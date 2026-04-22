@@ -5,6 +5,7 @@ import {Initializable} from "@openzeppelin/contracts/proxy/utils/Initializable.s
 import {UUPSUpgradeable} from "@openzeppelin/contracts/proxy/utils/UUPSUpgradeable.sol";
 import {OwnableUpgradeable} from "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 import {Ownable2StepUpgradeable} from "@openzeppelin/contracts-upgradeable/access/Ownable2StepUpgradeable.sol";
+import {PausableUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol";
 import {OFTAdapterUpgradeable} from "@layerzerolabs/oft-evm-upgradeable/contracts/oft/OFTAdapterUpgradeable.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 
@@ -42,6 +43,7 @@ contract VPFIOFTAdapter is
     Initializable,
     OFTAdapterUpgradeable,
     Ownable2StepUpgradeable,
+    PausableUpgradeable,
     UUPSUpgradeable,
     IVaipakamErrors
 {
@@ -73,12 +75,67 @@ contract VPFIOFTAdapter is
         __OFTAdapter_init(owner_);
         __Ownable_init(owner_);
         __Ownable2Step_init();
+        __Pausable_init();
     }
 
     /// @dev UUPS authorization hook. Only the owner (timelock/multi-sig)
     ///      may authorize upgrades to a new implementation.
     /// @param newImplementation Candidate implementation address.
     function _authorizeUpgrade(address newImplementation) internal override onlyOwner {}
+
+    // ─── Emergency pause ─────────────────────────────────────────────────────
+
+    /// @notice Pause both the outbound lock leg and the inbound release leg
+    ///         of the canonical adapter. Intended as the timelock / multi-sig
+    ///         emergency lever for a suspected LayerZero-side incident (DVN
+    ///         compromise, executor failure, unknown exploit). The Kelp DAO
+    ///         incident (April 2026) demonstrated the value of a fast pause
+    ///         — their 46-minute pause blocked ~$200M of follow-up drain.
+    ///         Because this adapter holds every bridged-out VPFI locked on
+    ///         Base, pausing `_credit` in particular protects the canonical
+    ///         honeypot from a fake inbound release.
+    /// @dev Only the owner (OApp delegate — timelock-gated multi-sig) may
+    ///      call. See `_debit` / `_credit` overrides for the send/receive
+    ///      guards.
+    function pause() external onlyOwner {
+        _pause();
+    }
+
+    /// @notice Resume send / receive paths after an incident has been
+    ///         investigated and resolved.
+    function unpause() external onlyOwner {
+        _unpause();
+    }
+
+    /// @dev Guards the outbound lock leg. When paused, users cannot initiate
+    ///      bridged-out sends from Base — locks are rejected before any
+    ///      LayerZero packet is emitted.
+    function _debit(
+        address _from,
+        uint256 _amountLD,
+        uint256 _minAmountLD,
+        uint32 _dstEid
+    )
+        internal
+        override
+        whenNotPaused
+        returns (uint256 amountSentLD, uint256 amountReceivedLD)
+    {
+        return super._debit(_from, _amountLD, _minAmountLD, _dstEid);
+    }
+
+    /// @dev Guards the inbound release leg — the high-value path that holds
+    ///      the locked canonical supply. When paused, an incoming LayerZero
+    ///      packet (even one signed by compromised DVNs) cannot unlock the
+    ///      adapter's VPFI. Peer verification still runs first at the OApp
+    ///      layer, so legitimate retries after `unpause()` succeed.
+    function _credit(
+        address _to,
+        uint256 _amountLD,
+        uint32 _srcEid
+    ) internal override whenNotPaused returns (uint256 amountReceivedLD) {
+        return super._credit(_to, _amountLD, _srcEid);
+    }
 
     // ─── Ownable MRO Resolution ──────────────────────────────────────────────
 

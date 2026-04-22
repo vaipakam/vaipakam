@@ -5,6 +5,7 @@ import {Initializable} from "@openzeppelin/contracts/proxy/utils/Initializable.s
 import {UUPSUpgradeable} from "@openzeppelin/contracts/proxy/utils/UUPSUpgradeable.sol";
 import {OwnableUpgradeable} from "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 import {Ownable2StepUpgradeable} from "@openzeppelin/contracts-upgradeable/access/Ownable2StepUpgradeable.sol";
+import {PausableUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol";
 import {OFTUpgradeable} from "@layerzerolabs/oft-evm-upgradeable/contracts/oft/OFTUpgradeable.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 
@@ -39,6 +40,7 @@ contract VPFIMirror is
     Initializable,
     OFTUpgradeable,
     Ownable2StepUpgradeable,
+    PausableUpgradeable,
     UUPSUpgradeable,
     IVaipakamErrors
 {
@@ -66,6 +68,58 @@ contract VPFIMirror is
         __OFT_init("Vaipakam DeFi Token", "VPFI", owner_);
         __Ownable_init(owner_);
         __Ownable2Step_init();
+        __Pausable_init();
+    }
+
+    // ─── Emergency pause ─────────────────────────────────────────────────────
+
+    /// @notice Pause both the outbound-burn and inbound-mint legs of this
+    ///         mirror. Intended as the timelock / multi-sig emergency lever
+    ///         for a suspected LayerZero-side incident (DVN compromise,
+    ///         executor failure, unknown exploit). The Kelp DAO incident
+    ///         (April 2026) demonstrated the value of a fast pause — their
+    ///         46-minute pause blocked ~$200M of follow-up drain.
+    /// @dev Only the owner (OApp delegate — timelock-gated multi-sig) may
+    ///      call. See `_debit` / `_credit` overrides for the send/receive
+    ///      guards.
+    function pause() external onlyOwner {
+        _pause();
+    }
+
+    /// @notice Resume send / receive paths after an incident has been
+    ///         investigated and resolved.
+    function unpause() external onlyOwner {
+        _unpause();
+    }
+
+    /// @dev Guards the outbound burn leg. When paused, users cannot initiate
+    ///      bridged-out sends from this chain — burns are rejected before
+    ///      any LayerZero packet is emitted.
+    function _debit(
+        address _from,
+        uint256 _amountLD,
+        uint256 _minAmountLD,
+        uint32 _dstEid
+    )
+        internal
+        override
+        whenNotPaused
+        returns (uint256 amountSentLD, uint256 amountReceivedLD)
+    {
+        return super._debit(_from, _amountLD, _minAmountLD, _dstEid);
+    }
+
+    /// @dev Guards the inbound mint leg. When paused, incoming LayerZero
+    ///      packets are rejected at the OFT layer — no new VPFI is minted
+    ///      on this chain until `unpause()` is called. Peer verification
+    ///      still runs first (OApp trust model), so legit retries after
+    ///      unpause succeed.
+    function _credit(
+        address _to,
+        uint256 _amountLD,
+        uint32 _srcEid
+    ) internal override whenNotPaused returns (uint256 amountReceivedLD) {
+        return super._credit(_to, _amountLD, _srcEid);
     }
 
     /// @dev UUPS authorization hook. Only the owner (timelock/multi-sig)

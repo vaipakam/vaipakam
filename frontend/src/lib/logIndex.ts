@@ -49,6 +49,20 @@ const LOAN_SOLD_TOPIC0 = keccakId('LoanSold(uint256,address,address,uint256)');
 const LOAN_OBLIGATION_TRANSFERRED_TOPIC0 = keccakId(
   'LoanObligationTransferred(uint256,address,address,uint256)',
 );
+// VPFI token activities surfaced on the Activity page so users can see
+// their fixed-rate buys and their escrow deposits/unstakes alongside
+// lending events. All three carry the user address as the first indexed
+// topic; non-indexed amounts live in `data`. Signatures pinned to the
+// VPFIDiscountFacet ABI.
+const VPFI_PURCHASED_TOPIC0 = keccakId(
+  'VPFIPurchasedWithETH(address,uint256,uint256)',
+);
+const VPFI_DEPOSITED_TOPIC0 = keccakId(
+  'VPFIDepositedToEscrow(address,uint256)',
+);
+const VPFI_WITHDRAWN_TOPIC0 = keccakId(
+  'VPFIWithdrawnFromEscrow(address,uint256)',
+);
 
 /**
  * Event-driven loan + position-NFT ownership cache.
@@ -88,7 +102,10 @@ export type ActivityEventKind =
   | 'BorrowerFundsClaimed'
   | 'CollateralAdded'
   | 'LoanSold'
-  | 'LoanObligationTransferred';
+  | 'LoanObligationTransferred'
+  | 'VPFIPurchasedWithETH'
+  | 'VPFIDepositedToEscrow'
+  | 'VPFIWithdrawnFromEscrow';
 
 export interface ActivityEvent {
   kind: ActivityEventKind;
@@ -197,7 +214,12 @@ const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
 // a burned position NFT. v5 caches don't carry this and can't backfill
 // incrementally since the relevant Transfer is already behind `lastBlock`.
 function storageKey(chainId: number, diamond: string): string {
-  return `vaipakam:logIndex:v6:${chainId}:${diamond.toLowerCase()}`;
+  // v7: widens the event allow-list to include VPFIPurchasedWithETH,
+  // VPFIDepositedToEscrow, and VPFIWithdrawnFromEscrow so the Activity
+  // page surfaces VPFI buy / stake / unstake alongside lending events.
+  // Older caches pre-date those topics in the `getLogs` OR-set and can't
+  // backfill incrementally, so bumping the version forces a fresh scan.
+  return `vaipakam:logIndex:v7:${chainId}:${diamond.toLowerCase()}`;
 }
 
 function emptyCache(deployBlock: number): CachedShape {
@@ -477,6 +499,9 @@ async function runScan(
             COLLATERAL_ADDED_TOPIC0,
             LOAN_SOLD_TOPIC0,
             LOAN_OBLIGATION_TRANSFERRED_TOPIC0,
+            VPFI_PURCHASED_TOPIC0,
+            VPFI_DEPOSITED_TOPIC0,
+            VPFI_WITHDRAWN_TOPIC0,
           ],
         ],
         fromBlock: cursor,
@@ -691,6 +716,48 @@ async function runScan(
           amountAdded,
           newCollateralAmount,
         });
+      } else if (topic0 === VPFI_PURCHASED_TOPIC0) {
+        // VPFIPurchasedWithETH(buyer indexed, vpfiAmount, ethAmount)
+        if (topics.length < 2) continue;
+        const buyer = ('0x' + topics[1].slice(26)).toLowerCase();
+        let vpfiAmount = '0';
+        let ethAmount = '0';
+        try {
+          const [v, e] = coder.decode(['uint256', 'uint256'], event.data);
+          vpfiAmount = (v as bigint).toString();
+          ethAmount = (e as bigint).toString();
+        } catch {
+          // malformed — keep defaults
+        }
+        addEvent('VPFIPurchasedWithETH', [buyer], {
+          buyer,
+          vpfiAmount,
+          ethAmount,
+        });
+      } else if (topic0 === VPFI_DEPOSITED_TOPIC0) {
+        // VPFIDepositedToEscrow(user indexed, amount)
+        if (topics.length < 2) continue;
+        const user = ('0x' + topics[1].slice(26)).toLowerCase();
+        let amount = '0';
+        try {
+          const [a] = coder.decode(['uint256'], event.data);
+          amount = (a as bigint).toString();
+        } catch {
+          // malformed — keep default
+        }
+        addEvent('VPFIDepositedToEscrow', [user], { user, amount });
+      } else if (topic0 === VPFI_WITHDRAWN_TOPIC0) {
+        // VPFIWithdrawnFromEscrow(user indexed, amount)
+        if (topics.length < 2) continue;
+        const user = ('0x' + topics[1].slice(26)).toLowerCase();
+        let amount = '0';
+        try {
+          const [a] = coder.decode(['uint256'], event.data);
+          amount = (a as bigint).toString();
+        } catch {
+          // malformed — keep default
+        }
+        addEvent('VPFIWithdrawnFromEscrow', [user], { user, amount });
       } else if (topic0 === TRANSFER_TOPIC0) {
         // ERC-721 Transfer(from, to, tokenId) — all three fields indexed, so
         // topics[1..3] carry from / to / tokenId. Rows with a different topic

@@ -33,6 +33,9 @@ const KIND_LABELS: Record<ActivityEventKind, string> = {
   CollateralAdded: 'Collateral added',
   LoanSold: 'Lender position sold',
   LoanObligationTransferred: 'Borrower position transferred',
+  VPFIPurchasedWithETH: 'VPFI bought with ETH',
+  VPFIDepositedToEscrow: 'VPFI staked to escrow',
+  VPFIWithdrawnFromEscrow: 'VPFI unstaked from escrow',
 };
 
 // Kind-kind → primary row accent colour class. Mirrors status accents from the
@@ -49,6 +52,9 @@ const KIND_ACCENT: Record<ActivityEventKind, string> = {
   CollateralAdded: 'info',
   LoanSold: 'info',
   LoanObligationTransferred: 'info',
+  VPFIPurchasedWithETH: 'success',
+  VPFIDepositedToEscrow: 'success',
+  VPFIWithdrawnFromEscrow: 'info',
 };
 
 interface TxGroup {
@@ -93,6 +99,9 @@ const KIND_PRIORITY: ActivityEventKind[] = [
   'CollateralAdded',
   'LenderFundsClaimed',
   'BorrowerFundsClaimed',
+  'VPFIPurchasedWithETH',
+  'VPFIDepositedToEscrow',
+  'VPFIWithdrawnFromEscrow',
   'OfferCreated',
   'OfferCanceled',
 ];
@@ -126,6 +135,8 @@ function renderArgValue(key: string, value: string | number | boolean): string {
     'newCollateralAmount',
     'interestPaid',
     'lateFeePaid',
+    'vpfiAmount',
+    'ethAmount',
   ]);
   if (amountKeys.has(key) && /^\d+$/.test(String(value))) {
     try {
@@ -156,6 +167,10 @@ const ARG_LABELS: Record<string, string> = {
   lateFeePaid: 'Late fee',
   offerType: 'Type',
   fallbackConsentFromBoth: 'Dual consent',
+  buyer: 'Buyer',
+  user: 'User',
+  vpfiAmount: 'VPFI',
+  ethAmount: 'ETH paid',
 };
 
 /**
