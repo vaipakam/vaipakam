@@ -1,0 +1,41 @@
+specVersion: 0.0.5
+description: Vaipakam loan-state drift indexer — minimal schema, one data source.
+repository: https://github.com/vaipakam/vaipakam
+schema:
+  file: ./schema.graphql
+
+# One data source per chain. Duplicate the block below for each deployment;
+# `startBlock` must be the Diamond's deploy block to avoid scanning history
+# needlessly. The chain-specific subgraph is deployed via `graph deploy`
+# with a suffix (e.g. vaipakam-base-sepolia).
+dataSources:
+  - kind: ethereum
+    name: Diamond
+    network: base-sepolia
+    source:
+      address: "0x0000000000000000000000000000000000000000" # replace per chain
+      abi: Diamond
+      startBlock: 0 # replace with diamond deploy block
+    mapping:
+      kind: ethereum/events
+      apiVersion: 0.0.7
+      language: wasm/assemblyscript
+      entities:
+        - Loan
+        - LoanTransition
+        - DriftStats
+      abis:
+        - name: Diamond
+          file: ./abis/Diamond.json
+      eventHandlers:
+        - event: LoanInitiated(indexed uint256,indexed uint256,indexed address,address)
+          handler: handleLoanInitiated
+        - event: LoanRepaid(indexed uint256,indexed address,uint256,uint256)
+          handler: handleLoanRepaid
+        - event: LoanDefaulted(indexed uint256,bool)
+          handler: handleLoanDefaulted
+        - event: LoanLiquidated(indexed uint256,uint256,uint256)
+          handler: handleLoanLiquidated
+        - event: LiquidationFallback(indexed uint256,indexed address,uint256)
+          handler: handleLiquidationFallback
+      file: ./src/mapping.ts

@@ -1,0 +1,619 @@
+[
+  {
+    "type": "function",
+    "name": "getFeesConfig",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "treasuryFeeBps",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "loanInitiationFeeBps",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getLiquidationConfig",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "handlingFeeBps",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "maxSlippageBps",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "maxIncentiveBps",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getProtocolConfigBundle",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "treasuryFeeBps",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "loanInitiationFeeBps",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "liquidationHandlingFeeBps",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "maxLiquidationSlippageBps",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "maxLiquidatorIncentiveBps",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "volatilityLtvThresholdBps",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "rentalBufferBps",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "vpfiStakingAprBps",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "tierThresholds",
+        "type": "uint256[4]",
+        "internalType": "uint256[4]"
+      },
+      {
+        "name": "tierDiscountBps",
+        "type": "uint256[4]",
+        "internalType": "uint256[4]"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getRiskConfig",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "volatilityLtvThresholdBps",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "rentalBufferBps",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getStakingAprBps",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getVpfiTierDiscountBps",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "t1",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "t2",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "t3",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "t4",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getVpfiTierThresholds",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "t1",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "t2",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "t3",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "t4",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "setFeesConfig",
+    "inputs": [
+      {
+        "name": "treasuryFeeBps",
+        "type": "uint16",
+        "internalType": "uint16"
+      },
+      {
+        "name": "loanInitiationFeeBps",
+        "type": "uint16",
+        "internalType": "uint16"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "setLiquidationConfig",
+    "inputs": [
+      {
+        "name": "handlingFeeBps",
+        "type": "uint16",
+        "internalType": "uint16"
+      },
+      {
+        "name": "maxSlippageBps",
+        "type": "uint16",
+        "internalType": "uint16"
+      },
+      {
+        "name": "maxIncentiveBps",
+        "type": "uint16",
+        "internalType": "uint16"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "setRiskConfig",
+    "inputs": [
+      {
+        "name": "volatilityLtvThresholdBps",
+        "type": "uint16",
+        "internalType": "uint16"
+      },
+      {
+        "name": "rentalBufferBps",
+        "type": "uint16",
+        "internalType": "uint16"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "setStakingApr",
+    "inputs": [
+      {
+        "name": "aprBps",
+        "type": "uint16",
+        "internalType": "uint16"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "setVpfiTierDiscountBps",
+    "inputs": [
+      {
+        "name": "t1",
+        "type": "uint16",
+        "internalType": "uint16"
+      },
+      {
+        "name": "t2",
+        "type": "uint16",
+        "internalType": "uint16"
+      },
+      {
+        "name": "t3",
+        "type": "uint16",
+        "internalType": "uint16"
+      },
+      {
+        "name": "t4",
+        "type": "uint16",
+        "internalType": "uint16"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "setVpfiTierThresholds",
+    "inputs": [
+      {
+        "name": "t1",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "t2",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "t3",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "t4",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "event",
+    "name": "FeesConfigSet",
+    "inputs": [
+      {
+        "name": "treasuryFeeBps",
+        "type": "uint16",
+        "indexed": false,
+        "internalType": "uint16"
+      },
+      {
+        "name": "loanInitiationFeeBps",
+        "type": "uint16",
+        "indexed": false,
+        "internalType": "uint16"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "LiquidationConfigSet",
+    "inputs": [
+      {
+        "name": "handlingFeeBps",
+        "type": "uint16",
+        "indexed": false,
+        "internalType": "uint16"
+      },
+      {
+        "name": "maxSlippageBps",
+        "type": "uint16",
+        "indexed": false,
+        "internalType": "uint16"
+      },
+      {
+        "name": "maxIncentiveBps",
+        "type": "uint16",
+        "indexed": false,
+        "internalType": "uint16"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "RiskConfigSet",
+    "inputs": [
+      {
+        "name": "volatilityLtvThresholdBps",
+        "type": "uint16",
+        "indexed": false,
+        "internalType": "uint16"
+      },
+      {
+        "name": "rentalBufferBps",
+        "type": "uint16",
+        "indexed": false,
+        "internalType": "uint16"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "StakingAprSet",
+    "inputs": [
+      {
+        "name": "aprBps",
+        "type": "uint16",
+        "indexed": false,
+        "internalType": "uint16"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "VpfiTierDiscountsSet",
+    "inputs": [
+      {
+        "name": "t1",
+        "type": "uint16",
+        "indexed": false,
+        "internalType": "uint16"
+      },
+      {
+        "name": "t2",
+        "type": "uint16",
+        "indexed": false,
+        "internalType": "uint16"
+      },
+      {
+        "name": "t3",
+        "type": "uint16",
+        "indexed": false,
+        "internalType": "uint16"
+      },
+      {
+        "name": "t4",
+        "type": "uint16",
+        "indexed": false,
+        "internalType": "uint16"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "VpfiTierThresholdsSet",
+    "inputs": [
+      {
+        "name": "t1",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "t2",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "t3",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "t4",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "error",
+    "name": "AccessControlUnauthorizedAccount",
+    "inputs": [
+      {
+        "name": "account",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "neededRole",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "DiscountBpsTooHigh",
+    "inputs": [
+      {
+        "name": "bps",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "maxAllowed",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "InvalidFeeBps",
+    "inputs": [
+      {
+        "name": "bps",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "maxAllowed",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "InvalidIncentiveBps",
+    "inputs": [
+      {
+        "name": "bps",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "maxAllowed",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "InvalidRentalBufferBps",
+    "inputs": [
+      {
+        "name": "bps",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "InvalidSlippageBps",
+    "inputs": [
+      {
+        "name": "bps",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "maxAllowed",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "InvalidStakingAprBps",
+    "inputs": [
+      {
+        "name": "bps",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "InvalidVolatilityLtvBps",
+    "inputs": [
+      {
+        "name": "bps",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "NonMonotoneTierDiscounts",
+    "inputs": [
+      {
+        "name": "t1",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "t2",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "t3",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "t4",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "NonMonotoneTierThresholds",
+    "inputs": [
+      {
+        "name": "t1",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "t2",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "t3",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "t4",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  }
+]

@@ -1,0 +1,854 @@
+// src/facets/MetricsFacet.sol
+// SPDX-License-Identifier: BUSL-1.1
+pragma solidity ^0.8.29;
+
+import {LibVaipakam} from "../libraries/LibVaipakam.sol";
+import {LibPausable} from "../libraries/LibPausable.sol";
+import {OracleFacet} from "./OracleFacet.sol";
+import {RiskFacet} from "./RiskFacet.sol";
+
+/**
+ * @title MetricsFacet
+ * @author Vaipakam Developer Team
+ * @notice Aggregated public read-only analytics surface — README §13
+ *         "Public View Functions for Analytics, Transparency, and
+ *         Integrations". Consumed by DefiLlama-style TVL trackers, Dune/
+ *         Nansen SQL aggregates, wallets/portfolio apps, auditors, and
+ *         composable DeFi integrations. All entry points are pure `view`
+ *         and multicall-friendly; callers incur zero gas when invoked via
+ *         RPC.
+ * @dev Analytics are backed by two complementary layers:
+ *        1. O(1) counters and per-key mappings maintained by
+ *           `LibMetricsHooks` at every lifecycle edge
+ *           (loan create/status change, offer create/accept/cancel).
+ *        2. Append/swap-pop-maintained active-set lists
+ *           (`activeLoanIdsList`, `activeOfferIdsList`) — these bound every
+ *           "live snapshot" aggregator by the CURRENT active count rather
+ *           than the lifetime sequence `nextLoanId/nextOfferId`. Inactive
+ *           or historical loans are never scanned for live metrics.
+ *
+ *      The previous MAX_ITER-based silent truncation has been removed —
+ *      no view returns a wrong answer because the sequence grew past a
+ *      hidden cap. Lifetime aggregators that inherently span every loan
+ *      ever created (e.g. `getProtocolStats.totalVolumeLentUSD`,
+ *      `getTotalInterestEarnedUSD`) iterate `[1 .. nextLoanId)` without a
+ *      cap; on very large deployments prefer the paginated reverse-index
+ *      views (`getAllLoansPaginated`, `getLoansByStatusPaginated`) and
+ *      aggregate off-chain.
+ *
+ *      Cross-facet reads for USD pricing go through `address(this)` so the
+ *      Diamond routes to OracleFacet (getAssetPrice) at runtime. Pricing
+ *      failures (no feed / stale) are treated as $0 for the affected leg so
+ *      the aggregate metrics never revert due to a single misbehaving asset.
+ */
+contract MetricsFacet {
+    uint256 private constant USD_SCALE = 1e18;
+
+    // ─── 1. Protocol-Wide Metrics ───────────────────────────────────────────
+
+    /**
+     * @notice Aggregated TVL across active loans, priced live at current
+     *         Chainlink rates.
+     * @dev Iterates `activeLoanIdsList` (bounded by `activeLoansCount`), so
+     *      closed loans no longer contribute. USD values are repriced on
+     *      every call — a loan priced at $100 today may be priced at $80
+     *      tomorrow if the underlying asset moves; this is the intended
+     *      semantic of "TVL" as a live market snapshot.
+     * @return tvlInUSD Sum of `principalUsdLocked` + `erc20CollateralTVL`.
+     * @return erc20CollateralTVL USD value of ERC-20 collateral on active loans.
+     * @return nftCollateralTVL NFT collateral is priced at $0 (no on-chain oracle);
+     *         returns the COUNT of active loans with NFT collateral instead.
+     */
+    function getProtocolTVL()
+        external
+        view
+        returns (uint256 tvlInUSD, uint256 erc20CollateralTVL, uint256 nftCollateralTVL)
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        uint256[] storage active = s.activeLoanIdsList;
+        uint256 len = active.length;
+        uint256 principalUsd;
+        uint256 nftCount;
+        for (uint256 i = 0; i < len; i++) {
+            LibVaipakam.Loan storage l = s.loans[active[i]];
+            if (l.assetType == LibVaipakam.AssetType.ERC20) {
+                principalUsd += _priceAmount(l.principalAsset, l.principal);
+            }
+            if (l.collateralAssetType == LibVaipakam.AssetType.ERC20) {
+                erc20CollateralTVL += _priceAmount(l.collateralAsset, l.collateralAmount);
+            } else {
+                nftCount += 1;
+            }
+        }
+        tvlInUSD = principalUsd + erc20CollateralTVL;
+        nftCollateralTVL = nftCount;
+    }
+
+    /**
+     * @notice Protocol-wide aggregate counters and rate summaries.
+     * @dev Counter-backed fields (`totalUniqueUsers`, `activeLoansCount`,
+     *      `activeOffersCount`, `totalLoansEverCreated`, `defaultRateBps`,
+     *      `averageAPR`) resolve to single SLOADs — O(1). `totalVolumeLentUSD`
+     *      and `totalInterestEarnedUSD` are repriced live and require a full
+     *      scan over `[1 .. nextLoanId)`; the numbers are never truncated
+     *      (no silent MAX_ITER cap), and dashboards that need to call this
+     *      on deployments with very large loan histories should aggregate
+     *      off-chain from `getAllLoansPaginated`.
+     */
+    function getProtocolStats()
+        external
+        view
+        returns (
+            uint256 totalUniqueUsers,
+            uint256 activeLoansCount,
+            uint256 activeOffersCount,
+            uint256 totalLoansEverCreated,
+            uint256 totalVolumeLentUSD,
+            uint256 totalInterestEarnedUSD,
+            uint256 defaultRateBps,
+            uint256 averageAPR
+        )
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        totalUniqueUsers = s.uniqueUserCount;
+        activeLoansCount = s.activeLoansCount;
+        activeOffersCount = s.activeOffersCount;
+        totalLoansEverCreated = s.totalLoansEverCreated;
+        defaultRateBps = totalLoansEverCreated == 0
+            ? 0
+            : (s.terminalBadOrSettledCount * LibVaipakam.BASIS_POINTS) / totalLoansEverCreated;
+        averageAPR = totalLoansEverCreated == 0 ? 0 : s.interestRateBpsSum / totalLoansEverCreated;
+
+        // IDs are pre-incremented in LoanFacet (`loanId = ++s.nextLoanId`),
+        // so `nextLoanId` is the highest id ever assigned — iterate inclusive
+        // to cover it. Matches the [1..nextLoanId] pattern used by
+        // {getAllLoansPaginated} and {getLoansByStatusPaginated}.
+        uint256 lEnd = s.nextLoanId;
+        for (uint256 i = 1; i <= lEnd; i++) {
+            LibVaipakam.Loan storage l = s.loans[i];
+            if (l.id == 0) continue;
+            if (l.assetType != LibVaipakam.AssetType.ERC20) continue;
+            uint256 pUsd = _priceAmount(l.principalAsset, l.principal);
+            totalVolumeLentUSD += pUsd;
+            if (
+                l.status != LibVaipakam.LoanStatus.Active &&
+                l.status != LibVaipakam.LoanStatus.FallbackPending
+            ) {
+                totalInterestEarnedUSD += (pUsd * l.interestRateBps) / LibVaipakam.BASIS_POINTS;
+            }
+        }
+    }
+
+    /// @notice Total count of unique wallets that have participated as lender,
+    ///         borrower, or offer creator. Counter-backed — O(1).
+    function getUserCount() external view returns (uint256) {
+        return LibVaipakam.storageSlot().uniqueUserCount;
+    }
+
+    /// @notice Number of loans currently in Active or FallbackPending status.
+    ///         Counter-backed — O(1).
+    function getActiveLoansCount() external view returns (uint256) {
+        return LibVaipakam.storageSlot().activeLoansCount;
+    }
+
+    /// @notice Number of offers still in the book (created, not yet accepted
+    ///         or cancelled). Counter-backed — O(1).
+    function getActiveOffersCount() external view returns (uint256) {
+        return LibVaipakam.storageSlot().activeOffersCount;
+    }
+
+    /**
+     * @notice Cumulative interest earned across all completed loans, priced
+     *         at current Chainlink rates.
+     * @dev Iterates `[1 .. nextLoanId]` with no cap — lifetime scan. On
+     *      deployments with very large histories prefer the paginated
+     *      reverse-index views (`getLoansByStatusPaginated(Repaid|Defaulted|
+     *      Settled, ..)`) and aggregate off-chain with event-time pricing.
+     */
+    function getTotalInterestEarnedUSD() external view returns (uint256 total) {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        uint256 end = s.nextLoanId;
+        for (uint256 i = 1; i <= end; i++) {
+            LibVaipakam.Loan storage l = s.loans[i];
+            if (l.id == 0) continue;
+            if (l.assetType != LibVaipakam.AssetType.ERC20) continue;
+            if (
+                l.status == LibVaipakam.LoanStatus.Active ||
+                l.status == LibVaipakam.LoanStatus.FallbackPending
+            ) continue;
+            uint256 pUsd = _priceAmount(l.principalAsset, l.principal);
+            total += (pUsd * l.interestRateBps) / LibVaipakam.BASIS_POINTS;
+        }
+    }
+
+    // ─── 2. Treasury & Revenue Metrics ──────────────────────────────────────
+
+    /**
+     * @notice Treasury balance snapshot plus lifetime and rolling-window
+     *         revenue metrics, all priced in USD.
+     * @dev Asset discovery scans only the active-loan list (not the full
+     *      lifetime sequence) unioning `principalAsset`, `collateralAsset`,
+     *      and `prepayAsset` per live loan — bounded by `activeLoansCount`.
+     *      Deployments with treasury balances in assets no longer represented
+     *      by any active loan should supplement off-chain with direct reads
+     *      of `treasuryBalances(asset)`. Rolling windows are backed by the
+     *      append-only `feeEventsLog` populated by
+     *      `LibFacet.recordTreasuryAccrual`. Values are frozen in USD at the
+     *      moment of accrual. Window scan is capped at
+     *      `LibVaipakam.MAX_FEE_EVENTS_ITER` from the tail; older events are
+     *      skipped from the window count but still counted in
+     *      `totalFeesCollectedUSD` via the O(1) `cumulativeFeesUSD`
+     *      accumulator.
+     */
+    function getTreasuryMetrics()
+        external
+        view
+        returns (
+            uint256 treasuryBalanceUSD,
+            uint256 totalFeesCollectedUSD,
+            uint256 feesLast24hUSD,
+            uint256 feesLast7dUSD
+        )
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        uint256[] storage active = s.activeLoanIdsList;
+        uint256 aLen = active.length;
+        address[] memory assets = new address[](aLen * 3);
+        uint256 n;
+        for (uint256 i = 0; i < aLen; i++) {
+            LibVaipakam.Loan storage l = s.loans[active[i]];
+            if (l.principalAsset != address(0)) n = _pushUnique(assets, n, l.principalAsset);
+            if (l.collateralAsset != address(0)) n = _pushUnique(assets, n, l.collateralAsset);
+            if (l.prepayAsset != address(0)) n = _pushUnique(assets, n, l.prepayAsset);
+        }
+        for (uint256 k = 0; k < n; k++) {
+            treasuryBalanceUSD += _priceAmount(assets[k], s.treasuryBalances[assets[k]]);
+        }
+        totalFeesCollectedUSD = s.cumulativeFeesUSD;
+        uint256 since24h = block.timestamp > 1 days ? block.timestamp - 1 days : 0;
+        uint256 since7d = block.timestamp > 7 days ? block.timestamp - 7 days : 0;
+        (feesLast24hUSD, feesLast7dUSD) = _sumFeesInWindows(since24h, since7d);
+    }
+
+    /**
+     * @notice Revenue over the last `days_` days, priced in USD at accrual time.
+     * @dev Sums `feeEventsLog` entries whose timestamp is within the window.
+     *      Scan is bounded by `LibVaipakam.MAX_FEE_EVENTS_ITER` entries from
+     *      the tail so the call stays cheap on long-lived deployments; on
+     *      exceeding that bound the returned figure is a lower bound on the
+     *      true window revenue. `days_ == 0` returns 0.
+     * @param days_ Look-back window in days.
+     * @return totalRevenueUSD Fees accrued to treasury in the window.
+     */
+    function getRevenueStats(uint256 days_)
+        external
+        view
+        returns (uint256 totalRevenueUSD)
+    {
+        if (days_ == 0) return 0;
+        uint256 windowSpan = days_ * 1 days;
+        uint256 windowStart = block.timestamp > windowSpan ? block.timestamp - windowSpan : 0;
+        totalRevenueUSD = _sumFeesSince(windowStart);
+    }
+
+    // ─── 3. Lending & Offer Metrics ─────────────────────────────────────────
+
+    /// @notice Paginated slice of the active-loan list. O(limit) — the
+    ///         underlying list is maintained swap-and-pop by LibMetricsHooks.
+    function getActiveLoansPaginated(uint256 offset, uint256 limit)
+        external
+        view
+        returns (uint256[] memory loanIds)
+    {
+        uint256[] storage src = LibVaipakam.storageSlot().activeLoanIdsList;
+        loanIds = _slice(src, offset, limit);
+    }
+
+    /// @notice Paginated list of open offer IDs filtered by lending asset.
+    /// @dev Walks `activeOfferIdsList` — bounded by `activeOffersCount`.
+    function getActiveOffersByAsset(address asset, uint256 offset, uint256 limit)
+        external
+        view
+        returns (uint256[] memory offerIds)
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        uint256[] storage src = s.activeOfferIdsList;
+        uint256 len = src.length;
+        uint256[] memory buf = new uint256[](limit);
+        uint256 skipped;
+        uint256 filled;
+        for (uint256 i = 0; i < len && filled < limit; i++) {
+            uint256 id = src[i];
+            LibVaipakam.Offer storage o = s.offers[id];
+            if (o.lendingAsset != asset) continue;
+            if (skipped < offset) { skipped += 1; continue; }
+            buf[filled] = id;
+            filled += 1;
+        }
+        offerIds = new uint256[](filled);
+        for (uint256 k = 0; k < filled; k++) offerIds[k] = buf[k];
+    }
+
+    /**
+     * @notice Aggregate summary across active loans.
+     * @return totalActiveLoanValueUSD Sum of priced principal across ERC-20 loans.
+     * @return averageLoanDuration Simple mean of durationDays across active loans.
+     * @return averageLTV Simple mean of per-loan LTV (bps) via RiskFacet; 0 for NFT legs.
+     */
+    function getLoanSummary()
+        external
+        view
+        returns (
+            uint256 totalActiveLoanValueUSD,
+            uint256 averageLoanDuration,
+            uint256 averageLTV
+        )
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        uint256[] storage active = s.activeLoanIdsList;
+        uint256 len = active.length;
+        uint256 durSum;
+        uint256 ltvSum;
+        uint256 ltvCount;
+        for (uint256 i = 0; i < len; i++) {
+            LibVaipakam.Loan storage l = s.loans[active[i]];
+            durSum += l.durationDays;
+            if (l.assetType == LibVaipakam.AssetType.ERC20) {
+                totalActiveLoanValueUSD += _priceAmount(l.principalAsset, l.principal);
+            }
+            if (
+                l.assetType == LibVaipakam.AssetType.ERC20 &&
+                l.collateralAssetType == LibVaipakam.AssetType.ERC20
+            ) {
+                try RiskFacet(address(this)).calculateLTV(l.id) returns (uint256 ltv) {
+                    ltvSum += ltv;
+                    ltvCount += 1;
+                } catch { }
+            }
+        }
+        averageLoanDuration = len == 0 ? 0 : durSum / len;
+        averageLTV = ltvCount == 0 ? 0 : ltvSum / ltvCount;
+    }
+
+    // ─── 4. NFT & Escrow Metrics ────────────────────────────────────────────
+
+    /**
+     * @notice NFT/escrow activity summary. Iterates the active-loan list
+     *         (bounded by `activeLoansCount`). A "rental" here is any
+     *         active loan whose principal (lending) asset is an NFT.
+     *         `totalRentalVolumeUSD` is the current-term USD price of each
+     *         active rental's principal where the `prepayAsset` has a live
+     *         feed.
+     */
+    function getEscrowStats()
+        external
+        view
+        returns (
+            uint256 totalNFTsInEscrow,
+            uint256 activeRentalsCount,
+            uint256 totalRentalVolumeUSD
+        )
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        uint256[] storage active = s.activeLoanIdsList;
+        uint256 len = active.length;
+        for (uint256 i = 0; i < len; i++) {
+            LibVaipakam.Loan storage l = s.loans[active[i]];
+            if (l.assetType != LibVaipakam.AssetType.ERC20) {
+                activeRentalsCount += 1;
+                if (l.prepayAsset != address(0) && l.prepayAmount > 0) {
+                    totalRentalVolumeUSD += _priceAmount(l.prepayAsset, l.prepayAmount);
+                }
+                totalNFTsInEscrow += 1;
+            }
+            if (l.collateralAssetType != LibVaipakam.AssetType.ERC20) {
+                totalNFTsInEscrow += 1;
+            }
+        }
+    }
+
+    /// @notice Loan corresponding to a rented Vaipakam position NFT.
+    /// @dev O(1): resolves via `loanIdByPositionTokenId` reverse mapping
+    ///      maintained by LibMetricsHooks. Returns empty Loan when the
+    ///      position is not an NFT-rental leg or no longer active.
+    function getNFTRentalDetails(uint256 tokenId) external view returns (LibVaipakam.Loan memory) {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        uint256 id = s.loanIdByPositionTokenId[tokenId];
+        if (id != 0) {
+            LibVaipakam.Loan storage l = s.loans[id];
+            if (l.assetType != LibVaipakam.AssetType.ERC20) {
+                return l;
+            }
+        }
+        LibVaipakam.Loan memory empty;
+        return empty;
+    }
+
+    /// @notice Count of active loan legs whose contract matches `collection`.
+    ///         Counter-backed via `nftsInEscrowByCollection` — O(1).
+    function getTotalNFTsInEscrowByCollection(address collection) external view returns (uint256) {
+        return LibVaipakam.storageSlot().nftsInEscrowByCollection[collection];
+    }
+
+    // ─── 6. User-Specific Metrics ───────────────────────────────────────────
+
+    /**
+     * @notice Per-user position summary.
+     * @dev Iterates `activeLoanIdsList` filtered by the user — bounded by
+     *      `activeLoansCount`, not lifetime loan count. `healthFactor` returned
+     *      is the MINIMUM HF across the user's borrower-side active loans
+     *      (worst-case). If the user has no borrower legs, returns
+     *      `type(uint256).max` (i.e. infinitely safe).
+     *      `availableToClaimUSD` currently returns 0 — claim valuations
+     *      require ClaimInfo iteration with per-asset pricing beyond the
+     *      scope of this snapshot; integrators should call
+     *      `ClaimFacet.getClaimable` per loan.
+     */
+    function getUserSummary(address user)
+        external
+        view
+        returns (
+            uint256 totalCollateralUSD,
+            uint256 totalBorrowedUSD,
+            uint256 availableToClaimUSD,
+            uint256 healthFactor,
+            uint256 activeLoanCount
+        )
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        uint256[] storage active = s.activeLoanIdsList;
+        uint256 len = active.length;
+        uint256 minHF = type(uint256).max;
+        bool anyBorrow;
+        for (uint256 i = 0; i < len; i++) {
+            LibVaipakam.Loan storage l = s.loans[active[i]];
+            bool isBorrower = l.borrower == user;
+            bool isLender = l.lender == user;
+            if (!isBorrower && !isLender) continue;
+            activeLoanCount += 1;
+            if (isBorrower) {
+                if (l.assetType == LibVaipakam.AssetType.ERC20) {
+                    totalBorrowedUSD += _priceAmount(l.principalAsset, l.principal);
+                }
+                if (l.collateralAssetType == LibVaipakam.AssetType.ERC20) {
+                    totalCollateralUSD += _priceAmount(l.collateralAsset, l.collateralAmount);
+                }
+                if (
+                    l.assetType == LibVaipakam.AssetType.ERC20 &&
+                    l.collateralAssetType == LibVaipakam.AssetType.ERC20
+                ) {
+                    try RiskFacet(address(this)).calculateHealthFactor(l.id) returns (uint256 hf) {
+                        anyBorrow = true;
+                        if (hf < minHF) minHF = hf;
+                    } catch { }
+                }
+            }
+        }
+        healthFactor = anyBorrow ? minHF : type(uint256).max;
+        availableToClaimUSD = 0;
+    }
+
+    /// @notice Active loan IDs where `user` is lender or borrower.
+    /// @dev O(activeLoansCount) — iterates the active-loan list rather than
+    ///      the lifetime sequence. For historical loans, use
+    ///      {getUserLoansPaginated} or {getUserLoansByStatusPaginated}.
+    function getUserActiveLoans(address user) external view returns (uint256[] memory loanIds) {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        uint256[] storage active = s.activeLoanIdsList;
+        uint256 len = active.length;
+        uint256[] memory buf = new uint256[](len);
+        uint256 n;
+        for (uint256 i = 0; i < len; i++) {
+            uint256 id = active[i];
+            LibVaipakam.Loan storage l = s.loans[id];
+            if (l.lender == user || l.borrower == user) { buf[n] = id; n += 1; }
+        }
+        loanIds = new uint256[](n);
+        for (uint256 k = 0; k < n; k++) loanIds[k] = buf[k];
+    }
+
+    /// @notice Open offer IDs created by `user`.
+    /// @dev O(activeOffersCount) — iterates the active-offer list.
+    function getUserActiveOffers(address user) external view returns (uint256[] memory offerIds) {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        uint256[] storage active = s.activeOfferIdsList;
+        uint256 len = active.length;
+        uint256[] memory buf = new uint256[](len);
+        uint256 n;
+        for (uint256 i = 0; i < len; i++) {
+            uint256 id = active[i];
+            LibVaipakam.Offer storage o = s.offers[id];
+            if (o.creator == user) { buf[n] = id; n += 1; }
+        }
+        offerIds = new uint256[](n);
+        for (uint256 k = 0; k < n; k++) offerIds[k] = buf[k];
+    }
+
+    /**
+     * @notice Token IDs of Vaipakam position NFTs representing NFT-asset legs
+     *         that currently belong to `user`.
+     * @dev O(activeLoansCount) — iterates the active-loan list. Does not
+     *      reach into per-user escrow proxies.
+     */
+    function getUserNFTsInEscrow(address user) external view returns (uint256[] memory tokenIds) {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        uint256[] storage active = s.activeLoanIdsList;
+        uint256 len = active.length;
+        uint256[] memory buf = new uint256[](len * 2);
+        uint256 n;
+        for (uint256 i = 0; i < len; i++) {
+            LibVaipakam.Loan storage l = s.loans[active[i]];
+            bool isNftLoan = l.assetType != LibVaipakam.AssetType.ERC20 ||
+                l.collateralAssetType != LibVaipakam.AssetType.ERC20;
+            if (!isNftLoan) continue;
+            if (l.lender == user) { buf[n] = l.lenderTokenId; n += 1; }
+            if (l.borrower == user) { buf[n] = l.borrowerTokenId; n += 1; }
+        }
+        tokenIds = new uint256[](n);
+        for (uint256 k = 0; k < n; k++) tokenIds[k] = buf[k];
+    }
+
+    // ─── 7. Compliance & Transparency ───────────────────────────────────────
+
+    /**
+     * @notice Protocol-level health snapshot over active loans, priced live.
+     * @return utilizationRateBps totalDebt / totalCollateral (bps); 0 if no collateral.
+     * @return totalCollateralUSD USD value of ERC-20 collateral on active loans.
+     * @return totalDebtUSD USD value of principal on active ERC-20 loans.
+     * @return isPaused True iff the protocol is currently paused.
+     */
+    function getProtocolHealth()
+        external
+        view
+        returns (
+            uint256 utilizationRateBps,
+            uint256 totalCollateralUSD,
+            uint256 totalDebtUSD,
+            bool isPaused
+        )
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        uint256[] storage active = s.activeLoanIdsList;
+        uint256 len = active.length;
+        for (uint256 i = 0; i < len; i++) {
+            LibVaipakam.Loan storage l = s.loans[active[i]];
+            if (l.assetType == LibVaipakam.AssetType.ERC20) {
+                totalDebtUSD += _priceAmount(l.principalAsset, l.principal);
+            }
+            if (l.collateralAssetType == LibVaipakam.AssetType.ERC20) {
+                totalCollateralUSD += _priceAmount(l.collateralAsset, l.collateralAmount);
+            }
+        }
+        utilizationRateBps = totalCollateralUSD == 0
+            ? 0
+            : (totalDebtUSD * LibVaipakam.BASIS_POINTS) / totalCollateralUSD;
+        isPaused = LibPausable.paused();
+    }
+
+    /// @notice Current block timestamp. Useful for freshness checks.
+    function getBlockTimestamp() external view returns (uint256) {
+        return block.timestamp;
+    }
+
+    // ─── 8. Reverse-Index Enumeration (indexer-independent) ─────────────────
+    //
+    // The views below are O(results) rather than O(nextLoanId/nextOfferId).
+    // They let frontends, indexers and bots enumerate protocol state without
+    // scanning logs — Alchemy / public RPCs that cap event scans to 10 blocks
+    // no longer affect reads. The reverse indexes are append-only (see
+    // LibVaipakam.Storage.userLoanIds / userOfferIds) and the position NFT
+    // enumeration lives in LibERC721.ERC721Storage.allTokens / ownedTokens.
+
+    /// @notice Global loan/offer counts. `nextLoanId - 1` is the highest ever
+    ///         assigned ID; IDs are sequential and start at 1.
+    function getGlobalCounts()
+        external
+        view
+        returns (uint256 totalLoansCreated, uint256 totalOffersCreated)
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        totalLoansCreated = s.nextLoanId;
+        totalOffersCreated = s.nextOfferId;
+    }
+
+    /// @notice Count of loans the user has ever appeared on (lender or borrower).
+    function getUserLoanCount(address user) external view returns (uint256) {
+        return LibVaipakam.storageSlot().userLoanIds[user].length;
+    }
+
+    /// @notice Count of offers the user has ever created.
+    function getUserOfferCount(address user) external view returns (uint256) {
+        return LibVaipakam.storageSlot().userOfferIds[user].length;
+    }
+
+    /// @notice Whether `offerId` was cancelled. Survives the hard-delete in
+    ///         {OfferFacet.cancelOffer} so history stays reconstructable.
+    function isOfferCancelled(uint256 offerId) external view returns (bool) {
+        return LibVaipakam.storageSlot().offerCancelled[offerId];
+    }
+
+    /**
+     * @notice Paginated slice of every loan the user has ever participated in.
+     * @dev Reads the append-only `userLoanIds[user]` index. Returned IDs
+     *      include all lifecycle states — filter client-side via
+     *      `LoanFacet.getLoanDetails` or use {getUserLoansByStatusPaginated}.
+     */
+    function getUserLoansPaginated(address user, uint256 offset, uint256 limit)
+        external
+        view
+        returns (uint256[] memory loanIds, uint256 total)
+    {
+        uint256[] storage src = LibVaipakam.storageSlot().userLoanIds[user];
+        total = src.length;
+        loanIds = _slice(src, offset, limit);
+    }
+
+    /// @notice Paginated slice of every offer the user has ever created.
+    function getUserOffersPaginated(address user, uint256 offset, uint256 limit)
+        external
+        view
+        returns (uint256[] memory offerIds, uint256 total)
+    {
+        uint256[] storage src = LibVaipakam.storageSlot().userOfferIds[user];
+        total = src.length;
+        offerIds = _slice(src, offset, limit);
+    }
+
+    /**
+     * @notice Paginated slice of the user's loans filtered by `status`.
+     * @dev O(userLoanIds[user].length) — still cheap vs. the protocol-wide
+     *      scans above. `offset`/`limit` refer to positions within the
+     *      filtered result, not the raw index.
+     */
+    function getUserLoansByStatusPaginated(
+        address user,
+        LibVaipakam.LoanStatus status,
+        uint256 offset,
+        uint256 limit
+    ) external view returns (uint256[] memory loanIds, uint256 matched) {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        uint256[] storage src = s.userLoanIds[user];
+        uint256 len = src.length;
+        uint256[] memory buf = new uint256[](limit);
+        uint256 skipped;
+        uint256 filled;
+        for (uint256 i = 0; i < len; i++) {
+            uint256 id = src[i];
+            if (s.loans[id].status != status) continue;
+            matched += 1;
+            if (skipped < offset) { skipped += 1; continue; }
+            if (filled < limit) { buf[filled] = id; filled += 1; }
+        }
+        loanIds = new uint256[](filled);
+        for (uint256 k = 0; k < filled; k++) loanIds[k] = buf[k];
+    }
+
+    /// @dev Offer lifecycle state used by {getUserOffersByStatePaginated}.
+    ///      Open = created, not accepted, not cancelled; Accepted = a loan
+    ///      was spun up; Cancelled = creator exited before acceptance.
+    enum OfferState { Open, Accepted, Cancelled }
+
+    /**
+     * @notice Paginated slice of the user's offers filtered by lifecycle state.
+     */
+    function getUserOffersByStatePaginated(
+        address user,
+        OfferState state,
+        uint256 offset,
+        uint256 limit
+    ) external view returns (uint256[] memory offerIds, uint256 matched) {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        uint256[] storage src = s.userOfferIds[user];
+        uint256 len = src.length;
+        uint256[] memory buf = new uint256[](limit);
+        uint256 skipped;
+        uint256 filled;
+        for (uint256 i = 0; i < len; i++) {
+            uint256 id = src[i];
+            OfferState actual = _offerStateOf(s, id);
+            if (actual != state) continue;
+            matched += 1;
+            if (skipped < offset) { skipped += 1; continue; }
+            if (filled < limit) { buf[filled] = id; filled += 1; }
+        }
+        offerIds = new uint256[](filled);
+        for (uint256 k = 0; k < filled; k++) offerIds[k] = buf[k];
+    }
+
+    /**
+     * @notice Paginated slice of every loan ever created, regardless of status.
+     * @dev Sequential ID scan bounded by `limit`. Loans with `id == 0`
+     *      (shouldn't happen post-initiation) are skipped.
+     */
+    function getAllLoansPaginated(uint256 offset, uint256 limit)
+        external
+        view
+        returns (uint256[] memory loanIds, uint256 total)
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        total = s.nextLoanId; // highest valid id (1-indexed; sequence starts at 1)
+        uint256[] memory buf = new uint256[](limit);
+        uint256 filled;
+        uint256 start = offset + 1; // IDs start at 1
+        for (uint256 id = start; id <= total && filled < limit; id++) {
+            if (s.loans[id].id == 0) continue;
+            buf[filled] = id; filled += 1;
+        }
+        loanIds = new uint256[](filled);
+        for (uint256 k = 0; k < filled; k++) loanIds[k] = buf[k];
+    }
+
+    /// @notice Paginated slice of every offer ever created (including cancelled).
+    function getAllOffersPaginated(uint256 offset, uint256 limit)
+        external
+        view
+        returns (uint256[] memory offerIds, uint256 total)
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        total = s.nextOfferId;
+        uint256[] memory buf = new uint256[](limit);
+        uint256 filled;
+        uint256 start = offset + 1;
+        for (uint256 id = start; id <= total && filled < limit; id++) {
+            // Include both live offers (offers[id].id != 0) and cancelled
+            // offers (offers[id].id == 0 && offerCancelled[id] == true) so
+            // indexers can reconstruct full history via a single view.
+            if (s.offers[id].id == 0 && !s.offerCancelled[id]) continue;
+            buf[filled] = id; filled += 1;
+        }
+        offerIds = new uint256[](filled);
+        for (uint256 k = 0; k < filled; k++) offerIds[k] = buf[k];
+    }
+
+    /// @notice Paginated slice of loans in a given status.
+    function getLoansByStatusPaginated(
+        LibVaipakam.LoanStatus status,
+        uint256 offset,
+        uint256 limit
+    ) external view returns (uint256[] memory loanIds, uint256 matched) {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        uint256 end = s.nextLoanId;
+        uint256[] memory buf = new uint256[](limit);
+        uint256 skipped;
+        uint256 filled;
+        for (uint256 id = 1; id <= end; id++) {
+            if (s.loans[id].status != status) continue;
+            matched += 1;
+            if (skipped < offset) { skipped += 1; continue; }
+            if (filled < limit) { buf[filled] = id; filled += 1; }
+        }
+        loanIds = new uint256[](filled);
+        for (uint256 k = 0; k < filled; k++) loanIds[k] = buf[k];
+    }
+
+    /// @notice Paginated slice of offers in a given lifecycle state.
+    function getOffersByStatePaginated(
+        OfferState state,
+        uint256 offset,
+        uint256 limit
+    ) external view returns (uint256[] memory offerIds, uint256 matched) {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        uint256 end = s.nextOfferId;
+        uint256[] memory buf = new uint256[](limit);
+        uint256 skipped;
+        uint256 filled;
+        for (uint256 id = 1; id <= end; id++) {
+            OfferState actual = _offerStateOf(s, id);
+            if (actual != state) continue;
+            matched += 1;
+            if (skipped < offset) { skipped += 1; continue; }
+            if (filled < limit) { buf[filled] = id; filled += 1; }
+        }
+        offerIds = new uint256[](filled);
+        for (uint256 k = 0; k < filled; k++) offerIds[k] = buf[k];
+    }
+
+    // ─── Internal helpers ───────────────────────────────────────────────────
+
+    function _slice(uint256[] storage src, uint256 offset, uint256 limit)
+        private
+        view
+        returns (uint256[] memory out)
+    {
+        uint256 len = src.length;
+        if (offset >= len || limit == 0) return new uint256[](0);
+        uint256 end = offset + limit;
+        if (end > len) end = len;
+        out = new uint256[](end - offset);
+        for (uint256 i = offset; i < end; i++) out[i - offset] = src[i];
+    }
+
+    /// @dev Derives the {OfferState} of `offerId` from storage. Matches the
+    ///      terminal flags set by {OfferFacet.acceptOffer} (accepted) and
+    ///      {OfferFacet.cancelOffer} (offerCancelled). Never-existed IDs
+    ///      also return Cancelled — callers filter via
+    ///      {getGlobalCounts}/{getAllOffersPaginated} before reading state.
+    function _offerStateOf(LibVaipakam.Storage storage s, uint256 offerId)
+        private
+        view
+        returns (OfferState)
+    {
+        if (s.offerCancelled[offerId]) return OfferState.Cancelled;
+        LibVaipakam.Offer storage o = s.offers[offerId];
+        if (o.id == 0) return OfferState.Cancelled; // treated as non-matchable
+        if (o.accepted) return OfferState.Accepted;
+        return OfferState.Open;
+    }
+
+    /// @dev Safe USD valuation. Returns 0 if feed missing or stale.
+    function _priceAmount(address asset, uint256 amount) private view returns (uint256) {
+        if (asset == address(0) || amount == 0) return 0;
+        try OracleFacet(address(this)).getAssetPrice(asset) returns (uint256 price, uint8 decimals) {
+            return (amount * price) / (10 ** decimals);
+        } catch {
+            return 0;
+        }
+    }
+
+    function _pushUnique(address[] memory arr, uint256 n, address v) private pure returns (uint256) {
+        for (uint256 k = 0; k < n; k++) {
+            if (arr[k] == v) return n;
+        }
+        arr[n] = v;
+        return n + 1;
+    }
+
+    /// @dev Tail-scans `feeEventsLog` summing `usdValue` for events with
+    ///      `timestamp >= since`. Stops early once an older event is hit
+    ///      (log is chronologically append-only). Bounded by
+    ///      LibVaipakam.MAX_FEE_EVENTS_ITER.
+    function _sumFeesSince(uint256 since) private view returns (uint256 sum) {
+        LibVaipakam.FeeEvent[] storage log = LibVaipakam.storageSlot().feeEventsLog;
+        uint256 len = log.length;
+        uint256 maxIter = LibVaipakam.MAX_FEE_EVENTS_ITER;
+        uint256 scanned;
+        for (uint256 i = len; i > 0 && scanned < maxIter; ) {
+            unchecked { i -= 1; scanned += 1; }
+            LibVaipakam.FeeEvent storage ev = log[i];
+            if (ev.timestamp < since) break;
+            sum += uint256(ev.usdValue);
+        }
+    }
+
+    /// @dev Two-window variant — computes 24h and 7d sums in one tail scan so
+    ///      `getTreasuryMetrics` only pays one iteration.
+    ///      `since24h >= since7d` (24h window is the tighter one).
+    function _sumFeesInWindows(uint256 since24h, uint256 since7d)
+        private
+        view
+        returns (uint256 sum24h, uint256 sum7d)
+    {
+        LibVaipakam.FeeEvent[] storage log = LibVaipakam.storageSlot().feeEventsLog;
+        uint256 len = log.length;
+        uint256 maxIter = LibVaipakam.MAX_FEE_EVENTS_ITER;
+        uint256 scanned;
+        for (uint256 i = len; i > 0 && scanned < maxIter; ) {
+            unchecked { i -= 1; scanned += 1; }
+            LibVaipakam.FeeEvent storage ev = log[i];
+            if (ev.timestamp < since7d) break;
+            uint256 v = uint256(ev.usdValue);
+            sum7d += v;
+            if (ev.timestamp >= since24h) sum24h += v;
+        }
+    }
+}

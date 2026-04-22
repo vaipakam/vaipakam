@@ -1,0 +1,203 @@
+.asset-picker {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.asset-picker-required {
+  color: #e5534b;
+  margin-left: 0.25rem;
+}
+
+.asset-picker-trigger-wrap {
+  position: relative;
+}
+
+.asset-picker-selected {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  width: 100%;
+  padding: 0.5rem 0.75rem;
+  border-radius: 8px;
+  border: 1px solid var(--border-color, #333);
+  background: var(--bg-secondary, #1a1a1a);
+  color: var(--text-primary, #fff);
+  cursor: pointer;
+  text-align: left;
+  font-size: 0.9rem;
+}
+
+.asset-picker-selected:hover:not(:disabled) {
+  filter: brightness(1.1);
+}
+
+.asset-picker-selected:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.asset-picker-logo {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.asset-picker-symbol {
+  font-weight: 600;
+}
+
+.asset-picker-name {
+  color: var(--text-secondary, #aaa);
+  font-size: 0.85rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+  min-width: 0;
+}
+
+.asset-picker-rank {
+  color: var(--text-secondary, #aaa);
+  font-size: 0.75rem;
+  background: var(--bg-primary, #0f0f0f);
+  padding: 0.1rem 0.4rem;
+  border-radius: 4px;
+}
+
+.asset-picker-addr-short {
+  color: var(--text-secondary, #aaa);
+  font-family: ui-monospace, Menlo, monospace;
+  font-size: 0.75rem;
+}
+
+.asset-picker-clear {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border-radius: 4px;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary, #aaa);
+  cursor: pointer;
+}
+
+.asset-picker-clear:hover {
+  background: var(--bg-primary, #0f0f0f);
+  color: var(--text-primary, #fff);
+}
+
+.asset-picker-dropdown {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  z-index: 50;
+  background: var(--bg-secondary, #1a1a1a);
+  border: 1px solid var(--border-color, #333);
+  border-radius: 8px;
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.35);
+  display: flex;
+  flex-direction: column;
+  max-height: 360px;
+}
+
+.asset-picker-search {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  border-bottom: 1px solid var(--border-color, #333);
+  color: var(--text-secondary, #aaa);
+}
+
+.asset-picker-search input {
+  flex: 1;
+  background: transparent;
+  border: none;
+  outline: none;
+  color: var(--text-primary, #fff);
+  font-size: 0.9rem;
+}
+
+.asset-picker-empty {
+  padding: 0.75rem;
+  color: var(--text-secondary, #aaa);
+  font-size: 0.85rem;
+  text-align: center;
+}
+
+.asset-picker-list {
+  overflow-y: auto;
+  max-height: 240px;
+  display: flex;
+  flex-direction: column;
+}
+
+.asset-picker-option {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  background: transparent;
+  border: none;
+  color: var(--text-primary, #fff);
+  cursor: pointer;
+  text-align: left;
+  font-size: 0.9rem;
+}
+
+.asset-picker-option:hover {
+  background: var(--bg-primary, #0f0f0f);
+}
+
+.asset-picker-custom {
+  padding: 0.5rem 0.75rem;
+  border-top: 1px solid var(--border-color, #333);
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.asset-picker-custom label {
+  font-size: 0.75rem;
+  color: var(--text-secondary, #aaa);
+}
+
+.asset-picker-notice {
+  display: inline-flex;
+  align-items: flex-start;
+  gap: 0.4rem;
+  padding: 0.4rem 0.6rem;
+  border-radius: 6px;
+  font-size: 0.8rem;
+  line-height: 1.3;
+}
+
+.asset-picker-notice svg {
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+.asset-picker-notice-info {
+  background: rgba(56, 139, 253, 0.1);
+  color: #79c0ff;
+  border: 1px solid rgba(56, 139, 253, 0.3);
+}
+
+.asset-picker-notice-warning {
+  background: rgba(255, 171, 0, 0.1);
+  color: #f5a623;
+  border: 1px solid rgba(255, 171, 0, 0.3);
+}
+
+.asset-picker-notice-error {
+  background: rgba(229, 83, 75, 0.1);
+  color: #ff7b72;
+  border: 1px solid rgba(229, 83, 75, 0.3);
+}

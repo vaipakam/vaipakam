@@ -1,0 +1,84 @@
+// SPDX-License-Identifier: CC0-1.0
+pragma solidity ^0.8.0;
+
+import {IERC165} from "openzeppelin-contracts/contracts/utils/introspection/IERC165.sol";
+
+/// @author Tim Daubenschütz and the authors of EIP-4907
+///  (https://github.com/rugpullindex/ERC4907/blob/main/src/ERC4907.sol)
+interface IERC4907 is IERC165 {
+    // Logged when the user of a token assigns a new user or updates expires
+    /// @notice Emitted when the `user` of an NFT or the `expires` of the `user`
+    ///  is changed. The zero address for user indicates that there is no user
+    ///  address.
+    event UpdateUser(
+        uint256 indexed tokenId,
+        address indexed user,
+        uint64 expires
+    );
+
+    /// @dev See {IERC165-supportsInterface}.
+    function supportsInterface(bytes4 interfaceId) external view returns (bool);
+
+    /// @notice set the user and expires of a NFT
+    /// @dev The zero address indicates there is no user
+    /// Throws if `tokenId` is not valid NFT
+    /// @param user  The new user of the NFT
+    /// @param expires  UNIX timestamp, The new user could use the NFT before
+    ///  expires
+    function setUser(uint256 tokenId, address user, uint64 expires) external;
+
+    /// @notice Get the user address of an NFT
+    /// @dev The zero address indicates that there is no user or the user is
+    ///  expired
+    /// @param tokenId The NFT to get the user address for
+    /// @return The user address for this NFT
+    function userOf(uint256 tokenId) external view returns (address);
+
+    /// @notice Get the user expires of an NFT
+    /// @dev The zero value indicates that there is no user
+    /// @param tokenId The NFT to get the user expires for
+    /// @return The user expires for this NFT
+    function userExpires(uint256 tokenId) external view returns (uint64);
+}
+
+// /**
+//  * @title IERC4907
+//  * @notice Interface for ERC-4907 rentable NFTs.
+//  * @dev Defines functions for setting and querying temporary users.
+//  */
+// interface IERC4907 {
+//     /**
+//      * @notice Emitted when the user of an NFT is changed or expires.
+//      * @param tokenId The NFT token ID.
+//      * @param user The new user address.
+//      * @param expires The expiration timestamp.
+//      */
+//     event UpdateUser(
+//         uint256 indexed tokenId,
+//         address indexed user,
+//         uint64 expires
+//     );
+
+//     /**
+//      * @notice Sets the temporary user of an NFT.
+//      * @dev Caller must be approved or owner.
+//      * @param tokenId The token ID.
+//      * @param user The temporary user address.
+//      * @param expires The UNIX timestamp for expiration.
+//      */
+//     function setUser(uint256 tokenId, address user, uint64 expires) external;
+
+//     /**
+//      * @notice Gets the current user of an NFT.
+//      * @param tokenId The token ID.
+//      * @return The current user address (zero if expired or none).
+//      */
+//     function userOf(uint256 tokenId) external view returns (address);
+
+//     /**
+//      * @notice Gets the expiration timestamp for an NFT's user.
+//      * @param tokenId The token ID.
+//      * @return The expiration timestamp (zero if none).
+//      */
+//     function userExpires(uint256 tokenId) external view returns (uint64);
+// }

@@ -1,0 +1,207 @@
+.nft-verifier {
+  max-width: 960px;
+}
+
+.verifier-form-stacked {
+  display: flex;
+  flex-direction: column;
+}
+
+.form-hint {
+  font-size: 0.78rem;
+  color: var(--text-tertiary);
+  margin-top: 6px;
+  line-height: 1.4;
+}
+
+.verifier-supported-chains {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+  font-size: 0.78rem;
+}
+
+.verifier-chain-pill {
+  display: inline-block;
+  padding: 2px 10px;
+  border-radius: 999px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+  font-size: 0.72rem;
+  font-weight: 500;
+}
+
+.verifier-chain-highlight {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: 6px;
+  background: rgba(79, 70, 229, 0.12);
+  color: var(--brand);
+  font-weight: 700;
+}
+
+.verifier-verdict-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.verifier-verdict-title {
+  font-weight: 700;
+  font-size: 1rem;
+}
+
+.verifier-verdict-title--good {
+  color: var(--accent-green);
+}
+
+.verifier-verdict-title--warn {
+  color: var(--accent-orange);
+}
+
+.verifier-verdict-title--bad {
+  color: var(--accent-red);
+}
+
+.verifier-not-vaipakam {
+  border-color: rgba(239, 68, 68, 0.4);
+  background: rgba(239, 68, 68, 0.04);
+}
+
+.verifier-live {
+  border-color: rgba(34, 197, 94, 0.4);
+  background: rgba(34, 197, 94, 0.04);
+}
+
+.verifier-advisory {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin-top: 16px;
+  padding: 12px 14px;
+  border-radius: var(--radius-sm);
+  font-size: 0.86rem;
+  line-height: 1.45;
+}
+
+.verifier-advisory--good {
+  background: rgba(34, 197, 94, 0.08);
+  border: 1px solid rgba(34, 197, 94, 0.3);
+  color: var(--text-primary);
+}
+
+.verifier-advisory--warn {
+  background: rgba(245, 158, 11, 0.08);
+  border: 1px solid rgba(245, 158, 11, 0.3);
+  color: var(--text-primary);
+}
+
+.verifier-advisory--bad {
+  background: rgba(239, 68, 68, 0.08);
+  border: 1px solid rgba(239, 68, 68, 0.3);
+  color: var(--text-primary);
+}
+
+.verifier-advisory svg {
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+.verifier-layout {
+  display: grid;
+  grid-template-columns: minmax(220px, 300px) 1fr;
+  gap: 24px;
+  align-items: start;
+}
+
+.verifier-image-col {
+  display: flex;
+  justify-content: center;
+}
+
+.verifier-details-col {
+  min-width: 0;
+}
+
+@media (max-width: 1024px) {
+  .verifier-layout {
+    grid-template-columns: 1fr;
+  }
+}
+
+.verifier-form {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.verifier-input-row {
+  display: flex;
+  gap: 8px;
+}
+
+.verifier-input-row .form-input {
+  flex: 1;
+}
+
+.verifier-contract-info {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+  font-size: 0.82rem;
+  flex-wrap: wrap;
+}
+
+.verifier-result {
+  margin-top: 0;
+}
+
+.verifier-burned {
+  border-color: rgba(245, 158, 11, 0.4);
+  background: rgba(245, 158, 11, 0.04);
+}
+
+.nft-attributes {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 10px;
+}
+
+.nft-attr {
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  text-align: center;
+}
+
+.nft-attr-trait {
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-tertiary);
+  margin-bottom: 4px;
+}
+
+.nft-attr-value {
+  font-size: 0.88rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  word-break: break-all;
+}
+
+.nft-image {
+  width: 100%;
+  max-width: 300px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border);
+}

@@ -1,0 +1,307 @@
+/* Activity page — reverse-chronological session-local journey feed.
+ * Tracks the design language of the Claim Center / Rewards pages:
+ * card-surfaced list rows on a --bg-primary body, .themed-select for
+ * the area filter, pill-shaped status chips. */
+
+.activity-page {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.activity-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.activity-chips {
+  display: inline-flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.activity-chip {
+  padding: 6px 14px;
+  border-radius: var(--radius-full);
+  border: 1px solid var(--border);
+  background: var(--bg-card);
+  color: var(--text-secondary);
+  font-size: 0.82rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+.activity-chip:hover {
+  border-color: var(--border-hover);
+  background: var(--bg-card-hover);
+}
+.activity-chip.active {
+  background: var(--brand-bg);
+  border-color: var(--brand);
+  color: var(--brand);
+}
+
+.activity-toolbar-right {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.activity-area-filter {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* ── List rows ───────────────────────────────────────────────────────── */
+
+.activity-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.activity-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 14px 16px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border);
+  background: var(--bg-card);
+  transition: border-color 0.15s, background 0.15s;
+}
+.activity-row:hover {
+  border-color: var(--border-hover);
+}
+.activity-row.status-failure {
+  border-left: 3px solid var(--accent-red);
+}
+.activity-row.status-success {
+  border-left: 3px solid var(--accent-green);
+}
+.activity-row.status-start {
+  border-left: 3px solid var(--accent-orange);
+}
+.activity-row.status-info {
+  border-left: 3px solid var(--brand);
+}
+
+.activity-row-main {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  flex: 1;
+  min-width: 0;
+}
+
+.activity-icon {
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+.activity-icon.success {
+  color: var(--accent-green);
+}
+.activity-icon.failure {
+  color: var(--accent-red);
+}
+.activity-icon.inflight {
+  color: var(--accent-orange);
+}
+.activity-icon.info {
+  color: var(--brand);
+}
+
+.activity-row-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.activity-row-title {
+  font-size: 0.92rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  word-break: break-word;
+}
+
+.activity-row-meta {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 4px;
+  font-size: 0.78rem;
+  color: var(--text-tertiary);
+}
+
+.activity-time {
+  font-variant-numeric: tabular-nums;
+}
+
+.activity-pill {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: var(--radius-full);
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+.activity-pill.role {
+  background: var(--brand-bg);
+  color: var(--brand);
+  text-transform: capitalize;
+}
+.activity-pill.chain {
+  background: var(--bg-card-hover);
+}
+
+.activity-row-error {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+  padding: 6px 10px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--accent-red) 8%, transparent);
+  color: var(--accent-red);
+  font-size: 0.8rem;
+}
+
+.activity-row-note {
+  margin-top: 6px;
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+}
+
+.activity-row-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+  color: var(--brand);
+  font-size: 0.8rem;
+  font-weight: 600;
+  padding: 6px 10px;
+  border-radius: var(--radius-full);
+  transition: background 0.15s;
+}
+.activity-row-link:hover {
+  background: var(--brand-bg);
+}
+
+.activity-expand-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 22px;
+  height: 22px;
+  margin-top: 2px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  border-radius: 4px;
+  transition: background 0.15s, color 0.15s;
+}
+.activity-expand-btn:hover {
+  background: var(--bg-card-hover);
+  color: var(--text-primary);
+}
+
+.activity-details {
+  margin-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  border-radius: var(--radius-md);
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+}
+
+.activity-detail-event {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.activity-detail-kind {
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: var(--text-primary);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.activity-detail-args {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 4px 16px;
+  margin: 0;
+}
+
+.activity-detail-arg {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 0.78rem;
+}
+
+.activity-detail-arg dt {
+  color: var(--text-tertiary);
+  margin: 0;
+}
+
+.activity-detail-arg dd {
+  margin: 0;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+  font-family: var(--font-mono, ui-monospace), monospace;
+  word-break: break-all;
+  text-align: right;
+}
+
+.spin {
+  animation: activity-spin 1s linear infinite;
+}
+@keyframes activity-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+/* ── Empty state ─────────────────────────────────────────────────────── */
+
+.activity-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 48px 24px;
+  border-radius: var(--radius-lg);
+  border: 1px dashed var(--border);
+  background: var(--bg-card);
+  text-align: center;
+  color: var(--text-secondary);
+}
+.activity-empty h3 {
+  margin: 0;
+  font-size: 1.05rem;
+  color: var(--text-primary);
+}
+.activity-empty p {
+  margin: 0;
+  max-width: 440px;
+  font-size: 0.88rem;
+}

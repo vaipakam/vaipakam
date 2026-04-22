@@ -1,0 +1,203 @@
+.diag-fab {
+  position: fixed;
+  right: 1rem;
+  bottom: 1rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.55rem 0.9rem;
+  border-radius: 999px;
+  border: 1px solid var(--border-color, #333);
+  background: var(--bg-secondary, #1a1a1a);
+  color: var(--text-primary, #fff);
+  font-size: 0.85rem;
+  cursor: pointer;
+  box-shadow: 0 6px 14px rgba(0, 0, 0, 0.25);
+  z-index: 900;
+}
+
+.diag-fab:hover { filter: brightness(1.1); }
+
+.diag-fab-badge {
+  background: #d9534f;
+  color: white;
+  border-radius: 999px;
+  padding: 0 0.4rem;
+  font-size: 0.7rem;
+  min-width: 1.2rem;
+  text-align: center;
+}
+
+.diag-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.35);
+  z-index: 1000;
+}
+
+.diag-drawer {
+  position: fixed;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  width: min(480px, 100vw);
+  background: var(--bg-primary, #0f0f0f);
+  color: var(--text-primary, #fff);
+  border-left: 1px solid var(--border-color, #333);
+  padding: 1rem 1.25rem;
+  z-index: 1001;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  overflow: hidden;
+}
+
+.diag-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.diag-header h3 { margin: 0; font-size: 1.05rem; }
+
+.diag-close {
+  background: transparent;
+  border: none;
+  color: inherit;
+  cursor: pointer;
+  padding: 0.25rem;
+}
+
+.diag-hint {
+  font-size: 0.8rem;
+  color: var(--text-secondary, #888);
+  margin: 0;
+  line-height: 1.4;
+}
+
+.diag-actions {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.diag-filters {
+  display: flex;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+}
+
+.diag-filter {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.3rem 0.65rem;
+  border-radius: 999px;
+  border: 1px solid var(--border-color, #333);
+  background: transparent;
+  color: var(--text-secondary, #aaa);
+  font-size: 0.75rem;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
+
+.diag-filter:hover {
+  color: var(--text-primary, #fff);
+  border-color: var(--text-secondary, #888);
+}
+
+.diag-filter.active {
+  background: var(--brand, #4f46e5);
+  border-color: var(--brand, #4f46e5);
+  color: #fff;
+}
+
+.diag-filter-count {
+  font-size: 0.7rem;
+  padding: 0 0.35rem;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.15);
+  min-width: 1.1rem;
+  text-align: center;
+}
+
+.diag-filter:not(.active) .diag-filter-count {
+  background: var(--bg-secondary, #1a1a1a);
+  color: var(--text-secondary, #aaa);
+}
+
+.diag-events {
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding-right: 0.25rem;
+}
+
+.diag-empty {
+  color: var(--text-secondary, #888);
+  font-style: italic;
+}
+
+.diag-event {
+  border: 1px solid var(--border-color, #333);
+  border-radius: 8px;
+  padding: 0.55rem 0.7rem;
+  background: var(--bg-secondary, #1a1a1a);
+  font-size: 0.8rem;
+}
+
+.diag-event-failure { border-color: #d9534f; }
+.diag-event-success { border-color: #4f9d69; }
+.diag-event-start   { border-color: #4a7fb8; }
+
+.diag-event-row {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.diag-event-area {
+  font-weight: 600;
+  text-transform: uppercase;
+  font-size: 0.7rem;
+  letter-spacing: 0.05em;
+  color: var(--text-secondary, #888);
+}
+
+.diag-event-flow { font-weight: 500; }
+
+.diag-event-status {
+  margin-left: auto;
+  font-size: 0.7rem;
+  padding: 0.1rem 0.5rem;
+  border-radius: 999px;
+  text-transform: uppercase;
+}
+.diag-event-status-success { background: #1e4d2b; color: #a8e6ba; }
+.diag-event-status-failure { background: #4d1e1e; color: #e6a8a8; }
+.diag-event-status-start   { background: #1e3a4d; color: #a8c8e6; }
+.diag-event-status-info    { background: #333; color: #ccc; }
+
+.diag-event-step {
+  margin-top: 0.2rem;
+  color: var(--text-secondary, #aaa);
+}
+
+.diag-event-error {
+  margin-top: 0.3rem;
+  padding: 0.35rem 0.5rem;
+  border-radius: 6px;
+  background: rgba(217, 83, 79, 0.15);
+  color: #e6a8a8;
+  font-size: 0.75rem;
+  word-break: break-word;
+}
+
+.diag-event-time {
+  margin-top: 0.25rem;
+  font-size: 0.7rem;
+  color: var(--text-secondary, #666);
+}

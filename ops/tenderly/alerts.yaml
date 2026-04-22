@@ -1,0 +1,223 @@
+# Tenderly Alert Presets — Vaipakam Diamond
+#
+# Scope: alerts that fire before user-visible breakage or economic loss, not
+# per-transaction noise. Each preset names the specific on-chain signal it
+# keys on, so the on-call can go from page → Tenderly filter → on-chain tx
+# without intermediate guesswork.
+#
+# Apply to EVERY chain the Diamond is deployed to — these alerts are scoped
+# per-contract, so duplicate each block for each chain's Diamond address and
+# substitute `${CHAIN}` and `${DIAMOND_ADDRESS}`. An alternative to using
+# Tenderly projects per chain is a single project with a "network" tag in
+# each alert; either works.
+#
+# Docs:
+#   - https://docs.tenderly.co/alerts
+#   - Apply via: `tenderly alerts apply` or paste into Tenderly UI
+#
+# Severity tiers (used to route to pager vs. Slack-only):
+#   P0  immediate page — user funds at risk, or pause already tripped
+#   P1  page during business hours — degraded service, no loss yet
+#   P2  slack-only — trend / anomaly to investigate
+
+version: 1
+project: vaipakam
+
+# ───────────────────────────────────────────────────────────────────────
+# 1. LOAN-STATE DRIFT
+#
+# Any default, liquidation, or fallback path is a rare, human-interesting
+# event. Missing a LoanDefaulted on-call means the borrower's grace window
+# has already passed and collateral moved — we want that paged, not
+# discovered later from the subgraph.
+# ───────────────────────────────────────────────────────────────────────
+
+- id: loan-defaulted
+  severity: P1
+  description: >
+    DefaultedFacet.processDefault was triggered. Grace period expired —
+    loan moved to Defaulted / collateral routed. Confirm via subgraph
+    that the status transition is valid from the prior state (Active or
+    FallbackPending only; Repaid → Defaulted is a bug).
+  type: event_emitted
+  contract: ${DIAMOND_ADDRESS}
+  event: LoanDefaulted(uint256,bool)
+  destination:
+    - pagerduty
+    - slack-onchain
+
+- id: loan-liquidated-by-hf
+  severity: P1
+  description: >
+    RiskFacet HF-based liquidation executed — health factor fell below
+    1.0e18 and a permissionless liquidator captured the bonus. Cross-
+    reference with Chainlink feed deviation in the same block — a
+    cluster of HF liquidations with no material price move usually
+    means a stale / mispriced feed, not organic risk.
+  type: event_emitted
+  contract: ${DIAMOND_ADDRESS}
+  event: LoanLiquidated(uint256,uint256,uint256)
+  destination:
+    - pagerduty
+    - slack-onchain
+
+- id: liquidation-fallback-triggered
+  severity: P0
+  description: >
+    The 0x swap leg of liquidation failed and the protocol fell back to
+    direct collateral transfer. This means the liquidation math did NOT
+    route through DEX liquidity — suspect: 0x proxy address wrong,
+    allowance target stale, sequencer grace window, or a token with a
+    transfer hook the router can't handle. Every fallback reduces
+    recovery vs. the happy-path swap.
+  type: event_emitted
+  contract: ${DIAMOND_ADDRESS}
+  event: LiquidationFallback(uint256,address,uint256)
+  destination:
+    - pagerduty
+    - slack-incidents
+
+- id: loan-initiated-anomalous-size
+  severity: P2
+  description: >
+    LoanInitiated where principal USD exceeds the historical p99 in any
+    24h window. Not a bug on its own — intended as a "large notional to
+    eyeball" signal before the loan is repaid or liquidated. Threshold
+    should be recomputed monthly from the subgraph.
+  type: event_emitted
+  contract: ${DIAMOND_ADDRESS}
+  event: LoanInitiated(uint256,uint256,address,address)
+  filters:
+    # Wire a Tenderly Web3 Action to fetch getLoanDetails(loanId) and
+    # compare principalUsd against the rolling p99. Tenderly's native
+    # filters don't support cross-call math, so this is routed through
+    # an action.
+    action: lib/flag-large-loan.ts
+  destination:
+    - slack-onchain
+
+# ───────────────────────────────────────────────────────────────────────
+# 2. HEALTH-FACTOR BREACH (pre-liquidation)
+#
+# Ideally we hear about HF < 1.0e18 BEFORE the liquidation fires — that's
+# the window to investigate oracle anomaly vs. organic price move. There
+# is no on-chain HealthFactor event (HF is a view, not a state change),
+# so this preset runs a scheduled Web3 Action rather than a log filter.
+# ───────────────────────────────────────────────────────────────────────
+
+- id: health-factor-watchlist
+  severity: P1
+  description: >
+    Scheduled action: for every Active/FallbackPending loan, call
+    RiskFacet.calculateHealthFactor(loanId) and page if HF < 1.05e18.
+    Window below the 1.5e18 init minimum but above the liquidation
+    floor — gives oncall a chance to evaluate before a liquidator fires.
+  type: web3_action
+  schedule: "*/5 * * * *" # every 5 minutes
+  action: lib/watch-health-factor.ts
+  params:
+    diamond: ${DIAMOND_ADDRESS}
+    chain_id: ${CHAIN_ID}
+    threshold_hf_1e18: "1050000000000000000" # 1.05e18
+  destination:
+    - pagerduty
+    - slack-onchain
+
+# ───────────────────────────────────────────────────────────────────────
+# 3. ORACLE STALENESS / FEED HEALTH
+#
+# StalePriceData reverts are the on-chain tell that a Chainlink feed
+# either exceeded its heartbeat or a stable-coin peg breached — both
+# block liquidations. We want both the error-revert alert (individual
+# failed tx) and a sequencer-grace alert (L2 only) that fires on the
+# uptime feed directly.
+# ───────────────────────────────────────────────────────────────────────
+
+- id: oracle-stale-price-revert
+  severity: P0
+  description: >
+    Any transaction reverted with OracleFacet.StalePriceData. This
+    blocks getAssetPrice, which in turn blocks new loans, repayments,
+    and HF-based liquidations for the affected asset. Check the
+    Chainlink feed address in the revert trace, confirm feed age vs.
+    heartbeat on the feed dashboard, and — if this is systemic — pause
+    the Diamond rather than let a partial outage stretch for hours.
+  type: error_in_transaction
+  contract: ${DIAMOND_ADDRESS}
+  error: StalePriceData()
+  destination:
+    - pagerduty
+    - slack-incidents
+
+- id: l2-sequencer-offline-or-grace
+  severity: P0
+  description: >
+    L2 sequencer uptime feed returned "down" or is still in the 1h
+    grace window after recovery. DefaultedFacet refuses to process
+    defaults during this interval (by design — prices aren't
+    trustworthy until feeds restart). Oncall action: announce the
+    outage on Twitter + user-facing banner, and track the grace-
+    window countdown so defaults can resume promptly.
+  type: web3_action
+  schedule: "*/2 * * * *"
+  action: lib/watch-l2-sequencer.ts
+  params:
+    diamond: ${DIAMOND_ADDRESS}
+    chain_id: ${CHAIN_ID}
+    # Emit only when state flips (up→down or down→up) to avoid spam
+    edge_only: true
+  destination:
+    - pagerduty
+    - slack-incidents
+
+- id: chainlink-feed-heartbeat-drift
+  severity: P2
+  description: >
+    Scheduled action: for every asset registered via
+    OracleAdminFacet.setPriceFeed, compare
+    (block.timestamp - feed.latestRoundData().updatedAt) against the
+    feed's heartbeat. Alert when age exceeds 80% of heartbeat — gives
+    a lead-time warning vs. the StalePriceData hard revert above.
+  type: web3_action
+  schedule: "*/10 * * * *"
+  action: lib/watch-feed-heartbeat.ts
+  params:
+    diamond: ${DIAMOND_ADDRESS}
+    chain_id: ${CHAIN_ID}
+    warn_ratio_bps: 8000 # 80% of heartbeat
+  destination:
+    - slack-onchain
+
+# ───────────────────────────────────────────────────────────────────────
+# 4. ADMIN / TIMELOCK ACTIVITY
+#
+# Anything the timelock schedules is security-sensitive even if
+# legitimate. We want transparent, immediate notification so oncall can
+# compare against the approved change calendar.
+# ───────────────────────────────────────────────────────────────────────
+
+- id: timelock-call-scheduled
+  severity: P1
+  description: >
+    TimelockController.CallScheduled fired. Either a legitimate
+    governance action (48h delay starts now) or a compromised proposer
+    key. Sanity check the target selector vs. the approved change log.
+  type: event_emitted
+  contract: ${TIMELOCK_ADDRESS}
+  event: CallScheduled(bytes32,uint256,address,uint256,bytes,bytes32,uint256)
+  destination:
+    - pagerduty
+    - slack-governance
+
+- id: diamond-paused
+  severity: P0
+  description: >
+    LibPausable.Paused emitted on the Diamond. Users cannot open loans,
+    repay, or claim during pause. Confirm this was an intentional
+    incident response and open a post-mortem doc.
+  type: event_emitted
+  contract: ${DIAMOND_ADDRESS}
+  event: Paused(address)
+  destination:
+    - pagerduty
+    - slack-incidents

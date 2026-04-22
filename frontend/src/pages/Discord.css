@@ -1,0 +1,74 @@
+/* Discord landing / redirect page — centered hero card on the public
+ * body background, matching the Buy VPFI / Analytics public-page feel. */
+
+.discord-page {
+  padding: 64px 0;
+  min-height: calc(100vh - 72px); /* push the footer below the fold */
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  background: var(--bg-primary);
+}
+
+.discord-wrap {
+  display: flex;
+  justify-content: center;
+}
+
+.discord-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 16px;
+  max-width: 560px;
+  padding: 40px 32px;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--border);
+  background: var(--bg-card);
+  box-shadow: var(--shadow-md);
+}
+
+.discord-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 72px;
+  height: 72px;
+  border-radius: 50%;
+  background: var(--brand-bg);
+  color: var(--brand);
+}
+
+.discord-card h1 {
+  margin: 0;
+  font-size: 1.7rem;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.discord-tagline {
+  margin: 0;
+  font-size: 0.95rem;
+  line-height: 1.6;
+  color: var(--text-secondary);
+}
+
+.discord-cta {
+  margin-top: 8px;
+}
+
+.discord-fine-print {
+  margin-top: 12px;
+  font-size: 0.8rem;
+  line-height: 1.5;
+  color: var(--text-tertiary);
+  max-width: 440px;
+}
+.discord-fine-print code {
+  background: var(--bg-card-hover);
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  font-size: 0.75rem;
+}

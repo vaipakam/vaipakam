@@ -1,0 +1,64 @@
+.claim-center {
+  max-width: 800px;
+}
+
+.claims-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.claim-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 16px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  flex-wrap: wrap;
+}
+
+.claim-row:hover {
+  border-color: var(--brand);
+}
+
+.claim-info {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.claim-loan-id {
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.claim-meta {
+  display: flex;
+  gap: 6px;
+}
+
+.claim-amount {
+  text-align: right;
+}
+
+.claim-value {
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.claim-asset {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.75rem;
+  color: var(--text-tertiary);
+  margin-top: 2px;
+}
+.claim-asset:hover {
+  color: var(--brand);
+}

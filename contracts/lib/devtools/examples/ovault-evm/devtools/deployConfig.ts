@@ -1,0 +1,85 @@
+import { EndpointId } from '@layerzerolabs/lz-definitions'
+
+import { DeploymentConfig } from './types'
+
+// ============================================
+// OVault Deployment Configuration
+// npx hardhat lz:deploy --tags ovault
+// ============================================
+//
+// DEFAULT: You have an ERC4626 vault and assetOFT deployed
+// - Set vault.vaultAddress to your existing vault
+// - Set vault.assetOFTAddress to your existing asset OFT
+// - ShareAdapter, ShareOFT, and Composer will be deployed to integrate with LayerZero
+//
+// ALTERNATIVE SCENARIOS:
+// - New vault, existing asset: Set only assetOFTAddress
+// - New vault, new asset: Leave both addresses undefined
+// ============================================
+
+// Define the chains we're deploying to
+// - _hubEid: The hub chain (where the OVault [ERC4626, ShareOFTAdapter, Composer] is deployed)
+// - _spokeEids: The spoke chains (where the ShareOFT is deployed)
+const _hubEid = EndpointId.ARBSEP_V2_TESTNET
+const _spokeEids = [EndpointId.OPTSEP_V2_TESTNET, EndpointId.BASESEP_V2_TESTNET]
+
+// ============================================
+// Deployment Export
+// ============================================
+//
+// This is the configuration for the deployment of the OVault.
+//
+// ============================================
+export const DEPLOYMENT_CONFIG: DeploymentConfig = {
+    // Vault chain configuration (where the ERC4626 vault lives)
+    vault: {
+        deploymentEid: _hubEid,
+        contracts: {
+            vault: 'MyERC4626',
+            shareAdapter: 'MyShareOFTAdapter',
+            composer: 'MyOVaultComposerERC20',
+        },
+        // IF YOU HAVE EXISTING CONTRACTS, SET THE ADDRESSES HERE
+        // This will skip deployment and use your existing hubEid contract deployments instead
+        // This must be the address of the ERC4626 vault
+        vaultAddress: undefined, // Set to '0xabc...' to use existing vault
+        // This must be the address of the asset OFT (not all OFT addresses are the same as the ERC20 contract)
+        assetOFTAddress: undefined, // Set to '0xdef...' to use existing asset OFT
+        // This must be the address of the ShareOFTAdapter
+        shareOFTAdapterAddress: undefined, // Set to '0xghi...' to use existing ShareOFTAdapter
+        // Required for native token OFTs (NativeOFTAdapter, StargatePoolNative) where token() returns address(0)
+        // Set this to the WETH address on the hub chain (e.g., '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2' for Ethereum mainnet)
+        assetTokenAddress: undefined,
+    },
+
+    // Share OFT configuration (only on spoke chains)
+    shareOFT: {
+        contract: 'MyShareOFT',
+        metadata: {
+            name: 'MyShareOFT',
+            symbol: 'SHARE',
+        },
+        deploymentEids: _spokeEids,
+    },
+
+    // Asset OFT configuration (deployed on specified chains OR use existing address)
+    // NOTE: For native assets (ETH, HYPE), use 'MyAssetOFTNative' with 'MyOVaultComposerNative'
+    assetOFT: {
+        contract: 'MyAssetOFTERC20',
+        metadata: {
+            name: 'MyAssetOFTERC20',
+            symbol: 'ASSET',
+        },
+        deploymentEids: [_hubEid, ..._spokeEids],
+    },
+} as const
+
+export const isVaultChain = (eid: number): boolean => eid === DEPLOYMENT_CONFIG.vault.deploymentEid
+export const shouldDeployVault = (eid: number): boolean => isVaultChain(eid) && !DEPLOYMENT_CONFIG.vault.vaultAddress
+export const shouldDeployAsset = (eid: number): boolean =>
+    !DEPLOYMENT_CONFIG.vault.assetOFTAddress && DEPLOYMENT_CONFIG.assetOFT.deploymentEids.includes(eid)
+export const shouldDeployShare = (eid: number): boolean =>
+    !DEPLOYMENT_CONFIG.vault.shareOFTAdapterAddress && DEPLOYMENT_CONFIG.shareOFT.deploymentEids.includes(eid)
+
+export const shouldDeployShareAdapter = (eid: number): boolean =>
+    isVaultChain(eid) && !DEPLOYMENT_CONFIG.vault.shareOFTAdapterAddress

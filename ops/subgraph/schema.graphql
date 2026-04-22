@@ -1,0 +1,69 @@
+# Minimal subgraph schema — loan-state drift only.
+#
+# Purpose: detect invalid LoanStatus transitions (e.g. Repaid → Defaulted,
+# Defaulted → Active) and surface the transition chain for any loan. This
+# is the dataset Tenderly alerts reference when they need cross-event
+# context ("was this loan previously repaid?") that a single event log
+# cannot provide.
+#
+# Explicitly NOT modelled here: offers, metrics, TVL, NFT state. Those are
+# served by the app's direct on-chain reads (useProtocolStats, etc.) — we
+# intentionally keep this subgraph narrow so the deploy is cheap and the
+# failure surface is small.
+
+type Loan @entity {
+  id: ID! # loanId as string
+  loanId: BigInt!
+
+  borrower: Bytes!
+  lender: Bytes!
+  offerId: BigInt!
+
+  currentStatus: LoanStatus!
+  # Ordered list of every status the loan has taken, oldest first.
+  transitions: [LoanTransition!]! @derivedFrom(field: "loan")
+
+  createdAtBlock: BigInt!
+  createdAtTimestamp: BigInt!
+  updatedAtBlock: BigInt!
+  updatedAtTimestamp: BigInt!
+
+  # Denormalised counts for the drift query — lets the alert action ask
+  # "are there any loans with >1 defaulted transition?" cheaply.
+  defaultedCount: Int!
+  repaidCount: Int!
+  liquidatedCount: Int!
+  fallbackCount: Int!
+}
+
+type LoanTransition @entity(immutable: true) {
+  id: ID! # txHash-logIndex
+  loan: Loan!
+  fromStatus: LoanStatus!
+  toStatus: LoanStatus!
+  # If the transition is invalid per the protocol's state machine, the
+  # indexer writes this field with a short description. Queried by the
+  # drift-alert action.
+  invalidReason: String
+  block: BigInt!
+  timestamp: BigInt!
+  txHash: Bytes!
+}
+
+enum LoanStatus {
+  Unknown
+  Active
+  Repaid
+  Defaulted
+  FallbackPending
+  Liquidated
+}
+
+# Aggregate counters used by the alert action to answer
+# "how many drift events in the last 24h" without scanning every loan.
+type DriftStats @entity {
+  id: ID! # singleton — always "global"
+  invalidTransitions: Int!
+  lastInvalidTxHash: Bytes
+  lastInvalidTimestamp: BigInt
+}

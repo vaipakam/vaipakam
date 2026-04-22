@@ -1,0 +1,80 @@
+.risk-gauge {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 140px;
+  cursor: help;
+}
+
+.risk-gauge-empty {
+  color: var(--text-tertiary);
+}
+
+.risk-gauge-track {
+  position: relative;
+  flex: 1;
+  height: 8px;
+  background: var(--bg-accent);
+  border-radius: var(--radius-full);
+  overflow: visible;
+}
+
+.risk-gauge-fill {
+  height: 100%;
+  border-radius: var(--radius-full);
+  transition: width 0.3s ease, background-color 0.2s ease;
+}
+
+.risk-gauge-value {
+  font-size: 0.85rem;
+  font-weight: 600;
+  min-width: 52px;
+  text-align: right;
+}
+
+.risk-gauge-mark {
+  position: absolute;
+  top: -2px;
+  width: 2px;
+  height: 12px;
+  background: var(--text-tertiary);
+  opacity: 0.6;
+}
+
+.risk-gauge-mark::after {
+  content: attr(data-mark);
+  position: absolute;
+  top: 14px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 0.65rem;
+  color: var(--text-tertiary);
+  white-space: nowrap;
+}
+
+.hf-safe .risk-gauge-fill,
+.ltv-safe .risk-gauge-fill {
+  background: var(--accent-green);
+}
+.hf-safe .risk-gauge-value,
+.ltv-safe .risk-gauge-value {
+  color: var(--accent-green);
+}
+
+.hf-warning .risk-gauge-fill,
+.ltv-warning .risk-gauge-fill {
+  background: var(--accent-orange);
+}
+.hf-warning .risk-gauge-value,
+.ltv-warning .risk-gauge-value {
+  color: var(--accent-orange);
+}
+
+.hf-danger .risk-gauge-fill,
+.ltv-danger .risk-gauge-fill {
+  background: var(--accent-red);
+}
+.hf-danger .risk-gauge-value,
+.ltv-danger .risk-gauge-value {
+  color: var(--accent-red);
+}

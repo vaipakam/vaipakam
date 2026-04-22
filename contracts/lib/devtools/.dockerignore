@@ -1,0 +1,41 @@
+# Docker
+Dockerfile
+docker-*.yaml
+
+# Git
+.git
+.gitignore
+
+# CI/CD files
+.changeset/*.md
+.github
+.husky
+.turbo
+.netrc
+.env
+.env*
+
+# Misc
+*ignore
+
+# Dependencies & deployments
+**/node_modules
+
+# Build files & cache  
+**/deployments
+**/dist
+**/artifacts
+**/cache
+**/out
+**/.turbo
+**/coverage
+**/tmp
+**/temp
+
+# Keep tests/ for specific builds but exclude heavy files
+tests/**/node_modules/
+tests/**/.turbo/
+tests/**/coverage/
+
+# Metadata
+*.md

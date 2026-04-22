@@ -1,0 +1,298 @@
+.navbar {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 1000;
+  background: var(--bg-nav);
+  backdrop-filter: blur(16px);
+  border-bottom: 1px solid var(--border);
+  transition: background 0.3s ease;
+}
+
+.navbar-inner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 72px;
+}
+
+.navbar-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 1.3rem;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.navbar-logo {
+  height: 36px;
+  width: auto;
+}
+
+.navbar-logo--icon {
+  display: none;
+}
+
+/* Public Navbar (outside /app) always shows the full logo — the icon-only
+ * variant is kept in the DOM for the AppLayout sidebar's own responsive
+ * rules. Instead of shrinking the logo when space gets tight, we fold the
+ * nav links into the hamburger at the 1200px breakpoint below. */
+
+.navbar-brand-text {
+  display: none;
+}
+.navbar-logo[style*="display: none"] ~ .navbar-brand-text,
+.navbar-brand-text.show {
+  display: inline;
+}
+
+.navbar-links {
+  display: none;
+  gap: 8px;
+}
+
+.navbar-link {
+  font-size: 0.9rem;
+  font-weight: 500;
+  color: var(--text-secondary);
+  padding: 8px 16px;
+  border-radius: var(--radius-full);
+  transition: all 0.2s ease;
+  /* Individual link text must never break across lines — the row should
+   * overflow toward the hamburger breakpoint rather than wrap mid-link. */
+  white-space: nowrap;
+}
+.navbar-link:hover {
+  color: var(--brand);
+  background: var(--brand-bg);
+}
+
+.navbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.theme-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border-radius: var(--radius-full);
+  border: 1px solid var(--border);
+  background: var(--bg-card);
+  color: var(--text-secondary);
+  transition: all 0.2s ease;
+}
+.theme-toggle:hover {
+  border-color: var(--brand);
+  color: var(--brand);
+}
+
+.navbar-cta {
+  display: none;
+  /* Desktop CTAs (Launch App, Connect Wallet, Wrong Network, wallet badge)
+   * must stay on one line — otherwise labels like "Launch App" or
+   * "Wrong Network" can break at narrow desktop widths, which looks
+   * broken next to the single-line nav links. */
+  white-space: nowrap;
+}
+
+/* Tight sizing shared by every .btn-based desktop CTA in the top bar
+ * (Launch App, Connect Wallet, Wrong Network). Overrides the default
+ * .btn 12/28 padding + 0.95rem font so these three buttons render at
+ * identical heights (≈32 px outer). The `.wallet-connected` wrapper is
+ * INTENTIONALLY excluded from this rule — it lays out its own inner
+ * badge + disconnect icon and must not inherit these paddings. */
+.btn.navbar-cta {
+  padding: 7px 16px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  gap: 6px;
+  letter-spacing: 0.01em;
+  line-height: 1.4;
+}
+.btn.navbar-cta svg {
+  width: 14px;
+  height: 14px;
+}
+
+/* Keep the connected-wallet pill's outer height aligned with Launch App
+ * so the top bar doesn't jump when the wallet connects. The inner
+ * disconnect icon stays square at 32 px to match. */
+.wallet-connected.navbar-cta .wallet-address-badge {
+  padding: 6px 12px;
+  height: 32px;
+  line-height: 1.4;
+}
+.wallet-connected.navbar-cta .wallet-disconnect-btn {
+  width: 32px;
+  height: 32px;
+}
+
+/* Launch App keeps a dedicated class for any future launch-specific
+ * tweaks (hover, focus ring, analytics attr hooks) without reopening
+ * the shared .btn.navbar-cta rule. */
+.navbar-launch {
+  letter-spacing: 0.01em;
+}
+
+.navbar-cta-mobile {
+  display: block;
+  text-align: center;
+  margin-top: 8px;
+}
+
+.mobile-menu-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border-radius: var(--radius-md);
+  border: none;
+  background: transparent;
+  color: var(--text-primary);
+}
+
+/* Desktop breakpoint — set at 1200px so the hamburger engages BEFORE the
+ * point where the full logo + 6 nav links + actions row would run out of
+ * horizontal space. Below this width we fold the links into the mobile
+ * flyout (the "3 lines" hamburger) rather than shrinking the brand mark.
+ * `flex-wrap: nowrap` is belt-and-suspenders: even at an in-between width
+ * the row cannot break across lines. */
+@media (min-width: 1200px) {
+  .navbar-links {
+    display: flex;
+    position: static;
+    flex-direction: row;
+    flex-wrap: nowrap;
+    background: none;
+    padding: 0;
+    border: none;
+  }
+  .navbar-cta {
+    display: inline-flex;
+  }
+  .navbar-cta-mobile,
+  .mobile-menu-btn {
+    display: none;
+  }
+}
+
+/* Mobile / tablet open state — paired max-width boundary with the desktop
+ * breakpoint above. */
+@media (max-width: 1199px) {
+  .navbar-links.open {
+    display: flex;
+    flex-direction: column;
+    position: absolute;
+    top: 72px;
+    left: 0;
+    right: 0;
+    background: var(--bg-primary);
+    border-bottom: 1px solid var(--border);
+    padding: 16px 24px;
+    gap: 4px;
+  }
+  .navbar-links.open .navbar-link {
+    padding: 12px 16px;
+    font-size: 1rem;
+  }
+}
+
+/* Wallet styles */
+.wallet-address-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  color: var(--text-primary);
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  padding: 8px 14px;
+  border-radius: var(--radius-full);
+}
+
+.wallet-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent-green);
+  flex-shrink: 0;
+}
+
+.wallet-connected {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.wallet-disconnect-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: var(--radius-full);
+  border: 1px solid var(--border);
+  background: var(--bg-card);
+  color: var(--text-tertiary);
+  transition: all 0.2s ease;
+}
+.wallet-disconnect-btn:hover {
+  border-color: var(--accent-red);
+  color: var(--accent-red);
+}
+
+.btn-warning {
+  background: rgba(245, 158, 11, 0.12);
+  color: var(--accent-orange);
+  border: 1px solid var(--accent-orange);
+}
+.btn-warning:hover {
+  background: rgba(245, 158, 11, 0.2);
+}
+
+.wallet-error {
+  background: rgba(239, 68, 68, 0.1);
+  color: var(--accent-red);
+  font-size: 0.82rem;
+  padding: 8px 0;
+  text-align: center;
+  border-bottom: 1px solid var(--accent-red);
+}
+
+.navbar-wallet-mobile {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+
+.wallet-connected-mobile {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* Mobile-only Launch App button inside the open nav flyout. Hidden on
+ * desktop because the desktop Navbar already renders its own .navbar-launch
+ * alongside the wallet button. */
+.navbar-launch-mobile {
+  margin-top: 12px;
+  text-align: center;
+  width: 100%;
+  justify-content: center;
+}
+
+@media (min-width: 1200px) {
+  .navbar-wallet-mobile,
+  .navbar-launch-mobile {
+    display: none;
+  }
+}

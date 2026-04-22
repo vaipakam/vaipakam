@@ -1,0 +1,79 @@
+.create-offer {
+  max-width: 720px;
+}
+
+.offer-type-toggle {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.toggle-btn {
+  padding: 8px 18px;
+  font-size: 0.88rem;
+  font-weight: 500;
+  color: var(--text-secondary);
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-full);
+  transition: all 0.15s ease;
+  cursor: pointer;
+}
+
+.toggle-btn:hover {
+  border-color: var(--brand);
+  color: var(--brand);
+}
+
+.toggle-btn.active {
+  background: var(--brand-bg);
+  border-color: var(--brand);
+  color: var(--brand);
+  font-weight: 600;
+}
+
+.checkbox-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 0;
+  font-size: 0.88rem;
+  color: var(--text-secondary);
+  cursor: pointer;
+  line-height: 1.5;
+}
+
+.checkbox-row input[type="checkbox"] {
+  margin-top: 3px;
+  width: 16px;
+  height: 16px;
+  accent-color: var(--brand);
+  flex-shrink: 0;
+}
+
+.form-actions {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.asset-detect-badge {
+  font-size: 0.8rem;
+  font-weight: 500;
+  margin-left: 4px;
+}
+.asset-detect-pending { opacity: 0.6; }
+.asset-detect-match { color: var(--success, #22c55e); }
+.asset-detect-mismatch { color: var(--warning, #f59e0b); }
+.asset-detect-unknown { color: var(--muted, #888); opacity: 0.8; }
+
+.form-input-error,
+.form-input-error:focus {
+  border-color: var(--danger, #ef4444);
+  box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.12);
+}
+
+.form-hint-error {
+  color: var(--danger, #ef4444);
+  font-weight: 500;
+}

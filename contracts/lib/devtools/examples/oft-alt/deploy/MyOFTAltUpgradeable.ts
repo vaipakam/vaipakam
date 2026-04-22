@@ -1,0 +1,62 @@
+import { DeployFunction } from 'hardhat-deploy/types'
+
+import {
+    deployImplementation,
+    deployProxy,
+    deployProxyAdmin,
+    saveCombinedDeployment,
+} from '@layerzerolabs/devtools-evm-hardhat'
+
+const contractName = 'MyOFTAltUpgradeable'
+
+const deploy: DeployFunction = async (hre) => {
+    const { getNamedAccounts } = hre
+    const { deployer } = await getNamedAccounts()
+
+    console.log(`Deploying ${contractName} on network: ${hre.network.name} with ${deployer}`)
+
+    /// EndpointV2Alt deployments are also saved under the filename: EndpointV2
+    const endpointV2AltDeployment = await hre.deployments.get('EndpointV2')
+
+    const { address: proxyAdminAddress } = await deployProxyAdmin({
+        hre,
+        deployOptions: {
+            from: deployer,
+            args: [deployer], // owner
+            skipIfAlreadyDeployed: true,
+        },
+        deploymentName: contractName,
+    })
+
+    const { address: implementationAddress } = await deployImplementation({
+        hre,
+        deployOptions: {
+            from: deployer,
+            args: [endpointV2AltDeployment.address],
+            skipIfAlreadyDeployed: true,
+            contract: contractName,
+        },
+        deploymentName: contractName,
+    })
+
+    const initializeInterface = new hre.ethers.utils.Interface([
+        'function initialize(string memory name, string memory symbol, address delegate)',
+    ])
+    const initializeData = initializeInterface.encodeFunctionData('initialize', ['MyOFT', 'MOFT', deployer])
+
+    await deployProxy({
+        hre,
+        deployOptions: {
+            from: deployer,
+            args: [implementationAddress, proxyAdminAddress, initializeData],
+            skipIfAlreadyDeployed: true,
+        },
+        deploymentName: contractName,
+    })
+
+    await saveCombinedDeployment({ hre, deploymentName: contractName })
+}
+
+deploy.tags = [contractName]
+
+export default deploy

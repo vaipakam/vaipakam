@@ -1,0 +1,44 @@
+{
+  "contracts/lib/chainlink-brownie-contracts": {
+    "rev": "5cb41fbc9b525338b6098da5ea7dd0b7e92f89e4"
+  },
+  "contracts/lib/diamond-3-hardhat": {
+    "rev": "08d415c7e1a27c811c34875d9263a90bc719cee3"
+  },
+  "contracts/lib/forge-std": {
+    "rev": "1801b0541f4fda118a10798fd3486bb7051c5dd6"
+  },
+  "contracts/lib/openzeppelin-contracts-upgradeable": {
+    "rev": "aa677e9d28ed78fc427ec47ba2baef2030c58e7c"
+  },
+  "lib/LayerZero-v2": {
+    "rev": "9c741e7f9790639537b1710a203bcdfd73b0b9ac"
+  },
+  "lib/chainlink-brownie-contracts": {
+    "rev": "5cb41fbc9b525338b6098da5ea7dd0b7e92f89e4"
+  },
+  "lib/devtools": {
+    "rev": "128b697838f4b0fd53ae748093fd66cc409ae5c4"
+  },
+  "lib/diamond-3-hardhat": {
+    "rev": "08d415c7e1a27c811c34875d9263a90bc719cee3"
+  },
+  "lib/forge-std": {
+    "rev": "1801b0541f4fda118a10798fd3486bb7051c5dd6"
+  },
+  "lib/openzeppelin-contracts": {
+    "tag": {
+      "name": "v5.6.1",
+      "rev": "5fd1781b1454fd1ef8e722282f86f9293cacf256"
+    }
+  },
+  "lib/openzeppelin-contracts-upgradeable": {
+    "rev": "aa677e9d28ed78fc427ec47ba2baef2030c58e7c"
+  },
+  "lib/solidity-bytes-utils": {
+    "tag": {
+      "name": "v0.8.4",
+      "rev": "f4413cd6137b78403e3a1156bee6aceab46b46fa"
+    }
+  }
+}

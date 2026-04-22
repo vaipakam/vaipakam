@@ -1,0 +1,399 @@
+/* ── Reset ── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+/* ── Theme tokens ── */
+:root,
+[data-theme='light'] {
+  /* Body takes the subtle grey that used to live on --bg-secondary so the
+   * page reads less "plain white" and gives cards (still pure white) a
+   * surface to float on. --bg-secondary steps to the already-existing
+   * --bg-card-hover tone so the alternating landing sections (Features /
+   * Security / CTA / Footer) keep their contrast against the body without
+   * introducing any new colour values. */
+  --bg-primary:    #f7f8fa;
+  --bg-secondary:  #f0f2f5;
+  --bg-card:       #ffffff;
+  --bg-card-hover: #f0f2f5;
+  --bg-accent:     #eef2ff;
+  --bg-nav:        rgba(247, 248, 250, 0.85);
+
+  --text-primary:   #0f172a;
+  --text-secondary: #475569;
+  --text-tertiary:  #94a3b8;
+  --text-inverse:   #ffffff;
+
+  --brand:        #4f46e5;
+  --brand-light:  #818cf8;
+  --brand-dark:   #3730a3;
+  --brand-bg:     #eef2ff;
+
+  --accent-green:  #10b981;
+  --accent-orange: #f59e0b;
+  --accent-red:    #ef4444;
+
+  --border:       #e2e8f0;
+  --border-hover: #cbd5e1;
+
+  --shadow-sm:  0 1px 2px rgba(0,0,0,0.05);
+  --shadow-md:  0 4px 12px rgba(0,0,0,0.08);
+  --shadow-lg:  0 10px 30px rgba(0,0,0,0.1);
+
+  --radius-sm:  8px;
+  --radius-md:  12px;
+  --radius-lg:  20px;
+  --radius-full: 9999px;
+}
+
+[data-theme='dark'] {
+  --bg-primary:    #0b0f1a;
+  --bg-secondary:  #111827;
+  --bg-card:       #1e2538;
+  --bg-card-hover: #283044;
+  --bg-accent:     #1e1b4b;
+  --bg-nav:        rgba(11, 15, 26, 0.9);
+
+  --text-primary:   #f1f5f9;
+  --text-secondary: #94a3b8;
+  --text-tertiary:  #64748b;
+  --text-inverse:   #0f172a;
+
+  --brand:        #818cf8;
+  --brand-light:  #a5b4fc;
+  --brand-dark:   #6366f1;
+  --brand-bg:     #1e1b4b;
+
+  --accent-green:  #34d399;
+  --accent-orange: #fbbf24;
+  --accent-red:    #f87171;
+
+  --border:       #1e293b;
+  --border-hover: #334155;
+
+  --shadow-sm:  0 1px 2px rgba(0,0,0,0.3);
+  --shadow-md:  0 4px 12px rgba(0,0,0,0.4);
+  --shadow-lg:  0 10px 30px rgba(0,0,0,0.5);
+
+  /* Lets the browser render native form controls (number-input spinners,
+     date pickers, scrollbars) in dark system colors instead of bright white
+     defaults that stand out against the dark surfaces. */
+  color-scheme: dark;
+}
+
+[data-theme='light'] {
+  color-scheme: light;
+}
+
+/* ── Base styles ── */
+html {
+  scroll-behavior: smooth;
+  -webkit-font-smoothing: antialiased;
+}
+
+body {
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  line-height: 1.6;
+  transition: background 0.3s ease, color 0.3s ease;
+}
+
+a { color: inherit; text-decoration: none; }
+button { cursor: pointer; font-family: inherit; }
+img { max-width: 100%; display: block; }
+
+/* ── Utility ── */
+.container {
+  width: 100%;
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 0 24px;
+}
+
+.section {
+  padding: 80px 0;
+}
+
+@media (min-width: 768px) {
+  .section { padding: 120px 0; }
+}
+
+.section-label {
+  display: inline-block;
+  font-size: 0.8rem;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--brand);
+  background: var(--brand-bg);
+  padding: 6px 16px;
+  border-radius: var(--radius-full);
+  margin-bottom: 16px;
+}
+
+.section-title {
+  font-size: clamp(1.75rem, 4vw, 2.75rem);
+  font-weight: 700;
+  line-height: 1.2;
+  color: var(--text-primary);
+  margin-bottom: 16px;
+}
+
+.section-subtitle {
+  font-size: 1.1rem;
+  color: var(--text-secondary);
+  max-width: 640px;
+  line-height: 1.7;
+}
+
+/* ── Buttons ── */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.95rem;
+  font-weight: 600;
+  padding: 12px 28px;
+  border-radius: var(--radius-full);
+  border: none;
+  transition: all 0.2s ease;
+}
+
+.btn-primary {
+  background: var(--brand);
+  color: #fff;
+}
+.btn-primary:hover {
+  background: var(--brand-dark);
+  box-shadow: 0 4px 16px rgba(79, 70, 229, 0.4);
+  transform: translateY(-1px);
+}
+
+.btn-secondary {
+  background: transparent;
+  color: var(--text-primary);
+  border: 1.5px solid var(--border);
+}
+.btn-secondary:hover {
+  border-color: var(--brand);
+  color: var(--brand);
+}
+
+.btn-ghost {
+  background: transparent;
+  color: var(--brand);
+  padding: 8px 16px;
+}
+.btn-ghost:hover {
+  background: var(--brand-bg);
+}
+
+/* Disabled state — applied to any .btn variant. Short-circuit the hover
+   transforms/shadows so a disabled button reads clearly as "don't click
+   me". The DOM `disabled` attribute already blocks clicks, so we keep
+   pointer events alive here — that lets the themed `[data-tooltip]`
+   hover still fire, which we use to explain *why* a button is disabled
+   (e.g. "Enter amount of ETH to pay"). */
+.btn:disabled,
+.btn[aria-disabled='true'] {
+  opacity: 0.55;
+  cursor: not-allowed;
+  box-shadow: none;
+  transform: none;
+  filter: saturate(0.7);
+}
+.btn:disabled:hover,
+.btn[aria-disabled='true']:hover {
+  box-shadow: none;
+  transform: none;
+}
+
+/* ── Themed <select> ── Shared styling for chain/region/etc pickers. Matches
+   the in-app .chain-switcher-btn so the Footer / Analytics / Buy VPFI
+   selectors read as the same control family as the authenticated-app
+   chain switcher: pill-shaped, bg-secondary background, small-but-bold
+   label, chevron affordance at the trailing edge. Pairs with
+   `color-scheme` on <html>, which also themes the native dropdown panel. */
+.themed-select {
+  appearance: none;
+  -webkit-appearance: none;
+  display: inline-flex;
+  align-items: center;
+  padding: 8px 34px 8px 14px;
+  border-radius: var(--radius-full);
+  border: 1px solid var(--border);
+  background-color: var(--bg-secondary);
+  color: var(--text-primary);
+  font-size: 0.82rem;
+  font-weight: 600;
+  line-height: 1.4;
+  /* Content-driven width so short-option selects (e.g. "All / Liquid /
+     Illiquid") don't get padded out with empty space, but wide enough to
+     read comfortably when the label is verbose. */
+  min-width: 140px;
+  cursor: pointer;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2394a3b8' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'><polyline points='6 9 12 15 18 9'/></svg>");
+  background-repeat: no-repeat;
+  background-position: right 12px center;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease, background-color 0.15s ease;
+}
+.themed-select:hover {
+  border-color: var(--border-hover);
+  background-color: var(--bg-card-hover);
+}
+.themed-select:focus,
+.themed-select:focus-visible {
+  outline: none;
+  border-color: var(--brand);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand) 25%, transparent);
+}
+.themed-select:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+/* Native <option> elements inherit limited styling — but `background-color`
+ * and `color` do apply in Chromium, Firefox, and WebKit, which lets the
+ * dropdown panel track the current theme instead of flashing the browser's
+ * default white-on-black (dark mode) or black-on-white (light mode). Pairs
+ * with the `color-scheme` hint on <html> for the surrounding chrome
+ * (scrollbar, highlight ring). */
+.themed-select option {
+  background-color: var(--bg-card);
+  color: var(--text-primary);
+}
+.themed-select option:disabled {
+  color: var(--text-tertiary);
+}
+.themed-select option:checked {
+  background-color: var(--brand-bg);
+  color: var(--brand);
+}
+
+/* ── Themed tooltips ──
+ * CSS-only tooltip driven by the `data-tooltip` attribute. Use this in place
+ * of the native HTML `title=` attribute: the native one is unstyleable, shows
+ * after an unpredictable browser delay, renders raw HTML (e.g. `</br>`)
+ * literally, and ignores theme tokens — jarring in a dark-mode UI.
+ *
+ * Usage:
+ *   <button data-tooltip="One short sentence">…</button>
+ *   <button data-tooltip={"Line one\nLine two"}>…</button>  // \n → line break
+ *
+ * Multi-line is supported via `white-space: pre-line`, so embed `\n` in the
+ * JSX value instead of `<br>`/`</br>`. Keep strings under ~240 chars — the
+ * max-width caps at 320px to stay inside card edges on small viewports.
+ * When a host element already sets `title=` for a11y (screen readers), it's
+ * fine to pair it with `data-tooltip` for the visible hover behavior. */
+[data-tooltip] {
+  position: relative;
+}
+[data-tooltip]::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 50%;
+  transform: translateX(-50%) translateY(4px);
+  min-width: max-content;
+  max-width: 320px;
+  width: max-content;
+  padding: 8px 12px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-card);
+  color: var(--text-primary);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow-md);
+  font-size: 0.78rem;
+  font-weight: 500;
+  line-height: 1.45;
+  text-align: left;
+  text-transform: none;
+  letter-spacing: normal;
+  white-space: pre-line;
+  pointer-events: none;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.15s ease, transform 0.15s ease, visibility 0.15s;
+  transition-delay: 0s;
+  z-index: 1000;
+}
+[data-tooltip]:hover::after,
+[data-tooltip]:focus-visible::after {
+  opacity: 1;
+  visibility: visible;
+  transform: translateX(-50%) translateY(0);
+  transition-delay: 0.35s;
+}
+/* Positioning variants — pick one when default "above, centered" clips or
+   overlaps neighbouring chrome (e.g. tooltip on an element near the top of
+   the viewport, or on the far right edge of a toolbar). */
+[data-tooltip-placement='below']::after {
+  bottom: auto;
+  top: calc(100% + 8px);
+  transform: translateX(-50%) translateY(-4px);
+}
+[data-tooltip-placement='below']:hover::after,
+[data-tooltip-placement='below']:focus-visible::after {
+  transform: translateX(-50%) translateY(0);
+}
+[data-tooltip-placement='right']::after {
+  bottom: auto;
+  top: 50%;
+  left: calc(100% + 8px);
+  transform: translate(-4px, -50%);
+}
+[data-tooltip-placement='right']:hover::after,
+[data-tooltip-placement='right']:focus-visible::after {
+  transform: translate(0, -50%);
+}
+[data-tooltip-placement='left']::after {
+  bottom: auto;
+  top: 50%;
+  left: auto;
+  right: calc(100% + 8px);
+  transform: translate(4px, -50%);
+}
+[data-tooltip-placement='left']:hover::after,
+[data-tooltip-placement='left']:focus-visible::after {
+  transform: translate(0, -50%);
+}
+/* Edge-aligned variants — use when the trigger sits close enough to a
+   container edge that a centered tooltip would clip. `-start` pins the
+   tooltip's left edge to the trigger's left; `-end` pins the right edge.
+   Combine with `below-` / `above-` to pick the vertical side. */
+[data-tooltip-placement='below-start']::after {
+  bottom: auto;
+  top: calc(100% + 8px);
+  left: 0;
+  transform: translateY(-4px);
+}
+[data-tooltip-placement='below-start']:hover::after,
+[data-tooltip-placement='below-start']:focus-visible::after {
+  transform: translateY(0);
+}
+[data-tooltip-placement='below-end']::after {
+  bottom: auto;
+  top: calc(100% + 8px);
+  left: auto;
+  right: 0;
+  transform: translateY(-4px);
+}
+[data-tooltip-placement='below-end']:hover::after,
+[data-tooltip-placement='below-end']:focus-visible::after {
+  transform: translateY(0);
+}
+[data-tooltip-placement='above-start']::after {
+  left: 0;
+  transform: translateY(4px);
+}
+[data-tooltip-placement='above-start']:hover::after,
+[data-tooltip-placement='above-start']:focus-visible::after {
+  transform: translateY(0);
+}
+[data-tooltip-placement='above-end']::after {
+  left: auto;
+  right: 0;
+  transform: translateY(4px);
+}
+[data-tooltip-placement='above-end']:hover::after,
+[data-tooltip-placement='above-end']:focus-visible::after {
+  transform: translateY(0);
+}
