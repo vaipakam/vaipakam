@@ -101,3 +101,41 @@ Mock contracts in `contracts/test/mocks/`: `ERC20Mock`, `ERC4907Mock`, `ZeroExPr
 - Token operations use `SafeERC20`
 - Custom errors (not require strings) for gas efficiency
 - Events use indexed parameters for filtering
+
+## Cross-Chain Security Policy (DVN + Pause)
+
+Every LayerZero OApp / OFT in this repo (`VPFIOFTAdapter`, `VPFIMirror`,
+`VPFIBuyAdapter`, `VPFIBuyReceiver`, `VaipakamRewardOApp`) ships with the
+LayerZero defaults, which are **1-required / 0-optional DVN** — the Kelp
+DAO exploit shape. A mainnet deploy that inherits those defaults is
+**not** acceptable.
+
+**Mainnet-deploy gate** — before routing real value, all of the below must
+be true:
+
+1. `ConfigureLZConfig.s.sol` has run against every (OApp, eid) pair. This
+   sets the DVN set, confirmations, libraries, and enforced options.
+2. `VPFIBuyAdapter.setRateLimits(50_000e18, 500_000e18)` has been called.
+   Defaults are `type(uint256).max` (disabled) at deploy time.
+3. `LZConfig.t.sol` passes — it asserts every OApp × eid reflects the
+   policy and fails the build otherwise.
+
+**DVN policy**: **3 required + 2 optional, threshold 1-of-2.** Required:
+LayerZero Labs + Google Cloud + Polyhedra or Nethermind. Optional:
+BWare Labs + Stargate/Horizen. Operator diversity is load-bearing
+— different corporate operators, different infra.
+
+**Chain scope (Phase 1)**: Ethereum, Base, Arbitrum, Optimism, Polygon
+zkEVM, BNB Chain. Polygon PoS is out of Phase 1 (weaker bridge trust).
+Solana is out of scope for all phases until further notice.
+
+**Confirmations**: Ethereum 15 / Base 10 / OP 10 / Arb 10 / zkEVM 20 /
+BNB 15. Higher numbers are acceptable; lower numbers require justification.
+
+**Pause lever**: every LZ-facing contract exposes owner-gated `pause()` /
+`unpause()` on both send and receive paths. Use in the first minutes of
+a suspected incident; Kelp's 46-minute pause blocked $200M of follow-up
+drain.
+
+Full detail in [`contracts/README.md`](contracts/README.md) under
+"Cross-Chain Security".

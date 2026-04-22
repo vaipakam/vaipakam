@@ -5,6 +5,7 @@ import {Initializable} from "@openzeppelin/contracts/proxy/utils/Initializable.s
 import {UUPSUpgradeable} from "@openzeppelin/contracts/proxy/utils/UUPSUpgradeable.sol";
 import {OwnableUpgradeable} from "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 import {Ownable2StepUpgradeable} from "@openzeppelin/contracts-upgradeable/access/Ownable2StepUpgradeable.sol";
+import {PausableUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol";
 import {OAppUpgradeable, Origin, MessagingFee, MessagingReceipt} from "@layerzerolabs/oapp-evm-upgradeable/contracts/oapp/OAppUpgradeable.sol";
 import {IRewardOApp} from "../interfaces/IRewardOApp.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
@@ -57,6 +58,7 @@ contract VaipakamRewardOApp is
     Initializable,
     OAppUpgradeable,
     Ownable2StepUpgradeable,
+    PausableUpgradeable,
     UUPSUpgradeable,
     IRewardOApp,
     IVaipakamErrors
@@ -220,6 +222,7 @@ contract VaipakamRewardOApp is
         __OApp_init(owner_);
         __Ownable_init(owner_);
         __Ownable2Step_init();
+        __Pausable_init();
 
         diamond = diamond_;
         isCanonical = isCanonical_;
@@ -230,6 +233,25 @@ contract VaipakamRewardOApp is
         emit DiamondSet(address(0), diamond_);
         emit CanonicalFlagSet(isCanonical_);
         if (baseEid_ != 0) emit BaseEidSet(0, baseEid_);
+    }
+
+    // ─── Emergency pause ─────────────────────────────────────────────────────
+
+    /// @notice Pause both sender-side (`sendChainReport` / `broadcastGlobal`)
+    ///         and inbound (`_lzReceive`) paths. Emergency lever for the
+    ///         timelock / multi-sig in case a LayerZero-side incident is
+    ///         suspected. Because this OApp carries scalar reward totals
+    ///         (not value), the worst-case forgery impact is incorrect
+    ///         reward math, not stolen funds — but stale math can still
+    ///         compound until unpaused, so the pause lever is worth having.
+    function pause() external onlyOwner {
+        _pause();
+    }
+
+    /// @notice Resume send / receive paths after an incident has been
+    ///         investigated and resolved.
+    function unpause() external onlyOwner {
+        _unpause();
     }
 
     // ─── Modifiers ──────────────────────────────────────────────────────────
@@ -248,7 +270,7 @@ contract VaipakamRewardOApp is
         uint256 lenderUSD18,
         uint256 borrowerUSD18,
         address payable refundAddress
-    ) external payable override onlyDiamond {
+    ) external payable override onlyDiamond whenNotPaused {
         if (baseEid == 0) revert BaseEidNotConfigured();
 
         bytes memory payload = abi.encode(
@@ -275,7 +297,7 @@ contract VaipakamRewardOApp is
         uint256 globalLenderUSD18,
         uint256 globalBorrowerUSD18,
         address payable refundAddress
-    ) external payable override onlyDiamond {
+    ) external payable override onlyDiamond whenNotPaused {
         uint256 n = broadcastDestinationEids.length;
         if (n == 0) revert NoBroadcastDestinations();
 
@@ -403,7 +425,7 @@ contract VaipakamRewardOApp is
         bytes calldata _message,
         address /*_executor*/,
         bytes calldata /*_extraData*/
-    ) internal override {
+    ) internal override whenNotPaused {
         (uint8 msgType, uint256 dayId, uint256 a, uint256 b) = abi.decode(
             _message,
             (uint8, uint256, uint256, uint256)

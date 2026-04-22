@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
-import { Contract, MaxUint256, parseEther, formatEther } from "ethers";
+import { Contract, parseEther, formatEther } from "ethers";
 import {
   Coins,
   Wallet,
@@ -124,9 +124,9 @@ function BridgeLandedBanner({
               : `VPFI delivered to your wallet on ${originChain.name}`}
           </div>
           <p className="stat-label" style={{ margin: 0 }}>
-            Deposit it to your escrow below to unlock the borrower fee
-            discount. You can also import the token into MetaMask so your
-            wallet UI tracks the balance.
+            Deposit it to your escrow below to unlock the borrower fee discount.
+            You can also import the token into MetaMask so your wallet UI tracks
+            the balance.
           </p>
           {(landed.txHash || landed.lzGuid) && (
             <p
@@ -270,8 +270,14 @@ function FlowBanner({ step, txHash, blockExplorer, onReset }: FlowBannerProps) {
 const ETH_GAS_RESERVE_WEI = 5_000_000_000_000_000n; // 0.005 ETH
 
 export default function BuyVPFI() {
-  const { address, signer, provider, activeChain, isCorrectChain, switchToDefaultChain } =
-    useWallet();
+  const {
+    address,
+    signer,
+    provider,
+    activeChain,
+    isCorrectChain,
+    switchToDefaultChain,
+  } = useWallet();
 
   const readChain = useReadChain();
   const diamond = useDiamondContract();
@@ -594,13 +600,12 @@ export default function BuyVPFI() {
       }
       const currentAllowance = await erc20.allowance(address, diamondAddr);
       if (currentAllowance < depositWei) {
-        // Approve the maximum uint256 so the user signs a single approval
-        // up front instead of re-approving on every deposit. MetaMask /
-        // Rabby surface this as "unlimited spend" with a lower-it affordance
-        // if the user prefers a tighter bound. Safe here because the only
-        // thing with allowance is the protocol's own Diamond, and users
-        // can revoke via any allowance explorer at any time.
-        const approveTx = await erc20.approve(diamondAddr, MaxUint256);
+        // Approve exactly the deposit amount. Users were uncomfortable
+        // with wallets surfacing an "unlimited spend" prompt even though
+        // the spender is our own Diamond — so we trade one extra approval
+        // per deposit for a clearer wallet UX. A future deposit that fits
+        // within the still-unconsumed allowance skips the approve leg.
+        const approveTx = await erc20.approve(diamondAddr, depositWei);
         await approveTx.wait();
       }
 
@@ -617,11 +622,7 @@ export default function BuyVPFI() {
       setStep("success");
       s.success({ note: `deposited ${depositWei}` });
       setDepositInput("");
-      await Promise.all([
-        reloadUserVpfi(),
-        reloadEscrow(),
-        reloadEthBalance(),
-      ]);
+      await Promise.all([reloadUserVpfi(), reloadEscrow(), reloadEthBalance()]);
     } catch (err) {
       setError(decodeContractError(err, "Deposit failed"));
       setStep("idle");
@@ -683,11 +684,7 @@ export default function BuyVPFI() {
       setStep("success");
       s.success({ note: `unstaked ${unstakeWei}` });
       setUnstakeInput("");
-      await Promise.all([
-        reloadUserVpfi(),
-        reloadEscrow(),
-        reloadEthBalance(),
-      ]);
+      await Promise.all([reloadUserVpfi(), reloadEscrow(), reloadEthBalance()]);
     } catch (err) {
       setError(decodeContractError(err, "Unstake failed"));
       setStep("idle");
@@ -795,8 +792,8 @@ export default function BuyVPFI() {
           Buy VPFI
         </h1>
         <p className="page-subtitle">
-          Purchase VPFI at the fixed early-stage rate using ETH and deposit
-          into your escrow to unlock the tiered discount on liquid loans.
+          Purchase VPFI at the fixed early-stage rate using ETH and deposit into
+          your escrow to unlock the tiered discount on liquid loans.
         </p>
       </div>
 
@@ -1492,7 +1489,8 @@ function BuyCard({
           style={{ margin: "0 0 8px", color: "var(--accent-red, #ef4444)" }}
         >
           Amount exceeds your wallet ETH balance of{" "}
-          {formatEthTrimmed(ethBalance!)} ETH (a small gas reserve is kept aside).
+          {formatEthTrimmed(ethBalance!)} ETH (a small gas reserve is kept
+          aside).
         </p>
       )}
 
@@ -1625,7 +1623,9 @@ function BridgedBuyCard({
       ? ethBalance - reserveWei
       : 0n;
   const maxSpendEth =
-    mode === "native" && ethBalance != null ? formatEthTrimmed(maxSpendWei) : null;
+    mode === "native" && ethBalance != null
+      ? formatEthTrimmed(maxSpendWei)
+      : null;
   // Native mode: the user pays ethWei + lzFee as msg.value.
   // Token  mode: msg.value is only the lzFee (ethWei comes from the ERC20).
   const totalNativeWei =
@@ -1742,10 +1742,7 @@ function BridgedBuyCard({
         <span className="stat-label" style={{ margin: 0, cursor: "help" }}>
           LayerZero fee
         </span>
-        <span
-          className="mono"
-          style={{ fontWeight: 500, cursor: "help" }}
-        >
+        <span className="mono" style={{ fontWeight: 500, cursor: "help" }}>
           {lzFee == null
             ? quote
               ? "estimating…"
@@ -1945,9 +1942,7 @@ function BridgedStatus({ bridge, originChain, canonical }: BridgedStatusProps) {
                   background: overdue
                     ? "rgba(245, 158, 11, 0.15)"
                     : "rgba(59, 130, 246, 0.15)",
-                  color: overdue
-                    ? "var(--accent-orange)"
-                    : "var(--brand)",
+                  color: overdue ? "var(--accent-orange)" : "var(--brand)",
                 }}
                 data-tooltip={
                   overdue
@@ -1955,7 +1950,9 @@ function BridgedStatus({ bridge, originChain, canonical }: BridgedStatusProps) {
                     : `Estimated time until VPFI lands in your wallet.`
                 }
               >
-                {overdue ? `overdue · ${formatMmSs(elapsedMs)}` : formatMmSs(remainingMs)}
+                {overdue
+                  ? `overdue · ${formatMmSs(elapsedMs)}`
+                  : formatMmSs(remainingMs)}
               </span>
             )}
           </div>
@@ -2125,8 +2122,7 @@ function DepositCard({
   // treated as not-yet-valid and falls through to the `inputEmpty` branch.
   const parsedInput = rawInput === "" ? NaN : Number(rawInput);
   const inputInvalid = !Number.isFinite(parsedInput) || parsedInput <= 0;
-  const exceedsBalance =
-    !inputInvalid && parsedInput > walletBalance;
+  const exceedsBalance = !inputInvalid && parsedInput > walletBalance;
   const disableReason = inputEmpty
     ? "Enter amount of VPFI to transfer to Escrow"
     : inputInvalid
@@ -2197,13 +2193,12 @@ function DepositCard({
             className="stat-label"
             style={{ margin: 0, fontSize: 12, lineHeight: 1.5 }}
           >
-            The first deposit needs a one-time <strong>approval</strong> so the
-            Diamond can pull VPFI from your wallet. Expect{" "}
-            <strong>two MetaMask prompts</strong> — one to approve the token
-            (for the maximum amount, so you never have to re-approve), then one
-            to move it into your escrow. Subsequent deposits skip the approval
-            step entirely. You can lower or revoke the allowance at any time
-            from any wallet-allowance explorer.
+            The deposit may need <strong>approval</strong> so the Diamond can
+            pull VPFI from your wallet. Expect{" "}
+            <strong>two MetaMask prompts</strong> — one to approve the exact
+            amount you're about to deposit, then one to move it into your
+            escrow. If a previous approval still covers this amount, the
+            approval step is skipped.
           </p>
         </div>
       )}
@@ -2331,6 +2326,8 @@ function UnstakeCard({
       )}
 
       <div
+        className="alert alert-warning"
+        role="alert"
         style={{
           display: "flex",
           gap: 10,
@@ -2351,13 +2348,13 @@ function UnstakeCard({
           }}
         />
         <p
-          className="stat-label"
+          // className="stat-label"
           style={{ margin: 0, fontSize: 12, lineHeight: 1.5 }}
         >
-          Escrow VPFI counts toward your borrower fee discount tier and earns
-          5% APR. Unstaking moves tokens back to your wallet — if the
-          remaining escrow balance drops below a tier threshold your
-          discount drops with it on the next loan.
+          Escrow VPFI counts toward your borrower fee discount tier and earns 5%
+          APR. Unstaking moves tokens back to your wallet — if the remaining
+          escrow balance drops below a tier threshold your discount drops with
+          it on the next loan.
         </p>
       </div>
 
@@ -2365,11 +2362,7 @@ function UnstakeCard({
         className="btn btn-primary"
         onClick={onUnstake}
         disabled={
-          pending ||
-          balanceZero ||
-          inputEmpty ||
-          inputInvalid ||
-          exceedsBalance
+          pending || balanceZero || inputEmpty || inputInvalid || exceedsBalance
         }
         data-tooltip={disableReason ?? undefined}
       >

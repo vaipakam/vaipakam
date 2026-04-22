@@ -5,6 +5,7 @@ import {Initializable} from "@openzeppelin/contracts/proxy/utils/Initializable.s
 import {UUPSUpgradeable} from "@openzeppelin/contracts/proxy/utils/UUPSUpgradeable.sol";
 import {OwnableUpgradeable} from "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 import {Ownable2StepUpgradeable} from "@openzeppelin/contracts-upgradeable/access/Ownable2StepUpgradeable.sol";
+import {PausableUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol";
 import {OAppUpgradeable, Origin, MessagingFee, MessagingReceipt} from "@layerzerolabs/oapp-evm-upgradeable/contracts/oapp/OAppUpgradeable.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
@@ -60,6 +61,7 @@ contract VPFIBuyAdapter is
     Initializable,
     OAppUpgradeable,
     Ownable2StepUpgradeable,
+    PausableUpgradeable,
     UUPSUpgradeable,
     IVPFIBuyMessages,
     IVaipakamErrors
@@ -124,6 +126,37 @@ contract VPFIBuyAdapter is
     ///         timeout).
     uint256 public totalPendingAmountIn;
 
+    // ─── Rate limits (defence-in-depth) ─────────────────────────────────────
+
+    /// @notice Max `amountIn` per single {buy} call, in the adapter's
+    ///         native payment unit (wei for ETH mode, token units for
+    ///         WETH mode — always 18-dec, 1:1 with ETH). Set via
+    ///         {setRateLimits}. Initialized to `type(uint256).max` so
+    ///         existing tests and testnet deploys aren't affected until
+    ///         governance explicitly enables the cap on mainnet.
+    /// @dev Layered above the Diamond-side caps (`globalCap`,
+    ///      `perWalletCap`) on the Base canonical chain. If a compromised
+    ///      DVN landed a forged BUY_REQUEST, this caps the damage to at
+    ///      most one per-request worth of locked funds on the adapter.
+    uint256 public perRequestCap;
+
+    /// @notice Max cumulative `amountIn` accepted within a rolling 24h
+    ///         window. Second-layer bound against rapid repeat-attacks
+    ///         that fit inside the per-request cap individually. Also
+    ///         initialized to `type(uint256).max`.
+    uint256 public dailyCap;
+
+    /// @notice Anchor timestamp for the current 24h window. Resets when
+    ///         `block.timestamp >= dailyWindowStart + 1 days`. Not a true
+    ///         rolling window (that would require a per-buy log); in
+    ///         practice a "first-buy anchored" tumbling window closes the
+    ///         midnight-burst exploit that fixed-clock windows have.
+    uint256 public dailyWindowStart;
+
+    /// @notice `amountIn` accumulated during the current window. Reset
+    ///         alongside `dailyWindowStart`.
+    uint256 public dailyUsed;
+
     // ─── Events ─────────────────────────────────────────────────────────────
 
     event ReceiverEidSet(uint32 indexed oldEid, uint32 indexed newEid);
@@ -131,6 +164,8 @@ contract VPFIBuyAdapter is
     event PaymentTokenSet(address indexed oldToken, address indexed newToken);
     event RefundTimeoutSet(uint64 oldSeconds, uint64 newSeconds);
     event BuyOptionsSet(bytes options);
+    event RateLimitsSet(uint256 perRequestCap, uint256 dailyCap);
+    event DailyWindowReset(uint256 newWindowStart);
 
     /// @notice Purchase receipt — emitted synchronously when the user
     ///         calls {buy}. The frontend uses `(requestId, lzGuid)` to
@@ -193,6 +228,8 @@ contract VPFIBuyAdapter is
     error UnknownMessageType(uint8 msgType);
     error EthSendFailed();
     error RescueWouldTouchPendingLock();
+    error BuyExceedsPerRequestCap(uint256 amountIn, uint256 cap);
+    error BuyExceedsDailyCap(uint256 attemptedTotal, uint256 cap);
 
     // ─── Construction ───────────────────────────────────────────────────────
 
@@ -228,6 +265,7 @@ contract VPFIBuyAdapter is
         __OApp_init(owner_);
         __Ownable_init(owner_);
         __Ownable2Step_init();
+        __Pausable_init();
 
         receiverEid = receiverEid_;
         treasury = treasury_;
@@ -235,10 +273,54 @@ contract VPFIBuyAdapter is
         buyOptions = buyOptions_;
         refundTimeoutSeconds = refundTimeoutSeconds_;
 
+        // Rate limits start disabled (type(uint256).max). Governance is
+        // expected to call {setRateLimits} with finite caps before mainnet
+        // goes live — the ConfigureLZConfig.s.sol rollout script is the
+        // enforcement point.
+        perRequestCap = type(uint256).max;
+        dailyCap = type(uint256).max;
+
         emit ReceiverEidSet(0, receiverEid_);
         emit TreasurySet(address(0), treasury_);
         emit PaymentTokenSet(address(0), paymentToken_);
         emit RefundTimeoutSet(0, refundTimeoutSeconds_);
+        emit RateLimitsSet(type(uint256).max, type(uint256).max);
+    }
+
+    // ─── Emergency pause + rate-limit admin ─────────────────────────────────
+
+    /// @notice Pause user-initiated {buy} calls and inbound response
+    ///         handling. Emergency lever for the timelock / multi-sig in
+    ///         case a LayerZero-side incident (DVN compromise, executor
+    ///         failure, unknown exploit) is suspected. When
+    ///         `_lzReceive` is paused it reverts — LZ retries the packet
+    ///         after `unpause()` so legitimate responses aren't dropped.
+    function pause() external onlyOwner {
+        _pause();
+    }
+
+    /// @notice Resume {buy} and inbound response handling after an incident
+    ///         has been investigated and resolved.
+    function unpause() external onlyOwner {
+        _unpause();
+    }
+
+    /// @notice Configure the per-request and rolling-24h `amountIn` caps.
+    ///         Tunable at any time by the timelock / multi-sig owner.
+    /// @dev Pass `type(uint256).max` on either field to disable that
+    ///      individual bound (the initialize default). Does not reset the
+    ///      current window's `dailyUsed` — tightening a cap mid-window is
+    ///      intentionally conservative (next {buy} evaluates the new cap
+    ///      against the existing spend).
+    /// @param perRequestCap_ Max `amountIn` for a single {buy} call.
+    /// @param dailyCap_      Max cumulative `amountIn` in a 24h window.
+    function setRateLimits(
+        uint256 perRequestCap_,
+        uint256 dailyCap_
+    ) external onlyOwner {
+        perRequestCap = perRequestCap_;
+        dailyCap = dailyCap_;
+        emit RateLimitsSet(perRequestCap_, dailyCap_);
     }
 
     // ─── Public quote ───────────────────────────────────────────────────────
@@ -291,11 +373,35 @@ contract VPFIBuyAdapter is
     )
         external
         payable
+        whenNotPaused
         returns (uint64 requestId, bytes32 lzGuid)
     {
         if (receiverEid == 0) revert ReceiverEidNotSet();
         if (treasury == address(0)) revert TreasuryNotSet();
         if (amountIn == 0) revert InvalidAmount();
+
+        // Rate-limit checks. Per-request cap short-circuits a single
+        // oversize attempt; the rolling-24h window catches rapid repeat
+        // attempts below the per-request bound. Both default to
+        // `type(uint256).max` (disabled) until governance tightens them.
+        if (amountIn > perRequestCap) {
+            revert BuyExceedsPerRequestCap(amountIn, perRequestCap);
+        }
+        if (block.timestamp >= dailyWindowStart + 1 days) {
+            // Window expired (or first buy post-deploy): anchor a new one
+            // to `now` and clear usage. "First-buy anchored" tumbling
+            // closes the midnight-burst exploit that fixed-clock windows
+            // have — the earliest possible reset after a large buy is
+            // `now + 24h`.
+            dailyWindowStart = block.timestamp;
+            dailyUsed = 0;
+            emit DailyWindowReset(block.timestamp);
+        }
+        uint256 newDailyUsed = dailyUsed + amountIn;
+        if (newDailyUsed > dailyCap) {
+            revert BuyExceedsDailyCap(newDailyUsed, dailyCap);
+        }
+        dailyUsed = newDailyUsed;
 
         // Mint request id FIRST so the outbound payload is final. The
         // state write follows the LZ send so a send revert rolls the id
@@ -392,7 +498,7 @@ contract VPFIBuyAdapter is
         bytes calldata _message,
         address /*_executor*/,
         bytes calldata /*_extraData*/
-    ) internal override {
+    ) internal override whenNotPaused {
         (uint8 msgType, uint64 requestId, uint256 vpfiOut, uint8 reason) = abi
             .decode(_message, (uint8, uint64, uint256, uint8));
 

@@ -5,6 +5,7 @@ import {Initializable} from "@openzeppelin/contracts/proxy/utils/Initializable.s
 import {UUPSUpgradeable} from "@openzeppelin/contracts/proxy/utils/UUPSUpgradeable.sol";
 import {OwnableUpgradeable} from "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 import {Ownable2StepUpgradeable} from "@openzeppelin/contracts-upgradeable/access/Ownable2StepUpgradeable.sol";
+import {PausableUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol";
 import {OAppUpgradeable, Origin, MessagingFee, MessagingReceipt} from "@layerzerolabs/oapp-evm-upgradeable/contracts/oapp/OAppUpgradeable.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
@@ -50,6 +51,7 @@ contract VPFIBuyReceiver is
     Initializable,
     OAppUpgradeable,
     Ownable2StepUpgradeable,
+    PausableUpgradeable,
     UUPSUpgradeable,
     IVPFIBuyMessages,
     IVaipakamErrors
@@ -196,6 +198,7 @@ contract VPFIBuyReceiver is
         __OApp_init(owner_);
         __Ownable_init(owner_);
         __Ownable2Step_init();
+        __Pausable_init();
 
         diamond = diamond_;
         vpfiToken = vpfiToken_;
@@ -208,6 +211,26 @@ contract VPFIBuyReceiver is
         emit OFTAdapterSet(address(0), vpfiOftAdapter_);
     }
 
+    // ─── Emergency pause ─────────────────────────────────────────────────────
+
+    /// @notice Pause inbound BUY_REQUEST handling. Emergency lever for the
+    ///         timelock / multi-sig in case a LayerZero-side incident (DVN
+    ///         compromise, executor failure) is suspected. A paused
+    ///         `_lzReceive` reverts the inbound packet — LZ retries after
+    ///         `unpause()` so legitimate buyers' requests aren't dropped.
+    ///         Since this contract performs the Diamond debit and the OFT
+    ///         send-back of VPFI to the user, pausing here is the highest-
+    ///         leverage single contract to halt a suspected forgery.
+    function pause() external onlyOwner {
+        _pause();
+    }
+
+    /// @notice Resume inbound BUY_REQUEST handling after an incident has
+    ///         been investigated and resolved.
+    function unpause() external onlyOwner {
+        _unpause();
+    }
+
     // ─── Receive (endpoint) ─────────────────────────────────────────────────
 
     function _lzReceive(
@@ -216,7 +239,7 @@ contract VPFIBuyReceiver is
         bytes calldata _message,
         address /*_executor*/,
         bytes calldata /*_extraData*/
-    ) internal override {
+    ) internal override whenNotPaused {
         (
             uint8 msgType,
             uint64 requestId,

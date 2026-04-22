@@ -35,16 +35,22 @@ function normalizeAddress(addr: string | null): string | null {
  * `diamondAddress: null` — `isChainSupported()` gates protocol calls on that.
  *
  * Env overrides (per-chain Diamond addresses land here as we roll out):
- *   VITE_ETHEREUM_DIAMOND_ADDRESS       / VITE_ETHEREUM_DEPLOY_BLOCK
- *   VITE_SEPOLIA_DIAMOND_ADDRESS        / VITE_SEPOLIA_DEPLOY_BLOCK
- *   VITE_BASE_DIAMOND_ADDRESS           / VITE_BASE_DEPLOY_BLOCK
- *   VITE_BASE_SEPOLIA_DIAMOND_ADDRESS   / VITE_BASE_SEPOLIA_DEPLOY_BLOCK
- *   VITE_POLYGON_DIAMOND_ADDRESS        / VITE_POLYGON_DEPLOY_BLOCK
- *   VITE_POLYGON_AMOY_DIAMOND_ADDRESS   / VITE_POLYGON_AMOY_DEPLOY_BLOCK
- *   VITE_ARBITRUM_DIAMOND_ADDRESS       / VITE_ARBITRUM_DEPLOY_BLOCK
- *   VITE_ARBITRUM_SEPOLIA_DIAMOND_ADDRESS / VITE_ARBITRUM_SEPOLIA_DEPLOY_BLOCK
- *   VITE_OPTIMISM_DIAMOND_ADDRESS       / VITE_OPTIMISM_DEPLOY_BLOCK
- *   VITE_OPTIMISM_SEPOLIA_DIAMOND_ADDRESS / VITE_OPTIMISM_SEPOLIA_DEPLOY_BLOCK
+ *   VITE_ETHEREUM_DIAMOND_ADDRESS              / VITE_ETHEREUM_DEPLOY_BLOCK
+ *   VITE_SEPOLIA_DIAMOND_ADDRESS               / VITE_SEPOLIA_DEPLOY_BLOCK
+ *   VITE_BASE_DIAMOND_ADDRESS                  / VITE_BASE_DEPLOY_BLOCK
+ *   VITE_BASE_SEPOLIA_DIAMOND_ADDRESS          / VITE_BASE_SEPOLIA_DEPLOY_BLOCK
+ *   VITE_POLYGON_ZKEVM_DIAMOND_ADDRESS         / VITE_POLYGON_ZKEVM_DEPLOY_BLOCK
+ *   VITE_POLYGON_ZKEVM_CARDONA_DIAMOND_ADDRESS / VITE_POLYGON_ZKEVM_CARDONA_DEPLOY_BLOCK
+ *   VITE_ARBITRUM_DIAMOND_ADDRESS              / VITE_ARBITRUM_DEPLOY_BLOCK
+ *   VITE_ARBITRUM_SEPOLIA_DIAMOND_ADDRESS      / VITE_ARBITRUM_SEPOLIA_DEPLOY_BLOCK
+ *   VITE_OPTIMISM_DIAMOND_ADDRESS              / VITE_OPTIMISM_DEPLOY_BLOCK
+ *   VITE_OPTIMISM_SEPOLIA_DIAMOND_ADDRESS      / VITE_OPTIMISM_SEPOLIA_DEPLOY_BLOCK
+ *   VITE_BNB_DIAMOND_ADDRESS                   / VITE_BNB_DEPLOY_BLOCK
+ *   VITE_BNB_TESTNET_DIAMOND_ADDRESS           / VITE_BNB_TESTNET_DEPLOY_BLOCK
+ *
+ *   Polygon PoS (mainnet 137) / Amoy (80002) are intentionally NOT listed
+ *   — dropped from Phase 1 in favour of Polygon zkEVM. Re-evaluate for
+ *   Phase 2 alongside AggLayer.
  *   VITE_*_RPC_URL                      — per-chain RPC override (same prefix)
  *   VITE_DEFAULT_CHAIN_ID               — force a specific chain for read-only
  *                                         fallback (must have a Diamond).
@@ -140,20 +146,47 @@ const BASE: ChainConfig = {
   vpfiBuyPaymentToken: null,
 };
 
-const POLYGON: ChainConfig = {
-  chainId: 137,
-  chainIdHex: '0x89',
-  name: 'Polygon',
-  shortName: 'polygon',
-  rpcUrl: str('VITE_POLYGON_RPC_URL', 'https://polygon-rpc.com'),
-  blockExplorer: 'https://polygonscan.com',
-  diamondAddress: optStr('VITE_POLYGON_DIAMOND_ADDRESS', null),
-  deployBlock: num('VITE_POLYGON_DEPLOY_BLOCK', 0),
+// Polygon PoS was dropped from Phase 1 (weaker multi-sig bridge trust +
+// long reorg depth forcing 128+ confirmations). Replaced with Polygon
+// zkEVM below, which is a validity-proof rollup on par with Base / Arb /
+// Optimism. Re-evaluate PoS for Phase 2 once AggLayer matures.
+const POLYGON_ZKEVM: ChainConfig = {
+  chainId: 1101,
+  chainIdHex: '0x44d',
+  name: 'Polygon zkEVM',
+  shortName: 'zkevm',
+  rpcUrl: str('VITE_POLYGON_ZKEVM_RPC_URL', 'https://zkevm-rpc.com'),
+  blockExplorer: 'https://zkevm.polygonscan.com',
+  diamondAddress: optStr('VITE_POLYGON_ZKEVM_DIAMOND_ADDRESS', null),
+  deployBlock: num('VITE_POLYGON_ZKEVM_DEPLOY_BLOCK', 0),
   isCanonicalVPFI: false,
-  lzEid: 30109,
+  // LZ V2 endpoint ID. **Verify against
+  // https://docs.layerzero.network/v2/deployments/deployed-contracts**
+  // before mainnet deploy — the numeric registry evolves, and the
+  // ConfigureLZConfig.s.sol runbook gates mainnet value routing on a
+  // config readback pass that surfaces any mismatch.
+  lzEid: 30267,
   testnet: false,
-  vpfiBuyAdapter: optStr('VITE_POLYGON_VPFI_BUY_ADAPTER', null),
-  vpfiBuyPaymentToken: optStr('VITE_POLYGON_VPFI_BUY_PAYMENT_TOKEN', null),
+  vpfiBuyAdapter: optStr('VITE_POLYGON_ZKEVM_VPFI_BUY_ADAPTER', null),
+  vpfiBuyPaymentToken: optStr('VITE_POLYGON_ZKEVM_VPFI_BUY_PAYMENT_TOKEN', null),
+};
+
+const BNB: ChainConfig = {
+  chainId: 56,
+  chainIdHex: '0x38',
+  name: 'BNB Chain',
+  shortName: 'bnb',
+  rpcUrl: str('VITE_BNB_RPC_URL', 'https://bsc-dataseed.binance.org'),
+  blockExplorer: 'https://bscscan.com',
+  diamondAddress: optStr('VITE_BNB_DIAMOND_ADDRESS', null),
+  deployBlock: num('VITE_BNB_DEPLOY_BLOCK', 0),
+  isCanonicalVPFI: false,
+  // LZ V2 endpoint ID — verify against the LZ deployed-contracts registry
+  // before mainnet deploy.
+  lzEid: 30102,
+  testnet: false,
+  vpfiBuyAdapter: optStr('VITE_BNB_VPFI_BUY_ADAPTER', null),
+  vpfiBuyPaymentToken: optStr('VITE_BNB_VPFI_BUY_PAYMENT_TOKEN', null),
 };
 
 const ARBITRUM: ChainConfig = {
@@ -228,20 +261,38 @@ const BASE_SEPOLIA: ChainConfig = {
   vpfiBuyPaymentToken: null,
 };
 
-const POLYGON_AMOY: ChainConfig = {
-  chainId: 80002,
-  chainIdHex: '0x13882',
-  name: 'Polygon Amoy',
-  shortName: 'amoy',
-  rpcUrl: str('VITE_POLYGON_AMOY_RPC_URL', 'https://rpc-amoy.polygon.technology'),
-  blockExplorer: 'https://amoy.polygonscan.com',
-  diamondAddress: optStr('VITE_POLYGON_AMOY_DIAMOND_ADDRESS', null),
-  deployBlock: num('VITE_POLYGON_AMOY_DEPLOY_BLOCK', 0),
+// Cardona is the Polygon zkEVM public testnet. Replaces Polygon Amoy from
+// Phase 1 — see the POLYGON_ZKEVM comment above for rationale.
+const POLYGON_ZKEVM_CARDONA: ChainConfig = {
+  chainId: 2442,
+  chainIdHex: '0x98a',
+  name: 'Polygon zkEVM Cardona',
+  shortName: 'cardona',
+  rpcUrl: str('VITE_POLYGON_ZKEVM_CARDONA_RPC_URL', 'https://rpc.cardona.zkevm-rpc.com'),
+  blockExplorer: 'https://cardona-zkevm.polygonscan.com',
+  diamondAddress: optStr('VITE_POLYGON_ZKEVM_CARDONA_DIAMOND_ADDRESS', null),
+  deployBlock: num('VITE_POLYGON_ZKEVM_CARDONA_DEPLOY_BLOCK', 0),
   isCanonicalVPFI: false,
-  lzEid: 40267,
+  lzEid: 40271,
   testnet: true,
-  vpfiBuyAdapter: optStr('VITE_POLYGON_AMOY_VPFI_BUY_ADAPTER', null),
-  vpfiBuyPaymentToken: optStr('VITE_POLYGON_AMOY_VPFI_BUY_PAYMENT_TOKEN', null),
+  vpfiBuyAdapter: optStr('VITE_POLYGON_ZKEVM_CARDONA_VPFI_BUY_ADAPTER', null),
+  vpfiBuyPaymentToken: optStr('VITE_POLYGON_ZKEVM_CARDONA_VPFI_BUY_PAYMENT_TOKEN', null),
+};
+
+const BNB_TESTNET: ChainConfig = {
+  chainId: 97,
+  chainIdHex: '0x61',
+  name: 'BNB Testnet',
+  shortName: 'bnb-test',
+  rpcUrl: str('VITE_BNB_TESTNET_RPC_URL', 'https://data-seed-prebsc-1-s1.binance.org:8545'),
+  blockExplorer: 'https://testnet.bscscan.com',
+  diamondAddress: optStr('VITE_BNB_TESTNET_DIAMOND_ADDRESS', null),
+  deployBlock: num('VITE_BNB_TESTNET_DEPLOY_BLOCK', 0),
+  isCanonicalVPFI: false,
+  lzEid: 40102,
+  testnet: true,
+  vpfiBuyAdapter: optStr('VITE_BNB_TESTNET_VPFI_BUY_ADAPTER', null),
+  vpfiBuyPaymentToken: optStr('VITE_BNB_TESTNET_VPFI_BUY_PAYMENT_TOKEN', null),
 };
 
 const ARBITRUM_SEPOLIA: ChainConfig = {
@@ -280,7 +331,20 @@ const OPTIMISM_SEPOLIA: ChainConfig = {
 // mis-cased operator entry doesn't propagate to `new Contract(addr, ...)`
 // and blow up with "bad address checksum" at first use. Done once at module
 // load, before the registry publishes the chain objects.
-for (const c of [ETHEREUM, BASE, POLYGON, ARBITRUM, OPTIMISM, SEPOLIA, BASE_SEPOLIA, POLYGON_AMOY, ARBITRUM_SEPOLIA, OPTIMISM_SEPOLIA]) {
+for (const c of [
+  ETHEREUM,
+  BASE,
+  POLYGON_ZKEVM,
+  ARBITRUM,
+  OPTIMISM,
+  BNB,
+  SEPOLIA,
+  BASE_SEPOLIA,
+  POLYGON_ZKEVM_CARDONA,
+  ARBITRUM_SEPOLIA,
+  OPTIMISM_SEPOLIA,
+  BNB_TESTNET,
+]) {
   c.diamondAddress = normalizeAddress(c.diamondAddress);
   c.vpfiBuyAdapter = normalizeAddress(c.vpfiBuyAdapter);
   c.vpfiBuyPaymentToken = normalizeAddress(c.vpfiBuyPaymentToken);
@@ -289,14 +353,16 @@ for (const c of [ETHEREUM, BASE, POLYGON, ARBITRUM, OPTIMISM, SEPOLIA, BASE_SEPO
 export const CHAIN_REGISTRY: Record<number, ChainConfig> = {
   [ETHEREUM.chainId]: ETHEREUM,
   [BASE.chainId]: BASE,
-  [POLYGON.chainId]: POLYGON,
+  [POLYGON_ZKEVM.chainId]: POLYGON_ZKEVM,
   [ARBITRUM.chainId]: ARBITRUM,
   [OPTIMISM.chainId]: OPTIMISM,
+  [BNB.chainId]: BNB,
   [SEPOLIA.chainId]: SEPOLIA,
   [BASE_SEPOLIA.chainId]: BASE_SEPOLIA,
-  [POLYGON_AMOY.chainId]: POLYGON_AMOY,
+  [POLYGON_ZKEVM_CARDONA.chainId]: POLYGON_ZKEVM_CARDONA,
   [ARBITRUM_SEPOLIA.chainId]: ARBITRUM_SEPOLIA,
   [OPTIMISM_SEPOLIA.chainId]: OPTIMISM_SEPOLIA,
+  [BNB_TESTNET.chainId]: BNB_TESTNET,
 };
 
 // Ethereum family (L1 + its canonical testnet) — pinned to the top of every
@@ -373,18 +439,21 @@ export function getCanonicalVPFIChain(
 export const SUPPORTED_CHAINS = {
   ethereum: ETHEREUM,
   base: BASE,
-  polygon: POLYGON,
+  polygonZkevm: POLYGON_ZKEVM,
   arbitrum: ARBITRUM,
   optimism: OPTIMISM,
+  bnb: BNB,
   sepolia: SEPOLIA,
   baseSepolia: BASE_SEPOLIA,
-  polygonAmoy: POLYGON_AMOY,
+  polygonZkevmCardona: POLYGON_ZKEVM_CARDONA,
   arbitrumSepolia: ARBITRUM_SEPOLIA,
   optimismSepolia: OPTIMISM_SEPOLIA,
+  bnbTestnet: BNB_TESTNET,
 } as const;
 
 /** Lookup a chain by its numeric chainId. Returns undefined for chains the
- *  app doesn't recognise at all (e.g. BNB, Avalanche — not in scope). */
+ *  app doesn't recognise at all (e.g. Avalanche, Solana — not in scope for
+ *  Phase 1). */
 export function getChainByChainId(
   chainId: number | null | undefined,
 ): ChainConfig | undefined {

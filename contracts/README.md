@@ -294,6 +294,108 @@ is role-gated — can mint, and only on Base. On every other chain
 
 ---
 
+## Cross-Chain Security (Mandatory Pre-Mainnet Hardening)
+
+Every LayerZero-facing contract in this repo — `VPFIOFTAdapter`,
+`VPFIMirror`, `VPFIBuyAdapter`, `VPFIBuyReceiver`, `VaipakamRewardOApp` —
+ships with the `OApp`/`OFT` defaults. **LayerZero's default configuration
+is 1-required / 0-optional DVN**, which was the root-cause shape of the
+April 2026 Kelp DAO exploit ($290M). A mainnet deploy that inherits the
+defaults is not acceptable.
+
+Before routing any real value through this system on mainnet:
+
+1. **Run `ConfigureLZConfig.s.sol`** (see the Script Reference) against
+   every (OApp, eid) pair we own. The script sets send + receive libraries,
+   `UlnConfig` (DVN set + confirmations), and enforced options in one
+   multisig / timelock transaction.
+2. **Call `setRateLimits(perRequestCap, dailyCap)`** on `VPFIBuyAdapter`
+   after deploy. Defaults are `type(uint256).max` (disabled) so the
+   contract is safe to deploy before the caps are configured — but the
+   runbook must gate mainnet value routing on this call having been made.
+3. **Verify via `LZConfig.t.sol`** that every OApp on every eid reflects
+   the policy below. The test fails the build if any pair is still on
+   defaults.
+
+### DVN Policy
+
+- **3 required + 2 optional, threshold 1-of-2** (3R + 2O).
+- Attacker must compromise all 3 required DVNs and at least 1 of 2
+  optionals to land a forged packet — 4 independent verifier compromises
+  minimum.
+- Operator diversity: different corporate operators, different infra
+  providers, mix of commercial and community-adjacent.
+
+Proposed operator set (final addresses pinned in `ConfigureLZConfig.s.sol`):
+
+| Role | Candidates |
+|---|---|
+| Required (all three must sign) | LayerZero Labs, Google Cloud, Polyhedra *or* Nethermind |
+| Optional (1-of-2 threshold) | BWare Labs, Stargate Labs *or* Horizen Labs |
+
+### Block Confirmations
+
+Per-chain `UlnConfig.confirmations`:
+
+| Chain | Confirmations | ~Wall-clock |
+|---|---|---|
+| Ethereum L1 | 15 | ~3 min |
+| Base | 10 | ~20 sec |
+| Optimism | 10 | ~20 sec |
+| Arbitrum | 10 | ~10 sec |
+| Polygon zkEVM | 20 | ~1 min |
+| BNB Chain | 15 | ~45 sec |
+
+Polygon PoS is out of Phase 1 (weaker multi-sig bridge trust; re-evaluate
+when AggLayer matures). Solana is out of scope for all phases until
+further notice.
+
+### Enforced Options
+
+`setEnforcedOptions` must be populated per `msgType` per `eid` for every
+OApp — protects against underpaid destination gas trapping messages.
+Covered by the configure script.
+
+### Emergency Pause
+
+Every LZ-facing contract has a timelock-gated `pause()` / `unpause()`:
+
+- `VPFIOFTAdapter` / `VPFIMirror` — pauses outbound `_debit` and inbound
+  `_credit`.
+- `VPFIBuyAdapter` — pauses user-initiated `buy()` and inbound response
+  `_lzReceive`. Timed-out reclaims stay callable so stranded buyers can
+  always recover funds.
+- `VPFIBuyReceiver` — pauses inbound `_lzReceive` (Diamond debit + OFT
+  send-back).
+- `VaipakamRewardOApp` — pauses `sendChainReport`, `broadcastGlobal`, and
+  `_lzReceive`.
+
+Kelp's 46-minute pause blocked $200M of follow-up drain; the pause lever
+is the difference between a contained incident and a catastrophic one.
+
+### Rate Limits (`VPFIBuyAdapter`)
+
+Defence-in-depth above the Diamond-side `globalCap` / `perWalletCap`:
+
+- **Per-request cap**: 50k VPFI (configurable post-deploy).
+- **Rolling 24h cap**: 500k VPFI (first-buy-anchored tumbling window;
+  closes the midnight-burst window of fixed-clock limits).
+
+Both initialized to `type(uint256).max` (disabled); governance must call
+`setRateLimits(50_000e18, 500_000e18)` before routing real value.
+
+### Monitoring
+
+Off-chain watcher alerts expected:
+
+- Packets received by our OApps with verifying DVN count < 2.
+- OFT mint/burn imbalance across mirrors vs. adapter lock on Base.
+- Large single-tx VPFI flow on a mirror that doesn't correlate with an
+  OFT send on another chain.
+- DVN / executor / endpoint availability of our configured operators.
+
+---
+
 ## OFT Bridging Flow
 
 **Outbound (Base → mirror chain)**

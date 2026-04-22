@@ -1,5 +1,5 @@
 import { Link } from "react-router-dom";
-import { ArrowRight, Shield, Zap, Globe, Coins, Layers } from "lucide-react";
+import { ArrowRight, Coins } from "lucide-react";
 import "./Hero.css";
 
 export default function Hero() {
@@ -8,24 +8,6 @@ export default function Hero() {
       <div className="hero-bg-glow" />
       <div className="container hero-container">
         <div className="hero-content">
-          <div className="hero-badges">
-            <span className="hero-badge">
-              <Globe size={14} /> Ethereum
-            </span>
-            <span className="hero-badge">
-              <Coins size={14} /> Base
-            </span>
-            <span className="hero-badge">
-              <Zap size={14} /> Polygon
-            </span>
-            <span className="hero-badge">
-              <Shield size={14} /> Arbitrum
-            </span>
-            <span className="hero-badge">
-              <Layers size={14} /> Optimism
-            </span>
-          </div>
-
           <div className="hero-brand">Vaipakam</div>
 
           <h1 className="hero-title">
@@ -36,9 +18,8 @@ export default function Hero() {
 
           <p className="hero-subtitle">
             <strong>Vaipakam</strong> lets you lend and borrow tokens, rent
-            NFTs, and set your own terms. Every position is tracked by a
-            unique NFT — transparent, traceable, and trustless from offer to
-            settlement.
+            NFTs, and set your own terms. Every position is tracked by a unique
+            NFT — transparent, traceable and trustless from offer to settlement.
           </p>
 
           <div className="hero-actions">
