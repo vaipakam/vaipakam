@@ -80,6 +80,13 @@ export function useVPFIDiscount(chainOverride?: ChainConfig | null) {
     if (!chainOverride || !chainOverride.diamondAddress) return null;
     const provider = new JsonRpcProvider(chainOverride.rpcUrl);
     return new Contract(chainOverride.diamondAddress, DIAMOND_ABI, provider);
+    // Intentionally depend on the two stable primitive fields rather than
+    // the `chainOverride` object reference — callers often pass a freshly
+    // constructed ChainConfig each render (e.g. `getCanonicalVPFIChain()`),
+    // which would otherwise invalidate the memo every render and recreate
+    // the Contract/provider on every call. The primitive deps ARE the
+    // invariant we actually care about.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [chainOverride?.rpcUrl, chainOverride?.diamondAddress]);
   const diamond = overrideDiamond ?? defaultDiamond;
   const chain =

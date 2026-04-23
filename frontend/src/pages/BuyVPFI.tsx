@@ -1011,7 +1011,6 @@ export default function BuyVPFI() {
             value={depositInput}
             onChange={setDepositInput}
             walletBalance={walletVpfi ?? 0}
-            firstDeposit={escrowBal === 0n}
             pending={step === "approving-deposit" || step === "depositing"}
             step={step}
             onDeposit={handleDeposit}
@@ -2077,10 +2076,6 @@ interface DepositCardProps {
   onChange: (v: string) => void;
   /** User's current VPFI wallet balance (already normalized to units). */
   walletBalance: number;
-  /** True when the user's escrow VPFI balance is 0 — i.e. this is their
-   *  first deposit on the active chain. Gates the "first deposit needs a
-   *  one-time approval" explainer so returning users aren't re-prompted. */
-  firstDeposit: boolean;
   /** True while either the approve or deposit tx is pending. */
   pending: boolean;
   /** Current outer-flow step — drives the button label. */
@@ -2097,7 +2092,6 @@ function DepositCard({
   value,
   onChange,
   walletBalance,
-  firstDeposit,
   pending,
   step,
   onDeposit,
@@ -2155,11 +2149,12 @@ function DepositCard({
           from the wallet, Step 2 moves the approved amount into escrow. */}
       <DepositStepTrail step={step} />
 
-      {/* First-time-deposit hint. Only shown when the escrow VPFI balance
-          is 0 — once the user has any escrow balance the approval dance is
-          behind them (or at least well-understood), so re-surfacing the
-          two-prompt explainer becomes noise. */}
-      {!inFlow && firstDeposit && walletBalance > 0 && (
+      {/* Two-prompt explainer. Shown whenever a deposit could trigger the
+          approve + deposit pair — which, with exact-amount approvals, is
+          every deposit unless a previous allowance still covers the new
+          amount. Hidden only when the flow is already in progress or the
+          wallet has no VPFI to deposit. */}
+      {!inFlow && walletBalance > 0 && (
         <div
           style={{
             display: "flex",
