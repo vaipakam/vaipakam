@@ -181,6 +181,33 @@
   align-items: center;
   gap: 12px;
   margin-left: auto;
+  /* Explicit nowrap + min-width-0 keeps the flex row from overflowing its
+   * grid cell and pushing the Connect Wallet button off-screen on narrow
+   * mobile viewports. The secondary controls (mode-switch, chain pill)
+   * shrink first via their own flex-shrink rules below; the wallet button
+   * stays fixed-width via flex-shrink: 0 on its container. */
+  flex-wrap: nowrap;
+  min-width: 0;
+}
+
+/* Wallet / connect / switch-network button anchors the row's right edge
+ * and must never shrink or wrap: a wrapped "Connect Wallet" / "Switch
+ * Network" label breaks the topbar layout on mobile. */
+.topbar-right > .btn-primary,
+.topbar-right > .btn-warning,
+.topbar-right > .topbar-wallet {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+/* Below 640px, the Basic/Advanced toggle is lowest-priority topbar real
+ * estate — it's changed rarely and a secondary control for power users.
+ * Hide it on small screens so the wallet button and chain pill have room
+ * without horizontal overflow. Re-surfaced at ≥ 640px. */
+@media (max-width: 639px) {
+  .topbar-right .mode-switch {
+    display: none;
+  }
 }
 
 .mode-switch {

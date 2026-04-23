@@ -53,6 +53,20 @@ function getEthereum(): Eip1193Provider | null {
   return null;
 }
 
+/**
+ * Coarse-grained mobile-OS detection. Only used to decide whether to
+ * fall back to the MetaMask mobile deep link (`metamask.app.link/dapp/…`)
+ * when no in-browser EIP-1193 provider is injected. Errs on the side of
+ * "treat as mobile" for known mobile OS substrings — a false positive
+ * just means a desktop user clicking Connect with no wallet installed
+ * gets routed to the MetaMask mobile app store page, which is harmless.
+ */
+function _isMobileUserAgent(): boolean {
+  if (typeof navigator === 'undefined') return false;
+  const ua = navigator.userAgent || '';
+  return /Android|iPhone|iPad|iPod|Windows Phone|Mobile/i.test(ua);
+}
+
 export function WalletProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState<WalletState>({
     provider: null,
@@ -75,7 +89,29 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     const step = beginStep({ area: 'wallet', flow: 'connect', step: 'request-accounts' });
     const ethereum = getEthereum();
     if (!ethereum) {
-      const msg = 'No wallet detected. Please install MetaMask or another Web3 wallet.';
+      // Mobile Safari / Chrome don't inject `window.ethereum`. Rather
+      // than tell the user to install MetaMask (which they already
+      // might have, just not integrated into their mobile browser),
+      // detect mobile and deep-link into the MetaMask mobile app's
+      // in-app browser using EIP-6963's well-known `metamask.app.link`.
+      // On desktop this case still means "no wallet installed" — show
+      // the old error.
+      if (typeof window !== 'undefined' && _isMobileUserAgent()) {
+        const host = window.location.host + window.location.pathname + window.location.search;
+        const deepLink = `https://metamask.app.link/dapp/${host}`;
+        const msg =
+          'No in-browser wallet detected. Redirecting to MetaMask mobile — ' +
+          'if you don\'t have it installed, the app store will open. Once ' +
+          'installed, Vaipakam will open inside the MetaMask in-app browser.';
+        setState((prev) => ({ ...prev, error: msg }));
+        step.failure(null, { errorType: 'wallet', errorMessage: 'mobile-deep-link' });
+        window.location.href = deepLink;
+        return;
+      }
+      const msg =
+        'No wallet detected. Install MetaMask (or another Web3 wallet) in ' +
+        'this browser and reload. On mobile, open this page from inside ' +
+        'the MetaMask app\'s browser.';
       setState((prev) => ({ ...prev, error: msg }));
       step.failure(null, { errorType: 'wallet', errorMessage: msg });
       return;

@@ -101,6 +101,43 @@ a { color: inherit; text-decoration: none; }
 button { cursor: pointer; font-family: inherit; }
 img { max-width: 100%; display: block; }
 
+/* ── Themed scrollbars ──
+ * Applied globally so scrollbars on <html>, inner scroll containers,
+ * and overflow panes all match the current theme instead of the
+ * browser's bright-white default (which clashes hard with dark mode).
+ *
+ * Two mechanisms in play:
+ *   - `scrollbar-color` + `scrollbar-width` (Firefox / Safari 17.5+):
+ *     CSS-standard, themed via tokens.
+ *   - `::-webkit-scrollbar` pseudos (Chromium, older WebKit): custom
+ *     thumb/track so the bar gets our brand colour on hover.
+ *
+ * Track uses `--bg-secondary` so it blends into most surfaces; thumb
+ * uses `--border-hover` (a light-grey / muted-slate depending on theme).
+ * Hover deepens thumb to `--text-tertiary` for affordance. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-hover) var(--bg-secondary);
+}
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: var(--bg-secondary);
+}
+::-webkit-scrollbar-thumb {
+  background: var(--border-hover);
+  border-radius: 999px;
+  border: 2px solid var(--bg-secondary);
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--text-tertiary);
+}
+::-webkit-scrollbar-corner {
+  background: var(--bg-secondary);
+}
+
 /* ── Utility ── */
 .container {
   width: 100%;
