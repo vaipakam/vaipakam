@@ -75,6 +75,15 @@ library LibVaipakam {
     uint256 constant MAX_LIQUIDATOR_INCENTIVE_BPS = 300; // 3% cap on dynamic liquidator incentive (README §3)
     uint256 constant LIQUIDATION_HANDLING_FEE_BPS = 200; // 2% of proceeds to treasury on successful DEX liquidation (README §3)
     uint256 constant LOAN_INITIATION_FEE_BPS = 10; // 0.1% fee deducted from ERC-20 principal at loan initiation (README §6 lines 280, 332)
+    // Fallback-path split (README §7): lender gets principal + accrued
+    // interest + {FALLBACK_LENDER_BONUS_BPS} of principal; treasury gets
+    // {FALLBACK_TREASURY_BPS} of principal; borrower gets the remainder.
+    // Both are governance-configurable via {ConfigFacet.setFallbackSplit},
+    // applied prospectively — each Loan snapshots the effective values at
+    // `initiateLoan` so the dual-consent contract at offer creation is
+    // never retroactively altered. Stored zero ⇒ use these defaults.
+    uint256 constant FALLBACK_LENDER_BONUS_BPS = 300; // 3% lender bonus on fallback path
+    uint256 constant FALLBACK_TREASURY_BPS = 200;     // 2% treasury cut on fallback path
     uint256 constant KYC_TIER0_THRESHOLD_USD = 1_000 * 1e18; // Tier0 max
     uint256 constant KYC_TIER1_THRESHOLD_USD = 10_000 * 1e18; // Tier1 max
     uint256 constant MAX_FEE_EVENTS_ITER = 10_000; // Max feeEventsLog entries scanned per window query in MetricsFacet
@@ -274,7 +283,7 @@ library LibVaipakam {
      *      settlement split, `BASIS_POINTS` and other scale constants.
      */
     struct ProtocolConfig {
-        // ── Packed BPS slot (12 × uint16 = 192 bits) ─────────────────
+        // ── Packed BPS slot (14 × uint16 = 224 bits; 32 bits of headroom) ──
         uint16 treasuryFeeBps;              // 0 ⇒ TREASURY_FEE_BPS (100)
         uint16 loanInitiationFeeBps;        // 0 ⇒ LOAN_INITIATION_FEE_BPS (10)
         uint16 liquidationHandlingFeeBps;   // 0 ⇒ LIQUIDATION_HANDLING_FEE_BPS (200)
@@ -287,6 +296,12 @@ library LibVaipakam {
         uint16 vpfiTier2DiscountBps;        // 0 ⇒ VPFI_TIER2_DISCOUNT_BPS (1500)
         uint16 vpfiTier3DiscountBps;        // 0 ⇒ VPFI_TIER3_DISCOUNT_BPS (2000)
         uint16 vpfiTier4DiscountBps;        // 0 ⇒ VPFI_TIER4_DISCOUNT_BPS (2400)
+        // Fallback-path split, governance-configurable. Prospective
+        // semantics: `Loan.fallbackLenderBonusBpsAtInit` / `...TreasuryBpsAtInit`
+        // are snapshotted at `initiateLoan`, so governance changes via
+        // `setFallbackSplit` never retroactively alter dual-consent offers.
+        uint16 fallbackLenderBonusBps;      // 0 ⇒ FALLBACK_LENDER_BONUS_BPS (300)
+        uint16 fallbackTreasuryBps;         // 0 ⇒ FALLBACK_TREASURY_BPS (200)
         // ── VPFI discount tier thresholds (18-dec VPFI; 0 ⇒ default) ──
         uint256 vpfiTier1Min;               // 0 ⇒ VPFI_TIER1_MIN (100e18)
         uint256 vpfiTier2Min;               // 0 ⇒ VPFI_TIER2_MIN (1_000e18)
@@ -373,7 +388,7 @@ library LibVaipakam {
         uint256 id;
         // Slot 1
         uint256 offerId;
-        // Slot 2: lender(20) + 9 small fields (9) = 29 bytes packed
+        // Slot 2: lender(20) + 9 small fields (9) + 2 × uint16 (4) = 32 bytes packed
         address lender;
         LiquidityStatus principalLiquidity;
         LiquidityStatus collateralLiquidity;
@@ -391,6 +406,16 @@ library LibVaipakam {
         // `ProfileFacet.setLoanKeeperAccess`.
         bool lenderKeeperAccessEnabled;
         bool borrowerKeeperAccessEnabled;
+        // Fallback-path settlement split, snapshotted at `initiateLoan` from
+        // the then-current {ProtocolConfig.fallbackLenderBonusBps} /
+        // `fallbackTreasuryBps`. {LibFallback.computeFallbackEntitlements}
+        // reads from here — not from live config — so any subsequent
+        // governance change via {ConfigFacet.setFallbackSplit} applies
+        // prospectively only to loans initiated after the change. Zero
+        // on a pre-upgrade loan falls through to the compile-time defaults
+        // in `LibFallback` (backfill-safe).
+        uint16 fallbackLenderBonusBpsAtInit;
+        uint16 fallbackTreasuryBpsAtInit;
         // Slot 3
         address borrower;
         // Slot 4
@@ -427,6 +452,15 @@ library LibVaipakam {
         uint256 collateralTokenId; // Token ID for NFT collateral; 0 for ERC20
         // Slot 20
         uint256 collateralQuantity; // Quantity for ERC1155 collateral; 0 for ERC20/ERC721
+        // Slot 21 — VPFI discount per-loan snapshot (§5.2a).
+        // Lender's `UserVpfiDiscountState.cumulativeDiscountBpsSeconds`
+        // at offer acceptance. At yield-fee settlement, subtracting this
+        // from the lender's current accumulator and dividing by loan
+        // duration yields the time-weighted average discount BPS — the
+        // rate the lender actually earned over the loan's full lifetime.
+        // Defeats last-minute escrow top-ups that used to steal the full
+        // tier-4 discount for a loan the lender was mostly at tier-1 on.
+        uint256 lenderDiscountAccAtInit;
     }
 
     /**
@@ -521,6 +555,30 @@ library LibVaipakam {
         bool processed;      // claim/sweep already routed this entry
         bool forfeited;      // true ⇒ route to treasury on processing
         uint256 perDayUSD18; // USD18 interest-per-day snapshotted at register
+    }
+
+    /**
+     * @notice Per-user VPFI discount accumulator. Drives the time-weighted
+     *         lender yield-fee discount (docs/GovernanceConfigDesign.md §5.2a).
+     *         Updated on every escrow-VPFI balance mutation and at every
+     *         offer-accept / yield-fee settlement. Ordering invariant: the
+     *         accompanying `rollupUserDiscount(user, preMutationBalance)`
+     *         call MUST execute BEFORE the mutation, so the closed period
+     *         sees the balance that was actually in effect for it.
+     *
+     * @dev Packed layout:
+     *        slot 0: uint16 (2) + uint64 (8) = 10 bytes → fits comfortably
+     *        slot 1: uint256 cumulativeDiscountBpsSeconds
+     *      `cumulativeDiscountBpsSeconds` is monotone non-decreasing and
+     *      the per-loan delta `(now_cum - loan.lenderDiscountAccAtInit) /
+     *      loanDuration` produces the average discount BPS the lender
+     *      actually qualified for over that loan's lifetime — a last-
+     *      minute top-up cannot backdate its effect onto prior periods.
+     */
+    struct UserVpfiDiscountState {
+        uint16  discountBpsAtPreviousRollup;
+        uint64  lastRollupAt;
+        uint256 cumulativeDiscountBpsSeconds;
     }
 
     /**
@@ -735,6 +793,18 @@ library LibVaipakam {
         mapping(address => uint256) userStakedVPFI;
         mapping(address => uint256) userStakingRewardPerTokenPaid;
         mapping(address => uint256) userStakingPendingReward;
+
+        // ─── VPFI Lender Yield-Fee Time-Weighted Discount (§5.2a) ──────
+        // Per-user accumulator backing the lender-side time-weighted
+        // yield-fee discount. Each loan stores `lenderDiscountAccAtInit`
+        // (on Loan struct) at offer acceptance; at yield-fee settlement,
+        // the time-weighted average BPS over the loan window =
+        //   (cumulativeDiscountBpsSeconds_now - loan.lenderDiscountAccAtInit)
+        //   / (now - loan.startTime)
+        // — and that average replaces the previous live tier-at-repay
+        // lookup. See docs/GovernanceConfigDesign.md §5.2a for the full
+        // rationale and the anti-gaming design sketch.
+        mapping(address => UserVpfiDiscountState) userVpfiDiscountState;
 
         // ─── VPFI Platform Interaction Rewards (spec §4) ────────────────
         // Daily emission pool split 50/50 across lenders (by USD interest
@@ -1238,6 +1308,20 @@ library LibVaipakam {
     function cfgVpfiStakingAprBps() internal view returns (uint256) {
         uint16 v = storageSlot().protocolCfg.vpfiStakingAprBps;
         return v == 0 ? VPFI_STAKING_APR_BPS : uint256(v);
+    }
+
+    /// @dev Fallback-path split, with zero-is-default fall-through to the
+    ///      compile-time constants. Callers at `initiateLoan` read these
+    ///      once to snapshot onto the `Loan`; settlement (`LibFallback`)
+    ///      reads from the loan's snapshot fields, not from here.
+    function cfgFallbackLenderBonusBps() internal view returns (uint256) {
+        uint16 v = storageSlot().protocolCfg.fallbackLenderBonusBps;
+        return v == 0 ? FALLBACK_LENDER_BONUS_BPS : uint256(v);
+    }
+
+    function cfgFallbackTreasuryBps() internal view returns (uint256) {
+        uint16 v = storageSlot().protocolCfg.fallbackTreasuryBps;
+        return v == 0 ? FALLBACK_TREASURY_BPS : uint256(v);
     }
 
     /// @dev Returns the four tier thresholds (T1 min, T2 min, T3 min, T4 min-exclusive).

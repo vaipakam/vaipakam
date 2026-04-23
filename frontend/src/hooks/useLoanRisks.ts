@@ -1,9 +1,9 @@
-import { useEffect, useMemo, useState } from 'react';
-import { Interface } from 'ethers';
-import { useDiamondRead, useReadChain } from '../contracts/useDiamond';
+import { useEffect, useState } from 'react';
+import { useDiamondPublicClient, useReadChain } from '../contracts/useDiamond';
 import { DEFAULT_CHAIN } from '../contracts/config';
 import { DIAMOND_ABI } from '../contracts/abis';
-import { batchCalls } from '../lib/multicall';
+import { batchCalls, encodeBatchCalls } from '../lib/multicall';
+import type { Address } from 'viem';
 
 export interface LoanRisk {
   ltv: bigint | null;
@@ -19,13 +19,12 @@ export interface LoanRisk {
  * re-fetch already-visible rows.
  */
 export function useLoanRisks(loanIds: bigint[]) {
-  const diamond = useDiamondRead();
+  const publicClient = useDiamondPublicClient();
   const chain = useReadChain();
   const [risks, setRisks] = useState<Map<string, LoanRisk>>(new Map());
   const [loading, setLoading] = useState(false);
 
-  const iface = useMemo(() => new Interface(DIAMOND_ABI), []);
-  const diamondAddress = chain.diamondAddress ?? DEFAULT_CHAIN.diamondAddress!;
+  const diamondAddress = (chain.diamondAddress ?? DEFAULT_CHAIN.diamondAddress) as Address;
 
   // Stable signature for the dependency array — comparing bigint arrays by
   // reference re-fires the effect on every render.
@@ -37,22 +36,25 @@ export function useLoanRisks(loanIds: bigint[]) {
       return;
     }
     let cancelled = false;
-    const provider = diamond.runner?.provider;
-    if (!provider) return;
     setLoading(true);
     (async () => {
       try {
-        const ltvCalls = loanIds.map((id) => ({
-          target: diamondAddress,
-          callData: iface.encodeFunctionData('calculateLTV', [id]),
-        }));
-        const hfCalls = loanIds.map((id) => ({
-          target: diamondAddress,
-          callData: iface.encodeFunctionData('calculateHealthFactor', [id]),
-        }));
+        const argsList = loanIds.map((id) => [id] as const);
+        const ltvCalls = encodeBatchCalls(
+          diamondAddress,
+          DIAMOND_ABI,
+          'calculateLTV',
+          argsList,
+        );
+        const hfCalls = encodeBatchCalls(
+          diamondAddress,
+          DIAMOND_ABI,
+          'calculateHealthFactor',
+          argsList,
+        );
         const [ltvs, hfs] = await Promise.all([
-          batchCalls<bigint>(provider, iface, 'calculateLTV', ltvCalls),
-          batchCalls<bigint>(provider, iface, 'calculateHealthFactor', hfCalls),
+          batchCalls<bigint>(publicClient, DIAMOND_ABI, 'calculateLTV', ltvCalls),
+          batchCalls<bigint>(publicClient, DIAMOND_ABI, 'calculateHealthFactor', hfCalls),
         ]);
         if (cancelled) return;
         const next = new Map<string, LoanRisk>();
@@ -71,7 +73,7 @@ export function useLoanRisks(loanIds: bigint[]) {
     })();
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [idsKey, diamondAddress, diamond, iface]);
+  }, [idsKey, diamondAddress, publicClient]);
 
   return { risks, loading };
 }

@@ -1,9 +1,9 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Interface } from 'ethers';
-import { useDiamondRead, useReadChain } from '../contracts/useDiamond';
+import { useCallback, useEffect, useState } from 'react';
+import type { Address } from 'viem';
+import { useDiamondPublicClient, useReadChain } from '../contracts/useDiamond';
 import { DEFAULT_CHAIN } from '../contracts/config';
 import { DIAMOND_ABI } from '../contracts/abis';
-import { batchCalls, type BatchCall } from '../lib/multicall';
+import { batchCalls, encodeBatchCalls } from '../lib/multicall';
 import { AssetType, LoanStatus, type LoanDetails } from '../types/loan';
 import { fetchTokenMeta } from '../lib/tokenMeta';
 import { beginStep } from '../lib/journeyLog';
@@ -49,18 +49,16 @@ function cacheKey(chainId: number, diamondAddress: string): string {
  * is treated as $0 but still listed in the per-asset breakdown.
  */
 export function useTVL() {
-  const diamond = useDiamondRead();
+  const publicClient = useDiamondPublicClient();
   const chain = useReadChain();
   const chainId = chain.chainId ?? DEFAULT_CHAIN.chainId;
-  const diamondAddress = chain.diamondAddress ?? DEFAULT_CHAIN.diamondAddress;
+  const diamondAddress = (chain.diamondAddress ?? DEFAULT_CHAIN.diamondAddress) as Address;
   const { stats, loading: statsLoading, error: statsError } = useProtocolStats();
   const [snapshot, setSnapshot] = useState<TVLSnapshot | null>(
     () => cache.get(cacheKey(chainId, diamondAddress))?.data ?? null,
   );
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<Error | null>(statsError ?? null);
-
-  const iface = useMemo(() => new Interface(DIAMOND_ABI), []);
 
   const load = useCallback(async () => {
     if (!stats) return;
@@ -104,13 +102,15 @@ export function useTVL() {
       }
 
       const uniqueAssets = Array.from(new Set(legs.map((l) => l.asset)));
-      const priceCalls: BatchCall[] = uniqueAssets.map((a) => ({
-        target: diamondAddress,
-        callData: iface.encodeFunctionData('getAssetPrice', [a]),
-      }));
+      const priceCalls = encodeBatchCalls(
+        diamondAddress,
+        DIAMOND_ABI,
+        'getAssetPrice',
+        uniqueAssets.map((a) => [a as Address] as const),
+      );
       const priceResults = await batchCalls<[bigint, number]>(
-        (diamond as unknown as { runner: { provider: never } }).runner.provider as never,
-        iface,
+        publicClient,
+        DIAMOND_ABI,
         'getAssetPrice',
         priceCalls,
       );
@@ -128,7 +128,7 @@ export function useTVL() {
       await Promise.all(
         uniqueAssets.map(async (addr) => {
           try {
-            const m = await fetchTokenMeta(addr, diamond);
+            const m = await fetchTokenMeta(addr, publicClient);
             metaByAsset.set(addr, { symbol: m.symbol, decimals: m.decimals });
           } catch {
             metaByAsset.set(addr, { symbol: addr.slice(0, 6) + '…', decimals: 18 });
@@ -212,7 +212,7 @@ export function useTVL() {
     } finally {
       setLoading(false);
     }
-  }, [diamond, stats, iface, chainId, diamondAddress]);
+  }, [publicClient, stats, chainId, diamondAddress]);
 
   useEffect(() => {
     if (statsLoading || !stats) return;

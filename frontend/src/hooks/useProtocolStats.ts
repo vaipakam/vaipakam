@@ -1,9 +1,9 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Interface } from 'ethers';
-import { useDiamondRead, useReadChain } from '../contracts/useDiamond';
+import { useCallback, useEffect, useState } from 'react';
+import type { Address } from 'viem';
+import { useDiamondPublicClient, useReadChain } from '../contracts/useDiamond';
 import { DEFAULT_CHAIN } from '../contracts/config';
 import { DIAMOND_ABI } from '../contracts/abis';
-import { batchCalls, type BatchCall } from '../lib/multicall';
+import { batchCalls, encodeBatchCalls } from '../lib/multicall';
 import { useLogIndex } from './useLogIndex';
 import { AssetType, LoanStatus, type LoanDetails } from '../types/loan';
 import { fetchTokenMeta } from '../lib/tokenMeta';
@@ -84,10 +84,10 @@ function cacheKey(chainId: number, diamondAddress: string): string {
  * multicall + log-scan cost across dashboard navigations.
  */
 export function useProtocolStats() {
-  const diamond = useDiamondRead();
+  const publicClient = useDiamondPublicClient();
   const chain = useReadChain();
   const chainId = chain.chainId ?? DEFAULT_CHAIN.chainId;
-  const diamondAddress = chain.diamondAddress ?? DEFAULT_CHAIN.diamondAddress;
+  const diamondAddress = (chain.diamondAddress ?? DEFAULT_CHAIN.diamondAddress) as Address;
   const {
     loans: indexedLoans,
     offerIds,
@@ -102,8 +102,6 @@ export function useProtocolStats() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<Error | null>(indexError ?? null);
 
-  const iface = useMemo(() => new Interface(DIAMOND_ABI), []);
-
   const load = useCallback(async () => {
     const key = cacheKey(chainId, diamondAddress);
     const cached = cache.get(key);
@@ -117,19 +115,18 @@ export function useProtocolStats() {
     setError(null);
     const step = beginStep({ area: 'dashboard', flow: 'useProtocolStats', step: 'multicall-loans' });
     try {
-      const provider = (diamond as unknown as { runner?: { provider?: unknown } }).runner?.provider as
-        | { getBlockNumber?: () => Promise<number> }
-        | undefined;
-      const blockNumber = provider?.getBlockNumber ? await provider.getBlockNumber() : null;
+      const blockNumber = await publicClient.getBlockNumber().then((n) => Number(n)).catch(() => null);
 
-      const loanDetailsCalls: BatchCall[] = indexedLoans.map((l) => ({
-        target: diamondAddress,
-        callData: iface.encodeFunctionData('getLoanDetails', [l.loanId]),
-      }));
+      const loanDetailsCalls = encodeBatchCalls(
+        diamondAddress,
+        DIAMOND_ABI,
+        'getLoanDetails',
+        indexedLoans.map((l) => [l.loanId] as const),
+      );
 
       const loans = (await batchCalls<LoanDetails>(
-        (diamond as unknown as { runner: { provider: never } }).runner.provider as never,
-        iface,
+        publicClient,
+        DIAMOND_ABI,
         'getLoanDetails',
         loanDetailsCalls,
       )).filter((x): x is LoanDetails => x !== null);
@@ -185,14 +182,16 @@ export function useProtocolStats() {
       //    so volume/interest figures are comparable across assets (USDC 6d,
       //    WBTC 8d, WETH 18d...) rather than raw token-native summed bigints.
       const pricedAssets = Array.from(erc20AssetSet);
-      const priceCalls: BatchCall[] = pricedAssets.map((a) => ({
-        target: diamondAddress,
-        callData: iface.encodeFunctionData('getAssetPrice', [a]),
-      }));
+      const priceCalls = encodeBatchCalls(
+        diamondAddress,
+        DIAMOND_ABI,
+        'getAssetPrice',
+        pricedAssets.map((a) => [a as Address] as const),
+      );
       const priceResults = pricedAssets.length
         ? await batchCalls<[bigint, number]>(
-            (diamond as unknown as { runner: { provider: never } }).runner.provider as never,
-            iface,
+            publicClient,
+            DIAMOND_ABI,
             'getAssetPrice',
             priceCalls,
           )
@@ -204,7 +203,7 @@ export function useProtocolStats() {
           let symbol = addr.slice(0, 6) + '…';
           let tokenDecimals = 18;
           try {
-            const m = await fetchTokenMeta(addr, diamond);
+            const m = await fetchTokenMeta(addr, publicClient);
             symbol = m.symbol;
             tokenDecimals = m.decimals;
           } catch {
@@ -323,7 +322,7 @@ export function useProtocolStats() {
     } finally {
       setLoading(false);
     }
-  }, [diamond, indexedLoans, offerIds, openOfferIds, iface, chainId, diamondAddress]);
+  }, [publicClient, indexedLoans, offerIds, openOfferIds, chainId, diamondAddress]);
 
   useEffect(() => {
     if (indexLoading) return;

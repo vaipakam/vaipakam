@@ -1,9 +1,9 @@
-import { useEffect, useState, useCallback, useMemo } from 'react';
-import { Interface } from 'ethers';
-import { useDiamondRead, useReadChain } from '../contracts/useDiamond';
+import { useEffect, useState, useCallback } from 'react';
+import type { Address } from 'viem';
+import { useDiamondPublicClient, useReadChain } from '../contracts/useDiamond';
 import { DEFAULT_CHAIN } from '../contracts/config';
 import { DIAMOND_ABI } from '../contracts/abis';
-import { batchCalls } from '../lib/multicall';
+import { batchCalls, encodeBatchCalls } from '../lib/multicall';
 import { useLogIndex } from './useLogIndex';
 import { type LoanStatus, type LoanSummary, type LoanDetails } from '../types/loan';
 import { beginStep } from '../lib/journeyLog';
@@ -23,14 +23,13 @@ const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
  * loans exist globally.
  */
 export function useUserLoans(address: string | null) {
-  const diamond = useDiamondRead();
+  const publicClient = useDiamondPublicClient();
   const chain = useReadChain();
   const { loans: knownLoans, getOwner, loading: indexLoading, reload: reloadIndex } = useLogIndex();
   const [loans, setLoans] = useState<LoanSummary[]>([]);
   const [loading, setLoading] = useState(false);
 
-  const iface = useMemo(() => new Interface(DIAMOND_ABI), []);
-  const diamondAddress = chain.diamondAddress ?? DEFAULT_CHAIN.diamondAddress!;
+  const diamondAddress = (chain.diamondAddress ?? DEFAULT_CHAIN.diamondAddress) as Address;
 
   const load = useCallback(async () => {
     if (!address) {
@@ -41,21 +40,17 @@ export function useUserLoans(address: string | null) {
     const step = beginStep({ area: 'dashboard', flow: 'useUserLoans', step: 'scan-known-loans', wallet: address });
     try {
       const me = address.toLowerCase();
-      const provider = diamond.runner?.provider;
-      if (!provider) {
-        setLoans([]);
-        step.success({ note: 'no provider' });
-        return;
-      }
 
       // 1. Batch all getLoanDetails calls in one Multicall3 round-trip.
-      const detailCalls = knownLoans.map((entry) => ({
-        target: diamondAddress,
-        callData: iface.encodeFunctionData('getLoanDetails', [entry.loanId]),
-      }));
+      const detailCalls = encodeBatchCalls(
+        diamondAddress,
+        DIAMOND_ABI,
+        'getLoanDetails',
+        knownLoans.map((e) => [e.loanId] as const),
+      );
       const details = await batchCalls<LoanDetails>(
-        provider,
-        iface,
+        publicClient,
+        DIAMOND_ABI,
         'getLoanDetails',
         detailCalls,
       );
@@ -70,11 +65,13 @@ export function useUserLoans(address: string | null) {
       }
       const liveOwners = new Map<string, string>();
       if (pendingOwnerIds.length > 0) {
-        const ownerCalls = pendingOwnerIds.map((tokenId) => ({
-          target: diamondAddress,
-          callData: iface.encodeFunctionData('ownerOf', [tokenId]),
-        }));
-        const owners = await batchCalls<string>(provider, iface, 'ownerOf', ownerCalls);
+        const ownerCalls = encodeBatchCalls(
+          diamondAddress,
+          DIAMOND_ABI,
+          'ownerOf',
+          pendingOwnerIds.map((tokenId) => [tokenId] as const),
+        );
+        const owners = await batchCalls<string>(publicClient, DIAMOND_ABI, 'ownerOf', ownerCalls);
         for (let i = 0; i < pendingOwnerIds.length; i++) {
           const o = owners[i];
           liveOwners.set(
@@ -134,7 +131,7 @@ export function useUserLoans(address: string | null) {
     } finally {
       setLoading(false);
     }
-  }, [address, diamond, knownLoans, getOwner, iface, diamondAddress]);
+  }, [address, publicClient, knownLoans, getOwner, diamondAddress]);
 
   useEffect(() => { load(); }, [load]);
 

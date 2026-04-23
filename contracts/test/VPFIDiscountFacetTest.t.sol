@@ -584,20 +584,28 @@ contract VPFIDiscountFacetTest is SetupTest {
     ///         the lending asset.
     function testRepayAppliesLenderYieldFeeDiscount() public {
         uint256 principal = 10_000 ether;
+
+        // Lender funds escrow via the sanctioned deposit path BEFORE the
+        // offer is accepted — this is the only path that wires the lender
+        // into `rollupUserDiscount`, which stamps their current tier so
+        // it applies for the full loan window. Raw `transfer(escrow, …)`
+        // bypasses the rollup entirely and (correctly) yields a zero
+        // time-weighted average at settlement.
+        vpfiToken.transfer(lender, 5_000 ether);
+        vm.startPrank(lender);
+        vpfiToken.approve(address(diamond), 5_000 ether);
+        _facet().depositVPFIToEscrow(5_000 ether);
+        _facet().setVPFIDiscountConsent(true);
+        vm.stopPrank();
+
         uint256 offerId = _createLenderERC20Offer(principal);
 
         // Borrower accepts normally (no borrower discount).
         _approveAndAcceptForLoan(offerId, principal);
         uint256 loanId = 1;
 
-        // Fund lender escrow with enough VPFI to cover the yield fee.
         address lenderEscrow = EscrowFactoryFacet(address(diamond))
             .getOrCreateUserEscrow(lender);
-        vpfiToken.transfer(lenderEscrow, 5_000 ether);
-
-        // Lender opts in to the platform-level consent.
-        vm.prank(lender);
-        _facet().setVPFIDiscountConsent(true);
 
         // Advance past the full loan duration so interest fully accrues.
         vm.warp(block.timestamp + 30 days);

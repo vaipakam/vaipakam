@@ -146,9 +146,8 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
         if (s.vpfiDiscountConsent[oldLoan.lender] && treasuryFee > 0) {
             bool yieldApplied;
             (yieldApplied, yieldVpfiDeducted) = LibVPFIDiscount.tryApplyYieldFee(
-                oldLoan.principalAsset,
-                interestPortion,
-                oldLoan.lender
+                oldLoan,
+                interestPortion
             );
             if (yieldApplied) {
                 lenderInterest = interestPortion;

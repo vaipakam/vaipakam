@@ -3,6 +3,7 @@ pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibAccessControl, DiamondAccessControl} from "../libraries/LibAccessControl.sol";
+import {LibStakingRewards} from "../libraries/LibStakingRewards.sol";
 
 /**
  * @title ConfigFacet
@@ -36,6 +37,8 @@ contract ConfigFacet is DiamondAccessControl {
     error NonMonotoneTierThresholds(uint256 t1, uint256 t2, uint256 t3, uint256 t4);
     error NonMonotoneTierDiscounts(uint256 t1, uint256 t2, uint256 t3, uint256 t4);
     error DiscountBpsTooHigh(uint256 bps, uint256 maxAllowed);
+    error FallbackSplitTooHigh(uint256 lenderBonusBps, uint256 treasuryBps, uint256 maxPerPartyBps);
+    error FallbackSplitCombinedTooHigh(uint256 combinedBps, uint256 maxCombinedBps);
 
     /// ─── Events ─────────────────────────────────────────────────────
     event FeesConfigSet(uint16 treasuryFeeBps, uint16 loanInitiationFeeBps);
@@ -48,6 +51,7 @@ contract ConfigFacet is DiamondAccessControl {
     event StakingAprSet(uint16 aprBps);
     event VpfiTierThresholdsSet(uint256 t1, uint256 t2, uint256 t3, uint256 t4);
     event VpfiTierDiscountsSet(uint16 t1, uint16 t2, uint16 t3, uint16 t4);
+    event FallbackSplitSet(uint16 lenderBonusBps, uint16 treasuryBps);
 
     // Upper bounds (sanity caps). Deliberately loose — production values
     // will sit far below these, but admin has headroom for emergency knobs.
@@ -76,6 +80,14 @@ contract ConfigFacet is DiamondAccessControl {
     uint16 private constant MAX_SLIPPAGE_BPS = 2_500;       // 25%
     uint16 private constant MAX_INCENTIVE_BPS = 2_000;      // 20%
     uint16 private constant MAX_DISCOUNT_BPS = 9_000;       // 90%
+    // Fallback-split bounds: each party capped at 10% of principal, combined
+    // (lender bonus + treasury) at 15%. These keep the borrower's remainder
+    // meaningful even under the most adverse governance setting — a
+    // theoretical abuse where a vote set both to 50% each would wipe out
+    // the borrower's collateral recovery right, which is exactly the kind
+    // of hostile-governance scenario the timelock + cap combo is for.
+    uint16 private constant MAX_FALLBACK_BPS = 1_000;       // 10% per party
+    uint16 private constant MAX_FALLBACK_COMBINED_BPS = 1_500; // 15% combined
 
     /// ─── Setters ────────────────────────────────────────────────────
 
@@ -149,9 +161,22 @@ contract ConfigFacet is DiamondAccessControl {
      * @param aprBps Annual rate in BPS (default 500 ≡ 5%). Passing `0`
      *        resets to the default.
      * @dev ADMIN_ROLE-only. Capped at 100% APR to guard against typos.
+     *
+     *      {LibStakingRewards.checkpointGlobal} MUST fire BEFORE writing
+     *      the new rate. That call folds the OLD APR × elapsed time into
+     *      `stakingRewardPerTokenStored` and stamps `stakingLastUpdateTime
+     *      = now`, so the subsequent `currentRewardPerToken()` view uses
+     *      the new APR only for time AFTER this tx. Without the checkpoint,
+     *      `currentRewardPerToken()` computes `dt × newApr` for the whole
+     *      elapsed period since the last update — effectively applying the
+     *      new rate retroactively to the old era. The fix makes every APR
+     *      era non-retroactive: each value applies to exactly the duration
+     *      it was in effect, automatically across both active and dormant
+     *      stakers (the global counter stores the full historical integral).
      */
     function setStakingApr(uint16 aprBps) external onlyRole(LibAccessControl.ADMIN_ROLE) {
         if (aprBps > uint16(LibVaipakam.BASIS_POINTS)) revert InvalidStakingAprBps(aprBps);
+        LibStakingRewards.checkpointGlobal();
         LibVaipakam.storageSlot().protocolCfg.vpfiStakingAprBps = aprBps;
         emit StakingAprSet(aprBps);
     }
@@ -220,6 +245,50 @@ contract ConfigFacet is DiamondAccessControl {
         emit VpfiTierDiscountsSet(t1, t2, t3, t4);
     }
 
+    /**
+     * @notice Update the fallback-path settlement split (README §7).
+     * @param lenderBonusBps Lender bonus share on the fallback path, in
+     *        BPS of principal. Default 300 ≡ 3%. Pass `0` to reset.
+     * @param treasuryBps    Treasury share on the fallback path, in BPS
+     *        of principal. Default 200 ≡ 2%. Pass `0` to reset.
+     * @dev ADMIN_ROLE-only. Each leg is capped at {MAX_FALLBACK_BPS}
+     *      (10%); combined at {MAX_FALLBACK_COMBINED_BPS} (15%). The
+     *      borrower's residual equity must stay meaningful even under
+     *      the most adverse governance setting.
+     *
+     *      Prospective semantics: `LoanFacet.initiateLoan` snapshots the
+     *      effective values at creation time onto `Loan.fallbackLender
+     *      BonusBpsAtInit` / `fallbackTreasuryBpsAtInit`, and
+     *      `LibFallback.computeFallbackEntitlements` reads from the
+     *      snapshot — governance changes never retroactively alter the
+     *      dual-consent offer contract.
+     */
+    function setFallbackSplit(uint16 lenderBonusBps, uint16 treasuryBps)
+        external
+        onlyRole(LibAccessControl.ADMIN_ROLE)
+    {
+        // Resolve zero-as-default for the bounds check so the monotonicity
+        // and combined-cap rules apply to what callers WILL see, not to
+        // the raw zero input.
+        uint16 e1 = lenderBonusBps == 0
+            ? uint16(LibVaipakam.FALLBACK_LENDER_BONUS_BPS)
+            : lenderBonusBps;
+        uint16 e2 = treasuryBps == 0
+            ? uint16(LibVaipakam.FALLBACK_TREASURY_BPS)
+            : treasuryBps;
+        if (e1 > MAX_FALLBACK_BPS || e2 > MAX_FALLBACK_BPS) {
+            revert FallbackSplitTooHigh(e1, e2, MAX_FALLBACK_BPS);
+        }
+        uint256 combined = uint256(e1) + uint256(e2);
+        if (combined > MAX_FALLBACK_COMBINED_BPS) {
+            revert FallbackSplitCombinedTooHigh(combined, MAX_FALLBACK_COMBINED_BPS);
+        }
+        LibVaipakam.ProtocolConfig storage c = LibVaipakam.storageSlot().protocolCfg;
+        c.fallbackLenderBonusBps = lenderBonusBps;
+        c.fallbackTreasuryBps = treasuryBps;
+        emit FallbackSplitSet(lenderBonusBps, treasuryBps);
+    }
+
     /// ─── Getters (effective values: override OR default) ────────────
 
     /// @notice Two-fee getter used by the frontend fee hints and pricing previews.
@@ -253,6 +322,20 @@ contract ConfigFacet is DiamondAccessControl {
 
     function getStakingAprBps() external view returns (uint256) {
         return LibVaipakam.cfgVpfiStakingAprBps();
+    }
+
+    /// @notice Current effective fallback-path split. Each value is in BPS
+    ///         of principal. These are the **live** values — the UI should
+    ///         use them when showing "what terms would apply to a new
+    ///         loan?". For a specific existing loan, the snapshotted values
+    ///         on the `Loan` struct are authoritative (prospective).
+    function getFallbackSplit()
+        external
+        view
+        returns (uint256 lenderBonusBps, uint256 treasuryBps)
+    {
+        lenderBonusBps = LibVaipakam.cfgFallbackLenderBonusBps();
+        treasuryBps = LibVaipakam.cfgFallbackTreasuryBps();
     }
 
     function getVpfiTierThresholds()

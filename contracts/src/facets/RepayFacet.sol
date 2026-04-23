@@ -165,9 +165,8 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
                 bool yieldApplied;
                 (yieldApplied, yieldVpfiDeducted) = LibVPFIDiscount
                     .tryApplyYieldFee(
-                        loan.principalAsset,
-                        plan.interest + plan.lateFee,
-                        loan.lender
+                        loan,
+                        plan.interest + plan.lateFee
                     );
                 if (yieldApplied) {
                     plan.lenderShare = plan.interest + plan.lateFee;

@@ -1,4 +1,4 @@
-import { parseUnits } from 'ethers';
+import { parseUnits } from 'viem';
 import { AssetType } from '../types/loan';
 
 /**

@@ -523,7 +523,7 @@ contract DeployDiamond is Script {
     }
 
     function _getVPFIDiscountSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](20);
+        s = new bytes4[](21);
         s[0] = VPFIDiscountFacet.buyVPFIWithETH.selector;
         s[1] = VPFIDiscountFacet.depositVPFIToEscrow.selector;
         s[2] = VPFIDiscountFacet.quoteVPFIDiscount.selector;
@@ -544,6 +544,7 @@ contract DeployDiamond is Script {
         s[17] = VPFIDiscountFacet.getBridgedBuyReceiver.selector;
         s[18] = VPFIDiscountFacet.processBridgedBuy.selector;
         s[19] = VPFIDiscountFacet.quoteFixedRateBuy.selector;
+        s[20] = VPFIDiscountFacet.getUserVpfiDiscountState.selector;
     }
 
     function _getStakingRewardsSelectors() internal pure returns (bytes4[] memory s) {

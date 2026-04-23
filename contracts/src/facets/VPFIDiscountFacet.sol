@@ -361,10 +361,16 @@ contract VPFIDiscountFacet is
             msg.sender
         );
 
+        uint256 prevBal = IERC20(vpfi).balanceOf(escrow);
+        // Roll up the lender-yield-fee discount accumulator at the OLD
+        // balance so the closing period gets attributed to what the user
+        // was actually holding. Mirrors the staking checkpoint below;
+        // both MUST run before the transferFrom mutates the balance or
+        // the accrual attribution slides by one period.
+        LibVPFIDiscount.rollupUserDiscount(msg.sender, prevBal);
         // Checkpoint the staker BEFORE the deposit lands so the accrual
         // captures the pre-deposit staked amount for the period it was
         // active, then adopts the new balance as the next accrual baseline.
-        uint256 prevBal = IERC20(vpfi).balanceOf(escrow);
         LibStakingRewards.updateUser(msg.sender, prevBal + amount);
 
         IERC20(vpfi).safeTransferFrom(msg.sender, escrow, amount);
@@ -410,6 +416,11 @@ contract VPFIDiscountFacet is
         uint256 prevBal = IERC20(vpfi).balanceOf(escrow);
         if (prevBal < amount) revert VPFIEscrowBalanceInsufficient();
 
+        // Close the VPFI-discount period at the OLD balance (the tier
+        // that actually applied up to this moment) before the pull drops
+        // us into a potentially lower tier. Both rollups must run pre-
+        // mutation so accrual is attributed correctly.
+        LibVPFIDiscount.rollupUserDiscount(msg.sender, prevBal);
         // Staking checkpoint on the OLD balance before the pull.
         LibStakingRewards.updateUser(msg.sender, prevBal - amount);
 
@@ -469,6 +480,40 @@ contract VPFIDiscountFacet is
         returns (bool enabled)
     {
         return LibVaipakam.storageSlot().vpfiDiscountConsent[user];
+    }
+
+    /**
+     * @notice Read `user`'s current VPFI-discount accumulator state.
+     * @dev Exposes the three per-user fields that drive the time-weighted
+     *      lender yield-fee discount (docs §5.2a):
+     *        - `discountBpsAtPreviousRollup` — stamped BPS since last rollup.
+     *        - `lastRollupAt`                — timestamp of last rollup.
+     *        - `cumulativeDiscountBpsSeconds` — monotone running total.
+     *      The frontend pairs these with a loan's `lenderDiscountAccAtInit`
+     *      to compute the live time-weighted average discount for an
+     *      open loan — the value that would apply if the yield fee were
+     *      settled right now.
+     * @param user Address to inspect.
+     * @return discountBpsAtPreviousRollup Stamped discount BPS.
+     * @return lastRollupAt                Timestamp of the last rollup.
+     * @return cumulativeDiscountBpsSeconds Monotone accumulator.
+     */
+    function getUserVpfiDiscountState(address user)
+        external
+        view
+        returns (
+            uint16 discountBpsAtPreviousRollup,
+            uint64 lastRollupAt,
+            uint256 cumulativeDiscountBpsSeconds
+        )
+    {
+        LibVaipakam.UserVpfiDiscountState storage u =
+            LibVaipakam.storageSlot().userVpfiDiscountState[user];
+        return (
+            u.discountBpsAtPreviousRollup,
+            u.lastRollupAt,
+            u.cumulativeDiscountBpsSeconds
+        );
     }
 
     /**

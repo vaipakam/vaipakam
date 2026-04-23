@@ -457,7 +457,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](16);
+        selectors = new bytes4[](17);
         selectors[0] = VPFIDiscountFacet.buyVPFIWithETH.selector;
         selectors[1] = VPFIDiscountFacet.depositVPFIToEscrow.selector;
         selectors[2] = VPFIDiscountFacet.quoteVPFIDiscount.selector;
@@ -474,6 +474,7 @@ contract HelperTest {
         selectors[13] = VPFIDiscountFacet.quoteVPFIDiscountFor.selector;
         selectors[14] = VPFIDiscountFacet.getVPFIDiscountTier.selector;
         selectors[15] = VPFIDiscountFacet.withdrawVPFIFromEscrow.selector;
+        selectors[16] = VPFIDiscountFacet.getUserVpfiDiscountState.selector;
         return selectors;
     }
 
@@ -500,7 +501,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](13);
+        selectors = new bytes4[](15);
         selectors[0] = ConfigFacet.setFeesConfig.selector;
         selectors[1] = ConfigFacet.setLiquidationConfig.selector;
         selectors[2] = ConfigFacet.setRiskConfig.selector;
@@ -514,6 +515,8 @@ contract HelperTest {
         selectors[10] = ConfigFacet.getVpfiTierThresholds.selector;
         selectors[11] = ConfigFacet.getVpfiTierDiscountBps.selector;
         selectors[12] = ConfigFacet.getProtocolConfigBundle.selector;
+        selectors[13] = ConfigFacet.setFallbackSplit.selector;
+        selectors[14] = ConfigFacet.getFallbackSplit.selector;
         return selectors;
     }
 

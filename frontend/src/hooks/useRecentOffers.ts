@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Interface } from 'ethers';
-import { useDiamondRead, useReadChain } from '../contracts/useDiamond';
+import type { Address } from 'viem';
+import { useDiamondPublicClient, useReadChain } from '../contracts/useDiamond';
 import { DEFAULT_CHAIN } from '../contracts/config';
 import { DIAMOND_ABI } from '../contracts/abis';
-import { batchCalls, type BatchCall } from '../lib/multicall';
+import { batchCalls, encodeBatchCalls } from '../lib/multicall';
 import { useLogIndex } from './useLogIndex';
 import { beginStep } from '../lib/journeyLog';
 
@@ -85,18 +85,16 @@ function toRecentOffer(r: RawOffer): RecentOffer {
  * ~50 loans AND offers in advanced mode.
  */
 export function useRecentOffers(limit = 50) {
-  const diamond = useDiamondRead();
+  const publicClient = useDiamondPublicClient();
   const chain = useReadChain();
   const chainId = chain.chainId ?? DEFAULT_CHAIN.chainId;
-  const diamondAddress = chain.diamondAddress ?? DEFAULT_CHAIN.diamondAddress;
+  const diamondAddress = (chain.diamondAddress ?? DEFAULT_CHAIN.diamondAddress) as Address;
   const { offerIds, loading: indexLoading, error: indexError } = useLogIndex();
   const [offers, setOffers] = useState<RecentOffer[]>(
     () => cache.get(cacheKey(chainId, diamondAddress, limit))?.data ?? [],
   );
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<Error | null>(indexError ?? null);
-
-  const iface = useMemo(() => new Interface(DIAMOND_ABI), []);
 
   const recentIds = useMemo(() => {
     return [...offerIds]
@@ -121,13 +119,15 @@ export function useRecentOffers(limit = 50) {
     setError(null);
     const step = beginStep({ area: 'dashboard', flow: 'useRecentOffers', step: 'multicall-offers' });
     try {
-      const calls: BatchCall[] = recentIds.map((id) => ({
-        target: diamondAddress,
-        callData: iface.encodeFunctionData('getOffer', [id]),
-      }));
+      const calls = encodeBatchCalls(
+        diamondAddress,
+        DIAMOND_ABI,
+        'getOffer',
+        recentIds.map((id) => [id] as const),
+      );
       const decoded = await batchCalls<RawOffer>(
-        (diamond as unknown as { runner: { provider: never } }).runner.provider as never,
-        iface,
+        publicClient,
+        DIAMOND_ABI,
         'getOffer',
         calls,
       );
@@ -145,7 +145,7 @@ export function useRecentOffers(limit = 50) {
     } finally {
       setLoading(false);
     }
-  }, [diamond, iface, recentIds, limit, chainId, diamondAddress]);
+  }, [publicClient, recentIds, limit, chainId, diamondAddress]);
 
   useEffect(() => {
     if (indexLoading) return;

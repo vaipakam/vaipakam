@@ -1,7 +1,7 @@
-import { useEffect, useMemo, useState, useCallback, useRef } from 'react';
-import { Interface } from 'ethers';
+import { useEffect, useState, useCallback, useRef } from 'react';
+import type { Address } from 'viem';
 import { useWallet } from '../context/WalletContext';
-import { useDiamondContract, useDiamondRead, useReadChain } from '../contracts/useDiamond';
+import { useDiamondContract, useDiamondRead, useDiamondPublicClient, useReadChain } from '../contracts/useDiamond';
 import { DIAMOND_ABI } from '../contracts/abis';
 import { Link } from 'react-router-dom';
 import { BookOpen, PlusCircle, AlertTriangle, ShieldCheck } from 'lucide-react';
@@ -21,7 +21,7 @@ import { AssetPicker } from '../components/app/AssetPicker';
 import { TokenAmount } from '../components/app/TokenAmount';
 import { ThemedSelect } from '../components/app/ThemedSelect';
 import { bpsToPercent } from '../lib/format';
-import { batchCalls } from '../lib/multicall';
+import { batchCalls, encodeBatchCalls } from '../lib/multicall';
 import { shortenAddr } from '../lib/format';
 import {
   absDelta,
@@ -201,7 +201,7 @@ export default function OfferBook() {
   // loaded under the current filter.
   const [lastAcceptedRate, setLastAcceptedRate] = useState<{ rate: bigint; lendingAsset: string; collateralAsset: string; durationDays: bigint; principalLiquidity: number } | null>(null);
 
-  const iface = useMemo(() => new Interface(DIAMOND_ABI), []);
+  const publicClient = useDiamondPublicClient();
   const loadedIdsRef = useRef<Set<string>>(new Set());
 
   // Reset cumulative state whenever the open set changes so we don't carry
@@ -214,15 +214,16 @@ export default function OfferBook() {
 
   const fetchBatch = useCallback(async (ids: bigint[]): Promise<OfferData[]> => {
     if (ids.length === 0) return [];
-    const provider = diamondRead.runner?.provider;
-    if (!provider) return [];
+    const target = (activeReadChain.diamondAddress ?? DEFAULT_CHAIN.diamondAddress) as Address;
     let decoded: (RawOffer | null)[] = [];
     try {
-      const calls = ids.map((id) => ({
-        target: activeReadChain.diamondAddress ?? DEFAULT_CHAIN.diamondAddress,
-        callData: iface.encodeFunctionData('getOffer', [id]),
-      }));
-      decoded = await batchCalls<RawOffer>(provider, iface, 'getOffer', calls);
+      const calls = encodeBatchCalls(
+        target,
+        DIAMOND_ABI,
+        'getOffer',
+        ids.map((id) => [id] as const),
+      );
+      decoded = await batchCalls<RawOffer>(publicClient, DIAMOND_ABI, 'getOffer', calls);
       if (decoded.every((d) => d === null)) throw new Error('multicall empty');
     } catch {
       decoded = [];
@@ -247,7 +248,7 @@ export default function OfferBook() {
       out.push(toOfferData(raw));
     }
     return out;
-  }, [diamondRead, iface, activeReadChain.diamondAddress, statusView]);
+  }, [diamondRead, publicClient, activeReadChain.diamondAddress, statusView]);
 
   const loadWindow = useCallback(async (from: number, size: number) => {
     const slice = sortedIds.slice(from, from + size).filter((id) => !loadedIdsRef.current.has(id.toString()));

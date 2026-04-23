@@ -1,6 +1,6 @@
-import { Contract } from 'ethers';
 import { useEffect, useState } from 'react';
-import { useDiamondRead } from '../contracts/useDiamond';
+import { getContract, type Address, type PublicClient } from 'viem';
+import { useDiamondPublicClient } from '../contracts/useDiamond';
 
 export interface TokenMeta {
   address: string;
@@ -9,10 +9,24 @@ export interface TokenMeta {
 }
 
 const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
+
+// viem-typed ERC20 ABI — just the two reads this module consumes.
 const ERC20_ABI = [
-  'function symbol() view returns (string)',
-  'function decimals() view returns (uint8)',
-];
+  {
+    inputs: [],
+    name: 'symbol',
+    outputs: [{ internalType: 'string', name: '', type: 'string' }],
+    stateMutability: 'view',
+    type: 'function',
+  },
+  {
+    inputs: [],
+    name: 'decimals',
+    outputs: [{ internalType: 'uint8', name: '', type: 'uint8' }],
+    stateMutability: 'view',
+    type: 'function',
+  },
+] as const;
 
 const STORAGE_KEY = 'vaipakam:tokenMeta:v1';
 const memoryCache = new Map<string, TokenMeta>();
@@ -47,9 +61,15 @@ function nativeMeta(): TokenMeta {
   return { address: ZERO_ADDRESS, symbol: 'ETH', decimals: 18 };
 }
 
+/**
+ * Resolve the ERC-20 `symbol()` + `decimals()` for `address`, caching the
+ * pair in memory + localStorage. Uses the caller-supplied viem PublicClient
+ * (typically from `useDiamondPublicClient()`) so every read targets the
+ * same upstream RPC the rest of the app already hit through wagmi.
+ */
 export async function fetchTokenMeta(
   address: string,
-  diamond: { runner?: { provider?: unknown } | null } | null,
+  publicClient: PublicClient | null,
 ): Promise<TokenMeta> {
   seedMemoryFromStorage();
   const key = address.toLowerCase();
@@ -59,16 +79,22 @@ export async function fetchTokenMeta(
   const existing = inflight.get(key);
   if (existing) return existing;
 
-  const provider = diamond?.runner?.provider;
   const fallback: TokenMeta = { address: key, symbol: '', decimals: 18 };
-  if (!provider) return fallback;
+  if (!publicClient) return fallback;
 
   const task = (async () => {
     try {
-      const token = new Contract(address, ERC20_ABI, provider as never);
+      const token = getContract({
+        address: address as Address,
+        abi: ERC20_ABI,
+        client: publicClient,
+      });
       const [symbol, decimals] = await Promise.all([
-        token.symbol().catch(() => ''),
-        token.decimals().then((d: bigint | number) => Number(d)).catch(() => 18),
+        token.read.symbol().catch(() => ''),
+        token.read
+          .decimals()
+          .then((d) => Number(d))
+          .catch(() => 18),
       ]);
       const meta: TokenMeta = { address: key, symbol, decimals };
       memoryCache.set(key, meta);
@@ -89,7 +115,7 @@ export async function fetchTokenMeta(
  * localStorage so switching pages doesn't re-query the RPC.
  */
 export function useTokenMeta(address: string | null | undefined): TokenMeta | null {
-  const diamond = useDiamondRead();
+  const publicClient = useDiamondPublicClient();
   const [meta, setMeta] = useState<TokenMeta | null>(() => {
     if (!address) return null;
     seedMemoryFromStorage();
@@ -101,13 +127,13 @@ export function useTokenMeta(address: string | null | undefined): TokenMeta | nu
   useEffect(() => {
     if (!address) return;
     let cancelled = false;
-    fetchTokenMeta(address, diamond).then((m) => {
+    fetchTokenMeta(address, publicClient).then((m) => {
       if (!cancelled) setMeta(m);
     });
     return () => {
       cancelled = true;
     };
-  }, [address, diamond]);
+  }, [address, publicClient]);
 
   return meta;
 }

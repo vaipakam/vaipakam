@@ -1,5 +1,7 @@
 import { useMemo } from 'react';
 import { Contract, JsonRpcProvider } from 'ethers';
+import { usePublicClient } from 'wagmi';
+import { createPublicClient, http, type PublicClient } from 'viem';
 import { useWallet } from '../context/WalletContext';
 import { useChainOverride } from '../context/ChainContext';
 import { CHAIN_REGISTRY, DEFAULT_CHAIN, type ChainConfig } from './config';
@@ -72,6 +74,28 @@ export function useDiamondRead() {
     const address = chain.diamondAddress ?? DEFAULT_CHAIN.diamondAddress!;
     return new Contract(address, DIAMOND_ABI, provider);
   }, [chain.rpcUrl, chain.diamondAddress]);
+}
+
+/** viem `PublicClient` bound to the current read chain. Hooks that need to
+ *  drive raw multicalls, `getLogs` scans, or other viem-native actions
+ *  against the same chain as `useDiamondRead()` should use this instead of
+ *  reaching into the ethers contract's internals.
+ *
+ *  This helper was added during the Phase B-full migration (B1) so new
+ *  hooks can target viem without waiting for the whole ethers-hook
+ *  cleanup to finish. Legacy ethers hooks keep working via
+ *  `useDiamondRead()` until they're individually migrated. */
+export function useDiamondPublicClient(): PublicClient {
+  const { activeChain, isCorrectChain } = useWallet();
+  const { viewChainId } = useChainOverride();
+  const chain = resolveReadChain(viewChainId, activeChain, isCorrectChain);
+  const wagmiClient = usePublicClient({ chainId: chain.chainId });
+  return useMemo(
+    () =>
+      wagmiClient ??
+      createPublicClient({ transport: http(chain.rpcUrl) }),
+    [wagmiClient, chain.rpcUrl],
+  );
 }
 
 /** The ChainConfig reads will be dispatched against. Useful for hooks that

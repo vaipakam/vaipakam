@@ -137,9 +137,8 @@ contract PrecloseFacet is
                 bool yieldApplied;
                 (yieldApplied, yieldVpfiDeducted) = LibVPFIDiscount
                     .tryApplyYieldFee(
-                        loan.principalAsset,
-                        plan.interest,
-                        loan.lender
+                        loan,
+                        plan.interest
                     );
                 if (yieldApplied) {
                     plan.lenderShare = plan.interest;

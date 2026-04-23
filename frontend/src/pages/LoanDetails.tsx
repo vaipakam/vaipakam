@@ -32,6 +32,7 @@ import { TokenAmount } from "../components/app/TokenAmount";
 import { ErrorAlert } from "../components/app/ErrorAlert";
 import { bpsToPercent } from "../lib/format";
 import { HealthFactorGauge, LTVBar } from "../components/app/RiskGauge";
+import { LenderDiscountCard } from "../components/app/LenderDiscountCard";
 import "./LoanDetails.css";
 
 export default function LoanDetails() {
@@ -371,6 +372,15 @@ export default function LoanDetails() {
           </div>
         )}
       </div>
+
+      {isLender && Number(loan.assetType) === AssetType.ERC20 && (
+        <div style={{ marginBottom: 16 }}>
+          <LenderDiscountCard
+            loanId={loanId ?? null}
+            lender={loan.lender}
+          />
+        </div>
+      )}
 
       {isBorrower && Number(loan.assetType) === AssetType.ERC20 && (
         <div

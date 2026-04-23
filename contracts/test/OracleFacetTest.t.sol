@@ -144,23 +144,32 @@ contract OracleFacetTest is Test {
         );
     }
 
-    /// @dev CREATE2 pool address for asset/WETH at the 0.3% fee tier — must
-    ///      match OracleFacet.UNIV3_POOL_INIT_CODE_HASH / UNIV3_FEE_TIER.
+    /// @dev Deterministic mock pool address for asset/WETH pair. Previously
+    ///      derived via CREATE2+init-code hash to match the v3-style AMM
+    ///      deployment math, but `OracleFacet._lookupPool` now resolves
+    ///      pools via `factory.getPool(tokenA, tokenB, feeTier)` — so this
+    ///      helper just needs a stable, collision-free pseudo-address that
+    ///      both the factory mock and the pool-level mocks can agree on.
     function _computePoolAddress(address tokenA, address tokenB) internal view returns (address) {
         address token0 = tokenA < tokenB ? tokenA : tokenB;
         address token1 = tokenA < tokenB ? tokenB : tokenA;
-        bytes32 initHash = 0x96e8ac4277198ff8b6f785478aa9a39f403cb768dd02cbee326c3e7da348845f;
-        return address(uint160(uint(keccak256(abi.encodePacked(
-            hex"ff",
-            mockFactory,
-            keccak256(abi.encode(token0, token1, uint24(3000))),
-            initHash
-        )))));
+        return address(uint160(uint256(keccak256(
+            abi.encode("mockPool", mockFactory, token0, token1, uint24(3000))
+        ))));
     }
 
-    /// @dev Mock a healthy asset/WETH v3-style AMM pool with `liquidity` raw units.
+    /// @dev Mock a healthy asset/WETH v3-style AMM pool with `liquidity` raw
+    ///      units. Wires `factory.getPool(...)` to return our deterministic
+    ///      stub address and then mocks that address's `slot0` + `liquidity`
+    ///      views so `OracleFacet._checkLiquidity` sees a real-looking pool.
     function _mockLiquidPool(address asset, uint128 liquidity) internal {
         address pool = _computePoolAddress(asset, mockWeth);
+        (address t0, address t1) = asset < mockWeth ? (asset, mockWeth) : (mockWeth, asset);
+        vm.mockCall(
+            mockFactory,
+            abi.encodeWithSignature("getPool(address,address,uint24)", t0, t1, uint24(3000)),
+            abi.encode(pool)
+        );
         vm.mockCall(
             pool,
             abi.encodeWithSignature("slot0()"),
@@ -507,6 +516,12 @@ contract OracleFacetTest is Test {
         _mockFeedFull(mockFeed, int256(1e8), 8);
 
         address pool = _computePoolAddress(mockAsset, mockWeth);
+        (address t0, address t1) = mockAsset < mockWeth ? (mockAsset, mockWeth) : (mockWeth, mockAsset);
+        vm.mockCall(
+            mockFactory,
+            abi.encodeWithSignature("getPool(address,address,uint24)", t0, t1, uint24(3000)),
+            abi.encode(pool)
+        );
         vm.mockCall(
             pool,
             abi.encodeWithSignature("slot0()"),

@@ -1,6 +1,24 @@
 [
   {
     "type": "function",
+    "name": "getFallbackSplit",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "lenderBonusBps",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "treasuryBps",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "getFeesConfig",
     "inputs": [],
     "outputs": [
@@ -187,6 +205,24 @@
   },
   {
     "type": "function",
+    "name": "setFallbackSplit",
+    "inputs": [
+      {
+        "name": "lenderBonusBps",
+        "type": "uint16",
+        "internalType": "uint16"
+      },
+      {
+        "name": "treasuryBps",
+        "type": "uint16",
+        "internalType": "uint16"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "setFeesConfig",
     "inputs": [
       {
@@ -312,6 +348,25 @@
     ],
     "outputs": [],
     "stateMutability": "nonpayable"
+  },
+  {
+    "type": "event",
+    "name": "FallbackSplitSet",
+    "inputs": [
+      {
+        "name": "lenderBonusBps",
+        "type": "uint16",
+        "indexed": false,
+        "internalType": "uint16"
+      },
+      {
+        "name": "treasuryBps",
+        "type": "uint16",
+        "indexed": false,
+        "internalType": "uint16"
+      }
+    ],
+    "anonymous": false
   },
   {
     "type": "event",
@@ -478,6 +533,43 @@
       },
       {
         "name": "maxAllowed",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "FallbackSplitCombinedTooHigh",
+    "inputs": [
+      {
+        "name": "combinedBps",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "maxCombinedBps",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "FallbackSplitTooHigh",
+    "inputs": [
+      {
+        "name": "lenderBonusBps",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "treasuryBps",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "maxPerPartyBps",
         "type": "uint256",
         "internalType": "uint256"
       }

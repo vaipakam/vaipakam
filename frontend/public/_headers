@@ -24,6 +24,11 @@
 # which is the superset. `Cross-Origin-Resource-Policy` is `cross-origin`
 # so the Safe parent frame can read our resources (it's a different
 # origin than us); `same-origin` would break that path.
+#
+# Google Analytics / gtag.js: `script-src` allows the gtag loader from
+# `www.googletagmanager.com` and the runtime from `www.google-analytics.com`.
+# The outbound analytics beacons are already covered by the permissive
+# `connect-src https:` above — no extra rule needed there.
 
 /*
   X-Content-Type-Options: nosniff
@@ -31,7 +36,7 @@
   Permissions-Policy: camera=(), microphone=(), geolocation=(), interest-cohort=()
   Cross-Origin-Opener-Policy: same-origin-allow-popups
   Cross-Origin-Resource-Policy: cross-origin
-  Content-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; font-src 'self' data:; img-src 'self' data: blob: https:; connect-src 'self' https: wss:; frame-src 'self' https://verify.walletconnect.com https://verify.walletconnect.org; worker-src 'self' blob:; manifest-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'self' https://app.safe.global https://*.safe.global; upgrade-insecure-requests
+  Content-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://www.googletagmanager.com https://www.google-analytics.com; style-src 'self' 'unsafe-inline'; font-src 'self' data:; img-src 'self' data: blob: https:; connect-src 'self' https: wss:; frame-src 'self' https://verify.walletconnect.com https://verify.walletconnect.org; worker-src 'self' blob:; manifest-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'self' https://app.safe.global https://*.safe.global; upgrade-insecure-requests
 
 # SPA entry point — Cloudflare returns this for every non-asset path via
 # wrangler.jsonc `not_found_handling: single-page-application`. Force a

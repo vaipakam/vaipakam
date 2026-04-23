@@ -91,10 +91,22 @@ library LibFallback {
         uint256 elapsed = block.timestamp - loan.startTime;
         uint256 accrued = (loan.principal * loan.interestRateBps * elapsed) /
             (LibVaipakam.SECONDS_PER_YEAR * LibVaipakam.BASIS_POINTS);
-        uint256 principalBonus = (loan.principal * 300) /
+        // Prospective fallback split: read from the values snapshotted at
+        // `initiateLoan` so any subsequent governance change via
+        // `ConfigFacet.setFallbackSplit` does NOT retroactively alter the
+        // dual-consent contract. A zero snapshot (pre-upgrade loan) falls
+        // through to the compile-time defaults so legacy loans settle at
+        // the original 3% / 2% terms they were created under.
+        uint256 lenderBonusBps = loan.fallbackLenderBonusBpsAtInit == 0
+            ? LibVaipakam.FALLBACK_LENDER_BONUS_BPS
+            : uint256(loan.fallbackLenderBonusBpsAtInit);
+        uint256 treasuryBps = loan.fallbackTreasuryBpsAtInit == 0
+            ? LibVaipakam.FALLBACK_TREASURY_BPS
+            : uint256(loan.fallbackTreasuryBpsAtInit);
+        uint256 principalBonus = (loan.principal * lenderBonusBps) /
             LibVaipakam.BASIS_POINTS;
         lenderPrincipalDue = loan.principal + accrued + principalBonus;
-        treasuryPrincipalDue = (loan.principal * 200) / LibVaipakam.BASIS_POINTS;
+        treasuryPrincipalDue = (loan.principal * treasuryBps) / LibVaipakam.BASIS_POINTS;
 
         uint256 lenderCol = collateralEquivalent(
             diamond,

@@ -7,6 +7,7 @@ import {LibLifecycle} from "../libraries/LibLifecycle.sol";
 import {LibMetricsHooks} from "../libraries/LibMetricsHooks.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
 import {LibInteractionRewards} from "../libraries/LibInteractionRewards.sol";
+import {LibVPFIDiscount} from "../libraries/LibVPFIDiscount.sol";
 import {DiamondPausable} from "../libraries/LibPausable.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {RiskFacet} from "./RiskFacet.sol";
@@ -392,6 +393,23 @@ contract LoanFacet is DiamondPausable, IVaipakamErrors {
             collateralLiquidity
         );
         _copyPartyFields(loan, offer, acceptor);
+        _snapshotLenderDiscount(loan);
+    }
+
+    /// @dev Anchor the lender's time-weighted VPFI-discount window. Force-
+    ///      rollup their accumulator at the current escrow balance, then
+    ///      freeze the post-rollup counter value onto the Loan — every
+    ///      subsequent yield-fee settlement subtracts this anchor to get
+    ///      the average discount over just this loan's lifetime.
+    ///      Docs §5.2a.
+    function _snapshotLenderDiscount(LibVaipakam.Loan storage loan) private {
+        address lender = loan.lender;
+        uint256 lenderBal = LibVPFIDiscount.escrowVPFIBalance(lender);
+        LibVPFIDiscount.rollupUserDiscount(lender, lenderBal);
+        loan.lenderDiscountAccAtInit = LibVaipakam
+            .storageSlot()
+            .userVpfiDiscountState[lender]
+            .cumulativeDiscountBpsSeconds;
     }
 
     function _copyFinancialFields(
@@ -442,6 +460,12 @@ contract LoanFacet is DiamondPausable, IVaipakamErrors {
         loan.collateralLiquidity = collateralLiquidity;
         loan.useFullTermInterest = offer.useFullTermInterest;
         loan.prepayAsset = offer.prepayAsset;
+        // Snapshot the effective fallback-path split right now so any future
+        // governance change via `ConfigFacet.setFallbackSplit` applies
+        // prospectively — dual-consent at offer creation guarantees both
+        // parties agreed to these specific splits.
+        loan.fallbackLenderBonusBpsAtInit = uint16(LibVaipakam.cfgFallbackLenderBonusBps());
+        loan.fallbackTreasuryBpsAtInit = uint16(LibVaipakam.cfgFallbackTreasuryBps());
     }
 
     function _copyCollateralAssetFields(

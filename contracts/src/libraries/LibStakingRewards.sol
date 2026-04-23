@@ -52,8 +52,15 @@ library LibStakingRewards {
         return s.stakingRewardPerTokenStored + increment;
     }
 
-    /// @dev Advances `rewardPerTokenStored` and `lastUpdateTime` to now.
-    function _checkpointGlobal() private {
+    /// @notice Advances `rewardPerTokenStored` and `lastUpdateTime` to now.
+    ///         Exposed `internal` so the APR setter in {ConfigFacet} can
+    ///         fold the OLD-rate accrual into the global counter BEFORE
+    ///         writing the new rate. Without this call in `setStakingApr`,
+    ///         every APR change retroactively applies to the full
+    ///         `dt` since the last update — a classic reward-per-token
+    ///         pitfall. The fix is era-wise non-retroactive: each APR
+    ///         value applies to exactly the duration it was in effect.
+    function checkpointGlobal() internal {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         s.stakingRewardPerTokenStored = currentRewardPerToken();
         s.stakingLastUpdateTime = block.timestamp;
@@ -68,7 +75,7 @@ library LibStakingRewards {
      */
     function updateUser(address user, uint256 newStakedBalance) internal {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        _checkpointGlobal();
+        checkpointGlobal();
         uint256 oldStaked = s.userStakedVPFI[user];
         uint256 rpt = s.stakingRewardPerTokenStored;
         // Fold any newly-accrued pending for the user at the OLD balance.

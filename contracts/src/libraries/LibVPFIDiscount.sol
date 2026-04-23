@@ -103,6 +103,84 @@ library LibVPFIDiscount {
         return IERC20(s.vpfiToken).balanceOf(escrow);
     }
 
+    // ─── Time-weighted discount rollup (§5.2a) ───────────────────────────────
+
+    /**
+     * @notice Close the current period on `user`'s VPFI discount accumulator,
+     *         refresh the stamped BPS against the post-mutation balance, and
+     *         stamp `lastRollupAt = now`.
+     *
+     * @dev Load-bearing ordering invariant: call this BEFORE mutating the
+     *      user's escrow VPFI balance, passing the **pre-mutation** balance
+     *      as `balAtPeriodEnd`. That's the balance that was actually in
+     *      effect for the closing period — reading post-mutation would
+     *      attribute a freshly-deposited amount backwards onto the prior
+     *      period and defeat the anti-gaming guarantee.
+     *
+     *      First call per user self-seeds (no accrual for a period we
+     *      never measured) so pre-upgrade users and brand-new users both
+     *      start at `cumulativeDiscountBpsSeconds = 0` with the stamped
+     *      BPS matching their current balance. Subsequent calls close out
+     *      `Σ(stamped_bps × elapsed)` into the accumulator and re-stamp.
+     *
+     * @param user             Address whose discount state is being rolled up.
+     * @param balAtPeriodEnd   Pre-mutation escrow VPFI balance. For read-only
+     *                         triggers (snapshot at loan init, at yield-fee
+     *                         settlement) pass the live balance — no mutation
+     *                         happens, so the "pre-mutation" distinction
+     *                         collapses to "now".
+     */
+    function rollupUserDiscount(address user, uint256 balAtPeriodEnd) internal {
+        LibVaipakam.UserVpfiDiscountState storage u =
+            LibVaipakam.storageSlot().userVpfiDiscountState[user];
+
+        if (u.lastRollupAt == 0) {
+            // Self-seed. No accrual yet because we didn't measure a prior
+            // period — everything before this moment is ignored. Loans
+            // opened before this line runs get the seed-at-init path.
+            u.discountBpsAtPreviousRollup =
+                uint16(discountBpsForTier(tierOf(balAtPeriodEnd)));
+            u.lastRollupAt = uint64(block.timestamp);
+            return;
+        }
+
+        uint256 elapsed = block.timestamp - u.lastRollupAt;
+        if (elapsed > 0) {
+            u.cumulativeDiscountBpsSeconds +=
+                uint256(u.discountBpsAtPreviousRollup) * elapsed;
+        }
+        // Re-stamp against the current governance schedule + new balance.
+        // Governance changes to the tier table therefore take effect for
+        // every open loan at each user's next rollup — never retroactively
+        // on the closed period, always prospectively on the open one.
+        u.discountBpsAtPreviousRollup =
+            uint16(discountBpsForTier(tierOf(balAtPeriodEnd)));
+        u.lastRollupAt = uint64(block.timestamp);
+    }
+
+    /**
+     * @notice Time-weighted average discount BPS a lender earned across a
+     *         specific loan's lifetime. Callers MUST have just invoked
+     *         {rollupUserDiscount} on the lender so the accumulator reflects
+     *         "as of now". A zero `loan.startTime` or a zero-duration window
+     *         (loan accepted and repaid in the same block) returns 0 — no
+     *         discount on degenerate loans, which matches settlement-math
+     *         sanity.
+     */
+    function lenderTimeWeightedDiscountBps(
+        LibVaipakam.Loan storage loan
+    ) internal view returns (uint256 avgBps) {
+        if (loan.startTime == 0 || block.timestamp <= loan.startTime) return 0;
+        uint256 windowSeconds = block.timestamp - loan.startTime;
+        uint256 currentAcc =
+            LibVaipakam.storageSlot()
+                .userVpfiDiscountState[loan.lender]
+                .cumulativeDiscountBpsSeconds;
+        if (currentAcc <= loan.lenderDiscountAccAtInit) return 0;
+        avgBps =
+            (currentAcc - loan.lenderDiscountAccAtInit) / windowSeconds;
+    }
+
     // ─── Quotes (view) ───────────────────────────────────────────────────────
 
     /**
@@ -144,39 +222,50 @@ library LibVPFIDiscount {
     }
 
     /**
-     * @notice Quote the VPFI required for the lender tier-discounted Yield
-     *         Fee on a given interest amount.
-     * @dev Mirror of {quote} for the lender-side discount.
-     * @param feeAsset       The lending asset the interest is denominated in.
-     * @param interestAmount The lender's pre-split interest in `feeAsset` wei.
-     * @param lender         The lender whose tier is resolved.
-     * @return canQuote      True iff a non-zero tier quote is available.
-     * @return vpfiRequired  VPFI (18 dec) the lender must hold in escrow.
-     * @return tier          Resolved tier 1..4 (0 on canQuote == false).
+     * @notice Quote the VPFI required for the lender yield-fee discount on
+     *         a given interest amount. Uses the TIME-WEIGHTED average
+     *         discount BPS across the loan's lifetime — NOT the lender's
+     *         tier at the settlement moment. This defeats the "top up
+     *         just before repay" gaming vector: a lender who held VPFI
+     *         for 29 of 30 days at tier 1 and jumped to tier 4 on day 30
+     *         sees a fractional discount, not the full tier-4 rate.
+     *
+     *         Prerequisite: caller MUST have just invoked
+     *         {rollupUserDiscount}(loan.lender, currentBal) so the
+     *         accumulator reflects "as of now". `tryApplyYieldFee` does
+     *         this implicitly; external callers shouldn't use
+     *         `quoteYieldFee` directly.
+     *
+     * @param loan           The loan the yield fee is settling against.
+     * @param interestAmount The lender's pre-split interest in principal-
+     *                       asset wei.
+     * @return canQuote      True iff a non-zero discount is available.
+     * @return vpfiRequired  VPFI (18 dec) the lender must hold in escrow
+     *                       to take the discount.
+     * @return avgBps        The time-weighted average discount BPS that
+     *                       applied across the loan (0 when canQuote=false).
      */
     function quoteYieldFee(
-        address feeAsset,
-        uint256 interestAmount,
-        address lender
+        LibVaipakam.Loan storage loan,
+        uint256 interestAmount
     )
         internal
         view
-        returns (bool canQuote, uint256 vpfiRequired, uint8 tier)
+        returns (bool canQuote, uint256 vpfiRequired, uint256 avgBps)
     {
-        if (interestAmount == 0 || lender == address(0)) return (false, 0, 0);
+        if (interestAmount == 0 || loan.lender == address(0)) return (false, 0, 0);
 
-        uint256 bal = escrowVPFIBalance(lender);
-        tier = tierOf(bal);
-        if (tier == 0) return (false, 0, 0);
+        avgBps = lenderTimeWeightedDiscountBps(loan);
+        if (avgBps == 0) return (false, 0, 0);
 
         uint256 normalFee = (interestAmount * LibVaipakam.cfgTreasuryFeeBps()) /
             LibVaipakam.BASIS_POINTS;
-        uint256 payBps = LibVaipakam.BASIS_POINTS - discountBpsForTier(tier);
+        uint256 payBps = LibVaipakam.BASIS_POINTS - avgBps;
         uint256 tierFee = (normalFee * payBps) / LibVaipakam.BASIS_POINTS;
 
-        (bool ok, uint256 vpfi) = _feeAssetWeiToVPFI(feeAsset, tierFee);
+        (bool ok, uint256 vpfi) = _feeAssetWeiToVPFI(loan.principalAsset, tierFee);
         if (!ok) return (false, 0, 0);
-        return (true, vpfi, tier);
+        return (true, vpfi, avgBps);
     }
 
     // ─── Apply (mutating) ────────────────────────────────────────────────────
@@ -213,6 +302,12 @@ library LibVPFIDiscount {
         uint256 escrowBal = IERC20(vpfi).balanceOf(borrowerEscrow);
         if (escrowBal < vpfiRequired) return (false, 0);
 
+        // Roll up the borrower's discount accumulator BEFORE the escrow
+        // balance drops — the closed period was earned against the
+        // pre-mutation balance. The borrower might be a lender on other
+        // loans, so keeping this accumulator current matters even though
+        // the borrower init fee itself is still one-shot (docs §5.2b).
+        rollupUserDiscount(borrower, escrowBal);
         // Checkpoint the staker BEFORE the balance leaves escrow so the
         // accrual captures the pre-deduction staked amount for the period
         // it was active. Uses the actual escrow balance (not stored mirror)
@@ -236,40 +331,64 @@ library LibVPFIDiscount {
     }
 
     /**
-     * @notice Attempt to pay the lender's tier-discounted Yield Fee in VPFI
-     *         out of the lender's escrow into the treasury.
+     * @notice Attempt to pay the lender's time-weighted Yield-Fee discount
+     *         in VPFI out of the lender's escrow into the treasury.
+     *
      * @dev On success, the lender keeps 100% of `interestAmount` in the
-     *      lending asset (no 1% haircut) and the tier-discounted treasury
-     *      share is satisfied entirely in VPFI from the lender's escrow.
-     *      Silent fallback on any failure. Caller must have verified
-     *      `s.vpfiDiscountConsent[lender]` before invoking.
-     * @param feeAsset       The lending asset the interest is denominated in.
-     * @param interestAmount The pre-split interest in `feeAsset` wei.
-     * @param lender         The lender funding the VPFI side.
+     *      lending asset (no full-rate treasury haircut) and the
+     *      time-weighted-discounted treasury share is satisfied entirely
+     *      in VPFI from the lender's escrow. Silent fallback on any
+     *      failure — quote unavailable, escrow underfunded, oracle gap,
+     *      zero-duration loan.
+     *
+     *      Caller must have verified `s.vpfiDiscountConsent[lender]`
+     *      before invoking; consent is platform-level, not loan-level.
+     *
+     *      Ordering invariant: this function performs the lender's
+     *      discount rollup BEFORE computing the quote and BEFORE
+     *      checkpointing the staking accrual, so the closed period is
+     *      attributed to the pre-mutation escrow balance. Read-only
+     *      callers that need the quote should not invoke this mutating
+     *      entrypoint; they can read the per-loan snapshot + user
+     *      accumulator themselves and call {lenderTimeWeightedDiscountBps}.
+     *
+     * @param loan           Live loan storage slot the yield fee is
+     *                       settling against. Provides the principal
+     *                       asset, lender address, and the per-loan
+     *                       snapshot that anchors the time-weighted
+     *                       window.
+     * @param interestAmount Pre-split interest in `loan.principalAsset`
+     *                       wei that the yield fee is computed against.
      * @return applied       True iff VPFI was successfully deducted.
-     * @return vpfiDeducted  VPFI amount moved from lender escrow to treasury.
+     * @return vpfiDeducted  VPFI moved from lender escrow to treasury.
      */
     function tryApplyYieldFee(
-        address feeAsset,
-        uint256 interestAmount,
-        address lender
+        LibVaipakam.Loan storage loan,
+        uint256 interestAmount
     ) internal returns (bool applied, uint256 vpfiDeducted) {
-        (bool canQuote, uint256 vpfiRequired, ) = quoteYieldFee(
-            feeAsset,
-            interestAmount,
-            lender
-        );
-        if (!canQuote) return (false, 0);
-
+        address lender = loan.lender;
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         address vpfi = s.vpfiToken;
         address lenderEscrow = s.userVaipakamEscrows[lender];
-        if (lenderEscrow == address(0)) return (false, 0);
+        if (lenderEscrow == address(0) || vpfi == address(0)) return (false, 0);
 
+        // 1. Roll up the lender's discount accumulator to "now" so the
+        //    window-averaged BPS reflects every period right up to this
+        //    settlement. The pre-mutation balance is the current escrow
+        //    balance (no balance change on a read). That balance also
+        //    flows into the subsequent quote's VPFI-required check.
         uint256 escrowBal = IERC20(vpfi).balanceOf(lenderEscrow);
+        rollupUserDiscount(lender, escrowBal);
+
+        // 2. Quote against the now-current accumulator + the loan's
+        //    init snapshot. This returns the time-weighted avg discount
+        //    for the window, not a live tier lookup.
+        (bool canQuote, uint256 vpfiRequired, ) = quoteYieldFee(loan, interestAmount);
+        if (!canQuote) return (false, 0);
         if (escrowBal < vpfiRequired) return (false, 0);
 
-        // Mirror of tryApply's checkpoint on the lender side.
+        // 3. Checkpoint staking accrual at the post-mutation balance.
+        //    Mirrors the pattern at every other escrow-mutation site.
         LibStakingRewards.updateUser(lender, escrowBal - vpfiRequired);
 
         address treasury = LibFacet.getTreasury();
