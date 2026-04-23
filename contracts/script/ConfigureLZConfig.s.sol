@@ -81,50 +81,45 @@ interface IOAppEndpoint {
  *      Phase 2 if we ever inherit `OAppOptionsType3Upgradeable`.
  *
  * @dev Env vars (per run):
- *        - PRIVATE_KEY : owner / delegate key for the OApp on this chain.
- *        - OAPP        : OApp proxy address (adapter / mirror / buy /
- *                        receiver / reward OApp).
- *        - SEND_LIB    : SendUln302 address on this chain.
- *        - RECV_LIB    : ReceiveUln302 address on this chain.
- *        - REMOTE_EIDS : comma-separated list of peer eids to configure
- *                        (e.g. "30110,30111,30184" for Arb+OP+Base).
- *        - CHAIN_ID    : current chain id — used to look up the
- *                        confirmation count from the table below.
+ *        - PRIVATE_KEY     : owner / delegate key for the OApp on this
+ *                            chain.
+ *        - OAPP            : OApp proxy address (adapter / mirror / buy /
+ *                            receiver / reward OApp).
+ *        - SEND_LIB        : SendUln302 address on this chain.
+ *        - RECV_LIB        : ReceiveUln302 address on this chain.
+ *        - REMOTE_EIDS     : comma-separated list of peer eids to configure
+ *                            (e.g. "30110,30111,30184" for Arb+OP+Base).
+ *        - DVN_REQUIRED_1  : first required DVN address (LZ Labs).
+ *        - DVN_REQUIRED_2  : second required DVN address (Google Cloud).
+ *        - DVN_REQUIRED_3  : third required DVN address (Polyhedra or
+ *                            Nethermind).
+ *        - DVN_OPTIONAL_1  : first optional DVN address (BWare Labs).
+ *        - DVN_OPTIONAL_2  : second optional DVN address (Stargate / Horizen).
+ *        - CONFIRMATIONS   : (optional) override block-confirmation count
+ *                            for this chain. Falls back to the built-in
+ *                            default table documented in
+ *                            contracts/README.md's Cross-Chain Security
+ *                            section. Useful for one-off hardening under
+ *                            incident conditions.
+ *        - CHAIN_ID        : (optional) override current chain id for the
+ *                            confirmation lookup; defaults to
+ *                            `block.chainid`.
  */
 contract ConfigureLZConfig is Script {
-    // ─── DVN set (3R + 2O, threshold 1) ─────────────────────────────────────
-    //
-    // TODO: replace each `_DVN_TODO_*` placeholder with the final operator
-    // address pinned by the security team. Keep the list SORTED ASCENDING
-    // by address in both required and optional groups — LZ's UlnBase
-    // enforces this at `setConfig` time.
-    //
-    // Required (all 3 must sign):
-    //   1. LayerZero Labs DVN
-    //   2. Google Cloud DVN
-    //   3. Polyhedra OR Nethermind DVN
-    // Optional (threshold 1-of-2):
-    //   1. BWare Labs DVN
-    //   2. Stargate Labs OR Horizen Labs DVN
-
-    address internal constant DVN_LAYERZERO_LABS = address(0x0000000000000000000000000000000000000000); // _DVN_TODO_MAINNET
-    address internal constant DVN_GOOGLE_CLOUD   = address(0x0000000000000000000000000000000000000000); // _DVN_TODO_MAINNET
-    address internal constant DVN_POLYHEDRA      = address(0x0000000000000000000000000000000000000000); // _DVN_TODO_MAINNET
-    address internal constant DVN_BWARE_LABS     = address(0x0000000000000000000000000000000000000000); // _DVN_TODO_MAINNET
-    address internal constant DVN_STARGATE_LABS  = address(0x0000000000000000000000000000000000000000); // _DVN_TODO_MAINNET
-
     // ─── ULN config type constants ──────────────────────────────────────────
     // Mirror of `SendUln302.CONFIG_TYPE_ULN` / `CONFIG_TYPE_EXECUTOR`.
     uint32 internal constant CONFIG_TYPE_ULN = 2;
 
-    // ─── Per-chain confirmation policy ──────────────────────────────────────
-    // Values track the Cross-Chain Security table in contracts/README.md.
-    // Update in lockstep with that doc when policy changes.
+    // ─── Per-chain default confirmation policy ──────────────────────────────
+    // Default values track the Cross-Chain Security table in
+    // contracts/README.md. Governance / the security team can override on a
+    // per-run basis via the `CONFIRMATIONS` env var — useful during
+    // incidents or when LayerZero publishes updated defaults.
     //
     // Note: values map chain -> confirmations to wait on the SOURCE side
     // before signing a packet originating on that chain. Applied to both
     // send (from this chain) and receive (from that peer) configs.
-    function _confirmationsFor(uint256 chainId_) internal pure returns (uint64) {
+    function _defaultConfirmations(uint256 chainId_) internal pure returns (uint64) {
         if (chainId_ == 1) return 15;         // Ethereum Mainnet
         if (chainId_ == 11155111) return 15;  // Sepolia
         if (chainId_ == 8453) return 10;      // Base
@@ -137,7 +132,25 @@ contract ConfigureLZConfig is Script {
         if (chainId_ == 2442) return 20;      // Polygon zkEVM Cardona
         if (chainId_ == 56) return 15;        // BNB Chain
         if (chainId_ == 97) return 15;        // BNB Testnet
-        revert("ConfigureLZConfig: unknown chainId");
+        return 0; // sentinel: caller must supply CONFIRMATIONS env override
+    }
+
+    /// @dev Resolve the confirmations to apply for this run — env override
+    ///      takes precedence, else the default table. Reverts when neither
+    ///      is available (unknown chain + no explicit value) so the script
+    ///      never broadcasts a `confirmations: 0` config.
+    function _confirmationsFor(uint256 chainId_) internal view returns (uint64) {
+        uint256 override_ = vm.envOr("CONFIRMATIONS", uint256(0));
+        if (override_ != 0) {
+            require(override_ <= type(uint64).max, "CONFIRMATIONS > uint64 max");
+            return uint64(override_);
+        }
+        uint64 def = _defaultConfirmations(chainId_);
+        require(
+            def != 0,
+            "ConfigureLZConfig: unknown chain; set CONFIRMATIONS env"
+        );
+        return def;
     }
 
     // ─── Entry point ────────────────────────────────────────────────────────
@@ -209,22 +222,13 @@ contract ConfigureLZConfig is Script {
 
     // ─── Helpers ────────────────────────────────────────────────────────────
 
-    /// @dev Build the UlnConfig for this chain. DVN arrays must be sorted
-    ///      ascending by address; we sort at runtime since the placeholder
-    ///      addresses are not yet known and the security team may pin any
-    ///      operators. Confirmations come from the per-chain table.
-    function _policyForChain(uint256 chainId_) internal pure returns (UlnConfig memory cfg) {
-        address[] memory req = new address[](3);
-        req[0] = DVN_LAYERZERO_LABS;
-        req[1] = DVN_GOOGLE_CLOUD;
-        req[2] = DVN_POLYHEDRA;
-        _sortAscending(req);
-
-        address[] memory opt = new address[](2);
-        opt[0] = DVN_BWARE_LABS;
-        opt[1] = DVN_STARGATE_LABS;
-        _sortAscending(opt);
-
+    /// @dev Build the UlnConfig for this chain using DVN operator addresses
+    ///      pulled from env. DVN arrays must be sorted ascending by address
+    ///      (LZ's UlnBase enforces that at `setConfig` time); we sort at
+    ///      runtime since the env-supplied operator ordering isn't
+    ///      guaranteed.
+    function _policyForChain(uint256 chainId_) internal view returns (UlnConfig memory cfg) {
+        (address[] memory req, address[] memory opt) = _loadDvnSet();
         cfg = UlnConfig({
             confirmations: _confirmationsFor(chainId_),
             requiredDVNCount: 3,
@@ -235,16 +239,47 @@ contract ConfigureLZConfig is Script {
         });
     }
 
-    /// @dev Abort the run if any DVN placeholder is still zero — a
-    ///      defensive gate preventing a "blank DVN" config from ever
-    ///      reaching broadcast. Remove once the operator addresses are
-    ///      pinned or replace with the production values.
-    function _assertDvnsConfigured() internal pure {
-        require(DVN_LAYERZERO_LABS != address(0), "DVN_LAYERZERO_LABS not set");
-        require(DVN_GOOGLE_CLOUD != address(0), "DVN_GOOGLE_CLOUD not set");
-        require(DVN_POLYHEDRA != address(0), "DVN_POLYHEDRA not set");
-        require(DVN_BWARE_LABS != address(0), "DVN_BWARE_LABS not set");
-        require(DVN_STARGATE_LABS != address(0), "DVN_STARGATE_LABS not set");
+    /// @dev Read the 3-required / 2-optional DVN operator set from env,
+    ///      sort ascending, and return. Reverts if any entry is zero or if
+    ///      any two addresses collide — diversification of operators is
+    ///      the whole point of the 3R+2O shape, so duplicates defeat the
+    ///      security goal and must never reach broadcast.
+    function _loadDvnSet() internal view returns (address[] memory req, address[] memory opt) {
+        req = new address[](3);
+        req[0] = vm.envAddress("DVN_REQUIRED_1");
+        req[1] = vm.envAddress("DVN_REQUIRED_2");
+        req[2] = vm.envAddress("DVN_REQUIRED_3");
+
+        opt = new address[](2);
+        opt[0] = vm.envAddress("DVN_OPTIONAL_1");
+        opt[1] = vm.envAddress("DVN_OPTIONAL_2");
+
+        _sortAscending(req);
+        _sortAscending(opt);
+    }
+
+    /// @dev Refuse to broadcast unless every DVN slot is populated with a
+    ///      unique non-zero address. Cheap pre-flight check that saves a
+    ///      failed on-chain tx (and the associated alarm) when an env var
+    ///      is missing.
+    function _assertDvnsConfigured() internal view {
+        (address[] memory req, address[] memory opt) = _loadDvnSet();
+
+        require(req[0] != address(0), "DVN_REQUIRED_1 not set");
+        require(req[1] != address(0), "DVN_REQUIRED_2 not set");
+        require(req[2] != address(0), "DVN_REQUIRED_3 not set");
+        require(opt[0] != address(0), "DVN_OPTIONAL_1 not set");
+        require(opt[1] != address(0), "DVN_OPTIONAL_2 not set");
+
+        // Sorted, so duplicates become adjacent.
+        require(req[0] != req[1] && req[1] != req[2], "duplicate required DVN");
+        require(opt[0] != opt[1], "duplicate optional DVN");
+        // Cross-group dupes are also a diversification failure.
+        for (uint256 i; i < req.length; ++i) {
+            for (uint256 j; j < opt.length; ++j) {
+                require(req[i] != opt[j], "required/optional DVN overlap");
+            }
+        }
     }
 
     /// @dev In-place insertion sort. N=2 or 3 in this script — avoids

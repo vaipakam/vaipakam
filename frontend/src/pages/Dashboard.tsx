@@ -6,6 +6,7 @@ import { useUserLoans } from '../hooks/useUserLoans';
 import { useLoanRisks, type LoanRisk } from '../hooks/useLoanRisks';
 import { useVPFIToken } from '../hooks/useVPFIToken';
 import { useUserVPFI } from '../hooks/useUserVPFI';
+import { useEscrowVPFIBalance, formatVpfiUnits } from '../hooks/useVPFIDiscount';
 import { LoanStatus, LOAN_STATUS_LABELS } from '../types/loan';
 import {
   LayoutDashboard,
@@ -35,6 +36,7 @@ export default function Dashboard() {
   const { loans, loading } = useUserLoans(address);
   const { snapshot: vpfi } = useVPFIToken();
   const { snapshot: userVpfi } = useUserVPFI(address);
+  const { balance: escrowVpfiWei } = useEscrowVPFIBalance(address);
   const [escrow, setEscrow] = useState<string | null>(null);
   const [loansPage, setLoansPage] = useState(0);
 
@@ -166,6 +168,7 @@ export default function Dashboard() {
       <VPFIPanel
         vpfi={vpfi}
         userVpfi={userVpfi}
+        escrowVpfiWei={escrowVpfiWei}
         networkName={activeChain?.name ?? DEFAULT_CHAIN.name}
         networkChainId={chainId ?? DEFAULT_CHAIN.chainId}
         blockExplorer={activeChain?.blockExplorer ?? DEFAULT_CHAIN.blockExplorer}
@@ -297,6 +300,10 @@ function formatVpfi(n: number): string {
 interface VPFIPanelProps {
   vpfi: ReturnType<typeof useVPFIToken>['snapshot'];
   userVpfi: ReturnType<typeof useUserVPFI>['snapshot'];
+  /** 18-dec VPFI currently locked in the user's protocol escrow on the
+   *  active chain. `null` when the escrow hasn't been deployed yet or
+   *  the balance fetch is still in flight — rendered as "—". */
+  escrowVpfiWei: bigint | null;
   networkName: string;
   networkChainId: number;
   blockExplorer: string;
@@ -311,12 +318,29 @@ const DIRECTION_LABEL: Record<'in' | 'out' | 'mint' | 'burn' | 'self', string> =
   self: 'Self-transfer',
 };
 
-export function VPFIPanel({ vpfi, userVpfi, networkName, networkChainId, blockExplorer, isCanonicalVPFI }: VPFIPanelProps) {
+export function VPFIPanel({
+  vpfi,
+  userVpfi,
+  escrowVpfiWei,
+  networkName,
+  networkChainId,
+  blockExplorer,
+  isCanonicalVPFI,
+}: VPFIPanelProps) {
   const registered = !!vpfi?.registered;
   const tokenAddr = vpfi?.token ?? null;
   const minterAddr = vpfi?.minter ?? null;
   const balance = userVpfi?.balance ?? 0;
-  const shareOfCirculating = userVpfi?.shareOfCirculating ?? 0;
+  const escrowVpfiUnits = escrowVpfiWei == null ? 0 : formatVpfiUnits(escrowVpfiWei);
+  // Effective ownership share = (wallet + escrow) / circulating. Escrow
+  // VPFI is still user-controlled — it's locked by choice, not
+  // transferred away — and counts toward their stake in the protocol.
+  // `userVpfi.shareOfCirculating` from the hook only reflects wallet
+  // balance; we recompute here so the Dashboard number matches the
+  // intuitive meaning.
+  const totalSupply = vpfi?.totalSupply ?? 0;
+  const effectiveShareOfCirculating =
+    totalSupply > 0 ? (balance + escrowVpfiUnits) / totalSupply : 0;
   const recentMints = userVpfi?.recentMints ?? [];
   const recentTransfers = userVpfi?.recentTransfers ?? [];
   const treasury = userVpfi?.treasury ?? null;
@@ -383,7 +407,19 @@ export function VPFIPanel({ vpfi, userVpfi, networkName, networkChainId, blockEx
           >
             <div>
               <div className="stat-value">{formatVpfi(balance)}</div>
-              <div className="stat-label">Your VPFI balance</div>
+              <div className="stat-label">Wallet VPFI balance</div>
+            </div>
+            <div>
+              <div
+                className="stat-value"
+                data-tooltip="VPFI currently staked in your per-user escrow on this chain. Counts toward the borrower fee discount tier."
+                data-tooltip-placement="below-start"
+              >
+                {escrowVpfiWei == null
+                  ? '—'
+                  : formatVpfi(formatVpfiUnits(escrowVpfiWei))}
+              </div>
+              <div className="stat-label">Escrow VPFI balance</div>
             </div>
             <div>
               <div className="stat-value">{(shareOfCirculating * 100).toFixed(2)}%</div>

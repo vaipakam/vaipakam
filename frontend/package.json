@@ -14,11 +14,15 @@
     "deploy": "npm run build && wrangler deploy"
   },
   "dependencies": {
+    "@walletconnect/ethereum-provider": "^2.23.9",
     "ethers": "^6.16.0",
     "lucide-react": "^1.8.0",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
     "react-router-dom": "^7.14.0"
+  },
+  "overrides": {
+    "axios": "^1.15.0"
   },
   "devDependencies": {
     "@cloudflare/vite-plugin": "^1.33.1",

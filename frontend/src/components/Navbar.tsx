@@ -7,13 +7,13 @@ import {
   Moon,
   Menu,
   X,
-  Wallet,
   AlertTriangle,
   LogOut,
   ArrowRight,
 } from 'lucide-react';
 import './Navbar.css';
 import { ReportIssueLink } from './app/ReportIssueLink';
+import { ConnectWalletButton } from './app/ConnectWalletButton';
 
 type NavLink = { label: string; href: string };
 
@@ -35,8 +35,7 @@ function shortenAddress(addr: string) {
 
 export default function Navbar() {
   const { theme, toggleTheme } = useTheme();
-  const { address, isConnecting, isCorrectChain, connect, disconnect, switchToDefaultChain, error } =
-    useWallet();
+  const { address, isCorrectChain, disconnect, switchToDefaultChain, error } = useWallet();
   const [mobileOpen, setMobileOpen] = useState(false);
 
   return (
@@ -87,15 +86,7 @@ export default function Navbar() {
           {/* Mobile wallet button */}
           <div className="navbar-wallet-mobile">
             {!address ? (
-              <button
-                className="btn btn-primary"
-                onClick={connect}
-                disabled={isConnecting}
-                style={{ width: '100%' }}
-              >
-                <Wallet size={16} />
-                {isConnecting ? 'Connecting...' : 'Connect Wallet'}
-              </button>
+              <ConnectWalletButton fullWidth />
             ) : !isCorrectChain ? (
               <button
                 className="btn btn-warning"
@@ -138,14 +129,7 @@ export default function Navbar() {
 
           {/* Desktop wallet button */}
           {!address ? (
-            <button
-              className="btn btn-primary navbar-cta"
-              onClick={connect}
-              disabled={isConnecting}
-            >
-              <Wallet size={16} />
-              {isConnecting ? 'Connecting...' : 'Connect Wallet'}
-            </button>
+            <ConnectWalletButton className="navbar-cta" />
           ) : !isCorrectChain ? (
             <button
               className="btn btn-warning navbar-cta"

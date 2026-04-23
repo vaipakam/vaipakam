@@ -58,8 +58,23 @@ contract LZConfigTest is Test, ConfigureLZConfig {
     }
 
     // ─── Shape tests (always on) ────────────────────────────────────────────
+    //
+    // These exercise the policy BUILDER. The DVN addresses come from env
+    // vars at `_policyForChain` time now (env-driven since the ConfigureLZ
+    // refactor), so every test that calls it needs placeholder DVN values
+    // loaded via `setUp`. We set five sequential sentinel addresses
+    // (0x01..0x05) that satisfy non-zero + strict-ascending + distinct —
+    // letting the shape tests run in CI without real DVN operator pins.
 
-    function test_policyShape_requiredOptionalCardinality() public pure {
+    function setUp() public {
+        vm.setEnv("DVN_REQUIRED_1", "0x0000000000000000000000000000000000000001");
+        vm.setEnv("DVN_REQUIRED_2", "0x0000000000000000000000000000000000000002");
+        vm.setEnv("DVN_REQUIRED_3", "0x0000000000000000000000000000000000000003");
+        vm.setEnv("DVN_OPTIONAL_1", "0x0000000000000000000000000000000000000004");
+        vm.setEnv("DVN_OPTIONAL_2", "0x0000000000000000000000000000000000000005");
+    }
+
+    function test_policyShape_requiredOptionalCardinality() public view {
         ChainExpectation[] memory table = _chainTable();
         for (uint256 i = 0; i < table.length; ++i) {
             UlnConfig memory cfg = _policyForChain(table[i].chainId);
@@ -71,7 +86,7 @@ contract LZConfigTest is Test, ConfigureLZConfig {
         }
     }
 
-    function test_policyShape_confirmationsMatchTable() public pure {
+    function test_policyShape_confirmationsMatchTable() public view {
         ChainExpectation[] memory table = _chainTable();
         for (uint256 i = 0; i < table.length; ++i) {
             UlnConfig memory cfg = _policyForChain(table[i].chainId);
@@ -83,12 +98,7 @@ contract LZConfigTest is Test, ConfigureLZConfig {
         }
     }
 
-    function test_policyShape_dvnArraysMonotonic() public pure {
-        // Monotonic (<=) ordering is the builder's output even when DVN
-        // placeholders are still all-zero. Strict distinctness is an
-        // additional property asserted in
-        // `test_dvnsPopulatedForMainnetDeploy` when the pre-mainnet env
-        // gate is flipped on.
+    function test_policyShape_dvnArraysMonotonic() public view {
         ChainExpectation[] memory table = _chainTable();
         for (uint256 i = 0; i < table.length; ++i) {
             UlnConfig memory cfg = _policyForChain(table[i].chainId);
@@ -98,14 +108,13 @@ contract LZConfigTest is Test, ConfigureLZConfig {
     }
 
     function test_policyShape_rejectsUnknownChain() public {
-        vm.expectRevert(bytes("ConfigureLZConfig: unknown chainId"));
+        // No CONFIRMATIONS override + no default-table entry → revert.
+        vm.expectRevert(bytes("ConfigureLZConfig: unknown chain; set CONFIRMATIONS env"));
         this.externalPolicyForChain(999999);
     }
 
-    /// @dev Public wrapper so `vm.expectRevert` can target the pure getter.
-    ///      Solidity 0.8 otherwise rejects `this._policyForChain(x)` because
-    ///      the internal qualifier makes the method unreachable via `this`.
-    function externalPolicyForChain(uint256 chainId_) external pure returns (UlnConfig memory) {
+    /// @dev Public wrapper so `vm.expectRevert` can target the getter.
+    function externalPolicyForChain(uint256 chainId_) external view returns (UlnConfig memory) {
         return _policyForChain(chainId_);
     }
 
@@ -115,43 +124,37 @@ contract LZConfigTest is Test, ConfigureLZConfig {
         bool gate = vm.envOr("LZ_CONFIG_VERIFY_DVNS", uint256(0)) != 0;
         if (!gate) {
             // Default CI path: skip silently. Pre-mainnet runbook flips the
-            // env flag and the assertion below blocks deploy if the DVN
-            // placeholders haven't been replaced with pinned operator
-            // addresses.
+            // env flag and the block below asserts the operator set is
+            // populated with real, non-sentinel, non-duplicate addresses.
             return;
         }
-        assertTrue(DVN_LAYERZERO_LABS != address(0), "DVN_LAYERZERO_LABS still placeholder");
-        assertTrue(DVN_GOOGLE_CLOUD != address(0), "DVN_GOOGLE_CLOUD still placeholder");
-        assertTrue(DVN_POLYHEDRA != address(0), "DVN_POLYHEDRA still placeholder");
-        assertTrue(DVN_BWARE_LABS != address(0), "DVN_BWARE_LABS still placeholder");
-        assertTrue(DVN_STARGATE_LABS != address(0), "DVN_STARGATE_LABS still placeholder");
 
-        // No duplicates across the 5 operators — diversification is the
-        // whole point of the 3R+2O config.
+        // Round-trip through `_loadDvnSet()` (which is `_assertDvnsConfigured`'s
+        // source of truth) — delegates non-zero + distinctness to the script
+        // itself and adds a sentinel-avoidance check on top so the CI gate
+        // can't pass with the shape-test placeholders.
+        (address[] memory req, address[] memory opt) = _loadDvnSet();
+        _assertStrictlyAscending(req, "required DVNs strictly ascending");
+        _assertStrictlyAscending(opt, "optional DVNs strictly ascending");
+
         address[] memory all = new address[](5);
-        all[0] = DVN_LAYERZERO_LABS;
-        all[1] = DVN_GOOGLE_CLOUD;
-        all[2] = DVN_POLYHEDRA;
-        all[3] = DVN_BWARE_LABS;
-        all[4] = DVN_STARGATE_LABS;
+        all[0] = req[0];
+        all[1] = req[1];
+        all[2] = req[2];
+        all[3] = opt[0];
+        all[4] = opt[1];
         for (uint256 i = 0; i < all.length; ++i) {
+            assertGt(
+                uint160(all[i]),
+                uint160(address(0x00000000000000000000000000000000000000ff)),
+                "DVN must be a real address, not a test sentinel"
+            );
             for (uint256 j = i + 1; j < all.length; ++j) {
                 assertTrue(
                     all[i] != all[j],
                     "DVN operator addresses must be distinct"
                 );
             }
-        }
-
-        // Strict-ascending sort within each group — UlnBase.setConfig
-        // rejects duplicates and unsorted arrays. Post-sort by the script
-        // builder must produce strictly ascending output for real
-        // addresses.
-        ChainExpectation[] memory table = _chainTable();
-        for (uint256 i = 0; i < table.length; ++i) {
-            UlnConfig memory cfg = _policyForChain(table[i].chainId);
-            _assertStrictlyAscending(cfg.requiredDVNs, "required DVNs strictly ascending");
-            _assertStrictlyAscending(cfg.optionalDVNs, "optional DVNs strictly ascending");
         }
     }
 

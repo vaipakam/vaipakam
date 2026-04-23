@@ -13,7 +13,6 @@ import {
   Activity,
   Sun,
   Moon,
-  Wallet,
   AlertTriangle,
   LogOut,
   Menu,
@@ -26,6 +25,7 @@ import { EscrowUpgradeBanner } from "../components/app/EscrowUpgradeBanner";
 import { UnsupportedChainBanner } from "../components/app/UnsupportedChainBanner";
 import { ChainSwitcher } from "../components/app/ChainSwitcher";
 import { ReportIssueLink } from "../components/app/ReportIssueLink";
+import { ConnectWalletButton } from "../components/app/ConnectWalletButton";
 import "./AppLayout.css";
 
 const BASIC_NAV = [
@@ -91,9 +91,7 @@ export default function AppLayout() {
   const { mode, setMode } = useMode();
   const {
     address,
-    isConnecting,
     isCorrectChain,
-    connect,
     disconnect,
     switchToDefaultChain,
     error,
@@ -240,14 +238,7 @@ export default function AppLayout() {
             </button>
 
             {!address ? (
-              <button
-                className="btn btn-primary btn-sm"
-                onClick={connect}
-                disabled={isConnecting}
-              >
-                <Wallet size={16} />
-                {isConnecting ? "Connecting..." : "Connect Wallet"}
-              </button>
+              <ConnectWalletButton className="btn-sm" />
             ) : !isCorrectChain ? (
               <button
                 className="btn btn-warning btn-sm"

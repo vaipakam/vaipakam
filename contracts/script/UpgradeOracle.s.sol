@@ -16,18 +16,42 @@ import {MockChainlinkRegistry, MockChainlinkFeed} from "./mocks/MockChainlinkReg
  *         Liquidity is determined strictly by on-chain Chainlink + Uniswap v3
  *         checks (README §1.5) — no manual overrides exist.
  *
- * Env vars: PRIVATE_KEY, DIAMOND_ADDRESS
+ * @dev Env vars (per chain — populate from `.env.local`):
+ *        - PRIVATE_KEY         : deployer / admin key (broadcaster).
+ *        - DIAMOND_ADDRESS     : target Vaipakam Diamond proxy.
+ *        - WETH_ADDRESS        : canonical WETH ERC20 on this chain
+ *                                (e.g. Sepolia: 0xfFf9…4, Base mainnet:
+ *                                0x4200000000000000000000000000000000000006).
+ *        - UNISWAP_V3_FACTORY  : Uniswap V3 factory on this chain.
+ *        - USD_DENOMINATOR     : (optional) Chainlink USD denominator —
+ *                                defaults to the universal Chainlink
+ *                                constant 0x000…0348 (840). Override only
+ *                                if the target registry uses a non-standard
+ *                                USD denominator.
+ *        - ETH_DENOMINATOR     : (optional) Chainlink ETH denominator —
+ *                                defaults to 0x000…000E (14).
+ *        - WETH_USD_PRICE_E8   : (optional) initial mock WETH price
+ *                                (8-decimal Chainlink scale). Default
+ *                                2000e8 ($2000/ETH).
+ *        - USDC_USD_PRICE_E8   : (optional) initial mock USDC price.
+ *                                Default 1e8 ($1.00).
  */
 contract UpgradeOracle is Script {
-    // Sepolia addresses
-    address constant WETH_SEPOLIA = 0xfFf9976782d46CC05630D1f6eBAb18b2324d6B14; // Sepolia canonical WETH
-    address constant UNISWAP_V3_FACTORY = 0x0227628f3F023bb0B980b67D528571c95c6DaC1c;
-    address constant CHAINLINK_USD_DENOMINATOR = 0x0000000000000000000000000000000000000348; // Chainlink Denominations.USD
-    address constant CHAINLINK_ETH_DENOMINATOR = 0x000000000000000000000000000000000000000E; // Chainlink Denominations.ETH
+    // Chainlink denominators are universal across every Chainlink Feed
+    // Registry deployment — safe as fallback defaults. Documented at
+    // github.com/smartcontractkit/chainlink/blob/contracts-v1.3.0/contracts/src/v0.8/Denominations.sol
+    address constant DEFAULT_USD_DENOMINATOR = 0x0000000000000000000000000000000000000348;
+    address constant DEFAULT_ETH_DENOMINATOR = 0x000000000000000000000000000000000000000E;
 
     function run() external {
         uint256 deployerKey = vm.envUint("PRIVATE_KEY");
         address diamond = vm.envAddress("DIAMOND_ADDRESS");
+        address wethAddress = vm.envAddress("WETH_ADDRESS");
+        address uniswapV3Factory = vm.envAddress("UNISWAP_V3_FACTORY");
+        address usdDenominator = _envAddressOr("USD_DENOMINATOR", DEFAULT_USD_DENOMINATOR);
+        address ethDenominator = _envAddressOr("ETH_DENOMINATOR", DEFAULT_ETH_DENOMINATOR);
+        uint256 wethUsdPrice = vm.envOr("WETH_USD_PRICE_E8", uint256(2000e8));
+        uint256 usdcUsdPrice = vm.envOr("USDC_USD_PRICE_E8", uint256(1e8));
 
         vm.startBroadcast(deployerKey);
 
@@ -42,12 +66,12 @@ contract UpgradeOracle is Script {
         MockChainlinkRegistry mockRegistry = new MockChainlinkRegistry();
         console.log("MockChainlinkRegistry:", address(mockRegistry));
 
-        // Mock USDC feed: $1.00 (1e8 with 8 decimals)
-        MockChainlinkFeed usdcFeed = new MockChainlinkFeed(1e8, 8);
+        // Mock USDC feed — price from env (default $1.00, 8-decimal).
+        MockChainlinkFeed usdcFeed = new MockChainlinkFeed(int256(usdcUsdPrice), 8);
         console.log("USDC Feed:", address(usdcFeed));
 
-        // Mock WETH feed: $2000 (2000e8 with 8 decimals)
-        MockChainlinkFeed wethFeed = new MockChainlinkFeed(2000e8, 8);
+        // Mock WETH feed — price from env (default $2000, 8-decimal).
+        MockChainlinkFeed wethFeed = new MockChainlinkFeed(int256(wethUsdPrice), 8);
         console.log("WETH Feed:", address(wethFeed));
 
         // ── 3. Diamond cut: Replace OracleFacet + Add OracleAdminFacet ──
@@ -87,11 +111,11 @@ contract UpgradeOracle is Script {
 
         // ── 4. Configure oracle addresses ───────────────────────────────
         OracleAdminFacet(diamond).setChainlinkRegistry(address(mockRegistry));
-        OracleAdminFacet(diamond).setUsdChainlinkDenominator(CHAINLINK_USD_DENOMINATOR);
-        OracleAdminFacet(diamond).setEthChainlinkDenominator(CHAINLINK_ETH_DENOMINATOR);
-        OracleAdminFacet(diamond).setWethContract(WETH_SEPOLIA);
+        OracleAdminFacet(diamond).setUsdChainlinkDenominator(usdDenominator);
+        OracleAdminFacet(diamond).setEthChainlinkDenominator(ethDenominator);
+        OracleAdminFacet(diamond).setWethContract(wethAddress);
         OracleAdminFacet(diamond).setEthUsdFeed(address(wethFeed));
-        OracleAdminFacet(diamond).setUniswapV3Factory(UNISWAP_V3_FACTORY);
+        OracleAdminFacet(diamond).setUniswapV3Factory(uniswapV3Factory);
         console.log("Oracle config set");
 
         vm.stopBroadcast();
@@ -109,5 +133,16 @@ contract UpgradeOracle is Script {
         console.log("   mockRegistry.setFeed(mockWETH, USD_DENOM, wethFeed)");
         console.log("2. Ensure mock tokens have a Uniswap v3 pool on the testnet or");
         console.log("   they will be classified Illiquid by on-chain checks.");
+    }
+
+    /// @dev Read an env address, falling back to a default when unset or
+    ///      empty. Forge's `vm.envOr` doesn't have an address overload, so
+    ///      we parse through `envOr(uint256)` via address→uint160 round-trip.
+    function _envAddressOr(string memory name, address fallback_) internal view returns (address) {
+        try vm.envAddress(name) returns (address v) {
+            return v;
+        } catch {
+            return fallback_;
+        }
     }
 }
