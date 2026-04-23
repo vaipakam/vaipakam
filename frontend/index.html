@@ -1,7 +1,7 @@
 <!doctype html>
 <html lang="en">
   <head>
-    <!-- Google tag (gtag.js) with Consent Mode v2.
+    <!-- Google tag (gtag.js) with Consent Mode v2 (Advanced).
          Consent defaults are set BEFORE the gtag loader fires — so no
          analytics/ads storage is created until the user explicitly opts
          in via the consent banner. `functionality_storage` and
@@ -9,7 +9,13 @@
          session/anti-abuse cookies, not tracking.
          `wait_for_update: 500` holds the initial pageview for up to half
          a second while the banner hydrates and the user's stored choice
-         is re-applied, so we don't double-fire. -->
+         is re-applied, so we don't double-fire.
+         `ads_data_redaction` redacts any ad-click identifiers (gclid /
+         dclid) in outbound network requests while `ad_storage` is
+         denied — defense-in-depth in case any future ad integration
+         adds a pixel. `url_passthrough` preserves conversion-attribution
+         params via URL rewriting when cookies are denied. Both are
+         Google's recommended defaults for Advanced Consent Mode. -->
     <script>
       window.dataLayer = window.dataLayer || [];
       function gtag(){dataLayer.push(arguments);}
@@ -23,6 +29,8 @@
         security_storage: 'granted',
         wait_for_update: 500,
       });
+      gtag('set', 'ads_data_redaction', true);
+      gtag('set', 'url_passthrough', true);
       gtag('js', new Date());
       gtag('config', 'G-KSL61Z65BF');
     </script>
