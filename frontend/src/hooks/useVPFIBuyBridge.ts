@@ -1,16 +1,28 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Contract,
-  JsonRpcProvider,
-  ZeroAddress,
-  type EventLog,
-  type Log,
-} from 'ethers';
+  createPublicClient,
+  http,
+  parseAbi,
+  parseEventLogs,
+  zeroAddress,
+  type Abi,
+  type Address,
+  type PublicClient,
+  type WalletClient,
+} from 'viem';
+import { useWalletClient } from 'wagmi';
 import { useWallet } from '../context/WalletContext';
 import { VPFIBuyAdapterABI } from '../contracts/abis';
 import { beginStep } from '../lib/journeyLog';
 import { decodeContractError } from '../lib/decodeContractError';
 import type { ChainConfig } from '../contracts/config';
+
+const ADAPTER_ABI = VPFIBuyAdapterABI as unknown as Abi;
+
+const ERC20_APPROVE_ABI = parseAbi([
+  'function allowance(address owner, address spender) view returns (uint256)',
+  'function approve(address spender, uint256 amount) returns (bool)',
+]) as unknown as Abi;
 
 /**
  * Reason codes emitted by VPFIBuyReceiver when it rejects a bridged buy
@@ -78,7 +90,7 @@ const INITIAL_STATE: BridgeBuyState = {
 };
 
 /** Shape of the on-chain `PendingBuy` struct returned by `adapter.pendingBuys`. */
-type PendingBuyTuple = [string, bigint, bigint, number] & {
+type PendingBuyStruct = {
   buyer: string;
   amountIn: bigint;
   initiatedAt: bigint;
@@ -121,20 +133,15 @@ const INITIAL_POLL_DELAY_MS = 15_000;
  * "not yet live" banner.
  */
 export function useVPFIBuyBridge(chain: ChainConfig | null) {
-  const { signer, address } = useWallet();
-  const adapterAddress = chain?.vpfiBuyAdapter ?? null;
+  const { address } = useWallet();
+  const { data: walletClient } = useWalletClient();
+  const adapterAddress = (chain?.vpfiBuyAdapter ?? null) as Address | null;
   const rpcUrl = chain?.rpcUrl ?? null;
 
-  const readAdapter = useMemo(() => {
-    if (!adapterAddress || !rpcUrl) return null;
-    const provider = new JsonRpcProvider(rpcUrl);
-    return new Contract(adapterAddress, VPFIBuyAdapterABI, provider);
-  }, [adapterAddress, rpcUrl]);
-
-  const writeAdapter = useMemo(() => {
-    if (!adapterAddress || !signer) return null;
-    return new Contract(adapterAddress, VPFIBuyAdapterABI, signer);
-  }, [adapterAddress, signer]);
+  const readClient = useMemo<PublicClient | null>(() => {
+    if (!rpcUrl) return null;
+    return createPublicClient({ transport: http(rpcUrl) }) as PublicClient;
+  }, [rpcUrl]);
 
   const [state, setState] = useState<BridgeBuyState>(INITIAL_STATE);
 
@@ -164,21 +171,23 @@ export function useVPFIBuyBridge(chain: ChainConfig | null) {
    */
   const quote = useCallback(
     async (ethWei: bigint, minVpfiOut: bigint): Promise<BridgeQuote | null> => {
-      if (!readAdapter) return null;
+      if (!readClient || !adapterAddress) return null;
       if (ethWei === 0n) return null;
-      const a = readAdapter as unknown as {
-        quoteBuy: (
-          amt: bigint,
-          min: bigint,
-        ) => Promise<{ nativeFee: bigint; lzTokenFee: bigint }>;
-        paymentToken: () => Promise<string>;
-      };
       const [fee, paymentToken] = await Promise.all([
-        a.quoteBuy(ethWei, minVpfiOut),
-        a.paymentToken(),
+        readClient.readContract({
+          address: adapterAddress,
+          abi: ADAPTER_ABI,
+          functionName: 'quoteBuy',
+          args: [ethWei, minVpfiOut],
+        }) as Promise<{ nativeFee: bigint; lzTokenFee: bigint }>,
+        readClient.readContract({
+          address: adapterAddress,
+          abi: ADAPTER_ABI,
+          functionName: 'paymentToken',
+        }) as Promise<Address>,
       ]);
       const mode: 'native' | 'token' =
-        paymentToken === ZeroAddress ? 'native' : 'token';
+        paymentToken === zeroAddress ? 'native' : 'token';
       return {
         ethWei,
         lzFee: fee.nativeFee,
@@ -187,7 +196,7 @@ export function useVPFIBuyBridge(chain: ChainConfig | null) {
         paymentToken: mode === 'token' ? paymentToken : null,
       };
     },
-    [readAdapter],
+    [readClient, adapterAddress],
   );
 
   /**
@@ -198,26 +207,19 @@ export function useVPFIBuyBridge(chain: ChainConfig | null) {
    */
   const schedulePoll = useCallback(
     (requestId: bigint) => {
-      if (!readAdapter || !chain) return;
+      if (!readClient || !chain || !adapterAddress) return;
       if (pollTimer.current) clearTimeout(pollTimer.current);
       activeRequestId.current = requestId;
 
       const tick = async () => {
         if (activeRequestId.current !== requestId) return;
         try {
-          const a = readAdapter as unknown as {
-            pendingBuys: (id: bigint) => Promise<PendingBuyTuple>;
-            filters: {
-              BuyResolvedSuccess: (id?: bigint) => unknown;
-              BuyRefunded: (id?: bigint) => unknown;
-            };
-            queryFilter: (
-              filter: unknown,
-              fromBlock?: number | string,
-              toBlock?: number | string,
-            ) => Promise<Array<Log | EventLog>>;
-          };
-          const p = await a.pendingBuys(requestId);
+          const p = (await readClient.readContract({
+            address: adapterAddress,
+            abi: ADAPTER_ABI,
+            functionName: 'pendingBuys',
+            args: [requestId],
+          })) as PendingBuyStruct;
           if (p.status === STATUS_PENDING || p.status === STATUS_NONE) {
             pollTimer.current = setTimeout(tick, POLL_INTERVAL_MS);
             return;
@@ -225,24 +227,32 @@ export function useVPFIBuyBridge(chain: ChainConfig | null) {
 
           // Terminal state reached — hydrate details from the emitted event.
           if (p.status === STATUS_RESOLVED_SUCCESS) {
-            const logs = await a.queryFilter(
-              a.filters.BuyResolvedSuccess(requestId),
-              chain.deployBlock || 0,
-              'latest',
-            );
-            const ev = logs[logs.length - 1] as EventLog | undefined;
-            const vpfiOut =
-              ev && 'args' in ev && ev.args ? (ev.args[3] as bigint) : 0n;
+            const logs = await readClient.getContractEvents({
+              address: adapterAddress,
+              abi: ADAPTER_ABI,
+              eventName: 'BuyResolvedSuccess',
+              args: { requestId } as unknown as Record<string, unknown>,
+              fromBlock: BigInt(chain.deployBlock || 0),
+              toBlock: 'latest',
+            });
+            const ev = logs[logs.length - 1] as
+              | { args: { vpfiOut?: bigint } }
+              | undefined;
+            const vpfiOut = ev?.args?.vpfiOut ?? 0n;
             setState((s) => ({ ...s, status: 'landed', vpfiOut }));
           } else if (p.status === STATUS_RESOLVED_REFUNDED) {
-            const logs = await a.queryFilter(
-              a.filters.BuyRefunded(requestId),
-              chain.deployBlock || 0,
-              'latest',
-            );
-            const ev = logs[logs.length - 1] as EventLog | undefined;
-            const reasonCode =
-              ev && 'args' in ev && ev.args ? Number(ev.args[3]) : 0;
+            const logs = await readClient.getContractEvents({
+              address: adapterAddress,
+              abi: ADAPTER_ABI,
+              eventName: 'BuyRefunded',
+              args: { requestId } as unknown as Record<string, unknown>,
+              fromBlock: BigInt(chain.deployBlock || 0),
+              toBlock: 'latest',
+            });
+            const ev = logs[logs.length - 1] as
+              | { args: { reason?: number | bigint } }
+              | undefined;
+            const reasonCode = Number(ev?.args?.reason ?? 0);
             setState((s) => ({
               ...s,
               status: 'refunded',
@@ -260,7 +270,7 @@ export function useVPFIBuyBridge(chain: ChainConfig | null) {
 
       pollTimer.current = setTimeout(tick, INITIAL_POLL_DELAY_MS);
     },
-    [readAdapter, chain],
+    [readClient, chain, adapterAddress],
   );
 
   /**
@@ -269,10 +279,17 @@ export function useVPFIBuyBridge(chain: ChainConfig | null) {
    */
   const buy = useCallback(
     async (ethWei: bigint, minVpfiOut: bigint) => {
-      if (!writeAdapter || !signer || !address || !chain) {
+      if (
+        !walletClient ||
+        !readClient ||
+        !address ||
+        !chain ||
+        !adapterAddress
+      ) {
         setState((s) => ({ ...s, status: 'error', error: 'Wallet not ready.' }));
         return;
       }
+      const wc = walletClient as WalletClient;
       const step = beginStep({
         area: 'vpfi-buy',
         flow: 'bridgedBuy',
@@ -286,69 +303,51 @@ export function useVPFIBuyBridge(chain: ChainConfig | null) {
         // WETH mode → approve the adapter to pull `amountIn` before sending.
         if (q.mode === 'token' && q.paymentToken) {
           setState((s) => ({ ...s, status: 'approving' }));
-          const erc20 = new Contract(
-            q.paymentToken,
-            [
-              'function allowance(address,address) view returns (uint256)',
-              'function approve(address,uint256) returns (bool)',
-            ],
-            signer,
-          ) as unknown as {
-            allowance: (o: string, s: string) => Promise<bigint>;
-            approve: (
-              s: string,
-              n: bigint,
-            ) => Promise<{ wait: () => Promise<unknown> }>;
-          };
-          const existing = await erc20.allowance(
-            address,
-            adapterAddress as string,
-          );
+          const paymentToken = q.paymentToken as Address;
+          const existing = (await readClient.readContract({
+            address: paymentToken,
+            abi: ERC20_APPROVE_ABI,
+            functionName: 'allowance',
+            args: [address as Address, adapterAddress],
+          })) as bigint;
           if (existing < ethWei) {
-            const approveTx = await erc20.approve(
-              adapterAddress as string,
-              ethWei,
-            );
-            await approveTx.wait();
+            const approveHash = await wc.writeContract({
+              address: paymentToken,
+              abi: ERC20_APPROVE_ABI,
+              functionName: 'approve',
+              args: [adapterAddress, ethWei],
+              account: wc.account!,
+              chain: wc.chain,
+            });
+            await readClient.waitForTransactionReceipt({ hash: approveHash });
           }
         }
 
         setState((s) => ({ ...s, status: 'submitting' }));
-        const a = writeAdapter as unknown as {
-          buy: (
-            amt: bigint,
-            min: bigint,
-            opts: { value: bigint },
-          ) => Promise<{
-            hash: string;
-            wait: () => Promise<{ logs: Array<Log | EventLog> }>;
-          }>;
-          interface: {
-            parseLog: (
-              log: { topics: readonly string[]; data: string },
-            ) => { name: string; args: ReadonlyArray<unknown> } | null;
-          };
-        };
-        const tx = await a.buy(ethWei, minVpfiOut, { value: q.totalValue });
-        const receipt = await tx.wait();
+        const txHash = await wc.writeContract({
+          address: adapterAddress,
+          abi: ADAPTER_ABI,
+          functionName: 'buy',
+          args: [ethWei, minVpfiOut],
+          value: q.totalValue,
+          account: wc.account!,
+          chain: wc.chain,
+        });
+        const receipt = await readClient.waitForTransactionReceipt({
+          hash: txHash,
+        });
 
         // The `buy()` return values are unavailable from a broadcast tx — we
         // decode `(requestId, lzGuid)` from the synchronously-emitted
         // `BuyRequested` log instead.
-        let requestId: bigint | null = null;
-        let lzGuid: string | null = null;
-        for (const log of receipt.logs) {
-          try {
-            const parsed = a.interface.parseLog(log);
-            if (parsed && parsed.name === 'BuyRequested') {
-              requestId = parsed.args[0] as bigint;
-              lzGuid = parsed.args[5] as string;
-              break;
-            }
-          } catch {
-            // log belongs to another contract (e.g. LZ endpoint) — skip.
-          }
-        }
+        const parsed = parseEventLogs({
+          abi: ADAPTER_ABI,
+          eventName: 'BuyRequested',
+          logs: receipt.logs,
+        }) as Array<{ args: { requestId?: bigint; guid?: string } }>;
+        const evt = parsed[0];
+        const requestId = evt?.args?.requestId ?? null;
+        const lzGuid = (evt?.args?.guid ?? null) as string | null;
 
         if (requestId == null) {
           throw new Error(
@@ -360,7 +359,7 @@ export function useVPFIBuyBridge(chain: ChainConfig | null) {
           status: 'pending',
           requestId,
           lzGuid,
-          txHash: tx.hash,
+          txHash,
           vpfiOut: null,
           refundReason: null,
           error: null,
@@ -376,7 +375,15 @@ export function useVPFIBuyBridge(chain: ChainConfig | null) {
         step.failure(err);
       }
     },
-    [writeAdapter, signer, address, chain, quote, schedulePoll, adapterAddress],
+    [
+      walletClient,
+      readClient,
+      address,
+      chain,
+      adapterAddress,
+      quote,
+      schedulePoll,
+    ],
   );
 
   /**
@@ -387,15 +394,18 @@ export function useVPFIBuyBridge(chain: ChainConfig | null) {
    */
   const reclaim = useCallback(
     async (requestId: bigint) => {
-      if (!writeAdapter) return;
+      if (!walletClient || !readClient || !adapterAddress) return;
+      const wc = walletClient as WalletClient;
       try {
-        const a = writeAdapter as unknown as {
-          reclaimTimedOutBuy: (
-            id: bigint,
-          ) => Promise<{ wait: () => Promise<unknown> }>;
-        };
-        const tx = await a.reclaimTimedOutBuy(requestId);
-        await tx.wait();
+        const hash = await wc.writeContract({
+          address: adapterAddress,
+          abi: ADAPTER_ABI,
+          functionName: 'reclaimTimedOutBuy',
+          args: [requestId],
+          account: wc.account!,
+          chain: wc.chain,
+        });
+        await readClient.waitForTransactionReceipt({ hash });
         setState((s) => ({ ...s, status: 'timed-out' }));
       } catch (err) {
         setState((s) => ({
@@ -405,7 +415,7 @@ export function useVPFIBuyBridge(chain: ChainConfig | null) {
         }));
       }
     },
-    [writeAdapter],
+    [walletClient, readClient, adapterAddress],
   );
 
   return {

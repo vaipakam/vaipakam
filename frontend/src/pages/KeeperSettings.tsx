@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { ethers } from "ethers";
+import { isAddress } from "viem";
 import { useWallet } from "../context/WalletContext";
 import { useMode } from "../context/ModeContext";
 import { useDiamondContract, useDiamondRead } from "../contracts/useDiamond";
@@ -96,7 +96,7 @@ export default function KeeperSettings() {
   }
 
   async function approve() {
-    if (!ethers.isAddress(input)) {
+    if (!isAddress(input)) {
       setErr("Invalid address");
       return;
     }

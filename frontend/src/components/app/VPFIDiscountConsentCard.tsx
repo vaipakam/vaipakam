@@ -27,7 +27,7 @@ import { beginStep } from "../../lib/journeyLog";
  * only user action gating the discount.
  */
 export default function VPFIDiscountConsentCard() {
-  const { address, signer } = useWallet();
+  const { address } = useWallet();
   const diamond = useDiamondContract();
 
   const [consent, setConsent] = useState<boolean | null>(null);
@@ -56,7 +56,7 @@ export default function VPFIDiscountConsentCard() {
   }, [reload]);
 
   const handleToggle = async () => {
-    if (!address || !signer || !diamond) return;
+    if (!address || !diamond) return;
     setError(null);
     setPending(true);
     const next = !consent;

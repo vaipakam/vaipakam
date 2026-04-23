@@ -26,7 +26,7 @@ import {
   Clock,
   Coins,
 } from "lucide-react";
-import { parseUnits } from "ethers";
+import { parseUnits } from "viem";
 import { AssetSymbol } from "../components/app/AssetSymbol";
 import { TokenAmount } from "../components/app/TokenAmount";
 import { ErrorAlert } from "../components/app/ErrorAlert";

@@ -1,6 +1,8 @@
 import { useEffect, useState, useCallback } from 'react';
-import type { Contract } from 'ethers';
-import { useDiamondRead } from '../contracts/useDiamond';
+import type { Address, PublicClient } from 'viem';
+import { useDiamondPublicClient, useReadChain } from '../contracts/useDiamond';
+import { DEFAULT_CHAIN } from '../contracts/config';
+import { DIAMOND_ABI_VIEM as DIAMOND_ABI } from '../contracts/abis';
 import { useLogIndex } from './useLogIndex';
 import {
   AssetType,
@@ -13,9 +15,10 @@ import { beginStep } from '../lib/journeyLog';
 
 const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
 
-// Matches the new `getClaimable(loanId, isLender)` return tuple. ethers v6
-// returns positional + named fields, so we accept both shapes and fall back
-// to indexed access.
+// Matches the `getClaimable(loanId, isLender)` return tuple. viem returns
+// the struct as a named-object (not the ethers positional-or-named mix),
+// so we accept both shapes defensively — older ABIs that predate the
+// named-output fields will still have positional access.
 interface ClaimableTuple {
   asset?: string;
   amount?: bigint;
@@ -44,7 +47,9 @@ interface ClaimableTuple {
  * un-indexed tokens fall through to a live `ownerOf` call.
  */
 export function useClaimables(address: string | null) {
-  const diamond = useDiamondRead();
+  const publicClient = useDiamondPublicClient();
+  const chain = useReadChain();
+  const diamondAddress = (chain.diamondAddress ?? DEFAULT_CHAIN.diamondAddress) as Address;
   const { loans: knownLoans, getOwner, loading: indexLoading, reload: reloadIndex } = useLogIndex();
   const [claims, setClaims] = useState<ClaimableEntry[]>([]);
   const [loading, setLoading] = useState(false);
@@ -61,10 +66,15 @@ export function useClaimables(address: string | null) {
       const perLoan = await Promise.all(
         knownLoans.map(async (entry): Promise<ClaimableEntry[]> => {
           try {
-            const loan = (await diamond.getLoanDetails(entry.loanId)) as LoanDetails;
+            const loan = (await publicClient.readContract({
+              address: diamondAddress,
+              abi: DIAMOND_ABI,
+              functionName: 'getLoanDetails',
+              args: [entry.loanId],
+            })) as LoanDetails;
             const [lenderHolder, borrowerHolder] = await Promise.all([
-              resolveOwner(diamond, loan.lenderTokenId, getOwner),
-              resolveOwner(diamond, loan.borrowerTokenId, getOwner),
+              resolveOwner(publicClient, diamondAddress, loan.lenderTokenId, getOwner),
+              resolveOwner(publicClient, diamondAddress, loan.borrowerTokenId, getOwner),
             ]);
             const isLender = lenderHolder === me;
             const isBorrower = borrowerHolder === me;
@@ -80,7 +90,12 @@ export function useClaimables(address: string | null) {
             const sideEntries = await Promise.all(
               sides.map(async (s): Promise<ClaimableEntry | null> => {
                 try {
-                  const res = (await diamond.getClaimable(entry.loanId, s.isLender)) as ClaimableTuple;
+                  const res = (await publicClient.readContract({
+                    address: diamondAddress,
+                    abi: DIAMOND_ABI,
+                    functionName: 'getClaimable',
+                    args: [entry.loanId, s.isLender],
+                  })) as ClaimableTuple;
                   const asset = res.asset ?? res[0] ?? '';
                   const amount = res.amount ?? res[1] ?? 0n;
                   const claimed = res.claimed ?? res[2] ?? false;
@@ -133,7 +148,7 @@ export function useClaimables(address: string | null) {
     } finally {
       setLoading(false);
     }
-  }, [address, diamond, knownLoans, getOwner]);
+  }, [address, publicClient, diamondAddress, knownLoans, getOwner]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -146,14 +161,20 @@ export function useClaimables(address: string | null) {
 }
 
 async function resolveOwner(
-  diamond: Contract,
+  publicClient: PublicClient,
+  diamondAddress: Address,
   tokenId: bigint,
   getOwner: (id: bigint) => string | null,
 ): Promise<string> {
   const cached = getOwner(tokenId);
   if (cached) return cached;
   try {
-    const live = (await diamond.ownerOf(tokenId)) as string;
+    const live = (await publicClient.readContract({
+      address: diamondAddress,
+      abi: DIAMOND_ABI,
+      functionName: 'ownerOf',
+      args: [tokenId],
+    })) as string;
     return (live ?? ZERO_ADDRESS).toLowerCase();
   } catch {
     return ZERO_ADDRESS;

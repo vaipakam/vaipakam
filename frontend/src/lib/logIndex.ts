@@ -1,52 +1,77 @@
-import { AbiCoder, id as keccakId, type Contract, type Log } from 'ethers';
+import {
+  decodeAbiParameters,
+  keccak256,
+  numberToHex,
+  parseAbiParameters,
+  toBytes,
+  type Hex,
+  type PublicClient,
+} from 'viem';
+
+/** Raw `eth_getLogs` log — we use `publicClient.request` directly rather
+ *  than the higher-level `publicClient.getLogs()` so we can OR together
+ *  15 event topic0s in one request instead of 15 separate calls. */
+interface RawLog {
+  blockNumber: Hex;
+  blockHash: Hex;
+  transactionHash: Hex;
+  transactionIndex: Hex;
+  logIndex: Hex;
+  address: Hex;
+  data: Hex;
+  topics: Hex[];
+  removed: boolean;
+}
+
+const id = (sig: string): Hex => keccak256(toBytes(sig));
 
 // Topic0 for ERC-721 Transfer(address,address,uint256). We filter by topic
 // hash rather than by event name because the combined Diamond ABI exposes
 // two identical `Transfer` fragments (the ERC-721 facet is bundled twice
-// in the generated ABI); ethers.js refuses to resolve `queryFilter('Transfer')`
-// in that case and surfaces it as a `could not coalesce error`.
-const TRANSFER_TOPIC0 = keccakId('Transfer(address,address,uint256)');
+// in the generated ABI); higher-level event-by-name filtering refuses to
+// resolve with duplicates, so raw topic filtering sidesteps that.
+const TRANSFER_TOPIC0 = id('Transfer(address,address,uint256)');
 // Same defensive pattern for LoanInitiated — filtering by topic hash avoids
 // any ABI-fragment resolution ambiguity in the combined Diamond ABI.
 // Signature must match the 6-arg form in `LoanFacet.sol` exactly — an earlier
 // 4-arg hash silently matched nothing and left the loan cache permanently
 // empty (which surfaced as "Total Loans = 0" on Dashboard even after loans
 // landed on-chain).
-const LOAN_INITIATED_TOPIC0 = keccakId(
+const LOAN_INITIATED_TOPIC0 = id(
   'LoanInitiated(uint256,uint256,address,address,uint256,uint256)',
 );
 // `OfferCreated(uint256 indexed offerId, address indexed creator, uint8 offerType)`
 // — topic[1] carries the offerId. We only need the ID universe; full offer
 // details are fetched via `getOffer(id)` on demand.
-const OFFER_CREATED_TOPIC0 = keccakId('OfferCreated(uint256,address,uint8)');
+const OFFER_CREATED_TOPIC0 = id('OfferCreated(uint256,address,uint8)');
 // Terminal transitions for an offer. Both carry `offerId` as the first
 // indexed topic, which lets us prune the open-offer set without any
 // `getOffer` round-trip.
-const OFFER_ACCEPTED_TOPIC0 = keccakId('OfferAccepted(uint256,address,uint256)');
-const OFFER_CANCELED_TOPIC0 = keccakId('OfferCanceled(uint256,address)');
+const OFFER_ACCEPTED_TOPIC0 = id('OfferAccepted(uint256,address,uint256)');
+const OFFER_CANCELED_TOPIC0 = id('OfferCanceled(uint256,address)');
 // Extended lifecycle events surfaced by the Activity page. These are purely
 // additive: they don't feed the loan/offer aggregates above, they're
 // captured into a parallel `events[]` stream so Activity can render a
 // per-user on-chain history without hitting the RPC again.
-const LOAN_REPAID_TOPIC0 = keccakId('LoanRepaid(uint256,address,uint256,uint256)');
-const LOAN_DEFAULTED_TOPIC0 = keccakId('LoanDefaulted(uint256,bool)');
-const LENDER_CLAIMED_TOPIC0 = keccakId(
+const LOAN_REPAID_TOPIC0 = id('LoanRepaid(uint256,address,uint256,uint256)');
+const LOAN_DEFAULTED_TOPIC0 = id('LoanDefaulted(uint256,bool)');
+const LENDER_CLAIMED_TOPIC0 = id(
   'LenderFundsClaimed(uint256,address,address,uint256)',
 );
-const BORROWER_CLAIMED_TOPIC0 = keccakId(
+const BORROWER_CLAIMED_TOPIC0 = id(
   'BorrowerFundsClaimed(uint256,address,address,uint256)',
 );
-const COLLATERAL_ADDED_TOPIC0 = keccakId(
+const COLLATERAL_ADDED_TOPIC0 = id(
   'CollateralAdded(uint256,address,uint256,uint256,uint256,uint256)',
 );
 // Lender early-withdrawal via BUY-offer path: burns the original lender's
 // position NFT and mints a new LoanInitiated-status NFT to the new lender in
 // the same tx. Carries `loanId`, `originalLender`, `newLender` indexed.
-const LOAN_SOLD_TOPIC0 = keccakId('LoanSold(uint256,address,address,uint256)');
+const LOAN_SOLD_TOPIC0 = id('LoanSold(uint256,address,address,uint256)');
 // Borrower obligation transfer via PrecloseFacet's offset flow: burns the
 // original borrower NFT and mints a new one to the new borrower in the same
 // tx. Carries `loanId`, `originalBorrower`, `newBorrower` indexed.
-const LOAN_OBLIGATION_TRANSFERRED_TOPIC0 = keccakId(
+const LOAN_OBLIGATION_TRANSFERRED_TOPIC0 = id(
   'LoanObligationTransferred(uint256,address,address,uint256)',
 );
 // VPFI token activities surfaced on the Activity page so users can see
@@ -54,13 +79,13 @@ const LOAN_OBLIGATION_TRANSFERRED_TOPIC0 = keccakId(
 // lending events. All three carry the user address as the first indexed
 // topic; non-indexed amounts live in `data`. Signatures pinned to the
 // VPFIDiscountFacet ABI.
-const VPFI_PURCHASED_TOPIC0 = keccakId(
+const VPFI_PURCHASED_TOPIC0 = id(
   'VPFIPurchasedWithETH(address,uint256,uint256)',
 );
-const VPFI_DEPOSITED_TOPIC0 = keccakId(
+const VPFI_DEPOSITED_TOPIC0 = id(
   'VPFIDepositedToEscrow(address,uint256)',
 );
-const VPFI_WITHDRAWN_TOPIC0 = keccakId(
+const VPFI_WITHDRAWN_TOPIC0 = id(
   'VPFIWithdrawnFromEscrow(address,uint256)',
 );
 
@@ -264,25 +289,49 @@ function writeCache(chainId: number, diamond: string, value: CachedShape): void 
   }
 }
 
-interface ProviderLike {
-  getBlockNumber?: () => Promise<number>;
-  getLogs?: (filter: {
-    address?: string;
-    topics?: (string | string[] | null)[];
-    fromBlock?: number;
-    toBlock?: number;
-  }) => Promise<Log[]>;
-}
-
-function getProvider(diamond: Contract): ProviderLike | undefined {
-  return (diamond as { runner?: { provider?: ProviderLike } }).runner?.provider;
+interface GetLogsFilter {
+  address?: string;
+  topics?: (string | string[] | null)[];
+  fromBlock?: number;
+  toBlock?: number;
 }
 
 /**
- * `provider.getLogs` wrapper that unwraps the ethers-v6 error aggregate and
- * rethrows the richest available message. Without this, all RPC failures
- * surface as the opaque "could not coalesce error" because ethers wraps the
- * inner transport error in a generic bag when multiple attempts fail.
+ * Low-level `eth_getLogs` via `publicClient.request`. Used instead of the
+ * higher-level `publicClient.getLogs()` so we can OR together many event
+ * topic0 signatures in one RPC (viem's `getLogs` requires an explicit
+ * `event` / `events` ABI-typed filter and doesn't accept the raw topic
+ * array shape).
+ */
+async function rawGetLogs(
+  client: PublicClient,
+  filter: GetLogsFilter,
+): Promise<RawLog[]> {
+  const params: {
+    address?: string;
+    topics?: (string | string[] | null)[];
+    fromBlock?: string;
+    toBlock?: string;
+  } = {};
+  if (filter.address) params.address = filter.address;
+  if (filter.topics) params.topics = filter.topics;
+  if (typeof filter.fromBlock === 'number') {
+    params.fromBlock = numberToHex(filter.fromBlock);
+  }
+  if (typeof filter.toBlock === 'number') {
+    params.toBlock = numberToHex(filter.toBlock);
+  }
+  const logs = await client.request({
+    method: 'eth_getLogs',
+    params: [params] as unknown as [{ fromBlock?: `0x${string}` }],
+  });
+  return logs as unknown as RawLog[];
+}
+
+/**
+ * `eth_getLogs` wrapper that rethrows the richest available message on
+ * failure. Without this, RPC failures surface as opaque errors from the
+ * transport layer.
  */
 const MAX_RETRIES = 8;
 const BASE_BACKOFF_MS = 400;
@@ -331,17 +380,12 @@ function isBlockRangeOrSizeError(message: string): boolean {
 }
 
 async function safeGetLogs(
-  provider: ProviderLike,
-  filter: {
-    address?: string;
-    topics?: (string | string[] | null)[];
-    fromBlock?: number;
-    toBlock?: number;
-  },
-): Promise<Log[]> {
+  client: PublicClient,
+  filter: GetLogsFilter,
+): Promise<RawLog[]> {
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
     try {
-      return await provider.getLogs!(filter);
+      return await rawGetLogs(client, filter);
     } catch (err) {
       const inner = extractErrorMessage(err);
       const retryable = isRateLimitError(inner);
@@ -361,10 +405,13 @@ async function safeGetLogs(
   throw new Error(`getLogs ${filter.fromBlock}-${filter.toBlock}: exhausted retries`);
 }
 
-async function getBlockNumber(diamond: Contract): Promise<number> {
-  const provider = getProvider(diamond);
-  if (provider?.getBlockNumber) return provider.getBlockNumber();
-  return 0;
+async function getBlockNumber(client: PublicClient): Promise<number> {
+  try {
+    const head = await client.getBlockNumber();
+    return Number(head);
+  } catch {
+    return 0;
+  }
 }
 
 /**
@@ -407,7 +454,7 @@ export function peekLoanIndex(
  * starting their own paging loop.
  */
 export async function loadLoanIndex(
-  diamond: Contract,
+  publicClient: PublicClient,
   diamondAddress: string,
   deployBlock: number,
   chainId: number,
@@ -416,7 +463,12 @@ export async function loadLoanIndex(
   const existing = inflight.get(key);
   if (existing) return existing;
 
-  const promise = runScan(diamond, diamondAddress, deployBlock, chainId).finally(() => {
+  const promise = runScan(
+    publicClient,
+    diamondAddress,
+    deployBlock,
+    chainId,
+  ).finally(() => {
     inflight.delete(key);
   });
   inflight.set(key, promise);
@@ -424,13 +476,13 @@ export async function loadLoanIndex(
 }
 
 async function runScan(
-  diamond: Contract,
+  publicClient: PublicClient,
   diamondAddress: string,
   deployBlock: number,
   chainId: number,
 ): Promise<LogIndexResult> {
   const cached = readCache(chainId, diamondAddress) ?? emptyCache(deployBlock);
-  const head = await getBlockNumber(diamond);
+  const head = await getBlockNumber(publicClient);
   const fromBlock = Math.max(cached.lastBlock + 1, deployBlock);
 
   if (fromBlock > head) return hydrate(cached);
@@ -458,21 +510,17 @@ async function runScan(
   // that's why the cache version is bumped (forcing one full rescan).
   const mintsByTx = new Map<string, Array<{ tokenId: string; to: string }>>();
 
-  // Go straight to `provider.getLogs` — `Contract.queryFilter` in ethers v6
-  // only accepts a string event name, `EventFragment`, or `DeferredTopicFilter`,
-  // and raises "unknown event name" on a plain `{ topics: [...] }` object. Raw
-  // topic filtering bypasses that and also sidesteps the duplicate-fragment
-  // disambiguation issue in the combined Diamond ABI.
-  const provider = getProvider(diamond);
-  if (!provider?.getLogs) return hydrate(cached);
-
+  // Raw `eth_getLogs` via `publicClient.request` — viem's higher-level
+  // `getLogs` requires ABI-typed `event`/`events`, but our filter here
+  // OR's 15 different topic0 hashes in one request, which only the raw
+  // topic-array filter form supports.
+  //
   // `effectiveChunk` starts at the configured CHUNK and halves whenever the
   // provider rejects a chunk as too wide or too large a response. Sticky for
   // the rest of this scan — once we discover the provider's real cap there's
   // no point rediscovering it every chunk.
   let effectiveChunk = CHUNK;
   let cursor = fromBlock;
-  const coder = AbiCoder.defaultAbiCoder();
 
   while (cursor <= head) {
     const toBlock = Math.min(cursor + effectiveChunk - 1, head);
@@ -481,9 +529,9 @@ async function runScan(
     // `topics[0]`. Cuts per-chunk call count from 5→1 and is supported by
     // every RPC that implements the JSON-RPC `eth_getLogs` spec (Alchemy,
     // Infura, QuickNode, publicnode, direct node RPCs).
-    let logs: Log[];
+    let logs: RawLog[];
     try {
-      logs = await safeGetLogs(provider, {
+      logs = await safeGetLogs(publicClient, {
         address: diamondAddress,
         topics: [
           [
@@ -528,12 +576,12 @@ async function runScan(
       const topics = event.topics;
       if (!topics || topics.length === 0) continue;
       const topic0 = topics[0];
-      const eventKey = `${event.transactionHash}:${event.index}`;
+      const eventKey = `${event.transactionHash}:${event.logIndex}`;
       const addEvent = (kind: ActivityEventKind, participants: string[], args: ActivityEvent['args']) => {
         eventMap.set(eventKey, {
           kind,
           blockNumber: Number(event.blockNumber),
-          logIndex: Number(event.index),
+          logIndex: Number(event.logIndex),
           txHash: event.transactionHash,
           participants: participants.filter((p) => p && p !== ZERO_ADDRESS).map((p) => p.toLowerCase()),
           args,
@@ -547,7 +595,7 @@ async function runScan(
         offerIdSet.add(offerId);
         let offerType = 0;
         try {
-          const [t] = coder.decode(['uint8'], event.data);
+          const [t] = decodeAbiParameters(parseAbiParameters('uint8'), event.data);
           offerType = Number(t);
         } catch {
           // malformed — keep offerType default
@@ -561,7 +609,7 @@ async function runScan(
         lastAcceptedOfferId = offerId;
         let loanId = '0';
         try {
-          const [l] = coder.decode(['uint256'], event.data);
+          const [l] = decodeAbiParameters(parseAbiParameters('uint256'), event.data);
           loanId = (l as bigint).toString();
         } catch {
           // malformed — keep loanId default
@@ -588,7 +636,7 @@ async function runScan(
         let principal = '0';
         let collateralAmount = '0';
         try {
-          const [b, p, c] = coder.decode(['address', 'uint256', 'uint256'], event.data);
+          const [b, p, c] = decodeAbiParameters(parseAbiParameters('address, uint256, uint256'), event.data);
           borrower = (b as string).toLowerCase();
           principal = (p as bigint).toString();
           collateralAmount = (c as bigint).toString();
@@ -611,7 +659,7 @@ async function runScan(
         let interestPaid = '0';
         let lateFeePaid = '0';
         try {
-          const [i, l] = coder.decode(['uint256', 'uint256'], event.data);
+          const [i, l] = decodeAbiParameters(parseAbiParameters('uint256, uint256'), event.data);
           interestPaid = (i as bigint).toString();
           lateFeePaid = (l as bigint).toString();
         } catch {
@@ -623,7 +671,7 @@ async function runScan(
         const loanId = BigInt(topics[1]).toString();
         let fallbackConsentFromBoth = false;
         try {
-          const [b] = coder.decode(['bool'], event.data);
+          const [b] = decodeAbiParameters(parseAbiParameters('bool'), event.data);
           fallbackConsentFromBoth = Boolean(b);
         } catch {
           // malformed — keep default
@@ -640,7 +688,7 @@ async function runScan(
         let asset = ZERO_ADDRESS;
         let amount = '0';
         try {
-          const [a, am] = coder.decode(['address', 'uint256'], event.data);
+          const [a, am] = decodeAbiParameters(parseAbiParameters('address, uint256'), event.data);
           asset = (a as string).toLowerCase();
           amount = (am as bigint).toString();
         } catch {
@@ -654,7 +702,7 @@ async function runScan(
         let asset = ZERO_ADDRESS;
         let amount = '0';
         try {
-          const [a, am] = coder.decode(['address', 'uint256'], event.data);
+          const [a, am] = decodeAbiParameters(parseAbiParameters('address, uint256'), event.data);
           asset = (a as string).toLowerCase();
           amount = (am as bigint).toString();
         } catch {
@@ -668,7 +716,7 @@ async function runScan(
         const newLender = ('0x' + topics[3].slice(26)).toLowerCase();
         let shortfallPaid = '0';
         try {
-          const [s] = coder.decode(['uint256'], event.data);
+          const [s] = decodeAbiParameters(parseAbiParameters('uint256'), event.data);
           shortfallPaid = (s as bigint).toString();
         } catch {
           // malformed — keep default
@@ -686,7 +734,7 @@ async function runScan(
         const newBorrower = ('0x' + topics[3].slice(26)).toLowerCase();
         let shortfallPaid = '0';
         try {
-          const [s] = coder.decode(['uint256'], event.data);
+          const [s] = decodeAbiParameters(parseAbiParameters('uint256'), event.data);
           shortfallPaid = (s as bigint).toString();
         } catch {
           // malformed — keep default
@@ -704,7 +752,7 @@ async function runScan(
         let amountAdded = '0';
         let newCollateralAmount = '0';
         try {
-          const [a, n] = coder.decode(['uint256', 'uint256', 'uint256', 'uint256'], event.data);
+          const [a, n] = decodeAbiParameters(parseAbiParameters('uint256, uint256, uint256, uint256'), event.data);
           amountAdded = (a as bigint).toString();
           newCollateralAmount = (n as bigint).toString();
         } catch {
@@ -723,7 +771,7 @@ async function runScan(
         let vpfiAmount = '0';
         let ethAmount = '0';
         try {
-          const [v, e] = coder.decode(['uint256', 'uint256'], event.data);
+          const [v, e] = decodeAbiParameters(parseAbiParameters('uint256, uint256'), event.data);
           vpfiAmount = (v as bigint).toString();
           ethAmount = (e as bigint).toString();
         } catch {
@@ -740,7 +788,7 @@ async function runScan(
         const user = ('0x' + topics[1].slice(26)).toLowerCase();
         let amount = '0';
         try {
-          const [a] = coder.decode(['uint256'], event.data);
+          const [a] = decodeAbiParameters(parseAbiParameters('uint256'), event.data);
           amount = (a as bigint).toString();
         } catch {
           // malformed — keep default
@@ -752,7 +800,7 @@ async function runScan(
         const user = ('0x' + topics[1].slice(26)).toLowerCase();
         let amount = '0';
         try {
-          const [a] = coder.decode(['uint256'], event.data);
+          const [a] = decodeAbiParameters(parseAbiParameters('uint256'), event.data);
           amount = (a as bigint).toString();
         } catch {
           // malformed — keep default

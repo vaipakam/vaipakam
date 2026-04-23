@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { useDiamondRead, useReadChain } from '../contracts/useDiamond';
+import { useDiamondPublicClient, useReadChain } from '../contracts/useDiamond';
 import { DEFAULT_CHAIN } from '../contracts/config';
 import {
   loadLoanIndex,
@@ -22,10 +22,10 @@ import { beginStep } from '../lib/journeyLog';
  * loans whose NFTs haven't moved since the last scan.
  */
 export function useLogIndex() {
-  const diamond = useDiamondRead();
   const chain = useReadChain();
   const chainId = chain.chainId ?? DEFAULT_CHAIN.chainId;
   const diamondAddress = chain.diamondAddress ?? DEFAULT_CHAIN.diamondAddress;
+  const publicClient = useDiamondPublicClient();
   // Synchronous first-paint: hydrate whatever the last scan left in
   // localStorage, so Dashboard's "Your Loans" renders instantly on return
   // visits instead of blocking on a fresh `eth_getLogs` paginated scan
@@ -77,7 +77,7 @@ export function useLogIndex() {
     const step = beginStep({ area: 'log-index', flow: 'loadLoanIndex', step: 'scan-events' });
     try {
       const result = await loadLoanIndex(
-        diamond,
+        publicClient,
         diamondAddress,
         chain.deployBlock ?? DEFAULT_CHAIN.deployBlock,
         chainId,
@@ -100,7 +100,7 @@ export function useLogIndex() {
     } finally {
       setLoading(false);
     }
-  }, [diamond, diamondAddress, chain.deployBlock, chainId]);
+  }, [publicClient, diamondAddress, chain.deployBlock, chainId]);
 
   useEffect(() => {
     load();

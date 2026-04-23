@@ -1,8 +1,20 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Contract, Interface, JsonRpcProvider } from 'ethers';
+import { useCallback, useEffect, useState } from 'react';
+import { createPublicClient, http, parseAbi, type Abi, type Address, type PublicClient } from 'viem';
 import { CHAIN_REGISTRY, type ChainConfig } from '../contracts/config';
 import { MetricsFacetABI } from '../contracts/abis';
 import { beginStep } from '../lib/journeyLog';
+
+// `getGlobalCounts()` exists in current MetricsFacet.sol but not every
+// deployed ABI snapshot. Defined inline here so viem can decode the call
+// when the facet dispatches it; fetchChain swallows reverts so a missing
+// selector doesn't break the rest of the row.
+const EXTRA_ABI: Abi = parseAbi([
+  'function getGlobalCounts() external view returns (uint256 totalLoansCreated, uint256 totalOffersCreated)',
+]);
+const FULL_ABI: Abi = [
+  ...(MetricsFacetABI as unknown as Abi),
+  ...EXTRA_ABI,
+] as Abi;
 
 const USD_SCALE = 1e18;
 const STALE_MS = 30_000;
@@ -124,10 +136,7 @@ function changePctAgainstWindow(
   return ((current - baseline.tvlUsd) / baseline.tvlUsd) * 100;
 }
 
-async function fetchChain(
-  chain: DeployedChain,
-  iface: Interface,
-): Promise<ChainStatsRow> {
+async function fetchChain(chain: DeployedChain): Promise<ChainStatsRow> {
   const row: ChainStatsRow = {
     chainId: chain.chainId,
     name: chain.name,
@@ -146,21 +155,28 @@ async function fetchChain(
     interestEarnedUsd: 0,
   };
   try {
-    const provider = new JsonRpcProvider(chain.rpcUrl, chain.chainId, {
-      staticNetwork: true,
-    });
-    const diamond = new Contract(chain.diamondAddress, iface, provider);
+    const publicClient = createPublicClient({
+      transport: http(chain.rpcUrl),
+    }) as PublicClient;
+    const diamondAddress = chain.diamondAddress as Address;
+    const call = async <T>(functionName: string): Promise<T> => {
+      return (await publicClient.readContract({
+        address: diamondAddress,
+        abi: FULL_ABI,
+        functionName,
+      })) as T;
+    };
     // `getProtocolStats` returns 8 fields (totalUniqueUsers, activeLoansCount,
     // activeOffersCount, totalLoansEverCreated, totalVolumeLentUSD,
     // totalInterestEarnedUSD, defaultRateBps, averageAPR) in one call — no
     // multicall needed. `getProtocolTVL` and `getLoanSummary` are both O(1)
     // counter-backed reads, so three parallel requests per chain is fine.
     const [tvlResult, statsResult, loanSummary] = await Promise.all([
-      diamond.getProtocolTVL() as Promise<[bigint, bigint, bigint]>,
-      diamond.getProtocolStats() as Promise<
-        [bigint, bigint, bigint, bigint, bigint, bigint, bigint, bigint]
-      >,
-      diamond.getLoanSummary() as Promise<[bigint, bigint, bigint]>,
+      call<readonly [bigint, bigint, bigint]>('getProtocolTVL'),
+      call<readonly [bigint, bigint, bigint, bigint, bigint, bigint, bigint, bigint]>(
+        'getProtocolStats',
+      ),
+      call<readonly [bigint, bigint, bigint]>('getLoanSummary'),
     ]);
     row.tvlUsd = Number(tvlResult[0]) / USD_SCALE;
     row.erc20CollateralUsd = Number(tvlResult[1]) / USD_SCALE;
@@ -176,7 +192,7 @@ async function fetchChain(
     // deployed ABI snapshot — swallow revert/unknown-selector so the rest of
     // the row still lands, and fall back to activeOffers for the headline.
     try {
-      const globals = (await diamond.getGlobalCounts()) as [bigint, bigint];
+      const globals = await call<readonly [bigint, bigint]>('getGlobalCounts');
       row.lifetimeOffers = Number(globals[1]);
     } catch {
       row.lifetimeOffers = row.activeOffers;
@@ -213,17 +229,6 @@ async function fetchChain(
  * with the chains that did succeed.
  */
 export function useCombinedChainsStats() {
-  const iface = useMemo(
-    () =>
-      new Interface([
-        ...MetricsFacetABI,
-        // Added here rather than editing the JSON ABI: the deployed ABI
-        // snapshot predates this function. If the call reverts at runtime
-        // because the facet isn't dispatched, fetchChain swallows it.
-        'function getGlobalCounts() external view returns (uint256 totalLoansCreated, uint256 totalOffersCreated)',
-      ]),
-    [],
-  );
   const [snapshot, setSnapshot] = useState<CombinedChainsSnapshot | null>(
     () => cache?.data ?? null,
   );
@@ -247,7 +252,7 @@ export function useCombinedChainsStats() {
     });
     try {
       const targets = deployedChains();
-      const rows = await Promise.all(targets.map((c) => fetchChain(c, iface)));
+      const rows = await Promise.all(targets.map((c) => fetchChain(c)));
       const ok = rows.filter((r) => !r.error);
       const errored = rows.length - ok.length;
 
@@ -289,7 +294,7 @@ export function useCombinedChainsStats() {
     } finally {
       setLoading(false);
     }
-  }, [iface]);
+  }, []);
 
   useEffect(() => {
     load();

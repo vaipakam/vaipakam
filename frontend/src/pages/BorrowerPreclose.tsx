@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { MaxUint256, parseUnits } from "ethers";
+import { maxUint256 as MaxUint256, parseUnits } from "viem";
 import { AlertTriangle, ArrowLeft, CheckCircle } from "lucide-react";
 import { ErrorAlert } from "../components/app/ErrorAlert";
 import { useWallet } from "../context/WalletContext";

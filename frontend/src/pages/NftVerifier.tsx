@@ -1,7 +1,14 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
-import { Contract, JsonRpcProvider, getAddress, isAddress } from "ethers";
-import { DIAMOND_ABI } from "../contracts/abis";
+import {
+  createPublicClient,
+  http,
+  getAddress,
+  isAddress,
+  type Address,
+  type PublicClient,
+} from "viem";
+import { DIAMOND_ABI_VIEM } from "../contracts/abis";
 import {
   CHAIN_REGISTRY,
   type DeployedChain,
@@ -98,9 +105,17 @@ function findChainByDiamond(addr: string): DeployedChain | null {
   return null;
 }
 
-function makeDiamondFor(chain: DeployedChain): Contract {
-  const provider = new JsonRpcProvider(chain.rpcUrl);
-  return new Contract(chain.diamondAddress, DIAMOND_ABI, provider);
+type DiamondHandles = {
+  publicClient: PublicClient;
+  address: Address;
+};
+
+function makeDiamondFor(chain: DeployedChain): DiamondHandles {
+  const publicClient = createPublicClient({ transport: http(chain.rpcUrl) });
+  return {
+    publicClient: publicClient as PublicClient,
+    address: chain.diamondAddress as Address,
+  };
 }
 
 /**
@@ -210,8 +225,14 @@ export default function NftVerifier() {
     });
 
     const diamond = makeDiamondFor(chain);
+    const { publicClient, address } = diamond;
     try {
-      const owner: string = await diamond.ownerOf(tokenIdBig);
+      const owner = (await publicClient.readContract({
+        address,
+        abi: DIAMOND_ABI_VIEM,
+        functionName: "ownerOf",
+        args: [tokenIdBig],
+      })) as string;
       if (owner === ZERO_ADDRESS) {
         // Defensive: `ownerOf` on OZ v5 reverts for burned tokens, but if a
         // future facet returns 0x0 instead we still want to render the
@@ -221,7 +242,12 @@ export default function NftVerifier() {
 
       let metadata: NFTMetadata | null = null;
       try {
-        const uri: string = await diamond.tokenURI(tokenIdBig);
+        const uri = (await publicClient.readContract({
+          address,
+          abi: DIAMOND_ABI_VIEM,
+          functionName: "tokenURI",
+          args: [tokenIdBig],
+        })) as string;
         metadata = parseTokenURI(uri);
       } catch {
         // Older facet versions may revert on tokenURI; owner is still the
@@ -236,7 +262,14 @@ export default function NftVerifier() {
       let ltv: bigint | null = null;
       if (loanId != null) {
         try {
-          loanDetails = normaliseLoan(await diamond.getLoanDetails(loanId));
+          loanDetails = normaliseLoan(
+            await publicClient.readContract({
+              address,
+              abi: DIAMOND_ABI_VIEM,
+              functionName: "getLoanDetails",
+              args: [loanId],
+            }),
+          );
         } catch {
           // Non-fatal: metadata referenced a loanId the contract no longer
           // exposes (shouldn't happen on a live NFT, but don't wreck the
@@ -245,8 +278,18 @@ export default function NftVerifier() {
         if (loanDetails && Number(loanDetails.status) === LoanStatus.Active) {
           try {
             const [hfRaw, ltvRaw] = await Promise.all([
-              diamond.calculateHealthFactor(loanId) as Promise<bigint>,
-              diamond.calculateLTV(loanId) as Promise<bigint>,
+              publicClient.readContract({
+                address,
+                abi: DIAMOND_ABI_VIEM,
+                functionName: "calculateHealthFactor",
+                args: [loanId],
+              }) as Promise<bigint>,
+              publicClient.readContract({
+                address,
+                abi: DIAMOND_ABI_VIEM,
+                functionName: "calculateLTV",
+                args: [loanId],
+              }) as Promise<bigint>,
             ]);
             hf = hfRaw;
             ltv = ltvRaw;
@@ -276,7 +319,7 @@ export default function NftVerifier() {
         // chain are instant) and consult the Transfer cache.
         try {
           const idx = await loadLoanIndex(
-            diamond,
+            publicClient,
             chain.diamondAddress,
             chain.deployBlock,
             chain.chainId,
@@ -288,7 +331,12 @@ export default function NftVerifier() {
             if (hit) {
               try {
                 loanDetails = normaliseLoan(
-                  await diamond.getLoanDetails(BigInt(hit.loanId)),
+                  await publicClient.readContract({
+                    address,
+                    abi: DIAMOND_ABI_VIEM,
+                    functionName: "getLoanDetails",
+                    args: [BigInt(hit.loanId)],
+                  }),
                 );
               } catch {
                 // Contract cleared the mapping on burn — fallback to the

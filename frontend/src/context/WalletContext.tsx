@@ -1,22 +1,13 @@
 /**
- * WalletContext — compatibility shim over wagmi + ConnectKit.
+ * WalletContext — thin compatibility wrapper over wagmi + ConnectKit.
  *
- * This context preserves the exact public API (`useWallet()` return shape,
- * `WalletProvider` boundary, `WalletSource` union) that every screen + hook
- * in the app consumes today, while delegating the actual connection
- * management to wagmi v2 and the wallet-picker UX to ConnectKit.
- *
- * Why a shim instead of cutting over directly to wagmi hooks everywhere:
- *   - ~30 call sites destructure from `useWallet()` today. Touching all of
- *     them in one pass would be a sprawling diff and block every unrelated
- *     change until it landed.
- *   - Our contract-interaction layer (`useDiamond`, every write hook) is
- *     still ethers-based. Exposing an ethers `BrowserProvider` + `signer`
- *     via the adapter in `lib/viemToEthers.ts` keeps those working without
- *     rewrite. They migrate in Phase B of the wallet migration plan.
- *
- * What changes for consumers: **nothing.** Every field and method exposed
- * previously is still exposed, with the same types and same semantics.
+ * Preserves the public `useWallet()` API every screen + hook consumes while
+ * delegating connection management to wagmi v2 and the wallet-picker UX to
+ * ConnectKit. After the Phase B migration, the context exposes only
+ * wagmi-native primitives — no ethers `BrowserProvider` / `JsonRpcSigner`
+ * anymore, because every consumer now reads the wallet via viem's
+ * `useWalletClient()` / `usePublicClient()` either directly or via the
+ * `useDiamondContract()` / `useERC20()` Proxies.
  */
 import {
   createContext,
@@ -27,7 +18,6 @@ import {
   useState,
   type ReactNode,
 } from 'react';
-import type { BrowserProvider, JsonRpcSigner } from 'ethers';
 import {
   useAccount,
   useChainId,
@@ -35,7 +25,6 @@ import {
   useConnectors,
   useDisconnect as useWagmiDisconnect,
   useSwitchChain,
-  useWalletClient,
 } from 'wagmi';
 import { useModal } from 'connectkit';
 import {
@@ -46,7 +35,6 @@ import {
   type ChainConfig,
 } from '../contracts/config';
 import { walletConnectAvailable as envWalletConnectAvailable } from '../lib/wagmiConfig';
-import { walletClientToEthers } from '../lib/viemToEthers';
 import { beginStep, emit } from '../lib/journeyLog';
 
 /** Which EIP-1193 path is currently driving the connection. Retained for
@@ -55,8 +43,6 @@ import { beginStep, emit } from '../lib/journeyLog';
 export type WalletSource = 'injected' | 'walletconnect';
 
 interface WalletState {
-  provider: BrowserProvider | null;
-  signer: JsonRpcSigner | null;
   address: string | null;
   chainId: number | null;
   isConnecting: boolean;
@@ -110,42 +96,11 @@ export function WalletProvider({ children }: { children: ReactNode }) {
   const chainId = useChainId();
   const { disconnectAsync } = useWagmiDisconnect();
   const { switchChainAsync } = useSwitchChain();
-  const { data: walletClient } = useWalletClient();
   const { setOpen: setConnectKitOpen } = useModal();
   const { connectAsync } = useConnect();
   const connectors = useConnectors();
 
-  // Derived ethers adapter — rebuilt whenever wagmi hands us a new viem
-  // WalletClient (on connect, account change, or chain change).
-  const [adapter, setAdapter] = useState<{
-    provider: BrowserProvider;
-    signer: JsonRpcSigner;
-  } | null>(null);
   const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    if (!walletClient) {
-      setAdapter(null);
-      return;
-    }
-    walletClientToEthers(walletClient)
-      .then((next) => {
-        if (!cancelled) setAdapter(next);
-      })
-      .catch((err) => {
-        emit({
-          area: 'wallet',
-          flow: 'adapter',
-          step: 'walletClientToEthers',
-          status: 'failure',
-          errorMessage: (err as Error)?.message,
-        });
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [walletClient]);
 
   // Clear transient errors once a connection succeeds.
   useEffect(() => {
@@ -278,8 +233,6 @@ export function WalletProvider({ children }: { children: ReactNode }) {
 
   const value = useMemo<WalletContextType>(
     () => ({
-      provider: adapter?.provider ?? null,
-      signer: adapter?.signer ?? null,
       address,
       chainId: chainId ?? null,
       isConnecting,
@@ -299,7 +252,6 @@ export function WalletProvider({ children }: { children: ReactNode }) {
       walletConnectAvailable: envWalletConnectAvailable,
     }),
     [
-      adapter,
       address,
       chainId,
       isConnecting,

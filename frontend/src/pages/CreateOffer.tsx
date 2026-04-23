@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo } from "react";
-import { Contract } from "ethers";
 import { useNavigate, useSearchParams } from "react-router-dom";
+import { parseAbi, type Abi, type Address } from "viem";
+import { usePublicClient, useWalletClient } from "wagmi";
 import { useWallet } from "../context/WalletContext";
 import { useMode } from "../context/ModeContext";
 import { useDiamondContract } from "../contracts/useDiamond";
@@ -33,13 +34,20 @@ type SubmitStep = "form" | "approving" | "creating" | "success";
 const RENTAL_BUFFER_BPS = 500n;
 const BASIS_POINTS = 10000n;
 
-const NFT_APPROVAL_ABI = [
+const NFT_APPROVAL_ABI = parseAbi([
   "function isApprovedForAll(address owner, address operator) view returns (bool)",
   "function setApprovalForAll(address operator, bool approved)",
-];
+]) as unknown as Abi;
+
+const ERC20_APPROVE_ABI = parseAbi([
+  "function allowance(address owner, address spender) view returns (uint256)",
+  "function approve(address spender, uint256 amount) returns (bool)",
+]) as unknown as Abi;
 
 export default function CreateOffer() {
-  const { address, chainId, signer, activeChain, isCorrectChain } = useWallet();
+  const { address, chainId, activeChain, isCorrectChain } = useWallet();
+  const publicClient = usePublicClient();
+  const { data: walletClient } = useWalletClient();
   const { mode } = useMode();
   const showAdvanced = mode === "advanced";
   const diamond = useDiamondContract();
@@ -222,12 +230,25 @@ export default function CreateOffer() {
         }
       };
       const ensureNftApproval = async (assetAddr: string) => {
-        if (!signer) throw new Error("wallet signer unavailable");
-        const c = new Contract(assetAddr, NFT_APPROVAL_ABI, signer);
-        const already: boolean = await c.isApprovedForAll(address, diamondAddr);
+        if (!walletClient || !publicClient) {
+          throw new Error("wallet not connected");
+        }
+        const already = (await publicClient.readContract({
+          address: assetAddr as Address,
+          abi: NFT_APPROVAL_ABI,
+          functionName: "isApprovedForAll",
+          args: [address as Address, diamondAddr as Address],
+        })) as boolean;
         if (!already) {
-          const tx = await c.setApprovalForAll(diamondAddr, true);
-          await tx.wait();
+          const hash = await walletClient.writeContract({
+            address: assetAddr as Address,
+            abi: NFT_APPROVAL_ABI,
+            functionName: "setApprovalForAll",
+            args: [diamondAddr as Address, true],
+            account: walletClient.account!,
+            chain: walletClient.chain,
+          });
+          await publicClient.waitForTransactionReceipt({ hash });
         }
       };
 
@@ -260,21 +281,29 @@ export default function CreateOffer() {
           } else {
             // NFT rental: borrower prepays `amount * days * (1 + buffer)`
             // in prepayAsset. Approval amount mirrors OfferFacet's transfer.
-            if (!signer) throw new Error("wallet signer unavailable");
-            const prepayErc20 = asErc20Approvable(
-              new Contract(
-                form.prepayAsset,
-                [
-                  "function allowance(address owner, address spender) view returns (uint256)",
-                  "function approve(address spender, uint256 amount) returns (bool)",
-                ],
-                signer,
-              ),
-            );
+            if (!walletClient || !publicClient) {
+              throw new Error("wallet not connected");
+            }
             const prepayBase = payload.amount * BigInt(payload.durationDays);
             const totalPrepay =
               (prepayBase * (BASIS_POINTS + RENTAL_BUFFER_BPS)) / BASIS_POINTS;
-            await ensureErc20(prepayErc20, totalPrepay);
+            const current = (await publicClient.readContract({
+              address: form.prepayAsset as Address,
+              abi: ERC20_APPROVE_ABI,
+              functionName: "allowance",
+              args: [address as Address, diamondAddr as Address],
+            })) as bigint;
+            if (current < totalPrepay) {
+              const hash = await walletClient.writeContract({
+                address: form.prepayAsset as Address,
+                abi: ERC20_APPROVE_ABI,
+                functionName: "approve",
+                args: [diamondAddr as Address, totalPrepay],
+                account: walletClient.account!,
+                chain: walletClient.chain,
+              });
+              await publicClient.waitForTransactionReceipt({ hash });
+            }
           }
         }
         approveStep.success();

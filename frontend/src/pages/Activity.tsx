@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { JsonRpcProvider } from 'ethers';
+import { createPublicClient, http } from 'viem';
 import {
   Activity as ActivityIcon,
   ChevronDown,
@@ -286,14 +286,14 @@ export default function Activity() {
     if (needed.size === 0) return;
     const rpc = chain.rpcUrl;
     if (!rpc) return;
-    const provider = new JsonRpcProvider(rpc);
+    const publicClient = createPublicClient({ transport: http(rpc) });
     for (const bn of needed) inflight.current.add(bn);
     (async () => {
       const updates: Record<number, number> = {};
       await Promise.all(
         Array.from(needed).map(async (bn) => {
           try {
-            const b = await provider.getBlock(bn);
+            const b = await publicClient.getBlock({ blockNumber: BigInt(bn) });
             if (b?.timestamp != null) updates[bn] = Number(b.timestamp);
           } catch {
             // Swallow — a missing timestamp just renders as the blockNumber.

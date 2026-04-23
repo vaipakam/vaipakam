@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Contract, type Provider } from 'ethers';
-import { useDiamondRead, useReadChain } from '../contracts/useDiamond';
+import { parseAbiItem, type Address, type PublicClient } from 'viem';
+import { useDiamondPublicClient, useReadChain } from '../contracts/useDiamond';
+import { DEFAULT_CHAIN } from '../contracts/config';
+import { DIAMOND_ABI_VIEM as DIAMOND_ABI } from '../contracts/abis';
 import { beginStep } from '../lib/journeyLog';
 
 const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
@@ -9,11 +11,19 @@ const STALE_MS = 30_000;
 const MINT_HISTORY_LIMIT = 10;
 const TRANSFER_HISTORY_LIMIT = 20;
 
-// Minimal ABI for Transfer-event queries on the VPFI ERC20 token contract —
-// the Diamond ABI doesn't cover events emitted on the token itself.
-const ERC20_TRANSFER_ABI = [
+// Viem-parsed Transfer event for token-level log queries. The Diamond ABI
+// doesn't cover token-emitted events, so we parse the standard ERC-20
+// Transfer signature directly.
+const TRANSFER_EVENT = parseAbiItem(
   'event Transfer(address indexed from, address indexed to, uint256 value)',
-];
+);
+
+// Protocol-level VPFIMinted event. Searched by topic on the diamond address
+// via `getContractEvents`. Kept here as a typed abiItem so viem narrows the
+// log args appropriately.
+const VPFI_MINTED_EVENT = parseAbiItem(
+  'event VPFIMinted(address indexed to, uint256 amount)',
+);
 
 export interface VPFIMintRecord {
   to: string;
@@ -76,8 +86,9 @@ let cached: CacheEntry | null = null;
  * switching networks (or wallet accounts) invalidates cleanly.
  */
 export function useUserVPFI(address: string | null) {
-  const diamond = useDiamondRead();
+  const publicClient = useDiamondPublicClient();
   const chain = useReadChain();
+  const diamondAddress = (chain.diamondAddress ?? DEFAULT_CHAIN.diamondAddress) as Address;
   const cacheKey = buildCacheKey(chain.chainId, chain.diamondAddress, address);
 
   const [snapshot, setSnapshot] = useState<UserVPFISnapshot | null>(() => {
@@ -96,66 +107,60 @@ export function useUserVPFI(address: string | null) {
     // Skip the fetch entirely when the wallet hasn't connected yet.
     // A pre-connect fetch can only produce `balance: 0` (no address to
     // query), and caching that under the current cacheKey makes every
-    // subsequent call within STALE_MS serve a phantom zero — visible to
-    // the user as "Wallet VPFI balance: 0" that only corrects after a
-    // hard refresh once the connect handshake re-fires the effect.
+    // subsequent call within STALE_MS serve a phantom zero.
     if (!address) {
       setSnapshot(null);
       setLoading(false);
       return;
     }
-    // Drop any snapshot belonging to a previous cacheKey (chain/diamond/
-    // wallet changed) so the UI doesn't keep showing e.g. a zero balance
-    // fetched pre-wallet-connect while the fresh fetch is in flight.
+    // Drop any snapshot belonging to a previous cacheKey so the UI doesn't
+    // keep showing stale data while the fresh fetch is in flight.
     setSnapshot(null);
     setLoading(true);
     setError(null);
     const step = beginStep({ area: 'dashboard', flow: 'useUserVPFI', step: 'readBalanceAndHistory' });
     try {
-      const d = diamond as unknown as {
-        getVPFIToken: () => Promise<string>;
-        getVPFIBalanceOf: (a: string) => Promise<bigint>;
-        getVPFITotalSupply: () => Promise<bigint>;
-        getTreasury: () => Promise<string>;
-        queryFilter: (
-          event: string,
-          fromBlock?: number | string,
-          toBlock?: number | string,
-        ) => Promise<
-          Array<{
-            args: { to: string; amount: bigint };
-            blockNumber: number;
-            transactionHash: string;
-          }>
-        >;
+      const readDiamond = async <T>(functionName: string, args: readonly unknown[] = []): Promise<T> => {
+        return (await publicClient.readContract({
+          address: diamondAddress,
+          abi: DIAMOND_ABI,
+          functionName,
+          args,
+        })) as T;
       };
 
       const [token, totalSupplyRaw, treasury] = await Promise.all([
-        d.getVPFIToken(),
-        d.getVPFITotalSupply(),
-        d.getTreasury(),
+        readDiamond<string>('getVPFIToken'),
+        readDiamond<bigint>('getVPFITotalSupply'),
+        readDiamond<string>('getTreasury'),
       ]);
 
       const registered = token !== ZERO_ADDRESS;
 
       let balance = 0;
       if (address && registered) {
-        const raw = await d.getVPFIBalanceOf(address);
+        const raw = await readDiamond<bigint>('getVPFIBalanceOf', [address as Address]);
         balance = Number(raw) / TOKEN_DECIMALS_SCALE;
       }
       const totalSupply = Number(totalSupplyRaw) / TOKEN_DECIMALS_SCALE;
       const shareOfCirculating = totalSupply === 0 ? 0 : balance / totalSupply;
 
-      // Protocol-level mint history: Diamond-side VPFIMinted event.
+      // Protocol-level mint history: Diamond-emitted VPFIMinted events.
       let recentMints: VPFIMintRecord[] = [];
       try {
-        const events = await d.queryFilter('VPFIMinted', chain.deployBlock || 0, 'latest');
-        recentMints = events
-          .map((e) => ({
-            to: e.args.to,
-            amount: Number(e.args.amount) / TOKEN_DECIMALS_SCALE,
-            blockNumber: e.blockNumber,
-            txHash: e.transactionHash,
+        const logs = await publicClient.getContractEvents({
+          address: diamondAddress,
+          abi: [VPFI_MINTED_EVENT],
+          eventName: 'VPFIMinted',
+          fromBlock: chain.deployBlock > 0 ? BigInt(chain.deployBlock) : 0n,
+          toBlock: 'latest',
+        });
+        recentMints = logs
+          .map((log) => ({
+            to: String(log.args.to ?? ''),
+            amount: Number(log.args.amount ?? 0n) / TOKEN_DECIMALS_SCALE,
+            blockNumber: Number(log.blockNumber ?? 0n),
+            txHash: String(log.transactionHash ?? ''),
           }))
           .sort((a, b) => b.blockNumber - a.blockNumber)
           .slice(0, MINT_HISTORY_LIMIT);
@@ -165,30 +170,17 @@ export function useUserVPFI(address: string | null) {
         recentMints = [];
       }
 
-      // Token-level activity: only meaningful when token is registered and
-      // a wallet is connected. Uses a minimal ABI bound to the token address,
-      // reusing the same provider the Diamond read is going through.
+      // Token-level activity: only meaningful when token is registered and a
+      // wallet is connected. Fetches both sides of Transfer with indexed-arg
+      // filters and merges client-side.
       let recentTransfers: VPFITransferRecord[] = [];
       if (registered && address) {
         try {
-          const provider = (diamond as unknown as { runner: Provider }).runner;
-          const tokenContract = new Contract(token, ERC20_TRANSFER_ABI, provider);
-          const fromBlock = chain.deployBlock || 0;
-          const [outgoing, incoming] = await Promise.all([
-            tokenContract.queryFilter(
-              tokenContract.filters.Transfer(address, null),
-              fromBlock,
-              'latest',
-            ),
-            tokenContract.queryFilter(
-              tokenContract.filters.Transfer(null, address),
-              fromBlock,
-              'latest',
-            ),
-          ]);
-          recentTransfers = mergeTransfers(
-            [...outgoing, ...incoming] as unknown as RawTransfer[],
-            address,
+          recentTransfers = await fetchTransferHistory(
+            publicClient,
+            token as Address,
+            address as Address,
+            chain.deployBlock > 0 ? BigInt(chain.deployBlock) : 0n,
           );
         } catch {
           recentTransfers = [];
@@ -216,7 +208,7 @@ export function useUserVPFI(address: string | null) {
     } finally {
       setLoading(false);
     }
-  }, [address, diamond, cacheKey, chain.deployBlock]);
+  }, [address, publicClient, diamondAddress, cacheKey, chain.deployBlock]);
 
   useEffect(() => {
     load();
@@ -247,57 +239,68 @@ function buildCacheKey(
   return `${chainId}:${d}:${u}`;
 }
 
-interface RawTransfer {
-  args: { from: string; to: string; value: bigint };
-  blockNumber: number;
-  transactionHash: string;
-  index?: number;
-  logIndex?: number;
-}
+async function fetchTransferHistory(
+  publicClient: PublicClient,
+  tokenAddress: Address,
+  user: Address,
+  fromBlock: bigint,
+): Promise<VPFITransferRecord[]> {
+  const [outgoing, incoming] = await Promise.all([
+    publicClient.getLogs({
+      address: tokenAddress,
+      event: TRANSFER_EVENT,
+      args: { from: user },
+      fromBlock,
+      toBlock: 'latest',
+    }),
+    publicClient.getLogs({
+      address: tokenAddress,
+      event: TRANSFER_EVENT,
+      args: { to: user },
+      fromBlock,
+      toBlock: 'latest',
+    }),
+  ]);
 
-function mergeTransfers(
-  raw: RawTransfer[],
-  user: string,
-): VPFITransferRecord[] {
   const u = user.toLowerCase();
   const seen = new Set<string>();
   const out: VPFITransferRecord[] = [];
 
-  for (const e of raw) {
-    const logIdx = e.index ?? e.logIndex ?? 0;
-    const dedupeKey = `${e.transactionHash}:${logIdx}`;
+  for (const log of [...outgoing, ...incoming]) {
+    const logIdx = Number(log.logIndex ?? 0n);
+    const dedupeKey = `${log.transactionHash}:${logIdx}`;
     if (seen.has(dedupeKey)) continue;
     seen.add(dedupeKey);
 
-    const from = (e.args.from ?? '').toLowerCase();
-    const to = (e.args.to ?? '').toLowerCase();
-    const amount = Number(e.args.value) / TOKEN_DECIMALS_SCALE;
+    const from = String(log.args.from ?? '').toLowerCase();
+    const to = String(log.args.to ?? '').toLowerCase();
+    const amount = Number(log.args.value ?? 0n) / TOKEN_DECIMALS_SCALE;
 
     let direction: VPFITransferRecord['direction'];
     let counterparty: string;
     if (from === u && to === u) {
       direction = 'self';
-      counterparty = e.args.from;
+      counterparty = String(log.args.from ?? '');
     } else if (from === ZERO_ADDRESS.toLowerCase() && to === u) {
       direction = 'mint';
-      counterparty = e.args.from;
+      counterparty = String(log.args.from ?? '');
     } else if (from === u && to === ZERO_ADDRESS.toLowerCase()) {
       direction = 'burn';
-      counterparty = e.args.to;
+      counterparty = String(log.args.to ?? '');
     } else if (from === u) {
       direction = 'out';
-      counterparty = e.args.to;
+      counterparty = String(log.args.to ?? '');
     } else {
       direction = 'in';
-      counterparty = e.args.from;
+      counterparty = String(log.args.from ?? '');
     }
 
     out.push({
       direction,
       counterparty,
       amount,
-      blockNumber: e.blockNumber,
-      txHash: e.transactionHash,
+      blockNumber: Number(log.blockNumber ?? 0n),
+      txHash: String(log.transactionHash ?? ''),
       logIndex: logIdx,
     });
   }

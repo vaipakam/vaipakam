@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
-import { Contract, parseEther, formatEther } from "ethers";
+import { parseAbi, type Abi, type Address } from "viem";
+import { usePublicClient, useWalletClient } from "wagmi";
+import { parseEther, formatEther } from "viem";
 import {
   Coins,
   Wallet,
@@ -269,15 +271,20 @@ function FlowBanner({ step, txHash, blockExplorer, onReset }: FlowBannerProps) {
 // final backstop.
 const ETH_GAS_RESERVE_WEI = 5_000_000_000_000_000n; // 0.005 ETH
 
+const VPFI_APPROVE_ABI = parseAbi([
+  "function allowance(address owner, address spender) view returns (uint256)",
+  "function approve(address spender, uint256 amount) returns (bool)",
+]) as unknown as Abi;
+
 export default function BuyVPFI() {
   const {
     address,
-    signer,
-    provider,
     activeChain,
     isCorrectChain,
     switchToDefaultChain,
   } = useWallet();
+  const { data: walletClient } = useWalletClient();
+  const publicClient = usePublicClient();
 
   const readChain = useReadChain();
   const diamond = useDiamondContract();
@@ -318,17 +325,19 @@ export default function BuyVPFI() {
   // `reloadEthBalance`).
   const [ethBalance, setEthBalance] = useState<bigint | null>(null);
   const reloadEthBalance = useCallback(async () => {
-    if (!provider || !address) {
+    if (!publicClient || !address) {
       setEthBalance(null);
       return;
     }
     try {
-      const bal = await provider.getBalance(address);
+      const bal = await publicClient.getBalance({
+        address: address as Address,
+      });
       setEthBalance(bal);
     } catch {
       setEthBalance(null);
     }
-  }, [provider, address]);
+  }, [publicClient, address]);
   useEffect(() => {
     void reloadEthBalance();
   }, [reloadEthBalance]);
@@ -538,7 +547,8 @@ export default function BuyVPFI() {
     if (
       !canWrite ||
       !address ||
-      !signer ||
+      !walletClient ||
+      !publicClient ||
       !activeChain ||
       !tokenAddr ||
       !tokenRegistered
@@ -576,20 +586,6 @@ export default function BuyVPFI() {
     try {
       // Approve diamond on the VPFI token first. Uses a minimal ERC20 iface
       // since the VPFI token lives outside the diamond ABI.
-      const erc20 = new Contract(
-        tokenAddr,
-        [
-          "function allowance(address owner, address spender) view returns (uint256)",
-          "function approve(address spender, uint256 amount) returns (bool)",
-        ],
-        signer,
-      ) as unknown as {
-        allowance: (o: string, s: string) => Promise<bigint>;
-        approve: (
-          s: string,
-          n: bigint,
-        ) => Promise<{ wait: () => Promise<unknown> }>;
-      };
       const diamondAddr = activeChain.diamondAddress;
       if (!diamondAddr) {
         setError(
@@ -598,15 +594,27 @@ export default function BuyVPFI() {
         setStep("idle");
         return;
       }
-      const currentAllowance = await erc20.allowance(address, diamondAddr);
+      const currentAllowance = (await publicClient.readContract({
+        address: tokenAddr as Address,
+        abi: VPFI_APPROVE_ABI,
+        functionName: "allowance",
+        args: [address as Address, diamondAddr as Address],
+      })) as bigint;
       if (currentAllowance < depositWei) {
         // Approve exactly the deposit amount. Users were uncomfortable
         // with wallets surfacing an "unlimited spend" prompt even though
         // the spender is our own Diamond — so we trade one extra approval
         // per deposit for a clearer wallet UX. A future deposit that fits
         // within the still-unconsumed allowance skips the approve leg.
-        const approveTx = await erc20.approve(diamondAddr, depositWei);
-        await approveTx.wait();
+        const approveHash = await walletClient.writeContract({
+          address: tokenAddr as Address,
+          abi: VPFI_APPROVE_ABI,
+          functionName: "approve",
+          args: [diamondAddr as Address, depositWei],
+          account: walletClient.account!,
+          chain: walletClient.chain,
+        });
+        await publicClient.waitForTransactionReceipt({ hash: approveHash });
       }
 
       setStep("depositing");
@@ -639,7 +647,7 @@ export default function BuyVPFI() {
 
   const handleUnstake = async () => {
     if (unstakeInFlight.current) return;
-    if (!canWrite || !address || !signer || !activeChain || !tokenRegistered)
+    if (!canWrite || !address || !walletClient || !activeChain || !tokenRegistered)
       return;
     setError(null);
     setTxHash(null);

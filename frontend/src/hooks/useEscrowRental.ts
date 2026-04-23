@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react';
-import { useDiamondRead } from '../contracts/useDiamond';
+import { getAddress, type Address } from 'viem';
+import { useDiamondPublicClient, useReadChain } from '../contracts/useDiamond';
+import { DIAMOND_ABI_VIEM } from '../contracts/abis';
 
 export interface EscrowRentalState {
   user: string;
@@ -21,25 +23,43 @@ export function useEscrowRental(
   nftContract: string | undefined,
   tokenId: bigint | undefined,
 ): EscrowRentalState | null {
-  const diamond = useDiamondRead();
+  const publicClient = useDiamondPublicClient();
+  const chain = useReadChain();
+  const diamondAddress = chain.diamondAddress as Address | null;
   const [state, setState] = useState<EscrowRentalState | null>(null);
 
   useEffect(() => {
     if (!lender || !nftContract || tokenId === undefined) return;
+    if (!diamondAddress) return;
     let cancelled = false;
 
     const readNow = async () => {
       try {
         const [user, expires, quantity] = await Promise.all([
-          diamond.escrowGetNFTUserOf(lender, nftContract, tokenId),
-          diamond.escrowGetNFTUserExpires(lender, nftContract, tokenId),
-          diamond.escrowGetNFTQuantity(lender, nftContract, tokenId),
+          publicClient.readContract({
+            address: diamondAddress,
+            abi: DIAMOND_ABI_VIEM,
+            functionName: 'escrowGetNFTUserOf',
+            args: [getAddress(lender), getAddress(nftContract), tokenId],
+          }),
+          publicClient.readContract({
+            address: diamondAddress,
+            abi: DIAMOND_ABI_VIEM,
+            functionName: 'escrowGetNFTUserExpires',
+            args: [getAddress(lender), getAddress(nftContract), tokenId],
+          }),
+          publicClient.readContract({
+            address: diamondAddress,
+            abi: DIAMOND_ABI_VIEM,
+            functionName: 'escrowGetNFTQuantity',
+            args: [getAddress(lender), getAddress(nftContract), tokenId],
+          }),
         ]);
         if (!cancelled) {
           setState({
             user: String(user),
-            expires: BigInt(expires),
-            quantity: BigInt(quantity),
+            expires: BigInt(expires as bigint),
+            quantity: BigInt(quantity as bigint),
           });
         }
       } catch {
@@ -49,16 +69,26 @@ export function useEscrowRental(
 
     readNow();
 
-    // Narrow the filter by indexed topics (lender, nftContract, tokenId).
-    const filter = diamond.filters.EscrowRentalUpdated(lender, nftContract, tokenId);
-    const onEvent = () => { readNow(); };
-    diamond.on(filter, onEvent);
+    // Narrow the subscription by indexed topics (lender, nftContract,
+    // tokenId) — viem filters on `args` to do the same thing ethers'
+    // `filters.EscrowRentalUpdated(...)` did.
+    const unwatch = publicClient.watchContractEvent({
+      address: diamondAddress,
+      abi: DIAMOND_ABI_VIEM,
+      eventName: 'EscrowRentalUpdated',
+      args: {
+        lender: getAddress(lender),
+        nftContract: getAddress(nftContract),
+        tokenId,
+      },
+      onLogs: () => { readNow(); },
+    });
 
     return () => {
       cancelled = true;
-      diamond.off(filter, onEvent);
+      unwatch();
     };
-  }, [diamond, lender, nftContract, tokenId]);
+  }, [publicClient, diamondAddress, lender, nftContract, tokenId]);
 
   return state;
 }

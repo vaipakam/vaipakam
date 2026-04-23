@@ -1,9 +1,14 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Contract, JsonRpcProvider } from 'ethers';
-import { useDiamondRead, useReadChain } from '../contracts/useDiamond';
+import {
+  createPublicClient,
+  http,
+  type Address,
+  type PublicClient,
+} from 'viem';
+import { useDiamondPublicClient, useReadChain } from '../contracts/useDiamond';
 import { useWallet } from '../context/WalletContext';
 import { beginStep } from '../lib/journeyLog';
-import { DIAMOND_ABI } from '../contracts/abis';
+import { DIAMOND_ABI_VIEM as DIAMOND_ABI } from '../contracts/abis';
 import type { ChainConfig } from '../contracts/config';
 
 const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
@@ -73,24 +78,24 @@ let cached: CacheEntry | null = null;
  *   behavior, correct for the direct canonical-chain buy).
  */
 export function useVPFIDiscount(chainOverride?: ChainConfig | null) {
-  const defaultDiamond = useDiamondRead();
+  const defaultClient = useDiamondPublicClient();
   const defaultChain = useReadChain();
   const { address } = useWallet();
-  const overrideDiamond = useMemo(() => {
+  const overrideClient = useMemo<PublicClient | null>(() => {
     if (!chainOverride || !chainOverride.diamondAddress) return null;
-    const provider = new JsonRpcProvider(chainOverride.rpcUrl);
-    return new Contract(chainOverride.diamondAddress, DIAMOND_ABI, provider);
+    return createPublicClient({
+      transport: http(chainOverride.rpcUrl),
+    }) as PublicClient;
     // Intentionally depend on the two stable primitive fields rather than
     // the `chainOverride` object reference — callers often pass a freshly
     // constructed ChainConfig each render (e.g. `getCanonicalVPFIChain()`),
-    // which would otherwise invalidate the memo every render and recreate
-    // the Contract/provider on every call. The primitive deps ARE the
-    // invariant we actually care about.
+    // which would otherwise invalidate the memo every render.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [chainOverride?.rpcUrl, chainOverride?.diamondAddress]);
-  const diamond = overrideDiamond ?? defaultDiamond;
+  const publicClient = overrideClient ?? defaultClient;
   const chain =
     chainOverride && chainOverride.diamondAddress ? chainOverride : defaultChain;
+  const diamondAddress = (chain.diamondAddress ?? ZERO_ADDRESS) as Address;
   const cacheKey = `${chain.chainId}:${(chain.diamondAddress ?? 'none').toLowerCase()}:${(address ?? 'none').toLowerCase()}`;
 
   const [config, setConfig] = useState<VPFIBuyConfig | null>(() =>
@@ -113,18 +118,22 @@ export function useVPFIDiscount(chainOverride?: ChainConfig | null) {
     setError(null);
     const step = beginStep({ area: 'vpfi-buy', flow: 'useVPFIDiscount', step: 'readConfig' });
     try {
-      const d = diamond as unknown as {
-        getVPFIBuyConfig: () => Promise<
-          [bigint, bigint, bigint, bigint, boolean, string]
-        >;
-        getVPFISoldTo: (user: string) => Promise<bigint>;
-      };
       const [tuple, soldToWallet] = await Promise.all([
-        d.getVPFIBuyConfig(),
-        address ? d.getVPFISoldTo(address) : Promise.resolve(0n),
+        publicClient.readContract({
+          address: diamondAddress,
+          abi: DIAMOND_ABI,
+          functionName: 'getVPFIBuyConfig',
+        }) as Promise<readonly [bigint, bigint, bigint, bigint, boolean, string]>,
+        address
+          ? (publicClient.readContract({
+              address: diamondAddress,
+              abi: DIAMOND_ABI,
+              functionName: 'getVPFISoldTo',
+              args: [address as Address],
+            }) as Promise<bigint>)
+          : Promise.resolve(0n),
       ]);
-      const [weiPerVpfi, globalCap, perWalletCap, totalSold, enabled, ethPriceAsset] =
-        tuple;
+      const [weiPerVpfi, globalCap, perWalletCap, totalSold, enabled, ethPriceAsset] = tuple;
 
       // Caps arrive pre-resolved (stored zero → spec default) from
       // VPFIDiscountFacet.getVPFIBuyConfig, so we can compute headroom
@@ -163,7 +172,7 @@ export function useVPFIDiscount(chainOverride?: ChainConfig | null) {
     } finally {
       setLoading(false);
     }
-  }, [diamond, cacheKey, address]);
+  }, [publicClient, diamondAddress, cacheKey, address]);
 
   useEffect(() => {
     load();
@@ -203,7 +212,9 @@ export function useVPFIDiscountQuote(
   offerId: bigint | null,
   borrower?: string | null,
 ) {
-  const diamond = useDiamondRead();
+  const publicClient = useDiamondPublicClient();
+  const chain = useReadChain();
+  const diamondAddress = (chain.diamondAddress ?? ZERO_ADDRESS) as Address;
   const [quote, setQuote] = useState<VPFIDiscountQuote | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -214,19 +225,14 @@ export function useVPFIDiscountQuote(
     }
     setLoading(true);
     try {
-      const d = diamond as unknown as {
-        quoteVPFIDiscount: (
-          id: bigint,
-        ) => Promise<[boolean, bigint, bigint, bigint]>;
-        quoteVPFIDiscountFor: (
-          id: bigint,
-          user: string,
-        ) => Promise<[boolean, bigint, bigint, bigint]>;
-      };
-      const [eligible, vpfiRequired, borrowerEscrowBal, tier] =
-        borrower && borrower !== ZERO_ADDRESS
-          ? await d.quoteVPFIDiscountFor(offerId, borrower)
-          : await d.quoteVPFIDiscount(offerId);
+      const useAcceptor = borrower && borrower !== ZERO_ADDRESS;
+      const result = (await publicClient.readContract({
+        address: diamondAddress,
+        abi: DIAMOND_ABI,
+        functionName: useAcceptor ? 'quoteVPFIDiscountFor' : 'quoteVPFIDiscount',
+        args: useAcceptor ? [offerId, borrower as Address] : [offerId],
+      })) as readonly [boolean, bigint, bigint, bigint];
+      const [eligible, vpfiRequired, borrowerEscrowBal, tier] = result;
       setQuote({
         eligible,
         vpfiRequired,
@@ -243,7 +249,7 @@ export function useVPFIDiscountQuote(
     } finally {
       setLoading(false);
     }
-  }, [diamond, offerId, borrower]);
+  }, [publicClient, diamondAddress, offerId, borrower]);
 
   useEffect(() => {
     load();
@@ -267,7 +273,9 @@ export interface VPFIDiscountTier {
  * no wallet is connected.
  */
 export function useVPFIDiscountTier(user: string | null) {
-  const diamond = useDiamondRead();
+  const publicClient = useDiamondPublicClient();
+  const chain = useReadChain();
+  const diamondAddress = (chain.diamondAddress ?? ZERO_ADDRESS) as Address;
   const [data, setData] = useState<VPFIDiscountTier | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -278,12 +286,13 @@ export function useVPFIDiscountTier(user: string | null) {
     }
     setLoading(true);
     try {
-      const d = diamond as unknown as {
-        getVPFIDiscountTier: (
-          u: string,
-        ) => Promise<[bigint, bigint, bigint]>;
-      };
-      const [tier, escrowBal, discountBps] = await d.getVPFIDiscountTier(user);
+      const result = (await publicClient.readContract({
+        address: diamondAddress,
+        abi: DIAMOND_ABI,
+        functionName: 'getVPFIDiscountTier',
+        args: [user as Address],
+      })) as readonly [bigint, bigint, bigint];
+      const [tier, escrowBal, discountBps] = result;
       setData({
         tier: Number(tier),
         escrowBal,
@@ -294,7 +303,7 @@ export function useVPFIDiscountTier(user: string | null) {
     } finally {
       setLoading(false);
     }
-  }, [diamond, user]);
+  }, [publicClient, diamondAddress, user]);
 
   useEffect(() => {
     load();
@@ -356,68 +365,17 @@ export const VPFI_TIER_TABLE: ReadonlyArray<{
 ];
 
 /**
- * Convenience: returns the VPFI balance the connected wallet currently holds
- * in its escrow on the active chain. `null` when no wallet, no escrow, or
- * the VPFI token isn't registered. Not cached — callers should gate reads
- * themselves if they need to poll.
- */
-export function useEscrowVPFIBalance(user: string | null) {
-  const diamond = useDiamondRead();
-  const [balance, setBalance] = useState<bigint | null>(null);
-  const [loading, setLoading] = useState(false);
-
-  const load = useCallback(async () => {
-    if (!user) {
-      setBalance(null);
-      return;
-    }
-    setLoading(true);
-    try {
-      const d = diamond as unknown as {
-        getUserEscrow: { staticCall: (user: string) => Promise<string> };
-        getVPFIToken: () => Promise<string>;
-      };
-      const [escrow, token] = await Promise.all([
-        d.getUserEscrow.staticCall(user),
-        d.getVPFIToken(),
-      ]);
-      if (!escrow || escrow === ZERO_ADDRESS || !token || token === ZERO_ADDRESS) {
-        setBalance(0n);
-        return;
-      }
-      const d2 = diamond as unknown as {
-        getVPFIBalanceOf: (a: string) => Promise<bigint>;
-      };
-      const raw = await d2.getVPFIBalanceOf(escrow);
-      setBalance(raw);
-    } catch {
-      setBalance(null);
-    } finally {
-      setLoading(false);
-    }
-  }, [diamond, user]);
-
-  useEffect(() => {
-    load();
-  }, [load]);
-
-  return { balance, loading, reload: load };
-}
-
-/**
- * Read + write the platform-level VPFI-discount consent flag for the caller.
- * When enabled, the protocol automatically applies borrower Loan Initiation
- * Fee and lender Yield Fee discounts whenever the caller's escrow holds
- * sufficient VPFI. One consent governs both legs — there is no per-offer or
- * per-loan opt-in.
- *
- * The hook hydrates from `getVPFIDiscountConsent(address)` and exposes a
- * `setConsent(enabled)` helper that submits the mutating tx and refreshes
- * local state on confirmation.
+ * Platform-level consent flag for using escrowed VPFI on fee discounts.
+ * Reads `getVPFIDiscountConsent(user)` for display, mutates via
+ * `setVPFIDiscountConsent(bool)` — caller supplies a write-capable ethers
+ * contract (kept that way until the write-path migration lands; the hook
+ * deliberately does not own write access).
  */
 export function useVPFIDiscountConsent() {
-  const diamond = useDiamondRead();
-  const { signer, address } = useWallet();
+  const publicClient = useDiamondPublicClient();
+  const chain = useReadChain();
+  const diamondAddress = (chain.diamondAddress ?? ZERO_ADDRESS) as Address;
+  const { address } = useWallet();
   const [enabled, setEnabled] = useState<boolean | null>(null);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -430,17 +388,19 @@ export function useVPFIDiscountConsent() {
     }
     setLoading(true);
     try {
-      const d = diamond as unknown as {
-        getVPFIDiscountConsent: (u: string) => Promise<boolean>;
-      };
-      const v = await d.getVPFIDiscountConsent(address);
+      const v = (await publicClient.readContract({
+        address: diamondAddress,
+        abi: DIAMOND_ABI,
+        functionName: 'getVPFIDiscountConsent',
+        args: [address as Address],
+      })) as boolean;
       setEnabled(v);
     } catch {
       setEnabled(false);
     } finally {
       setLoading(false);
     }
-  }, [diamond, address]);
+  }, [publicClient, diamondAddress, address]);
 
   useEffect(() => {
     load();
@@ -449,13 +409,14 @@ export function useVPFIDiscountConsent() {
   /**
    * Mutate the platform-level consent flag.
    * @param next         Target value (true = opt in, false = opt out).
-   * @param writeDiamond Write-capable diamond contract instance bound to
-   *                     the connected signer (caller provides; the hook
-   *                     deliberately does not own write access).
+   * @param writeDiamond Diamond handle bound to a connected wallet
+   *                     (caller provides; the hook deliberately does not
+   *                     own write access so callers can share a single
+   *                     `useDiamondContract()` with the rest of the page).
    */
   const setConsent = useCallback(
     async (next: boolean, writeDiamond: unknown) => {
-      if (!signer || !writeDiamond) return;
+      if (!writeDiamond) return;
       setError(null);
       setSaving(true);
       const step = beginStep({
@@ -480,7 +441,7 @@ export function useVPFIDiscountConsent() {
         setSaving(false);
       }
     },
-    [signer],
+    [],
   );
 
   return { enabled, loading, saving, error, reload: load, setConsent };
@@ -504,7 +465,60 @@ export function ethWeiToVpfi(ethWei: bigint, weiPerVpfi: bigint): bigint {
   return (ethWei * SCALE_18) / weiPerVpfi;
 }
 
-/** Test-only: clear the module-scoped cache. */
-export function __clearVPFIDiscountCache() {
-  cached = null;
+/**
+ * Convenience: returns the VPFI balance the connected wallet currently holds
+ * in its escrow on the active chain. `null` when no wallet, no escrow, or
+ * the VPFI token isn't registered. Not cached — callers should gate reads
+ * themselves if they need to poll.
+ */
+export function useEscrowVPFIBalance(user: string | null) {
+  const publicClient = useDiamondPublicClient();
+  const chain = useReadChain();
+  const diamondAddress = (chain.diamondAddress ?? ZERO_ADDRESS) as Address;
+  const [balance, setBalance] = useState<bigint | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  const load = useCallback(async () => {
+    if (!user) {
+      setBalance(null);
+      return;
+    }
+    setLoading(true);
+    try {
+      const [escrow, token] = await Promise.all([
+        publicClient.readContract({
+          address: diamondAddress,
+          abi: DIAMOND_ABI,
+          functionName: 'getUserEscrow',
+          args: [user as Address],
+        }) as Promise<string>,
+        publicClient.readContract({
+          address: diamondAddress,
+          abi: DIAMOND_ABI,
+          functionName: 'getVPFIToken',
+        }) as Promise<string>,
+      ]);
+      if (!escrow || escrow === ZERO_ADDRESS || !token || token === ZERO_ADDRESS) {
+        setBalance(0n);
+        return;
+      }
+      const raw = (await publicClient.readContract({
+        address: diamondAddress,
+        abi: DIAMOND_ABI,
+        functionName: 'getVPFIBalanceOf',
+        args: [escrow as Address],
+      })) as bigint;
+      setBalance(raw);
+    } catch {
+      setBalance(null);
+    } finally {
+      setLoading(false);
+    }
+  }, [publicClient, diamondAddress, user]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  return { balance, loading, reload: load };
 }

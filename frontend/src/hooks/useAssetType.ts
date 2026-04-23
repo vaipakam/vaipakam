@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
-import { Contract, isAddress } from 'ethers';
+import { getContract, isAddress, type Address, type PublicClient } from 'viem';
+import { useDiamondPublicClient } from '../contracts/useDiamond';
 import { useWallet } from '../context/WalletContext';
 
 export type DetectedAssetType = 'erc20' | 'erc721' | 'erc1155' | 'unknown';
@@ -8,9 +9,21 @@ const IERC721_INTERFACE_ID = '0x80ac58cd';
 const IERC1155_INTERFACE_ID = '0xd9b67a26';
 
 const DETECT_ABI = [
-  'function supportsInterface(bytes4 interfaceId) view returns (bool)',
-  'function decimals() view returns (uint8)',
-];
+  {
+    inputs: [{ internalType: 'bytes4', name: 'interfaceId', type: 'bytes4' }],
+    name: 'supportsInterface',
+    outputs: [{ internalType: 'bool', name: '', type: 'bool' }],
+    stateMutability: 'view',
+    type: 'function',
+  },
+  {
+    inputs: [],
+    name: 'decimals',
+    outputs: [{ internalType: 'uint8', name: '', type: 'uint8' }],
+    stateMutability: 'view',
+    type: 'function',
+  },
+] as const;
 
 const cache = new Map<string, DetectedAssetType>();
 
@@ -19,21 +32,21 @@ function cacheKey(chainId: number | null, address: string): string {
 }
 
 async function detect(
-  runner: ConstructorParameters<typeof Contract>[2],
-  address: string,
+  client: PublicClient,
+  address: Address,
 ): Promise<DetectedAssetType> {
-  const c = new Contract(address, DETECT_ABI, runner);
+  const c = getContract({ address, abi: DETECT_ABI, client });
 
   const [is721, is1155] = await Promise.all([
-    c.supportsInterface(IERC721_INTERFACE_ID).catch(() => false),
-    c.supportsInterface(IERC1155_INTERFACE_ID).catch(() => false),
+    c.read.supportsInterface([IERC721_INTERFACE_ID]).catch(() => false),
+    c.read.supportsInterface([IERC1155_INTERFACE_ID]).catch(() => false),
   ]);
 
   if (is1155) return 'erc1155';
   if (is721) return 'erc721';
 
   try {
-    await c.decimals();
+    await c.read.decimals();
     return 'erc20';
   } catch {
     return 'unknown';
@@ -52,15 +65,16 @@ export function useAssetType(address: string | null | undefined): {
   type: DetectedAssetType | null;
   loading: boolean;
 } {
-  const { provider, chainId } = useWallet();
-  const inputsReady = !!address && isAddress(address) && !!provider;
+  const { chainId } = useWallet();
+  const publicClient = useDiamondPublicClient();
+  const inputsReady = !!address && isAddress(address) && !!publicClient;
   const [type, setType] = useState<DetectedAssetType | null>(null);
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
     // When inputs are invalid the hook returns `{ type: null, loading: false }`
     // by derivation below — no synchronous setState inside the effect needed.
-    if (!inputsReady) return;
+    if (!inputsReady || !address) return;
 
     const key = cacheKey(chainId, address);
     const cached = cache.get(key);
@@ -75,7 +89,7 @@ export function useAssetType(address: string | null | undefined): {
 
     let cancelled = false;
     setLoading(true);
-    detect(provider, address)
+    detect(publicClient, address as Address)
       .then((result) => {
         if (cancelled) return;
         cache.set(key, result);
@@ -93,7 +107,7 @@ export function useAssetType(address: string | null | undefined): {
     return () => {
       cancelled = true;
     };
-  }, [address, provider, chainId, inputsReady]);
+  }, [address, publicClient, chainId, inputsReady]);
 
   return inputsReady ? { type, loading } : { type: null, loading: false };
 }
