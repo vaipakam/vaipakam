@@ -16,5 +16,3 @@ dist/
 # Optional
 .env
 .env.local
-
-.claude/
