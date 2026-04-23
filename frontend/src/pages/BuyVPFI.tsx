@@ -990,19 +990,6 @@ export default function BuyVPFI() {
               {walletVpfi == null ? "—" : formatAmount(walletVpfi)}
             </div>
             <div className="stat-label">Wallet VPFI balance</div>
-            {tokenRegistered && tokenAddr && (walletVpfi ?? 0) > 0 && (
-              <button
-                type="button"
-                className="btn btn-secondary btn-sm"
-                onClick={handleAddVPFIToWallet}
-                style={{ gap: 8, marginTop: 8 }}
-                data-tooltip="Import the VPFI token into your wallet to see the balance of VPFI token."
-                data-tooltip-placement="below-start"
-              >
-                <Wallet size={14} />
-                Add VPFI to MetaMask
-              </button>
-            )}
           </div>
           <Stat
             label={`Escrow VPFI balance (${activeChain?.name ?? readChain.name})`}
