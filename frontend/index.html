@@ -1,15 +1,32 @@
 <!doctype html>
 <html lang="en">
   <head>
-    <!-- Google tag (gtag.js) -->
-    <script async src="https://www.googletagmanager.com/gtag/js?id=G-KSL61Z65BF"></script>
+    <!-- Google tag (gtag.js) with Consent Mode v2.
+         Consent defaults are set BEFORE the gtag loader fires — so no
+         analytics/ads storage is created until the user explicitly opts
+         in via the consent banner. `functionality_storage` and
+         `security_storage` are granted because they cover essential
+         session/anti-abuse cookies, not tracking.
+         `wait_for_update: 500` holds the initial pageview for up to half
+         a second while the banner hydrates and the user's stored choice
+         is re-applied, so we don't double-fire. -->
     <script>
       window.dataLayer = window.dataLayer || [];
       function gtag(){dataLayer.push(arguments);}
+      gtag('consent', 'default', {
+        ad_storage: 'denied',
+        ad_user_data: 'denied',
+        ad_personalization: 'denied',
+        analytics_storage: 'denied',
+        personalization_storage: 'denied',
+        functionality_storage: 'granted',
+        security_storage: 'granted',
+        wait_for_update: 500,
+      });
       gtag('js', new Date());
-
       gtag('config', 'G-KSL61Z65BF');
     </script>
+    <script async src="https://www.googletagmanager.com/gtag/js?id=G-KSL61Z65BF"></script>
     <meta charset="UTF-8" />
     <link rel="icon" type="image/png" href="/logo-dark.png" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />

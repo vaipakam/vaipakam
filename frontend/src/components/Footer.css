@@ -113,3 +113,18 @@
   flex-wrap: wrap;
   gap: 8px;
 }
+
+.footer-cookie-link {
+  background: transparent;
+  border: none;
+  padding: 0;
+  font: inherit;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.footer-cookie-link:hover {
+  color: var(--text-primary);
+}

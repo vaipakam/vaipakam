@@ -18,6 +18,7 @@ import Activity from './pages/Activity';
 import DiscordPage from './pages/Discord';
 import Navbar from './components/Navbar';
 import Footer from './components/Footer';
+import ConsentBanner from './components/ConsentBanner';
 import { ScrollToHash } from './components/app/ScrollToHash';
 import DiagnosticsDrawer from './components/app/DiagnosticsDrawer';
 
@@ -44,6 +45,7 @@ export default function App() {
   return (
     <BrowserRouter>
       <ScrollToHash />
+      <ConsentBanner />
       <Routes>
         <Route path="/" element={<LandingPage />} />
         <Route path="/analytics" element={<PublicDashboard />} />

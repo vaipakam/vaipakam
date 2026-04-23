@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { useTheme } from '../context/ThemeContext';
 import { CHAIN_REGISTRY, compareChainsForDisplay } from '../contracts/config';
 import { ChainPicker } from './ChainPicker';
+import { openConsentBanner } from '../lib/consent';
 import './Footer.css';
 
 const GITHUB_URL = 'https://github.com/vaipakam';
@@ -101,6 +102,13 @@ export default function Footer() {
 
         <div className="footer-bottom">
           <p>&copy; {new Date().getFullYear()} Vaipakam. All rights reserved.</p>
+          <button
+            type="button"
+            className="footer-cookie-link"
+            onClick={openConsentBanner}
+          >
+            Cookie settings
+          </button>
           <p className="footer-license">BUSL 1.1 License</p>
         </div>
       </div>

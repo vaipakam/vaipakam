@@ -8,12 +8,13 @@
  *     ConnectKit, and our existing screens agree on "supported chains"
  *     without two sources of truth drifting.
  *   - RPC transports route through the same env-configurable URLs we use
- *     for read-only server calls, so wagmi-driven writes and our
- *     ethers-based reads both observe the same node (avoids the "wallet
- *     sees one state, UI sees another" class of bug).
+ *     for read-only calls, so wagmi-driven writes and our viem-based
+ *     reads observe the same node (avoids the "wallet sees one state,
+ *     UI sees another" class of bug).
  *   - Connectors are provided via ConnectKit's `getDefaultConfig` helper —
- *     it wires the injected + WalletConnect + Coinbase Wallet paths
- *     consistently and exposes the curated wallet-picker UI.
+ *     it wires the injected + WalletConnect + Coinbase Wallet paths with
+ *     ConnectKit's branded metadata so the picker shows wallet icons and
+ *     names, and (on mobile) the curated deep-link list.
  */
 import { createConfig, http } from 'wagmi';
 import { safe } from 'wagmi/connectors';
