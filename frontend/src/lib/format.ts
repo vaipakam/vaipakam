@@ -1,4 +1,4 @@
-import { formatUnits } from 'ethers';
+import { formatUnits } from 'viem';
 
 const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
 

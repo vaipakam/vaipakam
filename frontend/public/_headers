@@ -1,0 +1,49 @@
+# Cloudflare Pages / Workers static-assets header rules.
+# https://developers.cloudflare.com/pages/configuration/headers/
+#
+# This file is copied verbatim from `public/` to `dist/` by Vite at build
+# time; Cloudflare serves it as deploy-time routing metadata, so nothing
+# here ships as code to the browser.
+#
+# The CSP lets the wallet flow work (wallet-registry icons, session-relay
+# WebSocket, the verify-context iframe, injected browser-extension
+# popups) while keeping the rest of the surface tight. Review before
+# loosening further.
+#
+# The permissive-https allowances on `connect-src` / `img-src` are
+# inherent to a crypto frontend: RPC endpoints come from env-configurable
+# hosts (our CHAIN_REGISTRY), and token / wallet icons live on arbitrary
+# HTTPS origins across the ecosystem. Pin more narrowly in a later
+# hardening pass if we decide to freeze the RPC set.
+#
+# Safe-App embed support: `frame-ancestors` explicitly allows Safe's
+# dapp-browser origins so Vaipakam can run inside a Safe multisig UI
+# via the Safe-App pattern. `X-Frame-Options` is deliberately omitted —
+# that legacy header only supports `DENY`/`SAMEORIGIN` and would block
+# the Safe iframe; modern browsers enforce `frame-ancestors` instead,
+# which is the superset. `Cross-Origin-Resource-Policy` is `cross-origin`
+# so the Safe parent frame can read our resources (it's a different
+# origin than us); `same-origin` would break that path.
+
+/*
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: strict-origin-when-cross-origin
+  Permissions-Policy: camera=(), microphone=(), geolocation=(), interest-cohort=()
+  Cross-Origin-Opener-Policy: same-origin-allow-popups
+  Cross-Origin-Resource-Policy: cross-origin
+  Content-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; font-src 'self' data:; img-src 'self' data: blob: https:; connect-src 'self' https: wss:; frame-src 'self' https://verify.walletconnect.com https://verify.walletconnect.org; worker-src 'self' blob:; manifest-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'self' https://app.safe.global https://*.safe.global; upgrade-insecure-requests
+
+# SPA entry point — Cloudflare returns this for every non-asset path via
+# wrangler.jsonc `not_found_handling: single-page-application`. Force a
+# revalidation on every load so a deploy can never leave a client pinned
+# to stale JS references. The JS / CSS bundles themselves stay long-cached
+# via the /assets/* rule below because Vite emits content-hashed names.
+/
+  Cache-Control: public, max-age=0, must-revalidate
+
+/index.html
+  Cache-Control: public, max-age=0, must-revalidate
+
+# Immutable static assets (Vite emits content-hashed filenames in /assets/*).
+/assets/*
+  Cache-Control: public, max-age=31536000, immutable

@@ -1,4 +1,4 @@
-import { getAddress, isAddress } from 'ethers';
+import { getAddress, isAddress } from 'viem';
 
 const env = import.meta.env;
 
@@ -14,7 +14,9 @@ function normalizeAddress(addr: string | null): string | null {
   if (trimmed.length === 0) return null;
   // Validate-before-normalize so an obviously malformed env value surfaces
   // at load with a clear error, not as a cryptic checksum failure elsewhere.
-  if (!isAddress(trimmed.toLowerCase())) {
+  // `strict: false` disables checksum enforcement so the lowercase form
+  // passes — we're about to re-checksum via `getAddress` anyway.
+  if (!isAddress(trimmed.toLowerCase(), { strict: false })) {
     throw new Error(`Invalid address in env: ${addr}`);
   }
   return getAddress(trimmed.toLowerCase());

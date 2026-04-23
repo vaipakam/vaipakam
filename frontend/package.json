@@ -14,12 +14,15 @@
     "deploy": "npm run build && wrangler deploy"
   },
   "dependencies": {
-    "@walletconnect/ethereum-provider": "^2.23.9",
+    "@tanstack/react-query": "^5.100.1",
+    "connectkit": "^1.9.2",
     "ethers": "^6.16.0",
     "lucide-react": "^1.8.0",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
-    "react-router-dom": "^7.14.0"
+    "react-router-dom": "^7.14.0",
+    "viem": "^2.48.4",
+    "wagmi": "^2.19.5"
   },
   "overrides": {
     "axios": "^1.15.0"
