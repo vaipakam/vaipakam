@@ -422,7 +422,13 @@ export function VPFIPanel({
               <div className="stat-label">Escrow VPFI balance</div>
             </div>
             <div>
-              <div className="stat-value">{(shareOfCirculating * 100).toFixed(2)}%</div>
+              <div
+                className="stat-value"
+                data-tooltip="Your effective ownership of this chain's VPFI supply — wallet balance plus escrow-locked balance, divided by circulating. Escrow VPFI is still yours; it's just locked for tier discount / 5% APR."
+                data-tooltip-placement="below-start"
+              >
+                {(effectiveShareOfCirculating * 100).toFixed(2)}%
+              </div>
               <div className="stat-label">Share of circulating</div>
             </div>
             <div>
