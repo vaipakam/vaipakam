@@ -394,7 +394,7 @@ export default function CreateOffer() {
                 Hold VPFI in your escrow and enable the one-time platform-level
                 VPFI consent on your Dashboard. The protocol then auto-deducts
                 the tier-discounted fee in VPFI. Need VPFI?{" "}
-                <a href="/buy-vpfi" target="_blank" rel="noreferrer">
+                <a href="/app/buy-vpfi" target="_blank" rel="noreferrer">
                   Buy VPFI
                 </a>{" "}
                 (buy from your preferred chain — routing is handled for you).

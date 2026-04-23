@@ -1,6 +1,6 @@
-import { useReadContract, useReadContracts } from 'wagmi';
+import { useReadContracts } from 'wagmi';
 import { useReadChain } from '../contracts/useDiamond';
-import { DIAMOND_ABI } from '../contracts/abis';
+import { DIAMOND_ABI_VIEM as DIAMOND_ABI } from '../contracts/abis';
 
 /**
  * Live time-weighted lender yield-fee discount for a specific loan.
@@ -75,6 +75,9 @@ export function useLoanLenderDiscount(
 
   const loanResult = data[0];
   const stateResult = data[1];
+  if (!loanResult || !stateResult) {
+    return { data: null, isLoading, error: error ?? null };
+  }
   if (loanResult.status !== 'success' || stateResult.status !== 'success') {
     const firstError = (loanResult.status === 'failure' ? loanResult.error : null) ??
       (stateResult.status === 'failure' ? stateResult.error : null);

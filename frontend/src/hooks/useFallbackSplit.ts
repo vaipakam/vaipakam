@@ -1,6 +1,6 @@
 import { useReadContract } from 'wagmi';
 import { useReadChain } from '../contracts/useDiamond';
-import { DIAMOND_ABI } from '../contracts/abis';
+import { DIAMOND_ABI_VIEM as DIAMOND_ABI } from '../contracts/abis';
 
 /**
  * Reads the current effective fallback-path settlement split from the

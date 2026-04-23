@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { Address } from 'viem';
 import { useDiamondPublicClient, useReadChain } from '../contracts/useDiamond';
 import { DEFAULT_CHAIN } from '../contracts/config';
-import { DIAMOND_ABI } from '../contracts/abis';
+import { DIAMOND_ABI_VIEM as DIAMOND_ABI } from '../contracts/abis';
 import { batchCalls, encodeBatchCalls } from '../lib/multicall';
 import { useLogIndex } from './useLogIndex';
 import { beginStep } from '../lib/journeyLog';

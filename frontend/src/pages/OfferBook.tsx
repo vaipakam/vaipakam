@@ -1,8 +1,8 @@
-import { useEffect, useState, useCallback, useRef } from 'react';
+import { useEffect, useMemo, useState, useCallback, useRef } from 'react';
 import type { Address } from 'viem';
 import { useWallet } from '../context/WalletContext';
 import { useDiamondContract, useDiamondRead, useDiamondPublicClient, useReadChain } from '../contracts/useDiamond';
-import { DIAMOND_ABI } from '../contracts/abis';
+import { DIAMOND_ABI_VIEM as DIAMOND_ABI } from '../contracts/abis';
 import { Link } from 'react-router-dom';
 import { BookOpen, PlusCircle, AlertTriangle, ShieldCheck } from 'lucide-react';
 import { ErrorAlert } from '../components/app/ErrorAlert';
@@ -251,7 +251,7 @@ export default function OfferBook() {
   }, [diamondRead, publicClient, activeReadChain.diamondAddress, statusView]);
 
   const loadWindow = useCallback(async (from: number, size: number) => {
-    const slice = sortedIds.slice(from, from + size).filter((id) => !loadedIdsRef.current.has(id.toString()));
+    const slice = sortedIds.slice(from, from + size).filter((id: bigint) => !loadedIdsRef.current.has(id.toString()));
     if (slice.length === 0) {
       setCursor(from + size);
       return;
@@ -468,8 +468,8 @@ export default function OfferBook() {
     [anchorRateBps],
   );
 
-  const lenderAll = useMemo(() => rankLenderSide(filtered.filter((o) => o.offerType === 0)), [filtered, rankLenderSide]);
-  const borrowerAll = useMemo(() => rankBorrowerSide(filtered.filter((o) => o.offerType === 1)), [filtered, rankBorrowerSide]);
+  const lenderAll = useMemo(() => rankLenderSide(filtered.filter((o: OfferData) => o.offerType === 0)), [filtered, rankLenderSide]);
+  const borrowerAll = useMemo(() => rankBorrowerSide(filtered.filter((o: OfferData) => o.offerType === 1)), [filtered, rankBorrowerSide]);
   const lenderOffers = useMemo(() => lenderAll.slice(0, perSide), [lenderAll, perSide]);
   const borrowerOffers = useMemo(() => borrowerAll.slice(0, perSide), [borrowerAll, perSide]);
 
@@ -953,7 +953,7 @@ function AcceptReviewModal({ offer, illiquid, consent, onConsentChange, submitti
                   <span className="mono">{Number(discountPreview.vpfiRequired) / 1e18}</span> VPFI.
                   Top up on{' '}
                   <a
-                    href="/buy-vpfi"
+                    href="/app/buy-vpfi"
                     target="_blank"
                     rel="noreferrer"
                     style={{ textDecoration: 'underline' }}

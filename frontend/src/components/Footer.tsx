@@ -82,7 +82,7 @@ export default function Footer() {
             <a href={GITHUB_URL} target="_blank" rel="noreferrer">Documentation</a>
             <Link to="/analytics">Smart Contracts</Link>
             <Link to="/app/nft-verifier">NFT Verifier</Link>
-            <Link to="/buy-vpfi">Buy VPFI</Link>
+            <Link to="/app/buy-vpfi">Buy VPFI</Link>
           </div>
 
           <div className="footer-col">

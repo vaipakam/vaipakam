@@ -52,7 +52,15 @@ export {
   ConfigFacetABI,
 };
 
-/** Combined ABI — all facet functions routed through the Diamond proxy */
+import type { Abi } from 'viem';
+
+/** Combined ABI — all facet functions routed through the Diamond proxy.
+ *  Kept as the JSON-inferred shape because the ethers `Interface`/
+ *  `Contract` constructors want `JsonFragment[]` (which the JSON imports
+ *  match), while viem wants the narrower `Abi`. Viem consumers cast via
+ *  `DIAMOND_ABI_VIEM` below; ethers consumers pass `DIAMOND_ABI`
+ *  directly. Once Phase B-full is complete and the last ethers call site
+ *  is gone, collapse this back to a single `Abi`-typed export. */
 export const DIAMOND_ABI = [
   ...OfferFacetABI,
   ...LoanFacetABI,
@@ -79,3 +87,8 @@ export const DIAMOND_ABI = [
   ...InteractionRewardsFacetABI,
   ...ConfigFacetABI,
 ];
+
+/** Viem-typed alias for hooks using `encodeFunctionData` /
+ *  `decodeFunctionResult` / `useReadContract`. Same data, narrower
+ *  type so viem's type inference is happy. */
+export const DIAMOND_ABI_VIEM = DIAMOND_ABI as unknown as Abi;

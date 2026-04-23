@@ -26,7 +26,7 @@ export default function Hero() {
             <Link to="/app" className="btn btn-primary btn-lg">
               Launch App <ArrowRight size={18} />
             </Link>
-            <Link to="/buy-vpfi" className="btn btn-secondary btn-lg">
+            <Link to="/app/buy-vpfi" className="btn btn-secondary btn-lg">
               <Coins size={18} /> Buy VPFI
             </Link>
             <a href="#how-it-works" className="btn btn-ghost btn-lg">
