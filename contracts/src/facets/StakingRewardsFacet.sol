@@ -15,8 +15,8 @@ import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol
  * @notice Phase-1 VPFI staking rewards (docs/TokenomicsTechSpec.md §7).
  *         Escrow-held VPFI is implicitly staked: any VPFI sitting in a
  *         user's personal escrow earns 5% APR from the 55.2M pool with
- *         no separate stake/unstake tx. The bookkeeping is Synthetix-
- *         style time-weighted accrual in {LibStakingRewards}; this
+ *         no separate stake/unstake tx. The bookkeeping is a
+ *         reward-per-token time-weighted accrual in {LibStakingRewards}; this
  *         facet exposes the claim entrypoint and the transparency views.
  *
  * @dev Accrual hooks are wired into every VPFI-escrow balance mutation:
@@ -130,7 +130,7 @@ contract StakingRewardsFacet is
         return LibVaipakam.cfgVpfiStakingAprBps();
     }
 
-    /// @notice Monotone Synthetix-style reward-per-token accumulator, scaled
+    /// @notice Monotone reward-per-token accumulator, scaled
     ///         by 1e18. Advances every time a user's escrow VPFI balance
     ///         mutates (deposit / discount / withdraw) via the
     ///         {LibStakingRewards.updateUser} checkpoint. Pure transparency —

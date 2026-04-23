@@ -186,7 +186,7 @@ but responses are black-holed.
 
 ## 5. Harden LayerZero config — `ConfigureLZConfig.s.sol`
 
-**This is the Kelp-response gate. Do not skip, do not shortcut.**
+**This is the DVN-hardening gate. Do not skip, do not shortcut.**
 
 For every (OApp × chain) pair:
 
@@ -332,8 +332,9 @@ someone's spam folder" patterns.
      compromised.
 6. Post-mortem within 72h. Public.
 
-Reference: Kelp DAO's 46-minute pause (April 2026) prevented ~$200M of
-follow-up drain. Speed of first pause > everything else.
+Reference: a 46-minute operator pause in the April 2026 cross-chain
+bridge incident prevented ~$200M of follow-up drain. Speed of first
+pause > everything else.
 
 ---
 

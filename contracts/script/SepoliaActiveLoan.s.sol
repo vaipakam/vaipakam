@@ -76,7 +76,7 @@ contract SepoliaActiveLoan is Script {
         registry.setFeed(address(usdc), USD_DENOM, address(usdcFeed));
         registry.setFeed(address(weth), USD_DENOM, address(wethFeed));
 
-        // Mock Uniswap v3 infra: factory + mUSDC/mWETH 0.3% pool above the
+        // Mock v3-style AMM infra: factory + mUSDC/mWETH 0.3% pool above the
         // MIN_LIQUIDITY_USD threshold so OracleFacet._checkLiquidity
         // classifies both assets Liquid. sqrtPriceX96 is non-zero; the
         // pool-depth check uses `liquidity() * ethUsd` which with 1e24

@@ -16,7 +16,7 @@ import {HelperTest} from "../HelperTest.sol";
 /// @title LiquidationMainnetForkTest
 /// @notice Fork-based integration test for the oracle + liquidity inputs
 ///         that feed HF-based liquidation. Runs against real mainnet
-///         Chainlink Feed Registry and Uniswap v3 — the same surfaces the
+///         Chainlink Feed Registry and v3-style AMM — the same surfaces the
 ///         Diamond reads in production — so any address drift, decimals
 ///         bug, or staleness regression is caught before mainnet broadcast.
 /// @dev Scope boundary: this test covers the **read path** of the

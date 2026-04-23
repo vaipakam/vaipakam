@@ -20,7 +20,7 @@ import {DiamondAccessControl} from "../libraries/LibAccessControl.sol";
  *      mutating admin setters; price/liquidity views are always callable.
  *
  *      ── Quote asset ──
- *      The Uniswap v3 pool-depth gate is quoted against **WETH** on every
+ *      The v3-style AMM pool-depth gate is quoted against **WETH** on every
  *      EVM chain (WETH is the deepest cross-chain venue; the previous
  *      asset/USDT gate only worked on Ethereum mainnet). Pool depth is
  *      converted to USD via the direct Chainlink ETH/USD feed configured
@@ -62,9 +62,9 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
     ///         `LibVaipakam.SEQUENCER_GRACE_PERIOD` seconds after a recovery.
     error SequencerGracePeriod();
 
-    // 0.3% Uniswap v3 fee tier — the standard ERC20/WETH venue. Resolved
+    // 0.3% v3-style AMM fee tier — the standard ERC20/WETH venue. Resolved
     // live via `factory.getPool(tokenA, tokenB, fee)` so the same code path
-    // works against the canonical Uniswap v3 factory or any ABI-compatible
+    // works against the canonical v3-style AMM factory or any ABI-compatible
     // mock on a testnet.
     uint24 private constant UNIV3_FEE_TIER = 3000;
 
@@ -115,7 +115,7 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
 
         // Every other asset must have a fresh asset/USD OR asset/ETH
         // price feed (the same hybrid chain getAssetPrice uses), AND a
-        // Uniswap v3 asset/WETH 0.3% pool with ≥ MIN_LIQUIDITY_USD
+        // v3-style AMM asset/WETH 0.3% pool with ≥ MIN_LIQUIDITY_USD
         // worth of depth converted via ETH/USD.
         (bool priceOk, , ) = _tryGetAssetPriceView(asset);
         if (!priceOk) return LibVaipakam.LiquidityStatus.Illiquid;
@@ -322,12 +322,12 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
 
     // ─── Internal helpers ────────────────────────────────────────────────
 
-    /// @dev Resolve the 0.3% Uniswap v3 pool for the (a,b) pair by calling
+    /// @dev Resolve the 0.3% v3-style AMM pool for the (a,b) pair by calling
     ///      `factory.getPool(token0, token1, fee)`. Works against the
-    ///      canonical Uniswap v3 factory and any ABI-compatible mock; fails
+    ///      canonical v3-style AMM factory and any ABI-compatible mock; fails
     ///      closed (returns `address(0)`) on call failure or malformed
     ///      return data. Replaces the prior CREATE2-derivation approach,
-    ///      which was tied to Uniswap's pool init-code hash and could not
+    ///      which was tied to the v3 pool init-code hash and could not
     ///      be mocked without reproducing that hash.
     function _lookupPool(address factory, address a, address b) private view returns (address pool) {
         (address token0, address token1) = a < b ? (a, b) : (b, a);

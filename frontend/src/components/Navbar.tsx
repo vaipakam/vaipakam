@@ -35,7 +35,7 @@ function shortenAddress(addr: string) {
 
 export default function Navbar() {
   const { theme, toggleTheme } = useTheme();
-  const { address, isCorrectChain, disconnect, switchToDefaultChain, error } = useWallet();
+  const { address, isCorrectChain, disconnect, switchToDefaultChain, error, warning } = useWallet();
   const [mobileOpen, setMobileOpen] = useState(false);
 
   return (
@@ -172,6 +172,20 @@ export default function Navbar() {
           >
             <span style={{ flex: 1, minWidth: 0 }}>{error}</span>
             <ReportIssueLink variant="inline" />
+          </div>
+        </div>
+      )}
+
+      {/* Warning surface — "no wallet detected" etc. Amber banner, no
+       *  "report this" link because it's a user-environment nudge,
+       *  not a system failure. */}
+      {warning && !error && (
+        <div className="wallet-warning">
+          <div
+            className="container"
+            style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}
+          >
+            <span style={{ flex: 1, minWidth: 0 }}>{warning}</span>
           </div>
         </div>
       )}

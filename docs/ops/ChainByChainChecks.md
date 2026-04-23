@@ -77,11 +77,11 @@ The cron below reads this file, so any deploy must update it atomically with the
 | Chainlink registry set | `OracleAdminFacet` storage read | non-zero |
 | USD denominator set | same | non-zero |
 | USDT contract set | same | non-zero |
-| Uniswap v3 factory set | same | non-zero |
+| v3-style AMM factory set | same | non-zero |
 | Sequencer uptime feed set (L2 only) | `OracleFacet.getSequencerUptimeFeed()` | non-zero on Base/Arbitrum/Optimism/Scroll; `address(0)` on Ethereum mainnet |
 | Sequencer currently healthy (L2 only) | `OracleFacet.sequencerHealthy()` | true (false = live outage or <1h since recovery; do not auto-pause, page on-call) |
 | For each supported asset: Chainlink feed fresh | `getAssetPrice(asset)` | `answer > 0` and either `updatedAt > now - 2h` (volatile fast-path) or `updatedAt > now - 25h` AND `decimals == 8` AND `\|answer - $1\| <= 3%` (stablecoin peg grace) |
-| For each supported liquid asset: Uniswap pool liquid | `checkLiquidity(asset)` | true |
+| For each supported liquid asset: v3-style AMM pool liquid | `checkLiquidity(asset)` | true |
 | At least one reference asset passes `checkLiquidityOnActiveNetwork` | | true |
 
 Any oracle check that fails = **pause candidate**. Do not auto-pause from the cron; page the on-call instead.

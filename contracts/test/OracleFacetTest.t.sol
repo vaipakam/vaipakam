@@ -158,7 +158,7 @@ contract OracleFacetTest is Test {
         )))));
     }
 
-    /// @dev Mock a healthy asset/WETH Uniswap v3 pool with `liquidity` raw units.
+    /// @dev Mock a healthy asset/WETH v3-style AMM pool with `liquidity` raw units.
     function _mockLiquidPool(address asset, uint128 liquidity) internal {
         address pool = _computePoolAddress(asset, mockWeth);
         vm.mockCall(

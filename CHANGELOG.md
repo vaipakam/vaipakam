@@ -80,9 +80,9 @@ Every entry calls out, at minimum:
   reason)` for audit-trail separation from routine revocations.
   Refuses to revoke DEFAULT_ADMIN_ROLE itself.
 - **`StakingRewardsFacet.getStakingRewardPerTokenStored()`** — read-
-  only getter over the Synthetix-style accumulator. Added to support
-  the `VPFIStakingRewardMonotonicityInvariant`; cheap transparency
-  for off-chain dashboards.
+  only getter over the time-weighted reward-per-token accumulator.
+  Added to support the `VPFIStakingRewardMonotonicityInvariant`;
+  cheap transparency for off-chain dashboards.
 - **`VaipakamEscrowImplementation` `uint256[50] __gap`** — reserved
   tail slots for future UUPS storage additions. Consumes no state
   today; each future field must decrement the array length by the
@@ -135,9 +135,9 @@ Every entry calls out, at minimum:
 - **`KYC_THRESHOLD_USD` constant removed** (dead code — superseded by
   the tiered `KYC_TIER0_THRESHOLD_USD` / `KYC_TIER1_THRESHOLD_USD`).
   `contracts/README.md` constants table updated to the tiered pair.
-- **Aave references removed** from every project-owned comment and
-  doc. Vendored third-party code under `contracts/lib/devtools/` is
-  unchanged.
+- **External-protocol name references removed** from every project-
+  owned comment and doc. Vendored third-party code under
+  `contracts/lib/` is unchanged.
 
 ### Removed
 

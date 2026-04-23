@@ -54,7 +54,7 @@ Cross-facet calls use `address(this).call(abi.encodeWithSelector(...))` — this
 | **RepayFacet** | Full/partial repayment, NFT daily deductions, late fees |
 | **DefaultedFacet** | Time-based defaults (grace period expired) |
 | **RiskFacet** | LTV/Health Factor calculation, HF-based liquidation via 0x swap |
-| **OracleFacet** | Chainlink price feeds, Uniswap v3 liquidity checks |
+| **OracleFacet** | Chainlink price feeds, v3-style concentrated-liquidity AMM liquidity checks |
 | **EscrowFactoryFacet** | Per-user UUPS escrow proxy deployment |
 | **VaipakamNFTFacet** | Mint/update/burn position NFTs (ERC721, on-chain metadata) |
 | **ProfileFacet** | User country (sanctions), KYC verification |
@@ -64,7 +64,7 @@ Placeholder facets (Phase 2): TreasuryFacet, PrecloseFacet, RefinanceFacet, Earl
 
 ### Liquid vs Illiquid Assets
 
-- **Liquid**: Has Chainlink feed + Uniswap v3 pool + $1M volume → LTV/HF checks apply, 0x swap on liquidation
+- **Liquid**: Has Chainlink feed + v3-style concentrated-liquidity AMM pool + $1M volume → LTV/HF checks apply, 0x swap on liquidation
 - **Illiquid**: NFTs or tokens without oracle → valued at $0, full collateral transfer on default, both parties must explicitly consent
 
 ### Two Liquidation Paths
@@ -106,9 +106,10 @@ Mock contracts in `contracts/test/mocks/`: `ERC20Mock`, `ERC4907Mock`, `ZeroExPr
 
 Every LayerZero OApp / OFT in this repo (`VPFIOFTAdapter`, `VPFIMirror`,
 `VPFIBuyAdapter`, `VPFIBuyReceiver`, `VaipakamRewardOApp`) ships with the
-LayerZero defaults, which are **1-required / 0-optional DVN** — the Kelp
-DAO exploit shape. A mainnet deploy that inherits those defaults is
-**not** acceptable.
+LayerZero defaults, which are **1-required / 0-optional DVN** — the
+single-verifier shape that the April 2026 cross-chain bridge exploit
+rode. A mainnet deploy that inherits those defaults is **not**
+acceptable.
 
 **Mainnet-deploy gate** — before routing real value, all of the below must
 be true:
@@ -134,8 +135,8 @@ BNB 15. Higher numbers are acceptable; lower numbers require justification.
 
 **Pause lever**: every LZ-facing contract exposes owner-gated `pause()` /
 `unpause()` on both send and receive paths. Use in the first minutes of
-a suspected incident; Kelp's 46-minute pause blocked $200M of follow-up
-drain.
+a suspected incident; a precedent in the April 2026 cross-chain bridge
+incident (a 46-minute pause) blocked ~$200M of follow-up drain.
 
 Full detail in [`contracts/README.md`](contracts/README.md) under
 "Cross-Chain Security".

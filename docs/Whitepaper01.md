@@ -157,7 +157,7 @@ The NFT itself remains inside escrow. That design is why Vaipakam does not requi
 An ERC-20 is liquid on a chain only if the current active network can verify:
 
 - a usable price path
-- sufficient executable Uniswap v3 `asset/WETH` liquidity
+- sufficient executable v3-style concentrated-liquidity AMM `asset/WETH` liquidity
 
 The protocol must not use Ethereum mainnet as a substitute reference when assessing liquidity on another chain.
 
@@ -498,4 +498,4 @@ These choices create a product that is more expressive than conventional pooled 
 8. `ERC-1155`
 9. `ERC-4907`
 10. Chainlink documentation
-11. Uniswap v3 documentation
+11. v3-style concentrated-liquidity AMM documentation

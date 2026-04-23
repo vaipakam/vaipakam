@@ -157,7 +157,7 @@ contract SepoliaPositiveFlows is Script {
         mockRegistry.setFeed(address(usdc), USD_DENOM, address(usdcFeed));
         mockRegistry.setFeed(address(weth), USD_DENOM, address(wethFeed));
 
-        // Mock Uniswap v3 factory + mUSDC/mWETH 0.3% pool. OracleFacet
+        // Mock v3-style AMM factory + mUSDC/mWETH 0.3% pool. OracleFacet
         // looks up pools via `factory.getPool(tokenA, tokenB, fee)` (no
         // CREATE2 derivation), so any ABI-compatible mock works. Pool
         // liquidity is set well above the MIN_LIQUIDITY_USD floor so

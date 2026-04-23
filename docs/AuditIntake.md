@@ -20,7 +20,7 @@ before reviewing code.
 
 **Out of scope**
 
-- OpenZeppelin Contracts Upgradeable, Chainlink feed registry, Uniswap v3
+- OpenZeppelin Contracts Upgradeable, Chainlink feed registry, v3-style concentrated-liquidity AMM
   factory/pool, 0x swap proxy — treated as trusted dependencies.
 - Frontend (`frontend/`) and deployment scripts (`contracts/script/`) —
   reviewed informally, not part of the audit surface.
@@ -116,7 +116,7 @@ protection.
      active network. The prior Ethereum-mainnet reference layer (the
      `AssetBlockedUseMainnet` block-and-redirect path) has been retired.
      Both entry points now return Liquid/Illiquid based only on the
-     active network's Chainlink registry and Uniswap v3 pool availability.
+     active network's Chainlink registry and v3-style concentrated-liquidity AMM pool availability.
    - `checkLiquidity` and `checkLiquidityOnActiveNetwork` are now
      functionally identical; the split is retained purely for call-site
      clarity (authorization boundaries vs liquidation-execution routing).

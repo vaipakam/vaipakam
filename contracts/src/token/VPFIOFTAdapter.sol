@@ -88,12 +88,13 @@ contract VPFIOFTAdapter is
     /// @notice Pause both the outbound lock leg and the inbound release leg
     ///         of the canonical adapter. Intended as the timelock / multi-sig
     ///         emergency lever for a suspected LayerZero-side incident (DVN
-    ///         compromise, executor failure, unknown exploit). The Kelp DAO
-    ///         incident (April 2026) demonstrated the value of a fast pause
-    ///         — their 46-minute pause blocked ~$200M of follow-up drain.
-    ///         Because this adapter holds every bridged-out VPFI locked on
-    ///         Base, pausing `_credit` in particular protects the canonical
-    ///         honeypot from a fake inbound release.
+    ///         compromise, executor failure, unknown exploit). The April
+    ///         2026 cross-chain bridge exploit demonstrated the value of a
+    ///         fast pause — a 46-minute pause in that incident blocked
+    ///         ~$200M of follow-up drain. Because this adapter holds every
+    ///         bridged-out VPFI locked on Base, pausing `_credit` in
+    ///         particular protects the canonical honeypot from a fake
+    ///         inbound release.
     /// @dev Only the owner (OApp delegate — timelock-gated multi-sig) may
     ///      call. See `_debit` / `_credit` overrides for the send/receive
     ///      guards.

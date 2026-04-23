@@ -18,7 +18,7 @@ We aim to acknowledge within 24h and provide a remediation ETA within 72h. In-sc
 
 ## Oracle fallback — price resolution contract
 
-Vaipakam uses Chainlink as its *only* trusted price source. Every liquidity gate also validates Uniswap v3 pool depth, but depth alone never authorises a loan — a usable Chainlink price must exist first.
+Vaipakam uses Chainlink as its *only* trusted price source. Every liquidity gate also validates v3-style concentrated-liquidity AMM pool depth, but depth alone never authorises a loan — a usable Chainlink price must exist first.
 
 ### Price resolution order
 
@@ -97,7 +97,7 @@ See [`docs/ops/IncidentRunbook.md` §3.1](docs/ops/IncidentRunbook.md#what-does-
 
 ## Liquidity classification — depth gate
 
-Beyond a live Chainlink price, an asset is only eligible as *liquid* collateral if its Uniswap v3 pool (paired against WETH, converted via ETH/USD) reports at least `MIN_LIQUIDITY_USD = $1,000,000` of WETH-side depth at the configured fee tier. This is the second leg of the liquidity contract:
+Beyond a live Chainlink price, an asset is only eligible as *liquid* collateral if its v3-style concentrated-liquidity AMM pool (paired against WETH, converted via ETH/USD) reports at least `MIN_LIQUIDITY_USD = $1,000,000` of WETH-side depth at the configured fee tier. This is the second leg of the liquidity contract:
 
 - Assets with a price feed but insufficient pool depth fail-close to *illiquid*.
 - Illiquid assets cannot be force-liquidated via 0x swap; on default they are transferred directly to the lender, and both parties must have explicitly consented to the illiquid-path offer.

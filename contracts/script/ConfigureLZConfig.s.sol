@@ -50,7 +50,7 @@ interface IOAppEndpoint {
  *         against. Run once per (OApp, chain) pair during Phase 1 rollout,
  *         and re-run whenever the DVN set or confirmation policy evolves.
  *
- * @dev Applies the post-Kelp-incident hardening policy pinned in
+ * @dev Applies the post-incident DVN hardening policy pinned in
  *      `contracts/README.md` / `CLAUDE.md`:
  *        - ULN config: 3 required DVNs + 2 optional (threshold 1-of-2).
  *        - Per-chain confirmations per the Cross-Chain Security table.

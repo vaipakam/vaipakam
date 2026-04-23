@@ -34,7 +34,7 @@ The platform distinguishes between liquid and illiquid assets, which affects how
 
 - **Liquid Asset Criteria:** For Phase 1, an ERC-20 token is considered "Liquid" on a given network only if:
   1.  It has an active and reliable Chainlink Price Feed and corresponding usable DEX liquidity on that active network.
-  2.  The protocol should require both reliable pricing and reliable market-liquidity evidence. For DEX liquidity, recognized venues such as Uniswap, Curve, or Sushiswap may be used, with 24 hour trading volume above $1M serving as a practical Phase 1 indicator.
+  2.  The protocol should require both reliable pricing and reliable market-liquidity evidence. For DEX liquidity, recognized on-chain DEX venues may be used, with 24 hour trading volume above $1M serving as a practical Phase 1 indicator.
   3.  Ethereum mainnet may still be used as a reference network for identifying whether the asset is broadly liquid in the ecosystem. However, if the asset is illiquid on the active network but liquid on Ethereum mainnet, the asset must not be transacted through that active-network deployment. In that case, the protocol/frontend should reject the transaction on the active network and instruct the user to transact that asset only through the Ethereum-mainnet deployment.
 - **Illiquid Assets:**
   - All ERC-721 and ERC-721 NFTs are considered "Illiquid" by the platform for valuation and LTV purposes. Their platform-assessed value is $0.
@@ -45,7 +45,7 @@ The platform distinguishes between liquid and illiquid assets, which affects how
 - **Oracle Usage:**
   - **Chainlink Price Feeds:** Used to provide real-time pricing for Liquid ERC-20 assets. This is crucial for LTV calculations and liquidation processes for loans with Liquid collateral.
 - **Liquidity Determination Process & On-Chain Record:**
-  1.  **Frontend Assessment:** The frontend interface will attempt to assess asset liquidity by checking both sides of the Phase 1 safety model: reliable pricing data (such as Chainlink feeds) and reliable market liquidity signals (such as DEX or market-data APIs like Uniswap, Curve, or CoinGecko), with 24-hour trading volume above $1M used as a practical indicator. The frontend should first assess the active network. Ethereum mainnet may be consulted as a reference network for identifying whether the asset is broadly liquid, but if the active network itself fails the liquidity test, the frontend must not allow the user to proceed there and should instead direct the user to Ethereum mainnet for transactions involving that asset.
+  1.  **Frontend Assessment:** The frontend interface will attempt to assess asset liquidity by checking both sides of the Phase 1 safety model: reliable pricing data (such as Chainlink feeds) and reliable market liquidity signals (such as DEX or market-data APIs), with 24-hour trading volume above $1M used as a practical indicator. The frontend should first assess the active network. Ethereum mainnet may be consulted as a reference network for identifying whether the asset is broadly liquid, but if the active network itself fails the liquidity test, the frontend must not allow the user to proceed there and should instead direct the user to Ethereum mainnet for transactions involving that asset.
   2.  **User Acceptance (Frontend - Illiquid):** If the frontend flags an asset as potentially illiquid, or if the asset is an NFT, the user (lender creating the offer or borrower providing collateral) will be presented with terms stating that the asset will be treated as illiquid (i.e., full collateral transfer on default, no LTV-based liquidation). The user must accept these terms. This acceptance is recorded.
   3.  **On-Chain Verification (Smart Contract):**
       - When an offer involving an ERC-20 asset (as a lending asset or collateral) is being created or accepted, and the frontend has _not_ marked it as illiquid, the smart contract will perform an on-chain check.
@@ -112,7 +112,7 @@ Vaipakam mints unique NFTs to represent offers, enhancing traceability and user 
 **NFT Metadata:**
 
 - **On-Chain Data:** Key offer details are stored directly on-chain as part of the NFT's metadata. This includes asset types, amounts, rates, duration, and status (e.g., "Offer Created," "Offer Cancelled," "Offer Matched"). The status is updated by authorized smart contract roles (e.g., `VaipakamOfferManagement.sol`) as the offer progresses.
-- **`tokenURI()` Implementation:** The platform's NFT contract will implement a `tokenURI()` function that dynamically generates a JSON string containing all relevant loan information. This JSON can be consumed by third-party applications like OpenSea and other NFT marketplaces to display offer details.
+- **`tokenURI()` Implementation:** The platform's NFT contract will implement a `tokenURI()` function that dynamically generates a JSON string containing all relevant loan information. This JSON can be consumed by third-party NFT marketplaces to display offer details.
 - **Off-Chain Image Storage (IPFS):** Four distinct images representing different states/roles will be stored in IPFS:
   - `LenderActive.png`
   - `LenderClosed.png`
@@ -264,7 +264,7 @@ Vaipakam mints unique NFTs to represent offers, enhancing traceability and user 
 
 **ERC-20 Lending with Liquid Collateral:**
 
-- **Liquidation:** The borrower's collateral is liquidated (e.g., sold on a DEX via integration like 1inch, Balancer et.,) to recover the outstanding loan amount (principal + accrued interest + late fees + liquidation penalty/fee).
+- **Liquidation:** The borrower's collateral is liquidated (sold via the configured on-chain swap-aggregator proxy) to recover the outstanding loan amount (principal + accrued interest + late fees + liquidation penalty/fee).
 - **Slippage Protection:** If the liquidation swap would incur slippage greater than 6%, the collateral conversion must not happen. In that case, the liquidation flow must stop using the DEX conversion path and must follow the same full collateral transfer procedure used for abnormal liquidation-failure conditions.
 - **Fallback Claim Model:** When the DEX liquidation path is abandoned because the swap fails, market conditions are abnormal, liquidity is unavailable, technical execution fails, or the 6% slippage threshold would be exceeded, the protocol should resolve the lender side into a claimable full-collateral position. In that branch, the lender later claims the collateral asset by presenting the Vaipakam lender NFT, instead of requiring the protocol to auto-transfer the collateral during the same liquidation transaction.
 - **Proceeds Distribution:**

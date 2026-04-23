@@ -16,7 +16,7 @@ import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 
 /// @title StakingRewardsCoverageTest
 /// @notice Complements StakingAndInteractionRewardsTest with coverage for
-///         the Synthetix-style accrual invariants and pool-cap semantics
+///         the reward-per-token accrual invariants and pool-cap semantics
 ///         (docs/TokenomicsTechSpec.md §7):
 ///           - multi-user time-weighted proportional accrual
 ///           - pull-only: accrual continues without auto-claim on top-ups

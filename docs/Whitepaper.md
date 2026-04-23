@@ -122,7 +122,7 @@ This conservative model prevents external integrations from overstating duration
 Vaipakam treats an ERC-20 as liquid only if the **active chain** can validate both:
 
 - a usable on-chain pricing path, preferably direct `asset/USD`, or otherwise `asset/ETH × ETH/USD`
-- sufficiently deep Uniswap v3 `asset/WETH` liquidity on that same chain
+- sufficiently deep v3-style concentrated-liquidity AMM `asset/WETH` liquidity on that same chain
 
 Key rule:
 
@@ -411,7 +411,7 @@ Vaipakam is a bilateral, chain-local credit and rental protocol with explicit ri
 1. `EIP-2535` Diamond Standard
 2. `ERC-20`, `ERC-721`, `ERC-1155`, and `ERC-4907` standards
 3. Chainlink price feeds
-4. Uniswap v3 liquidity model
+4. v3-style concentrated-liquidity AMM liquidity model
 5. Vaipakam `README.md`
 6. `docs/BorrowerVPFIDiscountMechanism.md`
 7. `docs/TokenomicsTechSpec.md`

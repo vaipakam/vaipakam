@@ -36,6 +36,11 @@ interface WalletState {
   chainId: number | null;
   isConnecting: boolean;
   error: string | null;
+  /** Non-error informational notices (e.g. "No wallet detected") surfaced to
+   *  the UI as a yellow warning banner instead of the red error banner.
+   *  Distinct from `error` so the UI doesn't classify user-environment
+   *  nudges (wallet not installed, WC QR pending) as system failures. */
+  warning: string | null;
   /** Which EIP-1193 path is currently active, or null when disconnected.
    *  Consumers can read this to hide UI that's only meaningful for one
    *  source (e.g. "Open wallet app" shortcut for WalletConnect). */
@@ -99,6 +104,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     chainId: null,
     isConnecting: false,
     error: null,
+    warning: null,
     source: null,
   });
 
@@ -145,6 +151,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
         chainId: Number(network.chainId),
         isConnecting: false,
         error: null,
+        warning: null,
         source,
       });
     },
@@ -215,8 +222,16 @@ export function WalletProvider({ children }: { children: ReactNode }) {
             'No in-browser wallet detected. Redirecting to MetaMask mobile — ' +
             "if you don't have it installed, the app store will open. Once " +
             'installed, Vaipakam will open inside the MetaMask in-app browser.';
-          setState((prev) => ({ ...prev, error: msg }));
-          step.failure(null, { errorType: 'wallet', errorMessage: 'mobile-deep-link' });
+          // User-environment nudge, not a system failure — surface as warning
+          // and log as `info` so Diagnostics doesn't classify it as an error.
+          setState((prev) => ({ ...prev, warning: msg, error: null }));
+          emit({
+            area: 'wallet',
+            flow: 'connect',
+            step: 'no-injected-wallet',
+            status: 'info',
+            note: 'mobile-deep-link',
+          });
           window.location.href = deepLink;
           return;
         }
@@ -225,8 +240,15 @@ export function WalletProvider({ children }: { children: ReactNode }) {
           : 'No wallet detected. Install MetaMask (or another Web3 wallet) in ' +
             'this browser and reload. On mobile, open this page from inside ' +
             "the MetaMask app's browser.";
-        setState((prev) => ({ ...prev, error: msg }));
-        step.failure(null, { errorType: 'wallet', errorMessage: msg });
+        // Same rationale as the mobile branch above — demoted to warning.
+        setState((prev) => ({ ...prev, warning: msg, error: null }));
+        emit({
+          area: 'wallet',
+          flow: 'connect',
+          step: 'no-injected-wallet',
+          status: 'info',
+          note: walletConnectAvailable ? 'suggest-walletconnect' : 'install-wallet',
+        });
         return;
       }
 

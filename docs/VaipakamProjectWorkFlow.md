@@ -82,7 +82,7 @@ This scenario involves a lender offering an ERC20 token (e.g., USDC) to lend, wi
 
 4. **Lender (or Platform) Liquidates the Defaulted Loan**
    - The platform initiates liquidation since both assets are liquid ERC20 tokens.
-   - The 0.5 WETH collateral is sold (e.g., via Uniswap) to recover the principal + interest (1050 USDC).
+   - The 0.5 WETH collateral is sold (via the configured on-chain swap-aggregator proxy) to recover the principal + interest (1050 USDC).
    - Proceeds are held in the smart contract.
 
 5. **Lender Claims the Amount**
@@ -197,7 +197,7 @@ This scenario is Phase 2 scope. Phase 1 loans are single-network workflows, so t
 
 2. **Borrower on Polygon Accepts the Offer**
    - The borrower locks 0.5 WETH on Polygon and pays bridging fees.
-   - The smart contract bridges 1000 USDC from Ethereum to Polygon via Hop Protocol.
+   - The smart contract bridges 1000 USDC from Ethereum to Polygon via the configured cross-chain bridge.
    - The platform mints an acceptor NFT on Polygon with status "Loan Initiated."
 
 3. **Borrower Repays the Loan on Polygon**

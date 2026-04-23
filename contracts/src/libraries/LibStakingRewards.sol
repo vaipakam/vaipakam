@@ -6,7 +6,7 @@ import {LibVaipakam} from "./LibVaipakam.sol";
 /**
  * @title LibStakingRewards
  * @author Vaipakam Developer Team
- * @notice Synthetix-style time-weighted accrual bookkeeping for the
+ * @notice Reward-per-token time-weighted accrual bookkeeping for the
  *         Phase-1 VPFI staking rewards pool (docs/TokenomicsTechSpec.md
  *         §7). Escrow-held VPFI is implicitly "staked" — there is no
  *         separate stake/unstake entrypoint. Whenever a user's escrow
@@ -15,8 +15,8 @@ import {LibVaipakam} from "./LibVaipakam.sol";
  *         balance mutation so the checkpoint captures the OLD balance
  *         for the period it was active.
  *
- * @dev Accrual formula for an "APR-on-balance" model is equivalent to
- *      the canonical Synthetix form because each unit of staked VPFI
+ * @dev Accrual formula for an "APR-on-balance" model collapses to a
+ *      standard reward-per-token form because each unit of staked VPFI
  *      earns at the same rate regardless of totalStaked:
  *
  *        rewardPerToken  = rewardPerTokenStored

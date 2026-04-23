@@ -51,7 +51,7 @@ In Advanced Mode, you can whitelist up to **5 external keeper addresses**.
 The protocol enforces strict rules for "Liquid" status:
 
 1. **Oracle:** Active Chainlink Price Feed on the local network.
-2. **Volume:** >$1M 24h trading volume on recognized DEXs (Uniswap/Sushiswap).
+2. **Volume:** >$1M 24h trading volume on recognized on-chain DEX venues.
    _Note: Assets liquid on Ethereum Mainnet but illiquid on an L2 must be transacted on Mainnet._
 
 ## 6. Advanced Collateral Management

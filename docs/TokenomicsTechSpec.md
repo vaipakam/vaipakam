@@ -241,7 +241,7 @@ applies to both lenders and borrowers
 
 Shared rules:
 
-- discounts are determined purely from the user's escrowed VPFI balance tier on the relevant lending chain
+- discount tiers are derived from the user's escrowed VPFI balance on the relevant lending chain, with borrower discounts resolved point-in-time at loan initiation and lender discounts applied through the time-weighted rules below
 - moving VPFI into escrow automatically counts as staking
 - the user must explicitly consent through a single platform-level on-chain flag to allow escrowed VPFI to be used for fee discounts
 - in the frontend, this shared consent should be managed from `Dashboard`, not as an offer-level, loan-level, or `Buy VPFI`-page-only toggle
@@ -250,14 +250,54 @@ Shared rules:
 Lender rules:
 
 - the lender-side discount applies to the `Yield Fee`
-- the system should automatically deduct the required VPFI amount from lender escrow to Treasury when consent is active and sufficient VPFI is available
+- the lender-side discount must be time-weighted across the life of each loan rather than resolved from the lender's escrow balance at one final settlement moment
+- at every moment during a loan, the lender's current escrowed VPFI balance maps to a tier and that tier maps to the corresponding lender discount percentage
+- the protocol must continuously track the time-weighted average of that discount percentage over the actual life of the loan
+- at repayment, preclose, refinance, or other lender-yield settlement, the discount applied to the lender's `Yield Fee` must equal that time-weighted average discount, not the lender's tier at the settlement moment
+- the lender discount tracker should refresh whenever the lender's escrowed VPFI balance changes through deposit, withdrawal, claim-to-escrow, or fee deduction that consumes escrowed VPFI
+- each loan should snapshot the user's discount-accrual state at loan open and compute the loan-specific average discount from the delta between settlement and that opening snapshot, divided by the actual elapsed loan duration
+- this time-weighted design is required so a lender cannot obtain the full higher-tier discount by topping up VPFI just before repayment
+- when consent is active and sufficient VPFI is available, the system should automatically deduct the required discounted VPFI amount from lender escrow to Treasury
 
 Borrower rules:
 
 - the borrower-side discount applies to the `Loan Initiation Fee`
-- the system should automatically deduct the required VPFI amount from borrower escrow to Treasury when consent is active and sufficient VPFI is available
+- the borrower-side discount is a one-shot fee resolution taken at the moment of loan acceptance, using the borrower's escrowed VPFI balance and the then-current discount schedule at that exact moment
+- the borrower-side discount is not time-weighted, because the `Loan Initiation Fee` is computed, charged, and settled atomically with loan creation rather than over a multi-period interval
+- the borrower-side discount does not maintain its own ongoing rollup state beyond the normal escrow balance and staking accounting
+- when consent is active and sufficient VPFI is available, the system should automatically deduct the required discounted VPFI amount from borrower escrow to Treasury
 
 Received VPFI from protocol-fee flows should be handled under the Treasury Recycling Rule below.
+
+### 6a. Functional Discount Mechanics
+
+Lender yield-fee discount mechanics:
+
+- the promise is that the lender's yield-fee discount on a specific loan reflects the lender's time-weighted average escrowed-VPFI tier across the life of that loan
+- the lender cannot capture a full higher-tier discount by depositing VPFI only shortly before the loan closes
+- between balance-changing events, the lender's stamped discount tier remains pinned at the tier that applied when the last balance change happened
+- there is no per-block or per-day lender discount rollup; the accounting is driven by balance-change events plus the settlement moment itself
+- if a lender spends most of the loan in a lower tier and enters a higher tier only near the end, the resulting discount must be a duration-weighted blend of those tiers
+
+Governance effects on lender discounts:
+
+- governance may change the discount-tier thresholds and the per-tier discount percentages over time
+- those governance changes must apply prospectively only
+- periods already accrued under the lender's previously stamped tier remain locked at those older values
+- a lender is re-evaluated against the current governance schedule the next time their escrow balance changes or when the loan-specific discount is otherwise refreshed through settlement logic
+- a lender whose balance stays flat across a governance change should continue accruing under the previously stamped tier until the next refresh event, after which future accrual follows the new schedule
+
+Same-block safety:
+
+- if a lender's escrow balance changes multiple times in the same block, the elapsed time is zero, so no duplicate time accrual should be created
+- the tracker should simply stamp the latest balance-driven tier for future elapsed time
+
+Borrower initiation-fee discount mechanics:
+
+- the borrower-side discount remains a point-in-time discount resolved exactly once, at loan initiation
+- because the initiation fee is charged and settled atomically, there is no borrower-side time-weighted discount interval for that fee
+- borrower escrow balance changes before or after loan initiation do not retroactively alter the borrower discount already applied to that loan
+- governance changes to borrower discount thresholds or percentages affect only future loan-acceptance transactions, not already-created loans
 
 ---
 
@@ -275,7 +315,8 @@ Pool size:
 Design rules:
 
 - staking is unified with escrow: any VPFI held in a user escrow on a lending chain is considered staked
-- escrow-held VPFI earns `5% APR` paid from the Staking Rewards allocation
+- escrow-held VPFI earns a single flat APR paid from the Staking Rewards allocation
+- the default launch APR is `5%`, but governance may raise or lower this APR over time through the protocol admin path
 - no separate staking contract is required
 - rewards are calculated locally on each chain
 - rewards must use a pull model, with claims available on the user's preferred chain
@@ -300,6 +341,38 @@ Definitions:
 Primary reward claim path:
 
 - `claimStakingRewards()`
+
+### 7a. Functional Staking-APR Mechanics
+
+Era semantics:
+
+- each distinct staking APR value that has been active should be treated as its own effective reward era
+- when governance changes the APR, the outgoing era's accrual must first be closed and folded into the global staking accumulator before the new APR becomes active
+- this close-the-books step is mandatory so that a newly set APR cannot retroactively apply to time that elapsed before the change
+- past staking accrual can never be retroactively inflated or clawed back by a later governance update
+
+Dormant-user protection:
+
+- a user who deposits VPFI into escrow and then remains inactive across multiple APR changes must still receive the correctly weighted sum of accrual from each APR era when they eventually claim
+- dormant users do not need to interact at every governance change in order to preserve historical APR entitlements
+- the global staking accumulator and the user's standard reward-debt accounting must preserve that full era history implicitly
+
+Active-user protection:
+
+- a user who deposits, withdraws, claims, or otherwise changes escrow balance between APR changes should accrue at each APR only for the exact time intervals during which that APR was active while that balance was held
+- user interaction must not reset or refresh the APR itself; it only refreshes the user's balance-based staking position against the globally active APR history
+
+Governance audit trail:
+
+- every governance APR change should emit an event recording the new APR and the timestamp when it took effect
+- that event stream is the authoritative historical audit trail for APR changes; no separate on-chain history array is required
+
+### 7b. Cross-Mechanism Invariants
+
+- every escrow-balance change, including deposit, withdrawal, claim-to-escrow, and fee-driven VPFI deduction, must refresh the user's staking position and the lender-side time-weighted discount tracker where applicable
+- governance changes to staking APR, discount thresholds, or discount percentages must always apply prospectively; previously accrued value must remain priced under the schedule that was active during the relevant elapsed period
+- dormant holders must not lose historical accrual simply because they did not interact during a governance-change window
+- no user action at a single late moment should be able to inflate rewards or discounts for prior elapsed time that was spent at a lower balance or lower tier
 
 ---
 

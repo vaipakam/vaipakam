@@ -3,7 +3,7 @@ pragma solidity ^0.8.29;
 
 /**
  * @title MockUniswapV3Pool
- * @notice Minimal Uniswap v3 pool mock — implements the two views that
+ * @notice Minimal v3-style AMM pool mock — implements the two views that
  *         OracleFacet._checkLiquidity consumes: slot0() and liquidity().
  *         Both the price (sqrtPriceX96) and the liquidity reading can be
  *         configured at construction so a single deploy covers both the
@@ -45,7 +45,7 @@ contract MockUniswapV3Pool {
 
 /**
  * @title MockUniswapV3Factory
- * @notice Minimal Uniswap v3 factory mock, ABI-compatible with the canonical
+ * @notice Minimal v3-style AMM factory mock, ABI-compatible with the canonical
  *         factory's `getPool(tokenA, tokenB, fee)` view. OracleFacet looks
  *         up pools via this call (no CREATE2 derivation), so the mock just
  *         maintains a (token0, token1, fee) → pool mapping populated by
@@ -64,7 +64,7 @@ contract MockUniswapV3Factory {
 
     /// @notice Deploys a MockUniswapV3Pool for (tokenA, tokenB, fee) and
     ///         registers it under the canonical-ordered (token0 < token1)
-    ///         slot, matching Uniswap v3 factory semantics.
+    ///         slot, matching v3-style AMM factory semantics.
     /// @return pool The newly-deployed MockUniswapV3Pool address.
     function createPool(
         address tokenA,
@@ -83,7 +83,7 @@ contract MockUniswapV3Factory {
         emit PoolCreated(token0, token1, fee, pool);
     }
 
-    /// @notice Canonical Uniswap v3 `getPool` view. Returns `address(0)`
+    /// @notice Canonical v3-style AMM `getPool` view. Returns `address(0)`
     ///         for unregistered pairs — OracleFacet treats that as Illiquid.
     function getPool(address tokenA, address tokenB, uint24 fee) external view returns (address) {
         (address token0, address token1) = tokenA < tokenB ? (tokenA, tokenB) : (tokenB, tokenA);

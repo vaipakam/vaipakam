@@ -48,7 +48,7 @@ All loans and rentals are represented by an NFT. Whoever holds the NFT holds the
 
 Assets like ETH or WBTC are tracked by **Chainlink Oracles**.
 
-- **Liquidation:** If your Health Factor falls below 1.0, your collateral is sold on a DEX (like Uniswap) to pay the lender.
+- **Liquidation:** If your Health Factor falls below 1.0, your collateral is sold via the configured on-chain swap-aggregator proxy to pay the lender.
 - **Slippage Protection:** If a market crash is too fast (slippage > 6%), the system enters a **Fallback Period**. The lender can then claim a specific "Equivalent Amount" of collateral instead of the swap.
 
 ### 2. Illiquid Assets (NFTs & Small Tokens)

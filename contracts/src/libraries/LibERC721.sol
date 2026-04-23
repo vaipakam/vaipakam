@@ -44,7 +44,7 @@ library LibERC721 {
         string lenderClosedIPFS;
         string borrowerActiveIPFS;
         string borrowerClosedIPFS;
-        // Collection-level metadata (OpenSea contractURI + EIP-2981 royalties).
+        // Collection-level metadata (contractURI convention + EIP-2981 royalties).
         string contractImageURI;
         address royaltyReceiver;
         uint96 royaltyBps;

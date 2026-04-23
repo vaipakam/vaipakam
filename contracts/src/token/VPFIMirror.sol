@@ -76,9 +76,10 @@ contract VPFIMirror is
     /// @notice Pause both the outbound-burn and inbound-mint legs of this
     ///         mirror. Intended as the timelock / multi-sig emergency lever
     ///         for a suspected LayerZero-side incident (DVN compromise,
-    ///         executor failure, unknown exploit). The Kelp DAO incident
-    ///         (April 2026) demonstrated the value of a fast pause — their
-    ///         46-minute pause blocked ~$200M of follow-up drain.
+    ///         executor failure, unknown exploit). The April 2026 cross-
+    ///         chain bridge exploit demonstrated the value of a fast pause
+    ///         — a 46-minute pause in that incident blocked ~$200M of
+    ///         follow-up drain.
     /// @dev Only the owner (OApp delegate — timelock-gated multi-sig) may
     ///      call. See `_debit` / `_credit` overrides for the send/receive
     ///      guards.

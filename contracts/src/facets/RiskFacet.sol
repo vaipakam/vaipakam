@@ -84,7 +84,7 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
     error HealthFactorNotLow();
     /// @notice L2 sequencer is offline or still in its 1h recovery grace
     ///         window; HF-based liquidation is blocked to avoid swapping
-    ///         against stale Chainlink / Uniswap state.
+    ///         against stale Chainlink / AMM state.
     error SequencerUnhealthy();
 
     // MAX_LIQUIDATION_SLIPPAGE_BPS consolidated in LibVaipakam
@@ -298,7 +298,7 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
 
         // L2 circuit breaker: block HF-based liquidation when the sequencer
         // is down or still in the 1h grace window. Chainlink prices and
-        // Uniswap pools may be stale under those conditions, so a swap here
+        // AMM pools may be stale under those conditions, so a swap here
         // would execute against mispriced state and either cross heavy
         // slippage or unfairly punish the borrower. Time-based defaults
         // (DefaultedFacet) fall back to full collateral transfer instead.

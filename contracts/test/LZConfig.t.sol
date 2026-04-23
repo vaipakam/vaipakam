@@ -7,7 +7,7 @@ import {ConfigureLZConfig} from "../script/ConfigureLZConfig.s.sol";
 
 /**
  * @title LZConfigTest
- * @notice Policy-conformance tests for the post-Kelp LayerZero hardening
+ * @notice Policy-conformance tests for the post-incident LayerZero hardening
  *         config applied by {ConfigureLZConfig.s.sol}. Two modes:
  *
  *         1. **Shape test (always on)**: the `_policyForChain` builder

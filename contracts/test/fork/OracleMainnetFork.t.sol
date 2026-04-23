@@ -46,7 +46,7 @@ contract OracleMainnetForkTest is Test {
     address internal constant USD_DENOM =
         0x0000000000000000000000000000000000000348;
 
-    // Mainnet Uniswap V3 Factory
+    // Mainnet v3-style AMM Factory
     address internal constant UNISWAP_V3_FACTORY =
         0x1F98431c8aD98523631AE4a59f267346ea31F984;
 

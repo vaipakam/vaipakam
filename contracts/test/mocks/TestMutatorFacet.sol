@@ -182,7 +182,7 @@ contract TestMutatorFacet {
     }
 
     /// @notice Test-only: expose raw staking accrual storage fields so tests
-    ///         can assert against the internal Synthetix-style counters
+    ///         can assert against the internal reward-per-token counters
     ///         without grepping storage slots.
     function getStakingRPTStored() external view returns (uint256) {
         return LibVaipakam.storageSlot().stakingRewardPerTokenStored;

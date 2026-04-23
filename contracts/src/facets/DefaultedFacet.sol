@@ -160,7 +160,7 @@ contract DefaultedFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
 
         // L2 circuit breaker: block the default trigger entirely while the
         // sequencer is down or in its 1h recovery grace window. Chainlink
-        // prices and Uniswap pools are unreliable under those conditions,
+        // prices and AMM pools are unreliable under those conditions,
         // so a DEX swap would cross heavy slippage. Sequencer outages are
         // typically short — the caller can simply retry once it recovers,
         // which is safer than locking the loan into an irreversible full-

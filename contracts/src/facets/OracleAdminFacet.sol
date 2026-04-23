@@ -9,7 +9,7 @@ import {LibVaipakam} from "../libraries/LibVaipakam.sol";
  *         are owner-only (enforced in the LibVaipakam internal setters).
  *         Per README §1.5, liquidity classification is never manually
  *         overrideable — assets must pass the on-chain Chainlink +
- *         Uniswap v3 checks or be treated as Illiquid.
+ *         v3-style AMM checks or be treated as Illiquid.
  */
 contract OracleAdminFacet {
     /**
@@ -54,7 +54,7 @@ contract OracleAdminFacet {
 
     /**
      * @notice Sets the canonical WETH ERC-20 used by OracleFacet as the
-     *         Uniswap v3 asset/WETH pool-depth quote asset.
+     *         v3-style AMM asset/WETH pool-depth quote asset.
      * @dev Owner-only. Setting to `address(0)` fail-closes every asset to
      *      Illiquid (no pool to discover).
      * @param weth The WETH ERC-20 contract address on the active network.
@@ -77,11 +77,11 @@ contract OracleAdminFacet {
     }
 
     /**
-     * @notice Sets the Uniswap V3 factory used by
+     * @notice Sets the v3-style AMM factory used by
      *         `OracleFacet.checkLiquidity` for pool discovery.
      * @dev Owner-only. Setting to `address(0)` collapses the liquidity
      *      classification to Illiquid for every asset (fail-closed).
-     * @param factory The Uniswap V3 factory contract address.
+     * @param factory The v3-style AMM factory contract address.
      */
     function setUniswapV3Factory(address factory) external {
         LibVaipakam.setUniswapV3Factory(factory);

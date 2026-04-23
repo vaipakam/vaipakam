@@ -39,7 +39,7 @@ const FEATURES = [
     icon: <BarChart3 size={24} />,
     title: 'Liquid vs Illiquid Assets',
     description:
-      'Chainlink oracles + Uniswap liquidity checks determine asset status. Liquid assets get LTV monitoring; illiquid assets use full collateral transfer.',
+      'Chainlink oracles + on-chain DEX liquidity checks determine asset status. Liquid assets get LTV monitoring; illiquid assets use full collateral transfer.',
   },
   {
     icon: <Shield size={24} />,

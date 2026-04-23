@@ -74,7 +74,7 @@ contracts/
       AccessControlFacet.sol         # Role-based access
       AdminFacet.sol                 # Treasury + 0x proxy config
       ProfileFacet.sol               # Country/KYC state
-      OracleFacet.sol                # Chainlink + Uniswap v3 liquidity
+      OracleFacet.sol                # Chainlink + v3-style concentrated-liquidity AMM liquidity
       VaipakamNFTFacet.sol           # Position NFTs (ERC721)
       EscrowFactoryFacet.sol         # Per-user escrow proxy factory
       OfferFacet.sol                 # Create/accept/cancel offers
@@ -300,8 +300,8 @@ Every LayerZero-facing contract in this repo — `VPFIOFTAdapter`,
 `VPFIMirror`, `VPFIBuyAdapter`, `VPFIBuyReceiver`, `VaipakamRewardOApp` —
 ships with the `OApp`/`OFT` defaults. **LayerZero's default configuration
 is 1-required / 0-optional DVN**, which was the root-cause shape of the
-April 2026 Kelp DAO exploit ($290M). A mainnet deploy that inherits the
-defaults is not acceptable.
+April 2026 cross-chain bridge exploit ($290M). A mainnet deploy that
+inherits the defaults is not acceptable.
 
 Before routing any real value through this system on mainnet:
 
@@ -370,8 +370,9 @@ Every LZ-facing contract has a timelock-gated `pause()` / `unpause()`:
 - `VaipakamRewardOApp` — pauses `sendChainReport`, `broadcastGlobal`, and
   `_lzReceive`.
 
-Kelp's 46-minute pause blocked $200M of follow-up drain; the pause lever
-is the difference between a contained incident and a catastrophic one.
+A 46-minute operator pause in the April 2026 cross-chain bridge
+incident blocked ~$200M of follow-up drain; the pause lever is the
+difference between a contained incident and a catastrophic one.
 
 ### Rate Limits (`VPFIBuyAdapter`)
 

@@ -18,8 +18,21 @@ import {
   Menu,
   X,
   ArrowLeft,
+  ChevronsLeft,
+  ChevronsRight,
 } from "lucide-react";
 import { useState } from "react";
+
+const SIDEBAR_COLLAPSED_KEY = "vaipakam:sidebar-collapsed";
+
+function readInitialCollapsed(): boolean {
+  if (typeof window === "undefined") return false;
+  try {
+    return window.localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
 import DiagnosticsDrawer from "../components/app/DiagnosticsDrawer";
 import { EscrowUpgradeBanner } from "../components/app/EscrowUpgradeBanner";
 import { UnsupportedChainBanner } from "../components/app/UnsupportedChainBanner";
@@ -95,15 +108,44 @@ export default function AppLayout() {
     disconnect,
     switchToDefaultChain,
     error,
+    warning,
   } = useWallet();
   const navigate = useNavigate();
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(readInitialCollapsed);
+  // After clicking the collapse toggle, the pointer is still over the sidebar
+  // — which would immediately trigger the `:hover` expand and make it look
+  // like the click did nothing. Suppress hover-expand until the pointer
+  // actually leaves the rail, so clicking to collapse feels instant.
+  const [suppressHoverExpand, setSuppressHoverExpand] = useState(false);
   const isAdvanced = mode === "advanced";
 
+  const toggleSidebarCollapsed = () => {
+    setSidebarCollapsed((prev) => {
+      const next = !prev;
+      try {
+        window.localStorage.setItem(SIDEBAR_COLLAPSED_KEY, next ? "1" : "0");
+      } catch {
+        // ignore quota / privacy-mode errors; state is still correct in memory
+      }
+      return next;
+    });
+    setSuppressHoverExpand(true);
+  };
+
   return (
-    <div className="app-layout">
+    <div
+      className={`app-layout ${sidebarCollapsed ? "sidebar-collapsed" : ""}`}
+    >
       {/* Sidebar */}
-      <aside className={`app-sidebar ${sidebarOpen ? "open" : ""}`}>
+      <aside
+        className={`app-sidebar ${sidebarOpen ? "open" : ""} ${
+          sidebarCollapsed ? "collapsed" : ""
+        } ${suppressHoverExpand ? "suppress-hover-expand" : ""}`}
+        onMouseLeave={() => {
+          if (suppressHoverExpand) setSuppressHoverExpand(false);
+        }}
+      >
         <div className="sidebar-header">
           <a
             href="/"
@@ -116,12 +158,40 @@ export default function AppLayout() {
             <img
               src={theme === "dark" ? "/logo-dark.png" : "/logo-light.png"}
               alt="Vaipakam"
-              className="sidebar-logo"
+              className="sidebar-logo sidebar-logo--full"
+              onError={(e) => {
+                (e.target as HTMLImageElement).style.display = "none";
+              }}
+            />
+            <img
+              src={theme === "dark" ? "/icon-dark.png" : "/icon-light.png"}
+              alt="Vaipakam"
+              className="sidebar-logo sidebar-logo--icon"
+              aria-hidden="true"
               onError={(e) => {
                 (e.target as HTMLImageElement).style.display = "none";
               }}
             />
           </a>
+          <button
+            type="button"
+            className="sidebar-collapse-btn"
+            onClick={toggleSidebarCollapsed}
+            aria-label={
+              sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"
+            }
+            aria-pressed={sidebarCollapsed}
+            data-tooltip={
+              sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"
+            }
+            data-tooltip-placement="right"
+          >
+            {sidebarCollapsed ? (
+              <ChevronsRight size={18} />
+            ) : (
+              <ChevronsLeft size={18} />
+            )}
+          </button>
           <button
             className="sidebar-close"
             onClick={() => setSidebarOpen(false)}
@@ -273,6 +343,15 @@ export default function AppLayout() {
                 dig into the Diagnostics drawer for the same workflow. The
                 link body is auto-redacted per lib/journeyLog.ts rules. */}
             <ReportIssueLink />
+          </div>
+        )}
+
+        {/* Warning surface — "no wallet detected" etc. User-environment
+         *  nudges, not system failures, so no "report this" link and
+         *  styled as a yellow warning (not red error). */}
+        {warning && !error && (
+          <div className="app-wallet-warning">
+            <span>{warning}</span>
           </div>
         )}
 

@@ -21,7 +21,7 @@ import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.s
 
 /**
  * @title VPFIStakingRewardMonotonicityInvariant
- * @notice Two monotonicity properties of the Synthetix-style staking
+ * @notice Two monotonicity properties of the reward-per-token staking
  *         rewards accumulator that hold regardless of how deposits,
  *         withdrawals, claims and time warps are interleaved:
  *

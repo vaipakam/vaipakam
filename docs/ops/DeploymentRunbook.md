@@ -20,7 +20,7 @@ Audience: release engineer + signing multisig.
 | `PRIVATE_KEY` deployer is a hot key, revoked post-deploy | see step 6 |
 | Target chain RPC matches intended network id | `cast chain-id --rpc-url $RPC` |
 | Chainlink feeds for every supported asset are live on target chain | `cast call <feed> "latestRoundData()"` |
-| Uniswap v3 factory and USDT/USD denominator configured for the chain | see `OracleAdminFacet` setters |
+| v3-style concentrated-liquidity AMM factory and USDT/USD denominator configured for the chain | see `OracleAdminFacet` setters |
 
 If any check fails → **do not broadcast**.
 

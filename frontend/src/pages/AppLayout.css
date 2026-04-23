@@ -3,7 +3,17 @@
   min-height: 100vh;
 }
 
-/* ── Sidebar ── */
+/* ── Sidebar ──
+ *
+ * Desktop sidebar has two pinned states (toggled by the header collapse button):
+ *   - expanded (default, 260px) — full labels + brand logo
+ *   - collapsed (72px)           — icon rail, brand shrinks to the icon mark
+ *
+ * When pinned-collapsed, hovering the rail temporarily floats the full sidebar
+ * over page content WITHOUT shifting layout (`.app-main` keeps margin-left
+ * at 72px). Mouse-leave returns to the rail. Clicking the button is the only
+ * way to toggle the pinned state, so the layout stays stable.
+ */
 .app-sidebar {
   position: fixed;
   top: 0;
@@ -16,7 +26,7 @@
   flex-direction: column;
   z-index: 1100;
   transform: translateX(-100%);
-  transition: transform 0.25s ease;
+  transition: transform 0.25s ease, width 0.2s ease;
 }
 
 .app-sidebar.open {
@@ -27,12 +37,30 @@
   .app-sidebar {
     transform: translateX(0);
   }
+
+  /* Pinned-collapsed — slim icon rail. */
+  .app-sidebar.collapsed {
+    width: 72px;
+  }
+
+  /* Hover-expand on pinned-collapsed — float over content, no layout shift.
+   * `.suppress-hover-expand` is applied for the window between "user just
+   * clicked the toggle" and "pointer leaves the sidebar" so a click-to-
+   * collapse is reflected visually even while the cursor is still on the
+   * rail. The class is cleared on the next `mouseleave`, returning to the
+   * normal hover-expand behaviour. */
+  .app-sidebar.collapsed:not(.suppress-hover-expand):hover,
+  .app-sidebar.collapsed:not(.suppress-hover-expand):focus-within {
+    width: 260px;
+    box-shadow: 4px 0 24px rgba(0, 0, 0, 0.14);
+  }
 }
 
 .sidebar-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 8px;
   padding: 20px 20px 16px;
   border-bottom: 1px solid var(--border);
 }
@@ -40,6 +68,8 @@
 .sidebar-brand {
   display: flex;
   align-items: center;
+  min-width: 0;
+  flex: 1;
 }
 
 .sidebar-logo {
@@ -47,7 +77,35 @@
   width: auto;
 }
 
-.sidebar-close {
+/* Two logos live in the DOM so the collapsed rail can swap to the square
+ * icon mark without loading a different asset mid-transition. Default shows
+ * the full wordmark; the icon is display:none until `.collapsed` flips it. */
+.sidebar-logo--icon {
+  display: none;
+}
+
+.app-sidebar.collapsed .sidebar-logo--full {
+  display: none;
+}
+.app-sidebar.collapsed .sidebar-logo--icon {
+  display: block;
+}
+
+/* Hover-expand (desktop) brings the wordmark back so the floating panel
+ * reads as a real sidebar, not just a wider icon rail. */
+@media (min-width: 1024px) {
+  .app-sidebar.collapsed:not(.suppress-hover-expand):hover .sidebar-logo--full,
+  .app-sidebar.collapsed:not(.suppress-hover-expand):focus-within .sidebar-logo--full {
+    display: block;
+  }
+  .app-sidebar.collapsed:not(.suppress-hover-expand):hover .sidebar-logo--icon,
+  .app-sidebar.collapsed:not(.suppress-hover-expand):focus-within .sidebar-logo--icon {
+    display: none;
+  }
+}
+
+.sidebar-close,
+.sidebar-collapse-btn {
   display: flex;
   align-items: center;
   justify-content: center;
@@ -57,10 +115,51 @@
   background: none;
   color: var(--text-secondary);
   border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: color 0.15s ease, background-color 0.15s ease;
 }
 
+.sidebar-collapse-btn:hover {
+  color: var(--text-primary);
+  background: var(--bg-card-hover);
+}
+
+/* Mobile close (X) only shows on mobile drawer; desktop uses collapse button. */
+.sidebar-collapse-btn { display: none; }
 @media (min-width: 1024px) {
   .sidebar-close { display: none; }
+  .sidebar-collapse-btn { display: flex; }
+}
+
+/* When the sidebar is collapsed to the rail, the header becomes icon-only:
+ * center the brand and keep the collapse button reachable. Hover-expand
+ * restores the normal space-between layout via the `:hover` branch below. */
+@media (min-width: 1024px) {
+  .app-sidebar.collapsed .sidebar-header {
+    justify-content: center;
+    padding: 20px 0 16px;
+  }
+  .app-sidebar.collapsed .sidebar-brand {
+    justify-content: center;
+    flex: 0 0 auto;
+  }
+  .app-sidebar.collapsed .sidebar-collapse-btn {
+    display: none;
+  }
+  .app-sidebar.collapsed:not(.suppress-hover-expand):hover .sidebar-header,
+  .app-sidebar.collapsed:not(.suppress-hover-expand):focus-within .sidebar-header {
+    justify-content: space-between;
+    padding: 20px 20px 16px;
+  }
+  .app-sidebar.collapsed:not(.suppress-hover-expand):hover .sidebar-brand,
+  .app-sidebar.collapsed:not(.suppress-hover-expand):focus-within .sidebar-brand {
+    justify-content: flex-start;
+    flex: 1;
+  }
+  .app-sidebar.collapsed:not(.suppress-hover-expand):hover .sidebar-collapse-btn,
+  .app-sidebar.collapsed:not(.suppress-hover-expand):focus-within .sidebar-collapse-btn {
+    display: flex;
+  }
 }
 
 .sidebar-nav {
@@ -87,6 +186,53 @@
   width: 100%;
   text-align: left;
   cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+/* Collapsed rail — hide label text visually but keep it in the accessibility
+ * tree (screen readers still announce the destination). Icons center in the
+ * narrower rail. Hover-expand unhides the label for sighted users. */
+@media (min-width: 1024px) {
+  .app-sidebar.collapsed .sidebar-link {
+    justify-content: center;
+    padding: 10px 0;
+  }
+  .app-sidebar.collapsed .sidebar-link-nested {
+    padding-left: 0;
+  }
+  .app-sidebar.collapsed .sidebar-link > span {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+  }
+  .app-sidebar.collapsed:not(.suppress-hover-expand):hover .sidebar-link,
+  .app-sidebar.collapsed:not(.suppress-hover-expand):focus-within .sidebar-link {
+    justify-content: flex-start;
+    padding: 10px 14px;
+  }
+  .app-sidebar.collapsed:not(.suppress-hover-expand):hover .sidebar-link-nested,
+  .app-sidebar.collapsed:not(.suppress-hover-expand):focus-within .sidebar-link-nested {
+    padding-left: 28px;
+  }
+  .app-sidebar.collapsed:not(.suppress-hover-expand):hover .sidebar-link > span,
+  .app-sidebar.collapsed:not(.suppress-hover-expand):focus-within .sidebar-link > span {
+    position: static;
+    width: auto;
+    height: auto;
+    padding: initial;
+    margin: initial;
+    overflow: visible;
+    clip: auto;
+    white-space: nowrap;
+    border: initial;
+  }
 }
 
 .sidebar-link:hover {
@@ -121,6 +267,27 @@
   border-top: 1px solid var(--border);
 }
 
+/* Collapsed rail — group label becomes a simple divider (text is noise at
+ * 72px); footer button centers its icon and hides the label like nav links.
+ * Hover-expand restores the full appearance. */
+@media (min-width: 1024px) {
+  .app-sidebar.collapsed .sidebar-group-label {
+    font-size: 0;
+    padding: 0;
+    margin: 12px 12px 0;
+    height: 1px;
+    border-top: 1px solid var(--border);
+  }
+  .app-sidebar.collapsed:not(.suppress-hover-expand):hover .sidebar-group-label,
+  .app-sidebar.collapsed:not(.suppress-hover-expand):focus-within .sidebar-group-label {
+    font-size: 0.72rem;
+    padding: 4px 12px;
+    padding-top: 12px;
+    margin: 12px 12px 4px;
+    height: auto;
+  }
+}
+
 .sidebar-overlay {
   position: fixed;
   inset: 0;
@@ -135,14 +302,31 @@
 /* ── Main area ── */
 .app-main {
   flex: 1;
+  /* `min-width: 0` lets the flex child shrink below its content's intrinsic
+   * min-width instead of pushing the parent wider. Without it, wide child
+   * content (a table, a preformatted block, an oversized form row) can
+   * force the whole app shell to grow past the viewport and spawn a
+   * horizontal scrollbar even when nothing visually overflows. */
+  min-width: 0;
   display: flex;
   flex-direction: column;
   min-height: 100vh;
+  /* Defence-in-depth: if any child element does overflow horizontally,
+   * swallow it at the shell rather than scrolling the whole app. */
+  overflow-x: hidden;
+  transition: margin-left 0.2s ease;
 }
 
 @media (min-width: 1024px) {
   .app-main {
     margin-left: 260px;
+  }
+
+  /* Pinned-collapsed state tracks the 72px rail. Hover-expand deliberately
+   * does NOT shift this margin — the expanded panel floats over content
+   * instead of pushing it, so the layout stays stable. */
+  .app-layout.sidebar-collapsed .app-main {
+    margin-left: 72px;
   }
 }
 
@@ -273,6 +457,16 @@
   font-size: 0.82rem;
   padding: 8px 24px;
   border-bottom: 1px solid rgba(239, 68, 68, 0.2);
+}
+
+/* Warning equivalent of .app-wallet-error for user-environment nudges that
+ * are NOT system failures (e.g. "No wallet detected"). Amber, not red. */
+.app-wallet-warning {
+  background: rgba(245, 158, 11, 0.1);
+  color: var(--accent-orange);
+  font-size: 0.82rem;
+  padding: 8px 24px;
+  border-bottom: 1px solid rgba(245, 158, 11, 0.2);
 }
 
 /* ── Content area ── */

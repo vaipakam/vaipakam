@@ -23,7 +23,7 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 /**
  * @title StakingBalancesInvariant
  * @notice Phase-1 staking rewards (docs/TokenomicsTechSpec.md §7) are book-kept
- *         by a Synthetix-style accrual inside `LibStakingRewards`. Two hard
+ *         by a reward-per-token accrual inside `LibStakingRewards`. Two hard
  *         ledger invariants hold regardless of how the fuzzer scripts the
  *         deposit/withdraw/claim/warp sequence:
  *

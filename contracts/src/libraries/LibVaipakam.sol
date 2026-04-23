@@ -65,7 +65,7 @@ library LibVaipakam {
     // {OracleFacet._checkLiquidityWithConfig}: `poolLiquidity * ethPrice /
     // 10**ethFeedDecimals`, where `ethPrice` is the 8-decimal Chainlink
     // ETH/USD answer. The constant is an empirical floor, not a strict
-    // dollar unit — it is calibrated against asset/WETH 0.3% Uniswap v3
+    // dollar unit — it is calibrated against asset/WETH 0.3% v3-style AMM
     // pools on target deployments and tuned via ops if coverage shifts.
     uint256 constant MIN_LIQUIDITY_USD = 1_000_000 * 1e6;
     uint256 constant LTV_SCALE = 10000; // Basis points (e.g., 7500 = 75%)
@@ -587,7 +587,7 @@ library LibVaipakam {
         address allowanceTarget; // allowance target for 0x proxy protocol
         address usdChainlinkDenominator; // Chainlink Feed Registry USD denominator (mainnet only)
         address chainlnkRegistry; // Chainlink Feed Registry (mainnet only; address(0) on L2s)
-        address wethContract; // Canonical WETH on the active network — Uniswap v3 liquidity quote asset
+        address wethContract; // Canonical WETH on the active network — v3-style AMM liquidity quote asset
         address uniswapV3Factory; // UNISWAP_V3_FACTORY
         address diamondAddress;
         mapping(uint256 => uint256) loanToSaleOfferId;
@@ -715,7 +715,7 @@ library LibVaipakam {
 
         // ─── VPFI Staking Rewards (spec §7) ─────────────────────────────
         // Escrow-held VPFI is automatically "staked" and earns 5% APR from
-        // VPFI_STAKING_POOL_CAP. Synthetix-style time-weighted accrual —
+        // VPFI_STAKING_POOL_CAP. reward-per-token time-weighted accrual —
         // every VPFI escrow balance mutation (deposit, discount deduction,
         // withdrawVPFIFromEscrow) MUST call LibStakingRewards.updateUser
         // BEFORE mutating the escrow balance, passing the user's current
@@ -1013,7 +1013,7 @@ library LibVaipakam {
         mapping(uint256 => uint256) activeOfferIdsListPos;
 
         // ─── ETH-referenced oracle / liquidity config ────────────────────
-        // OracleFacet classifies an ERC-20 as Liquid via a Uniswap v3
+        // OracleFacet classifies an ERC-20 as Liquid via a v3-style AMM
         // asset/WETH 0.3% pool (the deepest quote layer across EVM
         // chains), converts depth to USD via the ETH/USD feed, and
         // prices assets with a hybrid rule: prefer a direct asset/USD
@@ -1393,7 +1393,7 @@ library LibVaipakam {
     }
 
     /// @dev Set the canonical WETH ERC-20 used by OracleFacet as the
-    ///      Uniswap v3 pool-depth quote asset. Owner-only. Setting to
+    ///      v3-style AMM pool-depth quote asset. Owner-only. Setting to
     ///      `address(0)` fail-closes every asset to Illiquid.
     /// @param newWethContract WETH ERC-20 contract address on the active
     ///        network.
@@ -1467,10 +1467,10 @@ library LibVaipakam {
         }
     }
 
-    /// @dev Set the Uniswap V3 factory used by OracleFacet's liquidity
+    /// @dev Set the v3-style AMM factory used by OracleFacet's liquidity
     ///      classification. Owner-only. Setting to `address(0)` fail-closes
     ///      every asset to Illiquid.
-    /// @param newUniswapV3Factory Uniswap V3 factory contract address.
+    /// @param newUniswapV3Factory v3-style AMM factory contract address.
     function setUniswapV3Factory(address newUniswapV3Factory) internal {
         LibDiamond.enforceIsContractOwner();
         Storage storage s = storageSlot();

@@ -13,7 +13,7 @@ import {MockChainlinkRegistry, MockChainlinkFeed} from "./mocks/MockChainlinkReg
  * @title UpgradeOracle
  * @notice Diamond-cuts the OracleFacet and OracleAdminFacet into the deployed
  *         Diamond, plus mock Chainlink infrastructure for testnet use.
- *         Liquidity is determined strictly by on-chain Chainlink + Uniswap v3
+ *         Liquidity is determined strictly by on-chain Chainlink + v3-style AMM
  *         checks (README §1.5) — no manual overrides exist.
  *
  * @dev Env vars (per chain — populate from `.env.local`):
@@ -22,7 +22,7 @@ import {MockChainlinkRegistry, MockChainlinkFeed} from "./mocks/MockChainlinkReg
  *        - WETH_ADDRESS        : canonical WETH ERC20 on this chain
  *                                (e.g. Sepolia: 0xfFf9…4, Base mainnet:
  *                                0x4200000000000000000000000000000000000006).
- *        - UNISWAP_V3_FACTORY  : Uniswap V3 factory on this chain.
+ *        - UNISWAP_V3_FACTORY  : v3-style AMM factory on this chain.
  *        - USD_DENOMINATOR     : (optional) Chainlink USD denominator —
  *                                defaults to the universal Chainlink
  *                                constant 0x000…0348 (840). Override only
@@ -131,7 +131,7 @@ contract UpgradeOracle is Script {
         console.log("1. In SepoliaPositiveFlows, register mock token feeds:");
         console.log("   mockRegistry.setFeed(mockUSDC, USD_DENOM, usdcFeed)");
         console.log("   mockRegistry.setFeed(mockWETH, USD_DENOM, wethFeed)");
-        console.log("2. Ensure mock tokens have a Uniswap v3 pool on the testnet or");
+        console.log("2. Ensure mock tokens have a v3-style AMM pool on the testnet or");
         console.log("   they will be classified Illiquid by on-chain checks.");
     }
 

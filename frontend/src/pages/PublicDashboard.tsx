@@ -14,6 +14,7 @@ import {
   TrendingUp,
   PiggyBank,
   Landmark,
+  Image as ImageIcon,
 } from 'lucide-react';
 import Navbar from '../components/Navbar';
 import Footer from '../components/Footer';
@@ -358,6 +359,13 @@ export default function PublicDashboard() {
                   hint="Every loan that has ever reached Active"
                   onchainFn="getProtocolStats"
                 />
+                <MetricCard
+                  icon={<ImageIcon size={18} />}
+                  label="NFTs Rented"
+                  value={combined.combined.nftCollateralCount.toString()}
+                  hint={`Currently rented across ${combined.combined.chainsCovered} chain${combined.combined.chainsCovered === 1 ? '' : 's'} (open NFT-collateralised rentals)`}
+                  onchainFn="getProtocolTVL"
+                />
               </div>
             )}
           </section>
@@ -439,6 +447,14 @@ export default function PublicDashboard() {
                   value={stats.activeLoans.toString()}
                   hint={`${formatUsd(stats.activeLoansValueUsd)} live value · ${stats.nftRentalsActive} NFT rentals`}
                   onchainFn="getActiveLoansCount"
+                />
+                <MetricCard
+                  diamondHref={diamondReadProxyHref}
+                  icon={<ImageIcon size={18} />}
+                  label="NFTs Rented"
+                  value={stats.nftRentalsActive.toString()}
+                  hint={`Active NFT-collateralised rentals on ${readChain.name}`}
+                  onchainFn="getProtocolTVL"
                 />
                 <MetricCard
                   diamondHref={diamondReadProxyHref}

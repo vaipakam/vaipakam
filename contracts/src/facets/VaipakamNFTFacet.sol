@@ -431,10 +431,10 @@ contract VaipakamNFTFacet is IERC721, IERC721Metadata, IERC721Enumerable, Diamon
         return "ERC1155";
     }
 
-    // ==================== Collection Metadata (OpenSea) ====================
+    // ==================== Collection Metadata (contractURI) ====================
 
     /**
-     * @notice OpenSea-compatible collection-level metadata URI.
+     * @notice Collection-level metadata URI (contractURI convention).
      * @dev Returns a base64-encoded JSON blob describing the collection
      *      (name, description, image). Marketplaces read this to render
      *      the collection page and fall back to tokenURI for items.
@@ -486,7 +486,7 @@ contract VaipakamNFTFacet is IERC721, IERC721Metadata, IERC721Enumerable, Diamon
 
     /**
      * @notice EIP-2981 royalty info for secondary sales of Vaipakam NFTs.
-     * @dev Marketplaces (OpenSea, Blur, LooksRare, …) call this to honour
+     * @dev NFT marketplaces call this (per the EIP-2981 standard) to honour
      *      collection royalties. A single default policy applies to every
      *      tokenId in the collection.
      * @param salePrice The sale price the marketplace is settling.

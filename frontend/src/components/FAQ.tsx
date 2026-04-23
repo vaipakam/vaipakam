@@ -307,7 +307,7 @@ const FAQS: FaqEntry[] = [
           <li>
             <strong>Time-based trigger:</strong> once the grace period expires,
             liquid collateral is swapped to repay the lender; illiquid
-            collateral (NFTs, or tokens without a qualifying oracle + Uniswap v3
+            collateral (NFTs, or tokens without a qualifying oracle + v3-style concentrated-liquidity AMM
             pool) is transferred directly to the lender via the NFT-claim model.
           </li>
         </ul>
@@ -450,7 +450,7 @@ const FAQS: FaqEntry[] = [
           Liquidity is judged{" "}
           <strong>only on the network you're transacting on</strong>. The
           protocol checks two things on that chain: a reliable Chainlink price
-          path for the asset, and a sufficiently deep Uniswap v3{" "}
+          path for the asset, and a sufficiently deep v3-style concentrated-liquidity AMM{" "}
           <code>asset/WETH</code> 0.3% pool. If either fails, the asset is
           marked <strong>illiquid on that network</strong>.
         </p>
