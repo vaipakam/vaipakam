@@ -37,7 +37,7 @@ contract SwapFailoverHarness {
         uint256 inputAmount,
         uint256 minOutputAmount,
         address recipient,
-        bytes[] calldata perAdapterData
+        LibSwap.AdapterCall[] calldata calls
     ) external returns (bool success, uint256 output, uint256 adapterIdx) {
         (success, output, adapterIdx) = LibSwap.swapWithFailover(
             loanId,
@@ -46,7 +46,7 @@ contract SwapFailoverHarness {
             inputAmount,
             minOutputAmount,
             recipient,
-            perAdapterData
+            calls
         );
         emit TestSwapResult(success, output, adapterIdx);
     }

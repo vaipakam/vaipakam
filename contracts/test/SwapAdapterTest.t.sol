@@ -274,10 +274,20 @@ contract SwapAdapterTest is Test {
     // SECTION B — LibSwap.swapWithFailover chain behaviour
     // ─────────────────────────────────────────────────────────────
 
-    function testSwapFailoverEmptyChainReverts() public {
+    /// @dev Helpers: build an AdapterCall[] of the given length with
+    ///      the indices mirroring slot positions and empty data. Tests
+    ///      that want custom ordering build the array inline.
+    function _seqCalls(uint256 n) internal pure returns (LibSwap.AdapterCall[] memory calls) {
+        calls = new LibSwap.AdapterCall[](n);
+        for (uint256 i = 0; i < n; ++i) {
+            calls[i] = LibSwap.AdapterCall({adapterIdx: i, data: bytes("")});
+        }
+    }
+
+    function testSwapFailoverNoAdaptersConfiguredReverts() public {
         SwapFailoverHarness h = new SwapFailoverHarness();
         // No adapters registered → NoSwapAdaptersConfigured.
-        bytes[] memory data = new bytes[](0);
+        LibSwap.AdapterCall[] memory calls = new LibSwap.AdapterCall[](0);
         vm.expectRevert(LibSwap.NoSwapAdaptersConfigured.selector);
         h.doSwap(
             1,
@@ -286,7 +296,62 @@ contract SwapAdapterTest is Test {
             1 ether,
             1,
             recipient,
-            data
+            calls
+        );
+    }
+
+    function testSwapFailoverEmptyCallListReturnsFalse() public {
+        SwapFailoverHarness h = new SwapFailoverHarness();
+        MockSwapAdapter a = new MockSwapAdapter("A");
+        address[] memory adapters = new address[](1);
+        adapters[0] = address(a);
+        h.setAdapters(adapters);
+        tokenIn.mint(address(h), 1 ether);
+
+        // Adapters registered but empty try-list — returns total-fail
+        // without reverting.
+        LibSwap.AdapterCall[] memory calls = new LibSwap.AdapterCall[](0);
+        (bool ok, uint256 out_, uint256 idx) = h.doSwap(
+            1,
+            address(tokenIn),
+            address(tokenOut),
+            1 ether,
+            1,
+            recipient,
+            calls
+        );
+        assertFalse(ok);
+        assertEq(out_, 0);
+        assertEq(idx, type(uint256).max);
+        assertEq(a.callCount(), 0);
+    }
+
+    function testSwapFailoverOutOfRangeIndexReverts() public {
+        SwapFailoverHarness h = new SwapFailoverHarness();
+        MockSwapAdapter a = new MockSwapAdapter("A");
+        address[] memory adapters = new address[](1);
+        adapters[0] = address(a);
+        h.setAdapters(adapters);
+        tokenIn.mint(address(h), 1 ether);
+
+        LibSwap.AdapterCall[] memory calls = new LibSwap.AdapterCall[](1);
+        // adapter idx 5 doesn't exist.
+        calls[0] = LibSwap.AdapterCall({adapterIdx: 5, data: bytes("")});
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                LibSwap.AdapterIndexOutOfRange.selector,
+                uint256(5),
+                uint256(1)
+            )
+        );
+        h.doSwap(
+            1,
+            address(tokenIn),
+            address(tokenOut),
+            1 ether,
+            1,
+            recipient,
+            calls
         );
     }
 
@@ -300,11 +365,9 @@ contract SwapAdapterTest is Test {
         adapters[0] = address(a);
         adapters[1] = address(b);
         h.setAdapters(adapters);
-
-        // Seed harness with input tokens (it's the caller).
         tokenIn.mint(address(h), 1000 ether);
 
-        bytes[] memory data = new bytes[](2);
+        LibSwap.AdapterCall[] memory calls = _seqCalls(2);
         (bool ok, uint256 out_, uint256 idx) = h.doSwap(
             42,
             address(tokenIn),
@@ -312,7 +375,7 @@ contract SwapAdapterTest is Test {
             1000 ether,
             900 ether,
             recipient,
-            data
+            calls
         );
 
         assertTrue(ok);
@@ -321,6 +384,40 @@ contract SwapAdapterTest is Test {
         assertEq(a.callCount(), 1);
         assertEq(b.callCount(), 0); // never tried
         assertEq(tokenOut.balanceOf(recipient), 1000 ether);
+    }
+
+    function testSwapFailoverFollowsCallerOrderNotStorageOrder() public {
+        // Frontend ranks B as best-quote → submits B first even though
+        // B is adapter slot 1. Library must try B first and commit.
+        SwapFailoverHarness h = new SwapFailoverHarness();
+        MockSwapAdapter a = new MockSwapAdapter("A");
+        MockSwapAdapter b = new MockSwapAdapter("B");
+        tokenOut.mint(address(b), 10_000 ether);
+
+        address[] memory adapters = new address[](2);
+        adapters[0] = address(a);
+        adapters[1] = address(b);
+        h.setAdapters(adapters);
+        tokenIn.mint(address(h), 1000 ether);
+
+        // Caller-ranked order: B (idx 1) first, A (idx 0) second.
+        LibSwap.AdapterCall[] memory calls = new LibSwap.AdapterCall[](2);
+        calls[0] = LibSwap.AdapterCall({adapterIdx: 1, data: bytes("")});
+        calls[1] = LibSwap.AdapterCall({adapterIdx: 0, data: bytes("")});
+
+        (bool ok, , uint256 committedIdx) = h.doSwap(
+            42,
+            address(tokenIn),
+            address(tokenOut),
+            1000 ether,
+            900 ether,
+            recipient,
+            calls
+        );
+        assertTrue(ok);
+        assertEq(committedIdx, 1); // B's storage index
+        assertEq(a.callCount(), 0); // A never tried
+        assertEq(b.callCount(), 1);
     }
 
     function testSwapFailoverSkipsRevertingAdapters() public {
@@ -340,7 +437,7 @@ contract SwapAdapterTest is Test {
         h.setAdapters(adapters);
         tokenIn.mint(address(h), 1000 ether);
 
-        bytes[] memory data = new bytes[](3);
+        LibSwap.AdapterCall[] memory calls = _seqCalls(3);
         (bool ok, uint256 out_, uint256 idx) = h.doSwap(
             42,
             address(tokenIn),
@@ -348,7 +445,7 @@ contract SwapAdapterTest is Test {
             1000 ether,
             900 ether,
             recipient,
-            data
+            calls
         );
 
         assertTrue(ok);
@@ -375,7 +472,7 @@ contract SwapAdapterTest is Test {
         h.setAdapters(adapters);
         tokenIn.mint(address(h), 1000 ether);
 
-        bytes[] memory data = new bytes[](2);
+        LibSwap.AdapterCall[] memory calls = _seqCalls(2);
         (bool ok, uint256 out_, uint256 idx) = h.doSwap(
             99,
             address(tokenIn),
@@ -383,7 +480,7 @@ contract SwapAdapterTest is Test {
             1000 ether,
             900 ether,
             recipient,
-            data
+            calls
         );
 
         assertFalse(ok);
@@ -404,7 +501,7 @@ contract SwapAdapterTest is Test {
         h.setAdapters(adapters);
         tokenIn.mint(address(h), 1000 ether);
 
-        bytes[] memory data = new bytes[](1);
+        LibSwap.AdapterCall[] memory calls = _seqCalls(1);
         h.doSwap(
             1,
             address(tokenIn),
@@ -412,7 +509,7 @@ contract SwapAdapterTest is Test {
             1000 ether,
             900 ether,
             recipient,
-            data
+            calls
         );
 
         // Post-swap: no residual allowance on the adapter.
@@ -432,7 +529,7 @@ contract SwapAdapterTest is Test {
         h.setAdapters(adapters);
         tokenIn.mint(address(h), 1000 ether);
 
-        bytes[] memory data = new bytes[](2);
+        LibSwap.AdapterCall[] memory calls = _seqCalls(2);
         h.doSwap(
             1,
             address(tokenIn),
@@ -440,10 +537,39 @@ contract SwapAdapterTest is Test {
             1000 ether,
             900 ether,
             recipient,
-            data
+            calls
         );
 
         assertEq(tokenIn.allowance(address(h), address(a)), 0);
         assertEq(tokenIn.allowance(address(h), address(b)), 0);
+    }
+
+    function testSwapFailoverAllowsDuplicateAdapterEntries() public {
+        // Caller can submit the same adapter twice with different
+        // routing data (e.g. UniV3 fee=500 first try, fee=3000 fallback).
+        SwapFailoverHarness h = new SwapFailoverHarness();
+        MockSwapAdapter a = new MockSwapAdapter("A");
+        tokenOut.mint(address(a), 10_000 ether);
+
+        address[] memory adapters = new address[](1);
+        adapters[0] = address(a);
+        h.setAdapters(adapters);
+        tokenIn.mint(address(h), 500 ether);
+
+        LibSwap.AdapterCall[] memory calls = new LibSwap.AdapterCall[](2);
+        calls[0] = LibSwap.AdapterCall({adapterIdx: 0, data: hex"01"});
+        calls[1] = LibSwap.AdapterCall({adapterIdx: 0, data: hex"02"});
+
+        (bool ok, , ) = h.doSwap(
+            1,
+            address(tokenIn),
+            address(tokenOut),
+            500 ether,
+            500 ether,
+            recipient,
+            calls
+        );
+        assertTrue(ok);
+        assertEq(a.callCount(), 1); // first succeeded, second never tried
     }
 }

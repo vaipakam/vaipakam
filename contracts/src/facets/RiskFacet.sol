@@ -25,6 +25,8 @@ import {ProfileFacet} from "./ProfileFacet.sol";
  // For KYC if high-value
 import {IZeroExProxy} from "../interfaces/IZeroExProxy.sol";
  // For swap calldata encoding
+import {LibSwap} from "../libraries/LibSwap.sol";
+ // Phase 7a — ordered adapter failover for liquidation swaps
 
 /**
  * @title RiskFacet
