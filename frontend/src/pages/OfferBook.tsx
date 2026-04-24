@@ -22,7 +22,7 @@ import { TokenAmount } from '../components/app/TokenAmount';
 import { ThemedSelect } from '../components/app/ThemedSelect';
 import { bpsToPercent } from '../lib/format';
 import { batchCalls, encodeBatchCalls } from '../lib/multicall';
-import { shortenAddr } from '../lib/format';
+import { AddressDisplay } from '../components/app/AddressDisplay';
 import {
   absDelta,
   matchesFilter as matchesFilterPure,
@@ -943,7 +943,7 @@ function AcceptReviewModal({ offer, illiquid, consent, onConsentChange, submitti
           <dd style={{ margin: 0 }}>{OFFER_TYPE_LABELS[offer.offerType]} · {sideLabel}</dd>
 
           <dt style={{ opacity: 0.7 }}>Counterparty</dt>
-          <dd style={{ margin: 0 }} className="mono">{shortenAddr(offer.creator)}</dd>
+          <dd style={{ margin: 0 }}><AddressDisplay address={offer.creator} withTooltip /></dd>
 
           <dt style={{ opacity: 0.7 }}>{isERC20 ? 'Principal' : 'Daily rental fee'}</dt>
           <dd style={{ margin: 0 }}>

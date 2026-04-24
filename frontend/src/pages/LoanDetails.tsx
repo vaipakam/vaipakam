@@ -31,7 +31,9 @@ import { AssetSymbol } from "../components/app/AssetSymbol";
 import { TokenAmount } from "../components/app/TokenAmount";
 import { ErrorAlert } from "../components/app/ErrorAlert";
 import { bpsToPercent } from "../lib/format";
+import { AddressDisplay } from "../components/app/AddressDisplay";
 import { HealthFactorGauge, LTVBar } from "../components/app/RiskGauge";
+import { LiquidationProjection } from "../components/app/LiquidationProjection";
 import { LenderDiscountCard } from "../components/app/LenderDiscountCard";
 import "./LoanDetails.css";
 
@@ -571,6 +573,22 @@ export default function LoanDetails() {
               </span>
             </div>
           )}
+          {/* Phase 8a.2: liquidation-price projection + what-if sliders.
+              Derived from the live HF; auto-hidden when HF is null
+              (NFT rental / illiquid / oracle gap). */}
+          {Number(loan.assetType) === 0 && (
+            <LiquidationProjection
+              loan={{
+                principal: loan.principal,
+                collateralAmount: loan.collateralAmount,
+                principalAsset: loan.principalAsset,
+                collateralAsset: loan.collateralAsset,
+              }}
+              hfScaled={hfScaled}
+              collateralDecimals={18}
+              principalDecimals={18}
+            />
+          )}
           {/* Phase 6: per-keeper per-loan enable picker. Shown whenever the
               viewer is an NFT holder for either side of the loan. For each
               keeper on the viewer's global whitelist, the checkbox reflects
@@ -597,10 +615,10 @@ export default function LoanDetails() {
               href={`${activeBlockExplorer}/address/${loan.lender}`}
               target="_blank"
               rel="noreferrer"
-              className="data-value mono"
+              className="data-value"
               style={{ color: "var(--brand)", fontSize: "0.82rem" }}
             >
-              {shortenAddr(loan.lender)} <ExternalLink size={12} />
+              <AddressDisplay address={loan.lender} withTooltip /> <ExternalLink size={12} />
             </a>
           </div>
           <div className="data-row">
@@ -609,10 +627,10 @@ export default function LoanDetails() {
               href={`${activeBlockExplorer}/address/${loan.borrower}`}
               target="_blank"
               rel="noreferrer"
-              className="data-value mono"
+              className="data-value"
               style={{ color: "var(--brand)", fontSize: "0.82rem" }}
             >
-              {shortenAddr(loan.borrower)} <ExternalLink size={12} />
+              <AddressDisplay address={loan.borrower} withTooltip /> <ExternalLink size={12} />
             </a>
           </div>
           <div className="data-row">
@@ -849,9 +867,6 @@ export default function LoanDetails() {
   );
 }
 
-function shortenAddr(addr: string): string {
-  return `${addr.slice(0, 8)}...${addr.slice(-6)}`;
-}
 
 interface LoanKeeperPickerProps {
   loanId: bigint;
@@ -942,7 +957,9 @@ function LoanKeeperPicker({ loanId, actionLoading, onToggle }: LoanKeeperPickerP
                     setRefreshTick((t) => t + 1);
                   }}
                 />
-                <code style={{ fontSize: "0.78rem" }}>{k}</code>
+                <span style={{ fontSize: "0.78rem", fontFamily: 'var(--font-mono, monospace)' }}>
+                  <AddressDisplay address={k} withTooltip />
+                </span>
               </label>
             );
           })}

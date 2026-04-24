@@ -5,6 +5,7 @@ import { useMode } from "../context/ModeContext";
 import { useDiamondContract, useDiamondRead } from "../contracts/useDiamond";
 import { beginStep } from "../lib/journeyLog";
 import { ErrorAlert } from "../components/app/ErrorAlert";
+import { AddressDisplay } from "../components/app/AddressDisplay";
 
 const MAX_KEEPERS = 5;
 
@@ -401,7 +402,9 @@ export default function KeeperSettings() {
                   gap: 12,
                 }}
               >
-                <code style={{ wordBreak: "break-all" }}>{k}</code>
+                <span style={{ wordBreak: "break-all", fontFamily: 'var(--font-mono, monospace)' }}>
+                  <AddressDisplay address={k} withTooltip />
+                </span>
                 <div style={{ display: "flex", gap: 8 }}>
                   <button
                     className="btn btn-sm btn-secondary"

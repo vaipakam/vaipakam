@@ -37,6 +37,7 @@ import DiagnosticsDrawer from "../components/app/DiagnosticsDrawer";
 import { EscrowUpgradeBanner } from "../components/app/EscrowUpgradeBanner";
 import { UnsupportedChainBanner } from "../components/app/UnsupportedChainBanner";
 import { LegalGate } from "../components/app/LegalGate";
+import { AddressDisplay } from "../components/app/AddressDisplay";
 import { ChainSwitcher } from "../components/app/ChainSwitcher";
 import { ReportIssueLink } from "../components/app/ReportIssueLink";
 import { ConnectWalletButton } from "../components/app/ConnectWalletButton";
@@ -96,9 +97,6 @@ const ADVANCED_NAV = [
   },
 ];
 
-function shortenAddress(addr: string) {
-  return `${addr.slice(0, 6)}...${addr.slice(-4)}`;
-}
 
 export default function AppLayout() {
   const { theme, toggleTheme } = useTheme();
@@ -335,7 +333,7 @@ export default function AppLayout() {
               <div className="topbar-wallet">
                 <span className="wallet-address-badge">
                   <span className="wallet-dot" />
-                  {shortenAddress(address)}
+                  <AddressDisplay address={address} />
                 </span>
                 <button
                   className="wallet-disconnect-btn"
