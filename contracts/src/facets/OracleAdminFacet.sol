@@ -128,4 +128,58 @@ contract OracleAdminFacet {
     function setSequencerUptimeFeed(address feed) external {
         LibVaipakam.setSequencerUptimeFeed(feed);
     }
+
+    /**
+     * @notice Sets a per-feed staleness override + minimum-valid-answer
+     *         floor for a specific Chainlink aggregator.
+     * @dev Owner-only (enforced inside `LibVaipakam.setFeedOverride`).
+     *      The two-tier global defaults (ORACLE_VOLATILE_STALENESS,
+     *      ORACLE_STABLE_STALENESS) apply as the fallback — an override
+     *      is consulted only when `maxStaleness > 0`.
+     *
+     *      When the override is active:
+     *        - `maxStaleness` bounds the allowable age (seconds). The
+     *          stable-peg branch is bypassed — operators take explicit
+     *          responsibility for the freshness budget on this feed.
+     *        - `minValidAnswer` imposes a hard floor on the aggregator's
+     *          returned answer, in the aggregator's own decimals. A
+     *          reading below this floor triggers `StalePriceData`.
+     *
+     *      Pass `maxStaleness = 0` to clear the override entirely (both
+     *      fields are cleared regardless of `minValidAnswer`). Emits
+     *      {LibVaipakam.FeedOverrideSet}.
+     *
+     * @param feed           The Chainlink aggregator address.
+     * @param maxStaleness   Max age in seconds. 0 = clear the override.
+     * @param minValidAnswer Minimum acceptable raw answer from this feed.
+     *                       0 or negative = no floor (only the baseline
+     *                       `answer > 0` sanity check applies).
+     */
+    function setFeedOverride(
+        address feed,
+        uint40 maxStaleness,
+        int256 minValidAnswer
+    ) external {
+        LibVaipakam.setFeedOverride(feed, maxStaleness, minValidAnswer);
+    }
+
+    /**
+     * @notice Reads the current per-feed override (if any) for a given
+     *         aggregator. Used by UI + monitoring to surface tightened
+     *         staleness bounds to users and to let audit tooling diff
+     *         the configured policy vs. expected policy.
+     * @param feed The Chainlink aggregator address.
+     * @return maxStaleness   Current max age in seconds; 0 means no
+     *                        override is set.
+     * @return minValidAnswer Current minimum-valid-answer floor;
+     *                        0 or negative means no floor.
+     */
+    function getFeedOverride(
+        address feed
+    ) external view returns (uint40 maxStaleness, int256 minValidAnswer) {
+        LibVaipakam.FeedOverride storage ovr = LibVaipakam
+            .storageSlot()
+            .feedOverrides[feed];
+        return (ovr.maxStaleness, ovr.minValidAnswer);
+    }
 }

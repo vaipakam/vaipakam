@@ -68,7 +68,7 @@ The platform distinguishes between liquid and illiquid assets, which affects how
   3.  The protocol converts the pool's raw liquidity to USD using the active network's Chainlink `ETH/USD` feed and requires at least the configured minimum depth threshold before the asset is treated as liquid.
   4.  Liquidity must be judged only from the current active network's own oracle and pool availability. Ethereum mainnet must not be consulted as a reference or fallback network for this decision. If the active network fails the liquidity check, the asset is treated as illiquid on that network and the protocol must not perform any additional mainnet verification to override that result.
 - **Illiquid Assets:**
-  - All ERC-721 and ERC-721 NFTs are considered "Illiquid" by the platform for valuation and LTV purposes. Their platform-assessed value is $0.
+  - All ERC-721 and ERC-1155 NFTs are considered "Illiquid" by the platform for valuation and LTV purposes. Their platform-assessed value is $0.
   - ERC-20 tokens that do not meet both criteria for a Liquid Asset are considered "Illiquid".
 - **NFT Valuation for Collateral (Lender's Discretion):**
   - The Vaipakam platform does not perform any valuation for NFT collateral due to their volatile and auction-driven nature. For LTV calculations and systematic risk assessment, NFTs used as collateral are assigned a value of zero.

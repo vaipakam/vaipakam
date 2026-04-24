@@ -102,6 +102,12 @@ export default function Footer() {
 
         <div className="footer-bottom">
           <p>&copy; {new Date().getFullYear()} Vaipakam. All rights reserved.</p>
+          <Link to="/terms" className="footer-cookie-link">
+            Terms
+          </Link>
+          <Link to="/privacy" className="footer-cookie-link">
+            Privacy
+          </Link>
           <button
             type="button"
             className="footer-cookie-link"

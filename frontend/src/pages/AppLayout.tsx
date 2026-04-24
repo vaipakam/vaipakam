@@ -36,6 +36,7 @@ function readInitialCollapsed(): boolean {
 import DiagnosticsDrawer from "../components/app/DiagnosticsDrawer";
 import { EscrowUpgradeBanner } from "../components/app/EscrowUpgradeBanner";
 import { UnsupportedChainBanner } from "../components/app/UnsupportedChainBanner";
+import { LegalGate } from "../components/app/LegalGate";
 import { ChainSwitcher } from "../components/app/ChainSwitcher";
 import { ReportIssueLink } from "../components/app/ReportIssueLink";
 import { ConnectWalletButton } from "../components/app/ConnectWalletButton";
@@ -358,9 +359,15 @@ export default function AppLayout() {
         <UnsupportedChainBanner />
         <EscrowUpgradeBanner />
 
-        {/* Page content */}
+        {/* Page content — wrapped in LegalGate so the first-connect
+            ToS acceptance check fires before any app page renders. The
+            gate short-circuits when the user is not connected, when the
+            on-chain gate is disabled (currentTosVersion == 0), or when
+            the user has already accepted the current version. */}
         <div className="app-content">
-          <Outlet />
+          <LegalGate>
+            <Outlet />
+          </LegalGate>
         </div>
       </div>
 

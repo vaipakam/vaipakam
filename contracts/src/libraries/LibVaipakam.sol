@@ -3,6 +3,7 @@
 pragma solidity ^0.8.29;
 
 import {LibDiamond} from "@diamond-3/libraries/LibDiamond.sol";
+import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 
 /**
  * @title LibVaipakam
@@ -505,6 +506,41 @@ library LibVaipakam {
         uint256 liqBonusBps; // Liquidation Bonus in basis points
         uint256 reserveFactorBps; // Reserve Factor in basis points
         uint256 minPartialBps; // Min partial repay % (e.g., 100 for 1%)
+    }
+
+    /// @notice Per-feed oracle override. Governance-installed tighter
+    ///         staleness bound and/or minimum-valid-answer floor on a
+    ///         specific Chainlink aggregator address. `maxStaleness == 0`
+    ///         is the "not set" marker — the global two-tier defaults
+    ///         (ORACLE_VOLATILE_STALENESS / ORACLE_STABLE_STALENESS)
+    ///         apply in that case.
+    /// @dev `minValidAnswer <= 0` is treated as "no floor" (the baseline
+    ///         `answer > 0` sanity check already rejects non-positive
+    ///         readings). A feed returning below this floor triggers a
+    ///         StalePriceData revert, preventing attacker- or
+    ///         incident-driven near-zero reads from surfacing as legitimate
+    ///         prices.
+    struct FeedOverride {
+        /// Max age in seconds. 0 = override not set.
+        uint40 maxStaleness;
+        /// Minimum acceptable `answer` from the aggregator. Must be
+        /// expressed in the aggregator's own decimals. `<= 0` = no floor.
+        int256 minValidAnswer;
+    }
+
+    /// @notice Per-user acceptance of the protocol's Terms of Service.
+    ///         Written once per user per ToS version by
+    ///         `LegalFacet.acceptTerms`. Frontends gate app entry until
+    ///         `version == currentTosVersion` AND `hash == currentTosHash`.
+    /// @dev `version == 0` is the "never accepted" marker — first-time
+    ///      visitors always need to sign to enter the app.
+    ///      `acceptedAt` is the block timestamp at acceptance; used by
+    ///      audit / compliance queries asking "when did this wallet
+    ///      accept version X?".
+    struct TosAcceptance {
+        uint32 version;
+        bytes32 hash;
+        uint64 acceptedAt;
     }
 
     /**
@@ -1126,6 +1162,40 @@ library LibVaipakam {
         /// @dev 1-based position map for swap-and-pop removal.
         mapping(bytes32 => uint256) stableFeedSymbolPos;
 
+        // ─── Per-feed oracle override (Phase 3.1 hardening) ──────────────
+        // Lets governance tighten `maxStaleness` and install a minimum-
+        // valid-answer floor on individual Chainlink aggregators WITHOUT
+        // redeploying. The two-tier global defaults (ORACLE_VOLATILE_
+        // STALENESS / ORACLE_STABLE_STALENESS) remain the fallback — an
+        // override is consulted only when `maxStaleness > 0`. Set via
+        // `OracleAdminFacet.setFeedOverride` under ORACLE_ADMIN_ROLE,
+        // which becomes timelock-gated after the governance handover.
+        //
+        // Use cases:
+        //   - High-value collateral (BTC, ETH) feed gets a tighter 30-
+        //     minute staleness to reduce the blind window vs the default
+        //     2h volatile ceiling.
+        //   - A feed known to occasionally return 1 wei during incidents
+        //     gets a `minValidAnswer` floor so a bad read reverts rather
+        //     than producing a fake "asset collapse" price.
+        //   - An off-US-market-hours commodity feed gets a relaxed
+        //     staleness to avoid false stalenesss reverts overnight.
+        mapping(address => FeedOverride) feedOverrides;
+
+        // ─── Legal: Terms of Service acceptance (Phase 4.1) ──────────────
+        // On-chain record of every wallet's acceptance of the current ToS
+        // version. `currentTosVersion` starts at 0 (no ToS in force), which
+        // the frontend treats as "gate disabled — app is still pre-launch
+        // / testnet"; once governance sets `currentTosVersion >= 1` via
+        // `LegalFacet.setCurrentTos`, every user wallet must sign an
+        // `acceptTerms(version, hash)` tx before the frontend unlocks
+        // `/app/*` routes. The version+hash pair in storage lets audit
+        // tooling reconstruct exactly which ToS text a given user agreed
+        // to and when.
+        uint32 currentTosVersion;
+        bytes32 currentTosHash;
+        mapping(address => TosAcceptance) tosAcceptance;
+
         // ─── Phase 2 Interaction Reward Accrual (spec §4 daily) ─────────
         // Replaces the Phase-1 "lump-sum-at-settlement" accounting with
         // per-day accrual. Each loan, on {LoanFacet.initiateLoan},
@@ -1572,5 +1642,53 @@ library LibVaipakam {
         LibDiamond.enforceIsContractOwner();
         Storage storage s = storageSlot();
         s.sequencerUptimeFeed = newFeed;
+    }
+
+    /// @notice Emitted whenever a per-feed oracle override is installed or
+    ///         cleared. Off-chain monitoring watches this so a governance-
+    ///         driven freshness tightening is publicly observable.
+    /// @param feed           Chainlink aggregator address the override
+    ///                       applies to.
+    /// @param maxStaleness   New max age in seconds (0 = cleared).
+    /// @param minValidAnswer New minimum-valid-answer floor (0/negative =
+    ///                       no floor).
+    event FeedOverrideSet(
+        address indexed feed,
+        uint40 maxStaleness,
+        int256 minValidAnswer
+    );
+
+    /// @notice Installs or clears a per-feed staleness + min-answer
+    ///         override for a specific Chainlink aggregator.
+    /// @dev Owner-only. After the governance handover the owner is the
+    ///      TimelockController, so every override change is 48h-gated
+    ///      and publicly observable via `CallScheduled` on the timelock.
+    ///      Passing `maxStaleness == 0` clears BOTH fields regardless of
+    ///      the `minValidAnswer` argument — it's the "remove the
+    ///      override entirely" escape hatch.
+    /// @param feed           Chainlink aggregator to configure.
+    /// @param maxStaleness   Max acceptable age in seconds. 0 clears.
+    /// @param minValidAnswer Floor on the raw answer the aggregator
+    ///                       returns; in the aggregator's decimals.
+    ///                       Pass 0 (or a negative int) for no floor.
+    function setFeedOverride(
+        address feed,
+        uint40 maxStaleness,
+        int256 minValidAnswer
+    ) internal {
+        LibDiamond.enforceIsContractOwner();
+        if (feed == address(0)) revert IVaipakamErrors.InvalidAddress();
+        Storage storage s = storageSlot();
+        FeedOverride storage ovr = s.feedOverrides[feed];
+        if (maxStaleness == 0) {
+            // Clear both fields — explicit "remove override" action.
+            ovr.maxStaleness = 0;
+            ovr.minValidAnswer = 0;
+            emit FeedOverrideSet(feed, 0, 0);
+            return;
+        }
+        ovr.maxStaleness = maxStaleness;
+        ovr.minValidAnswer = minValidAnswer;
+        emit FeedOverrideSet(feed, maxStaleness, minValidAnswer);
     }
 }

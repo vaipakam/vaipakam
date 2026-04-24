@@ -5,6 +5,7 @@ import {Test} from "forge-std/Test.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import {LZGuardianPausable} from "../src/token/LZGuardianPausable.sol";
 import {OwnableUpgradeable} from "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
+import {Ownable2StepUpgradeable} from "@openzeppelin/contracts-upgradeable/access/Ownable2StepUpgradeable.sol";
 import {PausableUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol";
 import {UUPSUpgradeable} from "@openzeppelin/contracts/proxy/utils/UUPSUpgradeable.sol";
 import {Initializable} from "@openzeppelin/contracts/proxy/utils/Initializable.sol";
@@ -13,13 +14,15 @@ import {Initializable} from "@openzeppelin/contracts/proxy/utils/Initializable.s
  * @title GuardianHarness
  * @dev Minimal concrete contract that inherits {LZGuardianPausable} so the
  *      abstract's surface can be tested without pulling in the full
- *      LayerZero OApp / OFT stack. Intentionally thin: exposes
- *      `pause`/`unpause` with the same modifier wiring every real OApp
- *      uses, plus a getter returning the upgradeable-Pausable state.
+ *      LayerZero OApp / OFT stack. Mirrors the real OApp's inheritance
+ *      chain — UUPSUpgradeable + Ownable2StepUpgradeable + Pausable via
+ *      LZGuardianPausable — so handover tests (via transferOwnership /
+ *      acceptOwnership) exercise the same paths production uses.
  */
 contract GuardianHarness is
     Initializable,
     LZGuardianPausable,
+    Ownable2StepUpgradeable,
     UUPSUpgradeable
 {
     /// @custom:oz-upgrades-unsafe-allow constructor
@@ -29,6 +32,7 @@ contract GuardianHarness is
 
     function initialize(address owner_) external initializer {
         __Ownable_init(owner_);
+        __Ownable2Step_init();
         __LZGuardianPausable_init();
     }
 
@@ -45,6 +49,21 @@ contract GuardianHarness is
     ///         re-enable a live contract.
     function unpause() external onlyOwner {
         _unpause();
+    }
+
+    /// @dev OwnableUpgradeable (from LZGuardianPausable) and
+    ///      Ownable2StepUpgradeable both define transferOwnership. Matches
+    ///      the disambiguation pattern used in VPFIOFTAdapter et al.
+    function transferOwnership(
+        address newOwner
+    ) public override(OwnableUpgradeable, Ownable2StepUpgradeable) onlyOwner {
+        Ownable2StepUpgradeable.transferOwnership(newOwner);
+    }
+
+    function _transferOwnership(
+        address newOwner
+    ) internal override(OwnableUpgradeable, Ownable2StepUpgradeable) {
+        Ownable2StepUpgradeable._transferOwnership(newOwner);
     }
 }
 

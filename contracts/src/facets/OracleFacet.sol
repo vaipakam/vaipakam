@@ -417,7 +417,9 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
 
     /// @dev Read a Chainlink aggregator and enforce the staleness rule;
     ///      reverts on failure. Used by the revert-on-failure getAssetPrice
-    ///      path.
+    ///      path. Consults the per-feed override first (Phase 3.1): when
+    ///      set, `maxStaleness` replaces the two-tier default and
+    ///      `minValidAnswer` imposes a hard floor on the returned answer.
     function _readAggregatorStrict(address feed, bool allowStablePeg)
         private
         view
@@ -439,13 +441,49 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
             revert StalePriceData();
         }
         uint256 age = block.timestamp - updatedAt;
+
+        LibVaipakam.FeedOverride storage ovr = LibVaipakam
+            .storageSlot()
+            .feedOverrides[feed];
+
+        // Minimum-valid-answer floor — if configured, reject below-floor
+        // readings regardless of other freshness bounds. Guards against
+        // incident-era near-zero prices entering the system.
+        if (ovr.minValidAnswer > 0 && answer < ovr.minValidAnswer) {
+            revert StalePriceData();
+        }
+
+        // Staleness enforcement is done BEFORE reading the feed's
+        // decimals so a stale feed reverts with the precise
+        // StalePriceData selector rather than tripping a secondary
+        // revert if `decimals()` itself behaves unexpectedly (empty
+        // return on a no-code address, stale nested call, etc).
+
+        if (ovr.maxStaleness > 0) {
+            // Override-enforced staleness. Deliberately bypasses the stable-
+            // peg branch — an operator that sets an override has taken
+            // explicit responsibility for the freshness budget on this feed,
+            // so the implicit "let a stable feed be 25h old if it's near
+            // $1" relaxation no longer applies. If the operator wants a
+            // long ceiling (e.g. 24h for a fiat-quoted feed that really
+            // does run 24h heartbeats), they set maxStaleness to that
+            // value.
+            if (age > ovr.maxStaleness) revert StalePriceData();
+            uint8 dec = AggregatorV3Interface(feed).decimals();
+            return (uint256(answer), dec);
+        }
+
+        // No override — fall through to the existing two-tier defaults:
+        // volatile feeds must be fresh within 2h; stable feeds may be
+        // up to 25h old only if the answer is within peg tolerance of
+        // $1 or any registered fiat/commodity reference.
         if (age > LibVaipakam.ORACLE_STABLE_STALENESS) revert StalePriceData();
-        uint8 dec = AggregatorV3Interface(feed).decimals();
+        uint8 dec2 = AggregatorV3Interface(feed).decimals();
         if (age > LibVaipakam.ORACLE_VOLATILE_STALENESS) {
             if (!allowStablePeg) revert StalePriceData();
-            if (!_answerWithinAnyPeg(answer, dec)) revert StalePriceData();
+            if (!_answerWithinAnyPeg(answer, dec2)) revert StalePriceData();
         }
-        return (uint256(answer), dec);
+        return (uint256(answer), dec2);
     }
 
     /// @dev Peg-aware stable branch. `answer` is accepted if it lies

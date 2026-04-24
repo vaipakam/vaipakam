@@ -23,6 +23,7 @@ import StakingRewardsFacetABI from './StakingRewardsFacet.json';
 import InteractionRewardsFacetABI from './InteractionRewardsFacet.json';
 import VPFIBuyAdapterABI from './VPFIBuyAdapter.json';
 import ConfigFacetABI from './ConfigFacet.json';
+import LegalFacetABI from './LegalFacet.json';
 
 export {
   OfferFacetABI,
@@ -50,6 +51,7 @@ export {
   InteractionRewardsFacetABI,
   VPFIBuyAdapterABI,
   ConfigFacetABI,
+  LegalFacetABI,
 };
 
 import type { Abi } from 'viem';
@@ -86,6 +88,7 @@ export const DIAMOND_ABI = [
   ...StakingRewardsFacetABI,
   ...InteractionRewardsFacetABI,
   ...ConfigFacetABI,
+  ...LegalFacetABI,
 ];
 
 /** Viem-typed alias for hooks using `encodeFunctionData` /

@@ -32,7 +32,7 @@ contract OracleAdminFacetTest is SetupTest {
         setupHelper();
 
         OracleAdminFacet adminFacet = new OracleAdminFacet();
-        bytes4[] memory selectors = new bytes4[](7);
+        bytes4[] memory selectors = new bytes4[](9);
         selectors[0] = OracleAdminFacet.setChainlinkRegistry.selector;
         selectors[1] = OracleAdminFacet.setUsdChainlinkDenominator.selector;
         selectors[2] = OracleAdminFacet.setEthChainlinkDenominator.selector;
@@ -40,6 +40,8 @@ contract OracleAdminFacetTest is SetupTest {
         selectors[4] = OracleAdminFacet.setEthUsdFeed.selector;
         selectors[5] = OracleAdminFacet.setUniswapV3Factory.selector;
         selectors[6] = OracleAdminFacet.setStableTokenFeed.selector;
+        selectors[7] = OracleAdminFacet.setFeedOverride.selector;
+        selectors[8] = OracleAdminFacet.getFeedOverride.selector;
 
         IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](1);
         cuts[0] = IDiamondCut.FacetCut({

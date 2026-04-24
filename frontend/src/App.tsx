@@ -16,6 +16,8 @@ import BuyVPFI from './pages/BuyVPFI';
 import Rewards from './pages/Rewards';
 import Activity from './pages/Activity';
 import DiscordPage from './pages/Discord';
+import TermsPage from './pages/TermsPage';
+import PrivacyPage from './pages/PrivacyPage';
 import Navbar from './components/Navbar';
 import Footer from './components/Footer';
 import ConsentBanner from './components/ConsentBanner';
@@ -51,6 +53,8 @@ export default function App() {
         <Route path="/analytics" element={<PublicDashboard />} />
         <Route path="/nft-verifier" element={<PublicNftVerifier />} />
         <Route path="/discord" element={<DiscordPage />} />
+        <Route path="/terms" element={<TermsPage />} />
+        <Route path="/privacy" element={<PrivacyPage />} />
         <Route path="/app" element={<AppLayout />}>
           <Route index element={<Dashboard />} />
           <Route path="offers" element={<OfferBook />} />

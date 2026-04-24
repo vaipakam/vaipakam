@@ -94,9 +94,9 @@ contract TransferAdminToTimelock is Script {
         AccessControlFacet ac = AccessControlFacet(diamond);
         IERC173 ownership = IERC173(diamond);
 
-        // PAUSER_ROLE and KYC_ADMIN_ROLE are NOT in this array — they stay
-        // on the ops multi-sig (see natspec).
-        bytes32[5] memory roles = [
+        // Roles that migrate TO the timelock (48h-gated). These are the
+        // slow / governance-grade admin surfaces.
+        bytes32[5] memory timelockRoles = [
             LibAccessControl.DEFAULT_ADMIN_ROLE,
             LibAccessControl.ADMIN_ROLE,
             LibAccessControl.ORACLE_ADMIN_ROLE,
@@ -104,22 +104,53 @@ contract TransferAdminToTimelock is Script {
             LibAccessControl.ESCROW_ADMIN_ROLE
         ];
 
+        // Roles that do NOT migrate to the timelock — they stay on the
+        // Guardian / ops multi-sigs (set up by GrantOpsRoles). The
+        // deployer's hold on them must still be renounced here, otherwise
+        // the deploy EOA retains PAUSER + KYC_ADMIN after handover, which
+        // is a hot-wallet hole the GovernanceHandover.t.sol invariant
+        // catches. Pre-condition: GrantOpsRoles has already granted these
+        // to their intended holders (a sanity-check assertion below).
+        bytes32[2] memory opsRoles = [
+            LibAccessControl.PAUSER_ROLE,
+            LibAccessControl.KYC_ADMIN_ROLE
+        ];
+
         vm.startBroadcast(deployerKey);
 
-        // 1-5: grant every timelocked role to the timelock
-        for (uint256 i = 0; i < roles.length; i++) {
-            if (!ac.hasRole(roles[i], timelock)) {
-                ac.grantRole(roles[i], timelock);
+        // 1-5: grant every timelocked role to the timelock.
+        for (uint256 i = 0; i < timelockRoles.length; i++) {
+            if (!ac.hasRole(timelockRoles[i], timelock)) {
+                ac.grantRole(timelockRoles[i], timelock);
             }
         }
 
-        // 6: transfer ERC-173 Diamond ownership (gates diamondCut + LibDiamond.enforceIsContractOwner)
+        // 6: transfer ERC-173 Diamond ownership (gates diamondCut +
+        // LibDiamond.enforceIsContractOwner).
         ownership.transferOwnership(timelock);
 
-        // 7: renounce EOA roles. DEFAULT_ADMIN_ROLE last, so any revert
-        //    above leaves the deployer able to retry.
-        for (uint256 i = roles.length; i > 0; i--) {
-            bytes32 role = roles[i - 1];
+        // 7: renounce every role the deployer still holds. Order matters:
+        //    - Renounce the ops roles (PAUSER, KYC_ADMIN) first — if
+        //      GrantOpsRoles was skipped they'd be stranded, so require
+        //      at least one other holder exists before renouncing. The
+        //      assertion below makes the skipped-GrantOpsRoles mistake
+        //      obvious at tx-execution time rather than silently leaving
+        //      a functional role unowned.
+        //    - Then renounce the timelock roles in reverse. DEFAULT_ADMIN
+        //      LAST so any revert above still leaves the deployer able to
+        //      retry without being locked out of role management.
+        for (uint256 i = 0; i < opsRoles.length; i++) {
+            bytes32 role = opsRoles[i];
+            if (ac.hasRole(role, deployer)) {
+                require(
+                    _roleHasAnotherHolder(ac, role, deployer),
+                    "TransferAdminToTimelock: run GrantOpsRoles first - ops role would be stranded"
+                );
+                ac.renounceRole(role, deployer);
+            }
+        }
+        for (uint256 i = timelockRoles.length; i > 0; i--) {
+            bytes32 role = timelockRoles[i - 1];
             if (ac.hasRole(role, deployer)) {
                 ac.renounceRole(role, deployer);
             }
@@ -128,5 +159,34 @@ contract TransferAdminToTimelock is Script {
         vm.stopBroadcast();
 
         console.log("Handover complete. Diamond owner:", ownership.owner());
+    }
+
+    /// @dev Returns true iff at least one address other than `excluded`
+    ///      currently holds `role`. Used to guard renouncing an ops role
+    ///      when no replacement holder exists (i.e. the prior
+    ///      GrantOpsRoles step was skipped). AccessControl doesn't
+    ///      expose a member count, so we rely on the caller specifying
+    ///      the expected replacement in an env hint.
+    function _roleHasAnotherHolder(
+        AccessControlFacet ac,
+        bytes32 role,
+        address excluded
+    ) internal view returns (bool) {
+        string memory guardianEnv = vm.envOr("GOVERNANCE_GUARDIAN", string(""));
+        string memory kycOpsEnv = vm.envOr("GOVERNANCE_KYC_OPS", guardianEnv);
+        address guardian = _parseAddressOrZero(guardianEnv);
+        address kycOps = _parseAddressOrZero(kycOpsEnv);
+        if (guardian != address(0) && guardian != excluded && ac.hasRole(role, guardian)) {
+            return true;
+        }
+        if (kycOps != address(0) && kycOps != excluded && ac.hasRole(role, kycOps)) {
+            return true;
+        }
+        return false;
+    }
+
+    function _parseAddressOrZero(string memory s) internal pure returns (address) {
+        if (bytes(s).length == 0) return address(0);
+        return vm.parseAddress(s);
     }
 }

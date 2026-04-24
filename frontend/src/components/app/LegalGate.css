@@ -1,0 +1,126 @@
+.legal-gate {
+  min-height: calc(100vh - 140px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px 16px;
+}
+
+.legal-gate-card {
+  max-width: 540px;
+  width: 100%;
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 28px 28px 22px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.12);
+}
+
+[data-theme='dark'] .legal-gate-card {
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+}
+
+.legal-gate-head {
+  display: flex;
+  gap: 14px;
+  align-items: flex-start;
+  margin-bottom: 18px;
+}
+
+.legal-gate-icon {
+  flex: 0 0 auto;
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  background: var(--brand-muted, rgba(99, 102, 241, 0.12));
+  color: var(--brand, #6366f1);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.legal-gate-title {
+  font-size: 1.1rem;
+  font-weight: 600;
+  margin: 0 0 6px;
+  color: var(--text-primary);
+}
+
+.legal-gate-body {
+  font-size: 0.88rem;
+  line-height: 1.55;
+  color: var(--text-secondary);
+  margin: 0;
+}
+
+.legal-gate-detail {
+  margin-top: 6px;
+  margin-bottom: 16px;
+  padding: 12px 14px;
+  background: var(--bg-secondary, rgba(0, 0, 0, 0.03));
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+[data-theme='dark'] .legal-gate-detail {
+  background: var(--bg-secondary, rgba(255, 255, 255, 0.03));
+}
+
+.legal-gate-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 0.82rem;
+}
+
+.legal-gate-label {
+  color: var(--text-tertiary);
+}
+
+.legal-gate-value {
+  color: var(--text-primary);
+  font-weight: 500;
+}
+
+.legal-gate-value.mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.78rem;
+}
+
+.legal-gate-links {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.legal-gate-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.84rem;
+  color: var(--brand, #6366f1);
+  text-decoration: none;
+}
+
+.legal-gate-link:hover {
+  text-decoration: underline;
+}
+
+.legal-gate-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.legal-gate-footnote {
+  margin-top: 12px;
+  font-size: 0.76rem;
+  line-height: 1.5;
+  color: var(--text-tertiary);
+  text-align: right;
+}
