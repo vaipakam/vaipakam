@@ -241,7 +241,7 @@ applies to both lenders and borrowers
 
 Shared rules:
 
-- discount tiers are derived from the user's escrowed VPFI balance on the relevant lending chain, with borrower discounts resolved point-in-time at loan initiation and lender discounts applied through the time-weighted rules below
+- discount tiers are derived from the user's escrowed VPFI balance on the relevant lending chain, with both lender and borrower discount value measured through the time-weighted rules below once Phase 5 is active
 - moving VPFI into escrow automatically counts as staking
 - the user must explicitly consent through a single platform-level on-chain flag to allow escrowed VPFI to be used for fee discounts
 - in the frontend, this shared consent should be managed from `Dashboard`, not as an offer-level, loan-level, or `Buy VPFI`-page-only toggle
@@ -389,6 +389,8 @@ To enable easy early access to VPFI for discounts:
 - per-wallet cap: configurable by admin, applied per chain rather than as one cross-chain wallet cap
 - initial recommendation: `30,000 VPFI` per wallet per chain — this is the live per-chain user limit surfaced on the `Buy VPFI` page until admin explicitly reconfigures it
 - ETH received from the fixed-rate purchase program is sent to Treasury and recycled according to the Treasury Recycling Rule
+- when the purchase flow routes through the Base canonical receiver, VPFI must be minted or released only after the Base receiver has actually received ETH; quoted, requested, or expected ETH amounts must never be enough to mint VPFI by themselves
+- the VPFI amount delivered to the buyer must be based on the ETH amount actually received by the Base receiver
 
 ### 8a. User-Facing Purchase Flow
 
@@ -396,7 +398,7 @@ The `Buy VPFI` page never asks the user to switch to the canonical `Base` chain.
 
 Two explicit user steps, in this order:
 
-1. **Buy** — the user, connected to their preferred supported chain (`Base`, `Arbitrum`, `Polygon`, `Optimism`, or `Ethereum mainnet`), pays ETH at the fixed rate directly from the page. Purchased VPFI is delivered to the user's wallet **on that same preferred chain** — never auto-routed into escrow, and never requiring a manual chain switch.
+1. **Buy** — the user, connected to their preferred supported chain (`Base`, `Arbitrum`, `Polygon`, `Optimism`, or `Ethereum mainnet`), pays ETH at the fixed rate directly from the page. Purchased VPFI is delivered to the user's wallet **on that same preferred chain** — never auto-routed into escrow, and never requiring a manual chain switch. If the flow settles on the canonical Base receiver, receipt of ETH on Base is the mint/release trigger.
 2. **Deposit to escrow** — a separate, explicit user action on the same page moves VPFI from the user's wallet into the user's personal escrow on the same chain. This step is always explicit: the protocol never auto-funds escrow after a buy or a bridge.
 
 Per-wallet cap display:
@@ -523,6 +525,7 @@ Testing requirements:
 - extend the existing scenario tests
 - extend invariant coverage
 - include supply-cap enforcement tests
+- include receipt-based mint/release tests for the fixed-rate purchase path, including successful receipt, failed receipt, and partial receipt cases
 - include cross-chain / OFT configuration tests where practical
 - include reward-accounting and vesting tests
 - include buyback-routing tests

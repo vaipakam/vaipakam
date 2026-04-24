@@ -1084,4 +1084,14 @@ scope separately once Phase 8 is in hand.
 Every completed phase gets a functional write-up appended here, in the
 same plain-English style. No code — function names and tables stay in
 the code base, this file is for describing behaviour to a non-engineer
+
+reader (auditor, partner team, regulator). Each new working day's
+deliveries land in a fresh dated file under `docs/ReleaseNotes-…md`.
+
+**Continued in [`ReleaseNotes-2026-04-25.md`](./ReleaseNotes-2026-04-25.md)** —
+covers Phase 8a (ENS handle resolution, liquidation-price calculator,
+Health-Factor alert infrastructure, allowance revoke surface), Phase 8b
+(Uniswap Permit2 single-tx flows + Blockaid transaction-scan preview),
+and Phase 7a (4-DEX swap failover replacing the single-0x liquidation
+path).
 reader.

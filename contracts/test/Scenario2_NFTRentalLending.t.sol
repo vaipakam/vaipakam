@@ -29,6 +29,7 @@ import {HelperTest} from "./HelperTest.sol";
 import {defaultAdapterCalls} from "./helpers/AdapterCallHelpers.sol";
 import {AccessControlFacet} from "../src/facets/AccessControlFacet.sol";
 import {ZeroExProxyMock} from "./mocks/ZeroExProxyMock.sol";
+import {MockZeroExLegacyAdapter} from "./mocks/MockZeroExLegacyAdapter.sol";
 import {MockRentableNFT721} from "./mocks/MockRentableNFT721.sol";
 
 /**
@@ -161,6 +162,13 @@ contract Scenario2_NFTRentalLending is Test {
         AdminFacet(address(diamond)).setTreasury(address(diamond));
         AdminFacet(address(diamond)).setZeroExProxy(mockZeroExProxy);
         AdminFacet(address(diamond)).setallowanceTarget(mockZeroExProxy);
+
+        // Phase 7a: register the legacy ZeroEx shim as adapter slot 0
+        // so triggerLiquidation / triggerDefault / claimAsLenderWithRetry
+        // route through LibSwap into the existing ZeroExProxyMock.
+        AdminFacet(address(diamond)).addSwapAdapter(
+            address(new MockZeroExLegacyAdapter(address(mockZeroExProxy)))
+        );
 
         // Token approvals to diamond
         vm.prank(lender);

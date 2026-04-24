@@ -76,12 +76,15 @@ The platform distinguishes between liquid and illiquid assets, which affects how
 - **Oracle Usage:**
   - **Chainlink Price Feeds:** Used to provide real-time pricing for Liquid ERC-20 assets. This is crucial for LTV calculations and liquidation processes for loans with Liquid collateral.
   - **Hybrid Price Retrieval:** For ERC-20 pricing the protocol prefers a direct Chainlink `asset/USD` feed. Only when no direct USD feed exists does it fall back to `asset/ETH × ETH/USD`.
+  - **Per-Feed Overrides:** Oracle admins may configure a per-feed staleness budget and minimum-valid-answer floor for critical Chainlink aggregators. A configured override takes precedence over the global freshness defaults and can be cleared by setting the override staleness back to zero.
+  - **Secondary Oracle Deviation Checks:** Where configured, Pyth acts as a second independent price source. The protocol accepts a price only when the primary Chainlink path and the configured Pyth feed agree within the governance-defined deviation bound. Missing, stale, negative, or divergent Pyth data fails closed for that asset.
+  - **Pyth Update Flow:** Because Pyth is a pull oracle, frontend actions that require a Pyth-gated price may first submit a Pyth price-update transaction and then submit the Diamond action from the same wallet in nonce order.
   - **ETH as Reference Asset:** ETH is the protocol's quote and reference asset for liquidity classification. In practice the DEX sees WETH, so the protocol checks `asset/WETH` pools while using the Chainlink `ETH/USD` feed to convert that depth into USD.
   - **WETH Special Case:** WETH itself is priced directly from `ETH/USD` and is treated as the quote asset for liquidity purposes; the protocol does not perform a circular `WETH/WETH` liquidity check.
   - **Peg-Aware Stable Staleness:** Stable and reference feeds may remain valid out to the protocol's longer stable staleness ceiling only when the reported price remains within tolerance of either the implicit USD `$1` peg or a governance-registered fiat / commodity reference such as `EUR/USD`, `JPY/USD`, or `XAU/USD`.
 - **Liquidity Determination Process & On-Chain Record:**
   1.  **Frontend Assessment:** The frontend interface should attempt to assess asset liquidity by checking the active network only: a valid price path and the presence of a sufficiently deep v3-style concentrated-liquidity AMM `asset/WETH` `0.3%` pool. If the active network fails the liquidity test, the frontend must treat the asset as illiquid on that network and stop there; it must not perform any Ethereum-mainnet fallback verification and must not redirect the user to another network.
-  2.  **User Acceptance (Frontend - Risk Consent):** Before a user creates or accepts an offer, the frontend must require one combined warning-and-consent acknowledgement. That single mandatory acknowledgement should read in substance: `Abnormal-market & illiquid asset terms. For Liquid Assets, If liquidation cannot execute safely — for example because slippage exceeds 6%, liquidity disappears, or the 0x swap reverts — the lender claims the collateral in collateral-asset form instead of receiving the lending asset. If collateral value has fallen below the amount due, the lender receives the full remaining collateral and nothing is left for the borrower. If collateral value is still above the amount due, the lender receives only the equivalent collateral amount and the remainder stays with the borrower after charges. The same fallback applies to loan with illiquid assets (both lending asset and / or collateral asset) on default — the lender takes the full collateral in-kind. Proceeding confirms you agree to these terms.` The transaction must not proceed without this consent, and the consent must be recorded for the relevant offer and resulting loan. It is acceptable for the resulting loan to store the combined accepted-by-both-parties consent state rather than two separately stored per-party consent fields, because the consent is mandatory for both lender and borrower.
+  2.  **User Acceptance (Frontend - Risk Consent):** Before a user creates or accepts an offer, the frontend must require one combined warning-and-consent acknowledgement. That single mandatory acknowledgement should read in substance: `Abnormal-market & illiquid asset terms. For Liquid Assets, if liquidation cannot execute safely — for example because slippage exceeds the configured max liquidation threshold, liquidity disappears, or the 0x swap reverts — the lender claims the collateral in collateral-asset form instead of receiving the lending asset. If collateral value has fallen below the amount due, the lender receives the full remaining collateral and nothing is left for the borrower. If collateral value is still above the amount due, the lender receives only the equivalent collateral amount and the remainder stays with the borrower after charges. The same fallback applies to loans with illiquid assets (lending asset and / or collateral asset) on default — the lender takes the full collateral in-kind. Proceeding confirms you agree to these terms.` The transaction must not proceed without this consent, and the consent must be recorded for the relevant offer and resulting loan. It is acceptable for the resulting loan to store the combined accepted-by-both-parties consent state rather than two separately stored per-party consent fields, because the consent is mandatory for both lender and borrower.
   3.  **On-Chain Verification (Smart Contract):**
       - When an offer involving an ERC-20 asset (as a lending asset or collateral) is being created or accepted, and the frontend has _not_ marked it as illiquid, the smart contract will perform an on-chain check.
       - For Phase 1, this check should confirm both: a reliable price-validation path and a reliable `asset/WETH` v3-style concentrated-liquidity AMM liquidity path for the asset on the active network where the transaction is being attempted.
@@ -134,6 +137,7 @@ The platform distinguishes between liquid and illiquid assets, which affects how
 - **For ERC-20 Tokens:**
   - Specify the desired ERC-20 asset and amount, maximum acceptable interest rate, offered collateral (type and amount), and loan duration.
   - The frontend must clearly disclose that when an ERC-20 loan is actually initiated, a `Loan Initiation Fee` equal to `0.1%` of the lending-asset amount will be charged to treasury before the lending asset is delivered to the borrower. In other words, if the matched lending amount is `1000 USDC`, the borrower receives `999 USDC` and `1 USDC` is routed to treasury at initiation.
+  - If the borrower uses the VPFI fee path, the borrower receives `100%` of the requested lending asset and pays the full `0.1%` fee equivalent in VPFI up front. That VPFI is held by the protocol until settlement and may produce a time-weighted borrower rebate on proper close, as defined in `docs/BorrowerVPFIDiscountMechanism.md`.
   - Lock the collateral in the Vaipakam smart contract upon offer submission.
 - **For Rentable NFTs (ERC-721/1155):**
   - Specify the desired NFT (or type of NFT), maximum acceptable daily rental charge, the ERC-20 token to be used for prepayment (rental fees + 5% buffer), and rental duration.
@@ -193,6 +197,7 @@ Vaipakam mints unique NFTs to represent offers, enhancing traceability and user 
 - **Full Collateral Transfer for Illiquid Assets:** Users are explicitly warned that if they use or accept illiquid assets/collateral, default by the borrower will result in the full transfer of that collateral to the lender, without any LTV-based liquidation auction.
 - **Equivalent Collateral Transfer for Liquid Asset during Abnormal Periods:** When liquid assets cannot be liquidated due to any of the following conditions, the protocol must not automatically give the lender the borrower's entire liquid collateral balance. Instead, the lender should become entitled only to the collateral-equivalent amount needed to satisfy the lender-side recovery amount, measured in collateral units against the lending-asset obligation.
   - for normal successful liquidations, the liquidator incentive must be dynamic and must satisfy: `slippage% + liquidator incentive% = 6%`, with the liquidator incentive therefore calculated as `6% - realized slippage%` and capped at a maximum of `3%` of liquidation proceeds
+  - the `6%` max liquidation slippage value should be governance-configurable within a bounded safe range; in Phase 1, configuration is controlled through the multisig / timelock admin path
   - for normal successful liquidations, an additional liquidation-handling charge equal to `2%` of liquidation proceeds must be routed to treasury because the borrower did not act before liquidation became necessary
   - this `2%` liquidation-handling charge is separate from, and may exist in addition to, any other treasury fees that are otherwise applicable under the protocol (such as fees on recovered interest, late fees, rental fees, or fallback settlement entitlements)
   - any market condition (too volatile or heavy crash)
@@ -211,7 +216,7 @@ Vaipakam mints unique NFTs to represent offers, enhancing traceability and user 
   - in that same retry-failed branch, the treasury becomes entitled to collateral equivalent to `2% of the lending asset amount`
   - the extra 5% fallback premium (3% to lender and 2% to treasury) exists because the borrower did not act before liquidation became necessary
   - any remaining liquid collateral beyond the lender entitlement and treasury entitlement must remain attributable to the borrower through the borrower-side accounting / claim flow
-  - the user-facing warning copy for this path should state in plain language: if liquidation cannot execute safely, for example because slippage exceeds `6%`, liquidity disappears, or the swap fails, the lender claims collateral in collateral-asset form instead of receiving the lending asset; if the collateral value has fallen below the amount due, the lender receives the full remaining collateral and nothing is left for the borrower; if the collateral value is still above the amount due, the lender receives only the equivalent collateral amount and the remainder stays with the borrower after charges
+  - the user-facing warning copy for this path should state in plain language: if liquidation cannot execute safely, for example because slippage exceeds the configured max liquidation threshold, liquidity disappears, or the swap fails, the lender claims collateral in collateral-asset form instead of receiving the lending asset; if the collateral value has fallen below the amount due, the lender receives the full remaining collateral and nothing is left for the borrower; if the collateral value is still above the amount due, the lender receives only the equivalent collateral amount and the remainder stays with the borrower after charges
 - **Permissionless Liquidation / Authorized Keepers / Third-Party Execution Allowed:**
   - Vaipakam should disable all non-liquidation MEV-style or third-party execution interactions by default.
   - Permissionless liquidation remains allowed even when broader MEV or keeper access is turned off, because liquidation is a protocol-safety function and must remain executable when a loan becomes default-eligible.
@@ -419,6 +424,7 @@ Vaipakam mints unique NFTs to represent offers, enhancing traceability and user 
 - **Liquidation:** The borrower's collateral is liquidated (sold via the configured on-chain swap-aggregator proxy) to recover the outstanding loan amount (principal + accrued interest + late fees + liquidation penalty/fee).
 - **Liquidation Handling Charge:** If liquidation succeeds through the normal swap path, treasury must receive an additional liquidation-handling charge equal to `2%` of liquidation proceeds because the borrower failed to act before liquidation. This handling charge is separate from the liquidator incentive and separate from any treasury fee that may still apply on recovered interest or late-fee amounts.
 - **Slippage Protection:** If the liquidation swap would incur slippage greater than 6%, the collateral conversion must not happen. In that case, the liquidation flow must stop using the DEX conversion path and must follow the same equivalent-collateral fallback procedure used for abnormal liquidation-failure conditions.
+- **Governance Configuration:** The maximum liquidation slippage threshold should be configurable by governance within an approved bounded range. The Phase 1 administrator for this setting is the multisig / timelock path.
 - **Fallback Claim Model:** When the DEX liquidation path is abandoned because the swap fails, market conditions are abnormal, liquidity is unavailable, technical execution fails, or the 6% slippage threshold would be exceeded, the protocol should resolve the lender side into a claimable collateral-equivalent position rather than a claim to the borrower's full liquid collateral. There is no separate borrower grace period in that state; the lender may claim immediately after the failed liquidation. However, until the lender claim is actually executed, the borrower may still either fully repay the loan or add enough collateral to restore the loan above the required LTV / Health Factor thresholds. If full repayment finalizes first, the fallback path is canceled and the borrower later claims back the collateral through the ordinary repayment flow. If a collateral top-up finalizes first and the position is again healthy, the loan may continue as active. Once lender claim execution starts, that claim path should not be interrupted or auto-revived during the same transaction. In that lender-claim branch, the system may attempt liquidation one more time. If that retry succeeds, settlement follows the normal converted-proceeds path. If that retry also fails, the lender later claims only the amount of collateral asset needed to satisfy `lending asset due + accrued interest + 3% of the lending asset amount` by presenting the Vaipakam lender NFT, unless the remaining collateral value is lower than that fallback entitlement, in which case the lender receives the full remaining collateral. The treasury receives collateral equivalent to `2% of the lending asset amount`, and any excess liquid collateral value remains attributable to the borrower.
 - **Proceeds Distribution:**
   - Lender is repaid.
@@ -922,7 +928,7 @@ VPFI token deployment begins in Phase 1 through the token contract and minting p
 
 - **Treasury Collection:** Treasury continues to collect protocol fees according to the live protocol rules, including the `0.1%` `Loan Initiation Fee` on ERC-20 loans, the `Yield Fee` on accrued interest / rental-fee earnings, the `1%` late-fee intake, and any other explicitly documented treasury charges such as liquidation-handling or fallback treasury entitlements.
 - **Lender Yield Fee Discount:** Lenders who maintain sufficient VPFI in their user escrow on the respective lending chain are eligible for the tiered `Yield Fee` discount schedule defined by the tokenomics spec.
-  - The lender discount is granted purely from the VPFI balance present in the lender's user escrow at the time of interest claim or fee calculation.
+  - The lender discount is measured as a time-weighted average over the life of the loan, not from only the VPFI balance present at the final claim moment.
   - Escrow-held VPFI automatically counts as staked under the unified escrow-based staking model.
   - The active tier schedule is:
     | Tier | Escrowed VPFI Balance | Discount | Lender Effective Yield Fee |
@@ -949,7 +955,10 @@ VPFI token deployment begins in Phase 1 through the token contract and minting p
 
   - The borrower must explicitly opt in through that same single platform-level user setting consenting to the use of escrowed VPFI for protocol fee discounts.
   - Offer-level or loan-level consent is not required for the borrower discount once the platform-level setting has been enabled.
-  - Only when that platform-level consent is active and sufficient VPFI is available should the system automatically deduct the required VPFI from the borrower's escrow and transfer it to treasury.
+  - Only when that platform-level consent is active, the lending asset is liquid, and sufficient VPFI is available should the system deduct the full `0.1%` fee equivalent in VPFI from the borrower's escrow.
+  - The deducted VPFI is held in protocol custody for the life of the loan rather than sent immediately to Treasury.
+  - On proper close through normal repayment, borrower preclose, or refinance, the borrower earns a time-weighted rebate based on the discount tiers actually held during the loan window. The rebate is paid in VPFI alongside the ordinary borrower claim.
+  - On default or HF-based liquidation, the rebate is forfeited and the full held VPFI becomes Treasury's share.
   - The borrower-side acquisition flow is described in the dedicated `docs/BorrowerVPFIDiscountMechanism.md` specification.
 
 - **Borrower VPFI Acquisition Flow:** For the borrower-side discount path:
@@ -957,6 +966,7 @@ VPFI token deployment begins in Phase 1 through the token contract and minting p
   - the user should not be required to manually switch to the canonical chain before buying
   - purchased VPFI should be delivered to the borrower's wallet on that same preferred chain, not auto-deposited into escrow
   - if canonical-chain or bridge infrastructure is used under the hood, that complexity should be abstracted from the user-facing purchase flow
+  - if the purchase path settles through a Base-chain receiver, VPFI must be minted or released only after that receiver actually receives ETH, and the amount delivered must be based on actual received ETH rather than a quoted amount
   - moving VPFI from wallet to user escrow should remain an explicit user-initiated action, with the frontend facilitating that step after purchase
   - the Phase 1 `30,000 VPFI` wallet cap is a per-chain cap, not one shared global wallet cap across every chain
   - VPFI moved into user escrow on a given chain should count toward fee-discount eligibility only for loans initiated on that same chain
@@ -1097,12 +1107,16 @@ A comprehensive user dashboard is essential for managing activities on Vaipakam.
   - **Escrow Upgrade Policy:** User escrows must not continue to be usable on outdated mandatory versions. If an escrow implementation upgrade is classified as required, user interactions through an older escrow version must be blocked by the protocol until that escrow is upgraded. Escrow upgrades are not intended to be pushed automatically to every existing user escrow because that would create significant network-fee overhead. Instead, the frontend must detect outdated escrows and require the user to submit their own escrow-upgrade transaction before any further protected interaction is allowed. For non-critical upgrades, the frontend may still prompt users to upgrade, but blocking behavior should only be enforced when the upgrade is marked mandatory.
   - **Reentrancy Guards:** Applied to all functions involving external calls or asset transfers.
   - **Access Control:** Granular roles (e.g., `LOAN_MANAGER_ROLE`, `OFFER_MANAGER_ROLE`, `TREASURY_ADMIN_ROLE`) managed via OpenZeppelin's AccessControl. Roles will be assigned initially by the contract deployer/owner, with plans to transition control to governance in Phase 2 where appropriate.
+  - **Three-Role Governance Handover:** Privileged production surfaces should be split between a Governance Safe, a Guardian Safe, and KYC Ops. The Governance Safe controls slow admin surfaces through a 48-hour timelock. The Guardian Safe can pause quickly during incidents but cannot unpause. KYC Ops holds only the user-tier operational role where that role is active.
+  - **OApp Guardian Pause:** LayerZero OApps and VPFI bridge-related contracts should allow Guardian or Owner pause, but unpause must remain Owner / Timelock controlled.
   - **Emergency Updates:** Critical security patches may be fast-tracked through the initial admin/multi-sig model when needed to protect user funds or protocol integrity, with those emergency powers limited to critical fixes.
   - **Batch Processing:** Support for batch processing of certain operations where feasible to optimize gas costs. Staking reward batch processing is Phase 2 scope.
 
 ### Frontend
 
-- **Framework:** React with Web3.js or Ethers.js for blockchain interaction.
+- **Framework:** React with wagmi v2 and viem for wallet connection, contract reads/writes, multicall batching, and direct JSON-RPC control.
+- **Wallet UX:** ConnectKit is the wallet picker layer on top of wagmi v2. Mobile wallet selections should open wallet apps directly through deep links, while QR pairing remains available for cross-device use.
+- **Legacy Provider Policy:** The frontend should not retain ethers.js compatibility shims or ethers as a production dependency after the wagmi / viem migration.
 - **State Management:** Robust state management solution (e.g., Redux, Zustand).
 - **Languages:** Initial launch in English, with plans for multilingual support (e.g., Spanish, Mandarin) in subsequent updates.
 - **API Standards:** Frontend will interact with smart contracts using standardized data formats (e.g., JSON-like structs or arrays returned by view functions).
@@ -1224,6 +1238,23 @@ function isAssetSupported(address token) external view returns (bool);
 
 These functions help external dashboards and integrations understand current support, liquidity classification, and collateral risk configuration on the active network.
 
+Additional oracle-hardening views should expose active per-feed overrides and configured secondary-oracle settings where practical, including:
+
+```solidity
+function getFeedOverride(address feed) external view returns (
+    uint256 maxStaleness,
+    int256 minValidAnswer
+);
+
+function getPythFeedConfig(address asset) external view returns (
+    bytes32 priceId,
+    uint256 maxDeviationBps,
+    uint256 maxStaleness
+);
+```
+
+These readbacks let operators, auditors, and frontend safety surfaces verify that high-value assets are using the intended freshness floors and secondary-oracle deviation bounds.
+
 #### 6. User-Specific Metrics
 
 For portfolio tracking and wallet integrations, the protocol should expose:
@@ -1280,6 +1311,10 @@ All functions are pure `view` functions (zero gas for callers when invoked via R
 - **Fuzz Testing:** Financial math, defaults, and LTV / health-factor edge cases should be fuzz tested.
 - **Open-Source Tests:** Test cases may be made open-source after mainnet deployment for community review.
 - **External Auditing:** Mandatory third-party security audits should be completed before mainnet launch, with reports published where appropriate.
+- **Bug Bounty:** A public bug bounty program should be defined before mainnet launch, including scope, severity levels, reward ranges, and a public reporting link. The website footer should link to that program once published.
+- **Liquidation Invariants:** Tests must assert that liquidation swap calldata uses the protocol-computed oracle-derived minimum output and that callers cannot influence the slippage floor.
+- **Oracle-Hardening Tests:** Tests should cover per-feed override admin gating, staleness override behavior, minimum-answer floor behavior, secondary-oracle agreement, divergence, stale secondary data, and missing secondary data.
+- **Governance-Handover Tests:** Tests should verify that Timelock, Guardian, and KYC Ops roles are installed correctly and that the deployer EOA retains no residual privileged authority after handover.
 
 #### Positive-flow coverage map
 
@@ -1438,6 +1473,10 @@ Vaipakam is committed to operating in a compliant manner within the evolving reg
     - **NFT Renting:** The _total rental value_ (daily rate \* duration, converted to USDC equivalent) determines the transaction value.
     - The platform will use Chainlink oracles for converting liquid asset values to USDC for these threshold checks.
 - **Implementation Timing:** Real KYC/AML enforcement is not part of the effective Phase 1 launch behavior. Phase 1 keeps KYC checks in pass-through mode under the Phase 1 flag, while later governance or admin decisions may choose to activate the retained KYC framework.
+- **Address-Level Sanctions Screening:** Where a supported on-chain sanctions oracle is configured for the active chain, the protocol should screen new-business boundaries: offer creation checks the caller, and offer acceptance checks both the acceptor and the original offer creator. If a checked address is flagged, the transaction must revert. Wind-down actions such as repayment, claims, add-collateral, and other existing-loan exits should remain available so non-sanctioned counterparties are not trapped in open positions.
+- **Sanctions Oracle Availability:** Sanctions oracle configuration is per chain and optional. Chains without a configured oracle should behave as no-op for this check. Oracle read failures should fail open rather than bricking all protocol actions during a vendor outage.
+- **Terms Acceptance Gate:** App routes may be gated behind a versioned on-chain Terms of Service acceptance. `currentTosVersion == 0` represents a disabled/testnet state. Once activated, users must accept the current Terms version and content hash before using `/app` routes; version bumps or hash changes invalidate prior acceptances.
+- **Privacy Policy and Data Rights:** Public `/terms` and `/privacy` pages should be available without a wallet. Browser-local Vaipakam diagnostic and consent data should support user download and deletion flows, while clearly explaining that public blockchain data cannot be deleted by frontend action.
 - **Ongoing Monitoring:** The platform will monitor regulatory developments during Phase 1. Governance proposals to update compliance measures are Phase 2 scope after governance is launched.
 
 ## Summary (Phase 1)

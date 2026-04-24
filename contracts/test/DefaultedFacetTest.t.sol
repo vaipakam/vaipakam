@@ -72,6 +72,7 @@ import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
 import {AddCollateralFacet} from "../src/facets/AddCollateralFacet.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {ZeroExProxyMock} from "./mocks/ZeroExProxyMock.sol";
+import {MockZeroExLegacyAdapter} from "./mocks/MockZeroExLegacyAdapter.sol";
 import {MockRentableNFT721} from "./mocks/MockRentableNFT721.sol";
 
 contract DefaultedFacetTest is Test {
@@ -284,6 +285,13 @@ contract DefaultedFacetTest is Test {
         AdminFacet(address(diamond)).setallowanceTarget(
             address(allowanceTarget)
             // address(0xDef1C0ded9bec7F1a1670819833240f027b25EfF)
+        );
+
+        // Phase 7a: register the legacy ZeroEx shim as adapter slot 0
+        // so triggerLiquidation / triggerDefault / claimAsLenderWithRetry
+        // route through LibSwap into the existing ZeroExProxyMock.
+        AdminFacet(address(diamond)).addSwapAdapter(
+            address(new MockZeroExLegacyAdapter(address(mockZeroExProxy)))
         );
         // address(escrowImpl)
 

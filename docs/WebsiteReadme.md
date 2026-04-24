@@ -41,6 +41,7 @@ This section will later define:
 - educational sections for ERC-20 lending and NFT rental flows
 - trust, safety, and risk communication
 - FAQs
+- public Terms of Service and Privacy Policy pages
 
 Public-navigation requirements:
 
@@ -48,6 +49,7 @@ Public-navigation requirements:
 - when a user clicks one of those anchor links from pages like `Buy VPFI`, `Analytics`, or any route under `/app`, the frontend should route to the landing page and then scroll to the correct section rather than dropping the user at the top of the home page
 - the implementation should tolerate route-change timing where the landing-page section may mount slightly after navigation, so hash-anchor scrolling should retry briefly until the target section exists
 - the `Buy VPFI` link from the home page must resolve to the working public purchase route
+- the footer should expose `Terms`, `Privacy`, `Cookie settings`, and, once published, the public bug bounty program link
 
 Privacy and consent requirements:
 
@@ -64,6 +66,17 @@ Privacy and consent requirements:
 - `ads_data_redaction` should ensure ad-click identifiers are redacted on outbound requests whenever advertising consent is denied
 - `url_passthrough` should allow conversion attribution to flow through URL parameters instead of cookies where appropriate
 - no non-essential tracking category should load before the user grants the corresponding consent
+
+Legal and data-rights requirements:
+
+- `/terms` and `/privacy` must be public routes that do not require wallet connection
+- the Terms page should mirror the source-of-truth text from `docs/TermsOfService.md`
+- before using `/app/*` routes, connected wallets may be required to sign or submit an on-chain acceptance of the current Terms version and content hash
+- if the Terms version or content hash changes, the app should ask the user to accept again before reopening app routes
+- a disabled Terms gate state should exist for testnet / pre-launch operation, so the code path can ship without forcing acceptance before governance activates it
+- the Privacy page should explain what Vaipakam collects, what it deliberately does not collect, who receives consented analytics data, and how users can exercise GDPR / CCPA-style data rights
+- the diagnostics drawer should include `Download my data` and `Delete my data` actions for Vaipakam-namespaced browser storage
+- data-rights UI must clearly explain that local browser data can be exported or deleted, but public on-chain state cannot be erased by frontend action
 
 ### 2. Connected App
 
@@ -88,8 +101,8 @@ Borrower VPFI discount UX:
 - the `Buy VPFI` page should also be reachable from inside the connected app
 - the page should not require or prompt the user to manually switch to the canonical chain in order to buy VPFI
 - if the protocol routes the purchase through canonical-chain infrastructure under the hood, that complexity should be abstracted away from the user-facing purchase flow
-- the fixed-rate `Buy VPFI` flow should continue using a transfer-from-reserve model rather than a mint-on-each-purchase model
-- the reserve-backed sale flow must make clear in implementation and operations that the Diamond or other sale-distribution contract needs sufficient VPFI inventory before purchases are allowed
+- the fixed-rate `Buy VPFI` flow should follow the active tokenomics spec and must not rely on a silent pre-minted sale reserve unless a later approved design explicitly reintroduces one
+- if the purchase route settles through a Base-chain receiver, VPFI must be minted or released only after the receiver actually receives ETH, and the delivered VPFI amount must be calculated from the received ETH amount
 - after purchase, the VPFI should be delivered to the user's wallet on the chain where the user chose to buy
 - the UI should then guide and facilitate a separate explicit user-intent action to move or deposit that wallet-held VPFI into the user's personal escrow for staking / discount eligibility
 - the Phase 1 `30,000 VPFI` user cap is a per-chain cap, not a protocol-wide global cap across all chains
@@ -104,6 +117,10 @@ Borrower VPFI discount UX:
 - borrower and lender fee-discount messaging should follow the tiered model from `docs/TokenomicsTechSpec.md`, not a single flat `25%` discount
 - app pages such as `Create Offer` and `Loan Details` may still link users into this `Buy VPFI` flow as secondary shortcuts when the borrower discount is relevant
 - if a `Buy VPFI` action fails, the page should show a clean error card with secondary actions such as `Report on GitHub` and `Dismiss` aligned consistently and visibly as one grouped action area rather than appearing visually misaligned
+- borrower VPFI-discount copy must follow the Phase 5 model: users pay the full `0.1%` LIF up front in VPFI, earn the discount time-weighted during the loan, and receive any earned rebate through the borrower claim on proper close
+- the Offer Book accept-review modal should explain the up-front VPFI payment plus time-weighted rebate model before the user accepts a loan through the VPFI path
+- borrower-facing shortcut copy may say `earn up to a 24% VPFI rebate`, but should not describe the up-front fee itself as reduced
+- the Claim Center should show a visible VPFI rebate line when a borrower claim includes a pending rebate
 
 Reward-claiming UX:
 
@@ -173,6 +190,7 @@ Wallet connection requirements:
 - if no wallet is detected, the app should present that state as a yellow warning rather than a red error
 - startup should warn site operators loudly if the WalletConnect project ID is missing from the deployment environment
 - a missing WalletConnect project ID should be treated as a production misconfiguration because it can break mobile deep-linking and degrade users into a QR-only flow
+- the wallet picker should be powered by ConnectKit on top of wagmi v2 so extension wallets, WalletConnect mobile wallets, and wallet-app deep links appear through one curated picker
 
 Safe-app embed requirements:
 
@@ -328,6 +346,8 @@ The website/app should clearly communicate:
 - when a user is creating or accepting an offer, the UI must show one combined pre-confirmation warning-and-consent area covering both abnormal-market fallback for liquid assets and the illiquid full-collateral-in-kind path when applicable
 - liquidity status should be determined only from the current active network's oracle and usable DEX liquidity conditions; the website/app should not rely on Ethereum mainnet liquidity as a substitute for the current network and should not frame asset handling around a required mainnet fallback
 - the combined warning must clearly explain that for liquid assets, abnormal conditions can disable normal liquidation: if liquidation cannot execute safely, the protocol must stop trying to convert collateral into the lending asset and resolve through a collateral-asset fallback path instead
+- wherever the UI displays the liquidation slippage threshold, it should read the active configured value rather than hard-coding `6%`
+- if governance changes the max liquidation slippage within its approved range, risk disclosures and liquidation preview copy should update to the new configured value
 - the same combined warning must also clearly explain that for loan with illiquid assets (both lending asset and / or collateral asset) on default, the lender takes the full collateral in-kind rather than through a normal DEX liquidation / price-based conversion path
 - the offer-creation and offer-acceptance flows should explicitly advise users to use only collateral assets they personally trust to hold value during stressed market conditions, because fallback settlement can leave the lender holding collateral worth far less than the principal amount
 - the offer-creation and offer-acceptance flows must use one single mandatory combined warning-and-consent acknowledgement, not two separate warnings or two separate consents; that one acknowledgement must cover the abnormal-market fallback terms and the illiquid full-collateral-in-kind terms together
@@ -338,7 +358,7 @@ Offer and acceptance risk warnings:
 
 - the create-offer flow and accept-offer flow must use a single combined risk-review block rather than separate abnormal-market and illiquid warning blocks
 - implementation note for the `Offer Book` accept-review modal: the page may additionally show one extra informational illiquid-leg warning above the combined warning-and-consent block when the selected offer contains an illiquid lending asset or collateral asset, so long as that extra warning does not introduce a second consent or a second required acknowledgement
-- the combined warning copy should read in substance: `Abnormal-market & illiquid asset terms. For Liquid Assets, If liquidation cannot execute safely — for example because slippage exceeds 6%, liquidity disappears, or the 0x swap reverts — the lender claims the collateral in collateral-asset form instead of receiving the lending asset. If collateral value has fallen below the amount due, the lender receives the full remaining collateral and nothing is left for the borrower. If collateral value is still above the amount due, the lender receives only the equivalent collateral amount and the remainder stays with the borrower after charges. The same fallback applies to loan with illiquid assets (both lending asset and / or collateral asset) on default — the lender takes the full collateral in-kind. Proceeding confirms you agree to these terms.`
+- the combined warning copy should read in substance: `Abnormal-market & illiquid asset terms. For Liquid Assets, if liquidation cannot execute safely — for example because slippage exceeds the configured max liquidation threshold, liquidity disappears, or the 0x swap reverts — the lender claims the collateral in collateral-asset form instead of receiving the lending asset. If collateral value has fallen below the amount due, the lender receives the full remaining collateral and nothing is left for the borrower. If collateral value is still above the amount due, the lender receives only the equivalent collateral amount and the remainder stays with the borrower after charges. The same fallback applies to loans with illiquid assets (lending asset and / or collateral asset) on default — the lender takes the full collateral in-kind. Proceeding confirms you agree to these terms.`
 - the same risk-review area should require one combined mandatory checkbox / consent action tied to that single message
 - on the create-offer page, these warnings only need to appear clearly on the page before submission; they are not required to be repeated in a separate final-confirmation state
 - on the accept-offer flow, these warnings should still appear in the transaction review or confirmation state before the acceptance transaction is submitted
@@ -360,6 +380,12 @@ Offer book requirements:
 - if no prior match exists for the active market / filter context, the UI should show a clear fallback state such as `No prior matched rate yet`
 - pagination should expand outward from that center instead of trying to load the full market into the browser at once
 - filtering and sorting should be applied in a way that keeps the visible market window relevant to the current lending asset, collateral asset, duration, liquidity, and other active filters
+- tab header counts must be based on verified visible offer data, not stale raw log-index IDs
+- if reliable counts cannot be produced for a tab, the UI should omit the count rather than displaying a misleading value such as `Open (2)` when one active offer is visible
+- single-side lender and borrower tabs should support real pagination with `Previous`, `Page X of Y`, and `Next`
+- pagination should reset on tab changes, filter changes, per-side limit changes, and open/closed status changes
+- the combined both-sides view may keep a top-N layout without competing per-column paginators
+- users should be able to toggle keeper access on their own open offer before acceptance, without cancelling and re-posting the offer
 
 Activity and dashboard history requirements:
 
@@ -382,11 +408,13 @@ Keeper UX requirements:
 
 - keeper configuration must be treated as an advanced setting
 - keeper opt-in, keeper whitelisting, and any role-manager delegation UI should appear only in advanced mode or inside advanced settings; this does not require a separate inline mode toggle inside each page if the app already provides a global top-level mode switch
-- basic mode should not surface keeper-management controls as part of the default everyday borrower or lender workflow
+- basic mode should not surface the full keeper-management experience as part of the default everyday borrower or lender workflow, but loan-detail pages may show a compact per-side keeper status row with a one-click enable / disable control and a link to the full keeper manager
 - wherever keepers are configured, the UI must clearly state that keepers are delegated role-managers only and cannot claim assets; claims remain available only to the current owner of the relevant Vaipakam NFT
 - wherever the create-offer or accept-offer flow lets a user enable keeper / third-party execution for that position, the UI must also clearly state that this position-level flag is not sufficient by itself: the relevant user must separately enable keeper access in the advanced keeper settings at the user/profile level, otherwise approved keepers still cannot execute that user's role-entitled actions
 - the UI should make it clear that keeper enablement is two-layered: a position may allow keeper execution, but a keeper can act for a given lender-side or borrower-side role only if that side's user-level keeper opt-in and whitelist are also active in advanced settings
 - after loan initiation, the website/app should still allow each user to enable or disable keeper access later at the individual loan level from advanced settings for that user's own side of existing loans, even if keeper access was not enabled during offer creation or offer acceptance
+- future keeper settings should allow users to choose which operation classes each keeper may perform, with scopes at the global user level, per keeper address, per offer, and per loan
+- early withdrawal, borrower preclose, and refinance completion paths may be opened to keepers only when the relevant operation is explicitly allowed for that keeper and scope
 
 Strategic-flow transfer-lock UX requirements:
 
@@ -493,6 +521,7 @@ Data-fetching strategy:
 Coding and quality requirements:
 
 - new dashboard code should follow TypeScript strict mode
+- frontend verification should use `tsc -b --force` for production-build parity because Cloudflare Pages runs the project build graph rather than only isolated no-emit checks
 - new hooks and components should include clear JSDoc comments
 - errors should use the existing contract-error decoding approach where relevant
 - production code should not leave debug `console.log` statements behind
@@ -506,6 +535,10 @@ Security, privacy, and compliance requirements:
 - selected-chain metrics should include nearby `View on-chain` affordances linking users toward the relevant contract call context, event source, or explorer trail where practical
 - the combined all-chains headline cards do not need chain-specific explorer links, because those values are frontend-aggregated across multiple Diamond deployments rather than sourced from one canonical read target
 - if heavy public queries need protection, lightweight frontend throttling or edge rate-limiting may be used as an implementation safeguard
+- where a sanctions oracle is configured on the active chain, Create Offer should pre-flight the connected wallet and the Offer Book accept modal should pre-flight both the connected wallet and offer creator
+- sanctions warnings should explain that Vaipakam does not maintain its own sanctions list and that list disputes must be handled with the oracle/list provider
+- when no sanctions oracle is configured on a chain, sanctions banners should stay silent
+- for Pyth-gated actions, the frontend should be able to run the two-transaction flow: submit the Pyth price update first, then submit the Diamond action from the same wallet
 
 Required dashboard disclaimer text:
 
@@ -548,6 +581,9 @@ Implementation requirements:
 - diagnostics filtering is a display concern only; export, copy, download, or `Report on GitHub` actions should continue to include the full unfiltered event history unless the product later explicitly adds scoped export choices
 - the filter controls should sit directly above the event list rather than being buried only near the drawer header, so users can clearly understand that the filter changes the list below
 - the layout of fixed diagnostics affordances must not cover important page controls, pagination buttons, or footer/legal text; public pages and app pages should reserve enough bottom breathing room so the floating button does not obstruct critical content
+- every shared user-facing error alert should include a `Dismiss` action when local dismissal is safe
+- `Dismiss` and `Report on GitHub` should appear together as one aligned action group
+- dismissed errors should reappear when the underlying error message changes
 
 ## Design Direction
 
