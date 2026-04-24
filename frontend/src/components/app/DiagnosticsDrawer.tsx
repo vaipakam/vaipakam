@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { LifeBuoy, Download, Trash2, X } from 'lucide-react';
+import { LifeBuoy, Download, Trash2, X, FileDown, ShieldAlert } from 'lucide-react';
 import {
   subscribe,
   exportDiagnostics,
@@ -7,6 +7,7 @@ import {
   resetReportId,
   type JourneyEvent,
 } from '../../lib/journeyLog';
+import { downloadMyData, deleteMyData } from '../../lib/gdpr';
 import { useMode } from '../../context/ModeContext';
 import { ReportIssueLink } from './ReportIssueLink';
 import './DiagnosticsDrawer.css';
@@ -130,6 +131,66 @@ export default function DiagnosticsDrawer() {
               >
                 <Trash2 size={14} />
                 Clear
+              </button>
+            </div>
+
+            {/* Phase 4.4 — GDPR data-subject-rights surface. Distinct
+                from the Copy / Download / Clear row above (which is a
+                support-debug flow for the journey buffer only): these
+                two buttons export or erase EVERY piece of client-side
+                data Vaipakam has on the user — journey log, consent
+                choice, cached event index — and cover the Privacy
+                Policy's "right to access" + "right to erasure" boxes
+                end-to-end. On-chain positions are unaffected; the
+                banner text on the button tooltips makes this clear. */}
+            <div
+              className="diag-actions"
+              style={{ marginTop: 10, paddingTop: 10, borderTop: '1px solid var(--border)' }}
+            >
+              <span
+                style={{
+                  fontSize: '0.75rem',
+                  color: 'var(--text-tertiary)',
+                  width: '100%',
+                  marginBottom: 4,
+                }}
+              >
+                Data rights (GDPR / CCPA)
+              </span>
+              <button
+                className="btn btn-secondary btn-sm"
+                onClick={() => {
+                  downloadMyData();
+                }}
+                data-tooltip="Export every client-side record Vaipakam keeps under its namespace as JSON. On-chain data is public blockchain state and is not included."
+              >
+                <FileDown size={14} />
+                Download my data
+              </button>
+              <button
+                className="btn btn-ghost btn-sm"
+                onClick={() => {
+                  // Two-step confirm — delete is irreversible on the
+                  // client side (though everything is restorable by
+                  // re-using the app; on-chain state stays).
+                  const ok = window.confirm(
+                    'Erase every Vaipakam-namespaced entry in this browser?\n\n' +
+                      '• Your journey log will be cleared.\n' +
+                      '• Your cookie / consent choice will be reset.\n' +
+                      '• Cached event indexes will be purged.\n\n' +
+                      'On-chain positions and transactions are NOT affected — ' +
+                      'blockchain state is public and cannot be erased.',
+                  );
+                  if (!ok) return;
+                  deleteMyData();
+                  // Reload so every hook / banner rehydrates from
+                  // the now-empty storage.
+                  window.location.reload();
+                }}
+                data-tooltip="Erase every client-side record Vaipakam keeps under its namespace. On-chain positions are unaffected (blockchain state is public)."
+              >
+                <ShieldAlert size={14} />
+                Delete my data
               </button>
             </div>
 

@@ -16,8 +16,6 @@ import {
 } from "../lib/offerSchema";
 import { decodeContractError } from "../lib/decodeContractError";
 import {
-  FALLBACK_CONSENT_TITLE,
-  FALLBACK_CONSENT_BODY,
   FALLBACK_CONSENT_CHECKBOX_LABEL,
 } from "../lib/fallbackTerms";
 import { beginStep, emit } from "../lib/journeyLog";
@@ -25,6 +23,7 @@ import { DEFAULT_CHAIN } from "../contracts/config";
 import { AlertTriangle, Info, CheckCircle, Wallet, Coins } from "lucide-react";
 import { ErrorAlert } from "../components/app/ErrorAlert";
 import { SanctionsBanner } from "../components/app/SanctionsBanner";
+import { RiskDisclosures } from "../components/app/RiskDisclosures";
 import { Link } from "react-router-dom";
 import { AssetPicker } from "../components/app/AssetPicker";
 import { useAssetType, type DetectedAssetType } from "../hooks/useAssetType";
@@ -820,12 +819,7 @@ export default function CreateOffer() {
         <div className="card" style={{ marginBottom: 20 }}>
           <div className="card-title">Risk Disclosures</div>
 
-          <div className="alert alert-warning" style={{ marginTop: 0 }}>
-            <AlertTriangle size={18} />
-            <div>
-              <strong>{FALLBACK_CONSENT_TITLE}.</strong> {FALLBACK_CONSENT_BODY}
-            </div>
-          </div>
+          <RiskDisclosures />
 
           <label className="checkbox-row" style={{ marginTop: 12 }}>
             <input

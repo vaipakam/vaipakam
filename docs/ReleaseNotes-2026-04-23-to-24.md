@@ -545,6 +545,59 @@ post-offer-creation flag edge case). All 59 tests in the file green
 (inherits 47 from the parent risk suite). Full forge suite green
 (see regression gate).
 
+## Security sprint — item #3 Phase 3.3 + item #4 Phase 4.4: docs + GDPR buttons
+
+**New documentation.** Two new operator-facing pages under `/docs/`,
+both written as standing playbooks rather than change-logs:
+
+- `docs/OraclePolicy.md` — pin of the Chainlink-primary + Pyth-
+  secondary model, per-chain recommended defaults (which chains use
+  Pyth, which stay Chainlink-only, which use the stable-peg
+  relaxation), per-feed override config, fail-closed semantics,
+  two-tx user flow for Pyth-gated actions, verification checklist
+  for pre-mainnet readback.
+- `docs/MEVProtection.md` — enumeration of what the protocol
+  actually enforces on-chain (liquidation slippage guard, oracle
+  deviation check, L2 sequencer circuit breaker) vs. what remains
+  user-level (defensive borrower / lender txs getting front-run).
+  Documents the Keeper system as the main user-side MEV mitigation
+  and records two decisions of record: no frontend sanity-banner
+  (bypassable via DevTools), no protocol-operated auto-defender bot
+  yet (deferred to Phase 5 product-decision).
+
+Both files pair with the existing `GovernanceRunbook.md` as a
+pre-mainnet reading set for new operators, auditors, and signers.
+
+**GDPR data-subject-rights surface.** Two new buttons in the
+Diagnostics drawer, under a "Data rights (GDPR / CCPA)" heading
+distinct from the pre-existing support / debug buttons:
+
+- **Download my data.** Exports every Vaipakam-namespaced entry in
+  both `localStorage` and `sessionStorage` as a single JSON file —
+  journey-log telemetry, consent-banner choice, cached event
+  indexes. The export includes the browser user agent and a
+  timestamp, and carries an embedded explanatory note so a user
+  or regulator reading it later has the context without needing a
+  separate document. Implements the Privacy Policy's "right to
+  access" commitment.
+- **Delete my data.** Two-step confirm that erases every
+  Vaipakam-namespaced entry from both storages. On confirm the
+  page reloads so every hook / banner rehydrates from the empty
+  state: consent banner reappears, ToS gate re-prompts (if the
+  on-chain gate is active), journey buffer starts fresh. The
+  confirm dialog is explicit that on-chain positions are not
+  affected — blockchain state is public and cannot be erased by
+  any frontend action. Implements the "right to erasure" commitment.
+
+**Verification.** Frontend `tsc -b --force` green. Full forge
+suite (unchanged by these phases) still passes 1367/0/5.
+
+**What's left after this phase.** The security sprint is complete
+for items #1–#4. Phase 5 (borrower LIF discount → time-weighted
+via claim flow) is queued and awaits a deliberate kick-off —
+project memory records the decision and scope at
+`memory/project_phase5_borrower_lif_discount.md`.
+
 ## Documentation convention going forward
 
 Every completed phase gets a functional write-up appended here, in the

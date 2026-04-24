@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { AlertTriangle, ArrowLeft, CheckCircle } from 'lucide-react';
 import { ErrorAlert } from '../components/app/ErrorAlert';
+import { RiskDisclosures } from '../components/app/RiskDisclosures';
 import { useWallet } from '../context/WalletContext';
 import { useDiamondContract } from '../contracts/useDiamond';
 import { useLoan } from '../hooks/useLoan';
@@ -9,8 +10,6 @@ import { usePositionLock, LockReason } from '../hooks/usePositionLock';
 import { AssetType, LoanStatus } from '../types/loan';
 import { decodeContractError } from '../lib/decodeContractError';
 import {
-  FALLBACK_CONSENT_TITLE,
-  FALLBACK_CONSENT_BODY,
   FALLBACK_CONSENT_CHECKBOX_LABEL,
 } from '../lib/fallbackTerms';
 import { beginStep } from '../lib/journeyLog';
@@ -297,13 +296,7 @@ export default function LenderEarlyWithdrawal() {
                   />
                 </div>
               </div>
-              <div className="alert alert-warning" style={{ marginTop: 12 }}>
-                <AlertTriangle size={18} />
-                <div style={{ fontSize: '0.88rem' }}>
-                  <strong>{FALLBACK_CONSENT_TITLE}.</strong>{' '}
-                  {FALLBACK_CONSENT_BODY}
-                </div>
-              </div>
+              <RiskDisclosures />
               <label style={{ display: 'flex', gap: 8, marginTop: 8, alignItems: 'center' }}>
                 <input
                   type="checkbox"

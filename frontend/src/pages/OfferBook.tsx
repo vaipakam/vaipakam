@@ -7,12 +7,11 @@ import { Link } from 'react-router-dom';
 import { BookOpen, PlusCircle, AlertTriangle, ShieldCheck } from 'lucide-react';
 import { ErrorAlert } from '../components/app/ErrorAlert';
 import { SanctionsBanner } from '../components/app/SanctionsBanner';
+import { RiskDisclosures } from '../components/app/RiskDisclosures';
 import { DEFAULT_CHAIN } from '../contracts/config';
 import { beginStep, emit } from '../lib/journeyLog';
 import { decodeContractError } from '../lib/decodeContractError';
 import {
-  FALLBACK_CONSENT_TITLE,
-  FALLBACK_CONSENT_BODY,
   FALLBACK_CONSENT_CHECKBOX_LABEL,
 } from '../lib/fallbackTerms';
 import { useLogIndex } from '../hooks/useLogIndex';
@@ -1059,13 +1058,7 @@ function AcceptReviewModal({ offer, illiquid, consent, onConsentChange, submitti
           </div>
         )}
 
-        <div className="alert alert-warning" style={{ marginTop: illiquid ? 8 : 0 }}>
-          <AlertTriangle size={18} />
-          <div style={{ fontSize: '0.88rem' }}>
-            <strong>{FALLBACK_CONSENT_TITLE}.</strong>{' '}
-            {FALLBACK_CONSENT_BODY}
-          </div>
-        </div>
+        <RiskDisclosures />
         <label className="checkbox-row" style={{ marginTop: 8 }}>
           <input
             type="checkbox"
