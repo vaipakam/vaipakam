@@ -10,6 +10,7 @@ import {AggregatorV2V3Interface} from "@chainlink/contracts/src/v0.8/shared/inte
 import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
 import {DiamondPausable} from "../libraries/LibPausable.sol";
 import {DiamondAccessControl} from "../libraries/LibAccessControl.sol";
+import {IPyth, PythPrice} from "../interfaces/IPyth.sol";
 
 /**
  * @title OracleFacet
@@ -55,6 +56,16 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
     error NoDexPool();
     error StalePriceData();
     error InsufficientLiquidity();
+
+    /// @notice Phase 3.2: Chainlink and the configured Pyth secondary
+    ///         disagreed beyond `maxDeviationBps`. Fail-closed —
+    ///         callers must NOT fall back to a single-source price.
+    error OraclePriceDivergence();
+
+    /// @notice Phase 3.2: the configured Pyth secondary is stale /
+    ///         missing / the endpoint is unreachable. Fail-closed for
+    ///         the same reason as {OraclePriceDivergence}.
+    error PythPriceUnavailable();
 
     /// @notice Reverted when the L2 sequencer is currently offline.
     error SequencerDown();
@@ -202,6 +213,16 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
     function getAssetPrice(
         address asset
     ) external view returns (uint256 price, uint8 decimals) {
+        (price, decimals) = _primaryPrice(asset);
+        _enforcePythDeviation(asset, price, decimals);
+        return (price, decimals);
+    }
+
+    /// @dev Chainlink-only primary read. Unchanged from Phase 3.1; the
+    ///      Phase 3.2 deviation check runs AFTER this returns.
+    function _primaryPrice(
+        address asset
+    ) private view returns (uint256 price, uint8 decimals) {
         _requireSequencerHealthy();
 
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
@@ -246,6 +267,74 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
         }
 
         revert NoPriceFeed();
+    }
+
+    /// @dev Phase 3.2 deviation guard. If a Pyth secondary is
+    ///      configured for `asset` AND the chain has a Pyth endpoint
+    ///      installed, reads the Pyth price, normalizes it to the
+    ///      primary's decimals, and reverts if the two disagree beyond
+    ///      the configured basis-point tolerance. Also reverts on
+    ///      stale / failing Pyth reads — deliberately fail-closed so
+    ///      an operator-configured secondary can't be silently
+    ///      bypassed.
+    function _enforcePythDeviation(
+        address asset,
+        uint256 primaryPrice,
+        uint8 primaryDec
+    ) private view {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        LibVaipakam.PythFeedConfig storage cfg = s.pythFeedConfigs[asset];
+        if (cfg.priceId == bytes32(0)) return; // no secondary configured
+        address endpoint = s.pythEndpoint;
+        if (endpoint == address(0)) return; // chain has no endpoint — secondary disabled globally
+
+        PythPrice memory pp;
+        try IPyth(endpoint).getPriceNoOlderThan(
+            cfg.priceId,
+            uint256(cfg.maxStaleness)
+        ) returns (PythPrice memory p) {
+            pp = p;
+        } catch {
+            revert PythPriceUnavailable();
+        }
+
+        if (pp.price <= 0) revert PythPriceUnavailable();
+        uint256 secondary = _normalizePythToPrimary(
+            uint256(int256(pp.price)),
+            pp.expo,
+            primaryDec
+        );
+        if (secondary == 0) revert PythPriceUnavailable();
+
+        uint256 diff = primaryPrice > secondary
+            ? primaryPrice - secondary
+            : secondary - primaryPrice;
+        uint256 deviationBps = (diff * LibVaipakam.BASIS_POINTS) / primaryPrice;
+        if (deviationBps > cfg.maxDeviationBps) revert OraclePriceDivergence();
+    }
+
+    /// @dev Converts a Pyth raw price (scaled by 10^expo) into the
+    ///      primary Chainlink feed's decimals. Pyth expo is signed
+    ///      (typically -8 for USD pairs); the net exponent is
+    ///      `primaryDec + expo`. Positive → multiply; negative →
+    ///      divide. Returns 0 if the resulting magnitude would
+    ///      round to zero (precision loss), which the caller treats
+    ///      as an unavailable reading.
+    function _normalizePythToPrimary(
+        uint256 pythPrice,
+        int32 expo,
+        uint8 primaryDec
+    ) private pure returns (uint256) {
+        int256 netExp = int256(int32(int256(uint256(primaryDec)))) + int256(expo);
+        if (netExp == 0) return pythPrice;
+        if (netExp > 0) {
+            // Scale up — safe from division-by-zero. Overflow is
+            // practically impossible within realistic price/exponent
+            // ranges (Pyth expo typically -8, primaryDec typically 8).
+            return pythPrice * (10 ** uint256(netExp));
+        }
+        uint256 divisor = 10 ** uint256(-netExp);
+        return pythPrice / divisor;
     }
 
     // ─── README §13.5 asset-risk views ──────────────────────────────────

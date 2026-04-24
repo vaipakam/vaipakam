@@ -387,6 +387,99 @@ reverts. `tsc -b --force` green on the frontend.
 screening against a Chainalysis oracle (Phase 4.3) and GDPR
 delete/export UI buttons (Phase 4.4). Both remain scheduled.
 
+## Security sprint — item #3 Phase 3.2: Pyth secondary oracle + deviation check
+
+**Protocol-level defence against a single-oracle compromise.** Phase
+3.1 tightened the Chainlink path; Phase 3.2 closes the "what if
+Chainlink itself is manipulated" class of exploit by requiring a
+second, independent oracle source (Pyth) to agree with Chainlink
+within a configurable tolerance before a price is accepted. The
+pattern is the same one Aave v3, Morpho Blue, and Euler v2 use for
+high-value markets.
+
+**How it works.**
+
+- Governance installs the chain's Pyth contract address once per
+  chain via `OracleAdminFacet.setPythEndpoint`. Canonical per-chain
+  addresses are published by Pyth; Vaipakam's runbook will pin them
+  before any mainnet rollout.
+- Governance installs a Pyth secondary-feed configuration for each
+  asset that should get the double-check, via
+  `OracleAdminFacet.setPythFeedConfig(asset, priceId,
+  maxDeviationBps, maxStaleness)`. Typical values: 5% deviation
+  tolerance on volatile majors, 1% on stables, 30–120-second
+  staleness window.
+- Whenever `OracleFacet.getAssetPrice(asset)` is called and the
+  asset has a Pyth feed configured, it reads BOTH oracles,
+  normalizes Pyth's scaled reading into the primary Chainlink feed's
+  decimals, and reverts `OraclePriceDivergence` if the two disagree
+  beyond the configured tolerance. A stale, missing, or negative
+  Pyth reading reverts `PythPriceUnavailable` — fail-closed by
+  design, so a silent fall-through to single-source data cannot
+  happen.
+- When Pyth is NOT configured for an asset (the default),
+  `getAssetPrice` behaves exactly as it did in Phase 3.1: Chainlink
+  only.
+
+**Two-transaction user flow.** Pyth is a pull oracle — its on-chain
+state only refreshes when someone posts a signed update payload from
+Pyth's off-chain network (Hermes). For price-reading Diamond actions,
+the frontend now submits two sequential transactions from the same
+wallet in nonce order:
+
+1. `IPyth(endpoint).updatePriceFeeds{value: fee}(updateData)` —
+   primes Pyth's on-chain storage with a fresh signed update.
+2. The actual Diamond action (`initiateLoan`, `triggerLiquidation`,
+   `addCollateral`, `refinance`, etc.).
+
+Same EOA + same block = nonce-ordered delivery, so the Pyth price
+cannot stale out between the two. This matches the pattern every
+major Pyth-integrated protocol uses (Synthetix, Perennial,
+Hyperliquid). The cost is one extra signature prompt; the benefit is
+that the protocol-level defence is real — no attacker-manipulated
+single-oracle read can produce a price the contract accepts.
+
+**Why the two-tx pattern vs. a single-tx bundler.** An earlier design
+for Phase 3.2 attempted to bundle the Pyth update and the Diamond
+action into one atomic tx via a `PriceUpdateFacet` that
+delegatecalled the inner action. The approach failed on Solidity's
+automatic non-payable guard: `delegatecall` preserves `msg.value`, so
+any non-payable action function reverts on receiving the outer tx's
+value (which carries the Pyth update fee). The only clean fixes were
+to mark every price-reading action function as `payable` — a large
+surface change — or to break the `msg.sender` chain, which would
+sink the existing authority checks. The two-tx pattern sidesteps
+both, matches industry practice, and keeps the protocol surface
+unchanged.
+
+**Frontend helpers.** A new `lib/pyth.ts` module fetches signed
+update payloads from Pyth's Hermes relayer (free, public, no API
+key) and quotes the on-chain update fee. A `useWriteWithPythUpdate`
+hook composes the two-tx flow: it reads the chain's configured Pyth
+endpoint, fetches the update for the requested feed ids, submits tx
+1, then submits tx 2. When the chain has no Pyth endpoint configured
+or the feed list is empty, tx 1 is skipped — no user-visible change
+vs. the existing single-tx flow. Integration into specific action
+paths (loan initiation, liquidation, etc.) follows incrementally as
+each page is wired.
+
+**What this does NOT include (deliberately dropped from scope).** An
+earlier proposal added a frontend CoinGecko / CoinMarketCap sanity
+check as defence-in-depth. Dropped: any frontend check is trivially
+bypassable via DevTools or a custom frontend, so it doesn't raise
+the security floor. The on-chain Pyth deviation check is the only
+layer that actually enforces a bound on what prices the protocol
+accepts.
+
+**Verification.** 16 Foundry tests in `PythDeviation.t.sol` cover:
+admin gating (non-owner reverts on both setters), setter rejection
+of obvious misconfig (zero asset, zero or ≥100% deviation, zero
+staleness), clear-on-zero-priceId, fall-through to Chainlink when
+no per-asset config OR no global Pyth endpoint, agreement passes
+within tolerance, agreement passes at the boundary, divergence
+reverts, stale Pyth reverts, missing Pyth reverts, zero or negative
+Pyth reading reverts. All green.
+
 ## Documentation convention going forward
 
 Every completed phase gets a functional write-up appended here, in the

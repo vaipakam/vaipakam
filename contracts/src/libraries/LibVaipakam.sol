@@ -528,6 +528,26 @@ library LibVaipakam {
         int256 minValidAnswer;
     }
 
+    /// @notice Per-asset Pyth secondary-oracle config (Phase 3.2).
+    ///         Installed by governance via
+    ///         {OracleAdminFacet.setPythFeedConfig}. When `priceId !=
+    ///         bytes32(0)` for an asset, {OracleFacet.getAssetPrice}
+    ///         reads the Pyth price alongside Chainlink and reverts
+    ///         {OraclePriceDivergence} if the two disagree by more than
+    ///         `maxDeviationBps`. A stale Pyth read (older than
+    ///         `maxStaleness`) also reverts — the secondary is
+    ///         deliberately fail-closed because an operator who
+    ///         configured it has said "both sources must agree".
+    /// @dev `maxDeviationBps` is in basis points (10000 = 100%). Typical
+    ///      values: 500 (5%) for volatile majors, 100 (1%) for stables.
+    ///      `maxStaleness` in seconds — Pyth publishes sub-second so a
+    ///      tight 30-60s window is the norm.
+    struct PythFeedConfig {
+        bytes32 priceId;
+        uint16 maxDeviationBps;
+        uint40 maxStaleness;
+    }
+
     /// @notice Per-user acceptance of the protocol's Terms of Service.
     ///         Written once per user per ToS version by
     ///         `LegalFacet.acceptTerms`. Frontends gate app entry until
@@ -1182,6 +1202,21 @@ library LibVaipakam {
         //     staleness to avoid false stalenesss reverts overnight.
         mapping(address => FeedOverride) feedOverrides;
 
+        // ─── Pyth secondary oracle (Phase 3.2) ───────────────────────────
+        // Per-asset Pyth price-feed configuration. When an asset has a
+        // non-zero `priceId`, {OracleFacet.getAssetPrice} reads BOTH the
+        // primary Chainlink feed AND the Pyth price, then reverts if the
+        // two diverge by more than `maxDeviationBps`. A stale Pyth read
+        // also reverts — fail-closed so a silent drop to primary-only
+        // can't happen.
+        //
+        // `pythEndpoint` is the chain-specific Pyth contract address
+        // (canonical deployments at
+        // https://docs.pyth.network/price-feeds/contract-addresses/evm).
+        // Set via {OracleAdminFacet.setPythEndpoint}.
+        address pythEndpoint;
+        mapping(address => PythFeedConfig) pythFeedConfigs;
+
         // ─── Legal: Terms of Service acceptance (Phase 4.1) ──────────────
         // On-chain record of every wallet's acceptance of the current ToS
         // version. `currentTosVersion` starts at 0 (no ToS in force), which
@@ -1690,5 +1725,79 @@ library LibVaipakam {
         ovr.maxStaleness = maxStaleness;
         ovr.minValidAnswer = minValidAnswer;
         emit FeedOverrideSet(feed, maxStaleness, minValidAnswer);
+    }
+
+    /// @notice Emitted when the chain's Pyth endpoint address changes.
+    event PythEndpointSet(address indexed previous, address indexed next);
+
+    /// @notice Emitted when a Pyth secondary-feed config is installed or
+    ///         cleared for an asset. `priceId == bytes32(0)` indicates
+    ///         clear; monitoring should alert on clear since it
+    ///         downgrades the deviation-check protection for that asset.
+    event PythFeedConfigSet(
+        address indexed asset,
+        bytes32 priceId,
+        uint16 maxDeviationBps,
+        uint40 maxStaleness
+    );
+
+    /// @notice Installs the per-chain Pyth endpoint address used by
+    ///         {OracleFacet.getAssetPrice} to read secondary prices
+    ///         and by {PriceUpdateFacet.updatePythAndCall} to post
+    ///         signed update payloads. `address(0)` disables the
+    ///         secondary-oracle path across the whole chain — every
+    ///         asset falls back to Chainlink-only reads regardless of
+    ///         its per-asset config.
+    /// @param endpoint The Pyth oracle contract address for this chain.
+    function setPythEndpoint(address endpoint) internal {
+        LibDiamond.enforceIsContractOwner();
+        Storage storage s = storageSlot();
+        address prev = s.pythEndpoint;
+        s.pythEndpoint = endpoint;
+        emit PythEndpointSet(prev, endpoint);
+    }
+
+    /// @notice Installs or clears a Pyth secondary-feed config for an
+    ///         asset. With `priceId = bytes32(0)` the asset falls back
+    ///         to Chainlink-only reads.
+    /// @dev Owner-only. After governance handover this is timelock-
+    ///      gated, so every divergence-bound change has a 48h public
+    ///      warning. `maxDeviationBps` must be in [1, BASIS_POINTS];
+    ///      values of 0 or >= 10000 are treated as misconfiguration
+    ///      and rejected.
+    /// @param asset            Asset address to configure.
+    /// @param priceId          Pyth feed id (32-byte). `bytes32(0)` clears.
+    /// @param maxDeviationBps  Allowed divergence between Chainlink and
+    ///                         Pyth, in basis points. Typical: 100-500.
+    /// @param maxStaleness     Max acceptable Pyth publishTime age, in
+    ///                         seconds. Typical: 30-120.
+    function setPythFeedConfig(
+        address asset,
+        bytes32 priceId,
+        uint16 maxDeviationBps,
+        uint40 maxStaleness
+    ) internal {
+        LibDiamond.enforceIsContractOwner();
+        if (asset == address(0)) revert IVaipakamErrors.InvalidAddress();
+        Storage storage s = storageSlot();
+        PythFeedConfig storage cfg = s.pythFeedConfigs[asset];
+        if (priceId == bytes32(0)) {
+            // Clear both fields explicitly — the "remove secondary"
+            // escape hatch. Other fields ignored.
+            cfg.priceId = bytes32(0);
+            cfg.maxDeviationBps = 0;
+            cfg.maxStaleness = 0;
+            emit PythFeedConfigSet(asset, bytes32(0), 0, 0);
+            return;
+        }
+        // Install: reject obvious misconfig.
+        if (maxDeviationBps == 0 || maxDeviationBps >= BASIS_POINTS) {
+            revert IVaipakamErrors.InvalidAmount();
+        }
+        if (maxStaleness == 0) revert IVaipakamErrors.InvalidAmount();
+        cfg.priceId = priceId;
+        cfg.maxDeviationBps = maxDeviationBps;
+        cfg.maxStaleness = maxStaleness;
+        emit PythFeedConfigSet(asset, priceId, maxDeviationBps, maxStaleness);
     }
 }

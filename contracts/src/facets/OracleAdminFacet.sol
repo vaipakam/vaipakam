@@ -182,4 +182,83 @@ contract OracleAdminFacet {
             .feedOverrides[feed];
         return (ovr.maxStaleness, ovr.minValidAnswer);
     }
+
+    /**
+     * @notice Installs the chain's Pyth endpoint address — the deployed
+     *         Pyth oracle contract this chain reads secondary prices
+     *         from and posts signed update payloads to. Canonical
+     *         per-chain addresses at
+     *         https://docs.pyth.network/price-feeds/contract-addresses/evm.
+     * @dev Owner-only (via `LibVaipakam.setPythEndpoint`). Setting to
+     *      `address(0)` disables the Pyth secondary-oracle path
+     *      globally — every asset falls back to Chainlink-only reads
+     *      regardless of per-asset config. Governance-controlled, so
+     *      timelock-gated after the Safe-Timelock handover.
+     * @param endpoint Pyth contract address for this chain, or zero.
+     */
+    function setPythEndpoint(address endpoint) external {
+        LibVaipakam.setPythEndpoint(endpoint);
+    }
+
+    /**
+     * @notice Returns the current Pyth endpoint. Zero when disabled.
+     */
+    function getPythEndpoint() external view returns (address endpoint) {
+        return LibVaipakam.storageSlot().pythEndpoint;
+    }
+
+    /**
+     * @notice Installs or clears a Pyth secondary-feed configuration
+     *         for a specific asset. When installed,
+     *         {OracleFacet.getAssetPrice} reads Pyth alongside
+     *         Chainlink and reverts on divergence above
+     *         `maxDeviationBps` or Pyth-staleness above `maxStaleness`.
+     * @dev Owner-only (via `LibVaipakam.setPythFeedConfig`).
+     *      `priceId = bytes32(0)` clears the config and reverts the
+     *      asset to Chainlink-only reads. Install requires:
+     *        - `maxDeviationBps` in (0, 10000) — 10000 or higher would
+     *          make the deviation check pointless; 0 would refuse every
+     *          price.
+     *        - `maxStaleness > 0` — zero would refuse every Pyth read.
+     *      Pyth prices can be reasonably tight since Pyth publishes
+     *      sub-second; typical `maxStaleness` is 30-120 seconds.
+     * @param asset           Asset address to configure.
+     * @param priceId         Pyth feed id, or `bytes32(0)` to clear.
+     * @param maxDeviationBps Max allowed divergence from Chainlink, in
+     *                        basis points (100 = 1%).
+     * @param maxStaleness    Max acceptable Pyth publishTime age, in
+     *                        seconds.
+     */
+    function setPythFeedConfig(
+        address asset,
+        bytes32 priceId,
+        uint16 maxDeviationBps,
+        uint40 maxStaleness
+    ) external {
+        LibVaipakam.setPythFeedConfig(
+            asset,
+            priceId,
+            maxDeviationBps,
+            maxStaleness
+        );
+    }
+
+    /**
+     * @notice Reads the current Pyth secondary-feed configuration for
+     *         an asset. Returned `priceId == bytes32(0)` means no Pyth
+     *         check is active for this asset — the asset falls back to
+     *         Chainlink-only reads.
+     */
+    function getPythFeedConfig(
+        address asset
+    )
+        external
+        view
+        returns (bytes32 priceId, uint16 maxDeviationBps, uint40 maxStaleness)
+    {
+        LibVaipakam.PythFeedConfig storage cfg = LibVaipakam
+            .storageSlot()
+            .pythFeedConfigs[asset];
+        return (cfg.priceId, cfg.maxDeviationBps, cfg.maxStaleness);
+    }
 }
