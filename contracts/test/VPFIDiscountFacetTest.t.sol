@@ -2,6 +2,7 @@
 pragma solidity ^0.8.29;
 
 import {SetupTest} from "./SetupTest.t.sol";
+import {defaultAdapterCalls} from "./helpers/AdapterCallHelpers.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IDiamondCut} from "@diamond-3/interfaces/IDiamondCut.sol";
@@ -909,7 +910,7 @@ contract VPFIDiscountFacetTest is SetupTest {
 
         // Lender calls triggerDefault — triggers forfeitBorrowerLif.
         vm.prank(lender);
-        DefaultedFacet(address(diamond)).triggerDefault(loanId);
+        DefaultedFacet(address(diamond)).triggerDefault(loanId, defaultAdapterCalls());
 
         (uint256 rebate, uint256 held) = ClaimFacet(address(diamond))
             .getBorrowerLifRebate(loanId);

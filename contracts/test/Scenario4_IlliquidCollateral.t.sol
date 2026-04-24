@@ -23,6 +23,7 @@ import {DiamondCutFacet} from "../src/facets/DiamondCutFacet.sol";
 import {AccessControlFacet} from "../src/facets/AccessControlFacet.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {HelperTest} from "./HelperTest.sol";
+import {defaultAdapterCalls} from "./helpers/AdapterCallHelpers.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 
 /**
@@ -221,7 +222,7 @@ contract Scenario4_IlliquidCollateral is Test {
         // Step 4: Trigger default (permissionless — anyone can call)
         vm.expectEmit(true, false, false, true);
         emit DefaultedFacet.LoanDefaulted(loanId, true); // fallbackConsentFromBoth = true
-        DefaultedFacet(address(diamond)).triggerDefault(loanId);
+        DefaultedFacet(address(diamond)).triggerDefault(loanId, defaultAdapterCalls());
 
         // Step 5: Verify loan is Defaulted
         loan = LoanFacet(address(diamond)).getLoanDetails(loanId);

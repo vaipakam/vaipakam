@@ -16,6 +16,8 @@ import {VaipakamNFTFacet} from "./VaipakamNFTFacet.sol";
 import {EscrowFactoryFacet} from "./EscrowFactoryFacet.sol";
 import {OracleFacet} from "./OracleFacet.sol";
 import {IZeroExProxy} from "../interfaces/IZeroExProxy.sol";
+import {LibSwap} from "../libraries/LibSwap.sol";
+import {ISwapAdapter} from "../interfaces/ISwapAdapter.sol";
 
 /**
  * @title ClaimFacet
@@ -108,6 +110,56 @@ contract ClaimFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
     function claimAsLender(
         uint256 loanId
     ) external nonReentrant whenNotPaused {
+        // No retry-swap try-list supplied — fallback collateral is
+        // distributed as recorded by the original liquidation. Phase
+        // 7a default behaviour for lenders who don't bring quotes.
+        LibSwap.AdapterCall[] memory empty = new LibSwap.AdapterCall[](0);
+        _claimAsLenderImpl(loanId, empty);
+    }
+
+    /**
+     * @notice Phase 7a counterpart to {claimAsLender}: lender (or a
+     *         keeper acting on the lender's NFT) supplies a ranked
+     *         retry try-list when the loan is in `FallbackPending`.
+     *         Frontend / HF watcher fetches fresh quotes from 0x /
+     *         1inch / UniV3 / Balancer, ranks by expected output, and
+     *         submits — same shape as
+     *         {RiskFacet.triggerLiquidation}'s second argument.
+     *
+     *         Behaviour identical to {claimAsLender} when the loan is
+     *         Repaid / Defaulted (retryCalls ignored). For a
+     *         `FallbackPending` loan the library iterates the try-list,
+     *         commits on first success, and rewrites the lender +
+     *         borrower claims to principal-asset proceeds. Total
+     *         failure leaves the recorded collateral split intact and
+     *         transitions the loan terminally to Defaulted.
+     * @param loanId      Resolved loan id.
+     * @param retryCalls  Caller-ranked AdapterCall[] for the retry swap.
+     *                    Empty array is equivalent to the no-retry
+     *                    variant.
+     */
+    function claimAsLenderWithRetry(
+        uint256 loanId,
+        LibSwap.AdapterCall[] calldata retryCalls
+    ) external nonReentrant whenNotPaused {
+        // Forward calldata-typed array as memory through the impl by
+        // copying. The length is bounded (~4 entries in practice) so
+        // the copy cost is negligible.
+        uint256 n = retryCalls.length;
+        LibSwap.AdapterCall[] memory copied = new LibSwap.AdapterCall[](n);
+        for (uint256 i = 0; i < n; ++i) {
+            copied[i] = LibSwap.AdapterCall({
+                adapterIdx: retryCalls[i].adapterIdx,
+                data: retryCalls[i].data
+            });
+        }
+        _claimAsLenderImpl(loanId, copied);
+    }
+
+    function _claimAsLenderImpl(
+        uint256 loanId,
+        LibSwap.AdapterCall[] memory retryCalls
+    ) internal {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.Loan storage loan = s.loans[loanId];
 
@@ -125,7 +177,7 @@ contract ClaimFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
         // leaves them as the collateral split recorded by the fallback. Once
         // resolved, the loan is terminally Defaulted (no further cure).
         if (loan.status == LibVaipakam.LoanStatus.FallbackPending) {
-            _resolveFallbackIfActive(loanId, loan, true);
+            _resolveFallbackIfActive(loanId, loan, retryCalls);
             LibLifecycle.transition(
                 loan,
                 LibVaipakam.LoanStatus.FallbackPending,
@@ -398,20 +450,21 @@ contract ClaimFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
 
     // ─── Internal Helpers ─────────────────────────────────────────────────────
 
-    /// @dev Resolves a pending fallback snapshot at claim time. If
-    ///      `attemptRetry` is true (lender claim) and no retry has yet been
-    ///      tried, we run the 0x swap one more time under the same 6%
-    ///      slippage gate used at liquidation time. On success: collateral
-    ///      held in the Diamond is converted to principal-asset proceeds
-    ///      and split per README §7 (lender due first, then 2% treasury,
-    ///      surplus to borrower); claims are rewritten accordingly. On
-    ///      failure (or when called from the borrower-claim path): the
-    ///      pre-recorded collateral split is pushed from the Diamond to
-    ///      lender/treasury/borrower escrows.
+    /// @dev Resolves a pending fallback snapshot at claim time. When
+    ///      `retryCalls` is non-empty and no retry has yet been tried,
+    ///      we run the swap one more time through the Phase-7a adapter
+    ///      failover chain under the same 6% slippage gate used at
+    ///      liquidation time. On success: collateral held in the
+    ///      Diamond is converted to principal-asset proceeds and split
+    ///      per README §7 (lender due first, then 2% treasury, surplus
+    ///      to borrower); claims are rewritten accordingly. On failure
+    ///      (empty try-list, all adapters reverted, or borrower claim
+    ///      path): the pre-recorded collateral split is pushed from
+    ///      the Diamond to lender/treasury/borrower escrows.
     function _resolveFallbackIfActive(
         uint256 loanId,
         LibVaipakam.Loan storage loan,
-        bool attemptRetry
+        LibSwap.AdapterCall[] memory retryCalls
     ) internal {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.FallbackSnapshot storage snap = s.fallbackSnapshot[loanId];
@@ -419,9 +472,9 @@ contract ClaimFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
 
         bool retrySucceeded;
         uint256 proceeds;
-        if (attemptRetry && !snap.retryAttempted) {
+        if (retryCalls.length > 0 && !snap.retryAttempted) {
             snap.retryAttempted = true;
-            (retrySucceeded, proceeds) = _attemptRetrySwap(loan);
+            (retrySucceeded, proceeds) = _attemptRetrySwap(loanId, loan, retryCalls);
             emit ClaimRetryExecuted(loanId, retrySucceeded, proceeds);
         }
 
@@ -433,20 +486,17 @@ contract ClaimFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
         snap.active = false;
     }
 
-    /// @dev Runs the single 0x retry swap from the collateral held in the
-    ///      Diamond to the principal asset. Returns (false, 0) if the swap
-    ///      reverts — e.g. still over the 6% slippage ceiling, thin
-    ///      liquidity, or any technical failure.
+    /// @dev Phase 7a — runs the retry swap through {LibSwap.swapWithFailover}.
+    ///      `retryCalls` is the lender / keeper-supplied ranked
+    ///      try-list across registered adapters. Returns (false, 0) if
+    ///      every adapter reverted or the try-list was empty (still
+    ///      over the 6% slippage ceiling, thin liquidity, or any
+    ///      technical failure).
     function _attemptRetrySwap(
-        LibVaipakam.Loan storage loan
+        uint256 loanId,
+        LibVaipakam.Loan storage loan,
+        LibSwap.AdapterCall[] memory retryCalls
     ) internal returns (bool, uint256) {
-        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        address allowanceTarget = s.allowanceTarget;
-        IERC20(loan.collateralAsset).approve(
-            allowanceTarget,
-            loan.collateralAmount
-        );
-
         uint256 expected = _expectedSwapOutput(
             loan.collateralAsset,
             loan.principalAsset,
@@ -456,19 +506,76 @@ contract ClaimFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
             (LibVaipakam.BASIS_POINTS -
                 LibVaipakam.cfgMaxLiquidationSlippageBps())) /
             LibVaipakam.BASIS_POINTS;
-        bytes memory swapData = abi.encodeWithSelector(
-            IZeroExProxy.swap.selector,
+
+        // LibSwap takes calldata; we have memory here. Solidity
+        // doesn't auto-convert memory→calldata for library internal
+        // calls, so swap to an inline assembly trick OR call a small
+        // wrapper that takes calldata. Cleanest: declare a tiny
+        // external `_libSwapWrapper(...)` selector via address(this).
+        // Skipping that complexity by inlining the iteration here —
+        // mirrors LibSwap.swapWithFailover with a memory try-list.
+        return _swapWithFailoverMem(
+            loanId,
             loan.collateralAsset,
             loan.principalAsset,
             loan.collateralAmount,
             minOut,
-            address(this)
+            address(this),
+            retryCalls
         );
+    }
 
-        (bool ok, bytes memory result) = s.zeroExProxy.call(swapData);
-        IERC20(loan.collateralAsset).approve(allowanceTarget, 0);
-        if (!ok) return (false, 0);
-        return (true, abi.decode(result, (uint256)));
+    /// @dev Memory-array variant of {LibSwap.swapWithFailover}.
+    ///      Identical semantics + invariants — only the try-list is
+    ///      `memory` (came from the storage-copied retry list above)
+    ///      instead of `calldata`. Kept local to ClaimFacet because
+    ///      the only caller is {_attemptRetrySwap}; promoting it to
+    ///      LibSwap would force every caller to overload their try-
+    ///      list location.
+    function _swapWithFailoverMem(
+        uint256 loanId,
+        address inputToken,
+        address outputToken,
+        uint256 inputAmount,
+        uint256 minOutputAmount,
+        address recipient,
+        LibSwap.AdapterCall[] memory calls
+    ) internal returns (bool, uint256) {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        uint256 registered = s.swapAdapters.length;
+        if (registered == 0) revert LibSwap.NoSwapAdaptersConfigured();
+        uint256 n = calls.length;
+        if (n == 0) return (false, 0);
+
+        for (uint256 i = 0; i < n; ++i) {
+            uint256 idx = calls[i].adapterIdx;
+            if (idx >= registered) {
+                revert LibSwap.AdapterIndexOutOfRange(idx, registered);
+            }
+            address adapter = s.swapAdapters[idx];
+            SafeERC20.forceApprove(IERC20(inputToken), adapter, 0);
+            SafeERC20.forceApprove(IERC20(inputToken), adapter, inputAmount);
+            try
+                ISwapAdapter(adapter).execute(
+                    inputToken,
+                    outputToken,
+                    inputAmount,
+                    minOutputAmount,
+                    recipient,
+                    calls[i].data
+                )
+            returns (uint256 out_) {
+                SafeERC20.forceApprove(IERC20(inputToken), adapter, 0);
+                emit LibSwap.SwapAdapterAttempted(loanId, idx, adapter, true);
+                emit LibSwap.SwapAdapterSucceeded(loanId, idx, adapter, out_);
+                return (true, out_);
+            } catch {
+                SafeERC20.forceApprove(IERC20(inputToken), adapter, 0);
+                emit LibSwap.SwapAdapterAttempted(loanId, idx, adapter, false);
+            }
+        }
+        emit LibSwap.SwapAllAdaptersFailed(loanId);
+        return (false, 0);
     }
 
     /// @dev Distributes principal-asset proceeds from a successful retry

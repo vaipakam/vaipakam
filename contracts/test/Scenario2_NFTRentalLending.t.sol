@@ -26,6 +26,7 @@ import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {DiamondCutFacet} from "../src/facets/DiamondCutFacet.sol";
 import {ERC20Mock} from "../test/mocks/ERC20Mock.sol";
 import {HelperTest} from "./HelperTest.sol";
+import {defaultAdapterCalls} from "./helpers/AdapterCallHelpers.sol";
 import {AccessControlFacet} from "../src/facets/AccessControlFacet.sol";
 import {ZeroExProxyMock} from "./mocks/ZeroExProxyMock.sol";
 import {MockRentableNFT721} from "./mocks/MockRentableNFT721.sol";
@@ -397,7 +398,7 @@ contract Scenario2_NFTRentalLending is Test {
         vm.warp(endTime + gracePeriod + 1); // Past grace
 
         // Step 3: Trigger default (permissionless)
-        DefaultedFacet(address(diamond)).triggerDefault(loanId);
+        DefaultedFacet(address(diamond)).triggerDefault(loanId, defaultAdapterCalls());
 
         // Step 4: Verify loan status = Defaulted
         loan = LoanFacet(address(diamond)).getLoanDetails(loanId);

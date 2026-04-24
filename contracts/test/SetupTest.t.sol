@@ -64,6 +64,7 @@ import {MetricsFacet} from "../src/facets/MetricsFacet.sol";
 import {VPFITokenFacet} from "../src/facets/VPFITokenFacet.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {ZeroExProxyMock} from "./mocks/ZeroExProxyMock.sol";
+import {MockZeroExLegacyAdapter} from "./mocks/MockZeroExLegacyAdapter.sol";
 import {MockRentableNFT721} from "./mocks/MockRentableNFT721.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 
@@ -308,6 +309,16 @@ contract SetupTest is Test {
             address(allowanceTarget)
             // address(0xDef1C0ded9bec7F1a1670819833240f027b25EfF)
         );
+
+        // Phase 7a: register the legacy-shim swap adapter as slot 0 in
+        // the failover chain so the existing test corpus exercises the
+        // same 0x mock through the new ISwapAdapter abstraction. Tests
+        // that need richer chains push additional adapters via
+        // `addSwapAdapter` in their own setUp.
+        MockZeroExLegacyAdapter legacyShim = new MockZeroExLegacyAdapter(
+            address(mockZeroExProxy)
+        );
+        AdminFacet(address(diamond)).addSwapAdapter(address(legacyShim));
         // address(escrowImpl)
 
         // Mock balances

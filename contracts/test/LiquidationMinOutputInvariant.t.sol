@@ -3,6 +3,7 @@ pragma solidity ^0.8.29;
 
 import {RiskFacetTest} from "./RiskFacetTest.t.sol";
 import {RiskFacet} from "../src/facets/RiskFacet.sol";
+import {defaultAdapterCalls} from "./helpers/AdapterCallHelpers.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {OracleFacet} from "../src/facets/OracleFacet.sol";
 import {EscrowFactoryFacet} from "../src/facets/EscrowFactoryFacet.sol";
@@ -102,7 +103,7 @@ contract LiquidationMinOutputInvariantTest is RiskFacetTest {
         // does not grant any caller-controlled input into the swap.
         address randomLiquidator = makeAddr("randomLiquidator");
         vm.prank(randomLiquidator);
-        RiskFacet(address(diamond)).triggerLiquidation(loanId);
+        RiskFacet(address(diamond)).triggerLiquidation(loanId, defaultAdapterCalls());
     }
 
     /// @dev Fuzzed counterpart: regardless of which address initiates the
@@ -176,6 +177,6 @@ contract LiquidationMinOutputInvariantTest is RiskFacetTest {
         );
 
         vm.prank(liquidator);
-        RiskFacet(address(diamond)).triggerLiquidation(loanId);
+        RiskFacet(address(diamond)).triggerLiquidation(loanId, defaultAdapterCalls());
     }
 }

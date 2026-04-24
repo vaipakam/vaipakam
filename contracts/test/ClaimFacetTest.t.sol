@@ -26,6 +26,7 @@ import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {DiamondCutFacet} from "../src/facets/DiamondCutFacet.sol";
 import {ERC20Mock} from "../test/mocks/ERC20Mock.sol";
 import {HelperTest} from "./HelperTest.sol";
+import {defaultAdapterCalls} from "./helpers/AdapterCallHelpers.sol";
 import {AccessControlFacet} from "../src/facets/AccessControlFacet.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {ZeroExProxyMock} from "./mocks/ZeroExProxyMock.sol";
@@ -368,7 +369,7 @@ contract ClaimFacetTest is Test {
             abi.encode(LibVaipakam.LiquidityStatus.Illiquid)
         );
 
-        DefaultedFacet(address(diamond)).triggerDefault(loanId);
+        DefaultedFacet(address(diamond)).triggerDefault(loanId, defaultAdapterCalls());
 
         // Borrower has no claim after illiquid default
         vm.prank(borrower);
@@ -425,7 +426,7 @@ contract ClaimFacetTest is Test {
             abi.encodeWithSelector(OracleFacet.checkLiquidity.selector, mockCollateralERC20),
             abi.encode(LibVaipakam.LiquidityStatus.Illiquid)
         );
-        DefaultedFacet(address(diamond)).triggerDefault(loanId);
+        DefaultedFacet(address(diamond)).triggerDefault(loanId, defaultAdapterCalls());
 
         // Loan is Defaulted; borrower has no claim — lender claiming should settle immediately
         vm.prank(lender);
@@ -533,7 +534,7 @@ contract ClaimFacetTest is Test {
             abi.encodeWithSelector(OracleFacet.checkLiquidity.selector, mockCollateralERC20),
             abi.encode(LibVaipakam.LiquidityStatus.Illiquid)
         );
-        DefaultedFacet(address(diamond)).triggerDefault(loanId);
+        DefaultedFacet(address(diamond)).triggerDefault(loanId, defaultAdapterCalls());
 
         (, uint256 lenderAmount,) = ClaimFacet(address(diamond)).getClaimableAmount(loanId, true);
         assertGt(lenderAmount, 0);

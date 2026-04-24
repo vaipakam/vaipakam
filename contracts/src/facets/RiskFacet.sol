@@ -293,7 +293,8 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
      * @param loanId The loan ID to liquidate.
      */
     function triggerLiquidation(
-        uint256 loanId
+        uint256 loanId,
+        LibSwap.AdapterCall[] calldata adapterCalls
     ) external nonReentrant whenNotPaused {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.Loan storage loan = s.loans[loanId];
@@ -337,18 +338,12 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
             EscrowWithdrawFailed.selector
         );
 
-        address zeroExProxy = _getZeroExProxy();
-
-        address allowanceTarget = _getAllowanceTarget();
-
-        // Approve 0x for collateral
-        IERC20(loan.collateralAsset).approve(
-            allowanceTarget,
-            loan.collateralAmount
-        );
-
         // Compute expected proceeds from oracle prices and the slippage floor
-        // (94% of expected = 6% slippage ceiling per README §7).
+        // (94% of expected = 6% slippage ceiling per README §7). The floor
+        // is passed unchanged to LibSwap; each adapter enforces it on its
+        // own side either via the underlying DEX's amountOutMinimum guard
+        // (UniV3, Balancer) or a balance-delta check around the call
+        // (aggregator base).
         uint256 expectedProceeds = LibFallback.expectedSwapOutput(
             address(this),
             loan.collateralAsset,
@@ -360,33 +355,27 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
             (LibVaipakam.BASIS_POINTS - maxSlippageBps)) /
             LibVaipakam.BASIS_POINTS;
 
-        // Construct the swap calldata on-chain so the `minOutputAmount` guard
-        // is enforced atomically by the DEX: any slippage > 6% — or abnormal
-        // market / liquidity / technical failure — reverts the call before
-        // collateral leaves the diamond. README §3 lines 140–141.
-        bytes memory swapData = abi.encodeWithSelector(
-            IZeroExProxy.swap.selector,
+        // Phase 7a — caller-ranked failover across the registered swap
+        // adapters. `adapterCalls` is the keeper-supplied try-list,
+        // ranked by expected output (best first). LibSwap iterates in
+        // submitted order, handles per-adapter exact-scope approvals,
+        // and commits on the first success. Total failure (all adapters
+        // reverted, or empty try-list) routes to the same full-
+        // collateral fallback path as pre-7a.
+        (bool swapSuccess, uint256 proceedsFromSwap, ) = LibSwap.swapWithFailover(
+            loanId,
             loan.collateralAsset,
             loan.principalAsset,
             loan.collateralAmount,
             minOutputAmount,
-            address(this)
+            address(this),
+            adapterCalls
         );
-
-        (bool swapSuccess, bytes memory result) = zeroExProxy.call(swapData);
         if (!swapSuccess) {
-            // Slippage exceeded, illiquid pool, or technical failure.
-            // Revoke approval and resolve via the claimable full-collateral
-            // fallback — the lender's economic entitlement becomes the raw
-            // collateral asset via the Vaipakam NFT claim flow.
-            IERC20(loan.collateralAsset).approve(allowanceTarget, 0);
             _fullCollateralTransferFallback(loanId, loan);
             return;
         }
-        uint256 proceeds = abi.decode(result, (uint256));
-
-        // Revoke approval
-        IERC20(loan.collateralAsset).approve(allowanceTarget, 0);
+        uint256 proceeds = proceedsFromSwap;
 
         // Calculate debt: principal + accrued interest + late fees (per README Section 7).
         uint256 currentBorrowBalance = _calculateCurrentBorrowBalance(loan);

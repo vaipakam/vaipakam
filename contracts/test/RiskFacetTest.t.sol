@@ -71,6 +71,7 @@ import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {DiamondCutFacet} from "../src/facets/DiamondCutFacet.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 import {HelperTest} from "./HelperTest.sol";
+import {defaultAdapterCalls} from "./helpers/AdapterCallHelpers.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {ZeroExProxyMock} from "./mocks/ZeroExProxyMock.sol";
 import {MockRentableNFT721} from "./mocks/MockRentableNFT721.sol";
@@ -821,7 +822,7 @@ contract RiskFacetTest is Test {
         vm.expectEmit(true, true, false, true);
         emit RiskFacet.HFLiquidationTriggered(loanId, address(this), 1980 ether);
 
-        RiskFacet(address(diamond)).triggerLiquidation(loanId);
+        RiskFacet(address(diamond)).triggerLiquidation(loanId, defaultAdapterCalls());
 
         LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(loanId);
         assertEq(uint8(loan.status), uint8(LibVaipakam.LoanStatus.Defaulted));
@@ -901,11 +902,11 @@ contract RiskFacetTest is Test {
         deal(mockERC20, address(diamond), 1800 ether);
         deal(mockCollateralERC20, address(diamond), 1800 ether);
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector), abi.encode(true));
-        RiskFacet(address(diamond)).triggerLiquidation(loanId);
+        RiskFacet(address(diamond)).triggerLiquidation(loanId, defaultAdapterCalls());
 
         // Second call should revert as loan is now Defaulted
         vm.expectRevert(RiskFacet.InvalidLoan.selector);
-        RiskFacet(address(diamond)).triggerLiquidation(loanId);
+        RiskFacet(address(diamond)).triggerLiquidation(loanId, defaultAdapterCalls());
         vm.clearMockedCalls();
     }
 
@@ -949,7 +950,7 @@ contract RiskFacetTest is Test {
         );
 
         vm.expectRevert(IVaipakamErrors.NonLiquidAsset.selector);
-        RiskFacet(address(diamond)).triggerLiquidation(loanId);
+        RiskFacet(address(diamond)).triggerLiquidation(loanId, defaultAdapterCalls());
         vm.clearMockedCalls();
     }
 
@@ -964,7 +965,7 @@ contract RiskFacetTest is Test {
         // HF-based liquidation always requires HF < 1, even past grace.
         // Healthy loans past grace are handled by DefaultedFacet, not RiskFacet.
         vm.expectRevert(RiskFacet.HealthFactorNotLow.selector);
-        RiskFacet(address(diamond)).triggerLiquidation(loanId);
+        RiskFacet(address(diamond)).triggerLiquidation(loanId, defaultAdapterCalls());
     }
 
     /// @dev Tests triggerLiquidation reverts if HF >= 1 and still within grace (HealthFactorNotLow).
@@ -974,7 +975,7 @@ contract RiskFacetTest is Test {
         // HF is 1.53 (healthy) and still within grace period
         // The real calculateHealthFactor returns 1.53e18 (> 1e18)
         vm.expectRevert(RiskFacet.HealthFactorNotLow.selector);
-        RiskFacet(address(diamond)).triggerLiquidation(loanId);
+        RiskFacet(address(diamond)).triggerLiquidation(loanId, defaultAdapterCalls());
     }
 
     /// @dev Tests that borrow balance grows over time (indirectly via calculateLTV).
@@ -1037,7 +1038,7 @@ contract RiskFacetTest is Test {
 
         vm.expectEmit(true, true, false, true);
         emit RiskFacet.LiquidationFallback(loanId, lender, 1800 ether);
-        RiskFacet(address(diamond)).triggerLiquidation(loanId);
+        RiskFacet(address(diamond)).triggerLiquidation(loanId, defaultAdapterCalls());
 
         LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(loanId);
         assertEq(uint8(loan.status), uint8(LibVaipakam.LoanStatus.FallbackPending));
@@ -1087,7 +1088,7 @@ contract RiskFacetTest is Test {
 
         vm.prank(liquidator);
         vm.expectRevert(IVaipakamErrors.KYCRequired.selector);
-        RiskFacet(address(diamond)).triggerLiquidation(loanId);
+        RiskFacet(address(diamond)).triggerLiquidation(loanId, defaultAdapterCalls());
         vm.clearMockedCalls();
     }
 
@@ -1110,7 +1111,7 @@ contract RiskFacetTest is Test {
         );
 
         vm.expectRevert(bytes("withdraw failed"));
-        RiskFacet(address(diamond)).triggerLiquidation(loanId);
+        RiskFacet(address(diamond)).triggerLiquidation(loanId, defaultAdapterCalls());
         vm.clearMockedCalls();
     }
 
@@ -1143,7 +1144,7 @@ contract RiskFacetTest is Test {
         );
 
         vm.expectRevert(bytes("escrow fail"));
-        RiskFacet(address(diamond)).triggerLiquidation(loanId);
+        RiskFacet(address(diamond)).triggerLiquidation(loanId, defaultAdapterCalls());
         vm.clearMockedCalls();
     }
 
@@ -1176,7 +1177,7 @@ contract RiskFacetTest is Test {
         );
 
         vm.expectRevert(bytes("nft fail"));
-        RiskFacet(address(diamond)).triggerLiquidation(loanId);
+        RiskFacet(address(diamond)).triggerLiquidation(loanId, defaultAdapterCalls());
         vm.clearMockedCalls();
     }
 
@@ -1217,7 +1218,7 @@ contract RiskFacetTest is Test {
         );
 
         vm.expectRevert(bytes("nft fail"));
-        RiskFacet(address(diamond)).triggerLiquidation(loanId);
+        RiskFacet(address(diamond)).triggerLiquidation(loanId, defaultAdapterCalls());
         vm.clearMockedCalls();
     }
 
@@ -1273,7 +1274,7 @@ contract RiskFacetTest is Test {
 
         vm.expectEmit(true, true, false, true);
         emit RiskFacet.LiquidationFallback(loanId, lender, 1800 ether);
-        RiskFacet(address(diamond)).triggerLiquidation(loanId);
+        RiskFacet(address(diamond)).triggerLiquidation(loanId, defaultAdapterCalls());
 
         // Loan should now be Defaulted; lender claim should record the full collateral.
         LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(loanId);
@@ -1357,7 +1358,7 @@ contract RiskFacetTest is Test {
         deal(mockERC20, address(diamond), 1800 ether + 900 ether);
         deal(mockCollateralERC20, address(diamond), 1800 ether);
 
-        RiskFacet(address(diamond)).triggerLiquidation(loanId);
+        RiskFacet(address(diamond)).triggerLiquidation(loanId, defaultAdapterCalls());
 
         // Lender gets allocated (afterBonus), no treasury fee since allocated < principal
         (, uint256 lenderAmt,) = ClaimFacet(address(diamond)).getClaimableAmount(loanId, true);
@@ -1431,7 +1432,7 @@ contract RiskFacetTest is Test {
         deal(mockERC20, address(diamond), 1800 ether + highProceeds); // enough for all transfers
         deal(mockCollateralERC20, address(diamond), 1800 ether);
 
-        RiskFacet(address(diamond)).triggerLiquidation(loanId);
+        RiskFacet(address(diamond)).triggerLiquidation(loanId, defaultAdapterCalls());
 
         // Verify borrower surplus exists
         (, uint256 borrowerAmt,) = ClaimFacet(address(diamond)).getClaimableAmount(loanId, false);
@@ -1543,7 +1544,7 @@ contract RiskFacetTest is Test {
         deal(mockERC20, address(diamond), 1800 ether + lowProceeds);
         deal(mockCollateralERC20, address(diamond), 1800 ether);
 
-        RiskFacet(address(diamond)).triggerLiquidation(loanId);
+        RiskFacet(address(diamond)).triggerLiquidation(loanId, defaultAdapterCalls());
 
         // Verify: lender gets allocated (afterBonus=342), no treasury fee
         (, uint256 lenderAmt,) = ClaimFacet(address(diamond)).getClaimableAmount(loanId, true);
@@ -1593,7 +1594,7 @@ contract RiskFacetTest is Test {
         // ZeroExProxyMock rate is 11/10 → proceeds = 1980 ether
         vm.expectEmit(true, true, false, true);
         emit RiskFacet.HFLiquidationTriggered(loanId, address(this), 1980 ether);
-        RiskFacet(address(diamond)).triggerLiquidation(loanId);
+        RiskFacet(address(diamond)).triggerLiquidation(loanId, defaultAdapterCalls());
 
         LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(loanId);
         assertEq(uint8(loan.status), uint8(LibVaipakam.LoanStatus.Defaulted));
@@ -1628,7 +1629,7 @@ contract RiskFacetTest is Test {
         deal(mockERC20, address(diamond), 1800 ether);
         deal(mockCollateralERC20, address(diamond), 1800 ether);
 
-        RiskFacet(address(diamond)).triggerLiquidation(loanId);
+        RiskFacet(address(diamond)).triggerLiquidation(loanId, defaultAdapterCalls());
 
         // Verify borrower has surplus
         (, uint256 borrowerAmt,) = ClaimFacet(address(diamond)).getClaimableAmount(loanId, false);
@@ -1671,7 +1672,7 @@ contract RiskFacetTest is Test {
 
         vm.expectEmit(true, true, false, true);
         emit RiskFacet.LiquidationFallback(loanId, lender, 1800 ether);
-        RiskFacet(address(diamond)).triggerLiquidation(loanId);
+        RiskFacet(address(diamond)).triggerLiquidation(loanId, defaultAdapterCalls());
 
         LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(loanId);
         assertEq(uint8(loan.status), uint8(LibVaipakam.LoanStatus.FallbackPending));
@@ -1709,7 +1710,7 @@ contract RiskFacetTest is Test {
         );
 
         vm.expectRevert(IVaipakamErrors.NonLiquidAsset.selector);
-        RiskFacet(address(diamond)).triggerLiquidation(loanId);
+        RiskFacet(address(diamond)).triggerLiquidation(loanId, defaultAdapterCalls());
         vm.clearMockedCalls();
     }
 
@@ -1747,7 +1748,7 @@ contract RiskFacetTest is Test {
         );
 
         vm.expectRevert(bytes("nft update fail"));
-        RiskFacet(address(diamond)).triggerLiquidation(loanId);
+        RiskFacet(address(diamond)).triggerLiquidation(loanId, defaultAdapterCalls());
         vm.clearMockedCalls();
     }
 
@@ -1766,7 +1767,7 @@ contract RiskFacetTest is Test {
         deal(mockCollateralERC20, address(diamond), 1800 ether);
         vm.mockCallRevert(address(mockZeroExProxy), abi.encodeWithSelector(IZeroExProxy.swap.selector), "swap revert");
 
-        RiskFacet(address(diamond)).triggerLiquidation(loanId);
+        RiskFacet(address(diamond)).triggerLiquidation(loanId, defaultAdapterCalls());
 
         (, uint256 lenderAmt,) = ClaimFacet(address(diamond)).getClaimableAmount(loanId, true);
         (, uint256 borrowerAmt,) = ClaimFacet(address(diamond)).getClaimableAmount(loanId, false);
@@ -1793,7 +1794,7 @@ contract RiskFacetTest is Test {
         deal(mockCollateralERC20, address(diamond), 1800 ether);
         vm.mockCallRevert(address(mockZeroExProxy), abi.encodeWithSelector(IZeroExProxy.swap.selector), "swap revert");
 
-        RiskFacet(address(diamond)).triggerLiquidation(loanId);
+        RiskFacet(address(diamond)).triggerLiquidation(loanId, defaultAdapterCalls());
 
         (, uint256 lenderAmt,) = ClaimFacet(address(diamond)).getClaimableAmount(loanId, true);
         (, uint256 borrowerAmt, bool borrowerClaimed) = ClaimFacet(address(diamond)).getClaimableAmount(loanId, false);
@@ -1822,7 +1823,7 @@ contract RiskFacetTest is Test {
 
         // Initial swap reverts → fallback. Collateral stays in Diamond.
         vm.mockCallRevert(address(mockZeroExProxy), abi.encodeWithSelector(IZeroExProxy.swap.selector), "swap revert");
-        RiskFacet(address(diamond)).triggerLiquidation(loanId);
+        RiskFacet(address(diamond)).triggerLiquidation(loanId, defaultAdapterCalls());
 
         // Now stub swap for the retry: return 1980 ether proceeds.
         vm.clearMockedCalls();
@@ -1866,7 +1867,7 @@ contract RiskFacetTest is Test {
         deal(mockCollateralERC20, address(diamond), 1800 ether);
         vm.mockCallRevert(address(mockZeroExProxy), abi.encodeWithSelector(IZeroExProxy.swap.selector), "swap revert");
 
-        RiskFacet(address(diamond)).triggerLiquidation(loanId);
+        RiskFacet(address(diamond)).triggerLiquidation(loanId, defaultAdapterCalls());
 
         // Retry also reverts.
         uint256 lenderBefore = IERC20(mockCollateralERC20).balanceOf(lender);
@@ -1933,7 +1934,7 @@ contract RiskFacetTest is Test {
         );
 
         vm.expectRevert(bytes("nft update fail"));
-        RiskFacet(address(diamond)).triggerLiquidation(loanId);
+        RiskFacet(address(diamond)).triggerLiquidation(loanId, defaultAdapterCalls());
         vm.clearMockedCalls();
     }
 
@@ -2002,7 +2003,7 @@ contract RiskFacetTest is Test {
 
         // Third-party liquidator triggers liquidation — should SUCCEED
         vm.prank(randomLiquidator);
-        RiskFacet(address(diamond)).triggerLiquidation(loanId);
+        RiskFacet(address(diamond)).triggerLiquidation(loanId, defaultAdapterCalls());
 
         // Verify loan is now Defaulted
         LibVaipakam.Loan memory loanAfter = LoanFacet(address(diamond)).getLoanDetails(loanId);

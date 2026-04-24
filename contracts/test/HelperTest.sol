@@ -32,6 +32,7 @@ import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 
 contract HelperTest {
+
     function getTestMutatorFacetSelectors()
         public
         pure
@@ -286,12 +287,13 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](5);
+        selectors = new bytes4[](6);
         selectors[0] = ClaimFacet.claimAsLender.selector;
         selectors[1] = ClaimFacet.claimAsBorrower.selector;
         selectors[2] = ClaimFacet.getClaimableAmount.selector;
         selectors[3] = ClaimFacet.getClaimable.selector;
         selectors[4] = ClaimFacet.getBorrowerLifRebate.selector;
+        selectors[5] = ClaimFacet.claimAsLenderWithRetry.selector;
         return selectors;
     }
 

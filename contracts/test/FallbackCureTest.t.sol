@@ -2,6 +2,7 @@
 pragma solidity ^0.8.29;
 
 import {SetupTest} from "./SetupTest.t.sol";
+import {defaultAdapterCalls} from "./helpers/AdapterCallHelpers.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {OfferFacet} from "../src/facets/OfferFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
@@ -108,7 +109,7 @@ contract FallbackCureTest is SetupTest, IVaipakamErrors {
         // eventual cure transfer-back.
         deal(mockCollateralERC20, address(diamond), COLLATERAL * 2);
 
-        DefaultedFacet(address(diamond)).triggerDefault(1);
+        DefaultedFacet(address(diamond)).triggerDefault(1, defaultAdapterCalls());
         return 1;
     }
 

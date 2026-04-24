@@ -2,6 +2,7 @@
 pragma solidity ^0.8.29;
 
 import {Test} from "forge-std/Test.sol";
+import {defaultAdapterCalls} from "../helpers/AdapterCallHelpers.sol";
 import {InvariantBase} from "./InvariantBase.sol";
 import {OfferFacet} from "../../src/facets/OfferFacet.sol";
 import {LibVaipakam} from "../../src/libraries/LibVaipakam.sol";
@@ -276,7 +277,7 @@ contract Handler is Test {
         uint256 target = L.startTime + L.durationDays * 1 days + 30 days;
         if (target > block.timestamp) vm.warp(target);
 
-        try DefaultedFacet(diamond).triggerDefault(loanId) {} catch {}
+        try DefaultedFacet(diamond).triggerDefault(loanId, defaultAdapterCalls()) {} catch {}
     }
 
     /// @notice Lender claims on a defaulted / fallback-pending loan.

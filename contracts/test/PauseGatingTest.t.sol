@@ -24,6 +24,7 @@ import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
 import {DefaultedFacet} from "../src/facets/DefaultedFacet.sol";
 import {TreasuryFacet} from "../src/facets/TreasuryFacet.sol";
 import {HelperTest} from "./HelperTest.sol";
+import {defaultAdapterCalls} from "./helpers/AdapterCallHelpers.sol";
 
 /**
  * @title PauseGatingTest
@@ -202,7 +203,7 @@ contract PauseGatingTest is Test {
 
     function test_pause_triggerLiquidation() public {
         vm.expectRevert(LibPausable.EnforcedPause.selector);
-        RiskFacet(address(diamond)).triggerLiquidation(0);
+        RiskFacet(address(diamond)).triggerLiquidation(0, defaultAdapterCalls());
     }
 
     function test_pause_updateRiskParams() public {
@@ -214,7 +215,7 @@ contract PauseGatingTest is Test {
 
     function test_pause_triggerDefault() public {
         vm.expectRevert(LibPausable.EnforcedPause.selector);
-        DefaultedFacet(address(diamond)).triggerDefault(0);
+        DefaultedFacet(address(diamond)).triggerDefault(0, defaultAdapterCalls());
     }
 
     // ── ProfileFacet ────────────────────────────────────────────────────────
