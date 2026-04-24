@@ -324,17 +324,25 @@ async function jsonRpcCall<T>(
       params,
     }),
   });
-  if (!response.ok) {
-    throw new Error(`${method}: HTTP ${response.status} ${response.statusText}`);
-  }
-  const body = (await response.json()) as {
-    result?: T;
-    error?: { code?: number; message?: string };
-  };
-  if (body.error) {
+  // Public RPCs often return the real error (e.g. "query returned more
+  // than 10000 results") in the JSON body even when the HTTP status is
+  // 400 — so read the body first and only fall back to the HTTP code
+  // if parsing fails. This is how the downstream block-range-size
+  // detector gets the strings it needs to halve the chunk and recover.
+  const body = await response
+    .json()
+    .catch(() => null) as
+    | { result?: T; error?: { code?: number; message?: string } }
+    | null;
+  if (body?.error) {
     throw new Error(body.error.message ?? `${method} failed`);
   }
-  return body.result as T;
+  if (!response.ok) {
+    throw new Error(
+      `${method}: HTTP ${response.status} ${response.statusText}`.trim(),
+    );
+  }
+  return (body?.result as T) ?? (undefined as T);
 }
 
 async function rawGetLogs(
