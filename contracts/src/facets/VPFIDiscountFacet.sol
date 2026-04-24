@@ -11,6 +11,7 @@ import {DiamondPausable} from "../libraries/LibPausable.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import {LibPermit2, ISignatureTransfer} from "../libraries/LibPermit2.sol";
 import {Address} from "@openzeppelin/contracts/utils/Address.sol";
 import {EscrowFactoryFacet} from "./EscrowFactoryFacet.sol";
 
@@ -352,29 +353,70 @@ contract VPFIDiscountFacet is
         nonReentrant
         whenNotPaused
     {
+        (address vpfi, address escrow) = _prepareDeposit(amount);
+        IERC20(vpfi).safeTransferFrom(msg.sender, escrow, amount);
+        emit VPFIDepositedToEscrow(msg.sender, amount);
+    }
+
+    /**
+     * @notice Permit2 variant of {depositVPFIToEscrow} (Phase 8b.1).
+     *
+     * @dev Pulls VPFI from the caller's wallet to their escrow via
+     *      Uniswap's Permit2 in a single transaction — no separate
+     *      `approve` tx required. The caller signs an EIP-712
+     *      `PermitTransferFrom` typed-data payload off-chain (frontend
+     *      handles payload + signature construction), then submits the
+     *      signature alongside the deposit call here.
+     *
+     *      Staking + discount-accrual side-effects mirror
+     *      {depositVPFIToEscrow} — both paths share `_prepareDeposit`.
+     *
+     *      `permit.permitted.token` MUST equal the VPFI token address;
+     *      the binding check is enforced by Permit2 itself (the token
+     *      is mixed into the EIP-712 digest the user signed). `amount`
+     *      MUST be ≤ `permit.permitted.amount`, again enforced inside
+     *      Permit2.
+     *
+     * @param amount    VPFI wei to deposit (18 dec).
+     * @param permit    `PermitTransferFrom` struct the user signed.
+     * @param signature 65-byte ECDSA signature over the EIP-712 digest.
+     */
+    function depositVPFIToEscrowWithPermit(
+        uint256 amount,
+        ISignatureTransfer.PermitTransferFrom calldata permit,
+        bytes calldata signature
+    ) external nonReentrant whenNotPaused {
+        (, address escrow) = _prepareDeposit(amount);
+        LibPermit2.pull(msg.sender, escrow, amount, permit, signature);
+        emit VPFIDepositedToEscrow(msg.sender, amount);
+    }
+
+    /// @dev Shared pre-pull setup — validates amount, resolves the VPFI
+    ///      token address and the caller's escrow, rolls up the
+    ///      discount accumulator + staking checkpoint at the
+    ///      post-mutation balance. Returns the resolved
+    ///      `(vpfi, escrow)` so the caller can do the actual transfer
+    ///      via whichever path (safeTransferFrom vs Permit2) fits.
+    function _prepareDeposit(uint256 amount)
+        private
+        returns (address vpfi, address escrow)
+    {
         if (amount == 0) revert InvalidAmount();
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        address vpfi = s.vpfiToken;
+        vpfi = s.vpfiToken;
         if (vpfi == address(0)) revert VPFITokenNotSet();
-
-        address escrow = EscrowFactoryFacet(address(this)).getOrCreateUserEscrow(
+        escrow = EscrowFactoryFacet(address(this)).getOrCreateUserEscrow(
             msg.sender
         );
-
         uint256 prevBal = IERC20(vpfi).balanceOf(escrow);
         // Roll up the VPFI discount accumulator, re-stamping at the
         // post-mutation balance so the next period accrues at the tier
-        // the user will actually hold after this deposit lands. The
-        // closing period keeps its bps from the prior rollup's stamp.
+        // the user will actually hold after this deposit lands.
         LibVPFIDiscount.rollupUserDiscount(msg.sender, prevBal + amount);
         // Checkpoint the staker BEFORE the deposit lands so the accrual
         // captures the pre-deposit staked amount for the period it was
         // active, then adopts the new balance as the next accrual baseline.
         LibStakingRewards.updateUser(msg.sender, prevBal + amount);
-
-        IERC20(vpfi).safeTransferFrom(msg.sender, escrow, amount);
-
-        emit VPFIDepositedToEscrow(msg.sender, amount);
     }
 
     /**
