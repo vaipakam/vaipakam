@@ -81,7 +81,17 @@ export default function PublicDashboard() {
   const blockExplorer = readChain.blockExplorer ?? DEFAULT_CHAIN.blockExplorer;
   const diamondAddress = readChain.diamondAddress ?? DEFAULT_CHAIN.diamondAddress;
   const chainId = readChain.chainId ?? DEFAULT_CHAIN.chainId;
-  const diamondReadProxyHref = `${blockExplorer}/address/${diamondAddress}#readProxyContract`;
+  // Consolidated Transparency link. Prefers the standalone MetricsFacet
+  // address when the chain has one configured — landing users on that
+  // contract's `#readContract` tab surfaces the full list of metrics
+  // getters (getProtocolTVL, getProtocolStats, getTotalInterestEarnedUSD,
+  // etc.) that map 1:1 to the card labels on this page. Falls back to
+  // the Diamond `#readProxyContract` tab when the facet address isn't
+  // configured yet for this chain.
+  const metricsFacetAddress = readChain.metricsFacetAddress ?? null;
+  const transparencyHref = metricsFacetAddress
+    ? `${blockExplorer}/address/${metricsFacetAddress}#readContract`
+    : `${blockExplorer}/address/${diamondAddress}#readProxyContract`;
   const { stats, loading: statsLoading, error: statsError, reload } = useProtocolStats();
   const { snapshot: tvl, loading: tvlLoading } = useTVL();
   const { stats: userStats } = useUserStats();
@@ -401,7 +411,6 @@ export default function PublicDashboard() {
             <>
               <section className="pd-metrics-grid" aria-label="Top-level metrics">
                 <MetricCard
-                  diamondHref={diamondReadProxyHref}
                   icon={<Lock size={18} />}
                   label="Total Value Locked"
                   value={formatUsd(tvl?.totalUsd ?? 0)}
@@ -413,7 +422,6 @@ export default function PublicDashboard() {
                   onchainFn="getProtocolTVL"
                 />
                 <MetricCard
-                  diamondHref={diamondReadProxyHref}
                   icon={<TrendingUp size={18} />}
                   label="Total Volume Lent"
                   value={formatUsd(stats.totalVolumeLentUsd)}
@@ -421,7 +429,6 @@ export default function PublicDashboard() {
                   onchainFn="getProtocolStats"
                 />
                 <MetricCard
-                  diamondHref={diamondReadProxyHref}
                   icon={<PiggyBank size={18} />}
                   label="Interest Earned by Lenders"
                   value={formatUsd(stats.totalInterestEarnedUsd)}
@@ -429,7 +436,6 @@ export default function PublicDashboard() {
                   onchainFn="getTotalInterestEarnedUSD"
                 />
                 <MetricCard
-                  diamondHref={diamondReadProxyHref}
                   icon={<Landmark size={18} />}
                   label="Treasury Balance"
                   value={formatUsd(treasuryMetrics?.treasuryBalanceUsd ?? 0)}
@@ -441,7 +447,6 @@ export default function PublicDashboard() {
                   onchainFn="getTreasuryMetrics"
                 />
                 <MetricCard
-                  diamondHref={diamondReadProxyHref}
                   icon={<Activity size={18} />}
                   label="Active Loans"
                   value={stats.activeLoans.toString()}
@@ -449,7 +454,6 @@ export default function PublicDashboard() {
                   onchainFn="getActiveLoansCount"
                 />
                 <MetricCard
-                  diamondHref={diamondReadProxyHref}
                   icon={<ImageIcon size={18} />}
                   label="NFTs Rented"
                   value={stats.nftRentalsActive.toString()}
@@ -457,7 +461,6 @@ export default function PublicDashboard() {
                   onchainFn="getProtocolTVL"
                 />
                 <MetricCard
-                  diamondHref={diamondReadProxyHref}
                   icon={<Users size={18} />}
                   label="Unique Wallets"
                   value={userStats ? formatCompact(userStats.uniqueWallets) : '—'}
@@ -469,7 +472,6 @@ export default function PublicDashboard() {
                   onchainFn="getUserCount"
                 />
                 <MetricCard
-                  diamondHref={diamondReadProxyHref}
                   icon={<Coins size={18} />}
                   label="Offers Posted"
                   value={stats.totalOffers.toString()}
@@ -477,7 +479,6 @@ export default function PublicDashboard() {
                   onchainFn="getActiveOffersCount"
                 />
                 <MetricCard
-                  diamondHref={diamondReadProxyHref}
                   icon={<Gauge size={18} />}
                   label="Average APR"
                   value={
@@ -489,7 +490,6 @@ export default function PublicDashboard() {
                   onchainFn="getProtocolStats"
                 />
                 <MetricCard
-                  diamondHref={diamondReadProxyHref}
                   icon={<Activity size={18} />}
                   label="Liquidation / Default Rate"
                   value={stats.totalLoans === 0 ? '—' : stats.liquidationRate.toFixed(2) + '%'}
@@ -723,19 +723,16 @@ export default function PublicDashboard() {
                     <h2>Protocol Health</h2>
                     <div className="pd-metrics-grid">
                       <MetricCard
-                        diamondHref={diamondReadProxyHref}
                         label="Average APR"
                         value={(stats.averageAprBps / 100).toFixed(2) + '%'}
                         hint="Mean across all loans (active + closed)"
                       />
                       <MetricCard
-                        diamondHref={diamondReadProxyHref}
                         label="Illiquid assets (loans)"
                         value={(tvl?.byAsset.filter((a) => !a.liquid).length ?? 0).toString()}
                         hint="Assets without a Chainlink feed; contribute $0 to TVL"
                       />
                       <MetricCard
-                        diamondHref={diamondReadProxyHref}
                         label="Default rate"
                         value={stats.liquidationRate.toFixed(2) + '%'}
                         hint={`${stats.defaultedLoans} defaulted of ${stats.totalLoans}`}
@@ -904,10 +901,30 @@ export default function PublicDashboard() {
                       {shortenAddr(diamondAddress)} <ExternalLink size={14} />
                     </a>
                   </div>
+                  <div>
+                    <div className="pd-sub">View on-chain</div>
+                    <a
+                      href={transparencyHref}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="pd-big pd-chain-link"
+                      data-tooltip={
+                        metricsFacetAddress
+                          ? 'MetricsFacet — Read Contract tab. Every getter shown here powers one of the cards above.'
+                          : 'Diamond — Read as Proxy tab. Configure the MetricsFacet address for a direct link to the metrics surface.'
+                      }
+                    >
+                      {metricsFacetAddress ? 'MetricsFacet' : 'Diamond proxy'}{' '}
+                      <ExternalLink size={14} />
+                    </a>
+                  </div>
                 </div>
                 <p className="pd-subtle" style={{ marginTop: 12 }}>
-                  All metrics above are reproducible from the Diamond at the block
-                  shown. See{' '}
+                  All metrics above are reproducible from the Diamond at the
+                  block shown. The <strong>View on-chain</strong> link lands on
+                  the {metricsFacetAddress ? 'MetricsFacet' : 'Diamond proxy'}{' '}
+                  Read Contract tab, where every getter that powers a card on
+                  this page is callable directly. See{' '}
                   <Link to="/app">connected app</Link> for wallet-scoped views.
                 </p>
               </section>
@@ -937,39 +954,29 @@ function MetricCard({
   value,
   hint,
   onchainFn,
-  diamondHref,
 }: {
   icon?: React.ReactNode;
   label: string;
   value: string;
   hint?: string;
   onchainFn?: string;
-  diamondHref?: string;
 }) {
-  // Only render the on-chain link when the caller provided a specific
-  // Diamond URL. Aggregated/combined cards deliberately omit `diamondHref`
-  // because a single read-proxy link can't represent a multi-chain total —
-  // linking to DEFAULT_CHAIN there would mislead users about the source.
+  // Per-card "View on-chain" links were removed — users now reach the
+  // MetricsFacet's Read Contract tab from the Transparency & Source
+  // section below the grid (single consolidated link so an explorer
+  // visit lands them on the full getter list, not a single function).
+  // `onchainFn` is kept on the card as a tooltip so readers still see
+  // which Diamond getter each metric came from without leaving the page.
   return (
-    <div className="stat-card pd-metric">
+    <div
+      className="stat-card pd-metric"
+      data-tooltip={onchainFn ? `Source: ${onchainFn}` : undefined}
+    >
       {icon && <div className="stat-icon pd-metric-icon">{icon}</div>}
       <div>
         <div className="stat-value">{value}</div>
         <div className="stat-label">{label}</div>
         {hint && <div className="pd-metric-hint">{hint}</div>}
-        {diamondHref && (
-          <a
-            className="pd-metric-onchain"
-            href={diamondHref}
-            target="_blank"
-            rel="noreferrer"
-            aria-label={`View ${label} source on block explorer`}
-            data-tooltip={onchainFn ? `Diamond getter: ${onchainFn}` : undefined}
-          >
-            <ExternalLink size={12} />
-            <span>View on-chain</span>
-          </a>
-        )}
       </div>
     </div>
   );
