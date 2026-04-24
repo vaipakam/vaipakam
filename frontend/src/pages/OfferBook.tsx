@@ -6,6 +6,7 @@ import { DIAMOND_ABI_VIEM as DIAMOND_ABI } from '../contracts/abis';
 import { Link } from 'react-router-dom';
 import { BookOpen, PlusCircle, AlertTriangle, ShieldCheck } from 'lucide-react';
 import { ErrorAlert } from '../components/app/ErrorAlert';
+import { SanctionsBanner } from '../components/app/SanctionsBanner';
 import { DEFAULT_CHAIN } from '../contracts/config';
 import { beginStep, emit } from '../lib/journeyLog';
 import { decodeContractError } from '../lib/decodeContractError';
@@ -830,6 +831,7 @@ interface AcceptReviewModalProps {
 }
 
 function AcceptReviewModal({ offer, illiquid, consent, onConsentChange, submitting, onConfirm, onCancel, discountPreview, protocolConfig }: AcceptReviewModalProps) {
+  const { address: viewerAddress } = useWallet();
   const principalIlliquid = offer.principalLiquidity === 1;
   const collateralIlliquid = offer.collateralLiquidity === 1;
   const illiquidLegs = principalIlliquid && collateralIlliquid
@@ -867,6 +869,23 @@ function AcceptReviewModal({ offer, illiquid, consent, onConsentChange, submitti
         <div className="card-title" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           Review offer #{offer.id.toString()}
         </div>
+
+        {/* Phase 4.3 — sanctions pre-flight. Both sides of the match
+            are checked: if the acceptor OR the offer creator is
+            flagged, the on-chain `acceptOffer` would revert, so we
+            warn up-front rather than letting the user sign and eat
+            gas on a doomed tx. Renders nothing when no oracle is
+            configured or when both sides are clean. */}
+        {viewerAddress && (
+          <SanctionsBanner
+            address={viewerAddress as Address}
+            label="Your wallet"
+          />
+        )}
+        <SanctionsBanner
+          address={offer.creator as Address}
+          label="Offer creator"
+        />
 
         <dl style={{ display: 'grid', gridTemplateColumns: 'max-content 1fr', rowGap: 6, columnGap: 16, fontSize: '0.9rem', margin: '8px 0 12px 0' }}>
           <dt style={{ opacity: 0.7 }}>Side</dt>

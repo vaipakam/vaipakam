@@ -453,4 +453,66 @@ contract ProfileFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors 
     function getApprovedKeepers(address user) external view returns (address[] memory) {
         return LibVaipakam.storageSlot().approvedKeepersList[user];
     }
+
+    // ─── Address-level sanctions (Phase 4.3) ──────────────────────────────
+    //
+    // Country-level sanctions already live above (setUserCountry +
+    // tradeAllowance). Phase 4.3 layers in address-level screening via a
+    // Chainalysis-style on-chain oracle. The check is a read-through to
+    // the configured oracle contract; on chains where no oracle is
+    // deployed (some L2 testnets), governance leaves the oracle address
+    // zero and the check becomes a no-op.
+    //
+    // Integration points: `OfferFacet.createOffer` and
+    // `OfferFacet.acceptOffer` — i.e. the "entering a new business
+    // relationship" path. Ongoing actions (`repay`, `claim`) are left
+    // unrestricted so a counterparty is never stranded if the other
+    // side lands on a sanctions list mid-loan.
+
+    /**
+     * @notice Reverts when a call from `who` is blocked because the
+     *         Chainalysis oracle has them flagged. Also fires when an
+     *         `acceptOffer` call would pair the acceptor with a
+     *         now-flagged offer creator — the offer author may have
+     *         been clean when they posted but is sanctioned now.
+     */
+    error SanctionedAddress(address who);
+
+    /**
+     * @notice Installs the Chainalysis-style sanctions oracle address
+     *         for this chain. Pass `address(0)` to disable screening
+     *         entirely (correct on chains where Chainalysis has not
+     *         deployed an oracle).
+     * @dev Owner-only (enforced inside `LibVaipakam.setSanctionsOracle`),
+     *      so timelock-gated after the governance handover. Emits
+     *      `LibVaipakam.SanctionsOracleSet`.
+     * @param oracle The Chainalysis oracle contract address, or zero.
+     */
+    function setSanctionsOracle(address oracle) external {
+        LibVaipakam.setSanctionsOracle(oracle);
+    }
+
+    /// @notice Returns the currently-configured sanctions oracle address.
+    ///         Zero means screening is disabled on this chain.
+    function getSanctionsOracle() external view returns (address) {
+        return LibVaipakam.storageSlot().sanctionsOracle;
+    }
+
+    /**
+     * @notice Returns true iff the configured sanctions oracle reports
+     *         `who` as currently flagged. Returns false when no oracle
+     *         is configured (screening disabled) or when the oracle
+     *         call itself reverts — fail-open on infrastructure
+     *         failure, since the alternative would brick every
+     *         interaction whenever the oracle has an outage.
+     *
+     *         Intended for UI pre-flight checks so a wallet sees a
+     *         clear "you are on a sanctions list; this action will
+     *         revert" message before signing — rather than a raw
+     *         revert from the subsequent tx.
+     * @param who The address to query.
+     */
+    function isSanctionedAddress(address who) external view returns (bool) {
+        return LibVaipakam.isSanctionedAddress(who);
+    }
 }

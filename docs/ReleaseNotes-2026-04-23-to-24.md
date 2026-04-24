@@ -480,6 +480,71 @@ within tolerance, agreement passes at the boundary, divergence
 reverts, stale Pyth reverts, missing Pyth reverts, zero or negative
 Pyth reading reverts. All green.
 
+## Security sprint — item #4 Phase 4.3: Chainalysis sanctions oracle
+
+**Address-level sanctions screening joins the country-filter and
+KYC-tier controls already in place.** A Chainalysis-style on-chain
+oracle (the same one Aave, Compound, Maker, and most regulated DeFi
+deployments use) is now queried at the two boundaries where Vaipakam
+enters a new business relationship: offer creation and offer
+acceptance. If the querying address is flagged — or if accepting an
+offer would pair the acceptor with a creator that has since been
+flagged — the transaction reverts at the protocol layer with a
+`SanctionedAddress(who)` error.
+
+**Deliberate scope choice: block "new business", not "ongoing".** The
+check fires on `createOffer` (caller) and `acceptOffer` (both caller
+and offer creator). It does NOT fire on `repay`, `addCollateral`,
+`claim`, or any other loan-wind-down path — if a counterparty gets
+sanctioned mid-loan, the other side must still be able to service
+the loan to completion. This matches how regulated DeFi deployments
+interpret OFAC compliance: block new relationships with sanctioned
+persons, let existing relationships unwind.
+
+**Oracle is per-chain, governance-installed, and optional.** Only
+some chains have a Chainalysis oracle deployed — Ethereum, Base,
+Arbitrum, Optimism, Polygon, BNB Chain. Mainnet deploys set the
+per-chain oracle address via `ProfileFacet.setSanctionsOracle`
+(owner-only; timelock-gated after the governance handover). Chains
+without an oracle leave the slot at zero and the check becomes a
+no-op — no brick on chains Chainalysis hasn't reached. An oracle
+outage (the read reverts) is also fail-open: the alternative would
+brick every protocol interaction on the chain whenever Chainalysis
+has an availability incident, which over-reacts to a vendor gap.
+
+**Frontend pre-flight check.** A new `useSanctionsCheck(address)`
+hook and `<SanctionsBanner>` component show a red warning BEFORE a
+user signs a doomed tx:
+
+- On the **Create Offer** page, the warning renders against the
+  connected wallet — users see "Your wallet: sanctions-screening
+  match" before they waste gas on a revert.
+- On the **Offer Book** accept-review modal, the check runs against
+  BOTH the connected wallet AND the offer creator — matching the
+  two-sided on-chain check. A would-be acceptor sees "Offer creator:
+  sanctions-screening match" if the original author has been flagged
+  between when they posted and now.
+
+Both banners render nothing when no oracle is configured on the
+active chain (silent UX on chains the feature doesn't cover) or
+when the checked addresses are clean.
+
+**Disclaimers shipped alongside.** The banner body is explicit that
+Vaipakam does not maintain its own sanctions list — match disputes
+route to Chainalysis directly, not to the Vaipakam team. This is
+also reflected in the Terms of Service (`Prohibited use` section).
+
+**Verification.** 12 new Foundry tests in `SanctionsOracle.t.sol`
+cover: admin gating on `setSanctionsOracle` (non-owner reverts,
+owner can set and clear), gate disabled = every address clean, gate
+enabled + flagged address = `isSanctionedAddress` returns true,
+oracle-outage fail-open returns false, `createOffer` reverts for
+flagged caller, `acceptOffer` reverts for flagged acceptor,
+`acceptOffer` reverts for now-flagged creator (the
+post-offer-creation flag edge case). All 59 tests in the file green
+(inherits 47 from the parent risk suite). Full forge suite green
+(see regression gate).
+
 ## Documentation convention going forward
 
 Every completed phase gets a functional write-up appended here, in the

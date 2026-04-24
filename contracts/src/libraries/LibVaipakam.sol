@@ -4,6 +4,7 @@ pragma solidity ^0.8.29;
 
 import {LibDiamond} from "@diamond-3/libraries/LibDiamond.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
+import {ISanctionsList} from "../interfaces/ISanctionsList.sol";
 
 /**
  * @title LibVaipakam
@@ -1217,6 +1218,19 @@ library LibVaipakam {
         address pythEndpoint;
         mapping(address => PythFeedConfig) pythFeedConfigs;
 
+        // ─── Address-level sanctions oracle (Phase 4.3) ─────────────────
+        // Chainalysis operates a free on-chain sanctions oracle on every
+        // chain it supports; governance sets this slot to the per-chain
+        // oracle address via {ProfileFacet.setSanctionsOracle}. When the
+        // slot is non-zero, {OfferFacet.createOffer} and
+        // {OfferFacet.acceptOffer} both refuse calls from (or involving)
+        // flagged addresses — the OFAC-aligned "no new business" posture.
+        // Ongoing actions (repay, claim) stay unrestricted so existing
+        // counterparties aren't stranded. `address(0)` disables the
+        // check entirely, which is the correct state on chains where
+        // Chainalysis does not deploy an oracle.
+        address sanctionsOracle;
+
         // ─── Legal: Terms of Service acceptance (Phase 4.1) ──────────────
         // On-chain record of every wallet's acceptance of the current ToS
         // version. `currentTosVersion` starts at 0 (no ToS in force), which
@@ -1799,5 +1813,44 @@ library LibVaipakam {
         cfg.maxDeviationBps = maxDeviationBps;
         cfg.maxStaleness = maxStaleness;
         emit PythFeedConfigSet(asset, priceId, maxDeviationBps, maxStaleness);
+    }
+
+    /// @notice Emitted when the chain's sanctions oracle address changes.
+    ///         Off-chain monitoring should alert on a transition to or
+    ///         from `address(0)`: zero disables the check globally, so
+    ///         the event is worth a human review either way.
+    event SanctionsOracleSet(address indexed previous, address indexed next);
+
+    /// @notice Installs the per-chain Chainalysis sanctions oracle
+    ///         address. Owner-only — timelock-gated after the
+    ///         governance handover. Setting to `address(0)` disables
+    ///         sanctions screening across the chain (correct when
+    ///         Chainalysis has not deployed an oracle there).
+    /// @param oracle The Chainalysis oracle contract address, or zero.
+    function setSanctionsOracle(address oracle) internal {
+        LibDiamond.enforceIsContractOwner();
+        Storage storage s = storageSlot();
+        address prev = s.sanctionsOracle;
+        s.sanctionsOracle = oracle;
+        emit SanctionsOracleSet(prev, oracle);
+    }
+
+    /// @notice Read-through helper: true iff the configured oracle
+    ///         reports `who` as currently sanctioned. Returns false
+    ///         when no oracle is configured (the gate is disabled)
+    ///         OR when the oracle call reverts (fail-open on
+    ///         infrastructure failure — the alternative would brick
+    ///         every interaction on the chain whenever Chainalysis's
+    ///         oracle has an outage, which would over-react to a
+    ///         vendor availability issue).
+    /// @param who The address to check.
+    function isSanctionedAddress(address who) internal view returns (bool) {
+        address oracle = storageSlot().sanctionsOracle;
+        if (oracle == address(0)) return false;
+        try ISanctionsList(oracle).isSanctioned(who) returns (bool flagged) {
+            return flagged;
+        } catch {
+            return false;
+        }
     }
 }

@@ -6,13 +6,13 @@
 **What this document is.** These Terms govern your use of the Vaipakam
 protocol. Vaipakam is a non-custodial, on-chain peer-to-peer lending
 and NFT-rental protocol. When you connect your wallet and interact
-with the app at vaipakam.app (or any other Vaipakam-branded frontend),
+with the app at vaipakam.com (or any other Vaipakam-branded frontend),
 you are doing so under these Terms.
 
 **Not a service provider.** Vaipakam is not a custodian, broker, bank,
 exchange, or financial adviser. The smart contracts run on public
 blockchains. You interact with them directly via your own wallet. The
-frontend at vaipakam.app is a convenience layer — the same smart
+frontend at vaipakam.com is a convenience layer — the same smart
 contracts are reachable from any wallet and any other UI.
 
 **No advice.** Nothing on the site or in this document is financial,

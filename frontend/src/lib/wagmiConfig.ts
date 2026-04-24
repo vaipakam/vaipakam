@@ -16,8 +16,8 @@
  *     ConnectKit's branded metadata so the picker shows wallet icons and
  *     names, and (on mobile) the curated deep-link list.
  */
-import { createConfig, http } from 'wagmi';
-import { safe } from 'wagmi/connectors';
+import { createConfig, http } from "wagmi";
+import { safe } from "wagmi/connectors";
 import {
   mainnet,
   base,
@@ -32,19 +32,23 @@ import {
   optimismSepolia,
   sepolia,
   type Chain,
-} from 'wagmi/chains';
-import { getDefaultConfig } from 'connectkit';
-import { CHAIN_REGISTRY } from '../contracts/config';
+} from "wagmi/chains";
+import { getDefaultConfig } from "connectkit";
+import { CHAIN_REGISTRY } from "../contracts/config";
 
 const WC_PROJECT_ID =
-  (import.meta.env.VITE_WALLETCONNECT_PROJECT_ID as string | undefined)?.trim() || '';
+  (
+    import.meta.env.VITE_WALLETCONNECT_PROJECT_ID as string | undefined
+  )?.trim() || "";
 
-const APP_NAME = 'Vaipakam';
+const APP_NAME = "Vaipakam";
 const APP_DESCRIPTION =
-  'Peer-to-peer lending fully on-chain. Lend and borrow tokens, rent NFTs, ' +
-  'set your own terms — every position tracked by a unique NFT.';
+  "Peer-to-peer lending fully on-chain. Lend and borrow tokens, rent NFTs, " +
+  "set your own terms — every position tracked by a unique NFT.";
 const APP_URL =
-  typeof window !== 'undefined' ? window.location.origin : 'https://vaipakam.app';
+  typeof window !== "undefined"
+    ? window.location.origin
+    : "https://vaipakam.com";
 const APP_ICON = `${APP_URL}/logo-light.png`;
 
 /**
@@ -77,8 +81,8 @@ const supportedChains = Object.values(CHAIN_REGISTRY)
 
 if (supportedChains.length === 0) {
   throw new Error(
-    'wagmi config: CHAIN_REGISTRY resolved to zero viem-known chains — ' +
-      'extend CHAIN_BY_ID in this file when adding a new supported chain.',
+    "wagmi config: CHAIN_REGISTRY resolved to zero viem-known chains — " +
+      "extend CHAIN_BY_ID in this file when adding a new supported chain.",
   );
 }
 
@@ -126,10 +130,7 @@ export const wagmiConfig = createConfig({
       // Wider matches would let arbitrary sites impersonate a Safe
       // context. Re-review this list if Safe publishes new surface
       // domains.
-      allowedDomains: [
-        /app\.safe\.global$/,
-        /safe\.global$/,
-      ],
+      allowedDomains: [/app\.safe\.global$/, /safe\.global$/],
       debug: false,
     }),
   ],

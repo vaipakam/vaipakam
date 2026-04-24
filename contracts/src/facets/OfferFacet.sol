@@ -128,6 +128,13 @@ contract OfferFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
         if (params.durationDays == 0) revert InvalidOfferType();
         if (params.amount <= 0) revert InvalidAmount();
 
+        // Phase 4.3 — address-level sanctions screening at the "entering
+        // a new business relationship" boundary. No-op on chains where
+        // governance has not configured the oracle address.
+        if (LibVaipakam.isSanctionedAddress(msg.sender)) {
+            revert ProfileFacet.SanctionedAddress(msg.sender);
+        }
+
         // Self-lending guard: principal and collateral must reference
         // distinct asset contracts. With ETH as the oracle quote asset
         // the older USDT "always-Illiquid" hack that implicitly blocked
@@ -366,6 +373,19 @@ contract OfferFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
         LibVaipakam.Offer storage offer = s.offers[offerId];
         if (offer.creator == address(0)) revert InvalidOffer();
         if (offer.accepted) revert OfferAlreadyAccepted();
+
+        // Phase 4.3 — address-level sanctions screening on both sides
+        // of the match. The acceptor's check is obvious; the creator's
+        // catches the edge case where a user was clean when they
+        // posted the offer but was sanctioned before anyone matched.
+        // No-op on chains where governance has not configured the
+        // oracle address.
+        if (LibVaipakam.isSanctionedAddress(msg.sender)) {
+            revert ProfileFacet.SanctionedAddress(msg.sender);
+        }
+        if (LibVaipakam.isSanctionedAddress(offer.creator)) {
+            revert ProfileFacet.SanctionedAddress(offer.creator);
+        }
 
         // Per-asset pause: block accepts if either leg has been paused
         // since the offer was created. The offer creator can still cancel

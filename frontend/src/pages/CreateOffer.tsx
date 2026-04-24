@@ -24,6 +24,7 @@ import { beginStep, emit } from "../lib/journeyLog";
 import { DEFAULT_CHAIN } from "../contracts/config";
 import { AlertTriangle, Info, CheckCircle, Wallet, Coins } from "lucide-react";
 import { ErrorAlert } from "../components/app/ErrorAlert";
+import { SanctionsBanner } from "../components/app/SanctionsBanner";
 import { Link } from "react-router-dom";
 import { AssetPicker } from "../components/app/AssetPicker";
 import { useAssetType, type DetectedAssetType } from "../hooks/useAssetType";
@@ -467,6 +468,18 @@ export default function CreateOffer() {
       )}
 
       {error && <ErrorAlert message={error} />}
+
+      {/* Phase 4.3 — pre-flight Chainalysis sanctions check on the
+          connected wallet. Renders nothing when the oracle isn't
+          configured on this chain or when the wallet is clean; on a
+          hit, users see the reason BEFORE they sign the createOffer
+          tx that would otherwise revert at the protocol layer. */}
+      {address && (
+        <SanctionsBanner
+          address={address as `0x${string}`}
+          label="Your wallet"
+        />
+      )}
 
       <form onSubmit={handleSubmit}>
         <div className="card" style={{ marginBottom: 20 }}>
