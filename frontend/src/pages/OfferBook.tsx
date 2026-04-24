@@ -150,7 +150,7 @@ export default function OfferBook() {
   // Used to target multicalls and build explorer links at the Diamond the
   // user's reads are actually hitting, instead of hard-coding DEFAULT_CHAIN.
   const activeReadChain = useReadChain();
-  const { openOfferIds, closedOfferIds, lastAcceptedOfferId, loading: indexLoading } = useLogIndex();
+  const { openOfferIds, closedOfferIds, lastAcceptedOfferId, loading: indexLoading, reload: reloadIndex } = useLogIndex();
   const { config: protocolConfig } = useProtocolConfig();
 
   const [statusView, setStatusView] = useState<StatusView>('open');
@@ -239,16 +239,40 @@ export default function OfferBook() {
       }
     }
     const out: OfferData[] = [];
+    // Diagnostic counters — one bucket per drop reason so a "Scanned 1
+    // of 1 but 0 displayed" state is self-explanatory in DevTools.
+    const dropReasons = { nullDecode: 0, zeroCreator: 0, accepted: 0, notAccepted: 0 };
     for (const raw of decoded) {
-      if (!raw) continue;
+      if (!raw) {
+        dropReasons.nullDecode++;
+        continue;
+      }
       // Canceled offers are impossible to display — `cancelOffer` deletes the
       // storage slot, so `creator` comes back as the zero address. Skip in
       // both views; the Closed view intentionally surfaces only filled
       // (accepted) offers, which retain their full struct.
-      if (raw.creator === ZERO_ADDR) continue;
-      if (statusView === 'open' && raw.accepted) continue;
-      if (statusView === 'closed' && !raw.accepted) continue;
+      if (!raw.creator || raw.creator.toLowerCase() === ZERO_ADDR) {
+        dropReasons.zeroCreator++;
+        continue;
+      }
+      if (statusView === 'open' && raw.accepted) {
+        dropReasons.accepted++;
+        continue;
+      }
+      if (statusView === 'closed' && !raw.accepted) {
+        dropReasons.notAccepted++;
+        continue;
+      }
       out.push(toOfferData(raw));
+    }
+    if (ids.length > 0 && out.length === 0) {
+      console.debug(
+        `[OfferBook] fetchBatch: requested ${ids.length} id(s), decoded ${decoded.length}, filtered to 0. Drops:`,
+        dropReasons,
+        `statusView=${statusView} ids=${ids.map(String).join(',')}`,
+        'decoded[0]:',
+        decoded[0],
+      );
     }
     return out;
   }, [diamondRead, publicClient, activeReadChain.diamondAddress, statusView]);
@@ -841,15 +865,34 @@ export default function OfferBook() {
         <span style={{ fontSize: '0.8rem', opacity: 0.7 }}>
           Scanned {scanned} of {sortedIds.length} {statusView === 'open' ? 'open' : 'filled'} offers
         </span>
-        {hasMore && (
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
           <button
             className="btn btn-secondary btn-sm"
-            disabled={loading}
-            onClick={() => loadWindow(cursor, WINDOW_SIZE)}
+            disabled={loading || indexLoading}
+            onClick={() => {
+              // Busts the event-indexed id cache and re-scans from
+              // chain. Fixes the case where OfferCreated /
+              // OfferCanceled / OfferAccepted events were missed and
+              // the id set diverges from on-chain state.
+              loadedIdsRef.current = new Set();
+              setOffers([]);
+              setCursor(0);
+              void reloadIndex();
+            }}
+            title="Rescan the chain for offers if the list looks stale."
           >
-            {loading ? 'Loading...' : `Load ${Math.min(WINDOW_SIZE, sortedIds.length - cursor)} more`}
+            {indexLoading ? 'Rescanning…' : 'Rescan chain'}
           </button>
-        )}
+          {hasMore && (
+            <button
+              className="btn btn-secondary btn-sm"
+              disabled={loading}
+              onClick={() => loadWindow(cursor, WINDOW_SIZE)}
+            >
+              {loading ? 'Loading...' : `Load ${Math.min(WINDOW_SIZE, sortedIds.length - cursor)} more`}
+            </button>
+          )}
+        </div>
       </div>
 
       {pendingOffer && (

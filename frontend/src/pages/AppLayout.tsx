@@ -20,6 +20,7 @@ import {
   ArrowLeft,
   ChevronsLeft,
   ChevronsRight,
+  Bell,
 } from "lucide-react";
 import { useState } from "react";
 
@@ -84,6 +85,12 @@ const BASIC_NAV = [
     to: "/app/activity",
     icon: <Activity size={20} />,
     label: "Activity",
+    end: false,
+  },
+  {
+    to: "/app/alerts",
+    icon: <Bell size={20} />,
+    label: "Alerts",
     end: false,
   },
 ];

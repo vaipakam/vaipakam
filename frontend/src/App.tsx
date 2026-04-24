@@ -12,6 +12,7 @@ import Refinance from './pages/Refinance';
 import ClaimCenter from './pages/ClaimCenter';
 import NftVerifier from './pages/NftVerifier';
 import KeeperSettings from './pages/KeeperSettings';
+import Alerts from './pages/Alerts';
 import BuyVPFI from './pages/BuyVPFI';
 import Rewards from './pages/Rewards';
 import Activity from './pages/Activity';
@@ -68,6 +69,7 @@ export default function App() {
           <Route path="rewards" element={<Rewards />} />
           <Route path="buy-vpfi" element={<BuyVPFI />} />
           <Route path="keepers" element={<KeeperSettings />} />
+          <Route path="alerts" element={<Alerts />} />
         </Route>
       </Routes>
     </BrowserRouter>

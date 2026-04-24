@@ -1,0 +1,21 @@
+{
+  "name": "vaipakam-hf-watcher",
+  "private": true,
+  "type": "module",
+  "description": "Cloudflare Worker that polls active Vaipakam loans across every supported chain, compares live Health Factor against each user's configured thresholds, and dispatches alerts via Telegram + Push Protocol. Phase 8a.3.",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "db:migrate": "wrangler d1 migrations apply vaipakam-hf-watcher",
+    "db:migrate:local": "wrangler d1 migrations apply vaipakam-hf-watcher --local",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "viem": "^2.21.0"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20240924.0",
+    "typescript": "^5.5.0",
+    "wrangler": "^3.80.0"
+  }
+}

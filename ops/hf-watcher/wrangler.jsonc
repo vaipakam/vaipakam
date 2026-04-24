@@ -1,0 +1,42 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "vaipakam-hf-watcher",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-04-23",
+  "compatibility_flags": ["nodejs_compat"],
+  "observability": {
+    "enabled": true
+  },
+  // Cron triggers — fire every 5 minutes. HF moves slowly enough that
+  // 5-min polling catches every band crossing well before it becomes
+  // actionable. Users who need sub-minute alerts should rely on the
+  // Push Protocol event-driven path below rather than this cron.
+  "triggers": {
+    "crons": ["*/5 * * * *"]
+  },
+  // D1 — user thresholds + last-notified state. Single DB across all
+  // watched chains; per-chain rows in the tables.
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "vaipakam-hf-watcher",
+      "database_id": "PLACEHOLDER — set via `wrangler d1 create`"
+    }
+  ],
+  // Env-scoped secrets (set via `wrangler secret put`):
+  //   TG_BOT_TOKEN          — Telegram bot token from BotFather.
+  //   PUSH_CHANNEL_PK       — Vaipakam Push channel signer privkey
+  //                           (keep in secret store; never commit).
+  //   RPC_BASE / RPC_ETH    — dedicated RPC endpoints per chain
+  //                           (public RPC rate-limits will fail the
+  //                           watcher; use Alchemy/Infura/QuickNode).
+  "vars": {
+    "DIAMOND_ADDR_BASE": "",
+    "DIAMOND_ADDR_ETH": "",
+    "DIAMOND_ADDR_ARB": "",
+    "DIAMOND_ADDR_OP": "",
+    "DIAMOND_ADDR_ZKEVM": "",
+    "DIAMOND_ADDR_BNB": "",
+    "FRONTEND_ORIGIN": "https://vaipakam.com"
+  }
+}
