@@ -416,13 +416,16 @@ export default function CreateOffer() {
             />
             <div style={{ flex: 1 }}>
               <div style={{ fontWeight: 600, marginBottom: 2 }}>
-                Borrowing a liquid ERC-20? Save up to 24% on the initiation fee
-                with VPFI
+                Borrowing a liquid ERC-20? Earn up to a 24% VPFI rebate on the
+                initiation fee
               </div>
               <p className="stat-label" style={{ margin: "0 0 8px" }}>
                 Hold VPFI in your escrow and enable the one-time platform-level
-                VPFI consent on your Dashboard. The protocol then auto-deducts
-                the tier-discounted fee in VPFI. Need VPFI?{" "}
+                VPFI consent on your Dashboard. The protocol pulls the full
+                0.1% initiation fee up front in VPFI, then credits back a
+                time-weighted rebate at proper loan close (repay / preclose /
+                refinance) based on how long you held VPFI across the loan.
+                Default or liquidation forfeits the rebate. Need VPFI?{" "}
                 <a href="/app/buy-vpfi" target="_blank" rel="noreferrer">
                   Buy VPFI
                 </a>{" "}

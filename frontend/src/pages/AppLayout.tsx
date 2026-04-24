@@ -143,8 +143,21 @@ export default function AppLayout() {
         className={`app-sidebar ${sidebarOpen ? "open" : ""} ${
           sidebarCollapsed ? "collapsed" : ""
         } ${suppressHoverExpand ? "suppress-hover-expand" : ""}`}
-        onMouseLeave={() => {
+        onMouseLeave={(e) => {
           if (suppressHoverExpand) setSuppressHoverExpand(false);
+          // After a click on a NavLink the element retains focus, and
+          // `:focus-within` (see AppLayout.css) keeps the rail expanded
+          // even though the pointer has left. Drop the focus on leave so
+          // mouse users get the expected collapse-on-exit. Keyboard-only
+          // users never fire mouseleave, so their focus is preserved.
+          const active = document.activeElement;
+          if (
+            active instanceof HTMLElement &&
+            e.currentTarget.contains(active) &&
+            active !== document.body
+          ) {
+            active.blur();
+          }
         }}
       >
         <div className="sidebar-header">

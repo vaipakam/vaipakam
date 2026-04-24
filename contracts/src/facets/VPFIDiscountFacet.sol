@@ -362,12 +362,11 @@ contract VPFIDiscountFacet is
         );
 
         uint256 prevBal = IERC20(vpfi).balanceOf(escrow);
-        // Roll up the lender-yield-fee discount accumulator at the OLD
-        // balance so the closing period gets attributed to what the user
-        // was actually holding. Mirrors the staking checkpoint below;
-        // both MUST run before the transferFrom mutates the balance or
-        // the accrual attribution slides by one period.
-        LibVPFIDiscount.rollupUserDiscount(msg.sender, prevBal);
+        // Roll up the VPFI discount accumulator, re-stamping at the
+        // post-mutation balance so the next period accrues at the tier
+        // the user will actually hold after this deposit lands. The
+        // closing period keeps its bps from the prior rollup's stamp.
+        LibVPFIDiscount.rollupUserDiscount(msg.sender, prevBal + amount);
         // Checkpoint the staker BEFORE the deposit lands so the accrual
         // captures the pre-deposit staked amount for the period it was
         // active, then adopts the new balance as the next accrual baseline.
@@ -416,11 +415,12 @@ contract VPFIDiscountFacet is
         uint256 prevBal = IERC20(vpfi).balanceOf(escrow);
         if (prevBal < amount) revert VPFIEscrowBalanceInsufficient();
 
-        // Close the VPFI-discount period at the OLD balance (the tier
-        // that actually applied up to this moment) before the pull drops
-        // us into a potentially lower tier. Both rollups must run pre-
-        // mutation so accrual is attributed correctly.
-        LibVPFIDiscount.rollupUserDiscount(msg.sender, prevBal);
+        // Close the VPFI-discount period and re-stamp at the post-
+        // mutation balance. The closing period carries the stamp left
+        // by the prior rollup (whatever tier was in effect up to now);
+        // the next period starts at the tier the user will hold after
+        // this withdraw.
+        LibVPFIDiscount.rollupUserDiscount(msg.sender, prevBal - amount);
         // Staking checkpoint on the OLD balance before the pull.
         LibStakingRewards.updateUser(msg.sender, prevBal - amount);
 

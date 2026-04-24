@@ -212,6 +212,16 @@ export default function OfferBook() {
   const publicClient = useDiamondPublicClient();
   const loadedIdsRef = useRef<Set<string>>(new Set());
 
+  // Verified tab counts — the log index lists IDs by event (OfferCreated
+  // minus OfferAccepted/Canceled), but RPC lag or missed events can leave
+  // canceled/accepted IDs in the wrong bucket. We validate by reading each
+  // offer on-chain and filtering the same way fetchBatch does below, so the
+  // tab header matches what users actually see after clicking through.
+  const [countByStatus, setCountByStatus] = useState<{
+    open: number | null;
+    closed: number | null;
+  }>({ open: null, closed: null });
+
   // Reset cumulative state whenever the open set changes so we don't carry
   // stale rows across reloads.
   useEffect(() => {
@@ -293,6 +303,57 @@ export default function OfferBook() {
     }
     loadWindow(0, WINDOW_SIZE);
   }, [indexLoading, sortedIds, loadWindow]);
+
+  // Count-only validator: multicall `getOffer` across the given ID set and
+  // apply the same filters as `fetchBatch` (skip zero-creator / accepted-
+  // status mismatch). Returns the raw ID length on multicall failure so
+  // the tab label never goes blank.
+  const fetchValidCount = useCallback(
+    async (ids: bigint[], status: StatusView): Promise<number> => {
+      if (ids.length === 0) return 0;
+      const target = (activeReadChain.diamondAddress ?? DEFAULT_CHAIN.diamondAddress) as Address;
+      try {
+        const calls = encodeBatchCalls(
+          target,
+          DIAMOND_ABI,
+          'getOffer',
+          ids.map((id) => [id] as const),
+        );
+        const decoded = await batchCalls<RawOffer>(publicClient, DIAMOND_ABI, 'getOffer', calls);
+        let count = 0;
+        for (const raw of decoded) {
+          if (!raw) continue;
+          if (raw.creator === ZERO_ADDR) continue;
+          if (status === 'open' && raw.accepted) continue;
+          if (status === 'closed' && !raw.accepted) continue;
+          count++;
+        }
+        return count;
+      } catch {
+        return ids.length;
+      }
+    },
+    [publicClient, activeReadChain.diamondAddress],
+  );
+
+  // Validate both tabs' counts in parallel whenever the log index updates.
+  // Runs alongside (not instead of) the active-view load so users see an
+  // accurate number on the tab they're NOT viewing as well.
+  useEffect(() => {
+    if (indexLoading) return;
+    let cancelled = false;
+    setCountByStatus({ open: null, closed: null });
+    (async () => {
+      const [openCount, closedCount] = await Promise.all([
+        fetchValidCount([...openOfferIds], 'open'),
+        fetchValidCount([...closedOfferIds], 'closed'),
+      ]);
+      if (!cancelled) setCountByStatus({ open: openCount, closed: closedCount });
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [indexLoading, openOfferIds, closedOfferIds, fetchValidCount]);
 
   // Fetch the last accepted offer once so we know the true market rate.
   useEffect(() => {
@@ -534,8 +595,32 @@ export default function OfferBook() {
 
   const lenderAll = useMemo(() => rankLenderSide(filtered.filter((o: OfferData) => o.offerType === 0)), [filtered, rankLenderSide]);
   const borrowerAll = useMemo(() => rankBorrowerSide(filtered.filter((o: OfferData) => o.offerType === 1)), [filtered, rankBorrowerSide]);
-  const lenderOffers = useMemo(() => lenderAll.slice(0, perSide), [lenderAll, perSide]);
-  const borrowerOffers = useMemo(() => borrowerAll.slice(0, perSide), [borrowerAll, perSide]);
+
+  // Single-side tabs get true pagination (page 1..N of perSide rows each);
+  // the 'both' tab keeps the existing top-N-of-each-side layout so the
+  // two columns stay aligned without a separate paginator per column.
+  const [page, setPage] = useState(1);
+  useEffect(() => {
+    setPage(1);
+  }, [tab, lendingAssetFilter, collateralAssetFilter, minDuration, maxDuration, liquidityFilter, perSide, statusView]);
+  const activeSideList = tab === 'lender' ? lenderAll : tab === 'borrower' ? borrowerAll : null;
+  const totalPages = activeSideList ? Math.max(1, Math.ceil(activeSideList.length / perSide)) : 1;
+  const safePage = Math.min(page, totalPages);
+  const pageStart = (safePage - 1) * perSide;
+  const lenderOffers = useMemo(
+    () =>
+      tab === 'lender'
+        ? lenderAll.slice(pageStart, pageStart + perSide)
+        : lenderAll.slice(0, perSide),
+    [lenderAll, tab, pageStart, perSide],
+  );
+  const borrowerOffers = useMemo(
+    () =>
+      tab === 'borrower'
+        ? borrowerAll.slice(pageStart, pageStart + perSide)
+        : borrowerAll.slice(0, perSide),
+    [borrowerAll, tab, pageStart, perSide],
+  );
 
   // The connected wallet's own open offers — derived BEFORE market filters
   // so a user who narrowed the view can still see their own listings. The
@@ -594,8 +679,8 @@ export default function OfferBook() {
             onClick={() => setStatusView(v)}
           >
             {v === 'open'
-              ? `Open (${openOfferIds.length})`
-              : `Closed / Filled (${closedOfferIds.length})`}
+              ? `Open (${countByStatus.open ?? openOfferIds.length})`
+              : `Closed / Filled (${countByStatus.closed ?? closedOfferIds.length})`}
           </button>
         ))}
       </div>
@@ -749,18 +834,27 @@ export default function OfferBook() {
       ) : (
         <>
           {showLender && (
-            <OfferTable
-              title={statusView === 'open' ? 'Lender Offers' : 'Filled Lender Offers'}
-              subtitle={`Showing ${lenderOffers.length} of ${totalLender}`}
-              offers={lenderOffers}
-              anchorRateBps={anchorRateBps}
-              address={address}
-              acceptingId={acceptingId}
-              onAccept={handleAcceptOffer}
-          onToggleKeeper={handleToggleOfferKeeper}
-          togglingKeeperId={togglingKeeperId}
-              statusView={statusView}
-            />
+            <>
+              <OfferTable
+                title={statusView === 'open' ? 'Lender Offers' : 'Filled Lender Offers'}
+                subtitle={
+                  tab === 'lender' && totalLender > perSide
+                    ? `Page ${safePage} of ${totalPages} · ${lenderOffers.length} of ${totalLender}`
+                    : `Showing ${lenderOffers.length} of ${totalLender}`
+                }
+                offers={lenderOffers}
+                anchorRateBps={anchorRateBps}
+                address={address}
+                acceptingId={acceptingId}
+                onAccept={handleAcceptOffer}
+                onToggleKeeper={handleToggleOfferKeeper}
+                togglingKeeperId={togglingKeeperId}
+                statusView={statusView}
+              />
+              {tab === 'lender' && totalLender > perSide && (
+                <Pagination page={safePage} totalPages={totalPages} onPage={setPage} />
+              )}
+            </>
           )}
           {statusView === 'open' && (
             <div className="card" style={{ marginTop: 12, borderLeft: '4px solid var(--brand)', background: 'var(--bg-muted, rgba(0,0,0,0.03))' }}>
@@ -779,18 +873,27 @@ export default function OfferBook() {
             </div>
           )}
           {showBorrower && (
-            <OfferTable
-              title={statusView === 'open' ? 'Borrower Offers' : 'Filled Borrower Offers'}
-              subtitle={`Showing ${borrowerOffers.length} of ${totalBorrower}`}
-              offers={borrowerOffers}
-              anchorRateBps={anchorRateBps}
-              address={address}
-              acceptingId={acceptingId}
-              onAccept={handleAcceptOffer}
-          onToggleKeeper={handleToggleOfferKeeper}
-          togglingKeeperId={togglingKeeperId}
-              statusView={statusView}
-            />
+            <>
+              <OfferTable
+                title={statusView === 'open' ? 'Borrower Offers' : 'Filled Borrower Offers'}
+                subtitle={
+                  tab === 'borrower' && totalBorrower > perSide
+                    ? `Page ${safePage} of ${totalPages} · ${borrowerOffers.length} of ${totalBorrower}`
+                    : `Showing ${borrowerOffers.length} of ${totalBorrower}`
+                }
+                offers={borrowerOffers}
+                anchorRateBps={anchorRateBps}
+                address={address}
+                acceptingId={acceptingId}
+                onAccept={handleAcceptOffer}
+                onToggleKeeper={handleToggleOfferKeeper}
+                togglingKeeperId={togglingKeeperId}
+                statusView={statusView}
+              />
+              {tab === 'borrower' && totalBorrower > perSide && (
+                <Pagination page={safePage} totalPages={totalPages} onPage={setPage} />
+              )}
+            </>
           )}
         </>
       )}
@@ -949,7 +1052,7 @@ function AcceptReviewModal({ offer, illiquid, consent, onConsentChange, submitti
                       <span className="mono">{Number(discountPreview!.vpfiRequired) / 1e18}</span>{' '}
                       VPFI{' '}
                       <span style={{ opacity: 0.6 }}>
-                        ({tierFeeLabel(tier, protocolConfig)} via tier-{tier} VPFI discount ({tierDiscountPct(tier, protocolConfig)} off) — deducted from your escrow, routed to treasury)
+                        (full {baseFeePctLabel} equivalent paid from your escrow into protocol custody — tier-{tier} rebate up to {tierDiscountPct(tier, protocolConfig)} earned time-weighted, claimable at proper loan close)
                       </span>
                     </>
                   ) : (
@@ -1007,37 +1110,35 @@ function AcceptReviewModal({ offer, illiquid, consent, onConsentChange, submitti
             <div style={{ fontSize: '0.88rem' }}>
               {discountPreview.willFire ? (
                 <>
-                  <strong>Tier-{discountPreview.tier} VPFI discount will apply ({tierDiscountPct(discountPreview.tier, protocolConfig)} off).</strong>{' '}
+                  <strong>Tier-{discountPreview.tier} VPFI path will apply (up to {tierDiscountPct(discountPreview.tier, protocolConfig)} rebate at proper close).</strong>{' '}
                   Platform consent is enabled and your escrow holds the required{' '}
                   <span className="mono">{Number(discountPreview.vpfiRequired) / 1e18}</span> VPFI.
-                  The {tierFeeLabel(discountPreview.tier, protocolConfig)} fee is paid in VPFI — the lender delivers the full
-                  principal.
+                  You pay the full {formatBpsPct(protocolConfig?.loanInitiationFeeBps ?? 10)} LIF up front in VPFI; the discount is earned time-weighted
+                  over the loan's lifetime and paid back as a VPFI rebate when you repay, preclose, or refinance properly. Default or
+                  liquidation forfeits the rebate.
                 </>
               ) : !discountPreview.consentEnabled ? (
                 <>
-                  <strong>Borrower VPFI discount available.</strong>{' '}
+                  <strong>Borrower VPFI rebate available.</strong>{' '}
                   Enable platform consent on your{' '}
                   <Link to="/app" style={{ textDecoration: 'underline' }}>
                     Dashboard
                   </Link>{' '}
-                  to pay a tiered VPFI fee ({protocolConfig ? protocolConfig.tierDiscountBps.map((b) => formatBpsPct(b)).join(' / ') : '10% / 15% / 20% / 24%'} off the {formatBpsPct(protocolConfig?.loanInitiationFeeBps ?? 10)}
-                  rate by escrow balance) instead of {formatBpsPct(protocolConfig?.loanInitiationFeeBps ?? 10)} in {' '}
-                  <AssetSymbol address={offer.lendingAsset} />. This acceptance
-                  will use the normal {formatBpsPct(protocolConfig?.loanInitiationFeeBps ?? 10)} path.
+                  to pay the {formatBpsPct(protocolConfig?.loanInitiationFeeBps ?? 10)} LIF up front in VPFI and earn a tier-based rebate (up to {protocolConfig ? protocolConfig.tierDiscountBps.map((b) => formatBpsPct(b)).join(' / ') : '10% / 15% / 20% / 24%'} by escrow balance held across the loan). Without consent this acceptance uses
+                  the normal {formatBpsPct(protocolConfig?.loanInitiationFeeBps ?? 10)} lending-asset fee path (no rebate).
                 </>
               ) : !discountPreview.eligible ? (
                 <>
-                  <strong>Borrower VPFI discount unavailable.</strong>{' '}
-                  This offer can't quote a discount right now (no oracle route,
-                  rate unset, or escrow balance below the tier-1 threshold).
-                  This acceptance will use the normal {formatBpsPct(protocolConfig?.loanInitiationFeeBps ?? 10)} path.
+                  <strong>Borrower VPFI rebate unavailable.</strong>{' '}
+                  No oracle route, rate unset, or escrow balance below the tier-1 threshold — this acceptance uses the
+                  normal {formatBpsPct(protocolConfig?.loanInitiationFeeBps ?? 10)} lending-asset fee path (no rebate).
                 </>
               ) : (
                 <>
-                  <strong>Tier-{discountPreview.tier} VPFI discount pending escrow balance.</strong>{' '}
+                  <strong>Tier-{discountPreview.tier} VPFI path pending escrow balance.</strong>{' '}
                   Consent is enabled but your escrow holds{' '}
                   <span className="mono">{Number(discountPreview.escrowVpfi) / 1e18}</span> VPFI —
-                  tier {discountPreview.tier} ({tierDiscountPct(discountPreview.tier, protocolConfig)} off → {tierFeeLabel(discountPreview.tier, protocolConfig)}) needs{' '}
+                  paying the {formatBpsPct(protocolConfig?.loanInitiationFeeBps ?? 10)} LIF up front in VPFI (up to {tierDiscountPct(discountPreview.tier, protocolConfig)} rebate at proper close) needs{' '}
                   <span className="mono">{Number(discountPreview.vpfiRequired) / 1e18}</span> VPFI.
                   Top up on{' '}
                   <a
@@ -1048,7 +1149,7 @@ function AcceptReviewModal({ offer, illiquid, consent, onConsentChange, submitti
                   >
                     Buy VPFI
                   </a>{' '}
-                  or proceed with the normal {formatBpsPct(protocolConfig?.loanInitiationFeeBps ?? 10)} path.
+                  or proceed with the normal {formatBpsPct(protocolConfig?.loanInitiationFeeBps ?? 10)} path (no rebate).
                 </>
               )}
             </div>
@@ -1091,6 +1192,38 @@ function AcceptReviewModal({ offer, illiquid, consent, onConsentChange, submitti
           </button>
         </div>
       </div>
+    </div>
+  );
+}
+
+interface PaginationProps {
+  page: number;
+  totalPages: number;
+  onPage: (p: number) => void;
+}
+
+function Pagination({ page, totalPages, onPage }: PaginationProps) {
+  const canPrev = page > 1;
+  const canNext = page < totalPages;
+  return (
+    <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 12, marginTop: 8 }}>
+      <button
+        className="btn btn-secondary btn-sm"
+        disabled={!canPrev}
+        onClick={() => onPage(page - 1)}
+      >
+        Previous
+      </button>
+      <span style={{ fontSize: '0.85rem', opacity: 0.7 }}>
+        Page {page} of {totalPages}
+      </span>
+      <button
+        className="btn btn-secondary btn-sm"
+        disabled={!canNext}
+        onClick={() => onPage(page + 1)}
+      >
+        Next
+      </button>
     </div>
   );
 }

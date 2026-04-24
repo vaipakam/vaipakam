@@ -106,55 +106,64 @@ library LibVPFIDiscount {
     // ─── Time-weighted discount rollup (§5.2a) ───────────────────────────────
 
     /**
-     * @notice Close the current period on `user`'s VPFI discount accumulator,
-     *         refresh the stamped BPS against the post-mutation balance, and
-     *         stamp `lastRollupAt = now`.
+     * @notice Close the current period on `user`'s VPFI discount accumulator
+     *         and re-stamp the BPS against the **post-mutation** balance.
      *
-     * @dev Load-bearing ordering invariant: call this BEFORE mutating the
-     *      user's escrow VPFI balance, passing the **pre-mutation** balance
-     *      as `balAtPeriodEnd`. That's the balance that was actually in
-     *      effect for the closing period — reading post-mutation would
-     *      attribute a freshly-deposited amount backwards onto the prior
-     *      period and defeat the anti-gaming guarantee.
+     * @dev Load-bearing ordering invariant: call this at every escrow-VPFI
+     *      balance mutation, passing the balance that will be in effect
+     *      after the mutation. The closing period is attributed to the
+     *      stamp left by the PRIOR rollup — whatever tier was in effect
+     *      from then until now. Re-stamping at the post-mutation balance
+     *      seeds the next period at the tier the user actually holds going
+     *      forward. Pre-mutation re-stamp (the pre-Phase 5 behaviour) let
+     *      a user keep collecting a high-tier stamp after unstaking down
+     *      to tier-0, defeating anti-gaming on both the lender yield-fee
+     *      and borrower LIF discounts.
+     *
+     *      Read-only callers (loan-init snapshot, yield-fee settlement
+     *      before any balance change) pass the live balance — no mutation
+     *      happens, so pre == post.
      *
      *      First call per user self-seeds (no accrual for a period we
-     *      never measured) so pre-upgrade users and brand-new users both
+     *      never measured). Pre-upgrade users and brand-new users both
      *      start at `cumulativeDiscountBpsSeconds = 0` with the stamped
-     *      BPS matching their current balance. Subsequent calls close out
-     *      `Σ(stamped_bps × elapsed)` into the accumulator and re-stamp.
+     *      BPS matching the supplied `balPostMutation`.
      *
-     * @param user             Address whose discount state is being rolled up.
-     * @param balAtPeriodEnd   Pre-mutation escrow VPFI balance. For read-only
-     *                         triggers (snapshot at loan init, at yield-fee
-     *                         settlement) pass the live balance — no mutation
-     *                         happens, so the "pre-mutation" distinction
-     *                         collapses to "now".
+     * @param user            Address whose discount state is being rolled up.
+     * @param balPostMutation Escrow VPFI balance that will be in effect for
+     *                        the next period. For snapshot-only callers,
+     *                        the live balance.
      */
-    function rollupUserDiscount(address user, uint256 balAtPeriodEnd) internal {
+    function rollupUserDiscount(
+        address user,
+        uint256 balPostMutation
+    ) internal {
         LibVaipakam.UserVpfiDiscountState storage u =
             LibVaipakam.storageSlot().userVpfiDiscountState[user];
 
         if (u.lastRollupAt == 0) {
-            // Self-seed. No accrual yet because we didn't measure a prior
-            // period — everything before this moment is ignored. Loans
-            // opened before this line runs get the seed-at-init path.
+            // Self-seed against the post-mutation balance — that's the
+            // tier in effect for the first measured period. Nothing
+            // accrues for time before this moment.
             u.discountBpsAtPreviousRollup =
-                uint16(discountBpsForTier(tierOf(balAtPeriodEnd)));
+                uint16(discountBpsForTier(tierOf(balPostMutation)));
             u.lastRollupAt = uint64(block.timestamp);
             return;
         }
 
         uint256 elapsed = block.timestamp - u.lastRollupAt;
         if (elapsed > 0) {
+            // Close the prior period at the stamped bps, which was seeded
+            // from the pre-mutation balance of the PRIOR rollup — i.e.
+            // the tier in effect across the just-closed window.
             u.cumulativeDiscountBpsSeconds +=
                 uint256(u.discountBpsAtPreviousRollup) * elapsed;
         }
-        // Re-stamp against the current governance schedule + new balance.
-        // Governance changes to the tier table therefore take effect for
-        // every open loan at each user's next rollup — never retroactively
-        // on the closed period, always prospectively on the open one.
+        // Re-stamp against the post-mutation balance: the tier that will
+        // be in effect from now until the next rollup. Governance changes
+        // to the tier table take effect here prospectively.
         u.discountBpsAtPreviousRollup =
-            uint16(discountBpsForTier(tierOf(balAtPeriodEnd)));
+            uint16(discountBpsForTier(tierOf(balPostMutation)));
         u.lastRollupAt = uint64(block.timestamp);
     }
 
@@ -181,20 +190,58 @@ library LibVPFIDiscount {
             (currentAcc - loan.lenderDiscountAccAtInit) / windowSeconds;
     }
 
+    /**
+     * @notice Time-weighted average discount BPS a borrower earned across a
+     *         specific loan's lifetime (Phase 5 / §5.2b). Borrower mirror
+     *         of {lenderTimeWeightedDiscountBps}.
+     *
+     * @dev Callers MUST have just invoked {rollupUserDiscount} on the
+     *      borrower so the accumulator reflects "as of now". A zero
+     *      `loan.startTime`, zero-duration window, or a loan that took
+     *      the lending-asset fee path at init (no anchor set, delta ==
+     *      0) returns 0.
+     */
+    function borrowerTimeWeightedDiscountBps(
+        LibVaipakam.Loan storage loan
+    ) internal view returns (uint256 avgBps) {
+        if (loan.startTime == 0 || block.timestamp <= loan.startTime) return 0;
+        uint256 windowSeconds = block.timestamp - loan.startTime;
+        uint256 currentAcc =
+            LibVaipakam.storageSlot()
+                .userVpfiDiscountState[loan.borrower]
+                .cumulativeDiscountBpsSeconds;
+        if (currentAcc <= loan.borrowerDiscountAccAtInit) return 0;
+        avgBps =
+            (currentAcc - loan.borrowerDiscountAccAtInit) / windowSeconds;
+    }
+
     // ─── Quotes (view) ───────────────────────────────────────────────────────
 
     /**
-     * @notice Quote the VPFI amount required for the borrower tier-discounted
-     *         Loan Initiation Fee on an ERC-20 principal offer.
-     * @dev Caller must have already verified the offer is ERC-20 principal.
+     * @notice Quote the VPFI amount required for the borrower Loan
+     *         Initiation Fee on an ERC-20 principal offer (Phase 5).
+     * @dev Phase 5 semantics: the borrower pays the FULL 0.1% LIF up front
+     *      in VPFI (no tier discount at init). The tier gates eligibility
+     *      only — tier-0 users stay on the lending-asset path because they
+     *      earn no time-weighted rebate. Tiers ≥ 1 get the discount as a
+     *      claimable rebate at proper settlement, sized by the time-
+     *      weighted average BPS across the loan's lifetime.
+     *
+     *      Caller must have already verified the offer is ERC-20 principal.
      *      Returns `(false, 0, 0)` when the borrower is in T0, or when any
      *      Chainlink / config input is unavailable. Never reverts.
      * @param principalAsset The offer's lending asset (ERC-20).
      * @param principal      The offer principal amount in lending asset wei.
      * @param borrower       The borrower whose tier is resolved.
-     * @return canQuote      True iff a non-zero tier quote is available.
-     * @return vpfiRequired  VPFI (18 dec) borrower must hold in escrow.
+     * @return canQuote      True iff the borrower is eligible for the VPFI
+     *                       path (tier ≥ 1) and the oracle route resolves.
+     * @return vpfiRequired  VPFI (18 dec) equivalent of the FULL LIF; the
+     *                       amount actually pulled from borrower escrow at
+     *                       init on the VPFI path.
      * @return tier          Resolved tier 1..4 (0 on canQuote == false).
+     *                       Surfaces the rebate scale the borrower is
+     *                       positioned to earn if they hold VPFI through
+     *                       settlement.
      */
     function quote(
         address principalAsset,
@@ -213,10 +260,8 @@ library LibVPFIDiscount {
 
         uint256 normalFee = (principal * LibVaipakam.cfgLoanInitiationFeeBps()) /
             LibVaipakam.BASIS_POINTS;
-        uint256 payBps = LibVaipakam.BASIS_POINTS - discountBpsForTier(tier);
-        uint256 tierFee = (normalFee * payBps) / LibVaipakam.BASIS_POINTS;
 
-        (bool ok, uint256 vpfi) = _feeAssetWeiToVPFI(principalAsset, tierFee);
+        (bool ok, uint256 vpfi) = _feeAssetWeiToVPFI(principalAsset, normalFee);
         if (!ok) return (false, 0, 0);
         return (true, vpfi, tier);
     }
@@ -271,18 +316,33 @@ library LibVPFIDiscount {
     // ─── Apply (mutating) ────────────────────────────────────────────────────
 
     /**
-     * @notice Attempt to pay the borrower's tier-discounted Loan Initiation
-     *         Fee in VPFI out of the borrower's escrow into the treasury.
-     * @dev Silent fallback on any failure (quote fails, escrow short, sub-
-     *      call reverts). On success transfers `vpfiRequired` from borrower
-     *      escrow to configured treasury and records the treasury accrual.
+     * @notice Attempt to pay the borrower's FULL Loan Initiation Fee in
+     *         VPFI out of the borrower's escrow into Diamond custody
+     *         (Phase 5 / §5.2b).
+     *
+     * @dev Phase 5 semantics: pays the FULL 0.1% LIF equivalent (not
+     *      tier-discounted) in VPFI at init. The discount is delivered as
+     *      a time-weighted rebate at proper settlement via
+     *      {settleBorrowerLifProper}. Tier ≥ 1 gate prevents tier-0 users
+     *      from paying VPFI with no expected rebate.
+     *
+     *      Silent fallback on any failure (tier-0, oracle gap, escrow
+     *      short, sub-call reverts) — caller falls through to the normal
+     *      lending-asset fee path. On success the VPFI lands in the
+     *      Diamond; caller MUST record the amount against the loan via
+     *      `s.borrowerLifRebate[loanId].vpfiHeld` once the loan id is
+     *      known. Treasury accrual is NOT recorded here — it happens at
+     *      settlement when the final split (rebate vs. treasury) is
+     *      determined.
+     *
      * @param principalAsset The offer's lending asset.
      * @param principal      The offer principal.
-     * @param borrower       The borrower funding the discount.
+     * @param borrower       The borrower funding the LIF in VPFI.
      * @return applied       True iff VPFI was successfully deducted.
-     * @return vpfiDeducted  VPFI amount moved from borrower escrow.
+     * @return vpfiDeducted  VPFI amount moved from borrower escrow to
+     *                       Diamond custody — caller records as vpfiHeld.
      */
-    function tryApply(
+    function tryApplyBorrowerLif(
         address principalAsset,
         uint256 principal,
         address borrower
@@ -302,32 +362,113 @@ library LibVPFIDiscount {
         uint256 escrowBal = IERC20(vpfi).balanceOf(borrowerEscrow);
         if (escrowBal < vpfiRequired) return (false, 0);
 
-        // Roll up the borrower's discount accumulator BEFORE the escrow
-        // balance drops — the closed period was earned against the
-        // pre-mutation balance. The borrower might be a lender on other
-        // loans, so keeping this accumulator current matters even though
-        // the borrower init fee itself is still one-shot (docs §5.2b).
-        rollupUserDiscount(borrower, escrowBal);
-        // Checkpoint the staker BEFORE the balance leaves escrow so the
-        // accrual captures the pre-deduction staked amount for the period
-        // it was active. Uses the actual escrow balance (not stored mirror)
-        // to stay robust against any reconciliation drift.
+        // Staking checkpoint BEFORE the balance leaves escrow so the
+        // accrual captures the pre-deduction staked amount.
         LibStakingRewards.updateUser(borrower, escrowBal - vpfiRequired);
 
-        address treasury = LibFacet.getTreasury();
+        // Withdraw VPFI from borrower's escrow into Diamond custody (the
+        // Diamond holds it until settlement splits it between rebate and
+        // treasury). The withdraw reverts on insufficient balance /
+        // escrow misconfiguration; silent-fallback via the call wrapper.
         (bool ok, ) = address(this).call(
             abi.encodeWithSelector(
                 EscrowFactoryFacet.escrowWithdrawERC20.selector,
                 borrower,
                 vpfi,
-                treasury,
+                address(this),
                 vpfiRequired
             )
         );
         if (!ok) return (false, 0);
 
-        LibFacet.recordTreasuryAccrual(vpfi, vpfiRequired);
+        // Rollup the borrower's discount accumulator at the post-
+        // mutation balance now that the withdraw has committed. Seeds
+        // the stamp so the next period's accrual reflects the tier the
+        // borrower actually holds from here on. The prior rollup (at
+        // `_snapshotBorrowerDiscount`) closed the period at the pre-
+        // withdraw stamp.
+        rollupUserDiscount(borrower, escrowBal - vpfiRequired);
+
         return (true, vpfiRequired);
+    }
+
+    // ─── Settlement helpers (Phase 5 / §5.2b) ────────────────────────────────
+
+    /**
+     * @notice Close out the borrower LIF custody at a proper loan
+     *         settlement (repay / preclose / refinance-old-loan). Splits
+     *         the held VPFI between the borrower's claimable rebate and
+     *         the treasury share based on the time-weighted average
+     *         discount BPS across the loan window.
+     *
+     * @dev No-op when `vpfiHeld == 0` (the loan took the lending-asset
+     *      fee path at init, so there's nothing to split). Silently does
+     *      the right thing for pre-upgrade loans — they have zero anchor
+     *      and zero vpfiHeld, so the helper returns without side-effects.
+     *
+     *      Ordering: the caller MUST roll up the borrower's discount
+     *      accumulator before invoking this helper so the window average
+     *      reflects "as of now".
+     *
+     *      Treasury accrual is recorded for the treasury share; the
+     *      rebate slice stays at the Diamond pending the borrower's
+     *      claim via {ClaimFacet.claimAsBorrower}.
+     *
+     * @param loan Loan being settled.
+     */
+    function settleBorrowerLifProper(LibVaipakam.Loan storage loan) internal {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        LibVaipakam.BorrowerLifRebate storage r = s.borrowerLifRebate[loan.id];
+        uint256 held = r.vpfiHeld;
+        if (held == 0) return;
+
+        address vpfi = s.vpfiToken;
+        if (vpfi == address(0)) {
+            // Unrecoverable oracle/config gap — flush to treasury (no
+            // rebate) rather than leave VPFI orphaned at the Diamond.
+            r.vpfiHeld = 0;
+            LibFacet.transferToTreasury(vpfi, held);
+            return;
+        }
+
+        // Roll up "as of now" (no mutation on this read) so the window
+        // average sees every period up to this settlement instant.
+        uint256 borrowerBal = IERC20(vpfi).balanceOf(
+            s.userVaipakamEscrows[loan.borrower]
+        );
+        rollupUserDiscount(loan.borrower, borrowerBal);
+
+        uint256 avgBps = borrowerTimeWeightedDiscountBps(loan);
+        uint256 rebate = (held * avgBps) / LibVaipakam.BASIS_POINTS;
+        if (rebate > held) rebate = held;
+        uint256 treasuryShare = held - rebate;
+
+        r.vpfiHeld = 0;
+        r.rebateAmount = rebate;
+
+        if (treasuryShare > 0) {
+            LibFacet.transferToTreasury(vpfi, treasuryShare);
+        }
+    }
+
+    /**
+     * @notice Forward the borrower LIF custody directly to treasury on a
+     *         non-proper settlement (default / HF-liquidation). No
+     *         rebate is credited — the borrower forfeits the entire
+     *         up-front VPFI.
+     *
+     * @dev No-op when `vpfiHeld == 0`. Always safe to call; the
+     *      settlement helpers on default/liquidation paths invoke this
+     *      unconditionally to drain any Diamond-held VPFI for the loan.
+     */
+    function forfeitBorrowerLif(LibVaipakam.Loan storage loan) internal {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        LibVaipakam.BorrowerLifRebate storage r = s.borrowerLifRebate[loan.id];
+        uint256 held = r.vpfiHeld;
+        if (held == 0) return;
+        r.vpfiHeld = 0;
+        // rebateAmount stays at 0 — no claim on forfeiture.
+        LibFacet.transferToTreasury(s.vpfiToken, held);
     }
 
     /**
@@ -374,9 +515,11 @@ library LibVPFIDiscount {
 
         // 1. Roll up the lender's discount accumulator to "now" so the
         //    window-averaged BPS reflects every period right up to this
-        //    settlement. The pre-mutation balance is the current escrow
-        //    balance (no balance change on a read). That balance also
-        //    flows into the subsequent quote's VPFI-required check.
+        //    settlement. No balance change on this read — pre == post at
+        //    the live balance. A second rollup after the withdraw
+        //    re-stamps at the post-mutation tier; splitting the two
+        //    protects against silent-fallback failure committing a
+        //    wrong stamp.
         uint256 escrowBal = IERC20(vpfi).balanceOf(lenderEscrow);
         rollupUserDiscount(lender, escrowBal);
 
@@ -402,6 +545,12 @@ library LibVPFIDiscount {
             )
         );
         if (!ok) return (false, 0);
+
+        // 4. Re-stamp the accumulator at the post-mutation balance now
+        //    that the withdraw has committed. Zero elapsed between this
+        //    call and step 1 — purely a stamp refresh so the next period
+        //    accrues at the tier the lender actually holds from here on.
+        rollupUserDiscount(lender, escrowBal - vpfiRequired);
 
         LibFacet.recordTreasuryAccrual(vpfi, vpfiRequired);
         return (true, vpfiRequired);

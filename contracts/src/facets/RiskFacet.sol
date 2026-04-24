@@ -7,6 +7,7 @@ import {LibLifecycle} from "../libraries/LibLifecycle.sol";
 import {LibFallback} from "../libraries/LibFallback.sol";
 import {LibEntitlement} from "../libraries/LibEntitlement.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
+import {LibVPFIDiscount} from "../libraries/LibVPFIDiscount.sol";
 import {LibInteractionRewards} from "../libraries/LibInteractionRewards.sol";
 import {OracleFacet} from "./OracleFacet.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
@@ -516,6 +517,11 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
             LibVaipakam.LoanStatus.Active,
             LibVaipakam.LoanStatus.Defaulted
         );
+
+        // Phase 5 / §5.2b — HF liquidation is NOT a proper close, so
+        // the borrower forfeits any up-front VPFI paid for the LIF.
+        // Full held amount flushes to treasury; no rebate.
+        LibVPFIDiscount.forfeitBorrowerLif(loan);
 
         // HF liquidation → borrower loses interaction rewards, lender keeps hers.
         LibInteractionRewards.closeLoan(loanId, /* borrowerClean */ false, /* lenderForfeit */ false);

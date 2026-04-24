@@ -134,6 +134,11 @@ export default function ClaimCenter() {
                         + held <TokenAmount amount={claim.heldForLender} address={claim.claimableAsset} />
                       </div>
                     )}
+                    {claim.role === 'borrower' && claim.lifRebate > 0n && (
+                      <div className="claim-held mono" data-tooltip="Phase 5 LIF VPFI rebate: time-weighted discount on the initiation fee you paid up front in VPFI, earned across this loan's lifetime and credited at proper close. Paid out in the same Claim transaction.">
+                        + rebate {(Number(claim.lifRebate) / 1e18).toString()} VPFI
+                      </div>
+                    )}
                   </div>
                   <button
                     className="btn btn-primary btn-sm"

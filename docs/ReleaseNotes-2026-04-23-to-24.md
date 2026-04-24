@@ -598,6 +598,166 @@ via claim flow) is queued and awaits a deliberate kick-off —
 project memory records the decision and scope at
 `memory/project_phase5_borrower_lif_discount.md`.
 
+## Phase 5: borrower LIF discount becomes time-weighted + claim-based
+
+**The old behaviour.** Until this phase, a borrower who held VPFI
+in escrow and had consented to the platform VPFI-discount could
+pay a tier-discounted Loan Initiation Fee (LIF) in VPFI instead of
+the flat 0.1% in the lending asset — the discount was applied
+upfront, priced off an instantaneous tier lookup of the borrower's
+escrow VPFI balance at the moment the loan was accepted. That made
+it gameable: a borrower could top up to tier-3 right before the
+accept transaction, pocket the full discount, and unstake the VPFI
+in the next block, earning a 0.075% fee against ~0 seconds of
+actual VPFI-holding. The lender-side yield-fee discount already
+used a time-weighted model that closed this gap; the borrower side
+lagged behind.
+
+**What changed.** The borrower VPFI-fee path now charges the
+**full 0.1% LIF** up front in VPFI and moves the discount to the
+back end. When a loan closes properly (normal repay, borrower
+preclose, refinance), the protocol measures how much of the
+loan's lifetime the borrower actually held VPFI, computes the
+time-weighted average discount BPS over that window, and credits
+the borrower a VPFI **rebate** equal to that average against what
+they paid. On default or HF-based liquidation the rebate is
+forfeited — the full up-front VPFI flushes to treasury. On
+refinance the old loan pays out its rebate at settlement and the
+new loan starts a fresh window with its own snapshot.
+
+**How rebates are delivered.** The rebate is paid in VPFI, the
+same medium the borrower originally funded the fee in. It shows
+up alongside the normal borrower claim: the borrower claim path
+now transfers both the collateral (or refund) and any pending
+VPFI rebate in one transaction, and the NFT burns after. The
+Claim Center surfaces a "+ rebate <N> VPFI" line under the main
+claim row whenever a loan is eligible. Loans that took the
+normal lending-asset fee path never accrue a rebate — that route
+still exists and is unchanged, just no longer the only way for
+a discount-conscious borrower to participate.
+
+**Who holds the VPFI between init and settlement.** The Diamond
+now custody-holds the borrower's up-front VPFI for the full loan
+lifetime. Old behaviour pushed it straight to the treasury; new
+behaviour retains it so settlement can split the held amount
+between the borrower's rebate and the treasury's share without
+needing treasury to pre-approve outbound transfers. The per-loan
+custody bookkeeping carries two numbers: the amount held while
+the loan is live, and the amount claimable once the loan settles
+properly. Both zero out when the loan reaches terminal state or
+the claim runs.
+
+**The stamp-refresh correctness fix.** The same update that ships
+Phase 5 also fixes a latent bug in the shared time-weighted
+accumulator that backed the lender yield-fee discount. The old
+accumulator, on every escrow-VPFI balance change, closed the
+just-ended period correctly at the previous tier but then re-
+stamped the next period's BPS against the pre-mutation balance
+instead of the post-mutation one. A user could therefore unstake
+down to tier-0 and keep earning the high-tier stamp on the new
+period until the next balance change — the exact gaming vector
+Phase 5 was meant to close on the borrower side. The accumulator
+now re-stamps against the post-mutation balance, so a balance
+drop takes effect immediately for every open loan's time-weighted
+average. This affects both the lender yield-fee discount and the
+new borrower LIF rebate; lenders who were unknowingly benefiting
+from the stale stamp will earn correctly-sized discounts going
+forward.
+
+**Frontend surfacing.** The OfferBook accept-review modal
+explains the new flow explicitly — "you pay the full 0.1% LIF
+up front in VPFI; the discount is earned time-weighted over the
+loan's lifetime and paid back as a VPFI rebate on proper close."
+The same language appears on the CreateOffer borrower-tip card
+("earn up to a 24% VPFI rebate"), and the Claim Center row adds
+the rebate line when applicable. The tier-aware preview keeps
+showing tier 1–4 positioning so a user can see how much rebate
+they'd earn at full-term hold, but no longer labels the up-front
+fee itself as discounted.
+
+**Storage layout.** Two additions, both append-only at the tail
+of their structs so existing slots are untouched. The Loan struct
+gains a borrower-side anchor mirroring the already-present
+lender anchor. The diamond's global storage gains a mapping
+keyed by loan id carrying the per-loan held-VPFI and claimable-
+rebate pair. In-flight loans that predate the upgrade have zero-
+valued entries and are silently ineligible for the rebate —
+they never paid VPFI up front, so there's nothing to split.
+
+**Settlement coverage.** Five loan-terminal paths are wired:
+repay (proper close → rebate credited), preclose direct (same),
+preclose-via-offset (same — the original borrower still earned
+the held time), refinance (old loan settles properly, new loan
+gets a fresh anchor), default (full forfeit), HF liquidation
+(full forfeit). Late-but-repaid loans route through the normal
+repay path and still get the rebate — lateness penalises via
+the late fee, not via rebate eligibility.
+
+**Diamond-cut update.** The new view function
+`getBorrowerLifRebate(loanId)` is registered against the Diamond
+in both the test setup harness (`HelperTest.getClaimFacetSelectors`)
+and the production deploy script (`DeployDiamond._getClaimSelectors`).
+Mainnet upgrade flow must include a `diamondCut` add-selector
+operation for this entry — without it the frontend's claim-center
+rebate probe falls through to its "old ABI" branch and treats every
+loan as having zero rebate.
+
+**Verification.** Forge build clean (full re-compile after struct
+changes — `bytes4` selector tables and `LibVaipakam.Storage` /
+`Loan` layout extensions all type-check). Existing
+`VPFIDiscountFacetTest.t.sol` regression: 24/25 pass; the one
+flagged test was the upgraded
+`testAcceptOfferWithVPFIDiscountApplied` whose new assertions
+exercise the just-added `getBorrowerLifRebate` selector — it
+flagged because the test-harness diamond cut also needs the
+new selector. Selector wired into `HelperTest` and re-run
+expected to clear it. New Phase 5 test additions (tier-gaming
+verification, long-hold, partial-hold, per-settlement-path
+coverage, claim-flow, default / liquidation no-rebate) are the
+next commit.
+
+## Frontend / UX fixes shipped alongside Phase 5
+
+These are independent quality-of-life fixes batched with the same
+Phase 5 commit, so the deploy doesn't need a separate frontend
+release.
+
+**Sidebar stuck-expanded after click.** The collapsed icon-rail
+sidebar would expand on hover (and on `:focus-within`, for keyboard
+accessibility). Clicking a navigation item left the link focused,
+so `:focus-within` kept the rail expanded after the cursor had
+already moved away — the rail only collapsed when the user clicked
+somewhere else and dropped the focus. The mouse-leave handler now
+blurs any focused descendant on exit, which collapses the rail
+immediately for mouse users. Keyboard-only navigation never fires
+mouseleave, so tabbing between icons still works correctly.
+
+**Offer Book tab counts.** The "Open" / "Closed / Filled" tab
+headers used the raw log-index ID counts, which can include stale
+entries when an offer is canceled or accepted between event
+indexing and the tab render. The active tab now shows the verified
+count from the actual fetch; the inactive tab gets validated by a
+parallel `getOffer` multicall across its full ID list (filtering
+out zero-creator and accepted-status mismatches the same way
+`fetchBatch` does). Both numbers now match what the user sees
+after switching tabs.
+
+**Offer Book pagination.** The "Lender Offers" and "Borrower Offers"
+single-side tabs gain real pagination: a Previous / Page X of Y /
+Next control under the table when there are more rows than the
+per-side cap. Page resets on tab change, filter change, perSide
+change, or status-view change. The "Both Sides" tab stays on the
+existing top-N-of-each-side layout so the two columns stay
+aligned without competing paginators.
+
+**Error alert dismiss button.** Every `ErrorAlert` (the shared
+component used across pages) now renders a dismiss `X` next to the
+"Report on GitHub" link. Default behaviour hides the alert locally
+via internal state; the dismissed state resets when the message
+changes so a fresh error always surfaces. Pages that need
+authoritative state clearing can opt in via the new `onDismiss`
+prop; no existing caller had to change.
+
 ## Documentation convention going forward
 
 Every completed phase gets a functional write-up appended here, in the

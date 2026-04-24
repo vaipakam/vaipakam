@@ -452,24 +452,32 @@ contract OfferFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
             // `offer.amount` back — the fee is paid out of the lender's
             // funded principal, not added on top of the debt.
             //
-            // VPFI discount path: activates when the borrower has enabled
-            // the single platform-level VPFI-discount consent setting
+            // VPFI path (Phase 5 / §5.2b): activates when the borrower has
+            // enabled the platform-level VPFI-discount consent setting
             // (s.vpfiDiscountConsent[borrower]), the lending asset is
-            // liquid, AND the borrower's escrow holds >= the required
-            // VPFI. On success:
-            //   - Borrower pays 0.075% of principal in VPFI from escrow to
-            //     treasury (via LibVPFIDiscount.tryApply).
+            // liquid, AND the borrower's escrow holds ≥ the FULL 0.1%
+            // LIF equivalent in VPFI. On success:
+            //   - Borrower pays the FULL 0.1% LIF equivalent in VPFI from
+            //     escrow into Diamond custody (via
+            //     LibVPFIDiscount.tryApplyBorrowerLif). No tier discount
+            //     at init — the discount is realized as a time-weighted
+            //     rebate on proper settlement (see ClaimFacet and
+            //     LibVPFIDiscount.settleBorrowerLifProper).
             //   - Lender delivers FULL 100% principal — no lender-side
             //     haircut.
-            // On any precondition failure tryApply returns (false, 0)
-            // silently and we fall through to the normal 0.1% fee path.
+            //   - vpfiDiscountDeducted is recorded against the loan via
+            //     s.borrowerLifRebate[loanId].vpfiHeld once the loan id
+            //     is known (see post-initiateLoan block below).
+            // On any precondition failure tryApplyBorrowerLif returns
+            // (false, 0) silently and we fall through to the normal 0.1%
+            // lending-asset fee path — no rebate eligibility on that path.
             bool discountApplied;
             if (
                 s.vpfiDiscountConsent[borrower] &&
                 lendingAssetLiquidity == LibVaipakam.LiquidityStatus.Liquid
             ) {
                 (discountApplied, vpfiDiscountDeducted) = LibVPFIDiscount
-                    .tryApply(offer.lendingAsset, offer.amount, borrower);
+                    .tryApplyBorrowerLif(offer.lendingAsset, offer.amount, borrower);
             }
 
             uint256 netToBorrower;
@@ -602,6 +610,17 @@ contract OfferFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
         // Update offer
         offer.accepted = true;
         LibMetricsHooks.onOfferAccepted(offerId);
+
+        // Phase 5: record the Diamond-held VPFI against the loan once
+        // the loan id is known. The settlement helpers
+        // (settleBorrowerLifProper / forfeitBorrowerLif) read this slot
+        // to split the held amount between the borrower rebate and
+        // treasury at resolution time.
+        if (vpfiDiscountDeducted > 0) {
+            LibVaipakam.storageSlot()
+                .borrowerLifRebate[loanId]
+                .vpfiHeld = vpfiDiscountDeducted;
+        }
 
         // Emit the discount event (after loanId is known) via
         // VPFIDiscountFacet so indexers can subscribe to a single facet for

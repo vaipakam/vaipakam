@@ -259,13 +259,15 @@ Lender rules:
 - this time-weighted design is required so a lender cannot obtain the full higher-tier discount by topping up VPFI just before repayment
 - when consent is active and sufficient VPFI is available, the system should automatically deduct the required discounted VPFI amount from lender escrow to Treasury
 
-Borrower rules:
+Borrower rules (Phase 5 and later):
 
 - the borrower-side discount applies to the `Loan Initiation Fee`
-- the borrower-side discount is a one-shot fee resolution taken at the moment of loan acceptance, using the borrower's escrowed VPFI balance and the then-current discount schedule at that exact moment
-- the borrower-side discount is not time-weighted, because the `Loan Initiation Fee` is computed, charged, and settled atomically with loan creation rather than over a multi-period interval
-- the borrower-side discount does not maintain its own ongoing rollup state beyond the normal escrow balance and staking accounting
-- when consent is active and sufficient VPFI is available, the system should automatically deduct the required discounted VPFI amount from borrower escrow to Treasury
+- when consent is active and sufficient VPFI is available, the system deducts the FULL (non-discounted) `Loan Initiation Fee` equivalent in VPFI from the borrower's escrow at loan acceptance; this VPFI is held in protocol custody (the Diamond) for the life of the loan rather than flowing immediately to Treasury
+- the borrower-side discount is TIME-WEIGHTED across the loan's lifetime, mirroring the lender-side model: each loan snapshots the borrower's discount-accrual state at acceptance, and on proper settlement the protocol computes the loan-specific average discount from the delta between the settlement-moment accumulator and the opening snapshot, divided by the actual elapsed loan duration
+- on proper close (normal repay, borrower preclose, refinance), the Diamond splits the held VPFI into a borrower rebate (held × time-weighted-avg-discount-bps / 10000) and a treasury share (the remainder); the rebate becomes claimable on the borrower's position NFT and is paid out atomically with the normal borrower claim; the treasury share is accrued to Treasury at settlement
+- on default or HF-based liquidation, the entire held VPFI is forfeited to Treasury with no rebate
+- on refinance, the OLD loan's borrower rebate is credited at settlement (the borrower earned that window fairly); the NEW loan gets a fresh opening snapshot and tracks a new independent window
+- pre-upgrade loans that predate Phase 5 carry zero-valued custody and no opening snapshot, so they silently settle with no rebate — they never paid VPFI up front
 
 Received VPFI from protocol-fee flows should be handled under the Treasury Recycling Rule below.
 
@@ -292,12 +294,13 @@ Same-block safety:
 - if a lender's escrow balance changes multiple times in the same block, the elapsed time is zero, so no duplicate time accrual should be created
 - the tracker should simply stamp the latest balance-driven tier for future elapsed time
 
-Borrower initiation-fee discount mechanics:
+Borrower initiation-fee discount mechanics (Phase 5):
 
-- the borrower-side discount remains a point-in-time discount resolved exactly once, at loan initiation
-- because the initiation fee is charged and settled atomically, there is no borrower-side time-weighted discount interval for that fee
-- borrower escrow balance changes before or after loan initiation do not retroactively alter the borrower discount already applied to that loan
-- governance changes to borrower discount thresholds or percentages affect only future loan-acceptance transactions, not already-created loans
+- the borrower pays the FULL Loan Initiation Fee up front in VPFI when the VPFI-fee path is selected; the Diamond holds that VPFI in custody for the life of the loan
+- the borrower-side discount is time-weighted across the loan window; there is no more point-in-time discount at acceptance
+- the stamped tier between balance-changing events pins the discount-accrual rate for the next elapsed-time bucket, identical to the lender-side mechanic; a borrower cannot capture a full higher-tier rebate by depositing VPFI only shortly before settlement
+- on proper settlement the held VPFI is split into rebate (to the borrower NFT holder via ClaimFacet) and treasury share; on default / HF liquidation the full held VPFI flushes to Treasury and no rebate is credited
+- governance changes to borrower discount thresholds or percentages apply prospectively only; periods already accrued under the previously stamped tier remain locked at those older values, mirroring the lender-side governance semantics
 
 ---
 

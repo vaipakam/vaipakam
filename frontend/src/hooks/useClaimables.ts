@@ -87,6 +87,31 @@ export function useClaimables(address: string | null) {
             if (isLender) sides.push({ isLender: true, role: 'lender' });
             if (isBorrower) sides.push({ isLender: false, role: 'borrower' });
 
+            // Phase 5 — probe the borrower LIF rebate lane once per loan
+            // (lender side never carries it). `getBorrowerLifRebate` returns
+            // `(rebateAmount, vpfiHeld)`; rebateAmount > 0 means a proper
+            // settlement credited a claimable VPFI rebate for the borrower
+            // NFT holder that will be paid out inside `claimAsBorrower`.
+            let borrowerLifRebate = 0n;
+            if (isBorrower) {
+              try {
+                const rebate = (await publicClient.readContract({
+                  address: diamondAddress,
+                  abi: DIAMOND_ABI,
+                  functionName: 'getBorrowerLifRebate',
+                  args: [entry.loanId],
+                })) as readonly [bigint, bigint] | { rebateAmount?: bigint };
+                if (Array.isArray(rebate)) {
+                  borrowerLifRebate = rebate[0] ?? 0n;
+                } else if (rebate && typeof rebate === 'object') {
+                  borrowerLifRebate = (rebate as { rebateAmount?: bigint }).rebateAmount ?? 0n;
+                }
+              } catch {
+                // Old ABI without Phase 5 view — treat as zero rebate.
+                borrowerLifRebate = 0n;
+              }
+            }
+
             const sideEntries = await Promise.all(
               sides.map(async (s): Promise<ClaimableEntry | null> => {
                 try {
@@ -104,15 +129,18 @@ export function useClaimables(address: string | null) {
                   const quantity = res.quantity ?? res[5] ?? 0n;
                   const heldForLender = res.heldForLender ?? res[6] ?? 0n;
                   const hasRentalNFTReturn = res.hasRentalNFTReturn ?? res[7] ?? false;
+                  const lifRebate = s.role === 'borrower' ? borrowerLifRebate : 0n;
 
                   // Mirror ClaimFacet's actionability guard: fungible amount,
                   // NFT payload (assetType != ERC20), held-for-lender funds,
-                  // or a rental NFT awaiting return all count as claimable.
+                  // a rental NFT awaiting return, or (Phase 5) a pending
+                  // borrower LIF rebate all count as claimable.
                   const actionable =
                     amount > 0n ||
                     assetType !== AssetType.ERC20 ||
                     heldForLender > 0n ||
-                    hasRentalNFTReturn;
+                    hasRentalNFTReturn ||
+                    lifRebate > 0n;
                   if (!claimed && actionable) {
                     return {
                       loanId: entry.loanId,
@@ -124,6 +152,7 @@ export function useClaimables(address: string | null) {
                       tokenId,
                       quantity,
                       heldForLender,
+                      lifRebate,
                     };
                   }
                   return null;

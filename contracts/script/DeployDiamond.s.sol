@@ -463,11 +463,12 @@ contract DeployDiamond is Script {
     }
 
     function _getClaimSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](4);
+        s = new bytes4[](5);
         s[0] = ClaimFacet.claimAsLender.selector;
         s[1] = ClaimFacet.claimAsBorrower.selector;
         s[2] = ClaimFacet.getClaimableAmount.selector;
         s[3] = ClaimFacet.getClaimable.selector;
+        s[4] = ClaimFacet.getBorrowerLifRebate.selector;
     }
 
     function _getAddCollateralSelectors() internal pure returns (bytes4[] memory s) {

@@ -140,3 +140,51 @@ incident (a 46-minute pause) blocked ~$200M of follow-up drain.
 
 Full detail in [`contracts/README.md`](contracts/README.md) under
 "Cross-Chain Security".
+
+## VPFI Fee Discounts — Time-Weighted + Claim-Based (Phase 5)
+
+Both sides of the VPFI fee discount (lender yield-fee + borrower Loan
+Initiation Fee) are **time-weighted** across a loan's lifetime and
+**not** a point-in-time tier lookup. The lender discount reduces the
+yield-fee treasury haircut at settlement; the borrower discount is
+delivered as a VPFI **rebate** paid out alongside `claimAsBorrower`.
+
+**Time-weighted accumulator (`LibVPFIDiscount.rollupUserDiscount`)**:
+re-stamps the BPS at the **post-mutation** escrow VPFI balance on
+every change, so an unstake takes effect immediately for every open
+loan's average. Pre-Phase-5 code stamped at pre-mutation balance,
+which let a user keep a high-tier stamp after dropping to tier 0
+until the next balance change — gaming vector. Always call rollup at
+mutation sites passing the post-mutation balance; read-only snapshots
+pass the live balance.
+
+**Borrower LIF — Phase 5 flow**:
+1. At `OfferFacet.acceptOffer` on the VPFI path: borrower pays the
+   FULL 0.1% LIF equivalent in VPFI (not tier-discounted) from their
+   escrow into **Diamond custody** (not treasury). Amount recorded
+   in `s.borrowerLifRebate[loanId].vpfiHeld`.
+2. At proper settlement (`RepayFacet` terminal, `PrecloseFacet`
+   direct + offset, `RefinanceFacet`):
+   `LibVPFIDiscount.settleBorrowerLifProper(loan)` splits `vpfiHeld`
+   into a borrower rebate (`vpfiHeld × avgBps / BPS`) and a treasury
+   share; stores rebate in `s.borrowerLifRebate[loanId].rebateAmount`
+   and forwards the treasury share.
+3. At default / HF-liquidation (`DefaultedFacet.markDefaulted`,
+   `RiskFacet` HF-terminal): `LibVPFIDiscount.forfeitBorrowerLif(loan)`
+   forwards the full held amount to treasury; no rebate.
+4. At claim (`ClaimFacet.claimAsBorrower`): pays out the rebate in
+   VPFI atomically with the normal collateral claim.
+
+**Mainnet invariants to preserve**:
+- Every proper-close terminal path MUST call
+  `LibVPFIDiscount.settleBorrowerLifProper(loan)`.
+- Every default / liquidation terminal path MUST call
+  `LibVPFIDiscount.forfeitBorrowerLif(loan)`.
+- Loan struct `borrowerDiscountAccAtInit` is snapshotted in
+  `LoanFacet._snapshotBorrowerDiscount` at loan-init; don't bypass.
+- The diamond holds the custody VPFI until terminal; no intermediate
+  transfer. A leaked `vpfiHeld` (non-zero on a Settled loan) is a bug.
+
+Full detail in [`docs/TokenomicsTechSpec.md`](docs/TokenomicsTechSpec.md)
+§5.2b and the Phase 5 section of
+[`docs/ReleaseNotes-2026-04-23-to-24.md`](docs/ReleaseNotes-2026-04-23-to-24.md).

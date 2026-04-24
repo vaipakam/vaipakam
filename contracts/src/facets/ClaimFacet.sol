@@ -74,6 +74,16 @@ contract ClaimFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
         uint256 proceeds
     );
 
+    /// @notice Emitted when a borrower claims their Phase 5 LIF VPFI rebate.
+    /// @param loanId The loan whose rebate was credited at proper settlement.
+    /// @param claimant The address receiving the VPFI (borrower NFT holder).
+    /// @param amount VPFI wei transferred.
+    event BorrowerLifRebateClaimed(
+        uint256 indexed loanId,
+        address indexed claimant,
+        uint256 amount
+    );
+
     // ─── Errors ───────────────────────────────────────────────────────────────
 
     // NotNFTOwner inherited from IVaipakamErrors
@@ -241,10 +251,15 @@ contract ClaimFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
 
         emit LenderFundsClaimed(loanId, msg.sender, claim.asset, claim.amount);
 
-        // If borrower already claimed or has nothing to claim, settle the loan
+        // If borrower already claimed or has nothing to claim, settle the loan.
+        // Phase 5: a pending borrower LIF rebate counts as "something to
+        // claim" so the loan stays in Repaid/Defaulted until the borrower
+        // also runs their claim — this preserves the NFT-owner gating on
+        // the rebate payout inside `claimAsBorrower`.
         LibVaipakam.ClaimInfo storage borrowerClaim = s.borrowerClaims[loanId];
         bool borrowerHasNothing = borrowerClaim.amount == 0 &&
-            borrowerClaim.assetType == LibVaipakam.AssetType.ERC20;
+            borrowerClaim.assetType == LibVaipakam.AssetType.ERC20 &&
+            s.borrowerLifRebate[loanId].rebateAmount == 0;
         if (borrowerClaim.claimed || borrowerHasNothing) {
             LibLifecycle.transitionFromAny(loan, LibVaipakam.LoanStatus.Settled);
             emit LoanSettled(loanId);
@@ -278,9 +293,16 @@ contract ClaimFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
 
         LibVaipakam.ClaimInfo storage claim = s.borrowerClaims[loanId];
         if (claim.claimed) revert AlreadyClaimed();
-        // NFT collateral claims have amount=0 but tokenId/quantity as payload
+        // NFT collateral claims have amount=0 but tokenId/quantity as payload.
+        // Phase 5 / §5.2b adds a second claimable lane: any pending VPFI
+        // rebate credited at proper settlement (borrowerLifRebate). Loans
+        // that paid LIF in the lending asset, or defaulted/liquidated,
+        // have rebateAmount == 0 and no-op that branch below.
         bool hasNFTClaim = claim.assetType != LibVaipakam.AssetType.ERC20;
-        if (claim.amount == 0 && !hasNFTClaim) revert NothingToClaim();
+        uint256 lifRebate = s.borrowerLifRebate[loanId].rebateAmount;
+        if (claim.amount == 0 && !hasNFTClaim && lifRebate == 0) {
+            revert NothingToClaim();
+        }
 
         // Verify caller owns the borrower's Vaipakam position NFT
         LibAuth.requireBorrowerNFTOwner(loan);
@@ -325,6 +347,19 @@ contract ClaimFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
             );
         }
 
+        // Phase 5 / §5.2b — transfer any pending borrower LIF VPFI rebate.
+        // The Diamond custody-holds the rebate slice between settlement
+        // (settleBorrowerLifProper) and this claim; zero it out and
+        // transfer to the claimant in one step.
+        if (lifRebate > 0) {
+            s.borrowerLifRebate[loanId].rebateAmount = 0;
+            address vpfi = s.vpfiToken;
+            if (vpfi != address(0)) {
+                IERC20(vpfi).safeTransfer(msg.sender, lifRebate);
+                emit BorrowerLifRebateClaimed(loanId, msg.sender, lifRebate);
+            }
+        }
+
         // Update borrower's NFT to "Loan Closed" before burning (per README)
         LibFacet.crossFacetCall(
             abi.encodeWithSelector(
@@ -346,6 +381,9 @@ contract ClaimFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
 
         // If lender already claimed or truly has nothing to claim, settle the loan.
         // Must check heldForLender, NFT rental returns, and NFT collateral claims.
+        // Note: the borrower LIF rebate is paid out in the same tx above, so
+        // it doesn't gate the Settled transition — once the borrower's
+        // claimAsBorrower has run, every borrower-side payout has cleared.
         LibVaipakam.ClaimInfo storage lenderClaim = s.lenderClaims[loanId];
         bool lenderHasHeld = s.heldForLender[loanId] > 0;
         bool lenderHasRentalNFT = loan.assetType != LibVaipakam.AssetType.ERC20;
@@ -579,6 +617,30 @@ contract ClaimFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
         return (claim.asset, claim.amount, claim.claimed);
     }
 
+    /// @notice Phase 5 borrower LIF VPFI rebate state for a given loan.
+    /// @dev `vpfiHeld` > 0 while the loan is live and took the VPFI fee
+    ///      path at init; zero once settlement runs. `rebateAmount` > 0
+    ///      after a proper settlement (repay / preclose / refinance-old-
+    ///      loan) credited the borrower; zero after
+    ///      `claimAsBorrower` paid it out, after a default/liquidation
+    ///      forfeiture, or on loans that never took the VPFI path. A
+    ///      loan is "rebate-actionable" iff `rebateAmount > 0`.
+    /// @param loanId Loan to query.
+    /// @return rebateAmount Claimable VPFI (18 dec) the borrower NFT owner
+    ///                      receives on their next `claimAsBorrower`.
+    /// @return vpfiHeld     VPFI currently held by the Diamond against this
+    ///                      loan pending settlement. Zero after any
+    ///                      terminal transition.
+    function getBorrowerLifRebate(uint256 loanId)
+        external
+        view
+        returns (uint256 rebateAmount, uint256 vpfiHeld)
+    {
+        LibVaipakam.BorrowerLifRebate storage r =
+            LibVaipakam.storageSlot().borrowerLifRebate[loanId];
+        return (r.rebateAmount, r.vpfiHeld);
+    }
+
     /// @notice Full claim payload for the requested side of a loan — use
     ///         this over `getClaimableAmount` when the claim may be an
     ///         NFT (ERC-721/1155) or when held-for-lender funds exist, as
@@ -587,6 +649,8 @@ contract ClaimFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
     ///         `!claimed && (amount > 0 || assetType != ERC20 ||
     ///                      heldForLender > 0 || hasRentalNFTReturn)`
     ///      — mirroring the guards in `claimAsLender` / `claimAsBorrower`.
+    ///      Phase 5 adds the borrower LIF rebate; query
+    ///      {getBorrowerLifRebate} for that lane.
     function getClaimable(
         uint256 loanId,
         bool isLender

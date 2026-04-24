@@ -126,4 +126,9 @@ export interface ClaimableEntry {
   // Lender-only: principal-asset amount held inside the diamond awaiting
   // the lender's claim (e.g. repayment path). Zero for borrower rows.
   heldForLender: bigint;
+  // Borrower-only: VPFI rebate credited at proper settlement for Phase 5
+  // loans that took the VPFI-fee LIF path. Zero for lender rows and for
+  // loans that paid LIF in the lending asset or forfeited on default.
+  // Paid out alongside the main claim inside `claimAsBorrower`.
+  lifRebate: bigint;
 }

@@ -7,6 +7,7 @@ import {LibLifecycle} from "../libraries/LibLifecycle.sol";
 import {LibFallback} from "../libraries/LibFallback.sol";
 import {LibEntitlement} from "../libraries/LibEntitlement.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
+import {LibVPFIDiscount} from "../libraries/LibVPFIDiscount.sol";
 import {LibInteractionRewards} from "../libraries/LibInteractionRewards.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
@@ -464,6 +465,13 @@ contract DefaultedFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
             // Either Active (direct default of illiquid loan) or
             // FallbackPending (retry succeeded) transitions here.
             LibLifecycle.transitionFromAny(loan, LibVaipakam.LoanStatus.Defaulted);
+
+            // Phase 5 / §5.2b — default is NOT a proper close, so the
+            // borrower forfeits any up-front VPFI paid for the LIF. The
+            // Diamond flushes the full held amount to treasury; no
+            // rebate is credited. No-op on loans that paid LIF in the
+            // lending asset (vpfiHeld == 0).
+            LibVPFIDiscount.forfeitBorrowerLif(loan);
 
             // Terminal NFT status ("Loan Defaulted" or "Loan Liquidated" per README §7).
             // Burns happen in ClaimFacet after the lender/borrower claims.

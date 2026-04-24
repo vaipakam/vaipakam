@@ -193,6 +193,12 @@ contract PrecloseFacet is
                 LibVaipakam.LoanStatus.Repaid
             );
 
+            // Phase 5 / §5.2b — proper-close settlement for borrower LIF
+            // VPFI path. Splits Diamond-held VPFI into borrower rebate +
+            // treasury share based on time-weighted avg discount BPS.
+            // No-op on loans that paid LIF in the lending asset.
+            LibVPFIDiscount.settleBorrowerLifProper(loan);
+
             emit LoanPreclosedDirect(loanId, msg.sender, plan.interest);
             emit LoanSettlementBreakdown(
                 loanId,
@@ -848,6 +854,12 @@ contract PrecloseFacet is
             LibVaipakam.LoanStatus.Active,
             LibVaipakam.LoanStatus.Repaid
         );
+
+        // Phase 5 / §5.2b — proper-close settlement on the offset path.
+        // The original borrower held VPFI (if applicable) across the old
+        // loan's lifetime and now settles; rebate is credited for the
+        // time-weighted period they actually held.
+        LibVPFIDiscount.settleBorrowerLifProper(loan);
 
         // Release the native transfer lock on the borrower-side NFT. The
         // original loan is now Repaid; the initiator retains the NFT to

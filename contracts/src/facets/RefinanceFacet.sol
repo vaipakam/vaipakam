@@ -278,6 +278,14 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
             LibVaipakam.LoanStatus.Repaid
         );
 
+        // Phase 5 / §5.2b — proper-close settlement for the OLD loan's
+        // borrower LIF VPFI path. The borrower earned the rebate over
+        // the old loan's live period; the new loan gets a fresh anchor
+        // via _snapshotBorrowerDiscount inside its own initiateLoan path
+        // (and, if the new loan also takes the VPFI fee path, that will
+        // register its own vpfiHeld against the new loan id).
+        LibVPFIDiscount.settleBorrowerLifProper(oldLoan);
+
         emit LoanRefinanced(
             oldLoanId,
             newLoanId,

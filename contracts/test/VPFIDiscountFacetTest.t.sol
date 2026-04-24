@@ -14,6 +14,8 @@ import {OfferFacet} from "../src/facets/OfferFacet.sol";
 import {OracleFacet} from "../src/facets/OracleFacet.sol";
 import {EscrowFactoryFacet} from "../src/facets/EscrowFactoryFacet.sol";
 import {RepayFacet} from "../src/facets/RepayFacet.sol";
+import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
+import {DefaultedFacet} from "../src/facets/DefaultedFacet.sol";
 import {AdminFacet} from "../src/facets/AdminFacet.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
@@ -423,6 +425,9 @@ contract VPFIDiscountFacetTest is SetupTest {
         uint256 offerId = _createLenderERC20Offer(principal);
 
         // Seed borrower escrow to tier 1 so the tier gate unlocks, then quote.
+        // Phase 5: quote returns the FULL 0.1% LIF equivalent in VPFI
+        // (no tier discount at init). Tier is still surfaced to show
+        // what time-weighted rebate the borrower is positioned to earn.
         address borrowerEscrow = _buyerEscrow(borrower);
         address lenderEscrow = EscrowFactoryFacet(address(diamond))
             .getOrCreateUserEscrow(lender);
@@ -435,7 +440,7 @@ contract VPFIDiscountFacetTest is SetupTest {
         assertGt(vpfiRequired, 0);
 
         // Top up so the escrow has the tier-1 seed + enough to cover the
-        // VPFI-denominated fee itself.
+        // FULL VPFI-denominated LIF (not a discounted slice).
         vpfiToken.transfer(borrowerEscrow, vpfiRequired * 2);
 
         uint256 treasuryVpfiBefore = vpfiToken.balanceOf(treasuryRecipient);
@@ -446,6 +451,7 @@ contract VPFIDiscountFacetTest is SetupTest {
         uint256 lenderEscrowBalBefore = IERC20(mockERC20).balanceOf(
             lenderEscrow
         );
+        uint256 diamondVpfiBefore = vpfiToken.balanceOf(address(diamond));
 
         // Borrower opts in to the platform-level VPFI-discount consent.
         vm.prank(borrower);
@@ -465,24 +471,35 @@ contract VPFIDiscountFacetTest is SetupTest {
             principal,
             "lender escrow debited by principal only"
         );
-        // Treasury did NOT receive any lending-asset fee (discount path
-        // flips the payer to borrower-in-VPFI).
+        // Treasury did NOT receive any lending-asset fee (VPFI path takes
+        // the fee in VPFI from borrower instead of lender-side haircut).
         assertEq(
             IERC20(mockERC20).balanceOf(treasuryRecipient),
             treasuryErc20Before,
-            "treasury ERC20 fee untouched on discount path"
+            "treasury ERC20 fee untouched on VPFI path"
         );
-        // VPFI moved: borrower escrow → treasury.
+        // Phase 5: VPFI moves borrower escrow → Diamond custody, NOT
+        // treasury directly. Treasury credit happens at settlement when
+        // the held amount splits between borrower rebate + treasury.
         assertEq(
             escrowVpfiBefore - vpfiToken.balanceOf(borrowerEscrow),
             vpfiRequired,
             "borrower escrow debited VPFI"
         );
         assertEq(
-            vpfiToken.balanceOf(treasuryRecipient) - treasuryVpfiBefore,
+            vpfiToken.balanceOf(address(diamond)) - diamondVpfiBefore,
             vpfiRequired,
-            "treasury credited VPFI"
+            "Diamond holds VPFI pending settlement"
         );
+        assertEq(
+            vpfiToken.balanceOf(treasuryRecipient),
+            treasuryVpfiBefore,
+            "treasury NOT credited VPFI at init on Phase 5 path"
+        );
+        (uint256 rebateAmount, uint256 vpfiHeld) = ClaimFacet(address(diamond))
+            .getBorrowerLifRebate(loanId);
+        assertEq(vpfiHeld, vpfiRequired, "custody recorded against loanId");
+        assertEq(rebateAmount, 0, "rebate not credited until settlement");
         assertGt(loanId, 0, "loan created");
     }
 
@@ -707,6 +724,211 @@ contract VPFIDiscountFacetTest is SetupTest {
     }
 
     // ─── Helpers ─────────────────────────────────────────────────────────────
+
+    // ─── Phase 5 — Borrower LIF time-weighted rebate ─────────────────────────
+
+    /// @notice Long-hold happy path: borrower funds escrow via the sanctioned
+    ///         deposit (which wires the discount rollup so the stamp is live
+    ///         for the whole loan window), accepts via the VPFI path, holds
+    ///         through the full loan duration, repays properly. The rebate
+    ///         at claim-time should be the tier-1 percentage (10%) of the
+    ///         VPFI paid up-front.
+    function testBorrowerLifRebateCreditedOnProperRepayLongHold() public {
+        uint256 principal = 10_000 ether;
+
+        // Seed borrower into tier 1 via the sanctioned deposit path so the
+        // discount accumulator is stamped correctly.
+        vpfiToken.transfer(borrower, 5_000 ether);
+        vm.startPrank(borrower);
+        vpfiToken.approve(address(diamond), 5_000 ether);
+        _facet().depositVPFIToEscrow(500 ether); // tier 1 (≥ 100 < 1000)
+        _facet().setVPFIDiscountConsent(true);
+        vm.stopPrank();
+
+        uint256 offerId = _createLenderERC20Offer(principal);
+
+        // Top up enough to cover the full 0.1% LIF in VPFI.
+        (, uint256 vpfiRequired, , ) = _facet().quoteVPFIDiscountFor(
+            offerId,
+            borrower
+        );
+        vpfiToken.transfer(_buyerEscrow(borrower), vpfiRequired * 2);
+
+        // Also fund borrower collateral for acceptOffer.
+        ERC20Mock(mockCollateralERC20).mint(borrower, principal);
+        vm.prank(borrower);
+        IERC20(mockCollateralERC20).approve(address(diamond), principal);
+
+        vm.prank(borrower);
+        uint256 loanId = OfferFacet(address(diamond)).acceptOffer(offerId, true);
+
+        // Phase 5 custody: the Diamond holds the full LIF in VPFI.
+        (uint256 rebateAtInit, uint256 heldAtInit) = ClaimFacet(address(diamond))
+            .getBorrowerLifRebate(loanId);
+        assertEq(rebateAtInit, 0, "no rebate until settlement");
+        assertEq(heldAtInit, vpfiRequired, "custody records full LIF");
+
+        // Advance past the full duration so the borrower accrued tier-1 across
+        // the entire loan.
+        vm.warp(block.timestamp + 30 days);
+
+        // Borrower repays the loan fully. settleBorrowerLifProper should split
+        // the held amount: rebateAmount = held × avgBps / BPS, treasury share
+        // = remainder.
+        uint256 approvalPad = principal + (principal / 10);
+        ERC20Mock(mockERC20).mint(borrower, approvalPad);
+        vm.prank(borrower);
+        IERC20(mockERC20).approve(address(diamond), approvalPad);
+
+        uint256 treasuryVpfiBefore = vpfiToken.balanceOf(treasuryRecipient);
+
+        vm.prank(borrower);
+        RepayFacet(address(diamond)).repayLoan(loanId);
+
+        (uint256 rebateAfterRepay, uint256 heldAfterRepay) = ClaimFacet(
+            address(diamond)
+        ).getBorrowerLifRebate(loanId);
+        assertEq(heldAfterRepay, 0, "custody drained at settlement");
+        assertGt(rebateAfterRepay, 0, "rebate credited");
+        // Tier 1 = 1000 bps discount ⇒ rebate == held × 10%.
+        // Allow 1% slack for same-block accrual edge effects.
+        uint256 expected = (vpfiRequired * 1000) / 10_000;
+        assertApproxEqRel(rebateAfterRepay, expected, 0.01e18, "rebate ~10% of held");
+
+        // Treasury received (held − rebate) in VPFI.
+        uint256 treasuryDelta = vpfiToken.balanceOf(treasuryRecipient) -
+            treasuryVpfiBefore;
+        assertEq(
+            treasuryDelta,
+            vpfiRequired - rebateAfterRepay,
+            "treasury got (held - rebate) VPFI"
+        );
+    }
+
+    /// @notice Stamp-refresh fix verification (Option X): borrower tops up to
+    ///         tier 1 just before loan acceptance, accepts the VPFI path,
+    ///         then immediately withdraws back to tier 0. On settlement
+    ///         after the full duration the time-weighted avg BPS must be
+    ///         ≈ 0 (not tier-1 BPS) because the stamp re-seeded at post-
+    ///         mutation balance after each mutation. This is the exact
+    ///         gaming vector Phase 5 was designed to block.
+    function testBorrowerLifGamingBlockedByStampRefresh() public {
+        uint256 principal = 10_000 ether;
+
+        // Tier-1 seed via deposit so the accumulator is live.
+        vpfiToken.transfer(borrower, 5_000 ether);
+        vm.startPrank(borrower);
+        vpfiToken.approve(address(diamond), 5_000 ether);
+        _facet().depositVPFIToEscrow(500 ether); // tier 1
+        _facet().setVPFIDiscountConsent(true);
+        vm.stopPrank();
+
+        uint256 offerId = _createLenderERC20Offer(principal);
+
+        (, uint256 vpfiRequired, , ) = _facet().quoteVPFIDiscountFor(
+            offerId,
+            borrower
+        );
+        // Top up so the escrow can cover the LIF itself.
+        vpfiToken.transfer(_buyerEscrow(borrower), vpfiRequired * 2);
+
+        ERC20Mock(mockCollateralERC20).mint(borrower, principal);
+        vm.prank(borrower);
+        IERC20(mockCollateralERC20).approve(address(diamond), principal);
+
+        vm.prank(borrower);
+        uint256 loanId = OfferFacet(address(diamond)).acceptOffer(offerId, true);
+
+        // Immediately unstake the lot — stamp-refresh fix should set the
+        // post-withdraw stamp at tier 0, so the whole loan period accrues
+        // at tier-0 BPS (0).
+        uint256 withdrawable = vpfiToken.balanceOf(_buyerEscrow(borrower));
+        vm.prank(borrower);
+        _facet().withdrawVPFIFromEscrow(withdrawable);
+
+        // Full term at tier 0.
+        vm.warp(block.timestamp + 30 days);
+
+        uint256 approvalPad = principal + (principal / 10);
+        ERC20Mock(mockERC20).mint(borrower, approvalPad);
+        vm.prank(borrower);
+        IERC20(mockERC20).approve(address(diamond), approvalPad);
+
+        vm.prank(borrower);
+        RepayFacet(address(diamond)).repayLoan(loanId);
+
+        (uint256 rebate, uint256 held) = ClaimFacet(address(diamond))
+            .getBorrowerLifRebate(loanId);
+        assertEq(held, 0, "custody drained");
+        // With stamp-refresh fix, the post-mutation stamp is tier 0, so the
+        // rebate should be ≈ 0. We accept a tiny non-zero value from the
+        // pre-withdraw same-block tier-1 window but not anywhere close to
+        // the full tier-1 rate.
+        uint256 fullTier1 = (vpfiRequired * 1000) / 10_000;
+        assertLt(rebate, fullTier1 / 100, "gaming blocked: rebate well under tier-1");
+    }
+
+    /// @notice Forfeit path: VPFI-path loan that defaults routes the full
+    ///         held amount to treasury with zero rebate. The Diamond must
+    ///         not retain any VPFI for the loan, and the borrower's claim
+    ///         slot carries zero rebateAmount.
+    function testBorrowerLifForfeitedOnDefault() public {
+        uint256 principal = 10_000 ether;
+
+        // Seed borrower into tier 1 via deposit (stamp live).
+        vpfiToken.transfer(borrower, 5_000 ether);
+        vm.startPrank(borrower);
+        vpfiToken.approve(address(diamond), 5_000 ether);
+        _facet().depositVPFIToEscrow(500 ether); // tier 1
+        _facet().setVPFIDiscountConsent(true);
+        vm.stopPrank();
+
+        // Use an illiquid-principal offer so default goes through
+        // DefaultedFacet.markDefaulted rather than the HF-liquidation path,
+        // and acceptOffer takes the VPFI path.
+        uint256 offerId = _createLenderERC20Offer(principal);
+
+        (, uint256 vpfiRequired, , ) = _facet().quoteVPFIDiscountFor(
+            offerId,
+            borrower
+        );
+        vpfiToken.transfer(_buyerEscrow(borrower), vpfiRequired * 2);
+
+        ERC20Mock(mockCollateralERC20).mint(borrower, principal);
+        vm.prank(borrower);
+        IERC20(mockCollateralERC20).approve(address(diamond), principal);
+
+        vm.prank(borrower);
+        uint256 loanId = OfferFacet(address(diamond)).acceptOffer(offerId, true);
+
+        // Skip past grace period so time-based default fires.
+        vm.warp(block.timestamp + 60 days);
+
+        uint256 treasuryVpfiBefore = vpfiToken.balanceOf(treasuryRecipient);
+        uint256 diamondVpfiBefore = vpfiToken.balanceOf(address(diamond));
+
+        // Lender calls triggerDefault — triggers forfeitBorrowerLif.
+        vm.prank(lender);
+        DefaultedFacet(address(diamond)).triggerDefault(loanId);
+
+        (uint256 rebate, uint256 held) = ClaimFacet(address(diamond))
+            .getBorrowerLifRebate(loanId);
+        assertEq(held, 0, "custody drained on default");
+        assertEq(rebate, 0, "no rebate on default");
+
+        // Full held amount went to treasury — Diamond no longer holds the
+        // loan's VPFI, treasury increased by exactly vpfiRequired.
+        assertEq(
+            diamondVpfiBefore - vpfiToken.balanceOf(address(diamond)),
+            vpfiRequired,
+            "Diamond drained the full custody"
+        );
+        assertEq(
+            vpfiToken.balanceOf(treasuryRecipient) - treasuryVpfiBefore,
+            vpfiRequired,
+            "treasury got full forfeited VPFI"
+        );
+    }
 
     function _createLenderERC20Offer(uint256 amount) internal returns (uint256) {
         // Lender funds the offer with `amount` of mockERC20; collateral is

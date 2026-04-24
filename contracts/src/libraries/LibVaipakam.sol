@@ -463,6 +463,20 @@ library LibVaipakam {
         // Defeats last-minute escrow top-ups that used to steal the full
         // tier-4 discount for a loan the lender was mostly at tier-1 on.
         uint256 lenderDiscountAccAtInit;
+        // Slot 22 — Borrower-side mirror of the lender snapshot above
+        // (Phase 5 / §5.2b). Borrower's
+        // `UserVpfiDiscountState.cumulativeDiscountBpsSeconds` at offer
+        // acceptance. Only populated on loans that take the VPFI-fee path
+        // (the borrower chose to pay the full 0.1% LIF in VPFI); zero on
+        // lending-asset-fee loans. On proper settlement the delta between
+        // the borrower's current accumulator and this anchor, divided by
+        // loan duration, yields the time-weighted average discount BPS
+        // — which scales the VPFI rebate paid out via ClaimFacet. The
+        // gameable one-shot tier lookup at init is replaced by this
+        // time-weighted window, so a borrower who tops up to tier 3 at
+        // accept and unstakes the next block earns only a prorated
+        // rebate (~0) instead of the full discount.
+        uint256 borrowerDiscountAccAtInit;
     }
 
     /**
@@ -619,9 +633,11 @@ library LibVaipakam {
      *         lender yield-fee discount (docs/GovernanceConfigDesign.md §5.2a).
      *         Updated on every escrow-VPFI balance mutation and at every
      *         offer-accept / yield-fee settlement. Ordering invariant: the
-     *         accompanying `rollupUserDiscount(user, preMutationBalance)`
-     *         call MUST execute BEFORE the mutation, so the closed period
-     *         sees the balance that was actually in effect for it.
+     *         accompanying `rollupUserDiscount(user, postMutationBalance)`
+     *         call runs at the mutation site; the closing period carries
+     *         the bps stamp left by the prior rollup (the tier that was in
+     *         effect across the just-closed window), and the re-stamp uses
+     *         the post-mutation balance to seed the next period.
      *
      * @dev Packed layout:
      *        slot 0: uint16 (2) + uint64 (8) = 10 bytes → fits comfortably
@@ -636,6 +652,31 @@ library LibVaipakam {
         uint16  discountBpsAtPreviousRollup;
         uint64  lastRollupAt;
         uint256 cumulativeDiscountBpsSeconds;
+    }
+
+    /**
+     * @notice Per-loan custody + claim bookkeeping for the borrower Loan
+     *         Initiation Fee VPFI-path (Phase 5 / §5.2b).
+     *
+     * @dev Lifecycle:
+     *        init (VPFI path):      vpfiHeld = full LIF-equivalent VPFI
+     *                               pulled from borrower escrow to the
+     *                               Diamond; rebateAmount = 0
+     *        proper settlement:     rebateAmount = vpfiHeld × avgBps / BPS
+     *                               (Diamond sends treasury share to
+     *                               treasury, retains rebateAmount for
+     *                               the borrower claim); vpfiHeld = 0
+     *        default / liquidation: both zeroed, full vpfiHeld forwarded
+     *                               to treasury (no rebate)
+     *        claim:                 rebateAmount cleared to zero as the
+     *                               Diamond transfers VPFI to the claimant
+     *
+     *      Non-VPFI-path loans keep this struct at the zero default; no
+     *      settlement side-effects and no claim.
+     */
+    struct BorrowerLifRebate {
+        uint256 vpfiHeld;      // Diamond's custody while the loan is live
+        uint256 rebateAmount;  // Claimable VPFI after proper settlement
     }
 
     /**
@@ -1328,6 +1369,14 @@ library LibVaipakam {
         ///      {ConfigFacet} under ADMIN_ROLE (routed through the 48h
         ///      Timelock post-handover).
         ProtocolConfig protocolCfg;
+
+        // ─── Borrower LIF discount claim bookkeeping (Phase 5 / §5.2b) ─
+        /// @dev Per-loan custody + claimable rebate for the borrower
+        ///      VPFI-path LIF. Keys are loan ids. A loan that took the
+        ///      lending-asset path (no VPFI discount) never touches this
+        ///      mapping — the zero struct reads correctly and settlement
+        ///      helpers no-op on zero vpfiHeld.
+        mapping(uint256 => BorrowerLifRebate) borrowerLifRebate;
     }
 
     uint256 internal constant MAX_APPROVED_KEEPERS = 5;

@@ -394,6 +394,7 @@ contract LoanFacet is DiamondPausable, IVaipakamErrors {
         );
         _copyPartyFields(loan, offer, acceptor);
         _snapshotLenderDiscount(loan);
+        _snapshotBorrowerDiscount(loan);
     }
 
     /// @dev Anchor the lender's time-weighted VPFI-discount window. Force-
@@ -409,6 +410,24 @@ contract LoanFacet is DiamondPausable, IVaipakamErrors {
         loan.lenderDiscountAccAtInit = LibVaipakam
             .storageSlot()
             .userVpfiDiscountState[lender]
+            .cumulativeDiscountBpsSeconds;
+    }
+
+    /// @dev Borrower mirror of {_snapshotLenderDiscount} (Phase 5 / §5.2b).
+    ///      Anchors the time-weighted borrower LIF-discount window so the
+    ///      proper-settlement helper in LibVPFIDiscount can compute the
+    ///      average discount BPS over the loan's lifetime — defeating the
+    ///      top-up-then-unstake gaming vector on the borrower side. Also
+    ///      captures any pre-init accumulator state the borrower already
+    ///      carries from prior loans (as lender or borrower), so the
+    ///      window measured here is purely "from now on".
+    function _snapshotBorrowerDiscount(LibVaipakam.Loan storage loan) private {
+        address borrower = loan.borrower;
+        uint256 borrowerBal = LibVPFIDiscount.escrowVPFIBalance(borrower);
+        LibVPFIDiscount.rollupUserDiscount(borrower, borrowerBal);
+        loan.borrowerDiscountAccAtInit = LibVaipakam
+            .storageSlot()
+            .userVpfiDiscountState[borrower]
             .cumulativeDiscountBpsSeconds;
     }
 

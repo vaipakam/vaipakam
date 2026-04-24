@@ -378,6 +378,13 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
         // (normal close or cure-by-repay). LibLifecycle validates the edge.
         LibLifecycle.transitionFromAny(loan, LibVaipakam.LoanStatus.Repaid);
 
+        // Phase 5 / §5.2b — proper-close settlement for the borrower LIF
+        // VPFI path. Splits any Diamond-held VPFI between the borrower's
+        // claimable rebate (scaled by time-weighted avg discount BPS) and
+        // the treasury share. No-op on loans that took the lending-asset
+        // fee path at init (vpfiHeld == 0).
+        LibVPFIDiscount.settleBorrowerLifProper(loan);
+
         // Fallback cure: collateral was moved to the Diamond during the failed
         // swap attempt. Push it into the borrower escrow so the borrowerClaim
         // record written above (points at borrower escrow) is satisfiable,
