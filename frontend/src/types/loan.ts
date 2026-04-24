@@ -74,8 +74,10 @@ export interface LoanDetails {
   assetType: bigint;
   principalLiquidity: bigint;
   collateralLiquidity: bigint;
-  lenderKeeperAccessEnabled: boolean;
-  borrowerKeeperAccessEnabled: boolean;
+  // Phase 6: per-loan keeper access is now per-keeper via
+  // `loanKeeperEnabled[loanId][keeper]` on-chain. No per-side bool on the
+  // Loan struct anymore. Frontend per-loan picker queries `isLoanKeeperEnabled`
+  // per keeper over the user's whitelist.
   // Asset-continuity fields required by refinance / offset flows. Each must
   // match between original loan and the replacement offer or the contract
   // reverts — the frontend uses them to prefill Create Offer.

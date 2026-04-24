@@ -246,7 +246,10 @@ contract PauseGatingTest is Test {
 
     function test_pause_approveKeeper() public {
         vm.expectRevert(LibPausable.EnforcedPause.selector);
-        ProfileFacet(address(diamond)).approveKeeper(address(0));
+        ProfileFacet(address(diamond)).approveKeeper(
+            address(0),
+            LibVaipakam.KEEPER_ACTION_ALL
+        );
     }
 
     function test_pause_revokeKeeper() public {

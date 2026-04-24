@@ -313,7 +313,7 @@ contract DeployDiamond is Script {
     }
 
     function _getProfileSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](17);
+        s = new bytes4[](22);
         s[0] = ProfileFacet.updateKYCStatus.selector;
         s[1] = ProfileFacet.getUserCountry.selector;
         s[2] = ProfileFacet.isKYCVerified.selector;
@@ -329,8 +329,14 @@ contract DeployDiamond is Script {
         s[12] = ProfileFacet.approveKeeper.selector;
         s[13] = ProfileFacet.revokeKeeper.selector;
         s[14] = ProfileFacet.getApprovedKeepers.selector;
-        s[15] = ProfileFacet.setLoanKeeperAccess.selector;
+        s[15] = ProfileFacet.setLoanKeeperEnabled.selector;
         s[16] = ProfileFacet.isApprovedKeeper.selector;
+        // Phase 6 additions
+        s[17] = ProfileFacet.setOfferKeeperEnabled.selector;
+        s[18] = ProfileFacet.setKeeperActions.selector;
+        s[19] = ProfileFacet.getKeeperActions.selector;
+        s[20] = ProfileFacet.isLoanKeeperEnabled.selector;
+        s[21] = ProfileFacet.isOfferKeeperEnabled.selector;
     }
 
     function _getOracleSelectors() internal pure returns (bytes4[] memory s) {

@@ -331,7 +331,10 @@ library LibVaipakam {
         AssetType collateralAssetType;
         uint256 collateralTokenId;
         uint256 collateralQuantity;
-        bool keeperAccessEnabled;
+        // Phase 6: keeper access is now per-keeper-per-offer via
+        // `offerKeeperEnabled[offerId][keeper]`. No single keeper bool on
+        // the params; the creator enables specific keepers after create
+        // (or before acceptance) via `ProfileFacet.setOfferKeeperEnabled`.
     }
 
     /**
@@ -353,7 +356,6 @@ library LibVaipakam {
         bool useFullTermInterest;
         bool creatorFallbackConsent;
         AssetType collateralAssetType;
-        bool keeperAccessEnabled;
         // Slot 2
         address lendingAsset; // ERC20 or NFT contract
         // Slot 3
@@ -399,15 +401,12 @@ library LibVaipakam {
         bool useFullTermInterest;
         bool fallbackConsentFromBoth;
         AssetType collateralAssetType;
-        // Per-side keeper access gates. Each side controls its own flag —
-        // borrower toggles `borrowerKeeperAccessEnabled`, lender toggles
-        // `lenderKeeperAccessEnabled`. LibAuth resolves the appropriate flag
-        // based on which side's action is being authorized. At loan creation
-        // both flags mirror the offer's `keeperAccessEnabled`; after
-        // initiation each side may toggle its own flag via
-        // `ProfileFacet.setLoanKeeperAccess`.
-        bool lenderKeeperAccessEnabled;
-        bool borrowerKeeperAccessEnabled;
+        // Phase 6: keeper access is now per-keeper-per-loan via
+        // `loanKeeperEnabled[loanId][keeper]` (see Storage below). Per-side
+        // authority is enforced via each NFT holder's own
+        // `approvedKeeperActions` bitmask, so there's no per-loan per-side
+        // bool here. The master "pause all keepers" switch remains on
+        // `keeperAccessEnabled[user]` (per-user, Storage-level).
         // Fallback-path settlement split, snapshotted at `initiateLoan` from
         // the then-current {ProtocolConfig.fallbackLenderBonusBps} /
         // `fallbackTreasuryBps`. {LibFallback.computeFallbackEntitlements}
@@ -723,15 +722,16 @@ library LibVaipakam {
      *          `offsetOfferToLoanId` / `loanToOffsetOfferId`: bijective pairs.
      *          Both sides must be written together and cleared together;
      *          a one-sided write is a bug.
-     *        • `approvedKeepers[user][keeper] == true` ⇔ `keeper ∈
+     *        • `approvedKeeperActions[user][keeper] != 0` ⇔ `keeper ∈
      *          approvedKeepersList[user]`. The list mirrors the mapping for
      *          enumeration and is capped at MAX_APPROVED_KEEPERS.
-     *        • `keeperAccessEnabled[user]`: user-level opt-in. A keeper call
-     *          on a loan additionally requires the entitled side's per-loan
-     *          flag — `loan.lenderKeeperAccessEnabled` for lender-entitled
-     *          actions, `loan.borrowerKeeperAccessEnabled` for borrower-
-     *          entitled actions. Each side toggles its own flag via
-     *          `ProfileFacet.setLoanKeeperAccess` — see LibAuth.
+     *        • `keeperAccessEnabled[user]`: user-level master switch (Phase 6).
+     *          A keeper call on a loan additionally requires
+     *          `loanKeeperEnabled[loanId][keeper] == true` AND the
+     *          per-action bit set on
+     *          `approvedKeeperActions[nftOwner][keeper]` — all three gates
+     *          must pass. See `LibAuth.requireKeeperFor` and
+     *          `ProfileFacet.setLoanKeeperEnabled`.
      */
     struct Storage {
         uint256 nextOfferId;
@@ -768,18 +768,31 @@ library LibVaipakam {
         mapping(address => uint256) escrowVersion; // user => version when their proxy was last upgraded
         uint256 kycTier0ThresholdUSD; // Tier0 max (default 1_000 * 1e18)
         uint256 kycTier1ThresholdUSD; // Tier1 max (default 10_000 * 1e18)
-        mapping(address => bool) keeperAccessEnabled; // User-level default: opt-in for third-party/keeper execution (default: false)
+        mapping(address => bool) keeperAccessEnabled; // User-level master switch — quick "pause all keepers for me" (default: false)
         // Snapshot of liquid-collateral liquidations that fell back to the
         // claim-time settlement path (README §7). Written by RiskFacet /
         // DefaultedFacet at fallback time; consumed by ClaimFacet on the
         // first lender/borrower claim.
         mapping(uint256 => FallbackSnapshot) fallbackSnapshot;
-        // README §3/§9: per-user whitelist of approved keeper addresses for
-        // non-liquidation third-party execution. A keeper may act on a loan
-        // only if BOTH lender and borrower have approved it (intersection).
-        // Capped at MAX_APPROVED_KEEPERS per user.
-        mapping(address => mapping(address => bool)) approvedKeepers;
+        // Phase 6: per-user whitelist of approved keepers + their per-action
+        // authorization bitmask. The bitmask uses the KEEPER_ACTION_* constants
+        // below. A zero value means the keeper is not approved (equivalent to
+        // not-on-the-list); a non-zero value authorizes the keeper for the set
+        // bits' actions. Capped at MAX_APPROVED_KEEPERS per user. Per-side
+        // authority is automatic: a lender-entitled action for a loan checks
+        // the lender-NFT holder's bitmask, a borrower-entitled action checks
+        // the borrower-NFT holder's — the two bitmasks are independent.
+        mapping(address => mapping(address => uint8)) approvedKeeperActions;
         mapping(address => address[]) approvedKeepersList;
+        // Phase 6: per-loan and per-offer keeper enable flags. A keeper may
+        // drive an action on a loan iff they are both enabled for the loan
+        // (this mapping) AND the relevant NFT holder's bitmask above has the
+        // action bit set. Offer-level flags are latched into loan-level at
+        // `initiateLoan` via the creator's whitelist; post-acceptance each
+        // NFT holder can edit the loan-level flag via
+        // `ProfileFacet.setLoanKeeperEnabled`.
+        mapping(uint256 => mapping(address => bool)) loanKeeperEnabled;
+        mapping(uint256 => mapping(address => bool)) offerKeeperEnabled;
         // README §13 analytics surface: timestamped log of every treasury-fee
         // accrual, priced in USD at accrual time. Appended by
         // LibFacet.recordTreasuryAccrual. Consumed by MetricsFacet for the
@@ -1380,6 +1393,20 @@ library LibVaipakam {
     }
 
     uint256 internal constant MAX_APPROVED_KEEPERS = 5;
+
+    // ─── Phase 6: Keeper action bitmask constants ────────────────────────────
+    // Each keeper carries a `uint8` bitmask of actions they're authorised to
+    // drive for a given NFT holder. Bits are OR'd together; up to 8 actions
+    // (5 used today, 3 spare). The constants are `uint8` to match the
+    // `approvedKeeperActions[user][keeper]` storage type and to keep mask
+    // operations on the stack small.
+    uint8 internal constant KEEPER_ACTION_COMPLETE_LOAN_SALE   = 1 << 0; // 0x01
+    uint8 internal constant KEEPER_ACTION_COMPLETE_OFFSET      = 1 << 1; // 0x02
+    uint8 internal constant KEEPER_ACTION_INIT_EARLY_WITHDRAW  = 1 << 2; // 0x04
+    uint8 internal constant KEEPER_ACTION_INIT_PRECLOSE        = 1 << 3; // 0x08
+    uint8 internal constant KEEPER_ACTION_REFINANCE            = 1 << 4; // 0x10
+    /// @dev All actions — convenience for "grant everything" UX flows.
+    uint8 internal constant KEEPER_ACTION_ALL                  = 0x1F;
 
     /**
      * @notice Retrieves the Vaipakam storage slot.

@@ -389,8 +389,7 @@ contract OfferFacetTest is Test {
                 prepayAsset: mockERC20,
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
-                collateralQuantity: 0,
-                keeperAccessEnabled: false
+                collateralQuantity: 0
             })
         );
 
@@ -436,8 +435,7 @@ contract OfferFacetTest is Test {
                 prepayAsset: mockERC20,
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
-                collateralQuantity: 0,
-                keeperAccessEnabled: false
+                collateralQuantity: 0
             })
         );
     }
@@ -460,8 +458,7 @@ contract OfferFacetTest is Test {
                 prepayAsset: mockERC20,
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
-                collateralQuantity: 0,
-                keeperAccessEnabled: false
+                collateralQuantity: 0
             })
         );
 
@@ -510,8 +507,7 @@ contract OfferFacetTest is Test {
                 prepayAsset: mockERC20,
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
-                collateralQuantity: 0,
-                keeperAccessEnabled: false
+                collateralQuantity: 0
             })
         );
 
@@ -570,8 +566,7 @@ contract OfferFacetTest is Test {
                 prepayAsset: mockERC20,
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
-                collateralQuantity: 0,
-                keeperAccessEnabled: false
+                collateralQuantity: 0
             })
         );
 
@@ -598,8 +593,7 @@ contract OfferFacetTest is Test {
                 prepayAsset: mockERC20,
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
-                collateralQuantity: 0,
-                keeperAccessEnabled: false
+                collateralQuantity: 0
             })
         );
         assertEq(
@@ -650,8 +644,7 @@ contract OfferFacetTest is Test {
                 prepayAsset: mockERC20,
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
-                collateralQuantity: 0,
-                keeperAccessEnabled: false
+                collateralQuantity: 0
             })
         );
 
@@ -700,8 +693,7 @@ contract OfferFacetTest is Test {
                 prepayAsset: mockERC20,
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
-                collateralQuantity: 0,
-                keeperAccessEnabled: false
+                collateralQuantity: 0
             })
         );
     }
@@ -737,8 +729,7 @@ contract OfferFacetTest is Test {
                 prepayAsset: mockERC20,
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
-                collateralQuantity: 0,
-                keeperAccessEnabled: false
+                collateralQuantity: 0
             })
         );
 
@@ -789,8 +780,7 @@ contract OfferFacetTest is Test {
                 prepayAsset: mockERC20,
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
-                collateralQuantity: 0,
-                keeperAccessEnabled: false
+                collateralQuantity: 0
             })
         );
     }
@@ -819,8 +809,7 @@ contract OfferFacetTest is Test {
                 prepayAsset: mockERC20,
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
-                collateralQuantity: 0,
-                keeperAccessEnabled: false
+                collateralQuantity: 0
             })
         );
     }
@@ -844,8 +833,7 @@ contract OfferFacetTest is Test {
                 prepayAsset: mockERC20,
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
-                collateralQuantity: 0,
-                keeperAccessEnabled: false
+                collateralQuantity: 0
             })
         );
 
@@ -873,8 +861,7 @@ contract OfferFacetTest is Test {
                 prepayAsset: mockERC20,
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
-                collateralQuantity: 0,
-                keeperAccessEnabled: false
+                collateralQuantity: 0
             })
         );
 
@@ -908,8 +895,7 @@ contract OfferFacetTest is Test {
                 prepayAsset: mockERC20,
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
-                collateralQuantity: 0,
-                keeperAccessEnabled: false
+                collateralQuantity: 0
             })
         );
 
@@ -968,8 +954,7 @@ contract OfferFacetTest is Test {
                 prepayAsset: mockERC20,
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
-                collateralQuantity: 0,
-                keeperAccessEnabled: false
+                collateralQuantity: 0
             })
         );
 
@@ -1010,8 +995,7 @@ contract OfferFacetTest is Test {
                 prepayAsset: mockERC20,
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
-                collateralQuantity: 0,
-                keeperAccessEnabled: false
+                collateralQuantity: 0
             })
         );
 
@@ -1044,8 +1028,7 @@ contract OfferFacetTest is Test {
                 prepayAsset: mockERC20,
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
-                collateralQuantity: 0,
-                keeperAccessEnabled: false
+                collateralQuantity: 0
             })
         );
 
@@ -1080,8 +1063,7 @@ contract OfferFacetTest is Test {
                 prepayAsset: mockERC20,
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
-                collateralQuantity: 0,
-                keeperAccessEnabled: false
+                collateralQuantity: 0
             })
         );
 
@@ -1119,8 +1101,7 @@ contract OfferFacetTest is Test {
                 prepayAsset: mockERC20,
                 collateralAssetType: LibVaipakam.AssetType.ERC721,
                 collateralTokenId: 42,
-                collateralQuantity: 0,
-                keeperAccessEnabled: false
+                collateralQuantity: 0
             })
         );
 
@@ -1162,8 +1143,7 @@ contract OfferFacetTest is Test {
                 prepayAsset: mockERC20,
                 collateralAssetType: LibVaipakam.AssetType.ERC1155,
                 collateralTokenId: 7,
-                collateralQuantity: 10,
-                keeperAccessEnabled: false
+                collateralQuantity: 10
             })
         );
 
@@ -1204,8 +1184,7 @@ contract OfferFacetTest is Test {
                 prepayAsset: mockERC20,
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
-                collateralQuantity: 0,
-                keeperAccessEnabled: false
+                collateralQuantity: 0
             })
         );
 
@@ -1247,8 +1226,7 @@ contract OfferFacetTest is Test {
                 prepayAsset: mockERC20,
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
-                collateralQuantity: 0,
-                keeperAccessEnabled: false
+                collateralQuantity: 0
             })
         );
 
@@ -1278,8 +1256,7 @@ contract OfferFacetTest is Test {
                 prepayAsset: mockERC20,
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
-                collateralQuantity: 0,
-                keeperAccessEnabled: false
+                collateralQuantity: 0
             })
         );
         // offerId = 1; user1 is lender
@@ -1323,8 +1300,7 @@ contract OfferFacetTest is Test {
                 prepayAsset: mockERC20,
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
-                collateralQuantity: 0,
-                keeperAccessEnabled: false
+                collateralQuantity: 0
             })
         );
 
@@ -1370,8 +1346,7 @@ contract OfferFacetTest is Test {
                 prepayAsset: mockERC20,
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
-                collateralQuantity: 0,
-                keeperAccessEnabled: false
+                collateralQuantity: 0
             })
         );
 
@@ -1420,8 +1395,7 @@ contract OfferFacetTest is Test {
                 prepayAsset: mockERC20,
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
-                collateralQuantity: 0,
-                keeperAccessEnabled: false
+                collateralQuantity: 0
             })
         );
 
@@ -1464,8 +1438,7 @@ contract OfferFacetTest is Test {
                 prepayAsset: mockERC20,
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
-                collateralQuantity: 0,
-                keeperAccessEnabled: false
+                collateralQuantity: 0
             })
         );
 
@@ -1496,8 +1469,7 @@ contract OfferFacetTest is Test {
                 prepayAsset: mockERC20,
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
-                collateralQuantity: 0,
-                keeperAccessEnabled: false
+                collateralQuantity: 0
             })
         );
 
@@ -1532,8 +1504,7 @@ contract OfferFacetTest is Test {
                 prepayAsset: mockERC20,
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
-                collateralQuantity: 0,
-                keeperAccessEnabled: false
+                collateralQuantity: 0
             })
         );
 
@@ -1591,8 +1562,7 @@ contract OfferFacetTest is Test {
                 prepayAsset: mockERC20,
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
-                collateralQuantity: 0,
-                keeperAccessEnabled: false
+                collateralQuantity: 0
             })
         );
         assertGt(offerId, 0);
@@ -1618,8 +1588,7 @@ contract OfferFacetTest is Test {
                 prepayAsset: mockERC20,
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
-                collateralQuantity: 0,
-                keeperAccessEnabled: false
+                collateralQuantity: 0
             })
         );
 
@@ -1657,8 +1626,7 @@ contract OfferFacetTest is Test {
                 prepayAsset: mockERC20,
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
-                collateralQuantity: 0,
-                keeperAccessEnabled: false
+                collateralQuantity: 0
             })
         );
 
@@ -1701,8 +1669,7 @@ contract OfferFacetTest is Test {
                 prepayAsset: mockERC20,
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
-                collateralQuantity: 0,
-                keeperAccessEnabled: false
+                collateralQuantity: 0
             })
         );
 
@@ -1746,8 +1713,7 @@ contract OfferFacetTest is Test {
                 prepayAsset: mockERC20,
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
-                collateralQuantity: 0,
-                keeperAccessEnabled: false
+                collateralQuantity: 0
             })
         );
 
@@ -1787,8 +1753,7 @@ contract OfferFacetTest is Test {
                 prepayAsset: mockERC20,
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
-                collateralQuantity: 0,
-                keeperAccessEnabled: false
+                collateralQuantity: 0
             })
         );
 
@@ -1836,8 +1801,7 @@ contract OfferFacetTest is Test {
                 prepayAsset: mockERC20,
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
-                collateralQuantity: 0,
-                keeperAccessEnabled: false
+                collateralQuantity: 0
             })
         );
 
@@ -1878,8 +1842,7 @@ contract OfferFacetTest is Test {
                 prepayAsset: mockERC20,
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
-                collateralQuantity: 0,
-                keeperAccessEnabled: false
+                collateralQuantity: 0
             })
         );
 
@@ -1926,8 +1889,7 @@ contract OfferFacetTest is Test {
                 prepayAsset: mockERC20,
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
-                collateralQuantity: 0,
-                keeperAccessEnabled: false
+                collateralQuantity: 0
             })
         );
 
@@ -2001,8 +1963,7 @@ contract OfferFacetTest is Test {
                 prepayAsset: mockERC20,
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
-                collateralQuantity: 0,
-                keeperAccessEnabled: false
+                collateralQuantity: 0
             })
         );
         vm.clearMockedCalls();
@@ -2033,8 +1994,7 @@ contract OfferFacetTest is Test {
                 prepayAsset: mockERC20,
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
-                collateralQuantity: 0,
-                keeperAccessEnabled: false
+                collateralQuantity: 0
             })
         );
         vm.clearMockedCalls();
@@ -2067,8 +2027,7 @@ contract OfferFacetTest is Test {
                 prepayAsset: mockERC20,
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
-                collateralQuantity: 0,
-                keeperAccessEnabled: false
+                collateralQuantity: 0
             })
         );
 
@@ -2112,8 +2071,7 @@ contract OfferFacetTest is Test {
                 prepayAsset: mockERC20,
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
-                collateralQuantity: 0,
-                keeperAccessEnabled: false
+                collateralQuantity: 0
             })
         );
 
@@ -2165,8 +2123,7 @@ contract OfferFacetTest is Test {
                 prepayAsset: mockERC20,
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
-                collateralQuantity: 0,
-                keeperAccessEnabled: false
+                collateralQuantity: 0
             })
         );
 
@@ -2224,8 +2181,7 @@ contract OfferFacetTest is Test {
                 prepayAsset: mockERC20,
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
-                collateralQuantity: 0,
-                keeperAccessEnabled: false
+                collateralQuantity: 0
             })
         );
 
@@ -2267,8 +2223,7 @@ contract OfferFacetTest is Test {
                 prepayAsset: mockERC20,
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
-                collateralQuantity: 0,
-                keeperAccessEnabled: false
+                collateralQuantity: 0
             })
         );
 
@@ -2328,8 +2283,7 @@ contract OfferFacetTest is Test {
                 prepayAsset: mockERC20,
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
-                collateralQuantity: 0,
-                keeperAccessEnabled: false
+                collateralQuantity: 0
             })
         );
 
@@ -2371,8 +2325,7 @@ contract OfferFacetTest is Test {
                 prepayAsset: mockERC20,
                 collateralAssetType: LibVaipakam.AssetType.ERC721,
                 collateralTokenId: 42,
-                collateralQuantity: 0,
-                keeperAccessEnabled: false
+                collateralQuantity: 0
             })
         );
 
@@ -2422,8 +2375,7 @@ contract OfferFacetTest is Test {
                 prepayAsset: mockERC20,
                 collateralAssetType: LibVaipakam.AssetType.ERC1155,
                 collateralTokenId: 7,
-                collateralQuantity: 10,
-                keeperAccessEnabled: false
+                collateralQuantity: 10
             })
         );
 
@@ -2476,8 +2428,7 @@ contract OfferFacetTest is Test {
                 prepayAsset: mockERC20,
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
-                collateralQuantity: 0,
-                keeperAccessEnabled: false
+                collateralQuantity: 0
             })
         );
 
@@ -2528,8 +2479,7 @@ contract OfferFacetTest is Test {
                 prepayAsset: mockERC20,
                 collateralAssetType: LibVaipakam.AssetType.ERC721,
                 collateralTokenId: 50,
-                collateralQuantity: 0,
-                keeperAccessEnabled: false
+                collateralQuantity: 0
             })
         );
 
@@ -2570,8 +2520,7 @@ contract OfferFacetTest is Test {
                 prepayAsset: mockERC20,
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
-                collateralQuantity: 0,
-                keeperAccessEnabled: false
+                collateralQuantity: 0
             })
         );
 
@@ -2627,8 +2576,7 @@ contract OfferFacetTest is Test {
                 prepayAsset: mockERC20,
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
-                collateralQuantity: 0,
-                keeperAccessEnabled: false
+                collateralQuantity: 0
             })
         );
 
@@ -2684,8 +2632,7 @@ contract OfferFacetTest is Test {
                 prepayAsset: mockERC20,
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
-                collateralQuantity: 0,
-                keeperAccessEnabled: false
+                collateralQuantity: 0
             })
         );
 
@@ -2741,8 +2688,7 @@ contract OfferFacetTest is Test {
                 prepayAsset: mockERC20,
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
-                collateralQuantity: 0,
-                keeperAccessEnabled: false
+                collateralQuantity: 0
             })
         );
 
@@ -2800,8 +2746,7 @@ contract OfferFacetTest is Test {
                 prepayAsset: mockERC20,
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
-                collateralQuantity: 0,
-                keeperAccessEnabled: false
+                collateralQuantity: 0
             })
         );
 
@@ -2862,8 +2807,7 @@ contract OfferFacetTest is Test {
                 prepayAsset: mockERC20,
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
-                collateralQuantity: 0,
-                keeperAccessEnabled: false
+                collateralQuantity: 0
             })
         );
 
@@ -2909,8 +2853,7 @@ contract OfferFacetTest is Test {
                 prepayAsset: mockERC20,
                 collateralAssetType: LibVaipakam.AssetType.ERC1155,
                 collateralTokenId: 7,
-                collateralQuantity: 10,
-                keeperAccessEnabled: false
+                collateralQuantity: 10
             })
         );
 
@@ -2955,8 +2898,7 @@ contract OfferFacetTest is Test {
                 prepayAsset: mockERC20,
                 collateralAssetType: LibVaipakam.AssetType.ERC721,
                 collateralTokenId: 42,
-                collateralQuantity: 0,
-                keeperAccessEnabled: false
+                collateralQuantity: 0
             })
         );
 
@@ -2992,8 +2934,7 @@ contract OfferFacetTest is Test {
                 prepayAsset: mockERC20,
                 collateralAssetType: LibVaipakam.AssetType.ERC1155,
                 collateralTokenId: 5,
-                collateralQuantity: 20,
-                keeperAccessEnabled: false
+                collateralQuantity: 20
             })
         );
 
@@ -3026,8 +2967,7 @@ contract OfferFacetTest is Test {
                 prepayAsset: mockERC20,
                 collateralAssetType: LibVaipakam.AssetType.ERC721,
                 collateralTokenId: 99,
-                collateralQuantity: 0,
-                keeperAccessEnabled: false
+                collateralQuantity: 0
             })
         );
 
@@ -3075,8 +3015,7 @@ contract OfferFacetTest is Test {
                 prepayAsset: mockERC20,
                 collateralAssetType: LibVaipakam.AssetType.ERC1155,
                 collateralTokenId: 3,
-                collateralQuantity: 15,
-                keeperAccessEnabled: false
+                collateralQuantity: 15
             })
         );
 
@@ -3124,8 +3063,7 @@ contract OfferFacetTest is Test {
                 prepayAsset: mockERC20,
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
-                collateralQuantity: 0,
-                keeperAccessEnabled: false
+                collateralQuantity: 0
             })
         );
 
@@ -3171,8 +3109,7 @@ contract OfferFacetTest is Test {
                 prepayAsset: mockERC20,
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
-                collateralQuantity: 0,
-                keeperAccessEnabled: false
+                collateralQuantity: 0
             })
         );
 
@@ -3213,8 +3150,7 @@ contract OfferFacetTest is Test {
                 prepayAsset: mockERC20,
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
-                collateralQuantity: 0,
-                keeperAccessEnabled: false
+                collateralQuantity: 0
             })
         );
 
@@ -3255,8 +3191,7 @@ contract OfferFacetTest is Test {
                 prepayAsset: mockERC20,
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
-                collateralQuantity: 0,
-                keeperAccessEnabled: false
+                collateralQuantity: 0
             })
         );
 
@@ -3295,8 +3230,7 @@ contract OfferFacetTest is Test {
                 prepayAsset: mockERC20,
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
-                collateralQuantity: 0,
-                keeperAccessEnabled: false
+                collateralQuantity: 0
             })
         );
 
@@ -3342,8 +3276,7 @@ contract OfferFacetTest is Test {
                 prepayAsset: mockERC20,
                 collateralAssetType: LibVaipakam.AssetType.ERC721,
                 collateralTokenId: 55,
-                collateralQuantity: 0,
-                keeperAccessEnabled: false
+                collateralQuantity: 0
             })
         );
 

@@ -126,7 +126,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](21);
+        selectors = new bytes4[](25);
         selectors[0] = ProfileFacet.updateKYCStatus.selector;
         selectors[1] = ProfileFacet.getUserCountry.selector;
         selectors[2] = ProfileFacet.isKYCVerified.selector;
@@ -143,11 +143,16 @@ contract HelperTest {
         selectors[13] = ProfileFacet.revokeKeeper.selector;
         selectors[14] = ProfileFacet.isApprovedKeeper.selector;
         selectors[15] = ProfileFacet.getApprovedKeepers.selector;
-        selectors[16] = ProfileFacet.setLoanKeeperAccess.selector;
-        selectors[17] = ProfileFacet.setOfferKeeperAccess.selector;
+        selectors[16] = ProfileFacet.setLoanKeeperEnabled.selector;
+        selectors[17] = ProfileFacet.setOfferKeeperEnabled.selector;
         selectors[18] = ProfileFacet.setSanctionsOracle.selector;
         selectors[19] = ProfileFacet.getSanctionsOracle.selector;
         selectors[20] = ProfileFacet.isSanctionedAddress.selector;
+        // Phase 6 additions
+        selectors[21] = ProfileFacet.setKeeperActions.selector;
+        selectors[22] = ProfileFacet.getKeeperActions.selector;
+        selectors[23] = ProfileFacet.isLoanKeeperEnabled.selector;
+        selectors[24] = ProfileFacet.isOfferKeeperEnabled.selector;
         return selectors;
     }
 

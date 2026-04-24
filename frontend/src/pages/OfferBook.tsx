@@ -60,11 +60,10 @@ interface OfferData {
   accepted: boolean;
   assetType: number;
   tokenId: bigint;
-  /** Mirrors the on-chain `offer.keeperAccessEnabled` flag. The offer
-   *  creator can flip this any time via `setOfferKeeperAccess` while
-   *  the offer is still open. Accepting an offer latches the flag into
-   *  the resulting loan's per-side keeper state. */
-  keeperAccessEnabled: boolean;
+  // Phase 6: per-keeper per-offer enable flags live in
+  // `s.offerKeeperEnabled[offerId][keeper]`. No single flag on the offer
+  // struct. Per-offer keeper selection is surfaced on the offer card
+  // only for the creator — see OfferKeeperPicker.
 }
 
 type TabFilter = 'both' | 'lender' | 'borrower';
@@ -133,7 +132,6 @@ type RawOffer = {
   accepted: boolean;
   assetType: bigint | number;
   tokenId: bigint;
-  keeperAccessEnabled: boolean;
 };
 
 function toOfferData(r: RawOffer): OfferData {
@@ -152,7 +150,6 @@ function toOfferData(r: RawOffer): OfferData {
     accepted: r.accepted,
     assetType: Number(r.assetType),
     tokenId: r.tokenId,
-    keeperAccessEnabled: Boolean(r.keeperAccessEnabled),
   };
 }
 
@@ -428,19 +425,19 @@ export default function OfferBook() {
     setPendingOffer(offer);
   };
 
-  // Per-offer keeper toggle — callable by the offer creator at any point
-  // before the offer is accepted. Mirrors `setLoanKeeperAccess` on the
-  // post-acceptance side. The on-chain fn reverts if the caller isn't
-  // the creator or if the offer has already been accepted, so UI-side
-  // we just check the button visibility via `isOwn`.
+  // Phase 6: per-keeper per-offer enable toggle — callable by the offer
+  // creator pre-acceptance. Mirrors the loan-level handler on the
+  // post-acceptance side. The contract reverts if the caller isn't the
+  // creator or if the offer has already been accepted.
   const handleToggleOfferKeeper = async (
     offerId: bigint,
+    keeper: string,
     next: boolean,
   ) => {
     if (!diamond || togglingKeeperId !== null) return;
     const step = beginStep({
       area: 'keeper',
-      flow: 'setOfferKeeperAccess',
+      flow: 'setOfferKeeperEnabled',
       step: 'submit-tx',
       wallet: address ?? undefined,
       chainId: chainId ?? undefined,
@@ -451,23 +448,17 @@ export default function OfferBook() {
     try {
       const tx = await (
         diamond as unknown as {
-          setOfferKeeperAccess: (
+          setOfferKeeperEnabled: (
             id: bigint,
+            keeper: string,
             enabled: boolean,
           ) => Promise<{ hash: string; wait: () => Promise<unknown> }>;
         }
-      ).setOfferKeeperAccess(offerId, next);
+      ).setOfferKeeperEnabled(offerId, keeper, next);
       await tx.wait();
-      step.success({ note: `enabled=${next}` });
-      // Optimistic update in place — the row's keeper-badge flips right
-      // away without waiting for a full offer-list re-scan.
-      setOffers((prev) =>
-        prev.map((o) =>
-          o.id === offerId ? { ...o, keeperAccessEnabled: next } : o,
-        ),
-      );
+      step.success({ note: `keeper=${keeper} enabled=${next}` });
     } catch (err) {
-      setError(decodeContractError(err, 'Failed to toggle offer keeper flag'));
+      setError(decodeContractError(err, 'Failed to toggle offer keeper enable'));
       step.failure(err);
     } finally {
       setTogglingKeeperId(null);
@@ -1309,27 +1300,21 @@ function OfferTable({ title, subtitle, offers, anchorRateBps, address, accepting
                       {statusView === 'closed' ? (
                         <span className="status-badge settled">Filled</span>
                       ) : isOwn ? (
-                        // Offer creator sees: Your-Offer badge + a keeper
-                        // toggle. The toggle goes through setOfferKeeperAccess
-                        // on-chain; it can flip freely at any point while the
-                        // offer is still open, matching the per-loan keeper
-                        // control available post-acceptance.
+                        // Phase 6: Offer creator sees Your-Offer badge + a
+                        // "Manage keepers" deep-link. Per-keeper enables for
+                        // this specific offer happen on the Keeper Settings
+                        // page pre-acceptance (setOfferKeeperEnabled), since
+                        // that's where the user picks which of their
+                        // whitelisted keepers to enable for which offer.
                         <div style={{ display: 'flex', flexDirection: 'column', gap: 4, alignItems: 'flex-end' }}>
                           <span className="status-badge settled">Your Offer</span>
-                          <button
-                            type="button"
-                            className="btn btn-secondary btn-sm"
-                            disabled={togglingKeeperId === offer.id}
-                            onClick={() => onToggleKeeper(offer.id, !offer.keeperAccessEnabled)}
-                            data-tooltip="Toggle whether keepers whitelisted on your profile can drive this offer on your behalf. Change anytime before acceptance."
-                            style={{ fontSize: '0.72rem', padding: '3px 8px' }}
+                          <Link
+                            to="/app/keepers"
+                            data-tooltip="Enable specific keepers to drive this offer via the Keeper Settings page."
+                            style={{ fontSize: '0.72rem', padding: '3px 8px', color: 'var(--brand)' }}
                           >
-                            {togglingKeeperId === offer.id
-                              ? '…'
-                              : offer.keeperAccessEnabled
-                                ? 'Keepers: on'
-                                : 'Keepers: off'}
-                          </button>
+                            Manage keepers →
+                          </Link>
                         </div>
                       ) : address ? (
                         <button

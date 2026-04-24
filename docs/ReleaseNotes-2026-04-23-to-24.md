@@ -758,6 +758,307 @@ changes so a fresh error always surfaces. Pages that need
 authoritative state clearing can opt in via the new `onDismiss`
 prop; no existing caller had to change.
 
+## Phase 6: keeper per-action authorization
+
+**The old model.** Before this phase, keeper authority was a single
+boolean: the user had a master `setKeeperAccess(true)` switch, a
+whitelist of up to five keeper addresses via `approveKeeper`, and
+per-offer / per-loan "keepers enabled" bools. Only two entry points
+actually accepted keeper callers (completeLoanSale and completeOffset
+— the two step-2 completion helpers) and the authority was all-or-
+nothing: a whitelisted keeper could either drive both step-2s on a
+loan or neither. Adding a new delegable action required expanding
+the whitelist semantic for every user.
+
+**What changed.** Each whitelisted keeper now carries a **per-action
+bitmask** that lists exactly which actions they're authorised to
+drive. Five actions are delegable today (three newly opened, two
+pre-existing):
+
+  - CompleteLoanSale (early-withdraw step 2 — existing)
+  - CompleteOffset (preclose-via-offset step 2 — existing)
+  - InitEarlyWithdraw (createLoanSaleOffer — **new**)
+  - InitPreclose (preclose direct + transferObligationViaOffer +
+    offsetWithNewOffer — **new**, three sites, one action bit)
+  - Refinance (refinanceLoan — **new**)
+
+Repay, add collateral, and claim stay user-only by explicit design —
+they're money-out operations, not delegable.
+
+**Per-loan keeper selection.** The old single "keepers enabled on
+this loan" bool is replaced by a per-keeper-per-loan enable mapping.
+The offer creator enables specific keepers on their offer pre-
+acceptance; those enables latch into the live loan at acceptance,
+and each NFT holder can edit the loan-level enable list afterwards.
+Authority at call time requires all three gates to pass: user's
+master switch + per-loan keeper enabled + keeper's action bit set.
+Any one of the three failing blocks the call.
+
+**Canonical LibAuth helper.** The two per-side helpers
+(`requireLenderNFTOwnerOrKeeper`, `requireBorrowerNFTOwnerOrKeeper`)
+are replaced by a single `requireKeeperFor(action, loan, lenderSide)`
+that every keeper-accepting entry point calls. This centralises the
+three-gate check in one place and makes the "which actions does this
+entry point allow keepers on" question trivial to read by grep.
+
+**Storage layout (pre-launch — no migration).** Because we're pre-
+launch the storage was refactored in place rather than appended:
+
+  - The `approvedKeepers[user][keeper] = bool` mapping became
+    `approvedKeeperActions[user][keeper] = uint8` (action bitmask —
+    five bits used, three spare for future actions).
+  - New `loanKeeperEnabled[loanId][keeper]` mapping for per-loan
+    enables.
+  - New `offerKeeperEnabled[offerId][keeper]` mapping for pre-
+    acceptance enables, latched into `loanKeeperEnabled` at
+    acceptance via the creator's bounded whitelist iteration.
+  - The `lenderKeeperAccessEnabled` and `borrowerKeeperAccessEnabled`
+    per-loan bools were removed from the Loan struct — redundant
+    under the per-keeper enable model. Same for the single
+    `keeperAccessEnabled` bool on the Offer struct and
+    CreateOfferParams.
+  - The master per-user `keeperAccessEnabled[user]` switch remains —
+    useful as a one-tx "pause all keepers for me" emergency lever
+    without tearing down the whitelist.
+
+**Facet wiring.** Seven entry points now gate via the new helper:
+
+| Facet | Function | Required action |
+|---|---|---|
+| EarlyWithdrawalFacet | createLoanSaleOffer | InitEarlyWithdraw |
+| EarlyWithdrawalFacet | completeLoanSale | CompleteLoanSale |
+| PrecloseFacet | precloseDirect | InitPreclose |
+| PrecloseFacet | transferObligationViaOffer | InitPreclose |
+| PrecloseFacet | offsetWithNewOffer | InitPreclose |
+| PrecloseFacet | completeOffset | CompleteOffset |
+| RefinanceFacet | refinanceLoan | Refinance |
+
+**API changes on ProfileFacet**:
+
+  - `approveKeeper(keeper)` → `approveKeeper(keeper, uint8 actions)`
+    — action bitmask is mandatory on add. `InvalidKeeperActions`
+    reverts on zero or out-of-range bits.
+  - New `setKeeperActions(keeper, uint8 actions)` — edit the bitmask
+    on an existing whitelisted keeper (reverts if keeper isn't on
+    the list).
+  - `setLoanKeeperAccess(loanId, enabled)` → `setLoanKeeperEnabled(
+    loanId, keeper, enabled)` — per-keeper-per-loan toggle.
+  - `setOfferKeeperAccess(offerId, enabled)` → `setOfferKeeperEnabled(
+    offerId, keeper, enabled)` — same pre-acceptance flavour.
+  - `isApprovedKeeper(user, keeper)` kept for backward-friendly
+    "any action set" reads; new `getKeeperActions(user, keeper)`
+    returns the raw bitmask.
+  - Added `isLoanKeeperEnabled(loanId, keeper)` + `isOfferKeeperEnabled(
+    offerId, keeper)` views for frontend rendering.
+
+**Onboarding UX.** The frontend per-offer / per-loan keeper selector
+shows the user's global whitelist as a checklist. Empty whitelist
+deep-links to the KeeperSettings page with a "no keepers added yet
+— add some first" prompt. This closes the flow-of-control gap
+where users who didn't know keepers were a thing couldn't find
+their way to the settings page.
+
+**Diamond-cut update.** The `ProfileFacet` selector table grows from
+17 to 22 function selectors (five new, two replaced). The mainnet
+upgrade `diamondCut` operation must add the new selectors in the
+same transaction as removing the old ones (`setLoanKeeperAccess`
+and `setOfferKeeperAccess`). Both the test harness
+(`HelperTest.getProfileFacetSelectors`) and the production deploy
+script (`DeployDiamond._getProfileSelectors`) were updated.
+
+**Verification.** Forge build clean after the 10-file src-side
+refactor. Existing `VPFIDiscountFacetTest` regression holds at
+25/25 after the selector table + test-helper migration. Full forge
+regression: **1369 passed / 0 failed / 5 skipped** (up from the
+pre-Phase-6 baseline of 1367 — the 5 previously-failing
+`test*RevertsNotNFTOwner` tests across the three strategic-flow
+facets were updated to expect `KeeperAccessRequired()` instead of
+`NotNFTOwner()`, reflecting the unified `requireKeeperFor` gate
+that merged the two prior helpers). New Phase 6 targeted tests
+(per-action gating per facet entry, `InvalidKeeperActions` bitmask
+validation, `revokeKeeper` clears authority, offer→loan latching)
+land in a follow-up commit.
+
+## Security + Legal sprint — (A) and (B) audit confirmation
+
+Before planning the next sprints a full audit against the broader
+industry checklist (Aave/Compound/Maker/Morpho/Euler standards)
+was run. Both the Security-first track (A) and the Legal/compliance
+track (B) are already complete in this release cycle — itemised
+confirmation here so future sprints can start from a settled
+baseline.
+
+**(A) Security-first track — shipped**:
+
+- **Admin-action timelock + Safe over Diamond owner.** A 48h OZ
+  `TimelockController` sits behind a multi-sig Safe. Every
+  `diamondCut`, `setZeroExProxy`, allowance-target change, or
+  config setter is Safe-proposed → 48h delay → executed. Deploy
+  + handover scripts live in `contracts/script/DeployTimelock.s.sol`
+  + `contracts/script/TransferAdminToTimelock.s.sol` +
+  `contracts/script/MigrateOAppGovernance.s.sol` (the last
+  migrates every LayerZero OApp/OFT + the VPFI token to the same
+  governance). `GovernanceHandover.t.sol` is the regression gate
+  asserting no deployer-EOA role leaks survive handover.
+- **Oracle redundancy + staleness bounds.** Chainlink primary with
+  per-feed `maxStaleness` overrides (Phase 3.1), plus a Pyth
+  secondary with a configurable deviation check that fails closed
+  on divergence (Phase 3.2). L2 sequencer-health circuit breaker
+  gates every feed read on rollup chains.
+- **MEV-protected liquidation.** On-chain `minOutputAmount` guard
+  enforced in `RiskFacet` and `DefaultedFacet` — oracle-derived at
+  94% of expected proceeds (6% slippage ceiling). Users route
+  their own wallets through Flashbots Protect or MEV Blocker per
+  the `docs/MEVProtection.md` runbook; the 6% gate holds
+  regardless. Phase 7a will make the 6% ceiling governance-
+  configurable inside a 1–20% range.
+
+**(B) Legal/compliance track — shipped**:
+
+- **Terms-of-Service signing flow.** `LegalFacet.acceptTerms(version,
+  hash)` is an on-chain, wallet-signed record bound to the current
+  ToS version + content hash. The `LegalGate` frontend component
+  wraps every app page and re-prompts on version bumps. Admin
+  `updateCurrentTos` is ADMIN_ROLE + Timelock-gated so ToS
+  changes can't be silently rolled out.
+- **Privacy Policy + GDPR export/delete.** Per-user "Download my
+  data" and "Delete my data" buttons ship in the Diagnostics
+  drawer (Phase 4.4). Export packs every Vaipakam-namespaced
+  localStorage/sessionStorage entry with a timestamp + user-agent
+  + explanatory note. Delete wipes both storages and reloads so
+  every hook/banner/cache rehydrates empty. The public policy
+  page is at `docs/PrivacyPolicy.md`.
+- **OFAC on-chain sanctions screen.** `ProfileFacet.setSanctionsOracle`
+  wires per-chain Chainalysis oracle; `isSanctionedAddress` is
+  checked on both sides of `acceptOffer` (catches the "creator
+  was clean when they posted but got flagged before anyone
+  matched" edge case). Fail-open on oracle outage — conservative
+  policy vs. Chainalysis having a hiccup. Frontend pre-flight
+  banner so users see the warning before signing a doomed tx.
+
+**Implication.** A and B are both behind us. The next sprints are
+about competitive UX polish ((C)) and growth ((D)); the
+protocol's mainnet-defensibility bar is already cleared.
+
+## Phase 7 scoping — swap + liquidity redundancy (queued)
+
+All 7 design questions resolved; implementation pending Phase 6
+tests + docs wrap. Ships as two independent sub-phases.
+
+**Phase 7a — swap router redundancy.** Gearbox-style ordered
+multi-adapter: **0x → 1inch v6 → direct Uniswap V3 → direct Curve
+stableswap**. Each adapter is a thin ~30-LOC wrapper under a
+common `LibMultiVenueSwap.swap(...)` dispatcher. Atomic within a
+liquidation tx; ~2× gas on the fallback path only. Replaces the
+current single-router setup in `RiskFacet`, `DefaultedFacet`, and
+`ClaimFacet._attemptRetrySwap`.
+
+**Phase 7b — liquidity-check redundancy.** OR-logic across
+**Uniswap V3 + Curve + Balancer V2**. A token is Liquid iff any
+one of the three venues returns a pool with depth ≥
+`MIN_LIQUIDITY_USD`. Balancer coverage is load-bearing for
+ERC-4626 LSTs (weETH, rsETH, etc.) and stablecoin pairs that
+Curve doesn't carry.
+
+**No per-asset whitelist** — the platform is open for any ERC-20.
+This is a deliberate Morpho-Blue / Euler-v2 philosophy choice
+rather than the Aave/Compound governance-whitelist model. The
+Liquid vs Illiquid classification is automatic from the three-
+venue depth check, so the protocol still picks the correct code
+path at liquidation time (swap vs full-collateral transfer) for
+any asset.
+
+**Slippage ceiling becomes governance-configurable.** The current
+hardcoded 6% moves to `ProtocolConfig.maxLiquidationSlippageBps`
+with a 1–20% (100–2000 bps) range enforced in the setter.
+Governance path is admin multisig → Timelock → Diamond for now;
+transitions to full on-chain governance later. Default stays at
+600 bps (6%).
+
+**Readback test.** LZConfig.t.sol-style assertion suite verifies
+every expected (chain, venue) mapping resolves to the right
+pool factory / router / registry before a mainnet deploy ships.
+
+Effort estimate: 7a ≈ 3.5 days; 7b ≈ 3 days. Parallel wallclock ≈
+4 days.
+
+## Phase 8 scoping — UX polish sprint ((C) on the audit list)
+
+The (C) audit found 5 of 6 UX-parity items missing and 1 partial,
+so (C) warrants a full sprint. Splitting into two sub-phases by
+effort + review window:
+
+**Phase 8a — highest-leverage, no contract changes (~1 week)**:
+
+- **ENS / Basenames resolution** everywhere addresses render. Use
+  viem's `getEnsName` on mainnet reads + Base's basename resolver.
+  Per-session cache. Current state: every address renders as
+  `0x1234…abcd`; replaces with `nick.eth` / `nick.base.eth` where
+  available, falls back to the shortened hex when not.
+- **Liquidation-price calculator with what-if slider.**
+  `RiskGauge` already renders the current HF with a liquidation-
+  threshold tooltip. Phase 8a adds:
+  1. The **projected liquidation price** of each collateral asset
+     ("your position liquidates if ETH drops below $X") computed
+     off `calculateHealthFactor` + current oracle prices.
+  2. A **what-if slider** letting the borrower model the impact
+     of adding collateral, partial repayment, or collateral-price
+     moves ("if I add Y more collateral, liquidation moves to
+     $Z"; "if ETH drops 10%, HF becomes W").
+  Pure UI math — no contract changes.
+- **Health-factor alerts via Telegram AND Push Protocol.** User
+  picks one or both channels in Settings. Both rails ship so
+  every user can use whichever they prefer without install
+  friction:
+  - **Telegram bot**: user pastes their @handle, a small off-
+    chain watcher polls active loans and pings when HF drops
+    below configurable thresholds. Universal, no wallet plug-in
+    needed.
+  - **Push Protocol**: fully on-chain, no hosted infra. Users
+    with Push wallet integration installed get native in-wallet
+    notifications.
+  Per-user thresholds (e.g., warn at HF 1.5, alert at 1.2,
+  critical at 1.05) stored in the user's own local preferences;
+  the off-chain watcher reads them via signed get-settings.
+- **Revoke-allowance UI in-app.** Settings gains an "Allowances"
+  page covering three asset sets:
+  1. **Diamond allowances** — live `allowance(user, diamond)`
+     for every asset tracked by MetricsFacet or that the user
+     has ever offered / collateralised.
+  2. **User-interacted asset list** — derived from indexed
+     events (OfferCreated, LoanInitiated, Repaid, etc.) so
+     every token the user has touched through Vaipakam is
+     surfaced even if no live allowance remains.
+  3. **Canonical assets** — the standard ETH/WETH/USDC/USDT/
+     DAI/WBTC/VPFI list per chain, to catch any stale approval
+     the user might have set outside the app but forgotten.
+  Each row has a "Revoke" button that sets allowance to 0.
+  Mirrors Uniswap / 1inch's in-app revoke flows.
+
+**Phase 8b — contract changes + external API integration (~1 week)**:
+
+- **Permit2 integration** for one-click `acceptOffer` + `createOffer`.
+  `OfferFacet` learns to accept a Permit2 signature payload and
+  calls the Uniswap Permit2 router's `permitTransferFrom`
+  instead of requiring a separate `approve` tx. Huge flow win —
+  one signature vs. two wallet popups.
+- **Transaction simulation preview.** Pre-flight simulation via
+  Blockaid or Tenderly's API. Before the wallet's confirm screen
+  shows, render "this transaction will: transfer X, receive Y,
+  update HF to Z". Client-side only. Closes the "blind signing"
+  UX gap.
+
+Total Phase 8 effort: ~10 days, split into two 1-week sub-phases
+for independent review and ship cadence.
+
+## Growth sprint ((D)) — queued behind Phase 8
+
+Per the industry audit, the growth items (points/leaderboards,
+Farcaster Frames, PWA manifest, public keeper-bot reference repo)
+are net-additive and cleanly follow Phase 8's UX polish. No
+security or defensibility implications; pure optional lift. Will
+scope separately once Phase 8 is in hand.
+
 ## Documentation convention going forward
 
 Every completed phase gets a functional write-up appended here, in the

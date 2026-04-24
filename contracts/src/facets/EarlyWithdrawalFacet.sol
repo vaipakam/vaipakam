@@ -301,8 +301,14 @@ contract EarlyWithdrawalFacet is
     ) external nonReentrant whenNotPaused {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.Loan storage loan = s.loans[loanId];
-        // Strategic flow — authority binds to current lender-side NFT owner.
-        LibAuth.requireLenderNFTOwner(loan);
+        // Phase 6: lender-entitled strategic flow. Authority binds to the
+        // current lender-NFT owner OR a keeper with the
+        // InitEarlyWithdraw action bit.
+        LibAuth.requireKeeperFor(
+            LibVaipakam.KEEPER_ACTION_INIT_EARLY_WITHDRAW,
+            loan,
+            /* lenderSide */ true
+        );
         if (loan.status != LibVaipakam.LoanStatus.Active)
             revert LoanNotActive();
         // NFT rental lender-sale not supported in Phase 1
@@ -387,10 +393,10 @@ contract EarlyWithdrawalFacet is
         params.collateralAssetType = loan.collateralAssetType;
         params.collateralTokenId = loan.collateralTokenId;
         params.collateralQuantity = loan.collateralQuantity;
-        // The replacement lender (offer acceptor) will create the sale
-        // completion; seed the sale offer's keeper flag from the outgoing
-        // lender's side — the lender is the entitled party for completeLoanSale.
-        params.keeperAccessEnabled = loan.lenderKeeperAccessEnabled;
+        // Phase 6: keeper enables are per-keeper via
+        // `offerKeeperEnabled[offerId][keeper]`. The outgoing lender (sale-
+        // offer creator) can enable specific keepers on this sale offer
+        // via `ProfileFacet.setOfferKeeperEnabled` after creation.
     }
 
     /**
@@ -400,8 +406,9 @@ contract EarlyWithdrawalFacet is
      *      "Complete Sale" button under the happy path. This entry point is
      *      retained as a manual recovery hook (e.g., for sales accepted
      *      before auto-completion was introduced, or keeper-driven
-     *      retries). Callable by lender, borrower, or keeper (if
-     *      loan.lenderKeeperAccessEnabled — lender-entitled action).
+     *      retries). Callable by the current lender-NFT holder OR a
+     *      keeper with the COMPLETE_LOAN_SALE action bit and the
+     *      per-loan enable for this loan (lender-entitled action).
      *      Verifies the linked sale offer was accepted, then:
      *      - Principal: Already transferred from Noah to Liam by acceptOffer() (no second transfer).
      *      - Forfeits accrued interest to treasury (or applies toward shortfall).
@@ -426,12 +433,14 @@ contract EarlyWithdrawalFacet is
         LibVaipakam.Offer storage saleOffer = s.offers[saleOfferId];
         if (!saleOffer.accepted) revert SaleOfferNotAccepted();
 
-        // Per README §3 lines 176–179: keeper authority is role-scoped to
-        // the lender-entitled party. With native NFT locking the lender
-        // position NFT remains with its owner throughout the sale, so
-        // authority resolves directly against the current NFT owner (or a
-        // whitelisted keeper when loan.lenderKeeperAccessEnabled).
-        LibAuth.requireLenderNFTOwnerOrKeeper(loan);
+        // Phase 6: role-scoped keeper authority. Lender-entitled action, so
+        // resolve against the lender NFT holder and require the
+        // CompleteLoanSale bit on the holder's approved-keeper bitmask.
+        LibAuth.requireKeeperFor(
+            LibVaipakam.KEEPER_ACTION_COMPLETE_LOAN_SALE,
+            loan,
+            /* lenderSide */ true
+        );
 
         address originalLender = loan.lender;
 

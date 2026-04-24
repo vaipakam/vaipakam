@@ -275,34 +275,40 @@ export default function LoanDetails() {
     }
   };
 
-  // Per-side post-init keeper-flag toggle. Each side toggles its own flag
-  // only — the contract auto-resolves msg.sender to lender vs borrower.
-  // Keeper execution still additionally requires the user's profile opt-in
-  // and whitelist entry (two-layer model).
-  const handleToggleLoanKeeper = async (nextEnabled: boolean) => {
+  // Phase 6: per-keeper per-loan enable toggle. Authority for the call
+  // binds to the current lender or borrower NFT owner (contract checks);
+  // msg.sender only needs to own one of the two NFTs. The keeper must
+  // already be on the caller's global whitelist (approveKeeper) with the
+  // relevant action bits.
+  const handleToggleLoanKeeper = async (keeper: string, nextEnabled: boolean) => {
     setActionLoading(true);
     setActionError(null);
     setTxHash(null);
     const step = beginStep({
       ...ctxBase,
       area: "keeper",
-      flow: "setLoanKeeperAccess",
+      flow: "setLoanKeeperEnabled",
       step: "submit-tx",
     });
     try {
-      const tx = await diamond.setLoanKeeperAccess(
-        BigInt(loanId!),
-        nextEnabled,
-      );
+      const tx = await (
+        diamond as unknown as {
+          setLoanKeeperEnabled: (
+            loanId: bigint,
+            keeper: string,
+            enabled: boolean,
+          ) => Promise<{ hash: string; wait: () => Promise<unknown> }>;
+        }
+      ).setLoanKeeperEnabled(BigInt(loanId!), keeper, nextEnabled);
       setTxHash(tx.hash);
       await tx.wait();
       loadLoan();
       step.success({
-        note: `tx ${tx.hash} side=${isLender ? "lender" : "borrower"} enabled=${nextEnabled}`,
+        note: `tx ${tx.hash} keeper=${keeper} enabled=${nextEnabled}`,
       });
     } catch (err) {
       setActionError(
-        decodeContractError(err, "Update loan keeper flag failed"),
+        decodeContractError(err, "Update loan keeper enable failed"),
       );
       step.failure(err);
     } finally {
@@ -565,163 +571,21 @@ export default function LoanDetails() {
               </span>
             </div>
           )}
-          {/* Basic-mode keeper summary — surfaces the per-side flag that
-              matters to this user (lender OR borrower, resolved from NFT
-              ownership) with a one-click toggle and a link to the full
-              keeper-whitelist surface. Visible whenever the viewer is a
-              party to the loan, even in non-advanced mode, so users can
-              enable or disable keeper delegation at any time during the
-              loan's life without hunting through advanced views. */}
-          {!showAdvanced && (isLender || isBorrower) && (
-            <div className="data-row">
-              <span className="data-label">Keeper delegation</span>
-              <span
-                className="data-value"
-                style={{
-                  fontSize: "0.82rem",
-                  display: "flex",
-                  gap: 8,
-                  alignItems: "center",
-                  flexWrap: "wrap",
-                }}
-              >
-                {(isLender
-                  ? loan.lenderKeeperAccessEnabled
-                  : loan.borrowerKeeperAccessEnabled)
-                  ? "Enabled"
-                  : "Disabled"}
-                {canAct && (
-                  <button
-                    className="btn btn-secondary btn-sm"
-                    disabled={actionLoading}
-                    onClick={() =>
-                      handleToggleLoanKeeper(
-                        !(isLender
-                          ? loan.lenderKeeperAccessEnabled
-                          : loan.borrowerKeeperAccessEnabled),
-                      )
-                    }
-                  >
-                    {(isLender
-                      ? loan.lenderKeeperAccessEnabled
-                      : loan.borrowerKeeperAccessEnabled)
-                      ? "Disable"
-                      : "Enable"}
-                  </button>
-                )}
-                <Link
-                  to="/app/keepers"
-                  style={{ fontSize: "0.76rem", color: "var(--brand)" }}
-                >
-                  Manage keepers →
-                </Link>
-              </span>
-            </div>
-          )}
-          {showAdvanced && (
-            <>
-              <div className="data-row">
-                <span className="data-label">Lender-side keeper flag</span>
-                <span
-                  className="data-value"
-                  style={{
-                    fontSize: "0.82rem",
-                    display: "flex",
-                    gap: 8,
-                    alignItems: "center",
-                  }}
-                  data-tooltip="Lender-entitled keeper actions (e.g. completeLoanSale) require ALL three: this loan flag, the current lender-NFT holder's profile opt-in, AND the keeper being on that holder's whitelist (LibAuth.requireLenderNFTOwnerOrKeeper)."
-                >
-                  {loan.lenderKeeperAccessEnabled ? "Enabled" : "Disabled"}
-                  {loan.lenderKeeperAccessEnabled && lenderKeeper && (
-                    <span style={{ opacity: 0.75 }}>
-                      ·{" "}
-                      {lenderKeeper.profileOptIn &&
-                      lenderKeeper.approvedCount > 0
-                        ? `Active (${lenderKeeper.approvedCount} keeper(s))`
-                        : !lenderKeeper.profileOptIn
-                          ? "Blocked — lender profile opt-in off"
-                          : "Blocked — lender whitelist empty"}
-                    </span>
-                  )}
-                  {isLender && canAct && (
-                    <button
-                      className="btn btn-secondary btn-sm"
-                      disabled={actionLoading}
-                      onClick={() =>
-                        handleToggleLoanKeeper(!loan.lenderKeeperAccessEnabled)
-                      }
-                    >
-                      {loan.lenderKeeperAccessEnabled ? "Disable" : "Enable"}
-                    </button>
-                  )}
-                </span>
-              </div>
-              <div className="data-row">
-                <span className="data-label">Borrower-side keeper flag</span>
-                <span
-                  className="data-value"
-                  style={{
-                    fontSize: "0.82rem",
-                    display: "flex",
-                    gap: 8,
-                    alignItems: "center",
-                  }}
-                  data-tooltip="Borrower-entitled keeper actions (e.g. completeOffset) require ALL three: this loan flag, the current borrower-NFT holder's profile opt-in, AND the keeper being on that holder's whitelist (LibAuth.requireBorrowerNFTOwnerOrKeeper)."
-                >
-                  {loan.borrowerKeeperAccessEnabled ? "Enabled" : "Disabled"}
-                  {loan.borrowerKeeperAccessEnabled && borrowerKeeper && (
-                    <span style={{ opacity: 0.75 }}>
-                      ·{" "}
-                      {borrowerKeeper.profileOptIn &&
-                      borrowerKeeper.approvedCount > 0
-                        ? `Active (${borrowerKeeper.approvedCount} keeper(s))`
-                        : !borrowerKeeper.profileOptIn
-                          ? "Blocked — borrower profile opt-in off"
-                          : "Blocked — borrower whitelist empty"}
-                    </span>
-                  )}
-                  {isBorrower && canAct && (
-                    <button
-                      className="btn btn-secondary btn-sm"
-                      disabled={actionLoading}
-                      onClick={() =>
-                        handleToggleLoanKeeper(
-                          !loan.borrowerKeeperAccessEnabled,
-                        )
-                      }
-                    >
-                      {loan.borrowerKeeperAccessEnabled ? "Disable" : "Enable"}
-                    </button>
-                  )}
-                </span>
-              </div>
-              {(isLender || isBorrower) && canAct && (
-                <div
-                  style={{
-                    padding: "4px 0 8px 0",
-                    fontSize: "0.75rem",
-                    opacity: 0.7,
-                  }}
-                >
-                  You can toggle the flag for your own side. Keepers still
-                  cannot execute on your behalf until your profile opt-in is on{" "}
-                  <Link to="/app/keepers">in Keepers</Link> and the keeper is on
-                  your whitelist.
-                </div>
-              )}
-              <div
-                className="alert alert-warning"
-                style={{ margin: "8px 0 0 0", fontSize: "0.78rem" }}
-              >
-                <strong>Keepers cannot claim assets.</strong> Claim rights
-                (collateral on default, principal on repayment) always follow
-                the current
-                <strong> Vaipakam NFT owner</strong>. Keepers are restricted to
-                strategic-flow completion (e.g. completeLoanSale,
-                completeOffset) and never inherit claim authority.
-              </div>
-            </>
+          {/* Phase 6: per-keeper per-loan enable picker. Shown whenever the
+              viewer is an NFT holder for either side of the loan. For each
+              keeper on the viewer's global whitelist, the checkbox reflects
+              `isLoanKeeperEnabled(loanId, keeper)` and toggling calls
+              `setLoanKeeperEnabled`. Empty whitelist deep-links to
+              KeeperSettings — the "no keepers added yet, add some there"
+              onboarding nudge. Keepers still need (a) the relevant action
+              bit set on the viewer's global whitelist and (b) the viewer's
+              master switch on before they can actually drive anything. */}
+          {(isLender || isBorrower) && canAct && (
+            <LoanKeeperPicker
+              loanId={BigInt(loanId!)}
+              actionLoading={actionLoading}
+              onToggle={handleToggleLoanKeeper}
+            />
           )}
         </div>
 
@@ -987,4 +851,111 @@ export default function LoanDetails() {
 
 function shortenAddr(addr: string): string {
   return `${addr.slice(0, 8)}...${addr.slice(-6)}`;
+}
+
+interface LoanKeeperPickerProps {
+  loanId: bigint;
+  actionLoading: boolean;
+  onToggle: (keeper: string, enabled: boolean) => Promise<void> | void;
+}
+
+/**
+ * Per-loan per-keeper enable picker (Phase 6). Reads the connected
+ * user's global whitelist via `getApprovedKeepers` and renders one
+ * checkbox per keeper, bound to `isLoanKeeperEnabled(loanId, keeper)`.
+ * Empty whitelist shows a deep-link prompt to add keepers on the
+ * KeeperSettings page — closes the "how do I get a keeper enabled on
+ * this loan" flow-of-control gap.
+ */
+function LoanKeeperPicker({ loanId, actionLoading, onToggle }: LoanKeeperPickerProps) {
+  const { address } = useWallet();
+  const diamondRo = useDiamondRead();
+  const [keepers, setKeepers] = useState<string[]>([]);
+  const [enabledMap, setEnabledMap] = useState<Record<string, boolean>>({});
+  const [loading, setLoading] = useState(false);
+  const [refreshTick, setRefreshTick] = useState(0);
+
+  useEffect(() => {
+    if (!address) return;
+    let cancelled = false;
+    setLoading(true);
+    (async () => {
+      try {
+        const list = [...((await diamondRo.getApprovedKeepers(address)) as string[])];
+        if (cancelled) return;
+        setKeepers(list);
+        const map: Record<string, boolean> = {};
+        for (const k of list) {
+          try {
+            const on = (await (
+              diamondRo as unknown as {
+                isLoanKeeperEnabled: (id: bigint, keeper: string) => Promise<boolean>;
+              }
+            ).isLoanKeeperEnabled(loanId, k)) as boolean;
+            map[k.toLowerCase()] = on;
+          } catch {
+            map[k.toLowerCase()] = false;
+          }
+        }
+        if (!cancelled) setEnabledMap(map);
+      } catch {
+        if (!cancelled) setKeepers([]);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [address, diamondRo, loanId, refreshTick]);
+
+  return (
+    <div className="data-row" style={{ flexDirection: "column", alignItems: "flex-start" }}>
+      <span className="data-label" style={{ marginBottom: 8 }}>
+        Keeper delegation
+      </span>
+      {loading ? (
+        <span style={{ fontSize: "0.82rem", opacity: 0.7 }}>Loading keepers…</span>
+      ) : keepers.length === 0 ? (
+        <div style={{ fontSize: "0.82rem", opacity: 0.8 }}>
+          You have no keepers on your global whitelist.{" "}
+          <Link to="/app/keepers" style={{ color: "var(--brand)" }}>
+            Add one on the Keeper Settings page →
+          </Link>{" "}
+          before enabling any for this loan.
+        </div>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 6, fontSize: "0.82rem" }}>
+          {keepers.map((k) => {
+            const on = enabledMap[k.toLowerCase()] ?? false;
+            return (
+              <label
+                key={k}
+                style={{ display: "flex", alignItems: "center", gap: 8 }}
+              >
+                <input
+                  type="checkbox"
+                  checked={on}
+                  disabled={actionLoading}
+                  onChange={async () => {
+                    await onToggle(k, !on);
+                    setRefreshTick((t) => t + 1);
+                  }}
+                />
+                <code style={{ fontSize: "0.78rem" }}>{k}</code>
+              </label>
+            );
+          })}
+          <div style={{ fontSize: "0.72rem", opacity: 0.65 }}>
+            A keeper still needs (a) the corresponding action bit set on your{" "}
+            <Link to="/app/keepers" style={{ color: "var(--brand)" }}>
+              global whitelist
+            </Link>{" "}
+            and (b) your master keeper-access switch ON before they can drive
+            anything on this loan.
+          </div>
+        </div>
+      )}
+    </div>
+  );
 }

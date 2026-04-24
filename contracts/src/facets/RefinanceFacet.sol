@@ -83,8 +83,14 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
     ) external nonReentrant whenNotPaused {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.Loan storage oldLoan = s.loans[oldLoanId];
-        // Strategic flow — authority binds to current borrower-side NFT owner.
-        LibAuth.requireBorrowerNFTOwner(oldLoan);
+        // Phase 6: borrower-entitled strategic flow. Authority binds to the
+        // current borrower-NFT owner OR a keeper with the Refinance action
+        // bit.
+        LibAuth.requireKeeperFor(
+            LibVaipakam.KEEPER_ACTION_REFINANCE,
+            oldLoan,
+            /* lenderSide */ false
+        );
         if (oldLoan.status != LibVaipakam.LoanStatus.Active)
             revert LoanNotActive();
         // NFT rental refinance not supported in Phase 1 (requires NFT custody transfer)

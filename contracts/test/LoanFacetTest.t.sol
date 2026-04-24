@@ -419,8 +419,7 @@ contract LoanFacetTest is Test {
                 prepayAsset: mockERC20,
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
-                collateralQuantity: 0,
-                keeperAccessEnabled: false
+                collateralQuantity: 0
             })
         );
     }
@@ -645,8 +644,7 @@ contract LoanFacetTest is Test {
                 prepayAsset: mockERC20,
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
-                collateralQuantity: 0,
-                keeperAccessEnabled: false
+                collateralQuantity: 0
             })
         );
 
@@ -773,8 +771,7 @@ contract LoanFacetTest is Test {
                 prepayAsset: mockERC20,
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
-                collateralQuantity: 0,
-                keeperAccessEnabled: false
+                collateralQuantity: 0
             })
         );
         vm.prank(lender);
@@ -806,8 +803,7 @@ contract LoanFacetTest is Test {
                 prepayAsset: mockERC20,
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
-                collateralQuantity: 0,
-                keeperAccessEnabled: false
+                collateralQuantity: 0
             })
         );
         vm.prank(borrower);
@@ -849,8 +845,7 @@ contract LoanFacetTest is Test {
                 prepayAsset: mockERC20,
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
-                collateralQuantity: 0,
-                keeperAccessEnabled: false
+                collateralQuantity: 0
             })
         );
 
@@ -991,8 +986,7 @@ contract LoanFacetTest is Test {
                 prepayAsset: mockERC20,
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
-                collateralQuantity: 0,
-                keeperAccessEnabled: false
+                collateralQuantity: 0
             })
         );
 
@@ -1024,8 +1018,7 @@ contract LoanFacetTest is Test {
                 prepayAsset: mockERC20,
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
-                collateralQuantity: 0,
-                keeperAccessEnabled: false
+                collateralQuantity: 0
             })
         );
         vm.prank(borrower);
@@ -1037,18 +1030,21 @@ contract LoanFacetTest is Test {
         vm.clearMockedCalls();
     }
 
-    // ─── Keeper Consent Propagation Tests ────────────────────────────────────
+    // ─── Keeper offer→loan latching (Phase 6) ────────────────────────────────
 
-    /// @dev Tests that keeper consent propagates correctly when all three levels agree:
-    ///      user1 profile = true, offer = true, user2 profile = true → both per-side loan flags = true.
-    function testKeeperConsentPropagation() public {
-        // Step 1: Both users enable keeper access at profile level
+    /// @dev Phase 6: the offer creator's per-keeper enable latches into
+    ///      `loanKeeperEnabled[loanId][keeper]` at acceptance. The old
+    ///      "offer keeper bool + both-profile-opt-in" model is gone.
+    function testOfferKeeperEnableLatchesToLoan() public {
+        address keeper = makeAddr("keeperX");
         vm.prank(lender);
         ProfileFacet(address(diamond)).setKeeperAccess(true);
-        vm.prank(borrower);
-        ProfileFacet(address(diamond)).setKeeperAccess(true);
+        vm.prank(lender);
+        ProfileFacet(address(diamond)).approveKeeper(
+            keeper,
+            LibVaipakam.KEEPER_ACTION_ALL
+        );
 
-        // Step 2: Lender creates offer with keeperAccessEnabled=true
         vm.prank(lender);
         uint256 offerId = OfferFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
@@ -1066,62 +1062,23 @@ contract LoanFacetTest is Test {
                 prepayAsset: mockERC20,
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
-                collateralQuantity: 0,
-                keeperAccessEnabled: true
+                collateralQuantity: 0
             })
         );
 
-        // Step 3: Borrower accepts
-        vm.prank(borrower);
-        uint256 loanId = OfferFacet(address(diamond)).acceptOffer(offerId, true);
-
-        // Step 4: Verify both per-side loan flags seeded = true
-        LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(loanId);
-        assertTrue(loan.lenderKeeperAccessEnabled, "Loan lender-side flag should seed from offer=true");
-        assertTrue(loan.borrowerKeeperAccessEnabled, "Loan borrower-side flag should seed from offer=true");
-    }
-
-    /// @dev Under the role-scoped keeper model (README §3 lines 176–179), the
-    ///      counterparty's profile opt-in no longer gates either per-side loan flag.
-    ///      The flag mirrors the offer's keeperAccessEnabled directly, and each
-    ///      side's whitelist independently governs its own entitled keeper actions.
-    function testKeeperConsentPropagationOneLevelFalse() public {
-        // Step 1: Lender enables, borrower does NOT enable keeper access
         vm.prank(lender);
-        ProfileFacet(address(diamond)).setKeeperAccess(true);
-        // borrower does NOT call setKeeperAccess (defaults to false)
-
-        // Step 2: Lender creates offer with keeperAccessEnabled=true
-        vm.prank(lender);
-        uint256 offerId = OfferFacet(address(diamond)).createOffer(
-            LibVaipakam.CreateOfferParams({
-                offerType: LibVaipakam.OfferType.Lender,
-                lendingAsset: mockERC20,
-                amount: 1000 ether,
-                interestRateBps: 500,
-                collateralAsset: mockCollateralERC20,
-                collateralAmount: 1500 ether,
-                durationDays: 30,
-                assetType: LibVaipakam.AssetType.ERC20,
-                tokenId: 0,
-                quantity: 0,
-                creatorFallbackConsent: true,
-                prepayAsset: mockERC20,
-                collateralAssetType: LibVaipakam.AssetType.ERC20,
-                collateralTokenId: 0,
-                collateralQuantity: 0,
-                keeperAccessEnabled: true
-            })
+        ProfileFacet(address(diamond)).setOfferKeeperEnabled(
+            offerId,
+            keeper,
+            true
         );
 
-        // Step 3: Borrower accepts (borrower profile has keeper=false)
         vm.prank(borrower);
         uint256 loanId = OfferFacet(address(diamond)).acceptOffer(offerId, true);
 
-        // Step 4: Under role-scoped model, both per-side loan flags mirror
-        //         the offer flag regardless of counterparty's profile opt-in.
-        LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(loanId);
-        assertTrue(loan.lenderKeeperAccessEnabled, "Lender-side flag mirrors offer flag under role-scoped model");
-        assertTrue(loan.borrowerKeeperAccessEnabled, "Borrower-side flag mirrors offer flag under role-scoped model");
+        assertTrue(
+            ProfileFacet(address(diamond)).isLoanKeeperEnabled(loanId, keeper),
+            "offer enable latched to loan"
+        );
     }
 }

@@ -12,6 +12,7 @@ import {AdminFacet} from "../src/facets/AdminFacet.sol";
 import {DiamondCutFacet} from "../src/facets/DiamondCutFacet.sol";
 import {AccessControlFacet} from "../src/facets/AccessControlFacet.sol";
 import {HelperTest} from "./HelperTest.sol";
+import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 
 /**
  * @title ProfileFacetTest

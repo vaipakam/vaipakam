@@ -671,8 +671,7 @@ contract RiskFacetTest is Test {
                 prepayAsset: mockERC20,
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
-                collateralQuantity: 0,
-                keeperAccessEnabled: false
+                collateralQuantity: 0
             })
         );
 
@@ -933,8 +932,7 @@ contract RiskFacetTest is Test {
                 prepayAsset: mockERC20,
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
-                collateralQuantity: 0,
-                keeperAccessEnabled: false
+                collateralQuantity: 0
             })
         );
         vm.prank(borrower);
@@ -1501,8 +1499,7 @@ contract RiskFacetTest is Test {
                 prepayAsset: mockERC20,
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
-                collateralQuantity: 0,
-                keeperAccessEnabled: false
+                collateralQuantity: 0
             })
         );
         vm.prank(borrower);
@@ -1964,10 +1961,12 @@ contract RiskFacetTest is Test {
     function testTriggerLiquidationPermissionlessWithKeeperOff() public {
         uint256 loanId = createAndAcceptOffer();
 
-        // Verify both per-side loan flags = false (default from createAndAcceptOffer)
-        LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(loanId);
-        assertFalse(loan.lenderKeeperAccessEnabled, "Lender-side flag should default false");
-        assertFalse(loan.borrowerKeeperAccessEnabled, "Borrower-side flag should default false");
+        // Phase 6: per-loan keeper state is now keeper-addressed via
+        // `loanKeeperEnabled[loanId][keeper]`. By default no keeper is
+        // enabled. triggerLiquidation is permissionless regardless —
+        // the gate check below proves the keeper system doesn't block
+        // non-keeper callers on this path.
+        LoanFacet(address(diamond)).getLoanDetails(loanId);
 
         // Create a random third-party liquidator (not lender, not borrower)
         address randomLiquidator = makeAddr("randomLiquidator");

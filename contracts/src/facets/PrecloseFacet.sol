@@ -114,9 +114,14 @@ contract PrecloseFacet is
     ) external nonReentrant whenNotPaused {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.Loan storage loan = s.loans[loanId];
-        // Strategic flow — authority follows the current borrower-side
-        // position NFT owner, not loan.borrower, per README High #1.
-        LibAuth.requireBorrowerNFTOwner(loan);
+        // Phase 6: borrower-entitled strategic flow. Authority follows the
+        // current borrower-NFT owner OR a keeper with the InitPreclose
+        // action bit.
+        LibAuth.requireKeeperFor(
+            LibVaipakam.KEEPER_ACTION_INIT_PRECLOSE,
+            loan,
+            /* lenderSide */ false
+        );
         if (loan.status != LibVaipakam.LoanStatus.Active)
             revert LoanNotActive();
 
@@ -322,8 +327,14 @@ contract PrecloseFacet is
     ) external nonReentrant whenNotPaused {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.Loan storage loan = s.loans[loanId];
-        // Strategic flow — authority binds to current NFT owner.
-        LibAuth.requireBorrowerNFTOwner(loan);
+        // Phase 6: borrower-entitled strategic flow (Preclose Option 2).
+        // Authority binds to the current borrower-NFT owner OR a keeper
+        // with the InitPreclose action bit.
+        LibAuth.requireKeeperFor(
+            LibVaipakam.KEEPER_ACTION_INIT_PRECLOSE,
+            loan,
+            /* lenderSide */ false
+        );
         if (loan.status != LibVaipakam.LoanStatus.Active)
             revert LoanNotActive();
 
@@ -615,8 +626,14 @@ contract PrecloseFacet is
         uint256 collateralAmount,
         address prepayAsset
     ) private view {
-        // Strategic flow — authority binds to current NFT owner.
-        LibAuth.requireBorrowerNFTOwner(loan);
+        // Phase 6: borrower-entitled strategic flow (Preclose Option 3).
+        // Authority binds to current borrower-NFT owner OR a keeper with
+        // the InitPreclose action bit.
+        LibAuth.requireKeeperFor(
+            LibVaipakam.KEEPER_ACTION_INIT_PRECLOSE,
+            loan,
+            /* lenderSide */ false
+        );
         if (loan.status != LibVaipakam.LoanStatus.Active)
             revert LoanNotActive();
         // NFT rentals cannot use the offset path: the NFT is in the lender's
@@ -782,10 +799,10 @@ contract PrecloseFacet is
         params.collateralAssetType = loan.collateralAssetType;
         params.collateralTokenId = loan.collateralTokenId;
         params.collateralQuantity = loan.collateralQuantity;
-        // Offset is borrower-entitled (completeOffset uses
-        // requireBorrowerNFTOwnerOrKeeper); seed the replacement offer's
-        // keeper flag from the borrower side.
-        params.keeperAccessEnabled = loan.borrowerKeeperAccessEnabled;
+        // Phase 6: keeper enables are per-keeper via
+        // `offerKeeperEnabled[offerId][keeper]`. The borrower (offset-offer
+        // creator) can enable specific keepers on this offset offer via
+        // `ProfileFacet.setOfferKeeperEnabled` after creation.
     }
 
     /**
@@ -795,9 +812,10 @@ contract PrecloseFacet is
      *      "Complete Offset" button under the happy path. This entry point is
      *      retained as a manual recovery hook (e.g., to rescue a loan that
      *      was accepted before auto-completion was introduced, or to be
-     *      driven by a keeper if needed). Callable by lender, borrower, or
-     *      keeper (if loan.borrowerKeeperAccessEnabled — borrower-entitled
-     *      action).
+     *      driven by a keeper if needed). Callable by the current
+     *      borrower-NFT holder OR a keeper with the COMPLETE_OFFSET
+     *      action bit and the per-loan enable for this loan (borrower-
+     *      entitled action).
      *      Verifies the linked offer was accepted, then:
      *      - Releases Alice's original collateral from escrow.
      *      - Closes Alice's original loan with Liam (status = Repaid).
@@ -820,12 +838,14 @@ contract PrecloseFacet is
         LibVaipakam.Offer storage offer = s.offers[newOfferId];
         if (!offer.accepted) revert OffsetOfferNotAccepted();
 
-        // Per README §3 lines 176–179: keeper authority is role-scoped to
-        // the borrower-entitled party. With native NFT locking the borrower
-        // position NFT remains with its owner throughout the offset flow,
-        // so authority resolves directly against the current NFT owner
-        // (or a whitelisted keeper when loan.borrowerKeeperAccessEnabled).
-        LibAuth.requireBorrowerNFTOwnerOrKeeper(loan);
+        // Phase 6: borrower-entitled action. Authority resolves against
+        // the current borrower-NFT holder OR a keeper with the
+        // CompleteOffset action bit.
+        LibAuth.requireKeeperFor(
+            LibVaipakam.KEEPER_ACTION_COMPLETE_OFFSET,
+            loan,
+            /* lenderSide */ false
+        );
 
         // Record borrower's claimable (collateral stays in borrower's escrow)
         s.borrowerClaims[originalLoanId] = LibVaipakam.ClaimInfo({

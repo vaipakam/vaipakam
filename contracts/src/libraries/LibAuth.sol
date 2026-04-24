@@ -18,25 +18,29 @@ import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
  *      behalf of. Lender and borrower may always act; internal diamond calls
  *      (msg.sender == address(this)) are always allowed.
  *
- *      ── Keeper-accessible surface (exhaustive) ─────────────────────────────
- *      Only two external functions accept keeper callers; everything else is
- *      strictly role-scoped. Expanding this list is a protocol-policy change
- *      and MUST be reviewed against README section 3:
+ *      ── Keeper-accessible surface (Phase 6) ────────────────────────────────
+ *      Keeper authority is gated per-action via
+ *      {requireKeeperFor(action, loan, lenderSide)} against the relevant
+ *      NFT holder's `approvedKeeperActions` bitmask. Five actions are
+ *      accepted at these seven entry points:
  *
- *        1. EarlyWithdrawalFacet.completeLoanSale  → requireLenderNFTOwnerOrKeeper
- *           (lender-entitled; authority follows ownerOf(lenderTokenId); keeper
- *           must be whitelisted by the current lender-NFT holder)
- *        2. PrecloseFacet.completeOffset           → requireBorrowerNFTOwnerOrKeeper
- *           (borrower-entitled; authority follows ownerOf(borrowerTokenId);
- *           keeper must be whitelisted by the current borrower-NFT holder)
+ *        EarlyWithdrawalFacet.createLoanSaleOffer    → INIT_EARLY_WITHDRAW
+ *        EarlyWithdrawalFacet.completeLoanSale       → COMPLETE_LOAN_SALE
+ *        PrecloseFacet.precloseDirect                → INIT_PRECLOSE
+ *        PrecloseFacet.transferObligationViaOffer    → INIT_PRECLOSE
+ *        PrecloseFacet.offsetWithNewOffer            → INIT_PRECLOSE
+ *        PrecloseFacet.completeOffset                → COMPLETE_OFFSET
+ *        RefinanceFacet.refinanceLoan                → REFINANCE
  *
- *      Per README §3 lines 190–191, ownership-sensitive authority resolves
- *      against the current `ownerOf(tokenId)` — not the latched
- *      `loan.lender` / `loan.borrower` — so a mid-flow NFT transfer carries
- *      authority with the NFT. All other loan-mutating functions (repay,
- *      claim, addCollateral, precloseDirect, partialWithdraw, refinance,
- *      createOffer, acceptOffer, liquidate, markDefaulted, …) explicitly
- *      reject keepers.
+ *      Money-out operations (repay, claim, addCollateral,
+ *      partialWithdraw, acceptOffer, liquidate, triggerDefault)
+ *      explicitly reject keepers — user-only actions by design.
+ *
+ *      Per README §3 lines 190–191, NFT-owner authority resolves against
+ *      `ownerOf(tokenId)` — not the latched `loan.lender` /
+ *      `loan.borrower` — so a mid-flow NFT transfer carries authority
+ *      with the NFT, and keeper whitelist is also resolved against the
+ *      current NFT holder.
  */
 library LibAuth {
     function requireBorrower(LibVaipakam.Loan storage loan) internal view {
@@ -63,41 +67,44 @@ library LibAuth {
             revert IVaipakamErrors.NotNFTOwner();
     }
 
-    /// @dev Permit the current owner of the borrower-side position NFT, the
-    ///      diamond itself (internal cross-facet), or a keeper scoped to the
-    ///      current NFT owner. Use for borrower-entitled strategic-flow
-    ///      completion paths (Preclose Option 3 offset completion, etc.).
+    /// @dev Canonical keeper-authorization helper (Phase 6).
     ///
-    ///      Bound to `ownerOf(loan.borrowerTokenId)` rather than
-    ///      `loan.borrower` so a mid-flow NFT transfer (e.g. secondary sale
-    ///      of a borrower position) correctly carries authority with the
-    ///      NFT. Keeper whitelist is also resolved against the current NFT
-    ///      owner, not the latched loan.borrower.
-    function requireBorrowerNFTOwnerOrKeeper(LibVaipakam.Loan storage loan) internal view {
+    ///      Permits three callers for a keeper-accessible function:
+    ///        1. The Diamond itself (internal cross-facet calls).
+    ///        2. The current owner of the relevant-side Vaipakam position NFT
+    ///           — `lenderTokenId` if `lenderSide` is true, `borrowerTokenId`
+    ///           otherwise.
+    ///        3. An address scoped to the current NFT owner's whitelist AND
+    ///           enabled for this specific loan AND authorised for this
+    ///           specific `action` (bitmask check against
+    ///           `approvedKeeperActions`).
+    ///
+    ///      Failure on any of the three gates (master switch off, per-loan
+    ///      flag off, action bit clear) reverts with {KeeperAccessRequired}.
+    ///
+    ///      NFT-owner authority is bound to `ownerOf(tokenId)` rather than
+    ///      `loan.lender` / `loan.borrower` so a mid-flow NFT transfer
+    ///      correctly carries authority with the position. Keeper whitelist
+    ///      is also resolved against the current NFT owner.
+    ///
+    /// @param action     One of `LibVaipakam.KEEPER_ACTION_*` (bitmask).
+    /// @param loan       Loan storage ref being acted on.
+    /// @param lenderSide True to authorise against the lender NFT, false for
+    ///                   the borrower NFT.
+    function requireKeeperFor(
+        uint8 action,
+        LibVaipakam.Loan storage loan,
+        bool lenderSide
+    ) internal view {
         if (msg.sender == address(this)) return;
-        address nftOwner = IERC721(address(this)).ownerOf(loan.borrowerTokenId);
+        uint256 tokenId = lenderSide ? loan.lenderTokenId : loan.borrowerTokenId;
+        address nftOwner = IERC721(address(this)).ownerOf(tokenId);
         if (msg.sender == nftOwner) return;
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         if (
-            !loan.borrowerKeeperAccessEnabled ||
             !s.keeperAccessEnabled[nftOwner] ||
-            !s.approvedKeepers[nftOwner][msg.sender]
-        ) revert IVaipakamErrors.KeeperAccessRequired();
-    }
-
-    /// @dev Permit the current owner of the lender-side position NFT, the
-    ///      diamond itself, or a keeper scoped to the current NFT owner.
-    ///      Use for lender-entitled strategic-flow completion paths
-    ///      (EarlyWithdrawal completeLoanSale).
-    function requireLenderNFTOwnerOrKeeper(LibVaipakam.Loan storage loan) internal view {
-        if (msg.sender == address(this)) return;
-        address nftOwner = IERC721(address(this)).ownerOf(loan.lenderTokenId);
-        if (msg.sender == nftOwner) return;
-        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        if (
-            !loan.lenderKeeperAccessEnabled ||
-            !s.keeperAccessEnabled[nftOwner] ||
-            !s.approvedKeepers[nftOwner][msg.sender]
+            !s.loanKeeperEnabled[loan.id][msg.sender] ||
+            (s.approvedKeeperActions[nftOwner][msg.sender] & action) == 0
         ) revert IVaipakamErrors.KeeperAccessRequired();
     }
 

@@ -190,8 +190,7 @@ contract SepoliaOpenOffers is Script {
             prepayAsset: address(usdc),
             collateralAssetType: LibVaipakam.AssetType.ERC20,
             collateralTokenId: 0,
-            collateralQuantity: 0,
-            keeperAccessEnabled: false
+            collateralQuantity: 0
         }));
         vm.stopBroadcast();
     }
@@ -217,8 +216,7 @@ contract SepoliaOpenOffers is Script {
             prepayAsset: address(usdc),
             collateralAssetType: LibVaipakam.AssetType.ERC20,
             collateralTokenId: 0,
-            collateralQuantity: 0,
-            keeperAccessEnabled: false
+            collateralQuantity: 0
         }));
         vm.stopBroadcast();
     }

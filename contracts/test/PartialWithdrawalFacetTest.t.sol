@@ -174,8 +174,7 @@ contract PartialWithdrawalFacetTest is Test {
                 prepayAsset: mockERC20,
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
-                collateralQuantity: 0,
-                keeperAccessEnabled: false
+                collateralQuantity: 0
             })
         );
         vm.prank(borrower);

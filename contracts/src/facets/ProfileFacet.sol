@@ -276,91 +276,91 @@ contract ProfileFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors 
         return LibVaipakam.storageSlot().keeperAccessEnabled[user];
     }
 
-    /// @notice Emitted when a party toggles the per-loan keeper flag for their own side.
+    /// @notice Emitted when an NFT holder toggles a per-loan keeper enable.
     /// @param loanId The loan whose flag was updated.
-    /// @param side True if the lender side toggled, false if the borrower side.
+    /// @param keeper The specific keeper being enabled or disabled.
     /// @param enabled New flag value.
-    event LoanKeeperAccessUpdated(uint256 indexed loanId, bool side, bool enabled);
+    event LoanKeeperEnabled(uint256 indexed loanId, address indexed keeper, bool enabled);
 
     /**
-     * @notice Toggles the caller's per-side keeper flag on an existing loan.
-     * @dev Post-initiation control over per-loan keeper execution. Authority
-     *      follows the current Vaipakam position NFT owner (README §3 lines
-     *      190–191: "Ownership-sensitive logic for Vaipakam position
-     *      authority should rely on the current `ownerOf(tokenId)` result
-     *      for the relevant lender-side or borrower-side Vaipakam NFT"),
-     *      not the latched `loan.lender` / `loan.borrower` — so if the
-     *      position NFT has been transferred, the new holder controls the
-     *      flag, matching the keeper-authority model enforced at the call
-     *      sites (`requireLenderNFTOwnerOrKeeper` /
-     *      `requireBorrowerNFTOwnerOrKeeper`).
-     *      Each side controls its own flag — the lender-NFT owner toggles
-     *      `lenderKeeperAccessEnabled`, the borrower-NFT owner toggles
-     *      `borrowerKeeperAccessEnabled`. The counterparty's flag is never
-     *      touched. Keeper execution still additionally requires the
-     *      holder's profile opt-in (`setKeeperAccess`) and the keeper being
-     *      on the holder's whitelist (`approveKeeper`).
-     * @param loanId The loan to update.
-     * @param enabled True to permit keepers on the caller's side, false to
-     *        disable.
+     * @notice Enable or disable a specific `keeper` for `loanId` (Phase 6).
+     *
+     * @dev Per-loan keeper selection. Authority follows the current
+     *      Vaipakam position NFT owner on either side (lender NFT holder
+     *      for lender-entitled actions, borrower NFT holder for borrower-
+     *      entitled actions). The same `loanKeeperEnabled[loanId][keeper]`
+     *      mapping backs both sides — per-side authority at call time is
+     *      enforced by the NFT-holder-specific `approvedKeeperActions`
+     *      bitmask, which is independent per user.
+     *
+     *      Callers must own EITHER the lender or borrower NFT for this
+     *      loan. Reverts with {NotNFTOwner} otherwise. A burnt counterparty
+     *      NFT does not block the live side.
+     *
+     *      Keeper execution still additionally requires the NFT holder's
+     *      master `setKeeperAccess(true)` and the keeper being approved
+     *      globally for the relevant action via {approveKeeper}.
+     *
+     * @param loanId  The loan to update.
+     * @param keeper  Keeper address to enable or disable for this loan.
+     * @param enabled True to enable, false to disable.
      */
-    function setLoanKeeperAccess(uint256 loanId, bool enabled) external whenNotPaused {
+    function setLoanKeeperEnabled(
+        uint256 loanId,
+        address keeper,
+        bool enabled
+    ) external whenNotPaused {
+        if (keeper == address(0)) revert InvalidAddress();
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.Loan storage loan = s.loans[loanId];
         IERC721 positionNFT = IERC721(address(this));
-        // Resolve authority against the current NFT holders so a mid-flow
-        // position transfer correctly carries the toggle right with the NFT.
-        // ownerOf reverts for a burnt / unminted token — catch so a burnt
-        // counterparty NFT doesn't revert a caller that owns the other side.
         address lenderHolder;
         try positionNFT.ownerOf(loan.lenderTokenId) returns (address h) { lenderHolder = h; } catch {}
         address borrowerHolder;
         try positionNFT.ownerOf(loan.borrowerTokenId) returns (address h) { borrowerHolder = h; } catch {}
 
-        bool side;
-        if (lenderHolder != address(0) && msg.sender == lenderHolder) {
-            loan.lenderKeeperAccessEnabled = enabled;
-            side = true;
-        } else if (borrowerHolder != address(0) && msg.sender == borrowerHolder) {
-            loan.borrowerKeeperAccessEnabled = enabled;
-            side = false;
-        } else {
-            revert NotNFTOwner();
-        }
-        emit LoanKeeperAccessUpdated(loanId, side, enabled);
+        if (
+            (lenderHolder == address(0) || msg.sender != lenderHolder) &&
+            (borrowerHolder == address(0) || msg.sender != borrowerHolder)
+        ) revert NotNFTOwner();
+
+        s.loanKeeperEnabled[loanId][keeper] = enabled;
+        emit LoanKeeperEnabled(loanId, keeper, enabled);
     }
 
-    /// @notice Emitted when an offer creator toggles the per-offer keeper flag.
+    /// @notice Emitted when an offer creator toggles a per-offer keeper enable.
     /// @param offerId The offer whose flag was updated.
+    /// @param keeper The specific keeper being enabled or disabled.
     /// @param enabled New flag value.
-    event OfferKeeperAccessUpdated(uint256 indexed offerId, bool enabled);
+    event OfferKeeperEnabled(uint256 indexed offerId, address indexed keeper, bool enabled);
 
     /**
-     * @notice Toggles the keeper-access flag on an offer the caller created.
-     * @dev Symmetric to {setLoanKeeperAccess} for the pre-acceptance
-     *      phase. `keeperAccessEnabled` can already be set at creation via
-     *      {OfferFacet.createOffer}, but creators have had no way to adjust
-     *      it after posting — forcing a cancel + re-post to change their
-     *      mind. This entry point closes that gap so keeper delegation can
-     *      be enabled or disabled freely while the offer is still open.
+     * @notice Enable or disable a specific `keeper` for `offerId` (Phase 6).
      *
-     *      Authority: the current offer `creator` only. An offer that has
-     *      already been accepted reverts with {OfferAlreadyAccepted} — the
-     *      loan now governs keeper authority via {setLoanKeeperAccess}.
-     *      An offer with no `creator` set (never-created / storage-empty
-     *      slot) reverts with {InvalidOffer}.
+     * @dev Pre-acceptance counterpart to {setLoanKeeperEnabled}. Creator-
+     *      only; reverts {InvalidOffer} / {OfferAlreadyAccepted} /
+     *      {NotNFTOwner} as applicable. Flags latch into
+     *      `loanKeeperEnabled[loanId][keeper]` at {OfferFacet.acceptOffer}
+     *      via the creator's approved-keepers list; post-acceptance each
+     *      NFT holder edits the loan-level flag via {setLoanKeeperEnabled}.
      *
      * @param offerId The offer to update.
-     * @param enabled True to permit keepers on this offer, false to disable.
+     * @param keeper  Keeper address to enable or disable for this offer.
+     * @param enabled True to enable, false to disable.
      */
-    function setOfferKeeperAccess(uint256 offerId, bool enabled) external whenNotPaused {
+    function setOfferKeeperEnabled(
+        uint256 offerId,
+        address keeper,
+        bool enabled
+    ) external whenNotPaused {
+        if (keeper == address(0)) revert InvalidAddress();
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.Offer storage offer = s.offers[offerId];
         if (offer.creator == address(0)) revert InvalidOffer();
         if (offer.accepted) revert OfferAlreadyAccepted();
         if (msg.sender != offer.creator) revert NotNFTOwner();
-        offer.keeperAccessEnabled = enabled;
-        emit OfferKeeperAccessUpdated(offerId, enabled);
+        s.offerKeeperEnabled[offerId][keeper] = enabled;
+        emit OfferKeeperEnabled(offerId, keeper, enabled);
     }
 
     // ─── Keeper Whitelist (README §3/§9) ──────────────────────────────────
@@ -376,11 +376,16 @@ contract ProfileFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors 
     // `MAX_APPROVED_KEEPERS` per user to bound gas on list reads and
     // keep the whitelist intentionally curated.
 
-    /// @notice Emitted when `user` adds `keeper` to their whitelist.
-    /// @param user The whitelist owner (lender or borrower).
-    /// @param keeper The address granted keeper authority for `user`'s side
-    ///        of any loan they participate in.
-    event KeeperApproved(address indexed user, address indexed keeper);
+    /// @notice Emitted when `user` adds `keeper` to their whitelist or
+    ///         updates the keeper's authorised action set.
+    /// @param user The whitelist owner (lender or borrower side, per user).
+    /// @param keeper The keeper address.
+    /// @param actions New action bitmask (see `LibVaipakam.KEEPER_ACTION_*`).
+    event KeeperActionsUpdated(
+        address indexed user,
+        address indexed keeper,
+        uint8 actions
+    );
 
     /// @notice Emitted when `user` removes `keeper` from their whitelist.
     /// @param user The whitelist owner.
@@ -388,38 +393,75 @@ contract ProfileFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors 
     event KeeperRevoked(address indexed user, address indexed keeper);
 
     /**
-     * @notice Adds `keeper` to the caller's whitelist of approved keepers.
-     * @dev Reverts InvalidAddress if `keeper` is zero, KeeperAlreadyApproved
-     *      if already on the list, or KeeperWhitelistFull when the list is
-     *      at `LibVaipakam.MAX_APPROVED_KEEPERS`. Adding a keeper only
-     *      authorizes the caller's side of any loan (README §3); the
-     *      counterparty's whitelist is independent.
-     * @param keeper The keeper address to whitelist (non-zero).
+     * @notice Adds `keeper` to the caller's whitelist with the given
+     *         per-action authorisation bitmask (Phase 6).
+     *
+     * @dev Reverts:
+     *      - {InvalidAddress} if `keeper` is zero.
+     *      - {InvalidKeeperActions} if `actions == 0` or sets bits outside
+     *        `LibVaipakam.KEEPER_ACTION_ALL`.
+     *      - {KeeperAlreadyApproved} if `keeper` is already on the list
+     *        (use {setKeeperActions} to modify bits for an existing entry).
+     *      - {KeeperWhitelistFull} when the list is at
+     *        `LibVaipakam.MAX_APPROVED_KEEPERS`.
+     *
+     *      Adding a keeper only authorises the caller's side of any loan;
+     *      the counterparty's whitelist is independent.
+     *
+     * @param keeper  Keeper address to whitelist (non-zero).
+     * @param actions Bitmask of `LibVaipakam.KEEPER_ACTION_*` bits.
      */
-    function approveKeeper(address keeper) external whenNotPaused {
+    function approveKeeper(address keeper, uint8 actions) external whenNotPaused {
         if (keeper == address(0)) revert InvalidAddress();
+        _requireValidKeeperActions(actions);
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        if (s.approvedKeepers[msg.sender][keeper]) revert KeeperAlreadyApproved();
+        if (s.approvedKeeperActions[msg.sender][keeper] != 0)
+            revert KeeperAlreadyApproved();
         if (s.approvedKeepersList[msg.sender].length >= LibVaipakam.MAX_APPROVED_KEEPERS)
             revert KeeperWhitelistFull();
-        s.approvedKeepers[msg.sender][keeper] = true;
+        s.approvedKeeperActions[msg.sender][keeper] = actions;
         s.approvedKeepersList[msg.sender].push(keeper);
-        emit KeeperApproved(msg.sender, keeper);
+        emit KeeperActionsUpdated(msg.sender, keeper, actions);
     }
 
     /**
-     * @notice Removes `keeper` from the caller's whitelist.
-     * @dev Reverts KeeperNotApproved if `keeper` isn't currently on the list.
-     *      Uses swap-and-pop so removal is O(list length) but avoids leaving
-     *      gaps. In-flight keeper-driven calls may still see the old flag
-     *      for the current block; re-check the flag inside LibAuth on every
-     *      call (already enforced).
+     * @notice Update the action bitmask for an existing whitelisted keeper.
+     *
+     * @dev Reverts:
+     *      - {KeeperNotApproved} if `keeper` is not currently on the list.
+     *      - {InvalidKeeperActions} if `actions == 0` (use {revokeKeeper}
+     *        to remove the keeper entirely) or sets bits outside
+     *        `LibVaipakam.KEEPER_ACTION_ALL`.
+     *
+     * @param keeper  Keeper to update.
+     * @param actions New action bitmask.
+     */
+    function setKeeperActions(address keeper, uint8 actions) external whenNotPaused {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        if (s.approvedKeeperActions[msg.sender][keeper] == 0)
+            revert KeeperNotApproved();
+        _requireValidKeeperActions(actions);
+        s.approvedKeeperActions[msg.sender][keeper] = actions;
+        emit KeeperActionsUpdated(msg.sender, keeper, actions);
+    }
+
+    /**
+     * @notice Removes `keeper` from the caller's whitelist (clears their
+     *         action bitmask to zero).
+     *
+     * @dev Reverts {KeeperNotApproved} if `keeper` isn't currently on the
+     *      list. Uses swap-and-pop on the enumerated list so removal is
+     *      O(list length) but avoids leaving gaps. In-flight keeper-driven
+     *      calls may still see the old flag for the current block; re-
+     *      checked inside LibAuth on every call.
+     *
      * @param keeper The keeper address to remove.
      */
     function revokeKeeper(address keeper) external whenNotPaused {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        if (!s.approvedKeepers[msg.sender][keeper]) revert KeeperNotApproved();
-        s.approvedKeepers[msg.sender][keeper] = false;
+        if (s.approvedKeeperActions[msg.sender][keeper] == 0)
+            revert KeeperNotApproved();
+        s.approvedKeeperActions[msg.sender][keeper] = 0;
         address[] storage list = s.approvedKeepersList[msg.sender];
         uint256 len = list.length;
         for (uint256 i; i < len; ) {
@@ -434,13 +476,29 @@ contract ProfileFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors 
     }
 
     /**
-     * @notice Returns whether `keeper` is on `user`'s whitelist.
-     * @param user The whitelist owner.
+     * @notice Returns the current action bitmask authorising `keeper` on
+     *         behalf of `user`. Zero means not approved.
+     * @param user   The whitelist owner.
      * @param keeper The keeper address to check.
-     * @return True iff `keeper` is currently approved for `user`.
+     * @return actions Bitmask of `LibVaipakam.KEEPER_ACTION_*` bits.
+     */
+    function getKeeperActions(address user, address keeper)
+        external
+        view
+        returns (uint8 actions)
+    {
+        return LibVaipakam.storageSlot().approvedKeeperActions[user][keeper];
+    }
+
+    /**
+     * @notice Backwards-friendly view: whether `keeper` is approved at
+     *         all (any action bit set) on `user`'s whitelist.
+     * @param user   The whitelist owner.
+     * @param keeper The keeper address to check.
+     * @return True iff the keeper has any authorised action.
      */
     function isApprovedKeeper(address user, address keeper) external view returns (bool) {
-        return LibVaipakam.storageSlot().approvedKeepers[user][keeper];
+        return LibVaipakam.storageSlot().approvedKeeperActions[user][keeper] != 0;
     }
 
     /**
@@ -452,6 +510,44 @@ contract ProfileFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors 
      */
     function getApprovedKeepers(address user) external view returns (address[] memory) {
         return LibVaipakam.storageSlot().approvedKeepersList[user];
+    }
+
+    /**
+     * @notice Returns whether a specific `keeper` is enabled for `loanId`.
+     *         Complements {getKeeperActions} — a keeper must be both
+     *         globally authorised AND enabled for the specific loan.
+     * @param loanId Loan to query.
+     * @param keeper Keeper address to check.
+     * @return True iff the keeper is enabled for this loan.
+     */
+    function isLoanKeeperEnabled(uint256 loanId, address keeper)
+        external
+        view
+        returns (bool)
+    {
+        return LibVaipakam.storageSlot().loanKeeperEnabled[loanId][keeper];
+    }
+
+    /**
+     * @notice Returns whether a specific `keeper` is enabled for `offerId`
+     *         (pre-acceptance). Latches into loan-level at acceptance.
+     * @param offerId Offer to query.
+     * @param keeper  Keeper address to check.
+     * @return True iff the keeper is enabled for this offer.
+     */
+    function isOfferKeeperEnabled(uint256 offerId, address keeper)
+        external
+        view
+        returns (bool)
+    {
+        return LibVaipakam.storageSlot().offerKeeperEnabled[offerId][keeper];
+    }
+
+    /// @dev Require `actions` is non-zero and only sets bits within the
+    ///      configured action space. Reverts {InvalidKeeperActions}.
+    function _requireValidKeeperActions(uint8 actions) private pure {
+        if (actions == 0 || (actions & ~LibVaipakam.KEEPER_ACTION_ALL) != 0)
+            revert InvalidKeeperActions();
     }
 
     // ─── Address-level sanctions (Phase 4.3) ──────────────────────────────

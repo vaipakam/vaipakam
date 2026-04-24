@@ -248,16 +248,14 @@ contract PositiveFlowsGapFillers is Test {
     // (D) Keeper two-layer opt-in ledger state
     // ─────────────────────────────────────────────────────────────────────
 
-    /// @notice Both opt-in layers (profile-level `setKeeperAccess` +
-    ///         per-loan `lenderKeeperAccessEnabled`) are captured correctly
-    ///         on the loan record, and the keeper whitelist maintains the
-    ///         approved keeper. WebsiteReadme §288–296 makes this ledger
-    ///         the on-chain authorization source of truth before any
-    ///         keeper-driven execution is allowed.
+    /// @notice Phase 6: the keeper opt-in ledger is three layers, per
+    ///         keeper per loan. (1) master `setKeeperAccess(true)` per
+    ///         user, (2) `approveKeeper(keeper, actions)` with an action
+    ///         bitmask on the user's whitelist, (3)
+    ///         `setOfferKeeperEnabled` / `setLoanKeeperEnabled` per loan.
+    ///         This test verifies all three layers persist correctly and
+    ///         the offer-level enable latches into the loan at acceptance.
     function test_Positive_KeeperTwoLayerOptIn_StateRecorded() public {
-        // Lender creates the offer WITH keeper-access latched — this sets
-        // both sides' keeper flags on the resulting loan per OfferFacet's
-        // current propagation logic.
         vm.prank(lender);
         ProfileFacet(address(diamond)).setKeeperAccess(true);
         assertTrue(
@@ -265,41 +263,54 @@ contract PositiveFlowsGapFillers is Test {
             "lender profile opt-in"
         );
         vm.prank(lender);
-        ProfileFacet(address(diamond)).approveKeeper(keeperEOA);
-        address[] memory approved =
-            ProfileFacet(address(diamond)).getApprovedKeepers(lender);
-        bool found;
-        for (uint256 i = 0; i < approved.length; i++) {
-            if (approved[i] == keeperEOA) {
-                found = true;
-                break;
-            }
-        }
-        assertTrue(found, "lender whitelist must contain keeper");
+        ProfileFacet(address(diamond)).approveKeeper(
+            keeperEOA,
+            LibVaipakam.KEEPER_ACTION_ALL
+        );
+        assertEq(
+            ProfileFacet(address(diamond)).getKeeperActions(lender, keeperEOA),
+            LibVaipakam.KEEPER_ACTION_ALL,
+            "lender whitelist must carry full action bitmask"
+        );
 
-        uint256 offerId = _createLenderOffer(true /* keeperAccessEnabled */);
+        uint256 offerId = _createLenderOffer();
+        // Lender enables the keeper at the offer level pre-acceptance; this
+        // latches into `loanKeeperEnabled[loanId][keeper]` at acceptance via
+        // LoanFacet._latchOfferKeepersToLoan.
+        vm.prank(lender);
+        ProfileFacet(address(diamond)).setOfferKeeperEnabled(
+            offerId,
+            keeperEOA,
+            true
+        );
+
         vm.prank(borrower);
         uint256 loanId = OfferFacet(address(diamond)).acceptOffer(offerId, true);
 
-        LibVaipakam.Loan memory L =
-            LoanFacet(address(diamond)).getLoanDetails(loanId);
         assertTrue(
-            L.lenderKeeperAccessEnabled,
-            "lender-side per-loan flag must latch from offer"
+            ProfileFacet(address(diamond)).isLoanKeeperEnabled(loanId, keeperEOA),
+            "offer-level enable must latch into loan-level at acceptance"
         );
 
-        // Borrower exercises their own profile toggle AFTER loan init —
-        // proves the individual setLoanKeeperAccess carries over to storage
-        // on the borrower side independent of the counterparty's state.
+        // Borrower exercises their own per-loan enable AFTER init — proves
+        // the loan-level flag is settable independently on the borrower
+        // side (distinct approved-keeper bitmask per user).
         vm.prank(borrower);
         ProfileFacet(address(diamond)).setKeeperAccess(true);
         vm.prank(borrower);
-        ProfileFacet(address(diamond)).setLoanKeeperAccess(loanId, true);
-
-        L = LoanFacet(address(diamond)).getLoanDetails(loanId);
+        ProfileFacet(address(diamond)).approveKeeper(
+            keeperEOA,
+            LibVaipakam.KEEPER_ACTION_INIT_PRECLOSE
+        );
+        vm.prank(borrower);
+        ProfileFacet(address(diamond)).setLoanKeeperEnabled(
+            loanId,
+            keeperEOA,
+            true
+        );
         assertTrue(
-            L.borrowerKeeperAccessEnabled,
-            "borrower-side per-loan flag must persist after setLoanKeeperAccess"
+            ProfileFacet(address(diamond)).isLoanKeeperEnabled(loanId, keeperEOA),
+            "borrower-side per-loan enable must persist"
         );
     }
 
@@ -308,12 +319,6 @@ contract PositiveFlowsGapFillers is Test {
     // ─────────────────────────────────────────────────────────────────────
 
     function _createLenderOffer() internal returns (uint256 offerId) {
-        return _createLenderOffer(false);
-    }
-
-    function _createLenderOffer(
-        bool keeperAccessEnabled
-    ) internal returns (uint256 offerId) {
         vm.prank(lender);
         offerId = OfferFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
@@ -331,8 +336,7 @@ contract PositiveFlowsGapFillers is Test {
                 prepayAsset: address(0),
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
-                collateralQuantity: 0,
-                keeperAccessEnabled: keeperAccessEnabled
+                collateralQuantity: 0
             })
         );
     }

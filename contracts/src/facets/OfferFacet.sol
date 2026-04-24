@@ -321,7 +321,9 @@ contract OfferFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
         offer.collateralAssetType = params.collateralAssetType;
         offer.collateralTokenId = params.collateralTokenId;
         offer.collateralQuantity = params.collateralQuantity;
-        offer.keeperAccessEnabled = params.keeperAccessEnabled;
+        // Phase 6: keeper access is per-keeper via
+        // `offerKeeperEnabled[offerId][keeper]`. Creator enables specific
+        // keepers post-create via `ProfileFacet.setOfferKeeperEnabled`.
     }
 
     /**

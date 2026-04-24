@@ -83,6 +83,9 @@ interface IVaipakamErrors {
     error KeeperAlreadyApproved();
     error KeeperNotApproved();
     error KeeperWhitelistFull();
+    /// @notice Phase 6: the supplied keeper-action bitmask is zero or sets
+    ///         bits outside `LibVaipakam.KEEPER_ACTION_ALL`.
+    error InvalidKeeperActions();
 
     // ─── VPFI Discount (docs/BorrowerVPFIDiscountMechanism.md) ───────────────
     /// @notice Fixed-rate VPFI buy attempted on a chain that is not the

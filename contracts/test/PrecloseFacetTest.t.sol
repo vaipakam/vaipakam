@@ -237,8 +237,7 @@ contract PrecloseFacetTest is Test {
                 prepayAsset: mockERC20,
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
-                collateralQuantity: 0,
-                keeperAccessEnabled: false
+                collateralQuantity: 0
             })
         );
         vm.prank(borrower);
@@ -251,9 +250,13 @@ contract PrecloseFacetTest is Test {
     // ─── precloseDirect reverts ───────────────────────────────────────────────
 
     function testPreclosedDirectRevertsNotNFTOwner() public {
-        // precloseDirect is a strategic flow — auth is ownerOf(borrowerTokenId).
+        // Phase 6: precloseDirect is a borrower-entitled strategic flow.
+        // A caller who isn't the borrower-NFT owner AND doesn't pass the
+        // three keeper gates falls out of `requireKeeperFor` with
+        // `KeeperAccessRequired()` (not `NotNFTOwner()` — those two
+        // used to be distinct helpers; Phase 6 merged them).
         vm.prank(lender);
-        vm.expectRevert(IVaipakamErrors.NotNFTOwner.selector);
+        vm.expectRevert(IVaipakamErrors.KeeperAccessRequired.selector);
         PrecloseFacet(address(diamond)).precloseDirect(activeLoanId);
     }
 
@@ -298,10 +301,10 @@ contract PrecloseFacetTest is Test {
     // ─── transferObligationViaOffer reverts ──────────────────────────────────
 
     function testTransferObligationRevertsNotNFTOwner() public {
-        // transferObligationViaOffer is a strategic flow — auth is
-        // ownerOf(borrowerTokenId), not loan.borrower.
+        // Phase 6: borrower-entitled strategic flow. Non-owner callers fall
+        // through requireKeeperFor and revert with KeeperAccessRequired.
         vm.prank(lender);
-        vm.expectRevert(IVaipakamErrors.NotNFTOwner.selector);
+        vm.expectRevert(IVaipakamErrors.KeeperAccessRequired.selector);
         PrecloseFacet(address(diamond)).transferObligationViaOffer(activeLoanId, 1);
     }
 
@@ -348,8 +351,7 @@ contract PrecloseFacetTest is Test {
                 prepayAsset: otherToken,
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
-                collateralQuantity: 0,
-                keeperAccessEnabled: false
+                collateralQuantity: 0
             })
         );
 
@@ -378,8 +380,7 @@ contract PrecloseFacetTest is Test {
                 prepayAsset: mockERC20,
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
-                collateralQuantity: 0,
-                keeperAccessEnabled: false
+                collateralQuantity: 0
             })
         );
 
@@ -406,8 +407,7 @@ contract PrecloseFacetTest is Test {
                 prepayAsset: mockERC20,
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
-                collateralQuantity: 0,
-                keeperAccessEnabled: false
+                collateralQuantity: 0
             })
         );
 
@@ -434,8 +434,7 @@ contract PrecloseFacetTest is Test {
                 prepayAsset: mockERC20,
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
-                collateralQuantity: 0,
-                keeperAccessEnabled: false
+                collateralQuantity: 0
             })
         );
 
@@ -463,8 +462,7 @@ contract PrecloseFacetTest is Test {
                 prepayAsset: mockERC20,
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
-                collateralQuantity: 0,
-                keeperAccessEnabled: false
+                collateralQuantity: 0
             })
         );
 
@@ -491,8 +489,7 @@ contract PrecloseFacetTest is Test {
                 prepayAsset: mockERC20,
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
-                collateralQuantity: 0,
-                keeperAccessEnabled: false
+                collateralQuantity: 0
             })
         );
 
@@ -534,8 +531,7 @@ contract PrecloseFacetTest is Test {
                 prepayAsset: mockERC20,
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
-                collateralQuantity: 0,
-                keeperAccessEnabled: false
+                collateralQuantity: 0
             })
         );
 
@@ -571,8 +567,7 @@ contract PrecloseFacetTest is Test {
                 prepayAsset: mockERC20,
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
-                collateralQuantity: 0,
-                keeperAccessEnabled: false
+                collateralQuantity: 0
             })
         );
 
@@ -611,8 +606,7 @@ contract PrecloseFacetTest is Test {
                 prepayAsset: mockERC20,
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
-                collateralQuantity: 0,
-                keeperAccessEnabled: false
+                collateralQuantity: 0
             })
         );
 
@@ -627,10 +621,10 @@ contract PrecloseFacetTest is Test {
     // ─── offsetWithNewOffer reverts ──────────────────────────────────────────
 
     function testOffsetRevertsNotNFTOwner() public {
-        // offsetWithNewOffer is a strategic flow — auth is
-        // ownerOf(borrowerTokenId), not loan.borrower.
+        // Phase 6: borrower-entitled strategic flow. Non-owner callers
+        // without keeper auth revert with KeeperAccessRequired.
         vm.prank(lender);
-        vm.expectRevert(IVaipakamErrors.NotNFTOwner.selector);
+        vm.expectRevert(IVaipakamErrors.KeeperAccessRequired.selector);
         PrecloseFacet(address(diamond)).offsetWithNewOffer(activeLoanId, 500, 30, mockCollateralERC20, COLLATERAL, true, mockERC20);
     }
 
@@ -840,8 +834,7 @@ contract PrecloseFacetTest is Test {
                 prepayAsset: mockERC20,
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
-                collateralQuantity: 0,
-                keeperAccessEnabled: false
+                collateralQuantity: 0
             })
         );
 
@@ -870,8 +863,7 @@ contract PrecloseFacetTest is Test {
                 prepayAsset: mockERC20,
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
-                collateralQuantity: 0,
-                keeperAccessEnabled: false
+                collateralQuantity: 0
             })
         );
 
@@ -903,8 +895,7 @@ contract PrecloseFacetTest is Test {
                 prepayAsset: mockERC20,
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
-                collateralQuantity: 0,
-                keeperAccessEnabled: false
+                collateralQuantity: 0
             })
         );
 
@@ -970,8 +961,7 @@ contract PrecloseFacetTest is Test {
                 prepayAsset: mockERC20,
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
-                collateralQuantity: 0,
-                keeperAccessEnabled: false
+                collateralQuantity: 0
             })
         );
 
@@ -1012,8 +1002,7 @@ contract PrecloseFacetTest is Test {
                 prepayAsset: mockERC20,
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
-                collateralQuantity: 0,
-                keeperAccessEnabled: false
+                collateralQuantity: 0
             })
         );
 
@@ -1057,8 +1046,7 @@ contract PrecloseFacetTest is Test {
                 prepayAsset: mockERC20,
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
-                collateralQuantity: 0,
-                keeperAccessEnabled: false
+                collateralQuantity: 0
             })
         );
 
@@ -1125,8 +1113,7 @@ contract PrecloseFacetTest is Test {
                 prepayAsset: mockERC20,
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
-                collateralQuantity: 0,
-                keeperAccessEnabled: false
+                collateralQuantity: 0
             })
         );
 
@@ -1167,8 +1154,7 @@ contract PrecloseFacetTest is Test {
                 prepayAsset: otherToken, // different prepayAsset
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
-                collateralQuantity: 0,
-                keeperAccessEnabled: false
+                collateralQuantity: 0
             })
         );
 
@@ -1198,8 +1184,7 @@ contract PrecloseFacetTest is Test {
                 prepayAsset: mockERC20,
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
-                collateralQuantity: 0,
-                keeperAccessEnabled: false
+                collateralQuantity: 0
             })
         );
 
@@ -1237,8 +1222,7 @@ contract PrecloseFacetTest is Test {
                 prepayAsset: mockERC20,
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
-                collateralQuantity: 0,
-                keeperAccessEnabled: false
+                collateralQuantity: 0
             })
         );
 
@@ -1320,23 +1304,24 @@ contract PrecloseFacetTest is Test {
         PrecloseFacet(address(diamond)).offsetWithNewOffer(activeLoanId, 500, 30, mockCollateralERC20, COLLATERAL, true, mockERC20);
         vm.clearMockedCalls();
 
-        {
-            LibVaipakam.Loan memory lk = LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
-            lk.borrowerKeeperAccessEnabled = true;
-            TestMutatorFacet(address(diamond)).setLoan(activeLoanId, lk);
-        }
         _setOfferAccepted(99);
 
         // Mock cross-facet calls
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector), "");
 
         address keeper = makeAddr("keeper");
-        // Under role-scoped model, completeOffset is a borrower-entitled action:
-        // only the borrower's profile opt-in + whitelist is consulted.
+        // Phase 6: completeOffset is a borrower-entitled action requiring
+        // the CompleteOffset action bit on the borrower's approved-keeper
+        // bitmask AND the keeper enabled for this specific loan.
         vm.prank(borrower);
         ProfileFacet(address(diamond)).setKeeperAccess(true);
         vm.prank(borrower);
-        ProfileFacet(address(diamond)).approveKeeper(keeper);
+        ProfileFacet(address(diamond)).approveKeeper(
+            keeper,
+            LibVaipakam.KEEPER_ACTION_COMPLETE_OFFSET
+        );
+        vm.prank(borrower);
+        ProfileFacet(address(diamond)).setLoanKeeperEnabled(activeLoanId, keeper, true);
         vm.prank(keeper);
         PrecloseFacet(address(diamond)).completeOffset(activeLoanId);
 
@@ -1442,8 +1427,7 @@ contract PrecloseFacetTest is Test {
                 prepayAsset: mockERC20,
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
-                collateralQuantity: 0,
-                keeperAccessEnabled: false
+                collateralQuantity: 0
             })
         );
 
@@ -1479,8 +1463,7 @@ contract PrecloseFacetTest is Test {
                 prepayAsset: mockERC20,
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
-                collateralQuantity: 0,
-                keeperAccessEnabled: false
+                collateralQuantity: 0
             })
         );
 

@@ -214,8 +214,7 @@ contract KYCTierEnforcementIntegration is Test {
                 prepayAsset: address(0),
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
-                collateralQuantity: 0,
-                keeperAccessEnabled: false
+                collateralQuantity: 0
             })
         );
     }

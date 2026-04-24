@@ -188,8 +188,7 @@ contract RefinanceFacetTest is Test {
                 prepayAsset: mockERC20,
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
-                collateralQuantity: 0,
-                keeperAccessEnabled: false
+                collateralQuantity: 0
             })
         );
         vm.prank(borrower);
@@ -213,8 +212,7 @@ contract RefinanceFacetTest is Test {
                 prepayAsset: mockERC20,
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
-                collateralQuantity: 0,
-                keeperAccessEnabled: false
+                collateralQuantity: 0
             })
         );
 
@@ -234,12 +232,13 @@ contract RefinanceFacetTest is Test {
     // ─── refinanceLoan reverts ────────────────────────────────────────────────
 
     function testRefinanceLoanRevertsNotNFTOwner() public {
-        // refinanceLoan is a strategic flow — auth is ownerOf(borrowerTokenId),
-        // not loan.borrower.
+        // Phase 6: refinanceLoan is a borrower-entitled strategic flow.
+        // Non-borrower-NFT callers without keeper auth revert with
+        // KeeperAccessRequired (the unified requireKeeperFor gate).
         _acceptBorrowerOffer(borrowerOfferId);
 
         vm.prank(lender);
-        vm.expectRevert(IVaipakamErrors.NotNFTOwner.selector);
+        vm.expectRevert(IVaipakamErrors.KeeperAccessRequired.selector);
         RefinanceFacet(address(diamond)).refinanceLoan(activeLoanId, borrowerOfferId);
     }
 
@@ -272,8 +271,7 @@ contract RefinanceFacetTest is Test {
                 prepayAsset: mockERC20,
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
-                collateralQuantity: 0,
-                keeperAccessEnabled: false
+                collateralQuantity: 0
             })
         );
 
@@ -319,8 +317,7 @@ contract RefinanceFacetTest is Test {
                 prepayAsset: mockERC20,
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
-                collateralQuantity: 0,
-                keeperAccessEnabled: false
+                collateralQuantity: 0
             })
         );
 
@@ -423,8 +420,7 @@ contract RefinanceFacetTest is Test {
                 prepayAsset: mockERC20,
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
-                collateralQuantity: 0,
-                keeperAccessEnabled: false
+                collateralQuantity: 0
             })
         );
 
@@ -716,8 +712,7 @@ contract RefinanceFacetTest is Test {
                 prepayAsset: mockERC20,
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
-                collateralQuantity: 0,
-                keeperAccessEnabled: false
+                collateralQuantity: 0
             })
         );
 
@@ -768,8 +763,7 @@ contract RefinanceFacetTest is Test {
                 prepayAsset: mockERC20,
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
-                collateralQuantity: 0,
-                keeperAccessEnabled: false
+                collateralQuantity: 0
             })
         );
 
@@ -814,8 +808,7 @@ contract RefinanceFacetTest is Test {
                 prepayAsset: otherERC20,
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
-                collateralQuantity: 0,
-                keeperAccessEnabled: false
+                collateralQuantity: 0
             })
         );
 
@@ -850,8 +843,7 @@ contract RefinanceFacetTest is Test {
                 prepayAsset: mockERC20,
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
-                collateralQuantity: 0,
-                keeperAccessEnabled: false
+                collateralQuantity: 0
             })
         );
 
@@ -980,8 +972,7 @@ contract RefinanceFacetTest is Test {
                 prepayAsset: mockERC20,
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
-                collateralQuantity: 0,
-                keeperAccessEnabled: false
+                collateralQuantity: 0
             })
         );
 

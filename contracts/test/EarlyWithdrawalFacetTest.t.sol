@@ -91,11 +91,15 @@ contract EarlyWithdrawalFacetTest is Test {
         TestMutatorFacet(address(diamond)).setLoan(loanId, ld);
     }
 
+    // Phase 6: the old per-loan lender/borrower keeper bools were replaced
+    // by `loanKeeperEnabled[loanId][keeper]`. Tests that need to simulate
+    // "keepers enabled on this loan" now call ProfileFacet.setLoanKeeperEnabled
+    // directly (from the appropriate NFT-owner prank) instead of mutating
+    // the loan struct. This helper is kept as a harmless no-op for backward
+    // compatibility with call sites that still reference it — the actual
+    // enable is done via setLoanKeeperEnabled in the per-test prank block.
     function _setLoanKeeperAccessEnabled(uint256 loanId, bool enabled) internal {
-        LibVaipakam.Loan memory ld = LoanFacet(address(diamond)).getLoanDetails(loanId);
-        ld.lenderKeeperAccessEnabled = enabled;
-        ld.borrowerKeeperAccessEnabled = enabled;
-        TestMutatorFacet(address(diamond)).setLoan(loanId, ld);
+        loanId; enabled;
     }
 
     function _setOfferAccepted(uint256 offerId) internal {
@@ -257,8 +261,7 @@ contract EarlyWithdrawalFacetTest is Test {
                 prepayAsset: mockERC20,
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
-                collateralQuantity: 0,
-                keeperAccessEnabled: false
+                collateralQuantity: 0
             })
         );
         vm.prank(borrower);
@@ -282,8 +285,7 @@ contract EarlyWithdrawalFacetTest is Test {
                 prepayAsset: mockERC20,
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
-                collateralQuantity: 0,
-                keeperAccessEnabled: false
+                collateralQuantity: 0
             })
         );
 
@@ -344,9 +346,11 @@ contract EarlyWithdrawalFacetTest is Test {
     // ─── createLoanSaleOffer reverts ─────────────────────────────────────────
 
     function testCreateSaleOfferRevertsNotNFTOwner() public {
-        // createLoanSaleOffer is a strategic flow — auth is ownerOf(lenderTokenId).
+        // Phase 6: createLoanSaleOffer is a lender-entitled strategic flow.
+        // Non-lender-NFT callers without keeper auth revert with
+        // KeeperAccessRequired (the unified requireKeeperFor gate).
         vm.prank(borrower);
-        vm.expectRevert(IVaipakamErrors.NotNFTOwner.selector);
+        vm.expectRevert(IVaipakamErrors.KeeperAccessRequired.selector);
         EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(activeLoanId, 500, true);
     }
 
@@ -400,8 +404,7 @@ contract EarlyWithdrawalFacetTest is Test {
                 prepayAsset: mockERC20,
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
-                collateralQuantity: 0,
-                keeperAccessEnabled: false
+                collateralQuantity: 0
             })
         );
 
@@ -459,8 +462,7 @@ contract EarlyWithdrawalFacetTest is Test {
                 prepayAsset: mockERC20,
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
-                collateralQuantity: 0,
-                keeperAccessEnabled: false
+                collateralQuantity: 0
             })
         );
 
@@ -502,8 +504,7 @@ contract EarlyWithdrawalFacetTest is Test {
                 prepayAsset: mockERC20,
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
-                collateralQuantity: 0,
-                keeperAccessEnabled: false
+                collateralQuantity: 0
             })
         );
 
@@ -541,8 +542,7 @@ contract EarlyWithdrawalFacetTest is Test {
                 prepayAsset: mockERC20,
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
-                collateralQuantity: 0,
-                keeperAccessEnabled: false
+                collateralQuantity: 0
             })
         );
 
@@ -591,8 +591,7 @@ contract EarlyWithdrawalFacetTest is Test {
                 prepayAsset: mockERC20,
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
-                collateralQuantity: 0,
-                keeperAccessEnabled: false
+                collateralQuantity: 0
             })
         );
 
@@ -627,8 +626,7 @@ contract EarlyWithdrawalFacetTest is Test {
                 prepayAsset: mockERC20,
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
-                collateralQuantity: 0,
-                keeperAccessEnabled: false
+                collateralQuantity: 0
             })
         );
 
@@ -660,8 +658,7 @@ contract EarlyWithdrawalFacetTest is Test {
                 prepayAsset: mockERC20,
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
-                collateralQuantity: 0,
-                keeperAccessEnabled: false
+                collateralQuantity: 0
             })
         );
 
@@ -706,8 +703,7 @@ contract EarlyWithdrawalFacetTest is Test {
                 prepayAsset: differentAsset,
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
-                collateralQuantity: 0,
-                keeperAccessEnabled: false
+                collateralQuantity: 0
             })
         );
         vm.prank(lender);
@@ -734,8 +730,7 @@ contract EarlyWithdrawalFacetTest is Test {
                 prepayAsset: mockERC20,
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
-                collateralQuantity: 0,
-                keeperAccessEnabled: false
+                collateralQuantity: 0
             })
         );
         vm.mockCall(address(diamond), abi.encodeWithSelector(EscrowFactoryFacet.escrowWithdrawERC20.selector), abi.encode(true));
@@ -770,8 +765,7 @@ contract EarlyWithdrawalFacetTest is Test {
                 prepayAsset: mockERC20,
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
-                collateralQuantity: 0,
-                keeperAccessEnabled: false
+                collateralQuantity: 0
             })
         );
 
@@ -799,8 +793,7 @@ contract EarlyWithdrawalFacetTest is Test {
                 prepayAsset: mockERC20,
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
-                collateralQuantity: 0,
-                keeperAccessEnabled: false
+                collateralQuantity: 0
             })
         );
 
@@ -894,8 +887,7 @@ contract EarlyWithdrawalFacetTest is Test {
                 prepayAsset: mockERC20,
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
-                collateralQuantity: 0,
-                keeperAccessEnabled: false
+                collateralQuantity: 0
             })
         );
 
@@ -930,8 +922,7 @@ contract EarlyWithdrawalFacetTest is Test {
                 prepayAsset: mockERC20,
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
-                collateralQuantity: 0,
-                keeperAccessEnabled: false
+                collateralQuantity: 0
             })
         );
 
@@ -985,8 +976,7 @@ contract EarlyWithdrawalFacetTest is Test {
                 prepayAsset: otherToken,
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
-                collateralQuantity: 0,
-                keeperAccessEnabled: false
+                collateralQuantity: 0
             })
         );
 
@@ -1023,8 +1013,7 @@ contract EarlyWithdrawalFacetTest is Test {
                 prepayAsset: mockERC20,
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
-                collateralQuantity: 0,
-                keeperAccessEnabled: false
+                collateralQuantity: 0
             })
         );
 
@@ -1053,8 +1042,7 @@ contract EarlyWithdrawalFacetTest is Test {
                 prepayAsset: mockERC20,
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
-                collateralQuantity: 0,
-                keeperAccessEnabled: false
+                collateralQuantity: 0
             })
         );
 
@@ -1089,8 +1077,7 @@ contract EarlyWithdrawalFacetTest is Test {
                 prepayAsset: mockERC20,
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
-                collateralQuantity: 0,
-                keeperAccessEnabled: false
+                collateralQuantity: 0
             })
         );
 
@@ -1706,13 +1693,23 @@ contract EarlyWithdrawalFacetTest is Test {
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.burnNFT.selector), "");
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.mintNFT.selector), "");
 
-        // Under role-scoped model, completeLoanSale is a lender-entitled action:
-        // only the lender's profile opt-in + whitelist is consulted.
+        // Phase 6: completeLoanSale is a lender-entitled action. Requires
+        // the lender's master keeper switch, the keeper approved for the
+        // CompleteLoanSale action, AND the keeper enabled for this loan.
+        // createLoanSaleOffer above ALSO needed the InitEarlyWithdraw bit
+        // and keeper-on-loan — the lender is msg.sender there so it went
+        // through the owner-of check; we only need the completeLoanSale
+        // leg gated here.
         address keeper = makeAddr("keeper");
         vm.prank(lender);
         ProfileFacet(address(diamond)).setKeeperAccess(true);
         vm.prank(lender);
-        ProfileFacet(address(diamond)).approveKeeper(keeper);
+        ProfileFacet(address(diamond)).approveKeeper(
+            keeper,
+            LibVaipakam.KEEPER_ACTION_COMPLETE_LOAN_SALE
+        );
+        vm.prank(lender);
+        ProfileFacet(address(diamond)).setLoanKeeperEnabled(activeLoanId, keeper, true);
         vm.prank(keeper);
         EarlyWithdrawalFacet(address(diamond)).completeLoanSale(activeLoanId);
 
@@ -1876,8 +1873,7 @@ contract EarlyWithdrawalFacetTest is Test {
                 prepayAsset: mockERC20,
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
-                collateralQuantity: 0,
-                keeperAccessEnabled: false
+                collateralQuantity: 0
             })
         );
 
@@ -1922,8 +1918,7 @@ contract EarlyWithdrawalFacetTest is Test {
                 prepayAsset: mockERC20,
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
-                collateralQuantity: 0,
-                keeperAccessEnabled: false
+                collateralQuantity: 0
             })
         );
 

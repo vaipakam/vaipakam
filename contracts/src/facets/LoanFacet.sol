@@ -395,6 +395,33 @@ contract LoanFacet is DiamondPausable, IVaipakamErrors {
         _copyPartyFields(loan, offer, acceptor);
         _snapshotLenderDiscount(loan);
         _snapshotBorrowerDiscount(loan);
+        _latchOfferKeepersToLoan(loan.id, offerId, offer.creator);
+    }
+
+    /// @dev Copy the offer's per-keeper enable flags onto the new loan
+    ///      (Phase 6). Iterates the offer creator's bounded approved-keepers
+    ///      list (cap `MAX_APPROVED_KEEPERS` = 5) and latches any keeper
+    ///      that was marked enabled on the offer into the loan's
+    ///      `loanKeeperEnabled` mapping. Post-acceptance, each NFT holder
+    ///      can edit their own loan-level enables via
+    ///      `ProfileFacet.setLoanKeeperEnabled`. No-op for offers with no
+    ///      keepers enabled — the whole function early-exits on an empty
+    ///      creator whitelist.
+    function _latchOfferKeepersToLoan(
+        uint256 loanId,
+        uint256 offerId,
+        address creator
+    ) private {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        address[] storage keepers = s.approvedKeepersList[creator];
+        uint256 len = keepers.length;
+        for (uint256 i; i < len; ) {
+            address k = keepers[i];
+            if (s.offerKeeperEnabled[offerId][k]) {
+                s.loanKeeperEnabled[loanId][k] = true;
+            }
+            unchecked { ++i; }
+        }
     }
 
     /// @dev Anchor the lender's time-weighted VPFI-discount window. Force-
@@ -497,8 +524,9 @@ contract LoanFacet is DiamondPausable, IVaipakamErrors {
         loan.collateralAssetType = offer.collateralAssetType;
         loan.collateralTokenId = offer.collateralTokenId;
         loan.collateralQuantity = offer.collateralQuantity;
-        loan.lenderKeeperAccessEnabled = offer.keeperAccessEnabled;
-        loan.borrowerKeeperAccessEnabled = offer.keeperAccessEnabled;
+        // Phase 6: no per-side keeper bool to mirror anymore. Offer-level
+        // keeper enables latch into loan-level via _latchOfferKeepersToLoan
+        // inside the full _copyOfferIntoLoan pipeline below.
     }
 
     function _copyPartyFields(
