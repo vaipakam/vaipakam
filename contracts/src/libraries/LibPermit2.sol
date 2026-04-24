@@ -99,8 +99,8 @@ library LibPermit2 {
         address owner,
         address to,
         uint256 amount,
-        ISignatureTransfer.PermitTransferFrom calldata permit,
-        bytes calldata signature
+        ISignatureTransfer.PermitTransferFrom memory permit,
+        bytes memory signature
     ) internal {
         ISignatureTransfer(PERMIT2).permitTransferFrom(
             permit,

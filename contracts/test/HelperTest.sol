@@ -85,7 +85,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](7);
+        selectors = new bytes4[](9);
         selectors[0] = OfferFacet.createOffer.selector;
         // Single `acceptOffer(uint256,bool)` signature — the VPFI discount
         // path is governed by the platform-level consent flag set via
@@ -96,6 +96,10 @@ contract HelperTest {
         selectors[4] = OfferFacet.getUserEscrow.selector;
         selectors[5] = OfferFacet.getOffer.selector;
         selectors[6] = OfferFacet.getOfferDetails.selector;
+        // Phase 8b.1 Permit2 additions — additive entries that coexist
+        // with the classic `createOffer` / `acceptOffer` paths.
+        selectors[7] = OfferFacet.createOfferWithPermit.selector;
+        selectors[8] = OfferFacet.acceptOfferWithPermit.selector;
         return selectors;
     }
 
@@ -467,7 +471,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](17);
+        selectors = new bytes4[](18);
         selectors[0] = VPFIDiscountFacet.buyVPFIWithETH.selector;
         selectors[1] = VPFIDiscountFacet.depositVPFIToEscrow.selector;
         selectors[2] = VPFIDiscountFacet.quoteVPFIDiscount.selector;
@@ -485,6 +489,9 @@ contract HelperTest {
         selectors[14] = VPFIDiscountFacet.getVPFIDiscountTier.selector;
         selectors[15] = VPFIDiscountFacet.withdrawVPFIFromEscrow.selector;
         selectors[16] = VPFIDiscountFacet.getUserVpfiDiscountState.selector;
+        // Phase 8b.1 Permit2 addition — signature-transfer variant of
+        // {depositVPFIToEscrow}.
+        selectors[17] = VPFIDiscountFacet.depositVPFIToEscrowWithPermit.selector;
         return selectors;
     }
 

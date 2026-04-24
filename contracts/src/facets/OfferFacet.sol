@@ -8,6 +8,7 @@ import {LibFacet} from "../libraries/LibFacet.sol";
 import {LibERC721} from "../libraries/LibERC721.sol";
 import {LibVPFIDiscount} from "../libraries/LibVPFIDiscount.sol";
 import {LibMetricsHooks} from "../libraries/LibMetricsHooks.sol";
+import {LibPermit2, ISignatureTransfer} from "../libraries/LibPermit2.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
@@ -125,6 +126,76 @@ contract OfferFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
     function createOffer(
         LibVaipakam.CreateOfferParams calldata params
     ) external nonReentrant whenNotPaused returns (uint256 offerId) {
+        address escrow;
+        (offerId, escrow) = _createOfferSetup(params);
+        _pullCreatorAssetsClassic(params, escrow);
+        _createOfferFinish(offerId, params);
+    }
+
+    /**
+     * @notice Permit2 variant of {createOffer} (Phase 8b.1).
+     *
+     * @dev Pulls the creator's ERC-20 asset (principal for a Lender
+     *      offer, collateral for a Borrower offer) via Uniswap's
+     *      canonical Permit2 using an off-chain signature. Saves the
+     *      separate `approve` tx the classic path would need.
+     *
+     *      Valid ONLY for ERC-20 offers on both legs — NFTs use
+     *      `setApprovalForAll` flows that Permit2 doesn't cover, and
+     *      NFT-rental prepay (ERC-20 prepayAsset) is handled via the
+     *      classic path. Reverts {InvalidAssetType} on any non-ERC-20
+     *      asset type on the side that would be pulled.
+     *
+     *      `permit.permitted.token` is bound to the signed EIP-712
+     *      digest — Permit2 itself rejects any mismatch, so a silent
+     *      wrong-asset transfer is impossible. `amount` MUST be ≤
+     *      `permit.permitted.amount`.
+     *
+     * @param params    Same `CreateOfferParams` as {createOffer}.
+     * @param permit    `PermitTransferFrom` struct the user signed.
+     * @param signature 65-byte ECDSA signature over the EIP-712 digest.
+     * @return offerId  The created offer's id.
+     */
+    function createOfferWithPermit(
+        LibVaipakam.CreateOfferParams calldata params,
+        ISignatureTransfer.PermitTransferFrom calldata permit,
+        bytes calldata signature
+    ) external nonReentrant whenNotPaused returns (uint256 offerId) {
+        // Permit2 only covers ERC-20 pulls. Reject NFT offers here so
+        // the caller can't accidentally sign a Permit2 payload that
+        // never gets honoured.
+        if (params.offerType == LibVaipakam.OfferType.Lender) {
+            if (params.assetType != LibVaipakam.AssetType.ERC20) {
+                revert InvalidAssetType();
+            }
+        } else {
+            // Borrower: either ERC-20 collateral (Permit2 target) or
+            // NFT rental with ERC-20 prepay. Permit2 targets the
+            // pulled asset — collateral for ERC-20 loans, prepay for
+            // NFT rentals. Both cases valid.
+            if (
+                params.assetType == LibVaipakam.AssetType.ERC20 &&
+                params.collateralAssetType != LibVaipakam.AssetType.ERC20
+            ) {
+                revert InvalidAssetType();
+            }
+        }
+
+        address escrow;
+        (offerId, escrow) = _createOfferSetup(params);
+        uint256 amount = _creatorPullAmount(offerId, params);
+        LibPermit2.pull(msg.sender, escrow, amount, permit, signature);
+        _createOfferFinish(offerId, params);
+    }
+
+    /// @dev Shared pre-pull setup. Runs every validation + allocates
+    ///      the offer id + writes offer fields + stores liquidity.
+    ///      Returns the new offer id and the caller's escrow address
+    ///      so the caller can do the actual asset pull via whichever
+    ///      path (safeTransferFrom vs Permit2) fits.
+    function _createOfferSetup(
+        LibVaipakam.CreateOfferParams calldata params
+    ) private returns (uint256 offerId, address escrow) {
         if (params.durationDays == 0) revert InvalidOfferType();
         if (params.amount <= 0) revert InvalidAmount();
 
@@ -136,18 +207,13 @@ contract OfferFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
         }
 
         // Self-lending guard: principal and collateral must reference
-        // distinct asset contracts. With ETH as the oracle quote asset
-        // the older USDT "always-Illiquid" hack that implicitly blocked
-        // same-asset offers is gone, so the invariant is enforced here
-        // directly at offer creation.
+        // distinct asset contracts.
         if (
             params.lendingAsset != address(0) &&
             params.lendingAsset == params.collateralAsset
         ) revert SelfCollateralizedOffer();
 
-        // Per-asset pause (governance-controlled reserve pause). Either
-        // leg being paused blocks offer creation; existing offers that
-        // reference the asset remain claimable via exit paths.
+        // Per-asset pause (governance-controlled reserve pause).
         LibFacet.requireAssetNotPaused(params.lendingAsset);
         LibFacet.requireAssetNotPaused(params.collateralAsset);
 
@@ -155,14 +221,11 @@ contract OfferFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
         unchecked {
             offerId = ++s.nextOfferId;
         }
-        // Append to the creator's reverse index so indexers and
-        // frontends can enumerate a user's offers without scanning events.
         s.userOfferIds[msg.sender].push(offerId);
 
         LibVaipakam.Offer storage offer = s.offers[offerId];
         _writeOfferFields(offer, offerId, params);
 
-        // Check liquidity for both principal and collateral (stored per README)
         LibVaipakam.LiquidityStatus principalLiq = OracleFacet(address(this))
             .checkLiquidity(params.lendingAsset);
         LibVaipakam.LiquidityStatus collateralLiq = OracleFacet(address(this))
@@ -170,19 +233,19 @@ contract OfferFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
         offer.principalLiquidity = principalLiq;
         offer.collateralLiquidity = collateralLiq;
 
-        // Liquidation-fallback terms consent is mandatory on every offer
-        // (liquid and illiquid): the creator must acknowledge both the
-        // abnormal-market fallback (lender claims collateral if liquidation
-        // can't execute safely) and, when applicable, the illiquid
-        // full-collateral-transfer terms. The frontend surfaces the full
-        // warning copy before this call.
         if (!params.creatorFallbackConsent) revert FallbackConsentRequired();
 
-        // Get/create escrow
-        address escrow = getUserEscrow(msg.sender);
+        escrow = getUserEscrow(msg.sender);
+    }
 
-        // Handle asset deposit/approval
-        bool success;
+    /// @dev Classic-path asset pull: the big if/else that lives in
+    ///      {createOffer}. Handles every combination of offer side +
+    ///      asset type. Permit2 callers skip this and invoke
+    ///      `LibPermit2.pull` with the signed permit instead.
+    function _pullCreatorAssetsClassic(
+        LibVaipakam.CreateOfferParams calldata params,
+        address escrow
+    ) private {
         if (params.offerType == LibVaipakam.OfferType.Lender) {
             if (params.assetType == LibVaipakam.AssetType.ERC20) {
                 IERC20(params.lendingAsset).safeTransferFrom(
@@ -208,7 +271,7 @@ contract OfferFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
                 revert InvalidAssetType();
             }
         } else {
-            // Borrower: Lock collateral
+            // Borrower: lock collateral (or prepay for NFT rental).
             if (params.assetType == LibVaipakam.AssetType.ERC20) {
                 if (params.collateralAssetType == LibVaipakam.AssetType.ERC20) {
                     IERC20(params.collateralAsset).safeTransferFrom(
@@ -237,11 +300,8 @@ contract OfferFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
                 params.assetType == LibVaipakam.AssetType.ERC721 ||
                 params.assetType == LibVaipakam.AssetType.ERC1155
             ) {
-                uint256 prepayAmount = offer.amount * offer.durationDays;
-                uint256 buffer = (prepayAmount * LibVaipakam.cfgRentalBufferBps()) /
-                    LibVaipakam.BASIS_POINTS;
-                uint256 totalPrepay = prepayAmount + buffer;
-                IERC20(offer.prepayAsset).safeTransferFrom(
+                uint256 totalPrepay = _nftRentalPrepayTotal(params);
+                IERC20(params.prepayAsset).safeTransferFrom(
                     msg.sender,
                     escrow,
                     totalPrepay
@@ -250,13 +310,69 @@ contract OfferFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
                 revert InvalidAssetType();
             }
         }
-        if (params.offerType == LibVaipakam.OfferType.Borrower) {}
+    }
 
-        // Mint Vaipakam position NFT for offer
+    /// @dev Computes the ERC-20 amount the Permit2 path needs to pull
+    ///      for an offer created via {createOfferWithPermit}. Mirrors
+    ///      the classic path's asset selection: lender-side ERC-20
+    ///      loan = principal, borrower-side ERC-20 loan = collateral,
+    ///      borrower-side NFT rental = prepay+buffer.
+    function _creatorPullAmount(
+        uint256 offerId,
+        LibVaipakam.CreateOfferParams calldata params
+    ) private view returns (uint256) {
+        if (params.offerType == LibVaipakam.OfferType.Lender) {
+            return params.amount;
+        }
+        if (params.assetType == LibVaipakam.AssetType.ERC20) {
+            return params.collateralAmount;
+        }
+        // NFT rental borrower offer — Permit2 pulls the prepay.
+        LibVaipakam.Offer storage offer = LibVaipakam.storageSlot().offers[offerId];
+        return _nftRentalPrepayTotal(LibVaipakam.CreateOfferParams({
+            offerType: params.offerType,
+            lendingAsset: params.lendingAsset,
+            amount: offer.amount,
+            interestRateBps: params.interestRateBps,
+            collateralAsset: params.collateralAsset,
+            collateralAmount: params.collateralAmount,
+            durationDays: offer.durationDays,
+            assetType: params.assetType,
+            tokenId: params.tokenId,
+            quantity: params.quantity,
+            creatorFallbackConsent: params.creatorFallbackConsent,
+            prepayAsset: params.prepayAsset,
+            collateralAssetType: params.collateralAssetType,
+            collateralTokenId: params.collateralTokenId,
+            collateralQuantity: params.collateralQuantity
+        }));
+    }
+
+    /// @dev Rental prepay total = amount × days + (amount × days ×
+    ///      rentalBufferBps / BASIS_POINTS). Isolated from the pull
+    ///      helper so the Permit2 path can call the same formula.
+    function _nftRentalPrepayTotal(
+        LibVaipakam.CreateOfferParams memory params
+    ) private view returns (uint256) {
+        uint256 prepayAmount = params.amount * params.durationDays;
+        uint256 buffer = (prepayAmount * LibVaipakam.cfgRentalBufferBps()) /
+            LibVaipakam.BASIS_POINTS;
+        return prepayAmount + buffer;
+    }
+
+    /// @dev Shared post-pull finish. Mints the Vaipakam position NFT,
+    ///      runs MetricsFacet analytics hook, emits OfferCreated.
+    function _createOfferFinish(
+        uint256 offerId,
+        LibVaipakam.CreateOfferParams calldata params
+    ) private {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        LibVaipakam.Offer storage offer = s.offers[offerId];
+
         unchecked {
             offer.positionTokenId = ++s.nextTokenId;
         }
-        (success, ) = address(VaipakamNFTFacet(address(this))).call(
+        (bool success, ) = address(VaipakamNFTFacet(address(this))).call(
             abi.encodeWithSelector(
                 VaipakamNFTFacet.mintNFT.selector,
                 msg.sender,
@@ -267,13 +383,8 @@ contract OfferFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
                 LibVaipakam.LoanPositionStatus.OfferCreated
             )
         );
-
         if (!success) revert NFTMintFailed();
 
-        // Register the offer in the MetricsFacet O(1) analytics layer —
-        // increments activeOffersCount, pushes to activeOfferIdsList,
-        // and marks the creator as a unique user. Runs last so the
-        // offer struct is fully populated by this point.
         LibMetricsHooks.onOfferCreated(offer);
 
         emit OfferCreated(offerId, msg.sender, params.offerType);
@@ -364,12 +475,95 @@ contract OfferFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
         uint256 offerId,
         bool acceptorFallbackConsent
     ) external nonReentrant whenNotPaused returns (uint256 loanId) {
-        return _acceptOffer(offerId, acceptorFallbackConsent);
+        return
+            _acceptOffer(
+                offerId,
+                acceptorFallbackConsent,
+                /*usePermit=*/ false,
+                _emptyPermit(),
+                ""
+            );
+    }
+
+    /**
+     * @notice Permit2 variant of {acceptOffer} (Phase 8b.1).
+     *
+     * @dev Pulls the acceptor's ERC-20 asset (collateral for an ERC-20
+     *      lender offer, prepay for an NFT-rental lender offer) via
+     *      Uniswap's Permit2 using an off-chain signature. Saves the
+     *      separate `approve` tx the classic path would need.
+     *
+     *      Only applies when the acceptor side actually pulls ERC-20.
+     *      Borrower-offer accepts (lender as acceptor with ERC-20
+     *      principal) go through the lender's escrow-internal flow and
+     *      don't need Permit2 on the acceptor side — call the classic
+     *      {acceptOffer} in that case. Reverts {InvalidAssetType} when
+     *      no acceptor ERC-20 pull applies.
+     *
+     * @param offerId                 The offer to accept.
+     * @param acceptorFallbackConsent Mandatory fallback-terms consent.
+     * @param permit                  Signed Permit2 `PermitTransferFrom`.
+     * @param signature               65-byte ECDSA signature.
+     * @return loanId                 The initiated loan's id.
+     */
+    function acceptOfferWithPermit(
+        uint256 offerId,
+        bool acceptorFallbackConsent,
+        ISignatureTransfer.PermitTransferFrom calldata permit,
+        bytes calldata signature
+    ) external nonReentrant whenNotPaused returns (uint256 loanId) {
+        // Permit2 only covers ERC-20 acceptor pulls. Pre-validate the
+        // offer shape so the caller can't sign a payload that never
+        // gets honoured.
+        LibVaipakam.Offer storage offer = LibVaipakam.storageSlot().offers[offerId];
+        if (offer.creator == address(0)) revert InvalidOffer();
+        if (offer.offerType != LibVaipakam.OfferType.Lender) {
+            // Borrower-offer accept: acceptor is the lender; their
+            // principal flow goes escrow-internal. No acceptor pull to
+            // Permit2-ify here.
+            revert InvalidAssetType();
+        }
+        if (offer.assetType == LibVaipakam.AssetType.ERC20) {
+            if (offer.collateralAssetType != LibVaipakam.AssetType.ERC20) {
+                revert InvalidAssetType();
+            }
+        }
+        // else: NFT rental — prepayAsset is ERC-20 by design, valid target.
+        return
+            _acceptOffer(
+                offerId,
+                acceptorFallbackConsent,
+                /*usePermit=*/ true,
+                permit,
+                signature
+            );
+    }
+
+    /// @dev Zero-valued `PermitTransferFrom` for the classic accept
+    ///      path that doesn't use Permit2. Ignored downstream because
+    ///      `_acceptOffer` branches on `usePermit` before touching it.
+    function _emptyPermit()
+        private
+        pure
+        returns (ISignatureTransfer.PermitTransferFrom memory)
+    {
+        return
+            ISignatureTransfer.PermitTransferFrom({
+                permitted: ISignatureTransfer.TokenPermissions({
+                    token: address(0),
+                    amount: 0
+                }),
+                nonce: 0,
+                deadline: 0
+            });
     }
 
     function _acceptOffer(
         uint256 offerId,
-        bool acceptorFallbackConsent
+        bool acceptorFallbackConsent,
+        bool usePermit,
+        ISignatureTransfer.PermitTransferFrom memory permit,
+        bytes memory signature
     ) internal returns (uint256 loanId) {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.Offer storage offer = s.offers[offerId];
@@ -528,11 +722,21 @@ contract OfferFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
                 uint256 buffer = (prepayAmount * LibVaipakam.cfgRentalBufferBps()) /
                     LibVaipakam.BASIS_POINTS;
                 uint256 totalPrepay = prepayAmount + buffer;
-                IERC20(offer.prepayAsset).safeTransferFrom(
-                    borrower,
-                    borrowerEscrow,
-                    totalPrepay
-                );
+                if (usePermit) {
+                    LibPermit2.pull(
+                        borrower,
+                        borrowerEscrow,
+                        totalPrepay,
+                        permit,
+                        signature
+                    );
+                } else {
+                    IERC20(offer.prepayAsset).safeTransferFrom(
+                        borrower,
+                        borrowerEscrow,
+                        totalPrepay
+                    );
+                }
             } else {
                 // Borrower-type NFT offer accepted by lender: escrow the lender's NFT.
                 // The lender (msg.sender/acceptor) must custody the NFT in their escrow
@@ -573,11 +777,21 @@ contract OfferFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
             if (offer.assetType == LibVaipakam.AssetType.ERC20) {
                 // ERC-20 lending: lock collateral based on collateral asset type
                 if (offer.collateralAssetType == LibVaipakam.AssetType.ERC20) {
-                    IERC20(offer.collateralAsset).safeTransferFrom(
-                        borrower,
-                        borrowerEscrow,
-                        offer.collateralAmount
-                    );
+                    if (usePermit) {
+                        LibPermit2.pull(
+                            borrower,
+                            borrowerEscrow,
+                            offer.collateralAmount,
+                            permit,
+                            signature
+                        );
+                    } else {
+                        IERC20(offer.collateralAsset).safeTransferFrom(
+                            borrower,
+                            borrowerEscrow,
+                            offer.collateralAmount
+                        );
+                    }
                 } else if (offer.collateralAssetType == LibVaipakam.AssetType.ERC721) {
                     IERC721(offer.collateralAsset).safeTransferFrom(
                         borrower,

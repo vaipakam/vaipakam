@@ -428,7 +428,7 @@ contract DeployDiamond is Script {
     }
 
     function _getOfferSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](7);
+        s = new bytes4[](9);
         s[0] = OfferFacet.createOffer.selector;
         s[1] = OfferFacet.acceptOffer.selector;
         s[2] = OfferFacet.cancelOffer.selector;
@@ -436,6 +436,9 @@ contract DeployDiamond is Script {
         s[4] = OfferFacet.getUserEscrow.selector;
         s[5] = OfferFacet.getOffer.selector;
         s[6] = OfferFacet.getOfferDetails.selector;
+        // Phase 8b.1 Permit2 additions.
+        s[7] = OfferFacet.createOfferWithPermit.selector;
+        s[8] = OfferFacet.acceptOfferWithPermit.selector;
     }
 
     function _getLoanSelectors() internal pure returns (bytes4[] memory s) {
@@ -530,7 +533,7 @@ contract DeployDiamond is Script {
     }
 
     function _getVPFIDiscountSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](21);
+        s = new bytes4[](22);
         s[0] = VPFIDiscountFacet.buyVPFIWithETH.selector;
         s[1] = VPFIDiscountFacet.depositVPFIToEscrow.selector;
         s[2] = VPFIDiscountFacet.quoteVPFIDiscount.selector;
@@ -552,6 +555,8 @@ contract DeployDiamond is Script {
         s[18] = VPFIDiscountFacet.processBridgedBuy.selector;
         s[19] = VPFIDiscountFacet.quoteFixedRateBuy.selector;
         s[20] = VPFIDiscountFacet.getUserVpfiDiscountState.selector;
+        // Phase 8b.1 Permit2 addition.
+        s[21] = VPFIDiscountFacet.depositVPFIToEscrowWithPermit.selector;
     }
 
     function _getStakingRewardsSelectors() internal pure returns (bytes4[] memory s) {
