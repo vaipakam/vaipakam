@@ -109,7 +109,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](12);
+        selectors = new bytes4[](16);
         selectors[0] = AdminFacet.setTreasury.selector;
         selectors[1] = AdminFacet.getTreasury.selector;
         selectors[2] = AdminFacet.setZeroExProxy.selector;
@@ -122,6 +122,10 @@ contract HelperTest {
         selectors[9] = AdminFacet.pauseAsset.selector;
         selectors[10] = AdminFacet.unpauseAsset.selector;
         selectors[11] = AdminFacet.isAssetPaused.selector;
+        selectors[12] = AdminFacet.addSwapAdapter.selector;
+        selectors[13] = AdminFacet.removeSwapAdapter.selector;
+        selectors[14] = AdminFacet.reorderSwapAdapters.selector;
+        selectors[15] = AdminFacet.getSwapAdapters.selector;
         return selectors;
     }
 

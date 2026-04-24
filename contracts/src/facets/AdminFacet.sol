@@ -61,7 +61,40 @@ contract AdminFacet is DiamondAccessControl, IVaipakamErrors {
     /// @param asset The asset that was unpaused.
     event AssetPauseDisabled(address indexed asset);
 
+    /// @notice Emitted when a swap adapter is appended to the liquidation
+    ///         failover chain. Phase 7a.
+    /// @param index   Slot the adapter occupies after the append (its
+    ///                priority — lower runs first).
+    /// @param adapter The {ISwapAdapter} contract address.
+    event SwapAdapterAdded(uint256 indexed index, address indexed adapter);
+
+    /// @notice Emitted when a swap adapter is removed from the failover
+    ///         chain. Remaining adapters shift down to close the gap.
+    /// @param index   Slot the adapter occupied before removal.
+    /// @param adapter The removed {ISwapAdapter} address.
+    event SwapAdapterRemoved(uint256 indexed index, address indexed adapter);
+
+    /// @notice Emitted when the swap adapter chain is reordered. The
+    ///         full new ordering is emitted so off-chain monitors can
+    ///         pick it up atomically. Phase 7a.
+    /// @param adapters The adapter array after reordering, index 0 first.
+    event SwapAdaptersReordered(address[] adapters);
+
     // InvalidAddress inherited from IVaipakamErrors
+
+    /// @notice Thrown when attempting to add an adapter that's already
+    ///         registered — we keep the list de-duplicated so reorder
+    ///         operations are unambiguous.
+    error SwapAdapterAlreadyRegistered();
+
+    /// @notice Thrown when a removal or reorder references an adapter
+    ///         that isn't currently registered.
+    error SwapAdapterNotRegistered();
+
+    /// @notice Thrown when a reorder receives a permutation that doesn't
+    ///         match the currently-registered set (different length or
+    ///         different members).
+    error SwapAdapterReorderMismatch();
 
     /// @notice Sets the treasury address that receives protocol fees.
     /// @dev ADMIN_ROLE-only. Reverts with InvalidAddress on zero. Emits
@@ -101,6 +134,105 @@ contract AdminFacet is DiamondAccessControl, IVaipakamErrors {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         s.allowanceTarget = newAllowanceTargetSet;
         emit AllowanceTargetSet(newAllowanceTargetSet);
+    }
+
+    // ─── Phase 7a: swap adapter failover chain ──────────────────────────
+    //
+    // The liquidation path (RiskFacet / DefaultedFacet / ClaimFacet
+    // retry) drives a priority-ordered failover across registered
+    // {ISwapAdapter} contracts via {LibSwap.swapWithFailover}. Index 0
+    // runs first; each subsequent slot is tried only if the previous
+    // one reverted. An empty chain blocks liquidation entirely so
+    // every live deployment must populate this array before enabling
+    // loan settlement. Adapter addresses are deployment-specific
+    // (different DEX addresses per chain) — governance registers the
+    // chain-correct set at configuration time.
+
+    /// @notice Append a swap adapter to the end of the failover chain.
+    /// @dev ADMIN_ROLE-only. Rejects the zero address and duplicates.
+    ///      Emits {SwapAdapterAdded}. Does NOT sanity-check the
+    ///      adapter's contract interface — admin is trusted to register
+    ///      only {ISwapAdapter} implementations.
+    /// @param adapter The adapter contract to register.
+    function addSwapAdapter(address adapter) external onlyRole(LibAccessControl.ADMIN_ROLE) {
+        if (adapter == address(0)) revert InvalidAddress();
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        uint256 n = s.swapAdapters.length;
+        for (uint256 i = 0; i < n; ++i) {
+            if (s.swapAdapters[i] == adapter) revert SwapAdapterAlreadyRegistered();
+        }
+        s.swapAdapters.push(adapter);
+        emit SwapAdapterAdded(n, adapter);
+    }
+
+    /// @notice Remove a swap adapter from the failover chain.
+    /// @dev ADMIN_ROLE-only. Preserves the relative order of the
+    ///      remaining adapters (shift-down). Emits
+    ///      {SwapAdapterRemoved}. Reverts if the adapter is not
+    ///      currently registered.
+    /// @param adapter The adapter contract to de-register.
+    function removeSwapAdapter(address adapter) external onlyRole(LibAccessControl.ADMIN_ROLE) {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        uint256 n = s.swapAdapters.length;
+        for (uint256 i = 0; i < n; ++i) {
+            if (s.swapAdapters[i] == adapter) {
+                for (uint256 j = i; j < n - 1; ++j) {
+                    s.swapAdapters[j] = s.swapAdapters[j + 1];
+                }
+                s.swapAdapters.pop();
+                emit SwapAdapterRemoved(i, adapter);
+                return;
+            }
+        }
+        revert SwapAdapterNotRegistered();
+    }
+
+    /// @notice Replace the adapter order with an explicit permutation.
+    /// @dev ADMIN_ROLE-only. `newOrder` must contain exactly the same
+    ///      set of addresses currently registered (same length, same
+    ///      members, no duplicates) — any mismatch reverts
+    ///      {SwapAdapterReorderMismatch}. Emits {SwapAdaptersReordered}
+    ///      with the new ordering on success.
+    /// @param newOrder Permutation of the current adapter set; element 0
+    ///        becomes the new priority-0 adapter.
+    function reorderSwapAdapters(address[] calldata newOrder)
+        external
+        onlyRole(LibAccessControl.ADMIN_ROLE)
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        uint256 n = s.swapAdapters.length;
+        if (newOrder.length != n) revert SwapAdapterReorderMismatch();
+
+        // Membership check: every entry in `newOrder` must already be
+        // registered, and no duplicates allowed.
+        for (uint256 i = 0; i < n; ++i) {
+            address candidate = newOrder[i];
+            if (candidate == address(0)) revert InvalidAddress();
+            // Reject duplicates within the supplied permutation.
+            for (uint256 j = 0; j < i; ++j) {
+                if (newOrder[j] == candidate) revert SwapAdapterReorderMismatch();
+            }
+            // Must be currently registered.
+            bool found = false;
+            for (uint256 k = 0; k < n; ++k) {
+                if (s.swapAdapters[k] == candidate) {
+                    found = true;
+                    break;
+                }
+            }
+            if (!found) revert SwapAdapterReorderMismatch();
+        }
+
+        for (uint256 i = 0; i < n; ++i) {
+            s.swapAdapters[i] = newOrder[i];
+        }
+        emit SwapAdaptersReordered(newOrder);
+    }
+
+    /// @notice Read the current priority-ordered swap adapter chain.
+    /// @return adapters Registered adapters, index 0 first (highest priority).
+    function getSwapAdapters() external view returns (address[] memory adapters) {
+        return LibVaipakam.storageSlot().swapAdapters;
     }
 
     /// @notice Returns the current protocol treasury address.

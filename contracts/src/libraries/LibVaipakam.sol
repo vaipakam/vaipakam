@@ -1390,6 +1390,19 @@ library LibVaipakam {
         ///      mapping — the zero struct reads correctly and settlement
         ///      helpers no-op on zero vpfiHeld.
         mapping(uint256 => BorrowerLifRebate) borrowerLifRebate;
+
+        // ─── Phase 7a: liquidation swap adapter failover chain ──────────
+        /// @dev Priority-ordered list of {ISwapAdapter} contracts.
+        ///      {LibSwap.swapWithFailover} iterates from index 0 and
+        ///      commits on the first adapter that returns proceeds
+        ///      at least equal to the oracle-derived `minOutputAmount`.
+        ///      Governance (AdminFacet, ADMIN_ROLE) maintains the list
+        ///      via `addSwapAdapter` / `removeSwapAdapter` /
+        ///      `reorderSwapAdapters`. An empty list reverts
+        ///      {LibSwap.NoSwapAdaptersConfigured} — any deployment
+        ///      that routes liquidations must populate this array
+        ///      before the first loan settles.
+        address[] swapAdapters;
     }
 
     uint256 internal constant MAX_APPROVED_KEEPERS = 5;

@@ -297,7 +297,7 @@ contract DeployDiamond is Script {
     }
 
     function _getAdminSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](12);
+        s = new bytes4[](16);
         s[0] = AdminFacet.setTreasury.selector;
         s[1] = AdminFacet.getTreasury.selector;
         s[2] = AdminFacet.setZeroExProxy.selector;
@@ -310,6 +310,10 @@ contract DeployDiamond is Script {
         s[9] = AdminFacet.pauseAsset.selector;
         s[10] = AdminFacet.unpauseAsset.selector;
         s[11] = AdminFacet.isAssetPaused.selector;
+        s[12] = AdminFacet.addSwapAdapter.selector;
+        s[13] = AdminFacet.removeSwapAdapter.selector;
+        s[14] = AdminFacet.reorderSwapAdapters.selector;
+        s[15] = AdminFacet.getSwapAdapters.selector;
     }
 
     function _getProfileSelectors() internal pure returns (bytes4[] memory s) {
