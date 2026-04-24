@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useState, useCallback, useRef } from 'react';
-import type { Address } from 'viem';
+import type { Address, Hex } from 'viem';
+import { encodeFunctionData } from 'viem';
+import { SimulationPreview } from '../components/app/SimulationPreview';
 import { useWallet } from '../context/WalletContext';
 import { useDiamondContract, useDiamondRead, useDiamondPublicClient, useReadChain } from '../contracts/useDiamond';
 import { DIAMOND_ABI_VIEM as DIAMOND_ABI } from '../contracts/abis';
@@ -1160,6 +1162,14 @@ function AcceptReviewModal({ offer, illiquid, consent, onConsentChange, submitti
         )}
 
         <RiskDisclosures />
+
+        {/* Phase 8b.2 — Blockaid preview. Uses the simulation of a
+            classic acceptOffer(offerId, true) call since that's what
+            the confirmation flow submits today. When the Permit2 UX
+            wiring lands, the preview input can swap to
+            acceptOfferWithPermit's calldata for the Permit2 path. */}
+        <AcceptSimulationPreview offerId={offer.id} />
+
         <label className="checkbox-row" style={{ marginTop: 8 }}>
           <input
             type="checkbox"
@@ -1190,6 +1200,27 @@ interface PaginationProps {
   page: number;
   totalPages: number;
   onPage: (p: number) => void;
+}
+
+/**
+ * Phase 8b.2 — small wrapper that encodes the pending acceptOffer call
+ * and hands it to the shared SimulationPreview component. Isolated
+ * here so the Blockaid preview can be swapped in/out without touching
+ * the review-modal body.
+ */
+function AcceptSimulationPreview({ offerId }: { offerId: bigint }) {
+  const chain = useReadChain();
+  const diamondAddress = (chain.diamondAddress ?? DEFAULT_CHAIN.diamondAddress) as Address;
+  const data = encodeFunctionData({
+    abi: DIAMOND_ABI,
+    functionName: 'acceptOffer',
+    args: [offerId, true],
+  }) as Hex;
+  return (
+    <SimulationPreview
+      tx={{ to: diamondAddress, data, value: 0n }}
+    />
+  );
 }
 
 function Pagination({ page, totalPages, onPage }: PaginationProps) {
