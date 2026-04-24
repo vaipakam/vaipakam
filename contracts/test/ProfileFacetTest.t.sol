@@ -389,4 +389,110 @@ contract ProfileFacetTest is Test {
         vm.prank(user1);
         ProfileFacet(address(diamond)).setKeeperAccess(true);
     }
+
+    // ─── Phase 6: Per-keeper per-action bitmask ─────────────────────────────
+
+    function testApproveKeeperRevertsOnZeroActions() public {
+        address k = makeAddr("keeperA");
+        vm.prank(user1);
+        vm.expectRevert(IVaipakamErrors.InvalidKeeperActions.selector);
+        ProfileFacet(address(diamond)).approveKeeper(k, 0);
+    }
+
+    function testApproveKeeperRevertsOnOutOfRangeActions() public {
+        // Bit 5 (0x20) is outside the defined KEEPER_ACTION_ALL = 0x1F.
+        address k = makeAddr("keeperA");
+        vm.prank(user1);
+        vm.expectRevert(IVaipakamErrors.InvalidKeeperActions.selector);
+        ProfileFacet(address(diamond)).approveKeeper(k, 0x20);
+    }
+
+    function testApproveKeeperRecordsBitmask() public {
+        address k = makeAddr("keeperA");
+        vm.prank(user1);
+        ProfileFacet(address(diamond)).approveKeeper(
+            k,
+            LibVaipakam.KEEPER_ACTION_COMPLETE_LOAN_SALE |
+                LibVaipakam.KEEPER_ACTION_REFINANCE
+        );
+        uint8 actions = ProfileFacet(address(diamond)).getKeeperActions(user1, k);
+        assertEq(
+            actions,
+            LibVaipakam.KEEPER_ACTION_COMPLETE_LOAN_SALE |
+                LibVaipakam.KEEPER_ACTION_REFINANCE,
+            "bitmask must match what was supplied to approveKeeper"
+        );
+        assertTrue(ProfileFacet(address(diamond)).isApprovedKeeper(user1, k));
+    }
+
+    function testApproveKeeperRevertsWhenAlreadyApproved() public {
+        address k = makeAddr("keeperA");
+        vm.prank(user1);
+        ProfileFacet(address(diamond)).approveKeeper(k, LibVaipakam.KEEPER_ACTION_ALL);
+        vm.prank(user1);
+        vm.expectRevert(IVaipakamErrors.KeeperAlreadyApproved.selector);
+        ProfileFacet(address(diamond)).approveKeeper(k, LibVaipakam.KEEPER_ACTION_REFINANCE);
+    }
+
+    function testSetKeeperActionsUpdatesBitmask() public {
+        address k = makeAddr("keeperA");
+        vm.prank(user1);
+        ProfileFacet(address(diamond)).approveKeeper(
+            k,
+            LibVaipakam.KEEPER_ACTION_COMPLETE_LOAN_SALE
+        );
+        vm.prank(user1);
+        ProfileFacet(address(diamond)).setKeeperActions(
+            k,
+            LibVaipakam.KEEPER_ACTION_INIT_PRECLOSE | LibVaipakam.KEEPER_ACTION_REFINANCE
+        );
+        assertEq(
+            ProfileFacet(address(diamond)).getKeeperActions(user1, k),
+            LibVaipakam.KEEPER_ACTION_INIT_PRECLOSE | LibVaipakam.KEEPER_ACTION_REFINANCE,
+            "bitmask replaced, not OR-ed"
+        );
+    }
+
+    function testSetKeeperActionsRevertsOnZero() public {
+        address k = makeAddr("keeperA");
+        vm.prank(user1);
+        ProfileFacet(address(diamond)).approveKeeper(k, LibVaipakam.KEEPER_ACTION_ALL);
+        vm.prank(user1);
+        vm.expectRevert(IVaipakamErrors.InvalidKeeperActions.selector);
+        ProfileFacet(address(diamond)).setKeeperActions(k, 0);
+    }
+
+    function testSetKeeperActionsRevertsOnUnapprovedKeeper() public {
+        address k = makeAddr("keeperA");
+        vm.prank(user1);
+        vm.expectRevert(IVaipakamErrors.KeeperNotApproved.selector);
+        ProfileFacet(address(diamond)).setKeeperActions(k, LibVaipakam.KEEPER_ACTION_ALL);
+    }
+
+    function testRevokeKeeperClearsBitmask() public {
+        address k = makeAddr("keeperA");
+        vm.prank(user1);
+        ProfileFacet(address(diamond)).approveKeeper(k, LibVaipakam.KEEPER_ACTION_ALL);
+        vm.prank(user1);
+        ProfileFacet(address(diamond)).revokeKeeper(k);
+        assertEq(
+            ProfileFacet(address(diamond)).getKeeperActions(user1, k),
+            0,
+            "bitmask cleared on revoke"
+        );
+        assertFalse(ProfileFacet(address(diamond)).isApprovedKeeper(user1, k));
+    }
+
+    function testApproveKeeperMaxWhitelist() public {
+        // Per LibVaipakam.MAX_APPROVED_KEEPERS = 5. Sixth add must revert.
+        for (uint256 i; i < 5; i++) {
+            address k = makeAddr(string.concat("keeper", vm.toString(i)));
+            vm.prank(user1);
+            ProfileFacet(address(diamond)).approveKeeper(k, LibVaipakam.KEEPER_ACTION_ALL);
+        }
+        address k6 = makeAddr("keeper6");
+        vm.prank(user1);
+        vm.expectRevert(IVaipakamErrors.KeeperWhitelistFull.selector);
+        ProfileFacet(address(diamond)).approveKeeper(k6, LibVaipakam.KEEPER_ACTION_ALL);
+    }
 }

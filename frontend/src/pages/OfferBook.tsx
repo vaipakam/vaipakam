@@ -88,19 +88,10 @@ interface DiscountPreview {
 
 // Tier → effective initiation-fee percent after the tiered discount, per
 // docs/TokenomicsTechSpec.md §6. Tier 0 means no discount (0.1% flat).
-/**
- * Effective initiation-fee percentage after applying the tier discount.
- * Uses the live protocol config so admin overrides to either the base
- * initiation fee or the per-tier discount BPS flow through automatically.
- * `tier === 0` means "no tier applies" — full base fee.
- */
-function tierFeeLabel(tier: number, config: ProtocolConfig | null): string {
-  const baseBps = config?.loanInitiationFeeBps ?? 10;
-  if (tier < 1 || tier > 4) return `${formatBpsPct(baseBps)}`;
-  const discountBps = config?.tierDiscountBps[tier - 1] ?? 0;
-  const effectiveBps = (baseBps * (BPS_DENOM - discountBps)) / BPS_DENOM;
-  return formatBpsPct(effectiveBps);
-}
+// Phase 5 removed the inline "tierFeeLabel" render helper since the
+// flow now always charges the full 0.1% LIF in VPFI up-front and pays
+// a time-weighted rebate later — the per-tier effective-fee label no
+// longer applies at quote time. Rebate percentage is shown directly.
 
 function tierDiscountPct(tier: number, config: ProtocolConfig | null): string {
   if (tier < 1 || tier > 4) return '0%';
@@ -114,8 +105,6 @@ function formatBpsPct(bps: number): string {
   const rounded = Number.isInteger(pct) ? pct.toString() : pct.toFixed(3).replace(/0+$/, '').replace(/\.$/, '');
   return `${rounded}%`;
 }
-
-const BPS_DENOM = 10_000;
 
 type RawOffer = {
   id: bigint;
@@ -186,7 +175,6 @@ export default function OfferBook() {
     if (perSide > maxPerSide) setPerSide(maxPerSide);
   }, [maxPerSide, perSide]);
   const [acceptingId, setAcceptingId] = useState<bigint | null>(null);
-  const [togglingKeeperId, setTogglingKeeperId] = useState<bigint | null>(null);
   const [pendingOffer, setPendingOffer] = useState<OfferData | null>(null);
   const [fallbackConsent, setFallbackConsent] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -425,45 +413,11 @@ export default function OfferBook() {
     setPendingOffer(offer);
   };
 
-  // Phase 6: per-keeper per-offer enable toggle — callable by the offer
-  // creator pre-acceptance. Mirrors the loan-level handler on the
-  // post-acceptance side. The contract reverts if the caller isn't the
-  // creator or if the offer has already been accepted.
-  const handleToggleOfferKeeper = async (
-    offerId: bigint,
-    keeper: string,
-    next: boolean,
-  ) => {
-    if (!diamond || togglingKeeperId !== null) return;
-    const step = beginStep({
-      area: 'keeper',
-      flow: 'setOfferKeeperEnabled',
-      step: 'submit-tx',
-      wallet: address ?? undefined,
-      chainId: chainId ?? undefined,
-      offerId: offerId.toString(),
-    });
-    setTogglingKeeperId(offerId);
-    setError(null);
-    try {
-      const tx = await (
-        diamond as unknown as {
-          setOfferKeeperEnabled: (
-            id: bigint,
-            keeper: string,
-            enabled: boolean,
-          ) => Promise<{ hash: string; wait: () => Promise<unknown> }>;
-        }
-      ).setOfferKeeperEnabled(offerId, keeper, next);
-      await tx.wait();
-      step.success({ note: `keeper=${keeper} enabled=${next}` });
-    } catch (err) {
-      setError(decodeContractError(err, 'Failed to toggle offer keeper enable'));
-      step.failure(err);
-    } finally {
-      setTogglingKeeperId(null);
-    }
-  };
+  // Phase 6: per-keeper per-offer enable toggles moved off the offer-card
+  // row. The creator-only "Manage keepers" deep-link below sends users to
+  // the KeeperSettings page where per-keeper per-offer enable
+  // (setOfferKeeperEnabled) is done centrally. Keeps the offer-list row
+  // compact and avoids duplicating the picker UI here.
 
   // Load VPFI-discount preview when the modal opens against a Lender offer
   // (acceptor becomes the borrower — they control the platform consent flag
@@ -704,8 +658,6 @@ export default function OfferBook() {
           address={address}
           acceptingId={acceptingId}
           onAccept={handleAcceptOffer}
-          onToggleKeeper={handleToggleOfferKeeper}
-          togglingKeeperId={togglingKeeperId}
           statusView={statusView}
         />
       )}
@@ -838,8 +790,6 @@ export default function OfferBook() {
                 address={address}
                 acceptingId={acceptingId}
                 onAccept={handleAcceptOffer}
-                onToggleKeeper={handleToggleOfferKeeper}
-                togglingKeeperId={togglingKeeperId}
                 statusView={statusView}
               />
               {tab === 'lender' && totalLender > perSide && (
@@ -877,8 +827,6 @@ export default function OfferBook() {
                 address={address}
                 acceptingId={acceptingId}
                 onAccept={handleAcceptOffer}
-                onToggleKeeper={handleToggleOfferKeeper}
-                togglingKeeperId={togglingKeeperId}
                 statusView={statusView}
               />
               {tab === 'borrower' && totalBorrower > perSide && (
@@ -1227,12 +1175,10 @@ interface OfferTableProps {
   address: string | null;
   acceptingId: bigint | null;
   onAccept: (id: bigint) => void;
-  onToggleKeeper: (id: bigint, next: boolean) => void;
-  togglingKeeperId: bigint | null;
   statusView: StatusView;
 }
 
-function OfferTable({ title, subtitle, offers, anchorRateBps, address, acceptingId, onAccept, onToggleKeeper, togglingKeeperId, statusView }: OfferTableProps) {
+function OfferTable({ title, subtitle, offers, anchorRateBps, address, acceptingId, onAccept, statusView }: OfferTableProps) {
   return (
     <div className="card" style={{ marginTop: 16 }}>
       <div className="card-title" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>

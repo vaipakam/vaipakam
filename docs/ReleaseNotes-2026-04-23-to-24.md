@@ -868,16 +868,36 @@ script (`DeployDiamond._getProfileSelectors`) were updated.
 
 **Verification.** Forge build clean after the 10-file src-side
 refactor. Existing `VPFIDiscountFacetTest` regression holds at
-25/25 after the selector table + test-helper migration. Full forge
-regression: **1369 passed / 0 failed / 5 skipped** (up from the
-pre-Phase-6 baseline of 1367 — the 5 previously-failing
+25/25 after the selector table + test-helper migration. **15 new
+Phase 6 targeted tests** added and green (9 in `ProfileFacetTest`,
+6 in `PrecloseFacetTest`) covering:
+
+- `InvalidKeeperActions` reverts on zero bitmask + on bits outside
+  `KEEPER_ACTION_ALL` (0x1F).
+- `approveKeeper` records the bitmask correctly + rejects
+  duplicate adds with `KeeperAlreadyApproved`.
+- `setKeeperActions` replaces (not OR-merges) the bitmask,
+  rejects zero (must use `revokeKeeper`), and rejects un-approved
+  keepers.
+- `revokeKeeper` clears the bitmask to zero and restores
+  `isApprovedKeeper == false`.
+- `KeeperWhitelistFull` fires at the 6th `approveKeeper` call per
+  user (MAX_APPROVED_KEEPERS = 5).
+- Per-action isolation: a keeper with the correct action bit
+  passes the gate, a keeper with the wrong action bit
+  (`REFINANCE` vs. `INIT_PRECLOSE`) is rejected with
+  `KeeperAccessRequired`, a keeper without per-loan enable is
+  rejected, and a keeper with all gates green but the user's
+  master switch off is still rejected.
+- `setLoanKeeperEnabled` / `setOfferKeeperEnabled` auth: non-NFT-
+  owners rejected; post-acceptance edits blocked.
+
+Full forge regression: **1384 passed / 0 failed / 5 skipped** (up
+from the pre-Phase-6 baseline of 1367). The 5 previously-failing
 `test*RevertsNotNFTOwner` tests across the three strategic-flow
 facets were updated to expect `KeeperAccessRequired()` instead of
 `NotNFTOwner()`, reflecting the unified `requireKeeperFor` gate
-that merged the two prior helpers). New Phase 6 targeted tests
-(per-action gating per facet entry, `InvalidKeeperActions` bitmask
-validation, `revokeKeeper` clears authority, offer→loan latching)
-land in a follow-up commit.
+that merged the two prior helpers.
 
 ## Security + Legal sprint — (A) and (B) audit confirmation
 

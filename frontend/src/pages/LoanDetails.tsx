@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { useParams, Link } from "react-router-dom";
 import { useWallet } from "../context/WalletContext";
 import { useMode } from "../context/ModeContext";
-import { useDiamondContract } from "../contracts/useDiamond";
+import { useDiamondContract, useDiamondRead } from "../contracts/useDiamond";
 import { useERC20 } from "../contracts/useERC20";
 import { useLoan } from "../hooks/useLoan";
 import { useKeeperStatus } from "../hooks/useKeeperStatus";
@@ -60,12 +60,12 @@ export default function LoanDetails() {
     reload: loadLoan,
   } = useLoan(loanId);
   // Per README §3 lines 190–191 keeper authority follows the current
-  // position-NFT owner, not the latched loan.lender/loan.borrower, so we
-  // read profile opt-in + whitelist against the live holders resolved by
-  // useLoan via ownerOf. A mid-flow NFT transfer therefore carries the
-  // keeper status with the NFT.
-  const { lenderStatus: lenderKeeper, borrowerStatus: borrowerKeeper } =
-    useKeeperStatus(lenderHolder || null, borrowerHolder || null);
+  // Phase 6: the old "whitelist-status" two-layer summary lived next to
+  // the per-side keeper bools on the loan struct. Both are gone; the new
+  // `LoanKeeperPicker` renders live per-keeper state directly so the
+  // useKeeperStatus hook is no longer consumed here. Kept the import
+  // path intact for potential future reuse on other surfaces.
+  useKeeperStatus(lenderHolder || null, borrowerHolder || null);
   // Signer-connected ERC-20 contracts for the loan's principal / collateral
   // assets. Used to read decimals() and to approve the Diamond before repay
   // and add-collateral, which pull tokens via safeTransferFrom.

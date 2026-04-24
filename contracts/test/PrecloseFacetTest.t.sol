@@ -1507,4 +1507,123 @@ contract PrecloseFacetTest is Test {
             activeLoanId, 500, 30, mockCollateralERC20, COLLATERAL, true, mockERC20
         );
     }
+
+    // ─── Phase 6 — per-action isolation across entry points ─────────────────
+
+    /// @dev Keeper with only the INIT_PRECLOSE action bit can drive
+    ///      precloseDirect (positive path through the new requireKeeperFor
+    ///      gate) even though they don't have every other bit.
+    function testPrecloseDirectAllowsKeeperWithInitPrecloseBit() public {
+        address keeper = makeAddr("keeperIP");
+        vm.prank(borrower);
+        ProfileFacet(address(diamond)).setKeeperAccess(true);
+        vm.prank(borrower);
+        ProfileFacet(address(diamond)).approveKeeper(
+            keeper,
+            LibVaipakam.KEEPER_ACTION_INIT_PRECLOSE
+        );
+        vm.prank(borrower);
+        ProfileFacet(address(diamond)).setLoanKeeperEnabled(activeLoanId, keeper, true);
+
+        // precloseDirect proceeds past the auth gate and subsequently
+        // reverts somewhere deeper (escrow / balance math) because this
+        // test harness doesn't wire the full settlement path. The auth
+        // check passing is what we care about here — any non-
+        // KeeperAccessRequired revert confirms we got past the gate.
+        vm.prank(keeper);
+        try PrecloseFacet(address(diamond)).precloseDirect(activeLoanId) {
+            // Settlement may or may not finish depending on mocks; either
+            // outcome here means the keeper auth gate passed.
+        } catch (bytes memory reason) {
+            bytes4 sel;
+            assembly {
+                sel := mload(add(reason, 0x20))
+            }
+            assertTrue(
+                sel != IVaipakamErrors.KeeperAccessRequired.selector,
+                "keeper with INIT_PRECLOSE bit must pass auth"
+            );
+        }
+    }
+
+    /// @dev Keeper with only REFINANCE (wrong action bit) is rejected at
+    ///      precloseDirect — demonstrates per-action isolation. Also
+    ///      validates the new canonical requireKeeperFor gate treats
+    ///      action mismatch as KeeperAccessRequired (not a generic auth
+    ///      error).
+    function testPrecloseDirectRejectsKeeperWithWrongActionBit() public {
+        address keeper = makeAddr("keeperRefOnly");
+        vm.prank(borrower);
+        ProfileFacet(address(diamond)).setKeeperAccess(true);
+        vm.prank(borrower);
+        ProfileFacet(address(diamond)).approveKeeper(
+            keeper,
+            LibVaipakam.KEEPER_ACTION_REFINANCE
+        );
+        vm.prank(borrower);
+        ProfileFacet(address(diamond)).setLoanKeeperEnabled(activeLoanId, keeper, true);
+
+        vm.prank(keeper);
+        vm.expectRevert(IVaipakamErrors.KeeperAccessRequired.selector);
+        PrecloseFacet(address(diamond)).precloseDirect(activeLoanId);
+    }
+
+    /// @dev Keeper with the right action bit but NOT enabled for this
+    ///      specific loan is rejected. Per-loan enable is a separate
+    ///      gate from the per-action bitmask.
+    function testPrecloseDirectRejectsKeeperWithoutLoanEnable() public {
+        address keeper = makeAddr("keeperNoLoanEn");
+        vm.prank(borrower);
+        ProfileFacet(address(diamond)).setKeeperAccess(true);
+        vm.prank(borrower);
+        ProfileFacet(address(diamond)).approveKeeper(
+            keeper,
+            LibVaipakam.KEEPER_ACTION_INIT_PRECLOSE
+        );
+        // Deliberately skip setLoanKeeperEnabled(activeLoanId, keeper, true).
+
+        vm.prank(keeper);
+        vm.expectRevert(IVaipakamErrors.KeeperAccessRequired.selector);
+        PrecloseFacet(address(diamond)).precloseDirect(activeLoanId);
+    }
+
+    /// @dev Keeper properly enabled but master switch off → rejected.
+    ///      Master switch is the emergency-brake gate.
+    function testPrecloseDirectRejectsKeeperWithMasterSwitchOff() public {
+        address keeper = makeAddr("keeperMasterOff");
+        // Skip setKeeperAccess — master switch defaults off.
+        vm.prank(borrower);
+        ProfileFacet(address(diamond)).approveKeeper(
+            keeper,
+            LibVaipakam.KEEPER_ACTION_INIT_PRECLOSE
+        );
+        vm.prank(borrower);
+        ProfileFacet(address(diamond)).setLoanKeeperEnabled(activeLoanId, keeper, true);
+
+        vm.prank(keeper);
+        vm.expectRevert(IVaipakamErrors.KeeperAccessRequired.selector);
+        PrecloseFacet(address(diamond)).precloseDirect(activeLoanId);
+    }
+
+    /// @dev `setLoanKeeperEnabled` rejects a caller who owns neither the
+    ///      lender nor the borrower NFT.
+    function testSetLoanKeeperEnabledRejectsNonOwner() public {
+        address keeper = makeAddr("keeperK");
+        address thirdParty = makeAddr("thirdParty");
+        vm.prank(thirdParty);
+        vm.expectRevert(IVaipakamErrors.NotNFTOwner.selector);
+        ProfileFacet(address(diamond)).setLoanKeeperEnabled(activeLoanId, keeper, true);
+    }
+
+    /// @dev `setOfferKeeperEnabled` blocks post-acceptance edits — the
+    ///      test fixture's offer #1 is already accepted in setUp, so this
+    ///      exercises the accepted-offer guard. A separate creator-auth
+    ///      test would need a pre-acceptance fixture; left for a dedicated
+    ///      OfferFacet-level test.
+    function testSetOfferKeeperEnabledRevertsOnAcceptedOffer() public {
+        address keeper = makeAddr("keeperK");
+        vm.prank(makeAddr("thirdParty"));
+        vm.expectRevert(ProfileFacet.OfferAlreadyAccepted.selector);
+        ProfileFacet(address(diamond)).setOfferKeeperEnabled(1, keeper, true);
+    }
 }
