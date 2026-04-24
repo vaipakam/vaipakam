@@ -25,6 +25,7 @@ import { ErrorAlert } from "../components/app/ErrorAlert";
 import { SanctionsBanner } from "../components/app/SanctionsBanner";
 import { RiskDisclosures } from "../components/app/RiskDisclosures";
 import { SimulationPreview } from "../components/app/SimulationPreview";
+import { usePermit2Signing } from "../hooks/usePermit2Signing";
 import { DIAMOND_ABI_VIEM as DIAMOND_ABI } from "../contracts/abis";
 import { Link } from "react-router-dom";
 import { AssetPicker } from "../components/app/AssetPicker";
@@ -53,6 +54,7 @@ export default function CreateOffer() {
   const { mode } = useMode();
   const showAdvanced = mode === "advanced";
   const diamond = useDiamondContract();
+  const { sign: permit2Sign, canSign: permit2CanSign } = usePermit2Signing();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
 
@@ -253,6 +255,68 @@ export default function CreateOffer() {
           await publicClient.waitForTransactionReceipt({ hash });
         }
       };
+
+      // Permit2 eligibility: OfferFacet.createOfferWithPermit only accepts
+      // ERC-20 creator pulls. Pre-compute the target token+amount so we
+      // can skip the classic `approve` leg entirely when the wallet can
+      // sign a Permit2 payload.
+      const permit2Target: { token: Address; amount: bigint } | null = (() => {
+        if (form.offerType === "lender") {
+          if (form.assetType === "erc20") {
+            return {
+              token: form.lendingAsset as Address,
+              amount: payload.amount,
+            };
+          }
+          return null;
+        }
+        if (form.assetType === "erc20") {
+          if (form.collateralAssetType === "erc20") {
+            return {
+              token: form.collateralAsset as Address,
+              amount: payload.collateralAmount,
+            };
+          }
+          return null;
+        }
+        const prepayBase = payload.amount * BigInt(payload.durationDays);
+        const totalPrepay =
+          (prepayBase * (BASIS_POINTS + RENTAL_BUFFER_BPS)) / BASIS_POINTS;
+        return { token: form.prepayAsset as Address, amount: totalPrepay };
+      })();
+
+      if (permit2Target && permit2CanSign) {
+        // Try the single-tx Permit2 path first. On any failure — wallet
+        // refuses EIP-712, no Permit2 allowance, user cancels, unexpected
+        // revert — fall through to the classic approve+create flow below.
+        const permitStep = beginStep({ ...ctx, step: "createOffer-permit2" });
+        try {
+          setStep("creating");
+          const { permit, signature } = await permit2Sign({
+            token: permit2Target.token,
+            amount: permit2Target.amount,
+            spender: diamondAddr as Address,
+          });
+          const tx = await (
+            diamond as unknown as {
+              createOfferWithPermit: (
+                p: unknown,
+                permit: unknown,
+                signature: Hex,
+              ) => Promise<{ hash: string; wait: () => Promise<unknown> }>;
+            }
+          ).createOfferWithPermit(payload, permit, signature);
+          setTxHash(tx.hash);
+          await tx.wait();
+          permitStep.success({ note: `tx ${tx.hash} via Permit2` });
+          setStep("success");
+          submit.success();
+          return;
+        } catch (permitErr) {
+          permitStep.failure(permitErr);
+          // fall through to classic path
+        }
+      }
 
       setStep("approving");
       const approveStep = beginStep({ ...ctx, step: "approve-assets" });

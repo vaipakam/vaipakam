@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
-import { parseAbi, type Abi, type Address } from "viem";
+import { parseAbi, type Abi, type Address, type Hex } from "viem";
 import { usePublicClient, useWalletClient } from "wagmi";
 import { parseEther, formatEther } from "viem";
 import {
@@ -28,6 +28,7 @@ import {
   formatVpfiUnits,
 } from "../hooks/useVPFIDiscount";
 import { useVPFIBuyBridge } from "../hooks/useVPFIBuyBridge";
+import { usePermit2Signing } from "../hooks/usePermit2Signing";
 import { getCanonicalVPFIChain, type ChainConfig } from "../contracts/config";
 import { decodeContractError } from "../lib/decodeContractError";
 import { beginStep } from "../lib/journeyLog";
@@ -288,6 +289,7 @@ export default function BuyVPFI() {
 
   const readChain = useReadChain();
   const diamond = useDiamondContract();
+  const { sign: permit2Sign, canSign: permit2CanSign } = usePermit2Signing();
   // Combined wallet+override guard: a write is safe only when the wallet's
   // chain actually matches the dashboard's view-chain override (if any).
   // Using isCorrectChain alone lets clicks fire while useDiamondContract()
@@ -594,6 +596,48 @@ export default function BuyVPFI() {
         setStep("idle");
         return;
       }
+      // Permit2 single-tx path: sign an EIP-712 PermitTransferFrom and
+      // let the diamond pull via Permit2 in the same tx as the deposit.
+      // On any failure (wallet lacks EIP-712 v4, no Permit2 allowance
+      // on the VPFI token, user cancels), fall through to the classic
+      // approve+deposit sequence below.
+      if (permit2CanSign) {
+        try {
+          setStep("depositing");
+          const { permit, signature } = await permit2Sign({
+            token: tokenAddr as Address,
+            amount: depositWei,
+            spender: diamondAddr as Address,
+          });
+          const tx = await (
+            diamond as unknown as {
+              depositVPFIToEscrowWithPermit: (
+                amount: bigint,
+                permit: unknown,
+                signature: Hex,
+              ) => Promise<{ hash: string; wait: () => Promise<unknown> }>;
+            }
+          ).depositVPFIToEscrowWithPermit(depositWei, permit, signature);
+          setTxHash(tx.hash);
+          await tx.wait();
+          setStep("success");
+          s.success({ note: `deposited ${depositWei} via Permit2` });
+          setDepositInput("");
+          await Promise.all([
+            reloadUserVpfi(),
+            reloadEscrow(),
+            reloadEthBalance(),
+          ]);
+          return;
+        } catch (permitErr) {
+          console.debug(
+            "[BuyVPFI] Permit2 deposit failed, falling back to classic:",
+            permitErr,
+          );
+          // fall through to classic approve+deposit
+        }
+      }
+
       const currentAllowance = (await publicClient.readContract({
         address: tokenAddr as Address,
         abi: VPFI_APPROVE_ABI,
@@ -606,6 +650,7 @@ export default function BuyVPFI() {
         // the spender is our own Diamond — so we trade one extra approval
         // per deposit for a clearer wallet UX. A future deposit that fits
         // within the still-unconsumed allowance skips the approve leg.
+        setStep("approving-deposit");
         const approveHash = await walletClient.writeContract({
           address: tokenAddr as Address,
           abi: VPFI_APPROVE_ABI,
