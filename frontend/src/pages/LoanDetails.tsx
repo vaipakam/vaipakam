@@ -26,7 +26,9 @@ import {
   Clock,
   Coins,
 } from "lucide-react";
-import { parseUnits } from "viem";
+import { parseUnits, encodeFunctionData, type Address, type Hex } from "viem";
+import { SimulationPreview } from "../components/app/SimulationPreview";
+import { DIAMOND_ABI_VIEM as DIAMOND_ABI } from "../contracts/abis";
 import { AssetSymbol } from "../components/app/AssetSymbol";
 import { TokenAmount } from "../components/app/TokenAmount";
 import { ErrorAlert } from "../components/app/ErrorAlert";
@@ -740,6 +742,11 @@ export default function LoanDetails() {
                     {loan.borrowerTokenId.toString()}.
                   </p>
                 )}
+                {/* Phase 8b.2 — Blockaid preview of the pending repay tx. */}
+                <RepaySimulationPreview
+                  loanId={BigInt(loanId!)}
+                  diamondAddr={activeDiamondAddr as Address}
+                />
                 <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
                   <button
                     className="btn btn-primary btn-sm"
@@ -786,6 +793,14 @@ export default function LoanDetails() {
                   {actionLoading ? "Processing..." : "Add Collateral"}
                 </button>
               </div>
+              {/* Phase 8b.2 — Blockaid preview of the pending addCollateral
+                  tx. Hides silently when the amount input is empty or
+                  doesn't parse. */}
+              <AddCollateralSimulationPreview
+                loanId={BigInt(loanId!)}
+                amountRaw={addCollateralAmt}
+                diamondAddr={activeDiamondAddr as Address}
+              />
             </div>
           )}
 
@@ -974,5 +989,63 @@ function LoanKeeperPicker({ loanId, actionLoading, onToggle }: LoanKeeperPickerP
         </div>
       )}
     </div>
+  );
+}
+
+/**
+ * Phase 8b.2 — Blockaid preview for the pending `repayLoan` tx on
+ * this loan. No form state needed beyond the loan id; the exact
+ * repay amount is resolved inside the contract from stored state.
+ */
+function RepaySimulationPreview({
+  loanId,
+  diamondAddr,
+}: {
+  loanId: bigint;
+  diamondAddr: Address;
+}) {
+  const data = encodeFunctionData({
+    abi: DIAMOND_ABI,
+    functionName: "repayLoan",
+    args: [loanId],
+  }) as Hex;
+  return (
+    <SimulationPreview tx={{ to: diamondAddr, data, value: 0n }} />
+  );
+}
+
+/**
+ * Phase 8b.2 — Blockaid preview for the pending `addCollateral` tx.
+ * Waits for the amount input to parse successfully before asking the
+ * API to scan — avoids spamming scans while the user is mid-typing.
+ */
+function AddCollateralSimulationPreview({
+  loanId,
+  amountRaw,
+  diamondAddr,
+}: {
+  loanId: bigint;
+  amountRaw: string;
+  diamondAddr: Address;
+}) {
+  let data: Hex | null = null;
+  try {
+    if (amountRaw) {
+      // Default to 18 decimals; exact conversion happens on-chain.
+      // Preview only needs the calldata to be valid ABI.
+      const amount = parseUnits(amountRaw, 18);
+      if (amount > 0n) {
+        data = encodeFunctionData({
+          abi: DIAMOND_ABI,
+          functionName: "addCollateral",
+          args: [loanId, amount],
+        }) as Hex;
+      }
+    }
+  } catch {
+    data = null;
+  }
+  return (
+    <SimulationPreview tx={data ? { to: diamondAddr, data, value: 0n } : null} />
   );
 }

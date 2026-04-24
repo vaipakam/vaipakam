@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { parseAbi, type Abi, type Address } from "viem";
+import { parseAbi, type Abi, type Address, type Hex, encodeFunctionData } from "viem";
 import { usePublicClient, useWalletClient } from "wagmi";
 import { useWallet } from "../context/WalletContext";
 import { useMode } from "../context/ModeContext";
@@ -24,6 +24,8 @@ import { AlertTriangle, Info, CheckCircle, Wallet, Coins } from "lucide-react";
 import { ErrorAlert } from "../components/app/ErrorAlert";
 import { SanctionsBanner } from "../components/app/SanctionsBanner";
 import { RiskDisclosures } from "../components/app/RiskDisclosures";
+import { SimulationPreview } from "../components/app/SimulationPreview";
+import { DIAMOND_ABI_VIEM as DIAMOND_ABI } from "../contracts/abis";
 import { Link } from "react-router-dom";
 import { AssetPicker } from "../components/app/AssetPicker";
 import { useAssetType, type DetectedAssetType } from "../hooks/useAssetType";
@@ -862,6 +864,21 @@ export default function CreateOffer() {
           </div>
         )}
 
+        {/* Phase 8b.2 — Blockaid preview of the pending createOffer
+            tx. Encodes the current form state into calldata so the
+            user sees exactly what their approval + create will move
+            before signing. Silently hides when the form isn't
+            buildable yet (missing required fields / decimals still
+            loading) or when the Blockaid API key isn't configured. */}
+        <CreateOfferSimulationPreview
+          toPayload={toPayload}
+          diamondAddr={
+            ((activeChain && isCorrectChain
+              ? activeChain.diamondAddress
+              : null) ?? DEFAULT_CHAIN.diamondAddress) as Address
+          }
+        />
+
         <div className="form-actions">
           <button
             type="submit"
@@ -948,5 +965,36 @@ function DetectionBadge({
       {" "}
       · detected {label}
     </span>
+  );
+}
+
+/**
+ * Phase 8b.2 — encodes the pending createOffer calldata from the
+ * current form state and hands it to SimulationPreview. Catches
+ * conversion errors (form still incomplete, bad numeric input) and
+ * silently hides the panel instead of surfacing an ugly trace.
+ */
+function CreateOfferSimulationPreview({
+  toPayload,
+  diamondAddr,
+}: {
+  // Accept any 0-arg function returning a CreateOfferPayload-shaped
+  // struct — avoids a type-import cycle for this wrapper component.
+  toPayload: () => unknown;
+  diamondAddr: Address;
+}) {
+  let data: Hex | null = null;
+  try {
+    const payload = toPayload();
+    data = encodeFunctionData({
+      abi: DIAMOND_ABI,
+      functionName: "createOffer",
+      args: [payload],
+    }) as Hex;
+  } catch {
+    data = null;
+  }
+  return (
+    <SimulationPreview tx={data ? { to: diamondAddr, data, value: 0n } : null} />
   );
 }

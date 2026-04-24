@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState, useCallback, useRef } from 'react';
 import type { Address, Hex } from 'viem';
 import { encodeFunctionData } from 'viem';
 import { SimulationPreview } from '../components/app/SimulationPreview';
+import { usePermit2Signing } from '../hooks/usePermit2Signing';
 import { useWallet } from '../context/WalletContext';
 import { useDiamondContract, useDiamondRead, useDiamondPublicClient, useReadChain } from '../contracts/useDiamond';
 import { DIAMOND_ABI_VIEM as DIAMOND_ABI } from '../contracts/abis';
@@ -148,6 +149,7 @@ export default function OfferBook() {
   const { address, chainId } = useWallet();
   const diamond = useDiamondContract();
   const diamondRead = useDiamondRead();
+  const { sign: permit2Sign, canSign: permit2CanSign } = usePermit2Signing();
   // The wallet's active chain (or DEFAULT_CHAIN fallback when disconnected).
   // Used to target multicalls and build explorer links at the Diamond the
   // user's reads are actually hitting, instead of hard-coding DEFAULT_CHAIN.
@@ -403,6 +405,53 @@ export default function OfferBook() {
     setError(null);
     setTxHash(null);
     const step = beginStep({ area: 'offer-accept', flow: 'acceptOffer', step: 'submit-tx', wallet: address, chainId, offerId });
+
+    // Phase 8b.1 — attempt the Permit2 path for borrower-side ERC-20
+    // accepts of lender offers. Saves the user the separate `approve`
+    // tx when they already have Permit2 pre-approved (common on
+    // wallets that use aggregators / have touched Uniswap v4). Any
+    // failure — wallet refuses EIP-712, no Permit2 allowance, user
+    // cancels signature, unexpected revert — silently falls through
+    // to the classic `acceptOffer` path below, which handles the
+    // approve+accept sequence itself. The user sees one extra
+    // wallet popup in the fallback case; acceptable.
+    const offer = offers.find((o) => o.id === offerId);
+    const permit2Eligible =
+      !!offer &&
+      offer.offerType === 0 && // Lender offer (acceptor = borrower)
+      offer.assetType === 0 && // ERC-20 principal → ERC-20 collateral pull
+      !!permit2CanSign;
+    if (permit2Eligible) {
+      try {
+        const diamondAddr = (activeReadChain.diamondAddress ??
+          DEFAULT_CHAIN.diamondAddress) as Address;
+        const { permit, signature } = await permit2Sign({
+          token: offer.collateralAsset as Address,
+          amount: offer.collateralAmount,
+          spender: diamondAddr,
+        });
+        const tx = await (
+          diamond as unknown as {
+            acceptOfferWithPermit: (
+              id: bigint,
+              consent: boolean,
+              permit: unknown,
+              signature: Hex,
+            ) => Promise<{ hash: string; wait: () => Promise<unknown> }>;
+          }
+        ).acceptOfferWithPermit(offerId, acceptorConsent, permit, signature);
+        setTxHash(tx.hash);
+        await tx.wait();
+        setOffers((prev) => prev.filter((o) => o.id !== offerId));
+        step.success({ note: `tx ${tx.hash} via Permit2` });
+        setAcceptingId(null);
+        return;
+      } catch (permitErr) {
+        console.debug('[OfferBook] Permit2 accept failed, falling back to classic:', permitErr);
+        // fall through to classic path
+      }
+    }
+
     try {
       const tx = await diamond.acceptOffer(offerId, acceptorConsent);
       setTxHash(tx.hash);
