@@ -608,7 +608,15 @@ export default function OfferBook() {
   const showBorrower = tab !== 'lender';
 
   const hasMore = cursor < sortedIds.length;
-  const scanned = Math.min(cursor, sortedIds.length);
+  // Prefer the validated count (same source the tab headers use) so
+  // the bottom status bar reflects reality after stale log-index
+  // entries are filtered. Falls back to raw log-index length while
+  // the validation pass is still running.
+  const validatedTotal =
+    statusView === 'open'
+      ? (countByStatus.open ?? openOfferIds.length)
+      : (countByStatus.closed ?? closedOfferIds.length);
+  const scanned = Math.min(offers.length, validatedTotal);
 
   const anchorLabel = useMemo(() => {
     if (anchorRateBps === null) return 'No prior matched rate yet';
@@ -863,7 +871,7 @@ export default function OfferBook() {
 
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 12, flexWrap: 'wrap', gap: 8 }}>
         <span style={{ fontSize: '0.8rem', opacity: 0.7 }}>
-          Scanned {scanned} of {sortedIds.length} {statusView === 'open' ? 'open' : 'filled'} offers
+          Scanned {scanned} of {validatedTotal} {statusView === 'open' ? 'open' : 'filled'} offers
         </span>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
           <button
