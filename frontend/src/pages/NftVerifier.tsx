@@ -319,7 +319,7 @@ export default function NftVerifier() {
         // chain are instant) and consult the Transfer cache.
         try {
           const idx = await loadLoanIndex(
-            publicClient,
+            chain.rpcUrl,
             chain.diamondAddress,
             chain.deployBlock,
             chain.chainId,

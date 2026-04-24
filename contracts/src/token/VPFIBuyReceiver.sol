@@ -5,13 +5,13 @@ import {Initializable} from "@openzeppelin/contracts/proxy/utils/Initializable.s
 import {UUPSUpgradeable} from "@openzeppelin/contracts/proxy/utils/UUPSUpgradeable.sol";
 import {OwnableUpgradeable} from "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 import {Ownable2StepUpgradeable} from "@openzeppelin/contracts-upgradeable/access/Ownable2StepUpgradeable.sol";
-import {PausableUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol";
 import {OAppUpgradeable, Origin, MessagingFee, MessagingReceipt} from "@layerzerolabs/oapp-evm-upgradeable/contracts/oapp/OAppUpgradeable.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {IOFT, SendParam, MessagingFee as OFTMessagingFee, MessagingReceipt as OFTMessagingReceipt, OFTReceipt} from "@layerzerolabs/oft-evm/contracts/interfaces/IOFT.sol";
 import {IVPFIBuyMessages} from "../interfaces/IVPFIBuyMessages.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
+import {LZGuardianPausable} from "./LZGuardianPausable.sol";
 
 /**
  * @title VPFIBuyReceiver
@@ -51,7 +51,7 @@ contract VPFIBuyReceiver is
     Initializable,
     OAppUpgradeable,
     Ownable2StepUpgradeable,
-    PausableUpgradeable,
+    LZGuardianPausable,
     UUPSUpgradeable,
     IVPFIBuyMessages,
     IVaipakamErrors
@@ -198,7 +198,7 @@ contract VPFIBuyReceiver is
         __OApp_init(owner_);
         __Ownable_init(owner_);
         __Ownable2Step_init();
-        __Pausable_init();
+        __LZGuardianPausable_init();
 
         diamond = diamond_;
         vpfiToken = vpfiToken_;
@@ -221,12 +221,15 @@ contract VPFIBuyReceiver is
     ///         Since this contract performs the Diamond debit and the OFT
     ///         send-back of VPFI to the user, pausing here is the highest-
     ///         leverage single contract to halt a suspected forgery.
-    function pause() external onlyOwner {
+    function pause() external onlyGuardianOrOwner {
         _pause();
     }
 
     /// @notice Resume inbound BUY_REQUEST handling after an incident has
     ///         been investigated and resolved.
+    /// @dev Deliberately owner-only. Recovery must travel the full
+    ///      governance path — a compromised or impatient guardian must
+    ///      not be able to race the incident team to unpause.
     function unpause() external onlyOwner {
         _unpause();
     }

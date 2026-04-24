@@ -5,10 +5,10 @@ import {Initializable} from "@openzeppelin/contracts/proxy/utils/Initializable.s
 import {UUPSUpgradeable} from "@openzeppelin/contracts/proxy/utils/UUPSUpgradeable.sol";
 import {OwnableUpgradeable} from "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 import {Ownable2StepUpgradeable} from "@openzeppelin/contracts-upgradeable/access/Ownable2StepUpgradeable.sol";
-import {PausableUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol";
 import {OAppUpgradeable, Origin, MessagingFee, MessagingReceipt} from "@layerzerolabs/oapp-evm-upgradeable/contracts/oapp/OAppUpgradeable.sol";
 import {IRewardOApp} from "../interfaces/IRewardOApp.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
+import {LZGuardianPausable} from "./LZGuardianPausable.sol";
 
 /**
  * @title VaipakamRewardOApp
@@ -58,7 +58,7 @@ contract VaipakamRewardOApp is
     Initializable,
     OAppUpgradeable,
     Ownable2StepUpgradeable,
-    PausableUpgradeable,
+    LZGuardianPausable,
     UUPSUpgradeable,
     IRewardOApp,
     IVaipakamErrors
@@ -222,7 +222,7 @@ contract VaipakamRewardOApp is
         __OApp_init(owner_);
         __Ownable_init(owner_);
         __Ownable2Step_init();
-        __Pausable_init();
+        __LZGuardianPausable_init();
 
         diamond = diamond_;
         isCanonical = isCanonical_;
@@ -238,18 +238,22 @@ contract VaipakamRewardOApp is
     // ─── Emergency pause ─────────────────────────────────────────────────────
 
     /// @notice Pause both sender-side (`sendChainReport` / `broadcastGlobal`)
-    ///         and inbound (`_lzReceive`) paths. Emergency lever for the
-    ///         timelock / multi-sig in case a LayerZero-side incident is
-    ///         suspected. Because this OApp carries scalar reward totals
-    ///         (not value), the worst-case forgery impact is incorrect
-    ///         reward math, not stolen funds — but stale math can still
-    ///         compound until unpaused, so the pause lever is worth having.
-    function pause() external onlyOwner {
+    ///         and inbound (`_lzReceive`) paths. Callable by either the
+    ///         guardian (incident-response multi-sig, no timelock) or the
+    ///         owner (timelock-gated multi-sig). Because this OApp carries
+    ///         scalar reward totals (not value), the worst-case forgery
+    ///         impact is incorrect reward math, not stolen funds — but
+    ///         stale math can still compound until unpaused, so the pause
+    ///         lever is worth having.
+    function pause() external onlyGuardianOrOwner {
         _pause();
     }
 
     /// @notice Resume send / receive paths after an incident has been
     ///         investigated and resolved.
+    /// @dev Deliberately owner-only. Recovery must travel the full
+    ///      governance path — a compromised or impatient guardian must
+    ///      not be able to race the incident team to unpause.
     function unpause() external onlyOwner {
         _unpause();
     }

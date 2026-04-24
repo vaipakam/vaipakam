@@ -5,12 +5,12 @@ import {Initializable} from "@openzeppelin/contracts/proxy/utils/Initializable.s
 import {UUPSUpgradeable} from "@openzeppelin/contracts/proxy/utils/UUPSUpgradeable.sol";
 import {OwnableUpgradeable} from "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 import {Ownable2StepUpgradeable} from "@openzeppelin/contracts-upgradeable/access/Ownable2StepUpgradeable.sol";
-import {PausableUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol";
 import {OAppUpgradeable, Origin, MessagingFee, MessagingReceipt} from "@layerzerolabs/oapp-evm-upgradeable/contracts/oapp/OAppUpgradeable.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {IVPFIBuyMessages} from "../interfaces/IVPFIBuyMessages.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
+import {LZGuardianPausable} from "./LZGuardianPausable.sol";
 
 /**
  * @title VPFIBuyAdapter
@@ -61,7 +61,7 @@ contract VPFIBuyAdapter is
     Initializable,
     OAppUpgradeable,
     Ownable2StepUpgradeable,
-    PausableUpgradeable,
+    LZGuardianPausable,
     UUPSUpgradeable,
     IVPFIBuyMessages,
     IVaipakamErrors
@@ -265,7 +265,7 @@ contract VPFIBuyAdapter is
         __OApp_init(owner_);
         __Ownable_init(owner_);
         __Ownable2Step_init();
-        __Pausable_init();
+        __LZGuardianPausable_init();
 
         receiverEid = receiverEid_;
         treasury = treasury_;
@@ -290,17 +290,22 @@ contract VPFIBuyAdapter is
     // ─── Emergency pause + rate-limit admin ─────────────────────────────────
 
     /// @notice Pause user-initiated {buy} calls and inbound response
-    ///         handling. Emergency lever for the timelock / multi-sig in
-    ///         case a LayerZero-side incident (DVN compromise, executor
-    ///         failure, unknown exploit) is suspected. When
-    ///         `_lzReceive` is paused it reverts — LZ retries the packet
-    ///         after `unpause()` so legitimate responses aren't dropped.
-    function pause() external onlyOwner {
+    ///         handling. Callable by either the guardian (incident-response
+    ///         multi-sig, no timelock) or the owner (timelock-gated multi-
+    ///         sig). The guardian path exists so the pause can land inside
+    ///         the detect-to-freeze window that a 48h timelock would
+    ///         otherwise foreclose. When `_lzReceive` is paused it reverts
+    ///         — LZ retries the packet after `unpause()` so legitimate
+    ///         responses aren't dropped.
+    function pause() external onlyGuardianOrOwner {
         _pause();
     }
 
     /// @notice Resume {buy} and inbound response handling after an incident
     ///         has been investigated and resolved.
+    /// @dev Deliberately owner-only. Recovery must travel the full
+    ///      governance path — a compromised or impatient guardian must
+    ///      not be able to race the incident team to unpause.
     function unpause() external onlyOwner {
         _unpause();
     }

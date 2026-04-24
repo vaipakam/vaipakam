@@ -5,9 +5,9 @@ import {Initializable} from "@openzeppelin/contracts/proxy/utils/Initializable.s
 import {UUPSUpgradeable} from "@openzeppelin/contracts/proxy/utils/UUPSUpgradeable.sol";
 import {OwnableUpgradeable} from "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 import {Ownable2StepUpgradeable} from "@openzeppelin/contracts-upgradeable/access/Ownable2StepUpgradeable.sol";
-import {PausableUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol";
 import {OFTUpgradeable} from "@layerzerolabs/oft-evm-upgradeable/contracts/oft/OFTUpgradeable.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
+import {LZGuardianPausable} from "./LZGuardianPausable.sol";
 
 /**
  * @title VPFIMirror
@@ -40,7 +40,7 @@ contract VPFIMirror is
     Initializable,
     OFTUpgradeable,
     Ownable2StepUpgradeable,
-    PausableUpgradeable,
+    LZGuardianPausable,
     UUPSUpgradeable,
     IVaipakamErrors
 {
@@ -68,7 +68,7 @@ contract VPFIMirror is
         __OFT_init("Vaipakam DeFi Token", "VPFI", owner_);
         __Ownable_init(owner_);
         __Ownable2Step_init();
-        __Pausable_init();
+        __LZGuardianPausable_init();
     }
 
     // ─── Emergency pause ─────────────────────────────────────────────────────
@@ -80,15 +80,21 @@ contract VPFIMirror is
     ///         chain bridge exploit demonstrated the value of a fast pause
     ///         — a 46-minute pause in that incident blocked ~$200M of
     ///         follow-up drain.
-    /// @dev Only the owner (OApp delegate — timelock-gated multi-sig) may
-    ///      call. See `_debit` / `_credit` overrides for the send/receive
-    ///      guards.
-    function pause() external onlyOwner {
+    /// @dev Callable by either the guardian (incident-response multi-sig,
+    ///      no timelock) or the owner (timelock-gated multi-sig). The
+    ///      guardian path exists so the pause can land inside the
+    ///      detect-to-freeze window that a 48h timelock would otherwise
+    ///      foreclose. See `_debit` / `_credit` overrides for the
+    ///      send/receive guards.
+    function pause() external onlyGuardianOrOwner {
         _pause();
     }
 
     /// @notice Resume send / receive paths after an incident has been
     ///         investigated and resolved.
+    /// @dev Deliberately owner-only. Recovery must travel the full
+    ///      governance path — a compromised or impatient guardian must
+    ///      not be able to race the incident team to unpause.
     function unpause() external onlyOwner {
         _unpause();
     }

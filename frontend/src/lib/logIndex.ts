@@ -5,12 +5,15 @@ import {
   parseAbiParameters,
   toBytes,
   type Hex,
-  type PublicClient,
 } from 'viem';
 
-/** Raw `eth_getLogs` log — we use `publicClient.request` directly rather
- *  than the higher-level `publicClient.getLogs()` so we can OR together
- *  15 event topic0s in one request instead of 15 separate calls. */
+/** Raw `eth_getLogs` log — we talk to the RPC via a direct `fetch` rather
+ *  than viem's `publicClient.request` so we can OR together 15 event
+ *  topic0s in one request instead of 15 separate calls, AND avoid viem's
+ *  typed-request wrapping (some public RPCs — `rpc.sepolia.org` in
+ *  particular — reject viem's body shape with "JSON is not a valid
+ *  request object", even though it's spec-compliant). Hand-rolling the
+ *  JSON-RPC body keeps this scan compatible with every upstream. */
 interface RawLog {
   blockNumber: Hex;
   blockHash: Hex;
@@ -297,14 +300,45 @@ interface GetLogsFilter {
 }
 
 /**
- * Low-level `eth_getLogs` via `publicClient.request`. Used instead of the
- * higher-level `publicClient.getLogs()` so we can OR together many event
- * topic0 signatures in one RPC (viem's `getLogs` requires an explicit
- * `event` / `events` ABI-typed filter and doesn't accept the raw topic
- * array shape).
+ * Hand-rolled `eth_getLogs` via `fetch`. Used instead of viem's
+ * `publicClient.getLogs` / `publicClient.request` for two reasons:
+ *   1. We OR together many event topic0 signatures in one RPC, and
+ *      viem's typed `getLogs` only accepts ABI-typed `event` / `events`.
+ *   2. Some public RPCs (`rpc.sepolia.org` in particular) reject viem's
+ *      typed-request body shape with "JSON is not a valid request
+ *      object" — a direct JSON-RPC body is the lowest-common-denominator
+ *      shape that every upstream accepts.
  */
+async function jsonRpcCall<T>(
+  rpcUrl: string,
+  method: string,
+  params: unknown[],
+): Promise<T> {
+  const response = await fetch(rpcUrl, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      jsonrpc: '2.0',
+      id: 1,
+      method,
+      params,
+    }),
+  });
+  if (!response.ok) {
+    throw new Error(`${method}: HTTP ${response.status} ${response.statusText}`);
+  }
+  const body = (await response.json()) as {
+    result?: T;
+    error?: { code?: number; message?: string };
+  };
+  if (body.error) {
+    throw new Error(body.error.message ?? `${method} failed`);
+  }
+  return body.result as T;
+}
+
 async function rawGetLogs(
-  client: PublicClient,
+  rpcUrl: string,
   filter: GetLogsFilter,
 ): Promise<RawLog[]> {
   const params: {
@@ -321,11 +355,7 @@ async function rawGetLogs(
   if (typeof filter.toBlock === 'number') {
     params.toBlock = numberToHex(filter.toBlock);
   }
-  const logs = await client.request({
-    method: 'eth_getLogs',
-    params: [params] as unknown as [{ fromBlock?: `0x${string}` }],
-  });
-  return logs as unknown as RawLog[];
+  return jsonRpcCall<RawLog[]>(rpcUrl, 'eth_getLogs', [params]);
 }
 
 /**
@@ -380,12 +410,12 @@ function isBlockRangeOrSizeError(message: string): boolean {
 }
 
 async function safeGetLogs(
-  client: PublicClient,
+  rpcUrl: string,
   filter: GetLogsFilter,
 ): Promise<RawLog[]> {
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
     try {
-      return await rawGetLogs(client, filter);
+      return await rawGetLogs(rpcUrl, filter);
     } catch (err) {
       const inner = extractErrorMessage(err);
       const retryable = isRateLimitError(inner);
@@ -405,10 +435,10 @@ async function safeGetLogs(
   throw new Error(`getLogs ${filter.fromBlock}-${filter.toBlock}: exhausted retries`);
 }
 
-async function getBlockNumber(client: PublicClient): Promise<number> {
+async function getBlockNumber(rpcUrl: string): Promise<number> {
   try {
-    const head = await client.getBlockNumber();
-    return Number(head);
+    const hex = await jsonRpcCall<string>(rpcUrl, 'eth_blockNumber', []);
+    return Number(hex);
   } catch {
     return 0;
   }
@@ -454,7 +484,7 @@ export function peekLoanIndex(
  * starting their own paging loop.
  */
 export async function loadLoanIndex(
-  publicClient: PublicClient,
+  rpcUrl: string,
   diamondAddress: string,
   deployBlock: number,
   chainId: number,
@@ -464,7 +494,7 @@ export async function loadLoanIndex(
   if (existing) return existing;
 
   const promise = runScan(
-    publicClient,
+    rpcUrl,
     diamondAddress,
     deployBlock,
     chainId,
@@ -476,13 +506,13 @@ export async function loadLoanIndex(
 }
 
 async function runScan(
-  publicClient: PublicClient,
+  rpcUrl: string,
   diamondAddress: string,
   deployBlock: number,
   chainId: number,
 ): Promise<LogIndexResult> {
   const cached = readCache(chainId, diamondAddress) ?? emptyCache(deployBlock);
-  const head = await getBlockNumber(publicClient);
+  const head = await getBlockNumber(rpcUrl);
   const fromBlock = Math.max(cached.lastBlock + 1, deployBlock);
 
   if (fromBlock > head) return hydrate(cached);
@@ -531,7 +561,7 @@ async function runScan(
     // Infura, QuickNode, publicnode, direct node RPCs).
     let logs: RawLog[];
     try {
-      logs = await safeGetLogs(publicClient, {
+      logs = await safeGetLogs(rpcUrl, {
         address: diamondAddress,
         topics: [
           [
