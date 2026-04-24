@@ -190,6 +190,44 @@ const FRIENDLY_ERROR_MESSAGES: Record<string, string> = {
     'Illegal loan state transition — the loan cannot move to the requested status.',
   '0x573c3147':
     'A cross-facet call inside the transaction failed. Please share the diagnostics export with support.',
+
+  // ── Phase 3.1 / 3.2 — Oracle hardening ────────────────────────────────
+  '0x55d2a2a6':
+    'L2 sequencer is currently considered unhealthy (down or in the 1h post-recovery grace window). Try again shortly.',
+  '0x032b3d00':
+    'L2 sequencer is currently down. Price reads are paused until the sequencer is healthy again.',
+  '0xb5d44b5c':
+    'L2 sequencer just came back up — prices are gated for 1 hour after recovery. Try again shortly.',
+  '0x28871998':
+    'Chainlink and the secondary oracle (Pyth) disagreed beyond the configured tolerance. The price read is rejected so no action runs against an unverified price.',
+  '0x1e7ace9a':
+    'Pyth secondary-oracle price is stale, missing, or unavailable. Submit a Pyth update transaction first, then retry the action.',
+
+  // ── Phase 4.1 — Terms of Service gate ─────────────────────────────────
+  '0x2a75db7f':
+    'The Terms of Service version you signed for is no longer current. Reload the app, review the updated Terms, and re-sign.',
+  '0x1b30f0a8':
+    'The submitted Terms-of-Service version or content hash is invalid (governance-side configuration error).',
+
+  // ── Phase 4.3 — Address sanctions ─────────────────────────────────────
+  '0x80279111':
+    'This wallet (or the offer creator) is flagged by the on-chain sanctions oracle. The protocol cannot pair you with a sanctioned address. If you believe this is a mismatch, contact the sanctions-oracle operator directly — Vaipakam does not maintain its own sanctions list.',
+
+  // ── Other facet errors observed in production ─────────────────────────
+  '0x8e2218e4':
+    'Self-collateralized offer — the principal asset and collateral asset must be different.',
+  '0x26e4b25d':
+    'This asset is currently paused by governance. Wait for the pause to lift before retrying.',
+  '0x515faa71':
+    'This position NFT is locked while a strategic flow (preclose / refinance / loan-sale) is mid-flight.',
+  '0x3baaf353':
+    'Trade between these two countries is not allowed by the current compliance configuration.',
+  '0x01d01c9f':
+    'This loan is not in a phase where repayment is accepted right now.',
+  '0x0857e728':
+    'Repayment amount exceeds the remaining principal + interest owed on this loan.',
+  '0xf33650bd':
+    'This NFT rental loan is not currently active.',
 };
 
 /**
@@ -331,6 +369,25 @@ const KNOWN_ERROR_SELECTORS: Record<string, string> = {
   '0x3ee5aeb5': 'ReentrancyGuardReentrantCall()',
   '0xeb1df718': 'IllegalTransition(uint8,uint8)',
   '0x573c3147': 'CrossFacetCallFailed(string)',
+
+  // ── Phase 3 / 4 surface (added when each phase landed) ────────────────
+  '0x55d2a2a6': 'SequencerUnhealthy()',
+  '0x032b3d00': 'SequencerDown()',
+  '0xb5d44b5c': 'SequencerGracePeriod()',
+  '0x28871998': 'OraclePriceDivergence()',
+  '0x1e7ace9a': 'PythPriceUnavailable()',
+  '0x2a75db7f': 'InvalidTosVersion()',
+  '0x1b30f0a8': 'InvalidTosParams()',
+  '0x80279111': 'SanctionedAddress(address)',
+
+  // ── Misc previously-unmapped facet errors (only entries NOT already
+  // listed in this same table above) ───────────────────────────────────
+  '0x8e2218e4': 'SelfCollateralizedOffer()',
+  '0x01d01c9f': 'LoanNotInRepayablePhase()',
+  '0xf33650bd': 'RentalNotActive()',
+  '0x26e4b25d': 'AssetPaused(address)',
+  '0x3baaf353': 'TradeNotAllowed()',
+  '0x515faa71': 'PositionNFTLocked()',
 };
 
 /** Extracts the raw revert data (hex string starting with 0x) from the tangle of shapes ethers/injected wallets surface. */
@@ -347,10 +404,22 @@ export function extractRevertData(err: unknown): string | undefined {
   for (const c of candidates) {
     if (typeof c === 'string' && c.startsWith('0x') && c.length >= 10) return c;
   }
-  // Some wallets embed the hex inside the message string.
+  // Some wallets / RPCs embed the revert bytes directly in the message
+  // string (e.g. `... data: 0x08c379a0...`). Fall back to a regex
+  // match — but ONLY accept hex blobs that are EITHER a clean 4-byte
+  // selector (10 chars) OR a full ABI-encoded revert payload (10
+  // chars + multiples of 64 hex chars). This rules out the trap
+  // where the message also contains a 40-char address (mistaken for
+  // the revert selector by the old `slice(0, 10)`) or a 64-char tx
+  // hash.
   const msg = e.message ?? '';
-  const match = /0x[0-9a-fA-F]{8,}/.exec(msg);
-  return match?.[0];
+  const matches = msg.match(/0x[0-9a-fA-F]+/g) ?? [];
+  for (const m of matches) {
+    const len = m.length - 2; // strip 0x
+    if (len === 8) return m; // bare 4-byte selector
+    if (len >= 8 && (len - 8) % 64 === 0) return m; // selector + N abi-encoded args
+  }
+  return undefined;
 }
 
 /** Returns the 4-byte selector of a revert (0x + 8 hex chars) if present. */

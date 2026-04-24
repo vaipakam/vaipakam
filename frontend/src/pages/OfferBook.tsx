@@ -10,7 +10,7 @@ import { SanctionsBanner } from '../components/app/SanctionsBanner';
 import { RiskDisclosures } from '../components/app/RiskDisclosures';
 import { DEFAULT_CHAIN } from '../contracts/config';
 import { beginStep, emit } from '../lib/journeyLog';
-import { decodeContractError } from '../lib/decodeContractError';
+import { decodeContractError, extractRevertSelector } from '../lib/decodeContractError';
 import {
   FALLBACK_CONSENT_CHECKBOX_LABEL,
 } from '../lib/fallbackTerms';
@@ -339,6 +339,16 @@ export default function OfferBook() {
       setOffers((prev) => prev.filter((o) => o.id !== offerId));
       step.success({ note: `tx ${tx.hash}` });
     } catch (err) {
+      // If the on-chain state says the offer is gone (canceled or never
+      // existed at this id), evict it from the local list so the user
+      // can't keep clicking the same dead row. The log-index cache may
+      // still surface it briefly until the OfferCanceled event lands;
+      // this catches the racy gap.
+      const sel = extractRevertSelector(err);
+      if (sel === '0x2ee39802' /* InvalidOffer() */) {
+        setOffers((prev) => prev.filter((o) => o.id !== offerId));
+        setPendingOffer(null);
+      }
       setError(decodeContractError(err, 'Transaction failed'));
       step.failure(err);
     } finally {
