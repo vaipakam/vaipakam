@@ -21,6 +21,7 @@ import {
   ChevronsLeft,
   ChevronsRight,
   Bell,
+  ShieldOff,
 } from "lucide-react";
 import { useState } from "react";
 
@@ -91,6 +92,12 @@ const BASIC_NAV = [
     to: "/app/alerts",
     icon: <Bell size={20} />,
     label: "Alerts",
+    end: false,
+  },
+  {
+    to: "/app/allowances",
+    icon: <ShieldOff size={20} />,
+    label: "Allowances",
     end: false,
   },
 ];

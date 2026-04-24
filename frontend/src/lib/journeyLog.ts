@@ -38,7 +38,8 @@ export type JourneyArea =
   | 'keeper'
   | 'config'
   | 'rewards'
-  | 'escrow-upgrade';
+  | 'escrow-upgrade'
+  | 'allowance';
 
 export type JourneyStatus = 'start' | 'success' | 'failure' | 'info';
 
