@@ -55,6 +55,13 @@ contract ProfileFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors 
     error NotOwner();
     error AlreadyRegistered();
     error InvalidThresholds();
+    // Mirrored from OfferFacet for the setOfferKeeperAccess entry point —
+    // Solidity scopes errors per-contract, so each facet that needs to
+    // revert with these must declare them locally. The 4-byte selectors
+    // are identical because the signatures are, so callers decode the
+    // revert the same way regardless of which facet raised it.
+    error InvalidOffer();
+    error OfferAlreadyAccepted();
 
     /**
      * @notice Sets the user's country for sanctions compliance.
@@ -321,6 +328,39 @@ contract ProfileFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors 
             revert NotNFTOwner();
         }
         emit LoanKeeperAccessUpdated(loanId, side, enabled);
+    }
+
+    /// @notice Emitted when an offer creator toggles the per-offer keeper flag.
+    /// @param offerId The offer whose flag was updated.
+    /// @param enabled New flag value.
+    event OfferKeeperAccessUpdated(uint256 indexed offerId, bool enabled);
+
+    /**
+     * @notice Toggles the keeper-access flag on an offer the caller created.
+     * @dev Symmetric to {setLoanKeeperAccess} for the pre-acceptance
+     *      phase. `keeperAccessEnabled` can already be set at creation via
+     *      {OfferFacet.createOffer}, but creators have had no way to adjust
+     *      it after posting — forcing a cancel + re-post to change their
+     *      mind. This entry point closes that gap so keeper delegation can
+     *      be enabled or disabled freely while the offer is still open.
+     *
+     *      Authority: the current offer `creator` only. An offer that has
+     *      already been accepted reverts with {OfferAlreadyAccepted} — the
+     *      loan now governs keeper authority via {setLoanKeeperAccess}.
+     *      An offer with no `creator` set (never-created / storage-empty
+     *      slot) reverts with {InvalidOffer}.
+     *
+     * @param offerId The offer to update.
+     * @param enabled True to permit keepers on this offer, false to disable.
+     */
+    function setOfferKeeperAccess(uint256 offerId, bool enabled) external whenNotPaused {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        LibVaipakam.Offer storage offer = s.offers[offerId];
+        if (offer.creator == address(0)) revert InvalidOffer();
+        if (offer.accepted) revert OfferAlreadyAccepted();
+        if (msg.sender != offer.creator) revert NotNFTOwner();
+        offer.keeperAccessEnabled = enabled;
+        emit OfferKeeperAccessUpdated(offerId, enabled);
     }
 
     // ─── Keeper Whitelist (README §3/§9) ──────────────────────────────────

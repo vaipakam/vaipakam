@@ -47,6 +47,23 @@ Public-navigation requirements:
 - cross-page hash-anchor navigation must work reliably from every public page and connected-app page that links back into the landing-page sections such as `Features`, `How it works`, `Security`, and `FAQ`
 - when a user clicks one of those anchor links from pages like `Buy VPFI`, `Analytics`, or any route under `/app`, the frontend should route to the landing page and then scroll to the correct section rather than dropping the user at the top of the home page
 - the implementation should tolerate route-change timing where the landing-page section may mount slightly after navigation, so hash-anchor scrolling should retry briefly until the target section exists
+- the `Buy VPFI` link from the home page must resolve to the working public purchase route
+
+Privacy and consent requirements:
+
+- the public website and connected app must include a cookie-consent banner that supports Google Consent Mode v2 and EU / GDPR expectations
+- on a first visit, the banner should slide up from the bottom and present three equally prominent choices: `Reject all`, `Customize`, and `Accept all`
+- essential cookies required for session handling and anti-abuse protections are always on
+- analytics, personalization, and advertising categories must be off by default until the user explicitly opts in
+- the `Customize` view must let users toggle analytics, personalization, and advertising independently
+- consent choices must persist across visits
+- the footer must include a `Cookie settings` link that re-opens the banner at any time so the user can change or revoke consent
+- Google consent defaults must be set to denied before Google's tag loader fires, so tracking cookies are not created before the user makes a choice
+- Google Analytics may load only through the consent-aware pipeline
+- when analytics consent is granted, the integration should use Advanced Consent Mode defensive defaults, including `ads_data_redaction` and `url_passthrough`
+- `ads_data_redaction` should ensure ad-click identifiers are redacted on outbound requests whenever advertising consent is denied
+- `url_passthrough` should allow conversion attribution to flow through URL parameters instead of cookies where appropriate
+- no non-essential tracking category should load before the user grants the corresponding consent
 
 ### 2. Connected App
 
@@ -145,6 +162,45 @@ Connected-app network model in Phase 1:
 - `VPFI` is cross-chain, and the interaction-reward denominator / reward-funding path also uses cross-chain messaging so each chain can claim against one protocol-wide daily interest total; loans, offers, collateral, repayment, liquidation, preclose, refinance, and keeper actions still stay on the currently selected network
 - the app should make the active network clear and treat each network as its own local protocol instance with a dedicated Diamond deployment per network
 
+Wallet connection requirements:
+
+- mobile wallet connection should open the selected wallet app directly instead of showing only a QR code
+- when a phone user taps a wallet in the connect picker, the app should prefer that wallet's mobile deep link
+- QR-code pairing should remain available as a fallback for cross-device connection
+- the initial-chain prompt must not block first connects on iOS
+- users on unsupported chains should still be allowed to connect and then see a clear switch-chain banner
+- unsupported-chain connection should not fail silently or prevent the wallet from being recognized
+- if no wallet is detected, the app should present that state as a yellow warning rather than a red error
+- startup should warn site operators loudly if the WalletConnect project ID is missing from the deployment environment
+- a missing WalletConnect project ID should be treated as a production misconfiguration because it can break mobile deep-linking and degrade users into a QR-only flow
+
+Safe-app embed requirements:
+
+- Vaipakam should be loadable as a Safe app inside the Safe multisig UI
+- the app should auto-detect the Safe iframe context and auto-connect through the Safe postMessage handshake without showing a wallet prompt
+- when connected in Safe context, the connected wallet should be the Safe itself
+- outside a Safe context, the Safe connector should behave as a no-op and the normal browser wallet flow should be unaffected
+- Content-Security-Policy headers must explicitly allow Safe's dapp-browser origins as frame ancestors
+- the Safe connector should trust only Safe-owned origins for iframe handshake behavior
+
+Governance-configuration visibility:
+
+- loan-screen surfaces should reflect live on-chain governance parameters where those parameters affect the user-facing position
+- each loan-detail page should include a `Lender Discount` card for the current lender when lender discount data is relevant
+- the `Lender Discount` card should show the effective time-weighted VPFI discount computed from the current open-loan window and the on-chain discount curve
+- this effective discount may be computed client-side by extrapolating the open-loan window against on-chain discount-curve data
+- the frontend should expose a shared hook for reading the protocol fallback-split configuration
+- fallback-split data should be available as lender / borrower split values so pages can read it without custom one-off contract calls
+
+Foundational frontend migration requirements:
+
+- the frontend should use wagmi v2 and viem end to end for wallet connection, reads, writes, multicalls, and JSON-RPC control
+- ethers.js compatibility shims and the ethers dependency should not remain in the production frontend once the migration is complete
+- the wagmi / viem foundation should preserve existing user flows while enabling first-class mobile wallet deep-linking
+- contract-read surfaces should use wagmi / viem multicall batching where practical
+- log-indexer and direct JSON-RPC paths should use viem-compatible request shapes so public RPCs do not reject legacy ethers-shaped calls
+- the migration should leave a clear path for future gasless transactions, smart-account flows, and session-key flows
+
 ### 3. User Roles
 
 The UI/UX should support:
@@ -195,6 +251,17 @@ This means:
 - navigation, cards, tables, forms, and transaction review panels must remain usable on mobile devices
 - desktop layouts should expand information density without making the UI feel like a different product
 - all critical actions should be accessible on both touch devices and desktop browsers
+
+## App Navigation And Layout
+
+Chrome-level layout behavior:
+
+- the left-side app panel toggle should collapse or expand immediately on the first click
+- the app shell should not show a horizontal scrollbar when content fits the viewport
+- fixed or floating layout affordances must not create accidental horizontal overflow
+- status severity should match user impact; for example, `No wallet detected` should be a warning rather than a blocking error
+- public and connected-app navigation should keep wallet, network, diagnostics, footer, cookie settings, and core route controls reachable on mobile and desktop
+- layout fixes should preserve the existing design language in both light and dark themes
 
 ## Interaction Modes
 
@@ -367,6 +434,7 @@ Required top-level metrics:
 - currently active offers and lifetime offer totals at the combined all-chains level in the global header
 - total volume lent in USD, lifetime
 - total interest earned by lenders in USD, lifetime
+- `Total NFTs rented`, shown in the combined all-chains summary
 
 Per-chain analytics section:
 
@@ -374,6 +442,7 @@ Per-chain analytics section:
 - the page should provide a visible chain selector that switches the active chain context for those lower sections
 - switching the chain selector should refresh the below-the-fold cards, charts, recent activity, treasury snapshot, and other detailed analytics to the selected chain only
 - the selected-chain state should be obvious in the UI so users can clearly distinguish protocol-wide combined totals from chain-local analytics
+- `Total NFTs rented` should also be shown in the selected chain's detailed breakdown
 - implementation note: it is acceptable for this selector to also become the app's active read-chain context so that subsequent read surfaces follow the chain the user just chose; if a wallet is connected, the app may additionally request a wallet network switch for consistency
 
 Required charts and visualizations:

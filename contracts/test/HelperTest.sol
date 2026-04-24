@@ -126,7 +126,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](17);
+        selectors = new bytes4[](18);
         selectors[0] = ProfileFacet.updateKYCStatus.selector;
         selectors[1] = ProfileFacet.getUserCountry.selector;
         selectors[2] = ProfileFacet.isKYCVerified.selector;
@@ -144,6 +144,7 @@ contract HelperTest {
         selectors[14] = ProfileFacet.isApprovedKeeper.selector;
         selectors[15] = ProfileFacet.getApprovedKeepers.selector;
         selectors[16] = ProfileFacet.setLoanKeeperAccess.selector;
+        selectors[17] = ProfileFacet.setOfferKeeperAccess.selector;
         return selectors;
     }
 

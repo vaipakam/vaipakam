@@ -565,6 +565,59 @@ export default function LoanDetails() {
               </span>
             </div>
           )}
+          {/* Basic-mode keeper summary — surfaces the per-side flag that
+              matters to this user (lender OR borrower, resolved from NFT
+              ownership) with a one-click toggle and a link to the full
+              keeper-whitelist surface. Visible whenever the viewer is a
+              party to the loan, even in non-advanced mode, so users can
+              enable or disable keeper delegation at any time during the
+              loan's life without hunting through advanced views. */}
+          {!showAdvanced && (isLender || isBorrower) && (
+            <div className="data-row">
+              <span className="data-label">Keeper delegation</span>
+              <span
+                className="data-value"
+                style={{
+                  fontSize: "0.82rem",
+                  display: "flex",
+                  gap: 8,
+                  alignItems: "center",
+                  flexWrap: "wrap",
+                }}
+              >
+                {(isLender
+                  ? loan.lenderKeeperAccessEnabled
+                  : loan.borrowerKeeperAccessEnabled)
+                  ? "Enabled"
+                  : "Disabled"}
+                {canAct && (
+                  <button
+                    className="btn btn-secondary btn-sm"
+                    disabled={actionLoading}
+                    onClick={() =>
+                      handleToggleLoanKeeper(
+                        !(isLender
+                          ? loan.lenderKeeperAccessEnabled
+                          : loan.borrowerKeeperAccessEnabled),
+                      )
+                    }
+                  >
+                    {(isLender
+                      ? loan.lenderKeeperAccessEnabled
+                      : loan.borrowerKeeperAccessEnabled)
+                      ? "Disable"
+                      : "Enable"}
+                  </button>
+                )}
+                <Link
+                  to="/app/keepers"
+                  style={{ fontSize: "0.76rem", color: "var(--brand)" }}
+                >
+                  Manage keepers →
+                </Link>
+              </span>
+            </div>
+          )}
           {showAdvanced && (
             <>
               <div className="data-row">

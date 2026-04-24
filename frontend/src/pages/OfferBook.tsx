@@ -60,6 +60,11 @@ interface OfferData {
   accepted: boolean;
   assetType: number;
   tokenId: bigint;
+  /** Mirrors the on-chain `offer.keeperAccessEnabled` flag. The offer
+   *  creator can flip this any time via `setOfferKeeperAccess` while
+   *  the offer is still open. Accepting an offer latches the flag into
+   *  the resulting loan's per-side keeper state. */
+  keeperAccessEnabled: boolean;
 }
 
 type TabFilter = 'both' | 'lender' | 'borrower';
@@ -128,6 +133,7 @@ type RawOffer = {
   accepted: boolean;
   assetType: bigint | number;
   tokenId: bigint;
+  keeperAccessEnabled: boolean;
 };
 
 function toOfferData(r: RawOffer): OfferData {
@@ -146,6 +152,7 @@ function toOfferData(r: RawOffer): OfferData {
     accepted: r.accepted,
     assetType: Number(r.assetType),
     tokenId: r.tokenId,
+    keeperAccessEnabled: Boolean(r.keeperAccessEnabled),
   };
 }
 
@@ -182,6 +189,7 @@ export default function OfferBook() {
     if (perSide > maxPerSide) setPerSide(maxPerSide);
   }, [maxPerSide, perSide]);
   const [acceptingId, setAcceptingId] = useState<bigint | null>(null);
+  const [togglingKeeperId, setTogglingKeeperId] = useState<bigint | null>(null);
   const [pendingOffer, setPendingOffer] = useState<OfferData | null>(null);
   const [fallbackConsent, setFallbackConsent] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -347,6 +355,52 @@ export default function OfferBook() {
     setFallbackConsent(false);
     setDiscountPreview(null);
     setPendingOffer(offer);
+  };
+
+  // Per-offer keeper toggle — callable by the offer creator at any point
+  // before the offer is accepted. Mirrors `setLoanKeeperAccess` on the
+  // post-acceptance side. The on-chain fn reverts if the caller isn't
+  // the creator or if the offer has already been accepted, so UI-side
+  // we just check the button visibility via `isOwn`.
+  const handleToggleOfferKeeper = async (
+    offerId: bigint,
+    next: boolean,
+  ) => {
+    if (!diamond || togglingKeeperId !== null) return;
+    const step = beginStep({
+      area: 'keeper',
+      flow: 'setOfferKeeperAccess',
+      step: 'submit-tx',
+      wallet: address ?? undefined,
+      chainId: chainId ?? undefined,
+      offerId: offerId.toString(),
+    });
+    setTogglingKeeperId(offerId);
+    setError(null);
+    try {
+      const tx = await (
+        diamond as unknown as {
+          setOfferKeeperAccess: (
+            id: bigint,
+            enabled: boolean,
+          ) => Promise<{ hash: string; wait: () => Promise<unknown> }>;
+        }
+      ).setOfferKeeperAccess(offerId, next);
+      await tx.wait();
+      step.success({ note: `enabled=${next}` });
+      // Optimistic update in place — the row's keeper-badge flips right
+      // away without waiting for a full offer-list re-scan.
+      setOffers((prev) =>
+        prev.map((o) =>
+          o.id === offerId ? { ...o, keeperAccessEnabled: next } : o,
+        ),
+      );
+    } catch (err) {
+      setError(decodeContractError(err, 'Failed to toggle offer keeper flag'));
+      step.failure(err);
+    } finally {
+      setTogglingKeeperId(null);
+    }
   };
 
   // Load VPFI-discount preview when the modal opens against a Lender offer
@@ -564,6 +618,8 @@ export default function OfferBook() {
           address={address}
           acceptingId={acceptingId}
           onAccept={handleAcceptOffer}
+          onToggleKeeper={handleToggleOfferKeeper}
+          togglingKeeperId={togglingKeeperId}
           statusView={statusView}
         />
       )}
@@ -691,6 +747,8 @@ export default function OfferBook() {
               address={address}
               acceptingId={acceptingId}
               onAccept={handleAcceptOffer}
+          onToggleKeeper={handleToggleOfferKeeper}
+          togglingKeeperId={togglingKeeperId}
               statusView={statusView}
             />
           )}
@@ -719,6 +777,8 @@ export default function OfferBook() {
               address={address}
               acceptingId={acceptingId}
               onAccept={handleAcceptOffer}
+          onToggleKeeper={handleToggleOfferKeeper}
+          togglingKeeperId={togglingKeeperId}
               statusView={statusView}
             />
           )}
@@ -1021,10 +1081,12 @@ interface OfferTableProps {
   address: string | null;
   acceptingId: bigint | null;
   onAccept: (id: bigint) => void;
+  onToggleKeeper: (id: bigint, next: boolean) => void;
+  togglingKeeperId: bigint | null;
   statusView: StatusView;
 }
 
-function OfferTable({ title, subtitle, offers, anchorRateBps, address, acceptingId, onAccept, statusView }: OfferTableProps) {
+function OfferTable({ title, subtitle, offers, anchorRateBps, address, acceptingId, onAccept, onToggleKeeper, togglingKeeperId, statusView }: OfferTableProps) {
   return (
     <div className="card" style={{ marginTop: 16 }}>
       <div className="card-title" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
@@ -1092,7 +1154,28 @@ function OfferTable({ title, subtitle, offers, anchorRateBps, address, accepting
                       {statusView === 'closed' ? (
                         <span className="status-badge settled">Filled</span>
                       ) : isOwn ? (
-                        <span className="status-badge settled">Your Offer</span>
+                        // Offer creator sees: Your-Offer badge + a keeper
+                        // toggle. The toggle goes through setOfferKeeperAccess
+                        // on-chain; it can flip freely at any point while the
+                        // offer is still open, matching the per-loan keeper
+                        // control available post-acceptance.
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 4, alignItems: 'flex-end' }}>
+                          <span className="status-badge settled">Your Offer</span>
+                          <button
+                            type="button"
+                            className="btn btn-secondary btn-sm"
+                            disabled={togglingKeeperId === offer.id}
+                            onClick={() => onToggleKeeper(offer.id, !offer.keeperAccessEnabled)}
+                            data-tooltip="Toggle whether keepers whitelisted on your profile can drive this offer on your behalf. Change anytime before acceptance."
+                            style={{ fontSize: '0.72rem', padding: '3px 8px' }}
+                          >
+                            {togglingKeeperId === offer.id
+                              ? '…'
+                              : offer.keeperAccessEnabled
+                                ? 'Keepers: on'
+                                : 'Keepers: off'}
+                          </button>
+                        </div>
                       ) : address ? (
                         <button
                           className="btn btn-primary btn-sm"
