@@ -33,6 +33,17 @@ export interface Env {
   ZEROEX_API_KEY?: string;
   ONEINCH_API_KEY?: string;
 
+  // Phase 7a.4 — autonomous keeper. When `KEEPER_ENABLED == 'true'`
+  // AND `KEEPER_PRIVATE_KEY` is set, the watcher submits
+  // `triggerLiquidation` on any subscribed-user loan whose on-chain
+  // HF crosses 1.0. The keeper EOA needs gas pre-funded on every
+  // chain it operates against (`RPC_*` configured + `DIAMOND_ADDR_*`
+  // populated). Liquidation is permissionless on-chain — losing the
+  // race to another keeper / MEV bot is fine; the diamond reverts
+  // the second tx so no double-spend.
+  KEEPER_ENABLED?: string;
+  KEEPER_PRIVATE_KEY?: string;
+
   // CORS origin the HTTP endpoints will accept. Set to the frontend
   // origin(s); defaults to the vars entry in wrangler.jsonc.
   FRONTEND_ORIGIN: string;

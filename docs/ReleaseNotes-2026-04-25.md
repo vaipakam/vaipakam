@@ -180,14 +180,67 @@ fixtures register a legacy-shim adapter that wraps the original
 test corpus continues to exercise the same 0x mock without rewriting
 1300+ liquidation assertions.
 
-**What still ships in a follow-up.** The frontend swap-quote orchestrator
-(`useLiquidationQuotes` hook + `LiquidateButton` UI in Loan Details +
-Cloudflare Worker proxy for 0x / 1inch API keys + UniV3 + Balancer V2
-subgraph integration for fee-tier and poolId discovery) is the next
-chunk and will land before the Phase 7a feature is user-visible. The
-HF watcher's autonomous-trigger path will be updated to fetch quotes
-server-side and pack the ranked try-list — same orchestrator code shared
-between frontend and watcher.
+**Frontend quote orchestration shipped.** A new `LiquidateButton` lands
+on every Active loan with on-chain Health Factor below 1.0 (visible
+both to the loan's lender / borrower and to any third-party watcher
+who navigated to the loan-details page — liquidation is permissionless).
+Click flow:
+1. Frontend opens four parallel quote requests — 0x v2 Swap API +
+   1inch v6 Swap API (both routed through a Cloudflare Worker that
+   injects the operator API keys server-side, so neither key ships
+   to a browser); UniswapV3 QuoterV2 (direct on-chain `eth_call`,
+   probing 500 / 3000 / 10000 fee tiers and picking whichever pool
+   returns the most output); Balancer V2 (stubbed pending the
+   subgraph integration follow-up).
+2. Successful responses are sorted by expected output (best first)
+   and surfaced as "Best quote: 12,459 USDC via 1inch · Fallback
+   plan: UniV3 → 0x · Unavailable: Balancer V2".
+3. On click, the ranked list submits via wagmi to
+   `triggerLiquidation(loanId, calls)`. The diamond runs the failover
+   in the submitted order — best-quote tries first, next-best on
+   stale-revert.
+4. A "Refresh quotes" button re-fetches if quotes have been sitting
+   too long.
+
+**HF watcher — autonomous liquidator.** Phase 7a.4. The cron-triggered
+HF watcher in the existing Cloudflare Worker now optionally submits
+`triggerLiquidation` itself when a subscribed user's loan crosses the
+1.0 Health-Factor line. Eligibility is independent of the user's
+notification thresholds — purely on-chain HF below 1.0. Per-tick
+dedupe prevents resubmitting the same loan twice in one cron sweep
+(the diamond would revert on a status check anyway, but this saves an
+RPC roundtrip + gas griefing). Routing is identical to the frontend
+flow: same four DEX venues quoted in parallel, ranked by expected
+output, packed as `AdapterCall[]`, and submitted from the keeper's
+EOA on whichever chain the loan lives on. Disabled by default —
+operator must set both `KEEPER_ENABLED=true` and `KEEPER_PRIVATE_KEY`
+in the Worker's secret store, and pre-fund the keeper EOA with gas
+on every chain it should operate against. Losing the race to another
+keeper or MEV bot is fine: the second `triggerLiquidation` reverts
+on the status check, no funds at risk. Logs each attempt with the
+chain, loan id, expected proceeds, and which adapter the diamond
+committed against.
+
+**Cloudflare Worker quote-proxy routes** (extended on the existing
+hf-watcher worker). Two new POST endpoints, `/quote/0x` and
+`/quote/1inch`, accept the same JSON body shape (chainId, sellToken,
+buyToken, sellAmount, taker, optional slippageBps), forward to the
+respective aggregator with the operator's API key injected
+server-side, and pass the response through verbatim. Returns 503 if
+the matching key isn't configured, so the frontend's other quote
+sources (UniV3 + Balancer) still populate the try-list when one
+aggregator is offline. Hosted alongside the existing HF-alert
+endpoints under the same CORS gate; frontend origin is the only
+allowed caller.
+
+**What still ships in a follow-up.**
+- **Balancer V2 quote integration** — needs Balancer V2 subgraph for
+  pool discovery + on-chain `BalancerQueries.queryBatchSwap` for
+  exact output. Stubbed as `null` for now; the orchestrator handles
+  null returns gracefully (drops the venue from the try-list).
+- **Worker rate-limit** on the `/quote/*` routes — Cloudflare's built-in
+  rate-limit feature configured via the dashboard, layered on top of
+  the existing CORS gate. Not yet wired.
 
 ## UI polish
 
@@ -213,16 +266,19 @@ chrome went away.
   amount, nonce reuse) is queued as a nice-to-have before the eventual
   mainnet cutover; mock-Permit2 covers the integration logic in the
   forge suite.
-- **Phase 7a** (4-DEX swap failover): contract layer shipped today.
-  Adapters, LibSwap failover library, AdminFacet adapter-management
-  surface, RiskFacet / DefaultedFacet / ClaimFacet rewired to call
-  the failover library, full test corpus migrated to the new signatures
-  via a legacy-shim adapter. 19/19 new adapter unit tests green;
-  full regression at 1358 passing / 3 unique failing tests at the
-  end of day, all isolated to legacy-shim edge cases that don't affect
-  the production code path. Frontend quote orchestrator + Cloudflare
-  Worker quote proxy + HF watcher quote integration are queued as the
-  next chunk.
+- **Phase 7a** (4-DEX swap failover): COMPLETE end-to-end. Contract
+  layer (4 adapters + LibSwap failover library + AdminFacet adapter-
+  management surface + RiskFacet / DefaultedFacet / ClaimFacet rewired
+  through the failover library + full test-corpus migration via a
+  legacy ZeroEx shim). Frontend (swap-quote orchestrator hook +
+  LiquidateButton with best-quote preview wired into Loan Details).
+  Cloudflare Worker (`/quote/0x` and `/quote/1inch` proxies with
+  server-side API-key injection). HF watcher autonomous keeper
+  (Phase 7a.4 — submits `triggerLiquidation` on any subscribed-user
+  loan whose on-chain HF crosses 1.0, disabled by default until
+  `KEEPER_ENABLED=true` and `KEEPER_PRIVATE_KEY` are populated in
+  the Worker secret store). Full regression: 1406 passing / 0 failed
+  / 5 skipped. Worker + frontend TypeScript both clean.
 - **Phase 7b** (3-venue liquidity OR-logic at oracle layer): not
   started, untouched by today's Phase 7a swap-execution work.
 - **Phase 9** (growth sprint — points, leaderboards, Frames, PWA):

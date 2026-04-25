@@ -23,6 +23,7 @@ import {
 } from './db';
 import { formatAlert, sendMessage } from './telegram';
 import { sendPush } from './push';
+import { maybeAutonomousLiquidate, resetKeeperDedupe } from './keeper';
 
 // ABI stubs — just enough to read the loan list + HF. Narrow slice keeps
 // the worker bundle small.
@@ -48,6 +49,11 @@ const BAND_RANK: Record<Band, number> = {
 export async function runWatcher(env: Env): Promise<void> {
   // Sweep expired handshake codes first so the table stays bounded.
   await sweepExpiredLinks(env.DB);
+  // Reset the per-tick dedupe set so a previously-attempted loan can
+  // be retried this tick if it's still HF-liquidatable. The diamond
+  // reverts second-attempts on already-liquidated loans, so this is
+  // safe even when the keeper races itself.
+  resetKeeperDedupe();
 
   const chains = getChainConfigs(env);
   if (chains.length === 0) {
@@ -104,6 +110,13 @@ async function watchChain(env: Env, chain: ChainConfig): Promise<void> {
           if (BAND_RANK[band] > BAND_RANK[prev.last_band]) {
             await dispatchAlert(env, user, chain, loanId, hf, band);
           }
+
+          // Phase 7a.4 — autonomous liquidation. Independent of the
+          // user's notification thresholds: triggers strictly on
+          // on-chain HF < 1.0. The keeper attempts at most once per
+          // (chain, loan) per cron tick; permissionless trigger means
+          // any other keeper / MEV bot may beat us, which is fine.
+          await maybeAutonomousLiquidate(env, chain, loanIdBig, hfRaw, client);
 
           await putNotifyState(env.DB, {
             wallet: user.wallet,
