@@ -48,13 +48,21 @@ export async function handleBlockaidScan(
   req: Request,
   env: Env,
 ): Promise<Response> {
+  // Resolve the allowed CORS origin **per request** rather than always
+  // returning the first entry of FRONTEND_ORIGIN. The preflight
+  // (`index.ts:preflight`) already reflects the requesting origin if it
+  // matches the allow-list; the actual response must match, otherwise
+  // the browser passes preflight but blocks the body for any allowed
+  // origin after the first (e.g. the staging entry when
+  // `FRONTEND_ORIGIN = "https://vaipakam.com,https://staging.vaipakam.com"`).
+  const corsOrigin = resolveAllowedOrigin(req, env);
   if (!(await checkRateLimit(req, env.SCAN_BLOCKAID_RATELIMIT))) {
-    return jsonErr(env, 429, 'rate-limited');
+    return jsonErr(429, 'rate-limited', corsOrigin);
   }
   const body = await parseBody(req);
-  if (!body) return jsonErr(env, 400, 'invalid-payload');
+  if (!body) return jsonErr(400, 'invalid-payload', corsOrigin);
   if (!env.BLOCKAID_API_KEY) {
-    return jsonErr(env, 503, 'blockaid-not-configured');
+    return jsonErr(503, 'blockaid-not-configured', corsOrigin);
   }
 
   const blockaidBody = {
@@ -82,7 +90,7 @@ export async function handleBlockaidScan(
       body: JSON.stringify(blockaidBody),
     },
   );
-  return passthrough(upstream, env);
+  return passthrough(upstream, corsOrigin);
 }
 
 // ─── Helpers ───────────────────────────────────────────────────────────
@@ -137,7 +145,10 @@ async function parseBody(req: Request): Promise<ScanRequest | null> {
   };
 }
 
-async function passthrough(upstream: Response, env: Env): Promise<Response> {
+async function passthrough(
+  upstream: Response,
+  corsOrigin: string,
+): Promise<Response> {
   let body: unknown;
   try {
     body = await upstream.json();
@@ -148,19 +159,36 @@ async function passthrough(upstream: Response, env: Env): Promise<Response> {
     status: upstream.status,
     headers: {
       'Content-Type': 'application/json',
-      'Access-Control-Allow-Origin': env.FRONTEND_ORIGIN.split(',')[0] ?? '*',
+      'Access-Control-Allow-Origin': corsOrigin,
     },
   });
 }
 
-function jsonErr(env: Env, status: number, code: string): Response {
+function jsonErr(status: number, code: string, corsOrigin: string): Response {
   return new Response(JSON.stringify({ error: code }), {
     status,
     headers: {
       'Content-Type': 'application/json',
-      'Access-Control-Allow-Origin': env.FRONTEND_ORIGIN.split(',')[0] ?? '*',
+      'Access-Control-Allow-Origin': corsOrigin,
     },
   });
+}
+
+/**
+ * Echo the requesting `Origin` header back if and only if it is in the
+ * comma-separated `FRONTEND_ORIGIN` allow-list. Returns the first
+ * allow-list entry as a safe fallback when the request lacks an Origin
+ * (non-browser callers) or the origin doesn't match — that fallback
+ * keeps debug curl calls and same-origin worker tests working without
+ * granting cross-origin access to unlisted callers.
+ */
+function resolveAllowedOrigin(req: Request, env: Env): string {
+  const origin = req.headers.get('Origin') ?? '';
+  const allow = env.FRONTEND_ORIGIN.split(',').map((s) => s.trim());
+  if (origin && allow.includes(origin)) {
+    return origin;
+  }
+  return allow[0] ?? '*';
 }
 
 function blockaidChainName(chainId: number): string {

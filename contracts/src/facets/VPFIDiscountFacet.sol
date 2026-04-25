@@ -241,9 +241,13 @@ contract VPFIDiscountFacet is
      *         was paid for on a non-Base chain and arrived via the
      *         {VPFIBuyReceiver} OApp.
      * @dev Gated to `s.bridgedBuyReceiver`. Runs the IDENTICAL
-     *      caps/rate/reserve pipeline as {buyVPFIWithETH} so the 200K
-     *      global + 2K per-wallet invariant holds across the whole
-     *      mesh (Base is the only gate).
+     *      caps/rate/reserve pipeline as {buyVPFIWithETH} so the 2.3M
+     *      global cap holds across the whole mesh (Base is the only
+     *      gate). The per-wallet cap (default 30K VPFI) is enforced
+     *      **per origin chain** — this call's `originEid` is the
+     *      bucket key, so a buyer who has spent their cap on Polygon
+     *      can still buy up to the cap on Optimism (per
+     *      docs/TokenomicsTechSpec.md §8a).
      *
      *      VPFI is transferred to `msg.sender` (the receiver contract),
      *      which then fires an OFT send to deliver it to `buyer` on
@@ -259,10 +263,12 @@ contract VPFIDiscountFacet is
      *        - Same cap/rate/reserve errors as {buyVPFIWithETH}.
      *
      *      Emits {VPFIBridgedBuyProcessed}.
-     * @param buyer         Buyer on the origin chain (per-wallet cap key).
-     * @param originEid     LayerZero eid of the buyer's origin chain
-     *                      (for observability only — caps are a single
-     *                      global key per address, not per-chain).
+     * @param buyer         Buyer on the origin chain.
+     * @param originEid     LayerZero eid of the buyer's origin chain.
+     *                      Used as the second key on
+     *                      `vpfiFixedRateSoldToByEid[buyer][originEid]`
+     *                      so the per-wallet cap is bucketed per origin
+     *                      chain (NOT shared globally across all chains).
      * @param ethAmountPaid Native ETH the buyer paid on the origin
      *                      chain — used to size the VPFI out at the
      *                      current `weiPerVpfi`.

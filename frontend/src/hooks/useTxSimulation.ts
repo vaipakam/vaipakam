@@ -87,10 +87,19 @@ export function useTxSimulation(input: TxSimInput | null, debounceMs = 400) {
     } catch (err) {
       if (myReq !== reqIdRef.current) return;
       const msg = err instanceof Error ? err.message : 'preview failed';
-      // 503 (worker says key not configured) and any network-class
-      // failure both downgrade to 'unavailable' so the UI renders the
-      // subtle footer rather than an alarming error state.
-      if (msg === 'blockaid-not-configured' || msg.startsWith('network')) {
+      // Per the docs (`docs/WebsiteReadme.md`): "Blockaid unavailability
+      // must fail soft: it may collapse to a subtle preview-unavailable
+      // state, but it must not block the on-chain transaction path by
+      // itself." Anything that means "the scanner couldn't give us an
+      // answer" — missing key, network hiccup, rate-limit, upstream
+      // outage, etc. — downgrades to 'unavailable'. Only programmer
+      // bugs (a thrown synchronous exception we genuinely don't
+      // recognise) surface as a hard error.
+      const failSoft =
+        msg === 'blockaid-not-configured' ||
+        msg.startsWith('network') ||
+        msg.startsWith('proxy ');
+      if (failSoft) {
         setResult({ status: 'unavailable' });
         return;
       }
