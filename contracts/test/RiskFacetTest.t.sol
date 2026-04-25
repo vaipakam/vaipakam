@@ -1853,7 +1853,10 @@ contract RiskFacetTest is Test {
 
         uint256 lenderBefore = IERC20(mockERC20).balanceOf(lender);
         vm.prank(lender);
-        ClaimFacet(address(diamond)).claimAsLender(loanId);
+        // Phase 7a: auto-retry was removed from single-arg claimAsLender;
+        // tests asserting retry success use the explicit overload that
+        // takes a ranked AdapterCall[] try-list.
+        ClaimFacet(address(diamond)).claimAsLenderWithRetry(loanId, defaultAdapterCalls());
 
         assertEq(
             IERC20(mockERC20).balanceOf(lender) - lenderBefore,

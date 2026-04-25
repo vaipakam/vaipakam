@@ -25,6 +25,14 @@ export interface Env {
   // Cloudflare secret store, never commit.
   PUSH_CHANNEL_PK?: string;
 
+  // Phase 7a — aggregator API keys (secrets). The frontend never
+  // sees these; quotes are fetched server-side and the response is
+  // proxied through. Without a key set, the matching `/quote/...`
+  // route returns 503 so the frontend's other adapter quotes still
+  // populate the failover try-list.
+  ZEROEX_API_KEY?: string;
+  ONEINCH_API_KEY?: string;
+
   // CORS origin the HTTP endpoints will accept. Set to the frontend
   // origin(s); defaults to the vars entry in wrangler.jsonc.
   FRONTEND_ORIGIN: string;

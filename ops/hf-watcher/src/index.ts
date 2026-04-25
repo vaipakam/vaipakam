@@ -15,6 +15,7 @@ import {
   upsertThresholds,
 } from './db';
 import { extractLinkCode, sendMessage, type TelegramUpdate } from './telegram';
+import { handle0xQuote, handle1inchQuote } from './quoteProxy';
 
 export default {
   async scheduled(
@@ -52,6 +53,17 @@ export default {
 
     if (url.pathname === '/link/telegram' && req.method === 'POST') {
       return handleIssueTelegramLink(req, env);
+    }
+
+    // Phase 7a — aggregator quote proxies. Frontend posts the (chain,
+    // tokens, amount, taker) tuple; worker proxies to 0x or 1inch with
+    // server-side API key injected, returns the aggregator's JSON
+    // pass-through. Used by the LiquidateButton's quote orchestrator.
+    if (url.pathname === '/quote/0x' && req.method === 'POST') {
+      return handle0xQuote(req, env);
+    }
+    if (url.pathname === '/quote/1inch' && req.method === 'POST') {
+      return handle1inchQuote(req, env);
     }
 
     return new Response('Not found', { status: 404 });

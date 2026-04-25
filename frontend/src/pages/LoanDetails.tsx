@@ -37,6 +37,7 @@ import { AddressDisplay } from "../components/app/AddressDisplay";
 import { HealthFactorGauge, LTVBar } from "../components/app/RiskGauge";
 import { LiquidationProjection } from "../components/app/LiquidationProjection";
 import { LenderDiscountCard } from "../components/app/LenderDiscountCard";
+import { LiquidateButton } from "../components/app/LiquidateButton";
 import "./LoanDetails.css";
 
 export default function LoanDetails() {
@@ -266,7 +267,21 @@ export default function LoanDetails() {
       step: "submit-tx",
     });
     try {
-      const tx = await diamond.triggerDefault(BigInt(loanId!));
+      // Phase 7a: triggerDefault now takes a ranked AdapterCall[] try-list.
+      // This simple "Trigger Default" button is a grace-period-expired
+      // fallback path — we submit an empty array so the swap chain
+      // short-circuits to FallbackPending (illiquid collateral path or
+      // lender-claim route). Users wanting an optimized swap-based
+      // default should use the `LiquidateButton` on the same page,
+      // which fetches quotes from all DEX venues first.
+      const tx = await (
+        diamond as unknown as {
+          triggerDefault: (
+            id: bigint,
+            calls: { adapterIdx: bigint; data: `0x${string}` }[],
+          ) => Promise<{ hash: string; wait: () => Promise<unknown> }>;
+        }
+      ).triggerDefault(BigInt(loanId!), []);
       setTxHash(tx.hash);
       await tx.wait();
       loadLoan();
@@ -803,6 +818,35 @@ export default function LoanDetails() {
               />
             </div>
           )}
+
+          {/* Phase 7a — HF-based liquidation with on-the-fly quote
+              orchestration across 0x / 1inch / UniswapV3 / Balancer V2.
+              Surfaces for any HF-liquidatable Active loan (HF < 1).
+              Renders above the "Trigger Default" card since HF-based
+              liquidation is the faster path when both apply. */}
+          {isActive &&
+            hf !== null &&
+            hf < 10n ** 18n &&
+            activeDiamondAddr && (
+              <div className="action-group">
+                <h4 className="action-title">Liquidate (HF &lt; 1)</h4>
+                <p className="action-desc">
+                  This loan is undercollateralized. Any wallet may liquidate
+                  — collateral is swapped to principal across the best-priced
+                  DEX and the lender is made whole. You collect a liquidator
+                  incentive (up to 3% of proceeds, tapering with realized
+                  slippage).
+                </p>
+                <LiquidateButton
+                  loanId={BigInt(loanId!)}
+                  chainId={chainId ?? 0}
+                  collateralAsset={loan.collateralAsset as Address}
+                  collateralAmount={loan.collateralAmount}
+                  principalAsset={loan.principalAsset as Address}
+                  diamondAddress={activeDiamondAddr as Address}
+                />
+              </div>
+            )}
 
           {availability.triggerDefault && (
             <div className="action-group">
