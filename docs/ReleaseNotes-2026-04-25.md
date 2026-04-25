@@ -10,8 +10,10 @@ calculator + HF alerts + approval revoke surface), **Phase 8b**
 (Uniswap Permit2 single-tx flows + Blockaid transaction-scan preview),
 **Phase 7a** (4-DEX swap failover for liquidations + autonomous HF-
 watcher keeper), **Phase 7b.1** (3-V3-clone OR-logic for oracle-layer
-liquidity classification), and a UI-polish fix for the diagnostics
-drawer.
+liquidity classification), **Phase 7b.2** (Tellor + API3 + DIA
+secondary price-oracle quorum with Soft 2-of-N decision rule; Pyth
+removed in favor of symbol-derived no-per-asset-config alternatives),
+and a UI-polish fix for the diagnostics drawer.
 
 ## Phase 8a — UX polish: ENS, liq-price calculator, HF alerts, revoke surface
 
@@ -366,11 +368,151 @@ string keys, Umbrella has limited chain coverage, UMA's optimistic
 delay (hours-long dispute window) is incompatible with spot-price
 freshness requirements.
 
-**Status at end-of-day 2026-04-25**: contract scaffolding for 7b.1
-landed and regression-clean (1361 passing / 0 failed in the
-no-invariants subset, identical to the pre-Phase-7b baseline). 7b.1.c
-test additions, 7b.1 frontend pre-flight, and 7b.2 Tellor integration
-all queued.
+**Status at end-of-day 2026-04-25**: 7b.1 contracts + 14 targeted
+tests + frontend 0x preflight all landed. 7b.2 contracts (Tellor +
+API3 + DIA + Soft 2-of-N quorum, Pyth removed) also landed clean.
+1359 passing / 0 failed in the no-invariants regression (down from
+1375 because the 16-test PythDeviation suite was deleted as part of
+Pyth removal).
+
+### Phase 7b.2 — symbol-derived secondary oracles + Soft 2-of-N quorum
+
+**The original plan called for Tellor + API3 + DIA on top of an
+existing Pyth integration. Research surfaced two findings that
+reshaped the plan**:
+
+1. **Pyth requires a per-asset `priceId` mapping** in diamond
+   storage — every new collateral asset needs a governance write to
+   install its priceId before pricing works. This conflicts with the
+   no-per-asset-config policy locked in for Phase 7b.
+2. **Tellor / API3 / DIA all key by string symbol**, not asset
+   address. Their lookup keys are derivable on-chain from
+   `IERC20.symbol()` — no per-asset config required.
+
+**Decision**: remove Pyth entirely; replace with Tellor + API3 + DIA.
+Three secondaries, all symbol-derived, zero per-asset governance
+writes. The previous `setPythEndpoint` / `setPythFeedConfig` setters,
+the `PythFeedConfig` struct, the `IPyth.sol` interface, the
+`MockPyth.sol` test mock, and the 16-test `PythDeviation.t.sol`
+suite were all stripped before any production write was made (the
+diamond is pre-mainnet, so the storage-layout shift is safe).
+
+**The new "Soft 2-of-N quorum" decision rule** (Interpretation B,
+chosen over a strict 2-of-N that would have been operationally
+fragile):
+
+For each price read:
+
+1. Run all three secondary probes (Tellor / API3 / DIA). Each
+   returns one of:
+   - **Unavailable** — silent skip (oracle not configured / symbol
+     unreadable / no reporter coverage / stale read / read reverted).
+   - **Agree** — value within the chain-level deviation tolerance
+     of the Chainlink primary.
+   - **Disagree** — value beyond tolerance.
+
+2. Decision:
+   - **All three Unavailable** → accept the Chainlink price
+     (graceful fallback, preserves operability on chains / assets
+     with sparse secondary coverage).
+   - **At least one Agree** (regardless of any Disagree alongside)
+     → accept the Chainlink price. The 2-source quorum is hit by
+     Chainlink + the agreeing secondary.
+   - **Some Disagree AND no Agree** → revert
+     `OraclePriceDivergence`.
+
+This mirrors the LayerZero DVN diversity model (Phase 1 cross-
+chain hardening) but applied to spot pricing: a single oracle
+compromise can no longer push a disagreeing price through the
+gate; an attacker has to compromise (or DoS at the same time)
+Chainlink AND every secondary that has data for the asset.
+
+**Key derivation per source**:
+
+- **Tellor**: `keccak256(abi.encode("SpotPrice", abi.encode(symbol, "usd")))` —
+  symbol read on-chain via `IERC20.symbol()`, lowercased.
+- **API3**: `keccak256(abi.encodePacked(bytes32("<SYMBOL>/USD")))` —
+  symbol uppercased, packed left-aligned into 32 bytes.
+- **DIA**: passes string `"<SYMBOL>/USD"` directly to the oracle's
+  `getValue(string)` view.
+
+The `IERC20.symbol()` helper accepts both string-returning tokens
+(modern ERC-20) and bytes32-returning tokens (legacy MakerDAO-style)
+and silently classifies non-decodable symbols as Unavailable.
+
+**Symbol-collision concern**: an attacker could deploy a malicious
+ERC-20 whose `symbol()` returns "ETH" (so the secondary lookups
+return ETH's price). The pricing path STILL gates against Chainlink
+as primary — the malicious token would need a Chainlink feed AND
+match within the deviation tolerance. The risk is meaningfully
+bounded but not zero; auditors should review.
+
+**Why API3, Tellor, and DIA but not Pyth, Umbrella, UMA**:
+
+| Source | Lookup keying | On-chain derivable? | Verdict |
+|---|---|---|---|
+| Chainlink Feed Registry | asset address | yes (registry resolves internally) | already used (primary) |
+| Pyth | bytes32 priceId | no (no symbol bridge) | **REMOVED** in this phase |
+| Tellor | symbol string in queryId | yes via `asset.symbol()` | **ADDED** |
+| API3 | dAPI name (string symbol) | yes via `asset.symbol()` | **ADDED** |
+| DIA | string key like "ETH/USD" | yes via `asset.symbol()` | **ADDED** |
+| Umbrella Network | merkle proof per chunk | requires per-asset cfg | rejected |
+| UMA | optimistic dispute window | hours-long delay | rejected (unsuitable for spot pricing) |
+
+**New chain-level admin surface** (`OracleAdminFacet`):
+
+- `setTellorOracle(address)` / `getTellorOracle()`
+- `setApi3ServerV1(address)` / `getApi3ServerV1()`
+- `setDIAOracleV2(address)` / `getDIAOracleV2()`
+- `setSecondaryOracleMaxDeviationBps(uint16)` (default 500 = 5%)
+- `setSecondaryOracleMaxStaleness(uint40)` (default 3600 = 1h)
+
+All ADMIN_ROLE-gated; timelock-gated post-handover. Setting any
+oracle address to zero disables that leg of the quorum; the
+remaining sources still apply (or graceful fallback to Chainlink-
+only if all three are zero).
+
+**Operational guidance**: every chain that hosts loans should
+configure at least 2 of the 3 secondaries to deliver real cross-
+provider redundancy. Pre-deploy verification (`ChainByChainChecks.md`)
+now includes a "≥ 2 of 3 secondaries configured" check.
+
+**Files touched**:
+
+- New interfaces: `contracts/src/interfaces/ITellor.sol`,
+  `IApi3ServerV1.sol`, `IDIAOracleV2.sol`.
+- Removed: `contracts/src/interfaces/IPyth.sol`,
+  `contracts/test/mocks/MockPyth.sol`,
+  `contracts/test/PythDeviation.t.sol`.
+- `contracts/src/facets/OracleFacet.sol`: removed
+  `_enforcePythDeviation` + `_normalizePythToPrimary`; added
+  `_enforceSecondaryQuorum` + `_checkTellor` / `_checkApi3` /
+  `_checkDIA` + symbol-derivation helpers (`_safeSymbol`, `_toLower`,
+  `_toUpper`, `_rescale`); new `SecondaryStatus` enum
+  (`Unavailable / Agree / Disagree`).
+- `contracts/src/facets/OracleAdminFacet.sol`: removed
+  `setPythEndpoint` / `getPythEndpoint` / `setPythFeedConfig` /
+  `getPythFeedConfig`; added 10 new wrappers for the Tellor / API3
+  / DIA / deviation / staleness setters + getters.
+- `contracts/src/libraries/LibVaipakam.sol`: removed
+  `PythFeedConfig` struct + `pythEndpoint` + `pythFeedConfigs`
+  storage slots + `setPythEndpoint` / `setPythFeedConfig` internal
+  setters + Pyth events; added `tellorOracle`, `api3ServerV1`,
+  `diaOracleV2`, `secondaryOracleMaxDeviationBps`,
+  `secondaryOracleMaxStaleness` slots + matching internal setters /
+  effective-getter helpers + `SECONDARY_ORACLE_*_DEFAULT`
+  constants.
+- `contracts/test/SwapAdapterTest.t.sol` — unchanged; Phase 7a path
+  is independent.
+- Pending follow-up: `test/SecondaryQuorumTest.t.sol` to drive the
+  Soft 2-of-N decision matrix end-to-end against mock Tellor /
+  API3 / DIA contracts.
+
+**Storage-layout warning** (no impact in practice): removing the
+mid-struct `pythEndpoint` and `pythFeedConfigs` slots shifts every
+slot below them by 2 positions. Diamond is pre-mainnet so this is
+safe. After the first mainnet deploy this kind of removal will
+require a migration plan instead.
 
 ## UI polish
 
@@ -409,18 +551,23 @@ chrome went away.
   `KEEPER_ENABLED=true` and `KEEPER_PRIVATE_KEY` are populated in
   the Worker secret store). Full regression: 1406 passing / 0 failed
   / 5 skipped. Worker + frontend TypeScript both clean.
-- **Phase 7b** (multi-venue liquidity classification at the oracle
-  layer): contract layer landed today. Pivoted from the originally-
-  scoped UniV3 + Balancer V2 OR (which would have required a per-
-  asset Balancer poolId mapping in governance storage) to a 3-V3-clone
-  OR — Uniswap V3 + PancakeSwap V3 + SushiSwap V3, all of them
-  Uniswap V3 forks at the contract layer. Fee-tier set extended to
-  cover PancakeV3's 2500 bps tier in addition to UniV3's standard
-  set. Zero per-asset governance configuration required. Regression
-  clean (1361 passing / 0 failed in the no-invariants subset).
-  Targeted unit tests for the new OR-combine, the 0x-based frontend
-  pre-flight UX guard, and the Phase 7b.2 Tellor-as-third-price-
-  source upgrade are all queued.
+- **Phase 7b** (multi-venue oracle redundancy): both 7b.1 (depth
+  classification, 3-V3-clone OR-logic) and 7b.2 (price feed,
+  symbol-derived Tellor + API3 + DIA Soft 2-of-N quorum) shipped
+  today. Pivoted from the originally-scoped UniV3 + Balancer V2 OR
+  (would have required per-asset Balancer poolId mapping) to a
+  3-V3-clone OR. Pivoted from Pyth-based price redundancy to
+  symbol-derived Tellor + API3 + DIA after research surfaced that
+  Pyth's `priceId` mapping is per-asset; chose Soft 2-of-N
+  (Interpretation B) over Strict 2-of-N to preserve operability on
+  long-tail assets and chains with sparse secondary coverage. Zero
+  per-asset governance configuration required for either piece.
+  Regression clean: 1359 passing / 0 failed in the no-invariants
+  subset (down 16 from the 1375 figure earlier in the day, because
+  the now-deleted 16-test PythDeviation suite was scrubbed as part
+  of the Pyth removal). Targeted Soft 2-of-N quorum tests
+  (`SecondaryQuorumTest.t.sol`) are queued as the remaining 7b
+  follow-up.
 - **Phase 9** (growth sprint — points, leaderboards, Frames, PWA):
   queued, not started.
 

@@ -20,10 +20,14 @@ before reviewing code.
 
 **Out of scope**
 
-- OpenZeppelin Contracts Upgradeable, Chainlink feed registry, v3-style concentrated-liquidity AMM
-  factory/pool, 0x swap proxy — treated as trusted dependencies.
+- OpenZeppelin Contracts Upgradeable, Chainlink feed registry, the
+  three V3-clone factories (UniswapV3 / PancakeSwap V3 / SushiSwap V3),
+  Balancer V2 Vault, Tellor Oracle, API3 ServerV1, DIA Oracle V2,
+  Uniswap Permit2 — treated as trusted external dependencies.
 - Frontend (`frontend/`) and deployment scripts (`contracts/script/`) —
-  reviewed informally, not part of the audit surface.
+  reviewed informally, not part of the audit surface. The frontend's
+  0x preflight check (Phase 7b.1) is a UX-layer guard only; the
+  on-chain attack surface is the on-chain V3-clone OR-logic.
 
 ---
 
@@ -46,7 +50,7 @@ before reviewing code.
 
 | Role | Address | Powers |
 |------|---------|--------|
-| Owner / admin | Multisig | Facet cuts, pause, treasury config, oracle config, 0x proxy config, allowance target, KYC verifier role |
+| Owner / admin | Multisig | Facet cuts, pause, treasury config, oracle config (Chainlink + Tellor + API3 + DIA + V3-clone factory addresses), swap-adapter chain config, KYC verifier role |
 | Treasury | Multisig | Receives fee skim (`Yield Fee` on interest, 2% liquidation fallback) |
 | KYC verifier | Role-gated address | `ProfileFacet.verifyKYC` — gates loans above `KYC_THRESHOLD_USD` |
 
@@ -148,6 +152,33 @@ protection.
   liquidation falls back to full-collateral transfer (no swap).
 - **Feed Registry deprecation**: Chainlink marked the Feed Registry
   deprecated. Migration to direct aggregators is planned for Phase 2.
+- **No per-asset governance config for oracles or DEX venues**
+  (Phase 7b). The Soft 2-of-N quorum reads `IERC20.symbol()` on-chain
+  to derive Tellor / API3 / DIA query keys. The 3-V3-clone OR-logic
+  discovers pools via `factory.getPool(...)`. Auditors should verify
+  that an attacker cannot manipulate the symbol-derivation path
+  (e.g., a malicious token whose `symbol()` returns a symbol owned
+  by a different asset on the upstream oracle to spoof a price).
+  The OracleFacet only ever applies the secondary check as a
+  *deviation gate against Chainlink's primary*, so a spoofed symbol
+  would have to land within the 5% deviation band to push a price
+  through — not zero risk, but materially bounded.
+- **Soft 2-of-N graceful fallback**: when every secondary returns
+  Unavailable for an asset (no reporter coverage, symbol unreadable,
+  etc.), the protocol accepts the Chainlink-only price. This is
+  deliberate to preserve operability on long-tail assets. A
+  sophisticated attacker who can DoS / silence every secondary on a
+  target asset's symbol can downgrade enforcement to Chainlink-only.
+  Auditors should evaluate whether this fallback is acceptable
+  given the deployed coverage matrix.
+- **Liquidation routing trust** (Phase 7a). The
+  `triggerLiquidation` / `triggerDefault` signature now accepts a
+  caller-supplied ranked `AdapterCall[]` try-list. The caller picks
+  routes; the contract enforces the oracle-derived `minOutputAmount`
+  on every adapter. Auditors should verify that no adapter exposes a
+  side-channel for the caller to weaken `minOutputAmount` — e.g.,
+  by passing crafted calldata that bypasses the underlying DEX's
+  slippage guard.
 
 ---
 

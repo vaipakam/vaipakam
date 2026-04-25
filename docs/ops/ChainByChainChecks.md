@@ -65,24 +65,46 @@ The cron below reads this file, so any deploy must update it atomically with the
 |---|---|---|
 | Not paused | `AdminFacet.paused()` | false (steady state) |
 | Treasury set to multisig | `AdminFacet.getTreasury()` | matches `treasury` in addresses.json |
-| 0x proxy set | reads from storage via `AdminFacet` / loupe | non-zero (if chain has 0x support) |
-| 0x allowance target set | same | non-zero (if chain has 0x support) |
+| Phase 7a swap-adapter chain populated | `AdminFacet.getSwapAdapters()` | length ≥ 1; production target is 4 (ZeroEx, OneInch, UniV3, Balancer V2). A length-0 chain reverts every liquidation. |
 
 ---
 
 ## 4. Oracles
 
+### 4.1 Primary feed (Chainlink)
+
 | Check | Call | Expected |
 |---|---|---|
 | Chainlink registry set | `OracleAdminFacet` storage read | non-zero |
 | USD denominator set | same | non-zero |
-| USDT contract set | same | non-zero |
-| v3-style AMM factory set | same | non-zero |
-| Sequencer uptime feed set (L2 only) | `OracleFacet.getSequencerUptimeFeed()` | non-zero on Base/Arbitrum/Optimism/Scroll; `address(0)` on Ethereum mainnet |
+| ETH denominator set | same | non-zero |
+| WETH contract set | `OracleFacet.getWETH()` (or storage read) | non-zero |
+| Sequencer uptime feed set (L2 only) | `OracleFacet.getSequencerUptimeFeed()` | non-zero on Base/Arbitrum/Optimism/zkEVM; `address(0)` on Ethereum mainnet + BNB Chain |
 | Sequencer currently healthy (L2 only) | `OracleFacet.sequencerHealthy()` | true (false = live outage or <1h since recovery; do not auto-pause, page on-call) |
 | For each supported asset: Chainlink feed fresh | `getAssetPrice(asset)` | `answer > 0` and either `updatedAt > now - 2h` (volatile fast-path) or `updatedAt > now - 25h` AND `decimals == 8` AND `\|answer - $1\| <= 3%` (stablecoin peg grace) |
-| For each supported liquid asset: v3-style AMM pool liquid | `checkLiquidity(asset)` | true |
+
+### 4.2 Phase 7b.1 — multi-venue liquidity classification
+
+| Check | Call | Expected |
+|---|---|---|
+| Uniswap V3 factory set | `OracleAdminFacet.getUniswapV3Factory()` | non-zero where Uni V3 is deployed; `address(0)` on BNB / Polygon zkEVM |
+| PancakeSwap V3 factory set | `AdminFacet.getPancakeswapV3Factory()` | non-zero where PancakeV3 is deployed |
+| SushiSwap V3 factory set | `AdminFacet.getSushiswapV3Factory()` | non-zero where SushiV3 is deployed |
+| At least 2 V3 factories configured | sum of non-zero | ≥ 2 (preserves OR-redundancy; falling to 1 collapses to single-venue dependency) |
+| For each supported liquid asset: at least 1 V3 factory exposes a deep pool | `checkLiquidity(asset)` | true |
 | At least one reference asset passes `checkLiquidityOnActiveNetwork` | | true |
+
+### 4.3 Phase 7b.2 — secondary price-oracle Soft 2-of-N quorum
+
+| Check | Call | Expected |
+|---|---|---|
+| Tellor oracle set | `OracleAdminFacet.getTellorOracle()` | non-zero on every chain that hosts loans |
+| API3 ServerV1 set | `OracleAdminFacet.getApi3ServerV1()` | non-zero on every chain that hosts loans |
+| DIA Oracle V2 set | `OracleAdminFacet.getDIAOracleV2()` | non-zero on every chain that hosts loans |
+| At least 2 of 3 secondaries configured | sum of non-zero | ≥ 2 (preserves cross-provider redundancy; with 1 the quorum reduces to "secondary must agree"; with 0 the check degrades to Chainlink-only by design) |
+| Deviation tolerance reasonable | `OracleAdminFacet.getSecondaryOracleMaxDeviationBps()` | ≤ 1000 (10%); default 500 (5%) |
+| Staleness ceiling reasonable | `OracleAdminFacet.getSecondaryOracleMaxStaleness()` | ≤ 14400 (4h); default 3600 (1h) |
+| For each supported asset: spot read does NOT revert | `getAssetPrice(asset)` | non-reverting (means primary is fresh AND no fresh secondary disagrees) |
 
 Any oracle check that fails = **pause candidate**. Do not auto-pause from the cron; page the on-call instead.
 

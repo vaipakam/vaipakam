@@ -997,6 +997,101 @@ period, governance boundaries locked in at the moment of the change):
   rollup needed; the discount and the fee are computed and settled
   in the same transaction. (§5.2b)
 
+---
+
+## 9. Phase 7 oracle + DEX redundancy admin surface (added 2026-04-25)
+
+The Phase 7 security sprint added two new chain-level admin
+surfaces. Both are admin-gated through `OracleAdminFacet` /
+`AdminFacet` (timelock-gated post-handover); both are explicitly
+**chain-level only** — no per-asset governance writes are required
+when adding new collateral assets.
+
+### 9.1 Phase 7a swap-failover adapter chain (`AdminFacet`)
+
+Liquidation swaps now fail over across a registered list of
+`ISwapAdapter` contracts. Production registers four: `ZeroExAdapter`,
+`OneInchAdapter`, `UniV3Adapter`, `BalancerV2Adapter`. The chain
+is priority-ordered; the failover library iterates and commits on
+the first adapter to return proceeds at least equal to the oracle-
+derived `minOutputAmount`.
+
+| Setter | Purpose |
+|---|---|
+| `addSwapAdapter(address)` | Append to chain (priority = current length). |
+| `removeSwapAdapter(address)` | Remove + shift higher slots down. |
+| `reorderSwapAdapters(address[])` | Replace order with explicit permutation. |
+| `getSwapAdapters() → address[]` | Read priority-ordered chain. |
+
+**Required pre-mainnet**: at least one adapter registered. A diamond
+with zero adapters reverts every liquidation. Recommended: register
+all four production adapters in `[ZeroEx, OneInch, UniV3, Balancer]`
+order at deploy time.
+
+### 9.2 Phase 7b.1 multi-venue liquidity OR-logic (`AdminFacet`)
+
+`OracleFacet.checkLiquidity` runs an OR-combine across three
+Uniswap-V3-fork DEX factories.
+
+| Setter | Purpose |
+|---|---|
+| `setPancakeswapV3Factory(address)` | PancakeSwap V3 factory (chain-specific). Zero disables the leg. |
+| `getPancakeswapV3Factory() → address` | Read current value. |
+| `setSushiswapV3Factory(address)` | SushiSwap V3 factory (chain-specific). Zero disables the leg. |
+| `getSushiswapV3Factory() → address` | Read current value. |
+
+Combined with the pre-existing `setUniswapV3Factory` from
+`OracleAdminFacet`, an asset is classified Liquid iff at least one
+of the three factories exposes an asset/WETH pool meeting the
+`MIN_LIQUIDITY_USD` floor. **No per-asset config**; the probe
+discovers pools via `factory.getPool(token0, token1, fee)` against
+the standard fee-tier set `[3000, 500, 2500, 10000, 100]`.
+
+### 9.3 Phase 7b.2 secondary price-oracle quorum (`OracleAdminFacet`)
+
+Soft 2-of-N quorum across Tellor + API3 + DIA, all three keyed by
+`asset.symbol()` derivation on-chain.
+
+| Setter | Purpose |
+|---|---|
+| `setTellorOracle(address)` | Chain-level Tellor oracle. Zero disables. |
+| `getTellorOracle() → address` | Read current. |
+| `setApi3ServerV1(address)` | Chain-level API3 ServerV1. Zero disables. |
+| `getApi3ServerV1() → address` | Read current. |
+| `setDIAOracleV2(address)` | Chain-level DIA Oracle V2. Zero disables. |
+| `getDIAOracleV2() → address` | Read current. |
+| `setSecondaryOracleMaxDeviationBps(uint16)` | Allowed Chainlink↔secondary deviation, in bps. Default 500 (5%). |
+| `getSecondaryOracleMaxDeviationBps() → uint16` | Read current. |
+| `setSecondaryOracleMaxStaleness(uint40)` | Max acceptable secondary report age, in seconds. Default 3600 (1h). |
+| `getSecondaryOracleMaxStaleness() → uint40` | Read current. |
+
+**Pyth was removed in Phase 7b.2** — its per-asset `priceId` mapping
+conflicted with the no-per-asset-config policy. The previous
+`setPythEndpoint` / `setPythFeedConfig` setters and the
+`PythFeedConfig` storage struct were stripped from the diamond
+pre-mainnet (no production write was ever made).
+
+### 9.4 Audit-trail events
+
+Every Phase 7 admin write emits a transition event so off-chain
+monitors can alert on changes:
+
+```
+SwapAdapterAdded(uint256 index, address adapter)
+SwapAdapterRemoved(uint256 index, address adapter)
+SwapAdaptersReordered(address[] adapters)
+PancakeswapV3FactorySet(address previous, address current)
+SushiswapV3FactorySet(address previous, address current)
+TellorOracleSet(address previous, address current)
+Api3ServerV1Set(address previous, address current)
+DIAOracleV2Set(address previous, address current)
+SecondaryOracleMaxDeviationBpsSet(uint16 previous, uint16 current)
+SecondaryOracleMaxStalenessSet(uint40 previous, uint40 current)
+```
+
+Operators should hook each into the existing config-change alerting
+the same way `TreasurySet` / `ZeroExProxySet` are tracked today.
+
 **What's retroactive (applies on next interaction)**: base fee BPS,
 liquidation-path knobs, risk parameters, KYC policy. 72h timelock
 delay + cancel-during-delay are the safety primitives.

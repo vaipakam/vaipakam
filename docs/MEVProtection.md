@@ -10,7 +10,7 @@ reference — pairs with `OraclePolicy.md` and `GovernanceRunbook.md`.
 | Vector | Protection |
 |---|---|
 | Sandwich attack on liquidation swap | On-chain minOutput guard in RiskFacet + DefaultedFacet. **Enforced, not bypassable.** |
-| Oracle manipulation to trigger liquidation | Chainlink + Pyth deviation check + L2 sequencer circuit breaker. **Enforced.** |
+| Oracle manipulation to trigger liquidation | Chainlink + Soft 2-of-N quorum across Tellor + API3 + DIA + L2 sequencer circuit breaker. **Enforced.** |
 | Liquidator race during HF < 1 | Natural: first liquidator wins the bonus. Permissionless by design. |
 | Defensive borrower / lender txs getting front-run (repay, addCollateral) | User-level mitigation only — no protocol enforcement. |
 
@@ -19,15 +19,24 @@ reference — pairs with `OraclePolicy.md` and `GovernanceRunbook.md`.
 ### Liquidation slippage guard
 
 Both liquidation paths (HF-based via `RiskFacet.triggerLiquidation` and
-time-based via `DefaultedFacet`) construct the 0x swap calldata
-themselves and embed an oracle-derived `minOutputAmount` equal to 94%
-of expected proceeds. The liquidator has NO caller-controlled input
-into this minimum — `triggerLiquidation` takes only a `loanId`.
+time-based via `DefaultedFacet`) compute an oracle-derived
+`minOutputAmount` equal to 94% of expected proceeds and pass it to
+the Phase 7a swap-failover library (`LibSwap.swapWithFailover`). Each
+adapter in the failover chain (0x / 1inch / UniV3 / Balancer V2)
+enforces the same min-out floor on its own side — UniV3 and Balancer
+via the underlying DEX's `amountOutMinimum`; the aggregator adapters
+via a balance-delta check around the call.
 
-Any sandwich that pushes the swap's actual output below the 94%
-floor causes the DEX to revert atomically, which reverts the whole
-liquidation. The attacker wastes gas; the position stays open until
-a new, non-manipulated liquidation attempt lands.
+Phase 7a changed the trigger signature to take a caller-supplied
+ranked try-list (`AdapterCall[]`) so a keeper / frontend can submit
+multiple route attempts ranked by expected output. **The
+`minOutputAmount` floor itself remains oracle-derived and
+caller-insulated** — the keeper picks routes, but cannot weaken the
+slippage cap. A sandwich that pushes any single adapter's output
+below the floor causes that adapter to revert; the failover library
+moves to the next-best entry. Only when **every** adapter reverts
+(no path can clear the floor) does the loan fall to the existing
+claim-time full-collateral fallback.
 
 Invariant locked in by `test/LiquidationMinOutputInvariant.t.sol`:
 `vm.expectCall` with exact calldata, across a 1,000-address fuzz of
@@ -36,10 +45,21 @@ caller influence the min-output floor fails the test.
 
 ### Oracle defences feeding liquidation
 
-Phase 3.1 tightens per-feed staleness bounds. Phase 3.2 adds Pyth as
-a deviation-checked secondary. Together, they close the class of
-attacks where manipulating one price source lets an attacker
-artificially trigger a liquidation at an advantageous rate.
+Phase 3.1 tightens per-feed staleness bounds. Phase 7b.2 replaces
+the prior Pyth-secondary integration with a **Soft 2-of-N quorum**
+across **Tellor + API3 + DIA**. All three secondaries derive their
+lookup keys from `IERC20.symbol()` on-chain, so adding new collateral
+assets never requires a per-asset governance write. Phase 7b.1 adds
+parallel multi-venue depth classification at
+`OracleFacet.checkLiquidity`, OR-combining UniswapV3 + PancakeSwap V3
++ SushiSwap V3 factory probes.
+
+Together, these close the class of attacks where manipulating one
+price source — or paus­ing one DEX — lets an attacker artificially
+trigger a liquidation at an advantageous rate. To push a fake price
+through the gate, an attacker now has to compromise **Chainlink
+plus every secondary that has data for the asset** in the same
+block.
 
 See `OraclePolicy.md` for the full config.
 
@@ -85,8 +105,8 @@ and chain-specific) or a UX that most users can't navigate.
 sanity banner. Evaluated and rejected in the Phase 3.2 scoping —
 any frontend check is bypassable via DevTools / a custom frontend /
 a direct `cast send`, so it doesn't raise the actual security floor.
-The in-protocol Chainlink + Pyth deviation check is what actually
-enforces price sanity.
+The in-protocol Chainlink + Soft 2-of-N (Tellor + API3 + DIA)
+deviation check is what actually enforces price sanity.
 
 ### Liquidator race
 
@@ -131,9 +151,19 @@ users' behalf by default) need a separate product discussion.
 ## Verification
 
 - `test/LiquidationMinOutputInvariant.t.sol` — the caller-insulation
-  invariant on `minOutputAmount`.
-- `test/PythDeviation.t.sol` — Pyth deviation check matrix.
+  invariant on `minOutputAmount` (still load-bearing under Phase 7a's
+  caller-ranked failover chain).
+- `test/SwapAdapterTest.t.sol` — Phase 7a 4-adapter failover unit
+  coverage (slippage-gated reverts, residual return on partial
+  fills, allowance scope).
+- `test/OracleLiquidityORTest.t.sol` — Phase 7b.1 3-V3-clone OR-logic.
+- `test/SecondaryQuorumTest.t.sol` (queued, Phase 7b.2.e) — Soft
+  2-of-N quorum semantics across Tellor + API3 + DIA.
 - `test/FeedOverride.t.sol` — per-feed staleness + min-answer bounds.
 
-All three suites are part of the gate before every mainnet deploy,
-alongside `LZConfig.t.sol` and `GovernanceHandover.t.sol`.
+All five suites are part of the gate before every mainnet deploy,
+alongside `LZConfig.t.sol` and `GovernanceHandover.t.sol`. The
+removed `test/PythDeviation.t.sol` was replaced by the symbol-
+derived secondary path; Pyth was retired in Phase 7b.2 because its
+per-asset `priceId` mapping conflicted with the no-per-asset-config
+policy.

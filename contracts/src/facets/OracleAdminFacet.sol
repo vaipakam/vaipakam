@@ -183,82 +183,100 @@ contract OracleAdminFacet {
         return (ovr.maxStaleness, ovr.minValidAnswer);
     }
 
+    // ─── Phase 7b.2 — Tellor + API3 + DIA + chain-level deviation cfg ──
+    //
+    // Pyth was removed in Phase 7b.2 because its `priceId` requires a
+    // per-asset governance mapping that conflicts with the platform's
+    // no-per-asset-config policy. The three replacement sources
+    // (Tellor / API3 / DIA) all derive their lookup key from the
+    // asset's ERC-20 symbol on-chain, so adding new collateral assets
+    // never requires a per-asset governance write.
+
     /**
-     * @notice Installs the chain's Pyth endpoint address — the deployed
-     *         Pyth oracle contract this chain reads secondary prices
-     *         from and posts signed update payloads to. Canonical
-     *         per-chain addresses at
-     *         https://docs.pyth.network/price-feeds/contract-addresses/evm.
-     * @dev Owner-only (via `LibVaipakam.setPythEndpoint`). Setting to
-     *      `address(0)` disables the Pyth secondary-oracle path
-     *      globally — every asset falls back to Chainlink-only reads
-     *      regardless of per-asset config. Governance-controlled, so
-     *      timelock-gated after the Safe-Timelock handover.
-     * @param endpoint Pyth contract address for this chain, or zero.
+     * @notice Set the chain's Tellor oracle address. Owner-only.
+     *         Zero disables Tellor's leg of the secondary deviation
+     *         check globally; the price view falls back to Chainlink-
+     *         only (plus API3 if configured).
+     *
+     *         No per-asset config: {OracleFacet} derives Tellor's
+     *         queryId at call time by reading `asset.symbol()` and
+     *         packing the standard SpotPrice query
+     *         (`keccak256(abi.encode("SpotPrice", abi.encode(symbol,
+     *         "usd")))`). Assets without a Tellor reporter are
+     *         silently skipped — the deviation check only fires when
+     *         Tellor returns non-zero data.
+     * @param oracle Tellor contract address on this chain, or zero.
      */
-    function setPythEndpoint(address endpoint) external {
-        LibVaipakam.setPythEndpoint(endpoint);
+    function setTellorOracle(address oracle) external {
+        LibVaipakam.setTellorOracle(oracle);
+    }
+
+    /// @notice Read the configured Tellor oracle address. Zero
+    ///         indicates Tellor is disabled.
+    function getTellorOracle() external view returns (address) {
+        return LibVaipakam.storageSlot().tellorOracle;
     }
 
     /**
-     * @notice Returns the current Pyth endpoint. Zero when disabled.
+     * @notice Set the chain's API3 ServerV1 contract address. Same
+     *         no-per-asset-config policy as Tellor — {OracleFacet}
+     *         derives the dAPI name from `asset.symbol()` at call
+     *         time. Owner-only.
+     * @param server API3 ServerV1 address on this chain, or zero.
      */
-    function getPythEndpoint() external view returns (address endpoint) {
-        return LibVaipakam.storageSlot().pythEndpoint;
+    function setApi3ServerV1(address server) external {
+        LibVaipakam.setApi3ServerV1(server);
+    }
+
+    /// @notice Read the configured API3 ServerV1 address. Zero
+    ///         indicates API3 is disabled.
+    function getApi3ServerV1() external view returns (address) {
+        return LibVaipakam.storageSlot().api3ServerV1;
     }
 
     /**
-     * @notice Installs or clears a Pyth secondary-feed configuration
-     *         for a specific asset. When installed,
-     *         {OracleFacet.getAssetPrice} reads Pyth alongside
-     *         Chainlink and reverts on divergence above
-     *         `maxDeviationBps` or Pyth-staleness above `maxStaleness`.
-     * @dev Owner-only (via `LibVaipakam.setPythFeedConfig`).
-     *      `priceId = bytes32(0)` clears the config and reverts the
-     *      asset to Chainlink-only reads. Install requires:
-     *        - `maxDeviationBps` in (0, 10000) — 10000 or higher would
-     *          make the deviation check pointless; 0 would refuse every
-     *          price.
-     *        - `maxStaleness > 0` — zero would refuse every Pyth read.
-     *      Pyth prices can be reasonably tight since Pyth publishes
-     *      sub-second; typical `maxStaleness` is 30-120 seconds.
-     * @param asset           Asset address to configure.
-     * @param priceId         Pyth feed id, or `bytes32(0)` to clear.
-     * @param maxDeviationBps Max allowed divergence from Chainlink, in
-     *                        basis points (100 = 1%).
-     * @param maxStaleness    Max acceptable Pyth publishTime age, in
-     *                        seconds.
+     * @notice Set the chain's DIA Oracle V2 contract address. Same
+     *         no-per-asset-config policy as Tellor + API3 — {OracleFacet}
+     *         derives the DIA key (`<SYMBOL>/USD`) from `asset.symbol()`
+     *         at call time. Owner-only.
+     * @param oracle DIA Oracle V2 address on this chain, or zero.
      */
-    function setPythFeedConfig(
-        address asset,
-        bytes32 priceId,
-        uint16 maxDeviationBps,
-        uint40 maxStaleness
-    ) external {
-        LibVaipakam.setPythFeedConfig(
-            asset,
-            priceId,
-            maxDeviationBps,
-            maxStaleness
-        );
+    function setDIAOracleV2(address oracle) external {
+        LibVaipakam.setDIAOracleV2(oracle);
+    }
+
+    /// @notice Read the configured DIA Oracle V2 address. Zero
+    ///         indicates DIA is disabled.
+    function getDIAOracleV2() external view returns (address) {
+        return LibVaipakam.storageSlot().diaOracleV2;
     }
 
     /**
-     * @notice Reads the current Pyth secondary-feed configuration for
-     *         an asset. Returned `priceId == bytes32(0)` means no Pyth
-     *         check is active for this asset — the asset falls back to
-     *         Chainlink-only reads.
+     * @notice Set the chain-level deviation tolerance applied to
+     *         every secondary oracle (Tellor / API3) when it
+     *         disagrees with the Chainlink primary.
+     * @dev Owner-only. Must be in (0, 10000) basis points.
+     * @param bps Allowed deviation, e.g. 500 = 5%.
      */
-    function getPythFeedConfig(
-        address asset
-    )
-        external
-        view
-        returns (bytes32 priceId, uint16 maxDeviationBps, uint40 maxStaleness)
-    {
-        LibVaipakam.PythFeedConfig storage cfg = LibVaipakam
-            .storageSlot()
-            .pythFeedConfigs[asset];
-        return (cfg.priceId, cfg.maxDeviationBps, cfg.maxStaleness);
+    function setSecondaryOracleMaxDeviationBps(uint16 bps) external {
+        LibVaipakam.setSecondaryOracleMaxDeviationBps(bps);
+    }
+
+    /// @notice Read the effective secondary-oracle deviation tolerance.
+    function getSecondaryOracleMaxDeviationBps() external view returns (uint16) {
+        return LibVaipakam.effectiveSecondaryOracleMaxDeviationBps();
+    }
+
+    /**
+     * @notice Set the chain-level secondary-oracle staleness tolerance.
+     * @dev Owner-only. Must be non-zero (seconds).
+     */
+    function setSecondaryOracleMaxStaleness(uint40 maxStaleness) external {
+        LibVaipakam.setSecondaryOracleMaxStaleness(maxStaleness);
+    }
+
+    /// @notice Read the effective secondary-oracle staleness tolerance.
+    function getSecondaryOracleMaxStaleness() external view returns (uint40) {
+        return LibVaipakam.effectiveSecondaryOracleMaxStaleness();
     }
 }

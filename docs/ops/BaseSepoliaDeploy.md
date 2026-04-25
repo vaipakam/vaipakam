@@ -49,26 +49,49 @@ cast call $BASE_SEPOLIA_DIAMOND_ADDRESS "getTreasury()(address)" --rpc-url $BASE
 
 ---
 
-## 2. Configure Oracle + 0x (per chain)
+## 2. Configure Oracle + DEX adapters (per chain)
 
-### 2a. Deploy ZeroExProxyMock (testnet only)
+### 2a. Deploy + register the swap-adapter chain (Phase 7a)
 
-0x Protocol has no canonical Base Sepolia deployment, so HF-based liquidations on testnet route through a minimal mock (`test/mocks/ZeroExProxyMock.sol`). The deploy script refuses to broadcast on mainnets by chain-id check.
+Phase 7a's swap failover replaces the legacy single-0x liquidation
+path with a registered chain of `ISwapAdapter` contracts. Production
+deploys four adapters per chain in priority order: ZeroEx → OneInch
+→ UniV3 → BalancerV2.
+
+For testnet, Base Sepolia has no real 0x / 1inch deployment, so we
+register a `MockZeroExLegacyAdapter` that wraps the existing
+`ZeroExProxyMock` for back-compat with pre-Phase-7a tests:
 
 ```bash
 forge script script/DeployZeroExMock.s.sol \
   --rpc-url $BASE_SEPOLIA_RPC_URL --broadcast
 ```
 
-Record the logged `Mock proxy:` address into **both** `BASE_SEPOLIA_ZEROX_PROXY` and `BASE_SEPOLIA_ZEROX_ALLOWANCE_TARGET` in `.env` (the mock is its own allowance target). For liquidation scenarios to actually execute a swap, the mock must hold the output token balance — pre-mint/transfer per-scenario.
+Record the logged `Mock proxy:` address. Then register the legacy-
+shim adapter on the diamond:
 
-### 2b. Configure oracle
+```bash
+# (Replace MOCK_ADAPTER with the deployed shim address.)
+cast send $BASE_SEPOLIA_DIAMOND_ADDRESS \
+  "addSwapAdapter(address)" $MOCK_ADAPTER \
+  --rpc-url $BASE_SEPOLIA_RPC_URL --private-key $DEPLOYER_PK
+```
+
+For mainnet, deploy each of the four production adapters
+(`ZeroExAggregatorAdapter` / `OneInchAggregatorAdapter` /
+`UniV3Adapter` / `BalancerV2Adapter`) with the chain-correct router
+addresses, then `addSwapAdapter` each in order. **A diamond with
+zero adapters reverts every liquidation — this step blocks any
+`triggerLiquidation` / `triggerDefault` action.**
+
+### 2b. Configure oracle (primary + secondary quorum)
 
 Populate in `.env`:
 - `BASE_SEPOLIA_WETH_ADDRESS` · `BASE_SEPOLIA_UNISWAP_V3_FACTORY`
+- `BASE_SEPOLIA_PANCAKESWAP_V3_FACTORY` · `BASE_SEPOLIA_SUSHISWAP_V3_FACTORY` (Phase 7b.1; leave blank where the chain has no deployment)
 - `BASE_SEPOLIA_ETH_USD_FEED` · `BASE_SEPOLIA_USD_DENOMINATOR` · `BASE_SEPOLIA_ETH_DENOMINATOR`
 - `BASE_SEPOLIA_SEQUENCER_UPTIME_FEED`
-- `BASE_SEPOLIA_ZEROX_PROXY` · `BASE_SEPOLIA_ZEROX_ALLOWANCE_TARGET` (from §2a)
+- `BASE_SEPOLIA_TELLOR_ORACLE` · `BASE_SEPOLIA_API3_SERVER_V1` · `BASE_SEPOLIA_DIA_ORACLE_V2` (Phase 7b.2; leave blank where the chain has no deployment)
 - (optional) `VPFI_STABLE_FEED_SYMBOLS=USDC` and `BASE_SEPOLIA_USDC_FEED`
 
 ```bash
@@ -76,12 +99,32 @@ forge script script/ConfigureOracle.s.sol \
   --rpc-url $BASE_SEPOLIA_RPC_URL --broadcast
 ```
 
+The Phase 7b setters wired by `ConfigureOracle.s.sol`:
+- `setUniswapV3Factory`, `setPancakeswapV3Factory`,
+  `setSushiswapV3Factory` — 3-V3-clone OR-logic for liquidity
+  classification.
+- `setTellorOracle`, `setApi3ServerV1`, `setDIAOracleV2` — Soft
+  2-of-N quorum cross-validation against Chainlink primary.
+- `setSecondaryOracleMaxDeviationBps(500)` and
+  `setSecondaryOracleMaxStaleness(3600)` — chain-level deviation +
+  staleness ceilings; tighten if desired.
+
 Verify with a spot quote:
 ```bash
 cast call $BASE_SEPOLIA_DIAMOND_ADDRESS \
   "getAssetPrice(address)(uint256)" $BASE_SEPOLIA_WETH_ADDRESS \
   --rpc-url $BASE_SEPOLIA_RPC_URL
 # ≈ current ETH/USD · 1e18
+```
+
+Verify Phase 7b admin readback:
+```bash
+cast call $BASE_SEPOLIA_DIAMOND_ADDRESS "getPancakeswapV3Factory()(address)" --rpc-url $BASE_SEPOLIA_RPC_URL
+cast call $BASE_SEPOLIA_DIAMOND_ADDRESS "getSushiswapV3Factory()(address)" --rpc-url $BASE_SEPOLIA_RPC_URL
+cast call $BASE_SEPOLIA_DIAMOND_ADDRESS "getTellorOracle()(address)" --rpc-url $BASE_SEPOLIA_RPC_URL
+cast call $BASE_SEPOLIA_DIAMOND_ADDRESS "getApi3ServerV1()(address)" --rpc-url $BASE_SEPOLIA_RPC_URL
+cast call $BASE_SEPOLIA_DIAMOND_ADDRESS "getDIAOracleV2()(address)" --rpc-url $BASE_SEPOLIA_RPC_URL
+cast call $BASE_SEPOLIA_DIAMOND_ADDRESS "getSwapAdapters()(address[])" --rpc-url $BASE_SEPOLIA_RPC_URL
 ```
 
 ---

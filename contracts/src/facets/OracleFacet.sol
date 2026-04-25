@@ -10,7 +10,9 @@ import {AggregatorV2V3Interface} from "@chainlink/contracts/src/v0.8/shared/inte
 import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
 import {DiamondPausable} from "../libraries/LibPausable.sol";
 import {DiamondAccessControl} from "../libraries/LibAccessControl.sol";
-import {IPyth, PythPrice} from "../interfaces/IPyth.sol";
+import {ITellor} from "../interfaces/ITellor.sol";
+import {IApi3ServerV1} from "../interfaces/IApi3ServerV1.sol";
+import {IDIAOracleV2} from "../interfaces/IDIAOracleV2.sol";
 
 /**
  * @title OracleFacet
@@ -57,15 +59,13 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
     error StalePriceData();
     error InsufficientLiquidity();
 
-    /// @notice Phase 3.2: Chainlink and the configured Pyth secondary
-    ///         disagreed beyond `maxDeviationBps`. Fail-closed —
-    ///         callers must NOT fall back to a single-source price.
+    /// @notice Chainlink and a configured secondary oracle (Tellor /
+    ///         API3 / DIA) disagreed beyond the chain-level
+    ///         `secondaryOracleMaxDeviationBps`. Fail-closed — callers
+    ///         must NOT fall back to a single-source price. Phase 7b.2
+    ///         replaced the previous Pyth-specific deviation gate with
+    ///         this multi-source AND-combine.
     error OraclePriceDivergence();
-
-    /// @notice Phase 3.2: the configured Pyth secondary is stale /
-    ///         missing / the endpoint is unreachable. Fail-closed for
-    ///         the same reason as {OraclePriceDivergence}.
-    error PythPriceUnavailable();
 
     /// @notice Reverted when the L2 sequencer is currently offline.
     error SequencerDown();
@@ -261,7 +261,18 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
         address asset
     ) external view returns (uint256 price, uint8 decimals) {
         (price, decimals) = _primaryPrice(asset);
-        _enforcePythDeviation(asset, price, decimals);
+        // Phase 7b.2 — Soft 2-of-N cross-validation across Tellor +
+        // API3 + DIA. The aggregator probes each source, classifies
+        // its result as Unavailable / Agree / Disagree, and:
+        //   - returns Chainlink-only when every secondary is
+        //     Unavailable (graceful fallback for sparse coverage),
+        //   - returns Chainlink + agreeing-secondary quorum when at
+        //     least one secondary agrees,
+        //   - reverts {OraclePriceDivergence} only when every
+        //     responding secondary disagrees (no quorum possible).
+        // Pyth was removed in Phase 7b.2: per-asset priceId mapping
+        // conflicts with the no-per-asset-config policy.
+        _enforceSecondaryQuorum(asset, price, decimals);
         return (price, decimals);
     }
 
@@ -316,72 +327,278 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
         revert NoPriceFeed();
     }
 
-    /// @dev Phase 3.2 deviation guard. If a Pyth secondary is
-    ///      configured for `asset` AND the chain has a Pyth endpoint
-    ///      installed, reads the Pyth price, normalizes it to the
-    ///      primary's decimals, and reverts if the two disagree beyond
-    ///      the configured basis-point tolerance. Also reverts on
-    ///      stale / failing Pyth reads — deliberately fail-closed so
-    ///      an operator-configured secondary can't be silently
-    ///      bypassed.
-    function _enforcePythDeviation(
+    // ─── Phase 7b.2 — symbol-derived secondary oracles + Soft 2-of-N ─
+    //
+    // Three cross-validation oracles (Tellor, API3, DIA), all keyed
+    // by the asset's ERC-20 symbol read on-chain at call time. Zero
+    // per-asset governance config — operators set ONE chain-level
+    // address per oracle; the OracleFacet derives query ids / dapi
+    // names / DIA keys from `asset.symbol()`.
+    //
+    // Combine rule (Soft 2-of-N quorum):
+    //   1. Each enforcer probes its source and returns a status:
+    //        - {Unavailable}: oracle not configured / symbol unreadable
+    //          / no data / stale → silent skip, doesn't count.
+    //        - {Agree}: data fresh AND within deviation tolerance → +1.
+    //        - {Disagree}: data fresh AND beyond tolerance.
+    //   2. The aggregator counts how many secondaries agree and how
+    //      many disagree. Chainlink itself is the primary (always 1
+    //      "agreement" with itself).
+    //   3. Decision:
+    //        - All secondaries Unavailable → accept (graceful fallback
+    //          to Chainlink-only; preserves Phase 1 chain coverage on
+    //          long-tail assets).
+    //        - At least one Agrees → accept (quorum hit: Chainlink + 1
+    //          secondary = 2 sources within tolerance).
+    //        - Some Disagrees AND no Agrees → revert
+    //          {OraclePriceDivergence}.
+
+    enum SecondaryStatus { Unavailable, Agree, Disagree }
+
+    /// @dev Aggregator that runs the Tellor + API3 + DIA probes and
+    ///      enforces the Soft 2-of-N quorum rule documented above.
+    function _enforceSecondaryQuorum(
         address asset,
         uint256 primaryPrice,
         uint8 primaryDec
     ) private view {
-        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        LibVaipakam.PythFeedConfig storage cfg = s.pythFeedConfigs[asset];
-        if (cfg.priceId == bytes32(0)) return; // no secondary configured
-        address endpoint = s.pythEndpoint;
-        if (endpoint == address(0)) return; // chain has no endpoint — secondary disabled globally
+        SecondaryStatus tellor = _checkTellor(asset, primaryPrice, primaryDec);
+        SecondaryStatus api3 = _checkApi3(asset, primaryPrice, primaryDec);
+        SecondaryStatus dia = _checkDIA(asset, primaryPrice, primaryDec);
 
-        PythPrice memory pp;
-        try IPyth(endpoint).getPriceNoOlderThan(
-            cfg.priceId,
-            uint256(cfg.maxStaleness)
-        ) returns (PythPrice memory p) {
-            pp = p;
-        } catch {
-            revert PythPriceUnavailable();
-        }
+        bool anyAgree = tellor == SecondaryStatus.Agree ||
+            api3 == SecondaryStatus.Agree ||
+            dia == SecondaryStatus.Agree;
+        bool anyDisagree = tellor == SecondaryStatus.Disagree ||
+            api3 == SecondaryStatus.Disagree ||
+            dia == SecondaryStatus.Disagree;
 
-        if (pp.price <= 0) revert PythPriceUnavailable();
-        uint256 secondary = _normalizePythToPrimary(
-            uint256(int256(pp.price)),
-            pp.expo,
-            primaryDec
-        );
-        if (secondary == 0) revert PythPriceUnavailable();
+        // Soft fallback: every secondary returned Unavailable. Accept
+        // Chainlink-only — preserves operability on long-tail assets
+        // and chains with sparse oracle coverage.
+        if (!anyDisagree && !anyAgree) return;
 
-        uint256 diff = primaryPrice > secondary
-            ? primaryPrice - secondary
-            : secondary - primaryPrice;
-        uint256 deviationBps = (diff * LibVaipakam.BASIS_POINTS) / primaryPrice;
-        if (deviationBps > cfg.maxDeviationBps) revert OraclePriceDivergence();
+        // Quorum hit: at least one secondary agrees. Even if another
+        // disagrees, the protocol has 2-of-N agreement (Chainlink +
+        // the agreeing secondary). Accept.
+        if (anyAgree) return;
+
+        // anyDisagree && !anyAgree — every secondary that returned
+        // data disagreed. No quorum can be formed; revert.
+        revert OraclePriceDivergence();
     }
 
-    /// @dev Converts a Pyth raw price (scaled by 10^expo) into the
-    ///      primary Chainlink feed's decimals. Pyth expo is signed
-    ///      (typically -8 for USD pairs); the net exponent is
-    ///      `primaryDec + expo`. Positive → multiply; negative →
-    ///      divide. Returns 0 if the resulting magnitude would
-    ///      round to zero (precision loss), which the caller treats
-    ///      as an unavailable reading.
-    function _normalizePythToPrimary(
-        uint256 pythPrice,
-        int32 expo,
+    /// @dev Tellor probe — returns the per-source status against
+    ///      Chainlink. Standard SpotPrice queryId derivation:
+    ///      `keccak256(abi.encode("SpotPrice", abi.encode(symbol, "usd")))`
+    ///      where `symbol` is the asset's lowercased ERC-20 symbol.
+    function _checkTellor(
+        address asset,
+        uint256 primaryPrice,
         uint8 primaryDec
-    ) private pure returns (uint256) {
-        int256 netExp = int256(int32(int256(uint256(primaryDec)))) + int256(expo);
-        if (netExp == 0) return pythPrice;
-        if (netExp > 0) {
-            // Scale up — safe from division-by-zero. Overflow is
-            // practically impossible within realistic price/exponent
-            // ranges (Pyth expo typically -8, primaryDec typically 8).
-            return pythPrice * (10 ** uint256(netExp));
+    ) private view returns (SecondaryStatus) {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        address oracle = s.tellorOracle;
+        if (oracle == address(0)) return SecondaryStatus.Unavailable;
+
+        (string memory symbol, bool symOk) = _safeSymbol(asset);
+        if (!symOk) return SecondaryStatus.Unavailable;
+        string memory lower = _toLower(symbol);
+
+        bytes32 queryId = keccak256(
+            abi.encode("SpotPrice", abi.encode(lower, "usd"))
+        );
+        bytes memory raw;
+        uint256 reportedAt;
+        try ITellor(oracle).getDataBefore(queryId, block.timestamp) returns (
+            bytes memory v,
+            uint256 t
+        ) {
+            raw = v;
+            reportedAt = t;
+        } catch {
+            return SecondaryStatus.Unavailable;
         }
-        uint256 divisor = 10 ** uint256(-netExp);
-        return pythPrice / divisor;
+        if (reportedAt == 0 || raw.length < 32) return SecondaryStatus.Unavailable;
+        if (block.timestamp - reportedAt > LibVaipakam.effectiveSecondaryOracleMaxStaleness()) {
+            return SecondaryStatus.Unavailable;
+        }
+        uint256 tellorAt18 = abi.decode(raw, (uint256));
+        if (tellorAt18 == 0) return SecondaryStatus.Unavailable;
+        uint256 secondary = _rescale(tellorAt18, 18, primaryDec);
+        if (secondary == 0) return SecondaryStatus.Unavailable;
+        return _classifyDeviation(primaryPrice, secondary);
+    }
+
+    /// @dev API3 probe. dAPI name = `<UPPER_SYMBOL>/USD` packed
+    ///      left-aligned into bytes32, hashed with keccak256.
+    function _checkApi3(
+        address asset,
+        uint256 primaryPrice,
+        uint8 primaryDec
+    ) private view returns (SecondaryStatus) {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        address server = s.api3ServerV1;
+        if (server == address(0)) return SecondaryStatus.Unavailable;
+
+        (string memory symbol, bool symOk) = _safeSymbol(asset);
+        if (!symOk) return SecondaryStatus.Unavailable;
+        string memory upper = _toUpper(symbol);
+
+        bytes memory packed = abi.encodePacked(upper, "/USD");
+        if (packed.length > 32) return SecondaryStatus.Unavailable;
+        bytes32 dapiName;
+        for (uint256 i = 0; i < packed.length; ++i) {
+            dapiName |= bytes32(packed[i]) >> (i * 8);
+        }
+        bytes32 dapiNameHash = keccak256(abi.encodePacked(dapiName));
+
+        int224 value;
+        uint32 reportedAt;
+        try IApi3ServerV1(server).readDataFeedWithDapiNameHash(dapiNameHash) returns (
+            int224 v,
+            uint32 t
+        ) {
+            value = v;
+            reportedAt = t;
+        } catch {
+            return SecondaryStatus.Unavailable;
+        }
+        if (value <= 0 || reportedAt == 0) return SecondaryStatus.Unavailable;
+        if (block.timestamp - reportedAt > LibVaipakam.effectiveSecondaryOracleMaxStaleness()) {
+            return SecondaryStatus.Unavailable;
+        }
+        uint256 secondary = _rescale(uint256(int256(value)), 18, primaryDec);
+        if (secondary == 0) return SecondaryStatus.Unavailable;
+        return _classifyDeviation(primaryPrice, secondary);
+    }
+
+    /// @dev DIA probe. Key = `<UPPER_SYMBOL>/USD` (e.g. "ETH/USD").
+    ///      DIA returns 8-decimal `(uint128 value, uint128 timestamp)`.
+    function _checkDIA(
+        address asset,
+        uint256 primaryPrice,
+        uint8 primaryDec
+    ) private view returns (SecondaryStatus) {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        address oracle = s.diaOracleV2;
+        if (oracle == address(0)) return SecondaryStatus.Unavailable;
+
+        (string memory symbol, bool symOk) = _safeSymbol(asset);
+        if (!symOk) return SecondaryStatus.Unavailable;
+        string memory key = string(abi.encodePacked(_toUpper(symbol), "/USD"));
+
+        uint128 value;
+        uint128 reportedAt;
+        try IDIAOracleV2(oracle).getValue(key) returns (
+            uint128 v,
+            uint128 t
+        ) {
+            value = v;
+            reportedAt = t;
+        } catch {
+            return SecondaryStatus.Unavailable;
+        }
+        if (value == 0 || reportedAt == 0) return SecondaryStatus.Unavailable;
+        if (block.timestamp - uint256(reportedAt) > LibVaipakam.effectiveSecondaryOracleMaxStaleness()) {
+            return SecondaryStatus.Unavailable;
+        }
+        uint256 secondary = _rescale(uint256(value), 8, primaryDec);
+        if (secondary == 0) return SecondaryStatus.Unavailable;
+        return _classifyDeviation(primaryPrice, secondary);
+    }
+
+    /// @dev Classify a (primary, secondary) pair as Agree or Disagree
+    ///      based on the chain-level deviation tolerance.
+    function _classifyDeviation(
+        uint256 primary,
+        uint256 secondary
+    ) private view returns (SecondaryStatus) {
+        uint256 diff = primary > secondary ? primary - secondary : secondary - primary;
+        uint256 deviationBps = (diff * LibVaipakam.BASIS_POINTS) / primary;
+        if (deviationBps > LibVaipakam.effectiveSecondaryOracleMaxDeviationBps()) {
+            return SecondaryStatus.Disagree;
+        }
+        return SecondaryStatus.Agree;
+    }
+
+    /// @dev Read `IERC20.symbol()` via try/staticcall. Falls back
+    ///      gracefully on tokens that revert, return bytes32, or
+    ///      omit the function entirely. Returns `(symbol, true)` on
+    ///      success, `("", false)` otherwise.
+    function _safeSymbol(address asset) private view returns (string memory, bool) {
+        (bool ok, bytes memory ret) = asset.staticcall(
+            abi.encodeWithSignature("symbol()")
+        );
+        if (!ok || ret.length == 0) return ("", false);
+        // String return: ABI-encoded as offset(32) + length(32) + data.
+        // Detect by checking the offset is exactly 32.
+        if (ret.length >= 64) {
+            uint256 off;
+            assembly { off := mload(add(ret, 32)) }
+            if (off == 32) {
+                string memory s = abi.decode(ret, (string));
+                if (bytes(s).length == 0) return ("", false);
+                return (s, true);
+            }
+        }
+        // Bytes32 return (legacy MakerDAO-style tokens). Strip
+        // trailing zeros and convert.
+        if (ret.length == 32) {
+            bytes32 raw;
+            assembly { raw := mload(add(ret, 32)) }
+            uint256 len = 0;
+            while (len < 32 && raw[len] != 0) {
+                ++len;
+            }
+            if (len == 0) return ("", false);
+            bytes memory out = new bytes(len);
+            for (uint256 i = 0; i < len; ++i) {
+                out[i] = raw[i];
+            }
+            return (string(out), true);
+        }
+        return ("", false);
+    }
+
+    /// @dev Returns the lowercase form of an ASCII string. Non-ASCII
+    ///      bytes pass through unchanged.
+    function _toLower(string memory s) private pure returns (string memory) {
+        bytes memory b = bytes(s);
+        bytes memory out = new bytes(b.length);
+        for (uint256 i = 0; i < b.length; ++i) {
+            uint8 c = uint8(b[i]);
+            if (c >= 0x41 && c <= 0x5A) {
+                out[i] = bytes1(c + 32);
+            } else {
+                out[i] = b[i];
+            }
+        }
+        return string(out);
+    }
+
+    /// @dev Returns the uppercase form of an ASCII string.
+    function _toUpper(string memory s) private pure returns (string memory) {
+        bytes memory b = bytes(s);
+        bytes memory out = new bytes(b.length);
+        for (uint256 i = 0; i < b.length; ++i) {
+            uint8 c = uint8(b[i]);
+            if (c >= 0x61 && c <= 0x7A) {
+                out[i] = bytes1(c - 32);
+            } else {
+                out[i] = b[i];
+            }
+        }
+        return string(out);
+    }
+
+    /// @dev Rescale a price value from `fromDec` to `toDec` decimals.
+    ///      Returns 0 if scaling down would round to zero (caller
+    ///      treats as unavailable).
+    function _rescale(uint256 value, uint8 fromDec, uint8 toDec) private pure returns (uint256) {
+        if (fromDec == toDec) return value;
+        if (fromDec < toDec) return value * (10 ** uint256(toDec - fromDec));
+        return value / (10 ** uint256(fromDec - toDec));
     }
 
     // ─── README §13.5 asset-risk views ──────────────────────────────────

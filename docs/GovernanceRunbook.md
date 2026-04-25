@@ -157,6 +157,67 @@ A Foundry test `test/GovernanceHandover.t.sol` can drive all of these
 in one pass against a fork of the target chain; add that to CI as a
 pre-mainnet gate alongside `LZConfig.t.sol`.
 
+### 6.1 Phase 7 oracle + DEX redundancy bring-up (added 2026-04-25)
+
+After the per-chain handover lands but BEFORE the first user loan
+settles, the deployer (under the Timelock + Safe path) must wire
+the Phase 7 admin surface. Skipping any of these leaves either
+liquidations (Phase 7a) or oracle pricing (Phase 7b) operating in a
+degraded single-source / single-venue posture.
+
+**Phase 7a — swap-adapter chain** (`AdminFacet`):
+
+```solidity
+// Register all four production swap adapters in priority order.
+// A diamond with zero adapters reverts every triggerLiquidation /
+// triggerDefault call, so this MUST land before any loan settles.
+diamond.addSwapAdapter(zeroExAdapter);    // slot 0
+diamond.addSwapAdapter(oneInchAdapter);   // slot 1
+diamond.addSwapAdapter(uniV3Adapter);     // slot 2
+diamond.addSwapAdapter(balancerV2Adapter); // slot 3
+```
+
+**Phase 7b.1 — multi-venue liquidity** (`AdminFacet`):
+
+```solidity
+// In addition to the existing setUniswapV3Factory call, register
+// PancakeSwap V3 and SushiSwap V3 factories per the chain matrix
+// in OraclePolicy.md. Setting any to zero disables that leg.
+diamond.setPancakeswapV3Factory(panV3FactoryThisChain);
+diamond.setSushiswapV3Factory(sushiV3FactoryThisChain);
+```
+
+**Phase 7b.2 — secondary price-oracle quorum** (`OracleAdminFacet`):
+
+```solidity
+// Wire at least 2 of the 3 secondary oracles so the Soft 2-of-N
+// quorum delivers actual cross-provider redundancy. With < 2
+// configured the check degrades gracefully to Chainlink-only.
+diamond.setTellorOracle(tellorOnThisChain);
+diamond.setApi3ServerV1(api3ServerOnThisChain);
+diamond.setDIAOracleV2(diaOnThisChain);
+// Defaults are 5% deviation and 1h staleness; tighten if desired.
+diamond.setSecondaryOracleMaxDeviationBps(500);
+diamond.setSecondaryOracleMaxStaleness(3600);
+```
+
+**Readback verification (per chain):**
+
+```solidity
+AdminFacet(diamond).getSwapAdapters().length            >= 1
+AdminFacet(diamond).getPancakeswapV3Factory()           // non-zero where deployed
+AdminFacet(diamond).getSushiswapV3Factory()             // non-zero where deployed
+OracleAdminFacet(diamond).getTellorOracle()             // expected address
+OracleAdminFacet(diamond).getApi3ServerV1()             // expected address
+OracleAdminFacet(diamond).getDIAOracleV2()              // expected address
+OracleAdminFacet(diamond).getSecondaryOracleMaxDeviationBps() // 500 default
+OracleAdminFacet(diamond).getSecondaryOracleMaxStaleness()    // 3600 default
+```
+
+A future `test/OraclePolicyReadback.t.sol` should encode all of these
+as fork-CI gates. Until then, use the deploy script's verification
+log as the artifact.
+
 ## Day-to-day operations after handover
 
 ### Routine admin action (e.g. tweak a risk param)
