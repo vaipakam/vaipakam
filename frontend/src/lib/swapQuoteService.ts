@@ -250,16 +250,150 @@ export async function fetchUniV3Quote(
 }
 
 /**
- * Phase 7a.3-deferred. Balancer V2 quotes require a subgraph lookup
- * (find the pool holding the pair) followed by a BalancerQueries
- * `queryBatchSwap` on-chain simulation. Returns null until that
- * integration lands.
+ * Phase 7a polish — Balancer V2 quote orchestration.
+ *
+ * Two-step:
+ *   1. GraphQL query against the per-chain Balancer V2 subgraph to find
+ *      the deepest pool containing both tokens. Returns the pool's
+ *      bytes32 `id` (= the canonical Balancer poolId) and its current
+ *      token balances.
+ *   2. Approximate the expected output from the pool's reserves via
+ *      a constant-product spot estimate
+ *      (`outAmount ≈ sellAmount * balanceOut / balanceIn`). This is a
+ *      first-order ranking estimate — it ignores the pool's weights
+ *      and slippage curvature for non-50/50 weighted pools and
+ *      stable-pool invariants. The on-chain BalancerV2 adapter then
+ *      enforces the oracle-derived `minOutputAmount` exactly, so a
+ *      ranking-stage over-estimate is bounded — the on-chain swap
+ *      reverts if real slippage exceeds the protocol's 6% ceiling.
+ *
+ * Returns null when:
+ *   - The chain has no subgraph URL configured.
+ *   - The subgraph returns no pool containing both tokens.
+ *   - The estimate works out to zero (degenerate balances).
+ *   - Network / parse error reaching the subgraph.
+ *
+ * Future polish: replace the spot estimate with an on-chain
+ * `BalancerQueries.queryBatchSwap` view call for an exact quote
+ * before submission. Adds one RPC roundtrip per pair; deferred until
+ * the ranking accuracy proves to be a real issue in production.
  */
 export async function fetchBalancerV2Quote(
   _client: PublicClient,
-  _req: QuoteRequest,
+  req: QuoteRequest,
 ): Promise<RankedQuote | null> {
-  return null;
+  const idx = adapterIdxFor(req.chainId, 'balancerv2');
+  if (idx == null) return null;
+  const reg = getSwapRegistry(req.chainId);
+  if (!reg?.balancerV2SubgraphUrl) return null;
+
+  const sellLower = req.sellToken.toLowerCase();
+  const buyLower = req.buyToken.toLowerCase();
+
+  // Subgraph schema: each Pool has `tokensList: Bytes!` (array of
+  // lowercased token addresses). `tokensList_contains: [a]` returns
+  // pools where `a ∈ tokensList`. We use double-`tokensList_contains`
+  // via separate filters to require BOTH tokens.
+  const query = `
+    query {
+      pools(
+        where: {
+          tokensList_contains: ["${sellLower}", "${buyLower}"]
+          totalLiquidity_gt: "10000"
+        }
+        orderBy: totalLiquidity
+        orderDirection: desc
+        first: 1
+      ) {
+        id
+        poolType
+        tokens {
+          address
+          balance
+          decimals
+        }
+      }
+    }
+  `;
+
+  let resJson: unknown;
+  try {
+    const res = await fetch(reg.balancerV2SubgraphUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query }),
+    });
+    if (!res.ok) return null;
+    resJson = await res.json();
+  } catch {
+    return null;
+  }
+
+  // Defensive parsing — subgraph payload typing is intentionally loose.
+  const data = (resJson as { data?: { pools?: unknown[] } })?.data?.pools;
+  if (!Array.isArray(data) || data.length === 0) return null;
+  const pool = data[0] as {
+    id?: string;
+    tokens?: Array<{ address?: string; balance?: string; decimals?: number }>;
+  };
+  const poolId = pool.id;
+  if (!poolId || !poolId.startsWith('0x') || poolId.length < 66) return null;
+  const tokens = pool.tokens ?? [];
+  const sellEntry = tokens.find(
+    (t) => (t.address ?? '').toLowerCase() === sellLower,
+  );
+  const buyEntry = tokens.find(
+    (t) => (t.address ?? '').toLowerCase() === buyLower,
+  );
+  if (!sellEntry || !buyEntry) return null;
+  const sellBalDec = sellEntry.decimals ?? 18;
+  const buyBalDec = buyEntry.decimals ?? 18;
+
+  // Subgraph balances are decimal-formatted strings (e.g. "1234.567").
+  // Convert to base units to match req.sellAmount's scale.
+  const sellBalBase = decimalStringToBigInt(sellEntry.balance ?? '0', sellBalDec);
+  const buyBalBase = decimalStringToBigInt(buyEntry.balance ?? '0', buyBalDec);
+  if (sellBalBase === 0n || buyBalBase === 0n) return null;
+
+  // First-order constant-product estimate:
+  //   outAmount = sellAmount * buyBal / sellBal
+  // Skips weight + curvature corrections; good enough for ranking.
+  const outAmount = (req.sellAmount * buyBalBase) / sellBalBase;
+  if (outAmount === 0n) return null;
+
+  // Encode poolId as the AdapterCall data — the on-chain Balancer V2
+  // adapter expects `abi.encode(bytes32 poolId)`.
+  const poolIdHex = poolId as Hex;
+  const encoded = encodeAbiParameters([{ type: 'bytes32' }], [poolIdHex]) as Hex;
+
+  return {
+    adapterKind: 'balancerv2',
+    expectedOutput: outAmount,
+    call: { adapterIdx: BigInt(idx), data: encoded },
+  };
+}
+
+/// Convert a subgraph decimal string ("1234.5678") into base units
+/// at the given token decimals. Truncates fractional digits beyond
+/// `decimals`.
+function decimalStringToBigInt(s: string, decimals: number): bigint {
+  if (!s) return 0n;
+  const trimmed = s.trim();
+  if (!/^-?\d+(\.\d+)?$/.test(trimmed)) return 0n;
+  const negative = trimmed.startsWith('-');
+  const abs = negative ? trimmed.slice(1) : trimmed;
+  const dot = abs.indexOf('.');
+  let intPart = dot === -1 ? abs : abs.slice(0, dot);
+  let fracPart = dot === -1 ? '' : abs.slice(dot + 1);
+  if (fracPart.length > decimals) fracPart = fracPart.slice(0, decimals);
+  const padded = fracPart.padEnd(decimals, '0');
+  const combined = (intPart + padded) || '0';
+  try {
+    const v = BigInt(combined);
+    return negative ? -v : v;
+  } catch {
+    return 0n;
+  }
 }
 
 // ─── Orchestrator. Fetches all 4 venues, ranks, returns try-list. ──────

@@ -23,6 +23,29 @@
       "database_id": "PLACEHOLDER — set via `wrangler d1 create`"
     }
   ],
+  // Phase 7a polish — per-IP rate limit on the /quote/* aggregator
+  // proxy routes. Each binding is keyed independently so 0x and
+  // 1inch limits don't share a counter. 60 requests / 60 seconds is
+  // generous for legitimate frontend usage (one liquidation review
+  // = ~4 quote requests across venues; UI debounce keeps this well
+  // under the cap) but throttles abusive scripted clients before
+  // they exhaust the upstream API key budget.
+  "unsafe": {
+    "bindings": [
+      {
+        "type": "ratelimit",
+        "name": "QUOTE_0X_RATELIMIT",
+        "namespace_id": "1001",
+        "simple": { "limit": 60, "period": 60 }
+      },
+      {
+        "type": "ratelimit",
+        "name": "QUOTE_1INCH_RATELIMIT",
+        "namespace_id": "1002",
+        "simple": { "limit": 60, "period": 60 }
+      }
+    ]
+  },
   // Env-scoped secrets (set via `wrangler secret put`):
   //   TG_BOT_TOKEN          — Telegram bot token from BotFather.
   //   PUSH_CHANNEL_PK       — Vaipakam Push channel signer privkey

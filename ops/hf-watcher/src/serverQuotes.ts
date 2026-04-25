@@ -63,6 +63,10 @@ type AdapterIdxMap = {
 interface ChainSwap {
   uniV3Quoter: Address | null;
   balancerVault: Address;
+  /** Balancer V2 subgraph URL — null disables the venue. Hosted-
+   *  service URLs by default; production deployments override via
+   *  env to point at a paid / decentralized-network endpoint. */
+  balancerV2SubgraphUrl: string | null;
   uniV3FeeTiers: readonly number[];
   adapters: AdapterIdxMap;
 }
@@ -75,36 +79,43 @@ const CHAIN_SWAP: Record<number, ChainSwap> = {
   1: {
     uniV3Quoter: '0x61fFE014bA17989E743c5F6cB21bF9697530B21e',
     balancerVault: BALANCER_V2_VAULT_CANONICAL,
+    balancerV2SubgraphUrl: 'https://api.thegraph.com/subgraphs/name/balancer-labs/balancer-v2',
     uniV3FeeTiers: COMMON_FEE_TIERS,
     adapters: { zeroex: 0, oneinch: 1, univ3: 2, balancerv2: 3 },
   },
   8453: {
     uniV3Quoter: '0x3d4e44Eb1374240CE5F1B871ab261CD16335B76a',
     balancerVault: BALANCER_V2_VAULT_CANONICAL,
+    balancerV2SubgraphUrl: 'https://api.thegraph.com/subgraphs/name/balancer-labs/balancer-base-v2',
     uniV3FeeTiers: COMMON_FEE_TIERS,
     adapters: { zeroex: 0, oneinch: 1, univ3: 2, balancerv2: 3 },
   },
   42161: {
     uniV3Quoter: '0x61fFE014bA17989E743c5F6cB21bF9697530B21e',
     balancerVault: BALANCER_V2_VAULT_CANONICAL,
+    balancerV2SubgraphUrl: 'https://api.thegraph.com/subgraphs/name/balancer-labs/balancer-arbitrum-v2',
     uniV3FeeTiers: COMMON_FEE_TIERS,
     adapters: { zeroex: 0, oneinch: 1, univ3: 2, balancerv2: 3 },
   },
   10: {
     uniV3Quoter: '0x61fFE014bA17989E743c5F6cB21bF9697530B21e',
     balancerVault: BALANCER_V2_VAULT_CANONICAL,
+    balancerV2SubgraphUrl: 'https://api.thegraph.com/subgraphs/name/balancer-labs/balancer-optimism-v2',
     uniV3FeeTiers: COMMON_FEE_TIERS,
     adapters: { zeroex: 0, oneinch: 1, univ3: 2, balancerv2: 3 },
   },
   1101: {
     uniV3Quoter: null,
     balancerVault: BALANCER_V2_VAULT_CANONICAL,
+    balancerV2SubgraphUrl: 'https://api.thegraph.com/subgraphs/name/balancer-labs/balancer-polygon-zk-v2',
     uniV3FeeTiers: COMMON_FEE_TIERS,
     adapters: { zeroex: 0, oneinch: 1, univ3: null, balancerv2: 3 },
   },
   56: {
     uniV3Quoter: null,
     balancerVault: BALANCER_V2_VAULT_CANONICAL,
+    // Balancer V2 not deployed on BNB Chain.
+    balancerV2SubgraphUrl: null,
     uniV3FeeTiers: COMMON_FEE_TIERS,
     adapters: { zeroex: 0, oneinch: 1, univ3: null, balancerv2: 3 },
   },
@@ -267,6 +278,117 @@ async function fetchUniV3(
   };
 }
 
+/**
+ * Phase 7a polish — Balancer V2 quote via subgraph.
+ *
+ * Mirror of the frontend `fetchBalancerV2Quote` in
+ * `frontend/src/lib/swapQuoteService.ts`. Two-step:
+ *   1. GraphQL query against the per-chain Balancer V2 subgraph for
+ *      the deepest pool containing both tokens.
+ *   2. Constant-product spot estimate from the pool's reserves.
+ *
+ * Returns null on any "data unavailable" path (no subgraph, no pool,
+ * degenerate balances, network / parse error). The on-chain Balancer
+ * V2 adapter enforces the oracle-derived `minOutputAmount` exactly,
+ * so a rough ranking estimate can't push proceeds below the floor.
+ */
+async function fetchBalancerV2(
+  req: ServerQuoteRequest,
+): Promise<ServerRankedQuote | null> {
+  const cs = CHAIN_SWAP[req.chainId];
+  if (!cs?.balancerV2SubgraphUrl || cs.adapters.balancerv2 == null) return null;
+
+  const sellLower = req.sellToken.toLowerCase();
+  const buyLower = req.buyToken.toLowerCase();
+  const query = `
+    query {
+      pools(
+        where: {
+          tokensList_contains: ["${sellLower}", "${buyLower}"]
+          totalLiquidity_gt: "10000"
+        }
+        orderBy: totalLiquidity
+        orderDirection: desc
+        first: 1
+      ) {
+        id
+        tokens { address balance decimals }
+      }
+    }
+  `;
+
+  let resJson: unknown;
+  try {
+    const res = await fetch(cs.balancerV2SubgraphUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query }),
+    });
+    if (!res.ok) return null;
+    resJson = await res.json();
+  } catch {
+    return null;
+  }
+
+  const pools = (resJson as { data?: { pools?: unknown[] } })?.data?.pools;
+  if (!Array.isArray(pools) || pools.length === 0) return null;
+  const pool = pools[0] as {
+    id?: string;
+    tokens?: Array<{ address?: string; balance?: string; decimals?: number }>;
+  };
+  const poolId = pool.id;
+  if (!poolId || !poolId.startsWith('0x') || poolId.length < 66) return null;
+  const tokens = pool.tokens ?? [];
+  const sellEntry = tokens.find(
+    (t) => (t.address ?? '').toLowerCase() === sellLower,
+  );
+  const buyEntry = tokens.find(
+    (t) => (t.address ?? '').toLowerCase() === buyLower,
+  );
+  if (!sellEntry || !buyEntry) return null;
+  const sellBal = decimalStringToBigInt(
+    sellEntry.balance ?? '0',
+    sellEntry.decimals ?? 18,
+  );
+  const buyBal = decimalStringToBigInt(
+    buyEntry.balance ?? '0',
+    buyEntry.decimals ?? 18,
+  );
+  if (sellBal === 0n || buyBal === 0n) return null;
+
+  const out = (req.sellAmount * buyBal) / sellBal;
+  if (out === 0n) return null;
+
+  const data = encodeAbiParameters(
+    [{ type: 'bytes32' }],
+    [poolId as `0x${string}`],
+  ) as Hex;
+  return {
+    kind: 'balancerv2',
+    expectedOutput: out,
+    call: { adapterIdx: BigInt(cs.adapters.balancerv2), data },
+  };
+}
+
+function decimalStringToBigInt(s: string, decimals: number): bigint {
+  if (!s) return 0n;
+  const trimmed = s.trim();
+  if (!/^-?\d+(\.\d+)?$/.test(trimmed)) return 0n;
+  const negative = trimmed.startsWith('-');
+  const abs = negative ? trimmed.slice(1) : trimmed;
+  const dot = abs.indexOf('.');
+  const intPart = dot === -1 ? abs : abs.slice(0, dot);
+  let fracPart = dot === -1 ? '' : abs.slice(dot + 1);
+  if (fracPart.length > decimals) fracPart = fracPart.slice(0, decimals);
+  const padded = fracPart.padEnd(decimals, '0');
+  try {
+    const v = BigInt((intPart + padded) || '0');
+    return negative ? -v : v;
+  } catch {
+    return 0n;
+  }
+}
+
 // ─── Orchestrator entrypoint. ──────────────────────────────────────────
 
 export async function orchestrateServerQuotes(
@@ -278,7 +400,7 @@ export async function orchestrateServerQuotes(
     fetchZeroEx(env, req),
     fetchOneInch(env, req),
     fetchUniV3(client, req),
-    Promise.resolve(null), // balancerv2 stub
+    fetchBalancerV2(req),
   ]);
   const kinds: ('zeroex' | 'oneinch' | 'univ3' | 'balancerv2')[] = [
     'zeroex',

@@ -44,6 +44,13 @@ export interface Env {
   KEEPER_ENABLED?: string;
   KEEPER_PRIVATE_KEY?: string;
 
+  // Phase 7a polish — Cloudflare Workers built-in rate-limit
+  // bindings (one per upstream aggregator). Default config:
+  // 60 reqs / 60 seconds per IP. Configured in wrangler.jsonc;
+  // injected as bindings on the env object.
+  QUOTE_0X_RATELIMIT?: { limit(input: { key: string }): Promise<{ success: boolean }> };
+  QUOTE_1INCH_RATELIMIT?: { limit(input: { key: string }): Promise<{ success: boolean }> };
+
   // CORS origin the HTTP endpoints will accept. Set to the frontend
   // origin(s); defaults to the vars entry in wrangler.jsonc.
   FRONTEND_ORIGIN: string;

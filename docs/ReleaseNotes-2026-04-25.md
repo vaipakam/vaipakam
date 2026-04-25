@@ -244,13 +244,74 @@ endpoints under the same CORS gate; frontend origin is the only
 allowed caller.
 
 **What still ships in a follow-up.**
-- **Balancer V2 quote integration** — needs Balancer V2 subgraph for
-  pool discovery + on-chain `BalancerQueries.queryBatchSwap` for
-  exact output. Stubbed as `null` for now; the orchestrator handles
-  null returns gracefully (drops the venue from the try-list).
-- **Worker rate-limit** on the `/quote/*` routes — Cloudflare's built-in
-  rate-limit feature configured via the dashboard, layered on top of
-  the existing CORS gate. Not yet wired.
+- **Balancer V2 quote integration** — ✅ shipped 2026-04-25 in Phase 7a
+  polish (see "Phase 7a polish — Balancer V2 quote + worker rate-
+  limit" section below).
+- **Worker rate-limit** on the `/quote/*` routes — ✅ shipped 2026-04-25
+  in Phase 7a polish.
+
+## Phase 7a polish — Balancer V2 quote + worker rate-limit
+
+Two follow-up items from Phase 7a's "queued polish" list landed
+together:
+
+**Balancer V2 quote orchestration**, previously stubbed as `null`,
+is now active in both the frontend (`swapQuoteService.ts`) and the
+hf-watcher worker (`serverQuotes.ts`). The orchestrator queries the
+per-chain Balancer V2 subgraph for the deepest pool containing the
+asset pair (filtered to `totalLiquidity > $10k` to skip dust pools)
+and produces a first-order constant-product spot estimate from the
+pool's reserves: `outAmount ≈ sellAmount × balanceOut / balanceIn`.
+This estimate is good enough for ranking the try-list; the on-chain
+Balancer V2 adapter still enforces the oracle-derived
+`minOutputAmount` exactly, so a too-optimistic ranking estimate just
+fails the slippage check and the failover library moves to the next
+adapter.
+
+Subgraph URLs are configured per chain in `swapRegistry.ts`
+(frontend) and `serverQuotes.ts` (worker). Defaults point at The
+Graph hosted endpoints; operators set
+`VITE_<CHAIN>_BALANCER_V2_SUBGRAPH_URL` to override with paid /
+decentralized-network endpoints. BNB Chain is left explicitly null
+(Balancer V2 not deployed there).
+
+**Worker per-IP rate-limit on /quote/0x and /quote/1inch.**
+Configured via Cloudflare Workers' built-in `unsafe.bindings`
+(rate-limit primitive) — 60 requests / 60 seconds per upstream per
+IP. The handlers check the limit before parsing the request body
+or proxying to the aggregator; over-budget IPs get 429 with
+`{"error": "rate-limited"}`. Caps abusive scripted clients before
+they exhaust the operator's 0x / 1inch API key budgets, while
+leaving plenty of headroom for legitimate frontend flows (a
+liquidation review issues ~4 quote requests across all venues; UI
+debouncing keeps real users well under 60/min).
+
+The bindings are scoped per upstream (`QUOTE_0X_RATELIMIT` and
+`QUOTE_1INCH_RATELIMIT`) so heavy 0x usage doesn't burn the 1inch
+budget. Bindings fail-OPEN when undefined (legacy deploys without
+the new wrangler config still serve traffic, just unrate-limited).
+
+**Files touched**:
+
+- `frontend/src/contracts/swapRegistry.ts` — added
+  `balancerV2SubgraphUrl` per chain; default URLs for Ethereum /
+  Base / Arbitrum / Optimism / Polygon zkEVM; null for BNB Chain;
+  env-var override per chain.
+- `frontend/src/lib/swapQuoteService.ts` — `fetchBalancerV2Quote`
+  re-implemented (was a stub returning null); shared
+  `decimalStringToBigInt` helper for parsing subgraph balances.
+- `ops/hf-watcher/src/serverQuotes.ts` — mirror of the frontend
+  Balancer fetch; `fetchBalancerV2` replaces the previous
+  `Promise.resolve(null)` placeholder.
+- `ops/hf-watcher/src/quoteProxy.ts` — `checkRateLimit` helper +
+  per-handler rate-limit gate at the top of `handle0xQuote` and
+  `handle1inchQuote`.
+- `ops/hf-watcher/src/env.ts` — typed bindings for the new
+  rate-limit primitives.
+- `ops/hf-watcher/wrangler.jsonc` — `unsafe.bindings` declaration
+  for both rate-limit namespaces.
+
+Frontend + worker TypeScript both clean.
 
 ## Phase 7b — multi-venue liquidity classification (oracle-layer redundancy)
 
@@ -504,9 +565,17 @@ now includes a "≥ 2 of 3 secondaries configured" check.
   constants.
 - `contracts/test/SwapAdapterTest.t.sol` — unchanged; Phase 7a path
   is independent.
-- Pending follow-up: `test/SecondaryQuorumTest.t.sol` to drive the
-  Soft 2-of-N decision matrix end-to-end against mock Tellor /
-  API3 / DIA contracts.
+- `contracts/test/SecondaryQuorumTest.t.sol` (new) — 27 tests
+  driving the Soft 2-of-N decision matrix end-to-end against
+  `vm.mockCall`-stubbed Tellor / API3 / DIA. Coverage: per-source
+  Agree / Disagree / Unavailable triggers (zero address, no data,
+  stale, zero value, oracle revert, symbol unreadable), every
+  meaningful 1-source / 2-source / 3-source combination, the
+  graceful-fallback edge cases (all unavailable, no agreement and
+  no disagreement), and the configuration knobs (deviation
+  tightening rejects prior-agreeing data; staleness loosening
+  accepts prior-rejected data). All 27 pass; full no-invariants
+  regression at 1386 / 0 / 5.
 
 **Storage-layout warning** (no impact in practice): removing the
 mid-struct `pythEndpoint` and `pythFeedConfigs` slots shifts every

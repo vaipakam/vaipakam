@@ -45,6 +45,9 @@ const HEX_ADDR = /^0x[0-9a-fA-F]{40}$/;
 const DECIMAL = /^[1-9][0-9]{0,77}$/;
 
 export async function handle0xQuote(req: Request, env: Env): Promise<Response> {
+  if (!(await checkRateLimit(req, env.QUOTE_0X_RATELIMIT))) {
+    return jsonErr(env, 429, 'rate-limited');
+  }
   const body = await parseBody(req);
   if (!body) return jsonErr(env, 400, 'invalid-payload');
   if (!env.ZEROEX_API_KEY) return jsonErr(env, 503, 'zeroex-not-configured');
@@ -71,6 +74,9 @@ export async function handle0xQuote(req: Request, env: Env): Promise<Response> {
 }
 
 export async function handle1inchQuote(req: Request, env: Env): Promise<Response> {
+  if (!(await checkRateLimit(req, env.QUOTE_1INCH_RATELIMIT))) {
+    return jsonErr(env, 429, 'rate-limited');
+  }
   const body = await parseBody(req);
   if (!body) return jsonErr(env, 400, 'invalid-payload');
   if (!env.ONEINCH_API_KEY) return jsonErr(env, 503, 'oneinch-not-configured');
@@ -101,6 +107,39 @@ export async function handle1inchQuote(req: Request, env: Env): Promise<Response
 }
 
 // ─── Helpers ───────────────────────────────────────────────────────────
+
+/**
+ * Per-IP rate-limit gate. Cloudflare Workers' built-in
+ * `RateLimitBinding` returns `{ success: boolean }` from `limit({ key })`;
+ * `success === false` means the IP is currently over the budget for
+ * this binding. We use the request's CF-resolved IP (`cf-connecting-ip`)
+ * as the key, falling back to a static "unknown" bucket so an absent
+ * header doesn't bypass the limit.
+ *
+ * Returns `true` if the request should proceed; `false` if the
+ * caller should respond 429.
+ *
+ * If the binding is undefined (legacy deploy that hasn't been
+ * `wrangler deploy`-ed since wrangler.jsonc gained the binding), we
+ * fail OPEN — the route still works, just unrate-limited. Operators
+ * see this in monitoring and can update the deployment.
+ */
+async function checkRateLimit(
+  req: Request,
+  binding:
+    | { limit(input: { key: string }): Promise<{ success: boolean }> }
+    | undefined,
+): Promise<boolean> {
+  if (!binding) return true;
+  const ip = req.headers.get('cf-connecting-ip') ?? 'unknown';
+  try {
+    const { success } = await binding.limit({ key: ip });
+    return success;
+  } catch {
+    // Don't fail-closed on a binding error — log and let through.
+    return true;
+  }
+}
 
 async function parseBody(req: Request): Promise<QuoteRequest | null> {
   let raw: unknown;

@@ -51,6 +51,14 @@ export interface ChainSwapRegistry {
   uniV3Router: string | null;
   /** Canonical Balancer V2 Vault — same address on every EVM. */
   balancerVault: string;
+  /** Balancer V2 subgraph endpoint for pool discovery. Per-chain
+   *  because The Graph hosts a different deployment per chain.
+   *  Null = Balancer V2 quote orchestration disabled on this chain
+   *  (no subgraph available, e.g. on chains where Balancer isn't
+   *  deployed). Operators override via env var
+   *  `VITE_<CHAIN>_BALANCER_V2_SUBGRAPH_URL` to point at a paid /
+   *  decentralized-network endpoint. */
+  balancerV2SubgraphUrl: string | null;
   /** UniswapV3 fee tiers to probe when searching for the best pool,
    *  ordered by popularity. 500 (0.05%), 3000 (0.3%), 10000 (1%). */
   uniV3FeeTiers: readonly number[];
@@ -97,6 +105,26 @@ const UNIV3_DEPLOYMENTS: Record<number, { quoter: string; router: string } | nul
 
 const COMMON_FEE_TIERS = [500, 3000, 10000] as const;
 
+// The Graph's hosted service has been migrating to the decentralized
+// network. The URLs below default to the legacy hosted endpoints so
+// dev / testnet works out of the box; operators should override via
+// env to point at the decentralized network (with API key) for
+// production. Null on chains where Balancer V2 isn't deployed.
+const BALANCER_V2_SUBGRAPHS: Record<number, string | null> = {
+  1: 'https://api.thegraph.com/subgraphs/name/balancer-labs/balancer-v2',
+  8453: 'https://api.thegraph.com/subgraphs/name/balancer-labs/balancer-base-v2',
+  42161: 'https://api.thegraph.com/subgraphs/name/balancer-labs/balancer-arbitrum-v2',
+  10: 'https://api.thegraph.com/subgraphs/name/balancer-labs/balancer-optimism-v2',
+  1101: 'https://api.thegraph.com/subgraphs/name/balancer-labs/balancer-polygon-zk-v2',
+  56: null, // Balancer V2 not deployed on BNB Chain
+};
+
+function optString(key: string, defaultValue: string | null): string | null {
+  const v = env[key];
+  if (v == null || v === '') return defaultValue;
+  return v;
+}
+
 function buildEntry(chainId: number): ChainSwapRegistry {
   const univ3 = UNIV3_DEPLOYMENTS[chainId] ?? null;
   const chainUpper = _chainEnvPrefix(chainId);
@@ -105,6 +133,10 @@ function buildEntry(chainId: number): ChainSwapRegistry {
     uniV3Quoter: univ3?.quoter ?? null,
     uniV3Router: univ3?.router ?? null,
     balancerVault: BALANCER_V2_VAULT_CANONICAL,
+    balancerV2SubgraphUrl: optString(
+      `VITE_${chainUpper}_BALANCER_V2_SUBGRAPH_URL`,
+      BALANCER_V2_SUBGRAPHS[chainId] ?? null,
+    ),
     uniV3FeeTiers: COMMON_FEE_TIERS,
     adapters: [
       {
