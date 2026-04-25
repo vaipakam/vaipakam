@@ -127,7 +127,8 @@
       "Bash(node_modules/.bin/tsc -p .)",
       "Bash(chmod +x /home/pranav/Codes/Vaipakam/vaipakam/contracts/script/exportAbis.sh)",
       "Bash(bash contracts/script/exportAbis.sh)",
-      "Bash(bash /home/pranav/Codes/Vaipakam/vaipakam/contracts/script/exportAbis.sh)"
+      "Bash(bash /home/pranav/Codes/Vaipakam/vaipakam/contracts/script/exportAbis.sh)",
+      "Bash(xargs -I {} basename {})"
     ],
     "additionalDirectories": [
       "/tmp",

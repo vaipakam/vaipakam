@@ -233,6 +233,42 @@ Users observe every queued admin action via the `CallScheduled` and
 `CallExecuted` events on the Timelock contract. A public subgraph /
 dashboard surfacing these is recommended but not strictly required.
 
+### Contract change → public keeper-bot sync (Phase 9.A)
+
+Whenever a contract change touches a selector the public reference
+keeper bot reads (`MetricsFacet.getActiveLoansCount /
+getActiveLoansPaginated`, `RiskFacet.calculateHealthFactor /
+triggerLiquidation`, `LoanFacet.getLoanDetails`), the
+`vaipakam-keeper-bot` sibling repo's checked-in ABIs need to be
+regenerated to match. **This is part of the same PR as the
+contract change** — shipping a contract update without the
+corresponding bot ABI sync leaves the public keeper bot reverting
+in production with opaque "function selector not found" failures.
+
+```bash
+# In this monorepo, after `forge build` is clean:
+KEEPER_BOT_DIR=../../vaipakam-keeper-bot \
+  bash contracts/script/exportAbis.sh
+
+# In the keeper-bot repo:
+cd ../../vaipakam-keeper-bot
+git diff src/abis/      # review the change
+npm run typecheck       # confirm bot still builds
+git commit -am 'Sync ABIs with vaipakam@<commit>'
+git push
+```
+
+The script writes `src/abis/_source.json` with the monorepo's
+commit hash + UTC timestamp at export, so an auditor reviewing a
+released bot version can correlate it to a specific contracts
+state. CI in the keeper-bot repo runs the `abi-shape` job on
+every PR; well-formed JSONs land green, hand-edited / pretty-
+table outputs fail loud.
+
+Full protocol behind this surface is documented in
+[`CLAUDE.md`](../CLAUDE.md) → "Keeper-bot ABI sync" and
+`docs/ReleaseNotes-2026-04-25.md` → Phase 9.A "Sync mechanism".
+
 ### Incident response — pause
 
 Guardian Safe directly calls `pause()` on the relevant contract:

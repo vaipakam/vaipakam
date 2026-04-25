@@ -51,6 +51,22 @@ Public-navigation requirements:
 - the `Buy VPFI` link from the home page must resolve to the working public purchase route
 - the footer should expose `Terms`, `Privacy`, `Cookie settings`, and, once published, the public bug bounty program link
 
+PWA requirements:
+
+- the dApp should be installable on supported mobile browsers through the native `Add to Home Screen` / install prompt
+- the web app manifest should include Vaipakam branding, app icons, theme color, and shortcuts for high-frequency destinations such as Offer Book, My Loans, Buy VPFI, and Alerts
+- the production service worker may cache only the static app shell with a stale-while-revalidate strategy
+- dynamic data including RPC responses, subgraph reads, `/quote/*` worker responses, and transaction-preview responses must bypass service-worker caching so on-chain state is never stale
+- the service worker should register only in production builds and should fail safely on browsers that do not support service workers
+
+Farcaster Frame requirements:
+
+- Vaipakam may expose a public read-only Farcaster Frame at `/frames/active-loans`
+- the Frame should let a user enter a wallet address and check active Vaipakam loans across supported chains without signing or connecting a wallet
+- the result should show total active-loan count, lowest Health Factor, and per-chain breakdown where data is available
+- the result should deep-link to the public NFT Verifier so users can inspect individual position NFTs after seeing the wallet summary
+- Frame image responses should be stateless, branded, and suitable for common Farcaster clients
+
 Privacy and consent requirements:
 
 - the public website and connected app must include a cookie-consent banner that supports Google Consent Mode v2 and EU / GDPR expectations
@@ -95,7 +111,7 @@ Transaction-safety and single-signature flows:
 
 - review modals for Offer Book accept, Create Offer submit, Repay, and Add Collateral should support the Permit2-first pattern where the action uses Uniswap Permit2 when possible and falls back to the classic approve-plus-action path when Permit2 is unavailable or unsupported
 - Permit2 should be presented as a convenience that reduces wallet popups for supported ERC-20 actions, not as a requirement to use Vaipakam
-- Permit signatures should have short expiries and clear review copy so users understand the asset and amount being authorized
+- Permit signatures should use the canonical Permit2 deployment at `0x000000000022D473030F116dDEE9F6B43aC78BA3`, expire after 30 minutes, and include clear review copy so users understand the asset and amount being authorized
 - before the final confirmation on supported review modals, the app should show a transaction preview panel backed by the server-side Blockaid proxy when available
 - the transaction preview panel should distinguish benign previews, warnings, malicious classifications, and preview-unavailable states with clear severity styling
 - Blockaid unavailability must fail soft: it may collapse to a subtle preview-unavailable state, but it must not block the on-chain transaction path by itself
@@ -112,6 +128,13 @@ Liquidation quote orchestration:
 - successful quotes should be sorted by expected output, with the best route and fallback order shown before the user submits liquidation
 - if one quote source is unavailable, the UI should still submit a ranked try-list from the remaining sources where possible
 - the quote-proxy routes should use per-upstream rate limits, such as separate 0x and 1inch per-IP budgets, so one upstream cannot exhaust the other
+
+Keeper-bot reference UX / ops requirements:
+
+- Vaipakam should support a standalone public keeper-bot reference implementation for third-party liquidators once mainnet selectors are stable
+- the bot should mirror the frontend / worker liquidation route orchestration: list active loans, read Health Factor, quote 0x / 1inch / UniV3 / Balancer V2, rank routes, and submit `triggerLiquidation`
+- the public bot documentation should describe setup, chain coverage, optional aggregator API keys, logging, MEV-protection options, and clear scope limits
+- bot ABI files should be generated from the monorepo contract surface rather than maintained as hand-written selector strings
 
 Borrower VPFI discount UX:
 

@@ -239,6 +239,36 @@ A Foundry test at `test/OraclePolicyReadback.t.sol` (to be written as
 a follow-up alongside `GovernanceHandover.t.sol`) should drive these
 readbacks against a forked target chain as a CI gate.
 
+### Off-chain consumers of the oracle / liquidation surface
+
+The Diamond's price + liquidity views are consumed by three distinct
+off-chain clients. Each has its own sync mechanism with this
+monorepo's contracts; none of them weakens the on-chain oracle
+policy — they all just read it.
+
+- **Frontend dApp** (`frontend/`) — renders prices, HFs, and
+  liquidity badges in the UI. ABIs hand-maintained per-facet under
+  `frontend/src/contracts/abis/`.
+- **HF watcher worker** (`ops/hf-watcher/`) — operator-controlled
+  Cloudflare Worker that polls HFs, dispatches alerts, and
+  optionally submits autonomous `triggerLiquidation` calls under
+  the same oracle-derived `minOutputAmount` floor enforced
+  on-chain. ABIs hand-maintained as `parseAbi([...])` strings in
+  the worker source.
+- **Public reference keeper bot** (sibling `vaipakam-keeper-bot`
+  repo, Phase 9.A) — third-party-runnable Node.js bot that reads
+  the same HF view and submits permissionless liquidations. ABIs
+  generated from this monorepo via
+  `contracts/script/exportAbis.sh`, stamped with the source
+  commit hash, validated in the bot's own CI.
+
+A keeper bot — operator-run or third-party — cannot influence
+the oracle gates. It can only submit a `triggerLiquidation` call;
+all the safety properties documented above (sequencer healthy
+required, oracle fresh required, 2-of-N secondary quorum required,
+on-chain `minOutputAmount` enforced per-adapter) apply to the
+keeper's submission identically to any other caller's.
+
 ## What this policy does NOT cover
 
 - **Multi-source simultaneous outage of every secondary.** If

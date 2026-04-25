@@ -28,6 +28,23 @@ before reviewing code.
   reviewed informally, not part of the audit surface. The frontend's
   0x preflight check (Phase 7b.1) is a UX-layer guard only; the
   on-chain attack surface is the on-chain V3-clone OR-logic.
+- **Reference keeper bot** (sibling `vaipakam-keeper-bot` repo,
+  Phase 9.A) — out of audit scope. Liquidation is permissionless
+  on-chain; the bot is one of many possible callers of
+  `triggerLiquidation`. A compromised or buggy keeper bot can
+  waste its own gas budget but cannot move user funds — the
+  diamond never holds anything for the keeper. Auditors should
+  confirm this property by reviewing `RiskFacet.triggerLiquidation`
+  and `DefaultedFacet.triggerDefault`: the only state writable
+  by the caller is the loan's status transition; collateral
+  movement is governed by oracle-derived `minOutputAmount` and
+  the per-adapter scope-bounded approvals in
+  `LibSwap.swapWithFailover`. A separate, reproducible-from-
+  monorepo-state link exists via the bot's
+  `src/abis/_source.json` provenance stamp written by
+  `contracts/script/exportAbis.sh` — auditors can verify any
+  bot release was generated from a specific monorepo commit
+  hash.
 
 ---
 

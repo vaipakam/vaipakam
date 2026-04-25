@@ -282,18 +282,17 @@ Files: `frontend/public/manifest.json`, `frontend/public/sw.js`,
 
 ### Phase 9.A — Public keeper-bot reference repo
 
-The keeper bot lives in its own standalone repo
-(`vaipakam-keeper-bot`, sibling of the monorepo at
-`/home/pranav/Codes/Vaipakam/vaipakam-keeper-bot` for local
-checkouts; will be published as a separate GitHub repo for the
-public release). Self-contained, MIT-licensed Node.js bot any
-third-party operator can clone, configure with their own keeper
-key + RPC endpoints + (optional) aggregator API keys, and run to
-compete for Vaipakam liquidations. **Liquidation is
-permissionless** — anyone whose `triggerLiquidation` lands first
-earns the on-chain bonus. Decentralizing liquidation
-infrastructure beyond the operator-run hf-watcher worker is a
-healthy book hygiene measure.
+The keeper bot lives in its own standalone repo,
+**`vaipakam-keeper-bot`**, kept private during pre-mainnet and
+intended to flip public at mainnet cutover. Self-contained,
+MIT-licensed Node.js bot any third-party operator can clone,
+configure with their own keeper key + RPC endpoints + (optional)
+aggregator API keys, and run to compete for Vaipakam
+liquidations. **Liquidation is permissionless** — anyone whose
+`triggerLiquidation` lands first earns the on-chain bonus.
+Decentralizing liquidation infrastructure beyond the
+operator-run hf-watcher worker is a healthy book hygiene
+measure.
 
 The bot mirrors the autonomous-keeper logic in the existing
 hf-watcher worker but as a vanilla Node.js process (no
@@ -316,6 +315,91 @@ The orchestrator code is self-contained TypeScript with viem +
 dotenv as the only runtime deps. JSON-lines logging for
 Datadog / Loki / Splunk ingest. Node 22+ required (uses
 `--experimental-strip-types` so no build step is needed).
+
+#### Sync mechanism (monorepo → public bot)
+
+The bot's Diamond ABI lives as per-facet JSON files in the
+public repo's `src/abis/` directory. To keep them in lockstep
+with this monorepo's actual contract surface, a new shell
+script — **`contracts/script/exportAbis.sh`** — runs
+`forge inspect <Facet> abi --json` for every facet the bot
+reads (`MetricsFacet`, `RiskFacet`, `LoanFacet`) and writes the
+output into the sibling keeper-bot checkout. The script also
+writes a `_source.json` provenance stamp containing the
+monorepo's commit hash + UTC timestamp at export time, so an
+auditor can correlate any released bot version with a specific
+contracts state.
+
+Contributor flow when changing a bot-relevant selector:
+
+```bash
+# In this monorepo
+forge build
+KEEPER_BOT_DIR=../../vaipakam-keeper-bot \
+  bash contracts/script/exportAbis.sh
+
+# In the keeper-bot repo
+cd ../../vaipakam-keeper-bot
+git diff src/abis/      # review what changed
+npm run typecheck       # confirm bot still builds
+git commit -am 'Sync ABIs with vaipakam@<commit>'
+```
+
+The bot's `src/index.ts` imports the JSONs directly:
+
+```ts
+import metricsAbi from './abis/MetricsFacet.json' with { type: 'json' };
+import riskAbi    from './abis/RiskFacet.json'    with { type: 'json' };
+import loanAbi    from './abis/LoanFacet.json'    with { type: 'json' };
+const DIAMOND_ABI: Abi = [...metricsAbi, ...riskAbi, ...loanAbi];
+```
+
+Old hand-typed `parseAbi([...])` strings were retired — the JSON
+files are now the single source of truth.
+
+A new "Keeper-bot ABI sync" section was added to
+[`CLAUDE.md`](../CLAUDE.md) so future contributors editing the
+relevant selectors know to run the export script as part of the
+same PR.
+
+#### Public-repo CI
+
+The keeper-bot's `.github/workflows/ci.yml` runs two jobs on
+every PR + main push:
+
+1. **typecheck** — `npm ci && npm run typecheck`. Catches TS
+   regressions including the most common breakage mode
+   (re-running `forge inspect` without `--json` and committing
+   the resulting pretty-table output as `*.json`).
+2. **abi-shape** — pure `jq`-based validation that every file
+   under `src/abis/*.json` is a non-empty array of items each
+   carrying a `type` field, and that `_source.json` exists
+   with `monorepoCommit` + `exportedAt` keys.
+
+A future Phase 2 follow-up will add an `abi-drift` job that
+`cast call`s known view selectors against a deployed testnet
+diamond — confirms the ABI in the bot matches the production
+surface, not just that it's well-formed JSON. Deferred until
+mainnet because Phase 2 needs a stable testnet diamond + CI
+secret budget.
+
+#### LICENSE
+
+MIT. Matches `package.json`'s license field and the README's
+licensing claim. Standard SPDX text in `LICENSE` at repo root.
+
+#### Repo visibility
+
+Created **private** during pre-mainnet so:
+- the staged commit has a remote backup,
+- GitHub Actions runs the CI matrix on every PR,
+- a small set of trusted reviewers can iterate on the bot
+  without third parties tracking the diamond's still-evolving
+  surface.
+
+Will flip to **public** at mainnet cutover once the diamond's
+selectors are locked. The flip is one click in GitHub's repo
+settings; no code changes required.
 
 ### Phase 9.B — Active-loan check Farcaster Frame
 

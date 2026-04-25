@@ -399,7 +399,7 @@ The `Buy VPFI` page never asks the user to switch to the canonical `Base` chain.
 Two explicit user steps, in this order:
 
 1. **Buy** — the user, connected to their preferred supported chain (`Base`, `Arbitrum`, `Polygon`, `Optimism`, or `Ethereum mainnet`), pays ETH at the fixed rate directly from the page. Purchased VPFI is delivered to the user's wallet **on that same preferred chain** — never auto-routed into escrow, and never requiring a manual chain switch. If the flow settles on the canonical Base receiver, receipt of ETH on Base is the mint/release trigger.
-2. **Deposit to escrow** — a separate, explicit user action on the same page moves VPFI from the user's wallet into the user's personal escrow on the same chain. This step is always explicit: the protocol never auto-funds escrow after a buy or a bridge. Where supported, this deposit may use Uniswap Permit2 so the user signs one EIP-712 authorization and executes the escrow deposit in a single transaction; the classic approve-plus-deposit path remains the fallback.
+2. **Deposit to escrow** — a separate, explicit user action on the same page moves VPFI from the user's wallet into the user's personal escrow on the same chain. This step is always explicit: the protocol never auto-funds escrow after a buy or a bridge. Where supported, this deposit may use Uniswap Permit2 at `0x000000000022D473030F116dDEE9F6B43aC78BA3` so the user signs one EIP-712 authorization and executes the escrow deposit in a single transaction; the classic approve-plus-deposit path remains the fallback.
 
 Per-wallet cap display:
 
@@ -413,7 +413,7 @@ VPFI held in escrow simultaneously satisfies the §3 staking model and the fee-d
 Permit2 requirements for VPFI utility flows:
 
 - Permit2 support is an optional convenience path for VPFI deposits and other eligible ERC-20 actions; it must not remove or weaken the classic ERC-20 allowance flow.
-- Permit signatures should use short expiries, high-entropy nonces, and exact asset / amount / spender scope.
+- Permit signatures should use 30-minute expiries, high-entropy nonces, and exact asset / amount / spender scope.
 - The Diamond should validate the target VPFI asset and deposit amount before pulling through Permit2.
 - Token-level allowances remain under the user's control; Permit2 should live beside the legacy path rather than becoming a silent global approval replacement.
 

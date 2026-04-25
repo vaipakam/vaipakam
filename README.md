@@ -6,19 +6,46 @@ Vaipakam is a decentralized peer-to-peer (P2P) lending and borrowing platform bu
 
 ## Table of Contents
 
+- [Technical Project Details for Developers](#technical-project-details-for-developers)
 - [1. Supported Assets and Networks (Phase 1)](#1-supported-assets-and-networks-phase-1)
+  - [Lending and Collateral Assets](#lending-and-collateral-assets)
+  - [Asset Viability, Oracles, and Liquidity Determination](#asset-viability-oracles-and-liquidity-determination)
 - [2. Loan Durations and Flexibility](#2-loan-durations-and-flexibility)
+  - [Loan Terms](#loan-terms)
 - [3. Offer Creation](#3-offer-creation)
+  - [Lenders](#lenders)
+  - [Borrowers](#borrowers)
+  - [NFT Minting for Offers](#nft-minting-for-offers)
+  - [Frontend Warnings (Reiteration)](#frontend-warnings-reiteration)
 - [4. Offer Book Display](#4-offer-book-display)
 - [5. Loan Initiation](#5-loan-initiation)
 - [6. Loan Closure & Repayment](#6-loan-closure--repayment)
 - [7. Liquidation and Default](#7-liquidation-and-default)
 - [8. Preclosing by Borrower (Early Repayment Options)](#8-preclosing-by-borrower-early-repayment-options)
+  - [General Rules for All Borrower Preclose Options](#general-rules-for-all-borrower-preclose-options)
+  - [Option 1: Standard Early Repayment](#option-1-standard-early-repayment)
+  - [Option 2: Loan Transfer to Another Borrower](#option-2-loan-transfer-to-another-borrower)
+  - [Option 3: Offset with a New Lender Offer (Original Borrower Becomes a Lender)](#option-3-offset-with-a-new-lender-offer-original-borrower-becomes-a-lender)
 - [9. Early Withdrawal by Lender](#9-early-withdrawal-by-lender)
+  - [General Rules for All Lender Early Withdrawal Options](#general-rules-for-all-lender-early-withdrawal-options)
+  - [Option 1: Sell the Loan to Another Lender](#option-1-sell-the-loan-to-another-lender)
+  - [Option 2: Create a New Offer Through the Borrower-Offer Path](#option-2-create-a-new-offer-through-the-borrower-offer-path)
+  - [Option 3: Wait for Loan Maturity](#option-3-wait-for-loan-maturity)
+  - [Implementation Checklist for Preclose and Early-Withdrawal Flows](#implementation-checklist-for-preclose-and-early-withdrawal-flows)
 - [10. Governance and VPFI Token Rollout](#10-governance-and-vpfi-token-rollout)
+  - [Phase 1 Token Deployment and Minting](#phase-1-token-deployment-and-minting)
+  - [Governance (Phase 2)](#governance-phase-2)
+  - [Treasury and Revenue Sharing](#treasury-and-revenue-sharing)
+  - [VPFI Token Distribution](#vpfi-token-distribution)
+  - [VPFI Multi-Chain Deployment](#vpfi-multi-chain-deployment)
 - [11. Notifications and Alerts](#11-notifications-and-alerts)
 - [12. User Dashboard](#12-user-dashboard)
 - [13. Technical Details](#13-technical-details)
+  - [Blockchain and Networks (Phase 1)](#blockchain-and-networks-phase-1)
+  - [Smart Contracts](#smart-contracts)
+  - [Frontend](#frontend)
+  - [Public View Functions for Analytics, Transparency, and Integrations](#public-view-functions-for-analytics-transparency-and-integrations)
+  - [Testing and Auditing](#testing-and-auditing)
 - [14. Initial Deployment and Configuration (Phase 1)](#14-initial-deployment-and-configuration-phase-1)
 - [15. NFT Verification Tool](#15-nft-verification-tool)
 - [16. Regulatory Compliance Considerations](#16-regulatory-compliance-considerations)
@@ -147,7 +174,7 @@ The platform distinguishes between liquid and illiquid assets, which affects how
 
 - Offers are created through a React-based web interface.
 - For common ERC-20 flows, the app may offer a Uniswap Permit2 single-signature path instead of the classic approve-then-action path. Supported actions include creating an offer, accepting an offer, and depositing VPFI to escrow. Wallets or users that do not use Permit2 should fall back to the explicit approval flow without changing protocol semantics.
-- Permit2 signatures should be EIP-712 signatures with short expiries and high-entropy nonces. Permit2 must live alongside the legacy allowance path; it must not silently replace token-level approvals for users who choose the classic flow.
+- Permit2 should use Uniswap's canonical EVM deployment at `0x000000000022D473030F116dDEE9F6B43aC78BA3`. Permit signatures should be EIP-712 signatures with a 30-minute expiry, high-entropy nonces, and exact asset / amount / spender scope. Permit2 must live alongside the legacy allowance path; it must not silently replace token-level approvals for users who choose the classic flow.
 - All offer details are recorded on-chain for transparency and immutability.
 - Wherever the frontend lets a borrower create an offer or accept an offer for ERC-20 borrowing, it must communicate the `Loan Initiation Fee` in plain language before submission. The disclosure should make clear that the fee is charged in the lending asset at loan initiation and is deducted before net proceeds reach the borrower.
 - Wherever the frontend lets a user create or accept an offer, it must require a single mandatory combined warning-and-consent acknowledgement before submission. That acknowledgement must use the combined `Abnormal-market & illiquid asset terms` substance described above and must cover both the liquid-asset abnormal-market fallback and, when applicable, the illiquid full-collateral-in-kind path. If the consent is not given, the transaction must revert / not proceed.
@@ -1056,6 +1083,7 @@ Effective communication is key for user experience and risk management. Vaipakam
 - **Health-Factor Alert Subscriptions:** Borrowers can subscribe to per-loan HF threshold alerts, such as `HF below 1.20`, for liquid loans they own. The watcher reprices subscribed loans on a timed sweep and sends an alert only when the configured threshold is newly crossed.
 - **HF Alert Channels:** Telegram alerts are delivered through the official Vaipakam bot linked to the wallet. Push Protocol is supported as a decentralized opt-in channel; the send path may remain staged until the production Push channel is registered.
 - **Autonomous Liquidation Watcher:** Operators may enable a keeper mode on the same watcher so it submits permissionless `triggerLiquidation` transactions when subscribed loans cross HF `1.0`. This mode is disabled by default and requires explicit worker secrets plus a funded keeper EOA per target chain.
+- **Public Keeper-Bot Reference:** Vaipakam should maintain a standalone keeper-bot reference implementation for third-party operators. The bot should be able to page through active loans, read Health Factor, quote 0x / 1inch / UniV3 / Balancer routes, rank them, and submit permissionless liquidations from the operator's own EOA.
 - **Funding:** The cost of sending these SMS/Email notifications will be covered by the Vaipakam platform, funded from its treasury.
 - **Criticality:** Notifications will be primarily for critical events to avoid alert fatigue.
 - **Style:** Notifications should remain concise, actionable, and focused on essential events.
@@ -1130,6 +1158,8 @@ A comprehensive user dashboard is essential for managing activities on Vaipakam.
 
 - **Framework:** React with wagmi v2 and viem for wallet connection, contract reads/writes, multicall batching, and direct JSON-RPC control.
 - **Wallet UX:** ConnectKit is the wallet picker layer on top of wagmi v2. Mobile wallet selections should open wallet apps directly through deep links, while QR pairing remains available for cross-device use.
+- **PWA Support:** The frontend should ship a web app manifest and production-only service worker so the dApp can be installed on iOS / Android through browser home-screen install flows. The service worker may cache only the static app shell; dynamic RPC, subgraph, and worker API responses must bypass service-worker caching so chain state is never served stale.
+- **Farcaster Frame Surface:** Public read-only growth surfaces may include a Farcaster Frame such as `/frames/active-loans` that accepts a wallet address, reads active loans across supported chains, shows total active-loan count / lowest HF / per-chain breakdown, and deep-links into the public NFT Verifier for detail.
 - **Legacy Provider Policy:** The frontend should not retain ethers.js compatibility shims or ethers as a production dependency after the wagmi / viem migration.
 - **State Management:** Robust state management solution (e.g., Redux, Zustand).
 - **Languages:** Initial launch in English, with plans for multilingual support (e.g., Spanish, Mandarin) in subsequent updates.
@@ -1403,6 +1433,7 @@ flow list in the Phase-1 gap audit (see CHANGELOG `[Unreleased]`).
 - [contracts/test/VPFIDiscountFacetTest.t.sol](contracts/test/VPFIDiscountFacetTest.t.sol) / [VPFIDiscountBoundariesTest.t.sol](contracts/test/VPFIDiscountBoundariesTest.t.sol) — tier table, escrow deposit / withdraw, fee discount application.
 - [contracts/test/VPFITokenFacetTest.t.sol](contracts/test/VPFITokenFacetTest.t.sol) / [VPFIOFTRoundTripTest.t.sol](contracts/test/VPFIOFTRoundTripTest.t.sol) — canonical + bridged VPFI mechanics.
 - [contracts/test/StakingAndInteractionRewardsTest.t.sol](contracts/test/StakingAndInteractionRewardsTest.t.sol) / [StakingRewardsCoverageTest.t.sol](contracts/test/StakingRewardsCoverageTest.t.sol) / [InteractionRewardsCoverageTest.t.sol](contracts/test/InteractionRewardsCoverageTest.t.sol) / [InteractionRewardCapTest.t.sol](contracts/test/InteractionRewardCapTest.t.sol) — 5% APR accrual, interaction rewards emission schedule, pool-cap truncation.
+- [contracts/test/Permit2IntegrationTest.t.sol](contracts/test/Permit2IntegrationTest.t.sol) / [contracts/test/fork/Permit2RealForkTest.t.sol](contracts/test/fork/Permit2RealForkTest.t.sol) — Permit2 integration against the local mock and real canonical Permit2 on a fork, including expired deadline, wrong amount, nonce reuse, and spender mismatch cases.
 - [contracts/test/CrossChainRewardPlumbingTest.t.sol](contracts/test/CrossChainRewardPlumbingTest.t.sol) / [RewardOAppDeliveryTest.t.sol](contracts/test/RewardOAppDeliveryTest.t.sol) — canonical broadcast + mirror aggregate reporting.
 - [contracts/test/GracePeriodTiersTest.t.sol](contracts/test/GracePeriodTiersTest.t.sol) — default grace-period tier transitions.
 - [contracts/test/VolatilityLTVTest.t.sol](contracts/test/VolatilityLTVTest.t.sol) — collapse-trigger (LTV > 110%) fallback path.

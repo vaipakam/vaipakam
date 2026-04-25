@@ -58,6 +58,25 @@ Roles defined in `LibAccessControl.sol`:
 
 Pausing is a **brake**, not a wrench. Anything structural requires governance → timelock.
 
+### Permissionless callers vs. role-gated admins
+
+Not every off-chain actor that interacts with the Diamond holds a role.
+The public reference keeper bot in the sibling `vaipakam-keeper-bot`
+repo (Phase 9.A) calls `RiskFacet.triggerLiquidation` and
+`DefaultedFacet.triggerDefault` permissionlessly — both functions are
+designed to be open so that any third party can race for the
+liquidation bonus once HF crosses 1.0 or grace expires. **No Diamond
+role is granted to keeper-bot operators**, and none should be: a
+keeper that needed an admin role would be a structural hazard. The
+operator's own hf-watcher Cloudflare Worker
+(`ops/hf-watcher/src/keeper.ts`) follows the same model — it submits
+liquidations from a hot key that holds zero on-chain authority.
+
+This means the role-rotation procedure below does **not** need to
+touch keeper-bot keys at all. Operators of `vaipakam-keeper-bot` rotate
+their own RPC / signer keys on their own schedule; the Diamond is
+indifferent.
+
 ---
 
 ## What pause blocks, and what it doesn't

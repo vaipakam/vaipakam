@@ -116,9 +116,23 @@ first gets the bonus. This is **natural MEV**, not an attack — it's
 how every serious lending protocol handles liquidator selection,
 and the race pressure is what makes liquidations timely.
 
-Protocol-operated bots are NOT deployed by Vaipakam. Anyone can run
-a liquidator against the public HF view. Documentation of the
-liquidator-bot pattern is a Phase 2+ follow-up.
+Vaipakam runs an autonomous keeper inside the operator-controlled
+hf-watcher Cloudflare Worker (`ops/hf-watcher/src/keeper.ts`)
+that submits `triggerLiquidation` for any subscribed-user loan
+whose on-chain HF crosses 1.0. That covers the alert-subscriber
+slice of the book.
+
+Beyond the operator's own keeper, **a public reference
+implementation lives in the sibling `vaipakam-keeper-bot` repo**
+(Phase 9.A). MIT-licensed, self-contained Node.js — third-party
+operators clone, configure their own keeper key + RPC + (optional)
+aggregator API keys, and run the same logic against any chain
+they choose. Decentralizing the liquidator pool beyond the
+operator's own bot is a structural improvement: more keepers
+competing = faster liquidations = lower bad-debt risk on the
+book. The bot's ABI is kept in lockstep with the monorepo via
+`contracts/script/exportAbis.sh` (see `OraclePolicy.md` and
+`CLAUDE.md` "Keeper-bot ABI sync").
 
 ## Keeper system as defensive lever
 

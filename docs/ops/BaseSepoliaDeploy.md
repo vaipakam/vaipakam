@@ -420,3 +420,28 @@ Emergency admin actions that **cannot wait 48h** — `AdminFacet.pause` / `unpau
 Commit the final `.env` values (addresses only — never private keys) to `docs/deployments/base-sepolia.md` or the equivalent for ops lookups. Include `BASE_SEPOLIA_TIMELOCK_ADDRESS` — integrators verifying the admin surface will check `owner()` against it.
 
 Record the block numbers too: `cast block-number --rpc-url $BASE_SEPOLIA_RPC_URL` at the start of each script for a point-in-time audit trail.
+
+---
+
+## 13. Sync the public keeper-bot ABI (Phase 9.A)
+
+If this fresh-deploy run involved any contract change that
+touches a selector the public reference keeper bot reads — i.e.
+`MetricsFacet.getActiveLoansCount` /
+`getActiveLoansPaginated`, `RiskFacet.calculateHealthFactor` /
+`triggerLiquidation`, `LoanFacet.getLoanDetails` — regenerate the
+bot's checked-in ABI bundles before tagging the deploy as done:
+
+```bash
+KEEPER_BOT_DIR=../../vaipakam-keeper-bot \
+  bash contracts/script/exportAbis.sh
+cd ../../vaipakam-keeper-bot
+git diff src/abis/    # review the change
+npm run typecheck
+git commit -am 'Sync ABIs with vaipakam@<commit>'
+git push
+```
+
+If the deploy was a pure config / parameter sweep with no
+selector changes, this step is a no-op — the script still
+re-runs cleanly but the diff is empty.
