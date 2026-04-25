@@ -33,6 +33,13 @@ export interface Env {
   ZEROEX_API_KEY?: string;
   ONEINCH_API_KEY?: string;
 
+  // Phase 8b.2 — Blockaid Transaction Scanner API key (secret).
+  // The frontend never sees this; the `/scan/blockaid` route injects
+  // it server-side and pass-throughs the response. Without a key set,
+  // the route returns 503 and the frontend's preview UI collapses to
+  // a subtle "preview-unavailable" state — fail-soft.
+  BLOCKAID_API_KEY?: string;
+
   // Phase 7a.4 — autonomous keeper. When `KEEPER_ENABLED == 'true'`
   // AND `KEEPER_PRIVATE_KEY` is set, the watcher submits
   // `triggerLiquidation` on any subscribed-user loan whose on-chain
@@ -50,6 +57,9 @@ export interface Env {
   // injected as bindings on the env object.
   QUOTE_0X_RATELIMIT?: { limit(input: { key: string }): Promise<{ success: boolean }> };
   QUOTE_1INCH_RATELIMIT?: { limit(input: { key: string }): Promise<{ success: boolean }> };
+  // Phase 8b.2 — separate rate-limit bucket for the Blockaid scan
+  // proxy so a noisy /scan/* caller can't drain the /quote/* budget.
+  SCAN_BLOCKAID_RATELIMIT?: { limit(input: { key: string }): Promise<{ success: boolean }> };
 
   // CORS origin the HTTP endpoints will accept. Set to the frontend
   // origin(s); defaults to the vars entry in wrangler.jsonc.

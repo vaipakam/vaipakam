@@ -481,7 +481,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](18);
+        selectors = new bytes4[](19);
         selectors[0] = VPFIDiscountFacet.buyVPFIWithETH.selector;
         selectors[1] = VPFIDiscountFacet.depositVPFIToEscrow.selector;
         selectors[2] = VPFIDiscountFacet.quoteVPFIDiscount.selector;
@@ -502,6 +502,11 @@ contract HelperTest {
         // Phase 8b.1 Permit2 addition — signature-transfer variant of
         // {depositVPFIToEscrow}.
         selectors[17] = VPFIDiscountFacet.depositVPFIToEscrowWithPermit.selector;
+        // Per-(buyer, originEid) wallet-cap query. The Phase 1 30K
+        // per-wallet cap applies independently per origin chain
+        // (docs/TokenomicsTechSpec.md §8a); this selector lets
+        // off-chain consumers read each origin bucket explicitly.
+        selectors[18] = VPFIDiscountFacet.getVPFISoldToByEid.selector;
         return selectors;
     }
 

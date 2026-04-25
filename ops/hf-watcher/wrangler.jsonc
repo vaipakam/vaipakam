@@ -43,6 +43,14 @@
         "name": "QUOTE_1INCH_RATELIMIT",
         "namespace_id": "1002",
         "simple": { "limit": 60, "period": 60 }
+      },
+      // Phase 8b.2 — Blockaid scan proxy on its own bucket so a noisy
+      // /scan/* caller can't drain the /quote/* budget.
+      {
+        "type": "ratelimit",
+        "name": "SCAN_BLOCKAID_RATELIMIT",
+        "namespace_id": "1003",
+        "simple": { "limit": 60, "period": 60 }
       }
     ]
   },
@@ -53,6 +61,9 @@
   //   RPC_BASE / RPC_ETH    — dedicated RPC endpoints per chain
   //                           (public RPC rate-limits will fail the
   //                           watcher; use Alchemy/Infura/QuickNode).
+  //   BLOCKAID_API_KEY      — Phase 8b.2 Transaction Scanner key,
+  //                           injected by /scan/blockaid; the
+  //                           frontend never sees it.
   "vars": {
     "DIAMOND_ADDR_BASE": "",
     "DIAMOND_ADDR_ETH": "",

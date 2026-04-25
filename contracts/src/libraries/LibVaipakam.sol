@@ -828,11 +828,15 @@ library LibVaipakam {
         // is no "uncapped" mode — the spec forbids surfacing the buy as
         // unlimited on any chain.
         uint256 vpfiFixedRateGlobalCap;
-        // Per-wallet cap on VPFI sold through the fixed-rate buy. Enforced
-        // against `vpfiFixedRateSoldTo[user]`. Zero resolves to the spec
-        // default {VPFI_FIXED_WALLET_CAP} (30k VPFI, see
-        // docs/TokenomicsTechSpec.md §8a) via {cfgVpfiFixedWalletCap}. As
-        // with the global cap, no "uncapped" mode is exposed.
+        // Per-(wallet, origin-chain) cap on VPFI sold through the
+        // fixed-rate buy. Enforced against
+        // `vpfiFixedRateSoldToByEid[user][originEid]` (declared at
+        // the end of this struct). Zero resolves to the spec default
+        // {VPFI_FIXED_WALLET_CAP} (30k VPFI, see
+        // docs/TokenomicsTechSpec.md §8a) via {cfgVpfiFixedWalletCap}.
+        // As with the global cap, no "uncapped" mode is exposed. The
+        // Phase 1 cap is per-chain, not one shared global wallet cap
+        // across every chain.
         uint256 vpfiFixedRatePerWalletCap;
         // Monotone append-only counter of total VPFI sold at the fixed
         // rate. Feeds the global cap check and the transparency view.
@@ -848,9 +852,14 @@ library LibVaipakam {
         // loan acceptance remains functional even when this flag is false
         // — it only gates `buyVPFIWithETH`. Set via setVPFIBuyEnabled.
         bool vpfiFixedRateBuyEnabled;
-        // Per-wallet running total of VPFI bought at the fixed rate.
-        // Enforced against `vpfiFixedRatePerWalletCap` on each buy.
-        mapping(address => uint256) vpfiFixedRateSoldTo;
+        // DEPRECATED — single-key per-wallet running total. Replaced by
+        // the per-(buyer, originEid) mapping {vpfiFixedRateSoldToByEid}
+        // declared at the end of this struct. The slot is preserved
+        // only because the Diamond storage layout is append-only; the
+        // facet code no longer reads or writes this mapping. Per spec
+        // (docs/TokenomicsTechSpec.md §8a) the per-wallet cap is now
+        // enforced per origin chain.
+        mapping(address => uint256) vpfiFixedRateSoldTo_LEGACY_DO_NOT_USE;
         // Platform-level opt-in to use escrowed VPFI for protocol fee
         // discounts. One common consent governs both the borrower Loan
         // Initiation Fee discount and the lender Yield Fee discount. Per
@@ -1429,6 +1438,27 @@ library LibVaipakam {
         ///      `LibVaipakam.SECONDARY_ORACLE_MAX_STALENESS_DEFAULT`
         ///      when zero.
         uint40 secondaryOracleMaxStaleness;
+
+        // ─── Per-Origin-Chain VPFI Fixed-Rate Wallet Caps ───────────────
+        /// @dev Per-(buyer, originEid) running total of VPFI bought at
+        ///      the fixed rate. Replaces the legacy
+        ///      `vpfiFixedRateSoldTo[buyer]` global key — that flat
+        ///      mapping is no longer written nor read by the buy /
+        ///      bridged-buy paths (its slot is preserved only because
+        ///      the Diamond storage layout is append-only).
+        ///
+        ///      Per docs/TokenomicsTechSpec.md §8a, README §
+        ///      "Treasury and Revenue Sharing", and
+        ///      docs/BorrowerVPFIDiscountMechanism.md §2: the Phase 1
+        ///      30K VPFI per-wallet cap is **per origin chain**, not
+        ///      one shared global wallet cap. A user buying up to the
+        ///      cap on one origin chain does not consume their cap on
+        ///      another. For direct buys via {buyVPFIWithETH} the
+        ///      `originEid` is the canonical chain's `localEid`; for
+        ///      bridged buys via {processBridgedBuy} it is the
+        ///      caller-asserted `originEid` argument carried from the
+        ///      OFT message.
+        mapping(address => mapping(uint32 => uint256)) vpfiFixedRateSoldToByEid;
     }
 
     /// @dev Default secondary-oracle deviation tolerance: 5%.

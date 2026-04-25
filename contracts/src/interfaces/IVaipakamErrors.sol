@@ -182,4 +182,16 @@ interface IVaipakamErrors {
     ///         this asset is blocked.
     /// @param asset The paused asset that triggered the revert.
     error AssetPaused(address asset);
+
+    // ─── Permit2 ────────────────────────────────────────────────────────────
+    /// @notice Permit2 path rejected because the signed `permit.permitted.token`
+    ///         does not match the protocol-expected asset for the action.
+    ///         Defends against a frontend bug or malicious frontend tricking
+    ///         the user into signing a permit for the wrong ERC-20: without
+    ///         this check Permit2 would faithfully pull the signed token,
+    ///         while the protocol would record state as if the expected
+    ///         asset had been funded.
+    /// @param expected The asset the protocol entry point expected.
+    /// @param signed   The asset the user signed over in the Permit2 digest.
+    error Permit2TokenMismatch(address expected, address signed);
 }

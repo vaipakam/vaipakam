@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
+
 /**
  * @title LibPermit2
  * @author Vaipakam Developer Team
@@ -79,29 +81,53 @@ library LibPermit2 {
     address internal constant PERMIT2 = 0x000000000022D473030F116dDEE9F6B43aC78BA3;
 
     /**
-     * @notice Pull `amount` of `permit.permitted.token` from `owner`
-     *         to `to` via Permit2 using the signed `permit` + `signature`.
+     * @notice Pull `amount` of `expectedToken` from `owner` to `to` via
+     *         Permit2 using the signed `permit` + `signature`.
      *
-     * @dev Thin wrapper around `ISignatureTransfer.permitTransferFrom`.
-     *      Reverts via Permit2 on any signature / nonce / deadline /
-     *      amount issue. Caller must ensure:
-     *        - `amount <= permit.permitted.amount` (Permit2 enforces)
-     *        - `permit.permitted.token` matches the expected asset
+     * @dev Thin wrapper around `ISignatureTransfer.permitTransferFrom`,
+     *      with one extra check on top: the signed
+     *      `permit.permitted.token` must equal the protocol-expected
+     *      `expectedToken` for the action. This is enforced HERE rather
+     *      than relying on Permit2 alone — Permit2 verifies the user's
+     *      signature against the digest of `(token, amount, nonce,
+     *      deadline)`, so a permit signed for an arbitrary ERC-20 is
+     *      "valid" in Permit2's eyes and would be faithfully pulled.
+     *      Without this guard, a frontend bug (or hostile frontend)
+     *      could trick the user into signing a permit for the wrong
+     *      asset; Permit2 would honour it; and the Vaipakam entry
+     *      point would record offer / deposit state as if the
+     *      expected asset had been funded — corrupting accumulators
+     *      and creating unfunded offers. Reverts
+     *      `Permit2TokenMismatch(expected, signed)` on mismatch.
+     *
+     *      Other invariants (Permit2 enforces, not this wrapper):
+     *        - `amount <= permit.permitted.amount`
      *        - `permit.deadline > block.timestamp`
+     *        - signature matches the EIP-712 digest
+     *        - nonce slot has not been burned
      *
-     * @param owner     Signer of the permit (asset source).
-     * @param to        Destination address (escrow proxy or Diamond).
-     * @param amount    Amount to pull — must be ≤ signed amount.
-     * @param permit    `PermitTransferFrom` struct the user signed.
-     * @param signature 65-byte ECDSA signature over the EIP-712 digest.
+     * @param owner         Signer of the permit (asset source).
+     * @param to            Destination address (escrow proxy or Diamond).
+     * @param expectedToken Asset the protocol entry point expects to pull.
+     *                      MUST equal `permit.permitted.token`.
+     * @param amount        Amount to pull — must be ≤ signed amount.
+     * @param permit        `PermitTransferFrom` struct the user signed.
+     * @param signature     65-byte ECDSA signature over the EIP-712 digest.
      */
     function pull(
         address owner,
         address to,
+        address expectedToken,
         uint256 amount,
         ISignatureTransfer.PermitTransferFrom memory permit,
         bytes memory signature
     ) internal {
+        if (permit.permitted.token != expectedToken) {
+            revert IVaipakamErrors.Permit2TokenMismatch(
+                expectedToken,
+                permit.permitted.token
+            );
+        }
         ISignatureTransfer(PERMIT2).permitTransferFrom(
             permit,
             ISignatureTransfer.SignatureTransferDetails({

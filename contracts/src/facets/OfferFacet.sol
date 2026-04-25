@@ -184,7 +184,26 @@ contract OfferFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
         address escrow;
         (offerId, escrow) = _createOfferSetup(params);
         uint256 amount = _creatorPullAmount(offerId, params);
-        LibPermit2.pull(msg.sender, escrow, amount, permit, signature);
+        // Resolve the asset the protocol actually expects to pull for
+        // this offer shape. Permit2's signature digest binds the user
+        // to a specific token, but Permit2 alone can't tell whether
+        // that signed token matches what Vaipakam will record as the
+        // funded leg — without this binding a permit signed for the
+        // wrong ERC-20 would be honoured and the offer would be
+        // recorded as funded against the unfunded protocol asset.
+        address expectedAsset;
+        if (params.offerType == LibVaipakam.OfferType.Lender) {
+            expectedAsset = params.lendingAsset;
+        } else if (params.assetType == LibVaipakam.AssetType.ERC20) {
+            // Borrower ERC-20 offer — Permit2 pulls the collateral
+            // (collateral is required to be ERC-20 here, enforced in
+            // the asset-type guard above).
+            expectedAsset = params.collateralAsset;
+        } else {
+            // Borrower NFT rental offer — Permit2 pulls the prepay.
+            expectedAsset = params.prepayAsset;
+        }
+        LibPermit2.pull(msg.sender, escrow, expectedAsset, amount, permit, signature);
         _createOfferFinish(offerId, params);
     }
 
@@ -726,6 +745,7 @@ contract OfferFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
                     LibPermit2.pull(
                         borrower,
                         borrowerEscrow,
+                        offer.prepayAsset,
                         totalPrepay,
                         permit,
                         signature
@@ -781,6 +801,7 @@ contract OfferFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
                         LibPermit2.pull(
                             borrower,
                             borrowerEscrow,
+                            offer.collateralAsset,
                             offer.collateralAmount,
                             permit,
                             signature

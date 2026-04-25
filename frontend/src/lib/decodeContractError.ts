@@ -199,9 +199,7 @@ const FRIENDLY_ERROR_MESSAGES: Record<string, string> = {
   '0xb5d44b5c':
     'L2 sequencer just came back up — prices are gated for 1 hour after recovery. Try again shortly.',
   '0x28871998':
-    'Chainlink and the secondary oracle (Pyth) disagreed beyond the configured tolerance. The price read is rejected so no action runs against an unverified price.',
-  '0x1e7ace9a':
-    'Pyth secondary-oracle price is stale, missing, or unavailable. Submit a Pyth update transaction first, then retry the action.',
+    'Chainlink and the configured secondary oracles (Tellor / API3 / DIA) disagreed beyond the allowed tolerance under the Soft 2-of-N quorum. The price read is rejected so no action runs against an unverified price. Try again shortly.',
 
   // ── Phase 4.1 — Terms of Service gate ─────────────────────────────────
   '0x2a75db7f':
@@ -375,7 +373,6 @@ const KNOWN_ERROR_SELECTORS: Record<string, string> = {
   '0x032b3d00': 'SequencerDown()',
   '0xb5d44b5c': 'SequencerGracePeriod()',
   '0x28871998': 'OraclePriceDivergence()',
-  '0x1e7ace9a': 'PythPriceUnavailable()',
   '0x2a75db7f': 'InvalidTosVersion()',
   '0x1b30f0a8': 'InvalidTosParams()',
   '0x80279111': 'SanctionedAddress(address)',

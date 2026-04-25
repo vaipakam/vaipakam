@@ -13,6 +13,7 @@ import {EscrowFactoryFacet} from "../src/facets/EscrowFactoryFacet.sol";
 import {VPFIToken} from "../src/token/VPFIToken.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {ISignatureTransfer, LibPermit2} from "../src/libraries/LibPermit2.sol";
+import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 import {MockPermit2} from "./mocks/MockPermit2.sol";
 
@@ -199,6 +200,87 @@ contract Permit2IntegrationTest is SetupTest {
         // Two Permit2 calls total would mean both collateral + prepay
         // fired; ERC20 loans don't prepay, so expect exactly one.
         assertEq(MockPermit2(CANONICAL_PERMIT2).callCount(), 1);
+    }
+
+    // ─── Permit2TokenMismatch — defends against permits signed for ──────────
+    // ─── the wrong ERC-20 (frontend bug or hostile frontend) ────────────────
+
+    function testDepositVPFIWithPermitRevertsOnWrongToken() public {
+        // Permit signed for the WRONG asset (mockERC20, not VPFI). Without
+        // the LibPermit2 token-binding check, Permit2 would faithfully
+        // pull mockERC20 while {_prepareDeposit} re-stamps the VPFI
+        // accumulator — a real correctness bug. Now reverts cleanly.
+        ISignatureTransfer.PermitTransferFrom memory wrongPermit =
+            _buildPermit(mockERC20, 500 ether);
+
+        vm.prank(borrower);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IVaipakamErrors.Permit2TokenMismatch.selector,
+                address(vpfi),
+                mockERC20
+            )
+        );
+        VPFIDiscountFacet(address(diamond)).depositVPFIToEscrowWithPermit(
+            500 ether,
+            wrongPermit,
+            ""
+        );
+    }
+
+    function testCreateOfferWithPermitRevertsOnWrongToken() public {
+        // Lender ERC-20 offer expects the principal asset (mockERC20);
+        // permit signed for mockCollateralERC20 must revert.
+        uint256 principal = 1_000 ether;
+        ISignatureTransfer.PermitTransferFrom memory wrongPermit =
+            _buildPermit(mockCollateralERC20, principal);
+
+        vm.prank(lender);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IVaipakamErrors.Permit2TokenMismatch.selector,
+                mockERC20,
+                mockCollateralERC20
+            )
+        );
+        OfferFacet(address(diamond)).createOfferWithPermit(
+            _lenderERC20OfferParams(principal),
+            wrongPermit,
+            ""
+        );
+    }
+
+    function testAcceptOfferWithPermitRevertsOnWrongCollateralToken() public {
+        // Set up a lender ERC-20 offer with the classic flow.
+        uint256 principal = 1_000 ether;
+        ERC20Mock(mockERC20).mint(lender, principal);
+        vm.prank(lender);
+        IERC20(mockERC20).approve(address(diamond), principal);
+        vm.prank(lender);
+        uint256 offerId = OfferFacet(address(diamond)).createOffer(
+            _lenderERC20OfferParams(principal)
+        );
+
+        // Borrower signs a permit for the WRONG asset (the principal
+        // token rather than the collateral). The accept path expects
+        // the collateral and must reject the mismatched permit.
+        ISignatureTransfer.PermitTransferFrom memory wrongPermit =
+            _buildPermit(mockERC20, principal);
+
+        vm.prank(borrower);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IVaipakamErrors.Permit2TokenMismatch.selector,
+                mockCollateralERC20,
+                mockERC20
+            )
+        );
+        OfferFacet(address(diamond)).acceptOfferWithPermit(
+            offerId,
+            /*acceptorFallbackConsent=*/ true,
+            wrongPermit,
+            ""
+        );
     }
 
     // ─── Helpers ─────────────────────────────────────────────────────────────

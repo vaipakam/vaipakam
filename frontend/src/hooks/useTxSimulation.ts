@@ -6,27 +6,30 @@ import { useWallet } from '../context/WalletContext';
  * Phase 8b.2 — client-side transaction simulation preview via Blockaid.
  *
  * Before the user clicks Confirm in the wallet, call `simulate()` with
- * the pending tx's `{ to, data, value }`. Blockaid returns a
- * classification (benign / warning / malicious) plus a structured
- * `stateChanges` diff describing what the tx will move. Render the
- * result inline in the review modal so the user sees the outcome
- * before signing — closes the "blind signing" UX gap that MetaMask's
- * Security Alerts, Rabby's transaction previews, and Coinbase Wallet's
- * Blockaid integration all address.
+ * the pending tx's `{ to, data, value }`. The hook posts to the
+ * operator's Cloudflare Worker proxy at `${VITE_HF_WATCHER_ORIGIN}/scan/blockaid`,
+ * which injects the Blockaid API key server-side and pass-throughs the
+ * scanner JSON. The browser never sees the API key, satisfying the
+ * docs' "API keys for transaction scanning and swap quotes must stay
+ * server-side" rule (`docs/WebsiteReadme.md`).
  *
- * Fails silently on API outage or network hiccup: the preview is
+ * Blockaid returns a classification (benign / warning / malicious) plus
+ * a structured `stateChanges` diff describing what the tx will move.
+ * Render the result inline in the review modal so the user sees the
+ * outcome before signing — closes the "blind signing" UX gap that
+ * MetaMask's Security Alerts, Rabby's transaction previews, and
+ * Coinbase Wallet's Blockaid integration all address.
+ *
+ * Fails silently on proxy outage, missing key (the worker returns 503
+ * `blockaid-not-configured`), or network hiccup: the preview is
  * advisory and MUST NOT block the tx. The hook's state simply stays
- * `{ status: 'unavailable' }` and the UI renders a subdued "preview
- * unavailable" footer instead of a full preview card.
- *
- * TODO(ops): once the Blockaid API key is provisioned (see
- * `VITE_BLOCKAID_API_KEY`), the free-tier Transaction Scanner endpoint
- * at `https://api.blockaid.io/v0/evm/transaction/scan` returns the
- * structured payload this hook consumes. The stub below is shaped
- * correctly so the drop-in is a one-line change to `_callBlockaid`.
+ * `{ status: 'unavailable' }` and the UI renders a subdued
+ * "preview unavailable" footer instead of a full preview card.
  */
 
-const BLOCKAID_ENDPOINT = 'https://api.blockaid.io/v0/evm/transaction/scan';
+const HF_WATCHER_ORIGIN = (import.meta.env.VITE_HF_WATCHER_ORIGIN as
+  | string
+  | undefined) ?? '';
 
 export interface StateChange {
   kind: 'transfer-in' | 'transfer-out' | 'approval' | 'nft-in' | 'nft-out' | 'other';
@@ -52,8 +55,6 @@ export interface TxSimInput {
   value?: bigint;
 }
 
-const apiKey = (import.meta.env.VITE_BLOCKAID_API_KEY as string | undefined) ?? '';
-
 /** Debounced simulation — rapid successive updates (e.g. slider-driven
  *  what-ifs) trigger only the last call. Stale responses are dropped. */
 export function useTxSimulation(input: TxSimInput | null, debounceMs = 400) {
@@ -66,27 +67,34 @@ export function useTxSimulation(input: TxSimInput | null, debounceMs = 400) {
       setResult({ status: 'ready' });
       return;
     }
-    if (!apiKey) {
-      // No Blockaid API key configured — mark unavailable so the UI
-      // renders a subdued footer instead of a missing preview.
+    if (!HF_WATCHER_ORIGIN) {
+      // No worker origin configured — the proxy isn't reachable from
+      // this build. Mark unavailable so the UI renders a subdued
+      // footer instead of a missing preview.
       setResult({ status: 'unavailable' });
       return;
     }
     const myReq = ++reqIdRef.current;
     setResult({ status: 'loading' });
     try {
-      const res = await _callBlockaid(
-        { chainId, from: address as Address, ...input },
-        apiKey,
-      );
+      const res = await _callBlockaidProxy({
+        chainId,
+        from: address as Address,
+        ...input,
+      });
       if (myReq !== reqIdRef.current) return;
       setResult({ status: 'ready', ...res });
     } catch (err) {
       if (myReq !== reqIdRef.current) return;
-      setResult({
-        status: 'error',
-        errorMessage: err instanceof Error ? err.message : 'preview failed',
-      });
+      const msg = err instanceof Error ? err.message : 'preview failed';
+      // 503 (worker says key not configured) and any network-class
+      // failure both downgrade to 'unavailable' so the UI renders the
+      // subtle footer rather than an alarming error state.
+      if (msg === 'blockaid-not-configured' || msg.startsWith('network')) {
+        setResult({ status: 'unavailable' });
+        return;
+      }
+      setResult({ status: 'error', errorMessage: msg });
     }
   }, [address, chainId, input]);
 
@@ -100,7 +108,7 @@ export function useTxSimulation(input: TxSimInput | null, debounceMs = 400) {
   return { result, refresh: simulate };
 }
 
-interface BlockaidRequest {
+interface ProxyRequest {
   chainId: number;
   from: Address;
   to: Address;
@@ -108,34 +116,33 @@ interface BlockaidRequest {
   value?: bigint;
 }
 
-async function _callBlockaid(
-  req: BlockaidRequest,
-  key: string,
+async function _callBlockaidProxy(
+  req: ProxyRequest,
 ): Promise<Omit<SimResult, 'status'>> {
-  // Blockaid's Transaction Scanner endpoint — docs:
-  // https://docs.blockaid.io/reference/evm-transaction-scan
-  const body = {
-    chain: _blockaidChainName(req.chainId),
-    account_address: req.from,
-    data: {
-      from: req.from,
-      to: req.to,
-      data: req.data,
-      value: req.value ? '0x' + req.value.toString(16) : '0x0',
-    },
-    metadata: { domain: 'app.vaipakam.com' },
-    options: ['simulation', 'validation'],
-  };
-  const res = await fetch(BLOCKAID_ENDPOINT, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'X-API-KEY': key,
-    },
-    body: JSON.stringify(body),
-  });
+  const url = `${HF_WATCHER_ORIGIN.replace(/\/$/, '')}/scan/blockaid`;
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        chainId: req.chainId,
+        from: req.from,
+        to: req.to,
+        data: req.data,
+        value: req.value ? '0x' + req.value.toString(16) : '0x0',
+      }),
+    });
+  } catch {
+    throw new Error('network');
+  }
+  if (res.status === 503) {
+    // Worker says the operator hasn't provisioned the Blockaid key
+    // yet (or `BLOCKAID_API_KEY` is empty). Treat as a quiet no-op.
+    throw new Error('blockaid-not-configured');
+  }
   if (!res.ok) {
-    throw new Error(`Blockaid ${res.status}`);
+    throw new Error(`proxy ${res.status}`);
   }
   const json = (await res.json()) as BlockaidResponse;
 
@@ -203,27 +210,4 @@ function _mapStateChanges(sim: BlockaidResponse['simulation']): StateChange[] {
     }
   }
   return out;
-}
-
-function _blockaidChainName(chainId: number): string {
-  switch (chainId) {
-    case 1:
-      return 'ethereum';
-    case 8453:
-      return 'base';
-    case 42161:
-      return 'arbitrum';
-    case 10:
-      return 'optimism';
-    case 56:
-      return 'bsc';
-    case 137:
-      return 'polygon';
-    case 11155111:
-      return 'sepolia';
-    case 84532:
-      return 'base-sepolia';
-    default:
-      return 'ethereum';
-  }
 }

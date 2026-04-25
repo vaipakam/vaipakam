@@ -16,6 +16,7 @@ import {
 } from './db';
 import { extractLinkCode, sendMessage, type TelegramUpdate } from './telegram';
 import { handle0xQuote, handle1inchQuote } from './quoteProxy';
+import { handleBlockaidScan } from './scanProxy';
 import {
   handleActiveLoansFrameInitial,
   handleActiveLoansFramePost,
@@ -87,6 +88,15 @@ export default {
     }
     if (url.pathname === '/quote/1inch' && req.method === 'POST') {
       return handle1inchQuote(req, env);
+    }
+
+    // Phase 8b.2 — Blockaid Transaction Scanner proxy. Frontend posts
+    // the pending tx (chainId, from, to, data, value); the worker
+    // injects the operator-held Blockaid key server-side and returns
+    // the scanner JSON pass-through. Used by the `useTxSimulation`
+    // preview hook on review modals.
+    if (url.pathname === '/scan/blockaid' && req.method === 'POST') {
+      return handleBlockaidScan(req, env);
     }
 
     return new Response('Not found', { status: 404 });

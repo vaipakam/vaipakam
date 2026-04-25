@@ -212,7 +212,15 @@ contract VPFIDiscountFacet is
      *      Emits {VPFIPurchasedWithETH}.
      */
     function buyVPFIWithETH() external payable nonReentrant whenNotPaused {
-        uint256 vpfiOut = _computeBuyAndDebitCaps(msg.sender, msg.value);
+        // Direct buy on the canonical Base Diamond — origin = local
+        // chain. The per-wallet cap is keyed on the buyer's origin
+        // chain (Base in this case), so Base-direct buys do not
+        // consume the buyer's cap on any mirror chain.
+        uint256 vpfiOut = _computeBuyAndDebitCaps(
+            msg.sender,
+            LibVaipakam.storageSlot().localEid,
+            msg.value
+        );
 
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         address vpfi = s.vpfiToken;
@@ -282,7 +290,13 @@ contract VPFIDiscountFacet is
             revert NotBridgedBuyReceiver();
         }
 
-        vpfiOut = _computeBuyAndDebitCaps(buyer, ethAmountPaid);
+        // Bridged buy — origin = the buyer's chain, asserted by the
+        // OFT message (validated upstream by the bridged-buy receiver
+        // against the registered peer). The per-wallet cap is keyed
+        // on that origin so the same buyer can buy up to the Phase 1
+        // 30K cap on each origin chain independently, as required by
+        // docs/TokenomicsTechSpec.md §8a.
+        vpfiOut = _computeBuyAndDebitCaps(buyer, originEid, ethAmountPaid);
         if (vpfiOut < minVpfiOut) revert VPFIBuyAmountTooSmall();
 
         // Hand VPFI to the receiver; it will OFT-bridge to `buyer` on
@@ -297,10 +311,19 @@ contract VPFIDiscountFacet is
     ///      caller must ensure the context is Base (both public entry
     ///      points do).
     /// @param buyer         Per-wallet-cap key.
+    /// @param originEid     LayerZero V2 endpoint id of the buyer's
+    ///                      origin chain. The per-wallet cap bucket is
+    ///                      keyed on `(buyer, originEid)` so the same
+    ///                      buyer's cap on each origin chain is
+    ///                      independent (per docs/TokenomicsTechSpec.md
+    ///                      §8a). For direct buys this is the canonical
+    ///                      chain's `localEid`; for bridged buys it is
+    ///                      the asserted-from-message origin eid.
     /// @param ethAmount     Native ETH amount paid.
     /// @return vpfiOut      VPFI amount to deliver at the current rate.
     function _computeBuyAndDebitCaps(
         address buyer,
+        uint32 originEid,
         uint256 ethAmount
     ) internal returns (uint256 vpfiOut) {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
@@ -325,7 +348,7 @@ contract VPFIDiscountFacet is
         if (newTotal > LibVaipakam.cfgVpfiFixedGlobalCap())
             revert VPFIGlobalCapExceeded();
 
-        uint256 newWallet = s.vpfiFixedRateSoldTo[buyer] + vpfiOut;
+        uint256 newWallet = s.vpfiFixedRateSoldToByEid[buyer][originEid] + vpfiOut;
         if (newWallet > LibVaipakam.cfgVpfiFixedWalletCap())
             revert VPFIPerWalletCapExceeded();
 
@@ -333,7 +356,7 @@ contract VPFIDiscountFacet is
         if (onHand < vpfiOut) revert VPFIReserveInsufficient();
 
         s.vpfiFixedRateTotalSold = newTotal;
-        s.vpfiFixedRateSoldTo[buyer] = newWallet;
+        s.vpfiFixedRateSoldToByEid[buyer][originEid] = newWallet;
     }
 
     /**
@@ -386,8 +409,14 @@ contract VPFIDiscountFacet is
         ISignatureTransfer.PermitTransferFrom calldata permit,
         bytes calldata signature
     ) external nonReentrant whenNotPaused {
-        (, address escrow) = _prepareDeposit(amount);
-        LibPermit2.pull(msg.sender, escrow, amount, permit, signature);
+        (address vpfi, address escrow) = _prepareDeposit(amount);
+        // Bind the Permit2 pull to the registered VPFI token. Without
+        // this check a permit signed for a different ERC-20 would be
+        // honoured by Permit2 while {_prepareDeposit} has already
+        // re-stamped the VPFI discount accumulator and staking
+        // checkpoint at the post-mutation balance — the on-chain VPFI
+        // balance would not actually move and accounting would drift.
+        LibPermit2.pull(msg.sender, escrow, vpfi, amount, permit, signature);
         emit VPFIDepositedToEscrow(msg.sender, amount);
     }
 
@@ -733,12 +762,37 @@ contract VPFIDiscountFacet is
         );
     }
 
-    /// @notice VPFI already purchased by `user` at the fixed rate.
+    /// @notice VPFI already purchased by `user` at the fixed rate
+    ///         from THIS chain's local origin (i.e. the local Diamond's
+    ///         `localEid`). Per-wallet caps are bucketed per origin
+    ///         chain; this getter returns the local-origin bucket so
+    ///         legacy callers reading the running total for the
+    ///         currently-connected chain see the value they expect.
+    ///         Use {getVPFISoldToByEid} to query a specific origin
+    ///         chain's bucket.
     /// @param  user   Address whose cumulative fixed-rate buy total to read.
-    /// @return soldTo Cumulative VPFI (18 dec) `user` has purchased against
-    ///                the per-wallet cap.
+    /// @return soldTo Cumulative VPFI (18 dec) `user` has purchased
+    ///                against the per-wallet cap on this chain's local
+    ///                origin bucket.
     function getVPFISoldTo(address user) external view returns (uint256 soldTo) {
-        return LibVaipakam.storageSlot().vpfiFixedRateSoldTo[user];
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        return s.vpfiFixedRateSoldToByEid[user][s.localEid];
+    }
+
+    /// @notice VPFI already purchased by `user` at the fixed rate
+    ///         against the per-wallet cap bucket for `originEid`.
+    ///         The Phase 1 30K wallet cap applies independently per
+    ///         origin chain (per docs/TokenomicsTechSpec.md §8a).
+    /// @param  user      Address whose cumulative buy total to read.
+    /// @param  originEid LayerZero V2 endpoint id of the origin chain.
+    /// @return soldTo    Cumulative VPFI (18 dec) `user` has purchased
+    ///                   from `originEid`.
+    function getVPFISoldToByEid(address user, uint32 originEid)
+        external
+        view
+        returns (uint256 soldTo)
+    {
+        return LibVaipakam.storageSlot().vpfiFixedRateSoldToByEid[user][originEid];
     }
 
     // ─── Admin ───────────────────────────────────────────────────────────────
