@@ -8,6 +8,7 @@ import {IDiamondCut} from "@diamond-3/interfaces/IDiamondCut.sol";
 import {OracleFacet} from "../src/facets/OracleFacet.sol";
 import {OracleAdminFacet} from "../src/facets/OracleAdminFacet.sol";
 import {MockChainlinkRegistry, MockChainlinkFeed} from "./mocks/MockChainlinkRegistry.sol";
+import {Deployments} from "./lib/Deployments.sol";
 
 /**
  * @title UpgradeOracle
@@ -45,7 +46,7 @@ contract UpgradeOracle is Script {
 
     function run() external {
         uint256 deployerKey = vm.envUint("PRIVATE_KEY");
-        address diamond = vm.envAddress("DIAMOND_ADDRESS");
+        address diamond = Deployments.readDiamond();
         address wethAddress = vm.envAddress("WETH_ADDRESS");
         address uniswapV3Factory = vm.envAddress("UNISWAP_V3_FACTORY");
         address usdDenominator = _envAddressOr("USD_DENOMINATOR", DEFAULT_USD_DENOMINATOR);

@@ -5,6 +5,7 @@ import {Script} from "forge-std/Script.sol";
 import {console} from "forge-std/console.sol";
 import {RewardReporterFacet} from "../src/facets/RewardReporterFacet.sol";
 import {RewardAggregatorFacet} from "../src/facets/RewardAggregatorFacet.sol";
+import {Deployments} from "./lib/Deployments.sol";
 
 /**
  * @title ConfigureRewardReporter
@@ -36,17 +37,6 @@ import {RewardAggregatorFacet} from "../src/facets/RewardAggregatorFacet.sol";
  *                                        "40161,40231,40232,40267".
  */
 contract ConfigureRewardReporter is Script {
-    function _diamondAddress() internal view returns (address) {
-        uint256 chainId = block.chainid;
-        if (chainId == 84532) return vm.envAddress("BASE_SEPOLIA_DIAMOND_ADDRESS");
-        if (chainId == 8453) return vm.envAddress("BASE_DIAMOND_ADDRESS");
-        if (chainId == 11155111) return vm.envAddress("SEPOLIA_DIAMOND_ADDRESS");
-        if (chainId == 421614) return vm.envAddress("ARB_SEPOLIA_DIAMOND_ADDRESS");
-        if (chainId == 11155420) return vm.envAddress("OP_SEPOLIA_DIAMOND_ADDRESS");
-        if (chainId == 80002) return vm.envAddress("POLYGON_AMOY_DIAMOND_ADDRESS");
-        revert(string.concat("ConfigureRewardReporter: unsupported chainId ", vm.toString(chainId)));
-    }
-
     /// @dev Base chainIds (8453 mainnet, 84532 sepolia) are canonical.
     function _isCanonicalRewardChain() internal view returns (bool) {
         uint256 chainId = block.chainid;
@@ -55,8 +45,19 @@ contract ConfigureRewardReporter is Script {
 
     function run() external {
         uint256 deployerKey = vm.envUint("PRIVATE_KEY");
-        address diamond = _diamondAddress();
-        address rewardOApp = vm.envAddress("REWARD_OAPP_PROXY");
+        // Read prior deploy artifacts. Diamond reads from
+        // deployments/<chain>/addresses.json with chain-prefixed env
+        // fallback. RewardOApp is special-cased: the CREATE2-bootstrap
+        // proxy is byte-identical across every chain in the mesh, so
+        // historical operator runbooks set a single un-prefixed
+        // `REWARD_OAPP_PROXY` env var rather than 6 chain-prefixed
+        // copies. Honour that legacy path first, then fall through to
+        // the addresses.json reader.
+        address diamond = Deployments.readDiamond();
+        address rewardOApp = vm.envOr("REWARD_OAPP_PROXY", address(0));
+        if (rewardOApp == address(0)) {
+            rewardOApp = Deployments.readRewardOApp();
+        }
         uint32 localEid = uint32(vm.envUint("LOCAL_EID"));
         uint32 baseEid = uint32(vm.envUint("BASE_EID"));
         uint64 grace = uint64(vm.envOr("REWARD_GRACE_SECONDS", uint256(14400)));

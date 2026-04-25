@@ -5,6 +5,7 @@ import {Script} from "forge-std/Script.sol";
 import {console} from "forge-std/console.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import {VPFIBuyAdapter} from "../src/token/VPFIBuyAdapter.sol";
+import {Deployments} from "./lib/Deployments.sol";
 
 /**
  * @title DeployVPFIBuyAdapter
@@ -104,6 +105,8 @@ contract DeployVPFIBuyAdapter is Script {
         );
 
         vm.stopBroadcast();
+
+        Deployments.writeVPFIBuyAdapter(address(proxy));
 
         console.log("VPFIBuyAdapter impl:  ", address(impl));
         console.log("VPFIBuyAdapter proxy: ", address(proxy));

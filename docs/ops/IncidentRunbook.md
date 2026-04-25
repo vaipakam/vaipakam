@@ -174,6 +174,97 @@ Before `AdminFacet.unpause()`:
 
 ---
 
+## 4. Off-chain alert-rail key compromise
+
+The watcher holds two long-lived secrets — `TG_BOT_TOKEN` (Telegram
+bot) and `PUSH_CHANNEL_PK` (Vaipakam Push channel signer). Neither
+controls on-chain authority, so neither requires an emergency
+on-chain pause. Both **do** allow brand-impersonation (sending
+arbitrary notifications to our subscriber base under the Vaipakam
+identity), so rotation is time-sensitive.
+
+### Vaipakam Push channel reference
+
+- **Channel address:** `0x6F5847A0CA1F2cB1bbEf944124cE5995988a1D6b`
+- **Public URL:** <https://app.push.org/channels/0x6F5847A0CA1F2cB1bbEf944124cE5995988a1D6b>
+- **Signer secret:** `PUSH_CHANNEL_PK` (Cloudflare Worker, encrypted)
+- **Frontend env:** `VITE_PUSH_CHANNEL_ADDRESS`
+
+### Symptom
+- Subscribers report Vaipakam notifications they did not opt into,
+  containing phishing copy, off-protocol links, or messages that
+  contradict known protocol state.
+- Wrangler tail shows successful `Push API` send calls our cron
+  didn't initiate.
+- Telegram inbound webhook traffic looks scripted (high-frequency
+  `/start <code>` posts from new chat IDs).
+
+### Detect
+- Search wrangler logs for unexpected `[push] send` lines outside the
+  cron schedule.
+- Cross-reference the channel's recent broadcast history at
+  <https://app.push.org/channels/0x6F5847A0CA1F2cB1bbEf944124cE5995988a1D6b>
+  against our own send log.
+
+### Execute — Telegram bot rotation
+1. From `@BotFather`: `/revoke` → confirms token revocation. Old
+   token stops working within seconds.
+2. `/token` to issue a fresh token.
+3. `cd ops/hf-watcher && npx wrangler secret put TG_BOT_TOKEN`
+   → paste the new token.
+4. Re-register the webhook:
+   ```bash
+   curl "https://api.telegram.org/bot<NEW_TG_BOT_TOKEN>/setWebhook" \
+        --data-urlencode "url=https://alerts.vaipakam.com/tg/webhook"
+   ```
+5. `npm run deploy` to flush any in-memory clients tied to the old
+   token.
+
+No subscriber action required — the bot's @-handle stays
+`@VaipakamBot`, only the API token rotates.
+
+### Execute — Push channel signer rotation
+1. From the **current** channel-owner wallet, log in to
+   <https://app.push.org/> and open the channel admin page.
+2. **Transfer channel ownership** to a fresh EOA you control. Push
+   surfaces this as a transfer tx that hands the channel + remaining
+   stake to the new owner. Wait for confirmation.
+3. The new EOA's privkey replaces the old `PUSH_CHANNEL_PK`:
+   ```bash
+   cd ops/hf-watcher && npx wrangler secret put PUSH_CHANNEL_PK
+   ```
+4. `npm run deploy` to invalidate the cached PushAPI client (the
+   worker module-scope cache rebuilds on next cron tick).
+5. The channel **address** stays the same iff the channel itself is
+   transferred (Push lets you change the signer, not the channel id).
+   No frontend redeploy needed — `VITE_PUSH_CHANNEL_ADDRESS` is
+   unchanged.
+6. If transfer is impossible (compromised wallet refuses to sign),
+   create a fresh Push channel from a clean EOA, update both
+   `PUSH_CHANNEL_PK` (worker) **and** `VITE_PUSH_CHANNEL_ADDRESS`
+   (frontend), redeploy both. Subscribers must re-subscribe to the
+   new channel; communicate clearly.
+
+### Communicate
+- Within 30 min of detection: post on official channels (X, Discord)
+  that any unsolicited notifications since `<timestamp>` are not
+  from Vaipakam, point at the genuine channel URL above, and
+  describe the rotation in progress.
+- Within 24h: post-mortem with root cause (worker secret leak vs.
+  Push.org account takeover vs. transit interception) and
+  preventive controls.
+
+### Guard rails
+- Never reuse the channel-owner wallet for any treasury or
+  governance role.
+- Audit `PUSH_CHANNEL_PK` access annually — Cloudflare lists every
+  member of the account who can read secrets.
+- Keep the channel-owner wallet's native-gas balance bounded
+  (~$50 on each supported chain). An attacker who steals the privkey
+  cannot drain serious value, only spam the brand.
+
+---
+
 ## Deployment log
 
 Append here on every mainnet deploy / upgrade. Format: `YYYY-MM-DD  chain  tag  diamond-address  summary`.

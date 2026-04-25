@@ -21,6 +21,7 @@ import {OracleAdminFacet} from "../src/facets/OracleAdminFacet.sol";
 import {RiskFacet} from "../src/facets/RiskFacet.sol";
 import {MockChainlinkRegistry, MockChainlinkFeed} from "./mocks/MockChainlinkRegistry.sol";
 import {MockUniswapV3Factory} from "./mocks/MockUniswapV3.sol";
+import {Deployments} from "./lib/Deployments.sol";
 
 /**
  * @title SepoliaPositiveFlows
@@ -80,7 +81,7 @@ contract SepoliaPositiveFlows is Script {
         newLender = vm.envAddress("NEW_LENDER_ADDRESS");
         newBorrowerKey = vm.envUint("NEW_BORROWER_PRIVATE_KEY");
         newBorrower = vm.envAddress("NEW_BORROWER_ADDRESS");
-        diamond = vm.envAddress("DIAMOND_ADDRESS");
+        diamond = Deployments.readDiamond();
 
         console.log("=== Sepolia Positive Flow Tests ===");
         console.log("Diamond: ", diamond);

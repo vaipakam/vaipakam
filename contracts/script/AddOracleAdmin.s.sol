@@ -5,6 +5,7 @@ import {Script} from "forge-std/Script.sol";
 import {console} from "forge-std/console.sol";
 import {IDiamondCut} from "@diamond-3/interfaces/IDiamondCut.sol";
 import {OracleAdminFacet} from "../src/facets/OracleAdminFacet.sol";
+import {Deployments} from "./lib/Deployments.sol";
 
 /**
  * @title AddOracleAdmin
@@ -13,19 +14,8 @@ import {OracleAdminFacet} from "../src/facets/OracleAdminFacet.sol";
  *         selectors but SepoliaPositiveFlows depends on them.
  */
 contract AddOracleAdmin is Script {
-    /// @dev Resolves the Diamond address for the active chain from a
-    ///      `<CHAIN>_DIAMOND_ADDRESS` env var. Add a branch per chain as the
-    ///      mesh expands. Reverts on unrecognised chains.
-    function _diamondAddress() internal view returns (address) {
-        uint256 chainId = block.chainid;
-        if (chainId == 84532) return vm.envAddress("BASE_SEPOLIA_DIAMOND_ADDRESS");
-        if (chainId == 11155111) return vm.envAddress("SEPOLIA_DIAMOND_ADDRESS");
-        if (chainId == 8453) return vm.envAddress("BASE_DIAMOND_ADDRESS");
-        revert(string.concat("AddOracleAdmin: unsupported chainId ", vm.toString(chainId)));
-    }
-
     function run() external {
-        address diamond = _diamondAddress();
+        address diamond = Deployments.readDiamond();
         uint256 deployerKey = vm.envUint("PRIVATE_KEY");
 
         vm.startBroadcast(deployerKey);

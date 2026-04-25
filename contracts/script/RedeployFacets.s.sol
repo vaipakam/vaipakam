@@ -10,6 +10,7 @@ import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {PrecloseFacet} from "../src/facets/PrecloseFacet.sol";
 import {EarlyWithdrawalFacet} from "../src/facets/EarlyWithdrawalFacet.sol";
 import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
+import {Deployments} from "./lib/Deployments.sol";
 
 /**
  * @title RedeployFacets
@@ -27,7 +28,11 @@ import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
 contract RedeployFacets is Script {
     function run() external {
         uint256 deployerKey = vm.envUint("PRIVATE_KEY");
-        address diamond = vm.envAddress("DIAMOND_ADDRESS");
+        // Read from deployments/<chain>/addresses.json with chain-prefixed
+        // env fallback. Replaces the previous unprefixed `DIAMOND_ADDRESS`
+        // env which was inconsistent with sibling scripts and risked
+        // broadcasting against the wrong Diamond if env state was stale.
+        address diamond = Deployments.readDiamond();
 
         console.log("Diamond:", diamond);
 

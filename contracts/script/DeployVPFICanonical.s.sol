@@ -7,6 +7,7 @@ import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.s
 import {VPFIToken} from "../src/token/VPFIToken.sol";
 import {VPFIOFTAdapter} from "../src/token/VPFIOFTAdapter.sol";
 import {VPFITokenFacet} from "../src/facets/VPFITokenFacet.sol";
+import {Deployments} from "./lib/Deployments.sol";
 
 /**
  * @title DeployVPFICanonical
@@ -39,16 +40,6 @@ import {VPFITokenFacet} from "../src/facets/VPFITokenFacet.sol";
  *        - LZ_ENDPOINT       : LayerZero EndpointV2 on Base
  */
 contract DeployVPFICanonical is Script {
-    /// @dev Resolves the Diamond address for the active chain from a
-    ///      `<CHAIN>_DIAMOND_ADDRESS` env var. Add a branch per chain as the
-    ///      mesh expands. Reverts on unrecognised chains.
-    function _diamondAddress() internal view returns (address) {
-        uint256 chainId = block.chainid;
-        if (chainId == 84532) return vm.envAddress("BASE_SEPOLIA_DIAMOND_ADDRESS");
-        if (chainId == 8453) return vm.envAddress("BASE_DIAMOND_ADDRESS");
-        revert(string.concat("DeployVPFICanonical: unsupported chainId ", vm.toString(chainId)));
-    }
-
     /// @dev Resolves the LayerZero V2 EndpointV2 for the active chain from a
     ///      `LZ_ENDPOINT_<CHAIN>` env var. Endpoint addresses per chain live at
     ///      https://docs.layerzero.network/v2/deployments/deployed-contracts
@@ -61,7 +52,11 @@ contract DeployVPFICanonical is Script {
 
     function run() external {
         uint256 deployerKey = vm.envUint("ADMIN_PRIVATE_KEY");
-        address diamond = _diamondAddress();
+        // Source-of-truth: deployments/<chain>/addresses.json (written
+        // by DeployDiamond). Falls back to <CHAIN>_DIAMOND_ADDRESS env
+        // if the file doesn't exist yet — keeps bootstrap path
+        // unbroken.
+        address diamond = Deployments.readDiamond();
         address vpfiOwner = vm.envAddress("VPFI_OWNER");
         address treasury = vm.envAddress("VPFI_TREASURY");
         address initialMinter = vm.envAddress("VPFI_INITIAL_MINTER");
@@ -100,6 +95,11 @@ contract DeployVPFICanonical is Script {
         VPFITokenFacet(diamond).setCanonicalVPFIChain(true);
 
         vm.stopBroadcast();
+
+        // Persist the freshly deployed addresses for downstream
+        // ConfigureVPFIBuy / WireVPFIPeers / BridgeVPFI runs.
+        Deployments.writeVPFIToken(vpfi);
+        Deployments.writeVPFIOFTAdapter(address(adapterProxy));
 
         console.log("VPFIToken impl:    ", address(tokenImpl));
         console.log("VPFIToken proxy:   ", vpfi);

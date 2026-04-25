@@ -6,6 +6,7 @@ import {console} from "forge-std/console.sol";
 import {AccessControlFacet} from "../src/facets/AccessControlFacet.sol";
 import {LibAccessControl} from "../src/libraries/LibAccessControl.sol";
 import {IERC173} from "@diamond-3/interfaces/IERC173.sol";
+import {Deployments} from "./lib/Deployments.sol";
 
 /**
  * @title TransferAdminToTimelock
@@ -48,28 +49,6 @@ import {IERC173} from "@diamond-3/interfaces/IERC173.sol";
  *                                        accidental mainnet broadcast
  */
 contract TransferAdminToTimelock is Script {
-    function _diamondAddress() internal view returns (address) {
-        uint256 chainId = block.chainid;
-        if (chainId == 84532) return vm.envAddress("BASE_SEPOLIA_DIAMOND_ADDRESS");
-        if (chainId == 8453) return vm.envAddress("BASE_DIAMOND_ADDRESS");
-        if (chainId == 11155111) return vm.envAddress("SEPOLIA_DIAMOND_ADDRESS");
-        if (chainId == 421614) return vm.envAddress("ARB_SEPOLIA_DIAMOND_ADDRESS");
-        if (chainId == 11155420) return vm.envAddress("OP_SEPOLIA_DIAMOND_ADDRESS");
-        if (chainId == 80002) return vm.envAddress("POLYGON_AMOY_DIAMOND_ADDRESS");
-        revert(string.concat("TransferAdminToTimelock: unsupported chainId ", vm.toString(chainId)));
-    }
-
-    function _timelockAddress() internal view returns (address) {
-        uint256 chainId = block.chainid;
-        if (chainId == 84532) return vm.envAddress("BASE_SEPOLIA_TIMELOCK_ADDRESS");
-        if (chainId == 8453) return vm.envAddress("BASE_TIMELOCK_ADDRESS");
-        if (chainId == 11155111) return vm.envAddress("SEPOLIA_TIMELOCK_ADDRESS");
-        if (chainId == 421614) return vm.envAddress("ARB_SEPOLIA_TIMELOCK_ADDRESS");
-        if (chainId == 11155420) return vm.envAddress("OP_SEPOLIA_TIMELOCK_ADDRESS");
-        if (chainId == 80002) return vm.envAddress("POLYGON_AMOY_TIMELOCK_ADDRESS");
-        revert(string.concat("TransferAdminToTimelock: unsupported chainId ", vm.toString(chainId)));
-    }
-
     function run() external {
         string memory confirm = vm.envOr("CONFIRM_HANDOVER", string(""));
         require(
@@ -79,8 +58,13 @@ contract TransferAdminToTimelock is Script {
 
         uint256 deployerKey = vm.envUint("PRIVATE_KEY");
         address deployer = vm.addr(deployerKey);
-        address diamond = _diamondAddress();
-        address timelock = _timelockAddress();
+        // Diamond + timelock both come from
+        // deployments/<chain>/addresses.json with chain-prefixed env
+        // fallback. Operators no longer need to chain-prefix
+        // <CHAIN>_DIAMOND_ADDRESS / <CHAIN>_TIMELOCK_ADDRESS once
+        // the file is committed.
+        address diamond = Deployments.readDiamond();
+        address timelock = Deployments.readTimelock();
 
         require(timelock != address(0), "TransferAdminToTimelock: timelock is zero");
         require(timelock != deployer, "TransferAdminToTimelock: timelock == deployer");

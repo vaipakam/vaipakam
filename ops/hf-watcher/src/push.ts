@@ -18,39 +18,56 @@
  * subscribed user calls `sendPush(...)`. The function is fail-soft —
  * a Push API outage logs and returns, so a single Push hiccup never
  * stalls the broader watcher loop or blocks the Telegram rail.
+ *
+ * SDK note: `@pushprotocol/restapi@^1.7` exposes the legacy
+ * modular API (`payloads.sendNotification(...)`), not the v2
+ * `PushAPI` class — the docs site documents both, only the v1 form
+ * is available on the version range we install. Push channels live
+ * on Ethereum mainnet by default, so the CAIP-2 prefix is
+ * `eip155:1` for both channel id and recipient id; the recipient
+ * wallet's actual chain doesn't need to match (Push routes by raw
+ * wallet, the chain prefix is metadata).
  */
 
-import { PushAPI, CONSTANTS } from '@pushprotocol/restapi';
+import * as PushAPI from '@pushprotocol/restapi';
 import { Wallet } from 'ethers';
 
+// Push channels live on Ethereum mainnet; the CAIP-2 prefix is
+// shared across both the channel id and recipient ids.
+const CAIP_PREFIX = 'eip155:1';
+
 export interface PushPayload {
-  subscriber: string; // 0x-hex wallet address (EIP-155 format or CAIP-2)
+  subscriber: string; // 0x-hex wallet address (we add the CAIP-2 prefix)
   title: string;
   body: string;
   deepLinkUrl?: string;
 }
 
 /**
- * Lazy-initialized PushAPI client cached at module scope. Push's
- * `initialize` hits the network once to register the signer, so
- * caching the instance amortises that cost across every send within
- * a single Worker isolate's lifetime. The Worker recycles its
- * isolate periodically and the cache is rebuilt automatically on
- * the next invocation.
+ * Cache the (signer, channel CAIP id) pair derived from the privkey
+ * at module scope so we only pay the address-derivation cost once
+ * per Worker isolate. The Worker recycles its isolate periodically;
+ * the cache rebuilds automatically on the next cold start.
  */
-let pushClient: Awaited<ReturnType<typeof PushAPI.initialize>> | null = null;
-let pushClientForKey: string | null = null;
+let cachedSignerKey: string | null = null;
+let cachedSigner: Wallet | null = null;
+let cachedChannelCaip: string | null = null;
 
-async function getPushClient(channelPk: string) {
-  if (pushClient && pushClientForKey === channelPk) return pushClient;
+function getSignerAndChannel(channelPk: string): {
+  signer: Wallet;
+  channelCaip: string;
+} {
+  if (cachedSignerKey === channelPk && cachedSigner && cachedChannelCaip) {
+    return { signer: cachedSigner, channelCaip: cachedChannelCaip };
+  }
   // Normalise to 0x-prefix — ethers.Wallet rejects naked hex.
   const pk = channelPk.startsWith('0x') ? channelPk : `0x${channelPk}`;
   const signer = new Wallet(pk);
-  pushClient = await PushAPI.initialize(signer, {
-    env: CONSTANTS.ENV.PROD,
-  });
-  pushClientForKey = channelPk;
-  return pushClient;
+  const channelCaip = `${CAIP_PREFIX}:${signer.address}`;
+  cachedSignerKey = channelPk;
+  cachedSigner = signer;
+  cachedChannelCaip = channelCaip;
+  return { signer, channelCaip };
 }
 
 /**
@@ -72,13 +89,19 @@ export async function sendPush(
     return;
   }
   try {
-    const channel = await getPushClient(channelPk);
-    // Targeted send to one subscriber. The CAIP-2 `eip155:1:`
-    // prefix is the SUBSCRIBER's chain context (we use mainnet's
-    // namespace as the canonical wallet identifier — Push routes
-    // by wallet address, the chain hint is metadata for the
-    // subscriber-side filter UI).
-    await channel.channel.send([`eip155:1:${payload.subscriber}`], {
+    const { signer, channelCaip } = getSignerAndChannel(channelPk);
+    await PushAPI.payloads.sendNotification({
+      signer,
+      // type=3 → targeted notification to a single recipient.
+      // type=1 is broadcast-to-all-subscribers; type=4 is a subset
+      // of subscribers. We only ever fan out individual HF alerts,
+      // so 3 is the right shape.
+      type: 3,
+      // identityType=2 → direct payload (no IPFS / Graph indirection).
+      // The notification body travels with the Push API request rather
+      // than being hash-pointed at off-chain storage. Cheapest + most
+      // reliable for short-lived alert content.
+      identityType: 2,
       notification: {
         title: payload.title,
         body: payload.body,
@@ -87,8 +110,11 @@ export async function sendPush(
         title: payload.title,
         body: payload.body,
         cta: payload.deepLinkUrl ?? '',
-        embed: '',
+        img: '',
       },
+      recipients: `${CAIP_PREFIX}:${payload.subscriber}`,
+      channel: channelCaip,
+      env: 'prod',
     });
   } catch (err) {
     console.error(

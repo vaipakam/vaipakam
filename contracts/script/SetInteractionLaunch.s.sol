@@ -4,6 +4,7 @@ pragma solidity ^0.8.29;
 import {Script} from "forge-std/Script.sol";
 import {console} from "forge-std/console.sol";
 import {InteractionRewardsFacet} from "../src/facets/InteractionRewardsFacet.sol";
+import {Deployments} from "./lib/Deployments.sol";
 
 /**
  * @title SetInteractionLaunch
@@ -29,20 +30,9 @@ import {InteractionRewardsFacet} from "../src/facets/InteractionRewardsFacet.sol
  *                                         (omit to leave unchanged)
  */
 contract SetInteractionLaunch is Script {
-    function _diamondAddress() internal view returns (address) {
-        uint256 chainId = block.chainid;
-        if (chainId == 84532) return vm.envAddress("BASE_SEPOLIA_DIAMOND_ADDRESS");
-        if (chainId == 8453) return vm.envAddress("BASE_DIAMOND_ADDRESS");
-        if (chainId == 11155111) return vm.envAddress("SEPOLIA_DIAMOND_ADDRESS");
-        if (chainId == 421614) return vm.envAddress("ARB_SEPOLIA_DIAMOND_ADDRESS");
-        if (chainId == 11155420) return vm.envAddress("OP_SEPOLIA_DIAMOND_ADDRESS");
-        if (chainId == 80002) return vm.envAddress("POLYGON_AMOY_DIAMOND_ADDRESS");
-        revert(string.concat("SetInteractionLaunch: unsupported chainId ", vm.toString(chainId)));
-    }
-
     function run() external {
         uint256 deployerKey = vm.envUint("PRIVATE_KEY");
-        address diamond = _diamondAddress();
+        address diamond = Deployments.readDiamond();
         uint256 launchTs = vm.envUint("INTERACTION_LAUNCH_TIMESTAMP");
         uint256 cap = vm.envOr("INTERACTION_CAP_VPFI_PER_ETH", uint256(0));
 

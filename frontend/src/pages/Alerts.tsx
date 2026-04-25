@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { useWallet } from "../context/WalletContext";
 import { Bell, MessageCircle, Wallet } from "lucide-react";
 import { ErrorAlert } from "../components/app/ErrorAlert";
@@ -61,7 +61,11 @@ export default function Alerts() {
 
   const [saving, setSaving] = useState(false);
   const [linking, setLinking] = useState(false);
-  const [msg, setMsg] = useState<string | null>(null);
+  // `msg` is a ReactNode so success banners can embed clickable links
+  // (e.g. the "Subscribe on Push" deep link surfaced after the user
+  // enables the Push rail). Plain-string callers still work — React
+  // narrows automatically.
+  const [msg, setMsg] = useState<ReactNode | null>(null);
   const [err, setErr] = useState<string | null>(null);
 
   if (!address) {
@@ -250,9 +254,30 @@ export default function Alerts() {
           `PUT ${fetchUrl} → HTTP ${res.status} — ${bodyText}`,
         );
       }
-      setMsg(
-        "Push rail enabled. You'll also need to subscribe to the Vaipakam Push channel from your Push-enabled wallet to actually receive the notifications — see docs for the channel address.",
-      );
+      // Surface the Vaipakam Push channel URL inline so the user can
+      // jump straight from this banner to their Push wallet's subscribe
+      // page — no hunting through docs. When the channel address env
+      // var isn't configured (degraded build) we fall back to the
+      // text-only message so the rail still surfaces *something*
+      // actionable.
+      if (PUSH_CHANNEL_ADDRESS) {
+        const channelUrl = `https://app.push.org/channels/${PUSH_CHANNEL_ADDRESS}`;
+        setMsg(
+          <span>
+            Push rail enabled. You'll also need to subscribe to the Vaipakam
+            Push channel from your Push-enabled wallet so the notifications
+            actually land —{" "}
+            <a href={channelUrl} target="_blank" rel="noreferrer">
+              Subscribe on Push →
+            </a>{" "}
+            (channel <span className="mono">{PUSH_CHANNEL_ADDRESS}</span>).
+          </span>,
+        );
+      } else {
+        setMsg(
+          "Push rail enabled. You'll also need to subscribe to the Vaipakam Push channel from your Push-enabled wallet to actually receive the notifications — see docs for the channel address.",
+        );
+      }
       step.success({ note: "push_channel=subscribed" });
     } catch (e) {
       // User-facing alert stays succinct (the bare error message);

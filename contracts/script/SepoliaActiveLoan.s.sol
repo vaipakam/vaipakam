@@ -13,6 +13,7 @@ import {OracleAdminFacet} from "../src/facets/OracleAdminFacet.sol";
 import {RiskFacet} from "../src/facets/RiskFacet.sol";
 import {MockChainlinkRegistry, MockChainlinkFeed} from "./mocks/MockChainlinkRegistry.sol";
 import {MockUniswapV3Factory} from "./mocks/MockUniswapV3.sol";
+import {Deployments} from "./lib/Deployments.sol";
 
 /**
  * @title SepoliaActiveLoan
@@ -42,7 +43,7 @@ contract SepoliaActiveLoan is Script {
     uint256 constant COLLATERAL_AMOUNT = 1e18;    // 1 mWETH (~$2000 @ $2000/ETH)
 
     function run() external {
-        diamond = vm.envAddress("DIAMOND_ADDRESS");
+        diamond = Deployments.readDiamond();
         // Phase-1 2-EOA topology: deployerKey funds + deploys mocks,
         // adminKey signs role-gated Diamond calls.
         deployerKey = vm.envUint("PRIVATE_KEY");

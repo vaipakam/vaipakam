@@ -6,6 +6,7 @@ import {Script} from "forge-std/Script.sol";
 import {console} from "forge-std/console.sol";
 import {IDiamondCut} from "@diamond-3/interfaces/IDiamondCut.sol";
 import {OracleFacet} from "../src/facets/OracleFacet.sol";
+import {Deployments} from "./lib/Deployments.sol";
 
 /**
  * @title UpgradeOracleFacet
@@ -33,7 +34,7 @@ contract UpgradeOracleFacet is Script {
         uint256 deployerKey = vm.envUint("PRIVATE_KEY");
         uint256 adminKey = vm.envUint("ADMIN_PRIVATE_KEY");
         address admin = vm.addr(adminKey);
-        address diamond = vm.envAddress("DIAMOND_ADDRESS");
+        address diamond = Deployments.readDiamond();
 
         console.log("Diamond:", diamond);
         console.log("Admin:  ", admin);

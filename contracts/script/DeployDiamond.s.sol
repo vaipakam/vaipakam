@@ -36,7 +36,9 @@ import {InteractionRewardsFacet} from "../src/facets/InteractionRewardsFacet.sol
 import {RewardReporterFacet} from "../src/facets/RewardReporterFacet.sol";
 import {RewardAggregatorFacet} from "../src/facets/RewardAggregatorFacet.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
+import {LegalFacet} from "../src/facets/LegalFacet.sol";
 import {LibAccessControl} from "../src/libraries/LibAccessControl.sol";
+import {Deployments} from "./lib/Deployments.sol";
 
 contract DeployDiamond is Script {
     // ── Deployed addresses (logged at the end) ──────────────────────────
@@ -88,8 +90,14 @@ contract DeployDiamond is Script {
         RewardReporterFacet rewardReporterFacet = new RewardReporterFacet();
         RewardAggregatorFacet rewardAggregatorFacet = new RewardAggregatorFacet();
         ConfigFacet configFacet = new ConfigFacet();
+        // LegalFacet — Phase 4.1 Terms-of-Service acceptance gate. The
+        // gate stays disabled until governance writes a non-zero
+        // `currentTosVersion` via `LegalFacet.setCurrentTos`; cutting
+        // the facet now keeps that surface reachable on the deployed
+        // Diamond instead of leaving it as dead code.
+        LegalFacet legalFacet = new LegalFacet();
 
-        console.log("All 30 facets deployed.");
+        console.log("All 31 facets deployed.");
 
         // ── Step 2: Deploy Diamond ──────────────────────────────────────
         // Deployer is the initial ERC-173 owner so it can execute the
@@ -106,8 +114,8 @@ contract DeployDiamond is Script {
         console.log("Diamond deployed at:", diamond);
 
         // ── Step 3: Build facet cuts ────────────────────────────────────
-        // 29 facets (DiamondCutFacet already added by constructor)
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](29);
+        // 30 facets (DiamondCutFacet already added by constructor)
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](30);
 
         cuts[0] = _buildCut(address(loupeFacet), _getLoupeSelectors());
         cuts[1] = _buildCut(address(ownershipFacet), _getOwnershipSelectors());
@@ -138,10 +146,11 @@ contract DeployDiamond is Script {
         cuts[26] = _buildCut(address(rewardReporterFacet), _getRewardReporterSelectors());
         cuts[27] = _buildCut(address(rewardAggregatorFacet), _getRewardAggregatorSelectors());
         cuts[28] = _buildCut(address(configFacet), _getConfigSelectors());
+        cuts[29] = _buildCut(address(legalFacet), _getLegalSelectors());
 
         // ── Step 4: Execute diamond cut ─────────────────────────────────
         IDiamondCut(diamond).diamondCut(cuts, address(0), "");
-        console.log("Diamond cut complete: 29 facets added.");
+        console.log("Diamond cut complete: 30 facets added.");
 
         // ── Step 5: Post-deployment initialization ──────────────────────
         // 5a. Initialize access control (grants all roles to admin)
@@ -205,6 +214,33 @@ contract DeployDiamond is Script {
         }
 
         vm.stopBroadcast();
+
+        // ── Step 7: Persist deployment artifact ─────────────────────────
+        // Write the Diamond + escrow-impl addresses to
+        // `deployments/<chain-slug>/addresses.json`. Every subsequent
+        // script (Configure*, Wire*, Upgrade*, seeders, smoke tests)
+        // reads from this file via `Deployments.readDiamond()` etc.
+        // — operators no longer need to chain-prefix env vars across
+        // every follow-on broadcast. The file is committed and is the
+        // canonical source of truth post-deploy. Writes happen OUTSIDE
+        // the broadcast (no on-chain effect) so a missing FS-write
+        // permission only fails the file step, not the deploy.
+        Deployments.writeChainHeader();
+        Deployments.writeDiamond(diamond);
+        // The per-user escrow template that
+        // `EscrowFactoryFacet.initializeEscrowImplementation` deployed
+        // is stored in shared Diamond storage but not surfaced through
+        // a public getter. Operators who need it for verifier UIs can
+        // pull it from the broadcast log
+        // (`broadcast/<script>/<chainid>/run-latest.json` →
+        // `transactions[].contractAddress` for `VaipakamEscrowImplementation`).
+        // Not written here to avoid adding an otherwise-unused
+        // selector to the production cut.
+        console.log(
+            "Wrote addresses to deployments/",
+            Deployments.chainSlug(),
+            "/addresses.json"
+        );
 
         // ── Summary ─────────────────────────────────────────────────────
         console.log("");
@@ -280,7 +316,7 @@ contract DeployDiamond is Script {
     }
 
     function _getAccessControlSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](13);
+        s = new bytes4[](14);
         s[0] = AccessControlFacet.initializeAccessControl.selector;
         s[1] = AccessControlFacet.grantRole.selector;
         s[2] = AccessControlFacet.revokeRole.selector;
@@ -294,6 +330,12 @@ contract DeployDiamond is Script {
         s[10] = AccessControlFacet.ORACLE_ADMIN_ROLE.selector;
         s[11] = AccessControlFacet.RISK_ADMIN_ROLE.selector;
         s[12] = AccessControlFacet.ESCROW_ADMIN_ROLE.selector;
+        // Hot-path role-revoke for incident response. Distinct from
+        // the timelocked `revokeRole` so a Pauser (or other emergency
+        // role-holder) can pull a compromised key without waiting
+        // 48h. See AccessControlFacet implementation for the role
+        // gate that scopes this.
+        s[13] = AccessControlFacet.emergencyRevokeRole.selector;
     }
 
     function _getAdminSelectors() internal pure returns (bytes4[] memory s) {
@@ -321,7 +363,7 @@ contract DeployDiamond is Script {
     }
 
     function _getProfileSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](22);
+        s = new bytes4[](25);
         s[0] = ProfileFacet.updateKYCStatus.selector;
         s[1] = ProfileFacet.getUserCountry.selector;
         s[2] = ProfileFacet.isKYCVerified.selector;
@@ -345,6 +387,13 @@ contract DeployDiamond is Script {
         s[19] = ProfileFacet.getKeeperActions.selector;
         s[20] = ProfileFacet.isLoanKeeperEnabled.selector;
         s[21] = ProfileFacet.isOfferKeeperEnabled.selector;
+        // Phase 4.3 sanctions-screen surface. The oracle is set per
+        // chain (Chainalysis-style); when unset the on-chain
+        // `isSanctionedAddress` returns false and offer-create /
+        // offer-accept simply skip the screen.
+        s[22] = ProfileFacet.setSanctionsOracle.selector;
+        s[23] = ProfileFacet.getSanctionsOracle.selector;
+        s[24] = ProfileFacet.isSanctionedAddress.selector;
     }
 
     function _getOracleSelectors() internal pure returns (bytes4[] memory s) {
@@ -361,7 +410,7 @@ contract DeployDiamond is Script {
     }
 
     function _getOracleAdminSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](8);
+        s = new bytes4[](20);
         s[0] = OracleAdminFacet.setChainlinkRegistry.selector;
         s[1] = OracleAdminFacet.setUsdChainlinkDenominator.selector;
         s[2] = OracleAdminFacet.setEthChainlinkDenominator.selector;
@@ -370,6 +419,27 @@ contract DeployDiamond is Script {
         s[5] = OracleAdminFacet.setUniswapV3Factory.selector;
         s[6] = OracleAdminFacet.setStableTokenFeed.selector;
         s[7] = OracleAdminFacet.setSequencerUptimeFeed.selector;
+        // Phase 3.1 — per-feed override: tighten staleness or set a
+        // minimum-valid-answer floor for a specific Chainlink
+        // aggregator. Only ever stricter than the global default;
+        // the override never loosens.
+        s[8] = OracleAdminFacet.setFeedOverride.selector;
+        s[9] = OracleAdminFacet.getFeedOverride.selector;
+        // Phase 7b.2 — Soft 2-of-N secondary oracle quorum across
+        // Tellor + API3 + DIA. Each address can be unset on chains
+        // where the secondary isn't deployed; when EVERY secondary
+        // is unavailable the protocol falls back to Chainlink-only
+        // (graceful) per OracleFacet._enforceSecondaryQuorum.
+        s[10] = OracleAdminFacet.setTellorOracle.selector;
+        s[11] = OracleAdminFacet.getTellorOracle.selector;
+        s[12] = OracleAdminFacet.setApi3ServerV1.selector;
+        s[13] = OracleAdminFacet.getApi3ServerV1.selector;
+        s[14] = OracleAdminFacet.setDIAOracleV2.selector;
+        s[15] = OracleAdminFacet.getDIAOracleV2.selector;
+        s[16] = OracleAdminFacet.setSecondaryOracleMaxDeviationBps.selector;
+        s[17] = OracleAdminFacet.getSecondaryOracleMaxDeviationBps.selector;
+        s[18] = OracleAdminFacet.setSecondaryOracleMaxStaleness.selector;
+        s[19] = OracleAdminFacet.getSecondaryOracleMaxStaleness.selector;
     }
 
     function _getNFTSelectors() internal pure returns (bytes4[] memory s) {
@@ -542,7 +612,7 @@ contract DeployDiamond is Script {
     }
 
     function _getVPFIDiscountSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](22);
+        s = new bytes4[](23);
         s[0] = VPFIDiscountFacet.buyVPFIWithETH.selector;
         s[1] = VPFIDiscountFacet.depositVPFIToEscrow.selector;
         s[2] = VPFIDiscountFacet.quoteVPFIDiscount.selector;
@@ -566,10 +636,15 @@ contract DeployDiamond is Script {
         s[20] = VPFIDiscountFacet.getUserVpfiDiscountState.selector;
         // Phase 8b.1 Permit2 addition.
         s[21] = VPFIDiscountFacet.depositVPFIToEscrowWithPermit.selector;
+        // #00010 fix — per-(buyer, originEid) wallet-cap reader. The
+        // canonical Diamond debits the cap bucket keyed by origin
+        // chain; the frontend reads via this getter so direct buys
+        // and bridged buys see consistent remaining-allowance values.
+        s[22] = VPFIDiscountFacet.getVPFISoldToByEid.selector;
     }
 
     function _getStakingRewardsSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](8);
+        s = new bytes4[](9);
         s[0] = StakingRewardsFacet.claimStakingRewards.selector;
         s[1] = StakingRewardsFacet.previewStakingRewards.selector;
         s[2] = StakingRewardsFacet.getUserStakedVPFI.selector;
@@ -578,6 +653,11 @@ contract DeployDiamond is Script {
         s[5] = StakingRewardsFacet.getStakingPoolPaidOut.selector;
         s[6] = StakingRewardsFacet.getStakingAPRBps.selector;
         s[7] = StakingRewardsFacet.getStakingSnapshot.selector;
+        // Off-chain analytics view: returns the cumulative
+        // reward-per-token accumulator without requiring the caller
+        // to know a specific user. Used by the staking dashboard for
+        // chain-wide accrual rate display.
+        s[8] = StakingRewardsFacet.getStakingRewardPerTokenStored.selector;
     }
 
     function _getInteractionRewardsSelectors() internal pure returns (bytes4[] memory s) {
@@ -617,7 +697,7 @@ contract DeployDiamond is Script {
     }
 
     function _getConfigSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](13);
+        s = new bytes4[](15);
         // Setters
         s[0] = ConfigFacet.setFeesConfig.selector;
         s[1] = ConfigFacet.setLiquidationConfig.selector;
@@ -625,14 +705,19 @@ contract DeployDiamond is Script {
         s[3] = ConfigFacet.setStakingApr.selector;
         s[4] = ConfigFacet.setVpfiTierThresholds.selector;
         s[5] = ConfigFacet.setVpfiTierDiscountBps.selector;
+        // Abnormal-market fallback: lender-bonus + treasury bps split
+        // applied when every swap adapter fails / under-fills. Default
+        // 3% / 2% per LibVaipakam constants, governance-tunable.
+        s[6] = ConfigFacet.setFallbackSplit.selector;
         // Getters
-        s[6] = ConfigFacet.getFeesConfig.selector;
-        s[7] = ConfigFacet.getLiquidationConfig.selector;
-        s[8] = ConfigFacet.getRiskConfig.selector;
-        s[9] = ConfigFacet.getStakingAprBps.selector;
-        s[10] = ConfigFacet.getVpfiTierThresholds.selector;
-        s[11] = ConfigFacet.getVpfiTierDiscountBps.selector;
-        s[12] = ConfigFacet.getProtocolConfigBundle.selector;
+        s[7] = ConfigFacet.getFeesConfig.selector;
+        s[8] = ConfigFacet.getLiquidationConfig.selector;
+        s[9] = ConfigFacet.getRiskConfig.selector;
+        s[10] = ConfigFacet.getStakingAprBps.selector;
+        s[11] = ConfigFacet.getFallbackSplit.selector;
+        s[12] = ConfigFacet.getVpfiTierThresholds.selector;
+        s[13] = ConfigFacet.getVpfiTierDiscountBps.selector;
+        s[14] = ConfigFacet.getProtocolConfigBundle.selector;
     }
 
     function _getRewardAggregatorSelectors() internal pure returns (bytes4[] memory s) {
@@ -686,5 +771,19 @@ contract DeployDiamond is Script {
         s[29] = MetricsFacet.getAllOffersPaginated.selector;
         s[30] = MetricsFacet.getLoansByStatusPaginated.selector;
         s[31] = MetricsFacet.getOffersByStatePaginated.selector;
+    }
+
+    /// Phase 4.1 — Terms-of-Service acceptance gate. The gate stays
+    /// disabled while `currentTosVersion == 0` (default at deploy);
+    /// once governance writes a non-zero version + content hash via
+    /// `setCurrentTos`, the frontend requires every wallet to call
+    /// `acceptTerms(version, hash)` before reaching `/app/*` routes.
+    function _getLegalSelectors() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](5);
+        s[0] = LegalFacet.acceptTerms.selector;
+        s[1] = LegalFacet.setCurrentTos.selector;
+        s[2] = LegalFacet.hasAcceptedCurrentTerms.selector;
+        s[3] = LegalFacet.getCurrentTos.selector;
+        s[4] = LegalFacet.getUserTosAcceptance.selector;
     }
 }

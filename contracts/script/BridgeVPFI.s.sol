@@ -13,6 +13,7 @@ import {
     OFTReceipt
 } from "@layerzerolabs/oft-evm/contracts/interfaces/IOFT.sol";
 import {OptionsBuilder} from "@layerzerolabs/oapp-evm/contracts/oapp/libs/OptionsBuilder.sol";
+import {Deployments} from "./lib/Deployments.sol";
 
 /**
  * @title BridgeVPFI
@@ -96,24 +97,6 @@ contract BridgeVPFI is Script {
         revert(string.concat("BridgeVPFI: unmapped chainId ", vm.toString(chainId)));
     }
 
-    /// @dev Resolves the local OApp (adapter on canonical, mirror elsewhere).
-    ///      Reads a per-chain env var so deploy artifacts from
-    ///      {DeployVPFICanonical} / {DeployVPFIMirror} can be reused as-is.
-    function _localOApp() internal view returns (address) {
-        uint256 chainId = block.chainid;
-        if (chainId == 84532)    return vm.envAddress("BASE_SEPOLIA_VPFI_OFT");
-        if (chainId == 11155111) return vm.envAddress("SEPOLIA_VPFI_OFT");
-        if (chainId == 80002)    return vm.envAddress("POLYGON_AMOY_VPFI_OFT");
-        if (chainId == 421614)   return vm.envAddress("ARB_SEPOLIA_VPFI_OFT");
-        if (chainId == 11155420) return vm.envAddress("OP_SEPOLIA_VPFI_OFT");
-        if (chainId == 8453)     return vm.envAddress("BASE_VPFI_OFT");
-        if (chainId == 1)        return vm.envAddress("ETHEREUM_VPFI_OFT");
-        if (chainId == 137)      return vm.envAddress("POLYGON_VPFI_OFT");
-        if (chainId == 42161)    return vm.envAddress("ARBITRUM_VPFI_OFT");
-        if (chainId == 10)       return vm.envAddress("OPTIMISM_VPFI_OFT");
-        revert(string.concat("BridgeVPFI: no VPFI_OFT env for chainId ", vm.toString(chainId)));
-    }
-
     /// @dev Only the canonical chain uses the adapter (lock-on-send model),
     ///      which requires an ERC20 approval. Mirrors burn on send and skip
     ///      this step. Canonical chains: Base (8453) and Base Sepolia (84532).
@@ -121,20 +104,17 @@ contract BridgeVPFI is Script {
         return chainId == 8453 || chainId == 84532;
     }
 
-    /// @dev Canonical-chain underlying VPFI token address for adapter
-    ///      approval. Only read when broadcasting on a canonical chain.
-    function _canonicalVPFIToken() internal view returns (address) {
-        uint256 chainId = block.chainid;
-        if (chainId == 84532) return vm.envAddress("BASE_SEPOLIA_VPFI");
-        if (chainId == 8453)  return vm.envAddress("BASE_VPFI");
-        revert("BridgeVPFI: _canonicalVPFIToken called off canonical chain");
-    }
-
     function run() external {
         uint256 senderKey = vm.envUint("PRIVATE_KEY");
         address sender = vm.addr(senderKey);
 
-        address localOApp = _localOApp();
+        // Local OApp = canonical-chain OFT adapter, mirror-chain
+        // OFT proxy elsewhere. Both are surfaced as `vpfiOftAdapter`
+        // in deployments/<chain>/addresses.json (DeployVPFICanonical /
+        // DeployVPFIMirror write under the same key by design).
+        // Falls back to <CHAIN>_VPFI_OFT_ADAPTER_ADDRESS env when the
+        // file isn't populated yet.
+        address localOApp = Deployments.readVPFIOFTAdapter();
         uint256 destChainId = vm.envUint("DEST_CHAIN_ID");
         uint32 dstEid = _eidFor(destChainId);
         if (dstEid == _eidFor(block.chainid)) {
@@ -181,7 +161,9 @@ contract BridgeVPFI is Script {
         vm.startBroadcast(senderKey);
 
         if (_isCanonical(block.chainid)) {
-            address vpfi = _canonicalVPFIToken();
+            // Canonical-chain underlying VPFI for adapter approval.
+            // Same `vpfiToken` key DeployVPFICanonical wrote post-deploy.
+            address vpfi = Deployments.readVPFIToken();
             console.log("VPFI token:      ", vpfi);
             IERC20(vpfi).forceApprove(localOApp, amount);
         }

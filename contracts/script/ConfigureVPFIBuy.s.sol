@@ -4,6 +4,7 @@ pragma solidity ^0.8.29;
 import {Script} from "forge-std/Script.sol";
 import {console} from "forge-std/console.sol";
 import {VPFIDiscountFacet} from "../src/facets/VPFIDiscountFacet.sol";
+import {Deployments} from "./lib/Deployments.sol";
 
 /**
  * @title ConfigureVPFIBuy
@@ -30,13 +31,6 @@ import {VPFIDiscountFacet} from "../src/facets/VPFIDiscountFacet.sol";
  *            for discount math. Usually WETH on Base.
  */
 contract ConfigureVPFIBuy is Script {
-    function _diamondAddress() internal view returns (address) {
-        uint256 chainId = block.chainid;
-        if (chainId == 84532) return vm.envAddress("BASE_SEPOLIA_DIAMOND_ADDRESS");
-        if (chainId == 8453) return vm.envAddress("BASE_DIAMOND_ADDRESS");
-        revert(string.concat("ConfigureVPFIBuy: must run on canonical chain, got ", vm.toString(chainId)));
-    }
-
     function _ethPriceAsset() internal view returns (address) {
         uint256 chainId = block.chainid;
         if (chainId == 84532) {
@@ -50,7 +44,11 @@ contract ConfigureVPFIBuy is Script {
 
     function run() external {
         uint256 adminKey = vm.envUint("ADMIN_PRIVATE_KEY");
-        address diamond = _diamondAddress();
+        // Reads from deployments/<chain>/addresses.json with legacy
+        // BASE_SEPOLIA_DIAMOND_ADDRESS / BASE_DIAMOND_ADDRESS env
+        // fallback. Must run on the canonical chain — caller's onus
+        // to ensure block.chainid matches the canonical-VPFI chain.
+        address diamond = Deployments.readDiamond();
         address ethPriceAsset = _ethPriceAsset();
 
         uint256 weiPerVpfi = vm.envUint("VPFI_BUY_WEI_PER_VPFI");

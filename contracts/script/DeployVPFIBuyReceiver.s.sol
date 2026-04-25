@@ -6,6 +6,7 @@ import {console} from "forge-std/console.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import {VPFIBuyReceiver} from "../src/token/VPFIBuyReceiver.sol";
 import {VPFIDiscountFacet} from "../src/facets/VPFIDiscountFacet.sol";
+import {Deployments} from "./lib/Deployments.sol";
 
 /**
  * @title DeployVPFIBuyReceiver
@@ -35,27 +36,6 @@ import {VPFIDiscountFacet} from "../src/facets/VPFIDiscountFacet.sol";
  *                                           (optional — as above)
  */
 contract DeployVPFIBuyReceiver is Script {
-    function _diamondAddress() internal view returns (address) {
-        uint256 chainId = block.chainid;
-        if (chainId == 84532) return vm.envAddress("BASE_SEPOLIA_DIAMOND_ADDRESS");
-        if (chainId == 8453) return vm.envAddress("BASE_DIAMOND_ADDRESS");
-        revert(string.concat("DeployVPFIBuyReceiver: unsupported chainId ", vm.toString(chainId)));
-    }
-
-    function _vpfiToken() internal view returns (address) {
-        uint256 chainId = block.chainid;
-        if (chainId == 84532) return vm.envAddress("BASE_SEPOLIA_VPFI_TOKEN");
-        if (chainId == 8453) return vm.envAddress("BASE_VPFI_TOKEN");
-        revert("DeployVPFIBuyReceiver: unsupported chainId");
-    }
-
-    function _vpfiOftAdapter() internal view returns (address) {
-        uint256 chainId = block.chainid;
-        if (chainId == 84532) return vm.envAddress("BASE_SEPOLIA_VPFI_OFT_ADAPTER");
-        if (chainId == 8453) return vm.envAddress("BASE_VPFI_OFT_ADAPTER");
-        revert("DeployVPFIBuyReceiver: unsupported chainId");
-    }
-
     function _lzEndpoint() internal view returns (address) {
         uint256 chainId = block.chainid;
         if (chainId == 84532) return vm.envAddress("LZ_ENDPOINT_BASE_SEPOLIA");
@@ -65,9 +45,12 @@ contract DeployVPFIBuyReceiver is Script {
 
     function run() external {
         uint256 deployerKey = vm.envUint("ADMIN_PRIVATE_KEY");
-        address diamond = _diamondAddress();
-        address vpfiToken = _vpfiToken();
-        address vpfiOftAdapter = _vpfiOftAdapter();
+        // Read prior-deploy artifacts from
+        // deployments/<chain>/addresses.json (with legacy
+        // BASE_SEPOLIA_*/BASE_* env fallback for bootstrap chains).
+        address diamond = Deployments.readDiamond();
+        address vpfiToken = Deployments.readVPFIToken();
+        address vpfiOftAdapter = Deployments.readVPFIOFTAdapter();
         address lzEndpoint = _lzEndpoint();
         address owner = vm.envAddress("VPFI_OWNER");
         bytes memory responseOptions = vm.envOr("VPFI_BUY_RESPONSE_OPTIONS", bytes(""));
@@ -102,6 +85,8 @@ contract DeployVPFIBuyReceiver is Script {
         VPFIDiscountFacet(diamond).setBridgedBuyReceiver(address(proxy));
 
         vm.stopBroadcast();
+
+        Deployments.writeVPFIBuyReceiver(address(proxy));
 
         console.log("VPFIBuyReceiver impl:  ", address(impl));
         console.log("VPFIBuyReceiver proxy: ", address(proxy));

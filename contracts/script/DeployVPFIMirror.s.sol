@@ -6,6 +6,7 @@ import {console} from "forge-std/console.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import {VPFIMirror} from "../src/token/VPFIMirror.sol";
 import {VPFITokenFacet} from "../src/facets/VPFITokenFacet.sol";
+import {Deployments} from "./lib/Deployments.sol";
 
 /**
  * @title DeployVPFIMirror
@@ -28,22 +29,6 @@ import {VPFITokenFacet} from "../src/facets/VPFITokenFacet.sol";
  *                                        (resolved by block.chainid)
  */
 contract DeployVPFIMirror is Script {
-    /// @dev Resolves the Diamond address for the active chain from a
-    ///      `<CHAIN>_DIAMOND_ADDRESS` env var. Add a branch per chain as the
-    ///      mesh expands. Reverts on unrecognised chains.
-    function _diamondAddress() internal view returns (address) {
-        uint256 chainId = block.chainid;
-        if (chainId == 11155111) return vm.envAddress("SEPOLIA_DIAMOND_ADDRESS");
-        if (chainId == 80002) return vm.envAddress("POLYGON_AMOY_DIAMOND_ADDRESS");
-        if (chainId == 421614) return vm.envAddress("ARB_SEPOLIA_DIAMOND_ADDRESS");
-        if (chainId == 11155420) return vm.envAddress("OP_SEPOLIA_DIAMOND_ADDRESS");
-        if (chainId == 1) return vm.envAddress("ETHEREUM_DIAMOND_ADDRESS");
-        if (chainId == 137) return vm.envAddress("POLYGON_DIAMOND_ADDRESS");
-        if (chainId == 42161) return vm.envAddress("ARBITRUM_DIAMOND_ADDRESS");
-        if (chainId == 10) return vm.envAddress("OPTIMISM_DIAMOND_ADDRESS");
-        revert(string.concat("DeployVPFIMirror: unsupported chainId ", vm.toString(chainId)));
-    }
-
     /// @dev Resolves the LayerZero V2 EndpointV2 for the active chain from a
     ///      `LZ_ENDPOINT_<CHAIN>` env var. Endpoint addresses per chain live at
     ///      https://docs.layerzero.network/v2/deployments/deployed-contracts
@@ -62,7 +47,7 @@ contract DeployVPFIMirror is Script {
 
     function run() external {
         uint256 deployerKey = vm.envUint("ADMIN_PRIVATE_KEY");
-        address diamond = _diamondAddress();
+        address diamond = Deployments.readDiamond();
         address owner = vm.envAddress("VPFI_OWNER");
         address lzEndpoint = _lzEndpoint();
 
@@ -87,6 +72,11 @@ contract DeployVPFIMirror is Script {
         VPFITokenFacet(diamond).setVPFIToken(mirror);
 
         vm.stopBroadcast();
+
+        // Mirror VPFI is the local-chain "vpfiToken" from the Diamond's
+        // perspective; surface it under the same key so other scripts
+        // (BridgeVPFI, etc.) read consistently across canonical and mirrors.
+        Deployments.writeVPFIToken(mirror);
 
         console.log("VPFIMirror impl:   ", address(mirrorImpl));
         console.log("VPFIMirror proxy:  ", mirror);

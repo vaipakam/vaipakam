@@ -5,6 +5,7 @@ import {Script} from "forge-std/Script.sol";
 import {console} from "forge-std/console.sol";
 import {AccessControlFacet} from "../src/facets/AccessControlFacet.sol";
 import {LibAccessControl} from "../src/libraries/LibAccessControl.sol";
+import {Deployments} from "./lib/Deployments.sol";
 
 /**
  * @title GrantOpsRoles
@@ -38,26 +39,9 @@ import {LibAccessControl} from "../src/libraries/LibAccessControl.sol";
  *                                        if unset (single-Safe deployments)
  */
 contract GrantOpsRoles is Script {
-    function _diamondAddress() internal view returns (address) {
-        uint256 chainId = block.chainid;
-        if (chainId == 84532) return vm.envAddress("BASE_SEPOLIA_DIAMOND_ADDRESS");
-        if (chainId == 8453) return vm.envAddress("BASE_DIAMOND_ADDRESS");
-        if (chainId == 11155111) return vm.envAddress("SEPOLIA_DIAMOND_ADDRESS");
-        if (chainId == 421614) return vm.envAddress("ARB_SEPOLIA_DIAMOND_ADDRESS");
-        if (chainId == 11155420) return vm.envAddress("OP_SEPOLIA_DIAMOND_ADDRESS");
-        if (chainId == 1) return vm.envAddress("ETHEREUM_DIAMOND_ADDRESS");
-        if (chainId == 42161) return vm.envAddress("ARBITRUM_DIAMOND_ADDRESS");
-        if (chainId == 10) return vm.envAddress("OPTIMISM_DIAMOND_ADDRESS");
-        if (chainId == 56) return vm.envAddress("BNB_DIAMOND_ADDRESS");
-        if (chainId == 97) return vm.envAddress("BNB_TESTNET_DIAMOND_ADDRESS");
-        if (chainId == 1101) return vm.envAddress("POLYGON_ZKEVM_DIAMOND_ADDRESS");
-        if (chainId == 2442) return vm.envAddress("POLYGON_ZKEVM_CARDONA_DIAMOND_ADDRESS");
-        revert(string.concat("GrantOpsRoles: unsupported chainId ", vm.toString(chainId)));
-    }
-
     function run() external {
         uint256 deployerKey = vm.envUint("PRIVATE_KEY");
-        address diamond = _diamondAddress();
+        address diamond = Deployments.readDiamond();
         address guardian = vm.envAddress("GOVERNANCE_GUARDIAN");
         // Fall back to the guardian address for single-Safe deployments.
         address kycOps = vm.envOr("GOVERNANCE_KYC_OPS", guardian);

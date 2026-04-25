@@ -12,6 +12,7 @@ import {OracleAdminFacet} from "../src/facets/OracleAdminFacet.sol";
 import {RiskFacet} from "../src/facets/RiskFacet.sol";
 import {MockChainlinkRegistry, MockChainlinkFeed} from "./mocks/MockChainlinkRegistry.sol";
 import {MockUniswapV3Factory} from "./mocks/MockUniswapV3.sol";
+import {Deployments} from "./lib/Deployments.sol";
 
 /**
  * @title SepoliaOpenOffers
@@ -229,24 +230,27 @@ contract SepoliaOpenOffers is Script {
      *      calling an empty address and surfacing "call to non-contract".
      */
     function _resolveDiamond() internal view returns (address addr) {
-        uint256 id = block.chainid;
-        string memory key;
-        if (id == 11155111) key = "SEPOLIA_DIAMOND_ADDRESS";
-        else if (id == 84532) key = "BASE_SEPOLIA_DIAMOND_ADDRESS";
-        else if (id == 11155420) key = "OP_SEPOLIA_DIAMOND_ADDRESS";
-        else if (id == 421614) key = "ARB_SEPOLIA_DIAMOND_ADDRESS";
-        else if (id == 80002) key = "POLYGON_AMOY_DIAMOND_ADDRESS";
-        else key = "DIAMOND_ADDRESS";
-
-        // Try the chain-specific var; fall through to the generic alias if
-        // unset so an operator who hasn't populated the per-chain entry yet
-        // can still run by exporting DIAMOND_ADDRESS manually.
-        addr = vm.envOr(key, address(0));
+        // Primary: deployments/<chain>/addresses.json (written by
+        // DeployDiamond). Secondary: chain-prefixed env (`SEPOLIA_…`)
+        // via `Deployments.readDiamond`'s envPrefix path. Tertiary:
+        // bare DIAMOND_ADDRESS for legacy operator runs that still
+        // export the unprefixed key. The bare-key path stays so an
+        // operator who hasn't yet committed addresses.json can still
+        // run the seeder manually.
+        addr = Deployments.readDiamond();
         if (addr == address(0)) addr = vm.envOr("DIAMOND_ADDRESS", address(0));
-        require(addr != address(0), string(abi.encodePacked(
-            "No Diamond address configured for chainid ", vm.toString(id),
-            ". Set ", key, " or DIAMOND_ADDRESS in env."
-        )));
+        require(
+            addr != address(0),
+            string(
+                abi.encodePacked(
+                    "No Diamond address configured for chainid ",
+                    vm.toString(block.chainid),
+                    ". Run DeployDiamond.s.sol on this chain to populate ",
+                    "deployments/<chain>/addresses.json, or set ",
+                    "<CHAIN>_DIAMOND_ADDRESS / DIAMOND_ADDRESS in env."
+                )
+            )
+        );
     }
 
     function _setCountryIfUnset(uint256 key, address acct, string memory code) internal {

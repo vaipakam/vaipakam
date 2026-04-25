@@ -7,6 +7,7 @@ import {IDiamondCut} from "@diamond-3/interfaces/IDiamondCut.sol";
 import {OfferFacet} from "../src/facets/OfferFacet.sol";
 import {OracleFacet} from "../src/facets/OracleFacet.sol";
 import {EscrowFactoryFacet} from "../src/facets/EscrowFactoryFacet.sol";
+import {Deployments} from "./lib/Deployments.sol";
 
 /**
  * @title ReplaceStaleFacets
@@ -27,7 +28,10 @@ import {EscrowFactoryFacet} from "../src/facets/EscrowFactoryFacet.sol";
 contract ReplaceStaleFacets is Script {
     function run() external {
         uint256 deployerKey = vm.envUint("PRIVATE_KEY");
-        address diamond = vm.envAddress("DIAMOND_ADDRESS");
+        // Same env-var-prefix normalisation as RedeployFacets — read
+        // from deployments/<chain>/addresses.json with chain-prefixed
+        // env fallback rather than the bare DIAMOND_ADDRESS.
+        address diamond = Deployments.readDiamond();
 
         console.log("Diamond:", diamond);
 

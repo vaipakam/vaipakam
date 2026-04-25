@@ -8,6 +8,16 @@ All commands run from `contracts/`.
 
 > **Admin handover ordering.** Steps 1–11 run from the `PRIVATE_KEY` EOA because it needs `ADMIN_ROLE` / `ORACLE_ADMIN_ROLE` / `ESCROW_ADMIN_ROLE` to land every `Configure*.s.sol`. Step 11.5 (*Hand over admin to timelock*) is **one-way** — after it runs, every `Configure*` invocation must be scheduled through the `TimelockController` (48h delay). Always land the full config sweep and run smoke tests under the EOA first; hand over last.
 
+> **Address propagation.** As of the Track-B refactor, every `Deploy*.s.sol`
+> writes its outputs to `deployments/base-sepolia/addresses.json` and every
+> downstream `Configure*` / `Wire*` / `Upgrade*` / seeder script reads from
+> the same file via the `Deployments.sol` helper. **Operators no longer
+> need to manually export `BASE_SEPOLIA_DIAMOND_ADDRESS` (or any other
+> deployment address) between steps.** The file is the source of truth.
+> Commit it after the deploy is green (Step 12). Legacy chain-prefixed env
+> vars still work as a fallback for one-off ops calls; the file wins when
+> both are present.
+
 ---
 
 ## 0. Pre-flight
@@ -39,12 +49,17 @@ forge script script/DeployDiamond.s.sol \
   --etherscan-api-key $ETHERSCAN_API_KEY
 ```
 
-Record the logged `Diamond:` address → `.env` as `BASE_SEPOLIA_DIAMOND_ADDRESS`.
+The script auto-writes the Diamond address (and a `chainId` /
+`deployedAt` header) to `deployments/base-sepolia/addresses.json` —
+**no manual env-var export is needed for downstream steps.** The
+deploy produces 31 facets cut into the Diamond (LegalFacet now
+included; OracleAdminFacet has the full Phase 7b secondary-quorum
+selector set). Post-check:
 
-Post-check:
 ```bash
-cast call $BASE_SEPOLIA_DIAMOND_ADDRESS "paused()(bool)" --rpc-url $BASE_SEPOLIA_RPC_URL  # → false
-cast call $BASE_SEPOLIA_DIAMOND_ADDRESS "getTreasury()(address)" --rpc-url $BASE_SEPOLIA_RPC_URL  # → $TREASURY_ADDRESS
+DIAMOND=$(jq -r .diamond deployments/base-sepolia/addresses.json)
+cast call $DIAMOND "paused()(bool)" --rpc-url $BASE_SEPOLIA_RPC_URL          # → false
+cast call $DIAMOND "getTreasury()(address)" --rpc-url $BASE_SEPOLIA_RPC_URL  # → $TREASURY_ADDRESS
 ```
 
 ---
@@ -126,6 +141,57 @@ cast call $BASE_SEPOLIA_DIAMOND_ADDRESS "getApi3ServerV1()(address)" --rpc-url $
 cast call $BASE_SEPOLIA_DIAMOND_ADDRESS "getDIAOracleV2()(address)" --rpc-url $BASE_SEPOLIA_RPC_URL
 cast call $BASE_SEPOLIA_DIAMOND_ADDRESS "getSwapAdapters()(address[])" --rpc-url $BASE_SEPOLIA_RPC_URL
 ```
+
+---
+
+## 2.5. Base Sepolia testnet liquidity mocks (testnet-only)
+
+Base Sepolia has only nine real Chainlink feeds (ETH/USD, BTC/USD,
+USDC/USD, USDT/USD, DAI/USD, LINK/USD, LINK/ETH, CBETH/ETH, CBETH/USD)
+and no Chainlink Feed Registry, so a fresh deploy can't classify
+arbitrary ERC-20s as **liquid** out of the box. For end-to-end testing
+without depending on real Base Sepolia DEX liquidity, deploy the
+mock infrastructure that surfaces TWO fully-liquid mock ERC-20s
+(`mUSDC` / `mWBTC`) along with a mock Feed Registry, mock per-asset
+feeds, and a mock UniswapV3 factory whose pool depth clears the
+$1M `MIN_LIQUIDITY_USD` floor:
+
+```bash
+forge script script/DeployBaseSepoliaLiquidityMocks.s.sol \
+  --rpc-url $BASE_SEPOLIA_RPC_URL --broadcast
+```
+
+The script:
+- Deploys `mUSDC` (6 dec, $1.00) + `mWBTC` (8 dec, $60,000) ERC-20s
+  with 100M / 1k initial supply on the deployer.
+- Deploys `MockChainlinkRegistry` + per-asset feeds (`mUSDC/USD`,
+  `mWBTC/USD`, `WETH/USD` at $2,000) registered under the canonical
+  Chainlink Denomination sentinels.
+- Deploys `MockUniswapV3Factory` + pools `mUSDC/WETH` and
+  `mWBTC/WETH` at fee=3000, `liquidity()=1e24` (well above the $1M
+  floor under any sane ETH/USD price).
+- Wires every address into the Diamond via `OracleAdminFacet`
+  setters (`setChainlinkRegistry`, `setEthUsdFeed`,
+  `setUniswapV3Factory`, `setWethContract`) plus
+  `RiskFacet.updateRiskParams` for both mocks.
+- Writes `.mockChainlinkAggregator`, `.mockUniswapV3Factory`,
+  `.mockERC20A`, `.mockERC20B`, `.mockUSDCFeed`, `.mockWBTCFeed`,
+  `.mockWETHFeed` keys to `addresses.json`.
+
+Verify both mocks classify Liquid:
+
+```bash
+DIAMOND=$(jq -r .diamond deployments/base-sepolia/addresses.json)
+MUSDC=$(jq -r .mockERC20A deployments/base-sepolia/addresses.json)
+MWBTC=$(jq -r .mockERC20B deployments/base-sepolia/addresses.json)
+
+cast call $DIAMOND "checkLiquidity(address)(uint8)" $MUSDC --rpc-url $BASE_SEPOLIA_RPC_URL  # → 0 (Liquid)
+cast call $DIAMOND "checkLiquidity(address)(uint8)" $MWBTC --rpc-url $BASE_SEPOLIA_RPC_URL  # → 0 (Liquid)
+```
+
+**Skip this step on mainnet deploys** — production wires real
+Chainlink + real UniswapV3 (factory `0x33128a8fC17869897dcE68Ed026d694621f6FDfD`),
+not mocks. Real-DEX deploys jump straight from §2 to §3.
 
 ---
 

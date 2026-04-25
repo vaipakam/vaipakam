@@ -5,6 +5,7 @@ import {Script} from "forge-std/Script.sol";
 import {console} from "forge-std/console.sol";
 import {LZGuardianPausable} from "../src/token/LZGuardianPausable.sol";
 import {Ownable2StepUpgradeable} from "@openzeppelin/contracts-upgradeable/access/Ownable2StepUpgradeable.sol";
+import {Deployments} from "./lib/Deployments.sol";
 
 /**
  * @title MigrateOAppGovernance
@@ -82,17 +83,36 @@ contract MigrateOAppGovernance is Script {
         );
     }
 
-    function _targets(string memory pfx) internal view returns (Targets memory t) {
-        t.vpfiToken = vm.envOr(string.concat(pfx, "_VPFI_TOKEN_ADDRESS"), address(0));
-        t.vpfiOftAdapter = vm.envOr(string.concat(pfx, "_VPFI_OFT_ADAPTER_ADDRESS"), address(0));
-        t.vpfiMirror = vm.envOr(string.concat(pfx, "_VPFI_MIRROR_ADDRESS"), address(0));
-        t.vpfiBuyAdapter = vm.envOr(string.concat(pfx, "_VPFI_BUY_ADAPTER_ADDRESS"), address(0));
-        t.vpfiBuyReceiver = vm.envOr(string.concat(pfx, "_VPFI_BUY_RECEIVER_ADDRESS"), address(0));
-        t.rewardOApp = vm.envOr(string.concat(pfx, "_REWARD_OAPP_ADDRESS"), address(0));
+    /// Reads each contract from deployments/<chain>/addresses.json,
+    /// falling back through the chain-prefixed env-var path that
+    /// `Deployments` exposes. The legacy per-chain env scan is kept
+    /// as the second-tier fallback for chains that haven't yet been
+    /// migrated onto the addresses.json convention. Zero entries are
+    /// skipped by `_run` — same behaviour as before, different source.
+    function _targets() internal view returns (Targets memory t) {
+        t.vpfiToken = Deployments.readVPFIToken();
+        t.vpfiOftAdapter = Deployments.readVPFIOFTAdapter();
+        // VPFIMirror is the same on-chain contract as the OFT adapter
+        // on a mirror chain; read the same key. On canonical chains
+        // there's no separate `vpfiMirror` entry (the adapter slot
+        // doubles as the local OFT). Operators who wired both
+        // separately can still use the `<CHAIN>_VPFI_MIRROR_ADDRESS`
+        // env override path.
+        t.vpfiMirror = vm.envOr(
+            string.concat(_chainEnvPrefix(), "_VPFI_MIRROR_ADDRESS"),
+            address(0)
+        );
+        t.vpfiBuyAdapter = Deployments.readVPFIBuyAdapter();
+        t.vpfiBuyReceiver = Deployments.readVPFIBuyReceiver();
+        t.rewardOApp = Deployments.readRewardOApp();
     }
 
-    function _timelockAddress(string memory pfx) internal view returns (address) {
-        return vm.envAddress(string.concat(pfx, "_TIMELOCK_ADDRESS"));
+    /// Mirror of the legacy `_prefix()` helper (returned strings without
+    /// the trailing underscore) — the addresses.json migration didn't
+    /// touch this; it's the per-chain prefix used for VPFIMirror env
+    /// fallback above.
+    function _chainEnvPrefix() internal view returns (string memory) {
+        return _prefix();
     }
 
     function run() external {
@@ -105,9 +125,11 @@ contract MigrateOAppGovernance is Script {
         uint256 deployerKey = vm.envUint("PRIVATE_KEY");
         address deployer = vm.addr(deployerKey);
         address guardian = vm.envAddress("GOVERNANCE_GUARDIAN");
-        string memory pfx = _prefix();
-        address timelock = _timelockAddress(pfx);
-        Targets memory t = _targets(pfx);
+        // Timelock + per-OApp target addresses both come from
+        // deployments/<chain>/addresses.json (Deployments.readTimelock,
+        // Deployments.read* per OApp) with chain-prefixed env fallback.
+        address timelock = Deployments.readTimelock();
+        Targets memory t = _targets();
 
         require(guardian != address(0), "MigrateOAppGovernance: guardian is zero");
         require(timelock != address(0), "MigrateOAppGovernance: timelock is zero");

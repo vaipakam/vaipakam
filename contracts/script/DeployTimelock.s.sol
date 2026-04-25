@@ -4,6 +4,7 @@ pragma solidity ^0.8.29;
 import {Script} from "forge-std/Script.sol";
 import {console} from "forge-std/console.sol";
 import {TimelockController} from "@openzeppelin/contracts/governance/TimelockController.sol";
+import {Deployments} from "./lib/Deployments.sol";
 
 /**
  * @title DeployTimelock
@@ -70,7 +71,8 @@ contract DeployTimelock is Script {
         vm.stopBroadcast();
 
         timelock = address(tl);
+        Deployments.writeTimelock(timelock);
         console.log("Timelock:       ", timelock);
-        console.log("Record this address in <CHAIN>_TIMELOCK_ADDRESS before running TransferAdminToTimelock.");
+        console.log("Recorded in deployments/<chain>/addresses.json under .timelock");
     }
 }

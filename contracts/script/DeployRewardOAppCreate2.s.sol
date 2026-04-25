@@ -8,6 +8,7 @@ import {UUPSUpgradeable} from "@openzeppelin/contracts/proxy/utils/UUPSUpgradeab
 import {VaipakamRewardOApp} from "../src/token/VaipakamRewardOApp.sol";
 import {VaipakamRewardOAppBootstrap} from "../src/token/VaipakamRewardOAppBootstrap.sol";
 import {LibCreate2Deploy} from "./lib/LibCreate2Deploy.sol";
+import {Deployments} from "./lib/Deployments.sol";
 
 /// @title DeployRewardOAppCreate2
 /// @notice Cross-chain-deterministic deployment of the VaipakamRewardOApp
@@ -68,7 +69,8 @@ contract DeployRewardOAppCreate2 is Script {
         uint256 deployerKey = vm.envUint("PRIVATE_KEY");
         string memory version = vm.envString("REWARD_VERSION");
         address owner = vm.envAddress("REWARD_OWNER");
-        address diamond = vm.envAddress("DIAMOND_ADDRESS");
+        // Read from addresses.json with legacy DIAMOND_ADDRESS env fallback.
+        address diamond = Deployments.readDiamond();
         bool isCanonical = vm.envBool("IS_CANONICAL_REWARD");
         uint32 baseEid = uint32(vm.envUint("BASE_EID"));
         address lzEndpoint = vm.envAddress("LZ_ENDPOINT");
@@ -162,6 +164,8 @@ contract DeployRewardOAppCreate2 is Script {
         console.log("Proxy upgraded + initialized.");
 
         vm.stopBroadcast();
+
+        Deployments.writeRewardOApp(rewardOAppProxy);
 
         // ── Summary ──────────────────────────────────────────────────────
         console.log("");

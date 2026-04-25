@@ -5,6 +5,7 @@ import {Script} from "forge-std/Script.sol";
 import {console} from "forge-std/console.sol";
 import {OracleAdminFacet} from "../src/facets/OracleAdminFacet.sol";
 import {AdminFacet} from "../src/facets/AdminFacet.sol";
+import {Deployments} from "./lib/Deployments.sol";
 
 /**
  * @title ConfigureOracle
@@ -73,8 +74,10 @@ contract ConfigureOracle is Script {
     function run() external {
         uint256 deployerKey = vm.envUint("PRIVATE_KEY");
 
-        // Diamond is mandatory.
-        address diamond = _resolveAddressStrict("DIAMOND_ADDRESS");
+        // Diamond is mandatory. Reads from
+        // deployments/<chain>/addresses.json (with legacy
+        // <CHAIN>_DIAMOND_ADDRESS env fallback).
+        address diamond = Deployments.readDiamond();
         address weth = _resolveAddressStrict("WETH_ADDRESS");
         address uniV3Factory = _resolveAddressStrict("UNISWAP_V3_FACTORY");
         address ethUsdFeed = _resolveAddressStrict("ETH_USD_FEED");

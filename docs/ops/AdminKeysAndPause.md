@@ -169,3 +169,24 @@ AccessControlFacet.hasRole(KYC_ADMIN_ROLE, OPS_MULTISIG) == true
 | `expectedSourceEids` | List of **every other chain's** eid | (unused — only checked on canonical) |
 
 Verify against `ChainByChainChecks.md` after every change.
+
+---
+
+## Off-chain operator keys (alert watcher)
+
+The alert watcher at `ops/hf-watcher/` holds two long-lived secrets
+and one public address. None of these are Diamond roles — losing or
+rotating them affects only the off-chain notification rails, never
+on-chain protocol authority.
+
+| Key | Purpose | Storage | Compromise blast radius |
+|---|---|---|---|
+| `TG_BOT_TOKEN` | Authenticates the worker as `@VaipakamBot` for Telegram message sends + webhook receives. | `wrangler secret put TG_BOT_TOKEN` (encrypted at rest in Cloudflare Workers). | Attacker can spam our subscriber base with arbitrary Telegram messages branded as the bot. Rotate via @BotFather → `/revoke` → re-issue → re-set the secret. |
+| `PUSH_CHANNEL_PK` | Channel signer privkey for the Vaipakam Push channel `0x6F5847A0CA1F2cB1bbEf944124cE5995988a1D6b` (<https://app.push.org/channels/0x6F5847A0CA1F2cB1bbEf944124cE5995988a1D6b>). Used by `@pushprotocol/restapi` to sign outbound notifications. | `wrangler secret put PUSH_CHANNEL_PK` (encrypted at rest). | Attacker can push arbitrary notifications to every Vaipakam Push subscriber. The channel-owner wallet should hold ONLY the 50 PUSH staking deposit + ~$50 of native gas — never operator funds, never connected to a treasury workflow. Rotate by transferring channel ownership at app.push.org to a fresh EOA, updating the secret, redeploying the worker (procedure in `IncidentRunbook.md`). |
+| `0x6F5847A0CA1F2cB1bbEf944124cE5995988a1D6b` (public address) | The Push channel-owner wallet's public side. Surfaced on the frontend via `VITE_PUSH_CHANNEL_ADDRESS` and rendered on `/app/alerts` as a "Subscribe on Push →" deep link. | Public — committed to `frontend/.env.example`, displayed to every user. | Public info; no compromise model. Changing it requires creating a new Push channel + 50-PUSH stake + frontend redeploy. |
+
+These keys are **independent** of the Diamond key topology above.
+Compromise of `TG_BOT_TOKEN` or `PUSH_CHANNEL_PK` does **not** require
+on-chain pause — see `IncidentRunbook.md` for the off-chain rotation
+SOP. Conversely, rotating Diamond admin roles does not require
+touching the watcher secrets.

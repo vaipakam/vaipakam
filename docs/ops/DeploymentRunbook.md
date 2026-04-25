@@ -185,3 +185,78 @@ See `AdminKeysAndPause.md` for the full role map and the Timelock + Multisig top
 - Commit `deployments/<chain>/addresses.json`.
 - Post the diamond address + facet addresses to the public status page.
 - File an entry in `docs/ops/IncidentRunbook.md#deployment-log`.
+
+---
+
+## 8. Off-chain alert watcher (one-time, not per-chain)
+
+The HF alert watcher at `ops/hf-watcher/` runs as a Cloudflare Worker
+and is shared across every supported chain — it polls each Diamond on
+a 5-minute cron and dispatches per-user threshold notifications via
+Telegram + Push Protocol. This section is one-time setup and does
+**not** repeat per-chain deploy.
+
+### 8a. Telegram bot
+
+1. Create the bot via [`@BotFather`](https://t.me/BotFather) with `/newbot`.
+   Use the handle `@VaipakamBot` for production. BotFather hands back
+   the bot's API token on creation — this is the only time it appears
+   in plaintext.
+2. Set worker secrets / vars:
+   ```bash
+   cd ops/hf-watcher
+   npx wrangler secret put TG_BOT_TOKEN          # paste BotFather token
+   ```
+   `TG_BOT_USERNAME` is committed in `wrangler.jsonc` as a public var.
+3. Register the webhook so Telegram pushes inbound DMs into the worker:
+   ```bash
+   curl "https://api.telegram.org/bot<TG_BOT_TOKEN>/setWebhook" \
+        --data-urlencode "url=https://alerts.vaipakam.com/tg/webhook"
+   ```
+   Verify with `getWebhookInfo`.
+
+### 8b. Push Protocol channel
+
+1. **One-time channel creation.** Connect a fresh dedicated EOA at
+   <https://app.push.org/>, fund it with 50 PUSH (the staking deposit;
+   refundable on channel deletion), and create the Vaipakam channel
+   with name + description + icon + website.
+2. **Production channel address** (do not change without rotating):
+   - **`0x6F5847A0CA1F2cB1bbEf944124cE5995988a1D6b`**
+   - Public URL: <https://app.push.org/channels/0x6F5847A0CA1F2cB1bbEf944124cE5995988a1D6b>
+   - End-user subscribe deep-link rendered on the Alerts page goes to
+     the same URL via the `VITE_PUSH_CHANNEL_ADDRESS` env var.
+3. **Channel signer privkey → worker secret.**
+   ```bash
+   npx wrangler secret put PUSH_CHANNEL_PK       # paste 0x-prefixed 64-hex
+   ```
+   The private key is **never** committed and never appears in
+   `wrangler.jsonc`. The channel-owner wallet should hold only the
+   staking deposit + ~$50 of native gas — nothing else of value.
+4. **Frontend env.** Set on every frontend deploy:
+   ```
+   VITE_PUSH_CHANNEL_ADDRESS=0x6F5847A0CA1F2cB1bbEf944124cE5995988a1D6b
+   VITE_HF_WATCHER_ORIGIN=https://alerts.vaipakam.com
+   ```
+   Without these, the Alerts page falls closed gracefully; with them,
+   the "Subscribe on Push →" deep link and the Push rail enable
+   button both render correctly.
+
+### 8c. Smoke test the watcher
+
+```bash
+cd ops/hf-watcher
+npx wrangler tail        # tail logs in another terminal
+
+# From a test wallet:
+#   1. Subscribe to the Push channel at the URL in 8b.2
+#   2. /app/alerts → Save thresholds, Link Telegram, Enable Push rail
+#   3. Lower one threshold below the connected wallet's HF
+#   4. Wait for the next 5-min cron tick
+# Expect: log lines for `tg send` + Push API success on band crossings.
+```
+
+A `[push] send failed …` line means either `PUSH_CHANNEL_PK` is
+wrong format or the channel hasn't cleared the post-stake delay
+(~10 blocks after channel-create tx on mainnet). Re-stake confirmations
+take a few minutes; nothing else to do.
