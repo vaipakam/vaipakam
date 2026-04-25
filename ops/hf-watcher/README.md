@@ -61,7 +61,11 @@ npx wrangler secret put RPC_OP
 npx wrangler secret put RPC_ZKEVM
 npx wrangler secret put RPC_BNB
 
-# 4. Telegram bot token (create via @BotFather first).
+# 4. Telegram bot token (create the bot via @BotFather first; the
+#    bot's username — e.g. `VaipakamBot` — is set as a plaintext
+#    var in wrangler.jsonc, NOT here, because it is public info).
+#    The TOKEN is the secret half: encrypted at rest, never logged,
+#    never visible in the dashboard after upload.
 npx wrangler secret put TG_BOT_TOKEN
 
 # 5. Push Protocol channel private key. Create the channel via
@@ -69,13 +73,30 @@ npx wrangler secret put TG_BOT_TOKEN
 #    channel signer's privkey goes here.
 npx wrangler secret put PUSH_CHANNEL_PK
 
-# 6. Set the diamond addresses in wrangler.jsonc vars (public info,
-#    so no secret needed). Also update FRONTEND_ORIGIN if not
-#    vaipakam.com.
+# 6. Aggregator + scanner API keys (server-side proxies inject them
+#    so the frontend never sees them — see #00003 for the regression
+#    that prompted moving Blockaid behind /scan/blockaid).
+npx wrangler secret put ZEROEX_API_KEY
+npx wrangler secret put ONEINCH_API_KEY
+npx wrangler secret put BLOCKAID_API_KEY
 
-# 7. Deploy.
+# 7. Set the diamond addresses in wrangler.jsonc vars (public info,
+#    so no secret needed). Also update FRONTEND_ORIGIN if not
+#    vaipakam.com, and confirm TG_BOT_USERNAME points at the
+#    @BotFather-issued handle (default committed value: VaipakamBot).
+
+# 8. Deploy.
 npm run deploy
 ```
+
+### Why `TG_BOT_TOKEN` is a secret but `TG_BOT_USERNAME` is a var
+
+Two different threat surfaces:
+
+- **`TG_BOT_TOKEN`** — gives anyone holding it the ability to send messages as the bot, read inbound webhook payloads, and rotate the bot's metadata. Treat as a high-sensitivity credential. `wrangler secret put` stores it encrypted; the Cloudflare dashboard's **Encrypt** toggle does the same thing through the UI. Plaintext exposure (in `wrangler.jsonc`, in the dashboard's "Variables" view, in a CI log, in a frontend `.env` file) is a compromise.
+- **`TG_BOT_USERNAME`** — the public @-handle. Visible to every user who sees the deep link. Storing it as a `vars` entry in `wrangler.jsonc` is correct.
+
+If you accidentally put `TG_BOT_TOKEN` into the plaintext `vars` block (or, worse, into `frontend/.env`), rotate the token immediately via @BotFather (`/revoke`) and re-issue.
 
 ## Register the Telegram webhook
 
@@ -95,8 +116,8 @@ curl "https://api.telegram.org/bot${TG_BOT_TOKEN}/getWebhookInfo"
 ## Telegram handshake flow
 
 1. User opens Settings → Alerts on the frontend, enters wallet + threshold values, clicks "Link Telegram".
-2. Frontend POSTs `/link/telegram` to the Worker. Worker returns a 6-digit code.
-3. Frontend renders "DM `<code>` to @vaipakam_alerts_bot" plus a one-click Telegram deep-link.
+2. Frontend POSTs `/link/telegram` to the Worker. Worker returns a 6-digit code plus a `bot_url` deep-link built from `TG_BOT_USERNAME` (default `https://t.me/VaipakamBot?start=<code>`). When `TG_BOT_USERNAME` is unset, `bot_url` is `null` and the frontend falls back to a copy-the-code UX so users never get pointed at a placeholder bot.
+3. Frontend renders the code plus the deep-link button.
 4. User DMs the code to the bot. Telegram pushes a webhook update to the Worker's `/tg/webhook`.
 5. Worker matches the code to the pending link row, writes the user's `chat_id` onto `user_thresholds.tg_chat_id`, and replies with a confirmation message.
 6. Next cron tick starts alerting that chat id on band crossings.
@@ -116,12 +137,17 @@ The SDK is Cloudflare-Worker-compatible from v1.6+.
 ## Local development
 
 ```bash
-# Apply schema to a local D1 replica.
+# 1. Copy the secrets template and fill in dev-tier values. The real
+#    file is gitignored; never commit a populated `.dev.vars`.
+cp .dev.vars.example .dev.vars
+
+# 2. Apply schema to a local D1 replica.
 npm run db:migrate:local
 
-# Run the Worker locally with a one-minute cron cycle for testing.
-# (Production cron is 5 minutes; Wrangler's `--test-scheduled` fires
-# the scheduled handler on demand.)
+# 3. Run the Worker locally with a one-minute cron cycle for testing.
+#    `wrangler dev` reads `.dev.vars` and exposes each KEY=VALUE on
+#    the `env` object the same way `wrangler secret put KEY` does in
+#    production.
 npx wrangler dev --test-scheduled
 
 # In another terminal, trigger the cron handler:

@@ -6,8 +6,8 @@
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
-    "db:migrate": "wrangler d1 migrations apply vaipakam-hf-watcher",
-    "db:migrate:local": "wrangler d1 migrations apply vaipakam-hf-watcher --local",
+    "db:migrate": "wrangler d1 migrations apply vaipakam-alerts-db --remote",
+    "db:migrate:local": "wrangler d1 migrations apply vaipakam-alerts-db --local",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
@@ -16,6 +16,6 @@
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20240924.0",
     "typescript": "^5.5.0",
-    "wrangler": "^3.80.0"
+    "wrangler": "^4.85.0"
   }
 }

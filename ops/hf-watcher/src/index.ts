@@ -106,14 +106,15 @@ export default {
 // ─── HTTP handlers ──────────────────────────────────────────────────────
 
 async function handlePutThresholds(req: Request, env: Env): Promise<Response> {
+  const corsOrigin = resolveAllowedOrigin(req, env);
   let body: unknown;
   try {
     body = await req.json();
   } catch {
-    return json({ error: 'invalid-json' }, 400, env);
+    return json({ error: 'invalid-json' }, 400, corsOrigin);
   }
   const parsed = parsePutThresholds(body);
-  if (!parsed) return json({ error: 'invalid-payload' }, 400, env);
+  if (!parsed) return json({ error: 'invalid-payload' }, 400, corsOrigin);
 
   // NOTE: this handler trusts the `wallet` field in the JSON body —
   // that's fine for the settings flow because the Worker's only
@@ -124,21 +125,22 @@ async function handlePutThresholds(req: Request, env: Env): Promise<Response> {
   // actions, switch this to an EIP-712-signed payload so msg.sender
   // parity is cryptographic.
   await upsertThresholds(env.DB, parsed);
-  return json({ ok: true }, 200, env);
+  return json({ ok: true }, 200, corsOrigin);
 }
 
 async function handleIssueTelegramLink(
   req: Request,
   env: Env,
 ): Promise<Response> {
+  const corsOrigin = resolveAllowedOrigin(req, env);
   let body: unknown;
   try {
     body = await req.json();
   } catch {
-    return json({ error: 'invalid-json' }, 400, env);
+    return json({ error: 'invalid-json' }, 400, corsOrigin);
   }
   const parsed = parseLinkIssue(body);
-  if (!parsed) return json({ error: 'invalid-payload' }, 400, env);
+  if (!parsed) return json({ error: 'invalid-payload' }, 400, corsOrigin);
 
   const code = await issueTelegramLinkCode(
     env.DB,
@@ -163,7 +165,7 @@ async function handleIssueTelegramLink(
       bot_url: botUrl,
     },
     200,
-    env,
+    corsOrigin,
   );
 }
 
@@ -233,12 +235,29 @@ function isOriginMatch(origin: string, env: Env): boolean {
   return allow.includes(origin);
 }
 
-function json(data: unknown, status: number, env: Env): Response {
+/**
+ * Resolve the CORS origin to echo back per request. Mirrors the
+ * matching helper in `scanProxy.ts`. Returns the requesting Origin
+ * iff it appears in the allow-list; otherwise returns the first
+ * allow-list entry as a safe fallback for non-browser callers
+ * (curl / debug). The CORS spec requires
+ * `Access-Control-Allow-Origin` to EXACTLY equal the inbound Origin
+ * — returning a different allow-list entry, even one that's also
+ * authorized, makes the browser reject the response.
+ */
+function resolveAllowedOrigin(req: Request, env: Env): string {
+  const origin = req.headers.get('Origin') ?? '';
+  const allow = env.FRONTEND_ORIGIN.split(',').map((s) => s.trim());
+  if (origin && allow.includes(origin)) return origin;
+  return allow[0] ?? '*';
+}
+
+function json(data: unknown, status: number, corsOrigin: string): Response {
   return new Response(JSON.stringify(data), {
     status,
     headers: {
       'Content-Type': 'application/json',
-      'Access-Control-Allow-Origin': env.FRONTEND_ORIGIN.split(',')[0] ?? '*',
+      'Access-Control-Allow-Origin': corsOrigin,
     },
   });
 }

@@ -16,3 +16,11 @@ dist/
 # Optional
 .env
 .env.local
+
+# Cloudflare Worker local-dev secrets. The `.example` file is
+# committed, the populated `.dev.vars` is local-only and contains
+# unencrypted secrets (TG_BOT_TOKEN, RPC URLs, aggregator keys).
+
+.wrangler
+.dev.vars
+**/.dev.vars

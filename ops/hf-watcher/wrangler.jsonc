@@ -5,23 +5,24 @@
   "compatibility_date": "2026-04-23",
   "compatibility_flags": ["nodejs_compat"],
   "observability": {
-    "enabled": true
+    "enabled": true,
   },
   // Cron triggers — fire every 5 minutes. HF moves slowly enough that
   // 5-min polling catches every band crossing well before it becomes
   // actionable. Users who need sub-minute alerts should rely on the
   // Push Protocol event-driven path below rather than this cron.
   "triggers": {
-    "crons": ["*/5 * * * *"]
+    "crons": ["*/5 * * * *"],
   },
   // D1 — user thresholds + last-notified state. Single DB across all
   // watched chains; per-chain rows in the tables.
   "d1_databases": [
     {
       "binding": "DB",
-      "database_name": "vaipakam-hf-watcher",
-      "database_id": "PLACEHOLDER — set via `wrangler d1 create`"
-    }
+      "database_name": "vaipakam-alerts-db",
+      "database_id": "50850eab-e959-4d6b-8752-dfbdf0530343",
+      "remote": false,
+    },
   ],
   // Phase 7a polish — per-IP rate limit on the /quote/* aggregator
   // proxy routes. Each binding is keyed independently so 0x and
@@ -36,13 +37,19 @@
         "type": "ratelimit",
         "name": "QUOTE_0X_RATELIMIT",
         "namespace_id": "1001",
-        "simple": { "limit": 60, "period": 60 }
+        "simple": {
+          "limit": 60,
+          "period": 60,
+        },
       },
       {
         "type": "ratelimit",
         "name": "QUOTE_1INCH_RATELIMIT",
         "namespace_id": "1002",
-        "simple": { "limit": 60, "period": 60 }
+        "simple": {
+          "limit": 60,
+          "period": 60,
+        },
       },
       // Phase 8b.2 — Blockaid scan proxy on its own bucket so a noisy
       // /scan/* caller can't drain the /quote/* budget.
@@ -50,9 +57,12 @@
         "type": "ratelimit",
         "name": "SCAN_BLOCKAID_RATELIMIT",
         "namespace_id": "1003",
-        "simple": { "limit": 60, "period": 60 }
-      }
-    ]
+        "simple": {
+          "limit": 60,
+          "period": 60,
+        },
+      },
+    ],
   },
   // Env-scoped secrets (set via `wrangler secret put`):
   //   TG_BOT_TOKEN          — Telegram bot token from BotFather.
@@ -81,7 +91,14 @@
     "DIAMOND_ADDR_OP": "",
     "DIAMOND_ADDR_ZKEVM": "",
     "DIAMOND_ADDR_BNB": "",
-    "FRONTEND_ORIGIN": "https://vaipakam.com",
-    "TG_BOT_USERNAME": ""
-  }
+    "FRONTEND_ORIGIN": "https://vaipakam.com,http://localhost:5173",
+    // "FRONTEND_ORIGIN": "https://vaipakam.com",
+
+    // Public Telegram bot handle (the @-name from BotFather). The
+    // worker uses this to build `https://t.me/<TG_BOT_USERNAME>?start=…`
+    // deep links in the alert-link issuer. NOT a secret — anyone can
+    // see the bot's username on Telegram. The bot's API token lives
+    // in `TG_BOT_TOKEN` as an encrypted secret instead.
+    "TG_BOT_USERNAME": "VaipakamBot",
+  },
 }

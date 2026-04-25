@@ -39,7 +39,8 @@ export type JourneyArea =
   | 'config'
   | 'rewards'
   | 'escrow-upgrade'
-  | 'allowance';
+  | 'allowance'
+  | 'alerts';
 
 export type JourneyStatus = 'start' | 'success' | 'failure' | 'info';
 
@@ -230,6 +231,7 @@ export function classifyError(err: unknown): {
       shortMessage?: string;
       message?: string;
       data?: { message?: string };
+      name?: string;
     };
     if (e.code === 4001 || e.code === 'ACTION_REJECTED') {
       return { type: 'wallet', message: 'User rejected the request.' };
@@ -245,6 +247,26 @@ export function classifyError(err: unknown): {
     }
     if (typeof e.code === 'string' && /NETWORK|TIMEOUT|SERVER/.test(e.code)) {
       return { type: 'rpc', message: decodeContractError(err) };
+    }
+    // Browser fetch() failures throw a `TypeError` with no `code`. The
+    // exact message is browser-dependent: Chrome/Edge → "Failed to fetch",
+    // Firefox → "NetworkError when attempting to fetch resource.", Safari
+    // → "Load failed". Classify all of these as `rpc` so the diagnostics
+    // drawer groups CORS rejections, DNS misses, offline states, and
+    // worker-down events together — they all mean "off-chain transport
+    // didn't reach the upstream service" and they all need the same
+    // operator response.
+    if (
+      e.name === 'TypeError' &&
+      typeof e.message === 'string' &&
+      /failed to fetch|networkerror|load failed/i.test(e.message)
+    ) {
+      return {
+        type: 'rpc',
+        message:
+          e.message ||
+          'Network request failed (CORS, offline, or upstream unreachable).',
+      };
     }
   }
   return { type: 'unknown', message: decodeContractError(err) };
