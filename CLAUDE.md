@@ -102,6 +102,38 @@ Mock contracts in `contracts/test/mocks/`: `ERC20Mock`, `ERC4907Mock`, `ZeroExPr
 - Custom errors (not require strings) for gas efficiency
 - Events use indexed parameters for filtering
 
+## Keeper-bot ABI sync (Phase 9.A)
+
+The public reference keeper bot lives in a sibling repo
+(`vaipakam-keeper-bot`). It reads a small Diamond surface
+(`MetricsFacet.getActiveLoansCount` /
+`getActiveLoansPaginated`, `RiskFacet.calculateHealthFactor` /
+`triggerLiquidation`, `LoanFacet.getLoanDetails`) via per-facet
+ABI JSONs checked into `keeper-bot/src/abis/`.
+
+**When you change ANY of those selectors** (rename, add/remove
+parameters, change return shape), run:
+
+```bash
+forge build   # build before inspecting
+KEEPER_BOT_DIR=../../vaipakam-keeper-bot \
+  bash contracts/script/exportAbis.sh
+```
+
+The script writes the regenerated JSONs into the keeper-bot
+checkout. Then `cd` to that repo, run `npm run typecheck` to
+confirm the bot still compiles against the new shape, review the
+diff, and commit there with a message like
+`"Sync ABIs with vaipakam@<commit-hash>"`. The script writes
+`src/abis/_source.json` with the upstream commit hash so the
+correlation is recorded.
+
+Skipping this sync ships a public bot whose ABI doesn't match
+deployed reality — the bot will revert in production with
+opaque "function selector not found" failures. Treat this sync
+the same way you'd treat a frontend ABI bump: part of the same
+PR as the contract change.
+
 ## Cross-Chain Security Policy (DVN + Pause)
 
 Every LayerZero OApp / OFT in this repo (`VPFIOFTAdapter`, `VPFIMirror`,
