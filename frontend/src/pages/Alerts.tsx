@@ -4,8 +4,36 @@ import { Bell, MessageCircle, Wallet } from "lucide-react";
 import { ErrorAlert } from "../components/app/ErrorAlert";
 import { beginStep, enrichFetchError } from "../lib/journeyLog";
 
-const HF_WATCHER_ORIGIN =
-  import.meta.env.VITE_HF_WATCHER_ORIGIN ?? "https://alerts.vaipakam.com";
+// Read the off-chain watcher's origin from env. NO production-URL
+// fallback by design — a build that forgets to set
+// `VITE_HF_WATCHER_ORIGIN` should fail closed (alert features
+// disabled with a clear message) rather than silently aim every
+// staging / preview / local build at the production worker. That
+// silent-fallback bug was what showed up as
+// `…placeholder.workers.dev/thresholds net::ERR_FAILED` in a stale
+// production bundle.
+const HF_WATCHER_ORIGIN: string | null =
+  (import.meta.env.VITE_HF_WATCHER_ORIGIN as string | undefined) ?? null;
+
+// Public Push Protocol channel owner address. Used only for the
+// "Subscribe on Push" deep link — `https://app.push.org/channels/<addr>`
+// drops the user straight on the right channel page so they can
+// subscribe in one click. Worker holds the channel SIGNER privkey;
+// this is the corresponding public address (same wallet, public side).
+// Default mirrors the production channel; set
+// `VITE_PUSH_CHANNEL_ADDRESS` per environment to point at a staging
+// channel instead. When unset (or zeroed), the Push rail still
+// activates the worker-side flag, but the deep-link button is hidden
+// and a plain "subscribe to channel address" copy line is shown
+// instead so users still know what to look up manually.
+const PUSH_CHANNEL_ADDRESS: string | null = (() => {
+  const raw = import.meta.env.VITE_PUSH_CHANNEL_ADDRESS as string | undefined;
+  if (!raw) return null;
+  const trimmed = raw.trim();
+  // Validate: must look like a 0x-prefixed 40-hex-char address.
+  if (!/^0x[a-fA-F0-9]{40}$/.test(trimmed)) return null;
+  return trimmed;
+})();
 
 /**
  * Phase 8a.3 — Settings → Alerts page.
@@ -49,6 +77,26 @@ export default function Alerts() {
       <div className="page-container">
         <h1>Alerts</h1>
         <p>Switch to a supported chain to configure alerts for your loans.</p>
+      </div>
+    );
+  }
+  if (!HF_WATCHER_ORIGIN) {
+    // Build-time misconfiguration: VITE_HF_WATCHER_ORIGIN was not
+    // baked into the bundle. Refusing to fire requests against a
+    // null URL prevents the silent fail-open that previously sent
+    // every staging / preview build at the production worker (and
+    // still surfaced as net::ERR_FAILED on stale production
+    // bundles where the env was missing entirely).
+    return (
+      <div className="page-container">
+        <h1>Alerts</h1>
+        <p>
+          The off-chain alert watcher origin is not configured in this build
+          (<code>VITE_HF_WATCHER_ORIGIN</code>). Alert features (HF threshold
+          subscriptions, Telegram link, Push rail) are disabled until the
+          deployment env is corrected and the frontend is rebuilt. Reach
+          out to your operator if you're seeing this on a production URL.
+        </p>
       </div>
     );
   }
@@ -413,18 +461,53 @@ export default function Alerts() {
           </div>
           <p style={{ fontSize: "0.82rem", opacity: 0.75, margin: "0 0 8px" }}>
             On-chain notification channel delivered to Push-enabled wallets
-            (Rabby, Push Wallet, MetaMask with Push Snap). Once enabled here,
-            you'll also need to subscribe to the Vaipakam channel from your
-            wallet — see the{" "}
-            <a
-              href="https://comms.push.org/docs/notifications/"
-              target="_blank"
-              rel="noreferrer"
-            >
-              Push Notifications docs
-            </a>
-            .
+            (Rabby, Push Wallet, MetaMask with Push Snap). Two steps:
+            (1) enable the rail here so the watcher dispatches Push
+            notifications for your wallet, and (2) subscribe to the
+            Vaipakam channel from your Push-enabled wallet so the
+            notifications actually land.
           </p>
+
+          {PUSH_CHANNEL_ADDRESS && (
+            <div
+              style={{
+                fontSize: "0.78rem",
+                opacity: 0.85,
+                margin: "0 0 8px",
+                padding: "8px 10px",
+                background: "var(--bg-muted)",
+                borderRadius: 6,
+              }}
+            >
+              <div style={{ marginBottom: 4 }}>
+                <strong>Vaipakam channel:</strong>{" "}
+                <span
+                  className="mono"
+                  style={{ wordBreak: "break-all" }}
+                >
+                  {PUSH_CHANNEL_ADDRESS}
+                </span>
+              </div>
+              <div>
+                <a
+                  href={`https://app.push.org/channels/${PUSH_CHANNEL_ADDRESS}`}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  Subscribe on Push →
+                </a>{" "}
+                ·{" "}
+                <a
+                  href="https://comms.push.org/docs/notifications/"
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  Push docs
+                </a>
+              </div>
+            </div>
+          )}
+
           <button
             className="btn btn-secondary btn-sm"
             disabled={saving}

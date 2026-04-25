@@ -11,6 +11,8 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@pushprotocol/restapi": "^0.0.1",
+    "ethers": "^6.16.0",
     "viem": "^2.21.0"
   },
   "devDependencies": {
