@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useWallet } from "../context/WalletContext";
 import { Bell, MessageCircle, Wallet } from "lucide-react";
 import { ErrorAlert } from "../components/app/ErrorAlert";
-import { beginStep } from "../lib/journeyLog";
+import { beginStep, enrichFetchError } from "../lib/journeyLog";
 
 const HF_WATCHER_ORIGIN =
   import.meta.env.VITE_HF_WATCHER_ORIGIN ?? "https://alerts.vaipakam.com";
@@ -79,9 +79,10 @@ export default function Alerts() {
       wallet: address,
       chainId,
     });
+    const fetchUrl = `${HF_WATCHER_ORIGIN}/thresholds`;
     setSaving(true);
     try {
-      const res = await fetch(`${HF_WATCHER_ORIGIN}/thresholds`, {
+      const res = await fetch(fetchUrl, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -94,13 +95,22 @@ export default function Alerts() {
       });
       if (!res.ok) {
         const bodyText = await res.text().catch(() => "request failed");
-        throw new Error(`HTTP ${res.status} — ${bodyText}`);
+        // Include method + URL + status so the diagnostics drawer
+        // captures WHERE the request went, not just what came back.
+        // Universal across HTTP failure modes (403, 404, 5xx, …).
+        throw new Error(
+          `PUT ${fetchUrl} → HTTP ${res.status} — ${bodyText}`,
+        );
       }
       setMsg("Thresholds saved.");
       step.success({ note: `warn=${warnHf} alert=${alertHf} critical=${criticalHf}` });
     } catch (e) {
+      // User-facing alert stays succinct (the bare error message);
+      // the diagnostics drawer gets the enriched version with the
+      // target URL + page origin + likely-cause hint synthesized in,
+      // since the browser strips CORS reasons from JS-visible errors.
       setErr((e as Error).message);
-      step.failure(e);
+      step.failure(enrichFetchError(e, fetchUrl));
     } finally {
       setSaving(false);
     }
@@ -116,30 +126,41 @@ export default function Alerts() {
       wallet: address,
       chainId,
     });
+    const fetchUrl = `${HF_WATCHER_ORIGIN}/link/telegram`;
     setLinking(true);
     try {
-      const res = await fetch(`${HF_WATCHER_ORIGIN}/link/telegram`, {
+      const res = await fetch(fetchUrl, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ wallet: address, chain_id: chainId }),
       });
       if (!res.ok) {
         const bodyText = await res.text().catch(() => "request failed");
-        throw new Error(`HTTP ${res.status} — ${bodyText}`);
+        throw new Error(
+          `POST ${fetchUrl} → HTTP ${res.status} — ${bodyText}`,
+        );
       }
       const data = (await res.json()) as {
         code?: string;
         bot_url?: string | null;
       };
-      if (!data.code) throw new Error("no code returned");
+      if (!data.code) {
+        throw new Error(
+          `POST ${fetchUrl} → 200 OK but response body has no \`code\` field`,
+        );
+      }
       setTgLinkCode(data.code);
       setTgBotUrl(data.bot_url ?? null);
       step.success({
         note: data.bot_url ? "code+deep-link issued" : "code issued (no bot deep-link)",
       });
     } catch (e) {
+      // User-facing alert stays succinct (the bare error message);
+      // the diagnostics drawer gets the enriched version with the
+      // target URL + page origin + likely-cause hint synthesized in,
+      // since the browser strips CORS reasons from JS-visible errors.
       setErr((e as Error).message);
-      step.failure(e);
+      step.failure(enrichFetchError(e, fetchUrl));
     } finally {
       setLinking(false);
     }
@@ -160,9 +181,10 @@ export default function Alerts() {
       wallet: address,
       chainId,
     });
+    const fetchUrl = `${HF_WATCHER_ORIGIN}/thresholds`;
     setSaving(true);
     try {
-      const res = await fetch(`${HF_WATCHER_ORIGIN}/thresholds`, {
+      const res = await fetch(fetchUrl, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -176,15 +198,21 @@ export default function Alerts() {
       });
       if (!res.ok) {
         const bodyText = await res.text().catch(() => "request failed");
-        throw new Error(`HTTP ${res.status} — ${bodyText}`);
+        throw new Error(
+          `PUT ${fetchUrl} → HTTP ${res.status} — ${bodyText}`,
+        );
       }
       setMsg(
         "Push rail enabled. You'll also need to subscribe to the Vaipakam Push channel from your Push-enabled wallet to actually receive the notifications — see docs for the channel address.",
       );
       step.success({ note: "push_channel=subscribed" });
     } catch (e) {
+      // User-facing alert stays succinct (the bare error message);
+      // the diagnostics drawer gets the enriched version with the
+      // target URL + page origin + likely-cause hint synthesized in,
+      // since the browser strips CORS reasons from JS-visible errors.
       setErr((e as Error).message);
-      step.failure(e);
+      step.failure(enrichFetchError(e, fetchUrl));
     } finally {
       setSaving(false);
     }

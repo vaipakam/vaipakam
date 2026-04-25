@@ -91,7 +91,7 @@
     "DIAMOND_ADDR_OP": "",
     "DIAMOND_ADDR_ZKEVM": "",
     "DIAMOND_ADDR_BNB": "",
-    "FRONTEND_ORIGIN": "https://vaipakam.com,http://localhost:5173",
+    "FRONTEND_ORIGIN": "https://vaipakam.com",
     // "FRONTEND_ORIGIN": "https://vaipakam.com",
 
     // Public Telegram bot handle (the @-name from BotFather). The
