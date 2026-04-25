@@ -145,15 +145,22 @@ async function handleIssueTelegramLink(
     parsed.wallet,
     parsed.chain_id,
   );
+  // Build the Telegram deep link from the operator-configured bot
+  // username (#00014). Both `TG_BOT_TOKEN` AND `TG_BOT_USERNAME` must
+  // be set: the token authenticates message sends, the username is
+  // the user-visible handle in the `https://t.me/<handle>?start=...`
+  // deep link. Without the username we deliberately return a null
+  // bot_url so the frontend falls back to a copy-the-code flow
+  // instead of pointing users at a placeholder bot they can't reach.
+  const botUrl =
+    env.TG_BOT_TOKEN && env.TG_BOT_USERNAME
+      ? `https://t.me/${encodeURIComponent(env.TG_BOT_USERNAME)}?start=${code}`
+      : null;
   return json(
     {
       ok: true,
       code,
-      // Hand the bot handle back too so the frontend can render a
-      // one-click "open Telegram" deep-link.
-      bot_url: env.TG_BOT_TOKEN
-        ? `https://t.me/your_bot?start=${code}`
-        : null,
+      bot_url: botUrl,
     },
     200,
     env,

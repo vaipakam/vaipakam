@@ -174,6 +174,22 @@ Let `D = currentDay - 1` (every chain should have finalized D by now).
 | Cap headroom non-negative | `getVPFICapHeadroom()` | ≥ 0 on every chain |
 | Peers wired | LZ OApp `peers(eid)` for every other chain | non-zero + non-default |
 
+### 7.1 Fixed-rate VPFI buy state
+
+The fixed-rate buy program is governed by
+`docs/TokenomicsTechSpec.md` §8 / §8a. Operationally, the important
+invariant is that sale accounting is bucketed by the origin-chain LZ
+eid, so a direct canonical buy must not fall into bucket `0`.
+
+| Check | Call | Expected |
+|---|---|---|
+| Buy config readable on canonical chain | `getVPFIBuyConfig()` | rate `1e15`, global cap `2_300_000e18`, wallet cap `30_000e18` unless intentionally reconfigured |
+| Canonical `localEid` set before buys | `RewardReporterFacet.getRewardReporterConfig()` | `localEid == inventory.lzEid`, never `0` |
+| Direct-buy bucket matches canonical eid | `getVPFISoldToByEid(user, inventory.lzEid)` after smoke buy | increases by purchased VPFI amount |
+| Bucket 0 unused | `getVPFISoldToByEid(user, 0)` for smoke buyer | `0` |
+| Mirror buy adapters wired | LZ OApp `peers(eid)` for buy receiver / adapter mesh | non-zero + non-default in both directions |
+| Wallet-to-escrow remains explicit | smoke flow checks wallet balance first, then calls deposit separately | buy does not auto-fund escrow |
+
 ---
 
 ## 8. Daily TVL / metrics snapshot

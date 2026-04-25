@@ -967,6 +967,15 @@ export default function OfferBook() {
           onCancel={cancelAccept}
           discountPreview={discountPreview}
           protocolConfig={protocolConfig}
+          permit2Eligible={
+            // Mirror the predicate used inside `submitAccept` so the
+            // preview encodes the same path the wallet will sign.
+            // Borrower-side ERC-20 accept of a lender ERC-20 offer
+            // takes the Permit2 path when the wallet supports it.
+            pendingOffer.offerType === 0 &&
+            pendingOffer.assetType === 0 &&
+            !!permit2CanSign
+          }
         />
       )}
     </div>
@@ -983,9 +992,13 @@ interface AcceptReviewModalProps {
   onCancel: () => void;
   discountPreview: DiscountPreview | null;
   protocolConfig: ProtocolConfig | null;
+  /** True when {submitAccept} will pick the Permit2 single-sig path
+   *  for this offer. Drives the inline Blockaid preview so the
+   *  scanned calldata matches what the user is about to sign. */
+  permit2Eligible: boolean;
 }
 
-function AcceptReviewModal({ offer, illiquid, consent, onConsentChange, submitting, onConfirm, onCancel, discountPreview, protocolConfig }: AcceptReviewModalProps) {
+function AcceptReviewModal({ offer, illiquid, consent, onConsentChange, submitting, onConfirm, onCancel, discountPreview, protocolConfig, permit2Eligible }: AcceptReviewModalProps) {
   const { address: viewerAddress } = useWallet();
   const principalIlliquid = offer.principalLiquidity === 1;
   const collateralIlliquid = offer.collateralLiquidity === 1;
@@ -1221,12 +1234,14 @@ function AcceptReviewModal({ offer, illiquid, consent, onConsentChange, submitti
             offers skip the check (no DEX swap path applies). */}
         <AcceptLiquidityPreflight offer={offer} />
 
-        {/* Phase 8b.2 — Blockaid preview. Uses the simulation of a
-            classic acceptOffer(offerId, true) call since that's what
-            the confirmation flow submits today. When the Permit2 UX
-            wiring lands, the preview input can swap to
-            acceptOfferWithPermit's calldata for the Permit2 path. */}
-        <AcceptSimulationPreview offerId={offer.id} />
+        {/* Phase 8b.2 — Blockaid preview. Encodes the SAME calldata
+            the confirmation flow will submit (`acceptOfferWithPermit`
+            on the Permit2 path, classic `acceptOffer` otherwise) so
+            the scan reflects the on-chain action 1:1. */}
+        <AcceptSimulationPreview
+          offer={offer}
+          permit2Eligible={permit2Eligible}
+        />
 
         <label className="checkbox-row" style={{ marginTop: 8 }}>
           <input
@@ -1261,23 +1276,65 @@ interface PaginationProps {
 }
 
 /**
- * Phase 8b.2 — small wrapper that encodes the pending acceptOffer call
- * and hands it to the shared SimulationPreview component. Isolated
- * here so the Blockaid preview can be swapped in/out without touching
- * the review-modal body.
+ * Phase 8b.2 — encodes the pending accept call and hands it to the
+ * shared SimulationPreview component.
+ *
+ * #00013 fix: when the parent has decided to take the Permit2
+ * single-sig path (mirroring the predicate inside `submitAccept`),
+ * encode `acceptOfferWithPermit(offerId, true, permit, signature)`
+ * with placeholder permit fields so the scanner sees the SAME
+ * Diamond entry point the wallet will sign. The signature isn't
+ * cryptographically valid yet — Blockaid scans the calldata shape +
+ * simulates the Permit2 pull from on-chain state, which is the
+ * relevant safety surface; if the simulator rejects the placeholder
+ * outright, useTxSimulation downgrades to "preview unavailable" via
+ * the existing fail-soft path.
+ *
+ * On the classic path we keep encoding `acceptOffer(offerId, true)`.
  */
-function AcceptSimulationPreview({ offerId }: { offerId: bigint }) {
+function AcceptSimulationPreview({
+  offer,
+  permit2Eligible,
+}: {
+  offer: OfferData;
+  permit2Eligible: boolean;
+}) {
   const chain = useReadChain();
   const diamondAddress = (chain.diamondAddress ?? DEFAULT_CHAIN.diamondAddress) as Address;
-  const data = encodeFunctionData({
-    abi: DIAMOND_ABI,
-    functionName: 'acceptOffer',
-    args: [offerId, true],
-  }) as Hex;
+
+  const data: Hex = permit2Eligible
+    ? (encodeFunctionData({
+        abi: DIAMOND_ABI,
+        functionName: 'acceptOfferWithPermit',
+        args: [
+          offer.id,
+          true,
+          // Placeholder permit — token / amount match the real pull;
+          // nonce + deadline use safe defaults. Permit2 will reject
+          // this signature on-chain (zeroed), but Blockaid uses the
+          // calldata shape to simulate the Permit2 pull, which is
+          // the safety surface that matters for the preview.
+          {
+            permitted: {
+              token: offer.collateralAsset as Address,
+              amount: offer.collateralAmount,
+            },
+            nonce: 0n,
+            deadline: BigInt(Math.floor(Date.now() / 1000) + 1800),
+          },
+          // 65-byte zero signature (r=0, s=0, v=0). Same shape Permit2
+          // expects; the scanner sees a Permit2 pull was requested.
+          ('0x' + '00'.repeat(65)) as Hex,
+        ],
+      }) as Hex)
+    : (encodeFunctionData({
+        abi: DIAMOND_ABI,
+        functionName: 'acceptOffer',
+        args: [offer.id, true],
+      }) as Hex);
+
   return (
-    <SimulationPreview
-      tx={{ to: diamondAddress, data, value: 0n }}
-    />
+    <SimulationPreview tx={{ to: diamondAddress, data, value: 0n }} />
   );
 }
 

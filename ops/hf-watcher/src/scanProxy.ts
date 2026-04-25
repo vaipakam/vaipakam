@@ -64,9 +64,19 @@ export async function handleBlockaidScan(
   if (!env.BLOCKAID_API_KEY) {
     return jsonErr(503, 'blockaid-not-configured', corsOrigin);
   }
+  // Phase 8b.2 / #00015 — refuse unsupported chain IDs explicitly
+  // instead of silently rebadging them as Ethereum and scanning the
+  // user's calldata against a totally different chain's state. The
+  // frontend's `useTxSimulation` fail-soft branch maps `proxy 503`
+  // to `{status:'unavailable'}` so the user sees the documented
+  // "preview unavailable" footer rather than a misleading green card.
+  const chainName = blockaidChainName(body.chainId);
+  if (chainName === null) {
+    return jsonErr(503, 'chain-unsupported', corsOrigin);
+  }
 
   const blockaidBody = {
-    chain: blockaidChainName(body.chainId),
+    chain: chainName,
     account_address: body.from,
     data: {
       from: body.from,
@@ -191,7 +201,18 @@ function resolveAllowedOrigin(req: Request, env: Env): string {
   return allow[0] ?? '*';
 }
 
-function blockaidChainName(chainId: number): string {
+/**
+ * Resolve the Blockaid chain identifier for a given EVM chain id.
+ * Returns `null` when the chain is not on the operator's allow-list —
+ * the caller MUST fail soft (503 `chain-unsupported`) instead of
+ * defaulting to a different chain. Per #00015, silently rebadging an
+ * unmapped chain as Ethereum would scan calldata against the wrong
+ * chain's state and surface an irrelevant safety verdict.
+ *
+ * Add new chains here only after confirming Blockaid supports them
+ * for the Transaction Scanner endpoint.
+ */
+function blockaidChainName(chainId: number): string | null {
   switch (chainId) {
     case 1:
       return 'ethereum';
@@ -212,6 +233,6 @@ function blockaidChainName(chainId: number): string {
     case 84532:
       return 'base-sepolia';
     default:
-      return 'ethereum';
+      return null;
   }
 }

@@ -1594,8 +1594,7 @@ Pending operational items before mainnet cutover:
 10. OpenZeppelin Contracts Upgradeable (UUPS, AccessControl, Pausable, ERC721)
 11. Diamond-3 reference implementation (Mudgen)
 12. Vaipakam `README.md`, `CLAUDE.md`, `docs/TokenomicsTechSpec.md`,
-    `docs/BorrowerVPFIDiscountMechanism.md`, `docs/MEVProtection.md`,
-    `docs/OraclePolicy.md`, `docs/GovernanceConfigDesign.md`,
+    `docs/MEVProtection.md`, `docs/OraclePolicy.md`, `docs/GovernanceConfigDesign.md`,
     `docs/GovernanceRunbook.md`, `docs/WebsiteReadme.md`
 13. LayerZero KelpDAO Incident Statement (April 2026) and follow-up
     industry coverage of the cross-chain bridge exploit
@@ -1608,4 +1607,3 @@ This document and the Vaipakam codebase ship under
 **Business Source License 1.1 (BUSL 1.1)** with the project-specific
 terms recorded in `LICENSE`. Change Date: 5 years after production
 deployment. Change License: MIT.
-

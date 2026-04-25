@@ -164,7 +164,7 @@ The platform distinguishes between liquid and illiquid assets, which affects how
 - **For ERC-20 Tokens:**
   - Specify the desired ERC-20 asset and amount, maximum acceptable interest rate, offered collateral (type and amount), and loan duration.
   - The frontend must clearly disclose that when an ERC-20 loan is actually initiated, a `Loan Initiation Fee` equal to `0.1%` of the lending-asset amount will be charged to treasury before the lending asset is delivered to the borrower. In other words, if the matched lending amount is `1000 USDC`, the borrower receives `999 USDC` and `1 USDC` is routed to treasury at initiation.
-  - If the borrower uses the VPFI fee path, the borrower receives `100%` of the requested lending asset and pays the full `0.1%` fee equivalent in VPFI up front. That VPFI is held by the protocol until settlement and may produce a time-weighted borrower rebate on proper close, as defined in `docs/BorrowerVPFIDiscountMechanism.md`.
+  - If the borrower uses the VPFI fee path, the borrower receives `100%` of the requested lending asset and pays the full `0.1%` fee equivalent in VPFI up front. That VPFI is held by the protocol until settlement and may produce a time-weighted borrower rebate on proper close, as defined in `docs/TokenomicsTechSpec.md`.
   - Lock the collateral in the Vaipakam smart contract upon offer submission.
 - **For Rentable NFTs (ERC-721/1155):**
   - Specify the desired NFT (or type of NFT), maximum acceptable daily rental charge, the ERC-20 token to be used for prepayment (rental fees + 5% buffer), and rental duration.
@@ -993,7 +993,7 @@ VPFI token deployment begins in Phase 1 through the token contract and minting p
   - The deducted VPFI is held in protocol custody for the life of the loan rather than sent immediately to Treasury.
   - On proper close through normal repayment, borrower preclose, or refinance, the borrower earns a time-weighted rebate based on the discount tiers actually held during the loan window. The rebate is paid in VPFI alongside the ordinary borrower claim.
   - On default or HF-based liquidation, the rebate is forfeited and the full held VPFI becomes Treasury's share.
-  - The borrower-side acquisition flow is described in the dedicated `docs/BorrowerVPFIDiscountMechanism.md` specification.
+  - The borrower-side acquisition and rebate flow is defined in `docs/TokenomicsTechSpec.md`.
 
 - **Borrower VPFI Acquisition Flow:** For the borrower-side discount path:
   - the frontend should provide a dedicated `Buy VPFI` page that works from the user's preferred supported chain

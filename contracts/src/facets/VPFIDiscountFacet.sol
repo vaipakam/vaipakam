@@ -19,7 +19,7 @@ import {EscrowFactoryFacet} from "./EscrowFactoryFacet.sol";
  * @title VPFIDiscountFacet
  * @author Vaipakam Developer Team
  * @notice Phase 1 borrower VPFI discount mechanism — spec in
- *         docs/BorrowerVPFIDiscountMechanism.md.
+ *         docs/TokenomicsTechSpec.md.
  * @dev Five user-facing surfaces:
  *        1. `buyVPFIWithETH()` — fixed-rate purchase that credits VPFI to
  *           the buyer's WALLET. This function is the canonical-chain leg
@@ -192,7 +192,7 @@ contract VPFIDiscountFacet is
      *         escrow is a separate, explicit user action (see
      *         {depositVPFIToEscrow}).
      * @dev Canonical-chain only — reverts `NotCanonicalVPFIChain` on mirrors.
-     *      Per spec (docs/BorrowerVPFIDiscountMechanism.md §9): "VPFI
+     *      Per spec (docs/TokenomicsTechSpec.md §8a): "VPFI
      *      purchase on Base delivers tokens to the user's wallet, not
      *      directly to escrow; bridging is only needed when the borrower
      *      wants to use VPFI on a non-canonical lending chain; on every
@@ -335,6 +335,16 @@ contract VPFIDiscountFacet is
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         if (!s.isCanonicalVPFIChain) revert NotCanonicalVPFIChain();
         if (!s.vpfiFixedRateBuyEnabled) revert VPFIBuyDisabled();
+        // Per-wallet cap is bucketed per origin chain (`vpfiFixedRateSoldToByEid[buyer][originEid]`).
+        // A zero `originEid` would silently land every direct buy in
+        // bucket 0 while the frontend reads the chain registry's known
+        // LZ eid (e.g. 30184 / 40245), desyncing the displayed remaining
+        // allowance from the on-chain ledger. Reject loudly so the
+        // operator must complete the LZ wiring (`setLocalEid`, peer
+        // setup) before flipping the buy switch on. Bridged buys fall
+        // under the same gate — an `originEid == 0` from the bridged
+        // receiver would only occur on a malformed OFT message.
+        if (originEid == 0) revert VPFICanonicalEidNotSet();
 
         uint256 weiPerVpfi = s.vpfiFixedRateWeiPerVpfi;
         if (weiPerVpfi == 0) revert VPFIBuyRateNotSet();

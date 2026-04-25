@@ -278,4 +278,15 @@ contract TestMutatorFacet {
     function getUserSeenFlag(address u) external view returns (bool) {
         return LibVaipakam.storageSlot().userSeen[u];
     }
+
+    /// @notice Test-only: stamp `s.localEid` without going through the
+    ///         RewardReporterFacet path. Production sets this via
+    ///         `RewardReporterFacet.setLocalEid` (admin-gated). Tests
+    ///         that exercise the canonical-chain VPFI fixed-rate buy
+    ///         must set a non-zero `localEid` here so the per-(buyer,
+    ///         originEid) cap bucket is well-defined; the on-chain
+    ///         entry point reverts `VPFICanonicalEidNotSet` otherwise.
+    function setLocalEidForTest(uint32 eid) external {
+        LibVaipakam.storageSlot().localEid = eid;
+    }
 }

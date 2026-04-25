@@ -1,8 +1,19 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
-import { parseAbi, type Abi, type Address, type Hex } from "viem";
+import {
+  encodeFunctionData,
+  parseAbi,
+  type Abi,
+  type Address,
+  type Hex,
+} from "viem";
 import { usePublicClient, useWalletClient } from "wagmi";
 import { parseEther, formatEther } from "viem";
+import {
+  DIAMOND_ABI_VIEM as DIAMOND_ABI,
+  VPFIBuyAdapterABI,
+} from "../contracts/abis";
+import { SimulationPreview } from "../components/app/SimulationPreview";
 import {
   Coins,
   Wallet,
@@ -1067,6 +1078,33 @@ export default function BuyVPFI() {
             pending={step === "approving-deposit" || step === "depositing"}
             step={step}
             onDeposit={handleDeposit}
+            previewTx={(() => {
+              // Phase 8b.2 preview: encode the classic-path
+              // `depositVPFIToEscrow(amount)` calldata. Even when the
+              // submit handler picks the Permit2 single-sig variant,
+              // the underlying state change Blockaid scans (VPFI from
+              // wallet → escrow) is identical, and the classic path
+              // does not require a yet-to-be-signed permit / signature
+              // pair to render meaningful preview output.
+              const raw = (depositInput ?? "").trim();
+              if (!raw || !activeChain?.diamondAddress) return null;
+              let amountWei: bigint;
+              try {
+                amountWei = parseEther(raw);
+              } catch {
+                return null;
+              }
+              if (amountWei === 0n) return null;
+              return {
+                to: activeChain.diamondAddress as Address,
+                data: encodeFunctionData({
+                  abi: DIAMOND_ABI,
+                  functionName: "depositVPFIToEscrow",
+                  args: [amountWei],
+                }) as Hex,
+                value: 0n,
+              };
+            })()}
           />
         )}
       </div>
@@ -1180,10 +1218,9 @@ interface DiscountStatusCardProps {
  * (b) what the next tier requires, (c) whether the platform-level consent
  * switch is on, and (d) that escrow-held VPFI doubles as staked (5% APR).
  *
- * Spec: BorrowerVPFIDiscountMechanism.md §1 (tier table), §2 (consent +
- * escrow = staked), §24 (single consent lives on Dashboard), §27 (liquid
- * assets only). Consent is read-only here — the toggle itself lives on the
- * Dashboard per spec.
+ * Spec: TokenomicsTechSpec.md §6 (tier table, consent, liquid assets only)
+ * and §8a (escrow = staked). Consent is read-only here — the toggle itself
+ * lives on the Dashboard per spec.
  */
 function DiscountStatusCard({
   tier,
@@ -1533,6 +1570,26 @@ function BuyCard({
         </p>
       )}
 
+      {/* Phase 8b.2 transaction-preview surface — required by docs/
+          TokenomicsTechSpec.md and docs/WebsiteReadme.md for the Buy
+          VPFI flow. Encodes the same `buyVPFIWithETH()` calldata the
+          submit handler will sign so the Blockaid scan reflects the
+          on-chain action 1:1. */}
+      <SimulationPreview
+        tx={
+          quote && !capExceeded && !exceedsBalance && !inputEmpty
+            ? {
+                to: canonical.diamondAddress as Address,
+                data: encodeFunctionData({
+                  abi: DIAMOND_ABI,
+                  functionName: "buyVPFIWithETH",
+                }) as Hex,
+                value: quote.ethWei,
+              }
+            : null
+        }
+      />
+
       <button
         className="btn btn-primary"
         onClick={onBuy}
@@ -1821,6 +1878,31 @@ function BridgedBuyCard({
         bridge={bridge}
         originChain={originChain}
         canonical={canonical}
+      />
+
+      {/* Phase 8b.2 transaction-preview surface for the bridged-buy
+          path. Encodes `VPFIBuyAdapter.buy(ethWei, minVpfiOut)` against
+          the origin chain's adapter — the same calldata the submit
+          handler signs (with `value = ethWei + lzFee`). */}
+      <SimulationPreview
+        tx={
+          quote &&
+          lzFee != null &&
+          !capExceeded &&
+          !exceedsBalance &&
+          !inputEmpty &&
+          originChain.vpfiBuyAdapter
+            ? {
+                to: originChain.vpfiBuyAdapter as Address,
+                data: encodeFunctionData({
+                  abi: VPFIBuyAdapterABI as Abi,
+                  functionName: "buy",
+                  args: [quote.ethWei, quote.vpfi],
+                }) as Hex,
+                value: quote.ethWei + lzFee,
+              }
+            : null
+        }
       />
 
       <button
@@ -2135,6 +2217,9 @@ interface DepositCardProps {
   step: Step;
   /** Submit handler wired to approve-then-deposit. */
   onDeposit: () => void;
+  /** Phase 8b.2 — pending tx for the inline Blockaid preview, or
+   *  null when the deposit input is empty / invalid. */
+  previewTx: { to: Address; data: Hex; value: bigint } | null;
 }
 
 /**
@@ -2148,6 +2233,7 @@ function DepositCard({
   pending,
   step,
   onDeposit,
+  previewTx,
 }: DepositCardProps) {
   const inFlow = step === "approving-deposit" || step === "depositing";
   const rawInput = value.trim();
@@ -2246,6 +2332,13 @@ function DepositCard({
           Amount exceeds your wallet VPFI balance of{" "}
           {formatAmount(walletBalance)} VPFI.
         </p>
+      )}
+
+      {/* Phase 8b.2 transaction-preview surface for the deposit step.
+          Hidden once the action is mid-flight — Blockaid only adds
+          value at the review-before-sign moment. */}
+      {!inFlow && !exceedsBalance && (
+        <SimulationPreview tx={previewTx} />
       )}
 
       <button

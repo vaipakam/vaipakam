@@ -27,7 +27,7 @@ import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 /**
  * @title PositiveFlowsGapFillers
  * @notice Positive (happy-path) coverage for flows that the gap analysis
- *         (README.md / BorrowerVPFIDiscountMechanism.md / TokenomicsTechSpec.md
+ *         (README.md / TokenomicsTechSpec.md
  *         / docs/WebsiteReadme.md) identified as PARTIAL or MISSING:
  *
  *           (A) Country-pair ALLOW path — the existing suite tests sanctions
@@ -37,8 +37,8 @@ import {ERC20Mock} from "./mocks/ERC20Mock.sol";
  *
  *           (B) Loan initiation fee (0.1%) — unit tests confirm initiation
  *               doesn't revert; no test asserts the EXACT principal-asset
- *               deduction and the treasury credit. BorrowerVPFIDiscountMechanism
- *               §3, README §6.
+ *               deduction and the treasury credit. TokenomicsTechSpec §6b,
+ *               README §6.
  *
  *           (C) Partial repayment 2-step — unit tests cover partialRepay
  *               returning success, but no test asserts that after a partial

@@ -413,6 +413,5 @@ Vaipakam is a bilateral, chain-local credit and rental protocol with explicit ri
 3. Chainlink price feeds
 4. v3-style concentrated-liquidity AMM liquidity model
 5. Vaipakam `README.md`
-6. `docs/BorrowerVPFIDiscountMechanism.md`
-7. `docs/TokenomicsTechSpec.md`
-8. `docs/WebsiteReadme.md`
+6. `docs/TokenomicsTechSpec.md`
+7. `docs/WebsiteReadme.md`

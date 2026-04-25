@@ -155,8 +155,22 @@ async function _callBlockaidProxy(
   }
   const json = (await res.json()) as BlockaidResponse;
 
+  // Per docs/WebsiteReadme.md the preview panel must distinguish
+  // benign / warning / malicious / preview-unavailable. An unknown
+  // (or missing) `result_type` could be a Blockaid schema change or
+  // a partial response — in either case we don't have a verdict, so
+  // surface as preview-unavailable rather than rendering a green
+  // benign card the user may misread as "scanner says it's safe".
+  // The error message starts with `proxy ` so the catch in
+  // `useTxSimulation` downgrades it to `{status:'unavailable'}` via
+  // the existing fail-soft branch.
+  const rt = json.validation?.result_type;
+  if (rt !== 'Benign' && rt !== 'Warning' && rt !== 'Malicious') {
+    throw new Error('proxy malformed');
+  }
+
   return {
-    classification: _mapClassification(json.validation?.result_type),
+    classification: _mapClassification(rt),
     stateChanges: _mapStateChanges(json.simulation),
     warnings: json.validation?.features?.map((f) => f.description) ?? [],
   };
@@ -179,7 +193,11 @@ interface BlockaidResponse {
   };
 }
 
-function _mapClassification(rt: string | undefined): SimClassification {
+/// Caller (`_callBlockaidProxy`) has already rejected anything outside
+/// the known set, so this mapper only sees one of the three values.
+function _mapClassification(
+  rt: 'Benign' | 'Warning' | 'Malicious',
+): SimClassification {
   switch (rt) {
     case 'Benign':
       return 'benign';
@@ -187,8 +205,6 @@ function _mapClassification(rt: string | undefined): SimClassification {
       return 'warning';
     case 'Malicious':
       return 'malicious';
-    default:
-      return 'benign';
   }
 }
 

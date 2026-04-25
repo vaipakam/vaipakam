@@ -17,8 +17,19 @@ export interface Env {
   DIAMOND_ADDR_ZKEVM: string;
   DIAMOND_ADDR_BNB: string;
 
-  // Telegram bot token (secret).
+  // Telegram bot token (secret) — issued by @BotFather when the
+  // production bot is created. Powers `sendMessage` calls; without
+  // this set, the worker rejects /tg/webhook with 503 and the
+  // alert-link issuer returns a null bot_url.
   TG_BOT_TOKEN?: string;
+  // Telegram bot username (e.g. `VaipakamBot`) — the @-handle the
+  // user sees in the deep link `https://t.me/<TG_BOT_USERNAME>?start=<code>`.
+  // SEPARATE from `TG_BOT_TOKEN` and from the operator's personal
+  // Telegram handle: a Telegram bot is its own account created via
+  // @BotFather and has its own username distinct from any human user.
+  // When unset, the worker returns `bot_url: null` and the frontend
+  // falls back to copy-the-code UX (no broken deep link).
+  TG_BOT_USERNAME?: string;
 
   // Push Protocol channel private key (secret). The channel signs
   // subscriber notifications; loss = impersonation → keep in

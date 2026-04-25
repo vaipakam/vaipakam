@@ -141,7 +141,7 @@ Borrower VPFI discount UX:
 - `Buy VPFI` must be a public / homepage-visible flow, not something hidden only inside the connected app
 - the homepage and other public-facing CTAs should surface the `Buy VPFI` flow for everyone
 - the borrower discount spec describes this as a public-facing purchase page that should be reachable directly from the homepage and should work from the user's preferred supported chain
-- that page should support the borrower-side VPFI discount flow described in `docs/BorrowerVPFIDiscountMechanism.md`
+- that page should support the borrower-side VPFI discount flow described in `docs/TokenomicsTechSpec.md`
 - the page should make clear that the user can buy from their currently preferred supported chain, even if canonical-chain infrastructure is used behind the scenes
 - the `Buy VPFI` page should also be reachable from inside the connected app
 - the page should not require or prompt the user to manually switch to the canonical chain in order to buy VPFI

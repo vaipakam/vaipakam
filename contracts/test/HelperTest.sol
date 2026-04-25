@@ -38,7 +38,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](38);
+        selectors = new bytes4[](39);
         selectors[0] = TestMutatorFacet.setLoan.selector;
         selectors[1] = TestMutatorFacet.setOffer.selector;
         selectors[2] = TestMutatorFacet.setNextLoanId.selector;
@@ -77,6 +77,11 @@ contract HelperTest {
         selectors[35] = TestMutatorFacet.getUserSeenFlag.selector;
         selectors[36] = TestMutatorFacet.setEthUsdFeedRaw.selector;
         selectors[37] = TestMutatorFacet.setInteractionCapVpfiPerEthRaw.selector;
+        // Test-only `s.localEid` writer. The on-chain canonical-buy
+        // entry point (VPFIDiscountFacet) reverts `VPFICanonicalEidNotSet`
+        // when `s.localEid == 0`; tests that exercise direct buys must
+        // stamp a non-zero value via this selector during setUp.
+        selectors[38] = TestMutatorFacet.setLocalEidForTest.selector;
         return selectors;
     }
 

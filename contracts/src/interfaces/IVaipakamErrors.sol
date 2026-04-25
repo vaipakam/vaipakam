@@ -87,7 +87,7 @@ interface IVaipakamErrors {
     ///         bits outside `LibVaipakam.KEEPER_ACTION_ALL`.
     error InvalidKeeperActions();
 
-    // ─── VPFI Discount (docs/BorrowerVPFIDiscountMechanism.md) ───────────────
+    // ─── VPFI Discount (docs/TokenomicsTechSpec.md) ─────────────────────────
     /// @notice Fixed-rate VPFI buy attempted on a chain that is not the
     ///         canonical VPFI chain (Base mainnet / Base Sepolia).
     error NotCanonicalVPFIChain();
@@ -182,6 +182,19 @@ interface IVaipakamErrors {
     ///         this asset is blocked.
     /// @param asset The paused asset that triggered the revert.
     error AssetPaused(address asset);
+
+    // ─── VPFI Fixed-Rate Buy: deploy gate ──────────────────────────────────
+    /// @notice Fixed-rate VPFI buy attempted while the canonical Diamond's
+    ///         `localEid` has not been configured yet. Without a non-zero
+    ///         `localEid` direct-buy debits would land in storage bucket 0,
+    ///         while the frontend reads the bucket keyed on the chain
+    ///         registry's known LayerZero eid (e.g. 30184 for Base mainnet,
+    ///         40245 for Base Sepolia). The buckets would silently desync,
+    ///         showing full remaining allowance to a user whose bucket-0
+    ///         on-chain total is already at the cap. Operators MUST call
+    ///         `RewardReporterFacet.setLocalEid(...)` before flipping
+    ///         `setVPFIBuyEnabled(true)` on the canonical Diamond.
+    error VPFICanonicalEidNotSet();
 
     // ─── Permit2 ────────────────────────────────────────────────────────────
     /// @notice Permit2 path rejected because the signed `permit.permitted.token`

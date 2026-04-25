@@ -21,10 +21,11 @@ import {AdminFacet} from "../src/facets/AdminFacet.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
+import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 
 /// @title VPFIDiscountFacetTest
 /// @notice Exercises the borrower VPFI discount mechanism end-to-end
-///         (docs/BorrowerVPFIDiscountMechanism.md):
+///         (docs/TokenomicsTechSpec.md):
 ///          - canonical-chain-only fixed-rate ETH → VPFI buy
 ///          - cap + kill-switch + reserve guards
 ///          - bridge-then-deposit helper
@@ -114,6 +115,14 @@ contract VPFIDiscountFacetTest is SetupTest {
         weth = new ERC20Mock("Wrapped Ether", "WETH", 18);
         _facet().setVPFIBuyRate(RATE_WEI_PER_VPFI);
         _facet().setVPFIBuyCaps(GLOBAL_CAP, WALLET_CAP);
+        // Stamp `s.localEid` before enabling the buy switch — the
+        // canonical-chain direct-buy path now reverts
+        // `VPFICanonicalEidNotSet` when `localEid == 0`, because the
+        // per-(buyer, originEid) cap bucket would otherwise land in
+        // bucket 0 while the frontend reads the chain-registry eid
+        // (#00010 hardening). Use Base mainnet's eid here since the
+        // test simulates the canonical Base Diamond.
+        TestMutatorFacet(address(diamond)).setLocalEidForTest(30184);
         _facet().setVPFIBuyEnabled(true);
         _facet().setVPFIDiscountETHPriceAsset(address(weth));
 
@@ -188,6 +197,20 @@ contract VPFIDiscountFacetTest is SetupTest {
         _facet().setVPFIBuyRate(0);
         vm.prank(buyer);
         vm.expectRevert(IVaipakamErrors.VPFIBuyRateNotSet.selector);
+        _facet().buyVPFIWithETH{value: 1 ether}();
+    }
+
+    /// @notice #00010 hardening — direct buy must revert when
+    ///         `s.localEid` is unset, otherwise the on-chain bucket
+    ///         debit (eid 0) would silently desync from the
+    ///         frontend's per-chain reads (eid 30184 / 40245 / …).
+    function testBuyVPFIRevertsWhenLocalEidUnset() public {
+        // Roll localEid back to 0 so we can exercise the revert. The
+        // shared setUp stamps a non-zero eid before flipping the buy
+        // switch on; this test undoes that for the negative path only.
+        TestMutatorFacet(address(diamond)).setLocalEidForTest(0);
+        vm.prank(buyer);
+        vm.expectRevert(IVaipakamErrors.VPFICanonicalEidNotSet.selector);
         _facet().buyVPFIWithETH{value: 1 ether}();
     }
 

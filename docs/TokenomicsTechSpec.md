@@ -29,6 +29,7 @@ Scope note:
 - token deployment, minting, utility, fixed-rate purchase, discounts, and escrow-based staking are in active scope for `Phase 1`
 - governance activation remains `Phase 2`
 - Phase 1 lending, escrow, oracle, and risk mechanics remain unchanged unless an approved tokenomics integration explicitly extends them
+- this document is the canonical home for the borrower VPFI `Loan Initiation Fee` path; the former standalone borrower-discount specification has been merged here so future references should point to this tokenomics spec
 
 ---
 
@@ -262,7 +263,10 @@ Lender rules:
 Borrower rules (Phase 5 and later):
 
 - the borrower-side discount applies to the `Loan Initiation Fee`
+- the borrower VPFI path applies only when the lending asset is liquid under the active-chain `RiskFacet` / `OracleFacet` checks; illiquid assets use the normal lending-asset `0.1%` `Loan Initiation Fee` with no VPFI discount path
+- the borrower must have the shared platform-level fee-discount consent enabled; no separate offer-level or loan-level VPFI consent is required once that setting is active
 - when consent is active and sufficient VPFI is available, the system deducts the FULL (non-discounted) `Loan Initiation Fee` equivalent in VPFI from the borrower's escrow at loan acceptance; this VPFI is held in protocol custody (the Diamond) for the life of the loan rather than flowing immediately to Treasury
+- when the VPFI path succeeds, `100%` of the requested lending asset is delivered to the borrower because the initiation fee has been satisfied entirely from escrowed VPFI
 - the borrower-side discount is TIME-WEIGHTED across the loan's lifetime, mirroring the lender-side model: each loan snapshots the borrower's discount-accrual state at acceptance, and on proper settlement the protocol computes the loan-specific average discount from the delta between the settlement-moment accumulator and the opening snapshot, divided by the actual elapsed loan duration
 - on proper close (normal repay, borrower preclose, refinance), the Diamond splits the held VPFI into a borrower rebate (held × time-weighted-avg-discount-bps / 10000) and a treasury share (the remainder); the rebate becomes claimable on the borrower's position NFT and is paid out atomically with the normal borrower claim; the treasury share is accrued to Treasury at settlement
 - on default or HF-based liquidation, the entire held VPFI is forfeited to Treasury with no rebate
@@ -301,6 +305,64 @@ Borrower initiation-fee discount mechanics (Phase 5):
 - the stamped tier between balance-changing events pins the discount-accrual rate for the next elapsed-time bucket, identical to the lender-side mechanic; a borrower cannot capture a full higher-tier rebate by depositing VPFI only shortly before settlement
 - on proper settlement the held VPFI is split into rebate (to the borrower NFT holder via ClaimFacet) and treasury share; on default / HF liquidation the full held VPFI flushes to Treasury and no rebate is credited
 - governance changes to borrower discount thresholds or percentages apply prospectively only; periods already accrued under the previously stamped tier remain locked at those older values, mirroring the lender-side governance semantics
+
+---
+
+### 6b. Borrower Loan-Initiation Fee VPFI Path
+
+Objective:
+
+- borrowers can acquire VPFI through the fixed-rate purchase flow, explicitly deposit it into their personal escrow on the lending chain, and use that escrowed VPFI to satisfy the full `0.1%` `Loan Initiation Fee` up front
+- the borrower then earns the documented discount as a time-weighted VPFI rebate only if the loan closes properly
+- this removes the old point-in-time gaming vector where a borrower could briefly top up VPFI only at acceptance time to capture a full discount
+
+Eligibility and fallback:
+
+- the lending asset must be liquid on the active lending chain according to the existing `RiskFacet` / `OracleFacet` path
+- the borrower must have enabled the shared platform-level VPFI fee-discount consent
+- the borrower's escrow on that same lending chain must contain enough VPFI to cover the full, non-discounted `0.1%` `Loan Initiation Fee` equivalent
+- escrow-held VPFI is a special non-collateral asset: it does not count toward collateral value, Health Factor, liquidation value, or LTV support
+- escrow-held VPFI continues to count as staked under the unified escrow-staking model while also serving as the fee-utility balance for borrower discounts
+- if the asset is illiquid, the borrower has insufficient VPFI, or consent is disabled, the system falls back to the normal lending-asset fee path: the borrower pays `0.1%` in the loan asset and receives the net amount after that treasury deduction
+
+Acceptance-time flow:
+
+1. the borrower creates or accepts a loan offer
+2. the protocol checks active-chain liquidity through the existing risk / oracle logic
+3. the protocol verifies the platform-level VPFI-discount consent flag
+4. the protocol snapshots the borrower's discount-accrual state for that loan
+5. for a liquid lending asset, the protocol converts the loan amount into ETH equivalent using the Chainlink-led active-chain pricing path
+6. the protocol calculates the full `0.1%` `Loan Initiation Fee`
+7. the protocol converts that full ETH-equivalent fee into exact VPFI required at the fixed rate `1 VPFI = 0.001 ETH`
+8. if escrow balance is sufficient, the protocol deducts that VPFI from borrower escrow into Diamond custody and sends `100%` of the requested lending asset to the borrower
+
+Settlement:
+
+- on normal repayment, borrower preclose, or refinance, the protocol computes the borrower's time-weighted average discount across the actual loan window
+- borrower rebate formula: `rebate = heldVPFI * timeWeightedAverageDiscountBps / 10000`
+- the borrower rebate is claimable by the borrower-side Vaipakam NFT holder and is paid with the ordinary borrower claim
+- the unrewarded remainder of the held VPFI becomes Treasury's share
+- on default or HF-based liquidation, the borrower rebate is `0` and all VPFI held for that loan is forfeited to Treasury
+
+Storage requirements:
+
+- store or derive borrower discount tiers from escrowed VPFI balance on the relevant lending chain
+- for each loan that uses the VPFI LIF path, store the full VPFI amount held in protocol custody, the borrower's opening discount-accrual snapshot, and any rebate claimable after proper settlement
+- track borrower LIF custody and rebate state by loan ID
+- keep all storage additions append-only in the existing Diamond storage libraries
+
+Events:
+
+- emit when the VPFI LIF path is selected and the full up-front VPFI amount is custody-held, including loan ID, borrower, lending asset, and VPFI amount
+- emit when a borrower VPFI rebate is credited
+- emit when borrower-held VPFI for a loan is forfeited to Treasury on default or HF-based liquidation
+
+Integration surface:
+
+- reuse the existing `EscrowFactory`, loan lifecycle facets, `VPFITokenFacet`, `TreasuryFacet`, shared settlement libraries, and Chainlink-led oracle path wherever possible
+- extend escrow handling so VPFI can be deducted for fee utility without being treated as collateral
+- Treasury must be able to receive and record VPFI fee flows for later recycling under §9
+- keep all existing Phase 1 lending, escrow, treasury, oracle, risk, and loan-funding semantics unchanged except for the explicit fee-source and VPFI-custody behavior described in this borrower LIF path
 
 ---
 
@@ -408,7 +470,7 @@ Per-wallet cap display:
 - this allowance is chain-local: buying up to the cap on one chain does not by itself consume the user's allowance on another chain unless admin later introduces an explicit cross-chain cap model
 - likewise, VPFI deposited into escrow on a given chain counts toward lender / borrower fee-discount tiers only for loans initiated on that same chain
 
-VPFI held in escrow simultaneously satisfies the §3 staking model and the fee-discount tier table in `docs/BorrowerVPFIDiscountMechanism.md` on that same chain — a single deposit serves both purposes locally, but does not qualify loans initiated on other chains.
+VPFI held in escrow simultaneously satisfies the staking model and the fee-discount tier table in §6 on that same chain — a single deposit serves both purposes locally, but does not qualify loans initiated on other chains.
 
 Permit2 requirements for VPFI utility flows:
 
@@ -526,6 +588,16 @@ Coding standards:
 - use project-standard custom errors via `IVaipakamErrors`
 - emit events for every mint, claim, buyback, discount-sensitive action where relevant, and every rate change
 - prioritize gas efficiency and reuse shared protocol libraries where it makes sense, including `LibVaipakam`, existing oracle logic, and shared accounting helpers
+- protect all new VPFI purchase, escrow deposit, fee deduction, rebate settlement, and treasury-receipt functions with the project-standard reentrancy guard and global pausable mechanism unless the function is a pure/view helper
+- every public or external function added for VPFI purchase, escrow deposit, fee deduction, rebate settlement, or treasury receipt must have NatSpec that describes the fee source, custody behavior, and settlement outcome
+
+Storage and event requirements:
+
+- track total VPFI sold through the fixed-rate program, the global sale cap, and the per-wallet cap in append-only Diamond storage
+- track per-chain wallet sale usage so the Phase 1 `30,000 VPFI` recommendation is enforced and displayed as a chain-local allowance
+- track VPFI held for borrower LIF custody, claimable borrower rebates, and forfeited treasury shares by loan ID
+- emit VPFI purchase events with buyer, VPFI amount, ETH amount, and origin chain context where applicable
+- emit escrow-deposit, LIF-custody, rebate-credit, rebate-forfeit, and treasury-receipt events in the relevant facets
 
 Testing requirements:
 
@@ -536,12 +608,40 @@ Testing requirements:
 - include cross-chain / OFT configuration tests where practical
 - include reward-accounting and vesting tests
 - include buyback-routing tests
+- include preferred-chain fixed-rate purchase tests where purchased VPFI is delivered to the user's wallet on that same chain
+- include explicit wallet-to-escrow deposit tests for both Permit2 and classic approve-plus-deposit paths
+- include liquid-asset borrower LIF VPFI tests across every discount tier
+- include time-weighted borrower rebate tests for long-hold, partial-hold, last-minute top-up, unstake-down, and governance-tier-change cases
+- include illiquid-asset fallback tests where the borrower pays the normal lending-asset LIF
+- include default and HF-liquidation tests proving held VPFI is forfeited to Treasury with no rebate
+- include normal repayment, borrower preclose, and refinance tests proving proper rebate crediting
+- include tests that escrow-held VPFI updates staking rewards and fee-discount accrual without being counted as collateral
+- include admin pause / disable tests for fixed-rate buying after cap exhaustion or sale shutdown
 
 Frontend integration requirements:
 
 - Phase 1 frontend requirements should focus on token-address transparency, supply visibility, mint/cap visibility where exposed, and clear separation between the cross-chain VPFI token and the single-chain core protocol
 - `Dashboard`, `ClaimCenter`, staking views, and reward hooks may gain broader VPFI utility surfaces in `Phase 1`
 - `Dashboard` should specifically surface the shared fee-discount consent control for escrowed VPFI usage
+- a dedicated `Buy VPFI` page should let users buy from their preferred supported chain without manually switching to canonical `Base`
+- the `Buy VPFI` page is the single user-facing purchase flow; any bridge, canonical-chain settlement, OFT routing, or Base-receiver complexity must be abstracted behind that flow
+- the purchase page must show the exact ETH required, resulting VPFI amount, fixed rate, remaining global supply, and chain-local wallet allowance
+- after purchase, the page should guide a separate explicit wallet-to-escrow deposit action on the same chain; it must not auto-deposit purchased VPFI into escrow
+- the deposit step should prefer Permit2 where supported, fall back cleanly to classic approval, and explain that Permit2 is optional convenience rather than a replacement for token-level allowance control
+- transaction review for buying VPFI, depositing VPFI to escrow, and accepting a loan through the VPFI path should include the standard transaction-preview surface where available and fail soft if preview is unavailable
+- borrower-facing pages should show current escrowed VPFI balance, current tier, discount eligibility for liquid assets, and the fact that escrow-held VPFI also counts as staked
+- `Create Offer` and `Loan Details` should provide clear entry points into the dedicated `Buy VPFI` page
+- `Offer Book` accept-review copy should explain that the borrower pays the full `0.1%` LIF up front in VPFI and earns any discount over the loan lifetime as a rebate
+- `Create Offer` borrower-tip copy should frame the benefit as earning up to a `24%` VPFI rebate, not as paying a reduced up-front fee
+- `Claim Center` should show a VPFI rebate line whenever a borrower claim includes a pending LIF rebate
+
+Acceptance criteria:
+
+- borrowers can purchase VPFI with ETH from the dedicated preferred-chain purchase page and receive VPFI in their wallet on that same chain
+- borrowers can explicitly move that VPFI from wallet to personal escrow on that same chain
+- eligible liquid-asset loan acceptance checks liquidity, fee-discount consent, borrower escrow balance, discount snapshot, Chainlink-led ETH conversion, full `0.1%` LIF computation, and exact VPFI deduction before sending `100%` of requested lending asset to the borrower
+- properly closed loans credit a time-weighted VPFI rebate; defaulted or HF-liquidated loans forfeit the held VPFI to Treasury
+- global caps, per-chain wallet caps, pausing, event transparency, NatSpec coverage, and Diamond storage compatibility are satisfied
 
 ---
 

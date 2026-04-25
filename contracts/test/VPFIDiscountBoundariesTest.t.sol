@@ -13,8 +13,7 @@ import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 
 /// @title VPFIDiscountBoundariesTest
 /// @notice Pinpoint-coverage for the T0/T1/T2/T3/T4 tier boundaries defined
-///         in docs/BorrowerVPFIDiscountMechanism.md and docs/TokenomicsTechSpec.md
-///         §6. Each boundary value is checked twice — one wei below and
+///         in docs/TokenomicsTechSpec.md §6. Each boundary value is checked twice — one wei below and
 ///         at/above the threshold — to lock the semantics:
 ///
 ///           0                               T0 (0%)

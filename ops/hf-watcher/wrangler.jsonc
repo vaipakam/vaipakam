@@ -64,6 +64,16 @@
   //   BLOCKAID_API_KEY      — Phase 8b.2 Transaction Scanner key,
   //                           injected by /scan/blockaid; the
   //                           frontend never sees it.
+  //
+  // Plain vars (set via `vars` here or `wrangler secret put` if the
+  // value is sensitive — bot username is public-facing):
+  //   TG_BOT_USERNAME       — Telegram bot @-handle used to build
+  //                           the user-facing deep link
+  //                           `https://t.me/<TG_BOT_USERNAME>?start=...`.
+  //                           Issued by @BotFather alongside
+  //                           TG_BOT_TOKEN. Distinct from any
+  //                           operator's personal Telegram handle —
+  //                           Telegram bots are their own accounts.
   "vars": {
     "DIAMOND_ADDR_BASE": "",
     "DIAMOND_ADDR_ETH": "",
@@ -71,6 +81,7 @@
     "DIAMOND_ADDR_OP": "",
     "DIAMOND_ADDR_ZKEVM": "",
     "DIAMOND_ADDR_BNB": "",
-    "FRONTEND_ORIGIN": "https://vaipakam.com"
+    "FRONTEND_ORIGIN": "https://vaipakam.com",
+    "TG_BOT_USERNAME": ""
   }
 }

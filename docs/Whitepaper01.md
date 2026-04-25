@@ -489,13 +489,12 @@ These choices create a product that is more expressive than conventional pooled 
 ## References
 
 1. Vaipakam `README.md`
-2. `docs/BorrowerVPFIDiscountMechanism.md`
-3. `docs/TokenomicsTechSpec.md`
-4. `docs/WebsiteReadme.md`
-5. `EIP-2535`
-6. `ERC-20`
-7. `ERC-721`
-8. `ERC-1155`
-9. `ERC-4907`
-10. Chainlink documentation
-11. v3-style concentrated-liquidity AMM documentation
+2. `docs/TokenomicsTechSpec.md`
+3. `docs/WebsiteReadme.md`
+4. `EIP-2535`
+5. `ERC-20`
+6. `ERC-721`
+7. `ERC-1155`
+8. `ERC-4907`
+9. Chainlink documentation
+10. v3-style concentrated-liquidity AMM documentation

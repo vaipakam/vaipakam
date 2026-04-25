@@ -153,6 +153,12 @@ cast send $BASE_SEPOLIA_VPFI_TOKEN "setMinter(address)" $BASE_SEPOLIA_DIAMOND_AD
 
 Populate `.env`: `VPFI_BUY_WEI_PER_VPFI=1000000000000000`, `VPFI_BUY_GLOBAL_CAP=2300000000000000000000000`, `VPFI_BUY_PER_WALLET_CAP=30000000000000000000000`, `VPFI_BUY_ENABLED=true`, `BASE_SEPOLIA_VPFI_DISCOUNT_ETH_PRICE_ASSET` (= WETH).
 
+The fixed-rate buy path follows `docs/TokenomicsTechSpec.md` §8 / §8a:
+buyers pay ETH, VPFI is delivered to the buyer's wallet, and any
+wallet-to-escrow deposit is a separate explicit action. Do not run the
+buy smoke test until §7 has configured `LOCAL_EID=40245`; direct buys
+bucket the per-wallet cap under the Diamond's `localEid`.
+
 ```bash
 forge script script/ConfigureVPFIBuy.s.sol \
   --rpc-url $BASE_SEPOLIA_RPC_URL --broadcast
@@ -220,6 +226,14 @@ Populate `.env`: `LOCAL_EID=40245`, `BASE_EID=40245`, `REWARD_GRACE_SECONDS=1440
 ```bash
 forge script script/ConfigureRewardReporter.s.sol \
   --rpc-url $BASE_SEPOLIA_RPC_URL --broadcast
+```
+
+Verify `localEid` before any direct Base buy:
+```bash
+cast call $BASE_SEPOLIA_DIAMOND_ADDRESS \
+  "getRewardReporterConfig()(address,uint32,uint32,uint32,bool)" \
+  --rpc-url $BASE_SEPOLIA_RPC_URL
+# localEid must be 40245 on Base Sepolia
 ```
 
 Verify:
@@ -307,13 +321,18 @@ Base Sepolia:
 ```bash
 # Buy 100 VPFI as admin:
 cast send $BASE_SEPOLIA_DIAMOND_ADDRESS \
-  "buyVPFIWithETH(uint256)" 100000000000000000000 \
+  "buyVPFIWithETH()" \
   --value 0.1ether \
   --rpc-url $BASE_SEPOLIA_RPC_URL --private-key $PRIVATE_KEY
 
 cast call $BASE_SEPOLIA_DIAMOND_ADDRESS \
   "getVPFIBalanceOf(address)(uint256)" $ADMIN_ADDRESS \
   --rpc-url $BASE_SEPOLIA_RPC_URL
+
+cast call $BASE_SEPOLIA_DIAMOND_ADDRESS \
+  "getVPFISoldToByEid(address,uint32)(uint256)" $ADMIN_ADDRESS 40245 \
+  --rpc-url $BASE_SEPOLIA_RPC_URL
+# → 100e18; confirms the direct buy landed in the Base Sepolia cap bucket
 ```
 
 Mirror (e.g. Sepolia) — bridged buy:

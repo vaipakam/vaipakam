@@ -1447,9 +1447,8 @@ library LibVaipakam {
         ///      bridged-buy paths (its slot is preserved only because
         ///      the Diamond storage layout is append-only).
         ///
-        ///      Per docs/TokenomicsTechSpec.md §8a, README §
-        ///      "Treasury and Revenue Sharing", and
-        ///      docs/BorrowerVPFIDiscountMechanism.md §2: the Phase 1
+        ///      Per docs/TokenomicsTechSpec.md §8a and README §
+        ///      "Treasury and Revenue Sharing": the Phase 1
         ///      30K VPFI per-wallet cap is **per origin chain**, not
         ///      one shared global wallet cap. A user buying up to the
         ///      cap on one origin chain does not consume their cap on

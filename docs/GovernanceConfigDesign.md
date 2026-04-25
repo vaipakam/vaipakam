@@ -171,7 +171,7 @@ When governance changes a value mid-protocol, two policies are possible:
 | `volatilityLtvThresholdBps`, `rentalBufferBps` | Retroactive | Risk-policy knobs. |
 | `vpfiStakingAprBps` | **Era-wise non-retroactive** | Flat APR adjustable by governance. Existing reward-per-token accumulator already locks past accrual into a global `stakingRewardPerTokenStored` — once we add a `checkpointGlobal()` call inside `setStakingApr`, every era gets its own rate applied to exactly its own duration. Applies uniformly to active and dormant users. Details in §5.2. |
 | **VPFI lender yield-fee discount** (tier schedule) | **Time-weighted rollup** | Per-user `cumulativeDiscountBpsSeconds` accumulator + per-loan snapshot at offer acceptance. At yield-fee settlement, the time-weighted average BPS over the loan's duration replaces the live-at-repay tier lookup. Governance changes apply to future periods only. Details in §5.2a. |
-| **VPFI borrower initiation-fee discount** (tier schedule) | Retroactive (one-shot) | Single point-in-time deduction at offer acceptance, no multi-period interval to average. Details in §5.2b. |
+| **VPFI borrower initiation-fee discount** (tier schedule) | **Time-weighted rebate rollup** | Borrower pays the full LIF up front in VPFI at acceptance; the earned discount is computed as a time-weighted rebate over the loan window. Governance changes apply to future periods only. Details in §5.2b. |
 | **Fallback settlement split** (treasury + liquidator BPS) | **Prospective** | Core contract term — dual-consent at offer creation means both parties signed up for specific numbers, not a governance-tunable target. |
 | KYC thresholds + `kycRequired` flag | Retroactive | Compliance-driven; effective immediately (users who cross a threshold mid-activity become subject to the new policy on their next action). |
 
@@ -446,10 +446,10 @@ who deposits 20 000 VPFI one block before repay jumps to Tier 4 / 24%
 discount on the entire loan's yield fee with no time-held commitment.
 The fix is a time-weighted accumulator scoped to the loan duration.
 
-**Only the lender side changes.** Borrower initiation-fee discount
-stays one-shot at acceptance (§5.2b) — there's no multi-period interval
-over which to average; the discount is decided and settled in the same
-moment.
+**Borrower parity.** The borrower initiation-fee path now follows the
+same time-weighted anti-gaming principle (§5.2b). The borrower still
+pays the full LIF amount up front in VPFI at acceptance, but the
+discount itself is earned as a rebate over the actual loan window.
 
 **Storage — one new per-user struct, one new per-loan snapshot:**
 
@@ -566,24 +566,43 @@ in the same block, `windowSeconds == 0` — division by zero. Code must
 guard and fall through to zero discount on the yield fee (spec behaviour
 for an impossible loan pattern anyway).
 
-### 5.2b VPFI borrower initiation-fee discount — unchanged (one-shot)
+### 5.2b VPFI borrower initiation-fee discount — time-weighted rebate
 
-Confirmed out of scope for the rollup mechanism. [`LibVPFIDiscount.tryApply`](../contracts/src/libraries/LibVPFIDiscount.sol#L196)
-stays as-is: the borrower's tier is resolved from live escrow balance
-at `OfferFacet.acceptOffer`, the discounted initiation fee is deducted
-in VPFI in the same tx, and no further accrual runs on the borrower
-side for this fee.
+The canonical borrower path is defined in
+[`docs/TokenomicsTechSpec.md`](TokenomicsTechSpec.md) §6 / §6b. The
+borrower no longer receives a reduced up-front LIF from a live
+acceptance-time tier alone. Instead, when the VPFI path is eligible,
+the borrower pays the full `0.1%` LIF equivalent in VPFI from escrow at
+offer acceptance. That VPFI is held in Diamond custody for the life of
+the loan.
 
-**Why one-shot is fine here.** The initiation fee is computed and
-settled atomically with loan creation — there is no "period" over
-which the borrower's balance could vary for this specific fee. A
-borrower *could* deposit just before accepting the offer to claim a
-higher tier, but they've committed VPFI to escrow at that moment,
-which is exactly what the discount is meant to reward. Withdrawing
-after acceptance doesn't give back the already-paid discount.
+**Accrual model.** The borrower uses the same per-user
+`cumulativeDiscountBpsSeconds` style rollup as the lender side. Each
+borrower escrow-balance change rolls up the previous elapsed period at
+the previously stamped tier, then stamps the current tier for the next
+period. Each VPFI-LIF loan snapshots the borrower's accumulator at
+acceptance.
 
-The yield-fee gaming vector — deposit just before a distant repay —
-doesn't have an analogue on the borrower side.
+**Settlement.** On normal repayment, borrower preclose, or refinance,
+the settlement path computes the borrower's time-weighted average
+discount over the actual loan window:
+
+```solidity
+rebate = heldVpfiForLoan * avgBorrowerDiscountBps / 10_000;
+treasuryShare = heldVpfiForLoan - rebate;
+```
+
+The rebate becomes claimable by the borrower-side Vaipakam NFT holder
+and is paid with the normal borrower claim. On default or HF-based
+liquidation, `rebate == 0` and the full held VPFI amount is forfeited
+to Treasury.
+
+**Governance changes to the tier schedule** apply prospectively, just
+like the lender side. Periods already rolled up under the old tier
+schedule stay locked; future periods use the new schedule after the
+next borrower rollup or settlement refresh. This preserves earned
+rebate value and prevents last-minute top-ups from earning a full-loan
+discount.
 
 ### 5.2c Storage cost summary
 
@@ -719,11 +738,10 @@ between "what the UI shows" and "what the next rollup will persist."
 **Tier badge for borrowers and lenders.** On the Dashboard VPFI card
 and on offer-browse pages, show the user's current tier badge (Tier
 0–4) sourced from the live escrow balance + `useVpfiTierSchedule()`.
-This is the tier that applies to a **new** offer accept (borrower
-initiation discount is one-shot, so "tier right now" is authoritative)
-or to the **next** rollup period (lender time-weighted discount is
-prospective, so "tier right now" is what you'll earn from this moment
-onward).
+This is the tier that applies to the **next** borrower or lender
+rollup period. For borrower VPFI-LIF loans, "tier right now" is a
+preview of the rebate rate the user will earn from this moment onward,
+not a promise that the full loan will settle at that tier.
 
 ### 5.5 Documentation
 
@@ -766,7 +784,7 @@ work.
 | Cancel during delay | ✅ yes — multisig holds `CANCELLER_ROLE` (auto-granted with proposer in OZ v5) |
 | VPFI staking APR | ✅ **Flat rate, gov-adjustable.** Leverage existing `LibStakingRewards` reward-per-token accumulator. Add `checkpointGlobal()` call in `setStakingApr` so every APR era is non-retroactively preserved. No predeclared schedule; history tracked via `StakingAprSet` events (§5.2). |
 | VPFI lender yield-fee discount | ✅ **Time-weighted rollup over loan duration** — per-user `cumulativeDiscountBpsSeconds` accumulator + per-loan snapshot at offer acceptance; applied at yield-fee settlement (§5.2a). |
-| VPFI borrower initiation-fee discount | ✅ **Unchanged (one-shot at accept)** — no rollup on borrower side (§5.2b). |
+| VPFI borrower initiation-fee discount | ✅ **Time-weighted rebate over loan duration** — full LIF paid up front in VPFI, borrower accumulator snapshotted at acceptance, rebate credited on proper close (§5.2b). |
 | Fallback settlement split | ✅ configurable + **prospective** snapshot on `Loan` (§5.3) |
 | `MIN_HEALTH_FACTOR` | ✅ **stays hardcoded** |
 | Tokenomics supply caps | ✅ **stay hardcoded** |
@@ -956,7 +974,7 @@ step 12 (frontend); the others are mechanical.
 - [`contracts/RUNBOOK.md`](../contracts/RUNBOOK.md) — add §12 parameter-change procedure; add "mainnet must ship staking-APR checkpoint fix before any gov APR change" to the go/no-go gate; update §1's timelock-delay row to 72h.
 - [`CLAUDE.md`](../CLAUDE.md) — add Parameter Governance subsection + the rollup ordering invariant (every escrow-VPFI mutation must call both `LibStakingRewards.updateUser` and `LibVPFIDiscount.rollupUserDiscount` before mutating).
 - [`docs/TokenomicsTechSpec.md`](TokenomicsTechSpec.md) — §7 gets the "era-wise non-retroactive APR" clarification; a new §7a (or equivalent) captures the time-weighted lender yield-fee discount (functional spec already drafted separately).
-- [`docs/BorrowerVPFIDiscountMechanism.md`](BorrowerVPFIDiscountMechanism.md) — add a "One-shot at acceptance" note explicitly excluding the borrower init-fee discount from the rollup path (§5.2b).
+- [`docs/TokenomicsTechSpec.md`](TokenomicsTechSpec.md) — keep the borrower init-fee VPFI path, fee-custody behavior, and time-weighted rebate rules in the canonical tokenomics spec (§6 / §6b).
 
 ---
 
@@ -985,17 +1003,17 @@ period, governance boundaries locked in at the moment of the change):
   BPS over the actual loan duration. Last-minute top-ups can't game the
   discount — a 30-day loan with a Day-29 top-up yields ~1/30 of the
   tier bump. Governance schedule changes apply to the next period only.
+- **VPFI borrower initiation-fee discount** — full LIF is custody-held
+  up front in VPFI, then the borrower-side rebate is computed from the
+  borrower's time-weighted discount BPS over the loan window. Proper
+  close credits the rebate; default or HF liquidation forfeits the full
+  held amount to Treasury. Governance schedule changes apply to the
+  next period only. (§5.2b)
 
 **What's prospective (init snapshot, locked per loan)**:
 - **Fallback settlement split** — snapshotted on `Loan` at init
   (§5.3). Gov changes tune future offers; already-accepted offers
   settle under their original terms.
-
-**What's one-shot (unchanged from today)**:
-- **VPFI borrower initiation-fee discount** — resolved once at offer
-  acceptance from live escrow balance + live tier schedule. No
-  rollup needed; the discount and the fee are computed and settled
-  in the same transaction. (§5.2b)
 
 ---
 
