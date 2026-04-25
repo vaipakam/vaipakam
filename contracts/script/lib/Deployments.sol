@@ -188,6 +188,12 @@ library Deployments {
         // We only do this on the first call (when no file exists) so
         // we don't clobber existing addresses written in a prior run.
         if (!_fileExists(p)) {
+            // `vm.writeJson` does NOT create parent directories; on
+            // a fresh chain the per-chain folder won't exist yet.
+            cheats.createDir(
+                string.concat("deployments/", chainSlug()),
+                true
+            );
             cheats.writeJson(finalJson, p);
         }
     }
@@ -242,6 +248,14 @@ library Deployments {
         // arg is the JSON-path key (`.diamond`, `.vpfiToken`, …).
         // Path expressions MUST start with `.` per Foundry's parser.
         if (!_fileExists(p)) {
+            // `vm.writeJson` does NOT create parent directories; on
+            // a fresh chain the per-chain folder won't exist yet, so
+            // create it (recursive) before the first write. No-op if
+            // the directory already exists.
+            cheats.createDir(
+                string.concat("deployments/", chainSlug()),
+                true
+            );
             // Bootstrap: create the file with just `chainId` so
             // subsequent updates have a valid container to merge into.
             string memory head = "deployments-bootstrap";

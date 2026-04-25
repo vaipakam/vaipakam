@@ -33,9 +33,18 @@ library LibCreate2Deploy {
 
     /// @notice Deploy `initCode` via the Singleton Factory with `salt`.
     /// @dev Reverts {Create2DeployFailed} on any factory failure. The
-    ///      factory's calldata format is `salt (32b) || initCode`, and
-    ///      its return data is the 20-byte deployed address left-padded
-    ///      into 32 bytes.
+    ///      Arachnid factory's Yul returns 20 raw address bytes —
+    ///      NOT a 32-byte right-padded word. The previous implementation
+    ///      read `bytes32(ret)` which loaded 32 bytes from `ret`'s data
+    ///      section: the 20-byte address followed by 12 bytes of
+    ///      whatever happened to live in the next memory slot. When
+    ///      that adjacent memory was zero, `uint160()` truncation
+    ///      stripped the FIRST 12 address bytes and kept the LAST 8 +
+    ///      12 trailing zeros — silently returning a malformed address
+    ///      that broke `deployExpecting`'s equality check on real
+    ///      chains. Fix: read the first 20 bytes via assembly and
+    ///      shift the 32-byte word right by 12 bytes (96 bits) so the
+    ///      address sits in the low 160 bits.
     function deploy(bytes32 salt, bytes memory initCode) internal returns (address deployed) {
         (bool success, bytes memory ret) = SINGLETON_FACTORY.call(
             abi.encodePacked(salt, initCode)
@@ -43,8 +52,14 @@ library LibCreate2Deploy {
         if (!success || ret.length < 20) {
             revert Create2DeployFailed(salt, keccak256(initCode));
         }
-        // Factory returns the deployed address as the last 20 bytes.
-        deployed = address(uint160(uint256(bytes32(ret))));
+        // Read the first 32 bytes of `ret`'s data and right-shift by
+        // 96 bits, leaving the leading 20-byte address in the low
+        // 160 bits where `address` casts expect it.
+        uint256 word;
+        assembly {
+            word := mload(add(ret, 32))
+        }
+        deployed = address(uint160(word >> 96));
         if (deployed == address(0)) {
             revert Create2DeployFailed(salt, keccak256(initCode));
         }

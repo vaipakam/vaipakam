@@ -7,6 +7,16 @@ viaIR = true
 optimizer = true
 optimizer_runs = 200
 
+# Filesystem cheatcode permissions. Required by `script/lib/Deployments.sol`
+# so deploy scripts can WRITE the per-chain `deployments/<chain>/addresses.json`
+# artifact at the end of a broadcast, and post-deploy scripts can READ from
+# the same file. Foundry's default FS sandbox blocks all `vm.readFile` /
+# `vm.writeJson` calls; this allow-list narrows the grant to the
+# `deployments/` subtree only — never the rest of the workspace.
+fs_permissions = [
+  { access = "read-write", path = "./deployments/" },
+]
+
 [profile.coverage]
 viaIR = true
 optimizer = true

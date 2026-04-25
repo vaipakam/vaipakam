@@ -11,12 +11,13 @@ import {MockUniswapV3Factory} from "./mocks/MockUniswapV3.sol";
 import {Deployments} from "./lib/Deployments.sol";
 
 /**
- * @title DeployBaseSepoliaLiquidityMocks
- * @notice One-shot setup that gives a Base Sepolia Vaipakam Diamond
+ * @title DeployTestnetLiquidityMocks
+ * @notice One-shot setup that gives a testnet Vaipakam Diamond
  *         enough mock infrastructure to make TWO mock ERC-20s
  *         (`mUSDC`, `mWBTC`) come out as **liquid** under the
- *         protocol's `(price + depth)` classification rule. After
- *         this script runs, both tokens satisfy:
+ *         protocol's `(price + depth)` classification rule. Supports
+ *         Base Sepolia (84532) and Ethereum Sepolia (11155111).
+ *         After this script runs, both tokens satisfy:
  *
  *           1. Chainlink-led price path (mock Feed Registry +
  *              per-asset feed → 8-decimal USD price).
@@ -24,11 +25,12 @@ import {Deployments} from "./lib/Deployments.sol";
  *              `MIN_LIQUIDITY_USD = $1,000,000` (mock UniswapV3
  *              factory + pool with `liquidity()` set to 1e24).
  *
- *         Real Base Sepolia WETH (`0x4200…0006`) is reused as the
- *         quote asset; we don't deploy a third mock ERC-20 for it.
- *         The protocol's `setWethContract(...)` is wired to that
- *         canonical address so liquidity-check call chains
- *         (`getPool(asset, WETH, fee)`) resolve correctly.
+ *         Real testnet WETH is reused as the quote asset (Base
+ *         Sepolia: `0x4200…0006`; Sepolia: `0xfFf9…6B14`); we don't
+ *         deploy a third mock ERC-20 for it. The protocol's
+ *         `setWethContract(...)` is wired to that canonical address
+ *         so liquidity-check call chains (`getPool(asset, WETH, fee)`)
+ *         resolve correctly.
  *
  *         All addresses are written to
  *         `deployments/base-sepolia/addresses.json` under the keys
@@ -36,10 +38,13 @@ import {Deployments} from "./lib/Deployments.sol";
  *         `.mockERC20A`, `.mockERC20B` so downstream seeders /
  *         smoke tests can pick them up automatically.
  *
- * @dev   ⚠ This script ONLY runs on Base Sepolia (chainId 84532).
- *         The mock infrastructure is testnet-only — production Base
- *         deploys must wire real Chainlink + real UniswapV3
- *         (mainnet UniV3 factory `0x33128a8fC17869897dcE68Ed026d694621f6FDfD`).
+ * @dev   ⚠ This script ONLY runs on supported testnets (Base Sepolia
+ *         84532 and Ethereum Sepolia 11155111). The mock
+ *         infrastructure is testnet-only — production deploys must
+ *         wire real Chainlink + real UniswapV3 (e.g. mainnet UniV3
+ *         factory `0x1F98431c8aD98523631AE4a59f267346ea31F984`,
+ *         Base mainnet UniV3 factory
+ *         `0x33128a8fC17869897dcE68Ed026d694621f6FDfD`).
  *
  *         Required env vars:
  *           - PRIVATE_KEY        : deployer (pays for mock contract gas)
@@ -47,16 +52,18 @@ import {Deployments} from "./lib/Deployments.sol";
  *                                  `ORACLE_ADMIN_ROLE` on the
  *                                  Diamond so OracleAdminFacet
  *                                  setters pass)
- *           - BASE_SEPOLIA_WETH  : optional; canonical WETH on Base
- *                                  Sepolia. Defaults to the well-known
- *                                  `0x4200…0006` predeploy.
+ *           - BASE_SEPOLIA_WETH  : optional override on Base Sepolia.
+ *                                  Defaults to `0x4200…0006` predeploy.
+ *           - SEPOLIA_WETH       : optional override on Ethereum Sepolia.
+ *                                  Defaults to canonical WETH9
+ *                                  `0xfFf9976782d46CC05630D1f6eBAb18b2324d6B14`.
  *
  *         Idempotent if re-run: every wiring step is a straight
  *         setter — re-running just re-points the Diamond at fresh
  *         mock addresses. The previous mocks remain on chain (just
  *         orphaned) and the new ones become authoritative.
  */
-contract DeployBaseSepoliaLiquidityMocks is Script {
+contract DeployTestnetLiquidityMocks is Script {
     /// @dev Canonical Chainlink Denominations sentinels — universal
     ///      across every chain that runs a Chainlink Feed Registry.
     ///      We register the mock registry under the same sentinels
@@ -69,6 +76,13 @@ contract DeployBaseSepoliaLiquidityMocks is Script {
     ///      mainnet (8453) and Base Sepolia (84532) — published by
     ///      Optimism's Bedrock spec.
     address constant BASE_WETH_DEFAULT = 0x4200000000000000000000000000000000000006;
+
+    /// @dev Canonical Sepolia WETH9 — the long-lived testnet WETH
+    ///      reused by Aave, Uniswap, etc. Not a predeploy; we just
+    ///      hardcode the well-known address so the protocol's
+    ///      `setWethContract(...)` and `getPool(asset, WETH, fee)`
+    ///      paths resolve to the same WETH everyone else uses.
+    address constant SEPOLIA_WETH_DEFAULT = 0xfFf9976782d46CC05630D1f6eBAb18b2324d6B14;
 
     /// @dev sqrtPriceX96 for price = 1.0 token0/token1. Cherry-picked
     ///      at 2^96 so the mock pool's slot0 returns a non-zero
@@ -100,17 +114,25 @@ contract DeployBaseSepoliaLiquidityMocks is Script {
     int256 constant WETH_USD_PRICE  = 2_000e8;   // $2,000
 
     function run() external {
+        uint256 cid = block.chainid;
         require(
-            block.chainid == 84532,
-            "DeployBaseSepoliaLiquidityMocks: Base Sepolia only"
+            cid == 84532 || cid == 11155111,
+            "DeployTestnetLiquidityMocks: chain not supported (need 84532 or 11155111)"
         );
 
         uint256 deployerKey = vm.envUint("PRIVATE_KEY");
         uint256 adminKey = vm.envUint("ADMIN_PRIVATE_KEY");
-        address weth = vm.envOr("BASE_SEPOLIA_WETH", BASE_WETH_DEFAULT);
+        address weth;
+        if (cid == 84532) {
+            weth = vm.envOr("BASE_SEPOLIA_WETH", BASE_WETH_DEFAULT);
+        } else {
+            // Ethereum Sepolia — chainid 11155111
+            weth = vm.envOr("SEPOLIA_WETH", SEPOLIA_WETH_DEFAULT);
+        }
         address diamond = Deployments.readDiamond();
 
-        console.log("=== Deploy Base Sepolia Liquidity Mocks ===");
+        console.log("=== Deploy Testnet Liquidity Mocks ===");
+        console.log("Chain id:   ", cid);
         console.log("Diamond:    ", diamond);
         console.log("Deployer:   ", vm.addr(deployerKey));
         console.log("Admin:      ", vm.addr(adminKey));

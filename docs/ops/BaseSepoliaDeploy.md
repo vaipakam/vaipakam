@@ -157,7 +157,7 @@ feeds, and a mock UniswapV3 factory whose pool depth clears the
 $1M `MIN_LIQUIDITY_USD` floor:
 
 ```bash
-forge script script/DeployBaseSepoliaLiquidityMocks.s.sol \
+forge script script/DeployTestnetLiquidityMocks.s.sol \
   --rpc-url $BASE_SEPOLIA_RPC_URL --broadcast
 ```
 
