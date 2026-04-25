@@ -5,6 +5,14 @@ plain-English user-facing / operator-facing descriptions — no code.
 Grouped by area, not by chronology. Continues from
 [`ReleaseNotes-2026-04-23-to-24.md`](./ReleaseNotes-2026-04-23-to-24.md).
 
+Coverage at a glance: **Phase 8a** (ENS resolution + liquidation-price
+calculator + HF alerts + approval revoke surface), **Phase 8b**
+(Uniswap Permit2 single-tx flows + Blockaid transaction-scan preview),
+**Phase 7a** (4-DEX swap failover for liquidations + autonomous HF-
+watcher keeper), **Phase 7b.1** (3-V3-clone OR-logic for oracle-layer
+liquidity classification), and a UI-polish fix for the diagnostics
+drawer.
+
 ## Phase 8a — UX polish: ENS, liq-price calculator, HF alerts, revoke surface
 
 **ENS / Basenames handle resolution.** Anywhere the app shows a wallet
@@ -242,6 +250,128 @@ allowed caller.
   rate-limit feature configured via the dashboard, layered on top of
   the existing CORS gate. Not yet wired.
 
+## Phase 7b — multi-venue liquidity classification (oracle-layer redundancy)
+
+**Background.** Vaipakam's `OracleFacet.checkLiquidity` decides whether
+an asset is "liquid" — meaning it has a price feed plus enough on-chain
+depth that the protocol is willing to value it as collateral and route
+its liquidations through a DEX. Pre-Phase-7b, this check ran exclusively
+against a single Uniswap V3 pool at the 0.3% fee tier. One outage,
+one drained pool, or one missing UniV3 deployment (BNB Chain, Polygon
+zkEVM) was enough to flip every asset on that chain to "illiquid",
+blocking new collateralized loans entirely. Phase 7a addressed the
+liquidation-routing redundancy; Phase 7b is the corresponding fix at
+the loan-classification layer.
+
+### Phase 7b.1 — three-venue OR-logic, zero per-asset config
+
+**The realisation that drove the design**: Uniswap V3, **PancakeSwap V3**,
+and **SushiSwap V3** are all forks of the same Uniswap V3 codebase at
+the contract layer. They expose the identical `getPool(token0, token1,
+fee)` factory lookup and the identical `slot0()` / `liquidity()` pool
+views. The exact same depth-probe code runs against any of the three —
+just point it at a different factory address. Adding the two clones to
+the on-chain liquidity check requires **zero per-asset governance
+configuration**: pool discovery still happens automatically via the
+factory, the same way it does today for Uniswap V3.
+
+**Decision rule**: an asset is now classified Liquid iff its price
+feed is fresh AND **at least one** of the three V3-clone factories
+exposes an asset/WETH pool meeting the `MIN_LIQUIDITY_USD` depth floor.
+Any single venue going offline (factory paused, pool drained, BNB
+Chain having no UniV3 deployment) doesn't matter as long as one other
+clone still meets the floor.
+
+**Per-chain coverage matrix** (which V3 forks we'll register on
+each chain at deploy time):
+
+| Chain | Uniswap V3 | PancakeSwap V3 | SushiSwap V3 |
+|---|---|---|---|
+| Ethereum | ✓ | ✓ | ✓ |
+| Base | ✓ | ✓ | (V2 only) |
+| Arbitrum | ✓ | ✓ | ✓ |
+| Optimism | ✓ | (limited) | ✓ |
+| Polygon zkEVM | ✗ | ✓ | ✓ |
+| BNB Chain | ✗ | ✓ | ✓ |
+
+The two chains where Uniswap V3 isn't deployed (BNB Chain and Polygon
+zkEVM) — previously stuck with no liquidity classification at all —
+now get coverage via PancakeSwap V3 + SushiSwap V3.
+
+**Fee-tier set extended.** Pre-Phase-7b the depth probe only checked
+the 0.3% (3000 bps) tier. PancakeSwap V3 uses a 0.25% (2500 bps) tier
+in place of 0.3%, and several blue-chip pairs live on UniV3's 0.05%
+(500 bps) tier instead. The probe now iterates `[3000, 500, 2500,
+10000, 100]` against every configured factory and returns the first
+non-empty pool — a strictly more permissive change with zero
+backward-compatibility risk (every asset that was liquid pre-Phase-7b
+remains liquid).
+
+**Governance footprint.** Two new admin functions:
+- `setPancakeswapV3Factory(address)` — chain-specific PancakeV3 factory.
+- `setSushiswapV3Factory(address)` — chain-specific SushiV3 factory.
+
+Setting either to zero disables that leg of the OR-combine; the check
+collapses to whichever factories are configured. **No per-asset
+mapping anywhere** — pool discovery is on-chain through the factory,
+exactly like today's Uniswap V3 path.
+
+**What was reconsidered and dropped**: an earlier draft considered
+adding **Balancer V2** as the third venue. Research surfaced that
+Balancer V2 has no canonical on-chain `getPoolByTokens(token0, token1)`
+view — pool indexing is off-chain via subgraph, so Balancer's
+on-chain depth probe would have required a per-asset poolId mapping
+in governance storage. That conflicted with the no-per-asset-config
+constraint, and adding PancakeSwap V3 + SushiSwap V3 instead delivers
+strictly better coverage for less ongoing ops effort. The prior
+storage slot for `balancerV2Vault` was removed before any production
+write was made; Balancer integration is deferred to a possible future
+phase that wires an off-chain depth attestation oracle.
+
+**What's queued for Phase 7b follow-up**:
+
+- **Targeted unit-test suite** for the new OR-combine — UniV3-only
+  pass, PancakeV3-only pass, SushiV3-only pass, all-empty fail, mock
+  factories at distinct addresses to confirm short-circuit behaviour.
+- **Frontend 0x-based pre-flight check** at offer create / accept
+  flows. Calls the existing `/quote/0x` Cloudflare Worker route to
+  confirm a $1M-equivalent route exists for the (collateral,
+  principal) pair before the wallet popup. Pure UX guard; the
+  on-chain attack surface stays exactly as the V3-clone OR-logic
+  defines it. Anyone calling the diamond directly via Etherscan
+  bypasses the preflight, exactly as today's UniV3-only gate works.
+
+### Phase 7b.2 — price-feed redundancy upgrade (queued)
+
+The same redundancy pattern, applied to price feeds (where the threat
+profile is **price manipulation** rather than venue outage, so the
+combine semantics flip from OR to "2-of-3 within deviation tolerance"):
+
+- **Required #1**: Chainlink Feed Registry (already live).
+- **Required #2**: **Tellor** with on-chain-derivable `queryId`
+  (`keccak256(abi.encode("SpotPrice", abi.encode(asset, "usd")))`).
+  Decentralised oracle, dispute-resolved data, no per-asset
+  governance mapping needed because the queryId is computed from the
+  asset address.
+- **Optional**: Pyth (already integrated, currently used as the
+  cross-validation oracle). Stays as the third source.
+
+The on-chain price view will accept any 2-of-3 sources whose values
+fall within a configurable deviation band; outliers get flagged but
+don't block valuation. This further hardens the liquidation /
+loan-init paths against single-oracle compromise. Other research
+options (API3, DIA, Umbrella Network, UMA) were evaluated and
+rejected: API3 needs per-asset symbol mapping, DIA needs per-asset
+string keys, Umbrella has limited chain coverage, UMA's optimistic
+delay (hours-long dispute window) is incompatible with spot-price
+freshness requirements.
+
+**Status at end-of-day 2026-04-25**: contract scaffolding for 7b.1
+landed and regression-clean (1361 passing / 0 failed in the
+no-invariants subset, identical to the pre-Phase-7b baseline). 7b.1.c
+test additions, 7b.1 frontend pre-flight, and 7b.2 Tellor integration
+all queued.
+
 ## UI polish
 
 **Diagnostics drawer — horizontal scrollbar removed.** The "Diagnostics"
@@ -279,15 +409,25 @@ chrome went away.
   `KEEPER_ENABLED=true` and `KEEPER_PRIVATE_KEY` are populated in
   the Worker secret store). Full regression: 1406 passing / 0 failed
   / 5 skipped. Worker + frontend TypeScript both clean.
-- **Phase 7b** (3-venue liquidity OR-logic at oracle layer): not
-  started, untouched by today's Phase 7a swap-execution work.
+- **Phase 7b** (multi-venue liquidity classification at the oracle
+  layer): contract layer landed today. Pivoted from the originally-
+  scoped UniV3 + Balancer V2 OR (which would have required a per-
+  asset Balancer poolId mapping in governance storage) to a 3-V3-clone
+  OR — Uniswap V3 + PancakeSwap V3 + SushiSwap V3, all of them
+  Uniswap V3 forks at the contract layer. Fee-tier set extended to
+  cover PancakeV3's 2500 bps tier in addition to UniV3's standard
+  set. Zero per-asset governance configuration required. Regression
+  clean (1361 passing / 0 failed in the no-invariants subset).
+  Targeted unit tests for the new OR-combine, the 0x-based frontend
+  pre-flight UX guard, and the Phase 7b.2 Tellor-as-third-price-
+  source upgrade are all queued.
 - **Phase 9** (growth sprint — points, leaderboards, Frames, PWA):
   queued, not started.
 
-**Mainnet deployment**: deferred. With Phase 7a, 7b, and 9 still in
-flight, there is no near-term cutover; the focus stays on landing the
-remaining contract-layer changes in any order, then a single combined
-deployment.
+**Mainnet deployment**: deferred. With Phase 7b follow-ups (tests +
+frontend pre-flight + Tellor) and Phase 9 still in flight, there is
+no near-term cutover; the focus stays on landing the remaining
+changes in any order, then a single combined deployment.
 
 ## Documentation convention
 

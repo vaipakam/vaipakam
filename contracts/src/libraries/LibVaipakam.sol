@@ -1403,6 +1403,26 @@ library LibVaipakam {
         ///      that routes liquidations must populate this array
         ///      before the first loan settles.
         address[] swapAdapters;
+
+        // ─── Phase 7b: multi-venue oracle liquidity check ───────────────
+        /// @dev PancakeSwap V3 factory address on this chain. PancakeV3
+        ///      is a Uniswap V3 fork — same `IUniswapV3Factory.getPool`
+        ///      lookup, same `slot0()` / `liquidity()` pool views — so
+        ///      the depth probe in {OracleFacet} can target it via the
+        ///      identical helper used for UniswapV3. Governance sets
+        ///      per-chain; null collapses the OR-combine to whichever
+        ///      other factories are configured. PancakeV3's fee-tier
+        ///      set differs slightly from UniV3 (uses 2500 in place of
+        ///      3000) so the on-chain probe iterates a superset that
+        ///      covers every clone.
+        address pancakeswapV3Factory;
+
+        /// @dev SushiSwap V3 factory address on this chain. Also a
+        ///      Uniswap V3 fork; same probe semantics as PancakeV3.
+        ///      Together with `uniswapV3Factory` and
+        ///      `pancakeswapV3Factory`, gives the liquidity check 1-of-3
+        ///      OR-redundancy without any per-asset governance config.
+        address sushiswapV3Factory;
     }
 
     uint256 internal constant MAX_APPROVED_KEEPERS = 5;

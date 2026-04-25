@@ -235,6 +235,59 @@ contract AdminFacet is DiamondAccessControl, IVaipakamErrors {
         return LibVaipakam.storageSlot().swapAdapters;
     }
 
+    // ─── Phase 7b: multi-venue liquidity check (3-V3-clone OR-logic) ──
+    //
+    // UniswapV3, PancakeSwap V3, and SushiSwap V3 are all Uniswap V3
+    // forks at the contract layer — same `getPool(token0, token1, fee)`
+    // factory lookup, same `slot0()` / `liquidity()` pool views. The
+    // OracleFacet liquidity probe runs the SAME depth-probe helper
+    // against each registered factory and OR-combines: an asset is
+    // classified Liquid iff at least one factory exposes a pool with
+    // sufficient depth. Zero per-asset governance config — pool
+    // discovery is on-chain via the factory.
+    //
+    // Setting a factory address to zero disables that leg; the OR-
+    // combine collapses to whichever other factories are configured.
+    // BNB Chain and Polygon zkEVM (no UniV3 deployment) rely on
+    // PancakeV3 + SushiV3 instead.
+
+    /// @notice Emitted when the PancakeSwap V3 factory address is updated.
+    event PancakeswapV3FactorySet(address indexed previous, address indexed current);
+    /// @notice Emitted when the SushiSwap V3 factory address is updated.
+    event SushiswapV3FactorySet(address indexed previous, address indexed current);
+
+    /// @notice Set the chain's PancakeSwap V3 factory address.
+    /// @dev ADMIN_ROLE-only. Pass `address(0)` to disable PancakeV3's
+    ///      leg of the liquidity OR-logic.
+    function setPancakeswapV3Factory(address newFactory) external onlyRole(LibAccessControl.ADMIN_ROLE) {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        address prev = s.pancakeswapV3Factory;
+        s.pancakeswapV3Factory = newFactory;
+        emit PancakeswapV3FactorySet(prev, newFactory);
+    }
+
+    /// @notice Read the PancakeSwap V3 factory address. Zero disables
+    ///         PancakeV3's leg of the liquidity OR-logic.
+    function getPancakeswapV3Factory() external view returns (address) {
+        return LibVaipakam.storageSlot().pancakeswapV3Factory;
+    }
+
+    /// @notice Set the chain's SushiSwap V3 factory address.
+    /// @dev ADMIN_ROLE-only. Pass `address(0)` to disable SushiV3's
+    ///      leg of the liquidity OR-logic.
+    function setSushiswapV3Factory(address newFactory) external onlyRole(LibAccessControl.ADMIN_ROLE) {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        address prev = s.sushiswapV3Factory;
+        s.sushiswapV3Factory = newFactory;
+        emit SushiswapV3FactorySet(prev, newFactory);
+    }
+
+    /// @notice Read the SushiSwap V3 factory address. Zero disables
+    ///         SushiV3's leg of the liquidity OR-logic.
+    function getSushiswapV3Factory() external view returns (address) {
+        return LibVaipakam.storageSlot().sushiswapV3Factory;
+    }
+
     /// @notice Returns the current protocol treasury address.
     /// @return treasury The configured treasury address (zero if unset).
     function getTreasury() external view returns (address treasury) {

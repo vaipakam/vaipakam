@@ -79,6 +79,20 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
     // mock on a testnet.
     uint24 private constant UNIV3_FEE_TIER = 3000;
 
+    // Phase 7b — fee tiers iterated by `_lookupPool` against any
+    // V3-clone factory. Includes UniswapV3's standard set (100, 500,
+    // 3000, 10000) plus PancakeV3's 2500 tier. The probe returns the
+    // first non-zero pool address; an asset whose pool exists at any
+    // one of these tiers gets classified. Order is by deployment
+    // popularity so the lookup short-circuits on the most likely tier
+    // first. Hardcoded as separate constants because Solidity's
+    // `constant` keyword does not support fixed-size storage arrays.
+    uint24 private constant V3_TIER_LOW       = 100;
+    uint24 private constant V3_TIER_LOW_MID   = 500;
+    uint24 private constant V3_TIER_PANCAKE   = 2500;
+    uint24 private constant V3_TIER_STANDARD  = 3000;
+    uint24 private constant V3_TIER_HIGH      = 10000;
+
     /**
      * @notice Classification entry point for "is this asset liquid on the
      *         active network?" used at transaction-authorization boundaries.
@@ -125,51 +139,84 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
         }
 
         // Every other asset must have a fresh asset/USD OR asset/ETH
-        // price feed (the same hybrid chain getAssetPrice uses), AND a
-        // v3-style AMM asset/WETH 0.3% pool with ≥ MIN_LIQUIDITY_USD
-        // worth of depth converted via ETH/USD.
+        // price feed (the same hybrid chain `getAssetPrice` uses), AND
+        // sufficient on-chain depth on AT LEAST ONE of the configured
+        // V3-style venues (Phase 7b: UniswapV3 OR PancakeSwap V3 OR
+        // SushiSwap V3 — all UniV3 forks at the contract layer, same
+        // probe semantics, different factory addresses). A single
+        // venue's outage / pool drainage / censorship cannot flip the
+        // asset to Illiquid as long as one other clone still meets
+        // the floor. Zero per-asset governance config — pool
+        // discovery is on-chain via `factory.getPool`.
         (bool priceOk, , ) = _tryGetAssetPriceView(asset);
         if (!priceOk) return LibVaipakam.LiquidityStatus.Illiquid;
 
-        address factory = s.uniswapV3Factory;
-        if (factory == address(0)) return LibVaipakam.LiquidityStatus.Illiquid;
+        // Read ETH/USD once; every venue probe needs it for the
+        // depth→USD conversion.
+        (bool ethOk, uint256 ethPrice, uint8 ethDec) = _readFreshUsdFeed(ethFeed, false);
+        if (!ethOk) return LibVaipakam.LiquidityStatus.Illiquid;
+
+        if (_v3DepthLiquid(s.uniswapV3Factory, asset, weth, ethPrice, ethDec)) {
+            return LibVaipakam.LiquidityStatus.Liquid;
+        }
+        if (_v3DepthLiquid(s.pancakeswapV3Factory, asset, weth, ethPrice, ethDec)) {
+            return LibVaipakam.LiquidityStatus.Liquid;
+        }
+        if (_v3DepthLiquid(s.sushiswapV3Factory, asset, weth, ethPrice, ethDec)) {
+            return LibVaipakam.LiquidityStatus.Liquid;
+        }
+        return LibVaipakam.LiquidityStatus.Illiquid;
+    }
+
+    /// @dev V3-style depth probe — the same code path applied against
+    ///      any UniswapV3-fork factory address (UniswapV3 itself,
+    ///      PancakeSwap V3, SushiSwap V3, or any other ABI-compatible
+    ///      mock). Returns true iff `factory` exposes an asset/WETH
+    ///      pool whose `liquidity()` value, multiplied by the spot
+    ///      ETH/USD price, meets {LibVaipakam.MIN_LIQUIDITY_USD}.
+    ///      Pool selection iterates the standard fee tiers + 2500
+    ///      (PancakeV3) via {_lookupPool}.
+    ///
+    ///      A zero `factory` short-circuits to false so the parent
+    ///      OR-combine in {_checkLiquidity} can transparently skip
+    ///      whichever V3-clone isn't deployed on this chain.
+    function _v3DepthLiquid(
+        address factory,
+        address asset,
+        address weth,
+        uint256 ethPrice,
+        uint8 ethDec
+    ) private view returns (bool) {
+        if (factory == address(0)) return false;
 
         address pool = _lookupPool(factory, asset, weth);
-        if (pool == address(0) || pool.code.length == 0) {
-            return LibVaipakam.LiquidityStatus.Illiquid;
-        }
+        if (pool == address(0) || pool.code.length == 0) return false;
 
-        // slot0() returns 7 fields (uint160, int24, uint16, uint16, uint16,
-        // uint8, bool) — a 224-byte ABI encoding. Guard the length before
-        // decoding so a staticcall against a non-pool (returns empty bytes
-        // with ok=true on an EOA) can't revert the whole liquidity view.
+        // slot0() returns 7 fields (uint160, int24, uint16, uint16,
+        // uint16, uint8, bool) — a 224-byte ABI encoding. Guard the
+        // length before decoding so a staticcall against a non-pool
+        // (returns empty bytes with ok=true on an EOA) can't revert
+        // the whole liquidity view.
         (bool slotOk, bytes memory slotData) = pool.staticcall(
             abi.encodeWithSignature("slot0()")
         );
-        if (!slotOk || slotData.length < 224) return LibVaipakam.LiquidityStatus.Illiquid;
+        if (!slotOk || slotData.length < 224) return false;
         (uint160 sqrtPriceX96, , , , , , ) = abi.decode(
             slotData,
             (uint160, int24, uint16, uint16, uint16, uint8, bool)
         );
-        if (sqrtPriceX96 == 0) return LibVaipakam.LiquidityStatus.Illiquid;
+        if (sqrtPriceX96 == 0) return false;
 
         (bool liqOk, bytes memory liqData) = pool.staticcall(
             abi.encodeWithSignature("liquidity()")
         );
-        if (!liqOk || liqData.length < 32) return LibVaipakam.LiquidityStatus.Illiquid;
+        if (!liqOk || liqData.length < 32) return false;
         uint128 poolLiquidity = abi.decode(liqData, (uint128));
 
-        // Read ETH/USD for the depth→USD conversion. Must pass the
-        // 2h volatile freshness test (ETH is volatile, not stable).
-        (bool ethOk, uint256 ethPrice, uint8 ethDec) = _readFreshUsdFeed(ethFeed, false);
-        if (!ethOk) return LibVaipakam.LiquidityStatus.Illiquid;
-
         uint256 approxUsdLiquidity = (uint256(poolLiquidity) * ethPrice) / (10 ** ethDec);
-        if (approxUsdLiquidity < LibVaipakam.MIN_LIQUIDITY_USD) {
-            return LibVaipakam.LiquidityStatus.Illiquid;
-        }
-        return LibVaipakam.LiquidityStatus.Liquid;
+        return approxUsdLiquidity >= LibVaipakam.MIN_LIQUIDITY_USD;
     }
+
 
     /**
      * @notice Calculates the Loan-to-Value (LTV) ratio for a loan in basis points.
@@ -411,21 +458,49 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
 
     // ─── Internal helpers ────────────────────────────────────────────────
 
-    /// @dev Resolve the 0.3% v3-style AMM pool for the (a,b) pair by calling
-    ///      `factory.getPool(token0, token1, fee)`. Works against the
-    ///      canonical v3-style AMM factory and any ABI-compatible mock; fails
-    ///      closed (returns `address(0)`) on call failure or malformed
-    ///      return data. Replaces the prior CREATE2-derivation approach,
-    ///      which was tied to the v3 pool init-code hash and could not
-    ///      be mocked without reproducing that hash.
+    /// @dev Resolve a v3-style AMM pool for the (a,b) pair by calling
+    ///      `factory.getPool(token0, token1, fee)` against every
+    ///      configured fee tier and returning the first non-zero
+    ///      result. Works against the canonical UniswapV3 factory,
+    ///      PancakeSwap V3 factory, SushiSwap V3 factory, and any
+    ///      ABI-compatible mock. Fails closed (returns `address(0)`)
+    ///      on every-tier-empty / call failure / malformed return.
+    ///
+    ///      Phase 7b — extended from a single 0.3% probe to iterate
+    ///      [3000, 500, 2500, 10000, 100] so PancakeV3 (whose mid
+    ///      tier is 2500 instead of 3000) classifies on the same
+    ///      probe path. The tier array is hardcoded as five separate
+    ///      `staticcall`s — a small bytecode cost in exchange for
+    ///      avoiding a fixed-size constant array (which Solidity's
+    ///      `constant` keyword does not support).
     function _lookupPool(address factory, address a, address b) private view returns (address pool) {
         (address token0, address token1) = a < b ? (a, b) : (b, a);
+        pool = _tryGetPool(factory, token0, token1, V3_TIER_STANDARD);
+        if (pool != address(0)) return pool;
+        pool = _tryGetPool(factory, token0, token1, V3_TIER_LOW_MID);
+        if (pool != address(0)) return pool;
+        pool = _tryGetPool(factory, token0, token1, V3_TIER_PANCAKE);
+        if (pool != address(0)) return pool;
+        pool = _tryGetPool(factory, token0, token1, V3_TIER_HIGH);
+        if (pool != address(0)) return pool;
+        pool = _tryGetPool(factory, token0, token1, V3_TIER_LOW);
+        return pool;
+    }
+
+    /// @dev Single-tier probe — extracted so the parent loop reads
+    ///      cleanly. Returns `address(0)` on any failure mode.
+    function _tryGetPool(
+        address factory,
+        address token0,
+        address token1,
+        uint24 fee
+    ) private view returns (address) {
         (bool ok, bytes memory data) = factory.staticcall(
             abi.encodeWithSignature(
                 "getPool(address,address,uint24)",
                 token0,
                 token1,
-                UNIV3_FEE_TIER
+                fee
             )
         );
         if (!ok || data.length < 32) return address(0);

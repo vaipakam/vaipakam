@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { parseAbi, type Abi, type Address, type Hex, encodeFunctionData } from "viem";
+import { parseAbi, parseUnits, type Abi, type Address, type Hex, encodeFunctionData } from "viem";
 import { usePublicClient, useWalletClient } from "wagmi";
 import { useWallet } from "../context/WalletContext";
 import { useMode } from "../context/ModeContext";
@@ -25,6 +25,8 @@ import { ErrorAlert } from "../components/app/ErrorAlert";
 import { SanctionsBanner } from "../components/app/SanctionsBanner";
 import { RiskDisclosures } from "../components/app/RiskDisclosures";
 import { SimulationPreview } from "../components/app/SimulationPreview";
+import { LiquidityPreflightBanner } from "../components/app/LiquidityPreflightBanner";
+import { useLiquidityPreflight } from "../hooks/useLiquidityPreflight";
 import { usePermit2Signing } from "../hooks/usePermit2Signing";
 import { DIAMOND_ABI_VIEM as DIAMOND_ABI } from "../contracts/abis";
 import { Link } from "react-router-dom";
@@ -928,6 +930,24 @@ export default function CreateOffer() {
           </div>
         )}
 
+        {/* Phase 7b.1 — 0x liquidity preflight. UX-only guard that
+            checks 0x can route the user's collateral → principal pair
+            at acceptable slippage BEFORE they commit. The on-chain
+            `OracleFacet.checkLiquidity` 3-V3-clone OR-logic is the
+            actual security boundary; this banner exists so a user
+            doesn't sign a tx that would leave them with a hard-to-
+            liquidate loan. Skipped automatically for NFT rentals and
+            non-ERC20 collateral. */}
+        <CreateOfferLiquidityPreflight
+          form={form}
+          chainId={chainId}
+          diamondAddr={
+            ((activeChain && isCorrectChain
+              ? activeChain.diamondAddress
+              : null) ?? DEFAULT_CHAIN.diamondAddress) as Address
+          }
+        />
+
         {/* Phase 8b.2 — Blockaid preview of the pending createOffer
             tx. Encodes the current form state into calldata so the
             user sees exactly what their approval + create will move
@@ -1061,4 +1081,55 @@ function CreateOfferSimulationPreview({
   return (
     <SimulationPreview tx={data ? { to: diamondAddr, data, value: 0n } : null} />
   );
+}
+
+const PREFLIGHT_WORKER_ORIGIN =
+  (import.meta as unknown as { env: Record<string, string | undefined> }).env
+    .VITE_HF_WATCHER_ORIGIN ?? null;
+
+/**
+ * Phase 7b.1 — wraps {useLiquidityPreflight} for CreateOffer's form
+ * shape. Translates the form state into the hook's input contract
+ * (ERC20 collateral + ERC20 principal + bigint amount), then renders
+ * the {LiquidityPreflightBanner}. Skipped automatically for NFT
+ * rentals and non-ERC20 collateral via the hook's enabled gate.
+ *
+ * Decimals approximation: we don't await an on-chain decimals() read
+ * here for snappy form feedback. A 6-decimal collateral (USDC, USDT)
+ * gets queried at 1e12× the user's intended size, which 0x will
+ * usually classify as "no route" — a false-negative banner. The
+ * banner is informational; submission is never blocked. The actual
+ * createOffer + acceptOffer flows compute decimals via on-chain
+ * calls. A future iteration can read decimals here too.
+ */
+function CreateOfferLiquidityPreflight({
+  form,
+  chainId,
+  diamondAddr,
+}: {
+  form: OfferFormState;
+  chainId: number | undefined | null;
+  diamondAddr: Address;
+}) {
+  let amount: bigint = 0n;
+  if (form.assetType === "erc20" && form.collateralAssetType === "erc20") {
+    try {
+      amount = parseUnits(form.collateralAmount || "0", 18);
+    } catch {
+      amount = 0n;
+    }
+  }
+  const result = useLiquidityPreflight({
+    collateralAsset: (form.collateralAsset || null) as Address | null,
+    principalAsset:
+      form.assetType === "erc20"
+        ? ((form.lendingAsset || null) as Address | null)
+        : null,
+    collateralAmount: amount,
+    collateralAssetType: form.collateralAssetType,
+    chainId,
+    diamond: diamondAddr,
+    workerOrigin: PREFLIGHT_WORKER_ORIGIN,
+  });
+  return <LiquidityPreflightBanner result={result} compact />;
 }

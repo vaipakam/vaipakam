@@ -2,6 +2,8 @@ import { useEffect, useMemo, useState, useCallback, useRef } from 'react';
 import type { Address, Hex } from 'viem';
 import { encodeFunctionData } from 'viem';
 import { SimulationPreview } from '../components/app/SimulationPreview';
+import { LiquidityPreflightBanner } from '../components/app/LiquidityPreflightBanner';
+import { useLiquidityPreflight } from '../hooks/useLiquidityPreflight';
 import { usePermit2Signing } from '../hooks/usePermit2Signing';
 import { useWallet } from '../context/WalletContext';
 import { useDiamondContract, useDiamondRead, useDiamondPublicClient, useReadChain } from '../contracts/useDiamond';
@@ -1212,6 +1214,13 @@ function AcceptReviewModal({ offer, illiquid, consent, onConsentChange, submitti
 
         <RiskDisclosures />
 
+        {/* Phase 7b.1 — UX guard: 0x preflight against the
+            collateral → principal pair at the actual offer size.
+            Banner only renders for ERC-20 collateral with non-zero
+            collateralAmount; NFT-rental and ERC-1155 collateral
+            offers skip the check (no DEX swap path applies). */}
+        <AcceptLiquidityPreflight offer={offer} />
+
         {/* Phase 8b.2 — Blockaid preview. Uses the simulation of a
             classic acceptOffer(offerId, true) call since that's what
             the confirmation flow submits today. When the Permit2 UX
@@ -1270,6 +1279,42 @@ function AcceptSimulationPreview({ offerId }: { offerId: bigint }) {
       tx={{ to: diamondAddress, data, value: 0n }}
     />
   );
+}
+
+const PREFLIGHT_WORKER_ORIGIN_OB =
+  (import.meta as unknown as { env: Record<string, string | undefined> }).env
+    .VITE_HF_WATCHER_ORIGIN ?? null;
+
+/**
+ * Phase 7b.1 — wraps {useLiquidityPreflight} for OfferBook's accept
+ * review modal. Gated on `offer.assetType === 0` (ERC-20 principal,
+ * which in practice always pairs with ERC-20 collateral on the
+ * happy path) and a non-zero `collateralAmount`. Skipped offers
+ * silently render nothing — the rest of the modal layout is
+ * unaffected.
+ *
+ * `collateralAssetType` isn't surfaced on the local `OfferData`
+ * shape; ERC-20-loans-with-NFT-collateral offers therefore get a
+ * false-negative banner here (the hook will see the NFT contract
+ * address, 0x will return no route, banner says "no route"). Banner
+ * is informational, never blocks submit, so the false negative is
+ * acceptable for v1. Future: thread `collateralAssetType` through
+ * the offer cache and pass it explicitly.
+ */
+function AcceptLiquidityPreflight({ offer }: { offer: OfferData }) {
+  const chain = useReadChain();
+  const diamondAddress = (chain.diamondAddress ?? DEFAULT_CHAIN.diamondAddress) as Address;
+  const enabled = offer.assetType === 0 && offer.collateralAmount > 0n;
+  const result = useLiquidityPreflight({
+    collateralAsset: enabled ? (offer.collateralAsset as Address) : null,
+    principalAsset: enabled ? (offer.lendingAsset as Address) : null,
+    collateralAmount: enabled ? offer.collateralAmount : 0n,
+    collateralAssetType: enabled ? 'erc20' : undefined,
+    chainId: chain.chainId,
+    diamond: diamondAddress,
+    workerOrigin: PREFLIGHT_WORKER_ORIGIN_OB,
+  });
+  return <LiquidityPreflightBanner result={result} compact />;
 }
 
 function Pagination({ page, totalPages, onPage }: PaginationProps) {
