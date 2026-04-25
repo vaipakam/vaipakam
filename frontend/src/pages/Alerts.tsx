@@ -387,13 +387,13 @@ export default function Alerts() {
             On-chain notification channel delivered to Push-enabled wallets
             (Rabby, Push Wallet, MetaMask with Push Snap). Once enabled here,
             you'll also need to subscribe to the Vaipakam channel from your
-            wallet — see{" "}
+            wallet — see the{" "}
             <a
-              href="https://push.org/docs/notifications/build/subscribe-to-channel"
+              href="https://comms.push.org/docs/notifications/"
               target="_blank"
               rel="noreferrer"
             >
-              docs
+              Push Notifications docs
             </a>
             .
           </p>
