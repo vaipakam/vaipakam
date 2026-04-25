@@ -41,7 +41,7 @@ This creates strong on-chain utility for VPFI, simplifies early acquisition, and
 1. Borrower opens a dedicated `Buy VPFI` page from their preferred supported chain.
 2. Borrower sends ETH to the protocol to buy VPFI at the fixed rate.
 3. The purchased VPFI is delivered to the borrower's wallet on that same preferred chain.
-4. The borrower explicitly transfers or deposits VPFI from wallet to personal escrow on that chain, with the system guiding and facilitating that action.
+4. The borrower explicitly transfers or deposits VPFI from wallet to personal escrow on that chain, with the system guiding and facilitating that action. Where supported, the escrow deposit may use Uniswap Permit2 so the user signs once and the deposit executes in a single transaction; wallets that do not support the Permit2 path must fall back to the classic approve-plus-deposit flow.
 5. Borrower creates or accepts a loan offer.
 6. At the moment of loan acceptance:
    - the system first checks whether the lending asset is marked as liquid
@@ -55,6 +55,7 @@ This creates strong on-chain utility for VPFI, simplifies early acquisition, and
 - Add logic to allow users to buy VPFI with ETH at the fixed rate from their preferred supported chain.
 - Ensure the fixed-rate purchase delivers VPFI to the buyer's wallet on the same chain where the user chose to buy, not directly into escrow.
 - If the implementation routes the purchase through canonical-chain liquidity, treasury, or OFT infrastructure, the user-facing flow should still remain a preferred-chain purchase flow rather than a manual chain-switch flow.
+- Support a Permit2-assisted `depositVPFIToEscrowWithPermit` style path alongside the classic escrow-deposit path. The Permit2 route should validate the VPFI asset, amount, deadline, and recipient scope before pulling tokens, and the classic approve-plus-deposit path must remain available.
 - Add global and per-wallet limits on the fixed-rate purchase to prevent abuse.
   - Required initial values under the current tokenomics model:
     - total cap of `2,300,000 VPFI`
@@ -141,6 +142,8 @@ This creates strong on-chain utility for VPFI, simplifies early acquisition, and
 - Surface the shared platform-level fee-discount consent control in the connected app `Dashboard`, so users can enable or disable escrowed-VPFI fee usage independently of the purchase flow.
 - Add clear entry points from the `Create Offer` and `Loan Details` pages to this dedicated purchase page.
 - Show the exact amount of ETH required and the resulting VPFI that will be purchased.
+- For the wallet-to-escrow deposit step, prefer the Permit2 single-signature path when available and fall back cleanly to classic token approval when unavailable.
+- Transaction review for buying VPFI, depositing VPFI to escrow, and accepting a loan through the VPFI path should include the standard transaction-preview surface where available, while failing soft if the preview service is unreachable.
 - Display the borrower's current VPFI balance in escrow, the active discount tier implied by that balance, and whether they qualify for a discount, only for liquid assets.
 - Explain clearly that escrow-held VPFI also counts as staked under the unified escrow-staking model.
 - Provide user-friendly messaging explaining the fixed rate, the bridge step, the escrow-funding step, the tiered discount table, that a single platform-level VPFI-discount consent setting governs fee-discount usage, that this setting is managed from `Dashboard`, and that the VPFI path results in full lending-asset delivery to the borrower, full up-front VPFI LIF custody, and a time-weighted VPFI rebate on proper close.

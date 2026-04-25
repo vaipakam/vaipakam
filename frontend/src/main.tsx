@@ -27,6 +27,21 @@ if (!walletConnectAvailable) {
   )
 }
 
+// Phase 9 PWA — register the service worker so iOS / Android users can
+// install Vaipakam to their home screen with a real standalone shell.
+// Worker file at /sw.js handles app-shell stale-while-revalidate caching;
+// dynamic data (RPC, subgraph, /quote/* worker) bypasses the SW so chain
+// state stays fresh. Skipped in dev (Vite HMR + SW conflict) and on
+// browsers without serviceWorker support.
+if ('serviceWorker' in navigator && import.meta.env.PROD) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('/sw.js').catch((err) => {
+      // eslint-disable-next-line no-console
+      console.warn('[vaipakam] Service worker registration failed:', err)
+    })
+  })
+}
+
 // Single QueryClient for the whole app — wagmi v2 uses React Query for
 // connection state, balance polling, contract-read caching. Keeping one
 // instance module-scoped so HMR hot-reloads don't discard the cache.

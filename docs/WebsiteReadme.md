@@ -91,6 +91,28 @@ This section will later define:
 - liquidation and warning states
 - preclose, refinance, and lender early-withdrawal flows
 
+Transaction-safety and single-signature flows:
+
+- review modals for Offer Book accept, Create Offer submit, Repay, and Add Collateral should support the Permit2-first pattern where the action uses Uniswap Permit2 when possible and falls back to the classic approve-plus-action path when Permit2 is unavailable or unsupported
+- Permit2 should be presented as a convenience that reduces wallet popups for supported ERC-20 actions, not as a requirement to use Vaipakam
+- Permit signatures should have short expiries and clear review copy so users understand the asset and amount being authorized
+- before the final confirmation on supported review modals, the app should show a transaction preview panel backed by the server-side Blockaid proxy when available
+- the transaction preview panel should distinguish benign previews, warnings, malicious classifications, and preview-unavailable states with clear severity styling
+- Blockaid unavailability must fail soft: it may collapse to a subtle preview-unavailable state, but it must not block the on-chain transaction path by itself
+- API keys for transaction scanning and swap quotes must stay server-side; the browser should call only worker-internal proxy routes
+- review modals should continue to treat the wallet transaction and smart contract call as the source of truth; scanner output is informational safety context
+
+Liquidation quote orchestration:
+
+- Loan Details should show a `Liquidate` action for active loans with on-chain Health Factor below `1.0`
+- liquidation review should quote available routes in parallel across 0x, 1inch, Uniswap V3, and Balancer V2 where configured
+- 0x and 1inch quote requests should go through Cloudflare Worker proxy routes so operator API keys are injected server-side and never ship to the browser
+- Uniswap V3 quotes may use direct on-chain quote reads across supported fee tiers
+- Balancer V2 quotes may use a configured per-chain subgraph URL to find a deep eligible pool and estimate output for route ranking
+- successful quotes should be sorted by expected output, with the best route and fallback order shown before the user submits liquidation
+- if one quote source is unavailable, the UI should still submit a ranked try-list from the remaining sources where possible
+- the quote-proxy routes should use per-upstream rate limits, such as separate 0x and 1inch per-IP budgets, so one upstream cannot exhaust the other
+
 Borrower VPFI discount UX:
 
 - `Buy VPFI` must be a public / homepage-visible flow, not something hidden only inside the connected app
@@ -121,6 +143,7 @@ Borrower VPFI discount UX:
 - the Offer Book accept-review modal should explain the up-front VPFI payment plus time-weighted rebate model before the user accepts a loan through the VPFI path
 - borrower-facing shortcut copy may say `earn up to a 24% VPFI rebate`, but should not describe the up-front fee itself as reduced
 - the Claim Center should show a visible VPFI rebate line when a borrower claim includes a pending rebate
+- VPFI escrow deposit from the `Buy VPFI` page or related app surfaces may use Permit2 when supported, with fallback to the classic approve-plus-deposit flow
 
 Reward-claiming UX:
 
@@ -336,6 +359,12 @@ The website/app should clearly communicate:
 - when historical indexed data is available for a burned NFT, the verifier should additionally show the related loan ID, whether that NFT represented the lender or borrower side, the final loan status, principal, collateral, interest rate, and duration
 - when the token ID was never minted on the selected chain, the verifier should show a clear chain-specific error explaining that the token does not exist on that chain and the user may need to switch to the chain where the position was originally opened
 - active theme and view-mode controls when relevant
+- ENS and Basenames should be resolved for wallet-address display in Activity, Loan Details, Offer Book, and header/profile surfaces; unresolved names should silently fall back to shortened addresses
+- liquid active loan details should show the collateral-asset liquidation price at which HF reaches `1.0`, both as an absolute price and as a percent move from the current oracle price
+- liquidation-price views should be hidden for illiquid loans where no oracle-priced liquidation threshold exists
+- borrowers should be able to subscribe to loan-specific HF alerts with a chosen threshold such as `1.20`
+- HF alert channels should include Telegram and Push Protocol where available; Push sending may be staged behind production channel setup without changing the client workflow
+- Profile should include an Approvals section where users can inspect and revoke ERC-20, ERC-721, and ERC-1155 allowances granted to the Vaipakam Diamond
 - whether the user is in a basic or advanced experience mode
 - asset identity in a user-friendly format: the default visible label should be the asset symbol, while the full contract address should appear only in a hover / focus tooltip or explicit details view
 - implementation note for asset pickers and token selectors: the UI may additionally show a shortened contract address inline next to the symbol/name when that helps users distinguish similarly named assets or verify they selected the intended token; full raw addresses should still be reserved for hover / focus, copy actions, or explicit details views rather than rendered prominently as the primary asset label
@@ -358,7 +387,7 @@ Offer and acceptance risk warnings:
 
 - the create-offer flow and accept-offer flow must use a single combined risk-review block rather than separate abnormal-market and illiquid warning blocks
 - implementation note for the `Offer Book` accept-review modal: the page may additionally show one extra informational illiquid-leg warning above the combined warning-and-consent block when the selected offer contains an illiquid lending asset or collateral asset, so long as that extra warning does not introduce a second consent or a second required acknowledgement
-- the combined warning copy should read in substance: `Abnormal-market & illiquid asset terms. For Liquid Assets, if liquidation cannot execute safely — for example because slippage exceeds the configured max liquidation threshold, liquidity disappears, or the 0x swap reverts — the lender claims the collateral in collateral-asset form instead of receiving the lending asset. If collateral value has fallen below the amount due, the lender receives the full remaining collateral and nothing is left for the borrower. If collateral value is still above the amount due, the lender receives only the equivalent collateral amount and the remainder stays with the borrower after charges. The same fallback applies to loans with illiquid assets (lending asset and / or collateral asset) on default — the lender takes the full collateral in-kind. Proceeding confirms you agree to these terms.`
+- the combined warning copy should read in substance: `Abnormal-market & illiquid asset terms. For Liquid Assets, if liquidation cannot execute safely — for example because slippage exceeds the configured max liquidation threshold, liquidity disappears, or every configured swap route fails — the lender claims the collateral in collateral-asset form instead of receiving the lending asset. If collateral value has fallen below the amount due, the lender receives the full remaining collateral and nothing is left for the borrower. If collateral value is still above the amount due, the lender receives only the equivalent collateral amount and the remainder stays with the borrower after charges. The same fallback applies to loans with illiquid assets (lending asset and / or collateral asset) on default — the lender takes the full collateral in-kind. Proceeding confirms you agree to these terms.`
 - the same risk-review area should require one combined mandatory checkbox / consent action tied to that single message
 - on the create-offer page, these warnings only need to appear clearly on the page before submission; they are not required to be repeated in a separate final-confirmation state
 - on the accept-offer flow, these warnings should still appear in the transaction review or confirmation state before the acceptance transaction is submitted
@@ -538,7 +567,7 @@ Security, privacy, and compliance requirements:
 - where a sanctions oracle is configured on the active chain, Create Offer should pre-flight the connected wallet and the Offer Book accept modal should pre-flight both the connected wallet and offer creator
 - sanctions warnings should explain that Vaipakam does not maintain its own sanctions list and that list disputes must be handled with the oracle/list provider
 - when no sanctions oracle is configured on a chain, sanctions banners should stay silent
-- for Pyth-gated actions, the frontend should be able to run the two-transaction flow: submit the Pyth price update first, then submit the Diamond action from the same wallet
+- frontend oracle safety surfaces should reflect the Chainlink-led secondary quorum model using configured Tellor, API3, and DIA sources; the app should not present Pyth price-update transactions as part of the current pricing path
 
 Required dashboard disclaimer text:
 

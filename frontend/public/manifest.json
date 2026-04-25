@@ -1,5 +1,61 @@
 {
-  "name": "Vaipakam",
+  "name": "Vaipakam — Decentralized P2P Lending & NFT Rentals",
+  "short_name": "Vaipakam",
   "description": "Peer-to-peer lending fully on-chain. Lend and borrow tokens, rent NFTs, set your own terms — every position tracked by a unique NFT.",
-  "iconPath": "logo-light.png"
+  "start_url": "/app",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#0f0f0f",
+  "theme_color": "#4f46e5",
+  "categories": ["finance", "productivity"],
+  "icons": [
+    {
+      "src": "/logo-stacked-dark.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/logo-stacked-dark.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icon-dark.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "maskable"
+    },
+    {
+      "src": "/icon-dark.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Offer Book",
+      "url": "/app/offers",
+      "description": "Browse open lending and borrowing offers"
+    },
+    {
+      "name": "My Loans",
+      "url": "/app/loans",
+      "description": "View your active loans and rentals"
+    },
+    {
+      "name": "Buy VPFI",
+      "url": "/app/buy",
+      "description": "Acquire VPFI for fee discounts"
+    },
+    {
+      "name": "Alerts",
+      "url": "/app/alerts",
+      "description": "Manage Health-Factor alert subscriptions"
+    }
+  ],
+  "prefer_related_applications": false
 }

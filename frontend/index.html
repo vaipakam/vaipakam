@@ -37,9 +37,20 @@
     <script async src="https://www.googletagmanager.com/gtag/js?id=G-KSL61Z65BF"></script>
     <meta charset="UTF-8" />
     <link rel="icon" type="image/png" href="/logo-dark.png" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <title>Vaipakam | Decentralized P2P Lending & NFT Rentals</title>
     <meta name="description" content="Lend and borrow ERC-20 tokens. Rent NFTs. Set your own terms. Trustless, transparent, fully on-chain." />
+    <!-- Phase 9 PWA — manifest + theme + apple-touch icons let mobile
+         users add Vaipakam to their home screen with a proper standalone
+         shell, a branded theme color, and offline-friendly caching from
+         the service worker registered in src/main.tsx. -->
+    <link rel="manifest" href="/manifest.json" />
+    <meta name="theme-color" content="#4f46e5" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Vaipakam" />
+    <link rel="apple-touch-icon" href="/icon-dark.png" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />

@@ -16,7 +16,7 @@ Vaipakam is a decentralized peer-to-peer (P2P) lending and borrowing platform bu
 - [8. Preclosing by Borrower (Early Repayment Options)](#8-preclosing-by-borrower-early-repayment-options)
 - [9. Early Withdrawal by Lender](#9-early-withdrawal-by-lender)
 - [10. Governance and VPFI Token Rollout](#10-governance-and-vpfi-token-rollout)
-- [11. Notifications (Phase 1: SMS/Email)](#11-notifications-phase-1-smsemail)
+- [11. Notifications and Alerts](#11-notifications-and-alerts)
 - [12. User Dashboard](#12-user-dashboard)
 - [13. Technical Details](#13-technical-details)
 - [14. Initial Deployment and Configuration (Phase 1)](#14-initial-deployment-and-configuration-phase-1)
@@ -64,7 +64,7 @@ The platform distinguishes between liquid and illiquid assets, which affects how
 
 - **Liquid Asset Criteria:** For Phase 1, an ERC-20 token is considered "Liquid" on a given network only if:
   1.  It has a usable on-chain price path on the active network: preferably a direct Chainlink `asset/USD` feed, and only if that is unavailable a fallback `asset/ETH × ETH/USD` path.
-  2.  It has sufficient on-chain DEX liquidity on the active network through a v3-style concentrated-liquidity AMM `asset/WETH` `0.3%` pool.
+  2.  It has sufficient on-chain DEX liquidity on the active network through at least one configured v3-style concentrated-liquidity AMM factory for `asset/WETH`. The deploy-time factory set may include Uniswap V3, PancakeSwap V3, and SushiSwap V3, and the check treats those venues with OR logic: one sufficiently deep venue is enough.
   3.  The protocol converts the pool's raw liquidity to USD using the active network's Chainlink `ETH/USD` feed and requires at least the configured minimum depth threshold before the asset is treated as liquid.
   4.  Liquidity must be judged only from the current active network's own oracle and pool availability. Ethereum mainnet must not be consulted as a reference or fallback network for this decision. If the active network fails the liquidity check, the asset is treated as illiquid on that network and the protocol must not perform any additional mainnet verification to override that result.
 - **Illiquid Assets:**
@@ -77,19 +77,19 @@ The platform distinguishes between liquid and illiquid assets, which affects how
   - **Chainlink Price Feeds:** Used to provide real-time pricing for Liquid ERC-20 assets. This is crucial for LTV calculations and liquidation processes for loans with Liquid collateral.
   - **Hybrid Price Retrieval:** For ERC-20 pricing the protocol prefers a direct Chainlink `asset/USD` feed. Only when no direct USD feed exists does it fall back to `asset/ETH × ETH/USD`.
   - **Per-Feed Overrides:** Oracle admins may configure a per-feed staleness budget and minimum-valid-answer floor for critical Chainlink aggregators. A configured override takes precedence over the global freshness defaults and can be cleared by setting the override staleness back to zero.
-  - **Secondary Oracle Deviation Checks:** Where configured, Pyth acts as a second independent price source. The protocol accepts a price only when the primary Chainlink path and the configured Pyth feed agree within the governance-defined deviation bound. Missing, stale, negative, or divergent Pyth data fails closed for that asset.
-  - **Pyth Update Flow:** Because Pyth is a pull oracle, frontend actions that require a Pyth-gated price may first submit a Pyth price-update transaction and then submit the Diamond action from the same wallet in nonce order.
+  - **Secondary Oracle Quorum:** Chainlink remains the primary pricing path. Where configured, Tellor, API3, and DIA act as symbol-derived secondary price sources. The protocol applies a Soft 2-of-N rule: if every secondary is unavailable, Chainlink is accepted; if at least one available secondary agrees with Chainlink within the configured deviation bound, Chainlink is accepted; if one or more secondaries disagree and none agree, pricing reverts for that asset.
+  - **No Per-Asset Secondary Oracle Mapping:** Tellor, API3, and DIA keys are derived from the ERC-20 symbol where possible, avoiding the per-asset price-id configuration that would otherwise be required for Pyth-style integrations.
   - **ETH as Reference Asset:** ETH is the protocol's quote and reference asset for liquidity classification. In practice the DEX sees WETH, so the protocol checks `asset/WETH` pools while using the Chainlink `ETH/USD` feed to convert that depth into USD.
   - **WETH Special Case:** WETH itself is priced directly from `ETH/USD` and is treated as the quote asset for liquidity purposes; the protocol does not perform a circular `WETH/WETH` liquidity check.
   - **Peg-Aware Stable Staleness:** Stable and reference feeds may remain valid out to the protocol's longer stable staleness ceiling only when the reported price remains within tolerance of either the implicit USD `$1` peg or a governance-registered fiat / commodity reference such as `EUR/USD`, `JPY/USD`, or `XAU/USD`.
 - **Liquidity Determination Process & On-Chain Record:**
-  1.  **Frontend Assessment:** The frontend interface should attempt to assess asset liquidity by checking the active network only: a valid price path and the presence of a sufficiently deep v3-style concentrated-liquidity AMM `asset/WETH` `0.3%` pool. If the active network fails the liquidity test, the frontend must treat the asset as illiquid on that network and stop there; it must not perform any Ethereum-mainnet fallback verification and must not redirect the user to another network.
-  2.  **User Acceptance (Frontend - Risk Consent):** Before a user creates or accepts an offer, the frontend must require one combined warning-and-consent acknowledgement. That single mandatory acknowledgement should read in substance: `Abnormal-market & illiquid asset terms. For Liquid Assets, if liquidation cannot execute safely — for example because slippage exceeds the configured max liquidation threshold, liquidity disappears, or the 0x swap reverts — the lender claims the collateral in collateral-asset form instead of receiving the lending asset. If collateral value has fallen below the amount due, the lender receives the full remaining collateral and nothing is left for the borrower. If collateral value is still above the amount due, the lender receives only the equivalent collateral amount and the remainder stays with the borrower after charges. The same fallback applies to loans with illiquid assets (lending asset and / or collateral asset) on default — the lender takes the full collateral in-kind. Proceeding confirms you agree to these terms.` The transaction must not proceed without this consent, and the consent must be recorded for the relevant offer and resulting loan. It is acceptable for the resulting loan to store the combined accepted-by-both-parties consent state rather than two separately stored per-party consent fields, because the consent is mandatory for both lender and borrower.
+  1.  **Frontend Assessment:** The frontend interface should attempt to assess asset liquidity by checking the active network only: a valid price path and the presence of a sufficiently deep configured v3-style concentrated-liquidity AMM `asset/WETH` pool. If the active network fails the liquidity test, the frontend must treat the asset as illiquid on that network and stop there; it must not perform any Ethereum-mainnet fallback verification and must not redirect the user to another network.
+  2.  **User Acceptance (Frontend - Risk Consent):** Before a user creates or accepts an offer, the frontend must require one combined warning-and-consent acknowledgement. That single mandatory acknowledgement should read in substance: `Abnormal-market & illiquid asset terms. For Liquid Assets, if liquidation cannot execute safely — for example because slippage exceeds the configured max liquidation threshold, liquidity disappears, or every configured swap route fails — the lender claims the collateral in collateral-asset form instead of receiving the lending asset. If collateral value has fallen below the amount due, the lender receives the full remaining collateral and nothing is left for the borrower. If collateral value is still above the amount due, the lender receives only the equivalent collateral amount and the remainder stays with the borrower after charges. The same fallback applies to loans with illiquid assets (lending asset and / or collateral asset) on default — the lender takes the full collateral in-kind. Proceeding confirms you agree to these terms.` The transaction must not proceed without this consent, and the consent must be recorded for the relevant offer and resulting loan. It is acceptable for the resulting loan to store the combined accepted-by-both-parties consent state rather than two separately stored per-party consent fields, because the consent is mandatory for both lender and borrower.
   3.  **On-Chain Verification (Smart Contract):**
       - When an offer involving an ERC-20 asset (as a lending asset or collateral) is being created or accepted, and the frontend has _not_ marked it as illiquid, the smart contract will perform an on-chain check.
-      - For Phase 1, this check should confirm both: a reliable price-validation path and a reliable `asset/WETH` v3-style concentrated-liquidity AMM liquidity path for the asset on the active network where the transaction is being attempted.
+      - For Phase 1, this check should confirm both: a reliable price-validation path and at least one reliable `asset/WETH` v3-style concentrated-liquidity AMM liquidity path for the asset on the active network where the transaction is being attempted.
       - Ethereum mainnet must not be consulted as a reference or fallback network. The on-chain check uses only the active network's Chainlink registry / direct feeds and v3-style concentrated-liquidity AMM pools.
-      - In practice, that means a valid Chainlink price path and a recognized v3-style concentrated-liquidity AMM `asset/WETH` pool with sufficient usable liquidity should both be confirmed on the active network before the asset is treated as liquid for transactions on that network.
+      - In practice, that means a valid Chainlink-led price path and at least one recognized v3-style concentrated-liquidity AMM `asset/WETH` pool with sufficient usable liquidity should both be confirmed on the active network before the asset is treated as liquid for transactions on that network. The supported v3 factory set may include Uniswap V3, PancakeSwap V3, and SushiSwap V3, with configured fee tiers checked across the active network.
       - A later protocol phase may split these concepts more explicitly into separate statuses such as "priceable" and "liquidatable", but Phase 1 should use the stricter combined rule for safety.
       - If the active network fails this check, the asset is classified as illiquid on that network. The protocol must not perform a second mainnet verification pass and must not use mainnet liquidity to authorize or reshape the active-network decision.
       - **On-Chain Precedence:** If the on-chain check determines the asset is illiquid (e.g., missing price feed or DEX pool), this on-chain determination overrides any prior assessment by the frontend. The user will then be required to accept the same single mandatory risk-consent acknowledgement, which in this case must also cover the full-collateral-transfer illiquid path.
@@ -146,6 +146,8 @@ The platform distinguishes between liquid and illiquid assets, which affects how
 ### Process:
 
 - Offers are created through a React-based web interface.
+- For common ERC-20 flows, the app may offer a Uniswap Permit2 single-signature path instead of the classic approve-then-action path. Supported actions include creating an offer, accepting an offer, and depositing VPFI to escrow. Wallets or users that do not use Permit2 should fall back to the explicit approval flow without changing protocol semantics.
+- Permit2 signatures should be EIP-712 signatures with short expiries and high-entropy nonces. Permit2 must live alongside the legacy allowance path; it must not silently replace token-level approvals for users who choose the classic flow.
 - All offer details are recorded on-chain for transparency and immutability.
 - Wherever the frontend lets a borrower create an offer or accept an offer for ERC-20 borrowing, it must communicate the `Loan Initiation Fee` in plain language before submission. The disclosure should make clear that the fee is charged in the lending asset at loan initiation and is deducted before net proceeds reach the borrower.
 - Wherever the frontend lets a user create or accept an offer, it must require a single mandatory combined warning-and-consent acknowledgement before submission. That acknowledgement must use the combined `Abnormal-market & illiquid asset terms` substance described above and must cover both the liquid-asset abnormal-market fallback and, when applicable, the illiquid full-collateral-in-kind path. If the consent is not given, the transaction must revert / not proceed.
@@ -421,11 +423,16 @@ Vaipakam mints unique NFTs to represent offers, enhancing traceability and user 
 
 **ERC-20 Lending with Liquid Collateral:**
 
-- **Liquidation:** The borrower's collateral is liquidated (sold via the configured on-chain swap-aggregator proxy) to recover the outstanding loan amount (principal + accrued interest + late fees + liquidation penalty/fee).
+- **Liquidation:** The borrower's collateral is liquidated through the configured swap-adapter failover path to recover the outstanding loan amount (principal + accrued interest + late fees + liquidation penalty/fee).
+- **Swap Failover:** The liquidation caller supplies a ranked try-list of swap adapter calls. Production routing may include 0x Settler, 1inch v6, Uniswap V3, and Balancer V2. The Diamond tries routes in the submitted order and falls back to the next route if a venue reverts, returns insufficient output, or becomes stale.
+- **Exact-Scope Adapter Approvals:** For each swap attempt, the Diamond approves only the exact input amount needed for that adapter and revokes the approval after the attempt, regardless of success or failure. There are no persistent DEX allowances left behind by liquidation routing.
+- **Oracle-Anchored Slippage Floor:** The on-chain oracle-derived minimum output remains authoritative. Keeper- or frontend-supplied `minOut` values may be stricter but cannot weaken the configured liquidation slippage floor.
+- **Adapter Registration:** Mainnet deployments must register at least one swap adapter before liquidation settlement can operate. A deployment with no registered adapters reverts swap-based liquidation attempts and therefore reaches the documented collateral fallback path.
+- **Permissionless Triggering Preserved:** Any address may call liquidation/default triggers once protocol conditions are met. The caller supplies routing data; there is no new liquidator role gate.
 - **Liquidation Handling Charge:** If liquidation succeeds through the normal swap path, treasury must receive an additional liquidation-handling charge equal to `2%` of liquidation proceeds because the borrower failed to act before liquidation. This handling charge is separate from the liquidator incentive and separate from any treasury fee that may still apply on recovered interest or late-fee amounts.
 - **Slippage Protection:** If the liquidation swap would incur slippage greater than 6%, the collateral conversion must not happen. In that case, the liquidation flow must stop using the DEX conversion path and must follow the same equivalent-collateral fallback procedure used for abnormal liquidation-failure conditions.
 - **Governance Configuration:** The maximum liquidation slippage threshold should be configurable by governance within an approved bounded range. The Phase 1 administrator for this setting is the multisig / timelock path.
-- **Fallback Claim Model:** When the DEX liquidation path is abandoned because the swap fails, market conditions are abnormal, liquidity is unavailable, technical execution fails, or the 6% slippage threshold would be exceeded, the protocol should resolve the lender side into a claimable collateral-equivalent position rather than a claim to the borrower's full liquid collateral. There is no separate borrower grace period in that state; the lender may claim immediately after the failed liquidation. However, until the lender claim is actually executed, the borrower may still either fully repay the loan or add enough collateral to restore the loan above the required LTV / Health Factor thresholds. If full repayment finalizes first, the fallback path is canceled and the borrower later claims back the collateral through the ordinary repayment flow. If a collateral top-up finalizes first and the position is again healthy, the loan may continue as active. Once lender claim execution starts, that claim path should not be interrupted or auto-revived during the same transaction. In that lender-claim branch, the system may attempt liquidation one more time. If that retry succeeds, settlement follows the normal converted-proceeds path. If that retry also fails, the lender later claims only the amount of collateral asset needed to satisfy `lending asset due + accrued interest + 3% of the lending asset amount` by presenting the Vaipakam lender NFT, unless the remaining collateral value is lower than that fallback entitlement, in which case the lender receives the full remaining collateral. The treasury receives collateral equivalent to `2% of the lending asset amount`, and any excess liquid collateral value remains attributable to the borrower.
+- **Fallback Claim Model:** When the DEX liquidation path is abandoned because every configured swap route fails, market conditions are abnormal, liquidity is unavailable, technical execution fails, or the configured slippage threshold would be exceeded, the protocol should resolve the lender side into a claimable collateral-equivalent position rather than a claim to the borrower's full liquid collateral. There is no separate borrower grace period in that state; the lender may claim immediately after the failed liquidation. However, until the lender claim is actually executed, the borrower may still either fully repay the loan or add enough collateral to restore the loan above the required LTV / Health Factor thresholds. If full repayment finalizes first, the fallback path is canceled and the borrower later claims back the collateral through the ordinary repayment flow. If a collateral top-up finalizes first and the position is again healthy, the loan may continue as active. Once lender claim execution starts, that claim path should not be interrupted or auto-revived during the same transaction. In that lender-claim branch, the lender or a keeper may supply a fresh ranked try-list for one more liquidation attempt. If that retry succeeds, settlement follows the normal converted-proceeds path. If that retry also fails, the lender later claims only the amount of collateral asset needed to satisfy `lending asset due + accrued interest + 3% of the lending asset amount` by presenting the Vaipakam lender NFT, unless the remaining collateral value is lower than that fallback entitlement, in which case the lender receives the full remaining collateral. The treasury receives collateral equivalent to `2% of the lending asset amount`, and any excess liquid collateral value remains attributable to the borrower.
 - **Proceeds Distribution:**
   - Lender is repaid.
   - Treasury receives the `2%` liquidation-handling charge on successful liquidation.
@@ -998,7 +1005,8 @@ The VPFI governance token will be distributed to align incentives and encourage 
   - Security Auditors: 2%
   - Regulatory Compliance Pool: 1%
   - Bug Bounty Programs: 2%
-  - Exchange Listings & Market Making: `15%` (`34,500,000`)
+  - Exchange Listings & Market Making: `14%` (`32,200,000`)
+  - **Early Fixed-Rate Purchase Program:** `1%` (`2,300,000`) sold at `1 VPFI = 0.001 ETH` under the capped purchase model
   - **Platform Interaction Rewards:** `30%` (`69,000,000`)
     - front-loaded emission schedule with annualized stages of `32%`, `29%`, `24%`, `20%`, `15%`, `10%`, then `5%` terminal rate
     - `50%` of each daily interaction pool goes to lenders, proportional to daily interest earned
@@ -1036,15 +1044,18 @@ The VPFI governance token will be distributed to align incentives and encourage 
 - **Architecture Clarification:** `VPFI` is cross-chain, and the interaction-reward denominator / reward-funding path also uses cross-chain messaging so each chain can claim against one protocol-wide daily interest total. The Vaipakam lending / borrowing / rental core protocol itself still remains single-chain per deployment, with a separate Diamond deployment on each supported network. Loans, offers, collateral, repayment, liquidation, preclose, refinance, and keeper actions always remain local to the network of that specific Diamond instance.
 - **Canonical Address Rule:** The Base deployment is the documented source of truth and should be published in `docs/` and surfaced through Vaipakam transparency / dashboard tooling.
 
-## 11. Notifications (Phase 1: SMS/Email)
+## 11. Notifications and Alerts
 
-Effective communication is key for user experience and risk management. For Phase 1, Vaipakam will use SMS and Email notifications.
+Effective communication is key for user experience and risk management. Vaipakam supports event-driven notification surfaces and Health-Factor alerts for liquid loans.
 
 ### Implementation
 
 - **Mechanism:** An off-chain service will monitor key smart contract events. When a relevant event occurs, this service will trigger SMS/Email notifications to the concerned users.
 - **Providers:** The platform will use established third-party APIs for sending SMS (e.g., Twilio) and Emails (e.g., SendGrid).
 - **User Registration:** Users will need to provide and verify their phone number and/or email address in their Vaipakam profile to receive notifications. Opt-in/opt-out preferences for non-critical notifications can be managed.
+- **Health-Factor Alert Subscriptions:** Borrowers can subscribe to per-loan HF threshold alerts, such as `HF below 1.20`, for liquid loans they own. The watcher reprices subscribed loans on a timed sweep and sends an alert only when the configured threshold is newly crossed.
+- **HF Alert Channels:** Telegram alerts are delivered through the official Vaipakam bot linked to the wallet. Push Protocol is supported as a decentralized opt-in channel; the send path may remain staged until the production Push channel is registered.
+- **Autonomous Liquidation Watcher:** Operators may enable a keeper mode on the same watcher so it submits permissionless `triggerLiquidation` transactions when subscribed loans cross HF `1.0`. This mode is disabled by default and requires explicit worker secrets plus a funded keeper EOA per target chain.
 - **Funding:** The cost of sending these SMS/Email notifications will be covered by the Vaipakam platform, funded from its treasury.
 - **Criticality:** Notifications will be primarily for critical events to avoid alert fatigue.
 - **Style:** Notifications should remain concise, actionable, and focused on essential events.
@@ -1075,6 +1086,9 @@ A comprehensive user dashboard is essential for managing activities on Vaipakam.
 - **Claim Center:** Clear interface to claim pending funds (repayments, rental fees) or collateral.
 - **Transaction History:** Record of all platform interactions.
 - **Activity Page:** A dedicated Activity page should be available inside the app so users can review recent platform interactions, lifecycle events, and account activity in one place.
+- **Identity Labels:** Where wallet addresses appear in the dashboard, Activity, loan details, offer book, or profile chip, the frontend should resolve and display ENS / Basenames handles when available, while falling back silently to shortened addresses.
+- **Liquidation Price View:** For liquid active loans, Loan Details should show the collateral-asset price at which HF reaches `1.0`, both as an absolute price and a percentage move from current price. This view should stay hidden for illiquid loans where no oracle-based liquidation price exists.
+- **Approval Management:** Profile should include an Approvals surface listing ERC-20, ERC-721, and ERC-1155 allowances granted to the Vaipakam Diamond, grouped by principal-eligible, collateral-eligible, and prepay-eligible assets, with one-click revoke actions.
 - **VPFI Token Management:** In Phase 1, this may include token address, supply, mint/transparency references, the dedicated `Buy VPFI` flow, wallet-to-escrow funding guidance, borrower discount eligibility views where exposed, and the shared fee-discount consent control surfaced in `Dashboard`. Governance and broader claimable-reward tools remain Phase 2 scope.
 - **Notification Settings:** Manage preferences for SMS/Email alerts.
 - **Analytics:** Basic analytics on lending/borrowing performance.
@@ -1246,10 +1260,12 @@ function getFeedOverride(address feed) external view returns (
     int256 minValidAnswer
 );
 
-function getPythFeedConfig(address asset) external view returns (
-    bytes32 priceId,
-    uint256 maxDeviationBps,
-    uint256 maxStaleness
+function getSecondaryOracleConfig() external view returns (
+    address tellorOracle,
+    address api3ServerV1,
+    address diaOracleV2,
+    uint16 maxDeviationBps,
+    uint40 maxStaleness
 );
 ```
 

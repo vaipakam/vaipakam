@@ -250,6 +250,64 @@ allowed caller.
 - **Worker rate-limit** on the `/quote/*` routes — ✅ shipped 2026-04-25
   in Phase 7a polish.
 
+## Phase 8b.1 nice-to-have — Permit2 fork test against the real contract
+
+The original Phase 8b.1 work shipped with a `MockPermit2` test stand-
+in that records call args + executes the underlying transfer but
+**skips signature verification entirely**. That's enough to assert
+"the diamond hits Permit2 in the right shape" but doesn't catch a
+signature regression that would only surface against the real
+Permit2 contract.
+
+`test/fork/Permit2RealForkTest.t.sol` closes that gap with 5 tests
+that exercise the **real** Uniswap Permit2 at the canonical
+`0x000000000022D473030F116dDEE9F6B43aC78BA3` address against a
+forked mainnet:
+
+1. **Happy path** — build a `PermitTransferFrom` with future
+   deadline, sign the EIP-712 digest with `vm.sign`, call
+   `permitTransferFrom` directly. Asserts the spender receives the
+   tokens and the owner is debited.
+2. **Expired deadline** — same flow with `deadline = block.timestamp - 1`.
+   Real Permit2 reverts `SignatureExpired`.
+3. **Wrong amount** — sign for amount X, request amount X+1.
+   Real Permit2 reverts.
+4. **Nonce reuse** — execute once, attempt the same `(owner, nonce)`
+   pair again. Real Permit2 burned the bitmap slot on the first use,
+   so the retry reverts `InvalidNonce`.
+5. **Spender mismatch** — owner signs with `spender = X` bound, a
+   different address tries to redeem. Permit2's enforced
+   `msg.sender == bound spender` check causes a revert.
+
+Each test reads Permit2's actual `DOMAIN_SEPARATOR()` from the
+forked chain (rather than recomputing it), so the test stays
+correct if Permit2 ever rolls. Each test consumes a unique nonce
+derived from `keccak256(chainId, owner, testIdx)` so back-to-back
+runs in the same fork session don't trip the replay guard.
+
+**Gating**: same `FORK_URL_MAINNET` env var the rest of the fork
+suite uses. Without the env, every test silently returns at the
+top-level `if (!forkEnabled) return;` guard and reports PASS in
+~600µs (5 no-ops). CI without archive-node credentials passes
+unchanged.
+
+To run the suite for real:
+
+```bash
+FORK_URL_MAINNET=$ALCHEMY_BASE_RPC \
+  forge test --match-path test/fork/Permit2RealForkTest.t.sol -vv
+```
+
+Permit2 is deployed at the same canonical address on every EVM
+chain via Nick's factory, so any of Ethereum / Base / Arbitrum /
+Optimism / Polygon zkEVM / BNB Chain RPCs work for the fork URL.
+Recommended: a low-traffic Base mainnet fork — minimal data
+download, free Alchemy tier suffices.
+
+**Status**: regression count after the addition is **1391 passing /
+0 failed / 5 skipped** (+5 from the new fork tests, all silent-
+skips in default CI mode).
+
 ## Phase 7a polish — Balancer V2 quote + worker rate-limit
 
 Two follow-up items from Phase 7a's "queued polish" list landed
@@ -602,11 +660,14 @@ chrome went away.
   now 1402-test green baseline as of pre-Phase-7a.3 state.
 - **Phase 8a** (UX polish bundle): shipped today. HF-alert push-channel
   send remains stubbed pending Push channel registration on-chain.
-- **Phase 8b** (Permit2 + Blockaid simulation): shipped today.
-  A real-Permit2 fork test (signature path, expired deadlines, wrong-
-  amount, nonce reuse) is queued as a nice-to-have before the eventual
-  mainnet cutover; mock-Permit2 covers the integration logic in the
-  forge suite.
+- **Phase 8b** (Permit2 + Blockaid simulation): shipped today,
+  including the 5-test fork suite against real Uniswap Permit2 at
+  the canonical address (`test/fork/Permit2RealForkTest.t.sol`).
+  Covers the happy path, expired-deadline revert, wrong-amount
+  revert, nonce-reuse revert, and spender-mismatch revert. Gated by
+  `FORK_URL_MAINNET` env so CI without archive credentials passes
+  unchanged. Mock-Permit2 still covers the integration-flow logic
+  in the unit suite for sub-second iteration speed.
 - **Phase 7a** (4-DEX swap failover): COMPLETE end-to-end. Contract
   layer (4 adapters + LibSwap failover library + AdminFacet adapter-
   management surface + RiskFacet / DefaultedFacet / ClaimFacet rewired
