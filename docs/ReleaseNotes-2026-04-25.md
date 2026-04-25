@@ -7,13 +7,17 @@ Grouped by area, not by chronology. Continues from
 
 Coverage at a glance: **Phase 8a** (ENS resolution + liquidation-price
 calculator + HF alerts + approval revoke surface), **Phase 8b**
-(Uniswap Permit2 single-tx flows + Blockaid transaction-scan preview),
-**Phase 7a** (4-DEX swap failover for liquidations + autonomous HF-
-watcher keeper), **Phase 7b.1** (3-V3-clone OR-logic for oracle-layer
-liquidity classification), **Phase 7b.2** (Tellor + API3 + DIA
-secondary price-oracle quorum with Soft 2-of-N decision rule; Pyth
-removed in favor of symbol-derived no-per-asset-config alternatives),
-and a UI-polish fix for the diagnostics drawer.
+(Uniswap Permit2 single-tx flows + Blockaid transaction-scan preview
++ real-Permit2 fork tests), **Phase 7a** (4-DEX swap failover for
+liquidations + autonomous HF-watcher keeper + Balancer V2 quote +
+worker rate-limit), **Phase 7b.1** (3-V3-clone OR-logic for
+oracle-layer liquidity classification), **Phase 7b.2** (Tellor +
+API3 + DIA secondary price-oracle quorum with Soft 2-of-N decision
+rule; Pyth removed in favor of symbol-derived no-per-asset-config
+alternatives), **Phase 9** (PWA manifest + service worker, public
+keeper-bot reference repo at the sibling `vaipakam-keeper-bot/`
+repository, Active-loan check
+Farcaster Frame), and a UI-polish fix for the diagnostics drawer.
 
 ## Phase 8a — UX polish: ENS, liq-price calculator, HF alerts, revoke surface
 
@@ -249,6 +253,113 @@ allowed caller.
   limit" section below).
 - **Worker rate-limit** on the `/quote/*` routes — ✅ shipped 2026-04-25
   in Phase 7a polish.
+
+## Phase 9 — growth sprint
+
+Phase 9 ships three of the four originally-scoped growth items
+(points/leaderboards was dropped after design review). All three
+are pure additive lifts; none touch the on-chain protocol surface.
+
+### Phase 9 — Progressive Web App (PWA)
+
+The dApp is now installable on iOS and Android via the browser's
+"Add to Home Screen" prompt. Installation produces a standalone
+shell with the Vaipakam icon, branded indigo theme color, and a
+list of one-tap shortcuts (Offer Book, My Loans, Buy VPFI, Alerts)
+on supported platforms.
+
+A minimal service worker (`/sw.js`) caches the app shell with a
+stale-while-revalidate strategy for instant cold-start render. **All
+dynamic data (RPC, subgraph, `/quote/*` worker) bypasses the
+service worker** — chain state never gets a stale cache; only the
+HTML / JS / CSS / image bundles are cached. The SW only registers
+in production builds (Vite HMR conflicts otherwise) and is a no-op
+on browsers without `serviceWorker` support.
+
+Files: `frontend/public/manifest.json`, `frontend/public/sw.js`,
+`frontend/index.html` (PWA + apple-touch meta tags),
+`frontend/src/main.tsx` (registration on app load).
+
+### Phase 9.A — Public keeper-bot reference repo
+
+The keeper bot lives in its own standalone repo
+(`vaipakam-keeper-bot`, sibling of the monorepo at
+`/home/pranav/Codes/Vaipakam/vaipakam-keeper-bot` for local
+checkouts; will be published as a separate GitHub repo for the
+public release). Self-contained, MIT-licensed Node.js bot any
+third-party operator can clone, configure with their own keeper
+key + RPC endpoints + (optional) aggregator API keys, and run to
+compete for Vaipakam liquidations. **Liquidation is
+permissionless** — anyone whose `triggerLiquidation` lands first
+earns the on-chain bonus. Decentralizing liquidation
+infrastructure beyond the operator-run hf-watcher worker is a
+healthy book hygiene measure.
+
+The bot mirrors the autonomous-keeper logic in the existing
+hf-watcher worker but as a vanilla Node.js process (no
+Cloudflare dependency). Per tick (default 60s), per chain:
+
+1. Page through `getActiveLoansPaginated` to list every active
+   loan id (operator can pin a whitelist instead via env).
+2. Read `calculateHealthFactor(loanId)` for each; skip HF ≥ 1.0.
+3. Fetch the loan struct, orchestrate quotes from 0x / 1inch /
+   UniV3 / Balancer V2 in parallel, rank by expected output.
+4. Submit `triggerLiquidation(loanId, ranked)` from the keeper EOA.
+
+The repo's README documents setup, MEV considerations
+(Flashbots Protect / MEV Blocker integration), per-chain coverage
+matrix, and the "what the bot does NOT do" list (no mempool
+monitoring, no NFT-collateral defaults, no profit projection —
+these are deliberate scope cuts for a reference implementation).
+
+The orchestrator code is self-contained TypeScript with viem +
+dotenv as the only runtime deps. JSON-lines logging for
+Datadog / Loki / Splunk ingest. Node 22+ required (uses
+`--experimental-strip-types` so no build step is needed).
+
+### Phase 9.B — Active-loan check Farcaster Frame
+
+A Farcaster Frame at `/frames/active-loans` (added to the
+existing hf-watcher worker) lets users on Farcaster paste any
+wallet address and see its active Vaipakam loans aggregated
+across every supported chain — total count, lowest Health
+Factor across all positions, per-chain breakdown — without
+leaving their feed.
+
+Three routes:
+
+- `GET /frames/active-loans` — initial Frame card with a text
+  input for the wallet address and a single Check button.
+- `POST /frames/active-loans` — handles the button click,
+  reads cross-chain active loans for the supplied address via
+  the same `getActiveLoansByUser` view the alert watcher uses,
+  returns a result Frame with a "View NFT Verifier" deep link.
+- `GET /frames/active-loans/image` — stateless SVG renderer
+  (1146×600, 1.91:1 ratio per Farcaster's recommendation)
+  driven entirely by query parameters. Branded gradient
+  background; HF coloring (red < 1, amber < 1.5, green ≥ 1.5).
+
+The Frame complements the existing **public NFT Verifier** at
+`/nft-verifier`: the Verifier handles per-NFT detail lookups
+(role, HF, LTV, fallback split, mint / burn lifecycle); this
+Frame handles per-wallet aggregate views. The result Frame's
+"Open NFT Verifier" button deep-links to the Verifier so users
+can drill into individual positions after seeing the wallet
+summary.
+
+Public read-only — no signing, no chain writes, no auth.
+Embeddable from any Farcaster client (Warpcast, etc.) by
+posting the `/frames/active-loans` URL.
+
+### Phase 9.C — Points / leaderboards (DROPPED)
+
+Originally scoped as part of the growth sprint. Dropped after
+design review surfaced that the scoring-model + sybil-resistance
++ storage decisions are product-strategy choices, not engineering
+choices, and adding a points layer this early in the protocol's
+lifecycle pre-commits to a model that may not match how organic
+user engagement actually develops. Revisit when there's a
+specific user-acquisition goal a leaderboard would serve.
 
 ## Phase 8b.1 nice-to-have — Permit2 fork test against the real contract
 
@@ -698,8 +809,13 @@ chrome went away.
   of the Pyth removal). Targeted Soft 2-of-N quorum tests
   (`SecondaryQuorumTest.t.sol`) are queued as the remaining 7b
   follow-up.
-- **Phase 9** (growth sprint — points, leaderboards, Frames, PWA):
-  queued, not started.
+- **Phase 9** (growth sprint): three of four sub-items shipped
+  today — PWA manifest + service worker, public keeper-bot reference
+  repo at the sibling `vaipakam-keeper-bot` repository, and an
+  Active-loan check Farcaster Frame
+  on the existing hf-watcher worker. Points/leaderboards (the fourth
+  sub-item) was dropped after design review — revisit when a specific
+  user-acquisition goal would benefit from a leaderboard.
 
 **Mainnet deployment**: deferred. With Phase 7b follow-ups (tests +
 frontend pre-flight + Tellor) and Phase 9 still in flight, there is

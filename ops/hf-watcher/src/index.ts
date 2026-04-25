@@ -16,6 +16,11 @@ import {
 } from './db';
 import { extractLinkCode, sendMessage, type TelegramUpdate } from './telegram';
 import { handle0xQuote, handle1inchQuote } from './quoteProxy';
+import {
+  handleActiveLoansFrameInitial,
+  handleActiveLoansFramePost,
+  handleActiveLoansFrameImage,
+} from './frames';
 
 export default {
   async scheduled(
@@ -39,6 +44,24 @@ export default {
     // a 6-digit code in the incoming message.
     if (url.pathname === '/tg/webhook' && req.method === 'POST') {
       return handleTelegramWebhook(req, env);
+    }
+
+    // Phase 9.B — Farcaster Frame: active-loan check. No CORS, no
+    // origin gate. The Frame is intentionally embeddable from any
+    // Farcaster client; the GET path returns the Frame metadata HTML,
+    // the POST path handles button clicks, and the image path serves
+    // an SVG card. Public read-only — no signing, no chain writes.
+    if (url.pathname === '/frames/active-loans' && req.method === 'GET') {
+      return handleActiveLoansFrameInitial(req, env);
+    }
+    if (url.pathname === '/frames/active-loans' && req.method === 'POST') {
+      return handleActiveLoansFramePost(req, env);
+    }
+    if (
+      url.pathname === '/frames/active-loans/image' &&
+      req.method === 'GET'
+    ) {
+      return handleActiveLoansFrameImage(req);
     }
 
     // Frontend-facing endpoints — all require the origin header to

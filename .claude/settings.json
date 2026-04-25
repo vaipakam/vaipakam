@@ -100,10 +100,38 @@
       "Bash(awk -F\"'\" '/^  '\\\\''0x[0-9a-f]+'\\\\'':/ {print $2}' /home/pranav/Codes/Vaipakam/vaipakam/frontend/src/lib/decodeContractError.ts)",
       "Bash(awk '/^const KNOWN_ERROR_SELECTORS/,/^};/' /home/pranav/Codes/Vaipakam/vaipakam/frontend/src/lib/decodeContractError.ts)",
       "Bash(grep -n \"^    }$\\\\|userVpfiDiscountState\\\\b\\\\|^    struct Storage\" /home/pranav/Codes/Vaipakam/vaipakam/contracts/src/libraries/LibVaipakam.sol)",
-      "Bash(awk '/^    struct Storage \\\\{/,/^    }/' /home/pranav/Codes/Vaipakam/vaipakam/contracts/src/libraries/LibVaipakam.sol)"
+      "Bash(awk '/^    struct Storage \\\\{/,/^    }/' /home/pranav/Codes/Vaipakam/vaipakam/contracts/src/libraries/LibVaipakam.sol)",
+      "Bash(grep -rln \"collateralQuantity: 0,$\" test/)",
+      "Bash(xargs perl *)",
+      "Bash(perl -i -0pe 's/\\(collateralQuantity: 0\\),\\\\n\\(\\\\s+}\\\\\\)\\)/$1\\\\n$2/g' /home/pranav/Codes/Vaipakam/vaipakam/contracts/test/invariants/Handler.sol /home/pranav/Codes/Vaipakam/vaipakam/contracts/test/invariants/PerAssetPause.invariant.t.sol)",
+      "Bash(grep -rln \"collateralQuantity: 0,$\" /home/pranav/Codes/Vaipakam/vaipakam/contracts/test/)",
+      "Bash(grep -n -B1 -A2 \"collateralQuantity: 0,$\" /home/pranav/Codes/Vaipakam/vaipakam/contracts/test/invariants/Handler.sol)",
+      "Bash(perl -i -0pe 's/\\(collateralQuantity: 0\\),\\\\n\\\\s+keeperAccessEnabled: \\(true|false\\)\\\\n/$1\\\\n/g' /home/pranav/Codes/Vaipakam/vaipakam/contracts/test/invariants/Handler.sol /home/pranav/Codes/Vaipakam/vaipakam/contracts/test/invariants/PerAssetPause.invariant.t.sol)",
+      "Bash(grep -v \":0$\")",
+      "Bash(perl -i -pe 's/^\\\\s*onToggleKeeper=\\\\{handleToggleOfferKeeper\\\\}\\\\s*\\\\n//; s/^\\\\s*togglingKeeperId=\\\\{togglingKeeperId\\\\}\\\\s*\\\\n//' /home/pranav/Codes/Vaipakam/vaipakam/frontend/src/pages/OfferBook.tsx)",
+      "Bash(grep -n \"^    }$\\\\|^    struct Storage\\\\|^        bool pauseOnDeviation\\\\|pythFeedConfigs\\\\|sanctionsOracle\" /home/pranav/Codes/Vaipakam/vaipakam/contracts/src/libraries/LibVaipakam.sol)",
+      "Bash(awk 'NR>=725 && NR<=960 && /^    }/ {print NR\": \"$0}' /home/pranav/Codes/Vaipakam/vaipakam/contracts/src/libraries/LibVaipakam.sol)",
+      "Bash(awk -F: '$1 >= 736 && $1 <= 950')",
+      "Bash(grep -qE \"Compiler run|Error|\\\\\\\\\\\\$ \" /tmp/claude-1000/-home-pranav-Codes-Vaipakam-vaipakam/5784ca17-35a4-4772-90d4-b19ed3a9edf3/tasks/bqn3ihvkh.output)",
+      "Bash(perl -i -0pe 's/\\\\.triggerLiquidation\\\\\\(\\\\s*\\([^\\(\\)]+?\\)\\\\s*\\\\\\)/.triggerLiquidation\\(\\\\1, defaultAdapterCalls\\(\\)\\)/g; s/\\\\.triggerDefault\\\\\\(\\\\s*\\([^\\(\\)]+?\\)\\\\s*\\\\\\)/.triggerDefault\\(\\\\1, defaultAdapterCalls\\(\\)\\)/g' test/invariants/Handler.sol)",
+      "Bash(perl -i -pe 's|^\\(import \\\\{Test\\\\} from \"forge-std/Test\\\\.sol\";\\)|$1\\\\nimport {defaultAdapterCalls} from \"../helpers/AdapterCallHelpers.sol\";|' test/invariants/Handler.sol)",
+      "Bash(perl -i -0pe 's|\\\\n\\\\n        // Phase 7a: register the legacy ZeroEx shim as adapter slot 0\\\\n        // so triggerLiquidation / triggerDefault / claimAsLenderWithRetry\\\\n        // route through LibSwap into the existing ZeroExProxyMock\\\\.\\\\n        AdminFacet\\\\\\(address\\\\\\(diamond\\\\\\)\\\\\\)\\\\.addSwapAdapter\\\\\\(\\\\n            address\\\\\\(new MockZeroExLegacyAdapter\\\\\\(address\\\\\\(mockZeroExProxy\\\\\\)\\\\\\)\\\\\\)\\\\n        \\\\\\);||' test/invariants/InvariantBase.sol)",
+      "Bash(perl -i -pe 's|^import \\\\{MockZeroExLegacyAdapter\\\\}.*\\\\n||' test/invariants/InvariantBase.sol)",
+      "Bash(echo \"fails: $\\(grep -cE '^\\\\[FAIL' /tmp/forge_test_phase7a_v4.txt\\) | exit=$?\")",
+      "Bash(python3 -c \"import json,sys; p=json.load\\(sys.stdin\\); print\\('scripts:', list\\(p.get\\('scripts', {}\\).keys\\(\\)\\), 'deps:', list\\(\\(p.get\\('devDependencies'\\) or {}\\).keys\\(\\)\\)[:5]\\)\")",
+      "Bash(node_modules/.bin/tsc --noEmit)",
+      "Bash(python3 -c \"import json,sys; p=json.load\\(sys.stdin\\); print\\('deps:', json.dumps\\(p.get\\('dependencies', {}\\), indent=2\\)\\)\")",
+      "Bash(grep -nB1 -A3 \"_tryGetAssetPriceView\" /home/pranav/Codes/Vaipakam/vaipakam/contracts/src/facets/OracleFacet.sol)",
+      "Bash(grep -nA 15 \"function setPythEndpoint\" /home/pranav/Codes/Vaipakam/vaipakam/contracts/src/libraries/LibVaipakam.sol)",
+      "Bash(grep -n \"function setPythFeedConfig\\\\|^    }$\" /home/pranav/Codes/Vaipakam/vaipakam/contracts/src/libraries/LibVaipakam.sol)",
+      "Bash(node_modules/.bin/tsc -p .)",
+      "Bash(chmod +x /home/pranav/Codes/Vaipakam/vaipakam/contracts/script/exportAbis.sh)",
+      "Bash(bash contracts/script/exportAbis.sh)",
+      "Bash(bash /home/pranav/Codes/Vaipakam/vaipakam/contracts/script/exportAbis.sh)"
     ],
     "additionalDirectories": [
-      "/tmp"
+      "/tmp",
+      "/home/pranav/Codes/Vaipakam/vaipakam-keeper-bot"
     ]
   }
 }

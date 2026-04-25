@@ -567,7 +567,7 @@ Security, privacy, and compliance requirements:
 - where a sanctions oracle is configured on the active chain, Create Offer should pre-flight the connected wallet and the Offer Book accept modal should pre-flight both the connected wallet and offer creator
 - sanctions warnings should explain that Vaipakam does not maintain its own sanctions list and that list disputes must be handled with the oracle/list provider
 - when no sanctions oracle is configured on a chain, sanctions banners should stay silent
-- frontend oracle safety surfaces should reflect the Chainlink-led secondary quorum model using configured Tellor, API3, and DIA sources; the app should not present Pyth price-update transactions as part of the current pricing path
+- frontend oracle safety surfaces should reflect the Chainlink-led secondary quorum model using configured Tellor, API3, and DIA sources; the app should not present any separate pull-oracle price-update transaction as part of the current pricing path
 
 Required dashboard disclaimer text:
 
