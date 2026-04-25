@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { createPublicClient, http, isAddress, type Address } from 'viem';
 import { mainnet, base } from 'viem/chains';
+import { CHAIN_REGISTRY } from '../contracts/config';
 
 /**
  * ENS / Basenames reverse resolution — Phase 8a.1.
@@ -12,6 +13,17 @@ import { mainnet, base } from 'viem/chains';
  *
  * The returned name is **display-only**. Never use it as an identifier —
  * always transact against the raw address.
+ *
+ * RPC selection: we explicitly route through the operator-configured
+ * mainnet / Base RPCs from `CHAIN_REGISTRY` (env-driven via
+ * `VITE_ETHEREUM_RPC_URL` / `VITE_BASE_RPC_URL`). Calling viem's
+ * `http()` with no URL falls back to viem's chain definition default,
+ * which for mainnet is `https://eth.merkle.io` — that endpoint does
+ * NOT allow browser-origin CORS, so every ENS lookup from a vaipakam
+ * page fired a 403 preflight rejection visible in the console. Using
+ * the registry URLs (default `https://eth.llamarpc.com` and
+ * `https://mainnet.base.org`, both CORS-permissive) silences the
+ * spam, and operators who set their own URL get the same routing.
  */
 
 const CACHE_KEY_PREFIX = 'vaipakam:ens:';
@@ -26,13 +38,16 @@ type CacheEntry = {
 // render pass when multiple components ask for the same address.
 const memCache = new Map<string, CacheEntry>();
 
-// One shared mainnet client; ENS gateway calls (CCIP-Read) flow through
-// viem's default transport. Basename resolution piggy-backs on the same
+const ETHEREUM_RPC_URL = CHAIN_REGISTRY[1]?.rpcUrl;
+const BASE_RPC_URL = CHAIN_REGISTRY[8453]?.rpcUrl;
+
+// Mainnet client: ENS gateway calls (CCIP-Read) flow through the
+// configured mainnet RPC. Basename resolution piggy-backs on the same
 // mainnet client because Coinbase's `*.base.eth` records register on
 // mainnet ENS and the resolver delegates on-chain to an L2 gateway.
 const mainnetClient = createPublicClient({
   chain: mainnet,
-  transport: http(),
+  transport: http(ETHEREUM_RPC_URL),
 });
 
 // Fallback: Base public client for any `*.base` native-basename record
@@ -41,7 +56,7 @@ const mainnetClient = createPublicClient({
 // this client is lazily used only when the mainnet path returns null.
 const baseClient = createPublicClient({
   chain: base,
-  transport: http(),
+  transport: http(BASE_RPC_URL),
 });
 
 function loadCache(addr: string): CacheEntry | null {
