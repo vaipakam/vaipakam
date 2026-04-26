@@ -26,6 +26,8 @@ import { HealthFactorGauge, LTVBar } from '../components/app/RiskGauge';
 import VPFIDiscountConsentCard from '../components/app/VPFIDiscountConsentCard';
 import { Pager } from '../components/app/Pager';
 import { CardInfo } from '../components/CardInfo';
+import { InfoTip } from '../components/InfoTip';
+import { useMode } from '../context/ModeContext';
 import './Dashboard.css';
 
 const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
@@ -33,6 +35,8 @@ const LOANS_PAGE_SIZE = 15;
 
 export default function Dashboard() {
   const { address, activeChain, chainId } = useWallet();
+  const { mode } = useMode();
+  const isAdvanced = mode === 'advanced';
   const diamond = useDiamondRead();
   const { loans, loading } = useUserLoans(address);
   const { snapshot: vpfi } = useVPFIToken();
@@ -177,6 +181,7 @@ export default function Dashboard() {
         networkChainId={chainId ?? DEFAULT_CHAIN.chainId}
         blockExplorer={activeChain?.blockExplorer ?? DEFAULT_CHAIN.blockExplorer}
         isCanonicalVPFI={activeChain?.isCanonicalVPFI ?? DEFAULT_CHAIN.isCanonicalVPFI}
+        isAdvanced={isAdvanced}
       />
 
       {/* Active loans */}
@@ -315,6 +320,11 @@ interface VPFIPanelProps {
   networkChainId: number;
   blockExplorer: string;
   isCanonicalVPFI: boolean;
+  /** Advanced-mode flag from `<ModeContext>`. When false, the two
+   *  technical badges in the card header (chain-name+id and the
+   *  Canonical/Mirror role pill) are hidden — they're protocol
+   *  detail that beginners don't need to see. */
+  isAdvanced: boolean;
 }
 
 const DIRECTION_LABEL: Record<'in' | 'out' | 'mint' | 'burn' | 'self', string> = {
@@ -333,6 +343,7 @@ export function VPFIPanel({
   networkChainId,
   blockExplorer,
   isCanonicalVPFI,
+  isAdvanced,
 }: VPFIPanelProps) {
   const registered = !!vpfi?.registered;
   const tokenAddr = vpfi?.token ?? null;
@@ -371,30 +382,42 @@ export function VPFIPanel({
             <CardInfo id="dashboard.vpfi-panel" />
           </div>
         </div>
-        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-          <span
-            className="status-badge"
-            style={{ background: 'rgba(148, 163, 184, 0.12)', color: 'var(--text-tertiary)' }}
+        {/* Technical badges (chain-name+id, Canonical/Mirror role)
+         *  are protocol-internals power-user info — hidden from
+         *  Basic mode so first-time users aren't bombarded with
+         *  cross-chain bridge terminology. The Canonical/Mirror
+         *  pill's previously-truncated `data-tooltip` is now an
+         *  inline InfoTip — click-only on every device, portal-
+         *  rendered so the bubble can't get clipped, and the
+         *  full explanation always wraps inside the viewport. */}
+        {isAdvanced && (
+          <div
+            style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}
           >
-            {networkName} · chainId {networkChainId}
-          </span>
-          <span
-            className="status-badge"
-            data-tooltip={
-              isCanonicalVPFI
-                ? 'Canonical chain — VPFIToken + OFT Adapter live here (lock/release on bridge).'
-                : 'Mirror chain — VPFI supply here is minted/burned by the OFT on bridge.'
-            }
-            style={{
-              background: isCanonicalVPFI
-                ? 'rgba(79, 70, 229, 0.12)'
-                : 'rgba(16, 185, 129, 0.12)',
-              color: isCanonicalVPFI ? 'var(--brand)' : 'var(--accent-green)',
-            }}
-          >
-            {isCanonicalVPFI ? 'Canonical' : 'Mirror'}
-          </span>
-        </div>
+            <span
+              className="status-badge"
+              style={{ background: 'rgba(148, 163, 184, 0.12)', color: 'var(--text-tertiary)' }}
+            >
+              {networkName} · chainId {networkChainId}
+            </span>
+            <span
+              className="status-badge"
+              style={{
+                background: isCanonicalVPFI
+                  ? 'rgba(79, 70, 229, 0.12)'
+                  : 'rgba(16, 185, 129, 0.12)',
+                color: isCanonicalVPFI ? 'var(--brand)' : 'var(--accent-green)',
+              }}
+            >
+              {isCanonicalVPFI ? 'Canonical' : 'Mirror'}
+            </span>
+            <InfoTip ariaLabel={isCanonicalVPFI ? 'About canonical chain' : 'About mirror chain'}>
+              {isCanonicalVPFI
+                ? 'Canonical chain — the VPFIToken contract and the OFT Adapter live here. Cross-chain bridges lock the canonical supply on the way out and release it on the way back; total supply is fixed at this chain.'
+                : 'Mirror chain — VPFI on this chain is a 1:1 representation of the canonical supply. The OFT mints tokens here when a bridge transfer arrives and burns them when a transfer leaves, so the mirror balance is always backed by canonical-chain locks.'}
+            </InfoTip>
+          </div>
+        )}
       </div>
 
       {!registered ? (
