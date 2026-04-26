@@ -168,12 +168,22 @@ export const CARD_HELP: Record<string, CardHelpEntry> = {
     learnMoreHref: `${README}#1-supported-assets-and-networks-phase-1`,
   },
   "create-offer.risk-disclosures": {
-    summary:
-      "Acknowledge the risks before signing. Smart-contract risk, oracle " +
-      "risk (Chainlink staleness / liquidity drift), liquidation slippage " +
-      "risk, and the no-recourse nature of illiquid-collateral defaults all " +
-      "apply. Vaipakam is non-custodial — there is no support desk to undo " +
-      "a bad position.",
+    summary: {
+      lender:
+        "Acknowledge the risks before signing as the lender. Smart-contract " +
+        "risk; oracle risk (a stale feed can delay liquidation against your " +
+        "principal); liquidation slippage shaves what you recover; illiquid-" +
+        "collateral defaults give you the collateral as-is with no recourse " +
+        "if it's worth less than the loan. Vaipakam is non-custodial — no " +
+        "support desk can undo a bad position.",
+      borrower:
+        "Acknowledge the risks before signing as the borrower. Smart-" +
+        "contract risk; oracle risk (a stale feed can trigger liquidation " +
+        "against you at a bad moment); liquidations sell your collateral at " +
+        "slippage-eaten prices; illiquid-collateral defaults transfer your " +
+        "collateral to the lender in full with no claim left behind. " +
+        "Vaipakam is non-custodial — no support desk can undo a bad position.",
+    },
     learnMoreHref: `${README}#7-liquidation-and-default`,
   },
   "create-offer.advanced-options": {
@@ -186,12 +196,19 @@ export const CARD_HELP: Record<string, CardHelpEntry> = {
 
   // ── Claim Center ──────────────────────────────────────────────────────
   "claim-center.claims": {
-    summary:
-      "Funds become claimable after a loan settles — repaid, defaulted, or " +
-      "liquidated. Lender claims unlock principal + interest (less the 1% " +
-      "treasury cut). Borrower claims unlock returned collateral on full " +
-      "repayment, or any unused VPFI rebate from the Loan Initiation Fee. " +
-      "Each claim consumes the holder's Vaipakam position NFT.",
+    summary: {
+      lender:
+        "Funds become claimable after a loan settles. Your lender claim " +
+        "unlocks the principal back plus accrued interest, less the 1% " +
+        "treasury cut on interest. The claim consumes your lender position " +
+        "NFT — once claimed, the loan is done from your side.",
+      borrower:
+        "Funds become claimable after a loan settles. On full repayment " +
+        "your borrower claim returns the collateral; on default or " +
+        "liquidation, only any unused VPFI rebate from the Loan Initiation " +
+        "Fee. The claim consumes your borrower position NFT — once claimed, " +
+        "the loan is done from your side.",
+    },
     learnMoreHref: `${README}#6-loan-closure--repayment`,
   },
 
@@ -402,12 +419,20 @@ export const CARD_HELP: Record<string, CardHelpEntry> = {
     learnMoreHref: `${README}#5-loan-initiation`,
   },
   "loan-details.collateral-risk": {
-    summary:
-      "Collateral asset + amount, current Health Factor and LTV, and the " +
-      "liquidation thresholds. Liquid collateral has live oracle math; " +
-      "illiquid collateral (NFTs, tokens without a feed) is valued at $0 " +
-      "on-chain — both parties consented to a full-transfer-on-default " +
-      "outcome at offer accept.",
+    summary: {
+      lender:
+        "The collateral securing your loan + the live Health Factor and " +
+        "LTV. Liquid collateral has oracle-backed valuation and is auto-" +
+        "liquidated when HF drops below 1; illiquid collateral has no on-" +
+        "chain valuation and is transferred to you in full on default. " +
+        "Watch HF — when it drops, your protection thins.",
+      borrower:
+        "The collateral you've locked + the live Health Factor and LTV. " +
+        "Keep HF above 1 — if it drops below, your collateral can be " +
+        "liquidated. Liquid collateral is auto-priced via oracle; illiquid " +
+        "collateral has no on-chain valuation and is transferred to the " +
+        "lender in full on default.",
+    },
     learnMoreHref: `${README}#7-liquidation-and-default`,
   },
   "loan-details.parties": {
@@ -419,12 +444,21 @@ export const CARD_HELP: Record<string, CardHelpEntry> = {
     learnMoreHref: `${README}#3-offer-creation`,
   },
   "loan-details.actions": {
-    summary:
-      "All on-chain actions available on this loan from your role. Borrower " +
-      "sees Repay (full / partial), Preclose, Refinance. Lender sees Claim " +
-      "after settlement. Anyone (third-party liquidator included) can call " +
-      "Liquidate when HF < 1 or grace expires. Disabled actions show a hover " +
-      "reason.",
+    summary: {
+      lender:
+        "Actions available to you on this loan as the lender. Claim once " +
+        "the loan settles (returns principal + interest, less the 1% " +
+        "treasury cut). Initiate Early Withdrawal to sell your lender NFT " +
+        "to a buyer mid-loan. Anyone (you included) can trigger Liquidate " +
+        "when HF < 1 or the grace period expires. Disabled actions show a " +
+        "hover reason.",
+      borrower:
+        "Actions available to you on this loan as the borrower. Repay full " +
+        "or partial; Preclose direct (pay outstanding now) or offset (sell " +
+        "collateral via DEX); Refinance into a new loan with new terms. " +
+        "Claim returns your collateral on full repayment, or any unused " +
+        "VPFI rebate. Disabled actions show a hover reason.",
+    },
     learnMoreHref: `${README}#6-loan-closure--repayment`,
   },
 

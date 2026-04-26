@@ -536,7 +536,7 @@ export default function LoanDetails() {
         <div className="card">
           <div className="card-title" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
             Collateral & Risk
-            <CardInfo id="loan-details.collateral-risk" />
+            <CardInfo id="loan-details.collateral-risk" role={role} />
           </div>
           <div className="data-row">
             <span className="data-label">Collateral Amount</span>
@@ -697,7 +697,7 @@ export default function LoanDetails() {
         <div className="card loan-actions-card">
           <div className="card-title" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
             Actions
-            <CardInfo id="loan-details.actions" />
+            <CardInfo id="loan-details.actions" role={role} />
           </div>
 
           {isFallbackPending && (

@@ -225,6 +225,122 @@ GitHub-rendered Markdown to an in-app `/help/<id>` route in
 Phase 3 — only the URL builder in CardInfo changes; the
 registry stays untouched.
 
+## In-app user-guide pages — `/help/basic` and `/help/advanced`
+
+The earlier "Mode-aware Learn more" wiring pointed at GitHub-rendered
+Markdown for the canonical user-guide files. That was useful as a
+shortcut but had three weaknesses: it left the app for an external
+page; it gave no place to react to the user's role on cards where the
+framing differs by side; and it leaked the docs path out of the app
+shell. This drop replaces the GitHub link with a pair of in-app
+public pages that host the same Markdown.
+
+**Two public routes** — `/help/basic` and `/help/advanced`. No wallet
+required; same Navbar+Footer chrome as the landing / analytics pages.
+Reachable from any tooltip in the app, and shareable as direct links
+(the URL fragment carries the section id and an optional role suffix).
+
+**Markdown rendering** — `react-markdown` + `remark-gfm` + a small
+custom remark plugin that converts the docs' inline `<a id="X"></a>`
+anchor markup into `id` attributes on the next heading. (Brief
+debugging detour: CommonMark wraps inline-only HTML tags inside a
+paragraph node even when they sit on their own line, and splits
+`<a id="X"></a>` into separate opening / closing inline-html siblings.
+The plugin handles both shapes — top-level html block and paragraph
+wrapping a pair of html children — concatenating sibling html values
+before matching the anchor pattern, then attaching the id via
+`data.hProperties` and removing the anchor node.)
+
+**Role-tab widget** — for cards with `:lender` / `:borrower` H4
+subsections under the same H3 anchor (Create Offer Lending Asset /
+Collateral / Risk Disclosures, Claim Center Claims, Loan Details
+Collateral & Risk / Actions), the page collapses the pair into a
+tabbed widget. The page-wide role state is shared — flipping the role
+in any one widget flips every other role-tab widget on the page in
+sync, and updates the URL fragment via `history.replaceState` so
+refresh-and-share is consistent without piling up back-button history.
+
+**Initial role / scroll deep-link behaviour.** Arriving via a
+CardInfo tooltip with a role-keyed card (e.g.
+`/help/basic#create-offer.collateral:borrower`) opens the page-wide
+tab on borrower and scrolls to the Collateral section; every other
+role-tab section on the page is also on the borrower variant. Flipping
+to lender silently rewrites the fragment to `:lender`. No
+localStorage — each visit starts from the URL or the lender default,
+which is correct because a Vaipakam wallet has no global role (it can
+lend and borrow on different loans simultaneously).
+
+**Sidebar / TOC.** The page extracts H2 (group) + H3 (item) headings
+from the raw Markdown into a 2-level table of contents, rendered as a
+side rail on desktop (sticky 88 px from the top, role tabs pinned at
+the top of the rail and the section list scrolling beneath them) and
+as a single sticky bar combining role tabs + collapsible Sections
+accordion on mobile. The role tabs stay visible while the page
+content scrolls; the mobile accordion auto-collapses when a TOC item
+is tapped so the section the user just jumped to isn't immediately
+covered. Tap targets are 32–36 px (touch-friendly without eating
+vertical space).
+
+**Sticky-footer flex shell.** The page is wrapped in a flex column
+with `min-height: 100vh` and the inner main set to `flex: 1`, so the
+Footer is anchored to the bottom whether the content is short or
+long. Theme tokens come from `styles/global.css` — both light and
+dark modes resolve cleanly, no hard-coded colours.
+
+**CardInfo retargeted.** The "Learn more →" URL builder in CardInfo
+now produces `/help/<mode>#<id><roleSuffix>` instead of a GitHub URL.
+Mode comes from `useMode()`; role suffix comes from the optional
+`role` prop on CardInfo when the registry entry is role-keyed.
+
+## Role-keyed expansion — four more cards
+
+The first cut of role-keyed tooltips covered only `create-offer.lending-asset`
+and `create-offer.collateral`. After re-evaluation against every
+card, four more were promoted to role-keyed because the framing
+genuinely differs per side rather than just the wording:
+
+- **`create-offer.risk-disclosures`** — same risk surface, different
+  failure mode per side (delayed liquidation hurts the lender's
+  recovery; early liquidation hurts the borrower's collateral).
+- **`claim-center.claims`** — totally different payouts per role
+  (principal + interest minus 1% treasury cut for the lender;
+  collateral or VPFI rebate for the borrower).
+- **`loan-details.collateral-risk`** — the same HF / LTV numbers
+  read as "your protection thins" to the lender and "your liquidation
+  risk grows" to the borrower.
+- **`loan-details.actions`** — completely disjoint action lists per
+  role (Claim / Init Early Withdrawal for the lender; Repay /
+  Preclose / Refinance / Claim for the borrower).
+
+Each got a matching pair of `:lender` / `:borrower` subsections in
+both `UserGuide-Basic.md` and `UserGuide-Advanced.md`, so deep
+links from the in-app tooltips land on the right tab.
+
+**Cards intentionally left strict-not-keyed.** Offer Book lender /
+borrower lists, Dashboard fee-discount consent, and a few others
+where the strict-language summary already explains both sides in one
+paragraph stay as-is — splitting them would hide the other side from
+each reader without adding clarity.
+
+**Call-site role prop.**
+
+- `CreateOffer.tsx` — passes `role={form.offerType}` on the four
+  CreateOffer cards (lending-asset, collateral, risk-disclosures,
+  plus the existing offer-type for the rebate-banner branch).
+- `LoanDetails.tsx` — derives the viewer's role from the connected
+  wallet vs `loan.lender` / `loan.borrower` (existing local
+  `role` constant) and passes it on collateral-risk and actions.
+- `ClaimCenter.tsx` — left without a role prop on purpose. The
+  page may show both lender and borrower claims simultaneously for
+  the same wallet; CardInfo falls back to the lender variant in
+  the tooltip and the help page lets the reader flip when they
+  want the other view.
+
+**`CardHelpEntry` typing.** `summary` is now `string | { lender,
+borrower }`. CardInfo resolves to the role-specific variant when both
+the entry is role-keyed and a role prop is supplied; falls back to
+the lender variant when role is omitted.
+
 ## Bug fixes
 
 **Mobile InfoTip behaviour.** InfoTip was rewritten to be
@@ -250,6 +366,34 @@ clipped by the card's `overflow:hidden`. Migrated to the new
 InfoTip primitive, which renders through a portal and so escapes
 the clipping ancestor cleanly. The fix is the same migration that
 handles the Advanced-mode gating mentioned above.
+
+**`<a id="…">` rendering as visible text on /help.** The first
+iteration of the in-app help page used `rehype-raw` to render the
+inline anchor markup, which left the `<a>` element in the DOM with
+no styling but still visible. The second iteration tried a remark
+plugin that walked top-level html nodes — but missed the anchors
+because CommonMark wraps inline-only HTML in paragraphs. Final
+fix: the plugin now also handles paragraphs whose children are all
+html nodes, concatenates their values, matches the anchor pattern,
+attaches the id to the next heading, and strips the paragraph.
+Verified on both guides — every H3 with an inline anchor now
+carries the corresponding id attribute, and no `<a id>` text leaks
+to the rendered page.
+
+**Footer not visible on /help pages.** Sticky children inside the
+help page's grid layout could push the Footer below the viewport
+in some states, leaving the page looking footer-less. Wrapped the
+whole page in a `display: flex; flex-direction: column;
+min-height: 100vh` shell with `flex: 1` on the inner main; the
+Footer now lands at the bottom predictably regardless of content
+height or sticky-element layout.
+
+**TOC accordion staying open on mobile after navigation.** Tapping
+a Sections item on mobile would scroll-jump to the section but
+leave the TOC accordion expanded, covering the heading the user
+just navigated to. Each TOC link now closes its enclosing
+`<details>` element on click via a small `closest('details')`
+walk; no-op on desktop where the TOC has no `<details>` ancestor.
 
 ## Status snapshot at end-of-day 2026-04-26
 

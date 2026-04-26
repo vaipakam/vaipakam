@@ -236,17 +236,43 @@ parties to consent to a full-collateral-on-default outcome.
 
 Lending and borrowing on Vaipakam carries real risk. Before an
 offer is signed, this card asks for an explicit acknowledgement
-from the side that's signing:
-
-- Smart contracts can have bugs.
-- Price feeds can be stale or wrong, which affects the liquidation
-  math.
-- Liquidations can sell collateral at a worse price than expected.
-- For illiquid collateral, defaults are final — no refund mechanism
-  exists.
+from the side that's signing. The risks below apply to both sides;
+the role-specific tabs below highlight which way each one tends to
+bite.
 
 Vaipakam is non-custodial. There is no support desk to reverse a
 landed transaction. Read these carefully before signing.
+
+<a id="create-offer.risk-disclosures:lender"></a>
+
+#### If you're the lender
+
+- **Smart-contract risk** — the contracts are immutable code; an
+  unknown bug could affect funds.
+- **Oracle risk** — a stale or manipulated price feed can delay
+  liquidation past the point where the collateral covers your
+  principal. You may not be made whole.
+- **Liquidation slippage** — even when liquidation fires on time,
+  the DEX swap can land at a worse price than the quote, shaving
+  what you actually recover.
+- **Illiquid collateral** — on default the collateral transfers to
+  you in full, but if it's worth less than the loan you have no
+  further claim. You agreed to this trade-off at offer creation.
+
+<a id="create-offer.risk-disclosures:borrower"></a>
+
+#### If you're the borrower
+
+- **Smart-contract risk** — the contracts are immutable code; an
+  unknown bug could affect your locked collateral.
+- **Oracle risk** — a stale or manipulated price feed can trigger
+  liquidation against you at the wrong moment, even when the real-
+  market price would have stayed safe.
+- **Liquidation slippage** — when liquidation fires, the DEX swap
+  can sell your collateral at a worse price than expected.
+- **Illiquid collateral** — on default your full collateral
+  transfers to the lender, with no leftover claim back to you. You
+  agreed to this trade-off at offer creation.
 
 <a id="create-offer.advanced-options"></a>
 
@@ -271,11 +297,31 @@ share of the result doesn't move into your wallet automatically.
 You have to click **Claim** for it. This page is the list of every
 unfinished claim you have on this chain.
 
-If you were the lender, you'll claim the principal back plus
-interest (minus a 1% treasury cut). If you were the borrower and
-you paid in full, you'll claim your collateral back, and any
-leftover VPFI rebate on the loan-initiation fee. Each successful
-claim uses up the position NFT you got at the start of the loan.
+A user can hold both lender claims (from loans they funded) and
+borrower claims (from loans they took) at the same time — both
+appear in the same list. The two role-specific tabs below describe
+what each kind of claim returns.
+
+<a id="claim-center.claims:lender"></a>
+
+#### If you're the lender
+
+Your lender claim returns the loan's principal plus the interest
+that accrued, minus a 1% treasury cut on the interest portion. It
+becomes claimable as soon as the loan settles — repaid, defaulted,
+or liquidated. The claim consumes your lender position NFT
+atomically — once it lands, that side of the loan is fully closed
+out.
+
+<a id="claim-center.claims:borrower"></a>
+
+#### If you're the borrower
+
+If you repaid the loan in full, your borrower claim returns the
+collateral you locked at the start. On default or liquidation,
+only any unused VPFI rebate from the Loan Initiation Fee is
+returned — the collateral itself has already gone to the lender.
+The claim consumes your borrower position NFT atomically.
 
 ---
 
@@ -412,7 +458,7 @@ pays this one off in the same transaction.)
 
 ### Collateral & Risk
 
-What the borrower locked up, plus the live risk numbers — Health
+The collateral on this loan, plus the live risk numbers — Health
 Factor and LTV. **Health Factor** is a single safety score: above
 1 means the collateral comfortably covers the loan; near 1 means
 it's risky and the loan could be liquidated. **LTV** is "how much
@@ -422,6 +468,30 @@ where the position becomes unsafe are on the same card.
 If the collateral is illiquid (an NFT or a token with no live
 price feed), these numbers can't be computed. Both sides agreed to
 that outcome at offer creation.
+
+<a id="loan-details.collateral-risk:lender"></a>
+
+#### If you're the lender
+
+This is the borrower's collateral — your protection. As long as HF
+stays above 1, you're well-covered. When HF drops, your protection
+thins; if it crosses 1, anyone (you included) can trigger
+liquidation, and the DEX swap converts the collateral to your
+principal asset to repay you. On illiquid collateral, default
+transfers the collateral to you in full — you take whatever it's
+worth.
+
+<a id="loan-details.collateral-risk:borrower"></a>
+
+#### If you're the borrower
+
+This is your locked collateral. Keep HF safely above 1 — when it
+gets close, you're at liquidation risk. You can usually pull HF
+back up by adding more collateral or repaying part of the loan.
+If HF crosses 1, anyone can trigger liquidation, and the DEX swap
+will sell your collateral at slippage-eaten prices to repay the
+lender. On illiquid collateral, default transfers your full
+collateral to the lender with no leftover claim back to you.
 
 <a id="loan-details.parties"></a>
 
@@ -438,15 +508,41 @@ instead.
 
 ### Actions
 
-Every button available on this loan, gated by your role:
+Every button available on this loan. The set you see depends on
+your role on this specific loan — the role-specific tabs below
+list each side's options. Buttons that aren't available right now
+will be greyed out, with a small tooltip explaining why.
 
-- **Borrower** — repay (in full or partly), close early, refinance.
-- **Lender** — claim once the loan settles.
-- **Anyone** — liquidate, when the loan crosses into unsafe
-  territory or the grace period expires.
+<a id="loan-details.actions:lender"></a>
 
-Buttons that aren't available right now will be greyed out, with a
-small tooltip explaining why.
+#### If you're the lender
+
+- **Claim** — once the loan settles (repaid, defaulted, or
+  liquidated), unlocks the principal back plus interest, less the
+  1% treasury cut on interest. Consumes your lender NFT.
+- **Initiate Early Withdrawal** — list your lender NFT for sale to
+  another buyer mid-loan. The buyer takes over your side; you walk
+  away with the sale proceeds.
+- **Liquidate** — anyone (you included) can trigger this when HF
+  drops below 1 or the grace period expires.
+
+<a id="loan-details.actions:borrower"></a>
+
+#### If you're the borrower
+
+- **Repay** — full or partial. Partial repayment lowers your
+  outstanding and improves HF; full repayment closes the loan and
+  unlocks your collateral via Claim.
+- **Preclose** — close the loan early. Direct path: pay the full
+  outstanding from your wallet now. Offset path: sell some of the
+  collateral on a DEX, use the proceeds to repay, get whatever's
+  left back.
+- **Refinance** — roll into a new loan with new terms; the
+  protocol pays off the old loan from the new principal in one
+  transaction. Collateral never leaves escrow.
+- **Claim** — once the loan settles, returns your collateral on
+  full repayment, or any leftover VPFI rebate from the loan-
+  initiation fee on default.
 
 ---
 

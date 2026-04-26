@@ -272,20 +272,49 @@ offer-acceptance time. Either way, the HF ≥ 1.5e18 gate at
 
 ### Risk Disclosures
 
-Acknowledgement gate before submitting. Relevant risks:
+Acknowledgement gate before submitting. The same risk surface
+applies to both sides; the role-specific tabs below explain how
+each one bites differently depending on which side of the offer
+you sign. Vaipakam is non-custodial; there is no admin key that
+can reverse a landed transaction. Pause levers exist on LZ-facing
+contracts only, gated to the timelock; they cannot move assets.
 
-- Smart-contract risk (the contracts are immutable code at
-  runtime; audit but not formally verified).
-- Oracle risk — Chainlink staleness, V3 pool depth divergence,
-  secondary-quorum disagreement.
-- Liquidation slippage — `LibSwap` will route to the best of four
-  DEXes but cannot guarantee a specific execution price.
-- Illiquid-collateral defaults are final — there is no recourse,
-  no Diamond-side dispute resolution.
+<a id="create-offer.risk-disclosures:lender"></a>
 
-Vaipakam is non-custodial; there is no admin key that can reverse
-a landed transaction. (Pause levers exist on LZ-facing contracts
-only, gated to the timelock; they cannot move assets.)
+#### If you're the lender
+
+- **Smart-contract risk** — immutable code at runtime; audit but
+  not formally verified.
+- **Oracle risk** — Chainlink staleness or V3 pool depth
+  divergence can delay a HF-based liquidation past the point where
+  the collateral covers the principal. The secondary quorum
+  (Tellor + API3 + DIA, Soft 2-of-N) catches gross drift but
+  small skew can still erode recovery.
+- **Liquidation slippage** — `LibSwap`'s 4-DEX failover (0x →
+  1inch → Uniswap V3 → Balancer V2) routes to the best execution
+  it can find, but cannot guarantee a specific price. Recovery is
+  net of slippage and the 1% treasury cut on interest.
+- **Illiquid-collateral defaults** — collateral transfers to you
+  in full at `markDefaulted` time. No recourse if the asset is
+  worth less than `principal + accruedInterest()`.
+
+<a id="create-offer.risk-disclosures:borrower"></a>
+
+#### If you're the borrower
+
+- **Smart-contract risk** — immutable code at runtime; bugs
+  affect locked collateral.
+- **Oracle risk** — staleness or manipulation can trigger
+  HF-based liquidation against you when the real-market price
+  would have stayed safe. The HF formula is reactive to oracle
+  output; a single bad tick crossing 1.0 is enough.
+- **Liquidation slippage** — when `RiskFacet → LibSwap` fires,
+  the swap can sell your collateral at slippage-eaten prices. The
+  swap is permissionless — anyone can trigger it the instant
+  HF < 1e18.
+- **Illiquid-collateral defaults** — `markDefaulted` transfers
+  your full collateral to the lender. No leftover claim — only
+  any unused VPFI LIF rebate via `claimAsBorrower`.
 
 <a id="create-offer.advanced-options"></a>
 
@@ -311,18 +340,45 @@ Defaults are sensible for most users.
 
 Claims are pull-style by design — terminal events leave funds in
 Diamond / escrow custody and the holder of the position NFT calls
-`claimAsLender` / `claimAsBorrower` to move them.
+`claimAsLender` / `claimAsBorrower` to move them. Both kinds of
+claim can sit in the same wallet at the same time. The role-
+specific tabs below describe each.
 
-- **Lender claim** — principal back + accrued interest, less the
-  1% treasury cut on interest.
-- **Borrower claim** — collateral back on full repayment; on
-  HF-liquidation or default, only any unused VPFI Loan Initiation
-  Fee rebate (`s.borrowerLifRebate[loanId].rebateAmount`) is
-  returned, not the collateral.
+Each claim burns the holder's position NFT atomically. The NFT
+_is_ the bearer instrument — transferring it before claiming
+hands the new holder the right to collect.
 
-Each claim consumes (burns) the holder's position NFT atomically.
-The NFT _is_ the bearer instrument — transferring it before
-claiming hands the new holder the right to collect.
+<a id="claim-center.claims:lender"></a>
+
+#### If you're the lender
+
+`ClaimFacet.claimAsLender(loanId)` returns:
+
+- `principal` back into your wallet on this chain.
+- `accruedInterest(loan)` minus the 1% treasury cut
+  (`TREASURY_FEE_BPS = 100`) — the cut is itself reduced by your
+  time-weighted VPFI fee discount accumulator (Phase 5) when
+  consent is on.
+
+Claimable as soon as the loan reaches a terminal state (Settled,
+Defaulted, or Liquidated). The lender position NFT is burned in
+the same transaction.
+
+<a id="claim-center.claims:borrower"></a>
+
+#### If you're the borrower
+
+`ClaimFacet.claimAsBorrower(loanId)` returns, depending on how
+the loan settled:
+
+- **Full repayment / preclose / refinance** — your collateral
+  basket back, plus the time-weighted VPFI rebate from the LIF
+  (`s.borrowerLifRebate[loanId].rebateAmount`).
+- **HF-liquidation or default** — only the unused VPFI LIF
+  rebate (which on these terminal paths is zero unless explicitly
+  preserved). Collateral has already moved to the lender.
+
+The borrower position NFT is burned in the same transaction.
 
 ---
 
@@ -502,6 +558,38 @@ to n/a and the only terminal path is full transfer on default —
 both parties consented at offer creation via the illiquid-risk
 acknowledgement.
 
+<a id="loan-details.collateral-risk:lender"></a>
+
+#### If you're the lender
+
+The collateral basket securing this loan is your protection.
+HF > 1e18 means the position is over-collateralised vs the
+liquidation threshold. As HF drifts toward 1e18, your protection
+thins; once HF < 1e18, anyone (you included) can call
+`RiskFacet.triggerLiquidation(loanId)` and `LibSwap` will route
+the collateral via the 4-DEX failover for your principal asset.
+Recovery is net of slippage.
+
+For illiquid collateral, on default the basket transfers to you
+in full at `markDefaulted` time — what it's actually worth is
+your problem.
+
+<a id="loan-details.collateral-risk:borrower"></a>
+
+#### If you're the borrower
+
+Your locked collateral. Keep HF safely above 1e18 — common buffer
+target is ≥ 1.5e18 to ride out volatility. Levers to bring HF up:
+
+- `addCollateral(loanId, …)` — top up the basket; user-only.
+- Partial repay via `RepayFacet` — reduces debt, raises HF.
+
+Once HF < 1e18, anyone can trigger HF-based liquidation; the
+swap sells your collateral at slippage-eaten prices to repay the
+lender. On illiquid collateral, default transfers your full
+collateral to the lender — only any unused VPFI LIF rebate
+(`s.borrowerLifRebate[loanId].rebateAmount`) is left to claim.
+
 <a id="loan-details.parties"></a>
 
 ### Parties
@@ -516,19 +604,51 @@ claim. The escrow proxies are deterministic per address (CREATE2)
 
 ### Actions
 
-Action surface, gated by `getLoanActionAvailability`:
+Action surface, gated per role by `getLoanActionAvailability`.
+The role-specific tabs below list each side's available
+selectors. Disabled actions surface a hover-reason derived from
+the gate (`InsufficientHF`, `NotYetExpired`, `LoanLocked`, etc.).
 
-- **Borrower** — `repay` (full / partial via `RepayFacet`),
-  `precloseDirect` / `precloseOffset` (`PrecloseFacet`),
-  `refinance` (`RefinanceFacet`).
-- **Lender** — `claimAsLender` (`ClaimFacet`),
-  `initEarlyWithdrawal` (`EarlyWithdrawalFacet`).
-- **Anyone** — `triggerLiquidation` (`RiskFacet`, when HF <
-  1e18) or `markDefaulted` (`DefaultedFacet`, when grace
-  expired).
+Permissionless actions available to anyone regardless of role:
 
-Disabled actions surface a hover-reason derived from the gate
-(`InsufficientHF`, `NotYetExpired`, `LoanLocked`, etc.).
+- `RiskFacet.triggerLiquidation(loanId)` — when HF < 1e18.
+- `DefaultedFacet.markDefaulted(loanId)` — when the grace period
+  has expired without full repayment.
+
+<a id="loan-details.actions:lender"></a>
+
+#### If you're the lender
+
+- `ClaimFacet.claimAsLender(loanId)` — terminal-only. Returns
+  principal + interest minus the 1% treasury cut (further
+  reduced by your time-weighted VPFI yield-fee discount when
+  consent is on). Burns the lender position NFT.
+- `EarlyWithdrawalFacet.initEarlyWithdrawal(loanId, askPrice)` —
+  list the lender NFT for sale at `askPrice`. A buyer calling
+  `completeEarlyWithdrawal(saleId)` takes over your side; you
+  receive the proceeds. Cancellable before fill.
+- Optionally delegatable to a keeper holding the relevant action
+  bit (`COMPLETE_LOAN_SALE`, etc.) — see Keeper Settings.
+
+<a id="loan-details.actions:borrower"></a>
+
+#### If you're the borrower
+
+- `RepayFacet.repay(loanId, amount)` — full or partial. Partial
+  reduces outstanding and raises HF; full triggers terminal
+  settlement, including the time-weighted VPFI LIF rebate via
+  `LibVPFIDiscount.settleBorrowerLifProper`.
+- `PrecloseFacet.precloseDirect(loanId)` — pay outstanding from
+  your wallet now, release collateral, settle LIF rebate.
+- `PrecloseFacet.initOffset(loanId, swapParams)` /
+  `completeOffset(loanId)` — sell some collateral via `LibSwap`,
+  repay from proceeds, return remainder.
+- `RefinanceFacet` flow — post a borrower offer for new terms;
+  `completeRefinance(oldLoanId, newOfferId)` swaps loans
+  atomically with collateral never leaving escrow.
+- `ClaimFacet.claimAsBorrower(loanId)` — terminal-only. Returns
+  collateral on full repayment, or the unused VPFI LIF rebate
+  on default / liquidation. Burns the borrower position NFT.
 
 ---
 

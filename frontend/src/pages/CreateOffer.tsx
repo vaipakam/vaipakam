@@ -934,7 +934,10 @@ export default function CreateOffer() {
         <div className="card" style={{ marginBottom: 20 }}>
           <div className="card-title">
             Risk Disclosures
-            <CardInfo id="create-offer.risk-disclosures" />
+            <CardInfo
+              id="create-offer.risk-disclosures"
+              role={form.offerType}
+            />
           </div>
 
           <RiskDisclosures />
