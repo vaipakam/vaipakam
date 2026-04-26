@@ -9,7 +9,7 @@ import {
   ExternalLink,
 } from "lucide-react";
 import { useWallet } from "../context/WalletContext";
-import { CHAIN_REGISTRY, DEFAULT_CHAIN } from "../contracts/config";
+import { DEFAULT_CHAIN } from "../contracts/config";
 import type { ChainConfig } from "../contracts/config";
 import { useUserEscrowAddress } from "../hooks/useUserEscrowAddress";
 import "./Security.css";
