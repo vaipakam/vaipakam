@@ -44,6 +44,7 @@ import { ReportIssueLink } from "../components/app/ReportIssueLink";
 import { ConnectWalletButton } from "../components/app/ConnectWalletButton";
 import { WalletMenu } from "../components/app/WalletMenu";
 import { InfoTip } from "../components/InfoTip";
+import { LanguagePicker } from "../components/LanguagePicker";
 import "./AppLayout.css";
 
 const BASIC_NAV = [
@@ -324,13 +325,12 @@ export default function AppLayout() {
           </button>
 
           <div className="topbar-right">
-            {/* Standalone chain switcher — only when no wallet is
-             *  connected (read-only mode) or the wallet is on an
-             *  unsupported chain. When the wallet is connected and on
-             *  a supported chain, network-switching lives inside
-             *  `<WalletMenu>` (under the address pill) so the
-             *  topbar has a single discoverable session-state
-             *  control. */}
+            {/* When disconnected or on an unsupported chain, the
+             *  chain switcher is the standalone read-only mode picker.
+             *  When fully connected, the chain switcher slots between
+             *  the wallet pill and the disconnect button (see below)
+             *  so all session-state controls live as inline siblings
+             *  rather than nested inside a popover. */}
             {(!address || !isCorrectChain) && <ChainSwitcher />}
 
             {!address ? (
@@ -404,6 +404,11 @@ export default function AppLayout() {
                         Advanced
                       </button>
                     </div>
+                  </div>
+
+                  <div className="topbar-settings-row">
+                    <span className="topbar-settings-label">Language</span>
+                    <LanguagePicker />
                   </div>
 
                   <div className="topbar-settings-row">

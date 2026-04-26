@@ -33,7 +33,7 @@
   transform: translateX(0);
 }
 
-@media (min-width: 1024px) {
+@media (min-width: 768px) {
   .app-sidebar {
     transform: translateX(0);
   }
@@ -93,7 +93,7 @@
 
 /* Hover-expand (desktop) brings the wordmark back so the floating panel
  * reads as a real sidebar, not just a wider icon rail. */
-@media (min-width: 1024px) {
+@media (min-width: 768px) {
   .app-sidebar.collapsed:not(.suppress-hover-expand):hover .sidebar-logo--full,
   .app-sidebar.collapsed:not(.suppress-hover-expand):focus-within .sidebar-logo--full {
     display: block;
@@ -126,7 +126,7 @@
 
 /* Mobile close (X) only shows on mobile drawer; desktop uses collapse button. */
 .sidebar-collapse-btn { display: none; }
-@media (min-width: 1024px) {
+@media (min-width: 768px) {
   .sidebar-close { display: none; }
   .sidebar-collapse-btn { display: flex; }
 }
@@ -134,7 +134,7 @@
 /* When the sidebar is collapsed to the rail, the header becomes icon-only:
  * center the brand and keep the collapse button reachable. Hover-expand
  * restores the normal space-between layout via the `:hover` branch below. */
-@media (min-width: 1024px) {
+@media (min-width: 768px) {
   .app-sidebar.collapsed .sidebar-header {
     justify-content: center;
     padding: 20px 0 16px;
@@ -193,7 +193,7 @@
 /* Collapsed rail — hide label text visually but keep it in the accessibility
  * tree (screen readers still announce the destination). Icons center in the
  * narrower rail. Hover-expand unhides the label for sighted users. */
-@media (min-width: 1024px) {
+@media (min-width: 768px) {
   .app-sidebar.collapsed .sidebar-link {
     justify-content: center;
     padding: 10px 0;
@@ -270,7 +270,7 @@
 /* Collapsed rail — group label becomes a simple divider (text is noise at
  * 72px); footer button centers its icon and hides the label like nav links.
  * Hover-expand restores the full appearance. */
-@media (min-width: 1024px) {
+@media (min-width: 768px) {
   .app-sidebar.collapsed .sidebar-group-label {
     font-size: 0;
     padding: 0;
@@ -295,7 +295,7 @@
   z-index: 1050;
 }
 
-@media (min-width: 1024px) {
+@media (min-width: 768px) {
   .sidebar-overlay { display: none; }
 }
 
@@ -317,7 +317,7 @@
   transition: margin-left 0.2s ease;
 }
 
-@media (min-width: 1024px) {
+@media (min-width: 768px) {
   .app-main {
     margin-left: 260px;
   }
@@ -356,7 +356,7 @@
   border-radius: var(--radius-sm);
 }
 
-@media (min-width: 1024px) {
+@media (min-width: 768px) {
   .topbar-menu-btn { display: none; }
 }
 

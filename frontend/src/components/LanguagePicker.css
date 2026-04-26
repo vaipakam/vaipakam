@@ -1,0 +1,115 @@
+/* LanguagePicker — custom dropdown that mirrors `ChainPicker.css`
+ * rule-for-rule so the two pickers feel like siblings across both
+ * the Settings gear popover (this component) and the Analytics
+ * dashboard's chain-override (ChainPicker). The only intentional
+ * deltas are size-related: this picker lives inside the gear's
+ * 320px-max popover, so its trigger doesn't enforce the 180px
+ * minimum width that ChainPicker's wider Analytics-row context
+ * uses, and its menu is narrower to fit. Inline-item styling
+ * (rows, hover, selected, group label) is identical.
+ *
+ * Keep this file in lockstep with ChainPicker.css if either gets
+ * visual tweaks. */
+
+.language-picker {
+  position: relative;
+  display: inline-block;
+}
+
+.language-picker-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  padding: 7px 14px;
+  border-radius: var(--radius-full);
+  background: var(--bg-card);
+  color: var(--text-primary);
+  border: 1px solid var(--border);
+  cursor: pointer;
+  transition:
+    background 0.15s ease,
+    border-color 0.15s ease,
+    box-shadow 0.15s ease;
+  /* No min-width here — the parent settings-row already gives
+   * the picker reasonable width via flex layout, and 180px
+   * (ChainPicker's default) would overflow on narrow gear
+   * popovers at viewport widths approaching the 320px max. */
+  min-width: 140px;
+  justify-content: space-between;
+}
+
+.language-picker-btn:hover {
+  background: var(--bg-card-hover);
+  border-color: var(--border-hover);
+}
+
+.language-picker-btn:focus-visible {
+  outline: none;
+  border-color: var(--brand);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand) 25%, transparent);
+}
+
+.language-picker-label {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 1;
+  text-align: left;
+}
+
+.language-picker-chevron {
+  flex-shrink: 0;
+  color: var(--text-tertiary);
+}
+
+.language-picker-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  /* Right-aligned because the picker sits in the right-hand slot
+   * of the gear popover row; left-anchoring would push the menu
+   * past the popover's right edge on narrow viewports. */
+  right: 0;
+  min-width: 180px;
+  max-height: 60vh;
+  overflow-y: auto;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: var(--shadow-lg);
+  padding: 6px 0;
+  /* One above the gear popover (1200) so the menu floats above its
+   * own container without being clipped. */
+  z-index: 1300;
+}
+
+.language-picker-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 9px 14px;
+  font-size: 0.88rem;
+  background: transparent;
+  color: var(--text-primary);
+  border: none;
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.12s ease;
+}
+
+.language-picker-item:hover {
+  background: var(--bg-secondary);
+}
+
+.language-picker-item[aria-selected='true'] {
+  color: var(--brand);
+  font-weight: 600;
+}
+
+.language-picker-item-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}

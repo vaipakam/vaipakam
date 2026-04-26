@@ -126,6 +126,88 @@
   color: var(--text-tertiary);
 }
 
+/* Address row — full-width button at the top of the popover.
+ * Click anywhere inside copies the FULL hex to the clipboard;
+ * the icon swaps to a Check + brand-tinted background flashes
+ * for 1.2s, then reverts. The displayed redacted form
+ * (`0x123456…abcdef`) intentionally bypasses ENS — users on
+ * this row want the on-chain hex, not the human name. */
+.wallet-menu-address-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 10px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  font-size: 0.85rem;
+  font-weight: 500;
+  cursor: pointer;
+  text-align: left;
+  transition:
+    background 0.15s ease,
+    border-color 0.15s ease,
+    color 0.15s ease;
+}
+
+@media (hover: hover) {
+  .wallet-menu-address-row:hover {
+    border-color: var(--brand);
+    color: var(--brand);
+  }
+  .wallet-menu-address-row:hover .wallet-menu-address-copy-icon {
+    color: var(--brand);
+  }
+}
+
+.wallet-menu-address-row:focus-visible {
+  outline: none;
+  border-color: var(--brand);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand) 25%, transparent);
+}
+
+.wallet-menu-address-row--copied,
+.wallet-menu-address-row--copied:hover {
+  background: var(--brand-bg);
+  border-color: var(--brand);
+  color: var(--brand);
+}
+
+.wallet-menu-address-hex {
+  flex: 1;
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.wallet-menu-address-copy-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  color: var(--text-tertiary);
+  transition: color 0.15s ease;
+}
+
+.wallet-menu-address-row--copied .wallet-menu-address-copy-icon {
+  color: var(--brand);
+  animation: wallet-menu-copied-pop 0.18s ease-out;
+}
+
+@keyframes wallet-menu-copied-pop {
+  from {
+    transform: scale(0.85);
+  }
+  to {
+    transform: scale(1);
+  }
+}
+
 .wallet-menu-current {
   display: flex;
   align-items: center;

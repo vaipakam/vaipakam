@@ -8,13 +8,23 @@ import {
   Menu,
   X,
   AlertTriangle,
-  LogOut,
   ArrowRight,
+  Settings,
+  Globe,
+  LogOut,
+  ChevronDown,
 } from 'lucide-react';
 import './Navbar.css';
 import { ReportIssueLink } from './app/ReportIssueLink';
 import { ConnectWalletButton } from './app/ConnectWalletButton';
 import { WalletMenu } from './app/WalletMenu';
+import { WalletAddressPill } from './app/WalletAddressPill';
+import { ChainPicker } from './ChainPicker';
+import {
+  CHAIN_REGISTRY,
+  compareChainsForDisplay,
+} from '../contracts/config';
+import { LanguagePicker } from './LanguagePicker';
 
 type NavLink = { label: string; href: string };
 
@@ -58,18 +68,53 @@ const NAV_GROUPS: NavGroup[] = [
   },
 ];
 
-function shortenAddress(addr: string) {
-  return `${addr.slice(0, 6)}...${addr.slice(-4)}`;
-}
-
 export default function Navbar() {
   const { theme, toggleTheme } = useTheme();
-  const { address, isCorrectChain, disconnect, switchToDefaultChain, error, warning } = useWallet();
+  const {
+    address,
+    chainId,
+    isCorrectChain,
+    disconnect,
+    switchToChain,
+    switchToDefaultChain,
+    error,
+    warning,
+  } = useWallet();
+  // Chain options for the inline picker — every chain we have a
+  // Diamond on, sorted in canonical display order. Memoised since
+  // CHAIN_REGISTRY is module-level (won't change at runtime).
+  const deployedChains = Object.values(CHAIN_REGISTRY)
+    .filter((c) => c.diamondAddress !== null)
+    .sort(compareChainsForDisplay);
   const [mobileOpen, setMobileOpen] = useState(false);
   // Which nav-group dropdown (if any) is currently expanded on
   // desktop. Mobile flyout shows both groups inline (no popover).
   const [openGroup, setOpenGroup] = useState<string | null>(null);
   const groupsWrapRef = useRef<HTMLDivElement | null>(null);
+  // Settings gear (Language + Theme) popover. Lives next to the
+  // hamburger so the public navbar matches the in-app topbar's
+  // settings entry-point. Click-only on every device (mirrors the
+  // InfoTip click-only pattern; avoids the iOS hover-on-first-tap
+  // bug that would defer click to a second tap).
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const settingsRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!settingsOpen) return;
+    function onPointerDown(e: PointerEvent) {
+      if (settingsRef.current?.contains(e.target as Node)) return;
+      setSettingsOpen(false);
+    }
+    function onKey(e: KeyboardEvent) {
+      if (e.key === 'Escape') setSettingsOpen(false);
+    }
+    document.addEventListener('pointerdown', onPointerDown);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('pointerdown', onPointerDown);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [settingsOpen]);
 
   // Close the desktop dropdown on outside click / Escape so it never
   // outlives the user's attention. Mobile uses inline rendering, so
@@ -129,10 +174,18 @@ export default function Navbar() {
               // open via the trigger's click + Enter / Space.
               onPointerEnter={(e) => {
                 if (e.pointerType !== 'mouse') return;
+                // Inside the open mobile flyout the section is a
+                // click-only collapse/expand row — hover-to-open
+                // would race with the click handler on touch /
+                // hybrid devices and toggle the section as soon as
+                // a stray cursor entered. Gate on `mobileOpen` so
+                // hover-to-expand only fires on the desktop popover.
+                if (mobileOpen) return;
                 setOpenGroup(group.id);
               }}
               onPointerLeave={(e) => {
                 if (e.pointerType !== 'mouse') return;
+                if (mobileOpen) return;
                 setOpenGroup((prev) => (prev === group.id ? null : prev));
               }}
             >
@@ -152,6 +205,16 @@ export default function Navbar() {
                 aria-expanded={openGroup === group.id}
               >
                 {group.label}
+                {/* Chevron is hidden on desktop via CSS (the
+                 *  desktop trigger is a bare text label); on
+                 *  mobile it's the visible affordance for the
+                 *  collapse/expand row. Rotates 180° when
+                 *  the section is open. */}
+                <ChevronDown
+                  size={16}
+                  className="navbar-group-trigger-chevron"
+                  aria-hidden="true"
+                />
               </button>
 
               {/* Desktop popover. Stays mounted in the DOM so CSS
@@ -188,11 +251,21 @@ export default function Navbar() {
                 ))}
               </div>
 
-              {/* Mobile inline list — visible only inside the open
-                  flyout. Section header + 3 items per group, no
-                  popover. CSS-toggled via `.navbar-group-mobile-list`
-                  visibility rules in Navbar.css. */}
-              <div className="navbar-group-mobile-list">
+              {/* Mobile inline list — collapsed by default,
+                  expands when the trigger button above flips
+                  `openGroup` to this group's id. The `--open`
+                  modifier (set inline) gates the CSS rule that
+                  shows the list inside the flyout. The section
+                  label `<span>` is kept in the DOM for screen
+                  readers but visually hidden in the flyout (the
+                  trigger button serves as the heading). */}
+              <div
+                className={`navbar-group-mobile-list${
+                  openGroup === group.id
+                    ? ' navbar-group-mobile-list--open'
+                    : ''
+                }`}
+              >
                 <span className="navbar-group-mobile-label">
                   {group.label}
                 </span>
@@ -221,7 +294,12 @@ export default function Navbar() {
             Launch App <ArrowRight size={16} />
           </Link>
 
-          {/* Mobile wallet button */}
+          {/* Mobile wallet block — same triplet as the desktop row
+              (wallet pill → chain picker → disconnect), arranged as
+              a column inside the open hamburger flyout. The chain
+              picker shows up only when the user is connected and on
+              a supported chain, mirroring the desktop's "session-
+              state controls live as inline siblings" pattern. */}
           <div className="navbar-wallet-mobile">
             {!address ? (
               <ConnectWalletButton fullWidth />
@@ -236,34 +314,26 @@ export default function Navbar() {
               </button>
             ) : (
               <div className="wallet-connected-mobile">
-                <span className="wallet-address-badge">
-                  <span className="wallet-dot" />
-                  {shortenAddress(address)}
-                </span>
-                <button className="btn btn-ghost" onClick={disconnect}>
+                <WalletAddressPill address={address} />
+                <ChainPicker
+                  chains={deployedChains}
+                  value={chainId}
+                  onSelect={switchToChain}
+                  ariaLabel="Switch network"
+                />
+                <button
+                  className="btn btn-ghost"
+                  onClick={() => {
+                    disconnect();
+                    setMobileOpen(false);
+                  }}
+                >
                   <LogOut size={16} /> Disconnect
                 </button>
               </div>
             )}
           </div>
 
-          {/* Mobile-only theme toggle — lives inside the hamburger
-              flyout so the topbar row stays uncluttered next to the
-              hamburger button. The desktop theme toggle (rendered
-              below in `.navbar-actions`) is hidden via CSS at the
-              same 1200px breakpoint that hides the desktop CTAs,
-              so exactly one theme toggle is reachable per viewport. */}
-          <button
-            className="theme-toggle theme-toggle--mobile"
-            onClick={() => {
-              toggleTheme();
-              setMobileOpen(false);
-            }}
-            aria-label="Toggle theme"
-          >
-            {theme === 'dark' ? <Sun size={18} /> : <Moon size={18} />}
-            <span>{theme === 'dark' ? 'Light theme' : 'Dark theme'}</span>
-          </button>
         </div>
 
         <div className="navbar-actions">
@@ -275,12 +345,14 @@ export default function Navbar() {
             Launch App <ArrowRight size={14} />
           </Link>
 
-          {/* Desktop wallet entry-point. Mirrors the in-app topbar: a
-              single pill (chain icon + address) that opens a popover
-              containing the chain switcher + disconnect. The
-              ConnectWalletButton / Wrong-Network states stay as
-              standalone buttons because they're one-click actions
-              with nothing else to consolidate. */}
+          {/* Desktop wallet block — combined `<WalletMenu>` pill
+              (address + chain icon + chevron, click to open popover
+              with chain switcher + copy + disconnect inside). The
+              expanded inline triplet (pill + chain picker +
+              disconnect) lives only inside the mobile hamburger
+              flyout above; on desktop the topbar is too tight for
+              three side-by-side controls and the consolidated pill
+              keeps the row balanced. */}
           {!address ? (
             <ConnectWalletButton className="navbar-cta" />
           ) : !isCorrectChain ? (
@@ -297,25 +369,70 @@ export default function Navbar() {
             </span>
           )}
 
+          {/* Settings gear — Language picker + Theme toggle. Sits
+              left of the hamburger on mobile and rightmost on
+              desktop (hamburger is hidden ≥ 1200px). Mirrors the
+              in-app topbar gear so the two surfaces feel like
+              siblings; click-only on every viewport to avoid the
+              iOS hover-on-first-tap issue. */}
+          <div className="navbar-settings" ref={settingsRef}>
+            <button
+              type="button"
+              className="navbar-settings-btn"
+              onClick={() => setSettingsOpen((o) => !o)}
+              aria-haspopup="menu"
+              aria-expanded={settingsOpen}
+              aria-label="Settings"
+            >
+              <Settings size={18} />
+            </button>
+
+            {settingsOpen && (
+              <div
+                className="navbar-settings-panel"
+                role="menu"
+                aria-label="Settings"
+              >
+                <div className="navbar-settings-row">
+                  <span className="navbar-settings-label">
+                    <Globe size={12} aria-hidden="true" />
+                    Language
+                  </span>
+                  <LanguagePicker />
+                </div>
+                <p className="navbar-settings-hint">
+                  More languages are coming. UI strings stay in English
+                  until translations ship — your choice is remembered.
+                </p>
+
+                <div className="navbar-settings-row">
+                  <span className="navbar-settings-label">Theme</span>
+                  <button
+                    type="button"
+                    className="theme-toggle"
+                    onClick={toggleTheme}
+                    aria-label={
+                      theme === 'dark'
+                        ? 'Switch to light theme'
+                        : 'Switch to dark theme'
+                    }
+                  >
+                    {theme === 'dark' ? <Sun size={18} /> : <Moon size={18} />}
+                    <span className="navbar-settings-theme-label">
+                      {theme === 'dark' ? 'Light' : 'Dark'}
+                    </span>
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+
           <button
             className="mobile-menu-btn"
             onClick={() => setMobileOpen(!mobileOpen)}
             aria-label="Toggle menu"
           >
             {mobileOpen ? <X size={22} /> : <Menu size={22} />}
-          </button>
-
-          {/* Theme toggle anchored to the trailing edge of the row
-              so the public navbar's right end mirrors the in-app
-              topbar's right-end-anchored Settings gear. On mobile
-              the hamburger sits to its left; the toggle is small
-              enough (40px) to share the row without crowding. */}
-          <button
-            className="theme-toggle"
-            onClick={toggleTheme}
-            aria-label="Toggle theme"
-          >
-            {theme === 'dark' ? <Sun size={18} /> : <Moon size={18} />}
           </button>
         </div>
       </div>

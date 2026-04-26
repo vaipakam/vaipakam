@@ -11,6 +11,11 @@ interface AddressDisplayProps {
   /** Renders the monospace-hex shortform with no ENS lookup. Escape hatch
    *  for places that specifically want the hex (auditor views, tx traces). */
   hexOnly?: boolean;
+  /** Tighter hex truncation for cramped surfaces like the topbar
+   *  wallet pill — `0x12…abcd` (2+4 visible) instead of the
+   *  default `0x1234…abcd` (4+4). Has no effect when ENS
+   *  resolves; ENS names are always shown in full. */
+  compact?: boolean;
   className?: string;
   style?: CSSProperties;
   /** Fallback override for the "no address" render. Default empty string. */
@@ -32,6 +37,7 @@ export function AddressDisplay({
   address,
   withTooltip = false,
   hexOnly = false,
+  compact = false,
   className,
   style,
   emptyLabel = '',
@@ -40,7 +46,9 @@ export function AddressDisplay({
 
   if (!address) return <>{emptyLabel}</>;
 
-  const short = shortenAddr(address);
+  const short = compact
+    ? `${address.slice(0, 4)}…${address.slice(-4)}`
+    : shortenAddr(address);
   const display = hexOnly ? short : name ?? short;
 
   if (withTooltip && !hexOnly && name) {

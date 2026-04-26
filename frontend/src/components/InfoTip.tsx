@@ -5,58 +5,50 @@ import { Info } from "lucide-react";
 
 /**
  * `<InfoTip>` — accessible (i) info icon paired with a portal-rendered
- * tooltip bubble.
+ * tooltip bubble. Click-only on every device.
  *
- * Why a new component instead of the existing CSS-only `[data-tooltip]`?
+ * Why click-only (no hover-to-open)?
  *
- *   1. **No clipping.** The CSS tooltip lives inside the trigger's DOM
- *      subtree; any ancestor with `overflow: hidden`, `overflow: auto`,
- *      or `transform` clips the bubble. We hit this in cards, drawers,
- *      and inside the new Settings popover. Rendering through a portal
- *      to `document.body` and positioning with `fixed` coordinates lets
- *      the bubble float above every clipping ancestor.
+ *   - On iOS / Android, a `:hover` rule on the trigger would defer
+ *     the synthetic `click` event to the SECOND tap (the first tap
+ *     becomes a "show hover state" interaction). Scoping `:hover`
+ *     to `@media (hover: hover)` works for visual styling, but JS
+ *     hover handlers (`onPointerEnter`/`onPointerLeave`) still left
+ *     a confusing UX: desktop opens on hover, mobile only on click,
+ *     and the close-on-mouseleave race made anchor links inside the
+ *     bubble flaky to tap. A single click-to-toggle path makes the
+ *     interaction identical on every device.
  *
- *   2. **Mobile parity.** `:hover` is unreliable on touch devices —
- *      iOS fires it on the tap before navigation, Android fires it
- *      after, and neither dismisses cleanly. A plain (i) button with an
- *      `onClick` toggle gives mobile users a deterministic affordance
- *      while desktop hover keeps working through `onPointerEnter`/
- *      `onPointerLeave` (pointer events unify mouse + pen + touch).
- *
- *   3. **Edge-aware positioning.** The bubble's `left` is clamped to
- *      the viewport bounds so it never extends past either edge — a
- *      separate fix the CSS variant can't pull off without JS.
+ *   - The bubble is portal-rendered to `document.body` (not a
+ *     descendant of the trigger), so it sits above every clipping
+ *     ancestor — a card, modal, drawer, or sticky topbar can't
+ *     truncate it. Coordinates are JS-clamped to the viewport so
+ *     long content wraps in-bounds rather than running off-screen.
  *
  * Usage:
  *   <label>
  *     LTV cap
  *     <InfoTip>Maximum loan-to-value the borrower can request before…</InfoTip>
  *   </label>
- *
- * Pair it with a host element that has its own a11y label; the (i)
- * icon's `aria-label` defaults to "More information" but should be
- * passed explicitly when the surrounding label isn't self-describing.
  */
 export interface InfoTipProps {
   /** Tooltip body — string or JSX. Multi-line strings render
    *  preserving `\n` (the bubble uses `white-space: pre-line`). */
   children: ReactNode;
-  /** Icon size in px. Default 14 — matches the inline-text x-height
-   *  of the surrounding 0.78–0.95rem labels we use across the app. */
+  /** Icon size in px. Default 14. */
   size?: number;
-  /** Extra class on the trigger. Useful for nudging colour or margin
-   *  in a parent context (e.g. white icon on a coloured pill). */
+  /** Extra class on the trigger. */
   className?: string;
-  /** Override for the trigger's screen-reader label. Default:
+  /** Override for the trigger's screen-reader label. Default
    *  "More information". */
   ariaLabel?: string;
   /** Tooltip vertical placement relative to the trigger. Default
-   *  "below". Falls back to "above" automatically when placing below
-   *  would overflow the viewport. */
+   *  "below". Falls back to "above" automatically when placing
+   *  below would overflow the viewport. */
   placement?: "above" | "below";
 }
 
-const VIEWPORT_PAD = 12; // px — keeps the bubble at least this far from any viewport edge
+const VIEWPORT_PAD = 12; // px — minimum distance from viewport edges
 
 export function InfoTip({
   children,
@@ -74,10 +66,10 @@ export function InfoTip({
   const triggerRef = useRef<HTMLButtonElement | null>(null);
   const bubbleRef = useRef<HTMLDivElement | null>(null);
 
-  // Compute viewport-aware coordinates whenever the bubble opens or
-  // its size changes. Uses `useLayoutEffect` so the bubble is placed
-  // before the next paint — a `useEffect` here causes a 1-frame jump
-  // from (0,0) to the final spot when toggling rapidly.
+  // Compute viewport-aware coordinates whenever the bubble opens
+  // (or its size changes via children). useLayoutEffect so the
+  // bubble is placed before the next paint — useEffect causes a
+  // 1-frame jump from (0,0) to the final spot.
   useLayoutEffect(() => {
     if (!open) {
       setCoords(null);
@@ -87,14 +79,9 @@ export function InfoTip({
     if (!trigger) return;
     const triggerRect = trigger.getBoundingClientRect();
     const bubble = bubbleRef.current;
-    // Bubble may not be in the DOM on the first pass (open just flipped
-    // true). Best-effort sizing — the secondary effect below recomputes
-    // once the bubble is rendered and its real width/height are known.
     const bubbleW = bubble?.offsetWidth ?? 280;
     const bubbleH = bubble?.offsetHeight ?? 60;
 
-    // Decide above vs below: prefer the requested placement, but flip
-    // if it would overflow the viewport.
     const triggerCenterX = triggerRect.left + triggerRect.width / 2;
     const spaceBelow = window.innerHeight - triggerRect.bottom;
     const spaceAbove = triggerRect.top;
@@ -104,17 +91,11 @@ export function InfoTip({
     } else if (place === "above" && spaceAbove < bubbleH + VIEWPORT_PAD && spaceBelow > spaceAbove) {
       place = "below";
     }
-
     const top =
       place === "below"
         ? triggerRect.bottom + 8
         : triggerRect.top - bubbleH - 8;
 
-    // Horizontal: centre on trigger, then clamp to viewport with
-    // `VIEWPORT_PAD` margin on each side. The bubble's transform-origin
-    // is its centre, so we also shift the arrow via CSS variable
-    // (--info-tip-arrow-x) so it still points at the trigger after the
-    // clamp.
     const halfBubble = bubbleW / 2;
     const minLeft = VIEWPORT_PAD + halfBubble;
     const maxLeft = window.innerWidth - VIEWPORT_PAD - halfBubble;
@@ -123,7 +104,13 @@ export function InfoTip({
     setCoords({ top, left, placement: place });
   }, [open, placement, children]);
 
-  // Close on outside click / Escape / scroll / resize.
+  // Close on outside click / Escape / scroll / resize. The handler
+  // checks `e.target` against the trigger and bubble refs, so a
+  // tap inside the bubble (e.g. on a "Learn more" link) is correctly
+  // ignored — no stopPropagation needed at the bubble level (and
+  // critically, NOT calling stopPropagation on pointerdown avoids
+  // an iOS Safari bug where it suppresses the synthetic click and
+  // anchor taps don't navigate).
   useEffect(() => {
     if (!open) return;
     function onPointerDown(e: PointerEvent) {
@@ -139,9 +126,6 @@ export function InfoTip({
       if (e.key === "Escape") setOpen(false);
     }
     function onWindowChange() {
-      // Either close (cheap) or recompute coords. Closing is simpler
-      // and a scroll/resize on an open tooltip is almost always the
-      // user dismissing the surface anyway.
       setOpen(false);
     }
     document.addEventListener("pointerdown", onPointerDown);
@@ -156,42 +140,6 @@ export function InfoTip({
     };
   }, [open]);
 
-  // Grace-period close handling. The bubble is portal-rendered to
-  // <body>, so it isn't a descendant of the trigger — `pointerleave`
-  // on the trigger fires the moment the cursor crosses the 8px gap
-  // toward the bubble, even though the user is *trying* to reach a
-  // link inside it. A short timer lets the cursor traverse the gap
-  // without losing the menu; if the cursor enters the bubble within
-  // the window, the timer is cancelled. Bubble-side
-  // pointerEnter/Leave do the symmetric thing so moving back to the
-  // trigger keeps the bubble open too.
-  const closeTimerRef = useRef<number | null>(null);
-  const scheduleClose = () => {
-    if (closeTimerRef.current != null) {
-      window.clearTimeout(closeTimerRef.current);
-    }
-    closeTimerRef.current = window.setTimeout(() => {
-      closeTimerRef.current = null;
-      setOpen(false);
-    }, 140);
-  };
-  const cancelClose = () => {
-    if (closeTimerRef.current != null) {
-      window.clearTimeout(closeTimerRef.current);
-      closeTimerRef.current = null;
-    }
-  };
-  // Always clear on unmount so a closing timer doesn't outlive the
-  // component and try to setState on a dead instance.
-  useEffect(
-    () => () => {
-      if (closeTimerRef.current != null) {
-        window.clearTimeout(closeTimerRef.current);
-      }
-    },
-    [],
-  );
-
   return (
     <>
       <button
@@ -201,35 +149,7 @@ export function InfoTip({
         aria-label={ariaLabel ?? "More information"}
         aria-expanded={open}
         aria-haspopup="dialog"
-        onClick={(e) => {
-          // `stopPropagation` so an outside-click handler on a parent
-          // popover (e.g. the topbar Settings panel) doesn't immediately
-          // close the parent when the user taps the (i) icon inside it.
-          e.stopPropagation();
-          cancelClose();
-          setOpen((prev) => !prev);
-        }}
-        onPointerEnter={(e) => {
-          // Mouse-only: hover-to-open. Touch input fires pointerenter
-          // immediately followed by pointerleave / pointercancel before
-          // the click; we let `onClick` own the toggle for touch and
-          // use this only for mouse.
-          if (e.pointerType !== "mouse") return;
-          cancelClose();
-          setOpen(true);
-        }}
-        onPointerLeave={(e) => {
-          if (e.pointerType !== "mouse") return;
-          // Don't close immediately — the user may be on their way to
-          // click a link inside the bubble. The bubble's
-          // pointerEnter cancels this timer if they make it.
-          scheduleClose();
-        }}
-        onFocus={() => {
-          cancelClose();
-          setOpen(true);
-        }}
-        onBlur={() => setOpen(false)}
+        onClick={() => setOpen((prev) => !prev)}
       >
         <Info size={size} aria-hidden="true" />
       </button>
@@ -245,20 +165,6 @@ export function InfoTip({
               top: coords.top,
               left: coords.left,
               transform: "translateX(-50%)",
-            }}
-            // Clicking inside the bubble shouldn't close it via the
-            // outside-click handler.
-            onPointerDown={(e) => e.stopPropagation()}
-            // Cursor reached the bubble before the close timer
-            // fired — keep it open. Symmetric pointerLeave restarts
-            // the timer when the user moves on.
-            onPointerEnter={(e) => {
-              if (e.pointerType !== "mouse") return;
-              cancelClose();
-            }}
-            onPointerLeave={(e) => {
-              if (e.pointerType !== "mouse") return;
-              scheduleClose();
             }}
           >
             {children}

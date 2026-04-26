@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { ChevronDown, LogOut, Globe } from 'lucide-react';
+import { ChevronDown, LogOut, Globe, Copy, Check } from 'lucide-react';
 import { useWallet } from '../../context/WalletContext';
 import {
   CHAIN_REGISTRY,
@@ -45,7 +45,9 @@ export function WalletMenu() {
   const { address, chainId, activeChain, disconnect, switchToChain } =
     useWallet();
   const [open, setOpen] = useState(false);
+  const [copied, setCopied] = useState(false);
   const wrapRef = useRef<HTMLDivElement | null>(null);
+  const copiedTimerRef = useRef<number | null>(null);
 
   // Close on outside click / Escape / scroll. Same pattern as the
   // settings popover and InfoTip — the bubble shouldn't outlive the
@@ -66,6 +68,17 @@ export function WalletMenu() {
       document.removeEventListener('keydown', onKey);
     };
   }, [open]);
+
+  // Clear any pending "Copied" timer on unmount so a closing menu
+  // doesn't fire setState on a dead component.
+  useEffect(
+    () => () => {
+      if (copiedTimerRef.current != null) {
+        window.clearTimeout(copiedTimerRef.current);
+      }
+    },
+    [],
+  );
 
   if (!address) return null;
 
@@ -94,6 +107,40 @@ export function WalletMenu() {
     disconnect();
   };
 
+  /** Copy the connected wallet's full hex address to the clipboard
+   *  and flash a "Copied" state for 1.2s. Falls back to the legacy
+   *  textarea + execCommand trick on environments without the
+   *  clipboard API (older iOS Safari, http:// origins). The popover
+   *  stays open so the user can confirm the copy succeeded. */
+  const handleCopyAddress = async () => {
+    if (!address) return;
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(address);
+      } else {
+        const ta = document.createElement('textarea');
+        ta.value = address;
+        ta.style.position = 'fixed';
+        ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand('copy');
+        document.body.removeChild(ta);
+      }
+      setCopied(true);
+      if (copiedTimerRef.current != null) {
+        window.clearTimeout(copiedTimerRef.current);
+      }
+      copiedTimerRef.current = window.setTimeout(() => {
+        setCopied(false);
+        copiedTimerRef.current = null;
+      }, 1200);
+    } catch {
+      // Silent fail — most browsers also offer long-press → Copy
+      // via native UI on the visible hex text.
+    }
+  };
+
   return (
     <div className="wallet-menu" ref={wrapRef}>
       <button
@@ -106,7 +153,11 @@ export function WalletMenu() {
       >
         <span className="wallet-dot" />
         <span className="wallet-menu-address">
-          <AddressDisplay address={address} />
+          {/* Compact form (`0x12…abcd`, 2+4) so the trigger pill
+           *  stays short. ENS still wins when resolved. The full
+           *  redacted form (`0x123456…abcdef`, 6+6) appears at the
+           *  top of the popover alongside the copy button. */}
+          <AddressDisplay address={address} compact />
         </span>
         {/* Chain badge sits on the trailing edge so the address text
          *  is the first thing the eye lands on; the chevron stays
@@ -125,6 +176,39 @@ export function WalletMenu() {
           role="menu"
           aria-label="Wallet actions"
         >
+          {/* Address section at the very top of the popover —
+           *  redacted hex form (always, even when ENS resolves)
+           *  with a click-anywhere-to-copy affordance. The whole
+           *  row is the click target; the trailing icon is just
+           *  the visual cue and swaps to a green Check + brand-
+           *  tinted background flash for 1.2s after each copy.
+           *  Copying writes the FULL hex to the clipboard, not
+           *  the redacted display form. */}
+          <div className="wallet-menu-section">
+            <div className="wallet-menu-section-label">
+              <span>Address</span>
+            </div>
+            <button
+              type="button"
+              className={`wallet-menu-address-row${
+                copied ? ' wallet-menu-address-row--copied' : ''
+              }`}
+              onClick={handleCopyAddress}
+              aria-label={copied ? 'Address copied' : 'Copy wallet address'}
+              aria-live="polite"
+            >
+              <span className="wallet-menu-address-hex">
+                {`${address.slice(0, 8)}…${address.slice(-6)}`}
+              </span>
+              <span
+                className="wallet-menu-address-copy-icon"
+                aria-hidden="true"
+              >
+                {copied ? <Check size={14} /> : <Copy size={14} />}
+              </span>
+            </button>
+          </div>
+
           <div className="wallet-menu-section">
             <div className="wallet-menu-section-label">
               <Globe size={12} aria-hidden="true" />
