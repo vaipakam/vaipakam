@@ -72,6 +72,16 @@ contract ConfigureVPFIBuy is Script {
         v.setVPFIBuyEnabled(enabled);
         vm.stopBroadcast();
 
+        // Mirror the canonical-chain rate/caps/enabled config into the
+        // per-chain artifact so the frontend env builder + downstream
+        // scripts see one source of truth (no more grepping .env on
+        // each redeploy).
+        Deployments.writeVPFIDiscountEthPriceAsset(ethPriceAsset);
+        Deployments.writeUint(".vpfiBuyWeiPerVpfi", weiPerVpfi);
+        Deployments.writeUint(".vpfiBuyGlobalCap", globalCap);
+        Deployments.writeUint(".vpfiBuyPerWalletCap", perWalletCap);
+        Deployments.writeBool(".vpfiBuyEnabled", enabled);
+
         console.log("VPFI buy config applied.");
     }
 }

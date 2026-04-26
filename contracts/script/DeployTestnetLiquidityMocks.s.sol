@@ -84,6 +84,13 @@ contract DeployTestnetLiquidityMocks is Script {
     ///      paths resolve to the same WETH everyone else uses.
     address constant SEPOLIA_WETH_DEFAULT = 0xfFf9976782d46CC05630D1f6eBAb18b2324d6B14;
 
+    /// @dev Canonical PancakeSwap WBNB on BNB Smart Chain Testnet —
+    ///      the wrapped-native asset role-equivalent of WETH on EVM
+    ///      L1/L2s. The protocol stores this under the same WETH
+    ///      pointer in `setWethContract(...)` since the role is
+    ///      identical: quote-asset for v3-style depth checks.
+    address constant BNB_TESTNET_WBNB_DEFAULT = 0xae13d989daC2f0dEbFf460aC112a837C89BAa7cd;
+
     /// @dev sqrtPriceX96 for price = 1.0 token0/token1. Cherry-picked
     ///      at 2^96 so the mock pool's slot0 returns a non-zero
     ///      price; the actual price doesn't drive liquidity
@@ -116,8 +123,8 @@ contract DeployTestnetLiquidityMocks is Script {
     function run() external {
         uint256 cid = block.chainid;
         require(
-            cid == 84532 || cid == 11155111,
-            "DeployTestnetLiquidityMocks: chain not supported (need 84532 or 11155111)"
+            cid == 84532 || cid == 11155111 || cid == 97,
+            "DeployTestnetLiquidityMocks: chain not supported (need 84532, 11155111, or 97)"
         );
 
         uint256 deployerKey = vm.envUint("PRIVATE_KEY");
@@ -125,9 +132,12 @@ contract DeployTestnetLiquidityMocks is Script {
         address weth;
         if (cid == 84532) {
             weth = vm.envOr("BASE_SEPOLIA_WETH", BASE_WETH_DEFAULT);
-        } else {
-            // Ethereum Sepolia — chainid 11155111
+        } else if (cid == 11155111) {
             weth = vm.envOr("SEPOLIA_WETH", SEPOLIA_WETH_DEFAULT);
+        } else {
+            // BNB Smart Chain Testnet — chainid 97. WBNB plays the
+            // WETH role in the Diamond's price-asset wiring.
+            weth = vm.envOr("BNB_TESTNET_WBNB", BNB_TESTNET_WBNB_DEFAULT);
         }
         address diamond = Deployments.readDiamond();
 
@@ -224,6 +234,12 @@ contract DeployTestnetLiquidityMocks is Script {
         Deployments.writeAddress(".mockUSDCFeed", address(mUSDCFeed));
         Deployments.writeAddress(".mockWBTCFeed", address(mWBTCFeed));
         Deployments.writeAddress(".mockWETHFeed", address(wethFeed));
+        // The wrapped-native asset (WETH on EVM L1/L2s, WBNB on BNB
+        // chains) is consumed by both the contract layer (via
+        // OracleAdminFacet.setWethContract above) and the frontend env
+        // loader (`weth` per chain). Stamp it once here so the artifact
+        // is the single source of truth.
+        Deployments.writeWeth(weth);
 
         console.log("");
         console.log("Wiring summary applied to Diamond:");

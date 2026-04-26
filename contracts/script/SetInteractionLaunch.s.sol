@@ -50,6 +50,16 @@ contract SetInteractionLaunch is Script {
         }
         vm.stopBroadcast();
 
+        // Stamp the day-0 anchor (and optional cap) into the per-chain
+        // artifact so cross-chain parity (every chain MUST share the
+        // same launch ts) can be audited via `jq '.interactionLaunchTimestamp'
+        // deployments/*/addresses.json | sort -u`. A non-singleton in
+        // that pipeline is a deploy bug.
+        Deployments.writeInteractionLaunchTimestamp(launchTs);
+        if (cap > 0) {
+            Deployments.writeUint(".interactionCapVpfiPerEth", cap);
+        }
+
         console.log("Interaction launch anchor applied.");
     }
 }

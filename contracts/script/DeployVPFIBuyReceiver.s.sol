@@ -87,6 +87,8 @@ contract DeployVPFIBuyReceiver is Script {
         vm.stopBroadcast();
 
         Deployments.writeVPFIBuyReceiver(address(proxy));
+        Deployments.writeVPFIBuyReceiverImpl(address(impl));
+        Deployments.writeLzEndpoint(lzEndpoint);
 
         console.log("VPFIBuyReceiver impl:  ", address(impl));
         console.log("VPFIBuyReceiver proxy: ", address(proxy));

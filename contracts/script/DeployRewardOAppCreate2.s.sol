@@ -166,6 +166,16 @@ contract DeployRewardOAppCreate2 is Script {
         vm.stopBroadcast();
 
         Deployments.writeRewardOApp(rewardOAppProxy);
+        Deployments.writeRewardOAppBootstrapImpl(bootstrapImpl);
+        Deployments.writeRewardOAppRealImpl(realImpl);
+        Deployments.writeLzEndpoint(lzEndpoint);
+        Deployments.writeIsCanonicalReward(isCanonical);
+        // Local eid for this chain (resolved from the canonical
+        // chainId→eid table) and the canonical Base eid the script's
+        // env supplied. Mirrors store the canonical eid as `baseEid`;
+        // canonical itself stamps `baseEid = 0` for symmetry.
+        Deployments.writeRewardLocalEid(Deployments.lzEidForChain());
+        Deployments.writeRewardBaseEid(baseEid);
 
         // ── Summary ──────────────────────────────────────────────────────
         console.log("");

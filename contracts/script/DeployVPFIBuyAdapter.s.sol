@@ -37,6 +37,7 @@ contract DeployVPFIBuyAdapter is Script {
         if (chainId == 421614) return vm.envAddress("LZ_ENDPOINT_ARB_SEPOLIA");
         if (chainId == 11155420) return vm.envAddress("LZ_ENDPOINT_OP_SEPOLIA");
         if (chainId == 80002) return vm.envAddress("LZ_ENDPOINT_POLYGON_AMOY");
+        if (chainId == 97) return vm.envAddress("LZ_ENDPOINT_BNB_TESTNET");
         revert(string.concat("DeployVPFIBuyAdapter: unsupported chainId ", vm.toString(chainId)));
     }
 
@@ -49,12 +50,15 @@ contract DeployVPFIBuyAdapter is Script {
             : chainId == 421614 ? "ARB_SEPOLIA_TREASURY_ADDRESS"
             : chainId == 11155420 ? "OP_SEPOLIA_TREASURY_ADDRESS"
             : chainId == 80002 ? "POLYGON_AMOY_TREASURY_ADDRESS"
+            : chainId == 97 ? "BNB_TESTNET_TREASURY_ADDRESS"
             : "TREASURY_ADDRESS";
         return vm.envOr(key, vm.envAddress("TREASURY_ADDRESS"));
     }
 
-    /// @dev Payment token resolves to address(0) on native-ETH chains and
-    ///      to the canonical WETH on Polygon Amoy.
+    /// @dev Payment token resolves to address(0) on native-gas chains
+    ///      (ETH on Sepolia/OP/Arb, BNB on BNB Testnet) and to the
+    ///      canonical wrapped-native on Polygon Amoy where MATIC is
+    ///      not the buy-currency surface.
     function _paymentToken() internal view returns (address) {
         uint256 chainId = block.chainid;
         string memory key =
@@ -62,6 +66,7 @@ contract DeployVPFIBuyAdapter is Script {
             : chainId == 421614 ? "ARB_SEPOLIA_VPFI_BUY_PAYMENT_TOKEN"
             : chainId == 11155420 ? "OP_SEPOLIA_VPFI_BUY_PAYMENT_TOKEN"
             : chainId == 80002 ? "POLYGON_AMOY_VPFI_BUY_PAYMENT_TOKEN"
+            : chainId == 97 ? "BNB_TESTNET_VPFI_BUY_PAYMENT_TOKEN"
             : "VPFI_BUY_PAYMENT_TOKEN";
         return vm.envOr(key, address(0));
     }
@@ -107,6 +112,10 @@ contract DeployVPFIBuyAdapter is Script {
         vm.stopBroadcast();
 
         Deployments.writeVPFIBuyAdapter(address(proxy));
+        Deployments.writeVPFIBuyAdapterImpl(address(impl));
+        Deployments.writeLzEndpoint(lzEndpoint);
+        Deployments.writeVpfiBuyReceiverEid(receiverEid);
+        Deployments.writeVPFIBuyPaymentToken(paymentToken);
 
         console.log("VPFIBuyAdapter impl:  ", address(impl));
         console.log("VPFIBuyAdapter proxy: ", address(proxy));

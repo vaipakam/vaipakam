@@ -38,10 +38,12 @@ contract DeployVPFIMirror is Script {
         if (chainId == 80002) return vm.envAddress("LZ_ENDPOINT_POLYGON_AMOY");
         if (chainId == 421614) return vm.envAddress("LZ_ENDPOINT_ARB_SEPOLIA");
         if (chainId == 11155420) return vm.envAddress("LZ_ENDPOINT_OP_SEPOLIA");
+        if (chainId == 97) return vm.envAddress("LZ_ENDPOINT_BNB_TESTNET");
         if (chainId == 1) return vm.envAddress("LZ_ENDPOINT_ETHEREUM");
         if (chainId == 137) return vm.envAddress("LZ_ENDPOINT_POLYGON");
         if (chainId == 42161) return vm.envAddress("LZ_ENDPOINT_ARBITRUM");
         if (chainId == 10) return vm.envAddress("LZ_ENDPOINT_OPTIMISM");
+        if (chainId == 56) return vm.envAddress("LZ_ENDPOINT_BNB");
         revert(string.concat("DeployVPFIMirror: unsupported chainId ", vm.toString(chainId)));
     }
 
@@ -75,8 +77,15 @@ contract DeployVPFIMirror is Script {
 
         // Mirror VPFI is the local-chain "vpfiToken" from the Diamond's
         // perspective; surface it under the same key so other scripts
-        // (BridgeVPFI, etc.) read consistently across canonical and mirrors.
+        // (BridgeVPFI, etc.) read consistently across canonical and
+        // mirrors. Also store the impl + LZ endpoint and stamp
+        // `isCanonicalVPFI=false` so downstream scripts can branch
+        // without re-querying the Diamond.
         Deployments.writeVPFIToken(mirror);
+        Deployments.writeVPFIMirror(mirror);
+        Deployments.writeVPFIMirrorImpl(address(mirrorImpl));
+        Deployments.writeLzEndpoint(lzEndpoint);
+        Deployments.writeIsCanonicalVPFI(false);
 
         console.log("VPFIMirror impl:   ", address(mirrorImpl));
         console.log("VPFIMirror proxy:  ", mirror);

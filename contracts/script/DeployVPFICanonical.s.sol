@@ -97,9 +97,16 @@ contract DeployVPFICanonical is Script {
         vm.stopBroadcast();
 
         // Persist the freshly deployed addresses for downstream
-        // ConfigureVPFIBuy / WireVPFIPeers / BridgeVPFI runs.
+        // ConfigureVPFIBuy / WireVPFIPeers / BridgeVPFI runs. Includes
+        // implementation addresses (verifier UIs / explorer links use
+        // them) and the canonical flag so downstream scripts can branch
+        // on isCanonicalVPFI without re-querying the Diamond.
         Deployments.writeVPFIToken(vpfi);
+        Deployments.writeVPFITokenImpl(address(tokenImpl));
         Deployments.writeVPFIOFTAdapter(address(adapterProxy));
+        Deployments.writeVPFIOFTAdapterImpl(address(adapterImpl));
+        Deployments.writeLzEndpoint(lzEndpoint);
+        Deployments.writeIsCanonicalVPFI(true);
 
         console.log("VPFIToken impl:    ", address(tokenImpl));
         console.log("VPFIToken proxy:   ", vpfi);

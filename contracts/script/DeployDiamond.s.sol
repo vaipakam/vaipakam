@@ -227,15 +227,70 @@ contract DeployDiamond is Script {
         // permission only fails the file step, not the deploy.
         Deployments.writeChainHeader();
         Deployments.writeDiamond(diamond);
-        // The per-user escrow template that
-        // `EscrowFactoryFacet.initializeEscrowImplementation` deployed
-        // is stored in shared Diamond storage but not surfaced through
-        // a public getter. Operators who need it for verifier UIs can
-        // pull it from the broadcast log
-        // (`broadcast/<script>/<chainid>/run-latest.json` →
-        // `transactions[].contractAddress` for `VaipakamEscrowImplementation`).
-        // Not written here to avoid adding an otherwise-unused
-        // selector to the production cut.
+
+        // Per-chain context that downstream scripts (and the frontend
+        // env builder) consume directly from addresses.json:
+        //   - chainSlug:   stable identifier matching the directory
+        //   - lzEndpoint:  LayerZero V2 EndpointV2 for this chain
+        //   - lzEid:       LayerZero V2 endpoint id
+        //   - deployBlock: block in which the Diamond proxy was created
+        //                  (frontend uses this as the lower-bound for
+        //                  log scans — `eth_getLogs(fromBlock=deployBlock)`)
+        //   - escrowImpl:  per-user UUPS escrow template the factory
+        //                  clones; surfaced via `getVaipakamEscrowImplementationAddress()`
+        //   - weth/treasury/admin: shared addresses every operator UI
+        //                  cross-references against the .env they hold
+        //
+        // All of these are stable for the lifetime of this Diamond
+        // deploy; rewriting them on each run is idempotent.
+        Deployments.writeChainSlug();
+        Deployments.writeLzEid(Deployments.lzEidForChain());
+        Deployments.writeDeployBlock(block.number);
+        Deployments.writeEscrowImpl(
+            EscrowFactoryFacet(diamond)
+                .getVaipakamEscrowImplementationAddress()
+        );
+        Deployments.writeTreasury(treasury);
+        Deployments.writeAdmin(admin);
+
+        // Per-facet addresses — written under `.facets.<key>`. The
+        // Diamond proxy is the only address frontend / dApp callers
+        // need at runtime, but per-facet addresses are surfaced so
+        // explorer-link UIs (PublicDashboard "Transparency" block) can
+        // deep-link to the actual implementation contract for each
+        // selector group, and so post-deploy upgrade scripts have a
+        // stable handle without re-reading the broadcast log.
+        Deployments.writeFacet("diamondCutFacet",         address(cutFacet));
+        Deployments.writeFacet("diamondLoupeFacet",       address(loupeFacet));
+        Deployments.writeFacet("ownershipFacet",          address(ownershipFacet));
+        Deployments.writeFacet("accessControlFacet",      address(accessControlFacet));
+        Deployments.writeFacet("adminFacet",              address(adminFacet));
+        Deployments.writeFacet("profileFacet",            address(profileFacet));
+        Deployments.writeFacet("oracleFacet",             address(oracleFacet));
+        Deployments.writeFacet("oracleAdminFacet",        address(oracleAdminFacet));
+        Deployments.writeFacet("vaipakamNFTFacet",        address(nftFacet));
+        Deployments.writeFacet("escrowFactoryFacet",      address(escrowFactoryFacet));
+        Deployments.writeFacet("offerFacet",              address(offerFacet));
+        Deployments.writeFacet("loanFacet",               address(loanFacet));
+        Deployments.writeFacet("repayFacet",              address(repayFacet));
+        Deployments.writeFacet("defaultedFacet",          address(defaultedFacet));
+        Deployments.writeFacet("riskFacet",               address(riskFacet));
+        Deployments.writeFacet("claimFacet",              address(claimFacet));
+        Deployments.writeFacet("addCollateralFacet",      address(addCollateralFacet));
+        Deployments.writeFacet("treasuryFacet",           address(treasuryFacet));
+        Deployments.writeFacet("earlyWithdrawalFacet",    address(earlyWithdrawalFacet));
+        Deployments.writeFacet("partialWithdrawalFacet",  address(partialWithdrawalFacet));
+        Deployments.writeFacet("precloseFacet",           address(precloseFacet));
+        Deployments.writeFacet("refinanceFacet",          address(refinanceFacet));
+        Deployments.writeFacet("metricsFacet",            address(metricsFacet));
+        Deployments.writeFacet("vpfiTokenFacet",          address(vpfiTokenFacet));
+        Deployments.writeFacet("vpfiDiscountFacet",       address(vpfiDiscountFacet));
+        Deployments.writeFacet("stakingRewardsFacet",     address(stakingRewardsFacet));
+        Deployments.writeFacet("interactionRewardsFacet", address(interactionRewardsFacet));
+        Deployments.writeFacet("rewardReporterFacet",     address(rewardReporterFacet));
+        Deployments.writeFacet("rewardAggregatorFacet",   address(rewardAggregatorFacet));
+        Deployments.writeFacet("configFacet",             address(configFacet));
+
         console.log(
             "Wrote addresses to deployments/",
             Deployments.chainSlug(),

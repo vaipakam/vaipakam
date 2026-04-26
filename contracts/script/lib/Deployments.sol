@@ -154,19 +154,91 @@ library Deployments {
     function writeEscrowImpl(address a)      internal { _writeAddr(".escrowImpl",      a); }
     function writeTimelock(address a)        internal { _writeAddr(".timelock",        a); }
     function writeVPFIToken(address a)       internal { _writeAddr(".vpfiToken",       a); }
+    function writeVPFITokenImpl(address a)   internal { _writeAddr(".vpfiTokenImpl",   a); }
     function writeVPFIOFTAdapter(address a)  internal { _writeAddr(".vpfiOftAdapter",  a); }
+    function writeVPFIOFTAdapterImpl(address a) internal { _writeAddr(".vpfiOftAdapterImpl", a); }
+    function writeVPFIMirror(address a)      internal { _writeAddr(".vpfiMirror",      a); }
+    function writeVPFIMirrorImpl(address a)  internal { _writeAddr(".vpfiMirrorImpl",  a); }
     function writeVPFIBuyAdapter(address a)  internal { _writeAddr(".vpfiBuyAdapter",  a); }
+    function writeVPFIBuyAdapterImpl(address a) internal { _writeAddr(".vpfiBuyAdapterImpl", a); }
     function writeVPFIBuyReceiver(address a) internal { _writeAddr(".vpfiBuyReceiver", a); }
+    function writeVPFIBuyReceiverImpl(address a) internal { _writeAddr(".vpfiBuyReceiverImpl", a); }
     function writeRewardOApp(address a)      internal { _writeAddr(".rewardOApp",      a); }
+    function writeRewardOAppBootstrapImpl(address a) internal { _writeAddr(".rewardOAppBootstrapImpl", a); }
+    function writeRewardOAppRealImpl(address a)      internal { _writeAddr(".rewardOAppRealImpl",      a); }
+    function writeWeth(address a)            internal { _writeAddr(".weth",            a); }
+    function writeTreasury(address a)        internal { _writeAddr(".treasury",        a); }
+    function writeAdmin(address a)           internal { _writeAddr(".admin",           a); }
+    function writeVPFIDiscountEthPriceAsset(address a) internal { _writeAddr(".vpfiDiscountEthPriceAsset", a); }
+    function writeVPFIBuyPaymentToken(address a)       internal { _writeAddr(".vpfiBuyPaymentToken", a); }
 
     function writeMockChainlinkAggregator(address a) internal { _writeAddr(".mockChainlinkAggregator", a); }
     function writeMockUniswapV3Factory(address a)    internal { _writeAddr(".mockUniswapV3Factory",    a); }
     function writeMockERC20A(address a)              internal { _writeAddr(".mockERC20A",              a); }
     function writeMockERC20B(address a)              internal { _writeAddr(".mockERC20B",              a); }
 
+    /// Per-facet write helper — stores `<facetAddress>` under
+    /// `.facets.<facetKey>`. `facetKey` is the lower-camel name
+    /// (e.g. `"metricsFacet"`, `"diamondCutFacet"`). Frontend reads
+    /// `.diamond` for the proxy address and may optionally surface
+    /// per-facet addresses for explorer links.
+    function writeFacet(string memory facetKey, address a) internal {
+        _writeAddr(string.concat(".facets.", facetKey), a);
+    }
+
+    // ── Scalar/uint writes ─────────────────────────────────────────────────
+
+    function writeUint(string memory jsonKey, uint256 value) internal {
+        _writeUint(jsonKey, value);
+    }
+
+    function writeBool(string memory jsonKey, bool value) internal {
+        _writeBool(jsonKey, value);
+    }
+
+    function writeString(string memory jsonKey, string memory value) internal {
+        _writeString(jsonKey, value);
+    }
+
+    function writeChainSlug() internal { _writeString(".chainSlug", chainSlug()); }
+    function writeLzEndpoint(address a) internal { _writeAddr(".lzEndpoint", a); }
+    function writeLzEid(uint32 eid) internal { _writeUint(".lzEid", uint256(eid)); }
+    function writeDeployBlock(uint256 blockNum) internal { _writeUint(".deployBlock", blockNum); }
+    function writeIsCanonicalVPFI(bool v) internal { _writeBool(".isCanonicalVPFI", v); }
+    function writeIsCanonicalReward(bool v) internal { _writeBool(".isCanonicalReward", v); }
+    function writeRewardLocalEid(uint32 eid) internal { _writeUint(".rewardLocalEid", uint256(eid)); }
+    function writeRewardBaseEid(uint32 eid) internal { _writeUint(".rewardBaseEid", uint256(eid)); }
+    function writeRewardGraceSeconds(uint64 secs) internal { _writeUint(".rewardGraceSeconds", uint256(secs)); }
+    function writeVpfiBuyReceiverEid(uint32 eid) internal { _writeUint(".vpfiBuyReceiverEid", uint256(eid)); }
+    function writeInteractionLaunchTimestamp(uint256 ts) internal { _writeUint(".interactionLaunchTimestamp", ts); }
+
     /// Generic typed write — keys not in the curated list above.
     function writeAddress(string memory jsonKey, address a) internal {
         _writeAddr(jsonKey, a);
+    }
+
+    // ── LayerZero EID resolver (per chain) ────────────────────────────────
+    //
+    // Centralised so every script writes a consistent eid into
+    // addresses.json without the operator having to remember the
+    // table. Source: LayerZero V2 deployments index.
+
+    function lzEidForChain() internal view returns (uint32) {
+        uint256 cid = block.chainid;
+        if (cid == 1)         return 30101; // Ethereum
+        if (cid == 8453)      return 30184; // Base
+        if (cid == 84532)     return 40245; // Base Sepolia
+        if (cid == 11155111)  return 40161; // Sepolia
+        if (cid == 421614)    return 40231; // Arb Sepolia
+        if (cid == 11155420)  return 40232; // OP Sepolia
+        if (cid == 80002)     return 40267; // Polygon Amoy
+        if (cid == 1101)      return 30257; // Polygon zkEVM
+        if (cid == 56)        return 30102; // BNB
+        if (cid == 97)        return 40102; // BNB Testnet
+        if (cid == 42161)     return 30110; // Arbitrum
+        if (cid == 10)        return 30111; // Optimism
+        if (cid == 137)       return 30109; // Polygon
+        revert("Deployments: no LZ EID mapped for chainid");
     }
 
     /// Stamp the file with `chainId` + `deployedAt`. Called from the
@@ -242,32 +314,48 @@ library Deployments {
     }
 
     function _writeAddr(string memory jsonKey, address a) private {
+        _ensureFile();
+        cheats.writeJson(cheats.toString(a), path(), jsonKey);
+    }
+
+    function _writeUint(string memory jsonKey, uint256 v) private {
+        _ensureFile();
+        cheats.writeJson(cheats.toString(v), path(), jsonKey);
+    }
+
+    function _writeBool(string memory jsonKey, bool v) private {
+        _ensureFile();
+        cheats.writeJson(v ? "true" : "false", path(), jsonKey);
+    }
+
+    function _writeString(string memory jsonKey, string memory v) private {
+        _ensureFile();
+        // Manually quote — `vm.writeJson(value, path, key)` accepts a
+        // raw JSON fragment. For strings we must wrap in double quotes
+        // so the result is valid JSON (otherwise Foundry interprets the
+        // value as a number/identifier and produces malformed output).
+        cheats.writeJson(string.concat("\"", v, "\""), path(), jsonKey);
+    }
+
+    /// Bootstrap the per-chain `addresses.json` if missing. Creates
+    /// the parent directory recursively, then writes a minimal
+    /// `{chainId, deployedAt}` skeleton so subsequent typed writes can
+    /// merge their key in place.
+    function _ensureFile() private {
         string memory p = path();
-        // Foundry's `vm.writeJson` updates a single key in place and
-        // creates the file if it doesn't exist. The trailing third
-        // arg is the JSON-path key (`.diamond`, `.vpfiToken`, …).
-        // Path expressions MUST start with `.` per Foundry's parser.
-        if (!_fileExists(p)) {
-            // `vm.writeJson` does NOT create parent directories; on
-            // a fresh chain the per-chain folder won't exist yet, so
-            // create it (recursive) before the first write. No-op if
-            // the directory already exists.
-            cheats.createDir(
-                string.concat("deployments/", chainSlug()),
-                true
-            );
-            // Bootstrap: create the file with just `chainId` so
-            // subsequent updates have a valid container to merge into.
-            string memory head = "deployments-bootstrap";
-            cheats.serializeUint(head, "chainId", block.chainid);
-            string memory init = cheats.serializeString(
-                head,
-                "deployedAt",
-                _isoNowApprox()
-            );
-            cheats.writeJson(init, p);
-        }
-        cheats.writeJson(cheats.toString(a), p, jsonKey);
+        if (_fileExists(p)) return;
+        cheats.createDir(
+            string.concat("deployments/", chainSlug()),
+            true
+        );
+        string memory head = "deployments-bootstrap";
+        cheats.serializeUint(head, "chainId", block.chainid);
+        string memory init = cheats.serializeString(
+            head,
+            "deployedAt",
+            _isoNowApprox()
+        );
+        cheats.writeJson(init, p);
     }
 
     function _legacyEnvAddress(string memory envKeyBase)

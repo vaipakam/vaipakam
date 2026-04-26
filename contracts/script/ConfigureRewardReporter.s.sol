@@ -92,6 +92,18 @@ contract ConfigureRewardReporter is Script {
         }
         vm.stopBroadcast();
 
+        // Mirror the per-chain reward-mesh config into the artifact so
+        // downstream scripts + the frontend env builder don't have to
+        // re-read env vars or query the Diamond. `rewardOApp` is
+        // already written by DeployRewardOAppCreate2; we update the
+        // local/base eids and grace here in case an operator
+        // intentionally re-ran the configurator with different values.
+        Deployments.writeRewardOApp(rewardOApp);
+        Deployments.writeRewardLocalEid(localEid);
+        Deployments.writeRewardBaseEid(baseEid);
+        Deployments.writeRewardGraceSeconds(grace);
+        Deployments.writeIsCanonicalReward(canonical);
+
         console.log("Reward reporter configuration applied.");
     }
 

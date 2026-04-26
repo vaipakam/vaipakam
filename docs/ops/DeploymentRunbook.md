@@ -6,6 +6,49 @@ Audience: release engineer + signing multisig.
 
 ---
 
+## How addresses get persisted
+
+Every deploy script writes its outputs to a single per-chain artifact at:
+
+```
+contracts/deployments/<chain-slug>/addresses.json
+```
+
+`<chain-slug>` is fixed per chainId (`base-sepolia` for 84532, `sepolia` for
+11155111, `bnb-testnet` for 97, etc. — see `Deployments.sol#chainSlug`).
+Every Configure / Wire / Upgrade / Seed / smoke-test script reads from
+this file via `Deployments.readDiamond()` etc.; operators no longer need
+chain-prefixed env vars to follow each fresh deploy. The file is
+committed and is the canonical post-deploy source of truth for both the
+contract layer and the frontend env builder.
+
+The schema each script populates (no manual editing needed since the
+26 April 2026 enrichment):
+
+| Key | Written by |
+|---|---|
+| `chainId`, `chainSlug`, `deployedAt`, `deployBlock` | `DeployDiamond` |
+| `lzEid`, `lzEndpoint` | `DeployDiamond` (eid) + each OApp deploy script (endpoint) |
+| `diamond`, `escrowImpl`, `treasury`, `admin` | `DeployDiamond` |
+| `facets.<name>` (×30) | `DeployDiamond` |
+| `vpfiToken`, `vpfiTokenImpl`, `vpfiOftAdapter`, `vpfiOftAdapterImpl`, `isCanonicalVPFI=true` | `DeployVPFICanonical` |
+| `vpfiMirror`, `vpfiMirrorImpl`, `isCanonicalVPFI=false` | `DeployVPFIMirror` |
+| `vpfiBuyReceiver`, `vpfiBuyReceiverImpl` | `DeployVPFIBuyReceiver` |
+| `vpfiBuyAdapter`, `vpfiBuyAdapterImpl`, `vpfiBuyReceiverEid`, `vpfiBuyPaymentToken` | `DeployVPFIBuyAdapter` |
+| `rewardOApp`, `rewardOAppBootstrapImpl`, `rewardOAppRealImpl`, `rewardLocalEid`, `rewardBaseEid`, `isCanonicalReward` | `DeployRewardOAppCreate2` |
+| `rewardOApp` / `rewardLocalEid` / `rewardBaseEid` / `rewardGraceSeconds` / `isCanonicalReward` | `ConfigureRewardReporter` (idempotent overwrite) |
+| `vpfiDiscountEthPriceAsset` / `vpfiBuyWeiPerVpfi` / `vpfiBuyGlobalCap` / `vpfiBuyPerWalletCap` / `vpfiBuyEnabled` | `ConfigureVPFIBuy` |
+| `interactionLaunchTimestamp`, `interactionCapVpfiPerEth` | `SetInteractionLaunch` |
+| `weth`, `mockChainlinkAggregator`, `mockUniswapV3Factory`, `mockERC20A/B`, `mockUSDC/WBTC/WETHFeed` | `DeployTestnetLiquidityMocks` |
+
+Frontend `.env.local` and `frontend/.env.example` consume these by
+mirroring the matching keys (e.g. `diamond` → `VITE_<CHAIN>_DIAMOND_ADDRESS`,
+`deployBlock` → `VITE_<CHAIN>_DEPLOY_BLOCK`,
+`facets.metricsFacet` → `VITE_<CHAIN>_METRICS_FACET_ADDRESS`,
+`vpfiBuyAdapter` → `VITE_<CHAIN>_VPFI_BUY_ADAPTER`).
+
+---
+
 ## 0. Pre-flight (before broadcasting any tx)
 
 | Check | Command / Source |
@@ -185,6 +228,40 @@ See `AdminKeysAndPause.md` for the full role map and the Timelock + Multisig top
 - Commit `deployments/<chain>/addresses.json`.
 - Post the diamond address + facet addresses to the public status page.
 - File an entry in `docs/ops/IncidentRunbook.md#deployment-log`.
+
+---
+
+## Chain-specific quirks
+
+### BNB Smart Chain Testnet (chainId 97, eid 40102)
+
+- **Do not pass `--slow` to `forge script` on this chain.** Alchemy's
+  BNB Testnet endpoint stalls indefinitely on `eth_getTransactionReceipt`
+  polling under `--slow`, causing `forge` to hang post-broadcast even
+  when the txs landed. We hit a 1h hang with zero receipts confirmed
+  during the first §2 mocks deploy. Use `--legacy` instead:
+  ```bash
+  forge script script/<Name>.s.sol:<Name> \
+    --rpc-url $BNB_TESTNET_RPC_URL --broadcast --legacy -vv
+  ```
+  `--legacy` sends pre-EIP-1559 txs at the gas-price returned by
+  `eth_gasPrice` (1 gwei on BNB Testnet at this writing) and Foundry
+  resumes its post-broadcast bookkeeping immediately. The deploy then
+  takes ~30s instead of timing out.
+- **Wrapped-native is WBNB, not WETH.** `DeployTestnetLiquidityMocks`
+  wires `OracleAdminFacet.setWethContract(...)` to the canonical
+  PancakeSwap WBNB at `0xae13d989daC2f0dEbFf460aC112a837C89BAa7cd`.
+  The Diamond's price-asset machinery doesn't care about the symbol —
+  only that a Chainlink-backed feed exists and the v3-style depth
+  check resolves to a non-zero pool.
+- **Buy adapter pays in tBNB**, not tETH. The script writes
+  `vpfiBuyPaymentToken = 0x0` (native-gas mode); the canonical Base
+  receiver still quotes the rate in wei-per-VPFI on its side, so the
+  user pays whatever the local chain's native asset is.
+- **Funding floor**: the §1 Diamond cut + §2 mocks + §3-§6 contract
+  deploys cost ~0.13 tBNB at 1 gwei. Have ≥0.3 tBNB on the deployer
+  EOA before starting; admin EOA needs ≥0.05 tBNB for handover +
+  config + peer-wire txs.
 
 ---
 

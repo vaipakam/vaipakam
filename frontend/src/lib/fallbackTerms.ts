@@ -16,10 +16,10 @@
  * `<RiskDisclosures>` in `components/app/RiskDisclosures.tsx`.
  */
 
-export const FALLBACK_CONSENT_TITLE = 'Risk Disclosures';
+export const FALLBACK_CONSENT_TITLE = "Risk Disclosures";
 
 export const FALLBACK_CONSENT_CHECKBOX_LABEL =
-  'I have read and agree to the Risk Disclosures above.';
+  "I have read and agree to the Risk Disclosures above.";
 
 export interface RiskSection {
   /** Section heading — displayed as a subtitle above the points. */
@@ -32,27 +32,27 @@ export interface RiskSection {
 export const FALLBACK_CONSENT_SECTIONS: readonly RiskSection[] = [
   {
     heading:
-      'If liquidation of liquid collateral fails (slippage > 6%, thin liquidity, DEX revert, or any other runtime failure)',
+      "If liquidation of liquid collateral fails (like in Abnormal Market conditions, when slippage > 6%, thin liquidity, DEX revert, or any other runtime failure)",
     points: [
-      'You receive the collateral in-kind — NOT the lending asset.',
-      'If collateral value < amount due: you receive ALL collateral; the borrower receives nothing; no shortfall top-up.',
-      'If collateral value ≥ amount due: you receive collateral equal to the amount owed at oracle price; remainder returns to the borrower after charges.',
+      "You receive the collateral in-kind — NOT the lending asset.",
+      "If collateral value < amount due: you receive ALL collateral; the borrower receives nothing; no shortfall top-up.",
+      "If collateral value ≥ amount due: you receive collateral equal to the amount owed at oracle price; remainder returns to the borrower after charges.",
     ],
   },
   {
     heading:
-      'If the borrower defaults on a loan with illiquid assets (illiquid lending asset, illiquid collateral, or both)',
+      "If the borrower defaults on a loan with illiquid assets (illiquid lending asset, illiquid collateral, or both)",
     points: [
-      'Full collateral transfers to you in-kind, regardless of its market value.',
+      "Full collateral transfers to you in-kind, regardless of its market value.",
       'No partition between "amount owed" and "remainder" — you take ALL collateral.',
-      'The asset received may be worth materially more or less than the amount owed. No warranty on value, liquidity, or resaleability.',
+      "The asset received may be worth materially more or less than the amount owed. No warranty on value, liquidity, or resaleability.",
     ],
   },
   {
-    heading: 'Acknowledgement',
+    heading: "Acknowledgement",
     points: [
-      'Recovery may be materially less than the asset you lent. You may receive assets other than the one lent. No further claim on the borrower, the protocol, its contributors, or any third party.',
-      'Proceeding records your binding agreement on-chain against your wallet for the full life of this position.',
+      "Recovery may be materially less than the asset you lent. You may receive assets other than the one lent. No further claim on the borrower, the protocol, its contributors, or any third party.",
+      "Proceeding records your binding agreement on-chain against your wallet for the full life of this position.",
     ],
   },
 ];
@@ -62,6 +62,7 @@ export const FALLBACK_CONSENT_SECTIONS: readonly RiskSection[] = [
  * rendering the old inline paragraph. New call sites should mount
  * `<RiskDisclosures />` instead.
  */
-export const FALLBACK_CONSENT_BODY = FALLBACK_CONSENT_SECTIONS
-  .flatMap((s) => [s.heading + ':', ...s.points.map((p) => `• ${p}`)])
-  .join(' ');
+export const FALLBACK_CONSENT_BODY = FALLBACK_CONSENT_SECTIONS.flatMap((s) => [
+  s.heading + ":",
+  ...s.points.map((p) => `• ${p}`),
+]).join(" ");
