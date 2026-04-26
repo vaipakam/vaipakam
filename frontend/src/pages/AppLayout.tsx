@@ -14,7 +14,6 @@ import {
   Sun,
   Moon,
   AlertTriangle,
-  LogOut,
   Menu,
   X,
   ArrowLeft,
@@ -22,8 +21,9 @@ import {
   ChevronsRight,
   Bell,
   ShieldOff,
+  Settings,
 } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 const SIDEBAR_COLLAPSED_KEY = "vaipakam:sidebar-collapsed";
 
@@ -39,10 +39,11 @@ import DiagnosticsDrawer from "../components/app/DiagnosticsDrawer";
 import { EscrowUpgradeBanner } from "../components/app/EscrowUpgradeBanner";
 import { UnsupportedChainBanner } from "../components/app/UnsupportedChainBanner";
 import { LegalGate } from "../components/app/LegalGate";
-import { AddressDisplay } from "../components/app/AddressDisplay";
 import { ChainSwitcher } from "../components/app/ChainSwitcher";
 import { ReportIssueLink } from "../components/app/ReportIssueLink";
 import { ConnectWalletButton } from "../components/app/ConnectWalletButton";
+import { WalletMenu } from "../components/app/WalletMenu";
+import { InfoTip } from "../components/InfoTip";
 import "./AppLayout.css";
 
 const BASIC_NAV = [
@@ -118,7 +119,6 @@ export default function AppLayout() {
   const {
     address,
     isCorrectChain,
-    disconnect,
     switchToDefaultChain,
     error,
     warning,
@@ -131,7 +131,35 @@ export default function AppLayout() {
   // like the click did nothing. Suppress hover-expand until the pointer
   // actually leaves the rail, so clicking to collapse feels instant.
   const [suppressHoverExpand, setSuppressHoverExpand] = useState(false);
+  // Settings popover (gear icon) — consolidates the Basic/Advanced mode
+  // switch and theme toggle into one menu accessible from the topbar.
+  // The inline mode-switch was previously hidden below 640px (see
+  // `.topbar-right .mode-switch { display: none }` in AppLayout.css),
+  // making "Advanced" mode entirely unreachable from mobile. Rolling
+  // both controls into a single popover restores access on every
+  // viewport and keeps the topbar uncluttered on desktop.
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const settingsRef = useRef<HTMLDivElement | null>(null);
   const isAdvanced = mode === "advanced";
+
+  useEffect(() => {
+    if (!settingsOpen) return;
+    function onPointerDown(e: PointerEvent) {
+      if (!settingsRef.current) return;
+      if (!settingsRef.current.contains(e.target as Node)) {
+        setSettingsOpen(false);
+      }
+    }
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key === "Escape") setSettingsOpen(false);
+    }
+    document.addEventListener("pointerdown", onPointerDown);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", onPointerDown);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [settingsOpen]);
 
   const toggleSidebarCollapsed = () => {
     setSidebarCollapsed((prev) => {
@@ -296,42 +324,14 @@ export default function AppLayout() {
           </button>
 
           <div className="topbar-right">
-            <ChainSwitcher />
-
-            <div
-              className="mode-switch"
-              role="group"
-              aria-label="UI mode"
-              data-tooltip={
-                "Basic hides advanced pages and controls like keeper settings."
-              }
-              data-tooltip-placement="below"
-            >
-              <button
-                type="button"
-                className={`mode-switch-btn ${!isAdvanced ? "active" : ""}`}
-                aria-pressed={!isAdvanced}
-                onClick={() => setMode("basic")}
-              >
-                Basic
-              </button>
-              <button
-                type="button"
-                className={`mode-switch-btn ${isAdvanced ? "active" : ""}`}
-                aria-pressed={isAdvanced}
-                onClick={() => setMode("advanced")}
-              >
-                Advanced
-              </button>
-            </div>
-
-            <button
-              className="theme-toggle"
-              onClick={toggleTheme}
-              aria-label="Toggle theme"
-            >
-              {theme === "dark" ? <Sun size={18} /> : <Moon size={18} />}
-            </button>
+            {/* Standalone chain switcher — only when no wallet is
+             *  connected (read-only mode) or the wallet is on an
+             *  unsupported chain. When the wallet is connected and on
+             *  a supported chain, network-switching lives inside
+             *  `<WalletMenu>` (under the address pill) so the
+             *  topbar has a single discoverable session-state
+             *  control. */}
+            {(!address || !isCorrectChain) && <ChainSwitcher />}
 
             {!address ? (
               <ConnectWalletButton className="btn-sm" />
@@ -344,20 +344,93 @@ export default function AppLayout() {
                 Switch Network
               </button>
             ) : (
-              <div className="topbar-wallet">
-                <span className="wallet-address-badge">
-                  <span className="wallet-dot" />
-                  <AddressDisplay address={address} />
-                </span>
-                <button
-                  className="wallet-disconnect-btn"
-                  onClick={disconnect}
-                  aria-label="Disconnect"
-                >
-                  <LogOut size={16} />
-                </button>
-              </div>
+              <WalletMenu />
             )}
+
+            {/* Settings popover anchored to the topbar's right edge —
+             *  rendered last so the gear is the trailing control on
+             *  every viewport. The panel opens below-left of the gear
+             *  via `right: 0` on `.topbar-settings-panel`, so it
+             *  stays inside the viewport even when the trigger sits
+             *  flush against the topbar's right border. */}
+            <div className="topbar-settings" ref={settingsRef}>
+              <button
+                type="button"
+                className="topbar-settings-btn"
+                onClick={() => setSettingsOpen((o) => !o)}
+                aria-haspopup="menu"
+                aria-expanded={settingsOpen}
+                aria-label="Settings"
+                data-tooltip="Settings"
+                data-tooltip-placement="below"
+              >
+                <Settings size={18} />
+              </button>
+
+              {settingsOpen && (
+                <div
+                  className="topbar-settings-panel"
+                  role="menu"
+                  aria-label="Settings"
+                >
+                  <div className="topbar-settings-row">
+                    <span className="topbar-settings-label">
+                      Mode
+                      <InfoTip ariaLabel="About Basic and Advanced mode">
+                        Basic hides advanced pages and controls like keeper
+                        settings. Switch to Advanced once you're comfortable
+                        with the core lending flow.
+                      </InfoTip>
+                    </span>
+                    <div
+                      className="mode-switch"
+                      role="group"
+                      aria-label="UI mode"
+                    >
+                      <button
+                        type="button"
+                        className={`mode-switch-btn ${!isAdvanced ? "active" : ""}`}
+                        aria-pressed={!isAdvanced}
+                        onClick={() => setMode("basic")}
+                      >
+                        Basic
+                      </button>
+                      <button
+                        type="button"
+                        className={`mode-switch-btn ${isAdvanced ? "active" : ""}`}
+                        aria-pressed={isAdvanced}
+                        onClick={() => setMode("advanced")}
+                      >
+                        Advanced
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="topbar-settings-row">
+                    <span className="topbar-settings-label">Theme</span>
+                    <button
+                      type="button"
+                      className="theme-toggle"
+                      onClick={toggleTheme}
+                      aria-label={
+                        theme === "dark"
+                          ? "Switch to light theme"
+                          : "Switch to dark theme"
+                      }
+                    >
+                      {theme === "dark" ? (
+                        <Sun size={18} />
+                      ) : (
+                        <Moon size={18} />
+                      )}
+                      <span className="topbar-settings-theme-label">
+                        {theme === "dark" ? "Light" : "Dark"}
+                      </span>
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
           </div>
         </header>
 

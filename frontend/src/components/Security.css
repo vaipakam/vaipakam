@@ -63,3 +63,44 @@
   line-height: 1.6;
   color: var(--text-secondary);
 }
+
+/* Verify-link footer — appears at the bottom of every card whose
+ * `verify(chain, userEscrow)` returns a target. The link points at
+ * the on-chain artifact that backs the card's claim (Diamond proxy,
+ * facet impl, escrow proxy, GitHub repo). On the Isolated Per-User
+ * Escrow card, a connected user with a deployed escrow gets a
+ * second link pointing at THEIR escrow proxy underneath. */
+.security-card-verify {
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  align-items: flex-start;
+}
+
+.security-verify-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--brand);
+  text-decoration: none;
+  transition: color 0.15s ease, transform 0.15s ease;
+}
+
+.security-verify-link:hover {
+  color: var(--brand-dark);
+  transform: translateX(2px);
+}
+
+.security-verify-link--secondary {
+  color: var(--text-secondary);
+  font-weight: 500;
+}
+
+.security-verify-link--secondary:hover {
+  color: var(--brand);
+}

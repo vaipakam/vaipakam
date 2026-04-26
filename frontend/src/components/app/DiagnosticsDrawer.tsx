@@ -10,6 +10,7 @@ import {
 import { downloadMyData, deleteMyData } from '../../lib/gdpr';
 import { useMode } from '../../context/ModeContext';
 import { ReportIssueLink } from './ReportIssueLink';
+import { InfoTip } from '../InfoTip';
 import './DiagnosticsDrawer.css';
 
 /**
@@ -157,41 +158,61 @@ export default function DiagnosticsDrawer() {
               >
                 Data rights (GDPR / CCPA)
               </span>
-              <button
-                className="btn btn-secondary btn-sm"
-                onClick={() => {
-                  downloadMyData();
-                }}
-                data-tooltip="Export every client-side record Vaipakam keeps under its namespace as JSON. On-chain data is public blockchain state and is not included."
-              >
-                <FileDown size={14} />
-                Download my data
-              </button>
-              <button
-                className="btn btn-ghost btn-sm"
-                onClick={() => {
-                  // Two-step confirm — delete is irreversible on the
-                  // client side (though everything is restorable by
-                  // re-using the app; on-chain state stays).
-                  const ok = window.confirm(
-                    'Erase every Vaipakam-namespaced entry in this browser?\n\n' +
-                      '• Your journey log will be cleared.\n' +
-                      '• Your cookie / consent choice will be reset.\n' +
-                      '• Cached event indexes will be purged.\n\n' +
-                      'On-chain positions and transactions are NOT affected — ' +
-                      'blockchain state is public and cannot be erased.',
-                  );
-                  if (!ok) return;
-                  deleteMyData();
-                  // Reload so every hook / banner rehydrates from
-                  // the now-empty storage.
-                  window.location.reload();
-                }}
-                data-tooltip="Erase every client-side record Vaipakam keeps under its namespace. On-chain positions are unaffected (blockchain state is public)."
-              >
-                <ShieldAlert size={14} />
-                Delete my data
-              </button>
+              {/* Each action is wrapped with its own InfoTip so the
+                  helper text stays anchored next to its button when
+                  the row wraps on narrow viewports. The (i) icon is
+                  the same surface mobile users tap to read the
+                  explanation — desktop users still get hover. The
+                  bubble is portal-rendered, so the drawer's
+                  `transform`/`overflow` clipping context can't
+                  truncate it. */}
+              <span className="diag-action-with-info">
+                <button
+                  className="btn btn-secondary btn-sm"
+                  onClick={() => {
+                    downloadMyData();
+                  }}
+                >
+                  <FileDown size={14} />
+                  Download my data
+                </button>
+                <InfoTip ariaLabel="About Download my data">
+                  Export every client-side record Vaipakam keeps under its
+                  namespace as JSON. On-chain data is public blockchain
+                  state and is not included.
+                </InfoTip>
+              </span>
+              <span className="diag-action-with-info">
+                <button
+                  className="btn btn-ghost btn-sm"
+                  onClick={() => {
+                    // Two-step confirm — delete is irreversible on the
+                    // client side (though everything is restorable by
+                    // re-using the app; on-chain state stays).
+                    const ok = window.confirm(
+                      'Erase every Vaipakam-namespaced entry in this browser?\n\n' +
+                        '• Your journey log will be cleared.\n' +
+                        '• Your cookie / consent choice will be reset.\n' +
+                        '• Cached event indexes will be purged.\n\n' +
+                        'On-chain positions and transactions are NOT affected — ' +
+                        'blockchain state is public and cannot be erased.',
+                    );
+                    if (!ok) return;
+                    deleteMyData();
+                    // Reload so every hook / banner rehydrates from
+                    // the now-empty storage.
+                    window.location.reload();
+                  }}
+                >
+                  <ShieldAlert size={14} />
+                  Delete my data
+                </button>
+                <InfoTip ariaLabel="About Delete my data">
+                  Erase every client-side record Vaipakam keeps under its
+                  namespace. On-chain positions are unaffected (blockchain
+                  state is public).
+                </InfoTip>
+              </span>
             </div>
 
             <div className="diag-filters" role="tablist" aria-label="Filter by status">

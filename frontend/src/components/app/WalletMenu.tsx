@@ -1,0 +1,194 @@
+import { useEffect, useRef, useState } from 'react';
+import { ChevronDown, LogOut, Globe } from 'lucide-react';
+import { useWallet } from '../../context/WalletContext';
+import {
+  CHAIN_REGISTRY,
+  DEFAULT_CHAIN,
+  compareChainsForDisplay,
+} from '../../contracts/config';
+import { AddressDisplay } from './AddressDisplay';
+import { ChainIcon } from './ChainIcon';
+import './WalletMenu.css';
+
+/**
+ * `<WalletMenu>` — connected-wallet pill that doubles as the entry-point
+ * for "switch network" and "disconnect" actions.
+ *
+ * Why this replaces the inline pill + standalone disconnect-icon + topbar
+ * `<ChainSwitcher>` triplet:
+ *
+ *   - Three separate controls in the topbar (chain switcher, wallet
+ *     pill, disconnect icon) compete for horizontal real-estate on
+ *     mobile and produce a busy reading order. Folding the chain
+ *     switcher and disconnect under the wallet address makes the
+ *     pill the single discoverable entry-point for everything that
+ *     mutates session state.
+ *   - The chain icon next to the address gives users a glance-able
+ *     "which network am I on" cue; the address pill on its own only
+ *     shows hex/ENS, which doesn't disambiguate Sepolia vs Base
+ *     Sepolia vs BNB Testnet at a glance.
+ *
+ * Behaviour:
+ *   - Click the pill → popover opens with current network + a list of
+ *     other deployed chains + a disconnect button.
+ *   - Picking a chain calls `wallet_switchEthereumChain`. If the
+ *     wallet doesn't have the chain, `switchToChain` falls back to
+ *     `wallet_addEthereumChain`.
+ *   - Pointer-down outside the menu, Escape, or scroll/resize closes
+ *     it. Same dismissal pattern as the InfoTip / Settings popover.
+ *
+ * The wrong-chain banner is rendered separately (not in this menu)
+ * so the warning stays visible without requiring the user to open
+ * a menu first.
+ */
+export function WalletMenu() {
+  const { address, chainId, activeChain, disconnect, switchToChain } =
+    useWallet();
+  const [open, setOpen] = useState(false);
+  const wrapRef = useRef<HTMLDivElement | null>(null);
+
+  // Close on outside click / Escape / scroll. Same pattern as the
+  // settings popover and InfoTip — the bubble shouldn't outlive the
+  // user's attention.
+  useEffect(() => {
+    if (!open) return;
+    function onPointerDown(e: PointerEvent) {
+      if (wrapRef.current?.contains(e.target as Node)) return;
+      setOpen(false);
+    }
+    function onKey(e: KeyboardEvent) {
+      if (e.key === 'Escape') setOpen(false);
+    }
+    document.addEventListener('pointerdown', onPointerDown);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('pointerdown', onPointerDown);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [open]);
+
+  if (!address) return null;
+
+  const current = activeChain ?? (chainId == null ? DEFAULT_CHAIN : null);
+  const currentLabel = current
+    ? `${current.name}${current.testnet ? ' Testnet' : ''}`
+    : chainId != null
+      ? `Unsupported (${chainId})`
+      : 'Read-only';
+
+  // Show every chain we have a Diamond on — sorted mainnets first by
+  // canonical, then testnets. Same sort the standalone ChainSwitcher
+  // uses, so ordering stays consistent across surfaces.
+  const deployedChains = Object.values(CHAIN_REGISTRY)
+    .filter((c) => c.diamondAddress !== null)
+    .sort(compareChainsForDisplay);
+
+  const handlePickChain = async (targetChainId: number) => {
+    setOpen(false);
+    if (targetChainId === chainId) return;
+    await switchToChain(targetChainId);
+  };
+
+  const handleDisconnect = () => {
+    setOpen(false);
+    disconnect();
+  };
+
+  return (
+    <div className="wallet-menu" ref={wrapRef}>
+      <button
+        type="button"
+        className="wallet-menu-trigger"
+        onClick={() => setOpen((o) => !o)}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        aria-label="Wallet menu — switch network or disconnect"
+      >
+        <span className="wallet-dot" />
+        <span className="wallet-menu-address">
+          <AddressDisplay address={address} />
+        </span>
+        {/* Chain badge sits on the trailing edge so the address text
+         *  is the first thing the eye lands on; the chevron stays
+         *  rightmost as the standard "this opens" affordance. */}
+        <ChainIcon chainId={chainId} size={18} />
+        <ChevronDown
+          size={14}
+          className="wallet-menu-chevron"
+          aria-hidden="true"
+        />
+      </button>
+
+      {open && (
+        <div
+          className="wallet-menu-panel"
+          role="menu"
+          aria-label="Wallet actions"
+        >
+          <div className="wallet-menu-section">
+            <div className="wallet-menu-section-label">
+              <Globe size={12} aria-hidden="true" />
+              <span>Network</span>
+            </div>
+            <div className="wallet-menu-current">
+              <ChainIcon chainId={chainId} size={20} />
+              <div className="wallet-menu-current-text">
+                <span className="wallet-menu-current-name">{currentLabel}</span>
+                {current?.isCanonicalVPFI && (
+                  <span className="wallet-menu-canonical-pill">canonical</span>
+                )}
+              </div>
+            </div>
+          </div>
+
+          {deployedChains.length > 1 && (
+            <div className="wallet-menu-section">
+              <div className="wallet-menu-section-label">Switch to</div>
+              <div className="wallet-menu-chain-list" role="listbox">
+                {deployedChains
+                  .filter((c) => c.chainId !== chainId)
+                  .map((c) => (
+                    <button
+                      key={c.chainId}
+                      type="button"
+                      role="option"
+                      aria-selected={false}
+                      className="wallet-menu-chain-item"
+                      onClick={() => handlePickChain(c.chainId)}
+                    >
+                      <ChainIcon chainId={c.chainId} size={18} />
+                      <span className="wallet-menu-chain-name">
+                        {c.name}
+                        {c.testnet && (
+                          <span className="wallet-menu-testnet-tag">
+                            Testnet
+                          </span>
+                        )}
+                      </span>
+                      {c.isCanonicalVPFI && (
+                        <span className="wallet-menu-canonical-pill">
+                          canonical
+                        </span>
+                      )}
+                    </button>
+                  ))}
+              </div>
+            </div>
+          )}
+
+          <button
+            type="button"
+            className="wallet-menu-disconnect"
+            onClick={handleDisconnect}
+            role="menuitem"
+          >
+            <LogOut size={14} aria-hidden="true" />
+            <span>Disconnect</span>
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+export default WalletMenu;

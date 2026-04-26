@@ -104,6 +104,24 @@ export interface ChainConfig {
    *  facet hasn't been deployed standalone on this chain yet; in that
    *  case the Transparency link falls back to the Diamond address. */
   metricsFacetAddress: string | null;
+  /** UUPS escrow implementation deployed by `EscrowFactoryFacet` —
+   *  the per-user template the factory clones into ERC-1967 proxies.
+   *  Surfaced for the Security section's "Isolated Per-User Escrow"
+   *  card so users can verify the impl source on the block explorer.
+   *  Null when not yet recorded on this chain; UI falls back to the
+   *  Diamond proxy in that case. */
+  escrowImplAddress: string | null;
+  /** Standalone RiskFacet implementation address (not the Diamond).
+   *  Surfaces on the Security section's "Slippage & Liquidation
+   *  Safety" card — Basescan's verified-source view shows the 6%
+   *  slippage cap + bonus-cap constants users can audit directly.
+   *  Null falls back to the Diamond proxy. */
+  riskFacetAddress: string | null;
+  /** Standalone ProfileFacet implementation address (not the Diamond).
+   *  Surfaces on the Security section's "Non-Custodial & No KYC" card
+   *  so users can verify the KYC pass-through code path on the block
+   *  explorer. Null falls back to the Diamond proxy. */
+  profileFacetAddress: string | null;
 }
 
 function str(key: string, fallback: string): string {
@@ -139,6 +157,9 @@ const ETHEREUM: ChainConfig = {
   vpfiBuyAdapter: optStr('VITE_ETHEREUM_VPFI_BUY_ADAPTER', null),
   vpfiBuyPaymentToken: optStr('VITE_ETHEREUM_VPFI_BUY_PAYMENT_TOKEN', null),
   metricsFacetAddress: optStr('VITE_ETHEREUM_METRICS_FACET_ADDRESS', null),
+  escrowImplAddress: optStr('VITE_ETHEREUM_ESCROW_IMPL', null),
+  riskFacetAddress: optStr('VITE_ETHEREUM_RISK_FACET_ADDRESS', null),
+  profileFacetAddress: optStr('VITE_ETHEREUM_PROFILE_FACET_ADDRESS', null),
 };
 
 const BASE: ChainConfig = {
@@ -156,6 +177,9 @@ const BASE: ChainConfig = {
   vpfiBuyAdapter: null,
   vpfiBuyPaymentToken: null,
   metricsFacetAddress: optStr('VITE_BASE_METRICS_FACET_ADDRESS', null),
+  escrowImplAddress: optStr('VITE_BASE_ESCROW_IMPL', null),
+  riskFacetAddress: optStr('VITE_BASE_RISK_FACET_ADDRESS', null),
+  profileFacetAddress: optStr('VITE_BASE_PROFILE_FACET_ADDRESS', null),
 };
 
 // Polygon PoS was dropped from Phase 1 (weaker multi-sig bridge trust +
@@ -182,6 +206,9 @@ const POLYGON_ZKEVM: ChainConfig = {
   vpfiBuyAdapter: optStr('VITE_POLYGON_ZKEVM_VPFI_BUY_ADAPTER', null),
   vpfiBuyPaymentToken: optStr('VITE_POLYGON_ZKEVM_VPFI_BUY_PAYMENT_TOKEN', null),
   metricsFacetAddress: optStr('VITE_POLYGON_ZKEVM_METRICS_FACET_ADDRESS', null),
+  escrowImplAddress: optStr('VITE_POLYGON_ZKEVM_ESCROW_IMPL', null),
+  riskFacetAddress: optStr('VITE_POLYGON_ZKEVM_RISK_FACET_ADDRESS', null),
+  profileFacetAddress: optStr('VITE_POLYGON_ZKEVM_PROFILE_FACET_ADDRESS', null),
 };
 
 const BNB: ChainConfig = {
@@ -201,6 +228,9 @@ const BNB: ChainConfig = {
   vpfiBuyAdapter: optStr('VITE_BNB_VPFI_BUY_ADAPTER', null),
   vpfiBuyPaymentToken: optStr('VITE_BNB_VPFI_BUY_PAYMENT_TOKEN', null),
   metricsFacetAddress: optStr('VITE_BNB_METRICS_FACET_ADDRESS', null),
+  escrowImplAddress: optStr('VITE_BNB_ESCROW_IMPL', null),
+  riskFacetAddress: optStr('VITE_BNB_RISK_FACET_ADDRESS', null),
+  profileFacetAddress: optStr('VITE_BNB_PROFILE_FACET_ADDRESS', null),
 };
 
 const ARBITRUM: ChainConfig = {
@@ -218,6 +248,9 @@ const ARBITRUM: ChainConfig = {
   vpfiBuyAdapter: optStr('VITE_ARBITRUM_VPFI_BUY_ADAPTER', null),
   vpfiBuyPaymentToken: optStr('VITE_ARBITRUM_VPFI_BUY_PAYMENT_TOKEN', null),
   metricsFacetAddress: optStr('VITE_ARBITRUM_METRICS_FACET_ADDRESS', null),
+  escrowImplAddress: optStr('VITE_ARBITRUM_ESCROW_IMPL', null),
+  riskFacetAddress: optStr('VITE_ARBITRUM_RISK_FACET_ADDRESS', null),
+  profileFacetAddress: optStr('VITE_ARBITRUM_PROFILE_FACET_ADDRESS', null),
 };
 
 const OPTIMISM: ChainConfig = {
@@ -235,6 +268,9 @@ const OPTIMISM: ChainConfig = {
   vpfiBuyAdapter: optStr('VITE_OPTIMISM_VPFI_BUY_ADAPTER', null),
   vpfiBuyPaymentToken: optStr('VITE_OPTIMISM_VPFI_BUY_PAYMENT_TOKEN', null),
   metricsFacetAddress: optStr('VITE_OPTIMISM_METRICS_FACET_ADDRESS', null),
+  escrowImplAddress: optStr('VITE_OPTIMISM_ESCROW_IMPL', null),
+  riskFacetAddress: optStr('VITE_OPTIMISM_RISK_FACET_ADDRESS', null),
+  profileFacetAddress: optStr('VITE_OPTIMISM_PROFILE_FACET_ADDRESS', null),
 };
 
 // ── Testnet ──────────────────────────────────────────────────────────────
@@ -260,6 +296,9 @@ const SEPOLIA: ChainConfig = {
   vpfiBuyAdapter: optStr('VITE_SEPOLIA_VPFI_BUY_ADAPTER', null),
   vpfiBuyPaymentToken: optStr('VITE_SEPOLIA_VPFI_BUY_PAYMENT_TOKEN', null),
   metricsFacetAddress: optStr('VITE_SEPOLIA_METRICS_FACET_ADDRESS', null),
+  escrowImplAddress: optStr('VITE_SEPOLIA_ESCROW_IMPL', null),
+  riskFacetAddress: optStr('VITE_SEPOLIA_RISK_FACET_ADDRESS', null),
+  profileFacetAddress: optStr('VITE_SEPOLIA_PROFILE_FACET_ADDRESS', null),
 };
 
 const BASE_SEPOLIA: ChainConfig = {
@@ -277,6 +316,9 @@ const BASE_SEPOLIA: ChainConfig = {
   vpfiBuyAdapter: null,
   vpfiBuyPaymentToken: null,
   metricsFacetAddress: optStr('VITE_BASE_SEPOLIA_METRICS_FACET_ADDRESS', null),
+  escrowImplAddress: optStr('VITE_BASE_SEPOLIA_ESCROW_IMPL', null),
+  riskFacetAddress: optStr('VITE_BASE_SEPOLIA_RISK_FACET_ADDRESS', null),
+  profileFacetAddress: optStr('VITE_BASE_SEPOLIA_PROFILE_FACET_ADDRESS', null),
 };
 
 // Cardona is the Polygon zkEVM public testnet. Replaces Polygon Amoy from
@@ -296,6 +338,9 @@ const POLYGON_ZKEVM_CARDONA: ChainConfig = {
   vpfiBuyAdapter: optStr('VITE_POLYGON_ZKEVM_CARDONA_VPFI_BUY_ADAPTER', null),
   vpfiBuyPaymentToken: optStr('VITE_POLYGON_ZKEVM_CARDONA_VPFI_BUY_PAYMENT_TOKEN', null),
   metricsFacetAddress: optStr('VITE_POLYGON_ZKEVM_CARDONA_METRICS_FACET_ADDRESS', null),
+  escrowImplAddress: optStr('VITE_POLYGON_ZKEVM_CARDONA_ESCROW_IMPL', null),
+  riskFacetAddress: optStr('VITE_POLYGON_ZKEVM_CARDONA_RISK_FACET_ADDRESS', null),
+  profileFacetAddress: optStr('VITE_POLYGON_ZKEVM_CARDONA_PROFILE_FACET_ADDRESS', null),
 };
 
 const BNB_TESTNET: ChainConfig = {
@@ -313,6 +358,9 @@ const BNB_TESTNET: ChainConfig = {
   vpfiBuyAdapter: optStr('VITE_BNB_TESTNET_VPFI_BUY_ADAPTER', null),
   vpfiBuyPaymentToken: optStr('VITE_BNB_TESTNET_VPFI_BUY_PAYMENT_TOKEN', null),
   metricsFacetAddress: optStr('VITE_BNB_TESTNET_METRICS_FACET_ADDRESS', null),
+  escrowImplAddress: optStr('VITE_BNB_TESTNET_ESCROW_IMPL', null),
+  riskFacetAddress: optStr('VITE_BNB_TESTNET_RISK_FACET_ADDRESS', null),
+  profileFacetAddress: optStr('VITE_BNB_TESTNET_PROFILE_FACET_ADDRESS', null),
 };
 
 const ARBITRUM_SEPOLIA: ChainConfig = {
@@ -330,6 +378,9 @@ const ARBITRUM_SEPOLIA: ChainConfig = {
   vpfiBuyAdapter: optStr('VITE_ARBITRUM_SEPOLIA_VPFI_BUY_ADAPTER', null),
   vpfiBuyPaymentToken: optStr('VITE_ARBITRUM_SEPOLIA_VPFI_BUY_PAYMENT_TOKEN', null),
   metricsFacetAddress: optStr('VITE_ARBITRUM_SEPOLIA_METRICS_FACET_ADDRESS', null),
+  escrowImplAddress: optStr('VITE_ARBITRUM_SEPOLIA_ESCROW_IMPL', null),
+  riskFacetAddress: optStr('VITE_ARBITRUM_SEPOLIA_RISK_FACET_ADDRESS', null),
+  profileFacetAddress: optStr('VITE_ARBITRUM_SEPOLIA_PROFILE_FACET_ADDRESS', null),
 };
 
 const OPTIMISM_SEPOLIA: ChainConfig = {
@@ -347,6 +398,9 @@ const OPTIMISM_SEPOLIA: ChainConfig = {
   vpfiBuyAdapter: optStr('VITE_OPTIMISM_SEPOLIA_VPFI_BUY_ADAPTER', null),
   vpfiBuyPaymentToken: optStr('VITE_OPTIMISM_SEPOLIA_VPFI_BUY_PAYMENT_TOKEN', null),
   metricsFacetAddress: optStr('VITE_OPTIMISM_SEPOLIA_METRICS_FACET_ADDRESS', null),
+  escrowImplAddress: optStr('VITE_OPTIMISM_SEPOLIA_ESCROW_IMPL', null),
+  riskFacetAddress: optStr('VITE_OPTIMISM_SEPOLIA_RISK_FACET_ADDRESS', null),
+  profileFacetAddress: optStr('VITE_OPTIMISM_SEPOLIA_PROFILE_FACET_ADDRESS', null),
 };
 
 // Normalise every env-configured address to canonical EIP-55 checksum so a

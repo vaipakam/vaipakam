@@ -69,6 +69,128 @@
   background: var(--brand-bg);
 }
 
+/* ── Nav-group dropdowns ──
+ *
+ * Two grouped dropdowns ("Learn", "Verify") replace the previous
+ * 6-flat-link row. Each `.navbar-group` is the relative anchor for
+ * its own `.navbar-group-panel` (desktop popover) and contains an
+ * inline `.navbar-group-mobile-list` that's hidden on desktop and
+ * shown inside the mobile flyout. Only one popover open at a time —
+ * `openGroup` state in Navbar.tsx enforces this; the click-outside
+ * handler closes whichever is open. */
+.navbar-group {
+  position: relative;
+}
+
+.navbar-group-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  font-family: inherit;
+  /* Browsers' user-agent stylesheet pins <button> font-size to
+   * ~13px regardless of the parent's `.navbar-link` rule, which
+   * made the dropdown triggers look noticeably smaller than the
+   * other nav links and the Launch App pill. Explicit overrides
+   * keep "Learn" / "Verify" at parity with the rest of the row.
+   *
+   * Weight 700 (Bold) is intentional — the dropdown triggers are
+   * higher-traffic than individual flat links, so bumping them
+   * above the row's 500 baseline gives them appropriate emphasis. */
+  font-size: 0.9rem;
+  font-weight: 700;
+  letter-spacing: -0.005em;
+}
+
+.navbar-group-trigger--open {
+  color: var(--brand);
+  background: var(--brand-bg);
+}
+
+.navbar-group-trigger svg {
+  transition: transform 0.15s ease;
+}
+.navbar-group-trigger--open svg {
+  transform: rotate(180deg);
+}
+
+.navbar-group-panel {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 0;
+  min-width: 200px;
+  padding: 6px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-lg);
+  z-index: 1100;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+/* Invisible hover-bridge that spans the 8px visual gap between
+ * the trigger and the panel. Without it, the cursor crossing
+ * that gap exits `.navbar-group`'s subtree (the trigger and the
+ * panel are siblings with empty space between them), `pointer-
+ * leave` fires on the wrapper, and the menu closes mid-traverse
+ * — the classic dropdown-disappears-when-you-try-to-click-it
+ * bug. The pseudo-element is a child of the panel, so as long
+ * as the cursor is over it, hit-testing treats the panel as
+ * hovered and `pointerleave` on the wrapper stays silent. */
+.navbar-group-panel::before {
+  content: '';
+  position: absolute;
+  top: -8px;
+  left: 0;
+  right: 0;
+  height: 8px;
+}
+
+.navbar-group-item {
+  display: block;
+  padding: 8px 12px;
+  border-radius: var(--radius-sm);
+  font-size: 0.88rem;
+  font-weight: 500;
+  color: var(--text-primary);
+  transition: background-color 0.15s ease, color 0.15s ease;
+  white-space: nowrap;
+}
+
+.navbar-group-item:hover {
+  background: var(--bg-card-hover);
+  color: var(--brand);
+}
+
+/* Mobile inline list lives in the DOM unconditionally; visibility is
+ * paired with the existing desktop / mobile breakpoint rules below
+ * so desktop hides it (popover wins) and mobile flyout shows it
+ * (popover hidden). */
+.navbar-group-mobile-list {
+  display: none;
+}
+
+.navbar-group-mobile-label {
+  display: block;
+  padding: 8px 16px 4px;
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+}
+
+.navbar-link--mobile-nested {
+  /* Slight indent so nested items read as part of the section above
+   * them. Mirrors the indent the AppLayout sidebar uses for nested
+   * sub-items. */
+  padding-left: 28px !important;
+}
+
 .navbar-actions {
   display: flex;
   align-items: center;
@@ -173,12 +295,22 @@
     background: none;
     padding: 0;
     border: none;
+    /* Push the Learn / Verify group to the right edge of the
+     * navbar-inner row so it sits flush against navbar-actions
+     * (Launch App + wallet + theme). Without this, `space-between`
+     * on `.navbar-inner` strands the dropdowns mid-row, far from
+     * the actions cluster they belong with. */
+    margin-left: auto;
   }
   .navbar-cta {
     display: inline-flex;
   }
   .navbar-cta-mobile,
   .mobile-menu-btn {
+    display: none;
+  }
+  /* Desktop uses the popover; the inline mobile list is hidden. */
+  .navbar-group-mobile-list {
     display: none;
   }
 }
@@ -201,6 +333,19 @@
   .navbar-links.open .navbar-link {
     padding: 12px 16px;
     font-size: 1rem;
+  }
+  /* Mobile flyout: hide the desktop dropdown trigger + popover and
+   * surface the inline section list instead. The trigger button is
+   * the desktop affordance; on mobile the section header + linear
+   * item list reads more naturally inside the flyout column. */
+  .navbar-links.open .navbar-group-trigger,
+  .navbar-links.open .navbar-group-panel {
+    display: none;
+  }
+  .navbar-links.open .navbar-group-mobile-list {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
   }
 }
 

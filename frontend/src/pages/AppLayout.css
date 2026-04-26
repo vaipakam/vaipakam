@@ -379,19 +379,93 @@
  * Network" label breaks the topbar layout on mobile. */
 .topbar-right > .btn-primary,
 .topbar-right > .btn-warning,
-.topbar-right > .topbar-wallet {
+.topbar-right > .topbar-wallet,
+.topbar-right > .wallet-menu {
   flex-shrink: 0;
   white-space: nowrap;
 }
 
-/* Below 640px, the Basic/Advanced toggle is lowest-priority topbar real
- * estate — it's changed rarely and a secondary control for power users.
- * Hide it on small screens so the wallet button and chain pill have room
- * without horizontal overflow. Re-surfaced at ≥ 640px. */
-@media (max-width: 639px) {
-  .topbar-right .mode-switch {
-    display: none;
-  }
+/* ── Settings popover (gear icon) ──
+ *
+ * Single entry-point for the Basic/Advanced mode toggle and the
+ * theme toggle. Replaced the previous inline controls because the
+ * mode switch was hidden on viewports below 640px (`.topbar-right
+ * .mode-switch { display: none }`), which made "Advanced" mode
+ * entirely unreachable on mobile. Anchored to the topbar row, panel
+ * floats below the gear via absolute positioning.
+ */
+.topbar-settings {
+  position: relative;
+  flex-shrink: 0;
+}
+
+.topbar-settings-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: var(--radius-full);
+  border: 1px solid var(--border);
+  background: var(--bg-card);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.topbar-settings-btn:hover,
+.topbar-settings[aria-expanded="true"] .topbar-settings-btn {
+  border-color: var(--brand);
+  color: var(--brand);
+}
+
+.topbar-settings-panel {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  min-width: 240px;
+  padding: 14px 16px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-lg);
+  z-index: 1200;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.topbar-settings-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.topbar-settings-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+}
+
+/* Inside the settings panel, the theme toggle becomes a wider button
+ * that pairs the icon with a label ("Light" / "Dark") so the affordance
+ * reads like a menu item rather than a stray icon. */
+.topbar-settings-panel .theme-toggle {
+  width: auto;
+  height: 32px;
+  padding: 0 12px;
+  gap: 8px;
+}
+
+.topbar-settings-theme-label {
+  font-size: 0.82rem;
+  font-weight: 600;
 }
 
 .mode-switch {
@@ -775,3 +849,4 @@
   border: 1px solid rgba(16, 185, 129, 0.15);
   color: var(--accent-green);
 }
+

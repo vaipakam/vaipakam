@@ -84,6 +84,16 @@
   flex-wrap: wrap;
 }
 
+/* Wrapper for an action button paired with its `<InfoTip>` (i) icon.
+ * The pair stays glued together when the parent `.diag-actions` row
+ * wraps on narrow viewports — without this, the (i) icon could end
+ * up on a different row from the button it explains. */
+.diag-action-with-info {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
 .diag-filters {
   display: flex;
   gap: 0.4rem;

@@ -1,0 +1,230 @@
+/* ── ChainIcon ──
+ *
+ * Small coloured badge with the chain's 1–3 char abbreviation. Used
+ * inside the wallet-menu pill, the wallet-menu chain list, and any
+ * future surface that needs an at-a-glance "which chain" cue. The
+ * background colour is set inline (per-chain palette in ChainIcon.tsx);
+ * everything else (size, font weight, border) is theme-shared here. */
+.chain-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  border-radius: 50%;
+  color: #fff;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  line-height: 1;
+  /* A faint inner ring keeps the badge legible against both the
+   * surrounding pill (bg-card) and the popover (bg-card) — without it,
+   * a same-colour-family badge can look like it's bleeding into the
+   * pill on dark mode. */
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.18);
+  user-select: none;
+}
+
+/* ── WalletMenu ──
+ *
+ * Connected-wallet pill that doubles as the entry-point for switch-
+ * network and disconnect. Replaces the old triplet of (standalone
+ * ChainSwitcher + wallet pill + inline disconnect icon) with one
+ * discoverable pill that opens a popover with all session-state
+ * actions inside.
+ *
+ * Lives in `components/app/` (rendered by both the in-app topbar and
+ * the public Navbar) so the styles travel with the component instead
+ * of being pinned to a specific layout's stylesheet. */
+.wallet-menu {
+  position: relative;
+}
+
+.wallet-menu-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  height: 36px;
+  border-radius: var(--radius-full);
+  border: 1px solid var(--border);
+  background: var(--bg-card);
+  color: var(--text-primary);
+  font-size: 0.85rem;
+  font-weight: 600;
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  cursor: pointer;
+  transition: border-color 0.15s ease, background-color 0.15s ease;
+}
+
+.wallet-menu-trigger:hover,
+.wallet-menu-trigger[aria-expanded='true'] {
+  border-color: var(--brand);
+  background: var(--bg-card-hover);
+}
+
+.wallet-menu-address {
+  /* Address text uses the inherited monospace from the trigger so the
+   * raw hex / shortened ENS reads stable; ENS resolution swaps in
+   * proportional letters at the same line-height. */
+  display: inline-flex;
+  align-items: center;
+  /* Cap width on very narrow screens so a long ENS doesn't push the
+   * chevron off the topbar. The trigger as a whole is `nowrap` so
+   * truncation kicks in here. */
+  max-width: 16ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.wallet-menu-chevron {
+  color: var(--text-tertiary);
+  transition: transform 0.15s ease, color 0.15s ease;
+}
+
+.wallet-menu-trigger[aria-expanded='true'] .wallet-menu-chevron {
+  transform: rotate(180deg);
+  color: var(--brand);
+}
+
+.wallet-menu-panel {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  min-width: 260px;
+  max-width: min(320px, calc(100vw - 32px));
+  padding: 8px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-lg);
+  z-index: 1200;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.wallet-menu-section {
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.wallet-menu-section + .wallet-menu-section {
+  border-top: 1px solid var(--border);
+  padding-top: 12px;
+}
+
+.wallet-menu-section-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+}
+
+.wallet-menu-current {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 0;
+}
+
+.wallet-menu-current-text {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.wallet-menu-current-name {
+  font-size: 0.92rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.wallet-menu-canonical-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: var(--radius-full);
+  background: var(--brand-bg);
+  color: var(--brand);
+  font-size: 0.65rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.wallet-menu-chain-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 280px;
+  overflow-y: auto;
+  /* Bleed into the section padding so chain rows align flush with the
+   * section label above. */
+  margin: 0 -4px;
+}
+
+.wallet-menu-chain-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  background: none;
+  border: none;
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  font-size: 0.88rem;
+  font-weight: 500;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color 0.15s ease;
+}
+
+.wallet-menu-chain-item:hover {
+  background: var(--bg-card-hover);
+}
+
+.wallet-menu-chain-name {
+  flex: 1;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.wallet-menu-testnet-tag {
+  font-size: 0.65rem;
+  font-weight: 600;
+  color: var(--text-tertiary);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.wallet-menu-disconnect {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  margin-top: 4px;
+  background: none;
+  border: none;
+  border-top: 1px solid var(--border);
+  border-radius: 0 0 var(--radius-sm) var(--radius-sm);
+  color: var(--accent-red);
+  font-size: 0.88rem;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color 0.15s ease;
+}
+
+.wallet-menu-disconnect:hover {
+  background: rgba(239, 68, 68, 0.08);
+}

@@ -434,3 +434,108 @@ img { max-width: 100%; display: block; }
 [data-tooltip-placement='above-end']:focus-visible::after {
   transform: translateY(0);
 }
+
+/* ── InfoTip component (`<InfoTip>` in components/InfoTip.tsx) ──
+ *
+ * (i) info icon trigger + portal-rendered tooltip bubble. Pairs with
+ * the React component for cases where:
+ *   - the inline `[data-tooltip]` clips against an `overflow:hidden`
+ *     ancestor (modal, drawer, scrollable card, sticky topbar), or
+ *   - the host viewport is touch-only (mobile) and `:hover` doesn't
+ *     fire reliably.
+ *
+ * The trigger is a small button — `inline-flex` so it sits on the
+ * baseline next to a label without breaking line height. Hover +
+ * focus highlight to brand colour to make the affordance clear.
+ *
+ * The bubble is rendered through React.createPortal into <body>, so
+ * its positioning is unaffected by clipping ancestors. Coordinates
+ * are computed in JS and applied as inline `style.top/left` —
+ * meaning all CSS does is paint the surface (size, fill, border,
+ * shadow) and provide the slide-in transition. */
+.info-tip-trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  border-radius: var(--radius-full);
+  vertical-align: middle;
+  margin-left: 4px;
+  flex-shrink: 0;
+  transition: color 0.15s ease, background-color 0.15s ease;
+}
+.info-tip-trigger:hover,
+.info-tip-trigger:focus-visible,
+.info-tip-trigger[aria-expanded='true'] {
+  color: var(--brand);
+  background: var(--brand-bg);
+  outline: none;
+}
+
+.info-tip-bubble {
+  /* Width: clamp to viewport so the bubble never extends past either
+   * edge regardless of how long its content is. The component's JS
+   * also clamps the *position*, but the width clamp is what lets long
+   * helper text wrap inside the visible area instead of pushing the
+   * bubble off-screen. */
+  max-width: min(320px, calc(100vw - 32px));
+  padding: 10px 12px;
+  background: var(--bg-card);
+  color: var(--text-primary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-lg);
+  font-size: 0.82rem;
+  font-weight: 500;
+  line-height: 1.5;
+  white-space: pre-line;
+  text-align: left;
+  text-transform: none;
+  letter-spacing: normal;
+  pointer-events: auto;
+  /* Above modals (z-index 1100), drawers (1200), sticky topbar
+   * (1000). The bubble is the most ephemeral surface in the stack,
+   * so it always wins. */
+  z-index: 5000;
+  /* Subtle slide-in keyed off placement so it appears to come from
+   * the (i) icon. Animations defined per-placement below. */
+  animation: info-tip-fade 0.12s ease-out;
+}
+
+.info-tip-bubble--below {
+  animation-name: info-tip-fade-below;
+}
+.info-tip-bubble--above {
+  animation-name: info-tip-fade-above;
+}
+
+@keyframes info-tip-fade-below {
+  from {
+    opacity: 0;
+    transform: translateX(-50%) translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+  }
+}
+@keyframes info-tip-fade-above {
+  from {
+    opacity: 0;
+    transform: translateX(-50%) translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+  }
+}
+@keyframes info-tip-fade {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
