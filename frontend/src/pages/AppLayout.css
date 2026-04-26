@@ -613,10 +613,23 @@
   color: var(--brand);
   text-decoration: none;
   white-space: nowrap;
+  /* Bigger touch target on mobile — without this, the link is the
+   * exact width of "Learn more " + icon, which is ~80px wide and
+   * 16px tall. iOS HIG asks for 44px minimum tap area; Material
+   * for Android asks 48dp. The vertical padding bumps the hit
+   * box without changing visual size (the bubble still wraps the
+   * link tightly because it's inline-flex). */
+  padding: 4px 0;
 }
 
-.card-info-learn-more:hover {
-  text-decoration: underline;
+/* Hover state scoped to pointer devices. Without this scope, iOS /
+ * Android treat the tap as "show hover" on the FIRST press and
+ * only fire the navigation click on the SECOND tap — i.e. the
+ * "link inside the tip doesn't open when tapped" symptom. */
+@media (hover: hover) {
+  .card-info-learn-more:hover {
+    text-decoration: underline;
+  }
 }
 
 .empty-state {

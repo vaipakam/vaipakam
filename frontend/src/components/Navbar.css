@@ -243,6 +243,27 @@
   color: var(--brand);
 }
 
+/* Mobile flyout copy of the theme toggle. Renders as a full-width
+ * row at the bottom of the open hamburger panel, matching the
+ * "Connect Wallet" / "Disconnect" / "Launch App" mobile rows in
+ * shape. Hidden on desktop via the `min-width: 1200px` block
+ * below; the desktop topbar's icon-only `.theme-toggle` is the
+ * desktop equivalent and is hidden on mobile in turn so we never
+ * render two simultaneously. */
+.theme-toggle--mobile {
+  display: none;
+  width: 100%;
+  height: 44px;
+  margin-top: 12px;
+  padding: 0 16px;
+  gap: 10px;
+  font-size: 0.95rem;
+  font-weight: 500;
+  justify-content: flex-start;
+  background: transparent;
+  border: 1px solid var(--border);
+}
+
 .navbar-cta {
   display: none;
   /* Desktop CTAs (Launch App, Connect Wallet, Wrong Network, wallet badge)
@@ -342,6 +363,12 @@
   .navbar-group-mobile-list {
     display: none;
   }
+  /* Mobile-flyout theme toggle is hidden on desktop — the topbar's
+   * standalone `.theme-toggle` (visible by default) handles theme
+   * switching for pointer-equipped viewports. */
+  .theme-toggle--mobile {
+    display: none;
+  }
 }
 
 /* Mobile / tablet open state — paired max-width boundary with the desktop
@@ -375,6 +402,17 @@
     display: flex;
     flex-direction: column;
     gap: 2px;
+  }
+  /* Mobile theme toggle is shown inside the open flyout; the
+   * topbar's icon-only `.theme-toggle` is hidden on mobile so we
+   * never have two simultaneously. The flyout copy is full-width
+   * and labelled (Light / Dark) so it reads as a settings row,
+   * not a stray icon. */
+  .navbar-actions > .theme-toggle:not(.theme-toggle--mobile) {
+    display: none;
+  }
+  .navbar-links.open .theme-toggle--mobile {
+    display: inline-flex;
   }
 }
 

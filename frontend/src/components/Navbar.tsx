@@ -246,6 +246,24 @@ export default function Navbar() {
               </div>
             )}
           </div>
+
+          {/* Mobile-only theme toggle — lives inside the hamburger
+              flyout so the topbar row stays uncluttered next to the
+              hamburger button. The desktop theme toggle (rendered
+              below in `.navbar-actions`) is hidden via CSS at the
+              same 1200px breakpoint that hides the desktop CTAs,
+              so exactly one theme toggle is reachable per viewport. */}
+          <button
+            className="theme-toggle theme-toggle--mobile"
+            onClick={() => {
+              toggleTheme();
+              setMobileOpen(false);
+            }}
+            aria-label="Toggle theme"
+          >
+            {theme === 'dark' ? <Sun size={18} /> : <Moon size={18} />}
+            <span>{theme === 'dark' ? 'Light theme' : 'Dark theme'}</span>
+          </button>
         </div>
 
         <div className="navbar-actions">

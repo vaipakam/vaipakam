@@ -470,12 +470,25 @@ img { max-width: 100%; display: block; }
   flex-shrink: 0;
   transition: color 0.15s ease, background-color 0.15s ease;
 }
-.info-tip-trigger:hover,
+/* `:focus-visible` and the open-state attribute always apply
+ * (keyboard / open-state need feedback on every device). The
+ * `:hover` selector is scoped to `@media (hover: hover)` so
+ * iOS / Android don't treat a tap on the trigger as a "show
+ * hover state" interaction — without this scope, mobile browsers
+ * would defer the click event to a SECOND tap, which is exactly
+ * the "tip only opens on the second tap" symptom we hit. */
 .info-tip-trigger:focus-visible,
 .info-tip-trigger[aria-expanded='true'] {
   color: var(--brand);
   background: var(--brand-bg);
   outline: none;
+}
+
+@media (hover: hover) {
+  .info-tip-trigger:hover {
+    color: var(--brand);
+    background: var(--brand-bg);
+  }
 }
 
 .info-tip-bubble {
