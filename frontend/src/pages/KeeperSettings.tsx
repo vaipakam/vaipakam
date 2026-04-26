@@ -6,6 +6,7 @@ import { useDiamondContract, useDiamondRead } from "../contracts/useDiamond";
 import { beginStep } from "../lib/journeyLog";
 import { ErrorAlert } from "../components/app/ErrorAlert";
 import { AddressDisplay } from "../components/app/AddressDisplay";
+import { CardInfo } from "../components/CardInfo";
 
 const MAX_KEEPERS = 5;
 
@@ -312,7 +313,10 @@ export default function KeeperSettings() {
 
   return (
     <div className="page-container">
-      <h1>Keeper Whitelist</h1>
+      <h1 style={{ display: "flex", alignItems: "center", gap: 6 }}>
+        Keeper Whitelist
+        <CardInfo id="keeper-settings.overview" />
+      </h1>
       <p style={{ maxWidth: 720 }}>
         Keepers are <strong>delegated managers</strong> of your role. Approving
         a keeper delegates only <strong>your side</strong> of a loan, and only
@@ -377,8 +381,9 @@ export default function KeeperSettings() {
       </section>
 
       <section>
-        <h2 style={{ fontSize: "1.1rem" }}>
+        <h2 style={{ fontSize: "1.1rem", display: "flex", alignItems: "center", gap: 6 }}>
           Approved keepers ({keepers.length}/{MAX_KEEPERS})
+          <CardInfo id="keeper-settings.approved-list" />
         </h2>
         {keepers.length === 0 && (
           <p style={{ opacity: 0.7 }}>No keepers approved.</p>

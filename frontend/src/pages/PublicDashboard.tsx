@@ -21,6 +21,7 @@ import Footer from '../components/Footer';
 import DiagnosticsDrawer from '../components/app/DiagnosticsDrawer';
 import { ChainPicker } from '../components/ChainPicker';
 import { ErrorAlert } from '../components/app/ErrorAlert';
+import { CardInfo } from '../components/CardInfo';
 import { useMode } from '../context/ModeContext';
 import { useProtocolStats } from '../hooks/useProtocolStats';
 import { useTVL } from '../hooks/useTVL';
@@ -249,9 +250,10 @@ export default function PublicDashboard() {
         <div className="container">
           <header className="pd-header">
             <div>
-              <h1 className="page-title">
+              <h1 className="page-title" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                 <BarChart3 size={28} style={{ verticalAlign: 'middle', marginRight: 8 }} />
                 Public Analytics Dashboard
+                <CardInfo id="public-dashboard.overview" />
               </h1>
               <p className="page-subtitle">
                 Transparent, aggregated protocol metrics derived entirely from on-chain
@@ -295,7 +297,10 @@ export default function PublicDashboard() {
 
           <section className="pd-section" aria-label="Combined across all chains">
             <div className="pd-section-head">
-              <h2>Combined — all chains</h2>
+              <h2 style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                Combined — all chains
+                <CardInfo id="public-dashboard.combined" />
+              </h2>
               {combined?.combined.fetchedAt && (
                 <span className="pd-subtle">
                   {combined.combined.chainsCovered} chain
@@ -382,7 +387,10 @@ export default function PublicDashboard() {
 
           <section className="pd-section" aria-label="Per-chain view">
             <div className="pd-section-head">
-              <h2>Per-chain breakdown</h2>
+              <h2 style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                Per-chain breakdown
+                <CardInfo id="public-dashboard.per-chain" />
+              </h2>
               <label className="pd-chain-selector">
                 <span className="pd-subtle">Chain</span>
                 <ChainPicker
@@ -604,7 +612,10 @@ export default function PublicDashboard() {
 
               <section className="pd-section">
                 <div className="pd-section-head">
-                  <h2>VPFI Token Transparency</h2>
+                  <h2 style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    VPFI Token Transparency
+                    <CardInfo id="public-dashboard.vpfi-transparency" />
+                  </h2>
                   {vpfi?.registered && (
                     <a
                       href={`${blockExplorer}/address/${vpfi.token}`}
@@ -880,7 +891,10 @@ export default function PublicDashboard() {
               )}
 
               <section className="pd-section pd-transparency">
-                <h2>Transparency &amp; Source</h2>
+                <h2 style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  Transparency &amp; Source
+                  <CardInfo id="public-dashboard.transparency" />
+                </h2>
                 <div className="pd-transparency-grid">
                   <div>
                     <div className="pd-sub">Snapshot block</div>

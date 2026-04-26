@@ -44,6 +44,7 @@ import { getCanonicalVPFIChain, type ChainConfig } from "../contracts/config";
 import { decodeContractError } from "../lib/decodeContractError";
 import { beginStep } from "../lib/journeyLog";
 import { ReportIssueLink } from "../components/app/ReportIssueLink";
+import { CardInfo } from "../components/CardInfo";
 import "./Dashboard.css";
 
 /**
@@ -854,6 +855,7 @@ export default function BuyVPFI() {
             style={{ verticalAlign: "middle", marginRight: 8 }}
           />
           Buy VPFI
+          <CardInfo id="buy-vpfi.overview" />
         </h1>
         <p className="page-subtitle">
           Purchase VPFI at the fixed early-stage rate using ETH and deposit into
@@ -938,6 +940,7 @@ export default function BuyVPFI() {
         <StepHeader
           index={1}
           title="Buy VPFI with ETH"
+          cardHelpId="buy-vpfi.buy"
           subtitle={
             isOnCanonical
               ? `Direct on ${canonical.name}. VPFI lands in your wallet on this chain.`
@@ -1017,6 +1020,7 @@ export default function BuyVPFI() {
         <StepHeader
           index={2}
           title="Deposit VPFI into your escrow"
+          cardHelpId="buy-vpfi.deposit"
           subtitle="Required on every chain — including the canonical one."
         />
         <div
@@ -1120,6 +1124,7 @@ export default function BuyVPFI() {
           <StepHeader
             index={3}
             title="Unstake VPFI from your escrow"
+            cardHelpId="buy-vpfi.unstake"
             subtitle={`Transfer VPFI from your escrow back to your wallet on ${activeChain?.name ?? readChain.name}. Reduces your discount tier if it drops your escrow balance below a threshold.`}
           />
           <UnstakeCard
@@ -1143,10 +1148,12 @@ interface StepHeaderProps {
   title: string;
   /** Supporting copy below the title. */
   subtitle: string;
+  /** Optional CardInfo registry id to render the (i) tip next to title. */
+  cardHelpId?: string;
 }
 
 /** Numbered-step header used as the card title for each stage in the flow. */
-function StepHeader({ index, title, subtitle }: StepHeaderProps) {
+function StepHeader({ index, title, subtitle, cardHelpId }: StepHeaderProps) {
   return (
     <div style={{ marginBottom: 12 }}>
       <div
@@ -1173,8 +1180,9 @@ function StepHeader({ index, title, subtitle }: StepHeaderProps) {
         >
           {index}
         </span>
-        <div className="card-title" style={{ marginBottom: 0 }}>
+        <div className="card-title" style={{ marginBottom: 0, display: 'flex', alignItems: 'center', gap: 6 }}>
           {title}
+          {cardHelpId && <CardInfo id={cardHelpId} />}
         </div>
       </div>
       <p className="stat-label" style={{ margin: 0, paddingLeft: 36 }}>
@@ -1249,8 +1257,9 @@ function DiscountStatusCard({
 
   return (
     <div className="card" style={{ marginBottom: 20 }}>
-      <div className="card-title" style={{ marginBottom: 12 }}>
+      <div className="card-title" style={{ marginBottom: 12, display: 'flex', alignItems: 'center', gap: 6 }}>
         Your VPFI discount status
+        <CardInfo id="buy-vpfi.discount-status" />
       </div>
 
       <div

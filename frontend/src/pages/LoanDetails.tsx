@@ -38,6 +38,7 @@ import { HealthFactorGauge, LTVBar } from "../components/app/RiskGauge";
 import { LiquidationProjection } from "../components/app/LiquidationProjection";
 import { LenderDiscountCard } from "../components/app/LenderDiscountCard";
 import { LiquidateButton } from "../components/app/LiquidateButton";
+import { CardInfo } from "../components/CardInfo";
 import "./LoanDetails.css";
 
 export default function LoanDetails() {
@@ -372,7 +373,10 @@ export default function LoanDetails() {
 
       <div className="loan-header">
         <div>
-          <h1 className="page-title">Loan #{loan.id.toString()}</h1>
+          <h1 className="page-title" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            Loan #{loan.id.toString()}
+            <CardInfo id="loan-details.overview" />
+          </h1>
           <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
             <span
               className={`status-badge ${LOAN_STATUS_LABELS[Number(loan.status) as LoanStatus].toLowerCase()}`}
@@ -466,7 +470,10 @@ export default function LoanDetails() {
       {/* Loan details grid */}
       <div className="loan-grid">
         <div className="card">
-          <div className="card-title">Loan Terms</div>
+          <div className="card-title" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            Loan Terms
+            <CardInfo id="loan-details.terms" />
+          </div>
           <div className="data-row">
             <span className="data-label">Principal</span>
             <span className="data-value mono">
@@ -527,7 +534,10 @@ export default function LoanDetails() {
         </div>
 
         <div className="card">
-          <div className="card-title">Collateral & Risk</div>
+          <div className="card-title" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            Collateral & Risk
+            <CardInfo id="loan-details.collateral-risk" />
+          </div>
           <div className="data-row">
             <span className="data-label">Collateral Amount</span>
             <span className="data-value mono">
@@ -625,7 +635,10 @@ export default function LoanDetails() {
         </div>
 
         <div className="card">
-          <div className="card-title">Parties</div>
+          <div className="card-title" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            Parties
+            <CardInfo id="loan-details.parties" />
+          </div>
           <div className="data-row">
             <span className="data-label">Lender</span>
             <a
@@ -682,7 +695,10 @@ export default function LoanDetails() {
       {/* Actions */}
       {availability.repay && (
         <div className="card loan-actions-card">
-          <div className="card-title">Actions</div>
+          <div className="card-title" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            Actions
+            <CardInfo id="loan-details.actions" />
+          </div>
 
           {isFallbackPending && (
             <div className="alert alert-warning" style={{ marginBottom: 12 }}>

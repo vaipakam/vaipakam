@@ -14,6 +14,7 @@ import { DEFAULT_CHAIN } from '../contracts/config';
 import { AssetSymbol } from '../components/app/AssetSymbol';
 import { TokenAmount } from '../components/app/TokenAmount';
 import { bpsToPercent } from '../lib/format';
+import { CardInfo } from '../components/CardInfo';
 import './LoanDetails.css';
 
 type Step = 'idle' | 'review' | 'submitting' | 'success';
@@ -168,7 +169,10 @@ export default function Refinance() {
 
       <div className="loan-header">
         <div>
-          <h1 className="page-title">Refinance · Loan #{loan.id.toString()}</h1>
+          <h1 className="page-title" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            Refinance · Loan #{loan.id.toString()}
+            <CardInfo id="refinance.overview" />
+          </h1>
           <p className="page-subtitle">
             Replace the current lender with a new one offering better terms. Works as a
             two-step flow: post a Borrower Offer, then complete the refinance after a new
@@ -206,7 +210,10 @@ export default function Refinance() {
       {txError && <ErrorAlert message={txError} />}
 
       <div className="card">
-        <div className="card-title">Position Summary</div>
+        <div className="card-title" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          Position Summary
+          <CardInfo id="refinance.position-summary" />
+        </div>
         <div className="data-row">
           <span className="data-label">Principal</span>
           <span className="data-value">
@@ -230,7 +237,10 @@ export default function Refinance() {
 
       {isActive && isErc20Loan && (
         <div className="card loan-actions-card">
-          <div className="card-title">Step 1 · Post a Borrower Offer</div>
+          <div className="card-title" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            Step 1 · Post a Borrower Offer
+            <CardInfo id="refinance.step-1-post-offer" />
+          </div>
           <p className="action-desc">
             Create a Borrower Offer that mirrors this loan's principal asset and your desired new
             terms (rate, duration, collateral). A replacement lender accepts it from the Offer Book,
@@ -267,7 +277,10 @@ export default function Refinance() {
 
       {isActive && isErc20Loan && (
         <div className="card loan-actions-card">
-          <div className="card-title">Step 2 · Complete Refinance</div>
+          <div className="card-title" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            Step 2 · Complete Refinance
+            <CardInfo id="refinance.step-2-complete" />
+          </div>
           {step === 'review' || step === 'submitting' ? (
             <>
               <div className="data-row" style={{ marginTop: 12 }}>

@@ -2,6 +2,7 @@ import { useState, type ReactNode } from "react";
 import { useWallet } from "../context/WalletContext";
 import { Bell, MessageCircle, Wallet } from "lucide-react";
 import { ErrorAlert } from "../components/app/ErrorAlert";
+import { CardInfo } from "../components/CardInfo";
 import { beginStep, enrichFetchError } from "../lib/journeyLog";
 
 // Read the off-chain watcher's origin from env. NO production-URL
@@ -293,9 +294,10 @@ export default function Alerts() {
 
   return (
     <div className="page-container">
-      <h1>
+      <h1 style={{ display: "flex", alignItems: "center", gap: 6 }}>
         <Bell size={22} style={{ verticalAlign: "-4px", marginRight: 8 }} />
         Alerts
+        <CardInfo id="alerts.overview" />
       </h1>
       <p style={{ maxWidth: 720 }}>
         Get a heads-up when your Health Factor (HF) falls toward the liquidation
@@ -330,7 +332,10 @@ export default function Alerts() {
           maxWidth: 720,
         }}
       >
-        <h2 style={{ fontSize: "1.05rem", margin: 0 }}>Threshold ladder</h2>
+        <h2 style={{ fontSize: "1.05rem", margin: 0, display: "flex", alignItems: "center", gap: 6 }}>
+          Threshold ladder
+          <CardInfo id="alerts.threshold-ladder" />
+        </h2>
         <p style={{ fontSize: "0.85rem", opacity: 0.8, margin: "4px 0 16px" }}>
           A fresh alert fires the first time HF crosses each band downward. Once
           a band fires it re-arms after HF recovers above the next higher band's
@@ -408,7 +413,10 @@ export default function Alerts() {
           maxWidth: 720,
         }}
       >
-        <h2 style={{ fontSize: "1.05rem", margin: 0 }}>Delivery channels</h2>
+        <h2 style={{ fontSize: "1.05rem", margin: 0, display: "flex", alignItems: "center", gap: 6 }}>
+          Delivery channels
+          <CardInfo id="alerts.delivery-channels" />
+        </h2>
         <p style={{ fontSize: "0.85rem", opacity: 0.8, margin: "4px 0 16px" }}>
           Enable one or both. Both rails share the threshold ladder above — you
           don't configure different warn-levels per channel.

@@ -18,6 +18,7 @@ import { TransferLockWarning } from '../components/app/TransferLockWarning';
 import { AssetSymbol } from '../components/app/AssetSymbol';
 import { TokenAmount } from '../components/app/TokenAmount';
 import { bpsToPercent } from '../lib/format';
+import { CardInfo } from '../components/CardInfo';
 import './LoanDetails.css';
 
 type Step = 'idle' | 'review' | 'submitting' | 'success';
@@ -153,7 +154,10 @@ export default function LenderEarlyWithdrawal() {
 
       <div className="loan-header">
         <div>
-          <h1 className="page-title">Early Withdrawal · Loan #{loan.id.toString()}</h1>
+          <h1 className="page-title" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            Early Withdrawal · Loan #{loan.id.toString()}
+            <CardInfo id="early-withdrawal.overview" />
+          </h1>
           <p className="page-subtitle">
             Sell your lender position to a new lender. Your lender-side Vaipakam NFT will be
             locked for transfer while the sale is pending.
@@ -193,7 +197,10 @@ export default function LenderEarlyWithdrawal() {
       {txError && <ErrorAlert message={txError} />}
 
       <div className="card">
-        <div className="card-title">Position Summary</div>
+        <div className="card-title" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          Position Summary
+          <CardInfo id="early-withdrawal.position-summary" />
+        </div>
         <div className="data-row">
           <span className="data-label">Principal</span>
           <span className="data-value">
@@ -217,7 +224,10 @@ export default function LenderEarlyWithdrawal() {
 
       {isActive && isErc20 && (
         <div className="card loan-actions-card">
-          <div className="card-title">{inProgress ? 'Sale In Progress' : 'Initiate Sale'}</div>
+          <div className="card-title" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            {inProgress ? 'Sale In Progress' : 'Initiate Sale'}
+            <CardInfo id="early-withdrawal.initiate-sale" />
+          </div>
 
           {inProgress ? (
             <>

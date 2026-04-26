@@ -28,6 +28,7 @@ import { ThemedSelect } from '../components/app/ThemedSelect';
 import { bpsToPercent } from '../lib/format';
 import { batchCalls, encodeBatchCalls } from '../lib/multicall';
 import { AddressDisplay } from '../components/app/AddressDisplay';
+import { CardInfo } from '../components/CardInfo';
 import {
   absDelta,
   matchesFilter as matchesFilterPure,
@@ -744,11 +745,15 @@ export default function OfferBook() {
           acceptingId={acceptingId}
           onAccept={handleAcceptOffer}
           statusView={statusView}
+          cardHelpId="offer-book.your-active-offers"
         />
       )}
 
       <div className="card" style={{ marginTop: 12 }}>
-        <div className="card-title">Filters</div>
+        <div className="card-title">
+          Filters
+          <CardInfo id="offer-book.filters" />
+        </div>
         <div className="offer-book-filter-grid">
           <div className="offer-book-filter-cell">
             <AssetPicker
@@ -876,6 +881,7 @@ export default function OfferBook() {
                 acceptingId={acceptingId}
                 onAccept={handleAcceptOffer}
                 statusView={statusView}
+                cardHelpId="offer-book.lender-offers"
               />
               {tab === 'lender' && totalLender > perSide && (
                 <Pagination page={safePage} totalPages={totalPages} onPage={setPage} />
@@ -913,6 +919,7 @@ export default function OfferBook() {
                 acceptingId={acceptingId}
                 onAccept={handleAcceptOffer}
                 statusView={statusView}
+                cardHelpId="offer-book.borrower-offers"
               />
               {tab === 'borrower' && totalBorrower > perSide && (
                 <Pagination page={safePage} totalPages={totalPages} onPage={setPage} />
@@ -1409,13 +1416,20 @@ interface OfferTableProps {
   acceptingId: bigint | null;
   onAccept: (id: bigint) => void;
   statusView: StatusView;
+  /** Optional registry id (`offer-book.lender-offers` etc.) — when
+   *  provided, an inline `<CardInfo>` (i) icon renders next to the
+   *  title with the matching summary + Learn-more link. */
+  cardHelpId?: string;
 }
 
-function OfferTable({ title, subtitle, offers, anchorRateBps, address, acceptingId, onAccept, statusView }: OfferTableProps) {
+function OfferTable({ title, subtitle, offers, anchorRateBps, address, acceptingId, onAccept, statusView, cardHelpId }: OfferTableProps) {
   return (
     <div className="card" style={{ marginTop: 16 }}>
       <div className="card-title" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
-        <span>{title}</span>
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+          {title}
+          {cardHelpId && <CardInfo id={cardHelpId} />}
+        </span>
         <span style={{ fontSize: '0.8rem', opacity: 0.7 }}>{subtitle}</span>
       </div>
       {offers.length === 0 ? (

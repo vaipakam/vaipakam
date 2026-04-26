@@ -7,6 +7,7 @@ import { useAllowances, type AllowanceRow } from '../hooks/useAllowances';
 import { formatUnitsPretty } from '../lib/format';
 import { AddressDisplay } from '../components/app/AddressDisplay';
 import { ErrorAlert } from '../components/app/ErrorAlert';
+import { CardInfo } from '../components/CardInfo';
 import { DEFAULT_CHAIN } from '../contracts/config';
 import { beginStep } from '../lib/journeyLog';
 
@@ -124,9 +125,10 @@ export default function Allowances() {
 
   return (
     <div className="page-container">
-      <h1>
+      <h1 style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
         <ShieldOff size={22} style={{ verticalAlign: '-4px', marginRight: 8 }} />
         Allowances
+        <CardInfo id="allowances.list" />
       </h1>
       <p style={{ maxWidth: 720 }}>
         Every ERC-20 approval the connected wallet has granted the Vaipakam

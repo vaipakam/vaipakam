@@ -19,6 +19,7 @@ import { VPFI_TIER_TABLE } from "../hooks/useVPFIDiscount";
 import { decodeContractError } from "../lib/decodeContractError";
 import { beginStep } from "../lib/journeyLog";
 import { ReportIssueLink } from "../components/app/ReportIssueLink";
+import { CardInfo } from "../components/CardInfo";
 import "./Dashboard.css";
 
 // Official LayerZero Superbridge entry — used for the optional
@@ -363,7 +364,10 @@ export default function Rewards() {
   return (
     <div>
       <header style={{ marginBottom: 24 }}>
-        <h1 style={{ marginBottom: 8 }}>Rewards</h1>
+        <h1 style={{ marginBottom: 8, display: 'flex', alignItems: 'center', gap: 6 }}>
+          Rewards
+          <CardInfo id="rewards.overview" />
+        </h1>
         <p className="stat-label" style={{ margin: 0 }}>
           Escrow-held VPFI accrues a 5% APR passively, and every USD of interest
           settled on a loan earns you a daily share of the interaction pool.
@@ -511,6 +515,7 @@ export default function Rewards() {
           >
             <ArrowDown size={20} style={{ color: "var(--brand)" }} />
             <h2 style={{ margin: 0 }}>Withdraw staked VPFI</h2>
+            <CardInfo id="rewards.withdraw-staked" />
           </div>
           <p className="stat-label" style={{ marginTop: 0 }}>
             Move VPFI out of your escrow back to your wallet. Withdrawn VPFI
@@ -663,6 +668,7 @@ function ClaimRewardsCard({
       >
         <Coins size={20} style={{ color: "var(--brand)" }} />
         <h2 style={{ margin: 0 }}>Claim Rewards</h2>
+        <CardInfo id="rewards.claim" />
       </div>
       <p className="stat-label" style={{ marginTop: 0 }}>
         Minted directly on <strong>{chainName}</strong> — no bridging or chain

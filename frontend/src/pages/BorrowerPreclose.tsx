@@ -21,6 +21,7 @@ import { TransferLockWarning } from "../components/app/TransferLockWarning";
 import { AssetSymbol } from "../components/app/AssetSymbol";
 import { TokenAmount } from "../components/app/TokenAmount";
 import { bpsToPercent } from "../lib/format";
+import { CardInfo } from "../components/CardInfo";
 import "./LoanDetails.css";
 
 type Option = "direct" | "offset" | "transfer";
@@ -320,7 +321,10 @@ export default function BorrowerPreclose() {
 
       <div className="loan-header">
         <div>
-          <h1 className="page-title">Preclose · Loan #{loan.id.toString()}</h1>
+          <h1 className="page-title" style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            Preclose · Loan #{loan.id.toString()}
+            <CardInfo id="preclose.overview" />
+          </h1>
           <p className="page-subtitle">
             Close this loan before maturity: pay directly, transfer the
             obligation to an existing Borrower Offer, or offset with a new
@@ -358,7 +362,10 @@ export default function BorrowerPreclose() {
       {txError && <ErrorAlert message={txError} />}
 
       <div className="card">
-        <div className="card-title">Position Summary</div>
+        <div className="card-title" style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          Position Summary
+          <CardInfo id="preclose.position-summary" />
+        </div>
         <div className="data-row">
           <span className="data-label">Principal</span>
           <span className="data-value">
@@ -391,7 +398,10 @@ export default function BorrowerPreclose() {
 
       {inProgress && (
         <div className="card">
-          <div className="card-title">Offset In Progress</div>
+          <div className="card-title" style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            Offset In Progress
+            <CardInfo id="preclose.in-progress" />
+          </div>
           <TransferLockWarning
             mode="active"
             lock={lock}
@@ -425,7 +435,10 @@ export default function BorrowerPreclose() {
 
       {isActive && !inProgress && (
         <div className="card loan-actions-card">
-          <div className="card-title">Choose Preclose Path</div>
+          <div className="card-title" style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            Choose Preclose Path
+            <CardInfo id="preclose.choose-path" />
+          </div>
           <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
             <button
               className={`btn btn-sm ${opt === "direct" ? "btn-primary" : "btn-secondary"}`}

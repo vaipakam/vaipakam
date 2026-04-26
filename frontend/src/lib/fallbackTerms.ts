@@ -44,7 +44,7 @@ export const FALLBACK_CONSENT_SECTIONS: readonly RiskSection[] = [
       "If the borrower defaults on a loan with illiquid assets (illiquid lending asset, illiquid collateral, or both)",
     points: [
       "Full collateral transfers to you in-kind, regardless of its market value.",
-      'No partition between "amount owed" and "remainder" — you take ALL collateral.',
+      'No partition between "amount owed" and "remainder" — Lender takes ALL collateral.',
       "The asset received may be worth materially more or less than the amount owed. No warranty on value, liquidity, or resaleability.",
     ],
   },

@@ -10,6 +10,7 @@ import { HandCoins, Wallet, CheckCircle, ExternalLink } from 'lucide-react';
 import { ErrorAlert } from '../components/app/ErrorAlert';
 import { AssetSymbol } from '../components/app/AssetSymbol';
 import { TokenAmount } from '../components/app/TokenAmount';
+import { CardInfo } from '../components/CardInfo';
 import './ClaimCenter.css';
 
 export default function ClaimCenter() {
@@ -68,7 +69,10 @@ export default function ClaimCenter() {
   return (
     <div className="claim-center">
       <div className="page-header">
-        <h1 className="page-title">Claim Center</h1>
+        <h1 className="page-title">
+          Claim Center
+          <CardInfo id="claim-center.claims" />
+        </h1>
         <p className="page-subtitle">
           Claim your funds and collateral from completed, repaid, or defaulted loans using your Vaipakam NFT.
         </p>

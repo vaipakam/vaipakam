@@ -32,6 +32,7 @@ import { DIAMOND_ABI_VIEM as DIAMOND_ABI } from "../contracts/abis";
 import { Link } from "react-router-dom";
 import { AssetPicker } from "../components/app/AssetPicker";
 import { useAssetType, type DetectedAssetType } from "../hooks/useAssetType";
+import { CardInfo } from "../components/CardInfo";
 import "./CreateOffer.css";
 
 type SubmitStep = "form" | "approving" | "creating" | "success";
@@ -468,45 +469,6 @@ export default function CreateOffer() {
         </p>
       </div>
 
-      {form.offerType === "borrower" && !isIlliquidForm && (
-        <div
-          className="card"
-          style={{
-            marginBottom: 16,
-            borderColor: "var(--brand)",
-            background: "rgba(79, 70, 229, 0.06)",
-          }}
-        >
-          <div style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
-            <Coins
-              size={18}
-              style={{ color: "var(--brand)", flexShrink: 0, marginTop: 2 }}
-            />
-            <div style={{ flex: 1 }}>
-              <div style={{ fontWeight: 600, marginBottom: 2 }}>
-                Borrowing a liquid ERC-20? Earn up to a 24% VPFI rebate on the
-                initiation fee
-              </div>
-              <p className="stat-label" style={{ margin: "0 0 8px" }}>
-                Hold VPFI in your escrow and enable the one-time platform-level
-                VPFI consent on your Dashboard. The protocol pulls the full
-                0.1% initiation fee up front in VPFI, then credits back a
-                time-weighted rebate at proper loan close (repay / preclose /
-                refinance) based on how long you held VPFI across the loan.
-                Default or liquidation forfeits the rebate. Need VPFI?{" "}
-                <a href="/app/buy-vpfi" target="_blank" rel="noreferrer">
-                  Buy VPFI
-                </a>{" "}
-                (buy from your preferred chain — routing is handled for you).
-              </p>
-              <Link to="/app" className="btn btn-secondary btn-sm">
-                Enable consent on Dashboard
-              </Link>
-            </div>
-          </div>
-        </div>
-      )}
-
       {deepLinkFrom === "refinance" && deepLinkLoanId && (
         <div className="alert alert-warning" role="alert">
           <AlertTriangle size={18} />
@@ -553,7 +515,10 @@ export default function CreateOffer() {
 
       <form onSubmit={handleSubmit}>
         <div className="card" style={{ marginBottom: 20 }}>
-          <div className="card-title">Offer Type</div>
+          <div className="card-title">
+            Offer Type
+            <CardInfo id="create-offer.offer-type" />
+          </div>
           <div className="offer-type-toggle">
             <button
               type="button"
@@ -600,9 +565,84 @@ export default function CreateOffer() {
           )}
         </div>
 
+        {!isIlliquidForm && (
+          <div
+            className="card"
+            style={{
+              marginBottom: 20,
+              borderColor: "var(--brand)",
+              background: "rgba(79, 70, 229, 0.06)",
+            }}
+          >
+            <div style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
+              <Coins
+                size={18}
+                style={{ color: "var(--brand)", flexShrink: 0, marginTop: 2 }}
+              />
+              <div style={{ flex: 1 }}>
+                {form.offerType === "borrower" ? (
+                  <>
+                    <div style={{ fontWeight: 600, marginBottom: 2 }}>
+                      Borrowing a liquid ERC-20? Earn up to a 24% VPFI rebate
+                      on the initiation fee
+                    </div>
+                    <p className="stat-label" style={{ margin: "0 0 8px" }}>
+                      Hold VPFI in your escrow and enable the one-time
+                      platform-level VPFI consent on your Dashboard. The
+                      protocol pulls the full 0.1% initiation fee up front in
+                      VPFI, then credits back a time-weighted rebate at proper
+                      loan close (repay / preclose / refinance) based on how
+                      long you held VPFI across the loan. Default or
+                      liquidation forfeits the rebate. Need VPFI?{" "}
+                      <a href="/app/buy-vpfi" target="_blank" rel="noreferrer">
+                        Buy VPFI
+                      </a>{" "}
+                      (buy from your preferred chain — routing is handled for
+                      you).
+                    </p>
+                  </>
+                ) : (
+                  <>
+                    <div style={{ fontWeight: 600, marginBottom: 2 }}>
+                      Lending a liquid ERC-20? Earn up to a 24% VPFI discount
+                      on the yield fee
+                    </div>
+                    <p className="stat-label" style={{ margin: "0 0 8px" }}>
+                      Hold VPFI in your escrow and enable the one-time
+                      platform-level VPFI consent on your Dashboard. At
+                      settlement, the 1% treasury cut on the interest you earn
+                      is reduced by a time-weighted VPFI discount across the
+                      loan's lifetime — up to 24%, so you keep more of the
+                      interest you earned. Nothing is paid up front; the
+                      discount is applied automatically when the loan settles
+                      properly (repay / preclose / refinance). Default or
+                      liquidation forfeits the discount. Need VPFI?{" "}
+                      <a href="/app/buy-vpfi" target="_blank" rel="noreferrer">
+                        Buy VPFI
+                      </a>{" "}
+                      (buy from your preferred chain — routing is handled for
+                      you).
+                    </p>
+                  </>
+                )}
+                <Link to="/app" className="btn btn-secondary btn-sm">
+                  Enable consent on Dashboard
+                </Link>
+              </div>
+            </div>
+          </div>
+        )}
+
         <div className="card" style={{ marginBottom: 20 }}>
           <div className="card-title">
             {isRental ? "NFT Details" : "Lending Asset"}
+            <CardInfo
+              id={
+                isRental
+                  ? 'create-offer.nft-details'
+                  : 'create-offer.lending-asset'
+              }
+            />
           </div>
 
           <div className="form-group">
@@ -759,7 +799,10 @@ export default function CreateOffer() {
         </div>
 
         <div className="card" style={{ marginBottom: 20 }}>
-          <div className="card-title">Collateral</div>
+          <div className="card-title">
+            Collateral
+            <CardInfo id="create-offer.collateral" />
+          </div>
 
           {(isRental || lockAssetContinuity) && (
             <div className="form-group">
@@ -888,7 +931,10 @@ export default function CreateOffer() {
         {/* Risk disclosures — per README §Frontend Warnings, these must be
             surfaced to every user, not hidden behind "advanced options". */}
         <div className="card" style={{ marginBottom: 20 }}>
-          <div className="card-title">Risk Disclosures</div>
+          <div className="card-title">
+            Risk Disclosures
+            <CardInfo id="create-offer.risk-disclosures" />
+          </div>
 
           <RiskDisclosures />
 
@@ -904,7 +950,10 @@ export default function CreateOffer() {
 
         {showAdvanced && (
           <div className="card" style={{ marginBottom: 20 }}>
-            <div className="card-title">Advanced Options</div>
+            <div className="card-title">
+              Advanced Options
+              <CardInfo id="create-offer.advanced-options" />
+            </div>
 
             <label className="checkbox-row">
               <input

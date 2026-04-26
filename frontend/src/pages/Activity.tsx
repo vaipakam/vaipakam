@@ -14,6 +14,7 @@ import { useReadChain } from '../contracts/useDiamond';
 import type { ActivityEvent, ActivityEventKind } from '../lib/logIndex';
 import { shortenAddr, formatUnitsPretty } from '../lib/format';
 import { Pager } from '../components/app/Pager';
+import { CardInfo } from '../components/CardInfo';
 import './Activity.css';
 
 const PAGE_SIZE = 15;
@@ -323,6 +324,7 @@ export default function Activity() {
             style={{ verticalAlign: 'middle', marginRight: 8 }}
           />
           Activity
+          <CardInfo id="activity.feed" />
         </h1>
         <p className="page-subtitle">
           On-chain events involving your wallet — offers you created, loans

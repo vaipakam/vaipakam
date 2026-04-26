@@ -35,6 +35,7 @@ import {
 import { ErrorAlert } from "../components/app/ErrorAlert";
 import { AssetSymbol } from "../components/app/AssetSymbol";
 import { TokenAmount } from "../components/app/TokenAmount";
+import { CardInfo } from "../components/CardInfo";
 import { bpsToPercent } from "../lib/format";
 import "./NftVerifier.css";
 
@@ -410,7 +411,10 @@ export default function NftVerifier() {
   return (
     <div className="nft-verifier">
       <div className="page-header">
-        <h1 className="page-title">NFT Verifier</h1>
+        <h1 className="page-title" style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          NFT Verifier
+          <CardInfo id="nft-verifier.lookup" />
+        </h1>
         <p className="page-subtitle">
           Verify the authenticity of a Vaipakam position NFT before you buy it
           from another holder. Paste the contract address and token ID from the
