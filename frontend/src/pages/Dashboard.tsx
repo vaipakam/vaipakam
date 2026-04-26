@@ -25,6 +25,7 @@ import { bpsToPercent } from '../lib/format';
 import { HealthFactorGauge, LTVBar } from '../components/app/RiskGauge';
 import VPFIDiscountConsentCard from '../components/app/VPFIDiscountConsentCard';
 import { Pager } from '../components/app/Pager';
+import { CardInfo } from '../components/CardInfo';
 import './Dashboard.css';
 
 const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
@@ -147,7 +148,10 @@ export default function Dashboard() {
       {/* Escrow info */}
       {currentEscrow && (
         <div className="card" style={{ marginBottom: 20 }}>
-          <div className="card-title">Your Escrow</div>
+          <div className="card-title">
+            Your Escrow
+            <CardInfo id="dashboard.your-escrow" />
+          </div>
           <div className="data-row">
             <span className="data-label">Escrow Address</span>
             <a
@@ -178,7 +182,10 @@ export default function Dashboard() {
       {/* Active loans */}
       <div className="card">
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-          <div className="card-title" style={{ marginBottom: 0 }}>Your Loans</div>
+          <div className="card-title" style={{ marginBottom: 0 }}>
+            Your Loans
+            <CardInfo id="dashboard.your-loans" />
+          </div>
           <Link to="/app/create-offer" className="btn btn-primary btn-sm">
             <PlusCircle size={16} /> New Offer
           </Link>
@@ -359,7 +366,10 @@ export function VPFIPanel({
       >
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <Coins size={16} style={{ color: 'var(--brand)' }} />
-          <div className="card-title" style={{ marginBottom: 0 }}>VPFI Token (this chain)</div>
+          <div className="card-title" style={{ marginBottom: 0 }}>
+            VPFI Token (this chain)
+            <CardInfo id="dashboard.vpfi-panel" />
+          </div>
         </div>
         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
           <span

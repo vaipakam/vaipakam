@@ -586,12 +586,37 @@
 }
 
 .card-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   font-size: 0.85rem;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.04em;
   color: var(--text-tertiary);
   margin-bottom: 12px;
+}
+
+/* "Learn more →" link rendered inside the CardInfo InfoTip bubble.
+ * The bubble's `pointer-events: auto` already makes anchors
+ * clickable, and the InfoTip's outside-click guard skips clicks
+ * inside the bubble — so this link works without extra wiring.
+ * Brand colour + small external-link glyph mirrors the verify
+ * links on the Security section so the visual language reads as a
+ * consistent "go check the source" affordance across the app. */
+.card-info-learn-more {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  margin-left: 4px;
+  font-weight: 600;
+  color: var(--brand);
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.card-info-learn-more:hover {
+  text-decoration: underline;
 }
 
 .empty-state {

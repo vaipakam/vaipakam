@@ -5,6 +5,7 @@ import { useWallet } from "../../context/WalletContext";
 import { useDiamondContract } from "../../contracts/useDiamond";
 import { decodeContractError } from "../../lib/decodeContractError";
 import { beginStep } from "../../lib/journeyLog";
+import { CardInfo } from "../CardInfo";
 
 /**
  * Platform-level opt-in card for the VPFI fee-discount flow.
@@ -100,6 +101,7 @@ export default function VPFIDiscountConsentCard() {
         <div style={{ flex: 1 }}>
           <div className="card-title" style={{ marginBottom: 4 }}>
             Fee-discount consent
+            <CardInfo id="dashboard.fee-discount-consent" />
           </div>
           <p className="stat-label" style={{ margin: "0 0 10px" }}>
             When enabled, the protocol may deduct VPFI from your escrow to pay

@@ -156,6 +156,42 @@ export function InfoTip({
     };
   }, [open]);
 
+  // Grace-period close handling. The bubble is portal-rendered to
+  // <body>, so it isn't a descendant of the trigger — `pointerleave`
+  // on the trigger fires the moment the cursor crosses the 8px gap
+  // toward the bubble, even though the user is *trying* to reach a
+  // link inside it. A short timer lets the cursor traverse the gap
+  // without losing the menu; if the cursor enters the bubble within
+  // the window, the timer is cancelled. Bubble-side
+  // pointerEnter/Leave do the symmetric thing so moving back to the
+  // trigger keeps the bubble open too.
+  const closeTimerRef = useRef<number | null>(null);
+  const scheduleClose = () => {
+    if (closeTimerRef.current != null) {
+      window.clearTimeout(closeTimerRef.current);
+    }
+    closeTimerRef.current = window.setTimeout(() => {
+      closeTimerRef.current = null;
+      setOpen(false);
+    }, 140);
+  };
+  const cancelClose = () => {
+    if (closeTimerRef.current != null) {
+      window.clearTimeout(closeTimerRef.current);
+      closeTimerRef.current = null;
+    }
+  };
+  // Always clear on unmount so a closing timer doesn't outlive the
+  // component and try to setState on a dead instance.
+  useEffect(
+    () => () => {
+      if (closeTimerRef.current != null) {
+        window.clearTimeout(closeTimerRef.current);
+      }
+    },
+    [],
+  );
+
   return (
     <>
       <button
@@ -170,6 +206,7 @@ export function InfoTip({
           // popover (e.g. the topbar Settings panel) doesn't immediately
           // close the parent when the user taps the (i) icon inside it.
           e.stopPropagation();
+          cancelClose();
           setOpen((prev) => !prev);
         }}
         onPointerEnter={(e) => {
@@ -178,13 +215,20 @@ export function InfoTip({
           // the click; we let `onClick` own the toggle for touch and
           // use this only for mouse.
           if (e.pointerType !== "mouse") return;
+          cancelClose();
           setOpen(true);
         }}
         onPointerLeave={(e) => {
           if (e.pointerType !== "mouse") return;
-          setOpen(false);
+          // Don't close immediately — the user may be on their way to
+          // click a link inside the bubble. The bubble's
+          // pointerEnter cancels this timer if they make it.
+          scheduleClose();
         }}
-        onFocus={() => setOpen(true)}
+        onFocus={() => {
+          cancelClose();
+          setOpen(true);
+        }}
         onBlur={() => setOpen(false)}
       >
         <Info size={size} aria-hidden="true" />
@@ -205,6 +249,17 @@ export function InfoTip({
             // Clicking inside the bubble shouldn't close it via the
             // outside-click handler.
             onPointerDown={(e) => e.stopPropagation()}
+            // Cursor reached the bubble before the close timer
+            // fired — keep it open. Symmetric pointerLeave restarts
+            // the timer when the user moves on.
+            onPointerEnter={(e) => {
+              if (e.pointerType !== "mouse") return;
+              cancelClose();
+            }}
+            onPointerLeave={(e) => {
+              if (e.pointerType !== "mouse") return;
+              scheduleClose();
+            }}
           >
             {children}
           </div>,
