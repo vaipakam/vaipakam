@@ -642,6 +642,7 @@ export default function CreateOffer() {
                   ? 'create-offer.nft-details'
                   : 'create-offer.lending-asset'
               }
+              role={isRental ? undefined : form.offerType}
             />
           </div>
 
@@ -801,7 +802,7 @@ export default function CreateOffer() {
         <div className="card" style={{ marginBottom: 20 }}>
           <div className="card-title">
             Collateral
-            <CardInfo id="create-offer.collateral" />
+            <CardInfo id="create-offer.collateral" role={form.offerType} />
           </div>
 
           {(isRental || lockAssetContinuity) && (

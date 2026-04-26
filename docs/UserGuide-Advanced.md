@@ -85,11 +85,11 @@ the time-weighted discount applies.
 Tier ladder (`VPFI_TIER_TABLE`):
 
 | Tier | Min escrow VPFI | Discount |
-|------|-----------------|----------|
-| 1 | ≥ 100 | 10% |
-| 2 | ≥ 1,000 | 15% |
-| 3 | ≥ 5,000 | 20% |
-| 4 | > 20,000 | 24% |
+| ---- | --------------- | -------- |
+| 1    | ≥ 100           | 10%      |
+| 2    | ≥ 1,000         | 15%      |
+| 3    | ≥ 5,000         | 20%      |
+| 4    | > 20,000        | 24%      |
 
 Tier is computed against the **post-mutation** escrow balance via
 `LibVPFIDiscount.rollupUserDiscount`, then time-weighted across each
@@ -186,6 +186,29 @@ Specifies `(asset, amount, aprBps, durationDays)` for a debt offer:
 Accrued interest is computed continuously per second from
 `loan.startTimestamp` until terminal settlement.
 
+<a id="create-offer.lending-asset:lender"></a>
+
+#### If you're the lender
+
+The principal asset and amount that you are willing to offer, plus
+the interest rate (APR in %) and duration in days. Rate is fixed
+at offer time; duration sets the grace window before the loan can
+default. Routes through `OfferFacet.createLenderOffer`; on
+acceptance, the principal moves from your escrow into the
+borrower's escrow as part of `LoanFacet.initiateLoan`.
+
+<a id="create-offer.lending-asset:borrower"></a>
+
+#### If you're the borrower
+
+The principal asset and amount that you want from the lender,
+plus the interest rate (APR in %) and duration in days. Rate is
+fixed at offer time; duration sets the grace window before the
+loan can default. Routes through `OfferFacet.createBorrowerOffer`;
+your collateral is locked in your escrow at offer-creation time
+and remains locked until a lender accepts and the loan opens
+(or you cancel).
+
 <a id="create-offer.nft-details"></a>
 
 ### NFT Details
@@ -218,6 +241,32 @@ Collateral asset spec on the offer. Two liquidity classes:
 
 Secondary price-oracle quorum (Phase 7b.2): Tellor + API3 + DIA,
 soft 2-of-N decision rule. Pyth removed.
+
+<a id="create-offer.collateral:lender"></a>
+
+#### If you're the lender
+
+How much you want the borrower to lock to secure the loan. Liquid
+ERC-20s (Chainlink feed + ≥$1M v3 pool depth) get LTV/HF math;
+illiquid ERC-20s and NFTs have no on-chain valuation and require
+both parties to consent to a full-collateral-on-default outcome.
+The HF ≥ 1.5e18 gate at `LoanFacet.initiateLoan` is computed
+against the collateral basket the borrower presents at acceptance —
+sizing the requirement here directly sets the borrower's HF
+headroom.
+
+<a id="create-offer.collateral:borrower"></a>
+
+#### If you're the borrower
+
+How much you are willing to lock to secure the loan. Liquid ERC-20s
+(Chainlink feed + ≥$1M v3 pool depth) get LTV/HF math; illiquid
+ERC-20s and NFTs have no on-chain valuation and require both
+parties to consent to a full-collateral-on-default outcome. Your
+collateral is locked in your escrow at offer-creation time on a
+borrower offer; for a lender offer, your collateral is locked at
+offer-acceptance time. Either way, the HF ≥ 1.5e18 gate at
+`LoanFacet.initiateLoan` must clear with the basket you present.
 
 <a id="create-offer.risk-disclosures"></a>
 
@@ -272,7 +321,7 @@ Diamond / escrow custody and the holder of the position NFT calls
   returned, not the collateral.
 
 Each claim consumes (burns) the holder's position NFT atomically.
-The NFT *is* the bearer instrument — transferring it before
+The NFT _is_ the bearer instrument — transferring it before
 claiming hands the new holder the right to collect.
 
 ---
@@ -429,9 +478,9 @@ Immutable parts of the loan:
 - `aprBps` (fixed at offer creation).
 - `durationDays`.
 - `startTimestamp`, `endTimestamp` (= `startTimestamp +
-  durationDays * 1 days`).
+durationDays * 1 days`).
 - `accruedInterest()` — view function, computes from `now -
-  startTimestamp`.
+startTimestamp`.
 
 Refinance creates a fresh `loanId` rather than mutating these.
 
@@ -648,7 +697,7 @@ On-chain VPFI accounting on the active chain:
 - Circulating supply — `totalSupply()` minus protocol-held
   balances (treasury, reward pools, in-flight LZ packets).
 - Remaining mintable cap — derived from `MAX_SUPPLY -
-  totalSupply()` on canonical; mirror chains report `n/a` for
+totalSupply()` on canonical; mirror chains report `n/a` for
   cap (mints there are bridge-driven).
 
 Cross-chain invariant: sum of `VPFIMirror.totalSupply()` across
@@ -825,4 +874,3 @@ what a buyer calls to accept. Cancellable before fill via
 `cancelEarlyWithdrawal(saleId)`. Optionally delegatable to a
 keeper holding the `COMPLETE_LOAN_SALE` action bit; init itself
 stays user-only.
-

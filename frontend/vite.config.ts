@@ -5,6 +5,16 @@ import { cloudflare } from "@cloudflare/vite-plugin";
 
 export default defineConfig({
   plugins: [react(), cloudflare()],
+  // The /help routes import the canonical user-guide Markdown files
+  // from `../docs/` via `?raw`. Vite's dev server defaults to
+  // restricting fs reads to the project root; allow one level up so
+  // those imports resolve in `npm run dev`. Production builds bundle
+  // the file content so this setting has no effect there.
+  server: {
+    fs: {
+      allow: ['..'],
+    },
+  },
   test: {
     globals: true,
     environment: 'jsdom',

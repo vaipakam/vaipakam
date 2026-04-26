@@ -20,7 +20,10 @@
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
     "react-is": "^19.2.5",
+    "react-markdown": "^10.1.0",
     "react-router-dom": "^7.14.0",
+    "rehype-raw": "^7.0.0",
+    "remark-gfm": "^4.0.1",
     "valtio": "^1.13.2",
     "viem": "^2.48.4",
     "wagmi": "^2.19.5"

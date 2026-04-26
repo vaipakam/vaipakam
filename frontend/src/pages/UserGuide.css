@@ -1,0 +1,561 @@
+/* User guide / help pages.
+ *
+ * Mobile-first. Defaults target small screens. Desktop enhancements
+ * layer on at min-width breakpoints.
+ *
+ * Layout shape
+ * ------------
+ *   Mobile (< 1024 px):
+ *     [Navbar — fixed, 72 px]
+ *     [Mobile role bar — sticky just under Navbar, always visible]
+ *     [TOC accordion — collapsed by default, doesn't push the role bar]
+ *     [Content]
+ *
+ *   Desktop (≥ 1024 px):
+ *     [Navbar — fixed, 72 px]
+ *     [Sidebar (sticky 88 px from top): Role tabs + TOC] | [Content]
+ *
+ * Theme tokens come from styles/global.css (--bg-primary, --bg-card,
+ * --text-primary, --brand, --border, etc.). Both light and dark modes
+ * resolve those automatically; no inline colour literals.
+ */
+
+/* ── Page shell — sticky-footer flex column ──────────────────────── */
+
+/* Ensures the Footer is anchored to the bottom regardless of how
+ * tall (or short) the content is. The `<main>` inside flex-grows so
+ * short content still pushes Footer to the viewport floor; long
+ * content lets Footer sit naturally below it. */
+.user-guide-page {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+}
+
+.user-guide-main {
+  flex: 1 1 auto;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+}
+
+/* ── Inner layout (sidebar + content) ────────────────────────────── */
+
+.user-guide-layout {
+  /* Clear the fixed 72 px Navbar with breathing room. The Navbar has
+   * no global body padding-top set, so each page provides its own. */
+  padding: 80px 16px 64px;
+  max-width: 1200px;
+  margin: 0 auto;
+}
+
+@media (min-width: 1024px) {
+  .user-guide-layout {
+    /* Two columns on desktop — fixed sidebar + flexible content. */
+    display: grid;
+    grid-template-columns: 260px 1fr;
+    column-gap: 40px;
+    /* The sticky mobile role bar and the mobile TOC accordion are
+     * hidden at this breakpoint — display:none below. */
+    padding: 96px 32px 96px;
+  }
+}
+
+/* ── Mobile combined sticky bar (role tabs + TOC accordion) ─────── */
+
+/* Single sticky container parked just below the fixed 72 px Navbar.
+ * Holds the role tabs (always visible) plus a collapsible TOC
+ * accordion underneath. Both stay at the top of the viewport while
+ * the user scrolls the page content below — short screens never
+ * lose access to either control. The whole bar is hidden on desktop
+ * where the dedicated side rail does this job better. */
+.user-guide-sticky-mobile {
+  position: sticky;
+  top: 72px;
+  z-index: 5;
+  background: var(--bg-primary);
+  margin: 0 0 16px;
+  border-bottom: 1px solid var(--border);
+  padding: 8px 0;
+}
+
+@media (min-width: 1024px) {
+  .user-guide-sticky-mobile {
+    display: none;
+  }
+}
+
+.user-guide-toc-mobile {
+  /* No outer border — the parent sticky bar already provides the
+   * bottom rule. Just a small top margin so the summary row is
+   * visually separated from the role tabs above. */
+  margin-top: 8px;
+}
+
+.user-guide-toc-mobile > summary {
+  list-style: none;
+  cursor: pointer;
+  padding: 8px 0;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  user-select: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.user-guide-toc-mobile > summary::-webkit-details-marker {
+  display: none;
+}
+
+.user-guide-toc-mobile > summary::after {
+  content: '▾';
+  color: var(--text-secondary);
+  transition: transform 120ms ease;
+}
+
+.user-guide-toc-mobile[open] > summary::after {
+  transform: rotate(180deg);
+}
+
+.user-guide-toc-mobile-body {
+  /* Cap the open accordion at 50 vh so it never eats the whole
+   * screen on a phone. Scroll inside if the TOC is taller. */
+  max-height: 50vh;
+  overflow-y: auto;
+  padding: 8px 0 4px;
+  border-top: 1px solid var(--border);
+}
+
+/* ── Desktop sidebar (sticky) ────────────────────────────────────── */
+
+.user-guide-sidebar-desktop {
+  display: none;
+}
+
+@media (min-width: 1024px) {
+  .user-guide-sidebar-desktop {
+    /* Flex column so the role tabs at the top can be pinned (no
+     * shrink, no scroll) while the TOC list below them takes the
+     * remaining height and scrolls independently. The sidebar
+     * itself is sticky to the viewport just under the Navbar. */
+    display: flex;
+    flex-direction: column;
+    position: sticky;
+    top: 88px;
+    align-self: start;
+    max-height: calc(100vh - 112px);
+    /* The sidebar itself doesn't scroll — only the inner TOC region
+     * does. Without `overflow: hidden` the sticky container would
+     * grow to fit children and the role-tab pinning becomes moot. */
+    overflow: hidden;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 14px;
+  }
+
+  /* Role selector — fixed at the top of the sidebar; never scrolls. */
+  .user-guide-sidebar-desktop > .user-guide-role {
+    flex: 0 0 auto;
+  }
+
+  /* TOC fills the rest of the sidebar and scrolls inside its own
+   * region when the section list is taller than the available
+   * space. The role tabs above stay locked in view. */
+  .user-guide-sidebar-desktop > .user-guide-toc {
+    flex: 1 1 auto;
+    overflow-y: auto;
+    /* Slight top padding to separate from the divider line at the
+     * bottom of the role-selector block above. */
+    padding-top: 4px;
+    /* Hide the scrollbar gutter when content fits — small visual
+     * polish in light mode. */
+    scrollbar-gutter: auto;
+  }
+}
+
+/* ── Role selector (used in both mobile sticky bar + desktop sidebar) */
+
+.user-guide-role {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.user-guide-role-label {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-tertiary);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.user-guide-role-tabs {
+  display: flex;
+  gap: 6px;
+  flex: 1;
+}
+
+.user-guide-role-tab {
+  flex: 1;
+  /* Reduced from the previous 44 px target — still touch-friendly
+   * (the 36 px floor covers thumbs cleanly) but takes far less
+   * vertical real estate in the sticky bar. */
+  min-height: 32px;
+  padding: 4px 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-card);
+  color: var(--text-secondary);
+  font-size: 0.85rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition:
+    background 120ms ease,
+    border-color 120ms ease,
+    color 120ms ease;
+}
+
+.user-guide-role-tab.is-active {
+  background: var(--brand);
+  border-color: var(--brand);
+  color: var(--text-inverse);
+  font-weight: 600;
+}
+
+@media (hover: hover) {
+  .user-guide-role-tab:not(.is-active):hover {
+    background: var(--bg-card-hover);
+    border-color: var(--border-hover);
+    color: var(--text-primary);
+  }
+}
+
+@media (min-width: 1024px) {
+  .user-guide-sidebar-desktop .user-guide-role {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 6px;
+    margin-bottom: 14px;
+    padding-bottom: 14px;
+    border-bottom: 1px solid var(--border);
+  }
+  .user-guide-sidebar-desktop .user-guide-role-tabs {
+    flex: none;
+  }
+}
+
+/* ── TOC list ────────────────────────────────────────────────────── */
+
+.user-guide-toc {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.user-guide-toc-group-title {
+  font-size: 0.74rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  font-weight: 700;
+  color: var(--text-tertiary);
+  margin-bottom: 4px;
+}
+
+.user-guide-toc-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.user-guide-toc-item a {
+  display: block;
+  padding: 5px 8px;
+  border-radius: 4px;
+  color: var(--text-secondary);
+  text-decoration: none;
+  font-size: 0.88rem;
+  line-height: 1.35;
+  transition:
+    background 120ms ease,
+    color 120ms ease;
+}
+
+@media (hover: hover) {
+  .user-guide-toc-item a:hover {
+    background: var(--bg-card-hover);
+    color: var(--text-primary);
+  }
+}
+
+/* ── Content column ──────────────────────────────────────────────── */
+
+.user-guide-content {
+  font-size: 16px;
+  line-height: 1.65;
+  color: var(--text-primary);
+  /* Reading-friendly max width — paragraphs cap at ~72ch. The grid
+   * column already constrains overall width on desktop; this cap
+   * keeps long lines from stretching when a single block dominates. */
+  max-width: 72ch;
+}
+
+@media (min-width: 768px) {
+  .user-guide-content {
+    font-size: 17px;
+  }
+}
+
+/* Scroll-margin on every heading so deep-link landings clear the
+ * fixed Navbar (72 px) plus the mobile sticky role bar (~48 px). */
+
+.user-guide-content h1,
+.user-guide-content h2,
+.user-guide-content h3,
+.user-guide-content h4 {
+  scroll-margin-top: 132px;
+}
+
+@media (min-width: 1024px) {
+  /* Desktop has no sticky role bar above the content (the role tabs
+   * live in the side rail), so the offset just needs to clear the
+   * 72 px Navbar plus a little air. */
+  .user-guide-content h1,
+  .user-guide-content h2,
+  .user-guide-content h3,
+  .user-guide-content h4 {
+    scroll-margin-top: 96px;
+  }
+}
+
+.user-guide-content h1 {
+  font-size: 1.6rem;
+  line-height: 1.25;
+  margin: 0 0 16px;
+  color: var(--text-primary);
+}
+
+.user-guide-content h2 {
+  font-size: 1.3rem;
+  line-height: 1.3;
+  margin: 32px 0 12px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--border);
+  color: var(--text-primary);
+}
+
+.user-guide-content h3 {
+  font-size: 1.15rem;
+  line-height: 1.35;
+  margin: 24px 0 10px;
+  color: var(--text-primary);
+}
+
+.user-guide-content h4 {
+  font-size: 1rem;
+  line-height: 1.4;
+  margin: 16px 0 8px;
+  color: var(--text-primary);
+}
+
+@media (min-width: 768px) {
+  .user-guide-content h1 {
+    font-size: 1.9rem;
+  }
+  .user-guide-content h2 {
+    font-size: 1.5rem;
+    margin-top: 40px;
+  }
+  .user-guide-content h3 {
+    font-size: 1.2rem;
+    margin-top: 28px;
+  }
+}
+
+/* ── Paragraph + list rhythm ─────────────────────────────────────── */
+
+.user-guide-content p {
+  margin: 0 0 12px;
+}
+
+.user-guide-content ul,
+.user-guide-content ol {
+  padding-left: 20px;
+  margin: 0 0 12px;
+}
+
+.user-guide-content li {
+  margin: 4px 0;
+}
+
+@media (min-width: 768px) {
+  .user-guide-content ul,
+  .user-guide-content ol {
+    padding-left: 24px;
+  }
+}
+
+/* ── Inline code + code blocks ───────────────────────────────────── */
+
+.user-guide-content code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.9em;
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  padding: 1px 6px;
+  border-radius: 4px;
+}
+
+.user-guide-content pre {
+  overflow-x: auto;
+  background: var(--bg-secondary);
+  padding: 12px;
+  border-radius: 6px;
+  margin: 0 0 16px;
+  border: 1px solid var(--border);
+}
+
+.user-guide-content pre code {
+  background: transparent;
+  padding: 0;
+  font-size: 0.875rem;
+  line-height: 1.5;
+}
+
+/* ── Tables ──────────────────────────────────────────────────────── */
+
+.user-guide-content table {
+  display: block;
+  overflow-x: auto;
+  white-space: nowrap;
+  border-collapse: collapse;
+  margin: 0 0 16px;
+  width: 100%;
+}
+
+.user-guide-content th,
+.user-guide-content td {
+  border: 1px solid var(--border);
+  padding: 8px 12px;
+  text-align: left;
+  font-size: 0.9rem;
+}
+
+.user-guide-content th {
+  background: var(--bg-card-hover);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.user-guide-content td {
+  color: var(--text-primary);
+}
+
+@media (min-width: 768px) {
+  .user-guide-content table {
+    display: table;
+    white-space: normal;
+  }
+}
+
+/* ── Links ───────────────────────────────────────────────────────── */
+
+.user-guide-content a {
+  color: var(--brand);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+@media (hover: hover) {
+  .user-guide-content a:hover {
+    text-decoration-thickness: 2px;
+  }
+}
+
+/* ── Strong / em ─────────────────────────────────────────────────── */
+
+.user-guide-content strong {
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.user-guide-content hr {
+  border: 0;
+  border-top: 1px solid var(--border);
+  margin: 32px 0;
+}
+
+/* ── In-section role tabs (per role-keyed card body) ─────────────── */
+
+.role-tabs {
+  margin: 16px 0 24px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-card);
+  overflow: hidden;
+}
+
+.role-tabs-bar {
+  display: flex;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-card-hover);
+}
+
+.role-tab {
+  flex: 1;
+  /* Same reduced height as the page-wide role tabs. */
+  min-height: 36px;
+  padding: 6px 12px;
+  background: transparent;
+  border: 0;
+  border-right: 1px solid var(--border);
+  color: var(--text-secondary);
+  font-size: 0.88rem;
+  font-weight: 500;
+  cursor: pointer;
+  text-align: center;
+  transition:
+    background 120ms ease,
+    color 120ms ease;
+}
+
+.role-tab:last-child {
+  border-right: 0;
+}
+
+.role-tab.is-active {
+  color: var(--brand);
+  background: var(--bg-card);
+  font-weight: 600;
+  box-shadow: inset 0 -3px 0 0 var(--brand);
+}
+
+@media (hover: hover) {
+  .role-tab:not(.is-active):hover {
+    color: var(--text-primary);
+    background: var(--bg-card);
+  }
+}
+
+.role-tabs-body {
+  padding: 14px 16px;
+}
+
+.role-tabs-body :first-child {
+  margin-top: 0;
+}
+
+.role-tabs-body :last-child {
+  margin-bottom: 0;
+}
+
+@media (min-width: 768px) {
+  .role-tabs-body {
+    padding: 18px 22px;
+  }
+}

@@ -8,16 +8,17 @@ Grouped by area, not by chronology. Continues from
 Coverage at a glance: **Phase 8a** (ENS resolution + liquidation-price
 calculator + HF alerts + approval revoke surface), **Phase 8b**
 (Uniswap Permit2 single-tx flows + Blockaid transaction-scan preview
-+ real-Permit2 fork tests), **Phase 7a** (4-DEX swap failover for
-liquidations + autonomous HF-watcher keeper + Balancer V2 quote +
-worker rate-limit), **Phase 7b.1** (3-V3-clone OR-logic for
-oracle-layer liquidity classification), **Phase 7b.2** (Tellor +
-API3 + DIA secondary price-oracle quorum with Soft 2-of-N decision
-rule; Pyth removed in favor of symbol-derived no-per-asset-config
-alternatives), **Phase 9** (PWA manifest + service worker, public
-keeper-bot reference repo at the sibling `vaipakam-keeper-bot/`
-repository, Active-loan check
-Farcaster Frame), and a UI-polish fix for the diagnostics drawer.
+
+- real-Permit2 fork tests), **Phase 7a** (4-DEX swap failover for
+  liquidations + autonomous HF-watcher keeper + Balancer V2 quote +
+  worker rate-limit), **Phase 7b.1** (3-V3-clone OR-logic for
+  oracle-layer liquidity classification), **Phase 7b.2** (Tellor +
+  API3 + DIA secondary price-oracle quorum with Soft 2-of-N decision
+  rule; Pyth removed in favor of symbol-derived no-per-asset-config
+  alternatives), **Phase 9** (PWA manifest + service worker, public
+  keeper-bot reference repo at the sibling `vaipakam-keeper-bot/`
+  repository, Active-loan check
+  Farcaster Frame), and a UI-polish fix for the diagnostics drawer.
 
 ## Phase 8a — UX polish: ENS, liq-price calculator, HF alerts, revoke surface
 
@@ -100,6 +101,7 @@ Before the user clicks the final **Confirm** button on any review modal
 (Offer Book accept, Create Offer submit, Repay, Add Collateral), the
 calldata is sent to Blockaid's Transaction Scanner API and the response
 is rendered as a colour-coded panel:
+
 - **Green** "Transaction preview" — Blockaid classified it as benign,
   shows the expected state changes ("Send 1,000 USDC", "Receive Vaipakam
   position NFT", etc.) so the user can sanity-check the impact before
@@ -147,7 +149,7 @@ production adapters and a caller-ranked failover chain.
   fetches quotes from all available venues, ranks them by expected
   output (best first), and submits the ranked try-list. The diamond
   iterates in the submitted order — best-quote tries first, next-best
-  fallback if the market moved between quote and tx. Only when *every*
+  fallback if the market moved between quote and tx. Only when _every_
   adapter reverts does the loan fall to the existing claim-time
   collateral-split path.
 - **Per-adapter exact-scope approvals**: the diamond approves an adapter
@@ -162,7 +164,7 @@ production adapters and a caller-ranked failover chain.
   protocol, and is bounded by the on-chain oracle price.
 
 **No governance asset gating.** The decision was deliberately made to
-*not* store per-pair UniV3 fee tiers or Balancer pool IDs in
+_not_ store per-pair UniV3 fee tiers or Balancer pool IDs in
 governance-controlled diamond storage. The caller (frontend, HF watcher,
 MEV keeper) supplies all routing data — keeping the contract surface
 minimal, removing a privileged config knob, and shifting per-pair
@@ -199,6 +201,7 @@ on every Active loan with on-chain Health Factor below 1.0 (visible
 both to the loan's lender / borrower and to any third-party watcher
 who navigated to the loan-details page — liquidation is permissionless).
 Click flow:
+
 1. Frontend opens four parallel quote requests — 0x v2 Swap API +
    1inch v6 Swap API (both routed through a Cloudflare Worker that
    injects the operator API keys server-side, so neither key ships
@@ -248,6 +251,7 @@ endpoints under the same CORS gate; frontend origin is the only
 allowed caller.
 
 **What still ships in a follow-up.**
+
 - **Balancer V2 quote integration** — ✅ shipped 2026-04-25 in Phase 7a
   polish (see "Phase 7a polish — Balancer V2 quote + worker rate-
   limit" section below).
@@ -348,9 +352,9 @@ git commit -am 'Sync ABIs with vaipakam@<commit>'
 The bot's `src/index.ts` imports the JSONs directly:
 
 ```ts
-import metricsAbi from './abis/MetricsFacet.json' with { type: 'json' };
-import riskAbi    from './abis/RiskFacet.json'    with { type: 'json' };
-import loanAbi    from './abis/LoanFacet.json'    with { type: 'json' };
+import metricsAbi from "./abis/MetricsFacet.json" with { type: "json" };
+import riskAbi from "./abis/RiskFacet.json" with { type: "json" };
+import loanAbi from "./abis/LoanFacet.json" with { type: "json" };
 const DIAMOND_ABI: Abi = [...metricsAbi, ...riskAbi, ...loanAbi];
 ```
 
@@ -391,6 +395,7 @@ licensing claim. Standard SPDX text in `LICENSE` at repo root.
 #### Repo visibility
 
 Created **private** during pre-mainnet so:
+
 - the staged commit has a remote backup,
 - GitHub Actions runs the CI matrix on every PR,
 - a small set of trusted reviewers can iterate on the bot
@@ -439,11 +444,12 @@ posting the `/frames/active-loans` URL.
 
 Originally scoped as part of the growth sprint. Dropped after
 design review surfaced that the scoring-model + sybil-resistance
-+ storage decisions are product-strategy choices, not engineering
-choices, and adding a points layer this early in the protocol's
-lifecycle pre-commits to a model that may not match how organic
-user engagement actually develops. Revisit when there's a
-specific user-acquisition goal a leaderboard would serve.
+
+- storage decisions are product-strategy choices, not engineering
+  choices, and adding a points layer this early in the protocol's
+  lifecycle pre-commits to a model that may not match how organic
+  user engagement actually develops. Revisit when there's a
+  specific user-acquisition goal a leaderboard would serve.
 
 ## Phase 8b.1 nice-to-have — Permit2 fork test against the real contract
 
@@ -601,14 +607,14 @@ clone still meets the floor.
 **Per-chain coverage matrix** (which V3 forks we'll register on
 each chain at deploy time):
 
-| Chain | Uniswap V3 | PancakeSwap V3 | SushiSwap V3 |
-|---|---|---|---|
-| Ethereum | ✓ | ✓ | ✓ |
-| Base | ✓ | ✓ | (V2 only) |
-| Arbitrum | ✓ | ✓ | ✓ |
-| Optimism | ✓ | (limited) | ✓ |
-| Polygon zkEVM | ✗ | ✓ | ✓ |
-| BNB Chain | ✗ | ✓ | ✓ |
+| Chain         | Uniswap V3 | PancakeSwap V3 | SushiSwap V3 |
+| ------------- | ---------- | -------------- | ------------ |
+| Ethereum      | ✓          | ✓              | ✓            |
+| Base          | ✓          | ✓              | (V2 only)    |
+| Arbitrum      | ✓          | ✓              | ✓            |
+| Optimism      | ✓          | (limited)      | ✓            |
+| Polygon zkEVM | ✗          | ✓              | ✓            |
+| BNB Chain     | ✗          | ✓              | ✓            |
 
 The two chains where Uniswap V3 isn't deployed (BNB Chain and Polygon
 zkEVM) — previously stuck with no liquidity classification at all —
@@ -624,6 +630,7 @@ backward-compatibility risk (every asset that was liquid pre-Phase-7b
 remains liquid).
 
 **Governance footprint.** Two new admin functions:
+
 - `setPancakeswapV3Factory(address)` — chain-specific PancakeV3 factory.
 - `setSushiswapV3Factory(address)` — chain-specific SushiV3 factory.
 
@@ -763,15 +770,15 @@ bounded but not zero; auditors should review.
 
 **Why API3, Tellor, and DIA but not Pyth, Umbrella, UMA**:
 
-| Source | Lookup keying | On-chain derivable? | Verdict |
-|---|---|---|---|
-| Chainlink Feed Registry | asset address | yes (registry resolves internally) | already used (primary) |
-| Pyth | bytes32 priceId | no (no symbol bridge) | **REMOVED** in this phase |
-| Tellor | symbol string in queryId | yes via `asset.symbol()` | **ADDED** |
-| API3 | dAPI name (string symbol) | yes via `asset.symbol()` | **ADDED** |
-| DIA | string key like "ETH/USD" | yes via `asset.symbol()` | **ADDED** |
-| Umbrella Network | merkle proof per chunk | requires per-asset cfg | rejected |
-| UMA | optimistic dispute window | hours-long delay | rejected (unsuitable for spot pricing) |
+| Source                  | Lookup keying             | On-chain derivable?                | Verdict                                |
+| ----------------------- | ------------------------- | ---------------------------------- | -------------------------------------- |
+| Chainlink Feed Registry | asset address             | yes (registry resolves internally) | already used (primary)                 |
+| Pyth                    | bytes32 priceId           | no (no symbol bridge)              | **REMOVED** in this phase              |
+| Tellor                  | symbol string in queryId  | yes via `asset.symbol()`           | **ADDED**                              |
+| API3                    | dAPI name (string symbol) | yes via `asset.symbol()`           | **ADDED**                              |
+| DIA                     | string key like "ETH/USD" | yes via `asset.symbol()`           | **ADDED**                              |
+| Umbrella Network        | merkle proof per chunk    | requires per-asset cfg             | rejected                               |
+| UMA                     | optimistic dispute window | hours-long delay                   | rejected (unsuitable for spot pricing) |
 
 **New chain-level admin surface** (`OracleAdminFacet`):
 
@@ -845,6 +852,51 @@ identifier overflowed the card width. Long content now wraps inside the
 card; the drawer's overall width is unchanged, only the unwanted scroll
 chrome went away.
 
+## Phase 8a tail — Telegram rail, Push polish, ENS fallback, diagnostics enrichment
+
+The HF-alert delivery story closed during the late evening, after the
+status snapshot earlier in the file was first drafted:
+
+**Telegram rail wired end-to-end.** The Alerts page accepts a Telegram
+chat-id alongside the existing Push subscribe button. The hf-watcher
+worker now sends DMs through a configured bot when a band crossing
+fires; the chat-id is captured once, validated by the worker, and
+remembered for subsequent fires. Subscribers get one DM per band
+crossing in the same shape as the Push-rail message. Required
+configuration is documented in the worker's `.dev.vars.example` and
+the frontend's `.env.example`.
+
+**Push rail polish.** Push subscribe / unsubscribe was tightened
+against silent-failure modes seen in testing. The worker no longer
+reports success when the Push channel hasn't actually accepted the
+subscription, and the Alerts UI surfaces rail-specific delivery
+confirmations instead of a generic "saved" message.
+
+**Diagnostics drawer — error enrichment.** Watcher-side fetch
+errors are now wrapped at journey-log time with the originating URL,
+the page that triggered the request, and a short likely-cause hint
+(CORS rejection, RPC down, rate-limit). The drawer surfaces this
+enriched form rather than the bare "Failed to fetch" the browser
+exposes to JS. Saves the minute of "what URL was that even hitting"
+in production debugging.
+
+**ENS resolution — RPC fallback.** The ENS-name resolver was failing
+on hosts that block the public `eth.merkle.io` RPC. Fix: a
+configurable RPC fallback list, and a graceful "no name" return
+when every RPC declines, rather than bubbling the fetch error up
+into the AddressDisplay component. User-visible effect is that an
+address now falls back cleanly to its 2+4 short form rather than
+disappearing into an error state when the primary RPC is
+unreachable.
+
+**Broken-link fix.** An external link on the Alerts page pointed at
+a stale URL; corrected, no other behaviour change.
+
+Phase 8a status now reads: every alert delivery rail (Push +
+Telegram) is functional end-to-end. Telegram is fully live on the
+hf-watcher worker; Push remains gated on the on-chain channel
+registration step pending mainnet cutover.
+
 ## Status snapshot at end-of-day 2026-04-25
 
 - **Phase 5** (Time-weighted VPFI fee discount + borrower LIF rebate):
@@ -853,8 +905,14 @@ chrome went away.
   2026-04-23/24 window, targeted regression tests added today
   (Profile bitmask validation + Preclose per-action isolation),
   now 1402-test green baseline as of pre-Phase-7a.3 state.
-- **Phase 8a** (UX polish bundle): shipped today. HF-alert push-channel
-  send remains stubbed pending Push channel registration on-chain.
+- **Phase 8a** (UX polish bundle): shipped today. Late-evening tail
+  closed the alert-delivery story — Telegram rail wired end-to-end on
+  the hf-watcher worker, Push rail tightened against silent failure
+  and surfaced through rail-specific delivery confirmations, ENS
+  resolution made resilient to a blocked primary RPC, and watcher-side
+  fetch errors enriched in the diagnostics drawer with originating URL
+  - likely-cause hint. Push channel registration on-chain remains the
+    one outstanding gate before Push delivery goes live in production.
 - **Phase 8b** (Permit2 + Blockaid simulation): shipped today,
   including the 5-test fork suite against real Uniswap Permit2 at
   the canonical address (`test/fork/Permit2RealForkTest.t.sol`).

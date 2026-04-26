@@ -34,7 +34,7 @@ export const FALLBACK_CONSENT_SECTIONS: readonly RiskSection[] = [
     heading:
       "If liquidation of liquid collateral fails (like in Abnormal Market conditions, when slippage > 6%, thin liquidity, DEX revert, or any other runtime failure)",
     points: [
-      "You receive the collateral in-kind — NOT the lending asset.",
+      "Lender receive the collateral in-kind — NOT the lending asset.",
       "If collateral value < amount due: you receive ALL collateral; the borrower receives nothing; no shortfall top-up.",
       "If collateral value ≥ amount due: you receive collateral equal to the amount owed at oracle price; remainder returns to the borrower after charges.",
     ],

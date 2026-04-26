@@ -25,11 +25,28 @@
  * entry, no JSX touched.
  */
 
+/** Role-keyed summary variant. Used on cards in the Create Offer flow
+ *  where lender and borrower see the same physical card but the action
+ *  framing differs (lender "you offer X" vs borrower "you request X"
+ *  on Lending Asset; lender "ask the borrower to lock" vs borrower
+ *  "lock yourself" on Collateral). The CreateOffer call site passes
+ *  `role={form.offerType}` to <CardInfo>, which picks the right
+ *  variant and appends `:lender` / `:borrower` to the docs anchor. */
+export interface RoleKeyedSummary {
+  lender: string;
+  borrower: string;
+}
+
 export interface CardHelpEntry {
   /** 1–2 sentence tooltip summary. Plain text — no HTML / markdown.
    *  Shown inside the InfoTip bubble. Keep under ~240 chars so the
-   *  bubble stays compact at the 320px max-width clamp. */
-  summary: string;
+   *  bubble stays compact at the 320px max-width clamp.
+   *
+   *  Plain string — same copy regardless of viewer role.
+   *  Role-keyed object — picked by <CardInfo role={...}>; falls back
+   *  to lender variant when role is not supplied so a stray usage
+   *  still renders something meaningful. */
+  summary: string | RoleKeyedSummary;
   /** Optional URL the "Learn more →" link points at. External (GitHub
    *  README / spec for now) opens in a new tab. Omit when the
    *  summary is self-contained. */
@@ -114,10 +131,18 @@ export const CARD_HELP: Record<string, CardHelpEntry> = {
     learnMoreHref: `${README}#3-offer-creation`,
   },
   "create-offer.lending-asset": {
-    summary:
-      "The principal asset and amount the lender is offering, plus the " +
-      "interest rate (APR in %) and duration in days. Rate is fixed at offer " +
-      "time; duration sets the grace window before the loan can default.",
+    summary: {
+      lender:
+        "The principal asset and amount that you are willing to offer, plus " +
+        "the interest rate (APR in %) and duration in days. Rate is fixed at " +
+        "offer time; duration sets the grace window before the loan can " +
+        "default.",
+      borrower:
+        "The principal asset and amount that you want from the lender, " +
+        "plus the interest rate (APR in %) and duration in days. Rate is " +
+        "fixed at offer time; duration sets the grace window before the " +
+        "loan can default.",
+    },
     learnMoreHref: `${README}#3-offer-creation`,
   },
   "create-offer.nft-details": {
@@ -128,11 +153,18 @@ export const CARD_HELP: Record<string, CardHelpEntry> = {
     learnMoreHref: `${README}#3-offer-creation`,
   },
   "create-offer.collateral": {
-    summary:
-      "What the borrower locks to secure the loan. Liquid ERC-20s (Chainlink " +
-      "feed + ≥$1M v3 pool depth) get LTV/HF math; illiquid ERC-20s and NFTs " +
-      "have no on-chain valuation and require both parties to consent to a " +
-      "full-collateral-on-default outcome.",
+    summary: {
+      lender:
+        "How much you want the borrower to lock to secure the loan. Liquid " +
+        "ERC-20s (Chainlink feed + ≥$1M v3 pool depth) get LTV/HF math; " +
+        "illiquid ERC-20s and NFTs have no on-chain valuation and require " +
+        "both parties to consent to a full-collateral-on-default outcome.",
+      borrower:
+        "How much you are willing to lock to secure the loan. Liquid ERC-20s " +
+        "(Chainlink feed + ≥$1M v3 pool depth) get LTV/HF math; illiquid " +
+        "ERC-20s and NFTs have no on-chain valuation and require both " +
+        "parties to consent to a full-collateral-on-default outcome.",
+    },
     learnMoreHref: `${README}#1-supported-assets-and-networks-phase-1`,
   },
   "create-offer.risk-disclosures": {

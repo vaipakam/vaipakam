@@ -163,17 +163,29 @@ of NFT that can be temporarily delegated). Rentals don't lend money
 
 ### Lending Asset
 
-The asset the lender is offering to lend, plus three numbers:
+The asset and amount in play, plus the interest rate (APR in %) and
+the duration in days. The rate is fixed when the offer is posted;
+nobody can change it later. After the duration ends a short grace
+window applies — if the borrower hasn't repaid by then the loan
+can be defaulted and the lender's collateral claim kicks in.
 
-- **Amount** — how much.
-- **Interest rate** — what the borrower pays the lender on top of
-  the principal.
-- **Duration** — number of days the loan runs.
+<a id="create-offer.lending-asset:lender"></a>
 
-The rate is fixed when the offer is posted; nobody can change it
-later. After the duration ends a short grace window applies — if
-the borrower hasn't repaid by then the loan can be defaulted and
-the lender's collateral claim kicks in.
+#### If you're the lender
+
+The principal asset and amount that you are willing to offer, plus
+the interest rate (APR in %) and duration in days. Rate is fixed at
+offer time; duration sets the grace window before the loan can
+default.
+
+<a id="create-offer.lending-asset:borrower"></a>
+
+#### If you're the borrower
+
+The principal asset and amount that you want from the lender,
+plus the interest rate (APR in %) and duration in days. Rate is
+fixed at offer time; duration sets the grace window before the loan
+can default.
 
 <a id="create-offer.nft-details"></a>
 
@@ -189,15 +201,34 @@ move it.
 
 ### Collateral
 
-What the borrower locks up to back the loan. Two flavours:
+What gets locked to secure the loan. Two flavours:
 
-- **Liquid** — a well-known token with a live price feed. The
-  protocol can value it in real time and automatically liquidate
-  the position if the price moves against the loan.
+- **Liquid** — a well-known token with a live price feed
+  (Chainlink + a deep enough on-chain pool). The protocol can value
+  it in real time and automatically liquidate the position if the
+  price moves against the loan.
 - **Illiquid** — NFTs, or tokens without a price feed. The
   protocol can't value these, so on default the lender simply takes
   the whole collateral. Both lender and borrower must tick a box
   agreeing to this before the offer can be made.
+
+<a id="create-offer.collateral:lender"></a>
+
+#### If you're the lender
+
+How much you want the borrower to lock to secure the loan. Liquid
+ERC-20s (Chainlink feed + ≥$1M v3 pool depth) get LTV/HF math;
+illiquid ERC-20s and NFTs have no on-chain valuation and require
+both parties to consent to a full-collateral-on-default outcome.
+
+<a id="create-offer.collateral:borrower"></a>
+
+#### If you're the borrower
+
+How much you are willing to lock to secure the loan. Liquid ERC-20s
+(Chainlink feed + ≥$1M v3 pool depth) get LTV/HF math; illiquid
+ERC-20s and NFTs have no on-chain valuation and require both
+parties to consent to a full-collateral-on-default outcome.
 
 <a id="create-offer.risk-disclosures"></a>
 
@@ -398,7 +429,7 @@ that outcome at offer creation.
 
 The two wallet addresses on this loan — lender and borrower — and
 the escrow vaults that hold their assets. Each side also got a
-"position NFT" when the loan opened. That NFT *is* the right to
+"position NFT" when the loan opened. That NFT _is_ the right to
 that side's share of the outcome — keep it safe. If a holder
 transfers it to someone else, the new holder gets to claim
 instead.
@@ -484,7 +515,7 @@ really was minted by Vaipakam, (b) which chain the underlying
 loan lives on, (c) what state that loan is in, and (d) who
 currently holds the NFT on-chain.
 
-The position NFT *is* the right to claim from the loan. Spotting
+The position NFT _is_ the right to claim from the loan. Spotting
 a fake — or a position that already settled — saves you the bad
 trade.
 
@@ -691,4 +722,3 @@ and you wait for a buyer. As soon as a buyer accepts, the
 proceeds land in your wallet and the loan continues — but you
 are no longer on the hook for it. While the listing is open and
 unfilled you can cancel it.
-
