@@ -61,15 +61,23 @@ export function CardInfo({ id, role }: CardInfoProps) {
   const { mode } = useMode();
   if (!entry) return null;
 
-  const isRoleKeyed = typeof entry.summary !== 'string';
   // Role-keyed entry: pick the variant matching the viewer's role and
   // suffix the docs anchor so the link lands on the right subsection.
   // Fallback to the lender variant when role wasn't supplied — keeps
   // the tooltip readable even if the call site forgot the prop.
-  const summary = isRoleKeyed
-    ? entry.summary[role ?? 'lender']
-    : (entry.summary as string);
-  const roleSuffix = isRoleKeyed && role ? `:${role}` : '';
+  //
+  // The typeof check is inlined into each consumer rather than hoisted
+  // into an `isRoleKeyed` boolean: TypeScript's narrowing only flows
+  // across a `typeof` check when it's on the operand directly, not via
+  // an intermediate variable. Hoisting compiles in dev but Cloudflare's
+  // stricter build rejects it as "expression of type '…' can't be used
+  // to index type 'string | RoleKeyedSummary'".
+  const summary =
+    typeof entry.summary === 'string'
+      ? entry.summary
+      : entry.summary[role ?? 'lender'];
+  const roleSuffix =
+    typeof entry.summary !== 'string' && role ? `:${role}` : '';
   const learnMoreHref = buildLearnMoreHref(mode, id, roleSuffix);
 
   return (
