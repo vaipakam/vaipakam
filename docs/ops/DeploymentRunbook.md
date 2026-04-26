@@ -6,6 +6,60 @@ Audience: release engineer + signing multisig.
 
 ---
 
+## Adding support for a new chain
+
+Before you can run a single deploy step on a chain, the codebase must
+*know* that chain — the per-chain Diamond address, env-var prefix, LZ
+endpoint id, and frontend wagmi record. Adding a new chain is **exactly
+four code edits**:
+
+1. **`contracts/script/lib/Deployments.sol#chainSlug()`** — add
+   `if (cid == X) return "<slug>";`. The slug becomes the
+   `deployments/<slug>/addresses.json` directory name.
+2. **`contracts/script/lib/Deployments.sol#envPrefix()`** — add
+   `if (cid == X) return "<PREFIX>_";`. This is the binding that turns
+   `block.chainid == 97` into `vm.envAddress("BNB_TESTNET_DIAMOND_ADDRESS")`
+   when the artifact file is missing.
+3. **`contracts/script/lib/Deployments.sol#lzEidForChain()`** — add the
+   LayerZero V2 endpoint id row (e.g. `if (cid == 97) return 40102;`).
+   Every Deploy*OApp* / RewardOApp script stamps this into
+   `addresses.json#lzEid` automatically.
+4. **`frontend/src/contracts/config.ts`** — add the per-chain record,
+   literally spelling out the `VITE_<PREFIX>_*` keys it consumes
+   (`rpcUrl`, `diamondAddress`, `deployBlock`,
+   `metricsFacetAddress`, `vpfiBuyAdapter`, `vpfiBuyPaymentToken`).
+   Each chain's env-var name is hardcoded in its record — there is no
+   general "for chainId N read `VITE_<PREFIX>_*`" rule, only the
+   per-chain literal.
+
+The `.env`, `.env.local`, `.env.example` files are **just storage** for
+the values those four code rows look up. **Without the four code edits,
+the env vars are dead text**: setting `BNB_TESTNET_DIAMOND_ADDRESS` in
+`.env` does nothing if `Deployments.sol#envPrefix()` doesn't return
+`"BNB_TESTNET_"` for chainid 97.
+
+Quick sanity check after the four edits:
+
+```bash
+# Solidity side — should not revert and should produce the expected slug
+forge script -vv --rpc-url $NEW_CHAIN_RPC_URL \
+  --sig 'run()' contracts/script/PrintChainSlug.s.sol  # if you have it,
+                                                       # else just attempt
+                                                       # any Deploy* in dry-run
+                                                       # — chainSlug()/envPrefix()
+                                                       # are called in writeChainHeader.
+
+# Frontend side — should compile and the new chainId should appear in the picker
+cd frontend && npm run typecheck && npm run dev
+```
+
+After those pass, the per-chain runbook (e.g.
+[`BaseSepoliaDeploy.md`](./BaseSepoliaDeploy.md),
+[`BNBTestnetDeploy.md`](./BNBTestnetDeploy.md)) is the cookbook for the
+actual broadcasts.
+
+---
+
 ## How addresses get persisted
 
 Every deploy script writes its outputs to a single per-chain artifact at:
