@@ -10,7 +10,6 @@ import {
   AlertTriangle,
   LogOut,
   ArrowRight,
-  ChevronDown,
 } from 'lucide-react';
 import './Navbar.css';
 import { ReportIssueLink } from './app/ReportIssueLink';
@@ -153,30 +152,41 @@ export default function Navbar() {
                 aria-expanded={openGroup === group.id}
               >
                 {group.label}
-                <ChevronDown size={14} aria-hidden="true" />
               </button>
 
-              {/* Desktop popover — only one open at a time. Hidden on
-                  mobile via CSS so the flyout uses the inline list
-                  below instead of a nested dropdown surface. */}
-              {openGroup === group.id && (
-                <div className="navbar-group-panel" role="menu">
-                  {group.links.map((link) => (
-                    <Link
-                      key={link.href}
-                      to={link.href}
-                      className="navbar-group-item"
-                      role="menuitem"
-                      onClick={() => {
-                        setOpenGroup(null);
-                        setMobileOpen(false);
-                      }}
-                    >
-                      {link.label}
-                    </Link>
-                  ))}
-                </div>
-              )}
+              {/* Desktop popover. Stays mounted in the DOM so CSS
+                  transitions can run on BOTH directions (the previous
+                  conditional-render approach gave us a smooth open
+                  but an instant unmount on close, which read as
+                  jarring). Visibility, opacity, and pointer-events
+                  flip together via the `--open` modifier so the
+                  closed panel is genuinely inert (no tab-stops, no
+                  hit-tests) without leaving it visible during the
+                  fade-out. Hidden on mobile via CSS so the flyout
+                  uses the inline list below instead. */}
+              <div
+                className={`navbar-group-panel${
+                  openGroup === group.id ? ' navbar-group-panel--open' : ''
+                }`}
+                role="menu"
+                aria-hidden={openGroup !== group.id}
+              >
+                {group.links.map((link) => (
+                  <Link
+                    key={link.href}
+                    to={link.href}
+                    className="navbar-group-item"
+                    role="menuitem"
+                    tabIndex={openGroup === group.id ? 0 : -1}
+                    onClick={() => {
+                      setOpenGroup(null);
+                      setMobileOpen(false);
+                    }}
+                  >
+                    {link.label}
+                  </Link>
+                ))}
+              </div>
 
               {/* Mobile inline list — visible only inside the open
                   flyout. Section header + 3 items per group, no

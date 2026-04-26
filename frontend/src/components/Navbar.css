@@ -85,7 +85,6 @@
 .navbar-group-trigger {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
   border: none;
   background: transparent;
   cursor: pointer;
@@ -109,13 +108,6 @@
   background: var(--brand-bg);
 }
 
-.navbar-group-trigger svg {
-  transition: transform 0.15s ease;
-}
-.navbar-group-trigger--open svg {
-  transform: rotate(180deg);
-}
-
 .navbar-group-panel {
   position: absolute;
   top: calc(100% + 8px);
@@ -130,6 +122,43 @@
   display: flex;
   flex-direction: column;
   gap: 2px;
+  /* Closed state — invisible, inert, slid up + slightly scaled down
+   * so the open transition has somewhere to ease from. The panel
+   * stays mounted in the DOM so the same `transition` rule below
+   * can animate BOTH the open and close directions; conditional
+   * rendering would skip the close transition entirely. */
+  transform-origin: top left;
+  opacity: 0;
+  transform: translateY(-6px) scale(0.97);
+  visibility: hidden;
+  pointer-events: none;
+  /* `cubic-bezier(0.16, 1, 0.3, 1)` is the "ease-out-expo"-ish curve
+   * Apple / Linear / Vercel use for menu reveals — fast start, slow
+   * settle. 280ms is at the upper edge of "snappy menu" before it
+   * starts feeling sluggish. Visibility's transition uses a 0s
+   * duration with a delay matching the opacity duration: that flips
+   * `visibility: hidden` AFTER the fade-out finishes (so we don't
+   * blink the panel out of existence mid-transition) and flips it
+   * to `visible` BEFORE the fade-in starts (delay overridden by the
+   * `--open` rule below). */
+  transition:
+    opacity 0.28s cubic-bezier(0.16, 1, 0.3, 1),
+    transform 0.28s cubic-bezier(0.16, 1, 0.3, 1),
+    visibility 0s 0.28s;
+}
+
+.navbar-group-panel--open {
+  opacity: 1;
+  transform: translateY(0) scale(1);
+  visibility: visible;
+  pointer-events: auto;
+  /* On open, visibility flips immediately (delay 0s) so the fade-in
+   * happens against a visible panel; on close, the rule above
+   * delays the flip until after the fade is done. */
+  transition:
+    opacity 0.28s cubic-bezier(0.16, 1, 0.3, 1),
+    transform 0.28s cubic-bezier(0.16, 1, 0.3, 1),
+    visibility 0s 0s;
 }
 
 /* Invisible hover-bridge that spans the 8px visual gap between
