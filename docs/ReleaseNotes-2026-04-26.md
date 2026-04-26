@@ -407,9 +407,24 @@ walk; no-op on desktop where the TOC has no `<details>` ancestor.
 - **In-app card-help system (Phase 1 + 2)**: shipped. 52 cards ×
   2 user-guide modes wired through one registry. Mode toggle now
   flips every "Learn more →" target without a per-page change.
+- **In-app `/help/basic` and `/help/advanced` pages**: shipped.
+  Renders the canonical Markdown via `react-markdown` + a custom
+  remark plugin that turns inline `<a id>` anchors into heading
+  ids; auto-extracted 2-level TOC sidebar; page-wide role tabs
+  (mobile sticky bar, desktop sticky rail) with shared role state
+  + URL-fragment sync; sticky-footer flex shell so Footer always
+  lands at viewport bottom.
 - **User guides**: `UserGuide-Basic.md` and `UserGuide-Advanced.md`
   checked in under `/docs/`. Role-aware language rule applied
   consistently across the registry summaries and both guides.
+  Six cards now carry `:lender` / `:borrower` H4 subsections —
+  the original two CreateOffer cards plus risk-disclosures,
+  claim-center.claims, loan-details.collateral-risk, and
+  loan-details.actions.
+- **CardInfo**: extended to accept an optional `role` prop and a
+  role-keyed `summary` shape (`{ lender, borrower }`); resolves
+  to the role-specific variant in the tooltip and appends the
+  matching role suffix to the in-app help URL fragment.
 - **Phase 8a alerts** (carried from 2026-04-25): both rails
   functional end-to-end. Push remains gated on the on-chain
   channel registration step pending mainnet cutover.
