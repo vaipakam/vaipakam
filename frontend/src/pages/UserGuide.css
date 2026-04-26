@@ -30,6 +30,14 @@
   display: flex;
   flex-direction: column;
   min-height: 100vh;
+  /* Defensive clip — if a child slips past the wrapping rules below
+   * (e.g. a future markdown insert with a hard-non-breakable atom),
+   * the overflow gets clipped here instead of bleeding into the
+   * body's horizontal scrollbar. `clip` is preferred over `hidden`
+   * because it doesn't establish a new scroll container, so it
+   * doesn't break `position: sticky` on descendant role bars and
+   * sidebars. */
+  overflow-x: clip;
 }
 
 .user-guide-main {
@@ -303,6 +311,21 @@
    * column already constrains overall width on desktop; this cap
    * keeps long lines from stretching when a single block dominates. */
   max-width: 72ch;
+  /* Required for grid / flex children whose content has long
+   * unbroken strings: without `min-width: 0` the default
+   * `min-width: auto` lets the column refuse to shrink below the
+   * intrinsic width of its widest atom (a long function name or
+   * 0x… address inline-code), and the page picks up a horizontal
+   * scrollbar. With `min-width: 0` the column shrinks normally and
+   * the wrapping rules below decide how to break the long atoms. */
+  min-width: 0;
+  /* Long inline code (`RefinanceFacet.completeRefinance(...)`),
+   * 0x addresses, and bare URLs in paragraph text wrap mid-string
+   * instead of forcing a horizontal scroll. `anywhere` is the
+   * stronger sibling of `break-word` — it allows the line-break
+   * algorithm to choose a break point inside an unbroken word
+   * when there's no other option. */
+  overflow-wrap: anywhere;
 }
 
 @media (min-width: 768px) {
@@ -544,6 +567,12 @@
 
 .role-tabs-body {
   padding: 14px 16px;
+  /* Same min-width / wrapping treatment as `.user-guide-content` —
+   * the body is a markdown render surface and can contain long
+   * inline-code atoms that would otherwise force horizontal
+   * scroll on narrow viewports. */
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .role-tabs-body :first-child {
