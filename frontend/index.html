@@ -1,6 +1,34 @@
 <!doctype html>
 <html lang="en">
   <head>
+    <!-- Theme bootstrap. Runs before any CSS or React loads so the
+         `data-theme` attribute is set during the very first paint —
+         no flash of wrong-theme. The order matches ThemeContext:
+         (1) honour an explicit user choice in localStorage; otherwise
+         (2) follow `prefers-color-scheme`. Wrapped in try/catch so a
+         disabled-storage privacy mode falls back gracefully to the
+         system preference instead of breaking the page. -->
+    <script>
+      (function () {
+        try {
+          var stored = localStorage.getItem('vaipakam-theme');
+          var theme;
+          if (stored === 'light' || stored === 'dark') {
+            theme = stored;
+          } else {
+            theme = window.matchMedia('(prefers-color-scheme: dark)').matches
+              ? 'dark'
+              : 'light';
+          }
+          document.documentElement.setAttribute('data-theme', theme);
+        } catch (_) {
+          var fallback = window.matchMedia('(prefers-color-scheme: dark)').matches
+            ? 'dark'
+            : 'light';
+          document.documentElement.setAttribute('data-theme', fallback);
+        }
+      })();
+    </script>
     <!-- Google tag (gtag.js) with Consent Mode v2 (Advanced).
          Consent defaults are set BEFORE the gtag loader fires — so no
          analytics/ads storage is created until the user explicitly opts

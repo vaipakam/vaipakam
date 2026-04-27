@@ -51,6 +51,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const LOCALES_DIR = path.resolve(__dirname, '..', 'src', 'i18n', 'locales');
 
 const LOCALE_NAMES: Record<LocaleCode, string> = {
+  // Already translated
   en: 'English',
   es: 'Spanish (Español)',
   fr: 'French (Français)',
@@ -61,6 +62,35 @@ const LOCALE_NAMES: Record<LocaleCode, string> = {
   ar: 'Arabic (العربية)',
   ta: 'Tamil (தமிழ்)',
   ko: 'Korean (한국어)',
+  // South Asia placeholders
+  te: 'Telugu (తెలుగు)',
+  kn: 'Kannada (ಕನ್ನಡ)',
+  ml: 'Malayalam (മലയാളം)',
+  bn: 'Bengali (বাংলা)',
+  mr: 'Marathi (मराठी)',
+  pa: 'Punjabi (ਪੰਜਾਬੀ)',
+  gu: 'Gujarati (ગુજરાતી)',
+  ur: 'Urdu (اردو) — RTL',
+  // SE Asia placeholders
+  vi: 'Vietnamese (Tiếng Việt)',
+  th: 'Thai (ไทย)',
+  tl: 'Filipino / Tagalog (use natural Tagalog with English code-switching where standard in Philippine fintech UI; "wallet" stays as "wallet"; translate "lend"/"borrow" to "magpautang"/"humiram")',
+  id: 'Bahasa Indonesia — formal-but-modern fintech register, "Anda" for second person, accept English fintech loanwords (wallet, token, blockchain) where standard',
+  // European placeholders
+  pt: 'Portuguese (Brazilian — "Português (Brasil)") — use "você" not "tu", "registrar" not "registar", "tela" not "ecrã", "aplicativo" or "app" not "aplicação", "celular" not "telemóvel"',
+  ru: 'Russian (Русский) — second-person formal "вы"',
+  uk: 'Ukrainian (Українська) — second-person "ви"',
+  tr: 'Turkish (Türkçe) — second-person informal "sen" (Turkish crypto apps overwhelmingly use sen, not formal siz)',
+  it: 'Italian (Italiano) — second-person informal "tu" (fintech apps in Italian use tu by convention, not Lei)',
+  nl: 'Dutch (Nederlands) — second-person informal "je/jij" (not "u"); accept English loanwords where standard in fintech',
+  pl: 'Polish (Polski) — second-person informal forms typical of fintech apps',
+  el: 'Greek (Ελληνικά)',
+  cs: 'Czech (Čeština)',
+  // Middle East RTL placeholders
+  fa: 'Persian / Farsi (فارسی) — RTL',
+  he: 'Hebrew (עברית) — RTL',
+  // Africa
+  sw: 'Swahili / Kiswahili sanifu (East African register, second-person familiar wewe/-ko-, accept English loanwords like wallet/blockchain where standard; pochi is fine for wallet)',
 };
 
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
@@ -150,9 +180,55 @@ async function main() {
   const enRaw = fs.readFileSync(enPath, 'utf8');
   const enJson = JSON.parse(enRaw) as object;
 
-  // Skip 'en' (we are translating FROM it). Translate every other
-  // supported locale.
-  const targets: LocaleCode[] = SUPPORTED_LOCALES.filter((c) => c !== 'en');
+  // CLI filtering. Examples:
+  //   npm run translate                    -> all locales without an existing JSON
+  //   npm run translate -- pt it nl        -> just those three (overwrites existing)
+  //   npm run translate -- --all           -> all non-English locales (overwrites)
+  //   npm run translate -- --missing       -> same as no-args (only missing ones)
+  // The default (no args) is **idempotent** — only translates locales whose
+  // `<code>.json` file is absent, so re-running after a partial failure picks up
+  // where it left off without re-billing locales that already have output.
+  const args = process.argv.slice(2);
+  const allFlag = args.includes('--all');
+  const missingFlag = args.includes('--missing');
+  const explicitCodes = args.filter((a) => !a.startsWith('--')) as LocaleCode[];
+
+  let targets: LocaleCode[];
+  if (explicitCodes.length > 0) {
+    // User-supplied codes — validate against SUPPORTED_LOCALES.
+    const known = new Set<string>(SUPPORTED_LOCALES);
+    const unknown = explicitCodes.filter((c) => !known.has(c));
+    if (unknown.length > 0) {
+      console.error(`Unknown locale codes: ${unknown.join(', ')}`);
+      console.error(`Recognised codes: ${SUPPORTED_LOCALES.join(', ')}`);
+      process.exit(1);
+    }
+    targets = explicitCodes;
+  } else if (allFlag) {
+    targets = SUPPORTED_LOCALES.filter((c) => c !== 'en');
+  } else {
+    // Default + --missing: only locales without an existing JSON. This is what
+    // you want after adding new placeholder codes to SUPPORTED_LOCALES — it
+    // fills in the gaps without retranslating the 10 you already have.
+    targets = SUPPORTED_LOCALES.filter((c) => {
+      if (c === 'en') return false;
+      const p = path.join(LOCALES_DIR, `${c}.json`);
+      return !fs.existsSync(p);
+    });
+    if (missingFlag && targets.length === 0) {
+      console.log('No missing locale bundles — every supported code already has a JSON.');
+      return;
+    }
+  }
+
+  if (targets.length === 0) {
+    console.log('No locales to translate. Pass `--all` to retranslate everything,');
+    console.log('or list explicit codes (e.g. `npm run translate -- pt it nl`).');
+    return;
+  }
+
+  console.log(`Translating ${targets.length} locale(s): ${targets.join(', ')}`);
+  console.log();
 
   for (const code of targets) {
     process.stdout.write(`→ ${code} (${LOCALE_NAMES[code]})… `);
