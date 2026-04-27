@@ -68,7 +68,6 @@
   },
   "settings": {
     "title": "設定",
-    "languageHint": "翻訳は順次対応中です。",
     "themeSwitchToLight": "ライトテーマに切替",
     "themeSwitchToDark": "ダークテーマに切替",
     "uiModeAria": "UIモード",

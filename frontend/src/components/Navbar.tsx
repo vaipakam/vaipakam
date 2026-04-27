@@ -407,9 +407,6 @@ export default function Navbar() {
                   </span>
                   <LanguagePicker />
                 </div>
-                <p className="navbar-settings-hint">
-                  {t('settings.languageHint')}
-                </p>
 
                 <div className="navbar-settings-row">
                   <span className="navbar-settings-label">{t('common.theme')}</span>

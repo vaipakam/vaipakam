@@ -68,7 +68,6 @@
   },
   "settings": {
     "title": "الإعدادات",
-    "languageHint": "الترجمات يتم طرحها تدريجيًا.",
     "themeSwitchToLight": "التبديل إلى المظهر الفاتح",
     "themeSwitchToDark": "التبديل إلى المظهر الداكن",
     "uiModeAria": "وضع الواجهة",

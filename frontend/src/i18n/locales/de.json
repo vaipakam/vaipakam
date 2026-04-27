@@ -68,7 +68,6 @@
   },
   "settings": {
     "title": "Einstellungen",
-    "languageHint": "Übersetzungen werden schrittweise eingeführt.",
     "themeSwitchToLight": "Zum hellen Design wechseln",
     "themeSwitchToDark": "Zum dunklen Design wechseln",
     "uiModeAria": "Oberflächenmodus",

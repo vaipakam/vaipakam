@@ -516,7 +516,6 @@
   },
   "settings": {
     "title": "Settings",
-    "languageHint": "Translations are rolling out gradually.",
     "themeSwitchToLight": "Switch to light theme",
     "themeSwitchToDark": "Switch to dark theme",
     "uiModeAria": "UI mode",

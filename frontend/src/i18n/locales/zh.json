@@ -68,7 +68,6 @@
   },
   "settings": {
     "title": "设置",
-    "languageHint": "翻译正在逐步推出。",
     "themeSwitchToLight": "切换到浅色主题",
     "themeSwitchToDark": "切换到深色主题",
     "uiModeAria": "界面模式",

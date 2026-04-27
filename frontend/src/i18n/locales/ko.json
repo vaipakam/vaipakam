@@ -68,7 +68,6 @@
   },
   "settings": {
     "title": "설정",
-    "languageHint": "번역이 점진적으로 적용되고 있습니다.",
     "themeSwitchToLight": "라이트 테마로 전환",
     "themeSwitchToDark": "다크 테마로 전환",
     "uiModeAria": "UI 모드",

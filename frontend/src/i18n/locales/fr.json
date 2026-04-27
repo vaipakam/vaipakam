@@ -68,7 +68,6 @@
   },
   "settings": {
     "title": "Paramètres",
-    "languageHint": "Les traductions arrivent progressivement.",
     "themeSwitchToLight": "Passer au thème clair",
     "themeSwitchToDark": "Passer au thème sombre",
     "uiModeAria": "Mode d'interface",

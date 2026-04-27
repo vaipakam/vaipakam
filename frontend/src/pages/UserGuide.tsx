@@ -70,6 +70,8 @@ import remarkGfm from 'remark-gfm';
 import Navbar from '../components/Navbar';
 import Footer from '../components/Footer';
 import { EnglishOnlyNotice } from '../components/app/EnglishOnlyNotice';
+import { isSupportedLocale, withLocalePrefix } from '../components/LocaleResolver';
+import type { SupportedLocale } from '../i18n/glossary';
 import './UserGuide.css';
 
 /**
@@ -502,7 +504,14 @@ export default function UserGuide({ variant }: UserGuideProps) {
   );
   const blocks = useMemo(() => parseGuide(raw), [raw]);
   const toc = useMemo(() => extractToc(raw), [raw]);
-  const basePath = `/help/${variant}`;
+  // TOC links must keep the user on the same locale-prefixed route.
+  // Without `withLocalePrefix` the hrefs come out as `/help/<variant>#…`
+  // and React Router's locale guard at the root mount falls back to
+  // English, silently flipping the language on every TOC tap.
+  const locale: SupportedLocale = isSupportedLocale(i18n.resolvedLanguage)
+    ? i18n.resolvedLanguage
+    : 'en';
+  const basePath = withLocalePrefix(`/help/${variant}`, locale);
 
   const [role, setRole] = useState<Role>(() => {
     if (typeof window === 'undefined') return 'lender';

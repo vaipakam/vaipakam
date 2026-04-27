@@ -3,6 +3,8 @@ import { useTranslation } from 'react-i18next';
 import { InfoTip } from './InfoTip';
 import { getCardHelp } from '../lib/cardHelp';
 import { useMode } from '../context/ModeContext';
+import { isSupportedLocale, withLocalePrefix } from './LocaleResolver';
+import type { SupportedLocale } from '../i18n/glossary';
 
 /**
  * `<CardInfo id="…">` — drop-in (i) icon next to a card title that
@@ -53,14 +55,24 @@ function buildLearnMoreHref(
   mode: 'basic' | 'advanced',
   id: string,
   roleSuffix: string,
+  locale: SupportedLocale,
 ): string {
-  return `/help/${mode}#${id}${roleSuffix}`;
+  // Locale-aware: a user reading the app in Spanish on /es/...
+  // should open the Spanish user guide at /es/help/<mode>, not the
+  // English one at /help/<mode>. `withLocalePrefix` returns the
+  // unprefixed path on English (the default) and the
+  // /<locale>-prefixed path otherwise.
+  const path = withLocalePrefix(`/help/${mode}`, locale);
+  return `${path}#${id}${roleSuffix}`;
 }
 
 export function CardInfo({ id, role }: CardInfoProps) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const entry = getCardHelp(id);
   const { mode } = useMode();
+  const locale: SupportedLocale = isSupportedLocale(i18n.resolvedLanguage)
+    ? i18n.resolvedLanguage
+    : 'en';
   if (!entry) return null;
 
   // Role-keyed entry: pick the variant matching the viewer's role and
@@ -81,7 +93,7 @@ export function CardInfo({ id, role }: CardInfoProps) {
   const summary = t(summaryKey);
   const roleSuffix =
     typeof entry.summary !== 'string' && role ? `:${role}` : '';
-  const learnMoreHref = buildLearnMoreHref(mode, id, roleSuffix);
+  const learnMoreHref = buildLearnMoreHref(mode, id, roleSuffix, locale);
 
   return (
     <InfoTip ariaLabel={t('cardInfo.ariaLabel')}>

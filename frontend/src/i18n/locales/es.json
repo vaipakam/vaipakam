@@ -68,7 +68,6 @@
   },
   "settings": {
     "title": "Configuración",
-    "languageHint": "Las traducciones se están implementando gradualmente.",
     "themeSwitchToLight": "Cambiar a tema claro",
     "themeSwitchToDark": "Cambiar a tema oscuro",
     "uiModeAria": "Modo de interfaz",
