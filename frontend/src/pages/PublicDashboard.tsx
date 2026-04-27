@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { L as Link } from '../components/L';
 import { useTranslation } from 'react-i18next';
+import i18n from '../i18n';
 import {
   BarChart3,
   Download,
@@ -48,26 +49,44 @@ import './PublicDashboard.css';
 const RANGES: TimeRange[] = ['24h', '7d', '30d', '90d', 'All'];
 const RECENT_PAGE_SIZE = 15;
 
+// Local formatters thread the active i18n locale via the helpers in
+// lib/format.ts so dashboard cells render with locale-correct grouping
+// + decimal separators (`1,000.00` en-US vs `1.000,00` de-DE vs
+// `1 000,00` fr-FR vs `1٬000٫00` ar). The compact-vs-precise switch
+// at $1k stays here — that's a UX rule for THIS dashboard, not a
+// locale concern.
 function formatUsd(n: number): string {
   if (!isFinite(n)) return '—';
-  if (n === 0) return '$0';
-  if (n < 1) return '$' + n.toFixed(4);
-  if (n < 1_000) return '$' + n.toFixed(2);
-  if (n < 1_000_000) return '$' + (n / 1_000).toFixed(2) + 'K';
-  if (n < 1_000_000_000) return '$' + (n / 1_000_000).toFixed(2) + 'M';
-  return '$' + (n / 1_000_000_000).toFixed(2) + 'B';
+  const lng = i18n.resolvedLanguage ?? 'en';
+  if (n === 0) {
+    return new Intl.NumberFormat(lng, { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(0);
+  }
+  if (n < 1) {
+    return new Intl.NumberFormat(lng, { style: 'currency', currency: 'USD', minimumFractionDigits: 4, maximumFractionDigits: 4 }).format(n);
+  }
+  if (n < 1_000) {
+    return new Intl.NumberFormat(lng, { style: 'currency', currency: 'USD', minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(n);
+  }
+  // Compact notation handles K/M/B/T suffixes per locale.
+  return new Intl.NumberFormat(lng, { style: 'currency', currency: 'USD', notation: 'compact', maximumFractionDigits: 2 }).format(n);
 }
 
 function formatCompact(n: number): string {
-  if (n < 1_000) return n.toString();
-  if (n < 1_000_000) return (n / 1_000).toFixed(1) + 'K';
-  return (n / 1_000_000).toFixed(1) + 'M';
+  const lng = i18n.resolvedLanguage ?? 'en';
+  if (n < 1_000) return new Intl.NumberFormat(lng).format(n);
+  return new Intl.NumberFormat(lng, { notation: 'compact', maximumFractionDigits: 1 }).format(n);
 }
 
 function formatPct(pct: number | null): string {
   if (pct == null) return '—';
-  const sign = pct > 0 ? '+' : '';
-  return `${sign}${pct.toFixed(2)}%`;
+  // `signDisplay: 'exceptZero'` gives `+5%`, `0%`, `-5%` per locale —
+  // same semantics as the previous manual `+` prefix.
+  return new Intl.NumberFormat(i18n.resolvedLanguage ?? 'en', {
+    style: 'percent',
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+    signDisplay: 'exceptZero',
+  }).format(pct / 100);
 }
 
 function formatChangeLine(pct24h: number | null, pct7d: number | null): string {
@@ -157,7 +176,7 @@ export default function PublicDashboard() {
   );
 
   const freshness = stats?.fetchedAt
-    ? new Date(stats.fetchedAt).toLocaleString()
+    ? new Intl.DateTimeFormat(i18n.resolvedLanguage ?? 'en', { dateStyle: 'medium', timeStyle: 'medium' }).format(new Date(stats.fetchedAt))
     : null;
 
   const loading = statsLoading || tvlLoading;

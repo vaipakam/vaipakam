@@ -10,6 +10,7 @@ import { ChainProvider } from './context/ChainContext'
 import { ModeProvider } from './context/ModeContext'
 import './i18n' // initialise i18next before any component renders
 import './styles/global.css'
+import './styles/rtl.css' // Phase-5 RTL polish (Arabic + future RTL locales)
 import App from './App.tsx'
 
 // Production sanity check. Without a WalletConnect project ID the mobile

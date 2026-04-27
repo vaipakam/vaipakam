@@ -25,9 +25,16 @@ Accept Offer Confirm buttons, **second-level verbose GitHub issue
 body** with stack trace / cause chain / browser-env folded in
 GitHub `<details>` blocks, **diagnostics drawer simplified** to drop
 its duplicate Download / Clear buttons in favour of the broader GDPR
-"Download my data" / "Delete my data" pair, and a small build-
-hygiene round (`tsx` build-time TypeScript runner replacing the
-experimental Node flag, npm postbuild dedup).
+"Download my data" / "Delete my data" pair, a small build-hygiene
+round (`tsx` build-time TypeScript runner replacing the experimental
+Node flag, npm postbuild dedup), **Phase 4 of language translation**
+(every number / percent / currency / date / time / duration the app
+renders now goes through `Intl.*` APIs with the active locale, so
+German users see `1.000,00`, French `1 000,00`, Arabic `1٬000٫00`,
+etc.), and **Phase 5 of language translation — RTL polish for Arabic**
+(in-app sidebar pinned-right, slide-out drawers reverse direction,
+directional icons flip, tooltips and modal close-buttons mirror,
+numeric inputs stay LTR for amount-entry consistency).
 
 ## Phase 2 of language translation — full app coverage
 
@@ -425,6 +432,122 @@ fires automatically after, running the sitemap and locale-shell
 generators. The earlier explicit chain caused the post-build to
 run twice; that's fixed.
 
+## Phase 4 of language translation — Intl.* formatting
+
+The chrome already translates; what stayed locale-blind until today
+was the *content* of every number, percentage, currency amount, date,
+time, and duration the app renders. That's now wired through
+JavaScript's built-in `Intl.*` APIs so each locale gets its native
+conventions for grouping, decimal separators, sign placement, and
+date / time order.
+
+**Helpers in `lib/format.ts` rewritten + extended.** The existing
+`bpsToPercent` and `formatUnitsPretty` now consume the active
+i18n locale (`i18n.resolvedLanguage`) at call time and use
+`Intl.NumberFormat` with the right options for percent / decimal
+formatting. New helpers landed alongside them:
+
+- `formatNumber(n, options?)` — locale-grouped decimal.
+- `formatPercent(value, digits?)` — fractional 0..1 input.
+- `formatUsd(value, options?)` — locale-aware USD currency.
+- `formatCompact(n, digits?)` — `1.2K` / `1,2 万` / `1٫2 ألف`.
+- `formatDate`, `formatTime`, `formatDateTime` — wrap
+  `Intl.DateTimeFormat` with sensible default `dateStyle` /
+  `timeStyle` options.
+- `formatRelativeTime(from, to?)` — wraps `Intl.RelativeTimeFormat`.
+  Picks the largest meaningful unit (seconds → minutes → hours →
+  days → weeks → months → years).
+- `formatDuration(totalSeconds)` — compact `Xd Yh` / `Xh Ym` form
+  using the locale's number grouping for the digit parts.
+
+The format helpers stay *pure functions* (no React hooks) because
+they're called from many non-component contexts. They re-evaluate
+the locale on every invocation, and components that consume them
+already re-render on `i18n.changeLanguage(...)` because they
+nearly all call `t()` somewhere — so the formatted output flips
+along with the rest of the page.
+
+**Hot-path call sites migrated.** Public Dashboard (`formatUsd` /
+`formatCompact` / `formatPct` rewritten via `Intl.NumberFormat`
+with `style: 'currency'` / `notation: 'compact'` /
+`signDisplay: 'exceptZero'`), Dashboard `formatVpfi`, Offer Book
+`formatBpsPct`, Activity `formatBlockTime` (now branches: relative
+time within 24h, absolute date+time after), Loan Details start /
+end-date renderers, Buy VPFI tier-row labels, Diagnostics drawer
+event timestamps.
+
+**What this looks like in practice.** A user reading the same
+loan-details card now sees:
+
+| Locale | Principal | APR | Start date | Activity ago |
+|---|---|---|---|---|
+| en | `1,000.50 USDC` | `5.00%` | `Apr 27, 2026` | `2 hours ago` |
+| de | `1.000,50 USDC` | `5,00 %` | `27. Apr. 2026` | `vor 2 Stunden` |
+| fr | `1 000,50 USDC` | `5,00 %` | `27 avr. 2026` | `il y a 2 heures` |
+| ja | `1,000.5 USDC` | `5.00%` | `2026/04/27` | `2 時間前` |
+| ar | `1٬000٫50 USDC` | `5٫00٪` | `٢٧‏/٤‏/٢٠٢٦` | `قبل ساعتين` |
+
+Numeric inputs (amounts, BPS) are deliberately kept in `direction:
+ltr` text alignment via the Phase-5 RTL overlay — Arabic users
+expect to type amounts the same way regardless of script
+direction.
+
+## Phase 5 of language translation — RTL polish for Arabic
+
+Arabic now renders with the right-to-left layout the script
+demands. The base stylesheets across the codebase use physical
+properties (`left`, `right`, `margin-left`, `padding-right`)
+rather than logical ones (`inset-inline-start`,
+`margin-inline-end`); a full migration to logical properties is
+deferred to a separate polish phase since it's a sweep across
+~14 CSS files. Today's drop is a focused RTL overlay
+(`styles/rtl.css`) loaded after `global.css` that targets the
+user-visible mirroring bugs.
+
+**Layout direction.** The pinned-left in-app sidebar mirrors to
+pinned-right under `dir="rtl"`, with the mobile drawer's slide-in
+direction reversed (`translateX(100%)` instead of `-100%`) and
+the main-content area's margin shifted to the right so the rail
+sits in the right place. The Diagnostics drawer's bottom-right
+floating "Support" button anchors bottom-left in Arabic, and the
+slide-out panel enters from the left edge.
+
+**Direction-sensitive icons.** Pager `‹ Prev` / `Next ›` chevrons,
+Hero / CTA / Navbar `→` arrows, breadcrumb chevrons, and the
+"How It Works" step-connector arrows all flip via
+`transform: scaleX(-1)` under `[dir="rtl"]` so "next" still
+points to the next-page direction (which in Arabic reading order
+is leftward). A generic `[data-rtl-flip="true"]` selector
+provides an opt-in mark for future directional icons. Direction-
+agnostic icons (search magnifier, settings gear, info `ⓘ`,
+trash, copy) stay un-flipped — those are symbols, not arrows.
+
+**Tooltip / popover alignment.** CSS-driven
+`data-tooltip-placement="below-start"` / `"below-end"` variants
+mirror under RTL so the tooltip's leading edge aligns to the
+right-side of its trigger as users expect.
+
+**Form alignment.** Form labels, hints, and text inputs use logical
+`text-align: start` instead of `left` under RTL. Numeric inputs
+(amount fields, BPS, ETH amounts) are forced to `direction: ltr`
+because users type "1000" the same way regardless of locale —
+flipping the digit-entry direction would create a usability
+regression with no readability win.
+
+**Modal close buttons.** The Diagnostics drawer's close X, the
+consent banner's dismiss, the inline ErrorAlert dismiss button
+all anchor top-start in RTL (top-left for Arabic) instead of
+their LTR top-right default.
+
+**What this overlay does NOT cover.** Mixed-script bidi text
+inside paragraphs is browser-handled (Latin-script glossary
+terms like "VPFI" / "ERC-20" stay LTR inside Arabic content
+automatically). Numbers in Arabic content stay LTR per CSS bidi
+defaults — correct behaviour. Flex `row` direction auto-flips
+in RTL — no overlay needed. The 29 selectors in `rtl.css` are
+the ones that physical CSS rules in the base stylesheets get
+wrong by default; everything else handles itself.
+
 ## Status snapshot at end-of-day 2026-04-27
 
 - **Language coverage**: 10 locales (en, es, fr, de, ja, zh, ko,
@@ -446,6 +569,18 @@ run twice; that's fixed.
 - **Backend alerts**: HF-watcher Telegram and Push notifications
   now sent in the user's preferred locale (10 locales covered).
   Worker-side i18n catalogue inline; no runtime dependency.
+- **Locale-aware numeric / date / duration formatting**: every
+  number, percent, currency amount, date, time, relative-time
+  string, and duration the app renders goes through `Intl.*`
+  APIs with the active locale. Group separators, decimal
+  conventions, sign placement, and date / time order all
+  match the user's locale.
+- **RTL layout (Arabic)**: in-app sidebar pinned-right, slide-
+  out drawers reverse direction, directional icons (chevrons,
+  arrows) flip, tooltips and modal close-buttons mirror,
+  numeric inputs stay LTR for amount-entry consistency. 29
+  selectors in `styles/rtl.css`; the rest is browser-handled
+  via flex auto-flipping and CSS bidi.
 - **Bilingual legal text**: Risk Disclosures has a one-click
   "View English original" path on every locale, so the legal-
   text-in-English property is preserved even though the

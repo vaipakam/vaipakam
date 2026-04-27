@@ -1,0 +1,160 @@
+/**
+ * RTL polish — Phase 5 of language translation.
+ *
+ * Targeted overrides for Arabic (and any future RTL locale) that
+ * mirror layout-critical positioning. The base stylesheets use
+ * physical properties (`left`, `right`, `margin-left`, etc.); rather
+ * than mass-migrating the whole codebase to logical properties at
+ * once, this overlay catches the truly user-visible mirroring bugs
+ * (sidebar position, slide-in drawer direction, directional icons,
+ * tooltip / popover alignment, modal close-button position).
+ *
+ * Loaded once from `main.tsx` after `global.css` so the rules cascade
+ * over the base layout. Each block is a no-op when `dir="ltr"`.
+ *
+ * What this file does NOT try to fix:
+ *   - Mixed-script bidi rendering inside paragraphs (browser-handled).
+ *   - Numeric direction (numbers stay LTR inside Arabic content per
+ *     CSS bidi defaults — correct behaviour).
+ *   - Flex `row` directionality (browsers auto-flip).
+ *   - Background-image positioning (no background-positioned UI today).
+ *
+ * Future work: move to CSS logical properties (`inset-inline-start`,
+ * `margin-inline-end`, `border-inline-end`) so we don't need this
+ * overlay at all. That migration is a sweep across ~14 CSS files —
+ * deferred to a polish phase.
+ */
+
+/* ─── Direction-sensitive icons ──────────────────────────────────────
+ * Mark icons as "directional" by adding `data-rtl-flip` (chevrons in
+ * pagers, "next/prev" arrows, breadcrumbs). The CSS flips them via
+ * a simple transform when the document is in RTL. Direction-agnostic
+ * icons (search, settings, info) keep their natural orientation —
+ * a search magnifier shouldn't flip, a "next page →" arrow should. */
+[dir="rtl"] [data-rtl-flip="true"] {
+  transform: scaleX(-1);
+}
+
+/* The Pager "Prev / Next" buttons use ChevronLeft / ChevronRight
+ * icons. We flip these uniformly under RTL so "next" still points to
+ * the next-page direction (which in Arabic reading order is leftward). */
+[dir="rtl"] .pager .lucide-chevron-left,
+[dir="rtl"] .pager .lucide-chevron-right,
+[dir="rtl"] .breadcrumb .lucide-chevron-right,
+[dir="rtl"] .step-connector,
+[dir="rtl"] .navbar-cta .lucide-arrow-right,
+[dir="rtl"] .hero-actions .lucide-arrow-right,
+[dir="rtl"] .cta-actions .lucide-arrow-right {
+  transform: scaleX(-1);
+}
+
+/* ─── App sidebar: pinned-right in RTL ──────────────────────────────
+ * Default is fixed-left with a right-edge border. RTL flips to
+ * fixed-right with a left-edge border. The mobile-drawer slide-in
+ * also reverses (translateX(100%) instead of -100%). */
+[dir="rtl"] .app-sidebar {
+  left: auto;
+  right: 0;
+  border-right: none;
+  border-left: 1px solid var(--border);
+  transform: translateX(100%);
+}
+[dir="rtl"] .app-sidebar.open {
+  transform: translateX(0);
+}
+@media (min-width: 768px) {
+  [dir="rtl"] .app-sidebar {
+    transform: translateX(0);
+  }
+}
+
+/* The AppLayout's main content margin shifts side-to-side based on the
+ * sidebar position. The base CSS uses `margin-left: 260px`; under RTL
+ * it should be `margin-right: 260px`. */
+[dir="rtl"] .app-main {
+  margin-left: 0 !important;
+  margin-right: 260px;
+}
+@media (min-width: 768px) {
+  [dir="rtl"] .app-layout.sidebar-collapsed .app-main {
+    margin-right: 72px;
+  }
+}
+@media (max-width: 767px) {
+  [dir="rtl"] .app-main {
+    margin-right: 0;
+  }
+}
+
+/* ─── Diagnostics FAB + drawer: bottom-left in RTL ──────────────────
+ * The "Support" floating button anchors bottom-right by default; flip
+ * to bottom-left in RTL. The slide-out drawer also enters from the
+ * left side instead of the right. */
+[dir="rtl"] .diag-fab {
+  right: auto;
+  left: 1rem;
+}
+[dir="rtl"] .diag-drawer {
+  right: auto;
+  left: 0;
+  border-left: none;
+  border-right: 1px solid var(--border-color, #333);
+  transform: translateX(-100%);
+}
+[dir="rtl"] .diag-drawer.open {
+  transform: translateX(0);
+}
+
+/* ─── Tooltip / popover alignment ───────────────────────────────────
+ * Tooltips that anchor on a left edge should anchor on the right
+ * edge in RTL, and vice versa. The InfoTip portal-renders bubbles
+ * with absolute positioning computed in JS — those re-clamp to the
+ * viewport on each open and so stay correct without a CSS rule.
+ * The CSS-driven `data-tooltip-placement` variants need explicit
+ * mirroring here. */
+[dir="rtl"] [data-tooltip-placement="below-start"]::after {
+  left: auto;
+  right: 0;
+}
+[dir="rtl"] [data-tooltip-placement="below-end"]::after {
+  left: 0;
+  right: auto;
+}
+
+/* ─── Form text alignment ───────────────────────────────────────────
+ * Inputs / labels that use `text-align: left` should use `start`.
+ * Globally re-align form controls so they read left-to-right (i.e.
+ * trailing-end-aligned for RTL — which is right-aligned). Numeric
+ * inputs (amounts, BPS) stay LTR via `direction: ltr` because users
+ * expect to type "1000" the same way regardless of locale. */
+[dir="rtl"] .form-input,
+[dir="rtl"] .form-label,
+[dir="rtl"] .form-hint {
+  text-align: start;
+}
+[dir="rtl"] input[type="number"],
+[dir="rtl"] input[inputmode="decimal"],
+[dir="rtl"] .mono {
+  direction: ltr;
+  text-align: end;
+}
+
+/* ─── Modal close (X) button: top-start corner ──────────────────────
+ * The diagnostic drawer's close X, the consent banner's dismiss,
+ * legal gate's, etc. all anchor top-right by default. In RTL the
+ * conventional dismiss position is top-left. */
+[dir="rtl"] .diag-close,
+[dir="rtl"] .consent-banner-close,
+[dir="rtl"] .alert-dismiss-btn {
+  margin-left: 0;
+  margin-right: auto;
+}
+
+/* ─── Misc: scrollbar gutter / number formatting ────────────────────
+ * Arabic locales expose Arabic-Indic digits via Intl.NumberFormat
+ * (handled in lib/format.ts). Some users prefer Western digits; this
+ * is a future preference setting, not a blocker.
+ *
+ * Scrollbars in RTL render on the left edge by default in modern
+ * browsers — no explicit rule needed.
+ */

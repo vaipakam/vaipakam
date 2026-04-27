@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState, useCallback, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
+import i18n from '../i18n';
 import type { Address, Hex } from 'viem';
 import { encodeFunctionData } from 'viem';
 import { SimulationPreview } from '../components/app/SimulationPreview';
@@ -103,11 +104,21 @@ function tierDiscountPct(tier: number, config: ProtocolConfig | null): string {
   return formatBpsPct(bps);
 }
 
-/** BPS → "0.1%" / "10%" — min of 3 sig figs to avoid rendering "0.08%" as "0.1%". */
+/** BPS → "0.1%" / "10%" — min of 3 sig figs to avoid rendering "0.08%" as "0.1%".
+ *  Locale-aware: emits "5,00 %" in fr-FR / "5.00%" in en-US / "٥٫٠٠٪" in ar etc.
+ *  via Intl.NumberFormat with `style: 'percent'`. */
 function formatBpsPct(bps: number): string {
   const pct = bps / 100;
-  const rounded = Number.isInteger(pct) ? pct.toString() : pct.toFixed(3).replace(/0+$/, '').replace(/\.$/, '');
-  return `${rounded}%`;
+  const lng = i18n.resolvedLanguage ?? 'en';
+  // Pick fraction-digit count: integers display as integers, others
+  // render up to 3 fractional digits with trailing zeros trimmed
+  // (Intl handles the trim via maximumFractionDigits).
+  const digits = Number.isInteger(pct) ? 0 : 3;
+  return new Intl.NumberFormat(lng, {
+    style: 'percent',
+    minimumFractionDigits: 0,
+    maximumFractionDigits: digits,
+  }).format(pct / 100);
 }
 
 type RawOffer = {

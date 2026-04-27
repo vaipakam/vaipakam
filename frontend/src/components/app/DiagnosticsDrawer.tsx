@@ -6,6 +6,7 @@ import {
   exportDiagnostics,
   type JourneyEvent,
 } from '../../lib/journeyLog';
+import { formatTime } from '../../lib/format';
 import { downloadMyData, deleteMyData } from '../../lib/gdpr';
 import { useMode } from '../../context/ModeContext';
 import { ReportIssueLink } from './ReportIssueLink';
@@ -235,7 +236,7 @@ export default function DiagnosticsDrawer() {
                       </div>
                     )}
                     <div className="diag-event-time">
-                      {new Date(ev.timestamp).toLocaleTimeString()}
+                      {formatTime(ev.timestamp)}
                     </div>
                   </div>
                 ))

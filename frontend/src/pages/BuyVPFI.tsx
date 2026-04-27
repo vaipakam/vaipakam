@@ -43,6 +43,7 @@ import { useVPFIBuyBridge } from "../hooks/useVPFIBuyBridge";
 import { usePermit2Signing } from "../hooks/usePermit2Signing";
 import { getCanonicalVPFIChain, type ChainConfig } from "../contracts/config";
 import { decodeContractError } from "../lib/decodeContractError";
+import { formatNumber } from "../lib/format";
 import { beginStep } from "../lib/journeyLog";
 import { ReportIssueLink } from "../components/app/ReportIssueLink";
 import { CardInfo } from "../components/CardInfo";
@@ -1369,8 +1370,8 @@ function DiscountStatusCard({
                   <td style={{ padding: "6px 8px" }}>{row.label}</td>
                   <td style={{ padding: "6px 8px" }}>
                     {row.maxVpfi == null
-                      ? `> ${(row.minVpfi - 0.000001).toLocaleString(undefined, { maximumFractionDigits: 0 })}`
-                      : `${row.minVpfi.toLocaleString()} – ${row.maxVpfi.toLocaleString(undefined, { maximumFractionDigits: 0 })}`}
+                      ? `> ${formatNumber(row.minVpfi - 0.000001, { maximumFractionDigits: 0 })}`
+                      : `${formatNumber(row.minVpfi)} – ${formatNumber(row.maxVpfi, { maximumFractionDigits: 0 })}`}
                   </td>
                   <td style={{ padding: "6px 8px" }}>{row.discountLabel}</td>
                 </tr>

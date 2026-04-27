@@ -34,7 +34,7 @@ import { DIAMOND_ABI_VIEM as DIAMOND_ABI } from "../contracts/abis";
 import { AssetSymbol } from "../components/app/AssetSymbol";
 import { TokenAmount } from "../components/app/TokenAmount";
 import { ErrorAlert } from "../components/app/ErrorAlert";
-import { bpsToPercent } from "../lib/format";
+import { bpsToPercent, formatDate } from "../lib/format";
 import { AddressDisplay } from "../components/app/AddressDisplay";
 import { HealthFactorGauge, LTVBar } from "../components/app/RiskGauge";
 import { LiquidationProjection } from "../components/app/LiquidationProjection";
@@ -516,13 +516,13 @@ export default function LoanDetails() {
           <div className="data-row">
             <span className="data-label">{t('loanDetails.startDate')}</span>
             <span className="data-value">
-              {new Date(Number(loan.startTime) * 1000).toLocaleDateString()}
+              {formatDate(Number(loan.startTime) * 1000)}
             </span>
           </div>
           <div className="data-row">
             <span className="data-label">{t('loanDetails.endDate')}</span>
             <span className="data-value">
-              {new Date(endTime * 1000).toLocaleDateString()}
+              {formatDate(endTime * 1000)}
             </span>
           </div>
           <div className="data-row">

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { L as Link } from '../components/L';
 import { useTranslation } from 'react-i18next';
+import i18n from '../i18n';
 import { useWallet } from '../context/WalletContext';
 import { useDiamondRead } from '../contracts/useDiamond';
 import { useUserLoans } from '../hooks/useUserLoans';
@@ -305,10 +306,26 @@ function shortenAddr(a: string | null | undefined): string {
 }
 
 function formatVpfi(n: number): string {
-  if (n === 0) return '0';
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(2)}M`;
-  if (n >= 1_000) return `${(n / 1_000).toFixed(2)}K`;
-  return n.toFixed(2);
+  // Locale-aware grouping + decimal separator. Compact notation
+  // (`1.2M`) for >= 1k matches the previous behaviour while letting
+  // each locale render the suffix in its native script (`1,2 万` ja,
+  // `1٫2 ألف` ar). Below 1k → 2-fraction-digit precise form.
+  const lng = i18nResolved();
+  if (n === 0) return new Intl.NumberFormat(lng).format(0);
+  if (n >= 1000) {
+    return new Intl.NumberFormat(lng, {
+      notation: 'compact',
+      maximumFractionDigits: 2,
+    }).format(n);
+  }
+  return new Intl.NumberFormat(lng, {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(n);
+}
+
+function i18nResolved(): string {
+  return i18n.resolvedLanguage ?? 'en';
 }
 
 interface VPFIPanelProps {

@@ -13,7 +13,7 @@ import { useUserLoans } from '../hooks/useUserLoans';
 import { useWallet } from '../context/WalletContext';
 import { useReadChain } from '../contracts/useDiamond';
 import type { ActivityEvent, ActivityEventKind } from '../lib/logIndex';
-import { shortenAddr, formatUnitsPretty } from '../lib/format';
+import { shortenAddr, formatUnitsPretty, formatRelativeTime, formatDateTime } from '../lib/format';
 import { Pager } from '../components/app/Pager';
 import { CardInfo } from '../components/CardInfo';
 import './Activity.css';
@@ -75,10 +75,11 @@ function formatBlockTime(unixSeconds: number | undefined): string {
   if (!unixSeconds) return '';
   const ms = unixSeconds * 1000;
   const diff = Date.now() - ms;
-  if (diff < 60_000) return 'just now';
-  if (diff < 3_600_000) return `${Math.floor(diff / 60_000)}m ago`;
-  if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)}h ago`;
-  return new Date(ms).toLocaleString();
+  // Within the last 24h: locale-aware relative-time string ("2 minutes
+  // ago" / "il y a 5 heures" / "5분 전"). Beyond 24h: absolute date+time
+  // in the locale's standard short format.
+  if (diff < 86_400_000) return formatRelativeTime(ms);
+  return formatDateTime(ms);
 }
 
 function shortHash(hash: string): string {
