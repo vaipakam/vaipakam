@@ -8,19 +8,27 @@
  * non-English readers to use English here. The legal-style "English
  * only" notice surfaces this clearly to non-English visitors.
  *
- * Pairs with HelpTabs at the page top so the reader can flip back to
- * the Overview or User Guide (which are translated) for a more
- * accessible explanation of the same material.
+ * Layout matches Overview: HelpTabs strip on top, sticky sidebar TOC
+ * on desktop, accordion TOC on mobile. The TOC is derived from
+ * the markdown's H2/H3 headings (the whitepaper uses numbered
+ * sections like "## 11. VPFI Token and Tokenomics" → "### 11.1 Token
+ * Parameters", so the TOC reads as a navigable spec outline).
  */
 
 import { useMemo, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
+import { useLocation } from 'react-router-dom';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import Navbar from '../components/Navbar';
 import Footer from '../components/Footer';
 import { EnglishOnlyNotice } from '../components/app/EnglishOnlyNotice';
 import { HelpTabs } from '../components/HelpTabs';
+import { HelpToc } from '../components/HelpToc';
+import {
+  extractMarkdownToc,
+  headingComponents,
+} from '../lib/markdownToc';
 import './UserGuide.css';
 
 const WHITEPAPER_FILES = import.meta.glob('../content/whitepaper/*.md', {
@@ -35,18 +43,44 @@ function resolveWhitepaper(): string {
 
 export default function Whitepaper() {
   const { i18n } = useTranslation();
+  const location = useLocation();
   const text = useMemo(() => resolveWhitepaper(), []);
+  const toc = useMemo(() => extractMarkdownToc(text), [text]);
+  const basePath = location.pathname.replace(/\/$/, '');
   const isNonEnglish = (i18n.resolvedLanguage ?? 'en') !== 'en';
+
+  const collapseEnclosingDetails = (e: React.MouseEvent<HTMLAnchorElement>) => {
+    const details = e.currentTarget.closest('details');
+    if (details) details.removeAttribute('open');
+  };
+
+  const headingComps = useMemo(() => headingComponents(), []);
 
   return (
     <div className="user-guide-page">
       <Navbar />
       <main className="user-guide-main">
-        <div className="user-guide-layout user-guide-layout--single">
+        <div className="user-guide-layout">
+          <div className="user-guide-sticky-mobile">
+            <details className="user-guide-toc-mobile">
+              <summary>Sections</summary>
+              <div className="user-guide-toc-mobile-body">
+                <HelpToc toc={toc} basePath={basePath} onItemClick={collapseEnclosingDetails} />
+              </div>
+            </details>
+          </div>
+
+          <aside className="user-guide-sidebar-desktop">
+            <HelpToc toc={toc} basePath={basePath} />
+          </aside>
+
           <article className="user-guide-content">
             <HelpTabs />
             {isNonEnglish && <EnglishOnlyNotice variant="legal" />}
-            <ReactMarkdown remarkPlugins={[remarkGfm]}>
+            <ReactMarkdown
+              remarkPlugins={[remarkGfm]}
+              components={headingComps as never}
+            >
               {text as ReactNode as string}
             </ReactMarkdown>
           </article>

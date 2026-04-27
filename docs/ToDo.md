@@ -7,4 +7,4 @@
 - [x] inside the app, When the 3 line icon is clicked on the left top, the expanded left side panel only shows `icon only logo`, but it should show full horizontal logo
 - [x] the create offer button and accept offer button need to be enabled only after clicking the checkbox for `I have read and agree to the Risk Disclosures above.`
 - [x] The error that is shown to the user may be short, but when user clicks on report to github page, the error information should atleat have second level of verbose information in it.
-- [ ] Group languages based on the locality of that continent and display only those group belonging to that continent. Note: exception is for japanese can be displayed together with western countries
+- [ ] Group languages based on the locality of that continent and display only those group belonging to that continent. Note: exception is for japanese can be displayed together with western countries too

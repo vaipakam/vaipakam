@@ -80,7 +80,7 @@ export default function Footer() {
 
           <div className="footer-col">
             <h4>{t('footer.colResources')}</h4>
-            <a href={GITHUB_URL} target="_blank" rel="noreferrer">{t('footer.documentation')}</a>
+            <Link to="/help/overview">{t('footer.documentation')}</Link>
             <Link to="/analytics">{t('footer.smartContracts')}</Link>
             <Link to="/app/nft-verifier">{t('nav.nftVerifier')}</Link>
             <Link to="/app/buy-vpfi">{t('appNav.buyVpfi')}</Link>

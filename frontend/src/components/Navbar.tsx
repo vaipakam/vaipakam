@@ -58,6 +58,7 @@ const NAV_GROUPS: NavGroup[] = [
     id: 'learn',
     labelKey: 'nav.learn',
     links: [
+      { labelKey: 'nav.documentation', href: '/help/overview' },
       { labelKey: 'nav.features', href: '/#features' },
       { labelKey: 'nav.howItWorks', href: '/#how-it-works' },
       { labelKey: 'nav.faq', href: '/#faq' },

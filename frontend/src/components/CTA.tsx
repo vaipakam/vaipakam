@@ -17,14 +17,9 @@ export default function CTA() {
             <Link to="/app" className="btn btn-primary btn-lg">
               {t('cta.launchApp')} <ArrowRight size={18} />
             </Link>
-            <a
-              href="https://github.com/vaipakam"
-              target="_blank"
-              rel="noreferrer"
-              className="btn btn-secondary btn-lg"
-            >
+            <Link to="/help/overview" className="btn btn-secondary btn-lg">
               {t('cta.readDocs')}
-            </a>
+            </Link>
           </div>
         </div>
       </div>
