@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
+import { useTranslation } from "react-i18next";
 import { parseAbi, parseUnits, type Abi, type Address, type Hex, encodeFunctionData } from "viem";
 import { usePublicClient, useWalletClient } from "wagmi";
 import { useWallet } from "../context/WalletContext";
@@ -15,9 +16,6 @@ import {
   type OfferSide,
 } from "../lib/offerSchema";
 import { decodeContractError } from "../lib/decodeContractError";
-import {
-  FALLBACK_CONSENT_CHECKBOX_LABEL,
-} from "../lib/fallbackTerms";
 import { beginStep, emit } from "../lib/journeyLog";
 import { DEFAULT_CHAIN } from "../contracts/config";
 import { AlertTriangle, Info, CheckCircle, Wallet, Coins } from "lucide-react";
@@ -51,6 +49,7 @@ const ERC20_APPROVE_ABI = parseAbi([
 ]) as unknown as Abi;
 
 export default function CreateOffer() {
+  const { t } = useTranslation();
   const { address, chainId, activeChain, isCorrectChain } = useWallet();
   const publicClient = usePublicClient();
   const { data: walletClient } = useWalletClient();
@@ -402,8 +401,8 @@ export default function CreateOffer() {
         <div className="empty-state-icon">
           <Wallet size={28} />
         </div>
-        <h3>Connect Your Wallet</h3>
-        <p>Connect your wallet to create offers on Vaipakam.</p>
+        <h3>{t('createOffer.connectTitle')}</h3>
+        <p>{t('createOffer.connectBody')}</p>
       </div>
     );
   }
@@ -420,11 +419,8 @@ export default function CreateOffer() {
         >
           <CheckCircle size={28} />
         </div>
-        <h3>Offer Created Successfully!</h3>
-        <p>
-          Your offer has been submitted on-chain and a Vaipakam position NFT has
-          been minted.
-        </p>
+        <h3>{t('createOffer.successTitle')}</h3>
+        <p>{t('createOffer.successBody')}</p>
         {txHash && (
           <a
             href={`${(activeChain && isCorrectChain ? activeChain.blockExplorer : null) ?? DEFAULT_CHAIN.blockExplorer}/tx/${txHash}`}
@@ -433,7 +429,7 @@ export default function CreateOffer() {
             className="btn btn-secondary btn-sm"
             style={{ marginBottom: 8 }}
           >
-            View Transaction
+            {t('createOffer.viewTransaction')}
           </a>
         )}
         <div style={{ display: "flex", gap: 8 }}>
@@ -445,13 +441,13 @@ export default function CreateOffer() {
               setTxHash(null);
             }}
           >
-            Create Another
+            {t('createOffer.createAnother')}
           </button>
           <button
             className="btn btn-secondary btn-sm"
             onClick={() => navigate("/app/offers")}
           >
-            View Offer Book
+            {t('createOffer.viewOfferBook')}
           </button>
         </div>
       </div>
@@ -461,11 +457,11 @@ export default function CreateOffer() {
   return (
     <div className="create-offer">
       <div className="page-header">
-        <h1 className="page-title">Create Offer</h1>
+        <h1 className="page-title">{t('appNav.createOffer')}</h1>
         <p className="page-subtitle">
           {form.offerType === "lender"
-            ? "Create a lending offer — specify what you want to lend and your terms."
-            : "Create a borrowing offer — specify what you need and the collateral you can provide."}
+            ? t('createOffer.subtitleLender')
+            : t('createOffer.subtitleBorrower')}
         </p>
       </div>
 
@@ -509,14 +505,14 @@ export default function CreateOffer() {
       {address && (
         <SanctionsBanner
           address={address as `0x${string}`}
-          label="Your wallet"
+          label={t('banners.sanctionsLabelWallet')}
         />
       )}
 
       <form onSubmit={handleSubmit}>
         <div className="card" style={{ marginBottom: 20 }}>
           <div className="card-title">
-            Offer Type
+            {t('createOffer.offerType')}
             <CardInfo id="create-offer.offer-type" />
           </div>
           <div className="offer-type-toggle">
@@ -531,7 +527,7 @@ export default function CreateOffer() {
                   : undefined
               }
             >
-              I want to Lend
+              {t('createOffer.iWantToLend')}
             </button>
             <button
               type="button"
@@ -544,23 +540,20 @@ export default function CreateOffer() {
                   : undefined
               }
             >
-              I want to Borrow
+              {t('createOffer.iWantToBorrow')}
             </button>
           </div>
 
           {showAdvanced && (
             <div style={{ marginTop: 20 }}>
               <div className="form-label">
-                Asset Type
+                {t('createOffer.assetType')}
                 <DetectionBadge
                   detection={lendingDetection}
                   selected={form.assetType}
                 />
               </div>
-              <div className="form-hint">
-                Auto-detected from the lending-asset contract address. Paste or
-                pick an address below to populate this.
-              </div>
+              <div className="form-hint">{t('createOffer.hintAssetTypeAuto')}</div>
             </div>
           )}
         </div>
@@ -583,50 +576,32 @@ export default function CreateOffer() {
                 {form.offerType === "borrower" ? (
                   <>
                     <div style={{ fontWeight: 600, marginBottom: 2 }}>
-                      Borrowing a liquid ERC-20? Earn up to a 24% VPFI rebate
-                      on the initiation fee
+                      {t('lenderDiscountCard.borrowerTitle')}
                     </div>
                     <p className="stat-label" style={{ margin: "0 0 8px" }}>
-                      Hold VPFI in your escrow and enable the one-time
-                      platform-level VPFI consent on your Dashboard. The
-                      protocol pulls the full 0.1% initiation fee up front in
-                      VPFI, then credits back a time-weighted rebate at proper
-                      loan close (repay / preclose / refinance) based on how
-                      long you held VPFI across the loan. Default or
-                      liquidation forfeits the rebate. Need VPFI?{" "}
+                      {t('lenderDiscountCard.borrowerBody1')}
                       <a href="/app/buy-vpfi" target="_blank" rel="noreferrer">
-                        Buy VPFI
-                      </a>{" "}
-                      (buy from your preferred chain — routing is handled for
-                      you).
+                        {t('lenderDiscountCard.buyVpfi')}
+                      </a>
+                      {t('lenderDiscountCard.routingNote')}
                     </p>
                   </>
                 ) : (
                   <>
                     <div style={{ fontWeight: 600, marginBottom: 2 }}>
-                      Lending a liquid ERC-20? Earn up to a 24% VPFI discount
-                      on the yield fee
+                      {t('lenderDiscountCard.lenderTitle')}
                     </div>
                     <p className="stat-label" style={{ margin: "0 0 8px" }}>
-                      Hold VPFI in your escrow and enable the one-time
-                      platform-level VPFI consent on your Dashboard. At
-                      settlement, the 1% treasury cut on the interest you earn
-                      is reduced by a time-weighted VPFI discount across the
-                      loan's lifetime — up to 24%, so you keep more of the
-                      interest you earned. Nothing is paid up front; the
-                      discount is applied automatically when the loan settles
-                      properly (repay / preclose / refinance). Default or
-                      liquidation forfeits the discount. Need VPFI?{" "}
+                      {t('lenderDiscountCard.lenderBody1')}
                       <a href="/app/buy-vpfi" target="_blank" rel="noreferrer">
-                        Buy VPFI
-                      </a>{" "}
-                      (buy from your preferred chain — routing is handled for
-                      you).
+                        {t('lenderDiscountCard.buyVpfi')}
+                      </a>
+                      {t('lenderDiscountCard.routingNote')}
                     </p>
                   </>
                 )}
                 <Link to="/app" className="btn btn-secondary btn-sm">
-                  Enable consent on Dashboard
+                  {t('lenderDiscountCard.enableConsent')}
                 </Link>
               </div>
             </div>
@@ -635,7 +610,7 @@ export default function CreateOffer() {
 
         <div className="card" style={{ marginBottom: 20 }}>
           <div className="card-title">
-            {isRental ? "NFT Details" : "Lending Asset"}
+            {isRental ? t('createOffer.nftDetails') : t('createOffer.lendingAsset')}
             <CardInfo
               id={
                 isRental
@@ -650,7 +625,7 @@ export default function CreateOffer() {
             {isRental ? (
               <>
                 <label className="form-label">
-                  NFT Contract Address
+                  {t('createOffer.nftContractAddress')}
                   {lockAssetContinuity && (
                     <span className="form-lock-badge"> · locked</span>
                   )}
@@ -668,8 +643,8 @@ export default function CreateOffer() {
                 />
                 <span className="form-hint">
                   {lockAssetContinuity
-                    ? "Pinned to the original loan — the settlement reverts on a mismatch."
-                    : "Enter the NFT collection's contract address manually."}
+                    ? t('createOffer.hintAddressLocked')
+                    : t('createOffer.hintNftAddressManual')}
                 </span>
               </>
             ) : (
@@ -678,12 +653,12 @@ export default function CreateOffer() {
                 chainId={chainId}
                 value={form.lendingAsset}
                 onChange={(addr) => setField("lendingAsset", addr)}
-                label={`Token Contract Address${lockAssetContinuity ? " · locked" : ""}`}
+                label={`${t('createOffer.tokenContractAddressLabel')}${lockAssetContinuity ? ` ${t('createOffer.lockedSuffix')}` : ""}`}
                 required
                 disabled={lockAssetContinuity}
                 hint={
                   lockAssetContinuity
-                    ? "Pinned to the original loan."
+                    ? t('createOffer.hintAddressLockedShort')
                     : undefined
                 }
               />
@@ -693,7 +668,7 @@ export default function CreateOffer() {
           <div className="form-row">
             <div className="form-group">
               <label className="form-label">
-                {isRental ? "Daily Rental Fee" : "Amount"}
+                {isRental ? t('createOffer.dailyRentalFee') : t('createOffer.amount')}
               </label>
               <input
                 className="form-input"
@@ -707,13 +682,13 @@ export default function CreateOffer() {
               />
               <span className="form-hint">
                 {isRental
-                  ? "Daily rate in whole tokens"
-                  : "Amount in whole tokens (scaled on-chain using the token's decimals)"}
+                  ? t('createOffer.hintAmountDaily')
+                  : t('createOffer.hintAmountTokens')}
               </span>
             </div>
             <div className="form-group">
               <label className="form-label">
-                Interest Rate / Rental Rate (APR %)
+                {t('createOffer.interestRate')}
               </label>
               <input
                 className="form-input"
@@ -725,16 +700,14 @@ export default function CreateOffer() {
                 onChange={(e) => setField("interestRate", e.target.value)}
                 required
               />
-              <span className="form-hint">
-                Stored in basis points (5% = 500 BPS)
-              </span>
+              <span className="form-hint">{t('createOffer.hintInterestBps')}</span>
             </div>
           </div>
 
           {isRental && (
             <div className="form-row">
               <div className="form-group">
-                <label className="form-label">Token ID</label>
+                <label className="form-label">{t('createOffer.tokenId')}</label>
                 <input
                   className="form-input"
                   type="number"
@@ -747,7 +720,7 @@ export default function CreateOffer() {
               </div>
               {form.assetType === "erc1155" && (
                 <div className="form-group">
-                  <label className="form-label">Quantity</label>
+                  <label className="form-label">{t('createOffer.quantity')}</label>
                   <input
                     className="form-input"
                     type="number"
@@ -764,7 +737,7 @@ export default function CreateOffer() {
 
           <div className="form-group">
             <label className="form-label" htmlFor="create-offer-duration">
-              Duration (Days)
+              {t('createOffer.duration')}
             </label>
             <input
               id="create-offer-duration"
@@ -786,13 +759,13 @@ export default function CreateOffer() {
               role={durationOutOfRange ? "alert" : undefined}
             >
               {durationOutOfRange ? (
-                <>Enter Duration between 1 and 365</>
+                <>{t('createOffer.hintDurationOutOfRange')}</>
               ) : (
                 <>
-                  Grace period:{" "}
+                  {t('createOffer.hintDurationGracePrefix')}{' '}
                   {form.durationDays
                     ? gracePeriodLabel(parseInt(form.durationDays, 10))
-                    : "enter duration to see"}
+                    : t('createOffer.hintDurationEnterToSee')}
                 </>
               )}
             </span>
@@ -801,7 +774,7 @@ export default function CreateOffer() {
 
         <div className="card" style={{ marginBottom: 20 }}>
           <div className="card-title">
-            Collateral
+            {t('createOffer.collateral')}
             <CardInfo id="create-offer.collateral" role={form.offerType} />
           </div>
 
@@ -812,11 +785,11 @@ export default function CreateOffer() {
                 chainId={chainId}
                 value={form.prepayAsset}
                 onChange={(addr) => setField("prepayAsset", addr)}
-                label={`Prepayment Asset (Stablecoin)${lockAssetContinuity ? " · locked" : ""}`}
+                label={`${t('createOffer.prepayAssetLabel')}${lockAssetContinuity ? ` ${t('createOffer.lockedSuffix')}` : ""}`}
                 hint={
                   lockAssetContinuity
-                    ? "Pinned to the original loan."
-                    : "Stablecoin used for rental fee prepayment + 5% buffer"
+                    ? t('createOffer.hintAddressLockedShort')
+                    : t('createOffer.prepayAssetHint')
                 }
                 disabled={lockAssetContinuity}
               />
@@ -826,7 +799,7 @@ export default function CreateOffer() {
           {showAdvanced && (
             <div className="form-group">
               <label className="form-label">
-                Collateral Asset Type
+                {t('createOffer.collateralAssetType')}
                 {lockAssetContinuity && (
                   <span className="form-lock-badge"> · locked</span>
                 )}
@@ -835,9 +808,7 @@ export default function CreateOffer() {
                   selected={form.collateralAssetType}
                 />
               </label>
-              <div className="form-hint">
-                Auto-detected from the collateral contract address.
-              </div>
+              <div className="form-hint">{t('createOffer.hintCollateralAssetTypeAuto')}</div>
             </div>
           )}
 
@@ -848,18 +819,18 @@ export default function CreateOffer() {
                 chainId={chainId}
                 value={form.collateralAsset}
                 onChange={(addr) => setField("collateralAsset", addr)}
-                label={`Collateral Contract Address${lockAssetContinuity ? " · locked" : ""}`}
+                label={`${t('createOffer.collateralContractAddressLabel')}${lockAssetContinuity ? ` ${t('createOffer.lockedSuffix')}` : ""}`}
                 disabled={lockAssetContinuity}
                 hint={
                   lockAssetContinuity
-                    ? "Pinned to the original loan."
+                    ? t('createOffer.hintAddressLockedShort')
                     : undefined
                 }
               />
             ) : (
               <>
                 <label className="form-label">
-                  Collateral Contract Address
+                  {t('createOffer.collateralContractAddress')}
                   {lockAssetContinuity && (
                     <span className="form-lock-badge"> · locked</span>
                   )}
@@ -876,8 +847,8 @@ export default function CreateOffer() {
                 />
                 <span className="form-hint">
                   {lockAssetContinuity
-                    ? "Pinned to the original loan — the settlement reverts on a mismatch."
-                    : "Enter the NFT collection's contract address manually."}
+                    ? t('createOffer.hintAddressLocked')
+                    : t('createOffer.hintNftAddressManual')}
                 </span>
               </>
             )}
@@ -885,7 +856,7 @@ export default function CreateOffer() {
 
           <div className="form-row">
             <div className="form-group">
-              <label className="form-label">Collateral Amount</label>
+              <label className="form-label">{t('createOffer.collateralAmount')}</label>
               <input
                 className="form-input"
                 type="number"
@@ -898,7 +869,7 @@ export default function CreateOffer() {
             </div>
             {form.collateralAssetType !== "erc20" && (
               <div className="form-group">
-                <label className="form-label">Collateral Token ID</label>
+                <label className="form-label">{t('createOffer.collateralTokenId')}</label>
                 <input
                   className="form-input"
                   type="number"
@@ -913,7 +884,7 @@ export default function CreateOffer() {
             )}
             {form.collateralAssetType === "erc1155" && (
               <div className="form-group">
-                <label className="form-label">Collateral Quantity</label>
+                <label className="form-label">{t('createOffer.collateralQuantity')}</label>
                 <input
                   className="form-input"
                   type="number"
@@ -933,7 +904,7 @@ export default function CreateOffer() {
             surfaced to every user, not hidden behind "advanced options". */}
         <div className="card" style={{ marginBottom: 20 }}>
           <div className="card-title">
-            Risk Disclosures
+            {t('createOffer.riskDisclosures')}
             <CardInfo
               id="create-offer.risk-disclosures"
               role={form.offerType}
@@ -948,14 +919,14 @@ export default function CreateOffer() {
               checked={form.fallbackConsent}
               onChange={(e) => setField("fallbackConsent", e.target.checked)}
             />
-            <span>{FALLBACK_CONSENT_CHECKBOX_LABEL}</span>
+            <span>{t('riskDisclosures.checkboxLabel')}</span>
           </label>
         </div>
 
         {showAdvanced && (
           <div className="card" style={{ marginBottom: 20 }}>
             <div className="card-title">
-              Advanced Options
+              {t('createOffer.advancedOptions')}
               <CardInfo id="create-offer.advanced-options" />
             </div>
 
@@ -966,17 +937,17 @@ export default function CreateOffer() {
                 onChange={(e) => setField("keeperAccess", e.target.checked)}
               />
               <span>
-                Enable authorized keeper / third-party execution access
+                {t('createOffer.keeperAccessLabel')}
                 <small
                   style={{ display: "block", opacity: 0.75, marginTop: 2 }}
                 >
-                  This is the <strong>position-level</strong> flag only. By
-                  itself it is <strong>not</strong> sufficient — before any
-                  keeper can act on your behalf you must <em>also</em> enable
-                  keeper access and add the keeper to your whitelist in your
-                  advanced profile (Keepers page). Keeper authority is
-                  role-scoped: your own profile opt-in + whitelist govern only
-                  the actions your side is entitled to.
+                  {t('createOffer.keeperAccessHintPrefix')}
+                  <strong>{t('createOffer.keeperAccessHintPositionLevel')}</strong>
+                  {t('createOffer.keeperAccessHintMid1')}
+                  <strong>{t('createOffer.keeperAccessHintNot')}</strong>
+                  {t('createOffer.keeperAccessHintMid2')}
+                  <em>{t('createOffer.keeperAccessHintAlso')}</em>
+                  {t('createOffer.keeperAccessHintSuffix')}
                 </small>
               </span>
             </label>
@@ -1023,37 +994,33 @@ export default function CreateOffer() {
             disabled={step !== "form"}
           >
             {step === "approving"
-              ? "Approving Tokens..."
+              ? t('createOffer.approving')
               : step === "creating"
-                ? "Creating Offer..."
-                : "Create Offer"}
+                ? t('createOffer.creating')
+                : t('appNav.createOffer')}
           </button>
           <button
             type="button"
             className="btn btn-secondary"
             onClick={() => navigate("/app/offers")}
           >
-            Cancel
+            {t('common.cancel')}
           </button>
         </div>
 
         <div className="alert alert-info" style={{ marginTop: 16 }}>
           <Info size={18} />
-          <span>
-            Creating an offer will lock your assets in your personal escrow and
-            mint a Vaipakam position NFT. The accepting party pays gas to
-            initiate the loan.
-          </span>
+          <span>{t('createOffer.lockAssetsAlert')}</span>
         </div>
 
         {form.assetType === "erc20" && (
           <div className="alert alert-info" style={{ marginTop: 12 }}>
             <Info size={18} />
             <span>
-              <strong>Loan Initiation Fee (0.1%):</strong>{" "}
+              <strong>{t('createOffer.lifLabel')}</strong>{' '}
               {form.offerType === "lender"
-                ? "When your offer is accepted, 0.1% of the lending amount will be routed to the Vaipakam treasury before the borrower receives the remaining 99.9%. The borrower still repays the full principal."
-                : "When your request is funded, 0.1% of the lending amount will be routed to the Vaipakam treasury before you receive the remaining 99.9%. You still repay the full principal."}
+                ? t('createOffer.lifLenderBody')
+                : t('createOffer.lifBorrowerBody')}
             </span>
           </div>
         )}

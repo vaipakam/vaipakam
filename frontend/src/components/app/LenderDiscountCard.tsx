@@ -1,4 +1,6 @@
 import { Gift, Info, Clock } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
+import type { TFunction } from 'i18next';
 import { useLoanLenderDiscount } from '../../hooks/useLoanLenderDiscount';
 
 interface Props {
@@ -21,6 +23,7 @@ interface Props {
  * flash-of-empty-card on navigation.
  */
 export function LenderDiscountCard({ loanId, lender }: Props) {
+  const { t } = useTranslation();
   const loanIdBig = loanId ? safeBigInt(loanId) : null;
   const lenderAddr = typeof lender === 'string' && lender.length > 0
     ? (lender as `0x${string}`)
@@ -47,23 +50,23 @@ export function LenderDiscountCard({ loanId, lender }: Props) {
     <div className="card">
       <div className="card-title" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
         <Gift size={14} />
-        Lender Yield-Fee Discount
+        {t('lenderDiscountCard.loanTitle')}
       </div>
 
       <div className="data-row">
-        <span className="data-label">Effective so far (time-weighted)</span>
+        <span className="data-label">{t('lenderDiscountCard.effectiveSoFar')}</span>
         <span className="data-value">{effectivePct}%</span>
       </div>
       <div className="data-row">
-        <span className="data-label">Currently earning (stamped tier)</span>
+        <span className="data-label">{t('lenderDiscountCard.currentlyEarning')}</span>
         <span className="data-value">{stampedPct}%</span>
       </div>
       <div className="data-row">
         <span className="data-label">
           <Clock size={12} style={{ verticalAlign: 'middle', marginRight: 4 }} />
-          Window elapsed
+          {t('lenderDiscountCard.windowElapsed')}
         </span>
-        <span className="data-value">{formatDuration(data.windowSeconds)}</span>
+        <span className="data-value">{formatDuration(data.windowSeconds, t)}</span>
       </div>
 
       {tiersDiffer && (
@@ -74,12 +77,11 @@ export function LenderDiscountCard({ loanId, lender }: Props) {
         >
           <Info size={14} />
           <div>
-            At settlement the treasury cut on this loan's yield is reduced by
-            the time-weighted average <strong>{effectivePct}%</strong>, not
-            your current <strong>{stampedPct}%</strong> rate. Topping up VPFI
-            just before repay won't capture the full current-tier discount —
-            only the share proportional to how long it was held during the
-            loan.
+            {t('lenderDiscountCard.tiersDifferAlertPrefix')}
+            <strong>{effectivePct}%</strong>
+            {t('lenderDiscountCard.tiersDifferAlertMid')}
+            <strong>{stampedPct}%</strong>
+            {t('lenderDiscountCard.tiersDifferAlertSuffix')}
           </div>
         </div>
       )}
@@ -97,18 +99,24 @@ function safeBigInt(s: string): bigint | null {
   }
 }
 
-function formatDuration(seconds: number): string {
-  if (seconds <= 0) return '0s';
+function formatDuration(seconds: number, t: TFunction): string {
+  if (seconds <= 0) return t('lenderDiscountCard.duration0s');
   const days = Math.floor(seconds / 86_400);
   if (days >= 1) {
     const hours = Math.floor((seconds % 86_400) / 3_600);
-    return hours > 0 ? `${days}d ${hours}h` : `${days}d`;
+    return hours > 0
+      ? t('lenderDiscountCard.durationDaysHours', { days, hours })
+      : t('lenderDiscountCard.durationDays', { days });
   }
   const hours = Math.floor(seconds / 3_600);
   if (hours >= 1) {
     const mins = Math.floor((seconds % 3_600) / 60);
-    return mins > 0 ? `${hours}h ${mins}m` : `${hours}h`;
+    return mins > 0
+      ? t('lenderDiscountCard.durationHoursMins', { hours, mins })
+      : t('lenderDiscountCard.durationHours', { hours });
   }
   const mins = Math.floor(seconds / 60);
-  return mins >= 1 ? `${mins}m` : `${seconds}s`;
+  return mins >= 1
+    ? t('lenderDiscountCard.durationMins', { mins })
+    : t('lenderDiscountCard.durationSecs', { seconds });
 }

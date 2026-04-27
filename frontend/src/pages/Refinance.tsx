@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
 import { maxUint256 as MaxUint256 } from 'viem';
 import { AlertTriangle, ArrowLeft, CheckCircle } from 'lucide-react';
 import { ErrorAlert } from '../components/app/ErrorAlert';
@@ -41,6 +42,7 @@ function assetTypeParam(t: bigint): string {
  * early-withdrawal per spec.
  */
 export default function Refinance() {
+  const { t } = useTranslation();
   const { loanId } = useParams();
   const { address, chainId, activeChain, isCorrectChain } = useWallet();
   // Active-chain Diamond + explorer (fallback: DEFAULT_CHAIN). Approvals
@@ -126,7 +128,7 @@ export default function Refinance() {
   if (loading) {
     return (
       <div className="empty-state" style={{ minHeight: '60vh' }}>
-        <p>Loading loan #{loanId}...</p>
+        <p>{t('loanDetails.loadingLoan', { id: loanId })}</p>
       </div>
     );
   }
@@ -137,10 +139,10 @@ export default function Refinance() {
         <div className="empty-state-icon" style={{ background: 'rgba(239,68,68,0.1)', color: 'var(--accent-red)' }}>
           <AlertTriangle size={28} />
         </div>
-        <h3>Loan Not Found</h3>
-        <p>{error || `Loan #${loanId} does not exist.`}</p>
+        <h3>{t('loanDetails.loanNotFound')}</h3>
+        <p>{error || t('loanDetails.loanNotFoundBody', { id: loanId })}</p>
         <Link to="/app" className="btn btn-secondary btn-sm">
-          <ArrowLeft size={16} /> Back to Dashboard
+          <ArrowLeft size={16} /> {t('loanDetails.backToDashboard')}
         </Link>
       </div>
     );
@@ -152,10 +154,10 @@ export default function Refinance() {
         <div className="empty-state-icon" style={{ background: 'rgba(239,68,68,0.1)', color: 'var(--accent-red)' }}>
           <AlertTriangle size={28} />
         </div>
-        <h3>Borrower only</h3>
-        <p>Only the current holder of the borrower-side Vaipakam NFT can refinance this loan.</p>
+        <h3>{t('loanFlow.borrowerOnly')}</h3>
+        <p>{t('loanFlow.borrowerOnlyRefinance')}</p>
         <Link to={`/app/loans/${loan.id.toString()}`} className="btn btn-secondary btn-sm">
-          <ArrowLeft size={16} /> Back to Loan
+          <ArrowLeft size={16} /> {t('loanFlow.backToLoan')}
         </Link>
       </div>
     );
@@ -164,34 +166,30 @@ export default function Refinance() {
   return (
     <div className="loan-details">
       <Link to={`/app/loans/${loan.id.toString()}`} className="back-link">
-        <ArrowLeft size={16} /> Back to Loan #{loan.id.toString()}
+        <ArrowLeft size={16} /> {t('loanFlow.backToLoan')} #{loan.id.toString()}
       </Link>
 
       <div className="loan-header">
         <div>
           <h1 className="page-title" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-            Refinance · Loan #{loan.id.toString()}
+            {t('refinance.pageTitle', { id: loan.id.toString() })}
             <CardInfo id="refinance.overview" />
           </h1>
-          <p className="page-subtitle">
-            Replace the current lender with a new one offering better terms. Works as a
-            two-step flow: post a Borrower Offer, then complete the refinance after a new
-            lender accepts it.
-          </p>
+          <p className="page-subtitle">{t('refinance.pageSubtitle')}</p>
         </div>
       </div>
 
       {!isActive && (
         <div className="alert alert-warning">
           <AlertTriangle size={18} />
-          <span>This loan is not active. Refinance is only available on active loans.</span>
+          <span>{t('loanFlow.notActiveRefinance')}</span>
         </div>
       )}
 
       {isActive && !isErc20Loan && (
         <div className="alert alert-warning">
           <AlertTriangle size={18} />
-          <span>Refinance is only supported for ERC-20 loans in Phase 1.</span>
+          <span>{t('refinance.phase1Erc20Only')}</span>
         </div>
       )}
 
@@ -199,7 +197,7 @@ export default function Refinance() {
         <div className="alert alert-success">
           <CheckCircle size={18} />
           <span>
-            Tx submitted:{' '}
+            {t('loanFlow.txSubmitted')}{' '}
             <a href={`${activeBlockExplorer}/tx/${txHash}`} target="_blank" rel="noreferrer" style={{ textDecoration: 'underline' }}>
               {txHash.slice(0, 20)}...
             </a>
@@ -211,26 +209,26 @@ export default function Refinance() {
 
       <div className="card">
         <div className="card-title" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-          Position Summary
+          {t('loanFlow.positionSummary')}
           <CardInfo id="refinance.position-summary" />
         </div>
         <div className="data-row">
-          <span className="data-label">Principal</span>
+          <span className="data-label">{t('loanDetails.principal')}</span>
           <span className="data-value">
             <TokenAmount amount={loan.principal} address={loan.principalAsset} />{' '}
             <AssetSymbol address={loan.principalAsset} />
           </span>
         </div>
         <div className="data-row">
-          <span className="data-label">Rate</span>
+          <span className="data-label">{t('loanFlow.rate')}</span>
           <span className="data-value">{bpsToPercent(loan.interestRateBps)}%</span>
         </div>
         <div className="data-row">
-          <span className="data-label">Duration</span>
-          <span className="data-value">{loan.durationDays.toString()} days</span>
+          <span className="data-label">{t('loanDetails.duration')}</span>
+          <span className="data-value">{loan.durationDays.toString()} {t('loanDetails.daysSuffix')}</span>
         </div>
         <div className="data-row">
-          <span className="data-label">Borrower NFT</span>
+          <span className="data-label">{t('loanFlow.borrowerNft')}</span>
           <span className="data-value mono">#{loan.borrowerTokenId.toString()}</span>
         </div>
       </div>
@@ -238,7 +236,7 @@ export default function Refinance() {
       {isActive && isErc20Loan && (
         <div className="card loan-actions-card">
           <div className="card-title" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-            Step 1 · Post a Borrower Offer
+            {t('refinance.step1Title')}
             <CardInfo id="refinance.step-1-post-offer" />
           </div>
           <p className="action-desc">
@@ -269,7 +267,7 @@ export default function Refinance() {
               }).toString()}`}
               className="btn btn-primary btn-sm"
             >
-              Create Refinance Borrower Offer
+              {t('refinance.createOfferButton')}
             </Link>
           </div>
         </div>
@@ -278,13 +276,13 @@ export default function Refinance() {
       {isActive && isErc20Loan && (
         <div className="card loan-actions-card">
           <div className="card-title" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-            Step 2 · Complete Refinance
+            {t('refinance.step2Title')}
             <CardInfo id="refinance.step-2-complete" />
           </div>
           {step === 'review' || step === 'submitting' ? (
             <>
               <div className="data-row" style={{ marginTop: 12 }}>
-                <span className="data-label">Accepted offer ID</span>
+                <span className="data-label">{t('refinance.acceptedOfferIdLabel')}</span>
                 <span className="data-value">#{offerIdStr}</span>
               </div>
               <p className="action-desc" style={{ marginTop: 12 }}>
@@ -300,14 +298,14 @@ export default function Refinance() {
                   onClick={handleRefinance}
                   disabled={step === 'submitting'}
                 >
-                  {step === 'submitting' ? 'Submitting...' : 'Confirm & Refinance'}
+                  {step === 'submitting' ? t('refinance.submitting') : t('refinance.confirmButton')}
                 </button>
                 <button
                   className="btn btn-secondary btn-sm"
                   onClick={() => setStep('idle')}
                   disabled={step === 'submitting'}
                 >
-                  Back
+                  {t('refinance.back')}
                 </button>
               </div>
             </>
@@ -320,7 +318,7 @@ export default function Refinance() {
               </p>
               <div className="action-row" style={{ alignItems: 'flex-end' }}>
                 <div style={{ flex: 1 }}>
-                  <label className="form-label">Accepted Borrower Offer ID</label>
+                  <label className="form-label">{t('refinance.acceptedOfferIdInputLabel')}</label>
                   <input
                     className="form-input"
                     type="text"
@@ -336,7 +334,7 @@ export default function Refinance() {
                   onClick={() => setStep('review')}
                   disabled={!offerIdStr}
                 >
-                  Review Refinance
+                  {t('refinance.reviewButton')}
                 </button>
               </div>
             </>

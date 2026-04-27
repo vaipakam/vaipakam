@@ -1,53 +1,53 @@
 import { Link } from "react-router-dom";
 import { ArrowRight, Coins } from "lucide-react";
+import { useTranslation } from "react-i18next";
 import "./Hero.css";
 
 export default function Hero() {
+  const { t } = useTranslation();
   return (
     <section className="hero" id="hero">
       <div className="hero-bg-glow" />
       <div className="container hero-container">
         <div className="hero-content">
-          <div className="hero-brand">Vaipakam</div>
+          <div className="hero-brand">{t('hero.brand')}</div>
 
           <h1 className="hero-title">
-            Peer-to-Peer Lending
+            {t('hero.titleLine1')}
             <br />
-            <span className="hero-gradient">Fully On-Chain</span>
+            <span className="hero-gradient">{t('hero.titleLine2')}</span>
           </h1>
 
           <p className="hero-subtitle">
-            <strong>Vaipakam</strong> lets you lend and borrow tokens, rent
-            NFTs, and set your own terms. Every position is tracked by a unique
-            NFT — transparent, traceable and trustless from offer to settlement.
+            <strong>{t('hero.subtitlePrefix')}</strong> {t('hero.subtitleBody')}
           </p>
 
           <div className="hero-actions">
             <Link to="/app" className="btn btn-primary btn-lg">
-              Launch App <ArrowRight size={18} />
+              {t('hero.launchApp')} <ArrowRight size={18} />
             </Link>
             <Link to="/app/buy-vpfi" className="btn btn-secondary btn-lg">
-              <Coins size={18} /> Buy VPFI
+              <Coins size={18} /> {t('hero.buyVpfi')}
             </Link>
             <a href="#how-it-works" className="btn btn-ghost btn-lg">
-              How It Works
+              {t('hero.howItWorks')}
             </a>
           </div>
 
           <div className="hero-stats">
             <div className="hero-stat">
-              <span className="hero-stat-value">P2P</span>
-              <span className="hero-stat-label">Direct Lending</span>
+              <span className="hero-stat-value">{t('hero.statP2pValue')}</span>
+              <span className="hero-stat-label">{t('hero.statP2pLabel')}</span>
             </div>
             <div className="hero-stat-divider" />
             <div className="hero-stat">
-              <span className="hero-stat-value">NFT</span>
-              <span className="hero-stat-label">Position Tracking</span>
+              <span className="hero-stat-value">{t('hero.statNftValue')}</span>
+              <span className="hero-stat-label">{t('hero.statNftLabel')}</span>
             </div>
             <div className="hero-stat-divider" />
             <div className="hero-stat">
-              <span className="hero-stat-value">1:1</span>
-              <span className="hero-stat-label">Isolated Escrow</span>
+              <span className="hero-stat-value">{t('hero.statEscrowValue')}</span>
+              <span className="hero-stat-label">{t('hero.statEscrowLabel')}</span>
             </div>
           </div>
         </div>
@@ -70,12 +70,10 @@ export default function Hero() {
               </svg>
             </div>
             <div>
-              <div className="hero-card-title">Lend 1,000 USDC</div>
-              <div className="hero-card-meta">
-                5% APR &middot; 30 days &middot; ETH collateral
-              </div>
+              <div className="hero-card-title">{t('hero.demoLendTitle')}</div>
+              <div className="hero-card-meta">{t('hero.demoLendMeta')}</div>
             </div>
-            <span className="hero-card-status active">Active</span>
+            <span className="hero-card-status active">{t('hero.demoLendStatus')}</span>
           </div>
 
           <div className="hero-card hero-card-2">
@@ -95,12 +93,10 @@ export default function Hero() {
               </svg>
             </div>
             <div>
-              <div className="hero-card-title">Rent Axie #1234</div>
-              <div className="hero-card-meta">
-                10 USDC/day &middot; 7 days &middot; ERC-4907
-              </div>
+              <div className="hero-card-title">{t('hero.demoRentTitle')}</div>
+              <div className="hero-card-meta">{t('hero.demoRentMeta')}</div>
             </div>
-            <span className="hero-card-status pending">Matched</span>
+            <span className="hero-card-status pending">{t('hero.demoRentStatus')}</span>
           </div>
 
           <div className="hero-card hero-card-3">
@@ -119,12 +115,10 @@ export default function Hero() {
               </svg>
             </div>
             <div>
-              <div className="hero-card-title">Loan Repaid</div>
-              <div className="hero-card-meta">
-                1,004.11 USDC settled &middot; Collateral released
-              </div>
+              <div className="hero-card-title">{t('hero.demoRepayTitle')}</div>
+              <div className="hero-card-meta">{t('hero.demoRepayMeta')}</div>
             </div>
-            <span className="hero-card-status settled">Closed</span>
+            <span className="hero-card-status settled">{t('hero.demoRepayStatus')}</span>
           </div>
         </div>
       </div>

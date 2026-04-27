@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
 import {
   Coins,
   TrendingUp,
@@ -51,6 +52,7 @@ function tierForVpfiUnits(balance: number): number {
 }
 
 export default function Rewards() {
+  const { t } = useTranslation();
   const { address, isCorrectChain, activeChain, switchToDefaultChain } =
     useWallet();
   const diamond = useDiamondContract();
@@ -274,18 +276,16 @@ export default function Rewards() {
   if (!address) {
     return (
       <div>
-        <h1 style={{ marginBottom: 8 }}>Rewards</h1>
+        <h1 style={{ marginBottom: 8 }}>{t('appNav.rewards')}</h1>
         <div className="card">
           <div style={{ display: "flex", gap: 12, alignItems: "flex-start" }}>
             <Wallet size={22} style={{ color: "var(--text-secondary)" }} />
             <div>
               <div style={{ fontWeight: 600, marginBottom: 4 }}>
-                Connect your wallet
+                {t('rewards.connectTitle')}
               </div>
               <p className="stat-label" style={{ margin: 0 }}>
-                Rewards can only be claimed on supported lending chains. Connect
-                a wallet on a supported chain to view and claim your staking and
-                interaction rewards.
+                {t('rewards.connectBody')}
               </p>
             </div>
           </div>
@@ -297,7 +297,7 @@ export default function Rewards() {
   if (!isCorrectChain) {
     return (
       <div>
-        <h1 style={{ marginBottom: 8 }}>Rewards</h1>
+        <h1 style={{ marginBottom: 8 }}>{t('appNav.rewards')}</h1>
         <div className="card" style={{ borderColor: "var(--accent-yellow)" }}>
           <div style={{ display: "flex", gap: 12, alignItems: "flex-start" }}>
             <AlertTriangle
@@ -306,14 +306,10 @@ export default function Rewards() {
             />
             <div style={{ flex: 1 }}>
               <div style={{ fontWeight: 600, marginBottom: 4 }}>
-                Unsupported network
+                {t('rewards.unsupportedNetwork')}
               </div>
               <p className="stat-label" style={{ margin: "0 0 12px" }}>
-                Rewards can only be claimed on supported lending chains. Your
-                wallet is currently on{" "}
-                <strong>{activeChain?.name ?? "an unsupported network"}</strong>
-                , which does not host a Vaipakam Diamond. Switch to a supported
-                chain to continue.
+                {t('rewards.unsupportedNetworkBody')}
               </p>
               <button
                 className="btn btn-primary"
@@ -321,7 +317,7 @@ export default function Rewards() {
                   void switchToDefaultChain();
                 }}
               >
-                Switch network
+                {t('nav.switchNetwork')}
               </button>
             </div>
           </div>
@@ -333,8 +329,8 @@ export default function Rewards() {
   if (loading && !staking) {
     return (
       <div>
-        <h1>Rewards</h1>
-        <p className="stat-label">Loading…</p>
+        <h1>{t('appNav.rewards')}</h1>
+        <p className="stat-label">{t('common.loading')}</p>
       </div>
     );
   }
@@ -342,12 +338,12 @@ export default function Rewards() {
   if (error) {
     return (
       <div>
-        <h1>Rewards</h1>
+        <h1>{t('appNav.rewards')}</h1>
         <div className="card" style={{ borderColor: "var(--accent-red)" }}>
           <div style={{ display: "flex", gap: 12, alignItems: "flex-start" }}>
             <AlertTriangle size={22} style={{ color: "var(--accent-red)" }} />
             <div>
-              <div style={{ fontWeight: 600 }}>Failed to load rewards</div>
+              <div style={{ fontWeight: 600 }}>{t('rewards.failedToLoad')}</div>
               <p className="stat-label" style={{ margin: 0 }}>
                 {error.message}
               </p>
@@ -365,12 +361,11 @@ export default function Rewards() {
     <div>
       <header style={{ marginBottom: 24 }}>
         <h1 style={{ marginBottom: 8, display: 'flex', alignItems: 'center', gap: 6 }}>
-          Rewards
+          {t('appNav.rewards')}
           <CardInfo id="rewards.overview" />
         </h1>
         <p className="stat-label" style={{ margin: 0 }}>
-          Escrow-held VPFI accrues a 5% APR passively, and every USD of interest
-          settled on a loan earns you a daily share of the interaction pool.
+          {t('rewards.pageSubtitle')}
         </p>
       </header>
 
@@ -514,13 +509,11 @@ export default function Rewards() {
             }}
           >
             <ArrowDown size={20} style={{ color: "var(--brand)" }} />
-            <h2 style={{ margin: 0 }}>Withdraw staked VPFI</h2>
+            <h2 style={{ margin: 0 }}>{t('rewards.withdrawStakedTitle')}</h2>
             <CardInfo id="rewards.withdraw-staked" />
           </div>
           <p className="stat-label" style={{ marginTop: 0 }}>
-            Move VPFI out of your escrow back to your wallet. Withdrawn VPFI
-            stops accruing staking rewards and no longer counts toward your
-            discount tier.
+            {t('rewards.withdrawStakedBody')}
           </p>
 
           <div
@@ -533,7 +526,7 @@ export default function Rewards() {
           >
             <Wallet size={14} style={{ color: "var(--text-secondary)" }} />
             <div className="stat-label" style={{ margin: 0 }}>
-              In escrow:{" "}
+              {t('rewards.inEscrow')}:{" "}
               <strong style={{ color: "var(--text-primary)" }}>
                 {staking ? formatVpfi(staking.userStaked).toFixed(4) : "—"} VPFI
               </strong>
@@ -541,7 +534,7 @@ export default function Rewards() {
           </div>
 
           <label className="stat-label" style={{ display: "block" }}>
-            Amount (VPFI)
+            {t('rewards.amountVpfi')}
           </label>
           <input
             type="text"
@@ -562,7 +555,7 @@ export default function Rewards() {
               }
               disabled={!staking || staking.userStaked === 0n}
             >
-              Max
+              {t('rewards.max')}
             </button>
           </div>
           <button
@@ -579,10 +572,10 @@ export default function Rewards() {
             onClick={openUnstakeReview}
           >
             {!staking || staking.userStaked === 0n
-              ? "No VPFI in escrow to unstake"
+              ? t('rewards.noVpfiInEscrow')
               : step === "withdrawing"
-                ? "Unstaking…"
-                : "Review unstake"}
+                ? t('rewards.unstaking')
+                : t('rewards.reviewUnstake')}
           </button>
 
           {step === "unstake-review" && reviewAmount != null && (
@@ -652,6 +645,7 @@ function ClaimRewardsCard({
   chainName,
   onClaim,
 }: ClaimRewardsCardProps) {
+  const { t } = useTranslation();
   const interactionClaimable =
     !interactionWaiting && pendingInteraction > 0n ? pendingInteraction : 0n;
   const totalClaimable = pendingStaking + interactionClaimable;
@@ -667,12 +661,11 @@ function ClaimRewardsCard({
         }}
       >
         <Coins size={20} style={{ color: "var(--brand)" }} />
-        <h2 style={{ margin: 0 }}>Claim Rewards</h2>
+        <h2 style={{ margin: 0 }}>{t('rewards.claimRewardsTitle')}</h2>
         <CardInfo id="rewards.claim" />
       </div>
       <p className="stat-label" style={{ marginTop: 0 }}>
-        Minted directly on <strong>{chainName}</strong> — no bridging or chain
-        switch required.
+        {t('rewards.mintedDirectlyOn', { chain: chainName })}
       </p>
 
       <div
@@ -703,7 +696,7 @@ function ClaimRewardsCard({
               }}
             >
               <Coins size={14} style={{ color: "var(--text-secondary)" }} />
-              Staking rewards
+              {t('rewards.stakingRewards')}
             </div>
             <div className="stat-label" style={{ fontSize: 11 }}>
               {staking ? `${staking.aprBps / 100}% APR` : "—"} · pool{" "}
@@ -745,7 +738,7 @@ function ClaimRewardsCard({
                 size={14}
                 style={{ color: "var(--text-secondary)" }}
               />
-              Interaction rewards
+              {t('rewards.interactionRewards')}
             </div>
             <div className="stat-label" style={{ fontSize: 11 }}>
               {interaction ? `${interaction.aprBps / 100}% APR` : "—"} · pool{" "}
@@ -771,7 +764,7 @@ function ClaimRewardsCard({
             }}
           >
             {interactionWaiting
-              ? "waiting"
+              ? t('rewards.waiting')
               : `${formatVpfi(pendingInteraction).toFixed(6)} VPFI`}
           </div>
         </div>
@@ -817,7 +810,7 @@ function ClaimRewardsCard({
         }}
       >
         <span className="stat-label" style={{ margin: 0, fontWeight: 600 }}>
-          Total to mint
+          {t('rewards.totalToMint')}
         </span>
         <span
           className="mono"
@@ -841,10 +834,10 @@ function ClaimRewardsCard({
         onClick={onClaim}
       >
         {claiming
-          ? "Claiming…"
+          ? t('rewards.claiming')
           : nothingToClaim
-            ? `No rewards available to claim on ${chainName}`
-            : `Claim ${formatVpfi(totalClaimable).toFixed(6)} VPFI`}
+            ? t('rewards.noRewardsAvailable', { chain: chainName })
+            : t('rewards.claimAmount', { amount: formatVpfi(totalClaimable).toFixed(6) })}
       </button>
     </div>
   );

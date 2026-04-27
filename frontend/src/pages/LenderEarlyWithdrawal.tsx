@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
 import { AlertTriangle, ArrowLeft, CheckCircle } from 'lucide-react';
 import { ErrorAlert } from '../components/app/ErrorAlert';
 import { RiskDisclosures } from '../components/app/RiskDisclosures';
@@ -9,9 +10,6 @@ import { useLoan } from '../hooks/useLoan';
 import { usePositionLock, LockReason } from '../hooks/usePositionLock';
 import { AssetType, LoanStatus } from '../types/loan';
 import { decodeContractError } from '../lib/decodeContractError';
-import {
-  FALLBACK_CONSENT_CHECKBOX_LABEL,
-} from '../lib/fallbackTerms';
 import { beginStep } from '../lib/journeyLog';
 import { DEFAULT_CHAIN } from '../contracts/config';
 import { TransferLockWarning } from '../components/app/TransferLockWarning';
@@ -30,6 +28,7 @@ type Step = 'idle' | 'review' | 'submitting' | 'success';
  * of the linked sale offer.
  */
 export default function LenderEarlyWithdrawal() {
+  const { t } = useTranslation();
   const { loanId } = useParams();
   const { address, chainId, activeChain, isCorrectChain } = useWallet();
   const activeBlockExplorer =
@@ -111,7 +110,7 @@ export default function LenderEarlyWithdrawal() {
   if (loading) {
     return (
       <div className="empty-state" style={{ minHeight: '60vh' }}>
-        <p>Loading loan #{loanId}...</p>
+        <p>{t('loanDetails.loadingLoan', { id: loanId })}</p>
       </div>
     );
   }
@@ -122,10 +121,10 @@ export default function LenderEarlyWithdrawal() {
         <div className="empty-state-icon" style={{ background: 'rgba(239,68,68,0.1)', color: 'var(--accent-red)' }}>
           <AlertTriangle size={28} />
         </div>
-        <h3>Loan Not Found</h3>
-        <p>{error || `Loan #${loanId} does not exist.`}</p>
+        <h3>{t('loanDetails.loanNotFound')}</h3>
+        <p>{error || t('loanDetails.loanNotFoundBody', { id: loanId })}</p>
         <Link to="/app" className="btn btn-secondary btn-sm">
-          <ArrowLeft size={16} /> Back to Dashboard
+          <ArrowLeft size={16} /> {t('loanDetails.backToDashboard')}
         </Link>
       </div>
     );
@@ -137,10 +136,10 @@ export default function LenderEarlyWithdrawal() {
         <div className="empty-state-icon" style={{ background: 'rgba(239,68,68,0.1)', color: 'var(--accent-red)' }}>
           <AlertTriangle size={28} />
         </div>
-        <h3>Lender only</h3>
-        <p>Only the current holder of the lender-side Vaipakam NFT can initiate early withdrawal for this loan.</p>
+        <h3>{t('loanFlow.lenderOnly')}</h3>
+        <p>{t('loanFlow.lenderOnlyEarlyWithdrawal')}</p>
         <Link to={`/app/loans/${loan.id.toString()}`} className="btn btn-secondary btn-sm">
-          <ArrowLeft size={16} /> Back to Loan
+          <ArrowLeft size={16} /> {t('loanFlow.backToLoan')}
         </Link>
       </div>
     );
@@ -149,36 +148,30 @@ export default function LenderEarlyWithdrawal() {
   return (
     <div className="loan-details">
       <Link to={`/app/loans/${loan.id.toString()}`} className="back-link">
-        <ArrowLeft size={16} /> Back to Loan #{loan.id.toString()}
+        <ArrowLeft size={16} /> {t('loanFlow.backToLoan')} #{loan.id.toString()}
       </Link>
 
       <div className="loan-header">
         <div>
           <h1 className="page-title" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-            Early Withdrawal · Loan #{loan.id.toString()}
+            {t('earlyWithdrawal.pageTitle', { id: loan.id.toString() })}
             <CardInfo id="early-withdrawal.overview" />
           </h1>
-          <p className="page-subtitle">
-            Sell your lender position to a new lender. Your lender-side Vaipakam NFT will be
-            locked for transfer while the sale is pending.
-          </p>
+          <p className="page-subtitle">{t('earlyWithdrawal.pageSubtitle')}</p>
         </div>
       </div>
 
       {!isActive && (
         <div className="alert alert-warning">
           <AlertTriangle size={18} />
-          <span>This loan is not active. Early withdrawal is only available on active loans.</span>
+          <span>{t('loanFlow.notActiveEarlyWithdrawal')}</span>
         </div>
       )}
 
       {isActive && !isErc20 && (
         <div className="alert alert-warning">
           <AlertTriangle size={18} />
-          <span>
-            Lender-side sale is only supported for ERC-20 loans in Phase 1. NFT-rental lender positions
-            cannot be sold through this flow.
-          </span>
+          <span>{t('earlyWithdrawal.phase1Erc20Only')}</span>
         </div>
       )}
 
@@ -186,7 +179,7 @@ export default function LenderEarlyWithdrawal() {
         <div className="alert alert-success">
           <CheckCircle size={18} />
           <span>
-            Tx submitted:{' '}
+            {t('loanFlow.txSubmitted')}{' '}
             <a href={`${activeBlockExplorer}/tx/${txHash}`} target="_blank" rel="noreferrer" style={{ textDecoration: 'underline' }}>
               {txHash.slice(0, 20)}...
             </a>
@@ -198,26 +191,26 @@ export default function LenderEarlyWithdrawal() {
 
       <div className="card">
         <div className="card-title" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-          Position Summary
+          {t('loanFlow.positionSummary')}
           <CardInfo id="early-withdrawal.position-summary" />
         </div>
         <div className="data-row">
-          <span className="data-label">Principal</span>
+          <span className="data-label">{t('loanDetails.principal')}</span>
           <span className="data-value">
             <TokenAmount amount={loan.principal} address={loan.principalAsset} />{' '}
             <AssetSymbol address={loan.principalAsset} />
           </span>
         </div>
         <div className="data-row">
-          <span className="data-label">Original Rate</span>
+          <span className="data-label">{t('loanFlow.originalRate')}</span>
           <span className="data-value">{bpsToPercent(loan.interestRateBps)}%</span>
         </div>
         <div className="data-row">
-          <span className="data-label">Duration</span>
-          <span className="data-value">{loan.durationDays.toString()} days</span>
+          <span className="data-label">{t('loanDetails.duration')}</span>
+          <span className="data-value">{loan.durationDays.toString()} {t('loanDetails.daysSuffix')}</span>
         </div>
         <div className="data-row">
-          <span className="data-label">Lender NFT</span>
+          <span className="data-label">{t('loanFlow.lenderNft')}</span>
           <span className="data-value mono">#{loan.lenderTokenId.toString()}</span>
         </div>
       </div>
@@ -225,7 +218,7 @@ export default function LenderEarlyWithdrawal() {
       {isActive && isErc20 && (
         <div className="card loan-actions-card">
           <div className="card-title" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-            {inProgress ? 'Sale In Progress' : 'Initiate Sale'}
+            {inProgress ? t('earlyWithdrawal.saleInProgressTitle') : t('earlyWithdrawal.initiateSaleTitle')}
             <CardInfo id="early-withdrawal.initiate-sale" />
           </div>
 
@@ -245,10 +238,10 @@ export default function LenderEarlyWithdrawal() {
                   onClick={handleComplete}
                   disabled={step === 'submitting'}
                 >
-                  {step === 'submitting' ? 'Processing...' : 'Complete Sale (recovery)'}
+                  {step === 'submitting' ? t('earlyWithdrawal.processingDots') : t('earlyWithdrawal.completeSaleRecovery')}
                 </button>
                 <Link to="/app/offers" className="btn btn-secondary btn-sm">
-                  View Offer Book
+                  {t('preclose.viewOfferBook')}
                 </Link>
               </div>
             </>
@@ -261,12 +254,12 @@ export default function LenderEarlyWithdrawal() {
                 role="lender"
               />
               <div className="data-row" style={{ marginTop: 12 }}>
-                <span className="data-label">New rate</span>
-                <span className="data-value">{rate}% per year</span>
+                <span className="data-label">{t('common.newRate')}</span>
+                <span className="data-value">{rate}{t('earlyWithdrawal.ratePerYearSuffix')}</span>
               </div>
               <div className="data-row">
-                <span className="data-label">Remaining term</span>
-                <span className="data-value">inherits from live loan</span>
+                <span className="data-label">{t('common.remainingTerm')}</span>
+                <span className="data-value">{t('earlyWithdrawal.remainingTermInherits')}</span>
               </div>
               <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
                 <button
@@ -274,27 +267,23 @@ export default function LenderEarlyWithdrawal() {
                   onClick={handleInitiate}
                   disabled={step === 'submitting'}
                 >
-                  {step === 'submitting' ? 'Submitting...' : 'Confirm & Create Sale Offer'}
+                  {step === 'submitting' ? t('earlyWithdrawal.submittingDots') : t('earlyWithdrawal.confirmAndCreateSaleOffer')}
                 </button>
                 <button
                   className="btn btn-secondary btn-sm"
                   onClick={() => setStep('idle')}
                   disabled={step === 'submitting'}
                 >
-                  Back
+                  {t('earlyWithdrawal.back')}
                 </button>
               </div>
             </>
           ) : (
             <>
-              <p className="action-desc">
-                Set a new interest rate that a replacement lender will see on the sale offer. Noah
-                (a new lender) can then accept the offer from the Offer Book. You forfeit accrued
-                interest to treasury on completion.
-              </p>
+              <p className="action-desc">{t('earlyWithdrawal.saleIntroBody')}</p>
               <div className="action-row" style={{ alignItems: 'flex-end' }}>
                 <div style={{ flex: 1 }}>
-                  <label className="form-label">Sale interest rate (%)</label>
+                  <label className="form-label">{t('earlyWithdrawal.saleInterestRateLabel')}</label>
                   <input
                     className="form-input"
                     type="number"
@@ -313,7 +302,7 @@ export default function LenderEarlyWithdrawal() {
                   checked={fallbackConsent}
                   onChange={(e) => setFallbackConsent(e.target.checked)}
                 />
-                <span>{FALLBACK_CONSENT_CHECKBOX_LABEL}</span>
+                <span>{t('riskDisclosures.checkboxLabel')}</span>
               </label>
               <div className="action-row" style={{ marginTop: 12 }}>
                 <button
@@ -321,7 +310,7 @@ export default function LenderEarlyWithdrawal() {
                   onClick={() => setStep('review')}
                   disabled={!rate || !fallbackConsent}
                 >
-                  Review Sale Offer
+                  {t('earlyWithdrawal.reviewSaleOffer')}
                 </button>
               </div>
             </>

@@ -1,4 +1,5 @@
 import { useState, type ReactNode } from "react";
+import { useTranslation } from "react-i18next";
 import { useWallet } from "../context/WalletContext";
 import { Bell, MessageCircle, Wallet } from "lucide-react";
 import { ErrorAlert } from "../components/app/ErrorAlert";
@@ -51,6 +52,7 @@ const PUSH_CHANNEL_ADDRESS: string | null = (() => {
  * different `warn_hf` per channel.
  */
 export default function Alerts() {
+  const { t } = useTranslation();
   const { address, chainId, isCorrectChain } = useWallet();
 
   const [warnHf, setWarnHf] = useState(1.5);
@@ -72,16 +74,16 @@ export default function Alerts() {
   if (!address) {
     return (
       <div className="page-container">
-        <h1>Alerts</h1>
-        <p>Connect your wallet to configure HF alerts.</p>
+        <h1>{t('appNav.alerts')}</h1>
+        <p>{t('alerts.connectBody')}</p>
       </div>
     );
   }
   if (!isCorrectChain) {
     return (
       <div className="page-container">
-        <h1>Alerts</h1>
-        <p>Switch to a supported chain to configure alerts for your loans.</p>
+        <h1>{t('appNav.alerts')}</h1>
+        <p>{t('alerts.switchChainBody')}</p>
       </div>
     );
   }
@@ -94,7 +96,7 @@ export default function Alerts() {
     // bundles where the env was missing entirely).
     return (
       <div className="page-container">
-        <h1>Alerts</h1>
+        <h1>{t('appNav.alerts')}</h1>
         <p>
           The off-chain alert watcher origin is not configured in this build
           (<code>VITE_HF_WATCHER_ORIGIN</code>). Alert features (HF threshold
@@ -296,15 +298,10 @@ export default function Alerts() {
     <div className="page-container">
       <h1 style={{ display: "flex", alignItems: "center", gap: 6 }}>
         <Bell size={22} style={{ verticalAlign: "-4px", marginRight: 8 }} />
-        Alerts
+        {t('appNav.alerts')}
         <CardInfo id="alerts.overview" />
       </h1>
-      <p style={{ maxWidth: 720 }}>
-        Get a heads-up when your Health Factor (HF) falls toward the liquidation
-        threshold. The off-chain watcher polls your active loans every 5 minutes
-        and alerts on band crossings — no gas, no on-chain state. Alerts fire
-        once per downgrade; climbing back to healthy re-arms the ladder.
-      </p>
+      <p style={{ maxWidth: 720 }}>{t('alerts.pageSubtitle')}</p>
 
       {err && (
         <ErrorAlert
@@ -333,13 +330,11 @@ export default function Alerts() {
         }}
       >
         <h2 style={{ fontSize: "1.05rem", margin: 0, display: "flex", alignItems: "center", gap: 6 }}>
-          Threshold ladder
+          {t('alerts.thresholdLadderTitle')}
           <CardInfo id="alerts.threshold-ladder" />
         </h2>
         <p style={{ fontSize: "0.85rem", opacity: 0.8, margin: "4px 0 16px" }}>
-          A fresh alert fires the first time HF crosses each band downward. Once
-          a band fires it re-arms after HF recovers above the next higher band's
-          threshold. Default values are conservative — adjust to taste.
+          {t('alertsPage.thresholdLadderBody')}
         </p>
 
         <div
@@ -350,7 +345,7 @@ export default function Alerts() {
             alignItems: "center",
           }}
         >
-          <label style={{ fontSize: "0.92rem" }}>Warn at HF</label>
+          <label style={{ fontSize: "0.92rem" }}>{t('alertsPage.warnAtHf')}</label>
           <input
             type="number"
             step="0.01"
@@ -361,10 +356,10 @@ export default function Alerts() {
             className="form-input"
           />
           <span style={{ fontSize: "0.82rem", opacity: 0.65 }}>
-            First heads-up — plenty of runway still.
+            {t('alertsPage.warnDescription')}
           </span>
 
-          <label style={{ fontSize: "0.92rem" }}>Alert at HF</label>
+          <label style={{ fontSize: "0.92rem" }}>{t('alertsPage.alertAtHf')}</label>
           <input
             type="number"
             step="0.01"
@@ -375,10 +370,10 @@ export default function Alerts() {
             className="form-input"
           />
           <span style={{ fontSize: "0.82rem", opacity: 0.65 }}>
-            Meaningful — take a look at adding collateral or repaying.
+            {t('alertsPage.alertDescription')}
           </span>
 
-          <label style={{ fontSize: "0.92rem" }}>Critical at HF</label>
+          <label style={{ fontSize: "0.92rem" }}>{t('alertsPage.criticalAtHf')}</label>
           <input
             type="number"
             step="0.01"
@@ -389,7 +384,7 @@ export default function Alerts() {
             className="form-input"
           />
           <span style={{ fontSize: "0.82rem", opacity: 0.65 }}>
-            Liquidation imminent — HF &lt; 1.00 triggers it on-chain.
+            {t('alertsPage.criticalDescription')}
           </span>
         </div>
 
@@ -399,7 +394,7 @@ export default function Alerts() {
           onClick={save}
           style={{ marginTop: 16 }}
         >
-          {saving ? "Saving…" : "Save thresholds"}
+          {saving ? t('alertsPage.saving') : t('alertsPage.saveThresholds')}
         </button>
       </section>
 
@@ -414,12 +409,11 @@ export default function Alerts() {
         }}
       >
         <h2 style={{ fontSize: "1.05rem", margin: 0, display: "flex", alignItems: "center", gap: 6 }}>
-          Delivery channels
+          {t('alerts.deliveryChannelsTitle')}
           <CardInfo id="alerts.delivery-channels" />
         </h2>
         <p style={{ fontSize: "0.85rem", opacity: 0.8, margin: "4px 0 16px" }}>
-          Enable one or both. Both rails share the threshold ladder above — you
-          don't configure different warn-levels per channel.
+          {t('alertsPage.deliveryChannelBody')}
         </p>
 
         {/* Telegram */}
@@ -438,16 +432,14 @@ export default function Alerts() {
             }}
           >
             <MessageCircle size={18} />
-            <strong>Telegram</strong>
+            <strong>{t('alertsPage.telegramTitle')}</strong>
           </div>
           <p style={{ fontSize: "0.82rem", opacity: 0.75, margin: "0 0 8px" }}>
-            Universal — no wallet plug-in required. Handshake: request a code
-            here, DM it to the bot, confirmation arrives back in Telegram.
+            {t('alertsPage.telegramBody')}
           </p>
           {tgLinkCode ? (
             <div style={{ fontSize: "0.9rem" }}>
-              DM this code to the Vaipakam alerts (@VaipakamBot) bot within 10
-              minutes:
+              {t('alerts.telegramHandshakeBody')}
               <div
                 style={{
                   margin: "6px 0",
@@ -464,7 +456,7 @@ export default function Alerts() {
               </div>
               {tgBotUrl && (
                 <a href={tgBotUrl} target="_blank" rel="noreferrer">
-                  Open Telegram →
+                  {t('alerts.openTelegram')}
                 </a>
               )}
             </div>
@@ -474,7 +466,7 @@ export default function Alerts() {
               disabled={linking}
               onClick={requestTelegramLink}
             >
-              {linking ? "Requesting…" : "Link Telegram"}
+              {linking ? t('alerts.requesting') : t('alerts.linkTelegram')}
             </button>
           )}
         </div>
@@ -490,15 +482,10 @@ export default function Alerts() {
             }}
           >
             <Wallet size={18} />
-            <strong>Push Protocol</strong>
+            <strong>{t('alertsPage.pushTitle')}</strong>
           </div>
           <p style={{ fontSize: "0.82rem", opacity: 0.75, margin: "0 0 8px" }}>
-            On-chain notification channel delivered to Push-enabled wallets
-            (Rabby, Push Wallet, MetaMask with Push Snap). Two steps:
-            (1) enable the rail here so the watcher dispatches Push
-            notifications for your wallet, and (2) subscribe to the
-            Vaipakam channel from your Push-enabled wallet so the
-            notifications actually land.
+            {t('alertsPage.pushBody')}
           </p>
 
           {PUSH_CHANNEL_ADDRESS && (
@@ -513,7 +500,7 @@ export default function Alerts() {
               }}
             >
               <div style={{ marginBottom: 4 }}>
-                <strong>Vaipakam channel:</strong>{" "}
+                <strong>{t('alertsPage.vaipakamChannel')}</strong>{" "}
                 <span
                   className="mono"
                   style={{ wordBreak: "break-all" }}
@@ -527,7 +514,7 @@ export default function Alerts() {
                   target="_blank"
                   rel="noreferrer"
                 >
-                  Subscribe on Push →
+                  {t('alertsPage.subscribeOnPush')}
                 </a>{" "}
                 ·{" "}
                 <a
@@ -535,7 +522,7 @@ export default function Alerts() {
                   target="_blank"
                   rel="noreferrer"
                 >
-                  Push docs
+                  {t('alertsPage.pushDocs')}
                 </a>
               </div>
             </div>
@@ -546,7 +533,7 @@ export default function Alerts() {
             disabled={saving}
             onClick={subscribePush}
           >
-            Enable Push rail
+            {t('alertsPage.enablePush')}
           </button>
         </div>
       </section>

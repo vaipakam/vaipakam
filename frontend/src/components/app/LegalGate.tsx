@@ -1,6 +1,7 @@
 import { type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { FileText, ShieldCheck, ExternalLink } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 import { useWallet } from '../../context/WalletContext';
 import { useTosAcceptance } from '../../hooks/useTosAcceptance';
 import { ErrorAlert } from './ErrorAlert';
@@ -24,6 +25,7 @@ import './LegalGate.css';
  * to the exact text they saw.
  */
 export function LegalGate({ children }: { children: ReactNode }) {
+  const { t } = useTranslation();
   const { address } = useWallet();
   const {
     hasAccepted,
@@ -50,24 +52,18 @@ export function LegalGate({ children }: { children: ReactNode }) {
             <ShieldCheck size={20} />
           </div>
           <div>
-            <h2 className="legal-gate-title">One-time Terms acceptance</h2>
-            <p className="legal-gate-body">
-              Before using the Vaipakam app you need to review and accept
-              the protocol's Terms of Service. This is a one-time signed
-              transaction — your acceptance is recorded on-chain,
-              anchored to your wallet, and only has to be re-signed if
-              the Terms change.
-            </p>
+            <h2 className="legal-gate-title">{t('legalGate.title')}</h2>
+            <p className="legal-gate-body">{t('legalGate.body')}</p>
           </div>
         </div>
 
         <div className="legal-gate-detail">
           <div className="legal-gate-row">
-            <span className="legal-gate-label">Current version</span>
+            <span className="legal-gate-label">{t('legalGate.currentVersion')}</span>
             <span className="legal-gate-value">v{currentVersion}</span>
           </div>
           <div className="legal-gate-row">
-            <span className="legal-gate-label">Content hash</span>
+            <span className="legal-gate-label">{t('legalGate.contentHash')}</span>
             <span className="legal-gate-value mono">
               {`${currentHash.slice(0, 10)}…${currentHash.slice(-6)}`}
             </span>
@@ -81,7 +77,7 @@ export function LegalGate({ children }: { children: ReactNode }) {
             rel="noreferrer"
             className="legal-gate-link"
           >
-            <FileText size={14} /> Read the full Terms of Service
+            <FileText size={14} /> {t('legalGate.readTerms')}
             <ExternalLink size={12} />
           </Link>
           <Link
@@ -90,7 +86,7 @@ export function LegalGate({ children }: { children: ReactNode }) {
             rel="noreferrer"
             className="legal-gate-link"
           >
-            <FileText size={14} /> Privacy Policy
+            <FileText size={14} /> {t('legalGate.privacyPolicy')}
             <ExternalLink size={12} />
           </Link>
         </div>
@@ -104,14 +100,11 @@ export function LegalGate({ children }: { children: ReactNode }) {
             onClick={() => void accept()}
             disabled={submitting}
           >
-            {submitting ? 'Signing…' : 'Sign & Accept'}
+            {submitting ? t('legalGate.signing') : t('legalGate.signAccept')}
           </button>
         </div>
 
-        <p className="legal-gate-footnote">
-          Signing costs a small on-chain fee. You will be asked to
-          approve one transaction from your wallet.
-        </p>
+        <p className="legal-gate-footnote">{t('legalGate.footnote')}</p>
       </div>
     </div>
   );

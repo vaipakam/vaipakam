@@ -1,4 +1,5 @@
 import { ExternalLink } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 import { InfoTip } from './InfoTip';
 import { getCardHelp } from '../lib/cardHelp';
 import { useMode } from '../context/ModeContext';
@@ -57,6 +58,7 @@ function buildLearnMoreHref(
 }
 
 export function CardInfo({ id, role }: CardInfoProps) {
+  const { t } = useTranslation();
   const entry = getCardHelp(id);
   const { mode } = useMode();
   if (!entry) return null;
@@ -71,17 +73,18 @@ export function CardInfo({ id, role }: CardInfoProps) {
   // across a `typeof` check when it's on the operand directly, not via
   // an intermediate variable. Hoisting compiles in dev but Cloudflare's
   // stricter build rejects it as "expression of type '…' can't be used
-  // to index type 'string | RoleKeyedSummary'".
-  const summary =
+  // to index type 'string | RoleKeyedI18nKey'".
+  const summaryKey =
     typeof entry.summary === 'string'
       ? entry.summary
       : entry.summary[role ?? 'lender'];
+  const summary = t(summaryKey);
   const roleSuffix =
     typeof entry.summary !== 'string' && role ? `:${role}` : '';
   const learnMoreHref = buildLearnMoreHref(mode, id, roleSuffix);
 
   return (
-    <InfoTip ariaLabel="About this card">
+    <InfoTip ariaLabel={t('cardInfo.ariaLabel')}>
       <span>{summary}</span>
       {' '}
       <a
@@ -90,7 +93,7 @@ export function CardInfo({ id, role }: CardInfoProps) {
         rel="noreferrer noopener"
         className="card-info-learn-more"
       >
-        Learn more
+        {t('cardInfo.learnMore')}
         <ExternalLink size={11} aria-hidden="true" />
       </a>
     </InfoTip>

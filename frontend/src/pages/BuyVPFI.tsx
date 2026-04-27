@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
+import { useTranslation } from "react-i18next";
 import {
   encodeFunctionData,
   parseAbi,
@@ -290,6 +291,7 @@ const VPFI_APPROVE_ABI = parseAbi([
 ]) as unknown as Abi;
 
 export default function BuyVPFI() {
+  const { t } = useTranslation();
   const {
     address,
     activeChain,
@@ -807,8 +809,8 @@ export default function BuyVPFI() {
         <div className="empty-state-icon">
           <Wallet size={28} />
         </div>
-        <h3>Connect Your Wallet</h3>
-        <p>Connect your wallet to buy VPFI and unlock the tiered discount.</p>
+        <h3>{t('buyVpfi.connectTitle')}</h3>
+        <p>{t('buyVpfi.connectBody')}</p>
       </div>
     );
   }
@@ -824,15 +826,8 @@ export default function BuyVPFI() {
         <div className="empty-state-icon">
           <AlertTriangle size={28} />
         </div>
-        <h3>Unsupported network</h3>
-        <p style={{ maxWidth: 520 }}>
-          Buy VPFI is available on any supported Vaipakam chain. Your wallet is
-          currently on{" "}
-          <strong>{activeChain?.name ?? "an unsupported network"}</strong>,
-          which does not host a Vaipakam Diamond. Switch to a supported chain to
-          continue — no canonical-chain switch is required once you are on any
-          supported chain.
-        </p>
+        <h3>{t('buyVpfi.unsupportedNetwork')}</h3>
+        <p style={{ maxWidth: 520 }}>{t('buyVpfi.unsupportedNetworkBody')}</p>
         <button
           className="btn btn-primary"
           style={{ marginTop: 16 }}
@@ -840,7 +835,7 @@ export default function BuyVPFI() {
             void switchToDefaultChain();
           }}
         >
-          Switch network
+          {t('nav.switchNetwork')}
         </button>
       </div>
     );
@@ -854,13 +849,10 @@ export default function BuyVPFI() {
             size={22}
             style={{ verticalAlign: "middle", marginRight: 8 }}
           />
-          Buy VPFI
+          {t('appNav.buyVpfi')}
           <CardInfo id="buy-vpfi.overview" />
         </h1>
-        <p className="page-subtitle">
-          Purchase VPFI at the fixed early-stage rate using ETH and deposit into
-          your escrow to unlock the tiered discount on liquid loans.
-        </p>
+        <p className="page-subtitle">{t('buyVpfi.pageSubtitle')}</p>
       </div>
 
       <FlowBanner
@@ -939,14 +931,14 @@ export default function BuyVPFI() {
       <div className="card" style={{ marginBottom: 20 }}>
         <StepHeader
           index={1}
-          title="Buy VPFI with ETH"
+          title={t('buyVpfi.step1Title')}
           cardHelpId="buy-vpfi.buy"
           subtitle={
             isOnCanonical
-              ? `Direct on ${canonical.name}. VPFI lands in your wallet on this chain.`
+              ? t('buyVpfi.step1SubtitleCanonical', { chain: canonical.name })
               : bridge.available
-                ? `Direct from ${activeChain?.name ?? "this chain"} — any cross-chain routing is handled for you. VPFI lands in your wallet on this chain.`
-                : `The buy adapter is being deployed to ${activeChain?.name ?? "this chain"}. You can continue here — no chain switch required.`
+                ? t('buyVpfi.step1SubtitleBridged', { chain: activeChain?.name ?? '' })
+                : t('buyVpfi.step1SubtitlePending', { chain: activeChain?.name ?? '' })
           }
         />
 
@@ -1019,9 +1011,9 @@ export default function BuyVPFI() {
       <div className="card" style={{ marginBottom: 20 }}>
         <StepHeader
           index={2}
-          title="Deposit VPFI into your escrow"
+          title={t('buyVpfi.step2Title')}
           cardHelpId="buy-vpfi.deposit"
-          subtitle="Required on every chain — including the canonical one."
+          subtitle={t('buyVpfi.step2Subtitle')}
         />
         <div
           style={{
@@ -1040,8 +1032,7 @@ export default function BuyVPFI() {
             style={{ color: "var(--brand)", flexShrink: 0, marginTop: 2 }}
           />
           <p className="stat-label" style={{ margin: 0 }}>
-            Per spec, moving VPFI into escrow is always an explicit user action.
-            The protocol never auto-funds escrow after a buy or bridge.
+            {t('buyVpfi.step2Info')}
           </p>
         </div>
 
@@ -1123,9 +1114,9 @@ export default function BuyVPFI() {
         <div className="card" style={{ marginBottom: 20 }}>
           <StepHeader
             index={3}
-            title="Unstake VPFI from your escrow"
+            title={t('buyVpfi.step3Title')}
             cardHelpId="buy-vpfi.unstake"
-            subtitle={`Transfer VPFI from your escrow back to your wallet on ${activeChain?.name ?? readChain.name}. Reduces your discount tier if it drops your escrow balance below a threshold.`}
+            subtitle={t('buyVpfi.step3Subtitle', { chain: activeChain?.name ?? readChain.name })}
           />
           <UnstakeCard
             value={unstakeInput}
@@ -1236,29 +1227,30 @@ function DiscountStatusCard({
   discountBps,
   consentEnabled,
 }: DiscountStatusCardProps) {
+  const { t } = useTranslation();
   const escrowUnits = formatVpfiUnits(escrowVpfi);
-  const nextTier = VPFI_TIER_TABLE.find((t) => t.tier === tier + 1) ?? null;
+  const nextTier = VPFI_TIER_TABLE.find((tt) => tt.tier === tier + 1) ?? null;
   const gapToNext = nextTier ? Math.max(0, nextTier.minVpfi - escrowUnits) : 0;
   const currentTierRow =
-    tier > 0 ? (VPFI_TIER_TABLE.find((t) => t.tier === tier) ?? null) : null;
+    tier > 0 ? (VPFI_TIER_TABLE.find((tt) => tt.tier === tier) ?? null) : null;
 
   let qualificationLabel: string;
   let qualificationColor: string;
   if (consentEnabled === false) {
-    qualificationLabel = "Inactive · discount consent OFF";
+    qualificationLabel = t('buyVpfiCards.inactiveOff');
     qualificationColor = "var(--accent-yellow)";
   } else if (tier === 0) {
-    qualificationLabel = "Inactive · below Tier 1 (100 VPFI in escrow)";
+    qualificationLabel = t('buyVpfiCards.inactiveBelowTier1');
     qualificationColor = "var(--text-secondary)";
   } else {
-    qualificationLabel = `Active · Tier ${tier} discount (${discountBps / 100}%)`;
+    qualificationLabel = t('buyVpfiCards.activeTier', { tier, pct: discountBps / 100 });
     qualificationColor = "var(--accent-green)";
   }
 
   return (
     <div className="card" style={{ marginBottom: 20 }}>
       <div className="card-title" style={{ marginBottom: 12, display: 'flex', alignItems: 'center', gap: 6 }}>
-        Your VPFI discount status
+        {t('buyVpfiCards.discountStatusTitle')}
         <CardInfo id="buy-vpfi.discount-status" />
       </div>
 
@@ -1271,25 +1263,25 @@ function DiscountStatusCard({
         }}
       >
         <div>
-          <div className="stat-label">Current tier</div>
+          <div className="stat-label">{t('buyVpfiCards.currentTier')}</div>
           <div style={{ fontSize: 22, fontWeight: 600 }}>
-            {tier === 0 ? "—" : `Tier ${tier}`}
+            {tier === 0 ? "—" : t('buyVpfiCards.tierN', { tier })}
           </div>
           <div className="stat-label" style={{ fontSize: 11 }}>
-            {currentTierRow ? currentTierRow.discountLabel : "No discount yet"}
+            {currentTierRow ? currentTierRow.discountLabel : t('buyVpfiCards.noDiscountYet')}
           </div>
         </div>
         <div>
-          <div className="stat-label">Escrow VPFI </div>
+          <div className="stat-label">{t('buyVpfiCards.escrowVpfi')} </div>
           <div style={{ fontSize: 22, fontWeight: 600 }}>
             {escrowVpfi == null ? "—" : escrowUnits.toFixed(4)}
           </div>
           <div className="stat-label" style={{ fontSize: 11 }}>
-            Escrow VPFI counts as staked (5% APR)
+            {t('buyVpfiCards.escrowCountsAsStaked')}
           </div>
         </div>
         <div>
-          <div className="stat-label">Status</div>
+          <div className="stat-label">{t('buyVpfiCards.statusLabel')}</div>
           <div
             style={{
               fontSize: 14,
@@ -1302,14 +1294,14 @@ function DiscountStatusCard({
           <div className="stat-label" style={{ fontSize: 11 }}>
             {consentEnabled === false ? (
               <>
-                Enable the shared discount consent on{" "}
+                {t('buyVpfiCards.enableSharedConsentPrefix')}
                 <Link to="/app" style={{ color: "var(--brand)" }}>
-                  Dashboard
+                  {t('buyVpfiCards.enableSharedConsentLink')}
                 </Link>
                 .
               </>
             ) : (
-              "Liquid lending assets only."
+              t('buyVpfiCards.liquidLendingOnly')
             )}
           </div>
         </div>
@@ -1334,17 +1326,13 @@ function DiscountStatusCard({
           />
           <div className="stat-label" style={{ margin: 0, fontSize: 12 }}>
             {gapToNext > 0 ? (
-              <>
-                Deposit <strong>{gapToNext.toFixed(2)} more VPFI</strong> into
-                escrow to reach <strong>{nextTier.label}</strong> (
-                {nextTier.discountLabel}).
-              </>
+              t('buyVpfiCards.depositMore', {
+                amount: gapToNext.toFixed(2),
+                tier: nextTier.label,
+                discount: nextTier.discountLabel,
+              })
             ) : (
-              <>
-                Your escrow balance qualifies for{" "}
-                <strong>{nextTier.label}</strong> on your next loan. Ensure the
-                discount consent is enabled on Dashboard.
-              </>
+              t('buyVpfiCards.depositGapAchieved', { tier: nextTier.label })
             )}
           </div>
         </div>
@@ -1360,11 +1348,11 @@ function DiscountStatusCard({
         >
           <thead>
             <tr style={{ textAlign: "left", color: "var(--text-secondary)" }}>
-              <th style={{ padding: "6px 8px", fontWeight: 500 }}>Tier</th>
+              <th style={{ padding: "6px 8px", fontWeight: 500 }}>{t('buyVpfiCards.tierColTier')}</th>
               <th style={{ padding: "6px 8px", fontWeight: 500 }}>
-                Escrow VPFI
+                {t('buyVpfiCards.tierColEscrow')}
               </th>
-              <th style={{ padding: "6px 8px", fontWeight: 500 }}>Discount</th>
+              <th style={{ padding: "6px 8px", fontWeight: 500 }}>{t('buyVpfiCards.tierColDiscount')}</th>
             </tr>
           </thead>
           <tbody>
@@ -1436,6 +1424,7 @@ function BuyCard({
   onBuy,
   canonical,
 }: BuyCardProps) {
+  const { t } = useTranslation();
   if (configLoading && !buyConfig) {
     return <p className="stat-label">Loading buy configuration…</p>;
   }
@@ -1493,13 +1482,13 @@ function BuyCard({
           marginBottom: 16,
         }}
       >
-        <Stat label="Fixed rate" value={`${rateEth} ETH / VPFI`} />
+        <Stat label={t('buyVpfiCards.fixedRateLabel')} value={`${rateEth} ETH / VPFI`} />
         <Stat
-          label="Remaining global early purchase"
+          label={t('buyVpfiCards.remainingGlobal')}
           value={formatAmount(formatVpfiUnits(buyConfig.globalHeadroom))}
         />
         <Stat
-          label="Your remaining allowance"
+          label={t('buyVpfiCards.remainingAllowance')}
           value={formatAmount(formatVpfiUnits(buyConfig.walletHeadroom))}
         />
       </div>
@@ -1513,7 +1502,7 @@ function BuyCard({
         }}
       >
         <label className="stat-label" style={{ margin: 0, fontWeight: 500 }}>
-          Pay (ETH)
+          {t('buyVpfiCards.payEth')}
         </label>
         {maxSpendEth && maxSpendWei > 0n && (
           <button
@@ -1521,10 +1510,10 @@ function BuyCard({
             className="btn btn-ghost btn-sm"
             onClick={() => setEthInput(maxSpendEth)}
             disabled={isBuying}
-            data-tooltip={`A small gas reserve (${formatEthTrimmed(ETH_GAS_RESERVE_WEI)} ETH) is held back from your balance so the buy tx can still be broadcast.`}
+            data-tooltip={t('buyVpfiCards.gasReserveTooltip', { reserve: formatEthTrimmed(ETH_GAS_RESERVE_WEI) })}
             data-tooltip-placement="below-end"
           >
-            Use max {maxSpendEth} ETH
+            {t('buyVpfiCards.useMaxEth', { amount: maxSpendEth })}
           </button>
         )}
       </div>
@@ -1551,7 +1540,7 @@ function BuyCard({
         }}
       >
         <span className="stat-label" style={{ margin: 0 }}>
-          You receive
+          {t('buyVpfiCards.youReceive')}
         </span>
         <span className="mono" style={{ fontWeight: 600 }}>
           {quote ? `${formatAmount(formatVpfiUnits(quote.vpfi))} VPFI` : "—"}
@@ -1563,8 +1552,7 @@ function BuyCard({
           className="stat-label"
           style={{ margin: "0 0 8px", color: "var(--accent-red, #ef4444)" }}
         >
-          This amount exceeds the remaining cap. Reduce the ETH input and try
-          again.
+          {t('buyVpfiCards.capExceeded')}
         </p>
       )}
 
@@ -1573,9 +1561,7 @@ function BuyCard({
           className="stat-label"
           style={{ margin: "0 0 8px", color: "var(--accent-red, #ef4444)" }}
         >
-          Amount exceeds your wallet ETH balance of{" "}
-          {formatEthTrimmed(ethBalance!)} ETH (a small gas reserve is kept
-          aside).
+          {t('buyVpfiCards.exceedsBalance', { balance: formatEthTrimmed(ethBalance!) })}
         </p>
       )}
 
@@ -1607,7 +1593,7 @@ function BuyCard({
         }
         data-tooltip={disableReason ?? undefined}
       >
-        {isBuying ? "Buying…" : "Buy VPFI"}
+        {isBuying ? t('buyVpfi.buying') : t('buyVpfi.buy')}
       </button>
     </div>
   );
@@ -1652,6 +1638,7 @@ function BridgedBuyCard({
   originChain,
   canonical,
 }: BridgedBuyCardProps) {
+  const { t } = useTranslation();
   const [lzFee, setLzFee] = useState<bigint | null>(null);
   const [quoteError, setQuoteError] = useState<string | null>(null);
   const [mode, setMode] = useState<"native" | "token" | null>(null);
@@ -1932,12 +1919,12 @@ function BridgedBuyCard({
         {s.status === "quoting"
           ? "Estimating fee…"
           : s.status === "approving"
-            ? "Approving…"
+            ? t('buyVpfi.approving')
             : s.status === "submitting"
               ? "Submitting…"
               : pending
                 ? "Bridging…"
-                : "Buy VPFI"}
+                : t('buyVpfi.buy')}
       </button>
     </div>
   );
@@ -2244,6 +2231,7 @@ function DepositCard({
   onDeposit,
   previewTx,
 }: DepositCardProps) {
+  const { t } = useTranslation();
   const inFlow = step === "approving-deposit" || step === "depositing";
   const rawInput = value.trim();
   const inputEmpty = rawInput === "";
@@ -2270,7 +2258,7 @@ function DepositCard({
         }}
       >
         <label className="stat-label" style={{ margin: 0, fontWeight: 500 }}>
-          VPFI amount to deposit
+          {t('buyVpfiCards.depositAmount')}
         </label>
         <button
           type="button"
@@ -2278,7 +2266,7 @@ function DepositCard({
           onClick={() => onChange(walletBalance.toString())}
           disabled={walletBalance === 0}
         >
-          Use max ({formatAmount(walletBalance)} VPFI)
+          {t('buyVpfiCards.useMaxVpfi', { amount: formatAmount(walletBalance) })}
         </button>
       </div>
       <input
@@ -2363,10 +2351,10 @@ function DepositCard({
         data-tooltip={disableReason ?? undefined}
       >
         {step === "approving-deposit"
-          ? "Approving VPFI…"
+          ? t('buyVpfi.approvingVpfi')
           : step === "depositing"
-            ? "Depositing…"
-            : "Deposit to escrow"}
+            ? t('buyVpfi.depositing')
+            : t('buyVpfi.depositToEscrow')}
       </button>
     </div>
   );
@@ -2402,6 +2390,7 @@ function UnstakeCard({
   step,
   onUnstake,
 }: UnstakeCardProps) {
+  const { t } = useTranslation();
   const escrowBalanceUnits = formatVpfiUnits(escrowBalance);
   const rawInput = value.trim();
   const inputEmpty = rawInput === "";
@@ -2430,7 +2419,7 @@ function UnstakeCard({
         }}
       >
         <label className="stat-label" style={{ margin: 0, fontWeight: 500 }}>
-          VPFI amount to unstake
+          {t('buyVpfiCards.unstakeAmount')}
         </label>
         <button
           type="button"
@@ -2438,7 +2427,7 @@ function UnstakeCard({
           onClick={() => onChange(escrowBalanceUnits.toString())}
           disabled={balanceZero || pending}
         >
-          Use max ({formatAmount(escrowBalanceUnits)} VPFI)
+          {t('buyVpfiCards.useMaxVpfi', { amount: formatAmount(escrowBalanceUnits) })}
         </button>
       </div>
       <input
@@ -2457,8 +2446,7 @@ function UnstakeCard({
           className="stat-label"
           style={{ margin: "-4px 0 8px", color: "var(--accent-red, #ef4444)" }}
         >
-          Amount exceeds your escrow VPFI balance of{" "}
-          {formatAmount(escrowBalanceUnits)} VPFI.
+          {t('buyVpfiCards.exceedsEscrowBalance', { balance: formatAmount(escrowBalanceUnits) })}
         </p>
       )}
 
@@ -2488,10 +2476,7 @@ function UnstakeCard({
           // className="stat-label"
           style={{ margin: 0, fontSize: 12, lineHeight: 1.5 }}
         >
-          Escrow VPFI counts toward your borrower fee discount tier and earns 5%
-          APR. Unstaking moves tokens back to your wallet — if the remaining
-          escrow balance drops below a tier threshold your discount drops with
-          it on the next loan.
+          {t('buyVpfiCards.unstakeWarning')}
         </p>
       </div>
 
@@ -2503,7 +2488,7 @@ function UnstakeCard({
         }
         data-tooltip={disableReason ?? undefined}
       >
-        {step === "unstaking" ? "Unstaking…" : "Unstake to wallet"}
+        {step === "unstaking" ? t('buyVpfi.unstaking') : t('buyVpfi.unstakeToWallet')}
       </button>
     </div>
   );

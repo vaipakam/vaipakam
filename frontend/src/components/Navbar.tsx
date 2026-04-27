@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
 import { useTheme } from '../context/ThemeContext';
 import { useWallet } from '../context/WalletContext';
 import {
@@ -26,11 +27,13 @@ import {
 } from '../contracts/config';
 import { LanguagePicker } from './LanguagePicker';
 
-type NavLink = { label: string; href: string };
+type NavLink = { labelKey: string; href: string };
 
 interface NavGroup {
-  /** Dropdown trigger label. */
-  label: string;
+  /** Translation key for the dropdown trigger label. Resolved via
+   *  `t(labelKey)` at render time so the label localises with the
+   *  rest of the navbar when the user changes language. */
+  labelKey: string;
   /** Stable identifier — used as the React key + the `openGroup` value
    *  in popover state so we know which dropdown is currently expanded. */
   id: string;
@@ -46,29 +49,33 @@ interface NavGroup {
  *
  * Hash-anchor entries rely on the app-level ScrollToHash helper to
  * jump to the matching section after the home page mounts on cross-
- * route navigation. */
+ * route navigation. Labels carry translation keys (resolved against
+ * the `nav.*` namespace in `src/i18n/locales/*.json`) rather than
+ * raw English strings so a language change re-renders them in place.
+ */
 const NAV_GROUPS: NavGroup[] = [
   {
     id: 'learn',
-    label: 'Learn',
+    labelKey: 'nav.learn',
     links: [
-      { label: 'Features', href: '/#features' },
-      { label: 'How It Works', href: '/#how-it-works' },
-      { label: 'FAQ', href: '/#faq' },
+      { labelKey: 'nav.features', href: '/#features' },
+      { labelKey: 'nav.howItWorks', href: '/#how-it-works' },
+      { labelKey: 'nav.faq', href: '/#faq' },
     ],
   },
   {
     id: 'verify',
-    label: 'Verify',
+    labelKey: 'nav.verify',
     links: [
-      { label: 'Analytics', href: '/analytics' },
-      { label: 'NFT Verifier', href: '/nft-verifier' },
-      { label: 'Security', href: '/#security' },
+      { labelKey: 'nav.analytics', href: '/analytics' },
+      { labelKey: 'nav.nftVerifier', href: '/nft-verifier' },
+      { labelKey: 'nav.security', href: '/#security' },
     ],
   },
 ];
 
 export default function Navbar() {
+  const { t } = useTranslation();
   const { theme, toggleTheme } = useTheme();
   const {
     address,
@@ -139,7 +146,7 @@ export default function Navbar() {
   return (
     <nav className="navbar">
       <div className="container navbar-inner">
-        <Link to="/" className="navbar-brand" aria-label="Vaipakam home">
+        <Link to="/" className="navbar-brand" aria-label={t('nav.brandHome')}>
           <img
             src={theme === 'dark' ? '/logo-dark.png' : '/logo-light.png'}
             alt="Vaipakam"
@@ -204,7 +211,7 @@ export default function Navbar() {
                 aria-haspopup="menu"
                 aria-expanded={openGroup === group.id}
               >
-                {group.label}
+                {t(group.labelKey)}
                 {/* Chevron is hidden on desktop via CSS (the
                  *  desktop trigger is a bare text label); on
                  *  mobile it's the visible affordance for the
@@ -246,7 +253,7 @@ export default function Navbar() {
                       setMobileOpen(false);
                     }}
                   >
-                    {link.label}
+                    {t(link.labelKey)}
                   </Link>
                 ))}
               </div>
@@ -267,7 +274,7 @@ export default function Navbar() {
                 }`}
               >
                 <span className="navbar-group-mobile-label">
-                  {group.label}
+                  {t(group.labelKey)}
                 </span>
                 {group.links.map((link) => (
                   <Link
@@ -276,7 +283,7 @@ export default function Navbar() {
                     className="navbar-link navbar-link--mobile-nested"
                     onClick={() => setMobileOpen(false)}
                   >
-                    {link.label}
+                    {t(link.labelKey)}
                   </Link>
                 ))}
               </div>
@@ -291,7 +298,7 @@ export default function Navbar() {
             className="btn btn-primary navbar-launch-mobile"
             onClick={() => setMobileOpen(false)}
           >
-            Launch App <ArrowRight size={16} />
+            {t('nav.launchApp')} <ArrowRight size={16} />
           </Link>
 
           {/* Mobile wallet block — same triplet as the desktop row
@@ -310,7 +317,7 @@ export default function Navbar() {
                 style={{ width: '100%' }}
               >
                 <AlertTriangle size={16} />
-                Switch Network
+                {t('nav.switchNetwork')}
               </button>
             ) : (
               <div className="wallet-connected-mobile">
@@ -319,7 +326,7 @@ export default function Navbar() {
                   chains={deployedChains}
                   value={chainId}
                   onSelect={switchToChain}
-                  ariaLabel="Switch network"
+                  ariaLabel={t('nav.switchNetworkAria')}
                 />
                 <button
                   className="btn btn-ghost"
@@ -328,7 +335,7 @@ export default function Navbar() {
                     setMobileOpen(false);
                   }}
                 >
-                  <LogOut size={16} /> Disconnect
+                  <LogOut size={16} /> {t('common.disconnect')}
                 </button>
               </div>
             )}
@@ -342,7 +349,7 @@ export default function Navbar() {
               outside /app. AppLayout owns its own chrome, so no extra
               route-based gating needed here. */}
           <Link to="/app" className="btn btn-primary navbar-cta navbar-launch">
-            Launch App <ArrowRight size={14} />
+            {t('nav.launchApp')} <ArrowRight size={14} />
           </Link>
 
           {/* Desktop wallet block — combined `<WalletMenu>` pill
@@ -361,7 +368,7 @@ export default function Navbar() {
               onClick={switchToDefaultChain}
             >
               <AlertTriangle size={16} />
-              Wrong Network
+              {t('nav.wrongNetwork')}
             </button>
           ) : (
             <span className="navbar-cta">
@@ -382,7 +389,7 @@ export default function Navbar() {
               onClick={() => setSettingsOpen((o) => !o)}
               aria-haspopup="menu"
               aria-expanded={settingsOpen}
-              aria-label="Settings"
+              aria-label={t('settings.title')}
             >
               <Settings size={18} />
             </button>
@@ -391,35 +398,36 @@ export default function Navbar() {
               <div
                 className="navbar-settings-panel"
                 role="menu"
-                aria-label="Settings"
+                aria-label={t('settings.title')}
               >
                 <div className="navbar-settings-row">
                   <span className="navbar-settings-label">
                     <Globe size={12} aria-hidden="true" />
-                    Language
+                    {t('common.language')}
                   </span>
                   <LanguagePicker />
                 </div>
                 <p className="navbar-settings-hint">
-                  More languages are coming. UI strings stay in English
-                  until translations ship — your choice is remembered.
+                  {t('settings.languageHint')}
                 </p>
 
                 <div className="navbar-settings-row">
-                  <span className="navbar-settings-label">Theme</span>
+                  <span className="navbar-settings-label">{t('common.theme')}</span>
                   <button
                     type="button"
                     className="theme-toggle"
                     onClick={toggleTheme}
                     aria-label={
                       theme === 'dark'
-                        ? 'Switch to light theme'
-                        : 'Switch to dark theme'
+                        ? t('settings.themeSwitchToLight')
+                        : t('settings.themeSwitchToDark')
                     }
                   >
                     {theme === 'dark' ? <Sun size={18} /> : <Moon size={18} />}
                     <span className="navbar-settings-theme-label">
-                      {theme === 'dark' ? 'Light' : 'Dark'}
+                      {theme === 'dark'
+                        ? t('common.themeLight')
+                        : t('common.themeDark')}
                     </span>
                   </button>
                 </div>
@@ -430,7 +438,7 @@ export default function Navbar() {
           <button
             className="mobile-menu-btn"
             onClick={() => setMobileOpen(!mobileOpen)}
-            aria-label="Toggle menu"
+            aria-label={t('nav.toggleMenu')}
           >
             {mobileOpen ? <X size={22} /> : <Menu size={22} />}
           </button>

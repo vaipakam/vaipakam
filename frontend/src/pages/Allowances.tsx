@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { ShieldOff, RefreshCw, ExternalLink } from 'lucide-react';
 import type { Address } from 'viem';
 import { useWallet } from '../context/WalletContext';
@@ -47,6 +48,7 @@ const ERC20_APPROVE_ABI = [
  *     pending; on success the row's allowance updates to 0.
  */
 export default function Allowances() {
+  const { t } = useTranslation();
   const { address, chainId, activeChain, isCorrectChain } = useWallet();
   const publicClient = useDiamondPublicClient();
   const chain = useReadChain();
@@ -63,16 +65,16 @@ export default function Allowances() {
   if (!address) {
     return (
       <div className="page-container">
-        <h1>Allowances</h1>
-        <p>Connect your wallet to view allowances.</p>
+        <h1>{t('appNav.allowances')}</h1>
+        <p>{t('allowances.connectBody')}</p>
       </div>
     );
   }
   if (!isCorrectChain) {
     return (
       <div className="page-container">
-        <h1>Allowances</h1>
-        <p>Switch to a supported chain to view allowances.</p>
+        <h1>{t('appNav.allowances')}</h1>
+        <p>{t('allowances.switchChainBody')}</p>
       </div>
     );
   }
@@ -127,16 +129,10 @@ export default function Allowances() {
     <div className="page-container">
       <h1 style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
         <ShieldOff size={22} style={{ verticalAlign: '-4px', marginRight: 8 }} />
-        Allowances
+        {t('appNav.allowances')}
         <CardInfo id="allowances.list" />
       </h1>
-      <p style={{ maxWidth: 720 }}>
-        Every ERC-20 approval the connected wallet has granted the Vaipakam
-        Diamond on this chain. Revoke any you no longer need in one click —
-        mirrors the in-app revoke flow used by Uniswap and 1inch. Non-zero
-        approvals appear first; the zero-allowance rows below are a reference
-        so you can confirm the list is clean.
-      </p>
+      <p style={{ maxWidth: 720 }}>{t('allowances.pageSubtitle')}</p>
 
       <div
         style={{
@@ -153,11 +149,13 @@ export default function Allowances() {
           disabled={loading}
         >
           <RefreshCw size={14} style={{ verticalAlign: '-2px' }} />{' '}
-          {loading ? 'Refreshing…' : 'Refresh'}
+          {loading ? t('allowances.refreshing') : t('allowances.refresh')}
         </button>
         <span style={{ fontSize: '0.82rem', opacity: 0.7 }}>
-          {rows.length} token{rows.length === 1 ? '' : 's'} scanned · {nonZeroCount}{' '}
-          with non-zero allowance
+          {t('allowancesPage.scannedSummary', {
+            count: rows.length,
+            nonZero: nonZeroCount,
+          })}
         </span>
       </div>
 
@@ -169,20 +167,20 @@ export default function Allowances() {
       )}
 
       {loading && rows.length === 0 ? (
-        <div className="empty-state"><p>Reading allowances…</p></div>
+        <div className="empty-state"><p>{t('allowances.reading')}</p></div>
       ) : rows.length === 0 ? (
         <div className="empty-state">
-          <p>No tokens to check on this chain. Take a loan or create an offer to populate this list with your interacted assets.</p>
+          <p>{t('allowances.noTokens')}</p>
         </div>
       ) : (
         <div className="card" style={{ padding: 0 }}>
           <table className="loans-table" style={{ width: '100%' }}>
             <thead>
               <tr>
-                <th>Token</th>
-                <th>Address</th>
-                <th>Allowance</th>
-                <th>Source</th>
+                <th>{t('allowances.colToken')}</th>
+                <th>{t('allowances.colAddress')}</th>
+                <th>{t('allowances.colAllowance')}</th>
+                <th>{t('allowances.colSource')}</th>
                 <th></th>
               </tr>
             </thead>
@@ -218,10 +216,10 @@ export default function Allowances() {
                         style={{ fontSize: '0.72rem' }}
                       >
                         {r.source === 'loan'
-                          ? 'loan-derived'
+                          ? t('allowancesPage.sourceLoanDerived')
                           : r.source === 'vpfi'
-                            ? 'VPFI'
-                            : 'canonical'}
+                            ? t('allowancesPage.sourceVpfi')
+                            : t('allowancesPage.sourceCanonical')}
                       </span>
                     </td>
                     <td style={{ textAlign: 'right' }}>
@@ -231,11 +229,11 @@ export default function Allowances() {
                           disabled={isRevoking}
                           onClick={() => revoke(r)}
                         >
-                          {isRevoking ? 'Revoking…' : 'Revoke'}
+                          {isRevoking ? t('allowances.revoking') : t('allowances.revoke')}
                         </button>
                       ) : (
                         <span style={{ fontSize: '0.78rem', opacity: 0.6 }}>
-                          cleared
+                          {t('allowances.cleared')}
                         </span>
                       )}
                     </td>
@@ -248,10 +246,7 @@ export default function Allowances() {
       )}
 
       <p style={{ fontSize: '0.75rem', opacity: 0.6, marginTop: 12 }}>
-        This page scans only the Vaipakam Diamond as spender on the current
-        chain. Approvals granted to other contracts (DEX aggregators, other
-        dApps) aren't listed here — use revoke.cash or a similar tool to
-        audit them.
+        {t('allowances.footnote')}
       </p>
     </div>
   );

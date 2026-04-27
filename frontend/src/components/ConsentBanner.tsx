@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { X, Shield, ChevronDown, ChevronUp } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 import {
   ALL_DENIED,
   ALL_GRANTED,
@@ -27,6 +28,7 @@ type Toggles = Omit<ConsentChoice, 'updatedAt' | 'version'>;
  *     "Cookie settings" link can re-open it without prop drilling.
  */
 export default function ConsentBanner() {
+  const { t } = useTranslation();
   const [open, setOpen] = useState(false);
   const [customizing, setCustomizing] = useState(false);
   const [toggles, setToggles] = useState<Toggles>(ALL_DENIED);
@@ -104,7 +106,7 @@ export default function ConsentBanner() {
         <button
           type="button"
           className="consent-banner-close"
-          aria-label="Dismiss — we'll ask again next visit"
+          aria-label={t('consent.dismissAria')}
           onClick={() => setOpen(false)}
         >
           <X size={16} />
@@ -116,51 +118,53 @@ export default function ConsentBanner() {
           </div>
           <div>
             <h2 id="consent-banner-title" className="consent-banner-title">
-              Your privacy choices
+              {t('consent.title')}
             </h2>
-            <p className="consent-banner-body">
-              We use cookies and similar technologies to run essential parts of
-              the app (session state, anti-abuse) and — with your permission —
-              to understand how Vaipakam is used so we can improve it. You can
-              change your choice at any time from the "Cookie settings" link in
-              the footer.
-            </p>
+            <p className="consent-banner-body">{t('consent.body')}</p>
           </div>
         </div>
 
         {customizing && (
           <div className="consent-banner-details">
             <CategoryRow
-              label="Essential"
-              description="Required for the app to function — session state, wallet connection, anti-abuse. Cannot be disabled."
+              label={t('consent.categoryEssentialLabel')}
+              description={t('consent.categoryEssentialDesc')}
               value="granted"
               disabled
+              ariaOn={t('consent.switchAriaSuffixOn')}
+              ariaOff={t('consent.switchAriaSuffixOff')}
             />
             <CategoryRow
-              label="Analytics"
-              description="Anonymous usage stats that help us understand which features matter and where flows break."
+              label={t('consent.categoryAnalyticsLabel')}
+              description={t('consent.categoryAnalyticsDesc')}
               value={toggles.analytics_storage}
               onToggle={() => toggleCategory('analytics_storage')}
+              ariaOn={t('consent.switchAriaSuffixOn')}
+              ariaOff={t('consent.switchAriaSuffixOff')}
             />
             <CategoryRow
-              label="Personalization"
-              description="Remembers UI preferences across visits (beyond the essentials)."
+              label={t('consent.categoryPersonalizationLabel')}
+              description={t('consent.categoryPersonalizationDesc')}
               value={toggles.personalization_storage}
               onToggle={() => toggleCategory('personalization_storage')}
+              ariaOn={t('consent.switchAriaSuffixOn')}
+              ariaOff={t('consent.switchAriaSuffixOff')}
             />
             <CategoryRow
-              label="Advertising"
-              description="Ad measurement and targeting. Vaipakam does not currently serve ads, but this covers any future ad-measurement pixels."
+              label={t('consent.categoryAdvertisingLabel')}
+              description={t('consent.categoryAdvertisingDesc')}
               value={toggles.ad_storage}
               onToggle={() => {
                 const next = toggles.ad_storage === 'granted' ? 'denied' : 'granted';
-                setToggles((t) => ({
-                  ...t,
+                setToggles((tt) => ({
+                  ...tt,
                   ad_storage: next,
                   ad_user_data: next,
                   ad_personalization: next,
                 }));
               }}
+              ariaOn={t('consent.switchAriaSuffixOn')}
+              ariaOff={t('consent.switchAriaSuffixOff')}
             />
           </div>
         )}
@@ -171,7 +175,7 @@ export default function ConsentBanner() {
             className="consent-banner-btn consent-banner-btn--secondary"
             onClick={handleRejectAll}
           >
-            Reject all
+            {t('consent.rejectAll')}
           </button>
 
           <button
@@ -180,7 +184,7 @@ export default function ConsentBanner() {
             onClick={() => setCustomizing((v) => !v)}
             aria-expanded={customizing}
           >
-            Customize
+            {t('consent.customize')}
             {customizing ? (
               <ChevronUp size={14} />
             ) : (
@@ -194,7 +198,7 @@ export default function ConsentBanner() {
               className="consent-banner-btn consent-banner-btn--primary"
               onClick={handleSaveCustom}
             >
-              Save my choices
+              {t('consent.saveChoices')}
             </button>
           ) : (
             <button
@@ -202,7 +206,7 @@ export default function ConsentBanner() {
               className="consent-banner-btn consent-banner-btn--primary"
               onClick={handleAcceptAll}
             >
-              Accept all
+              {t('consent.acceptAll')}
             </button>
           )}
         </div>
@@ -217,6 +221,8 @@ interface CategoryRowProps {
   value: 'granted' | 'denied';
   onToggle?: () => void;
   disabled?: boolean;
+  ariaOn: string;
+  ariaOff: string;
 }
 
 function CategoryRow({
@@ -225,6 +231,8 @@ function CategoryRow({
   value,
   onToggle,
   disabled,
+  ariaOn,
+  ariaOff,
 }: CategoryRowProps) {
   const granted = value === 'granted';
   return (
@@ -237,7 +245,7 @@ function CategoryRow({
         type="button"
         role="switch"
         aria-checked={granted}
-        aria-label={`${label}: ${granted ? 'on' : 'off'}`}
+        aria-label={`${label}: ${granted ? ariaOn : ariaOff}`}
         className={`consent-switch ${granted ? 'consent-switch--on' : ''} ${
           disabled ? 'consent-switch--disabled' : ''
         }`}

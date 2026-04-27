@@ -1,4 +1,5 @@
 import { MessageCircle, ExternalLink } from "lucide-react";
+import { useTranslation } from "react-i18next";
 import Navbar from "../components/Navbar";
 import Footer from "../components/Footer";
 import "./Discord.css";
@@ -16,6 +17,7 @@ const DISCORD_INVITE_URL = "https://discord.gg/5dTYbQKm69";
  * invite in a new tab so the user keeps their Vaipakam session intact.
  */
 export default function DiscordPage() {
+  const { t } = useTranslation();
   return (
     <>
       <Navbar />
@@ -25,29 +27,24 @@ export default function DiscordPage() {
             <div className="discord-icon">
               <MessageCircle size={36} />
             </div>
-            <h1>Join the Vaipakam Discord</h1>
-            <p className="discord-tagline">
-              Chat with the core team, other lenders and borrowers, swap
-              collateral-strategy notes, and get early signal on new
-              deployments. Moderation follows the same non-custodial, no-KYC
-              ethos as the protocol itself.
-            </p>
+            <h1>{t('discordPage.title')}</h1>
+            <p className="discord-tagline">{t('discordPage.tagline')}</p>
 
             <a
               href={DISCORD_INVITE_URL}
               target="_blank"
               rel="noopener noreferrer"
               className="btn btn-primary btn-lg discord-cta"
-              aria-label="Open Vaipakam Discord invite in a new tab"
+              aria-label={t('discordPage.ctaAria')}
             >
-              Join Discord
+              {t('discordPage.ctaButton')}
               <ExternalLink size={18} />
             </a>
 
             <p className="discord-fine-print">
-              Opens <code>{DISCORD_INVITE_URL}</code> in a new tab. We never ask
-              for wallet signatures, seed phrases, or KYC on Discord — anyone
-              who DMs you claiming to is impersonating the team.
+              {t('discordPage.finePrintPrefix')}
+              <code>{DISCORD_INVITE_URL}</code>
+              {t('discordPage.finePrintSuffix')}
             </p>
           </div>
         </div>

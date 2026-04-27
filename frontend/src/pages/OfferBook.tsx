@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState, useCallback, useRef } from 'react';
+import { useTranslation } from 'react-i18next';
 import type { Address, Hex } from 'viem';
 import { encodeFunctionData } from 'viem';
 import { SimulationPreview } from '../components/app/SimulationPreview';
@@ -16,9 +17,6 @@ import { RiskDisclosures } from '../components/app/RiskDisclosures';
 import { DEFAULT_CHAIN } from '../contracts/config';
 import { beginStep, emit } from '../lib/journeyLog';
 import { decodeContractError, extractRevertSelector } from '../lib/decodeContractError';
-import {
-  FALLBACK_CONSENT_CHECKBOX_LABEL,
-} from '../lib/fallbackTerms';
 import { useLogIndex } from '../hooks/useLogIndex';
 import { useProtocolConfig, type ProtocolConfig } from '../hooks/useProtocolConfig';
 import { AssetSymbol } from '../components/app/AssetSymbol';
@@ -149,6 +147,7 @@ function toOfferData(r: RawOffer): OfferData {
 }
 
 export default function OfferBook() {
+  const { t } = useTranslation();
   const { address, chainId } = useWallet();
   const diamond = useDiamondContract();
   const diamondRead = useDiamondRead();
@@ -681,24 +680,26 @@ export default function OfferBook() {
     <div>
       <div className="page-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: 12 }}>
         <div>
-          <h1 className="page-title">Offer Book</h1>
+          <h1 className="page-title">{t('appNav.offerBook')}</h1>
           <p className="page-subtitle">
             {statusView === 'open' ? (
               <>
-                Ranked outward from the market anchor
-                {anchorRateBps !== null && (<> — currently <strong>{bpsToPercent(anchorRateBps)}</strong></>)}.
+                {t('offerBookPage.subtitleOpenPrefix')}
+                {anchorRateBps !== null && (
+                  <>
+                    {t('offerBookPage.subtitleOpenAnchorPrefix')}
+                    <strong>{bpsToPercent(anchorRateBps)}</strong>
+                  </>
+                )}
+                {t('offerBookPage.subtitleOpenSuffix')}
               </>
             ) : (
-              <>
-                Historical view of filled offers — accepted liquidity that's
-                already been matched to a loan. Use this to see past market rates
-                even after the live book clears.
-              </>
+              <>{t('offerBookPage.subtitleClosed')}</>
             )}
           </p>
         </div>
         <Link to="/app/create-offer" className="btn btn-primary btn-sm">
-          <PlusCircle size={16} /> Create Offer
+          <PlusCircle size={16} /> {t('appNav.createOffer')}
         </Link>
       </div>
 
@@ -710,8 +711,8 @@ export default function OfferBook() {
             onClick={() => setStatusView(v)}
           >
             {v === 'open'
-              ? `Open (${countByStatus.open ?? openOfferIds.length})`
-              : `Closed / Filled (${countByStatus.closed ?? closedOfferIds.length})`}
+              ? `${t('offerBook.tabOpen')} (${countByStatus.open ?? openOfferIds.length})`
+              : `${t('offerBook.tabClosed')} (${countByStatus.closed ?? closedOfferIds.length})`}
           </button>
         ))}
       </div>
@@ -722,7 +723,7 @@ export default function OfferBook() {
 
       {txHash && (
         <div className="alert alert-success">
-          Transaction submitted:{' '}
+          {t('offerBook.txSubmitted')}{' '}
           <a href={`${activeReadChain.blockExplorer}/tx/${txHash}`} target="_blank" rel="noreferrer" style={{ textDecoration: 'underline' }}>
             {txHash.slice(0, 16)}...
           </a>
@@ -737,8 +738,8 @@ export default function OfferBook() {
           pushing the filters card down with an empty placeholder. */}
       {statusView === 'open' && address && myActiveOffers.length > 0 && (
         <OfferTable
-          title="Your Active Offers"
-          subtitle={`${myActiveOffers.length} open`}
+          title={t('offerBook.yourActiveOffers')}
+          subtitle={`${myActiveOffers.length} ${t('offerBook.tabOpen').toLowerCase()}`}
           offers={myActiveOffers}
           anchorRateBps={anchorRateBps}
           address={address}
@@ -751,7 +752,7 @@ export default function OfferBook() {
 
       <div className="card" style={{ marginTop: 12 }}>
         <div className="card-title">
-          Filters
+          {t('offerBookPage.filtersHeader')}
           <CardInfo id="offer-book.filters" />
         </div>
         <div className="offer-book-filter-grid">
@@ -761,8 +762,8 @@ export default function OfferBook() {
               chainId={chainId}
               value={lendingAssetFilter}
               onChange={setLendingAssetFilter}
-              label="Lending asset"
-              placeholder="0x... (any)"
+              label={t('common.lendingAsset')}
+              placeholder={t('offerBookPage.addressPlaceholder')}
             />
           </div>
           <div className="offer-book-filter-cell">
@@ -771,13 +772,13 @@ export default function OfferBook() {
               chainId={chainId}
               value={collateralAssetFilter}
               onChange={setCollateralAssetFilter}
-              label="Collateral asset"
-              placeholder="0x... (any)"
+              label={t('common.collateralAsset')}
+              placeholder={t('offerBookPage.addressPlaceholder')}
             />
           </div>
           <div className="offer-book-filter-cell">
             <label className="form-label" htmlFor="offer-book-min-duration">
-              Min duration (days)
+              {t('offerBookPage.minDuration')}
             </label>
             <input
               id="offer-book-min-duration"
@@ -790,7 +791,7 @@ export default function OfferBook() {
           </div>
           <div className="offer-book-filter-cell">
             <label className="form-label" htmlFor="offer-book-max-duration">
-              Max duration (days)
+              {t('offerBookPage.maxDuration')}
             </label>
             <input
               id="offer-book-max-duration"
@@ -802,16 +803,16 @@ export default function OfferBook() {
             />
           </div>
           <div className="offer-book-filter-cell">
-            <span className="form-label">Liquidity</span>
+            <span className="form-label">{t('offerBookPage.liquidity')}</span>
             <ThemedSelect<LiquidityFilter>
               value={liquidityFilter}
               options={[
-                { value: 'any', label: 'Any' },
-                { value: 'liquid', label: 'Liquid only' },
-                { value: 'illiquid', label: 'Illiquid only' },
+                { value: 'any', label: t('offerBookPage.liquidityAny') },
+                { value: 'liquid', label: t('offerBookPage.liquidityLiquid') },
+                { value: 'illiquid', label: t('offerBookPage.liquidityIlliquid') },
               ]}
               onChange={setLiquidityFilter}
-              ariaLabel="Filter by liquidity"
+              ariaLabel={t('offerBookPage.filterByLiquidity')}
             />
           </div>
         </div>
@@ -819,14 +820,18 @@ export default function OfferBook() {
 
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 12, marginTop: 12 }}>
         <div className="tabs">
-          {(['both', 'lender', 'borrower'] as TabFilter[]).map((t) => (
-            <button key={t} className={`tab ${tab === t ? 'active' : ''}`} onClick={() => setTab(t)}>
-              {t === 'both' ? 'Both Sides' : t === 'lender' ? 'Lender Offers' : 'Borrower Offers'}
+          {(['both', 'lender', 'borrower'] as TabFilter[]).map((tabKey) => (
+            <button key={tabKey} className={`tab ${tab === tabKey ? 'active' : ''}`} onClick={() => setTab(tabKey)}>
+              {tabKey === 'both'
+                ? t('offerBookPage.bothSides')
+                : tabKey === 'lender'
+                  ? t('offerBookPage.lenderOffers')
+                  : t('offerBookPage.borrowerOffers')}
             </button>
           ))}
         </div>
         <label style={{ fontSize: '0.85rem', display: 'inline-flex', alignItems: 'center', gap: 8 }}>
-          Per side ({MIN_PER_SIDE}-{maxPerSide})
+          {t('offerBookPage.perSide', { min: MIN_PER_SIDE, max: maxPerSide })}
           <input
             type="number"
             min={MIN_PER_SIDE}
@@ -844,23 +849,23 @@ export default function OfferBook() {
       </div>
 
       {indexLoading || (loading && offers.length === 0) ? (
-        <div className="card"><div className="empty-state"><p>Loading offers from chain...</p></div></div>
+        <div className="card"><div className="empty-state"><p>{t('offerBook.loadingOffers')}</p></div></div>
       ) : filtered.length === 0 ? (
         <div className="card">
           <div className="empty-state">
             <div className="empty-state-icon"><BookOpen size={28} /></div>
-            <h3>{statusView === 'open' ? 'No Open Offers' : 'No Filled Offers Yet'}</h3>
+            <h3>{statusView === 'open' ? t('offerBook.noOpenOffers') : t('offerBook.noClosedOffers')}</h3>
             <p>
               {statusView === 'open'
                 ? offers.length === 0
-                  ? 'There are no open offers on the book. Be the first to create one!'
-                  : 'No offers match your filters. Try widening them or loading more.'
+                  ? t('offerBookPage.noOpenBody')
+                  : t('offerBookPage.noOpenFiltered')
                 : offers.length === 0
-                  ? "No offers have been filled on this chain yet — once someone accepts an offer, it'll appear here."
-                  : 'No filled offers match your filters. Try widening them or loading more.'}
+                  ? t('offerBook.noClosedBody')
+                  : t('offerBookPage.noClosedFiltered')}
             </p>
             {statusView === 'open' && (
-              <Link to="/app/create-offer" className="btn btn-primary btn-sm">Create Offer</Link>
+              <Link to="/app/create-offer" className="btn btn-primary btn-sm">{t('appNav.createOffer')}</Link>
             )}
           </div>
         </div>
@@ -869,11 +874,11 @@ export default function OfferBook() {
           {showLender && (
             <>
               <OfferTable
-                title={statusView === 'open' ? 'Lender Offers' : 'Filled Lender Offers'}
+                title={statusView === 'open' ? t('offerBookPage.lenderOffers') : t('offerBookPage.filledLenderOffers')}
                 subtitle={
                   tab === 'lender' && totalLender > perSide
-                    ? `Page ${safePage} of ${totalPages} · ${lenderOffers.length} of ${totalLender}`
-                    : `Showing ${lenderOffers.length} of ${totalLender}`
+                    ? t('offerBookPage.pageOfTotal', { current: safePage, pages: totalPages, shown: lenderOffers.length, total: totalLender })
+                    : t('offerBookPage.showing', { shown: lenderOffers.length, total: totalLender })
                 }
                 offers={lenderOffers}
                 anchorRateBps={anchorRateBps}
@@ -892,14 +897,14 @@ export default function OfferBook() {
             <div className="card" style={{ marginTop: 12, borderLeft: '4px solid var(--brand)', background: 'var(--bg-muted, rgba(0,0,0,0.03))' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
                 <div>
-                  <div style={{ fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: '0.06em', opacity: 0.7 }}>Market Anchor</div>
+                  <div style={{ fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: '0.06em', opacity: 0.7 }}>{t('offerBookPage.marketAnchor')}</div>
                   <div style={{ fontSize: '1.25rem', fontWeight: 600 }}>
                     {anchorRateBps !== null ? bpsToPercent(anchorRateBps) : '—'}
                   </div>
                   {anchorLabel && <div style={{ fontSize: '0.75rem', opacity: 0.7 }}>{anchorLabel}</div>}
                 </div>
                 <div style={{ fontSize: '0.8rem', opacity: 0.7, textAlign: 'right' }}>
-                  Lenders ↑ above · Borrowers ↓ below
+                  {t('offerBookPage.lendersAboveBorrowersBelow')}
                 </div>
               </div>
             </div>
@@ -907,11 +912,11 @@ export default function OfferBook() {
           {showBorrower && (
             <>
               <OfferTable
-                title={statusView === 'open' ? 'Borrower Offers' : 'Filled Borrower Offers'}
+                title={statusView === 'open' ? t('offerBookPage.borrowerOffers') : t('offerBookPage.filledBorrowerOffers')}
                 subtitle={
                   tab === 'borrower' && totalBorrower > perSide
-                    ? `Page ${safePage} of ${totalPages} · ${borrowerOffers.length} of ${totalBorrower}`
-                    : `Showing ${borrowerOffers.length} of ${totalBorrower}`
+                    ? t('offerBookPage.pageOfTotal', { current: safePage, pages: totalPages, shown: borrowerOffers.length, total: totalBorrower })
+                    : t('offerBookPage.showing', { shown: borrowerOffers.length, total: totalBorrower })
                 }
                 offers={borrowerOffers}
                 anchorRateBps={anchorRateBps}
@@ -931,7 +936,9 @@ export default function OfferBook() {
 
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 12, flexWrap: 'wrap', gap: 8 }}>
         <span style={{ fontSize: '0.8rem', opacity: 0.7 }}>
-          Scanned {scanned} of {validatedTotal} {statusView === 'open' ? 'open' : 'filled'} offers
+          {statusView === 'open'
+            ? t('offerBookPage.scannedOffersOpen', { scanned, total: validatedTotal })
+            : t('offerBookPage.scannedOffersFilled', { scanned, total: validatedTotal })}
         </span>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
           <button
@@ -947,9 +954,9 @@ export default function OfferBook() {
               setCursor(0);
               void reloadIndex();
             }}
-            title="Rescan the chain for offers if the list looks stale."
+            title={t('offerBookPage.rescanTooltip')}
           >
-            {indexLoading ? 'Rescanning…' : 'Rescan chain'}
+            {indexLoading ? t('offerBookPage.rescanning') : t('offerBookPage.rescanChain')}
           </button>
           {hasMore && (
             <button
@@ -1054,12 +1061,12 @@ function AcceptReviewModal({ offer, illiquid, consent, onConsentChange, submitti
         {viewerAddress && (
           <SanctionsBanner
             address={viewerAddress as Address}
-            label="Your wallet"
+            label={t('banners.sanctionsLabelWallet')}
           />
         )}
         <SanctionsBanner
           address={offer.creator as Address}
-          label="Offer creator"
+          label={t('banners.sanctionsLabelOfferCreator')}
         />
 
         <dl style={{ display: 'grid', gridTemplateColumns: 'max-content 1fr', rowGap: 6, columnGap: 16, fontSize: '0.9rem', margin: '8px 0 12px 0' }}>
@@ -1256,7 +1263,7 @@ function AcceptReviewModal({ offer, illiquid, consent, onConsentChange, submitti
             checked={consent}
             onChange={(e) => onConsentChange(e.target.checked)}
           />
-          <span>{FALLBACK_CONSENT_CHECKBOX_LABEL}</span>
+          <span>{t('riskDisclosures.checkboxLabel')}</span>
         </label>
 
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 16 }}>
@@ -1423,6 +1430,7 @@ interface OfferTableProps {
 }
 
 function OfferTable({ title, subtitle, offers, anchorRateBps, address, acceptingId, onAccept, statusView, cardHelpId }: OfferTableProps) {
+  const { t } = useTranslation();
   return (
     <div className="card" style={{ marginTop: 16 }}>
       <div className="card-title" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
@@ -1433,20 +1441,20 @@ function OfferTable({ title, subtitle, offers, anchorRateBps, address, accepting
         <span style={{ fontSize: '0.8rem', opacity: 0.7 }}>{subtitle}</span>
       </div>
       {offers.length === 0 ? (
-        <div className="empty-state"><p>No open offers on this side.</p></div>
+        <div className="empty-state"><p>{t('offerTable.noOffers')}</p></div>
       ) : (
         <div className="loans-table-wrap">
           <table className="loans-table">
             <thead>
               <tr>
-                <th>ID</th>
-                <th>Type</th>
-                <th>Asset</th>
-                <th>Amount</th>
-                <th>Rate</th>
-                <th>Duration</th>
-                <th>Collateral</th>
-                <th>Liquidity</th>
+                <th>{t('offerTable.colId')}</th>
+                <th>{t('offerTable.colType')}</th>
+                <th>{t('offerTable.colAsset')}</th>
+                <th>{t('offerTable.colAmount')}</th>
+                <th>{t('offerTable.colRate')}</th>
+                <th>{t('offerTable.colDuration')}</th>
+                <th>{t('offerTable.colCollateral')}</th>
+                <th>{t('offerTable.colLiquidity')}</th>
                 <th></th>
               </tr>
             </thead>
@@ -1477,7 +1485,7 @@ function OfferTable({ title, subtitle, offers, anchorRateBps, address, accepting
                         </span>
                       )}
                     </td>
-                    <td>{offer.durationDays.toString()} days</td>
+                    <td>{offer.durationDays.toString()} {t('loanDetails.daysSuffix')}</td>
                     <td>
                       <div>
                         <span className="mono"><TokenAmount amount={offer.collateralAmount} address={offer.collateralAsset} /></span>
@@ -1491,7 +1499,7 @@ function OfferTable({ title, subtitle, offers, anchorRateBps, address, accepting
                     </td>
                     <td>
                       {statusView === 'closed' ? (
-                        <span className="status-badge settled">Filled</span>
+                        <span className="status-badge settled">{t('offerTable.filled')}</span>
                       ) : isOwn ? (
                         // Phase 6: Offer creator sees Your-Offer badge + a
                         // "Manage keepers" deep-link. Per-keeper enables for
@@ -1500,13 +1508,13 @@ function OfferTable({ title, subtitle, offers, anchorRateBps, address, accepting
                         // that's where the user picks which of their
                         // whitelisted keepers to enable for which offer.
                         <div style={{ display: 'flex', flexDirection: 'column', gap: 4, alignItems: 'flex-end' }}>
-                          <span className="status-badge settled">Your Offer</span>
+                          <span className="status-badge settled">{t('offerTable.yourOffer')}</span>
                           <Link
                             to="/app/keepers"
                             data-tooltip="Enable specific keepers to drive this offer via the Keeper Settings page."
                             style={{ fontSize: '0.72rem', padding: '3px 8px', color: 'var(--brand)' }}
                           >
-                            Manage keepers →
+                            {t('offerTable.manageKeepers')}
                           </Link>
                         </div>
                       ) : address ? (
@@ -1515,10 +1523,10 @@ function OfferTable({ title, subtitle, offers, anchorRateBps, address, accepting
                           onClick={() => onAccept(offer.id)}
                           disabled={acceptingId === offer.id}
                         >
-                          {acceptingId === offer.id ? 'Accepting...' : 'Accept'}
+                          {acceptingId === offer.id ? t('offerTable.accepting') : t('offerTable.accept')}
                         </button>
                       ) : (
-                        <span className="status-badge pending">Connect Wallet</span>
+                        <span className="status-badge pending">{t('common.connectWallet')}</span>
                       )}
                     </td>
                   </tr>

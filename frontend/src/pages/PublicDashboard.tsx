@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
 import {
   BarChart3,
   Download,
@@ -75,6 +76,7 @@ function formatChangeLine(pct24h: number | null, pct7d: number | null): string {
 }
 
 export default function PublicDashboard() {
+  const { t } = useTranslation();
   const { mode } = useMode();
   const readChain = useReadChain();
   const { switchToChain, address: walletAddress } = useWallet();
@@ -252,13 +254,10 @@ export default function PublicDashboard() {
             <div>
               <h1 className="page-title" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                 <BarChart3 size={28} style={{ verticalAlign: 'middle', marginRight: 8 }} />
-                Public Analytics Dashboard
+                {t('publicDashboard.pageTitle')}
                 <CardInfo id="public-dashboard.overview" />
               </h1>
-              <p className="page-subtitle">
-                Transparent, aggregated protocol metrics derived entirely from on-chain
-                contract state and event logs. No wallet required.
-              </p>
+              <p className="page-subtitle">{t('publicDashboard.pageSubtitle')}</p>
             </div>
             <div className="pd-header-actions">
               <button
@@ -268,15 +267,15 @@ export default function PublicDashboard() {
                   void reload();
                   void reloadCombined();
                 }}
-                aria-label="Refresh snapshot"
+                aria-label={t('publicDashboard.refreshAria')}
               >
-                <RefreshCw size={14} /> Refresh
+                <RefreshCw size={14} /> {t('publicDashboard.refresh')}
               </button>
               <button
                 type="button"
                 className="btn btn-secondary btn-sm"
                 onClick={() => handleExport('csv')}
-                aria-label="Export CSV"
+                aria-label={t('publicDashboard.exportCsvAria')}
               >
                 <Download size={14} /> CSV
               </button>
@@ -284,7 +283,7 @@ export default function PublicDashboard() {
                 type="button"
                 className="btn btn-secondary btn-sm"
                 onClick={() => handleExport('json')}
-                aria-label="Export JSON"
+                aria-label={t('publicDashboard.exportJsonAria')}
               >
                 <Download size={14} /> JSON
               </button>
@@ -292,13 +291,13 @@ export default function PublicDashboard() {
           </header>
 
           {error && (
-            <ErrorAlert message={`Failed to load on-chain data: ${error.message}`} />
+            <ErrorAlert message={`${t('publicDashboard.errorLoading')} ${error.message}`} />
           )}
 
-          <section className="pd-section" aria-label="Combined across all chains">
+          <section className="pd-section" aria-label={t('publicDashboard.combinedAria')}>
             <div className="pd-section-head">
               <h2 style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                Combined — all chains
+                {t('publicDashboard.combinedTitle')}
                 <CardInfo id="public-dashboard.combined" />
               </h2>
               {combined?.combined.fetchedAt && (
@@ -312,9 +311,9 @@ export default function PublicDashboard() {
               )}
             </div>
             {combinedLoading && !combined ? (
-              <p className="pd-subtle">Aggregating metrics from every deployed chain…</p>
+              <p className="pd-subtle">{t('publicDashboard.aggregatingCombined')}</p>
             ) : !combined ? (
-              <p className="pd-subtle">No deployed chains available.</p>
+              <p className="pd-subtle">{t('publicDashboard.noDeployedChains')}</p>
             ) : (
               <div className="pd-metrics-grid">
                 <MetricCard
@@ -385,33 +384,31 @@ export default function PublicDashboard() {
             )}
           </section>
 
-          <section className="pd-section" aria-label="Per-chain view">
+          <section className="pd-section" aria-label={t('publicDashboard.perChainAria')}>
             <div className="pd-section-head">
               <h2 style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                Per-chain breakdown
+                {t('publicDashboard.perChainTitle')}
                 <CardInfo id="public-dashboard.per-chain" />
               </h2>
               <label className="pd-chain-selector">
-                <span className="pd-subtle">Chain</span>
+                <span className="pd-subtle">{t('publicDashboard.chainLabel')}</span>
                 <ChainPicker
                   chains={deployedChainOptions}
                   value={chainId}
                   onSelect={handleChainSelect}
-                  ariaLabel="Select chain for per-chain metrics"
+                  ariaLabel={t('publicDashboard.chainPickerAria')}
                   menuAlign="right"
                 />
               </label>
             </div>
             <p className="pd-subtle" style={{ marginTop: 4 }}>
-              Metrics below are scoped to the selected chain — no wallet required.
-              If a wallet is connected, it is also asked to switch networks so any
-              subsequent writes land on the same chain.
+              {t('publicDashboard.perChainSubtitle')}
             </p>
           </section>
 
           {loading && !stats && (
             <div className="empty-state" style={{ minHeight: 240 }}>
-              <p>Aggregating on-chain state…</p>
+              <p>{t('publicDashboard.aggregatingOnChain')}</p>
             </div>
           )}
 
@@ -508,7 +505,7 @@ export default function PublicDashboard() {
 
               <section className="pd-section">
                 <div className="pd-section-head">
-                  <h2>TVL Over Time</h2>
+                  <h2>{t('publicDashboard.tvlOverTime')}</h2>
                   <div className="pd-range" role="tablist" aria-label="TVL range">
                     {RANGES.map((r) => (
                       <button
@@ -528,11 +525,11 @@ export default function PublicDashboard() {
 
               <section className="pd-section pd-two-col">
                 <div>
-                  <h2>Daily Loan Volume &amp; Interest</h2>
+                  <h2>{t('publicDashboard.dailyLoanVolume')}</h2>
                   <BarSeries data={series?.dailyVolume ?? []} />
                 </div>
                 <div>
-                  <h2>Active vs Completed</h2>
+                  <h2>{t('publicDashboard.activeVsCompleted')}</h2>
                   <Donut
                     slices={[
                       { label: 'Active', value: stats.activeLoans, color: 'var(--brand)' },
@@ -552,9 +549,9 @@ export default function PublicDashboard() {
               </section>
 
               <section className="pd-section">
-                <h2>Asset Distribution</h2>
+                <h2>{t('publicDashboard.assetDistribution')}</h2>
                 {stats.assetBreakdown.length === 0 ? (
-                  <p className="empty-state-inline">No loan volume yet.</p>
+                  <p className="empty-state-inline">{t('publicDashboard.noLoanVolume')}</p>
                 ) : (
                   <div className="pd-distribution">
                     {stats.assetBreakdown.slice(0, 8).map((row) => (
@@ -593,7 +590,7 @@ export default function PublicDashboard() {
               </section>
 
               <section className="pd-section">
-                <h2>NFT Rental Utilization</h2>
+                <h2>{t('publicDashboard.nftRentalUtilization')}</h2>
                 <div className="pd-utilization">
                   <div>
                     <div className="pd-big">{stats.nftRentalsActive}</div>
@@ -683,7 +680,7 @@ export default function PublicDashboard() {
               {isAdvanced && (
                 <>
                   <section className="pd-section">
-                    <h2>Asset-wise Breakdown</h2>
+                    <h2>{t('publicDashboard.assetWiseBreakdown')}</h2>
                     <div className="pd-table-wrap">
                       <table className="pd-table">
                         <thead>
@@ -731,7 +728,7 @@ export default function PublicDashboard() {
                   </section>
 
                   <section className="pd-section">
-                    <h2>Protocol Health</h2>
+                    <h2>{t('publicDashboard.protocolHealth')}</h2>
                     <div className="pd-metrics-grid">
                       <MetricCard
                         label="Average APR"
@@ -752,13 +749,13 @@ export default function PublicDashboard() {
                   </section>
 
                   <section className="pd-section">
-                    <h2>Recent Activity</h2>
+                    <h2>{t('publicDashboard.recentActivity')}</h2>
                     <p className="pd-subtle">
                       Last {recentLoans.length} loans. No addresses shown — positions are
                       keyed by loan ID only.
                     </p>
                     {recentLoans.length === 0 ? (
-                      <p className="empty-state-inline">No loans yet.</p>
+                      <p className="empty-state-inline">{t('publicDashboard.noLoans')}</p>
                     ) : (
                       <>
                         <div className="pd-table-wrap">
@@ -822,13 +819,13 @@ export default function PublicDashboard() {
                   </section>
 
                   <section className="pd-section">
-                    <h2>Recent Offers</h2>
+                    <h2>{t('publicDashboard.recentOffers')}</h2>
                     <p className="pd-subtle">
                       Last {recentOffers.length} offers indexed from events. Open, accepted,
                       and cancelled states are all shown.
                     </p>
                     {recentOffers.length === 0 ? (
-                      <p className="empty-state-inline">No offers yet.</p>
+                      <p className="empty-state-inline">{t('publicDashboard.noOffers')}</p>
                     ) : (
                       <>
                         <div className="pd-table-wrap">

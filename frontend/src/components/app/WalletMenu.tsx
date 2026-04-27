@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { ChevronDown, LogOut, Globe, Copy, Check } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 import { useWallet } from '../../context/WalletContext';
 import {
   CHAIN_REGISTRY,
@@ -42,6 +43,7 @@ import './WalletMenu.css';
  * a menu first.
  */
 export function WalletMenu() {
+  const { t } = useTranslation();
   const { address, chainId, activeChain, disconnect, switchToChain } =
     useWallet();
   const [open, setOpen] = useState(false);
@@ -149,7 +151,7 @@ export function WalletMenu() {
         onClick={() => setOpen((o) => !o)}
         aria-haspopup="menu"
         aria-expanded={open}
-        aria-label="Wallet menu — switch network or disconnect"
+        aria-label={t('wallet.menuAriaLabel')}
       >
         <span className="wallet-dot" />
         <span className="wallet-menu-address">
@@ -174,7 +176,7 @@ export function WalletMenu() {
         <div
           className="wallet-menu-panel"
           role="menu"
-          aria-label="Wallet actions"
+          aria-label={t('wallet.actionsAriaLabel')}
         >
           {/* Address section at the very top of the popover —
            *  redacted hex form (always, even when ENS resolves)
@@ -219,7 +221,7 @@ export function WalletMenu() {
               <div className="wallet-menu-current-text">
                 <span className="wallet-menu-current-name">{currentLabel}</span>
                 {current?.isCanonicalVPFI && (
-                  <span className="wallet-menu-canonical-pill">canonical</span>
+                  <span className="wallet-menu-canonical-pill">{t('wallet.canonical')}</span>
                 )}
               </div>
             </div>
@@ -227,7 +229,7 @@ export function WalletMenu() {
 
           {deployedChains.length > 1 && (
             <div className="wallet-menu-section">
-              <div className="wallet-menu-section-label">Switch to</div>
+              <div className="wallet-menu-section-label">{t('wallet.switchTo')}</div>
               <div className="wallet-menu-chain-list" role="listbox">
                 {deployedChains
                   .filter((c) => c.chainId !== chainId)
@@ -245,7 +247,7 @@ export function WalletMenu() {
                         {c.name}
                         {c.testnet && (
                           <span className="wallet-menu-testnet-tag">
-                            Testnet
+                            {t('wallet.testnet')}
                           </span>
                         )}
                       </span>
@@ -267,7 +269,7 @@ export function WalletMenu() {
             role="menuitem"
           >
             <LogOut size={14} aria-hidden="true" />
-            <span>Disconnect</span>
+            <span>{t('common.disconnect')}</span>
           </button>
         </div>
       )}

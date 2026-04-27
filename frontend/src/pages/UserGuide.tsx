@@ -64,13 +64,51 @@ import {
   type ReactNode,
 } from 'react';
 import { useLocation } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import Navbar from '../components/Navbar';
 import Footer from '../components/Footer';
-import basicMd from '../../../docs/UserGuide-Basic.md?raw';
-import advancedMd from '../../../docs/UserGuide-Advanced.md?raw';
+import { EnglishOnlyNotice } from '../components/app/EnglishOnlyNotice';
 import './UserGuide.css';
+
+/**
+ * Per-locale user-guide markdown. Files live in
+ * `frontend/src/content/userguide/` named `<Mode>.<locale>.md`
+ * (e.g. `Basic.en.md`, `Advanced.en.md`). To add a translation, drop a
+ * new file alongside — `Basic.es.md`, `Advanced.ja.md`, etc. — and the
+ * UserGuide page will pick it up at build time.
+ *
+ * Vite's `import.meta.glob` with `eager: true, query: '?raw'` resolves
+ * to `Record<absolutePath, rawString>` at build time. Only files
+ * matching the glob exist in the bundle; missing locales fall through
+ * to the English source with an in-page "translation pending" notice.
+ */
+const GUIDE_FILES = import.meta.glob('../content/userguide/*.md', {
+  eager: true,
+  query: '?raw',
+  import: 'default',
+}) as Record<string, string>;
+
+/** Look up the markdown for a (mode, locale) pair. Returns the
+ *  resolved text + a flag indicating whether the requested locale was
+ *  actually found, so the page can show a "translation pending" notice
+ *  on the English fallback. */
+function resolveGuide(
+  mode: 'Basic' | 'Advanced',
+  locale: string,
+): { text: string; usedLocale: string; fellBackToEnglish: boolean } {
+  const wanted = `../content/userguide/${mode}.${locale}.md`;
+  const fallback = `../content/userguide/${mode}.en.md`;
+  if (GUIDE_FILES[wanted]) {
+    return { text: GUIDE_FILES[wanted], usedLocale: locale, fellBackToEnglish: false };
+  }
+  return {
+    text: GUIDE_FILES[fallback] ?? '',
+    usedLocale: 'en',
+    fellBackToEnglish: locale !== 'en',
+  };
+}
 
 type Role = 'lender' | 'borrower';
 
@@ -455,7 +493,13 @@ function parseFragment(hash: string): { baseId: string | null; role: Role | null
 
 export default function UserGuide({ variant }: UserGuideProps) {
   const location = useLocation();
-  const raw = variant === 'advanced' ? advancedMd : basicMd;
+  const { i18n } = useTranslation();
+  const mode: 'Basic' | 'Advanced' = variant === 'advanced' ? 'Advanced' : 'Basic';
+  const lang = i18n.resolvedLanguage ?? 'en';
+  const { text: raw, fellBackToEnglish } = useMemo(
+    () => resolveGuide(mode, lang),
+    [mode, lang],
+  );
   const blocks = useMemo(() => parseGuide(raw), [raw]);
   const toc = useMemo(() => extractToc(raw), [raw]);
   const basePath = `/help/${variant}`;
@@ -558,6 +602,7 @@ export default function UserGuide({ variant }: UserGuideProps) {
             </aside>
 
             <article className="user-guide-content">
+              {fellBackToEnglish && <EnglishOnlyNotice variant="guide" />}
               {blocks.map((block, i) =>
                 block.kind === 'markdown' ? (
                   <MarkdownChunk key={i} text={block.text} />

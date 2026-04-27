@@ -1,5 +1,6 @@
 import { useMemo } from 'react';
 import { Link } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
 import { useTheme } from '../context/ThemeContext';
 import { CHAIN_REGISTRY, compareChainsForDisplay } from '../contracts/config';
 import { ChainPicker } from './ChainPicker';
@@ -12,6 +13,7 @@ const REDDIT_URL = 'https://www.reddit.com/user/Vaipakam/';
 
 export default function Footer() {
   const { theme } = useTheme();
+  const { t } = useTranslation();
 
   // Derive the "supported networks" badges directly from CHAIN_REGISTRY so
   // this block reflects what's actually deployed (diamondAddress non-null)
@@ -38,24 +40,22 @@ export default function Footer() {
                 (e.target as HTMLImageElement).style.display = 'none';
               }}
             />
-            <p className="footer-tagline">
-              Decentralized peer-to-peer lending and NFT rentals. Trustless, transparent, on-chain.
-            </p>
+            <p className="footer-tagline">{t('footer.tagline')}</p>
             <div className="footer-networks">
               {deployedNetworks.length === 0 ? (
-                <span className="network-badge">Coming soon</span>
+                <span className="network-badge">{t('footer.comingSoon')}</span>
               ) : (
                 <div className="footer-network-select">
                   <span className="footer-network-label">
-                    Supported networks
+                    {t('footer.supportedNetworks')}
                   </span>
                   {/* No persistent value — the picker is a menu; selecting a
                       chain opens its Diamond on the chain's block explorer in
                       a fresh tab. */}
                   <ChainPicker
                     chains={deployedNetworks}
-                    placeholder="View Diamond on explorer…"
-                    ariaLabel="View Diamond contract on block explorer"
+                    placeholder={t('footer.viewDiamondOnExplorer')}
+                    ariaLabel={t('footer.viewDiamondAria')}
                     onSelect={(chainId) => {
                       const chain = deployedNetworks.find(
                         (c) => c.chainId === chainId,
@@ -71,51 +71,51 @@ export default function Footer() {
           </div>
 
           <div className="footer-col">
-            <h4>Protocol</h4>
-            <Link to="/#features">Features</Link>
-            <Link to="/#how-it-works">How It Works</Link>
-            <Link to="/#security">Security</Link>
-            <Link to="/#faq">FAQ</Link>
+            <h4>{t('footer.colProtocol')}</h4>
+            <Link to="/#features">{t('nav.features')}</Link>
+            <Link to="/#how-it-works">{t('nav.howItWorks')}</Link>
+            <Link to="/#security">{t('nav.security')}</Link>
+            <Link to="/#faq">{t('nav.faq')}</Link>
           </div>
 
           <div className="footer-col">
-            <h4>Resources</h4>
-            <a href={GITHUB_URL} target="_blank" rel="noreferrer">Documentation</a>
-            <Link to="/analytics">Smart Contracts</Link>
-            <Link to="/app/nft-verifier">NFT Verifier</Link>
-            <Link to="/app/buy-vpfi">Buy VPFI</Link>
+            <h4>{t('footer.colResources')}</h4>
+            <a href={GITHUB_URL} target="_blank" rel="noreferrer">{t('footer.documentation')}</a>
+            <Link to="/analytics">{t('footer.smartContracts')}</Link>
+            <Link to="/app/nft-verifier">{t('nav.nftVerifier')}</Link>
+            <Link to="/app/buy-vpfi">{t('appNav.buyVpfi')}</Link>
           </div>
 
           <div className="footer-col">
-            <h4>Community</h4>
-            <Link to="/discord">Discord</Link>
+            <h4>{t('footer.colCommunity')}</h4>
+            <Link to="/discord">{t('footer.discord')}</Link>
             <a href={X_URL} target="_blank" rel="noreferrer">X</a>
             <a href={GITHUB_URL} target="_blank" rel="noreferrer">GitHub</a>
             <a href={REDDIT_URL} target="_blank" rel="noreferrer">Reddit</a>
           </div>
         </div>
 
-        <p className="footer-disclaimer" role="note">
-          Vaipakam is a decentralized, non-custodial protocol. No KYC is required.
-          Users are responsible for their own regulatory compliance.
-        </p>
+        <p className="footer-disclaimer" role="note">{t('footer.disclaimer')}</p>
 
         <div className="footer-bottom">
-          <p>&copy; {new Date().getFullYear()} Vaipakam. All rights reserved.</p>
+          <p>
+            &copy; {new Date().getFullYear()} Vaipakam.{' '}
+            {t('footer.rightsReserved')}
+          </p>
           <Link to="/terms" className="footer-cookie-link">
-            Terms
+            {t('footer.terms')}
           </Link>
           <Link to="/privacy" className="footer-cookie-link">
-            Privacy
+            {t('footer.privacy')}
           </Link>
           <button
             type="button"
             className="footer-cookie-link"
             onClick={openConsentBanner}
           >
-            Cookie settings
+            {t('footer.cookieSettings')}
           </button>
-          <p className="footer-license">BUSL 1.1 License</p>
+          <p className="footer-license">{t('footer.license')}</p>
         </div>
       </div>
     </footer>

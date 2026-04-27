@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
 import { useWallet } from '../context/WalletContext';
 import { useDiamondRead } from '../contracts/useDiamond';
 import { useUserLoans } from '../hooks/useUserLoans';
@@ -34,6 +35,7 @@ const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
 const LOANS_PAGE_SIZE = 15;
 
 export default function Dashboard() {
+  const { t } = useTranslation();
   const { address, activeChain, chainId } = useWallet();
   const { mode } = useMode();
   const isAdvanced = mode === 'advanced';
@@ -93,8 +95,8 @@ export default function Dashboard() {
         <div className="empty-state-icon">
           <Wallet size={28} />
         </div>
-        <h3>Connect Your Wallet</h3>
-        <p>Connect your wallet to view your dashboard, active loans, and positions.</p>
+        <h3>{t('dashboard.connectTitle')}</h3>
+        <p>{t('dashboard.connectBody')}</p>
       </div>
     );
   }
@@ -102,8 +104,8 @@ export default function Dashboard() {
   return (
     <div className="dashboard">
       <div className="page-header">
-        <h1 className="page-title">Dashboard</h1>
-        <p className="page-subtitle">Overview of your lending and borrowing positions</p>
+        <h1 className="page-title">{t('appNav.dashboard')}</h1>
+        <p className="page-subtitle">{t('dashboard.subtitle')}</p>
       </div>
 
       {/* Stats row */}
@@ -114,7 +116,7 @@ export default function Dashboard() {
           </div>
           <div>
             <div className="stat-value">{activeLoans.length}</div>
-            <div className="stat-label">Active Loans</div>
+            <div className="stat-label">{t('dashboard.activeLoans')}</div>
           </div>
         </div>
         <div className="stat-card">
@@ -123,7 +125,7 @@ export default function Dashboard() {
           </div>
           <div>
             <div className="stat-value">{lentCount}</div>
-            <div className="stat-label">As Lender</div>
+            <div className="stat-label">{t('dashboard.asLender')}</div>
           </div>
         </div>
         <div className="stat-card">
@@ -132,7 +134,7 @@ export default function Dashboard() {
           </div>
           <div>
             <div className="stat-value">{borrowedCount}</div>
-            <div className="stat-label">As Borrower</div>
+            <div className="stat-label">{t('dashboard.asBorrower')}</div>
           </div>
         </div>
         <div className="stat-card">
@@ -141,7 +143,7 @@ export default function Dashboard() {
           </div>
           <div>
             <div className="stat-value">{loans.length}</div>
-            <div className="stat-label">Total Loans</div>
+            <div className="stat-label">{t('dashboard.totalLoans')}</div>
           </div>
         </div>
       </div>
@@ -153,11 +155,11 @@ export default function Dashboard() {
       {currentEscrow && (
         <div className="card" style={{ marginBottom: 20 }}>
           <div className="card-title">
-            Your Escrow
+            {t('dashboard.yourEscrow')}
             <CardInfo id="dashboard.your-escrow" />
           </div>
           <div className="data-row">
-            <span className="data-label">Escrow Address</span>
+            <span className="data-label">{t('dashboard.escrowAddress')}</span>
             <a
               href={`${activeChain?.blockExplorer ?? DEFAULT_CHAIN.blockExplorer}/address/${currentEscrow}`}
               target="_blank"
@@ -188,31 +190,31 @@ export default function Dashboard() {
       <div className="card">
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
           <div className="card-title" style={{ marginBottom: 0 }}>
-            Your Loans
+            {t('dashboard.yourLoans')}
             <CardInfo id="dashboard.your-loans" />
           </div>
           <Link to="/app/create-offer" className="btn btn-primary btn-sm">
-            <PlusCircle size={16} /> New Offer
+            <PlusCircle size={16} /> {t('dashboard.newOffer')}
           </Link>
         </div>
 
         {loading ? (
           <div className="empty-state">
-            <p>Loading your positions...</p>
+            <p>{t('dashboard.loadingPositions')}</p>
           </div>
         ) : loans.length === 0 ? (
           <div className="empty-state">
             <div className="empty-state-icon">
               <LayoutDashboard size={28} />
             </div>
-            <h3>No Loans Yet</h3>
-            <p>Create an offer or browse the offer book to get started.</p>
+            <h3>{t('dashboard.noLoansYet')}</h3>
+            <p>{t('dashboard.noLoansBody')}</p>
             <div style={{ display: 'flex', gap: 8 }}>
               <Link to="/app/create-offer" className="btn btn-primary btn-sm">
-                Create Offer
+                {t('appNav.createOffer')}
               </Link>
               <Link to="/app/offers" className="btn btn-secondary btn-sm">
-                Browse Offers
+                {t('dashboard.browseOffers')}
               </Link>
             </div>
           </div>
@@ -239,7 +241,7 @@ export default function Dashboard() {
                     <td>#{loan.id.toString()}</td>
                     <td>
                       <span className={`status-badge ${loan.role}`}>
-                        {loan.role === 'lender' ? 'Lender' : 'Borrower'}
+                        {loan.role === 'lender' ? t('common.lender') : t('common.borrower')}
                       </span>
                     </td>
                     <td className="mono">
@@ -266,7 +268,7 @@ export default function Dashboard() {
                     </td>
                     <td>
                       <Link to={`/app/loans/${loan.id.toString()}`} className="btn btn-ghost btn-sm">
-                        View
+                        {t('common.view')}
                       </Link>
                     </td>
                   </tr>
@@ -345,6 +347,7 @@ export function VPFIPanel({
   isCanonicalVPFI,
   isAdvanced,
 }: VPFIPanelProps) {
+  const { t } = useTranslation();
   const registered = !!vpfi?.registered;
   const tokenAddr = vpfi?.token ?? null;
   const minterAddr = vpfi?.minter ?? null;
@@ -378,7 +381,7 @@ export function VPFIPanel({
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <Coins size={16} style={{ color: 'var(--brand)' }} />
           <div className="card-title" style={{ marginBottom: 0 }}>
-            VPFI Token (this chain)
+            {t('vpfiTokenCard.title')}
             <CardInfo id="dashboard.vpfi-panel" />
           </div>
         </div>
@@ -398,7 +401,7 @@ export function VPFIPanel({
               className="status-badge"
               style={{ background: 'rgba(148, 163, 184, 0.12)', color: 'var(--text-tertiary)' }}
             >
-              {networkName} · chainId {networkChainId}
+              {t('vpfiTokenCard.chainBadge', { chain: networkName, chainId: networkChainId })}
             </span>
             <span
               className="status-badge"
@@ -409,12 +412,10 @@ export function VPFIPanel({
                 color: isCanonicalVPFI ? 'var(--brand)' : 'var(--accent-green)',
               }}
             >
-              {isCanonicalVPFI ? 'Canonical' : 'Mirror'}
+              {isCanonicalVPFI ? t('vpfiTokenCard.canonical') : t('vpfiTokenCard.mirror')}
             </span>
-            <InfoTip ariaLabel={isCanonicalVPFI ? 'About canonical chain' : 'About mirror chain'}>
-              {isCanonicalVPFI
-                ? 'Canonical chain — the VPFIToken contract and the OFT Adapter live here. Cross-chain bridges lock the canonical supply on the way out and release it on the way back; total supply is fixed at this chain.'
-                : 'Mirror chain — VPFI on this chain is a 1:1 representation of the canonical supply. The OFT mints tokens here when a bridge transfer arrives and burns them when a transfer leaves, so the mirror balance is always backed by canonical-chain locks.'}
+            <InfoTip ariaLabel={isCanonicalVPFI ? t('vpfiTokenCard.canonicalAria') : t('vpfiTokenCard.mirrorAria')}>
+              {isCanonicalVPFI ? t('vpfiTokenCard.canonicalTip') : t('vpfiTokenCard.mirrorTip')}
             </InfoTip>
           </div>
         )}
@@ -422,11 +423,7 @@ export function VPFIPanel({
 
       {!registered ? (
         <div className="empty-state" style={{ padding: '16px 0' }}>
-          <p style={{ margin: 0 }}>
-            VPFI is not yet registered with the Diamond on {networkName}. Once
-            the admin calls <span className="mono">setVPFIToken</span>, balances
-            and activity will appear here.
-          </p>
+          <p style={{ margin: 0 }}>{t('vpfiTokenCard.notRegistered', { chain: networkName })}</p>
         </div>
       ) : (
         <>
@@ -440,42 +437,42 @@ export function VPFIPanel({
           >
             <div>
               <div className="stat-value">{formatVpfi(balance)}</div>
-              <div className="stat-label">Wallet VPFI balance</div>
+              <div className="stat-label">{t('vpfiTokenCard.walletBalance')}</div>
             </div>
             <div>
               <div
                 className="stat-value"
-                data-tooltip="VPFI currently staked in your per-user escrow on this chain. Counts toward the borrower fee discount tier."
+                data-tooltip={t('vpfiTokenCard.escrowTooltip')}
                 data-tooltip-placement="below-start"
               >
                 {escrowVpfiWei == null
                   ? '—'
                   : formatVpfi(formatVpfiUnits(escrowVpfiWei))}
               </div>
-              <div className="stat-label">Escrow VPFI balance</div>
+              <div className="stat-label">{t('vpfiTokenCard.escrowBalance')}</div>
             </div>
             <div>
               <div
                 className="stat-value"
-                data-tooltip="Your effective ownership of this chain's VPFI supply — wallet balance plus escrow-locked balance, divided by circulating. Escrow VPFI is still yours; it's just locked for tier discount / 5% APR."
+                data-tooltip={t('vpfiTokenCard.shareTooltip')}
                 data-tooltip-placement="below-start"
               >
                 {(effectiveShareOfCirculating * 100).toFixed(2)}%
               </div>
-              <div className="stat-label">Share of circulating</div>
+              <div className="stat-label">{t('vpfiTokenCard.shareCirculating')}</div>
             </div>
             <div>
               <div className="stat-value">{vpfi ? formatVpfi(vpfi.totalSupply) : '—'}</div>
-              <div className="stat-label">Circulating (this chain)</div>
+              <div className="stat-label">{t('vpfiTokenCard.circulatingThisChain')}</div>
             </div>
             <div>
               <div className="stat-value">{vpfi ? formatVpfi(vpfi.capHeadroom) : '—'}</div>
-              <div className="stat-label">Remaining mintable</div>
+              <div className="stat-label">{t('vpfiTokenCard.remainingMintable')}</div>
             </div>
           </div>
 
           <div className="data-row">
-            <span className="data-label">Token</span>
+            <span className="data-label">{t('vpfiTokenCard.tokenLabel')}</span>
             <a
               href={`${blockExplorer}/address/${tokenAddr}`}
               target="_blank"
@@ -488,7 +485,7 @@ export function VPFIPanel({
             </a>
           </div>
           <div className="data-row">
-            <span className="data-label">Authorized minter</span>
+            <span className="data-label">{t('vpfiTokenCard.authorizedMinter')}</span>
             <a
               href={`${blockExplorer}/address/${minterAddr}`}
               target="_blank"
@@ -502,7 +499,7 @@ export function VPFIPanel({
           </div>
           {treasury && (
             <div className="data-row">
-              <span className="data-label">Treasury (mint destination)</span>
+              <span className="data-label">{t('vpfiTokenCard.treasuryMintDestination')}</span>
               <a
                 href={`${blockExplorer}/address/${treasury}`}
                 target="_blank"
@@ -518,13 +515,11 @@ export function VPFIPanel({
 
           <div style={{ marginTop: 16 }}>
             <div className="data-label" style={{ marginBottom: 8 }}>
-              Your VPFI activity
+              {t('vpfiTokenCard.yourActivity')}
             </div>
             {recentTransfers.length === 0 ? (
               <p className="stat-label" style={{ margin: 0 }}>
-                No VPFI transfers touch this wallet on {networkName} yet.
-                User-facing distributions (rewards, staking) arrive in a later
-                rollout phase.
+                {t('vpfiTokenCard.noActivity', { chain: networkName })}
               </p>
             ) : (
               <div className="loans-table-wrap">

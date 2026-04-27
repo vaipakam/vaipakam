@@ -1,4 +1,5 @@
 import { AlertOctagon } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 import { useSanctionsCheck } from '../../hooks/useSanctionsCheck';
 import type { Address } from 'viem';
 
@@ -20,10 +21,11 @@ export function SanctionsBanner({
   label,
 }: {
   address: Address | null | undefined;
-  /** Short label for which wallet we're flagging — "Your wallet",
-   *  "Offer creator", etc. Shown in the banner body. */
+  /** Already-localised label for which wallet is flagged — callers
+   *  should pass `t('banners.sanctionsLabelWallet')` etc. directly. */
   label: string;
 }) {
+  const { t } = useTranslation();
   const { isSanctioned, loading } = useSanctionsCheck(address);
   if (loading) return null;
   if (!isSanctioned) return null;
@@ -40,12 +42,8 @@ export function SanctionsBanner({
     >
       <AlertOctagon size={18} style={{ flex: '0 0 auto', marginTop: 2 }} />
       <div style={{ fontSize: '0.86rem', lineHeight: 1.5 }}>
-        <strong>{label}: sanctions-screening match.</strong> The on-chain
-        sanctions oracle (Chainalysis) currently lists this address.
-        Any offer-creation or offer-acceptance transaction will revert
-        at the protocol layer. If you believe this is a mis-match,
-        contact Chainalysis support — Vaipakam does not maintain its
-        own sanctions list.
+        <strong>{t('banners.sanctionsMatchTitle', { label })}</strong>{' '}
+        {t('banners.sanctionsMatchBody')}
       </div>
     </div>
   );

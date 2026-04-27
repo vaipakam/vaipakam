@@ -1,6 +1,7 @@
 import Navbar from "../components/Navbar";
 import Footer from "../components/Footer";
 import DiagnosticsDrawer from "../components/app/DiagnosticsDrawer";
+import { EnglishOnlyNotice } from "../components/app/EnglishOnlyNotice";
 import "./LegalPage.css";
 
 /**
@@ -18,6 +19,7 @@ export default function TermsPage() {
     <>
       <Navbar />
       <main className="container legal-page">
+        <EnglishOnlyNotice />
         <header>
           <h1>Vaipakam Terms of Service</h1>
           <div className="legal-meta">

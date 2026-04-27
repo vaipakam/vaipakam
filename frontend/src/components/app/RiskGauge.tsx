@@ -1,3 +1,4 @@
+import { useTranslation } from 'react-i18next';
 import './RiskGauge.css';
 
 /**
@@ -23,6 +24,7 @@ function hfZone(v: number): 'safe' | 'warning' | 'danger' {
 }
 
 export function HealthFactorGauge({ value }: HealthFactorProps) {
+  const { t } = useTranslation();
   if (value === null) {
     return <span className="risk-gauge-empty">—</span>;
   }
@@ -30,10 +32,16 @@ export function HealthFactorGauge({ value }: HealthFactorProps) {
   const pct = Math.min(100, (value / 2.5) * 100);
   const label =
     zone === 'danger'
-      ? 'Liquidation imminent: HF below 1.00.'
+      ? t('riskGauge.hfDanger')
       : zone === 'warning'
-        ? `HF below initiation minimum (${HF_INITIATION_MIN.toFixed(2)}). Top up collateral to avoid liquidation at HF < ${HF_LIQUIDATION_THRESHOLD.toFixed(2)}.`
-        : `Above initiation minimum (${HF_INITIATION_MIN.toFixed(2)}). Liquidation triggers when HF < ${HF_LIQUIDATION_THRESHOLD.toFixed(2)}.`;
+        ? t('riskGauge.hfWarning', {
+            init: HF_INITIATION_MIN.toFixed(2),
+            liq: HF_LIQUIDATION_THRESHOLD.toFixed(2),
+          })
+        : t('riskGauge.hfSafe', {
+            init: HF_INITIATION_MIN.toFixed(2),
+            liq: HF_LIQUIDATION_THRESHOLD.toFixed(2),
+          });
 
   return (
     <div className={`risk-gauge hf-${zone}`} data-tooltip={label} aria-label={label}>
@@ -58,6 +66,7 @@ function ltvZone(p: number): 'safe' | 'warning' | 'danger' {
 }
 
 export function LTVBar({ percent }: LTVProps) {
+  const { t } = useTranslation();
   if (percent === null) {
     return <span className="risk-gauge-empty">—</span>;
   }
@@ -65,10 +74,10 @@ export function LTVBar({ percent }: LTVProps) {
   const pct = Math.min(100, (percent / 120) * 100);
   const label =
     zone === 'danger'
-      ? `Volatility-collapse threshold reached (LTV ≥ ${LTV_VOLATILITY_THRESHOLD}%). The position is flagged for protocol liquidation.`
+      ? t('riskGauge.ltvDanger', { threshold: LTV_VOLATILITY_THRESHOLD })
       : zone === 'warning'
-        ? `Approaching the volatility-collapse threshold (LTV ≥ ${LTV_VOLATILITY_THRESHOLD}%). Add collateral or repay to lower risk.`
-        : `Well under the volatility-collapse threshold (LTV ≥ ${LTV_VOLATILITY_THRESHOLD}%).`;
+        ? t('riskGauge.ltvWarning', { threshold: LTV_VOLATILITY_THRESHOLD })
+        : t('riskGauge.ltvSafe', { threshold: LTV_VOLATILITY_THRESHOLD });
 
   return (
     <div className={`risk-gauge ltv-${zone}`} data-tooltip={label} aria-label={label}>

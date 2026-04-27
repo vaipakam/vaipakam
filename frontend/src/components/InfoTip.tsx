@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { Info } from "lucide-react";
+import { useTranslation } from "react-i18next";
 
 /**
  * `<InfoTip>` — accessible (i) info icon paired with a portal-rendered
@@ -57,6 +58,7 @@ export function InfoTip({
   ariaLabel,
   placement = "below",
 }: InfoTipProps) {
+  const { t } = useTranslation();
   const [open, setOpen] = useState(false);
   const [coords, setCoords] = useState<{
     top: number;
@@ -146,7 +148,7 @@ export function InfoTip({
         ref={triggerRef}
         type="button"
         className={`info-tip-trigger${className ? " " + className : ""}`}
-        aria-label={ariaLabel ?? "More information"}
+        aria-label={ariaLabel ?? t('infoTip.defaultAria')}
         aria-expanded={open}
         aria-haspopup="dialog"
         onClick={() => setOpen((prev) => !prev)}

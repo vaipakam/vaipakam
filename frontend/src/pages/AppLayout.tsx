@@ -1,6 +1,7 @@
 import { Outlet, NavLink, useNavigate } from "react-router-dom";
 import { useTheme } from "../context/ThemeContext";
 import { useWallet } from "../context/WalletContext";
+import { useTranslation } from "react-i18next";
 import { useMode } from "../context/ModeContext";
 import {
   LayoutDashboard,
@@ -47,59 +48,62 @@ import { InfoTip } from "../components/InfoTip";
 import { LanguagePicker } from "../components/LanguagePicker";
 import "./AppLayout.css";
 
+// Sidebar nav items. `labelKey` resolves against the `appNav.*`
+// namespace in `src/i18n/locales/*.json` at render time, so the
+// label localises in lockstep with the rest of the app.
 const BASIC_NAV = [
   {
     to: "/app",
     icon: <LayoutDashboard size={20} />,
-    label: "Dashboard",
+    labelKey: "appNav.dashboard",
     end: true,
   },
   {
     to: "/app/offers",
     icon: <BookOpen size={20} />,
-    label: "Offer Book",
+    labelKey: "appNav.offerBook",
     end: false,
   },
   {
     to: "/app/create-offer",
     icon: <PlusCircle size={20} />,
-    label: "Create Offer",
+    labelKey: "appNav.createOffer",
     end: false,
   },
   {
     to: "/app/buy-vpfi",
     icon: <Coins size={20} />,
-    label: "Buy VPFI",
+    labelKey: "appNav.buyVpfi",
     end: false,
   },
   {
     to: "/app/rewards",
     icon: <Gift size={20} />,
-    label: "Rewards",
+    labelKey: "appNav.rewards",
     end: false,
   },
   {
     to: "/app/claims",
     icon: <HandCoins size={20} />,
-    label: "Claim Center",
+    labelKey: "appNav.claimCenter",
     end: false,
   },
   {
     to: "/app/activity",
     icon: <Activity size={20} />,
-    label: "Activity",
+    labelKey: "appNav.activity",
     end: false,
   },
   {
     to: "/app/alerts",
     icon: <Bell size={20} />,
-    label: "Alerts",
+    labelKey: "appNav.alerts",
     end: false,
   },
   {
     to: "/app/allowances",
     icon: <ShieldOff size={20} />,
-    label: "Allowances",
+    labelKey: "appNav.allowances",
     end: false,
   },
 ];
@@ -108,13 +112,14 @@ const ADVANCED_NAV = [
   {
     to: "/app/keepers",
     icon: <ShieldCheck size={20} />,
-    label: "Keepers",
+    labelKey: "appNav.keepers",
     end: false,
   },
 ];
 
 
 export default function AppLayout() {
+  const { t } = useTranslation();
   const { theme, toggleTheme } = useTheme();
   const { mode, setMode } = useMode();
   const {
@@ -267,13 +272,13 @@ export default function AppLayout() {
               onClick={() => setSidebarOpen(false)}
             >
               {item.icon}
-              <span>{item.label}</span>
+              <span>{t(item.labelKey)}</span>
             </NavLink>
           ))}
 
           {isAdvanced && (
             <>
-              <div className="sidebar-group-label">Advanced</div>
+              <div className="sidebar-group-label">{t('common.modeAdvanced')}</div>
               {ADVANCED_NAV.map((item) => (
                 <NavLink
                   key={item.to}
@@ -285,7 +290,7 @@ export default function AppLayout() {
                   onClick={() => setSidebarOpen(false)}
                 >
                   {item.icon}
-                  <span>{item.label}</span>
+                  <span>{t(item.labelKey)}</span>
                 </NavLink>
               ))}
             </>
@@ -300,7 +305,7 @@ export default function AppLayout() {
             }}
           >
             <ArrowLeft size={20} />
-            <span>Back to Home</span>
+            <span>{t('appNav.backToHome')}</span>
           </button>
         </div>
       </aside>
@@ -341,7 +346,7 @@ export default function AppLayout() {
                 onClick={switchToDefaultChain}
               >
                 <AlertTriangle size={16} />
-                Switch Network
+                {t('nav.switchNetwork')}
               </button>
             ) : (
               <WalletMenu />
@@ -360,8 +365,8 @@ export default function AppLayout() {
                 onClick={() => setSettingsOpen((o) => !o)}
                 aria-haspopup="menu"
                 aria-expanded={settingsOpen}
-                aria-label="Settings"
-                data-tooltip="Settings"
+                aria-label={t('settings.title')}
+                data-tooltip={t('settings.title')}
                 data-tooltip-placement="below"
               >
                 <Settings size={18} />
@@ -371,21 +376,19 @@ export default function AppLayout() {
                 <div
                   className="topbar-settings-panel"
                   role="menu"
-                  aria-label="Settings"
+                  aria-label={t('settings.title')}
                 >
                   <div className="topbar-settings-row">
                     <span className="topbar-settings-label">
-                      Mode
-                      <InfoTip ariaLabel="About Basic and Advanced mode">
-                        Basic hides advanced pages and controls like keeper
-                        settings. Switch to Advanced once you're comfortable
-                        with the core lending flow.
+                      {t('common.mode')}
+                      <InfoTip ariaLabel={t('settings.modeInfoAriaLabel')}>
+                        {t('settings.modeInfo')}
                       </InfoTip>
                     </span>
                     <div
                       className="mode-switch"
                       role="group"
-                      aria-label="UI mode"
+                      aria-label={t('settings.uiModeAria')}
                     >
                       <button
                         type="button"
@@ -393,7 +396,7 @@ export default function AppLayout() {
                         aria-pressed={!isAdvanced}
                         onClick={() => setMode("basic")}
                       >
-                        Basic
+                        {t('common.modeBasic')}
                       </button>
                       <button
                         type="button"
@@ -401,26 +404,26 @@ export default function AppLayout() {
                         aria-pressed={isAdvanced}
                         onClick={() => setMode("advanced")}
                       >
-                        Advanced
+                        {t('common.modeAdvanced')}
                       </button>
                     </div>
                   </div>
 
                   <div className="topbar-settings-row">
-                    <span className="topbar-settings-label">Language</span>
+                    <span className="topbar-settings-label">{t('common.language')}</span>
                     <LanguagePicker />
                   </div>
 
                   <div className="topbar-settings-row">
-                    <span className="topbar-settings-label">Theme</span>
+                    <span className="topbar-settings-label">{t('common.theme')}</span>
                     <button
                       type="button"
                       className="theme-toggle"
                       onClick={toggleTheme}
                       aria-label={
                         theme === "dark"
-                          ? "Switch to light theme"
-                          : "Switch to dark theme"
+                          ? t('settings.themeSwitchToLight')
+                          : t('settings.themeSwitchToDark')
                       }
                     >
                       {theme === "dark" ? (
@@ -429,7 +432,9 @@ export default function AppLayout() {
                         <Moon size={18} />
                       )}
                       <span className="topbar-settings-theme-label">
-                        {theme === "dark" ? "Light" : "Dark"}
+                        {theme === "dark"
+                          ? t('common.themeLight')
+                          : t('common.themeDark')}
                       </span>
                     </button>
                   </div>

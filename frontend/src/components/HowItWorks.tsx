@@ -1,63 +1,65 @@
+import { useTranslation } from 'react-i18next';
 import './HowItWorks.css';
 
-const STEPS = [
+interface StepSpec {
+  number: string;
+  titleKey: string;
+  descKey: string;
+  detailKeys: string[];
+}
+
+const STEPS: StepSpec[] = [
   {
     number: '01',
-    title: 'Create an Offer',
-    description:
-      'As a lender, specify your asset, interest rate, collateral requirements, and duration. As a borrower, state what you need and the collateral you can provide. Your assets are locked in your personal escrow.',
-    details: ['ERC-20 lending or NFT rental', 'Set your own terms', 'Vaipakam NFT minted for your position'],
+    titleKey: 'howItWorksSection.step1Title',
+    descKey: 'howItWorksSection.step1Desc',
+    detailKeys: ['howItWorksSection.step1Detail1', 'howItWorksSection.step1Detail2', 'howItWorksSection.step1Detail3'],
   },
   {
     number: '02',
-    title: 'Match & Initiate',
-    description:
-      'Browse the offer book, filter by asset type or rate, and accept a compatible offer. The accepting party pays gas. Collateral is locked, funds transfer, and both parties receive position NFTs.',
-    details: ['Auto-matching suggestions', 'On-chain liquidity verification', 'LTV & Health Factor validation'],
+    titleKey: 'howItWorksSection.step2Title',
+    descKey: 'howItWorksSection.step2Desc',
+    detailKeys: ['howItWorksSection.step2Detail1', 'howItWorksSection.step2Detail2', 'howItWorksSection.step2Detail3'],
   },
   {
     number: '03',
-    title: 'Manage Your Loan',
-    description:
-      'Monitor your position via the dashboard. Add collateral if LTV rises. Withdraw excess if your Health Factor is strong. Get notified before critical thresholds are breached.',
-    details: ['Real-time LTV tracking', 'Collateral management', 'SMS & email alerts'],
+    titleKey: 'howItWorksSection.step3Title',
+    descKey: 'howItWorksSection.step3Desc',
+    detailKeys: ['howItWorksSection.step3Detail1', 'howItWorksSection.step3Detail2', 'howItWorksSection.step3Detail3'],
   },
   {
     number: '04',
-    title: 'Settle or Claim',
-    description:
-      'Repay on time and reclaim your collateral. Lenders claim principal + interest using their NFT. If default occurs, liquidation or full collateral transfer follows the protocol rules.',
-    details: [
-      'Present NFT to claim funds',
-      'Late fees capped at 5%',
-      '0.1% Loan Initiation Fee + 1% Yield Fee on interest',
-      'Tiered VPFI discount: 10% / 15% / 20% / 24% off both fees by escrow balance',
+    titleKey: 'howItWorksSection.step4Title',
+    descKey: 'howItWorksSection.step4Desc',
+    detailKeys: [
+      'howItWorksSection.step4Detail1',
+      'howItWorksSection.step4Detail2',
+      'howItWorksSection.step4Detail3',
+      'howItWorksSection.step4Detail4',
     ],
   },
 ];
 
 export default function HowItWorks() {
+  const { t } = useTranslation();
   return (
     <section className="section how-it-works" id="how-it-works">
       <div className="container">
         <div className="how-header">
-          <span className="section-label">How It Works</span>
-          <h2 className="section-title">From offer to settlement in four steps</h2>
-          <p className="section-subtitle">
-            Every action is recorded on-chain. Position NFTs provide proof of ownership
-            and are required to claim your funds.
-          </p>
+          <span className="section-label">{t('howItWorksSection.sectionLabel')}</span>
+          <h2 className="section-title">{t('howItWorksSection.title')}</h2>
+          <p className="section-subtitle">{t('howItWorksSection.subtitle')}</p>
         </div>
 
         <div className="steps-grid">
           {STEPS.map((step, i) => (
             <div key={step.number} className="step-card">
               <div className="step-number">{step.number}</div>
-              <h3 className="step-title">{step.title}</h3>
-              <p className="step-desc">{step.description}</p>
+              <h3 className="step-title">{t(step.titleKey)}</h3>
+              <p className="step-desc">{t(step.descKey)}</p>
               <ul className="step-details">
-                {step.details.map((d) => (
-                  <li key={d}>{d}</li>
+                {step.detailKeys.map((dk) => (
+                  <li key={dk}>{t(dk)}</li>
                 ))}
               </ul>
               {i < STEPS.length - 1 && <div className="step-connector" />}

@@ -1,5 +1,7 @@
 import type { ReactNode } from 'react';
 import { ShieldCheck, AlertTriangle, Loader2 } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
+import type { TFunction } from 'i18next';
 import { useTxSimulation, type TxSimInput, type SimResult } from '../../hooks/useTxSimulation';
 
 interface SimulationPreviewProps {
@@ -24,6 +26,7 @@ interface SimulationPreviewProps {
  * places this between the risk disclosures and the Confirm button.
  */
 export function SimulationPreview({ tx, children }: SimulationPreviewProps) {
+  const { t } = useTranslation();
   const { result } = useTxSimulation(tx);
 
   if (!tx) return null;
@@ -38,7 +41,7 @@ export function SimulationPreview({ tx, children }: SimulationPreviewProps) {
           textAlign: 'center',
         }}
       >
-        Transaction preview unavailable on this chain / deployment.
+        {t('simulationPreview.unavailable')}
       </div>
     );
   }
@@ -50,7 +53,7 @@ export function SimulationPreview({ tx, children }: SimulationPreviewProps) {
         style={{ marginTop: 8, display: 'flex', gap: 8, alignItems: 'center' }}
       >
         <Loader2 size={16} className="spin" />
-        <span style={{ fontSize: '0.85rem' }}>Scanning transaction…</span>
+        <span style={{ fontSize: '0.85rem' }}>{t('simulationPreview.scanning')}</span>
       </div>
     );
   }
@@ -63,14 +66,13 @@ export function SimulationPreview({ tx, children }: SimulationPreviewProps) {
       >
         <AlertTriangle size={16} />
         <span>
-          Preview error: {result.errorMessage}. The on-chain tx is
-          unaffected — proceed with caution.
+          {t('simulationPreview.errorPrefix')} {result.errorMessage}{t('simulationPreview.errorSuffix')}
         </span>
       </div>
     );
   }
 
-  const classStyle = _classificationStyle(result.classification);
+  const classStyle = _classificationStyle(result.classification, t);
   return (
     <div
       className="alert"
@@ -105,7 +107,7 @@ export function SimulationPreview({ tx, children }: SimulationPreviewProps) {
                 letterSpacing: '0.05em',
               }}
             >
-              Expected state changes
+              {t('simulationPreview.expectedStateChanges')}
             </div>
             <ul style={{ margin: '0 0 0 16px', padding: 0 }}>
               {result.stateChanges.slice(0, 6).map((change, i) => (
@@ -115,7 +117,7 @@ export function SimulationPreview({ tx, children }: SimulationPreviewProps) {
               ))}
               {result.stateChanges.length > 6 && (
                 <li style={{ fontSize: '0.76rem', opacity: 0.65 }}>
-                  … plus {result.stateChanges.length - 6} more
+                  {t('simulationPreview.plusMore', { count: result.stateChanges.length - 6 })}
                 </li>
               )}
             </ul>
@@ -127,14 +129,14 @@ export function SimulationPreview({ tx, children }: SimulationPreviewProps) {
   );
 }
 
-function _classificationStyle(c: SimResult['classification']) {
+function _classificationStyle(c: SimResult['classification'], t: TFunction) {
   switch (c) {
     case 'malicious':
       return {
         border: 'var(--accent-red)',
         bg: 'rgba(239, 68, 68, 0.08)',
         icon: <AlertTriangle size={18} style={{ color: 'var(--accent-red)' }} />,
-        title: 'Blockaid flagged this transaction as malicious. Do NOT proceed.',
+        title: t('simulationPreview.titleMalicious'),
       };
     case 'warning':
       return {
@@ -143,7 +145,7 @@ function _classificationStyle(c: SimResult['classification']) {
         icon: (
           <AlertTriangle size={18} style={{ color: 'var(--accent-orange, #f59e0b)' }} />
         ),
-        title: 'Blockaid surfaced warnings — review state changes before signing.',
+        title: t('simulationPreview.titleWarning'),
       };
     default:
       return {
@@ -152,7 +154,7 @@ function _classificationStyle(c: SimResult['classification']) {
         icon: (
           <ShieldCheck size={18} style={{ color: 'var(--accent-green, #10b981)' }} />
         ),
-        title: 'Transaction preview',
+        title: t('simulationPreview.titlePreview'),
       };
   }
 }

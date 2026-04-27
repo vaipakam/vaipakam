@@ -1,22 +1,20 @@
 import { useEffect, useRef, useState } from "react";
 import { ChevronDown, Check, Globe } from "lucide-react";
+import { useTranslation } from "react-i18next";
 import "./LanguagePicker.css";
 
 /**
- * `<LanguagePicker>` — UI stub for the upcoming multi-language
- * feature. Custom-rendered dropdown (not a native `<select>`) so
- * the trigger pill + popup menu match the `<ChainPicker>` look on
- * the public Analytics page; the styling lives in `LanguagePicker.css`
- * and intentionally mirrors `ChainPicker.css` rule-for-rule so the
- * two pickers feel like siblings across both surfaces.
+ * `<LanguagePicker>` — display-language selector. Custom-rendered
+ * dropdown (not a native `<select>`) so the trigger pill + popup
+ * menu match the `<ChainPicker>` look on the public Analytics page;
+ * the styling lives in `LanguagePicker.css` and intentionally
+ * mirrors `ChainPicker.css` rule-for-rule so the two pickers feel
+ * like siblings across both surfaces.
  *
- * Selection persists to `localStorage["vaipakam:language"]` and a
- * `language-change` window event fires on pick so the i18n layer
- * (when it lands) can hook in without touching this component.
- *
- * Today: only English has shipped translations. The picker still
- * lists the planned languages so users can choose their preferred
- * one and have it remembered for when translations arrive.
+ * Selection is delegated to i18next via `i18n.changeLanguage`, which
+ * also persists the choice to `localStorage["vaipakam:language"]`
+ * (the same key this component used in its pre-i18n stub form, so
+ * existing user preferences carry forward).
  */
 
 interface LanguageOption {
@@ -33,35 +31,27 @@ const LANGUAGES: LanguageOption[] = [
   { code: "de", label: "Deutsch" },
   { code: "ja", label: "日本語" },
   { code: "zh", label: "中文" },
+  { code: "ko", label: "한국어" },
   { code: "hi", label: "हिन्दी" },
+  { code: "ta", label: "தமிழ்" },
   { code: "ar", label: "العربية" },
 ];
 
-const STORAGE_KEY = "vaipakam:language";
-
-function readInitial(): string {
-  if (typeof window === "undefined") return "en";
-  try {
-    return window.localStorage.getItem(STORAGE_KEY) ?? "en";
-  } catch {
-    return "en";
-  }
-}
-
 export function LanguagePicker() {
-  const [code, setCode] = useState<string>(readInitial);
+  const { i18n, t } = useTranslation();
+  const [code, setCode] = useState<string>(i18n.resolvedLanguage ?? "en");
   const [open, setOpen] = useState(false);
   const wrapRef = useRef<HTMLDivElement | null>(null);
 
-  // Cross-tab sync: another tab changing the language keeps ours
-  // in lockstep. Cheap consistency for a stub setting.
+  // Mirror i18next's active language into local state so the
+  // selected-tick re-renders correctly when language changes via
+  // anything other than this picker (a programmatic call elsewhere,
+  // a cross-tab sync from the localStorage detector, etc.).
   useEffect(() => {
-    function onStorage(e: StorageEvent) {
-      if (e.key === STORAGE_KEY && e.newValue) setCode(e.newValue);
-    }
-    window.addEventListener("storage", onStorage);
-    return () => window.removeEventListener("storage", onStorage);
-  }, []);
+    const onChange = (lng: string) => setCode(lng);
+    i18n.on("languageChanged", onChange);
+    return () => i18n.off("languageChanged", onChange);
+  }, [i18n]);
 
   // Outside-click / Escape close — same dismissal pattern as
   // ChainPicker.
@@ -83,21 +73,11 @@ export function LanguagePicker() {
     };
   }, [open]);
 
-  const selected =
-    LANGUAGES.find((l) => l.code === code) ?? LANGUAGES[0];
+  const selected = LANGUAGES.find((l) => l.code === code) ?? LANGUAGES[0];
 
   function pick(next: string) {
     setOpen(false);
-    setCode(next);
-    try {
-      window.localStorage.setItem(STORAGE_KEY, next);
-    } catch {
-      // ignore quota / privacy-mode errors; in-memory state is
-      // still correct for the rest of the session.
-    }
-    window.dispatchEvent(
-      new CustomEvent("language-change", { detail: { code: next } }),
-    );
+    void i18n.changeLanguage(next);
   }
 
   return (
@@ -108,7 +88,7 @@ export function LanguagePicker() {
         onClick={() => setOpen((v) => !v)}
         aria-haspopup="listbox"
         aria-expanded={open}
-        aria-label="Display language"
+        aria-label={t("languagePicker.ariaLabel")}
       >
         <Globe size={14} aria-hidden="true" />
         <span className="language-picker-label">{selected.label}</span>

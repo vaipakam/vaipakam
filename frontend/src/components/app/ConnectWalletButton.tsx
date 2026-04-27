@@ -1,5 +1,6 @@
 import { Wallet } from 'lucide-react';
 import { ConnectKitButton } from 'connectkit';
+import { useTranslation } from 'react-i18next';
 
 interface Props {
   /** Extra classes applied to the primary button (e.g. `btn-sm`). */
@@ -31,6 +32,7 @@ interface Props {
  * state, which matches the previous component's behaviour.
  */
 export function ConnectWalletButton({ className = '', fullWidth = false }: Props) {
+  const { t } = useTranslation();
   return (
     <ConnectKitButton.Custom>
       {({ show, isConnecting }) => (
@@ -42,7 +44,7 @@ export function ConnectWalletButton({ className = '', fullWidth = false }: Props
           style={fullWidth ? { width: '100%' } : undefined}
         >
           <Wallet size={16} />
-          {isConnecting ? 'Connecting…' : 'Connect Wallet'}
+          {isConnecting ? t('shared.connecting') : t('common.connectWallet')}
         </button>
       )}
     </ConnectKitButton.Custom>

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { isAddress } from "viem";
 import { useWallet } from "../context/WalletContext";
 import { useMode } from "../context/ModeContext";
@@ -29,31 +30,31 @@ export const KEEPER_ACTION_ALL =
 
 type ActionKey = keyof typeof KEEPER_ACTION;
 
-const ACTION_ROWS: Array<{ key: ActionKey; label: string; hint: string }> = [
+const ACTION_ROWS: Array<{ key: ActionKey; labelKey: string; hintKey: string }> = [
   {
     key: "INIT_EARLY_WITHDRAW",
-    label: "Initiate early withdrawal",
-    hint: "Creates the sale offer on the lender side.",
+    labelKey: "keeperPicker.permissionInitiateEarlyWithdrawalTitle",
+    hintKey: "keeperPicker.permissionInitiateEarlyWithdrawalDesc",
   },
   {
     key: "COMPLETE_LOAN_SALE",
-    label: "Complete early withdrawal",
-    hint: "Finalises the lender-side sale after a matching borrower accepts.",
+    labelKey: "keeperPicker.permissionCompleteEarlyWithdrawalTitle",
+    hintKey: "keeperPicker.permissionCompleteEarlyWithdrawalDesc",
   },
   {
     key: "INIT_PRECLOSE",
-    label: "Initiate preclose / obligation transfer",
-    hint: "Covers direct preclose, Option 2 obligation transfer, Option 3 offset offer creation.",
+    labelKey: "keeperPicker.permissionInitiatePrecloseTitle",
+    hintKey: "keeperPicker.permissionInitiatePrecloseDesc",
   },
   {
     key: "COMPLETE_OFFSET",
-    label: "Complete offset",
-    hint: "Finalises the Option 3 offset flow after a new borrower takes on the obligation.",
+    labelKey: "keeperPicker.permissionCompleteOffsetTitle",
+    hintKey: "keeperPicker.permissionCompleteOffsetDesc",
   },
   {
     key: "REFINANCE",
-    label: "Initiate refinance",
-    hint: "Triggers a refinance against a matching borrower offer.",
+    labelKey: "keeperPicker.permissionInitiateRefinanceTitle",
+    hintKey: "keeperPicker.permissionInitiateRefinanceDesc",
   },
 ];
 
@@ -68,6 +69,7 @@ const ACTION_ROWS: Array<{ key: ActionKey; label: string; hint: string }> = [
  * keeper.
  */
 export default function KeeperSettings() {
+  const { t } = useTranslation();
   const { address, isCorrectChain } = useWallet();
   const { mode } = useMode();
   const diamondRw = useDiamondContract();
@@ -284,27 +286,22 @@ export default function KeeperSettings() {
   if (mode !== "advanced") {
     return (
       <div className="page-container">
-        <h1>Keeper Whitelist</h1>
-        <p style={{ maxWidth: 720 }}>
-          Keeper management is an advanced feature. Switch to{" "}
-          <strong>Advanced</strong> using the mode toggle in the top bar to
-          delegate role-scoped execution of your loan actions to trusted keeper
-          addresses.
-        </p>
+        <h1>{t('keeperSettings.title')}</h1>
+        <p style={{ maxWidth: 720 }}>{t('keeperSettings.advancedOnlyBody')}</p>
       </div>
     );
   }
   if (!address) {
     return (
       <div className="page-container">
-        <p>Connect your wallet to manage keepers.</p>
+        <p>{t('keeperSettings.connectBody')}</p>
       </div>
     );
   }
   if (!isCorrectChain) {
     return (
       <div className="page-container">
-        <p>Switch to Sepolia to manage keepers.</p>
+        <p>{t('keeperSettings.switchChainBody')}</p>
       </div>
     );
   }
@@ -314,34 +311,24 @@ export default function KeeperSettings() {
   return (
     <div className="page-container">
       <h1 style={{ display: "flex", alignItems: "center", gap: 6 }}>
-        Keeper Whitelist
+        {t('keeperSettings.title')}
         <CardInfo id="keeper-settings.overview" />
       </h1>
       <p style={{ maxWidth: 720 }}>
-        Keepers are <strong>delegated managers</strong> of your role. Approving
-        a keeper delegates only <strong>your side</strong> of a loan, and only
-        for the specific actions you authorise. A lender's keeper with just
-        "Complete early withdrawal" can finish an early-withdraw sale you
-        initiated, but cannot start one on your behalf. Liquidations,
-        repayments, adding collateral, and claiming stay user-only — keepers
-        cannot touch money-out paths. You may whitelist up to {MAX_KEEPERS}{" "}
-        keeper addresses.
+        {t('keeperSettings.pageSubtitle', { max: MAX_KEEPERS })}
       </p>
 
       <div
         className="alert alert-warning"
         style={{ maxWidth: 720, margin: "1rem 0" }}
       >
-        <strong>Two additional gates apply per-loan.</strong> Even after you
-        approve a keeper here, they can only act on a specific loan when (a)
-        your master keeper-access switch below is ON and (b) you've explicitly
-        enabled them for that loan on the Offer Book or Loan Details page.
+        {t('keeperSettings.perLoanGatesAlert')}
       </div>
 
       {!supported && (
         <ErrorAlert
           style={{ margin: "1rem 0" }}
-          message="Keeper whitelist is not enabled on the currently deployed Diamond (the keeper facet hasn't been cut in yet). Management is disabled until the deployment includes it."
+          message={t('keeperSettings.facetUnavailable')}
         />
       )}
 
@@ -363,11 +350,10 @@ export default function KeeperSettings() {
         >
           <div>
             <div>
-              <strong>Master keeper access</strong>
+              <strong>{t('keeperSettings.masterAccess')}</strong>
             </div>
             <div style={{ fontSize: "0.85rem", opacity: 0.8 }}>
-              One-switch emergency brake — disables every whitelisted keeper
-              on every loan without touching the allowlist.
+              {t('keeperSettings.masterAccessBody')}
             </div>
           </div>
           <button
@@ -375,18 +361,18 @@ export default function KeeperSettings() {
             disabled={busy || !supported}
             onClick={toggleOptIn}
           >
-            {optIn ? "Disable" : "Enable"}
+            {optIn ? t('keeperSettings.disable') : t('keeperSettings.enable')}
           </button>
         </div>
       </section>
 
       <section>
         <h2 style={{ fontSize: "1.1rem", display: "flex", alignItems: "center", gap: 6 }}>
-          Approved keepers ({keepers.length}/{MAX_KEEPERS})
+          {t('keeperSettings.approvedKeepersTitle', { count: keepers.length, max: MAX_KEEPERS })}
           <CardInfo id="keeper-settings.approved-list" />
         </h2>
         {keepers.length === 0 && (
-          <p style={{ opacity: 0.7 }}>No keepers approved.</p>
+          <p style={{ opacity: 0.7 }}>{t('keeperSettings.noKeepersApproved')}</p>
         )}
         {keepers.map((k) => {
           const bits = actionsByKeeper[k.toLowerCase()] ?? 0;
@@ -448,12 +434,12 @@ export default function KeeperSettings() {
                 <div
                   style={{ marginTop: 6, fontSize: "0.85rem", opacity: 0.8 }}
                 >
-                  Actions:{" "}
+                  {t('keeperPicker.actionsLabel')}{" "}
                   {bits === 0 ? (
-                    <em>none</em>
+                    <em>{t('keeperPicker.actionsNone')}</em>
                   ) : (
                     ACTION_ROWS.filter((r) => (bits & KEEPER_ACTION[r.key]) !== 0)
-                      .map((r) => r.label)
+                      .map((r) => t(r.labelKey))
                       .join(", ")
                   )}
                 </div>
@@ -464,13 +450,13 @@ export default function KeeperSettings() {
 
         <div style={{ marginTop: 16 }}>
           <h3 style={{ fontSize: "0.95rem", margin: "0 0 8px" }}>
-            Add keeper
+            {t('keeperPicker.addKeeper')}
           </h3>
           <div style={{ display: "flex", gap: 8 }}>
             <input
               type="text"
               className="form-input"
-              placeholder="0xKeeper..."
+              placeholder={t('keeperPicker.addKeeperPlaceholder')}
               value={input}
               onChange={(e) => setInput(e.target.value)}
               disabled={busy || full || !supported}
@@ -483,7 +469,7 @@ export default function KeeperSettings() {
               }
               onClick={approve}
             >
-              Approve
+              {t('keeperPicker.approve')}
             </button>
           </div>
           <div style={{ marginTop: 8 }}>
@@ -495,7 +481,7 @@ export default function KeeperSettings() {
           </div>
           {full && (
             <p style={{ fontSize: "0.85rem", opacity: 0.8 }}>
-              Whitelist full. Revoke an entry to add a new keeper.
+              {t('keeperPicker.whitelistFull')}
             </p>
           )}
         </div>
@@ -521,6 +507,7 @@ function ActionsCheckboxGroup({
   onChange,
   disabled,
 }: ActionsCheckboxGroupProps) {
+  const { t } = useTranslation();
   const toggle = (bit: number) => {
     const has = (value & bit) !== 0;
     onChange(has ? value & ~bit : value | bit);
@@ -557,9 +544,9 @@ function ActionsCheckboxGroup({
               style={{ marginTop: 3 }}
             />
             <span>
-              <span style={{ fontWeight: 600 }}>{row.label}</span>
+              <span style={{ fontWeight: 600 }}>{t(row.labelKey)}</span>
               <span style={{ display: "block", opacity: 0.75 }}>
-                {row.hint}
+                {t(row.hintKey)}
               </span>
             </span>
           </label>

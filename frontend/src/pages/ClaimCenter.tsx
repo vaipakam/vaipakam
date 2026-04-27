@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { useWallet } from '../context/WalletContext';
 import { useDiamondContract } from '../contracts/useDiamond';
 import { useClaimables } from '../hooks/useClaimables';
@@ -14,6 +15,7 @@ import { CardInfo } from '../components/CardInfo';
 import './ClaimCenter.css';
 
 export default function ClaimCenter() {
+  const { t } = useTranslation();
   const { address, chainId, activeChain, isCorrectChain } = useWallet();
   const activeBlockExplorer =
     (activeChain && isCorrectChain ? activeChain.blockExplorer : null) ??
@@ -60,8 +62,8 @@ export default function ClaimCenter() {
         <div className="empty-state-icon">
           <Wallet size={28} />
         </div>
-        <h3>Connect Your Wallet</h3>
-        <p>Connect your wallet to view and claim your funds.</p>
+        <h3>{t('claimCenter.connectTitle')}</h3>
+        <p>{t('claimCenter.connectBody')}</p>
       </div>
     );
   }
@@ -70,12 +72,10 @@ export default function ClaimCenter() {
     <div className="claim-center">
       <div className="page-header">
         <h1 className="page-title">
-          Claim Center
+          {t('appNav.claimCenter')}
           <CardInfo id="claim-center.claims" />
         </h1>
-        <p className="page-subtitle">
-          Claim your funds and collateral from completed, repaid, or defaulted loans using your Vaipakam NFT.
-        </p>
+        <p className="page-subtitle">{t('claimCenter.pageSubtitle')}</p>
       </div>
 
       {error && <ErrorAlert message={error} />}
@@ -84,7 +84,7 @@ export default function ClaimCenter() {
         <div className="alert alert-success">
           <CheckCircle size={18} />
           <span>
-            Claim submitted:{' '}
+            {t('claimCenter.claimSubmitted')}{' '}
             <a href={`${activeBlockExplorer}/tx/${txHash}`} target="_blank" rel="noreferrer" style={{ textDecoration: 'underline' }}>
               {txHash.slice(0, 20)}...
             </a>
@@ -95,15 +95,15 @@ export default function ClaimCenter() {
       <div className="card">
         {loading ? (
           <div className="empty-state">
-            <p>Scanning your loans for claimable funds...</p>
+            <p>{t('claimCenter.scanning')}</p>
           </div>
         ) : claims.length === 0 ? (
           <div className="empty-state">
             <div className="empty-state-icon">
               <HandCoins size={28} />
             </div>
-            <h3>No Claimable Funds</h3>
-            <p>You have no pending claims. Funds become claimable after a loan is repaid, defaulted, or settled.</p>
+            <h3>{t('claimCenter.noClaimableFunds')}</h3>
+            <p>{t('claimCenter.noClaimableFundsBody')}</p>
           </div>
         ) : (
           <div className="claims-list">
@@ -113,10 +113,10 @@ export default function ClaimCenter() {
               return (
                 <div key={key} className="claim-row">
                   <div className="claim-info">
-                    <div className="claim-loan-id">Loan #{claim.loanId.toString()}</div>
+                    <div className="claim-loan-id">{t('claimCenter.loanPrefix')} #{claim.loanId.toString()}</div>
                     <div className="claim-meta">
                       <span className={`status-badge ${claim.role}`}>
-                        {claim.role === 'lender' ? 'Lender' : 'Borrower'}
+                        {claim.role === 'lender' ? t('common.lender') : t('common.borrower')}
                       </span>
                       <span className={`status-badge ${LOAN_STATUS_LABELS[claim.status].toLowerCase()}`}>
                         {LOAN_STATUS_LABELS[claim.status]}
@@ -149,7 +149,7 @@ export default function ClaimCenter() {
                     onClick={() => handleClaim(claim.loanId, claim.role)}
                     disabled={isClaiming}
                   >
-                    {isClaiming ? 'Claiming...' : 'Claim'}
+                    {isClaiming ? t('claimCenter.claiming') : t('claimCenter.claim')}
                   </button>
                 </div>
               );

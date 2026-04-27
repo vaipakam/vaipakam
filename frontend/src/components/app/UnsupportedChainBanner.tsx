@@ -1,4 +1,5 @@
 import { AlertTriangle } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 import { useWallet } from '../../context/WalletContext';
 import { CHAIN_REGISTRY, DEFAULT_CHAIN, isChainRegistered } from '../../contracts/config';
 
@@ -18,6 +19,7 @@ import { CHAIN_REGISTRY, DEFAULT_CHAIN, isChainRegistered } from '../../contract
  * on the wallet's chain) or when the wallet's chain is supported.
  */
 export function UnsupportedChainBanner() {
+  const { t } = useTranslation();
   const { address, chainId, isCorrectChain, switchToDefaultChain } = useWallet();
 
   if (!address || isCorrectChain) return null;
@@ -51,15 +53,15 @@ export function UnsupportedChainBanner() {
       <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
         <AlertTriangle size={16} />
         <span>
-          {walletChainRecognised ? 'Phase 1 Diamond pending' : 'Unsupported network'}{' '}
-          (chainId {walletChain}). Vaipakam runs as a separate Diamond on each
-          supported network — currently live on: {liveList}.
-          {pendingList && (
-            <>
-              {' '}Mainnet rollout to {pendingList} is planned for Phase 1.
-            </>
-          )}
-          {' '}Protocol actions are disabled until you switch to a supported network.
+          {t('banners.unsupportedBody', {
+            state: walletChainRecognised
+              ? t('banners.unsupportedDiamondPending')
+              : t('banners.unsupportedNetwork'),
+            chainId: walletChain,
+            liveList,
+          })}
+          {pendingList && t('banners.unsupportedPendingPlanned', { pendingList })}
+          {t('banners.unsupportedActionsDisabled')}
         </span>
       </span>
       <button
@@ -67,7 +69,7 @@ export function UnsupportedChainBanner() {
         className="btn btn-warning btn-sm"
         onClick={switchToDefaultChain}
       >
-        Switch to {DEFAULT_CHAIN.name}
+        {t('banners.switchToDefault', { name: DEFAULT_CHAIN.name })}
       </button>
     </div>
   );

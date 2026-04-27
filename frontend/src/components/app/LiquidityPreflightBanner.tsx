@@ -1,4 +1,5 @@
 import { AlertTriangle, Info, CheckCircle, Loader2 } from "lucide-react";
+import { useTranslation } from "react-i18next";
 import type { UseLiquidityPreflightResult } from "../../hooks/useLiquidityPreflight";
 
 interface Props {
@@ -29,6 +30,7 @@ interface Props {
  *   - `error`                       → grey informational fallback.
  */
 export function LiquidityPreflightBanner({ result, compact }: Props) {
+  const { t } = useTranslation();
   if (result.status === "idle" || result.status === "unavailable") return null;
   if (result.status === "loading" && compact) return null;
 
@@ -45,7 +47,7 @@ export function LiquidityPreflightBanner({ result, compact }: Props) {
         }}
       >
         <Loader2 size={16} className="spin" />
-        <span>Checking on-chain liquidity for this pair…</span>
+        <span>{t('banners.preflightChecking')}</span>
       </div>
     );
   }
@@ -57,13 +59,7 @@ export function LiquidityPreflightBanner({ result, compact }: Props) {
         style={{ marginTop: 8, fontSize: "0.85rem" }}
       >
         <AlertTriangle size={16} />
-        <span>
-          0x can't find a route for this collateral → principal pair at
-          the requested size. Liquidations would fall back to the
-          claim-time full-collateral path. Pick a different collateral
-          asset, or proceed knowing the lender's recovery is the raw
-          collateral instead of principal proceeds.
-        </span>
+        <span>{t('banners.preflightNoRoute')}</span>
       </div>
     );
   }
@@ -76,13 +72,11 @@ export function LiquidityPreflightBanner({ result, compact }: Props) {
       >
         <AlertTriangle size={16} />
         <span>
-          0x routed this pair, but with high price impact
+          {t('banners.preflightThinPrefix')}
           {result.priceImpactPct !== null
             ? ` (~${result.priceImpactPct.toFixed(2)}%)`
-            : ""}{" "}
-          — above the protocol's 6% slippage cap. Liquidations may
-          revert and fall back to the claim-time path. Consider
-          smaller collateral amounts or a more liquid asset.
+            : ""}
+          {t('banners.preflightThinSuffix')}
         </span>
       </div>
     );
@@ -100,9 +94,9 @@ export function LiquidityPreflightBanner({ result, compact }: Props) {
       >
         <Info size={14} />
         <span>
-          Liquidity preflight unavailable
-          {result.errorMessage ? ` (${result.errorMessage})` : ""}. The
-          on-chain liquidity gate still applies.
+          {t('banners.preflightErrorPrefix')}
+          {result.errorMessage ? ` (${result.errorMessage})` : ""}
+          {t('banners.preflightErrorSuffix')}
         </span>
       </div>
     );
@@ -120,11 +114,7 @@ export function LiquidityPreflightBanner({ result, compact }: Props) {
       }}
     >
       <CheckCircle size={14} style={{ color: "var(--accent-green, #10b981)" }} />
-      <span>
-        0x can route this collateral → principal pair within the
-        protocol's slippage cap. Liquidations should settle without
-        falling back.
-      </span>
+      <span>{t('banners.preflightLiquid')}</span>
     </div>
   );
 }

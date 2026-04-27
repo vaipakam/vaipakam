@@ -1,6 +1,7 @@
 import { AlertTriangle, X } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import type { CSSProperties, ReactNode } from 'react';
+import { useTranslation } from 'react-i18next';
 import { ReportIssueLink } from './ReportIssueLink';
 
 interface ErrorAlertProps {
@@ -23,6 +24,7 @@ export function ErrorAlert({
   className = '',
   onDismiss,
 }: ErrorAlertProps) {
+  const { t } = useTranslation();
   const [dismissed, setDismissed] = useState(false);
   // Reset the dismissed state whenever the message changes — a new error
   // should surface even if the user had dismissed the previous one.
@@ -52,7 +54,7 @@ export function ErrorAlert({
       <button
         type="button"
         onClick={handleDismiss}
-        aria-label="Dismiss"
+        aria-label={t('shared.dismiss')}
         className="alert-dismiss-btn"
         style={{
           display: 'inline-flex',

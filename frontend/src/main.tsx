@@ -8,6 +8,7 @@ import { ThemeProvider } from './context/ThemeContext'
 import { WalletProvider } from './context/WalletContext'
 import { ChainProvider } from './context/ChainContext'
 import { ModeProvider } from './context/ModeContext'
+import './i18n' // initialise i18next before any component renders
 import './styles/global.css'
 import App from './App.tsx'
 

@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { Link, useParams } from "react-router-dom";
+import { useTranslation } from "react-i18next";
 import { maxUint256 as MaxUint256, parseUnits } from "viem";
 import { AlertTriangle, ArrowLeft, CheckCircle } from "lucide-react";
 import { ErrorAlert } from "../components/app/ErrorAlert";
@@ -10,14 +11,10 @@ import { useLoan } from "../hooks/useLoan";
 import { usePositionLock, LockReason } from "../hooks/usePositionLock";
 import { AssetType, LoanStatus } from "../types/loan";
 import { decodeContractError } from "../lib/decodeContractError";
-import {
-  FALLBACK_CONSENT_TITLE,
-  FALLBACK_CONSENT_BODY,
-  FALLBACK_CONSENT_CHECKBOX_LABEL,
-} from "../lib/fallbackTerms";
 import { beginStep } from "../lib/journeyLog";
 import { DEFAULT_CHAIN } from "../contracts/config";
 import { TransferLockWarning } from "../components/app/TransferLockWarning";
+import { RiskDisclosures } from "../components/app/RiskDisclosures";
 import { AssetSymbol } from "../components/app/AssetSymbol";
 import { TokenAmount } from "../components/app/TokenAmount";
 import { bpsToPercent } from "../lib/format";
@@ -39,6 +36,7 @@ const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
  *   Vaipakam NFT is natively locked for transfer until completeOffset or cancel.
  */
 export default function BorrowerPreclose() {
+  const { t } = useTranslation();
   const { loanId } = useParams();
   const { address, chainId, activeChain, isCorrectChain } = useWallet();
   // Active-chain Diamond + explorer, falling back to DEFAULT_CHAIN when the
@@ -226,7 +224,7 @@ export default function BorrowerPreclose() {
       setStep("success");
       s.success({ note: `tx ${tx.hash}` });
     } catch (err) {
-      setTxError(decodeContractError(err, "Offset creation failed"));
+      setTxError(decodeContractError(err, t('preclose.offsetCreationFailed')));
       setStep("review");
       s.failure(err);
     }
@@ -260,7 +258,7 @@ export default function BorrowerPreclose() {
   if (loading) {
     return (
       <div className="empty-state" style={{ minHeight: "60vh" }}>
-        <p>Loading loan #{loanId}...</p>
+        <p>{t('loanDetails.loadingLoan', { id: loanId })}</p>
       </div>
     );
   }
@@ -277,10 +275,10 @@ export default function BorrowerPreclose() {
         >
           <AlertTriangle size={28} />
         </div>
-        <h3>Loan Not Found</h3>
-        <p>{error || `Loan #${loanId} does not exist.`}</p>
+        <h3>{t('loanDetails.loanNotFound')}</h3>
+        <p>{error || t('loanDetails.loanNotFoundBody', { id: loanId })}</p>
         <Link to="/app" className="btn btn-secondary btn-sm">
-          <ArrowLeft size={16} /> Back to Dashboard
+          <ArrowLeft size={16} /> {t('loanDetails.backToDashboard')}
         </Link>
       </div>
     );
@@ -298,16 +296,13 @@ export default function BorrowerPreclose() {
         >
           <AlertTriangle size={28} />
         </div>
-        <h3>Borrower only</h3>
-        <p>
-          Only the current holder of the borrower-side Vaipakam NFT can preclose
-          this loan.
-        </p>
+        <h3>{t('loanFlow.borrowerOnly')}</h3>
+        <p>{t('loanFlow.borrowerOnlyPreclose')}</p>
         <Link
           to={`/app/loans/${loan.id.toString()}`}
           className="btn btn-secondary btn-sm"
         >
-          <ArrowLeft size={16} /> Back to Loan
+          <ArrowLeft size={16} /> {t('loanFlow.backToLoan')}
         </Link>
       </div>
     );
@@ -316,29 +311,23 @@ export default function BorrowerPreclose() {
   return (
     <div className="loan-details">
       <Link to={`/app/loans/${loan.id.toString()}`} className="back-link">
-        <ArrowLeft size={16} /> Back to Loan #{loan.id.toString()}
+        <ArrowLeft size={16} /> {t('loanFlow.backToLoan')} #{loan.id.toString()}
       </Link>
 
       <div className="loan-header">
         <div>
           <h1 className="page-title" style={{ display: "flex", alignItems: "center", gap: 6 }}>
-            Preclose · Loan #{loan.id.toString()}
+            {t('preclose.pageTitle', { id: loan.id.toString() })}
             <CardInfo id="preclose.overview" />
           </h1>
-          <p className="page-subtitle">
-            Close this loan before maturity: pay directly, transfer the
-            obligation to an existing Borrower Offer, or offset with a new
-            lender offer (borrower NFT locked until complete).
-          </p>
+          <p className="page-subtitle">{t('preclose.pageSubtitle')}</p>
         </div>
       </div>
 
       {!isActive && (
         <div className="alert alert-warning">
           <AlertTriangle size={18} />
-          <span>
-            This loan is not active. Preclose is only available on active loans.
-          </span>
+          <span>{t('loanFlow.notActivePreclose')}</span>
         </div>
       )}
 
@@ -346,7 +335,7 @@ export default function BorrowerPreclose() {
         <div className="alert alert-success">
           <CheckCircle size={18} />
           <span>
-            Tx submitted:{" "}
+            {t('loanFlow.txSubmitted')}{" "}
             <a
               href={`${activeBlockExplorer}/tx/${txHash}`}
               target="_blank"
@@ -363,11 +352,11 @@ export default function BorrowerPreclose() {
 
       <div className="card">
         <div className="card-title" style={{ display: "flex", alignItems: "center", gap: 6 }}>
-          Position Summary
+          {t('loanFlow.positionSummary')}
           <CardInfo id="preclose.position-summary" />
         </div>
         <div className="data-row">
-          <span className="data-label">Principal</span>
+          <span className="data-label">{t('loanDetails.principal')}</span>
           <span className="data-value">
             <TokenAmount
               amount={loan.principal}
@@ -377,19 +366,19 @@ export default function BorrowerPreclose() {
           </span>
         </div>
         <div className="data-row">
-          <span className="data-label">Rate</span>
+          <span className="data-label">{t('loanFlow.rate')}</span>
           <span className="data-value">
             {bpsToPercent(loan.interestRateBps)}%
           </span>
         </div>
         <div className="data-row">
-          <span className="data-label">Duration</span>
+          <span className="data-label">{t('loanDetails.duration')}</span>
           <span className="data-value">
-            {loan.durationDays.toString()} days
+            {loan.durationDays.toString()} {t('loanDetails.daysSuffix')}
           </span>
         </div>
         <div className="data-row">
-          <span className="data-label">Borrower NFT</span>
+          <span className="data-label">{t('loanFlow.borrowerNft')}</span>
           <span className="data-value mono">
             #{loan.borrowerTokenId.toString()}
           </span>
@@ -399,7 +388,7 @@ export default function BorrowerPreclose() {
       {inProgress && (
         <div className="card">
           <div className="card-title" style={{ display: "flex", alignItems: "center", gap: 6 }}>
-            Offset In Progress
+            {t('preclose.inProgressTitle')}
             <CardInfo id="preclose.in-progress" />
           </div>
           <TransferLockWarning
@@ -423,11 +412,11 @@ export default function BorrowerPreclose() {
               disabled={step === "submitting"}
             >
               {step === "submitting"
-                ? "Processing..."
-                : "Complete Offset (recovery)"}
+                ? t('loanDetails.processing')
+                : t('preclose.completeOffsetRecovery')}
             </button>
             <Link to="/app/offers" className="btn btn-secondary btn-sm">
-              View Offer Book
+              {t('preclose.viewOfferBook')}
             </Link>
           </div>
         </div>
@@ -436,7 +425,7 @@ export default function BorrowerPreclose() {
       {isActive && !inProgress && (
         <div className="card loan-actions-card">
           <div className="card-title" style={{ display: "flex", alignItems: "center", gap: 6 }}>
-            Choose Preclose Path
+            {t('preclose.choosePathTitle')}
             <CardInfo id="preclose.choose-path" />
           </div>
           <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
@@ -448,7 +437,7 @@ export default function BorrowerPreclose() {
               }}
               disabled={step === "submitting"}
             >
-              Direct Preclose
+              {t('preclose.directPath')}
             </button>
             <button
               className={`btn btn-sm ${opt === "transfer" ? "btn-primary" : "btn-secondary"}`}
@@ -463,7 +452,7 @@ export default function BorrowerPreclose() {
                   : undefined
               }
             >
-              Transfer to New Borrower
+              {t('preclose.transferPath')}
             </button>
             <button
               className={`btn btn-sm ${opt === "offset" ? "btn-primary" : "btn-secondary"}`}
@@ -474,22 +463,18 @@ export default function BorrowerPreclose() {
               disabled={step === "submitting" || !isErc20Loan}
               data-tooltip={
                 !isErc20Loan
-                  ? "Offset path is ERC-20 only in Phase 1"
+                  ? t('preclose.offsetTooltipPhase1')
                   : undefined
               }
             >
-              Offset with New Offer
+              {t('preclose.offsetPath')}
             </button>
           </div>
 
           {opt === "direct" && (
             <div className="action-group">
-              <h4 className="action-title">Direct Preclose</h4>
-              <p className="action-desc">
-                Pay principal plus full-term interest now. The loan closes
-                immediately and your collateral becomes claimable. No Vaipakam
-                NFT lock — this path is atomic.
-              </p>
+              <h4 className="action-title">{t('preclose.directPrecloseTitle')}</h4>
+              <p className="action-desc">{t('preclose.directPrecloseDesc')}</p>
               <div className="action-row">
                 <button
                   className="btn btn-primary btn-sm"
@@ -497,7 +482,7 @@ export default function BorrowerPreclose() {
                   disabled={step === "submitting"}
                   style={{ background: "var(--accent-red)" }}
                 >
-                  {step === "submitting" ? "Processing..." : "Pay & Close Loan"}
+                  {step === "submitting" ? t('loanDetails.processing') : t('preclose.payAndCloseLoan')}
                 </button>
               </div>
             </div>
@@ -506,21 +491,16 @@ export default function BorrowerPreclose() {
           {opt === "transfer" && isErc20Loan && (
             <div className="action-group">
               <h4 className="action-title">
-                Transfer Obligation to Another Borrower
+                {t('preclose.transferToBorrowerTitle')}
               </h4>
               {step === "review" || step === "submitting" ? (
                 <>
                   <div className="data-row" style={{ marginTop: 12 }}>
-                    <span className="data-label">Borrower offer ID</span>
+                    <span className="data-label">{t('preclose.borrowerOfferIdLabel')}</span>
                     <span className="data-value">#{transferOfferId}</span>
                   </div>
                   <p className="action-desc" style={{ marginTop: 12 }}>
-                    Confirm moves the loan obligation to the new borrower
-                    atomically: you repay Liam accrued interest + any rate
-                    shortfall + treasury fee, the new borrower's collateral
-                    (already locked in their escrow) backs the live loan, and
-                    your original collateral becomes claimable — all in one
-                    transaction. No NFT transfer-lock is required.
+                    {t('preclose.transferReviewBody')}
                   </p>
                   <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
                     <button
@@ -529,52 +509,37 @@ export default function BorrowerPreclose() {
                       disabled={step === "submitting"}
                     >
                       {step === "submitting"
-                        ? "Submitting..."
-                        : "Confirm & Transfer"}
+                        ? t('preclose.submittingDots')
+                        : t('preclose.confirmAndTransfer')}
                     </button>
                     <button
                       className="btn btn-secondary btn-sm"
                       onClick={() => setStep("idle")}
                       disabled={step === "submitting"}
                     >
-                      Back
+                      {t('preclose.back')}
                     </button>
                   </div>
                 </>
               ) : (
                 <>
-                  <p className="action-desc">
-                    Pick an existing Borrower Offer from the Offer Book and hand
-                    off this loan to its creator. Contract-enforced rules
-                    (PrecloseFacet.transferObligationViaOffer):
-                  </p>
+                  <p className="action-desc">{t('preclose.transferIntroBody')}</p>
                   <ul
                     className="action-desc"
                     style={{ marginLeft: 18, marginTop: 4 }}
                   >
-                    <li>
-                      Same lending, collateral, collateral-type, and prepay
-                      asset as this loan
-                    </li>
-                    <li>
-                      Offer amount must equal this loan's principal exactly
-                    </li>
-                    <li>
-                      Offer collateral &ge; original collateral (lender
-                      protection)
-                    </li>
-                    <li>Offer duration &le; remaining days on this loan</li>
-                    <li>
-                      New borrower must be a different address and pass
-                      sanctions / KYC
-                    </li>
+                    <li>{t('preclose.transferRuleSameAssets')}</li>
+                    <li>{t('preclose.transferRuleAmountEqual')}</li>
+                    <li>{t('preclose.transferRuleCollateralGte')}</li>
+                    <li>{t('preclose.transferRuleDurationLte')}</li>
+                    <li>{t('preclose.transferRuleNewBorrower')}</li>
                   </ul>
                   <div
                     className="action-row"
                     style={{ alignItems: "flex-end", marginTop: 8 }}
                   >
                     <div style={{ flex: 1 }}>
-                      <label className="form-label">Borrower Offer ID</label>
+                      <label className="form-label">{t('preclose.borrowerOfferIdInputLabel')}</label>
                       <input
                         className="form-input"
                         type="text"
@@ -584,7 +549,7 @@ export default function BorrowerPreclose() {
                       />
                     </div>
                     <Link to="/app/offers" className="btn btn-secondary btn-sm">
-                      Browse Offer Book
+                      {t('preclose.browseOfferBook')}
                     </Link>
                   </div>
                   <div className="action-row" style={{ marginTop: 12 }}>
@@ -593,7 +558,7 @@ export default function BorrowerPreclose() {
                       onClick={() => setStep("review")}
                       disabled={!transferOfferId}
                     >
-                      Review Transfer
+                      {t('preclose.reviewTransfer')}
                     </button>
                   </div>
                 </>
@@ -603,7 +568,7 @@ export default function BorrowerPreclose() {
 
           {opt === "offset" && isErc20Loan && (
             <div className="action-group">
-              <h4 className="action-title">Offset with New Lender Offer</h4>
+              <h4 className="action-title">{t('preclose.offsetTitle')}</h4>
               {step === "review" || step === "submitting" ? (
                 <>
                   <TransferLockWarning
@@ -613,16 +578,16 @@ export default function BorrowerPreclose() {
                     role="borrower"
                   />
                   <div className="data-row" style={{ marginTop: 12 }}>
-                    <span className="data-label">New rate</span>
+                    <span className="data-label">{t('preclose.newRateLabel')}</span>
                     <span className="data-value">{rate}%</span>
                   </div>
                   <div className="data-row">
-                    <span className="data-label">New duration</span>
-                    <span className="data-value">{duration} days</span>
+                    <span className="data-label">{t('preclose.newDurationLabel')}</span>
+                    <span className="data-value">{duration} {t('preclose.daysSuffix')}</span>
                   </div>
                   <div className="data-row">
                     <span className="data-label">
-                      Required collateral (for new borrower)
+                      {t('preclose.requiredCollateralForBorrower')}
                     </span>
                     <span className="data-value">
                       {collateralAmt}{" "}
@@ -636,35 +601,27 @@ export default function BorrowerPreclose() {
                       disabled={step === "submitting"}
                     >
                       {step === "submitting"
-                        ? "Submitting..."
-                        : "Confirm & Create Offset Offer"}
+                        ? t('preclose.submittingDots')
+                        : t('preclose.confirmAndCreateOffset')}
                     </button>
                     <button
                       className="btn btn-secondary btn-sm"
                       onClick={() => setStep("idle")}
                       disabled={step === "submitting"}
                     >
-                      Back
+                      {t('preclose.back')}
                     </button>
                   </div>
                 </>
               ) : (
                 <>
-                  <p className="action-desc">
-                    Post a new lender offer linked to this loan. As soon as a
-                    replacement borrower accepts it, the offset completes
-                    atomically in the same transaction — your original
-                    collateral is released and the original loan closes with no
-                    extra click. Your borrower-side Vaipakam NFT will be locked
-                    for transfer from submission until completion or
-                    cancellation.
-                  </p>
+                  <p className="action-desc">{t('preclose.offsetIntroBody')}</p>
                   <div
                     className="action-row"
                     style={{ alignItems: "flex-end" }}
                   >
                     <div style={{ flex: 1 }}>
-                      <label className="form-label">New rate (%)</label>
+                      <label className="form-label">{t('preclose.newRateInputLabel')}</label>
                       <input
                         className="form-input"
                         type="number"
@@ -676,7 +633,7 @@ export default function BorrowerPreclose() {
                       />
                     </div>
                     <div style={{ flex: 1 }}>
-                      <label className="form-label">New duration (days)</label>
+                      <label className="form-label">{t('preclose.newDurationInputLabel')}</label>
                       <input
                         className="form-input"
                         type="number"
@@ -693,9 +650,7 @@ export default function BorrowerPreclose() {
                     style={{ alignItems: "flex-end", marginTop: 8 }}
                   >
                     <div style={{ flex: 1 }}>
-                      <label className="form-label">
-                        Required collateral (whole tokens, same asset as original)
-                      </label>
+                      <label className="form-label">{t('preclose.requiredCollateralLabel')}</label>
                       <input
                         className="form-input"
                         type="number"
@@ -705,19 +660,10 @@ export default function BorrowerPreclose() {
                         value={collateralAmt}
                         onChange={(e) => setCollateralAmt(e.target.value)}
                       />
-                      <span className="form-hint">
-                        Amount in whole tokens (scaled on-chain using the
-                        token's decimals).
-                      </span>
+                      <span className="form-hint">{t('preclose.amountWholeTokensHint')}</span>
                     </div>
                   </div>
-                  <div className="alert alert-warning" style={{ marginTop: 12 }}>
-                    <AlertTriangle size={18} />
-                    <div style={{ fontSize: "0.88rem" }}>
-                      <strong>{FALLBACK_CONSENT_TITLE}.</strong>{" "}
-                      {FALLBACK_CONSENT_BODY}
-                    </div>
-                  </div>
+                  <RiskDisclosures />
                   <label
                     style={{
                       display: "flex",
@@ -731,7 +677,7 @@ export default function BorrowerPreclose() {
                       checked={fallbackConsent}
                       onChange={(e) => setFallbackConsent(e.target.checked)}
                     />
-                    <span>{FALLBACK_CONSENT_CHECKBOX_LABEL}</span>
+                    <span>{t('riskDisclosures.checkboxLabel')}</span>
                   </label>
                   <div className="action-row" style={{ marginTop: 12 }}>
                     <button
@@ -739,7 +685,7 @@ export default function BorrowerPreclose() {
                       onClick={() => setStep("review")}
                       disabled={!rate || !duration || !collateralAmt || !fallbackConsent}
                     >
-                      Review Offset Offer
+                      {t('preclose.reviewOffsetOffer')}
                     </button>
                   </div>
                 </>

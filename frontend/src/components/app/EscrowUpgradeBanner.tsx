@@ -1,4 +1,5 @@
 import { AlertTriangle } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 import { useWallet } from '../../context/WalletContext';
 import { useEscrowUpgrade } from '../../hooks/useEscrowUpgrade';
 
@@ -13,6 +14,7 @@ import { useEscrowUpgrade } from '../../hooks/useEscrowUpgrade';
  * actionable CTA before they hit a revert on any page.
  */
 export function EscrowUpgradeBanner() {
+  const { t } = useTranslation();
   const { address, isCorrectChain } = useWallet();
   const { info, upgrading, error, txHash, upgrade } = useEscrowUpgrade(
     isCorrectChain ? address : null,
@@ -38,16 +40,18 @@ export function EscrowUpgradeBanner() {
       <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
         <AlertTriangle size={16} />
         <span>
-          Escrow upgrade required — your escrow is at v{info.userVersion.toString()}, mandatory floor is v
-          {info.mandatoryVersion.toString()} (latest v{info.currentVersion.toString()}). Diamond flows
-          will revert until you upgrade.
+          {t('banners.escrowUpgradeBody', {
+            userVersion: info.userVersion.toString(),
+            mandatoryVersion: info.mandatoryVersion.toString(),
+            currentVersion: info.currentVersion.toString(),
+          })}
         </span>
       </span>
       <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
         {error && <span style={{ fontSize: '0.78rem' }}>{error}</span>}
         {txHash && !upgrading && (
           <span style={{ fontSize: '0.78rem' }} className="mono">
-            tx {txHash.slice(0, 10)}…
+            {t('banners.escrowTxPrefix')} {txHash.slice(0, 10)}…
           </span>
         )}
         <button
@@ -56,7 +60,7 @@ export function EscrowUpgradeBanner() {
           onClick={upgrade}
           disabled={upgrading}
         >
-          {upgrading ? 'Upgrading…' : 'Upgrade Escrow'}
+          {upgrading ? t('banners.escrowUpgrading') : t('banners.escrowUpgradeButton')}
         </button>
       </span>
     </div>

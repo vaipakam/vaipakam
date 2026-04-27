@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { createPublicClient, http } from 'viem';
 import {
   Activity as ActivityIcon,
@@ -187,6 +188,7 @@ const ARG_LABELS: Record<string, string> = {
  * timeline readable while the expanded panel exposes per-event detail.
  */
 export default function Activity() {
+  const { t } = useTranslation();
   const { address } = useWallet();
   const chain = useReadChain();
   const { events, loading: indexLoading, reload } = useLogIndex();
@@ -323,15 +325,11 @@ export default function Activity() {
             size={22}
             style={{ verticalAlign: 'middle', marginRight: 8 }}
           />
-          Activity
+          {t('appNav.activity')}
           <CardInfo id="activity.feed" />
         </h1>
         <p className="page-subtitle">
-          On-chain events involving your wallet — offers you created, loans
-          you opened, repayments, claims, and liquidations. Sourced directly
-          from Diamond event logs on {chain.name ?? 'this chain'} and grouped
-          by transaction so multi-event flows (like "Accept offer →
-          Initiate loan") read as one row.
+          {t('activity.pageSubtitle', { chain: chain.name ?? '' })}
         </p>
       </div>
 
@@ -342,7 +340,7 @@ export default function Activity() {
             className={`activity-chip ${kindFilter === 'all' ? 'active' : ''}`}
             onClick={() => setKindFilter('all')}
           >
-            All
+            {t('activity.filterAll')}
           </button>
           {KIND_PRIORITY.filter((k) => kindsPresent.includes(k)).map((k) => (
             <button
@@ -362,11 +360,11 @@ export default function Activity() {
             className="btn btn-ghost btn-sm"
             onClick={reload}
             disabled={indexLoading}
-            data-tooltip="Rescan on-chain events"
+            data-tooltip={t('activity.rescanTooltip')}
             data-tooltip-placement="below"
           >
             <RefreshCw size={14} className={indexLoading ? 'spin' : ''} />
-            {indexLoading ? 'Scanning…' : 'Refresh'}
+            {indexLoading ? t('activity.scanning') : t('activity.refresh')}
           </button>
         </div>
       </div>
@@ -374,11 +372,8 @@ export default function Activity() {
       {!address ? (
         <div className="activity-empty">
           <ActivityIcon size={28} />
-          <h3>Connect your wallet</h3>
-          <p>
-            Activity is filtered to events your connected address took part
-            in. Connect to see your history.
-          </p>
+          <h3>{t('activity.connectTitle')}</h3>
+          <p>{t('activity.connectBody')}</p>
         </div>
       ) : filteredGroups.length === 0 ? (
         <div className="activity-empty">
@@ -386,14 +381,14 @@ export default function Activity() {
           <h3>
             {groups.length === 0
               ? indexLoading
-                ? 'Scanning event logs…'
-                : 'No on-chain activity yet'
-              : 'No transactions match this filter'}
+                ? t('activity.scanningLogs')
+                : t('activity.noActivity')
+              : t('activity.noFilterMatch')}
           </h3>
           <p>
             {groups.length === 0
-              ? 'Transactions like creating an offer, opening a loan, or claiming rewards will appear here once they settle on-chain.'
-              : 'Try the "All" chip to widen the view.'}
+              ? t('activity.noActivityBody')
+              : t('activity.noFilterMatchBody')}
           </p>
         </div>
       ) : (

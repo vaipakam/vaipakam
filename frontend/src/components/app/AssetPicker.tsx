@@ -1,5 +1,7 @@
 import { useMemo, useState, useEffect, useRef } from 'react';
 import { AlertTriangle, Info, Search, X } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
+import type { TFunction } from 'i18next';
 import { useTopTokens, useStablecoins, useVerifyContract } from '../../hooks/useCoinGecko';
 import { platformForChain } from '../../lib/chainPlatforms';
 import type { CoinGeckoToken } from '../../lib/coingecko';
@@ -32,6 +34,7 @@ export function AssetPicker({
   hint,
   disabled = false,
 }: AssetPickerProps) {
+  const { t } = useTranslation();
   const platformSupported = platformForChain(chainId) !== null;
 
   const { tokens: topTokens, loading: topLoading } = useTopTokens(
@@ -111,7 +114,7 @@ export function AssetPicker({
   };
 
   // Warning/error messaging derived from mode + verification.
-  const notice = deriveNotice(mode, platformSupported, value, selectedInList, verification, verifying);
+  const notice = deriveNotice(mode, platformSupported, value, selectedInList, verification, verifying, t);
 
   return (
     <div className="asset-picker" ref={rootRef}>
@@ -264,13 +267,13 @@ function deriveNotice(
   selectedInList: CoinGeckoToken | null,
   verification: ReturnType<typeof useVerifyContract>['result'],
   verifying: boolean,
+  t: TFunction,
 ): Notice | null {
   if (!platformSupported) {
     if (!value) {
       return {
         level: 'info',
-        message:
-          'Token discovery is not available on this network (testnet). Paste the contract address manually.',
+        message: t('assetPicker.tokenDiscoveryUnavailable'),
       };
     }
     return null;
@@ -278,29 +281,32 @@ function deriveNotice(
 
   if (!value) return null;
   if (!ADDR_RE.test(value)) {
-    return { level: 'error', message: 'Enter a valid 0x contract address (40 hex chars).' };
+    return { level: 'error', message: t('assetPicker.invalidAddress') };
   }
   if (selectedInList) return null;
-  if (verifying) return { level: 'info', message: 'Verifying token with CoinGecko…' };
+  if (verifying) return { level: 'info', message: t('assetPicker.verifying') };
   if (!verification) return null;
 
   if (mode === 'stablecoin') {
     if (!verification.known) {
       return {
         level: 'error',
-        message:
-          'This address is not recognized by CoinGecko. The prepayment asset for NFT rentals must be a stablecoin from the list above.',
+        message: t('assetPicker.stablecoinNotRecognized'),
       };
     }
     if (!verification.isStablecoin) {
       return {
         level: 'error',
-        message: `${verification.symbol ?? 'This token'} is not categorized as a stablecoin on CoinGecko. Choose a stablecoin from the dropdown.`,
+        message: t('assetPicker.notStablecoin', {
+          symbol: verification.symbol ?? t('assetPicker.fallbackThis'),
+        }),
       };
     }
     return {
       level: 'info',
-      message: `${verification.symbol ?? 'Token'} recognized as a stablecoin.`,
+      message: t('assetPicker.stablecoinRecognized', {
+        symbol: verification.symbol ?? t('assetPicker.fallbackToken'),
+      }),
     };
   }
 
@@ -308,18 +314,24 @@ function deriveNotice(
   if (!verification.known) {
     return {
       level: 'warning',
-      message:
-        'This token is not listed on CoinGecko. Use only if you trust the project, and verify the contract address yourself.',
+      message: t('assetPicker.tokenNotListed'),
     };
   }
+  const rankSuffix = verification.marketCapRank ? ` (rank #${verification.marketCapRank})` : '';
   if (!verification.inTop200) {
     return {
       level: 'warning',
-      message: `${verification.symbol ?? 'This token'} is outside the top 200 by market cap${verification.marketCapRank ? ` (rank #${verification.marketCapRank})` : ''}. Use only if you trust the project, and verify the contract address yourself.`,
+      message: t('assetPicker.tokenOutsideTop200', {
+        symbol: verification.symbol ?? t('assetPicker.fallbackThis'),
+        rankSuffix,
+      }),
     };
   }
   return {
     level: 'info',
-    message: `${verification.symbol ?? 'Token'} recognized${verification.marketCapRank ? ` (rank #${verification.marketCapRank})` : ''}.`,
+    message: t('assetPicker.tokenRecognized', {
+      symbol: verification.symbol ?? t('assetPicker.fallbackToken'),
+      rankSuffix,
+    }),
   };
 }

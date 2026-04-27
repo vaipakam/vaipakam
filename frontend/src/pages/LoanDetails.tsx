@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { useParams, Link } from "react-router-dom";
+import { useTranslation } from "react-i18next";
 import { useWallet } from "../context/WalletContext";
 import { useMode } from "../context/ModeContext";
 import { useDiamondContract, useDiamondRead } from "../contracts/useDiamond";
@@ -42,6 +43,7 @@ import { CardInfo } from "../components/CardInfo";
 import "./LoanDetails.css";
 
 export default function LoanDetails() {
+  const { t } = useTranslation();
   const { loanId } = useParams();
   const { address, chainId, activeChain, isCorrectChain } = useWallet();
   // Active-chain Diamond + explorer, falling back to DEFAULT_CHAIN when the
@@ -111,10 +113,7 @@ export default function LoanDetails() {
         setLtv(null);
         setHf(null);
         setRiskError(
-          decodeContractError(
-            err,
-            "Risk metrics unavailable (illiquid position)",
-          ),
+          decodeContractError(err, t('loanDetails.riskMetricsUnavailable')),
         );
       }
     })();
@@ -339,7 +338,7 @@ export default function LoanDetails() {
   if (loading) {
     return (
       <div className="empty-state" style={{ minHeight: "60vh" }}>
-        <p>Loading loan #{loanId}...</p>
+        <p>{t('loanDetails.loadingLoan', { id: loanId })}</p>
       </div>
     );
   }
@@ -356,10 +355,10 @@ export default function LoanDetails() {
         >
           <AlertTriangle size={28} />
         </div>
-        <h3>Loan Not Found</h3>
-        <p>{error || `Loan #${loanId} does not exist.`}</p>
+        <h3>{t('loanDetails.loanNotFound')}</h3>
+        <p>{error || t('loanDetails.loanNotFoundBody', { id: loanId })}</p>
         <Link to="/app" className="btn btn-secondary btn-sm">
-          <ArrowLeft size={16} /> Back to Dashboard
+          <ArrowLeft size={16} /> {t('loanDetails.backToDashboard')}
         </Link>
       </div>
     );
@@ -368,7 +367,7 @@ export default function LoanDetails() {
   return (
     <div className="loan-details">
       <Link to="/app" className="back-link">
-        <ArrowLeft size={16} /> Back to Dashboard
+        <ArrowLeft size={16} /> {t('loanDetails.backToDashboard')}
       </Link>
 
       <div className="loan-header">
@@ -384,20 +383,20 @@ export default function LoanDetails() {
               {LOAN_STATUS_LABELS[Number(loan.status) as LoanStatus]}
             </span>
             {isLender && (
-              <span className="status-badge lender">You are Lender</span>
+              <span className="status-badge lender">{t('loanDetails.youAreLender')}</span>
             )}
             {isBorrower && (
-              <span className="status-badge borrower">You are Borrower</span>
+              <span className="status-badge borrower">{t('loanDetails.youAreBorrower')}</span>
             )}
             {isOverdue && (
-              <span className="status-badge defaulted">Overdue</span>
+              <span className="status-badge defaulted">{t('loanDetails.overdue')}</span>
             )}
           </div>
         </div>
         {isActive && (
           <div className="loan-countdown">
             <Clock size={18} />
-            <span>{daysRemaining} days remaining</span>
+            <span>{t('loanDetails.daysRemaining', { count: daysRemaining })}</span>
           </div>
         )}
       </div>
@@ -471,11 +470,11 @@ export default function LoanDetails() {
       <div className="loan-grid">
         <div className="card">
           <div className="card-title" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-            Loan Terms
+            {t('loanDetails.loanTerms')}
             <CardInfo id="loan-details.terms" />
           </div>
           <div className="data-row">
-            <span className="data-label">Principal</span>
+            <span className="data-label">{t('loanDetails.principal')}</span>
             <span className="data-value mono">
               <TokenAmount
                 amount={loan.principal}
@@ -484,7 +483,7 @@ export default function LoanDetails() {
             </span>
           </div>
           <div className="data-row">
-            <span className="data-label">Principal Asset</span>
+            <span className="data-label">{t('loanDetails.principalAsset')}</span>
             <a
               href={`${activeBlockExplorer}/address/${loan.principalAsset}`}
               target="_blank"
@@ -502,31 +501,31 @@ export default function LoanDetails() {
             </a>
           </div>
           <div className="data-row">
-            <span className="data-label">Interest Rate (APR)</span>
+            <span className="data-label">{t('loanDetails.interestRateApr')}</span>
             <span className="data-value">
               {bpsToPercent(loan.interestRateBps)}
             </span>
           </div>
           <div className="data-row">
-            <span className="data-label">Duration</span>
+            <span className="data-label">{t('loanDetails.duration')}</span>
             <span className="data-value">
-              {loan.durationDays.toString()} days
+              {loan.durationDays.toString()} {t('loanDetails.daysSuffix')}
             </span>
           </div>
           <div className="data-row">
-            <span className="data-label">Start Date</span>
+            <span className="data-label">{t('loanDetails.startDate')}</span>
             <span className="data-value">
               {new Date(Number(loan.startTime) * 1000).toLocaleDateString()}
             </span>
           </div>
           <div className="data-row">
-            <span className="data-label">End Date</span>
+            <span className="data-label">{t('loanDetails.endDate')}</span>
             <span className="data-value">
               {new Date(endTime * 1000).toLocaleDateString()}
             </span>
           </div>
           <div className="data-row">
-            <span className="data-label">Asset Type</span>
+            <span className="data-label">{t('loanDetails.assetType')}</span>
             <span className="data-value">
               {ASSET_TYPE_LABELS[Number(loan.assetType) as AssetType]}
             </span>
@@ -535,11 +534,11 @@ export default function LoanDetails() {
 
         <div className="card">
           <div className="card-title" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-            Collateral & Risk
+            {t('loanDetails.collateralAndRisk')}
             <CardInfo id="loan-details.collateral-risk" role={role} />
           </div>
           <div className="data-row">
-            <span className="data-label">Collateral Amount</span>
+            <span className="data-label">{t('loanDetails.collateralAmount')}</span>
             <span className="data-value mono">
               <TokenAmount
                 amount={loan.collateralAmount}
@@ -548,7 +547,7 @@ export default function LoanDetails() {
             </span>
           </div>
           <div className="data-row">
-            <span className="data-label">Collateral Asset</span>
+            <span className="data-label">{t('loanDetails.collateralAsset')}</span>
             <a
               href={`${activeBlockExplorer}/address/${loan.collateralAsset}`}
               target="_blank"
@@ -566,7 +565,7 @@ export default function LoanDetails() {
             </a>
           </div>
           <div className="data-row">
-            <span className="data-label">Principal Liquidity</span>
+            <span className="data-label">{t('loanDetails.principalLiquidity')}</span>
             <span
               className={`status-badge ${loan.principalLiquidity === 0n ? "active" : "defaulted"}`}
             >
@@ -574,7 +573,7 @@ export default function LoanDetails() {
             </span>
           </div>
           <div className="data-row">
-            <span className="data-label">Collateral Liquidity</span>
+            <span className="data-label">{t('loanDetails.collateralLiquidity')}</span>
             <span
               className={`status-badge ${loan.collateralLiquidity === 0n ? "active" : "defaulted"}`}
             >
@@ -582,16 +581,16 @@ export default function LoanDetails() {
             </span>
           </div>
           <div className="data-row">
-            <span className="data-label">LTV</span>
+            <span className="data-label">{t('loanDetails.ltv')}</span>
             <LTVBar percent={ltvPercent} />
           </div>
           <div className="data-row">
-            <span className="data-label">Health Factor</span>
+            <span className="data-label">{t('loanDetails.healthFactor')}</span>
             <HealthFactorGauge value={hfScaled} />
           </div>
           {riskError && (
             <div className="data-row">
-              <span className="data-label">Risk</span>
+              <span className="data-label">{t('loanDetails.risk')}</span>
               <span
                 className="data-value"
                 style={{ color: "var(--text-tertiary)", fontSize: "0.78rem" }}
@@ -636,11 +635,11 @@ export default function LoanDetails() {
 
         <div className="card">
           <div className="card-title" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-            Parties
+            {t('loanDetails.parties')}
             <CardInfo id="loan-details.parties" />
           </div>
           <div className="data-row">
-            <span className="data-label">Lender</span>
+            <span className="data-label">{t('common.lender')}</span>
             <a
               href={`${activeBlockExplorer}/address/${loan.lender}`}
               target="_blank"
@@ -652,7 +651,7 @@ export default function LoanDetails() {
             </a>
           </div>
           <div className="data-row">
-            <span className="data-label">Borrower</span>
+            <span className="data-label">{t('common.borrower')}</span>
             <a
               href={`${activeBlockExplorer}/address/${loan.borrower}`}
               target="_blank"
@@ -664,7 +663,7 @@ export default function LoanDetails() {
             </a>
           </div>
           <div className="data-row">
-            <span className="data-label">Lender NFT ID</span>
+            <span className="data-label">{t('loanDetails.lenderNftId')}</span>
             <Link
               to={`/nft-verifier?contract=${activeDiamondAddr}&id=${loan.lenderTokenId.toString()}`}
               className="data-value mono"
@@ -675,7 +674,7 @@ export default function LoanDetails() {
             </Link>
           </div>
           <div className="data-row">
-            <span className="data-label">Borrower NFT ID</span>
+            <span className="data-label">{t('loanDetails.borrowerNftId')}</span>
             <Link
               to={`/nft-verifier?contract=${activeDiamondAddr}&id=${loan.borrowerTokenId.toString()}`}
               className="data-value mono"
@@ -686,7 +685,7 @@ export default function LoanDetails() {
             </Link>
           </div>
           <div className="data-row">
-            <span className="data-label">Original Offer</span>
+            <span className="data-label">{t('loanDetails.originalOffer')}</span>
             <span className="data-value">#{loan.offerId.toString()}</span>
           </div>
         </div>
@@ -696,7 +695,7 @@ export default function LoanDetails() {
       {availability.repay && (
         <div className="card loan-actions-card">
           <div className="card-title" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-            Actions
+            {t('loanDetails.actions')}
             <CardInfo id="loan-details.actions" role={role} />
           </div>
 
@@ -704,29 +703,27 @@ export default function LoanDetails() {
             <div className="alert alert-warning" style={{ marginBottom: 12 }}>
               <AlertTriangle size={18} />
               <span>
-                Liquidation swap failed and this loan is in{" "}
-                <strong>Fallback Pending</strong>.
+                {t('loanDetails.fallbackPendingAlertPrefix')}{" "}
+                <strong>{t('loanDetails.fallbackPendingLabel')}</strong>.{" "}
                 {isBorrower
-                  ? " You can still cure it by repaying in full, or by adding collateral until Health Factor and LTV return to their initiation thresholds."
-                  : " The borrower may still cure the position (full repay or collateral top-up) until the lender finalizes the claim."}
+                  ? t('loanDetails.fallbackPendingBorrower')
+                  : t('loanDetails.fallbackPendingLender')}
               </span>
             </div>
           )}
 
           <div className="action-group">
-            <h4 className="action-title">Repay Loan</h4>
+            <h4 className="action-title">{t('loanDetails.repayLoan')}</h4>
             <p className="action-desc">
               {isBorrower
-                ? "Repay the principal + interest in full to close the loan and release your collateral."
-                : "Anyone can repay this loan on behalf of the borrower (full repayment only)."}
+                ? t('loanDetails.repayDescBorrower')
+                : t('loanDetails.repayDescOther')}
             </p>
             {!isBorrower && (
               <div className="alert alert-warning" style={{ marginBottom: 12 }}>
                 <AlertTriangle size={18} />
                 <span>
-                  Repaying this loan does not grant collateral rights.
-                  Collateral is claimable only by the current holder of borrower
-                  NFT #{loan.borrowerTokenId.toString()}.
+                  {t('loanDetails.repayNonBorrowerWarning', { tokenId: loan.borrowerTokenId.toString() })}
                 </span>
               </div>
             )}
@@ -738,7 +735,7 @@ export default function LoanDetails() {
                   onClick={() => setRepayConfirming(true)}
                   disabled={actionLoading}
                 >
-                  Repay in Full
+                  {t('loanDetails.repayInFull')}
                 </button>
               </div>
             ) : (
@@ -755,22 +752,19 @@ export default function LoanDetails() {
                   }}
                 >
                   <AlertTriangle size={18} />
-                  <strong>Confirm Full Repayment</strong>
+                  <strong>{t('loanDetails.confirmFullRepayment')}</strong>
                 </div>
                 <div className="data-row">
-                  <span className="data-label">Loan</span>
+                  <span className="data-label">{t('loanDetails.loanLabel')}</span>
                   <span className="data-value">#{loan.id.toString()}</span>
                 </div>
                 <p style={{ marginTop: 8 }}>
-                  This will repay principal plus accrued interest for the full
-                  outstanding balance and close (or cure) the loan.
+                  {t('loanDetails.repayConfirmBody')}
                 </p>
                 {!isBorrower && (
                   <p style={{ marginTop: 8 }}>
-                    <strong>Reminder:</strong> repaying this loan does not grant
-                    you collateral rights. Collateral is claimable only by the
-                    current holder of borrower NFT #
-                    {loan.borrowerTokenId.toString()}.
+                    <strong>{t('loanDetails.repayConfirmReminderHead')}</strong>{' '}
+                    {t('loanDetails.repayConfirmReminderBody', { tokenId: loan.borrowerTokenId.toString() })}
                   </p>
                 )}
                 {/* Phase 8b.2 — Blockaid preview of the pending repay tx. */}
@@ -784,14 +778,14 @@ export default function LoanDetails() {
                     onClick={handleRepay}
                     disabled={actionLoading}
                   >
-                    {actionLoading ? "Processing..." : "Confirm & Repay"}
+                    {actionLoading ? t('loanDetails.processing') : t('loanDetails.confirmAndRepay')}
                   </button>
                   <button
                     className="btn btn-secondary btn-sm"
                     onClick={() => setRepayConfirming(false)}
                     disabled={actionLoading}
                   >
-                    Cancel
+                    {t('common.cancel')}
                   </button>
                 </div>
               </div>
@@ -800,11 +794,11 @@ export default function LoanDetails() {
 
           {availability.addCollateral && (
             <div className="action-group">
-              <h4 className="action-title">Add Collateral</h4>
+              <h4 className="action-title">{t('loanDetails.addCollateral')}</h4>
               <p className="action-desc">
                 {isFallbackPending
-                  ? "Top up collateral to cure the fallback. The loan reactivates once Health Factor and LTV are back within their initiation thresholds."
-                  : "Add more collateral to improve your Health Factor and avoid liquidation."}
+                  ? t('loanDetails.addCollateralFallbackDesc')
+                  : t('loanDetails.addCollateralNormalDesc')}
               </p>
               <div className="action-row">
                 <input
@@ -812,7 +806,7 @@ export default function LoanDetails() {
                   type="number"
                   step="any"
                   min="0"
-                  placeholder="Amount to add"
+                  placeholder={t('loanDetails.amountToAdd')}
                   value={addCollateralAmt}
                   onChange={(e) => setAddCollateralAmt(e.target.value)}
                 />
@@ -821,7 +815,7 @@ export default function LoanDetails() {
                   onClick={handleAddCollateral}
                   disabled={actionLoading || !addCollateralAmt}
                 >
-                  {actionLoading ? "Processing..." : "Add Collateral"}
+                  {actionLoading ? t('loanDetails.processing') : t('loanDetails.addCollateral')}
                 </button>
               </div>
               {/* Phase 8b.2 — Blockaid preview of the pending addCollateral
@@ -845,14 +839,8 @@ export default function LoanDetails() {
             hf < 10n ** 18n &&
             activeDiamondAddr && (
               <div className="action-group">
-                <h4 className="action-title">Liquidate (HF &lt; 1)</h4>
-                <p className="action-desc">
-                  This loan is undercollateralized. Any wallet may liquidate
-                  — collateral is swapped to principal across the best-priced
-                  DEX and the lender is made whole. You collect a liquidator
-                  incentive (up to 3% of proceeds, tapering with realized
-                  slippage).
-                </p>
+                <h4 className="action-title">{t('loanDetails.liquidateHfLt1')}</h4>
+                <p className="action-desc">{t('loanDetails.liquidateHfDesc')}</p>
                 <LiquidateButton
                   loanId={BigInt(loanId!)}
                   chainId={chainId ?? 0}
@@ -866,35 +854,29 @@ export default function LoanDetails() {
 
           {availability.triggerDefault && (
             <div className="action-group">
-              <h4 className="action-title">Trigger Default</h4>
-              <p className="action-desc">
-                This loan is overdue. Anyone can trigger the default process.
-              </p>
+              <h4 className="action-title">{t('loanDetails.triggerDefault')}</h4>
+              <p className="action-desc">{t('loanDetails.triggerDefaultDesc')}</p>
               <button
                 className="btn btn-primary btn-sm"
                 style={{ background: "var(--accent-red)" }}
                 onClick={handleTriggerDefault}
                 disabled={actionLoading}
               >
-                {actionLoading ? "Processing..." : "Trigger Default"}
+                {actionLoading ? t('loanDetails.processing') : t('loanDetails.triggerDefault')}
               </button>
             </div>
           )}
 
           {availability.earlyWithdrawal && (
             <div className="action-group">
-              <h4 className="action-title">Early Withdrawal</h4>
-              <p className="action-desc">
-                Exit this loan before maturity by selling your lender position
-                to a new lender. Initiating this flow will lock your lender NFT
-                from transfer until the sale completes or is cancelled.
-              </p>
+              <h4 className="action-title">{t('loanDetails.earlyWithdrawal')}</h4>
+              <p className="action-desc">{t('loanDetails.earlyWithdrawalDesc')}</p>
               <div className="action-row">
                 <Link
                   to={`/app/loans/${loan.id.toString()}/early-withdrawal`}
                   className="btn btn-primary btn-sm"
                 >
-                  Initiate Early Withdrawal
+                  {t('loanDetails.initiateEarlyWithdrawal')}
                 </Link>
               </div>
             </div>
@@ -903,34 +885,26 @@ export default function LoanDetails() {
           {availability.preclose && (
             <>
               <div className="action-group">
-                <h4 className="action-title">Preclose</h4>
-                <p className="action-desc">
-                  Close this loan early by repaying directly, or by offsetting
-                  with a new lender offer. The offset path will lock your
-                  borrower NFT from transfer until the new offer is accepted or
-                  cancelled.
-                </p>
+                <h4 className="action-title">{t('loanDetails.preclose')}</h4>
+                <p className="action-desc">{t('loanDetails.precloseDesc')}</p>
                 <div className="action-row">
                   <Link
                     to={`/app/loans/${loan.id.toString()}/preclose`}
                     className="btn btn-primary btn-sm"
                   >
-                    Open Preclose Flow
+                    {t('loanDetails.openPrecloseFlow')}
                   </Link>
                 </div>
               </div>
               <div className="action-group">
-                <h4 className="action-title">Refinance</h4>
-                <p className="action-desc">
-                  Switch to a new lender with better terms by posting a borrower
-                  offer and completing the refinance once accepted.
-                </p>
+                <h4 className="action-title">{t('loanDetails.refinance')}</h4>
+                <p className="action-desc">{t('loanDetails.refinanceDesc')}</p>
                 <div className="action-row">
                   <Link
                     to={`/app/loans/${loan.id.toString()}/refinance`}
                     className="btn btn-primary btn-sm"
                   >
-                    Open Refinance Flow
+                    {t('loanDetails.openRefinanceFlow')}
                   </Link>
                 </div>
               </div>
@@ -958,6 +932,7 @@ interface LoanKeeperPickerProps {
  * this loan" flow-of-control gap.
  */
 function LoanKeeperPicker({ loanId, actionLoading, onToggle }: LoanKeeperPickerProps) {
+  const { t } = useTranslation();
   const { address } = useWallet();
   const diamondRo = useDiamondRead();
   const [keepers, setKeepers] = useState<string[]>([]);
@@ -1002,17 +977,17 @@ function LoanKeeperPicker({ loanId, actionLoading, onToggle }: LoanKeeperPickerP
   return (
     <div className="data-row" style={{ flexDirection: "column", alignItems: "flex-start" }}>
       <span className="data-label" style={{ marginBottom: 8 }}>
-        Keeper delegation
+        {t('loanDetails.keeperDelegation')}
       </span>
       {loading ? (
-        <span style={{ fontSize: "0.82rem", opacity: 0.7 }}>Loading keepers…</span>
+        <span style={{ fontSize: "0.82rem", opacity: 0.7 }}>{t('loanDetails.loadingKeepers')}</span>
       ) : keepers.length === 0 ? (
         <div style={{ fontSize: "0.82rem", opacity: 0.8 }}>
-          You have no keepers on your global whitelist.{" "}
+          {t('loanDetails.noKeepersWhitelistPrefix')}{' '}
           <Link to="/app/keepers" style={{ color: "var(--brand)" }}>
-            Add one on the Keeper Settings page →
-          </Link>{" "}
-          before enabling any for this loan.
+            {t('loanDetails.noKeepersWhitelistLink')}
+          </Link>{' '}
+          {t('loanDetails.noKeepersWhitelistSuffix')}
         </div>
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: 6, fontSize: "0.82rem" }}>
@@ -1039,12 +1014,11 @@ function LoanKeeperPicker({ loanId, actionLoading, onToggle }: LoanKeeperPickerP
             );
           })}
           <div style={{ fontSize: "0.72rem", opacity: 0.65 }}>
-            A keeper still needs (a) the corresponding action bit set on your{" "}
+            {t('loanDetails.keeperHintPrefixA')}{' '}
             <Link to="/app/keepers" style={{ color: "var(--brand)" }}>
-              global whitelist
-            </Link>{" "}
-            and (b) your master keeper-access switch ON before they can drive
-            anything on this loan.
+              {t('loanDetails.keeperHintGlobalWhitelist')}
+            </Link>{' '}
+            {t('loanDetails.keeperHintSuffix')}
           </div>
         </div>
       )}

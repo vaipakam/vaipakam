@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
+import { useTranslation } from "react-i18next";
 import {
   createPublicClient,
   http,
@@ -171,6 +172,7 @@ function normaliseLoan(raw: unknown): LoanDetails {
 }
 
 export default function NftVerifier() {
+  const { t } = useTranslation();
   const [searchParams, setSearchParams] = useSearchParams();
   const [addressInput, setAddressInput] = useState(
     () => searchParams.get("contract") ?? "",
@@ -412,22 +414,16 @@ export default function NftVerifier() {
     <div className="nft-verifier">
       <div className="page-header">
         <h1 className="page-title" style={{ display: "flex", alignItems: "center", gap: 6 }}>
-          NFT Verifier
+          {t('nav.nftVerifier')}
           <CardInfo id="nft-verifier.lookup" />
         </h1>
-        <p className="page-subtitle">
-          Verify the authenticity of a Vaipakam position NFT before you buy it
-          from another holder. Paste the contract address and token ID from the
-          marketplace listing &mdash; we'll confirm whether it was minted by
-          Vaipakam, which chain it lives on and the position's current state
-          with NFT's current Owner, so you can decide whether to purchase.
-        </p>
+        <p className="page-subtitle">{t('nftVerifier.pageSubtitle')}</p>
       </div>
 
       <div className="card" style={{ marginBottom: 24 }}>
         <form onSubmit={handleSubmit} className="verifier-form-stacked">
           <div className="form-group" style={{ marginBottom: 16 }}>
-            <label className="form-label">NFT Contract Address</label>
+            <label className="form-label">{t('nftVerifier.contractAddressLabel')}</label>
             <input
               className="form-input"
               type="text"
@@ -438,14 +434,10 @@ export default function NftVerifier() {
               autoComplete="off"
               required
             />
-            <div className="form-hint">
-              Paste the NFT collection address from the marketplace. The
-              Verifier checks it against every Vaipakam deployment to confirm
-              the NFT is genuine and tell you which chain it sits on.
-            </div>
+            <div className="form-hint">{t('nftVerifier.contractAddressHint')}</div>
           </div>
           <div className="form-group" style={{ marginBottom: 16 }}>
-            <label className="form-label">Token ID</label>
+            <label className="form-label">{t('nftVerifier.tokenIdLabel')}</label>
             <input
               className="form-input"
               type="number"
@@ -462,12 +454,12 @@ export default function NftVerifier() {
             disabled={verdict.kind === "verifying"}
           >
             <Search size={16} />
-            {verdict.kind === "verifying" ? "Verifying…" : "Verify NFT"}
+            {verdict.kind === "verifying" ? t('nftVerifier.verifying') : t('nftVerifier.verifyButton')}
           </button>
         </form>
 
         <div className="verifier-supported-chains">
-          <span className="data-label">Recognised on:</span>
+          <span className="data-label">{t('nftVerifier.recognisedOn')}</span>
           {chains.map((c) => (
             <span key={c.chainId} className="verifier-chain-pill">
               {c.name}
@@ -564,6 +556,7 @@ function BurnedCard({
 }: {
   verdict: Extract<Verdict, { kind: "burned" }>;
 }) {
+  const { t } = useTranslation();
   const { chain, tokenId, role, loanDetails, offerContext, lastOwner } =
     verdict;
   const offerStatusLabel =
@@ -591,7 +584,7 @@ function BurnedCard({
       {lastOwner && (
         <div className="verifier-details-col" style={{ marginTop: 12 }}>
           <div className="data-row">
-            <span className="data-label">Last owner before burn</span>
+            <span className="data-label">{t('nftVerifier.lastOwnerBeforeBurn')}</span>
             <a
               href={`${chain.blockExplorer}/address/${lastOwner}`}
               target="_blank"
@@ -607,28 +600,28 @@ function BurnedCard({
       {loanDetails ? (
         <div className="verifier-details-col" style={{ marginTop: 12 }}>
           <div className="data-row">
-            <span className="data-label">Loan</span>
+            <span className="data-label">{t('nftVerifier.loanLabel')}</span>
             <span className="data-value mono">
               #{loanDetails.id.toString()}
             </span>
           </div>
           {role && (
             <div className="data-row">
-              <span className="data-label">Role</span>
+              <span className="data-label">{t('common.role')}</span>
               <span className="data-value">
-                {role === "lender" ? "Lender position" : "Borrower position"}
+                {role === "lender" ? t('nftVerifier.lenderPosition') : t('nftVerifier.borrowerPosition')}
               </span>
             </div>
           )}
           <div className="data-row">
-            <span className="data-label">Status</span>
+            <span className="data-label">{t('common.status')}</span>
             <span className="data-value">
               {LOAN_STATUS_LABELS[Number(loanDetails.status) as LoanStatus] ??
-                "Unknown"}
+                t('nftVerifier.unknown')}
             </span>
           </div>
           <div className="data-row">
-            <span className="data-label">Principal</span>
+            <span className="data-label">{t('nftVerifier.principal')}</span>
             <span className="data-value">
               <TokenAmount
                 amount={loanDetails.principal}
@@ -640,7 +633,7 @@ function BurnedCard({
           {loanDetails.collateralAsset &&
             loanDetails.collateralAsset !== ZERO_ADDRESS && (
               <div className="data-row">
-                <span className="data-label">Collateral</span>
+                <span className="data-label">{t('nftVerifier.collateral')}</span>
                 <span className="data-value">
                   <TokenAmount
                     amount={loanDetails.collateralAmount}
@@ -651,32 +644,32 @@ function BurnedCard({
               </div>
             )}
           <div className="data-row">
-            <span className="data-label">Interest Rate</span>
+            <span className="data-label">{t('common.interestRate')}</span>
             <span className="data-value">
               {bpsToPercent(loanDetails.interestRateBps)}
             </span>
           </div>
           <div className="data-row">
-            <span className="data-label">Duration</span>
+            <span className="data-label">{t('nftVerifier.duration')}</span>
             <span className="data-value">
-              {loanDetails.durationDays.toString()} days
+              {loanDetails.durationDays.toString()} {t('nftVerifier.daysSuffix')}
             </span>
           </div>
         </div>
       ) : offerContext ? (
         <div className="verifier-details-col" style={{ marginTop: 12 }}>
           <div className="data-row">
-            <span className="data-label">Origin</span>
+            <span className="data-label">{t('nftVerifier.origin')}</span>
             <span className="data-value">Offer #{offerContext.offerId}</span>
           </div>
           <div className="data-row">
-            <span className="data-label">Offer status</span>
+            <span className="data-label">{t('nftVerifier.offerStatus')}</span>
             <span className="data-value">
               {offerContext.status === "canceled"
-                ? "Canceled"
+                ? t('nftVerifier.offerCanceled')
                 : offerContext.status === "accepted"
-                  ? "Accepted"
-                  : "Open"}
+                  ? t('nftVerifier.offerAccepted')
+                  : t('nftVerifier.offerOpen')}
             </span>
           </div>
           <p className="page-subtitle" style={{ marginTop: 12 }}>
@@ -711,6 +704,7 @@ function LiveCard({
 }: {
   verdict: Extract<Verdict, { kind: "live" }>;
 }) {
+  const { t } = useTranslation();
   const { chain, tokenId, owner, metadata, role, loanDetails, hf, ltv } =
     verdict;
   const blockExplorer = chain.blockExplorer;
@@ -736,15 +730,15 @@ function LiveCard({
 
         <div className="verifier-details-col">
           <div className="data-row">
-            <span className="data-label">Token ID</span>
+            <span className="data-label">{t('nftVerifier.tokenIdLabelShort')}</span>
             <span className="data-value mono">#{tokenId}</span>
           </div>
           <div className="data-row">
-            <span className="data-label">Network</span>
+            <span className="data-label">{t('common.network')}</span>
             <span className="data-value">{chain.name}</span>
           </div>
           <div className="data-row">
-            <span className="data-label">Current Owner</span>
+            <span className="data-label">{t('nftVerifier.currentOwner')}</span>
             <a
               href={`${blockExplorer}/address/${owner}`}
               target="_blank"
@@ -757,28 +751,28 @@ function LiveCard({
           </div>
           {role && (
             <div className="data-row">
-              <span className="data-label">Role</span>
+              <span className="data-label">{t('common.role')}</span>
               <span className="data-value">
-                {role === "lender" ? "Lender position" : "Borrower position"}
+                {role === "lender" ? t('nftVerifier.lenderPosition') : t('nftVerifier.borrowerPosition')}
               </span>
             </div>
           )}
           {loanDetails && (
             <>
               <div className="data-row">
-                <span className="data-label">Loan</span>
+                <span className="data-label">{t('nftVerifier.loanLabel')}</span>
                 <span className="data-value mono">
                   #{loanDetails.id.toString()}
                 </span>
               </div>
               <div className="data-row">
-                <span className="data-label">Status</span>
+                <span className="data-label">{t('common.status')}</span>
                 <span className="data-value">
-                  {LOAN_STATUS_LABELS[status ?? LoanStatus.Active] ?? "Unknown"}
+                  {LOAN_STATUS_LABELS[status ?? LoanStatus.Active] ?? t('nftVerifier.unknown')}
                 </span>
               </div>
               <div className="data-row">
-                <span className="data-label">Principal</span>
+                <span className="data-label">{t('nftVerifier.principal')}</span>
                 <span className="data-value">
                   <TokenAmount
                     amount={loanDetails.principal}
@@ -790,7 +784,7 @@ function LiveCard({
               {loanDetails.collateralAsset &&
                 loanDetails.collateralAsset !== ZERO_ADDRESS && (
                   <div className="data-row">
-                    <span className="data-label">Collateral</span>
+                    <span className="data-label">{t('nftVerifier.collateral')}</span>
                     <span className="data-value">
                       <TokenAmount
                         amount={loanDetails.collateralAmount}
@@ -801,26 +795,26 @@ function LiveCard({
                   </div>
                 )}
               <div className="data-row">
-                <span className="data-label">Interest Rate</span>
+                <span className="data-label">{t('common.interestRate')}</span>
                 <span className="data-value">
                   {bpsToPercent(loanDetails.interestRateBps)}
                 </span>
               </div>
               <div className="data-row">
-                <span className="data-label">Duration</span>
+                <span className="data-label">{t('nftVerifier.duration')}</span>
                 <span className="data-value">
-                  {loanDetails.durationDays.toString()} days
+                  {loanDetails.durationDays.toString()} {t('nftVerifier.daysSuffix')}
                 </span>
               </div>
               {hf != null && (
                 <div className="data-row">
-                  <span className="data-label">Health Factor</span>
+                  <span className="data-label">{t('nftVerifier.healthFactor')}</span>
                   <span className="data-value mono">{formatScaled18(hf)}</span>
                 </div>
               )}
               {ltv != null && (
                 <div className="data-row">
-                  <span className="data-label">LTV</span>
+                  <span className="data-label">{t('nftVerifier.ltv')}</span>
                   <span className="data-value">{bpsToPercent(ltv)}</span>
                 </div>
               )}
