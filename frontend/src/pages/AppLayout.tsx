@@ -1,5 +1,7 @@
 import { Outlet, useNavigate } from "react-router-dom";
 import { NL as NavLink } from "../components/L";
+import { isSupportedLocale, withLocalePrefix } from "../components/LocaleResolver";
+import type { SupportedLocale } from "../i18n/glossary";
 import { useTheme } from "../context/ThemeContext";
 import { useWallet } from "../context/WalletContext";
 import { useTranslation } from "react-i18next";
@@ -120,7 +122,15 @@ const ADVANCED_NAV = [
 
 
 export default function AppLayout() {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
+  const activeLocale: SupportedLocale = isSupportedLocale(i18n.resolvedLanguage)
+    ? i18n.resolvedLanguage
+    : "en";
+  // Locale-aware home URL — `/` for English, `/<locale>` otherwise.
+  // Used by the sidebar brand link so clicking the logo from inside
+  // the app on /es/app/dashboard goes to /es (Spanish landing page)
+  // not / (English landing page).
+  const homePath = withLocalePrefix("/", activeLocale);
   const { theme, toggleTheme } = useTheme();
   const { mode, setMode } = useMode();
   const {
@@ -209,11 +219,11 @@ export default function AppLayout() {
       >
         <div className="sidebar-header">
           <a
-            href="/"
+            href={homePath}
             className="sidebar-brand"
             onClick={(e) => {
               e.preventDefault();
-              navigate("/");
+              navigate(homePath);
             }}
           >
             <img
