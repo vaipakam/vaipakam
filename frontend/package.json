@@ -9,7 +9,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
-    "postbuild": "tsx scripts/generate-sitemap.ts && tsx scripts/generate-locale-shells.ts",
+    "postbuild": "tsx scripts/generate-sitemap.ts && tsx scripts/inject-seo-meta.ts",
     "lint": "eslint .",
     "preview": "npm run build && wrangler dev",
     "test": "vitest run",
