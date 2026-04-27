@@ -901,14 +901,15 @@ export default function CreateOffer() {
         </div>
 
         {/* Risk disclosures — per README §Frontend Warnings, these must be
-            surfaced to every user, not hidden behind "advanced options". */}
+            surfaced to every user, not hidden behind "advanced options".
+            No CardInfo (i) icon next to the title: a help-tooltip cue
+            confuses the reader into treating the disclosures as
+            optional reading rather than the required dual-consent
+            surface they are. The title text stays so the section is
+            still labelled. */}
         <div className="card" style={{ marginBottom: 20 }}>
           <div className="card-title">
             {t('createOffer.riskDisclosures')}
-            <CardInfo
-              id="create-offer.risk-disclosures"
-              role={form.offerType}
-            />
           </div>
 
           <RiskDisclosures />

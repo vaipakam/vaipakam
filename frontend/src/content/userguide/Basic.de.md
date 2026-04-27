@@ -2,20 +2,15 @@
 
 Verständliche, alltagssprachliche Erklärungen zu jeder Karte in der
 App. Jeder Abschnitt entspricht einem `(i)`-Info-Symbol neben einem
-Karten-Titel. Im **Basic**-Modus führt der "Mehr erfahren →"-Link
-auf jedem Tooltip hierher. Der Advanced-Modus zeigt stattdessen auf
-das technische Handbuch.
+Karten-Titel.
 
-Die Überschriften unten entsprechen den Karten-Titeln in der App.
-Der versteckte HTML-Anker unter jedem davon entspricht der id der
-Karte, sodass die App direkt auf den exakten Absatz verlinken kann.
-
-Eine Anmerkung zur Sprache: die Listen im **Offer Book** und der
-Ablauf zum **Erstellen einer Offer** beschreiben Situationen, in
-denen Lender und Borrower auf demselben Bildschirm
-unterschiedliche Dinge tun, daher nennen diese Abschnitte die
-Rolle ausdrücklich, um Verwechslungen zu vermeiden. Andere
-Abschnitte sprechen direkt zur Leserin oder zum Leser.
+> **Sie lesen die Basic-Version.** Sie entspricht dem **Basic**-Modus
+> der App (die einfachere Ansicht mit weniger Steuerelementen und
+> sichereren Voreinstellungen). Für eine technischere, detailliertere
+> Anleitung wechseln Sie die App in den **Advanced**-Modus — öffnen
+> Sie Einstellungen (Zahnrad-Symbol oben rechts) → **Modus** →
+> **Advanced**. Die "Mehr erfahren"-Links (i) in der App öffnen dann
+> das Advanced-Handbuch.
 
 ---
 

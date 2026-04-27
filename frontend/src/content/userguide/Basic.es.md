@@ -2,20 +2,15 @@
 
 Explicaciones cercanas y en lenguaje sencillo de cada tarjeta de la
 aplicación. Cada sección corresponde a un icono de información `(i)`
-junto al título de una tarjeta. En modo **Básico**, el enlace
-"Aprender más →" de cada tooltip lleva aquí. El modo Avanzado apunta
-en cambio a la guía técnica.
+junto al título de una tarjeta.
 
-Los títulos de abajo coinciden con los títulos de las tarjetas dentro
-de la app. El ancla HTML oculta debajo de cada uno coincide con el id
-de la tarjeta, de modo que la app puede enlazar directamente al
-párrafo exacto.
-
-Una nota sobre el lenguaje: las listas del **Libro de ofertas** y el
-flujo de **Crear oferta** describen situaciones donde el prestamista
-y el prestatario hacen cosas distintas en la misma pantalla, por lo
-que esas secciones nombran el rol de forma explícita para evitar
-confusiones. Las demás secciones se dirigen directamente a quien lee.
+> **Estás leyendo la versión Básica.** Corresponde al modo **Básico**
+> de la app (la vista más sencilla, con menos controles y valores
+> predeterminados más seguros). Para un recorrido más técnico y
+> detallado, cambia la app al modo **Avanzado** — abre Configuración
+> (icono del engranaje en la esquina superior derecha) → **Modo** →
+> **Avanzado**. Los enlaces "Aprender más" (i) dentro de la app
+> abrirán entonces la guía Avanzada.
 
 ---
 

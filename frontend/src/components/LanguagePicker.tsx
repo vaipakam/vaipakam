@@ -8,6 +8,10 @@ import {
   withLocalePrefix,
 } from "./LocaleResolver";
 import type { SupportedLocale } from "../i18n/glossary";
+import {
+  LANGUAGE_PICKER_ENABLED,
+  VISIBLE_LOCALES,
+} from "../i18n/localeConfig";
 import "./LanguagePicker.css";
 
 /**
@@ -24,27 +28,29 @@ import "./LanguagePicker.css";
  * existing user preferences carry forward).
  */
 
-interface LanguageOption {
-  code: string;
-  /** Native-language label so users can locate their language even
-   *  without reading English (e.g. "Español" not "Spanish"). */
-  label: string;
+/**
+ * Language list shown in the dropdown. Pulled from `localeConfig.ts`
+ * via `VISIBLE_LOCALES`, which is the subset of `SUPPORTED_LOCALES`
+ * with `visible: true` — so placeholder locales (added to
+ * SUPPORTED_LOCALES but not yet translated) are filtered out.
+ */
+const LANGUAGES = VISIBLE_LOCALES;
+
+/**
+ * Public entry point. Wraps the actual implementation so the master
+ * switch (`LANGUAGE_PICKER_ENABLED`) can short-circuit to `null`
+ * without triggering React's rules-of-hooks lint (the inner
+ * component carries the hooks). URL-based locale routing
+ * (`/es/...`, `/ta/...`) keeps working when the picker is hidden —
+ * users with bookmarks or hreflang-discovered URLs land on the
+ * right locale regardless of whether the picker is visible.
+ */
+export function LanguagePicker() {
+  if (!LANGUAGE_PICKER_ENABLED) return null;
+  return <LanguagePickerInner />;
 }
 
-const LANGUAGES: LanguageOption[] = [
-  { code: "en", label: "English" },
-  { code: "es", label: "Español" },
-  { code: "fr", label: "Français" },
-  { code: "de", label: "Deutsch" },
-  { code: "ja", label: "日本語" },
-  { code: "zh", label: "中文" },
-  { code: "ko", label: "한국어" },
-  { code: "hi", label: "हिन्दी" },
-  { code: "ta", label: "தமிழ்" },
-  { code: "ar", label: "العربية" },
-];
-
-export function LanguagePicker() {
+function LanguagePickerInner() {
   const { i18n, t } = useTranslation();
   const navigate = useNavigate();
   const location = useLocation();

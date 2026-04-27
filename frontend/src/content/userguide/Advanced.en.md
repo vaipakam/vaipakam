@@ -2,20 +2,13 @@
 
 Precise, technically-accurate explanations of every card in the app.
 Each section corresponds to an `(i)` info icon next to a card title.
-In **Advanced** mode, the "Learn more →" link on every tooltip lands
-here. Basic mode points at the friendlier guide instead.
 
-The headings below match the in-app card titles. The hidden HTML anchor
-under each one matches the card's id, so the app can deep-link to the
-exact paragraph. Cross-references to `README.md`,
-`TokenomicsTechSpec.md`, `CLAUDE.md`, and the contracts are inline
-where useful.
-
-A note on language: the **Offer Book** lender / borrower lists and
-the **Create Offer** flow describe situations where lender and
-borrower do different things on the same screen, so those sections
-name the role explicitly to avoid confusion. Other sections speak
-directly to the reader.
+> **You're reading the Advanced version.** It matches the app's
+> **Advanced** mode (denser controls, diagnostics, protocol-config
+> detail). For the friendlier, plain-English walkthrough, switch the
+> app to **Basic** mode — open Settings (gear icon at the top right)
+> → **Mode** → **Basic**. The (i) "Learn more" links inside the app
+> will then start opening the Basic guide.
 
 ---
 

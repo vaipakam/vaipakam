@@ -132,11 +132,22 @@ export const GLOSSARY_STYLE_NOTES = `
   markdown. Return the translated JSON object directly.
 `.trim();
 
-/** Locales that the LanguagePicker advertises and that ship
- *  translation bundles. Adding a new entry here also requires
- *  authoring the matching `locales/<code>.json` (or running
- *  `npm run translate` to generate it via the Claude API). */
+/** Every locale code recognised by URL routing and the LanguagePicker.
+ *  Includes both **translated** locales (have a JSON bundle in
+ *  `locales/<code>.json` and surface in hreflang / sitemap / per-locale
+ *  SEO shells) and **placeholder** locales (recognised so the URL
+ *  routing accepts `/<code>/...` paths and the picker can list them,
+ *  but they don't ship a translation bundle yet — i18next's
+ *  `fallbackLng: 'en'` resolves every key to the English string when
+ *  the user picks one).
+ *
+ *  Adding a translation:
+ *    1. Run `npm run translate -- <code>` to generate `locales/<code>.json`
+ *    2. Add the import + resource registration in `i18n/index.ts`
+ *    3. Move the code from `PLACEHOLDER_LOCALES` to `TRANSLATED_LOCALES` below
+ *    4. Flip its `visible` flag in `localeConfig.ts` if you want it in the picker */
 export const SUPPORTED_LOCALES = [
+  // Translated (10) — have JSON bundles, advertised to crawlers
   'en', // English — source
   'es', // Spanish
   'fr', // French
@@ -147,7 +158,58 @@ export const SUPPORTED_LOCALES = [
   'ar', // Arabic
   'ta', // Tamil
   'ko', // Korean
+  // Placeholders (24) — URL routing accepts but no JSON yet; falls
+  // back to English text via i18next's fallbackLng. Hidden from the
+  // LanguagePicker by default (see localeConfig.ts).
+  // South Asia
+  'te', // Telugu
+  'kn', // Kannada
+  'ml', // Malayalam
+  'bn', // Bengali
+  'mr', // Marathi
+  'pa', // Punjabi
+  'gu', // Gujarati
+  'ur', // Urdu — RTL
+  // SE Asia
+  'vi', // Vietnamese
+  'th', // Thai
+  'tl', // Filipino / Tagalog
+  'id', // Indonesian (Bahasa Indonesia)
+  // Europe (high-volume crypto markets)
+  'pt', // Portuguese (Brazilian)
+  'ru', // Russian
+  'uk', // Ukrainian
+  'tr', // Turkish
+  'it', // Italian
+  'nl', // Dutch
+  'pl', // Polish
+  'el', // Greek
+  'cs', // Czech
+  // Middle East — RTL
+  'fa', // Persian / Farsi — RTL
+  'he', // Hebrew — RTL
+  // Africa
+  'sw', // Swahili
+] as const;
+
+/** Subset of SUPPORTED_LOCALES that ships a translation bundle. Drives
+ *  hreflang / sitemap / per-locale SEO shells — those should advertise
+ *  ONLY pages that exist as localised content. Listing a placeholder
+ *  locale in hreflang would be misleading to search engines because
+ *  the actual rendered text is English. */
+export const TRANSLATED_LOCALES = [
+  'en',
+  'es',
+  'fr',
+  'de',
+  'ja',
+  'zh',
+  'hi',
+  'ar',
+  'ta',
+  'ko',
 ] as const;
 
 export type SupportedLocale = (typeof SUPPORTED_LOCALES)[number];
+export type TranslatedLocale = (typeof TRANSLATED_LOCALES)[number];
 export type LocaleCode = SupportedLocale;

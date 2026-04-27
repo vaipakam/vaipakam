@@ -22,7 +22,7 @@
 
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { SUPPORTED_LOCALES } from '../src/i18n/glossary.ts';
+import { TRANSLATED_LOCALES } from '../src/i18n/glossary.ts';
 
 const DEFAULT_LOCALE = 'en';
 
@@ -63,11 +63,11 @@ function buildSitemap(): string {
   lines.push('  xmlns:xhtml="http://www.w3.org/1999/xhtml">');
 
   for (const route of PUBLIC_ROUTES) {
-    for (const locale of SUPPORTED_LOCALES) {
+    for (const locale of TRANSLATED_LOCALES) {
       lines.push('  <url>');
       lines.push(`    <loc>${urlFor(route, locale)}</loc>`);
       // hreflang siblings: every locale + x-default (English).
-      for (const peer of SUPPORTED_LOCALES) {
+      for (const peer of TRANSLATED_LOCALES) {
         lines.push(
           `    <xhtml:link rel="alternate" hreflang="${peer}" href="${urlFor(route, peer)}" />`,
         );
@@ -90,7 +90,7 @@ function buildRobots(): string {
     '',
     '# Wallet-gated app routes — nothing static to index',
     'Disallow: /app/',
-    ...SUPPORTED_LOCALES.filter((l) => l !== DEFAULT_LOCALE).map(
+    ...TRANSLATED_LOCALES.filter((l) => l !== DEFAULT_LOCALE).map(
       (l) => `Disallow: /${l}/app/`,
     ),
     '',
@@ -106,7 +106,7 @@ function main(): void {
   writeFileSync(join(DIST_DIR, 'sitemap.xml'), sitemap, 'utf-8');
   const sitemapEntries = (sitemap.match(/<url>/g) ?? []).length;
   console.log(
-    `[sitemap] wrote dist/sitemap.xml — ${sitemapEntries} url entries (${PUBLIC_ROUTES.length} routes × ${SUPPORTED_LOCALES.length} locales)`,
+    `[sitemap] wrote dist/sitemap.xml — ${sitemapEntries} url entries (${PUBLIC_ROUTES.length} routes × ${TRANSLATED_LOCALES.length} locales)`,
   );
 
   const robots = buildRobots();

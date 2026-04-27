@@ -156,18 +156,130 @@ a targeted RTL pass. The TopBar's wallet-pill chevron, the help-page
 sidebar, and the icon spacing inside buttons are the most likely
 needers; everything else looked correct in a quick scan.
 
+## Locale display flags (LanguagePicker visibility control)
+
+Two compile-time switches in
+[`frontend/src/i18n/localeConfig.ts`](../frontend/src/i18n/localeConfig.ts)
+control what the LanguagePicker dropdown advertises. Both are TypeScript
+constants — flip the value, rebuild, redeploy.
+
+### `LANGUAGE_PICKER_ENABLED` — master switch
+
+```ts
+export const LANGUAGE_PICKER_ENABLED = true;  // flip to false to hide entirely
+```
+
+When `false`, the LanguagePicker is not rendered anywhere — public Navbar,
+in-app settings panel, both gone. URL-based locale routing
+(`/es/...`, `/ta/...`) continues to work for users with bookmarks or
+hreflang-discovered URLs; the picker is just the user-facing surface for
+switching. Useful when the user base is overwhelmingly English and the
+picker is more clutter than feature.
+
+### `LOCALE_DISPLAY_CONFIG[<code>].visible` — per-language switch
+
+```ts
+export const LOCALE_DISPLAY_CONFIG: Record<SupportedLocale, LocaleDisplayConfig> = {
+  en: { code: 'en', label: 'English',   visible: true  },
+  es: { code: 'es', label: 'Español',   visible: true  },
+  // ...
+  te: { code: 'te', label: 'తెలుగు',     visible: false }, // placeholder
+  // ...
+};
+```
+
+Each locale has a `visible` flag that controls whether it appears in the
+dropdown options. Use cases:
+
+- **Hide a locale temporarily** — flip `visible: false`. URL routing and
+  bookmarks keep working; the locale just disappears from the picker.
+- **Surface a placeholder locale early** — flip `visible: true` on a
+  placeholder (i.e. an entry with no JSON bundle yet). The user can
+  select it; i18next's `fallbackLng: 'en'` renders English text under
+  that locale code (with `<html lang="te">` set). Good for "coming
+  soon" tease; misleading if you don't actually intend to ship the
+  translation soon.
+
+The picker reads `VISIBLE_LOCALES` (filtered list of entries with
+`visible: true`) so the order in the dropdown matches the order in
+`LOCALE_DISPLAY_CONFIG` — translated locales first, placeholders below.
+
+## Placeholder locales (recognised but not translated)
+
+`SUPPORTED_LOCALES` in
+[`frontend/src/i18n/glossary.ts`](../frontend/src/i18n/glossary.ts)
+includes every locale code the URL router accepts. It is partitioned
+into two groups:
+
+- **Translated** (10): `en, es, fr, de, ja, zh, hi, ar, ta, ko`. Each
+  has a JSON bundle in `locales/`, gets a per-locale SSG shell via
+  `inject-seo-meta.ts`, appears in `sitemap.xml`, and is advertised in
+  the `<link rel="alternate" hreflang>` block.
+- **Placeholder** (12): `te, kn, ml, pt, ru, tr, it, nl, id, pl, bn, mr`.
+  Recognised by URL routing (so `/te/dashboard` doesn't 404) and
+  accepted by i18next, but with **no JSON bundle**. Picking one of these
+  resolves every `t('key')` call to the English string via
+  `fallbackLng: 'en'`. Hidden from the LanguagePicker by default
+  (`visible: false`).
+
+A separate constant `TRANSLATED_LOCALES` lists only the 10 translated
+codes. SEO surfaces use this list:
+
+| Surface | Iterates | Why |
+|---|---|---|
+| LanguagePicker | `VISIBLE_LOCALES` | User can pick any locale we want to expose, translated or not |
+| URL routing (LocaleResolver) | `SUPPORTED_LOCALES` | Recognise placeholder URL prefixes too — never 404 a `/te/...` URL |
+| `inject-seo-meta.ts` (per-locale shells) | `TRANSLATED_LOCALES` | Don't emit a Telugu shell with English content under `<html lang="te">` — worse SEO than serving the root |
+| `generate-sitemap.ts` | `TRANSLATED_LOCALES` | Don't list locale URLs for content that doesn't exist as localised pages |
+| `HreflangAlternates.tsx` | `TRANSLATED_LOCALES` | Don't advertise non-existent localised pages to crawlers |
+| `DefaultLocaleRedirect.tsx` | `TRANSLATED_LOCALES` | Auto-redirecting a Telugu-browser visitor to `/te/` would land them on English content with `<html lang="te">` mismatch |
+| i18next resources | English + 10 translated bundles | Placeholder codes resolve via `fallbackLng: 'en'` |
+
+### Promoting a placeholder to translated
+
+When a placeholder locale's translation lands:
+
+1. Run `npm run translate -- <code>` (or hand-author
+   `locales/<code>.json` from `en.json`).
+2. Add the import + resource registration in `i18n/index.ts`:
+   ```ts
+   import te from './locales/te.json';
+   // ...
+   resources: { ..., te: { translation: te } },
+   ```
+3. Move `<code>` from the placeholder section into `TRANSLATED_LOCALES`
+   in `glossary.ts`.
+4. Add the locale's `META` entry (htmlLang, title, description) and
+   `OG_LOCALES` BCP-47 tag in `scripts/inject-seo-meta.ts`.
+5. Flip `visible: true` for the entry in `localeConfig.ts`.
+6. Rebuild — `inject-seo-meta` will emit `dist/<code>/index.html`,
+   sitemap will include the locale's URLs, hreflang block will
+   advertise it.
+
+Going the other way (demoting / hiding) is just the inverse of step 5
+(or step 3 if you want to remove SEO surfacing too).
+
 ## Files
 
 - `frontend/src/i18n/index.ts` — i18next bootstrap, detection
   chain, RTL toggle.
 - `frontend/src/i18n/glossary.ts` — DO-NOT-TRANSLATE list, style
-  notes for the prompt, locale code arrays.
+  notes for the prompt, `SUPPORTED_LOCALES` (full) and
+  `TRANSLATED_LOCALES` (subset that ships JSON bundles).
+- `frontend/src/i18n/localeConfig.ts` — `LANGUAGE_PICKER_ENABLED`
+  master switch + `LOCALE_DISPLAY_CONFIG` per-locale visibility flags
+  + computed `VISIBLE_LOCALES`.
 - `frontend/src/i18n/locales/<code>.json` — translated string
   bundles. Source is `en.json`.
 - `frontend/scripts/translate-i18n.ts` — Claude API translation
   script. Runnable via `npm run translate`.
-- `frontend/src/components/LanguagePicker.tsx` — picker UI;
-  delegates language change to `i18n.changeLanguage`.
+- `frontend/scripts/inject-seo-meta.ts` — post-build per-locale SSG
+  shell generator. Iterates `TRANSLATED_LOCALES`.
+- `frontend/scripts/generate-sitemap.ts` — sitemap.xml generator.
+  Iterates `TRANSLATED_LOCALES`.
+- `frontend/src/components/LanguagePicker.tsx` — picker UI; reads
+  `LANGUAGE_PICKER_ENABLED` + `VISIBLE_LOCALES`; delegates language
+  change to `i18n.changeLanguage`.
 - `frontend/src/components/Footer.tsx` — first call site using
   `t()` (demo).
 - `frontend/src/main.tsx` — imports `./i18n` before app render.

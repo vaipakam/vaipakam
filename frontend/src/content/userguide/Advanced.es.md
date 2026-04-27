@@ -2,23 +2,15 @@
 
 Explicaciones precisas y técnicamente exactas de cada tarjeta de la
 aplicación. Cada sección corresponde a un icono de información `(i)`
-junto al título de una tarjeta. En modo **Avanzado**, el enlace
-"Aprender más →" de cada tooltip lleva aquí. El modo Básico apunta
-en cambio a la guía más amigable.
+junto al título de una tarjeta.
 
-Los títulos de abajo coinciden con los títulos de las tarjetas dentro
-de la app. El ancla HTML oculta debajo de cada uno coincide con el
-id de la tarjeta, de modo que la app puede enlazar directamente al
-párrafo exacto. Las referencias cruzadas a `README.md`,
-`TokenomicsTechSpec.md`, `CLAUDE.md` y a los contratos están en
-línea donde resultan útiles.
-
-Una nota sobre el lenguaje: las listas de prestamista / prestatario
-del **Libro de ofertas** y el flujo de **Crear oferta** describen
-situaciones donde el prestamista y el prestatario hacen cosas
-distintas en la misma pantalla, así que esas secciones nombran el
-rol explícitamente para evitar confusiones. Las demás secciones se
-dirigen directamente a quien lee.
+> **Estás leyendo la versión Avanzada.** Corresponde al modo
+> **Avanzado** de la app (controles más densos, diagnósticos y
+> detalles de configuración del protocolo). Para una explicación
+> más amigable y sencilla, cambia la app al modo **Básico** — abre
+> Configuración (icono del engranaje en la esquina superior derecha)
+> → **Modo** → **Básico**. Los enlaces "Aprender más" (i) dentro de
+> la app abrirán entonces la guía Básica.
 
 ---
 
@@ -258,7 +250,8 @@ liquidez:
   creación / aceptación de la oferta para que la oferta entre.
 
 Quórum de oráculo de precio secundario (Phase 7b.2): Tellor + API3
-+ DIA, regla de decisión soft 2-de-N. Pyth removido.
+
+- DIA, regla de decisión soft 2-de-N. Pyth removido.
 
 <a id="create-offer.collateral:lender"></a>
 
@@ -334,7 +327,7 @@ mover activos.
   HF es reactiva a la salida del oráculo; un único tick malo
   cruzando 1.0 es suficiente.
 - **Slippage de liquidación** — cuando se dispara `RiskFacet →
-  LibSwap`, el swap puede vender tu colateral a precios mermados por
+LibSwap`, el swap puede vender tu colateral a precios mermados por
   slippage. El swap es permissionless —cualquiera puede dispararlo
   en el instante en que HF < 1e18.
 - **Defaults con colateral ilíquido** — `markDefaulted` transfiere
@@ -469,10 +462,11 @@ hacer staking.
 Envía la compra. En cadenas canónicas, el Diamond mintea
 directamente. En cadenas espejo, el adapter de compra recibe el
 pago, envía un mensaje LZ, y el receiver ejecuta la compra en Base
-+ OFT-envía VPFI de vuelta. La fee del puente + costo DVN se
-cotiza en vivo por `useVPFIBuyBridge.quote()` y se muestra en el
-formulario. El VPFI no se auto-deposita en escrow —el Paso 2 es
-explícito.
+
+- OFT-envía VPFI de vuelta. La fee del puente + costo DVN se
+  cotiza en vivo por `useVPFIBuyBridge.quote()` y se muestra en el
+  formulario. El VPFI no se auto-deposita en escrow —el Paso 2 es
+  explícito.
 
 <a id="buy-vpfi.deposit"></a>
 
@@ -747,7 +741,7 @@ antes de que HF < 1e18 dispare la liquidación.
 Dos canales:
 
 - **Telegram** — DM de bot con la dirección corta de la billetera
-  + loan id + HF actual.
+  - loan id + HF actual.
 - **Push Protocol** — notificación directa a la billetera vía el
   canal Vaipakam Push.
 

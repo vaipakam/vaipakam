@@ -1,6 +1,6 @@
 import { useEffect } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { SUPPORTED_LOCALES } from '../i18n/glossary';
+import { TRANSLATED_LOCALES } from '../i18n/glossary';
 import { isSupportedLocale, withLocalePrefix } from './LocaleResolver';
 
 /**
@@ -48,13 +48,17 @@ export function DefaultLocaleRedirect() {
     // Step 2 — find the first navigator-language match. `navigator.languages`
     // is a priority-ordered list (e.g. `['en-US', 'en', 'es']`); we
     // strip to the primary subtag and pick the first that we ship
-    // a translation for. Defaults to English when nothing matches.
+    // a **translation bundle** for. Placeholder locales are
+    // intentionally NOT matched here — redirecting a Telugu-speaking
+    // visitor to `/te/` would land them on English content with a
+    // `<html lang="te">` mismatch (worse than just leaving them on
+    // the root English page). Defaults to English when nothing matches.
     const candidates = (navigator.languages?.length
       ? navigator.languages
       : [navigator.language ?? 'en']
     ).map((tag) => tag.split('-')[0].toLowerCase());
     const matched = candidates.find((primary) =>
-      (SUPPORTED_LOCALES as readonly string[]).includes(primary),
+      (TRANSLATED_LOCALES as readonly string[]).includes(primary),
     );
     if (!matched || !isSupportedLocale(matched) || matched === 'en') {
       // Persist so we don't re-evaluate every visit. English at root

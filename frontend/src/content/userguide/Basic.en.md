@@ -1,18 +1,14 @@
 # Vaipakam — User Guide (Basic Mode)
 
 Friendly, plain-English explanations of every card in the app. Each
-section corresponds to an `(i)` info icon next to a card title. In
-**Basic** mode, the "Learn more →" link on every tooltip lands here.
-Advanced mode points at the technical guide instead.
+section corresponds to an `(i)` info icon next to a card title.
 
-The headings below match the in-app card titles. The hidden HTML anchor
-under each one matches the card's id, so the app can deep-link to the
-exact paragraph.
-
-A note on language: the **Offer Book** lists and the **Create Offer**
-flow describe situations where lender and borrower do different things
-on the same screen, so those sections name the role explicitly to
-avoid confusion. Other sections speak directly to the reader.
+> **You're reading the Basic version.** It matches the app's
+> **Basic** mode (the simpler view with fewer controls and safer
+> defaults). For a more technical, detailed walkthrough, switch the
+> app to **Advanced** mode — open Settings (gear icon at the top
+> right) → **Mode** → **Advanced**. The (i) "Learn more" links
+> inside the app will then start opening the Advanced guide.
 
 ---
 

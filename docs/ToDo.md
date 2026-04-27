@@ -8,3 +8,14 @@
 - [x] the create offer button and accept offer button need to be enabled only after clicking the checkbox for `I have read and agree to the Risk Disclosures above.`
 - [x] The error that is shown to the user may be short, but when user clicks on report to github page, the error information should atleat have second level of verbose information in it.
 - [ ] Group languages based on the locality of that continent and display only those group belonging to that continent. Note: exception is for japanese can be displayed together with western countries too
+- [ ] Translated (10, in picker, full SEO surface): en, es, fr, de, ja, zh, hi, ar, ta, ko
+
+  Placeholders (24, hidden by default, fall back to English):
+
+  South Asia (8): te, kn, ml, bn, mr, pa, gu, ur (ur RTL)
+  SE Asia (4): vi, th, tl, id
+  Europe (9): pt, ru, uk, tr, it, nl, pl, el, cs
+  Middle East RTL (2): fa, he
+  Africa (1): sw
+
+- [ ]

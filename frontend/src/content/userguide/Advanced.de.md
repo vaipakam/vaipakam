@@ -2,23 +2,15 @@
 
 Präzise, technisch korrekte Erklärungen zu jeder Karte in der App.
 Jeder Abschnitt entspricht einem `(i)`-Info-Symbol neben einem
-Karten-Titel. Im **Advanced**-Modus führt der "Mehr erfahren →"-Link
-auf jedem Tooltip hierher. Der Basic-Modus zeigt stattdessen auf das
-freundlichere Handbuch.
+Karten-Titel.
 
-Die Überschriften unten entsprechen den Karten-Titeln in der App.
-Der versteckte HTML-Anker unter jedem davon entspricht der id der
-Karte, sodass die App direkt auf den exakten Absatz verlinken kann.
-Querverweise zu `README.md`, `TokenomicsTechSpec.md`, `CLAUDE.md`
-und den Verträgen stehen inline, wo sie nützlich sind.
-
-Eine Anmerkung zur Sprache: die Lender / Borrower-Listen im
-**Offer Book** und der Ablauf zum **Erstellen einer Offer**
-beschreiben Situationen, in denen Lender und Borrower auf
-demselben Bildschirm unterschiedliche Dinge tun, daher nennen
-diese Abschnitte die Rolle ausdrücklich, um Verwechslungen zu
-vermeiden. Andere Abschnitte sprechen direkt zur Leserin oder zum
-Leser.
+> **Sie lesen die Advanced-Version.** Sie entspricht dem
+> **Advanced**-Modus der App (dichtere Steuerelemente, Diagnose und
+> Protokoll-Konfigurationsdetails). Für die einfachere,
+> alltagssprachliche Erklärung wechseln Sie die App in den
+> **Basic**-Modus — öffnen Sie Einstellungen (Zahnrad-Symbol oben
+> rechts) → **Modus** → **Basic**. Die "Mehr erfahren"-Links (i) in
+> der App öffnen dann das Basic-Handbuch.
 
 ---
 
@@ -390,8 +382,7 @@ gibt dem neuen Halter das Recht zu kassieren.
 - `principal` zurück in dein Wallet auf dieser Chain.
 - `accruedInterest(loan)` minus den 1%-Treasury-Anteil
   (`TREASURY_FEE_BPS = 100`) — der Anteil wird selbst durch
-  deinen zeitgewichteten VPFI-Gebühren-Rabatt-Akkumulator (Phase
-  5) reduziert, wenn die Zustimmung an ist.
+  deinen zeitgewichteten VPFI-Gebühren-Rabatt-Akkumulator (Phase 5) reduziert, wenn die Zustimmung an ist.
 
 Claimable, sobald der Loan einen terminalen Zustand erreicht
 (Settled, Defaulted oder Liquidated). Der Lender-Position-NFT

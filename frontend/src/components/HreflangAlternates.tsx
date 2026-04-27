@@ -1,6 +1,6 @@
 import { useEffect } from 'react';
 import { useLocation } from 'react-router-dom';
-import { SUPPORTED_LOCALES } from '../i18n/glossary';
+import { TRANSLATED_LOCALES } from '../i18n/glossary';
 import { stripLocalePrefix, withLocalePrefix } from './LocaleResolver';
 
 /**
@@ -35,9 +35,12 @@ export function HreflangAlternates() {
       .querySelectorAll('link[rel="alternate"][data-i18n-alt="1"]')
       .forEach((el) => el.remove());
 
-    // One alternate per supported locale, pointing at the same page in
-    // that locale.
-    for (const loc of SUPPORTED_LOCALES) {
+    // One alternate per **translated** locale, pointing at the same
+    // page in that locale. Placeholder locales (recognised by URL
+    // routing but without a translation bundle) are excluded — listing
+    // them in hreflang would advertise non-existent localised pages
+    // to crawlers, which is misleading and can hurt ranking.
+    for (const loc of TRANSLATED_LOCALES) {
       const href = `${origin}${withLocalePrefix(stripped, loc)}${location.search}${location.hash}`;
       const link = document.createElement('link');
       link.rel = 'alternate';

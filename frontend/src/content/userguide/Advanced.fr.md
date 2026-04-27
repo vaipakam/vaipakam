@@ -2,23 +2,15 @@
 
 Explications précises et techniquement exactes de chaque carte de
 l'application. Chaque section correspond à une icône d'information
-`(i)` à côté du titre d'une carte. En mode **Avancé**, le lien "En
-savoir plus →" de chaque info-bulle mène ici. Le mode Basique pointe
-à la place vers le guide plus accessible.
+`(i)` à côté du titre d'une carte.
 
-Les titres ci-dessous correspondent aux titres des cartes dans
-l'application. L'ancre HTML cachée sous chacun d'eux correspond à
-l'identifiant de la carte, ce qui permet à l'application d'établir
-un lien direct vers le paragraphe exact. Les références croisées
-vers `README.md`, `TokenomicsTechSpec.md`, `CLAUDE.md` et les
-contrats sont en ligne là où elles sont utiles.
-
-Une note sur la langue : les listes prêteur / emprunteur du **Carnet
-d'offres** et le flux **Créer une offre** décrivent des situations
-où le prêteur et l'emprunteur font des choses différentes sur le
-même écran ; ces sections nomment donc explicitement le rôle pour
-éviter toute confusion. Les autres sections s'adressent directement
-au lecteur.
+> **Vous lisez la version Avancée.** Elle correspond au mode
+> **Avancé** de l'app (contrôles plus denses, diagnostics et
+> détails de configuration du protocole). Pour une explication
+> plus accessible et simple, basculez l'app en mode **Basique** —
+> ouvrez les Paramètres (icône d'engrenage en haut à droite) →
+> **Mode** → **Basique**. Les liens « En savoir plus » (i) dans
+> l'app ouvriront alors le guide Basique.
 
 ---
 
@@ -421,9 +413,10 @@ sourcés en direct depuis les logs du Diamond (`getLogs` sur une
 fenêtre glissante de blocs). Aucun cache backend — chaque
 chargement re-fetche. Les événements sont regroupés par
 `transactionHash` pour que les txns multi-événements (p.ex. accept
-+ initiate) restent ensemble. Les plus récents en premier. Affiche
-offres, prêts, remboursements, réclamations, liquidations,
-mints/burns de NFT, et achats / stakes / unstakes de VPFI.
+
+- initiate) restent ensemble. Les plus récents en premier. Affiche
+  offres, prêts, remboursements, réclamations, liquidations,
+  mints/burns de NFT, et achats / stakes / unstakes de VPFI.
 
 ---
 

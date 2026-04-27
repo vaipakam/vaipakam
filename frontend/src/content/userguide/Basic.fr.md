@@ -2,20 +2,15 @@
 
 Explications claires et accessibles de chaque carte de l'application.
 Chaque section correspond à une icône d'information `(i)` à côté du
-titre d'une carte. En mode **Basique**, le lien "En savoir plus →"
-de chaque info-bulle mène ici. Le mode Avancé pointe à la place vers
-le guide technique.
+titre d'une carte.
 
-Les titres ci-dessous correspondent aux titres des cartes dans
-l'application. L'ancre HTML cachée sous chacun d'eux correspond à
-l'identifiant de la carte, ce qui permet à l'application d'établir un
-lien direct vers le paragraphe exact.
-
-Une note sur la langue : les listes du **Carnet d'offres** et le flux
-**Créer une offre** décrivent des situations où le prêteur et
-l'emprunteur font des choses différentes sur le même écran ; ces
-sections nomment donc explicitement le rôle pour éviter toute
-confusion. Les autres sections s'adressent directement au lecteur.
+> **Vous lisez la version Basique.** Elle correspond au mode
+> **Basique** de l'app (la vue plus simple, avec moins de contrôles
+> et des valeurs par défaut plus sûres). Pour une présentation plus
+> technique et détaillée, basculez l'app en mode **Avancé** —
+> ouvrez les Paramètres (icône d'engrenage en haut à droite) →
+> **Mode** → **Avancé**. Les liens « En savoir plus » (i) dans l'app
+> ouvriront alors le guide Avancé.
 
 ---
 
