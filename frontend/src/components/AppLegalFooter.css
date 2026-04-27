@@ -1,0 +1,61 @@
+/* Legal-only footer used inside the connected app (AppLayout). The
+ * styling mirrors the bottom strip of the public-site Footer
+ * (.footer-bottom) — flex row, wraps on narrow viewports, top
+ * border, muted text colour — but lives in its own class namespace
+ * so it doesn't accidentally inherit the marketing footer's outer
+ * padding / background.
+ *
+ * Sits at the natural bottom of the scrollable content column. Padding
+ * matches the in-app pages' breathing room (24px top + 16px gutters)
+ * so it reads as a footer band rather than as a stray strip. */
+
+.app-legal-footer {
+  width: 100%;
+  margin-top: auto;
+  /* Generous bottom padding (80px) reserves vertical space for the
+   * Diagnostics FAB (`.diag-fab`), which is fixed at `bottom: 1rem
+   * right: 1rem` and would otherwise overlap the BUSL license band
+   * on its right edge. The FAB lands in this padding zone below the
+   * legal text instead of on top of it. */
+  padding: 24px 16px 80px;
+  background: var(--bg-primary);
+}
+
+.app-legal-footer-inner {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  max-width: 1400px;
+  margin: 0 auto;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+  font-size: 0.8rem;
+  color: var(--text-tertiary);
+}
+
+.app-legal-footer-inner p {
+  margin: 0;
+}
+
+.app-legal-footer-link {
+  background: transparent;
+  border: none;
+  padding: 0;
+  font: inherit;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.app-legal-footer-link:hover {
+  color: var(--text-primary);
+}
+
+.app-legal-footer-license {
+  /* On wide screens push to the far right end of the row; on narrow
+   * screens the flex-wrap above keeps it readable on its own line. */
+  margin-left: auto;
+}

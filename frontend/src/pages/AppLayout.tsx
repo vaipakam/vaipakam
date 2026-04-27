@@ -1,6 +1,9 @@
 import { Outlet, useNavigate } from "react-router-dom";
 import { NL as NavLink } from "../components/L";
-import { isSupportedLocale, withLocalePrefix } from "../components/LocaleResolver";
+import {
+  isSupportedLocale,
+  withLocalePrefix,
+} from "../components/LocaleResolver";
 import type { SupportedLocale } from "../i18n/glossary";
 import { useTheme } from "../context/ThemeContext";
 import { useWallet } from "../context/WalletContext";
@@ -40,6 +43,7 @@ function readInitialCollapsed(): boolean {
   }
 }
 import DiagnosticsDrawer from "../components/app/DiagnosticsDrawer";
+import { AppLegalFooter } from "../components/AppLegalFooter";
 import { EscrowUpgradeBanner } from "../components/app/EscrowUpgradeBanner";
 import { UnsupportedChainBanner } from "../components/app/UnsupportedChainBanner";
 import { LegalGate } from "../components/app/LegalGate";
@@ -120,7 +124,6 @@ const ADVANCED_NAV = [
   },
 ];
 
-
 export default function AppLayout() {
   const { t, i18n } = useTranslation();
   const activeLocale: SupportedLocale = isSupportedLocale(i18n.resolvedLanguage)
@@ -133,16 +136,12 @@ export default function AppLayout() {
   const homePath = withLocalePrefix("/", activeLocale);
   const { theme, toggleTheme } = useTheme();
   const { mode, setMode } = useMode();
-  const {
-    address,
-    isCorrectChain,
-    switchToDefaultChain,
-    error,
-    warning,
-  } = useWallet();
+  const { address, isCorrectChain, switchToDefaultChain, error, warning } =
+    useWallet();
   const navigate = useNavigate();
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(readInitialCollapsed);
+  const [sidebarCollapsed, setSidebarCollapsed] =
+    useState(readInitialCollapsed);
   // After clicking the collapse toggle, the pointer is still over the sidebar
   // — which would immediately trigger the `:hover` expand and make it look
   // like the click did nothing. Suppress hover-expand until the pointer
@@ -289,7 +288,9 @@ export default function AppLayout() {
 
           {isAdvanced && (
             <>
-              <div className="sidebar-group-label">{t('common.modeAdvanced')}</div>
+              <div className="sidebar-group-label">
+                {t("common.modeAdvanced")}
+              </div>
               {ADVANCED_NAV.map((item) => (
                 <NavLink
                   key={item.to}
@@ -316,7 +317,7 @@ export default function AppLayout() {
             }}
           >
             <ArrowLeft size={20} />
-            <span>{t('appNav.backToHome')}</span>
+            <span>{t("appNav.backToHome")}</span>
           </button>
         </div>
       </aside>
@@ -357,7 +358,7 @@ export default function AppLayout() {
                 onClick={switchToDefaultChain}
               >
                 <AlertTriangle size={16} />
-                {t('nav.switchNetwork')}
+                {t("nav.switchNetwork")}
               </button>
             ) : (
               <WalletMenu />
@@ -376,8 +377,8 @@ export default function AppLayout() {
                 onClick={() => setSettingsOpen((o) => !o)}
                 aria-haspopup="menu"
                 aria-expanded={settingsOpen}
-                aria-label={t('settings.title')}
-                data-tooltip={t('settings.title')}
+                aria-label={t("settings.title")}
+                data-tooltip={t("settings.title")}
                 data-tooltip-placement="below"
               >
                 <Settings size={18} />
@@ -387,19 +388,19 @@ export default function AppLayout() {
                 <div
                   className="topbar-settings-panel"
                   role="menu"
-                  aria-label={t('settings.title')}
+                  aria-label={t("settings.title")}
                 >
                   <div className="topbar-settings-row">
                     <span className="topbar-settings-label">
-                      {t('common.mode')}
-                      <InfoTip ariaLabel={t('settings.modeInfoAriaLabel')}>
-                        {t('settings.modeInfo')}
+                      {t("common.mode")}
+                      <InfoTip ariaLabel={t("settings.modeInfoAriaLabel")}>
+                        {t("settings.modeInfo")}
                       </InfoTip>
                     </span>
                     <div
                       className="mode-switch"
                       role="group"
-                      aria-label={t('settings.uiModeAria')}
+                      aria-label={t("settings.uiModeAria")}
                     >
                       <button
                         type="button"
@@ -407,7 +408,7 @@ export default function AppLayout() {
                         aria-pressed={!isAdvanced}
                         onClick={() => setMode("basic")}
                       >
-                        {t('common.modeBasic')}
+                        {t("common.modeBasic")}
                       </button>
                       <button
                         type="button"
@@ -415,26 +416,30 @@ export default function AppLayout() {
                         aria-pressed={isAdvanced}
                         onClick={() => setMode("advanced")}
                       >
-                        {t('common.modeAdvanced')}
+                        {t("common.modeAdvanced")}
                       </button>
                     </div>
                   </div>
 
                   <div className="topbar-settings-row">
-                    <span className="topbar-settings-label">{t('common.language')}</span>
+                    <span className="topbar-settings-label">
+                      {t("common.language")}
+                    </span>
                     <LanguagePicker />
                   </div>
 
                   <div className="topbar-settings-row">
-                    <span className="topbar-settings-label">{t('common.theme')}</span>
+                    <span className="topbar-settings-label">
+                      {t("common.theme")}
+                    </span>
                     <button
                       type="button"
                       className="theme-toggle"
                       onClick={toggleTheme}
                       aria-label={
                         theme === "dark"
-                          ? t('settings.themeSwitchToLight')
-                          : t('settings.themeSwitchToDark')
+                          ? t("settings.themeSwitchToLight")
+                          : t("settings.themeSwitchToDark")
                       }
                     >
                       {theme === "dark" ? (
@@ -444,8 +449,8 @@ export default function AppLayout() {
                       )}
                       <span className="topbar-settings-theme-label">
                         {theme === "dark"
-                          ? t('common.themeLight')
-                          : t('common.themeDark')}
+                          ? t("common.themeLight")
+                          : t("common.themeDark")}
                       </span>
                     </button>
                   </div>
@@ -488,6 +493,7 @@ export default function AppLayout() {
             <Outlet />
           </LegalGate>
         </div>
+        <AppLegalFooter />
       </div>
 
       <DiagnosticsDrawer />

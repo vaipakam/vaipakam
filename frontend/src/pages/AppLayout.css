@@ -551,13 +551,12 @@
 .app-content {
   flex: 1;
   padding: 24px;
-  padding-bottom: 80px;
   max-width: 1200px;
   width: 100%;
 }
 
 @media (min-width: 768px) {
-  .app-content { padding: 32px; padding-bottom: 96px; }
+  .app-content { padding: 32px; }
 }
 
 /* ── Shared app page styles ── */
