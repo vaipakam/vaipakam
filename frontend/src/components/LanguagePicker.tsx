@@ -1,6 +1,13 @@
 import { useEffect, useRef, useState } from "react";
+import { useLocation, useNavigate } from "react-router-dom";
 import { ChevronDown, Check, Globe } from "lucide-react";
 import { useTranslation } from "react-i18next";
+import {
+  isSupportedLocale,
+  stripLocalePrefix,
+  withLocalePrefix,
+} from "./LocaleResolver";
+import type { SupportedLocale } from "../i18n/glossary";
 import "./LanguagePicker.css";
 
 /**
@@ -39,6 +46,8 @@ const LANGUAGES: LanguageOption[] = [
 
 export function LanguagePicker() {
   const { i18n, t } = useTranslation();
+  const navigate = useNavigate();
+  const location = useLocation();
   const [code, setCode] = useState<string>(i18n.resolvedLanguage ?? "en");
   const [open, setOpen] = useState(false);
   const wrapRef = useRef<HTMLDivElement | null>(null);
@@ -77,7 +86,19 @@ export function LanguagePicker() {
 
   function pick(next: string) {
     setOpen(false);
-    void i18n.changeLanguage(next);
+    if (!isSupportedLocale(next)) return;
+    const target: SupportedLocale = next;
+    void i18n.changeLanguage(target);
+
+    // Rewrite the URL to carry the new locale prefix (or strip it
+    // when switching back to English). Preserves the rest of the path
+    // plus any search params and hash fragment so a deep link still
+    // points at the same page after the language change.
+    const stripped = stripLocalePrefix(location.pathname);
+    const newPath = withLocalePrefix(stripped, target);
+    if (newPath !== location.pathname) {
+      navigate(`${newPath}${location.search}${location.hash}`, { replace: false });
+    }
   }
 
   return (

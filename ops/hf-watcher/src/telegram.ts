@@ -58,22 +58,6 @@ export function extractLinkCode(update: TelegramUpdate): {
   return { chatId: String(chatId), code: match[0] };
 }
 
-export function formatAlert(
-  band: 'warn' | 'alert' | 'critical',
-  opts: {
-    chainName: string;
-    loanId: number;
-    hf: number;
-    frontendOrigin: string;
-  },
-): string {
-  const tag =
-    band === 'critical'
-      ? '🚨 CRITICAL'
-      : band === 'alert'
-        ? '⚠ ALERT'
-        : 'Heads up';
-  const hfStr = opts.hf.toFixed(3);
-  const link = `${opts.frontendOrigin}/app/loans/${opts.loanId}`;
-  return `${tag}: your Vaipakam loan on ${opts.chainName} (loan #${opts.loanId}) has HF ${hfStr}. Liquidation triggers at HF < 1.00. Review your position: ${link}`;
-}
+// `formatAlert` was moved to `./i18n.ts` (Phase 3b) so the message
+// body can be sent in the user's preferred locale. Keep this file
+// focused on raw Telegram API helpers.

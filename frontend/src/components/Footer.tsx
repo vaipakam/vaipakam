@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import { Link } from 'react-router-dom';
+import { L as Link } from './L';
 import { useTranslation } from 'react-i18next';
 import { useTheme } from '../context/ThemeContext';
 import { CHAIN_REGISTRY, compareChainsForDisplay } from '../contracts/config';

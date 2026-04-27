@@ -52,7 +52,7 @@ const PUSH_CHANNEL_ADDRESS: string | null = (() => {
  * different `warn_hf` per channel.
  */
 export default function Alerts() {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const { address, chainId, isCorrectChain } = useWallet();
 
   const [warnHf, setWarnHf] = useState(1.5);
@@ -146,6 +146,11 @@ export default function Alerts() {
           warn_hf: warnHf,
           alert_hf: alertHf,
           critical_hf: criticalHf,
+          // Phase 3b — backend uses this to pick the language for
+          // Telegram / Push notification copy. 2-letter ISO 639-1
+          // code; the worker falls back to 'en' for any unsupported
+          // value, so a stale localStorage entry can't break delivery.
+          locale: i18n.resolvedLanguage ?? "en",
         }),
       });
       if (!res.ok) {
@@ -249,6 +254,7 @@ export default function Alerts() {
           alert_hf: alertHf,
           critical_hf: criticalHf,
           push_channel: "subscribed",
+          locale: i18n.resolvedLanguage ?? "en",
         }),
       });
       if (!res.ok) {

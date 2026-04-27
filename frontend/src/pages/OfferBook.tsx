@@ -1013,6 +1013,7 @@ interface AcceptReviewModalProps {
 }
 
 function AcceptReviewModal({ offer, illiquid, consent, onConsentChange, submitting, onConfirm, onCancel, discountPreview, protocolConfig, permit2Eligible }: AcceptReviewModalProps) {
+  const { t } = useTranslation();
   const { address: viewerAddress } = useWallet();
   const principalIlliquid = offer.principalLiquidity === 1;
   const collateralIlliquid = offer.collateralLiquidity === 1;

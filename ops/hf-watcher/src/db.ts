@@ -14,6 +14,10 @@ export interface UserThresholds {
   critical_hf: number;
   tg_chat_id: string | null;
   push_channel: string | null;
+  /** 2-letter ISO 639-1 locale code (`en`, `es`, ...) for the
+   *  language to send Telegram / Push notifications in. Defaults to
+   *  `'en'` when the user hasn't explicitly set one. */
+  locale: string;
 }
 
 export interface NotifyState {
@@ -33,7 +37,7 @@ export async function listThresholdsForChain(
 ): Promise<UserThresholds[]> {
   const res = await db
     .prepare(
-      `SELECT wallet, chain_id, warn_hf, alert_hf, critical_hf, tg_chat_id, push_channel
+      `SELECT wallet, chain_id, warn_hf, alert_hf, critical_hf, tg_chat_id, push_channel, locale
        FROM user_thresholds
        WHERE chain_id = ?`,
     )
@@ -46,23 +50,25 @@ export async function listThresholdsForChain(
  *  via the HTTP handler. */
 export async function upsertThresholds(
   db: D1Database,
-  t: Omit<UserThresholds, 'tg_chat_id' | 'push_channel'> & {
+  t: Omit<UserThresholds, 'tg_chat_id' | 'push_channel' | 'locale'> & {
     tg_chat_id?: string | null;
     push_channel?: string | null;
+    locale?: string | null;
   },
 ): Promise<void> {
   const now = Math.floor(Date.now() / 1000);
   await db
     .prepare(
       `INSERT INTO user_thresholds
-         (wallet, chain_id, warn_hf, alert_hf, critical_hf, tg_chat_id, push_channel, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+         (wallet, chain_id, warn_hf, alert_hf, critical_hf, tg_chat_id, push_channel, locale, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(wallet, chain_id) DO UPDATE SET
          warn_hf = excluded.warn_hf,
          alert_hf = excluded.alert_hf,
          critical_hf = excluded.critical_hf,
          tg_chat_id = COALESCE(excluded.tg_chat_id, user_thresholds.tg_chat_id),
          push_channel = COALESCE(excluded.push_channel, user_thresholds.push_channel),
+         locale = COALESCE(excluded.locale, user_thresholds.locale),
          updated_at = excluded.updated_at`,
     )
     .bind(
@@ -73,6 +79,7 @@ export async function upsertThresholds(
       t.critical_hf,
       t.tg_chat_id ?? null,
       t.push_channel ?? null,
+      t.locale ?? 'en',
       now,
       now,
     )
@@ -159,12 +166,13 @@ export async function issueTelegramLinkCode(
 }
 
 /** Consume a handshake code — called by the Telegram bot webhook when
- *  a user DMs the code. Returns the linked wallet/chain, or null if
- *  expired / unknown. */
+ *  a user DMs the code. Returns the linked wallet/chain plus the
+ *  user's stored locale (so the handshake confirmation message can
+ *  be sent in the right language), or null if expired / unknown. */
 export async function consumeTelegramLinkCode(
   db: D1Database,
   code: string,
-): Promise<{ wallet: string; chainId: number } | null> {
+): Promise<{ wallet: string; chainId: number; locale: string } | null> {
   const now = Math.floor(Date.now() / 1000);
   const row = await db
     .prepare(
@@ -179,7 +187,20 @@ export async function consumeTelegramLinkCode(
     .prepare(`DELETE FROM telegram_links WHERE code = ?`)
     .bind(code)
     .run();
-  return { wallet: row.wallet, chainId: row.chain_id };
+  // Look up the user's stored locale on user_thresholds. Falls back
+  // to 'en' if the row doesn't exist yet (the link flow can run before
+  // the first upsertThresholds call in some race orderings).
+  const locRow = await db
+    .prepare(
+      `SELECT locale FROM user_thresholds WHERE wallet = ? AND chain_id = ?`,
+    )
+    .bind(row.wallet, row.chain_id)
+    .first<{ locale: string }>();
+  return {
+    wallet: row.wallet,
+    chainId: row.chain_id,
+    locale: locRow?.locale ?? 'en',
+  };
 }
 
 /** Store the Telegram chat id on the user's thresholds row. Called

@@ -15,6 +15,7 @@ import {
   upsertThresholds,
 } from './db';
 import { extractLinkCode, sendMessage, type TelegramUpdate } from './telegram';
+import { handshakeExpired, handshakeLinked } from './i18n';
 import { handle0xQuote, handle1inchQuote } from './quoteProxy';
 import { handleBlockaidScan } from './scanProxy';
 import {
@@ -191,19 +192,17 @@ async function handleTelegramWebhook(
   const { chatId, code } = extracted;
   const match = await consumeTelegramLinkCode(env.DB, code);
   if (!match) {
-    await sendMessage(
-      env.TG_BOT_TOKEN,
-      chatId,
-      'That code is expired or unrecognised. Head back to Vaipakam → Alerts and request a new one.',
-    );
+    // No locale to look up (the row didn't resolve); fall back to en.
+    await sendMessage(env.TG_BOT_TOKEN, chatId, handshakeExpired('en'));
     return new Response('ok', { status: 200 });
   }
 
   await linkTelegram(env.DB, match.wallet, match.chainId, chatId);
+  const walletShort = `${match.wallet.slice(0, 8)}…${match.wallet.slice(-6)}`;
   await sendMessage(
     env.TG_BOT_TOKEN,
     chatId,
-    `Linked — you'll receive HF alerts for wallet ${match.wallet.slice(0, 8)}…${match.wallet.slice(-6)} on chain ${match.chainId}.`,
+    handshakeLinked(match.locale, walletShort, match.chainId),
   );
   return new Response('ok', { status: 200 });
 }

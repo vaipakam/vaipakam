@@ -94,6 +94,83 @@ mobile; replaced with the new InfoTip primitive (click-only,
 portal-rendered, dismissable). The InfoTip primitive is the same
 one that drives the info-icon rollout below.
 
+## Phase 1 of language translation — i18n infrastructure
+
+The LanguagePicker mentioned above sits on top of a complete i18n
+foundation that landed today. The picker by itself doesn't translate
+anything; it tells `i18next` which locale resource to read. The
+foundation:
+
+**Locale catalogue.** Ten supported locales: English (en), Spanish
+(es), French (fr), German (de), Japanese (ja), Simplified Chinese
+(zh), Korean (ko), Hindi (hi), Tamil (ta), Arabic (ar). Each locale
+gets one JSON file under `frontend/src/i18n/locales/` containing
+namespaced keys (`common`, `nav`, `dashboard`, `offerBook`,
+`createOffer`, …). Adding an eleventh locale is one new file plus
+one entry in the picker — no code path changes. (The picker lists
+only locales whose JSON file is registered, so unregistered entries
+are invisible to users.)
+
+**Detection chain.**
+1. URL path prefix (e.g. `/es/...`) — reserved for SEO-friendly
+   per-locale routes; not used today, infrastructure already
+   accepts it.
+2. `localStorage["vaipakam:language"]` — what the LanguagePicker
+   writes to. Same key the picker has always used so existing
+   user preferences carry forward without reset.
+3. `navigator.languages` — first match against the supported set.
+4. Cloudflare `cf-ipcountry` cookie hint (reserved; an edge
+   worker can populate this for users with no matching browser
+   locale).
+5. Fallback to English.
+
+A user landing on the site with `localStorage` empty and a
+French browser locale gets French automatically; a user with
+`localStorage["vaipakam:language"] = "ja"` set on a previous
+visit gets Japanese regardless of browser locale.
+
+**Glossary.** A glossary file (`frontend/src/i18n/glossary.ts`)
+lists strings that must remain verbatim across every locale —
+`VPFI`, `NFT`, `Vaipakam`, `ERC-20/721/1155/4907`, `HF`, `LTV`,
+`APR`, `BPS`, `Diamond`, `Keeper`, `DEX`, `KYC`, plus stablecoin
+and chain identifiers (`USDC`, `ETH`, `Ethereum`, `Base`,
+`Polygon`, `Arbitrum`, `Optimism`, `Sepolia`, etc.) and the
+protocol-internal facet names (`RiskFacet`, `ProfileFacet`,
+`EscrowFactoryFacet`). Translators (and the translate script
+below) read this list to keep terminology consistent.
+
+**Claude API translate script.** `frontend/scripts/translate-i18n.ts`
+takes the English JSON as authoritative input and produces
+translations for the other nine locales using the Claude API,
+respecting the glossary. Runnable via `npm run translate` from
+the `frontend/` directory. Designed for incremental updates: it
+diffs the current locale file against the English source and only
+asks for translations of new or changed strings, so re-running
+after adding a few new keys is fast and doesn't disturb existing
+translated copy.
+
+**RTL handling.** Arabic flips the document direction: when the
+active locale is `ar`, an `i18n.on('languageChanged')` listener
+sets `<html dir="rtl">`. CSS that uses logical properties
+(`margin-inline-start`, `padding-block-start`, `text-align: start`)
+flips automatically. Any layout that uses physical properties
+(`margin-left`, `padding-right`) was audited and either migrated
+to logical properties or given a targeted RTL pass.
+
+**No double-escape.** `interpolation.escapeValue: false` is set in
+the `i18next` config because React already escapes interpolated
+values; without this, an interpolated `&` or `<` would get HTML-
+entity-encoded twice.
+
+**Phase 1 chrome-string coverage.** Today's drop covers the
+top-level navigation, settings popover, language picker labels,
+appNav (in-app nav), Dashboard headers, Offer Book tabs and empty
+states, Create Offer card titles and hint placeholders, common
+shared strings (Connect Wallet, Disconnect, Cancel, Save, Loading,
+Error, Try again, Lender, Borrower, view, Lending asset,
+Collateral asset). Subsequent phases extend coverage page by
+page.
+
 ## In-app card-help system — Phase 1 + 2 + mode-aware deep-linking
 
 Three sub-deliverables that together stand up a fully indexed
@@ -425,6 +502,12 @@ walk; no-op on desktop where the TOC has no `<details>` ancestor.
   role-keyed `summary` shape (`{ lender, borrower }`); resolves
   to the role-specific variant in the tooltip and appends the
   matching role suffix to the in-app help URL fragment.
+- **Phase 1 of language translation**: i18n infrastructure live —
+  ten locales registered, detection chain (URL path → localStorage
+  → navigator → CF cookie hint → English fallback), glossary file,
+  Claude API translate script, RTL handling for Arabic, top-level
+  chrome strings translated. Page-level string extraction is
+  Phase 2 (subsequent days).
 - **Phase 8a alerts** (carried from 2026-04-25): both rails
   functional end-to-end. Push remains gated on the on-chain
   channel registration step pending mainnet cutover.

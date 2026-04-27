@@ -21,8 +21,9 @@ import {
   putNotifyState,
   sweepExpiredLinks,
 } from './db';
-import { formatAlert, sendMessage } from './telegram';
+import { sendMessage } from './telegram';
 import { sendPush } from './push';
+import { formatAlert, pushTitle } from './i18n';
 import { maybeAutonomousLiquidate, resetKeeperDedupe } from './keeper';
 
 // ABI stubs — just enough to read the loan list + HF. Narrow slice keeps
@@ -150,7 +151,7 @@ async function dispatchAlert(
 ): Promise<void> {
   if (band === 'healthy') return;
 
-  const text = formatAlert(band, {
+  const text = formatAlert(band, user.locale, {
     chainName: chain.name,
     loanId,
     hf,
@@ -163,7 +164,7 @@ async function dispatchAlert(
   if (user.push_channel) {
     await sendPush(env.PUSH_CHANNEL_PK, {
       subscriber: user.wallet,
-      title: band === 'critical' ? 'Vaipakam liquidation imminent' : 'Vaipakam HF alert',
+      title: pushTitle(band, user.locale),
       body: text,
       deepLinkUrl: `${env.FRONTEND_ORIGIN}/app/loans/${loanId}`,
     });

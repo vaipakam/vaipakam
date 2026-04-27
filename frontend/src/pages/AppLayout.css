@@ -79,21 +79,25 @@
 
 /* Two logos live in the DOM so the collapsed rail can swap to the square
  * icon mark without loading a different asset mid-transition. Default shows
- * the full wordmark; the icon is display:none until `.collapsed` flips it. */
+ * the full wordmark; the icon is display:none until the desktop `.collapsed`
+ * rail flips it. The collapsed swap is scoped to desktop because `.collapsed`
+ * is a desktop-only preference — on mobile the drawer (`.open`) is always
+ * the fully-expanded layout and must show the full wordmark even if the
+ * desktop preference happens to be collapsed. */
 .sidebar-logo--icon {
   display: none;
 }
 
-.app-sidebar.collapsed .sidebar-logo--full {
-  display: none;
-}
-.app-sidebar.collapsed .sidebar-logo--icon {
-  display: block;
-}
-
-/* Hover-expand (desktop) brings the wordmark back so the floating panel
- * reads as a real sidebar, not just a wider icon rail. */
 @media (min-width: 768px) {
+  .app-sidebar.collapsed .sidebar-logo--full {
+    display: none;
+  }
+  .app-sidebar.collapsed .sidebar-logo--icon {
+    display: block;
+  }
+
+  /* Hover-expand brings the wordmark back so the floating panel reads as
+   * a real sidebar, not just a wider icon rail. */
   .app-sidebar.collapsed:not(.suppress-hover-expand):hover .sidebar-logo--full,
   .app-sidebar.collapsed:not(.suppress-hover-expand):focus-within .sidebar-logo--full {
     display: block;
