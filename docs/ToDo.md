@@ -6,4 +6,4 @@
 - [ ] we need to provide slider to adjust the lending amount and collateral amount. also based on it, we should also show HF/LTV visually with animation
 - [x] inside the app, When the 3 line icon is clicked on the left top, the expanded left side panel only shows `icon only logo`, but it should show full horizontal logo
 - [x] the create offer button and accept offer button need to be enabled only after clicking the checkbox for `I have read and agree to the Risk Disclosures above.`
-- [ ] The error that is shown to the user may be short, but when user clicks on report to github page, the error information should atleat have first level of verbose information in it.
+- [x] The error that is shown to the user may be short, but when user clicks on report to github page, the error information should atleat have second level of verbose information in it.

@@ -13,10 +13,21 @@ Korean, Hindi, Tamil, Arabic), **bilingual Risk Disclosures** (a
 translated convenience copy plus a "View English original" modal so
 the legally-binding text remains the English one), **English-only
 notice** on the Terms / Privacy pages and on User-Guide pages where
-the locale-matched markdown isn't translated yet, and **a locale-
+the locale-matched markdown isn't translated yet, **a locale-
 aware loader** for the User Guide that picks `Basic.<lang>.md` /
 `Advanced.<lang>.md` from the frontend bundle and falls back to the
-English source with a clear notice when no localised file exists.
+English source with a clear notice when no localised file exists,
+**Phase 3 of language translation — SEO routes + backend copy**
+(per-locale URL prefixes for every public page with a hreflang and
+locale-shell SEO layer, locale-aware backend Telegram / Push alerts),
+**bilingual Risk Disclosures consent gating** of Create Offer and
+Accept Offer Confirm buttons, **second-level verbose GitHub issue
+body** with stack trace / cause chain / browser-env folded in
+GitHub `<details>` blocks, **diagnostics drawer simplified** to drop
+its duplicate Download / Clear buttons in favour of the broader GDPR
+"Download my data" / "Delete my data" pair, and a small build-
+hygiene round (`tsx` build-time TypeScript runner replacing the
+experimental Node flag, npm postbuild dedup).
 
 ## Phase 2 of language translation — full app coverage
 
@@ -200,23 +211,256 @@ expanded to the full-logo asset, matching the desktop top-bar
 behaviour. The collapsed (icon-only) state continues to show the
 square mark.
 
+## Phase 3 of language translation — SEO routes + backend copy
+
+Two complementary deliverables that together push i18n past "the
+chrome translates" to "the protocol is locale-aware end-to-end".
+
+### Phase 3a — SEO-friendly per-locale routes
+
+Every public page now has a distinct, crawlable URL per supported
+locale: `/`, `/es/`, `/fr/`, `/de/`, `/ja/`, `/zh/`, `/ko/`, `/hi/`,
+`/ta/`, `/ar/`. English stays at the unprefixed root; the other nine
+locales each get a `/<locale>` prefix on every public route so search
+engines can index `/es/help/basic` as Spanish content (not as a
+duplicate of `/help/basic`) and route Spanish-speaking users to the
+right URL from search results.
+
+**Routing.** The route tree is mounted twice in `App.tsx` — once
+under the unprefixed root for English, once under a `:locale`
+URL parameter for the other nine. A `<LocaleResolver>` route guard
+reads the URL prefix, validates against the supported-locales
+catalogue, and calls `i18n.changeLanguage(...)` on first paint so
+the body content matches the URL. Old unprefixed URLs keep working
+and resolve to English; nothing existing breaks.
+
+**Locale-aware navigation.** Two new wrapper components — `<L>` (a
+drop-in for React Router's `Link`) and `<NL>` (the same for
+`NavLink`) — auto-prepend the active locale prefix to absolute
+internal paths. Migrated across every page and component that does
+internal navigation: Navbar, Footer, AppLayout sidebar, the four
+preclose / refinance / early-withdrawal / loan-details flows, the
+landing-page CTA, the FAQ, the Public Dashboard, the Privacy and
+Discord pages. A user on `/es/dashboard` clicking any internal link
+now stays in Spanish; before this round, every click silently
+dropped them back to English.
+
+**LanguagePicker rewrites the URL.** Picking a different language
+in the picker no longer just changes `i18n` state — it also
+navigates to the matching prefix (or strips back to the root for
+English). The user's bookmark / share-link reflects the language
+they're reading.
+
+**hreflang link tags.** A small `<HreflangAlternates>` component
+mounted at app-root injects `<link rel="alternate" hreflang="X"
+href="..."/>` siblings into `<head>` for every supported locale plus
+`x-default`. Search engines now have explicit per-locale URL
+mappings on every navigation event.
+
+**Sitemap and robots.txt.** A new build-time script
+(`scripts/generate-sitemap.ts`) emits `dist/sitemap.xml` containing
+80 `<url>` entries (eight public routes × ten locales), each with a
+full hreflang block plus `x-default`. Wallet-gated `/app/*` routes
+are deliberately excluded — they require a wallet connection and
+have nothing static to index. A matching `dist/robots.txt`
+explicitly disallows `/app/*` and points crawlers at the sitemap.
+The site origin is overridable via the `SITE_URL` env var so
+preview deploys advertise the correct preview URL.
+
+**First-visit default-locale redirect.** A new `<DefaultLocaleRedirect>`
+guard runs once on first paint: if the user has no stored language
+preference (no `localStorage["vaipakam:language"]`) and
+`navigator.languages` prefers a supported non-English locale, the app
+navigates the user to the prefixed equivalent of where they wanted
+to go (`/dashboard` → `/es/dashboard` for a Spanish browser).
+Persists the choice so subsequent visits skip the check. Users who
+explicitly switch to English via the LanguagePicker have that choice
+honoured.
+
+**Tier-A SSG: per-locale shell HTML.** A second build-time script
+(`scripts/generate-locale-shells.ts`) generates `dist/<locale>/index.html`
+for each supported locale with locale-correct `<html lang="X" dir="rtl|ltr">`
+(RTL applied to Arabic so the layout flips before JS runs, no LTR
+flash), localised `<title>` and `<meta name="description">` tags
+hand-written per locale, a `<link rel="canonical">` pointing at the
+locale variant itself, the full hreflang block, and OpenGraph locale
+alternates (`og:locale` + `og:locale:alternate`) so social-card
+scrapers (Twitter, Discord, Slack) preview the right copy. The root
+`dist/index.html` also gets the same hreflang / canonical / OG block
+applied. The body of every shell is the same React mount point as
+before — JS hydrates and renders the page in the matching locale
+once it boots.
+
+This is "shells" rather than full pre-rendered content. Pre-rendering
+the actual page body would require StaticRouter, side-effect-free
+imports (the wallet contexts touch `window` at module-load time),
+and a per-route data-loader contract — architectural rework deferred
+to a future phase. Shells alone cover the meaningful first-paint
+signals: locale-aware `<html lang>`, localised browser-tab title,
+correct search-result snippets, and right-locale social cards.
+
+**Cloudflare Pages `_redirects`.** Cloudflare's default SPA fallback
+would route `/es/dashboard` to the root (English) `index.html`,
+defeating the per-locale shell entirely for any path beyond `/es/`.
+The same script emits `dist/_redirects` with one rewrite rule per
+locale (`/<locale>/* → /<locale>/index.html (200)`) followed by the
+catch-all `/* → /index.html (200)`. Now any URL under `/es/...`
+serves the Spanish shell on first paint regardless of how deep the
+path is.
+
+### Phase 3b — Backend Telegram / Push alert copy translation
+
+The HF watcher Cloudflare Worker now sends Telegram and Push alerts
+in the user's preferred language.
+
+**Database column.** New migration `0002_user_locale.sql` adds a
+`locale TEXT NOT NULL DEFAULT 'en'` column to `user_thresholds`. The
+frontend Alerts page sends `locale: i18n.resolvedLanguage` on every
+threshold-save and Push-subscribe HTTP PUT, so the user's stored
+locale stays in sync with their last-active UI language.
+
+**Worker-side i18n catalogue.** A small `ops/hf-watcher/src/i18n.ts`
+file holds translations of every user-visible string the watcher
+emits — band tags ("Heads up", "ALERT", "CRITICAL"), the alert body
+template, Push notification titles, the Telegram handshake-expired
+and handshake-linked confirmations — across all ten locales. Lookup
+falls back to English for any unknown locale code; never throws,
+never blocks an alert from delivering. Worker stays small (no
+i18next runtime, no JSON-bundle loading at cold-start).
+
+**Wired through.** `formatAlert(band, locale, opts)` and
+`pushTitle(band, locale)` are called by the watcher loop with
+`user.locale` from the per-user thresholds row. The Telegram
+handshake messages in the worker's `/tg/webhook` endpoint look up
+the linked user's locale from the database and respond accordingly.
+
+## Risk-disclosure consent gating + bilingual UX polish
+
+The "I have read and agree to the Risk Disclosures above." checkbox
+already lived inside the Risk Disclosures component but didn't
+gate the Create Offer or Accept Offer Confirm buttons. Both buttons
+now require the checkbox to be checked before they can be clicked.
+A hover-state tooltip on the disabled button shows the checkbox
+label so the user understands *why* the button is disabled.
+
+The Risk Disclosures component itself was rewired to pull from i18n
+in earlier rounds; this round added a translated-summary notice
+("This translated copy is for reference. The legally-binding text
+is in English") plus a "View English original" button on every
+non-English locale. Clicking the button opens a modal that re-renders
+the same disclosures with `t(key, { lng: 'en' })`, so the user reads
+the legally-binding English regardless of the active locale. The
+notice and button are suppressed entirely on English.
+
+## Diagnostics drawer — simplified action surface
+
+The drawer used to carry six action buttons in two rows: a "support
+debug" row (Report on GitHub, Copy JSON, Download, Clear) and a
+"data rights" row (Download my data, Delete my data). The two rows
+overlapped — *Download* was a subset of *Download my data* (the
+GDPR action exports the journey log plus everything else under
+Vaipakam's namespace), and *Clear* overlapped with *Delete my data*.
+After review the two duplicates were removed, leaving the drawer
+with a clean two-row surface: support actions (*Report on GitHub*,
+*Copy JSON*) above the GDPR row (*Download my data*, *Delete my
+data*). Same coverage, less cognitive load.
+
+## Second-level verbose GitHub issue body
+
+When the user clicks *Report on GitHub* from the diagnostics drawer
+or any inline error banner, the prefilled issue body now carries a
+second level of verbose error data so a developer can pinpoint the
+problem on first scroll instead of having to ask for the JSON
+attachment.
+
+The visible-by-default header carries the report id, redacted wallet,
+chain, last on-chain tx hash, the area / flow / step that failed,
+the decoded custom error name, the 4-byte revert selector, the
+full error message (no longer truncated at 140 chars), the raw
+revert data, and the loan / offer / NFT id. Folded inside GitHub
+`<details>` blocks (collapsible, click to expand) sit four
+deeper-dive sections:
+
+- **Stack trace** — top frames from the original `Error.stack`,
+  third-party `node_modules` frames included so the call site that
+  triggered the throw is visible even when our own bundle is
+  wrapped through ethers / viem / wagmi.
+- **Cause chain** — recursive `Error.cause` walk, depth ≤ 3.
+  Surfaces wrapped errors (e.g. `enrichFetchError` puts a
+  more-verbose `TypeError` over the original `Failed to fetch`)
+  so triage sees both layers at once.
+- **Browser environment** — viewport, online state,
+  `prefers-color-scheme`, document language, document referrer.
+  Deliberately excludes user-agent, screen resolution, localStorage
+  contents, and cookies — none of those are needed for triage and
+  all of them are fingerprint vectors.
+- **Recent events** — the dense events list from the journey
+  buffer, fifteen entries before the failure plus the failure plus
+  five after, each with the event's free-form `note` field included
+  inline (often carries the on-chain tx hash for a successful
+  step) and the per-event error message cap raised from 140 to 500
+  characters.
+
+The redaction contract holds: wallet addresses still shortened to
+`0x…abcd`, no user-agent, no IP-derived info, no localStorage, no
+cookies. Free-form fields (note, errorMessage, errorData) still go
+through the same control-char-strip + pipe / backtick escape pass.
+
+## Build hygiene — `tsx` runner
+
+Build-time TypeScript scripts (`generate-sitemap.ts`,
+`generate-locale-shells.ts`, `translate-i18n.ts`) now run via `tsx`
+— a battle-tested loader wrapping esbuild, ~3 MB devDep. Replaces
+the prior `node --experimental-strip-types script.ts` invocation,
+which depended on Node 22.18+'s native type-stripping behind an
+"experimental" flag. `tsx` supports the full TypeScript syntax
+surface (including `enum`, `namespace`, `import = require`),
+isn't experimental, and works on any Node ≥ 20.19 — Vite 8's
+actual minimum. `engines.node` relaxed accordingly. `.nvmrc`
+stays at 22 (current LTS, sensible local default).
+
+The `npm run build` script now uses npm's standard lifecycle hook
+behaviour: `build` runs `tsc -b && vite build`, and `postbuild`
+fires automatically after, running the sitemap and locale-shell
+generators. The earlier explicit chain caused the post-build to
+run twice; that's fixed.
+
 ## Status snapshot at end-of-day 2026-04-27
 
 - **Language coverage**: 10 locales (en, es, fr, de, ja, zh, ko,
   hi, ta, ar) at structural parity. Every interactive control,
   form hint, banner, error toast, card-title tooltip, and FAQ
-  entry translates. Long-prose pages (Terms, Privacy, User
-  Guide) carry an explicit English-only / translation-pending
-  notice when the active locale doesn't have a translated
-  version — they don't silently fall back without telling the
-  user.
+  entry translates. Long-prose pages (Terms, Privacy) carry an
+  explicit English-only notice when the active locale isn't
+  English. The User Guide ships translated for es / fr / de / ar
+  and falls back to English with a "translation pending" banner
+  for the other five locales.
+- **SEO**: per-locale URL prefixes live for every public page,
+  with a hreflang block on every navigation, a sitemap
+  enumerating 80 URL × locale combinations, a robots.txt that
+  excludes wallet-gated routes, locale-aware Cloudflare Pages
+  rewrites, and per-locale shell HTML so crawlers and social-card
+  scrapers see the right metadata before JS runs. First-visit
+  default-locale redirect sends users to their preferred locale
+  on the first hit.
+- **Backend alerts**: HF-watcher Telegram and Push notifications
+  now sent in the user's preferred locale (10 locales covered).
+  Worker-side i18n catalogue inline; no runtime dependency.
 - **Bilingual legal text**: Risk Disclosures has a one-click
   "View English original" path on every locale, so the legal-
   text-in-English property is preserved even though the
-  on-screen copy is localised.
-- **User Guide**: locale-aware loader live; English files in
-  place; per-locale translation files are a drop-in addition,
-  no code change needed when added.
+  on-screen copy is localised. Both Create Offer and Accept Offer
+  Confirm buttons gate on the matching consent checkbox.
+- **Diagnostics**: GitHub issue body upgraded to a second-level
+  verbose payload — stack trace, cause chain, browser environment,
+  expanded events list — folded behind GitHub `<details>`
+  collapsibles so the at-a-glance triage view stays scannable.
+  Drawer simplified from six to four action buttons after the
+  GDPR row was identified as a superset of the duplicate
+  Download / Clear actions.
+- **Build hygiene**: `tsx` is now the build-time TypeScript
+  runner; experimental Node flag and npm-lifecycle double-run
+  both eliminated. `engines.node >= 20.19.0`, `.nvmrc` at 22.
 - **Mainnet deployment**: deferred per the prior days'
   status. No translation-related blocker added today.
 

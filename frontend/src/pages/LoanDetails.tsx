@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { useParams, Link } from "react-router-dom";
+import { useParams } from "react-router-dom";
+import { L as Link } from "../components/L";
 import { useTranslation } from "react-i18next";
 import { useWallet } from "../context/WalletContext";
 import { useMode } from "../context/ModeContext";

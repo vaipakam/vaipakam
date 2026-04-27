@@ -9,7 +9,7 @@ import { usePermit2Signing } from '../hooks/usePermit2Signing';
 import { useWallet } from '../context/WalletContext';
 import { useDiamondContract, useDiamondRead, useDiamondPublicClient, useReadChain } from '../contracts/useDiamond';
 import { DIAMOND_ABI_VIEM as DIAMOND_ABI } from '../contracts/abis';
-import { Link } from 'react-router-dom';
+import { L as Link } from '../components/L';
 import { BookOpen, PlusCircle, AlertTriangle, ShieldCheck } from 'lucide-react';
 import { ErrorAlert } from '../components/app/ErrorAlert';
 import { SanctionsBanner } from '../components/app/SanctionsBanner';

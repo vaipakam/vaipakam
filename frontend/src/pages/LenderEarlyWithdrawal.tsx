@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { useParams } from 'react-router-dom';
+import { L as Link } from '../components/L';
 import { useTranslation } from 'react-i18next';
 import { AlertTriangle, ArrowLeft, CheckCircle } from 'lucide-react';
 import { ErrorAlert } from '../components/app/ErrorAlert';

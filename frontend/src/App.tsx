@@ -28,6 +28,7 @@ import { ScrollToHash } from './components/app/ScrollToHash';
 import DiagnosticsDrawer from './components/app/DiagnosticsDrawer';
 import { LocaleResolver } from './components/LocaleResolver';
 import { HreflangAlternates } from './components/HreflangAlternates';
+import { DefaultLocaleRedirect } from './components/DefaultLocaleRedirect';
 import type { ReactElement } from 'react';
 
 // Public NFT Verifier shell — verification is a pre-purchase due-diligence
@@ -93,6 +94,7 @@ export default function App() {
       <ScrollToHash />
       <ConsentBanner />
       <HreflangAlternates />
+      <DefaultLocaleRedirect />
       <Routes>
         {/* Default English tree at the unprefixed root. */}
         <Route element={<LocaleResolver locale="en" />}>

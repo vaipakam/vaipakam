@@ -1,5 +1,6 @@
 import { useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { useParams } from "react-router-dom";
+import { L as Link } from "../components/L";
 import { useTranslation } from "react-i18next";
 import { maxUint256 as MaxUint256, parseUnits } from "viem";
 import { AlertTriangle, ArrowLeft, CheckCircle } from "lucide-react";

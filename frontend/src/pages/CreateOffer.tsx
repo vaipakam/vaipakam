@@ -27,7 +27,7 @@ import { LiquidityPreflightBanner } from "../components/app/LiquidityPreflightBa
 import { useLiquidityPreflight } from "../hooks/useLiquidityPreflight";
 import { usePermit2Signing } from "../hooks/usePermit2Signing";
 import { DIAMOND_ABI_VIEM as DIAMOND_ABI } from "../contracts/abis";
-import { Link } from "react-router-dom";
+import { L as Link } from "../components/L";
 import { AssetPicker } from "../components/app/AssetPicker";
 import { useAssetType, type DetectedAssetType } from "../hooks/useAssetType";
 import { CardInfo } from "../components/CardInfo";

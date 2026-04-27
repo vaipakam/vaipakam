@@ -1,4 +1,4 @@
-import { Link } from 'react-router-dom';
+import { L as Link } from './L';
 import { ArrowRight } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import './CTA.css';

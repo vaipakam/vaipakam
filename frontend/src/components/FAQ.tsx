@@ -7,7 +7,7 @@ import {
   type ReactNode,
 } from "react";
 import { ChevronDown, Search } from "lucide-react";
-import { Link } from "react-router-dom";
+import { L as Link } from "./L";
 import { Trans, useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
 import "./FAQ.css";
