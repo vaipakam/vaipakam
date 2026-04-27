@@ -1,10 +1,9 @@
 import { useEffect, useState } from 'react';
-import { LifeBuoy, Download, Trash2, X, FileDown, ShieldAlert } from 'lucide-react';
+import { LifeBuoy, Copy, X, FileDown, ShieldAlert } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 import {
   subscribe,
   exportDiagnostics,
-  clearJourney,
-  resetReportId,
   type JourneyEvent,
 } from '../../lib/journeyLog';
 import { downloadMyData, deleteMyData } from '../../lib/gdpr';
@@ -21,14 +20,15 @@ import './DiagnosticsDrawer.css';
  */
 type StatusFilter = 'all' | 'failure' | 'start' | 'success';
 
-const FILTERS: { key: StatusFilter; label: string }[] = [
-  { key: 'all', label: 'All' },
-  { key: 'failure', label: 'Failure' },
-  { key: 'start', label: 'Start' },
-  { key: 'success', label: 'Success' },
+const FILTERS: { key: StatusFilter; labelKey: string }[] = [
+  { key: 'all', labelKey: 'diagnostics.filterAll' },
+  { key: 'failure', labelKey: 'diagnostics.filterFailure' },
+  { key: 'start', labelKey: 'diagnostics.filterStart' },
+  { key: 'success', labelKey: 'diagnostics.filterSuccess' },
 ];
 
 export default function DiagnosticsDrawer() {
+  const { t } = useTranslation();
   const { mode } = useMode();
   const [open, setOpen] = useState(false);
   const [events, setEvents] = useState<JourneyEvent[]>([]);
@@ -47,19 +47,12 @@ export default function DiagnosticsDrawer() {
       setCopied(true);
       setTimeout(() => setCopied(false), 1500);
     } catch {
-      // Clipboard blocked (e.g. insecure context) — fall through to download.
-      handleDownload();
+      // Clipboard blocked (e.g. insecure context). The GDPR-scoped
+      // "Download my data" below covers the file-download path
+      // including the journey log, so a fallback here would be
+      // duplicative — silently no-op and let the user reach for the
+      // larger button.
     }
-  };
-
-  const handleDownload = () => {
-    const blob = new Blob([exportDiagnostics()], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `vaipakam-diagnostics-${Date.now()}.json`;
-    a.click();
-    URL.revokeObjectURL(url);
   };
 
   const failureCount = events.filter((e) => e.status === 'failure').length;
@@ -81,12 +74,12 @@ export default function DiagnosticsDrawer() {
           type="button"
           className="diag-fab"
           onClick={() => setOpen(true)}
-          aria-label="Open diagnostics"
-          data-tooltip="Troubleshooting / diagnostics"
+          aria-label={t('diagnostics.fabAria')}
+          data-tooltip={t('diagnostics.fabTooltip')}
           data-tooltip-placement="left"
         >
           <LifeBuoy size={18} />
-          <span>Diagnostics</span>
+          <span>{t('diagnostics.fabLabel')}</span>
           {failureCount > 0 && <span className="diag-fab-badge">{failureCount}</span>}
         </button>
       )}
@@ -94,44 +87,30 @@ export default function DiagnosticsDrawer() {
       {open && (
         <>
           <div className="diag-overlay" onClick={() => setOpen(false)} />
-          <aside className="diag-drawer" role="dialog" aria-label="Diagnostics">
+          <aside className="diag-drawer" role="dialog" aria-label={t('diagnostics.drawerAria')}>
             <header className="diag-header">
-              <h3>Diagnostics ({visibleEvents.length}/{events.length})</h3>
-              <button onClick={() => setOpen(false)} aria-label="Close" className="diag-close">
+              <h3>{t('diagnostics.title')} ({visibleEvents.length}/{events.length})</h3>
+              <button onClick={() => setOpen(false)} aria-label={t('diagnostics.closeAria')} className="diag-close">
                 <X size={18} />
               </button>
             </header>
 
-            <p className="diag-hint">
-              A redacted log of your recent steps is kept here to help support
-              diagnose problems. Report directly on GitHub (prefilled &
-              redacted), or copy / download the full JSON for support. Wallet
-              addresses are shortened to <code>0x…abcd</code>; user-agent
-              and free-form error text are not published.
-            </p>
+            <p className="diag-hint">{t('diagnostics.hint')}</p>
 
             <div className="diag-actions">
-              {/* Primary CTA for Phase 1: publish straight to GitHub with
-                  a redacted body. Copy/Download stay available for deeper
-                  support tickets that want the full local buffer. */}
-              <ReportIssueLink variant="button" label="Report on GitHub" />
+              {/* Two complementary support actions:
+                  • Report on GitHub — one-click prefilled issue.
+                  • Copy JSON       — paste-into-chat workflow.
+                  The previous Download / Clear buttons were removed
+                  in favour of the broader GDPR row below — Download
+                  my data covers the file-export case (and exports
+                  more than the journey log), and Delete my data
+                  covers the wipe case (and clears the rest of the
+                  client-side namespace too). */}
+              <ReportIssueLink variant="button" label={t('diagnostics.reportOnGithub')} />
               <button className="btn btn-secondary btn-sm" onClick={handleCopy}>
-                <Download size={14} />
-                {copied ? 'Copied!' : 'Copy JSON'}
-              </button>
-              <button className="btn btn-ghost btn-sm" onClick={handleDownload}>
-                <Download size={14} />
-                Download
-              </button>
-              <button
-                className="btn btn-ghost btn-sm"
-                onClick={() => {
-                  clearJourney();
-                  resetReportId();
-                }}
-              >
-                <Trash2 size={14} />
-                Clear
+                <Copy size={14} />
+                {copied ? t('diagnostics.copied') : t('diagnostics.copyJson')}
               </button>
             </div>
 
@@ -156,7 +135,7 @@ export default function DiagnosticsDrawer() {
                   marginBottom: 4,
                 }}
               >
-                Data rights (GDPR / CCPA)
+                {t('diagnostics.dataRights')}
               </span>
               {/* Each action is wrapped with its own InfoTip so the
                   helper text stays anchored next to its button when
@@ -174,12 +153,10 @@ export default function DiagnosticsDrawer() {
                   }}
                 >
                   <FileDown size={14} />
-                  Download my data
+                  {t('diagnostics.downloadMyData')}
                 </button>
-                <InfoTip ariaLabel="About Download my data">
-                  Export every client-side record Vaipakam keeps under its
-                  namespace as JSON. On-chain data is public blockchain
-                  state and is not included.
+                <InfoTip ariaLabel={t('diagnostics.downloadMyDataAria')}>
+                  {t('diagnostics.downloadMyDataTip')}
                 </InfoTip>
               </span>
               <span className="diag-action-with-info">
@@ -189,14 +166,7 @@ export default function DiagnosticsDrawer() {
                     // Two-step confirm — delete is irreversible on the
                     // client side (though everything is restorable by
                     // re-using the app; on-chain state stays).
-                    const ok = window.confirm(
-                      'Erase every Vaipakam-namespaced entry in this browser?\n\n' +
-                        '• Your journey log will be cleared.\n' +
-                        '• Your cookie / consent choice will be reset.\n' +
-                        '• Cached event indexes will be purged.\n\n' +
-                        'On-chain positions and transactions are NOT affected — ' +
-                        'blockchain state is public and cannot be erased.',
-                    );
+                    const ok = window.confirm(t('diagnostics.deleteConfirm'));
                     if (!ok) return;
                     deleteMyData();
                     // Reload so every hook / banner rehydrates from
@@ -205,17 +175,15 @@ export default function DiagnosticsDrawer() {
                   }}
                 >
                   <ShieldAlert size={14} />
-                  Delete my data
+                  {t('diagnostics.deleteMyData')}
                 </button>
-                <InfoTip ariaLabel="About Delete my data">
-                  Erase every client-side record Vaipakam keeps under its
-                  namespace. On-chain positions are unaffected (blockchain
-                  state is public).
+                <InfoTip ariaLabel={t('diagnostics.deleteMyDataAria')}>
+                  {t('diagnostics.deleteMyDataTip')}
                 </InfoTip>
               </span>
             </div>
 
-            <div className="diag-filters" role="tablist" aria-label="Filter by status">
+            <div className="diag-filters" role="tablist" aria-label={t('diagnostics.filterAriaLabel')}>
               {FILTERS.map((f) => {
                 const count = f.key === 'all'
                   ? events.length
@@ -229,7 +197,7 @@ export default function DiagnosticsDrawer() {
                     className={`diag-filter ${filter === f.key ? 'active' : ''}`}
                     onClick={() => setFilter(f.key)}
                   >
-                    {f.label}
+                    {t(f.labelKey)}
                     <span className="diag-filter-count">{count}</span>
                   </button>
                 );
@@ -238,10 +206,10 @@ export default function DiagnosticsDrawer() {
 
             <div className="diag-events">
               {events.length === 0 ? (
-                <p className="diag-empty">No events yet — take an action to start recording.</p>
+                <p className="diag-empty">{t('diagnostics.noEventsYet')}</p>
               ) : visibleEvents.length === 0 ? (
                 <p className="diag-empty">
-                  No {filter} events. Switch the filter to see other steps.
+                  {t('diagnostics.noFilterMatches', { filter: t(`diagnostics.filter${filter.charAt(0).toUpperCase()}${filter.slice(1)}`).toLowerCase() })}
                 </p>
               ) : (
                 [...visibleEvents].reverse().map((ev) => (
@@ -255,12 +223,12 @@ export default function DiagnosticsDrawer() {
                     </div>
                     <div className="diag-event-step">
                       {ev.step}
-                      {ev.loanId !== undefined && ` · loan #${ev.loanId}`}
-                      {ev.offerId !== undefined && ` · offer #${ev.offerId}`}
+                      {ev.loanId !== undefined && ` · ${t('diagnostics.loanSuffix', { id: ev.loanId })}`}
+                      {ev.offerId !== undefined && ` · ${t('diagnostics.offerSuffix', { id: ev.offerId })}`}
                     </div>
                     {ev.errorMessage && (
                       <div className="diag-event-error">
-                        <strong>{ev.errorType ?? 'error'}:</strong> {ev.errorMessage}
+                        <strong>{ev.errorType ?? t('diagnostics.errorFallback')}:</strong> {ev.errorMessage}
                         <span style={{ marginLeft: 8 }}>
                           <ReportIssueLink />
                         </span>

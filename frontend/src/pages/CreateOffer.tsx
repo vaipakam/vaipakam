@@ -991,7 +991,12 @@ export default function CreateOffer() {
           <button
             type="submit"
             className="btn btn-primary"
-            disabled={step !== "form"}
+            disabled={step !== "form" || !form.fallbackConsent}
+            data-tooltip={
+              step === "form" && !form.fallbackConsent
+                ? t('riskDisclosures.checkboxLabel')
+                : undefined
+            }
           >
             {step === "approving"
               ? t('createOffer.approving')

@@ -70,6 +70,15 @@ export interface JourneyEvent {
   errorSelector?: string;    // 4-byte revert selector (0x + 8 hex), when available
   errorName?: string;        // resolved custom-error name, if the selector matches a known entry
   errorData?: string;        // full raw revert data (0x…) for off-line decoding
+  /** Truncated `Error.stack` from the original throw — top frames only,
+   *  control chars stripped. Captured automatically by
+   *  `beginStep().failure()` so callers don't have to thread it. */
+  errorStack?: string;
+  /** Recursive walk of `Error.cause` at the time of the throw, each
+   *  layer's `name: message`. Depth capped at 3 to keep URL length
+   *  manageable. Useful when wrappers like `enrichFetchError` layer a
+   *  more verbose error over the original network failure. */
+  errorCauseChain?: string[];
   note?: string;             // optional free-form extra context (never secrets)
 }
 
@@ -144,6 +153,8 @@ export interface EmitInput {
   errorSelector?: string;
   errorName?: string;
   errorData?: string;
+  errorStack?: string;
+  errorCauseChain?: string[];
   note?: string;
   correlationId?: string;
 }
@@ -168,6 +179,8 @@ export function emit(input: EmitInput): JourneyEvent {
     errorSelector: input.errorSelector,
     errorName: input.errorName,
     errorData: input.errorData,
+    errorStack: input.errorStack,
+    errorCauseChain: input.errorCauseChain,
     note: input.note,
   };
   buffer.push(ev);
@@ -175,6 +188,45 @@ export function emit(input: EmitInput): JourneyEvent {
   persist();
   notify();
   return ev;
+}
+
+/**
+ * Truncate a JS Error.stack string to the top N frames + a header. Keeps
+ * third-party `node_modules` frames so the call site that triggered the
+ * throw is visible even when our own bundle is wrapped through ethers /
+ * viem / wagmi internals. Returns undefined when the input doesn't look
+ * like a stack trace.
+ */
+function extractStack(err: unknown, maxFrames = 15): string | undefined {
+  if (!err || typeof err !== 'object') return undefined;
+  const stack = (err as { stack?: unknown }).stack;
+  if (typeof stack !== 'string' || !stack) return undefined;
+  // The first line is the error name + message; subsequent lines are
+  // frames. Keep the header line + up to maxFrames frame lines.
+  const lines = stack.split('\n');
+  if (lines.length <= maxFrames + 1) return stack;
+  return [...lines.slice(0, maxFrames + 1), `... (${lines.length - maxFrames - 1} more frames)`].join('\n');
+}
+
+/**
+ * Walk `Error.cause` recursively up to `maxDepth` levels and return one
+ * compact string per layer (`name: message`). Useful when wrappers like
+ * `enrichFetchError` layer a more-verbose error over the original
+ * network failure — the cause chain surfaces both.
+ */
+function extractCauseChain(err: unknown, maxDepth = 3): string[] | undefined {
+  const chain: string[] = [];
+  let current: unknown = err && typeof err === 'object' ? (err as { cause?: unknown }).cause : undefined;
+  let depth = 0;
+  while (current && depth < maxDepth) {
+    const layer = current as { name?: string; message?: string };
+    const name = layer.name ?? 'Error';
+    const msg = layer.message ?? String(current).slice(0, 200);
+    chain.push(`${name}: ${msg}`);
+    current = (current as { cause?: unknown }).cause;
+    depth++;
+  }
+  return chain.length > 0 ? chain : undefined;
 }
 
 /**
@@ -206,6 +258,8 @@ export function beginStep(input: Omit<EmitInput, 'status'>): {
         errorSelector: extra?.errorSelector ?? selector,
         errorName: extra?.errorName ?? (named && named !== selector ? named : undefined),
         errorData: extra?.errorData ?? data,
+        errorStack: extra?.errorStack ?? extractStack(err),
+        errorCauseChain: extra?.errorCauseChain ?? extractCauseChain(err),
         correlationId: start.id,
       });
     },
@@ -411,7 +465,11 @@ function readProviderChainId(): number | null {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
-const MAX_BODY_LEN = 6_000; // keep GitHub issue URL under its practical limit
+// 8000 chars leaves comfortable headroom under GitHub's practical issue-URL
+// length (~16k). The dense events list lives inside a folded `<details>`
+// section, so the visible top-of-issue triage remains scannable even when
+// the body approaches the cap.
+const MAX_BODY_LEN = 8_000;
 const MAX_EVENTS_IN_ISSUE = 20;
 /** How many events to include on either side of the most-recent failure
  *  when the buffer contains one. The error itself is always included.
@@ -458,6 +516,75 @@ function mostRecentTxHash(): string | null {
   return null;
 }
 
+/** Strip ASCII control chars (C0 set) via code-point filter so eslint's
+ *  no-control-regex doesn't flag the pattern, then escape markdown-breaking
+ *  characters so downstream triage tables stay intact. Optionally caps the
+ *  result at `maxLen` characters; pass `null` for no cap. */
+function sanitiseForIssue(raw: string, maxLen: number | null = 140): string {
+  const cleaned = raw
+    .replace(/[|`]/g, (c) => '\\' + c)
+    .split('')
+    .filter((c) => c.charCodeAt(0) >= 0x20)
+    .join('');
+  if (maxLen == null) return cleaned;
+  return cleaned.slice(0, maxLen);
+}
+
+/**
+ * Verbose first-level error-details block surfaced at the top of every
+ * GitHub issue body. The UI typically shows a short user-friendly
+ * message; this block carries everything support needs for triage on
+ * the FIRST view of the issue: the failing area / flow / step, the
+ * full error type / name / selector / message, raw revert data, plus
+ * the most-recent on-chain tx hash if one exists. Wallet addresses
+ * are redacted but error fields are kept verbatim — they're already
+ * captured server-deterministically and never include private keys
+ * or signatures (per the journey-log redaction contract above).
+ */
+function errorDetailsBlock(ev: JourneyEvent | null): string {
+  if (!ev) return '';
+  const lines: string[] = ['### Error details', ''];
+  lines.push(`- **Area / Flow / Step:** \`${ev.area}/${ev.flow}\` · step \`${ev.step}\``);
+  if (ev.errorType) lines.push(`- **Error type:** \`${ev.errorType}\``);
+  if (ev.errorName && ev.errorName !== ev.errorSelector) {
+    lines.push(`- **Decoded custom error:** \`${ev.errorName}\``);
+  }
+  if (ev.errorSelector) {
+    lines.push(`- **Revert selector (4-byte):** \`${ev.errorSelector}\``);
+  }
+  if (ev.loanId) lines.push(`- **Loan id:** \`#${ev.loanId}\``);
+  if (ev.offerId) lines.push(`- **Offer id:** \`#${ev.offerId}\``);
+  if (ev.nftId) lines.push(`- **NFT id:** \`#${ev.nftId}\``);
+  if (ev.role) lines.push(`- **Role:** \`${ev.role}\``);
+  if (ev.chainId != null) lines.push(`- **Chain id:** \`${ev.chainId}\``);
+  const txHash = extractTxHash(ev);
+  if (txHash) lines.push(`- **Tx hash:** \`${txHash}\``);
+  if (ev.errorMessage) {
+    // No 140-char cap here — this is the dedicated detail block. We
+    // still strip control chars and escape pipe / backtick so the
+    // markdown stays clean. Wrapped in a fenced code block so long
+    // multi-line revert reasons render as-is.
+    const safe = sanitiseForIssue(ev.errorMessage, 1200);
+    lines.push('- **Error message:**');
+    lines.push('```');
+    lines.push(safe);
+    lines.push('```');
+  }
+  if (ev.errorData) {
+    const safe = sanitiseForIssue(ev.errorData, 800);
+    lines.push('- **Raw revert data:**');
+    lines.push('```');
+    lines.push(safe);
+    lines.push('```');
+  }
+  if (ev.note) {
+    const safe = sanitiseForIssue(ev.note, 200);
+    lines.push(`- **Step note:** \`${safe}\``);
+  }
+  lines.push('');
+  return lines.join('\n');
+}
+
 /**
  * Summarises ONE event as a single safe-to-publish line. Never includes:
  *   - full wallet addresses (always redacted to `0x…abcd`)
@@ -484,21 +611,110 @@ function eventToIssueLine(ev: JourneyEvent): string {
   else if (ev.errorSelector) parts.push(`selector=${ev.errorSelector}`);
   if (ev.errorType) parts.push(`type=${ev.errorType}`);
   // Error messages sometimes embed user-entered strings (e.g. bad address
-  // input echoed back). Truncate + strip control chars + escape pipes so
-  // nothing downstream can break or smuggle hidden markdown.
+  // input echoed back). The events list lives inside a folded
+  // `<details>` block on the issue, so we can afford a more generous
+  // 500-char cap per line — enough to capture a typical revert reason
+  // including struct-formatted custom-error args without truncating
+  // mid-thought. The dedicated `errorDetailsBlock` above the fold still
+  // carries the full message (cap 1200) for the most-recent failure.
   if (ev.errorMessage) {
-    // Strip ASCII control chars (C0 set) via their code points so eslint's
-    // no-control-regex doesn't flag the pattern, and escape markdown-breaking
-    // backticks and pipes so downstream triage tables stay intact.
-    const safe = ev.errorMessage
-      .replace(/[|`]/g, (c) => '\\' + c)
-      .split('')
-      .filter((c) => c.charCodeAt(0) >= 0x20)
-      .join('')
-      .slice(0, 140);
-    parts.push(`msg="${safe}"`);
+    parts.push(`msg="${sanitiseForIssue(ev.errorMessage, 500)}"`);
+  }
+  // Free-form step note (e.g. tx hash, retry count, gas-estimation
+  // result). Capped at 200 chars; same sanitisation pass as everything
+  // else in this file. Many success steps emit `note: 'tx 0x...'` so
+  // including this in the events list lets triage correlate the
+  // failure with the surrounding on-chain activity.
+  if (ev.note) {
+    parts.push(`note="${sanitiseForIssue(ev.note, 200)}"`);
   }
   return `- ${parts.join(' · ')}`;
+}
+
+/**
+ * Render an `Error.stack` excerpt (already truncated upstream by
+ * `extractStack`) inside a folded `<details>` block. Sanitised to strip
+ * control chars and pipes / backticks, then wrapped in a fenced code
+ * block so frame paths render literally.
+ */
+function stackTraceSection(ev: JourneyEvent | null): string {
+  if (!ev?.errorStack) return '';
+  const safe = sanitiseForIssue(ev.errorStack, 2400);
+  return [
+    '<details>',
+    '<summary><strong>Stack trace</strong> (top frames from the original throw)</summary>',
+    '',
+    '```',
+    safe,
+    '```',
+    '',
+    '</details>',
+    '',
+  ].join('\n');
+}
+
+/**
+ * Render the recursive `Error.cause` chain inside a folded `<details>`
+ * block. Surfaces wrappers like `enrichFetchError` (which puts a more
+ * verbose `TypeError` over the original `Failed to fetch`) so triage
+ * sees both layers at once instead of having to ask "what was the
+ * underlying network error?".
+ */
+function causeChainSection(ev: JourneyEvent | null): string {
+  if (!ev?.errorCauseChain || ev.errorCauseChain.length === 0) return '';
+  const lines = ev.errorCauseChain.map((layer, i) => {
+    const safe = sanitiseForIssue(layer, 400);
+    return `${i + 1}. \`${safe}\``;
+  });
+  return [
+    '<details>',
+    '<summary><strong>Cause chain</strong> (wrapped errors, top → bottom)</summary>',
+    '',
+    ...lines,
+    '',
+    '</details>',
+    '',
+  ].join('\n');
+}
+
+/**
+ * Browser-environment summary. Deliberately narrow: viewport size,
+ * online state, prefers-color-scheme, document language, and document
+ * referrer. Excludes anything that would help fingerprint or identify
+ * the user — no user-agent, no screen resolution, no localStorage
+ * contents, no cookie info. Returns an empty string when running
+ * server-side (no `window`).
+ */
+function browserEnvSection(): string {
+  if (typeof window === 'undefined' || typeof document === 'undefined') return '';
+  const viewport = `${window.innerWidth}×${window.innerHeight}`;
+  const online =
+    typeof navigator !== 'undefined' && 'onLine' in navigator
+      ? String(navigator.onLine)
+      : 'unknown';
+  const colorScheme =
+    typeof window.matchMedia === 'function' &&
+    window.matchMedia('(prefers-color-scheme: dark)').matches
+      ? 'dark'
+      : 'light';
+  const lang = (document.documentElement.lang || 'unknown').slice(0, 16);
+  const referrer = sanitiseForIssue(document.referrer || '(none)', 120);
+  const lines = [
+    `- **Viewport:** \`${viewport}\``,
+    `- **Online:** \`${online}\``,
+    `- **Prefers color scheme:** \`${colorScheme}\``,
+    `- **Document language:** \`${lang}\``,
+    `- **Referrer:** \`${referrer}\``,
+  ];
+  return [
+    '<details>',
+    '<summary><strong>Browser environment</strong> (no user-agent, no fingerprint vectors)</summary>',
+    '',
+    ...lines,
+    '',
+    '</details>',
+    '',
+  ].join('\n');
 }
 
 /**
@@ -549,15 +765,19 @@ export function buildGithubIssueUrl(): string {
     '',
     '> Auto-generated by the Vaipakam diagnostics drawer. No personal',
     '> information is published: wallet addresses are shortened to',
-    '> `0x…abcd`, free-form error text is truncated to 140 chars, the',
-    '> browser user-agent is NOT included. If support asks for more detail,',
-    '> they can request the full diagnostics JSON (contains the same',
-    '> `reportId` as this issue).',
+    '> `0x…abcd`, the browser user-agent is NOT included, no localStorage',
+    '> contents, no cookies. The "Error details" block carries the full',
+    '> first-level diagnostic info for the most recent failure; the folded',
+    '> sections below carry the deeper second-level data (stack trace,',
+    '> cause chain, browser env, dense events list) so a developer can',
+    '> pinpoint the bug without a back-and-forth.',
     '',
+    errorDetailsBlock(lastFailure),
+    stackTraceSection(lastFailure),
+    causeChainSection(lastFailure),
+    browserEnvSection(),
     '### What happened?',
     '<!-- Please describe in your own words what you were trying to do. -->',
-    '',
-    '### Recent events',
     '',
   ].filter((l) => l != null).join('\n');
 
@@ -574,10 +794,26 @@ export function buildGithubIssueUrl(): string {
   const windowEnd = lastFailureIdx >= 0
     ? Math.min(buffer.length, lastFailureIdx + 1 + EVENTS_AFTER_FAILURE)
     : buffer.length;
-  const recent = buffer
+  const eventLines = buffer
     .slice(windowStart, windowEnd)
     .map(eventToIssueLine)
     .join('\n');
+  // Wrap the events list in a folded `<details>` block so the
+  // top-of-issue triage stays scannable. The summary count gives
+  // triage an at-a-glance signal of how chatty the session was
+  // before they decide to expand. Window window window — the
+  // visible boundaries are also shown so a reader knows whether
+  // the buffer was clipped.
+  const eventCount = windowEnd - windowStart;
+  const recent = [
+    '<details>',
+    `<summary><strong>Recent events</strong> (${eventCount} entries — click to expand)</summary>`,
+    '',
+    eventLines,
+    '',
+    '</details>',
+    '',
+  ].join('\n');
 
   let body = header + recent;
   if (body.length > MAX_BODY_LEN) {

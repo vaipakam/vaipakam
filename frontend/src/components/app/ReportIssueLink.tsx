@@ -1,4 +1,5 @@
 import { Bug } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 import { buildGithubIssueUrl } from '../../lib/journeyLog';
 import './ReportIssueLink.css';
 
@@ -22,7 +23,8 @@ interface ReportIssueLinkProps {
    *  error text; `button` renders as a ghost-style button for standalone
    *  placement in error banners / empty states. */
   variant?: 'inline' | 'button';
-  /** Optional override for the link label; defaults to "Report on GitHub". */
+  /** Optional override for the link label; defaults to the localised
+   *  "Report on GitHub" string. */
   label?: string;
   /** Optional extra className the parent wants to pin on. */
   className?: string;
@@ -30,9 +32,10 @@ interface ReportIssueLinkProps {
 
 export function ReportIssueLink({
   variant = 'inline',
-  label = 'Report on GitHub',
+  label,
   className = '',
 }: ReportIssueLinkProps) {
+  const { t } = useTranslation();
   const onClick = (e: React.MouseEvent<HTMLAnchorElement>) => {
     // Rebuild at click-time so the URL captures the latest buffer state.
     const url = buildGithubIssueUrl();
@@ -48,11 +51,11 @@ export function ReportIssueLink({
       rel="noopener noreferrer"
       onClick={onClick}
       className={`${base} ${className}`.trim()}
-      aria-label="Report this issue on GitHub"
-      data-tooltip="Opens a prefilled issue form. No wallet address, user-agent, or free-form input is shared."
+      aria-label={t('diagnostics.reportIssueAria')}
+      data-tooltip={t('diagnostics.reportIssueTooltip')}
     >
       <Bug size={variant === 'button' ? 14 : 12} />
-      <span>{label}</span>
+      <span>{label ?? t('diagnostics.reportOnGithub')}</span>
     </a>
   );
 }

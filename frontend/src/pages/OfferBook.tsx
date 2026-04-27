@@ -1269,14 +1269,19 @@ function AcceptReviewModal({ offer, illiquid, consent, onConsentChange, submitti
 
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 16 }}>
           <button className="btn btn-secondary btn-sm" onClick={onCancel} disabled={submitting}>
-            Cancel
+            {t('common.cancel')}
           </button>
           <button
             className="btn btn-primary btn-sm"
             onClick={onConfirm}
             disabled={submitting || !consent}
+            data-tooltip={
+              !submitting && !consent
+                ? t('riskDisclosures.checkboxLabel')
+                : undefined
+            }
           >
-            {submitting ? 'Accepting...' : 'Confirm & Accept'}
+            {submitting ? t('offerTable.acceptingDots') : t('offerTable.confirmAndAccept')}
           </button>
         </div>
       </div>
