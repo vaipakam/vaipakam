@@ -47,18 +47,18 @@ Cross-facet calls use `address(this).call(abi.encodeWithSelector(...))` — this
 
 ### Core Facets & Loan Lifecycle
 
-| Facet | Role |
-|---|---|
-| **OfferFacet** | Create/accept/cancel lending & borrowing offers |
-| **LoanFacet** | Initiate loans, enforce HF >= 1.5 and LTV constraints |
-| **RepayFacet** | Full/partial repayment, NFT daily deductions, late fees |
-| **DefaultedFacet** | Time-based defaults (grace period expired) |
-| **RiskFacet** | LTV/Health Factor calculation, HF-based liquidation via 0x swap |
-| **OracleFacet** | Chainlink price feeds, v3-style concentrated-liquidity AMM liquidity checks |
-| **EscrowFactoryFacet** | Per-user UUPS escrow proxy deployment |
-| **VaipakamNFTFacet** | Mint/update/burn position NFTs (ERC721, on-chain metadata) |
-| **ProfileFacet** | User country (sanctions), KYC verification |
-| **AdminFacet** | Treasury, 0x proxy, allowance target config |
+| Facet                  | Role                                                                        |
+| ---------------------- | --------------------------------------------------------------------------- |
+| **OfferFacet**         | Create/accept/cancel lending & borrowing offers                             |
+| **LoanFacet**          | Initiate loans, enforce HF >= 1.5 and LTV constraints                       |
+| **RepayFacet**         | Full/partial repayment, NFT daily deductions, late fees                     |
+| **DefaultedFacet**     | Time-based defaults (grace period expired)                                  |
+| **RiskFacet**          | LTV/Health Factor calculation, HF-based liquidation via 0x swap             |
+| **OracleFacet**        | Chainlink price feeds, v3-style concentrated-liquidity AMM liquidity checks |
+| **EscrowFactoryFacet** | Per-user UUPS escrow proxy deployment                                       |
+| **VaipakamNFTFacet**   | Mint/update/burn position NFTs (ERC721, on-chain metadata)                  |
+| **ProfileFacet**       | User country (sanctions), KYC verification                                  |
+| **AdminFacet**         | Treasury, 0x proxy, allowance target config                                 |
 
 Placeholder facets (Phase 2): TreasuryFacet, PrecloseFacet, RefinanceFacet, EarlyWithdrawalFacet, PartialWithdrawalFacet.
 
@@ -191,6 +191,7 @@ mutation sites passing the post-mutation balance; read-only snapshots
 pass the live balance.
 
 **Borrower LIF — Phase 5 flow**:
+
 1. At `OfferFacet.acceptOffer` on the VPFI path: borrower pays the
    FULL 0.1% LIF equivalent in VPFI (not tier-discounted) from their
    escrow into **Diamond custody** (not treasury). Amount recorded
@@ -208,6 +209,7 @@ pass the live balance.
    VPFI atomically with the normal collateral claim.
 
 **Mainnet invariants to preserve**:
+
 - Every proper-close terminal path MUST call
   `LibVPFIDiscount.settleBorrowerLifProper(loan)`.
 - Every default / liquidation terminal path MUST call
@@ -220,3 +222,49 @@ pass the live balance.
 Full detail in [`docs/TokenomicsTechSpec.md`](docs/TokenomicsTechSpec.md)
 §5.2b and the Phase 5 section of
 [`docs/ReleaseNotes-2026-04-23-to-24.md`](docs/ReleaseNotes-2026-04-23-to-24.md).
+
+## Retail-deploy policy — KYC / sanctions / country-pair gates STAY OFF
+
+The retail Vaipakam deploy is permissionless: KYC, sanctions-oracle
+lookups, and country-pair trade restrictions never gate user flow.
+The contracts already ship with these checks runtime-disabled by
+default; the deploy must preserve that posture.
+
+**Three runtime knobs that must never be flipped on the retail deploy:**
+
+1. `AdminFacet.setKYCEnforcement(true)` — flips
+   `s.kycEnforcementEnabled`. While `false` (the post-deploy default),
+   `ProfileFacet.meetsKYCRequirement` and `isKYCVerified` short-circuit
+   to `true` so OfferFacet / LibCompliance / RiskFacet / DefaultedFacet
+   call sites never block.
+2. `ProfileFacet.setSanctionsOracle(<oracle>)` — sets
+   `s.sanctionsOracle`. While unset (`address(0)` default),
+   `LibVaipakam.isSanctionedAddress(...)` returns `false` for every
+   address, so `OfferFacet.createOffer` / `acceptOffer` sanctions
+   guards are no-ops.
+3. `LibVaipakam.canTradeBetween(...)` — already returns `true`
+   unconditionally regardless of `allowedTrades` storage. Don't
+   replace it with the gated implementation.
+
+**Don't:**
+
+- Add `setKYCEnforcement(true)` to any deploy or post-deploy script.
+- Add `setSanctionsOracle(...)` to any deploy or post-deploy script.
+- Change `canTradeBetween` to consult the `allowedTrades` mapping.
+- Mention KYC, identity verification, sanctions screening, or
+  country gating on the website / whitepaper / overview / user
+  guide / marketing copy. The retail product is permissionless
+  end-state, not "permissionless for now".
+
+**Why the code is still there:** the industrial-user variant is a
+separate deploy on a separate fork that re-uses the same contracts
+with these gates flipped on. Don't delete the gates from the source;
+just don't enable them on the retail deploy. See
+[`docs/internal/Roadmap.md`](docs/internal/Roadmap.md) for the
+fork plan.
+
+The Sepolia test scripts (`SepoliaActiveLoan.s.sol`,
+`SepoliaOpenOffers.s.sol`, `SepoliaPositiveFlows.s.sol`) call
+`updateKYCTier(...)` / `setTradeAllowance(...)` defensively but those
+calls are no-ops while enforcement is off and trade-pair checks are
+unconditional. They can stay.

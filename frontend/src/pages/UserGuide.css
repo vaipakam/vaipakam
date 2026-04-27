@@ -588,3 +588,71 @@
     padding: 18px 22px;
   }
 }
+
+/* ── Help-section three-tab strip (Overview / User Guide / Technical) ─
+ *
+ * Pinned at the top of every `/help/*` page's content column. Renders
+ * the same on the Overview, User Guide (basic + advanced), and
+ * Technical pages so the reader can flip between them without
+ * navigating away from the help section.
+ *
+ * Layout: horizontal flex strip on every viewport size; the labels
+ * are short enough to fit three across even on narrow phones. The
+ * active tab is bottom-bordered with the brand colour; inactive tabs
+ * use the muted text colour. */
+
+.help-tabs {
+  display: flex;
+  gap: 4px;
+  border-bottom: 1px solid var(--border);
+  margin: 0 0 24px;
+  /* Allow horizontal scroll on extremely narrow viewports rather than
+   * wrapping the row — three tabs on two lines reads as "broken nav". */
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.help-tabs::-webkit-scrollbar {
+  display: none;
+}
+
+.help-tab {
+  flex: 0 0 auto;
+  padding: 10px 16px;
+  font-size: 0.9rem;
+  font-weight: 500;
+  color: var(--text-secondary);
+  text-decoration: none;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  transition: color 120ms ease, border-color 120ms ease;
+  white-space: nowrap;
+}
+
+.help-tab:hover {
+  color: var(--text-primary);
+}
+
+.help-tab.is-active {
+  color: var(--brand);
+  border-bottom-color: var(--brand);
+  font-weight: 600;
+}
+
+/* ── Single-column help layout (Overview, Technical) ──────────────────
+ *
+ * The two-column sidebar layout in `.user-guide-layout` is needed for
+ * the User Guide because that page has a TOC + role selector. The
+ * Overview and Technical pages don't — they're top-to-bottom prose.
+ * `--single` overrides the grid back to a single column on desktop. */
+
+.user-guide-layout--single {
+  display: block;
+}
+
+@media (min-width: 1024px) {
+  .user-guide-layout--single {
+    display: block;
+    max-width: 880px;
+  }
+}

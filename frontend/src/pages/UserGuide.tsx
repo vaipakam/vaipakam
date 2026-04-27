@@ -70,6 +70,7 @@ import remarkGfm from 'remark-gfm';
 import Navbar from '../components/Navbar';
 import Footer from '../components/Footer';
 import { EnglishOnlyNotice } from '../components/app/EnglishOnlyNotice';
+import { HelpTabs } from '../components/HelpTabs';
 import { isSupportedLocale, withLocalePrefix } from '../components/LocaleResolver';
 import type { SupportedLocale } from '../i18n/glossary';
 import './UserGuide.css';
@@ -611,6 +612,7 @@ export default function UserGuide({ variant }: UserGuideProps) {
             </aside>
 
             <article className="user-guide-content">
+              <HelpTabs />
               {fellBackToEnglish && <EnglishOnlyNotice variant="guide" />}
               {blocks.map((block, i) =>
                 block.kind === 'markdown' ? (

@@ -905,6 +905,12 @@
     "ariaLabel": "À propos de cette carte",
     "learnMore": "En savoir plus"
   },
+  "helpTabs": {
+    "ariaLabel": "Navigation de la section d'aide",
+    "overview": "Vue d'ensemble",
+    "userGuide": "Guide d'utilisation",
+    "technical": "Technique"
+  },
   "pageNotice": {
     "englishOnlyTitle": "Disponible uniquement en anglais",
     "englishOnlyBody": "Ce document est disponible uniquement en anglais. Une version traduite pourra être ajoutée dans une future mise à jour.",

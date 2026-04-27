@@ -905,6 +905,12 @@
     "ariaLabel": "Acerca de esta tarjeta",
     "learnMore": "Más información"
   },
+  "helpTabs": {
+    "ariaLabel": "Navegación de la sección de ayuda",
+    "overview": "Visión general",
+    "userGuide": "Guía de usuario",
+    "technical": "Técnico"
+  },
   "pageNotice": {
     "englishOnlyTitle": "Disponible solo en inglés",
     "englishOnlyBody": "Este documento está disponible solo en inglés. Una versión traducida puede agregarse en una futura actualización.",

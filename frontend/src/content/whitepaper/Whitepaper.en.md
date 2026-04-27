@@ -2,7 +2,7 @@
 
 **Version:** `3.0`
 **Date:** April 2026
-**Status:** Phase 1 implementation complete (Phases 5–9 shipped); production rollout pending mainnet cutover
+**Status:** Production protocol
 
 ---
 
@@ -25,7 +25,7 @@ This document specifies the architecture, the loan and rental lifecycle,
 the risk and liquidation engine, the oracle and liquidity-classification
 model, the VPFI tokenomics, the cross-chain reward mesh, the security
 posture, and the operational and governance topology that together define
-the Phase 1 production protocol.
+the production protocol.
 
 ---
 
@@ -47,10 +47,8 @@ the Phase 1 production protocol.
 14. MEV Protection
 15. Governance and Operations
 16. Frontend as a Safety Layer
-17. Compliance Posture
-18. Verification and Testing
-19. Roadmap
-20. References
+17. Verification and Testing
+18. References
 
 ---
 
@@ -80,7 +78,7 @@ The protocol's defining commitments are:
   path and sufficient v3-style AMM depth. Ethereum mainnet is never
   consulted as a fallback reference for another chain.
 - **Refusal to trade on bad markets.** When liquidation slippage would exceed
-  the configured ceiling (Phase 1 default `6%`), the protocol stops trying
+  the configured ceiling (default `6%`), the protocol stops trying
   to convert collateral and routes into a documented in-kind fallback path
   rather than dumping into illiquid books.
 - **Permissionless safety.** Any address may liquidate when conditions are
@@ -109,9 +107,8 @@ supported chain. Each Diamond is an independent protocol instance:
 - per-chain Diamonds are governed by per-chain Safes / timelocks
 - only `VPFI` and the daily interaction-reward denominator are cross-chain
 
-Phase 1 chains: `Ethereum mainnet`, `Base` (canonical), `Polygon zkEVM`,
-`Arbitrum`, `Optimism`, and `BNB Chain`. Polygon PoS is deferred to Phase 2
-pending AggLayer maturity; Solana is explicitly out of scope.
+Supported chains: `Ethereum mainnet`, `Base` (canonical), `Polygon zkEVM`,
+`Arbitrum`, `Optimism`, and `BNB Chain`.
 
 ### 2.2 Product Surface
 
@@ -143,7 +140,7 @@ Vaipakam supports:
 - **Operator** — the team that runs the canonical frontend, the
   hf-watcher Cloudflare Worker, and the public reference keeper-bot repo.
 - **Governance Safe** — long-delay admin authority via 48-hour timelock.
-- **Ops Safe (Guardian)** — fast-response pause + KYC tier holder.
+- **Ops Safe (Guardian)** — fast-response pause holder.
 
 ---
 
@@ -171,7 +168,7 @@ Lifecycle facets:
 - **OfferFacet** — create / accept / cancel offers (ERC-20 and rental)
 - **LoanFacet** — `initiateLoan`, liquidity re-check, HF / LTV gate, NFT mint
 - **RepayFacet** — full / partial repayment, late-fee accrual, daily rental deductions
-- **ClaimFacet** — claim-based fund release for both sides; routes Phase 5 borrower VPFI rebate
+- **ClaimFacet** — claim-based fund release for both sides; routes the borrower VPFI rebate
 
 Risk and oracle:
 
@@ -193,7 +190,7 @@ Admin and config:
 
 - **AdminFacet** — treasury address, pause toggles, swap-adapter registry
 - **ConfigFacet** — runtime-tunable protocol parameters (fees, LTV, slippage, tier table, APR)
-- **AccessControlFacet** — RBAC with seven roles
+- **AccessControlFacet** — RBAC role plumbing
 - **TreasuryFacet** — VPFI mint surface, treasury fee accumulation
 - **DiamondCutFacet / DiamondLoupeFacet / OwnershipFacet** — `EIP-2535` plumbing
 
@@ -201,7 +198,7 @@ NFT and escrow:
 
 - **VaipakamNFTFacet** — position NFT mint / update / burn (ERC-721, on-chain metadata)
 - **EscrowFactoryFacet** — per-user UUPS escrow proxy deployment, mandatory upgrade gating
-- **ProfileFacet** — user country, KYC tier, keeper opt-in surface
+- **ProfileFacet** — keeper opt-in surface
 
 Strategic flows:
 
@@ -214,7 +211,6 @@ Strategic flows:
 Auxiliary:
 
 - **MetricsFacet** — read-only public analytics surface (TVL, counts, fee totals)
-- **LegalFacet** — country-pair compatibility query (Phase 1: always returns `true`)
 
 ### 3.3 Per-User Escrow
 
@@ -265,8 +261,6 @@ Key constants in `LibVaipakam.sol`:
 | `FALLBACK_TREASURY_BPS` | `200` | `2%` treasury share in fallback |
 | `RENTAL_BUFFER_BPS` | `500` | `5%` NFT rental prepayment buffer |
 | `VOLATILITY_LTV_THRESHOLD_BPS` | `11000` | `110%` LTV collapse trigger |
-| `KYC_TIER1_THRESHOLD_USD` | `1000e18` | KYC Tier 1 threshold |
-| `KYC_TIER2_THRESHOLD_USD` | `10000e18` | KYC Tier 2 threshold |
 | `VPFI_HARD_CAP` | `230_000_000e18` | Global VPFI supply cap |
 | `VPFI_INITIAL_MINT` | `23_000_000e18` | Genesis mint on Base |
 | `VPFI_INTERACTION_POOL_CAP` | `69_000_000e18` | Interaction-reward category cap |
@@ -300,7 +294,7 @@ only if both of the following hold on that chain:
    when converted to USD via the active chain's Chainlink `ETH/USD`.
 
 Multiple V3-clone factories are checked with **OR** logic: Uniswap V3,
-PancakeSwap V3, and SushiSwap V3 (Phase 7b.1). One sufficiently deep
+PancakeSwap V3, and SushiSwap V3. One sufficiently deep
 venue is enough.
 
 **Bright-line rule:** Ethereum mainnet must not be consulted as a
@@ -406,7 +400,7 @@ For ERC-20 loans, a `0.1%` Loan Initiation Fee is charged on the lending-
 asset amount **before** net proceeds reach the borrower. On a 1,000 USDC
 match, the borrower receives 999 USDC and 1 USDC routes to treasury.
 
-The Phase 5 borrower VPFI path inverts the fee source: when consent is
+The borrower VPFI path inverts the fee source: when consent is
 active, the lending asset is liquid, and sufficient VPFI is in escrow,
 the borrower receives `100%` of the requested principal and pays the
 **full** non-discounted `0.1%` LIF equivalent in VPFI up front. That VPFI
@@ -447,8 +441,8 @@ to full collateral return. Both sides claim independently against their
 position NFTs:
 
 - `ClaimFacet.claimAsLender(loanId)` — pays principal + interest from
-  escrow; routes Phase 5 borrower VPFI rebate share if applicable
-- `ClaimFacet.claimAsBorrower(loanId)` — pays collateral + Phase 5 VPFI
+  escrow; routes the borrower VPFI rebate share if applicable
+- `ClaimFacet.claimAsBorrower(loanId)` — pays collateral + VPFI
   rebate atomically
 
 Once both sides have claimed (or have nothing to claim), the loan moves
@@ -529,7 +523,7 @@ For NFT rental defaults, `triggerDefault` revokes the borrower's user
 rights; the prepayment + buffer route to the lender (minus treasury
 fee), and the NFT returns to the lender's escrow.
 
-### 7.2 Phase 7a Swap-Failover (LibSwap)
+### 7.2 Swap-Failover (LibSwap)
 
 Liquidation conversion of liquid collateral into the borrowed asset
 goes through a four-DEX failover pipeline. The caller (keeper or
@@ -612,7 +606,7 @@ liquidation became necessary.
 
 `LibSettlement.computeRepayment` and `computePreclose` are pure functions
 that produce an immutable `ERC20Settlement` plan: principal, interest,
-late fee, treasury share, lender share, lender due, and (Phase 5) the
+late fee, treasury share, lender share, lender due, and the
 borrower VPFI rebate split. The facet body executes transfers from
 that plan exactly. This separation prevents the class of bug where the
 event log reports one split and the transfer executes another.
@@ -625,9 +619,9 @@ every swap-based liquidation attempt, automatically reaching the
 fallback path. This is intentional — the test suite exercises this as
 a bright-line gate.
 
-### 7.7 Phase 7a Operator Tooling
+### 7.7 Operator Tooling
 
-To support the Phase 7a flow end-to-end:
+To support the swap-failover flow end-to-end:
 
 - A Cloudflare Worker (`ops/hf-watcher`) exposes `/quote/0x` and
   `/quote/1inch` proxy endpoints that inject operator API keys server-
@@ -640,7 +634,7 @@ To support the Phase 7a flow end-to-end:
   when HF crosses 1.0. This mode is opt-in and requires worker secrets
   + a funded keeper EOA per chain.
 - A standalone public reference keeper bot lives in the sibling repo
-  `vaipakam-keeper-bot` (Phase 9.A). MIT-licensed, Node.js / TypeScript,
+  `vaipakam-keeper-bot`. MIT-licensed, Node.js / TypeScript,
   ABI-synced from the monorepo via `forge inspect <Facet> abi --json`.
 
 ---
@@ -662,7 +656,7 @@ For ERC-20 pricing:
 
 ### 8.2 Hybrid Peg-Aware Staleness
 
-Phase 3.1 introduced a hybrid staleness model:
+The hybrid staleness model:
 
 - volatile assets must be `≤ 2 hours` old (`ORACLE_VOLATILE_STALENESS`)
 - stable / reference feeds may extend to `≤ 25 hours` only when the
@@ -675,7 +669,7 @@ Per-feed overrides allow oracle admins to tighten the staleness budget
 or set a minimum-valid-answer floor for critical aggregators. Setting
 the override staleness back to zero clears it.
 
-### 8.3 Soft 2-of-N Secondary Quorum (Phase 7b.2)
+### 8.3 Soft 2-of-N Secondary Quorum
 
 Chainlink remains the primary pricing path. Secondary oracles harden the
 gate against single-feed manipulation:
@@ -697,10 +691,10 @@ The decision rule:
 Secondary oracle keys are derived from `IERC20.symbol()` on-chain. There
 is **no per-asset governance write** required to enable secondaries on
 new collateral assets — adding USDC, USDT, or any symbol with secondary
-coverage works automatically. Phase 7b.2 retired Pyth precisely because
+coverage works automatically. Pyth was specifically not adopted because
 its per-asset `priceId` mapping conflicted with this no-config policy.
 
-### 8.4 V3 Multi-Clone Liquidity (Phase 7b.1)
+### 8.4 V3 Multi-Clone Liquidity
 
 Pool depth is read from `IUniswapV3Factory.getPool(asset, WETH, fee)`
 across the configured V3-clone factory set:
@@ -709,7 +703,7 @@ across the configured V3-clone factory set:
 - PancakeSwap V3
 - SushiSwap V3
 
-Across multiple fee tiers (Phase 7a registers `500 / 3000 / 10000` bps
+Across multiple fee tiers (the protocol registers `500 / 3000 / 10000` bps
 tiers for each clone). Results combine with **OR** logic — one
 sufficiently deep pool on any clone at any fee tier is enough.
 
@@ -882,7 +876,7 @@ emergency brake.
 | Testers & Early Contributors | 6% | 13,800,000 | 6–12 mo cliff |
 | Platform Admins | 3% | 6,900,000 | Timelock controlled |
 | Security Auditors | 2% | 4,600,000 | One-time on delivery |
-| Regulatory Compliance Pool | 1% | 2,300,000 | One-time |
+| Reserve | 1% | 2,300,000 | One-time |
 | Bug Bounty | 2% | 4,600,000 | Multi-sig locked |
 | Exchange / Market Making | 14% | 32,200,000 | 50% liquidity / 50% locked |
 | **Early Fixed-Rate Purchase** | 1% | 2,300,000 | Public sale at `1 VPFI = 0.001 ETH` |
@@ -909,20 +903,19 @@ or per-loan toggle.
 
 ### 11.4 Time-Weighted Discount Accumulator
 
-Phase 5 enforces **time-weighted** discount calculation across the loan
+The protocol enforces **time-weighted** discount calculation across the loan
 lifetime, not point-in-time tier lookup. `LibVPFIDiscount.rollupUserDiscount`
 re-stamps the BPS at the **post-mutation** escrow VPFI balance on every
-balance change. Pre-Phase-5 code stamped at pre-mutation balance, which
-let a user keep a high-tier stamp after dropping to tier 0 until the
-next balance change — closing that gaming vector required this rollup
-contract.
+balance change. This rollup closes the gaming vector where a user could
+keep a high-tier stamp after dropping to tier 0 until the next balance
+change.
 
 The lender discount is applied at settlement: the time-weighted average
 BPS reduces the Yield Fee taken from lender interest, deducting the
 required VPFI amount from the lender's escrow into Treasury via the
 ETH+asset USD conversion path.
 
-### 11.5 Phase 5 Borrower LIF — Up-Front + Time-Weighted Rebate
+### 11.5 Borrower LIF — Up-Front + Time-Weighted Rebate
 
 The borrower path inverts the fee source. At `OfferFacet.acceptOffer`
 on the VPFI path:
@@ -951,7 +944,7 @@ amount to treasury; no rebate.
 
 This model removes the prior gaming vector where a borrower could
 briefly top up VPFI at acceptance to capture a full discount and unstake
-immediately after. Now they pay full LIF up front and earn the discount
+immediately after. Borrowers pay full LIF up front and earn the discount
 **only for the time they actually held the tier balance**.
 
 ### 11.6 Early Fixed-Rate Purchase
@@ -960,7 +953,7 @@ A `1%` allocation (`2,300,000 VPFI`) is sold publicly at the fixed rate
 `1 VPFI = 0.001 ETH`. Caps:
 
 - global: `2,300,000 VPFI`
-- per-wallet per-chain: `30,000 VPFI` (admin-configurable; Phase 1 default)
+- per-wallet per-chain: `30,000 VPFI` (admin-configurable)
 
 User flow (the `Buy VPFI` page):
 
@@ -1061,9 +1054,9 @@ from accrual.
 
 Loans are chain-local but the interaction-reward denominator is
 **protocol-wide**. Computing rewards against a local-only denominator
-would give a lender on a quiet chain an outsized share. The Phase 1
-solution: aggregate daily totals to the canonical chain and broadcast
-the global denominator back.
+would give a lender on a quiet chain an outsized share. The solution:
+aggregate daily totals to the canonical chain and broadcast the global
+denominator back.
 
 Topology:
 
@@ -1144,7 +1137,7 @@ Dedicated OApp for cross-chain reward accounting. Mirrors send `REPORT`
 messages to Base; Base sends `BROADCAST` messages back. Authenticates
 sender against the registered peer OApp address.
 
-### 13.6 DVN Hardening (Phase 1 Operational Requirement)
+### 13.6 DVN Hardening (Mainnet Operational Requirement)
 
 LayerZero defaults are 1-required / 0-optional DVN — the single-verifier
 shape that the April 2026 cross-chain bridge incident exploited. Mainnet
@@ -1206,12 +1199,12 @@ User-level mitigations available:
   have sequencer-ordered inclusion and are naturally less exposed.
 
 A frontend CoinGecko / CoinMarketCap sanity banner was evaluated and
-**rejected** in Phase 3.2 scoping — any frontend check is bypassable
+**not adopted** — any frontend check is bypassable
 via DevTools / a custom frontend / a direct `cast send`, so it doesn't
 raise the actual security floor. The in-protocol Chainlink + Soft 2-of-N
 deviation check is what actually enforces price sanity.
 
-### 14.3 Phase 6 Keeper Per-Action Authorization
+### 14.3 Keeper Per-Action Authorization
 
 The KeeperSettings system supports granular delegation:
 
@@ -1241,8 +1234,8 @@ never grants claim rights.
   default delay (24-hour minimum after stabilization). Proposer:
   Governance Safe. Executor: open after delay.
 - **Ops Safe / Guardian (2-of-5, fast-response on-call).** Holds
-  `PAUSER_ROLE` and `KYC_ADMIN_ROLE`. No delay on these — pause in a
-  live exploit is useless if it's behind a 48h timelock.
+  `PAUSER_ROLE`. No delay — pause in a live exploit is useless if it's
+  behind a 48h timelock.
 - **Deployer hot key.** Used for initial deploy + role transfer.
   **Revoked within 24 hours.**
 
@@ -1272,7 +1265,7 @@ the test.
 `AdminFacet.pauseAsset(asset)` is a finer-grained surface separate from
 the global pause. When an asset is paused, new offers / loans involving
 it revert, but in-flight wind-down (repayment, claims, addCollateral,
-preclose, refinance) remains available so non-sanctioned counterparties
+preclose, refinance) remains available so counterparties
 are not trapped.
 
 ### 15.4 Timelock Minimum
@@ -1290,7 +1283,7 @@ Executed within 24 hours of a fresh deploy:
 1. Grant new Governance Safe `DEFAULT_ADMIN_ROLE`
 2. From Governance Safe: `TimelockController.scheduleBatch` granting
    ADMIN/ORACLE/RISK/ESCROW roles to the Timelock
-3. From Governance Safe: directly grant `PAUSER_ROLE` and `KYC_ADMIN_ROLE`
+3. From Governance Safe: directly grant `PAUSER_ROLE`
    to the Ops Safe (no timelock)
 4. After 48h delay, execute the batch from step 2
 5. From deployer hot key: `renounceRole` for every role
@@ -1348,8 +1341,8 @@ Built on React + wagmi v2 + viem + ConnectKit. Pages:
   enforcement
 - `Loan Details` — LTV / HF, liquidation-price calculator (shows the
   collateral price at which HF reaches 1.0), per-side keeper status,
-  Phase 7a Liquidate action with parallel route quotes
-- `Claim Center` — settled-loan claims, including the Phase 5 borrower
+  Liquidate action with parallel route quotes
+- `Claim Center` — settled-loan claims, including the borrower
   VPFI rebate line
 - `Activity` — paginated lifecycle events
 - `Buy VPFI` — fixed-rate purchase with chain selector
@@ -1359,7 +1352,7 @@ Built on React + wagmi v2 + viem + ConnectKit. Pages:
 - `Alerts` — HF alert subscriptions per loan (Telegram + Push Protocol)
 - `Keepers` (advanced) — per-action keeper authorization
 
-### 16.3 Phase 8b Transaction Safety
+### 16.3 Transaction Safety
 
 - **Permit2 single-signature path.** Uses Uniswap's canonical deployment
   at `0x000000000022D473030F116dDEE9F6B43aC78BA3`. EIP-712 signatures,
@@ -1373,7 +1366,7 @@ Built on React + wagmi v2 + viem + ConnectKit. Pages:
   unavailability collapses to a subtle `preview-unavailable` state but
   never blocks the on-chain path.
 
-### 16.4 Phase 9 Mobile and Growth Surfaces
+### 16.4 Mobile and Growth Surfaces
 
 - **PWA support** — web app manifest + production-only service worker
   with stale-while-revalidate for the static shell. RPC, subgraph, and
@@ -1393,7 +1386,7 @@ Built on React + wagmi v2 + viem + ConnectKit. Pages:
 No-wallet-required transparency surface. Top row: combined all-chains
 headline totals. Below: chain-specific drill-down via a visible chain
 selector. All metrics are derived from on-chain contract state and event
-logs — no PII, no KYC data, no off-chain warehousing.
+logs — no PII, no off-chain warehousing.
 
 Required exports: CSV / JSON with snapshot timestamp, contract addresses,
 and block number for verifiable provenance.
@@ -1422,60 +1415,9 @@ public pages where critical actions can fail.
 
 ---
 
-## 17. Compliance Posture
+## 17. Verification and Testing
 
-### 17.1 Phase 1 Pass-Through
-
-KYC, country-pair restrictions, and sanctions checks are scaffolded in
-the contracts but operate in **pass-through mode** under an explicit
-Phase 1 flag. `LibVaipakam.canTradeBetween` always returns `true`.
-`AdminFacet.setKYCEnforcement(false)` is the live default.
-
-The frontend disclaimer reads:
-
-> Vaipakam is a decentralized, non-custodial protocol. No KYC is
-> required. Users are responsible for their own regulatory compliance.
-
-### 17.2 Sanctions Oracle (Per-Chain, Optional)
-
-Where a supported on-chain sanctions oracle is configured for the active
-chain, the protocol screens new-business boundaries:
-
-- offer creation — checks the caller
-- offer acceptance — checks both acceptor and original creator
-
-If a checked address is flagged, the transaction reverts. Wind-down
-actions (repayment, claims, addCollateral, preclose, refinance) remain
-available so non-sanctioned counterparties are never trapped in open
-positions. Chains without a configured oracle are no-op. Oracle read
-failures fail open rather than bricking all protocol actions during a
-vendor outage.
-
-### 17.3 Tiered KYC Framework (Retained for Phase 2)
-
-The codebase retains a tiered KYC framework for future activation:
-
-- **Tier 0** — transactions `< $1,000` USD-equivalent; no KYC
-- **Tier 1** — `$1,000–$9,999`; basic identity verification
-- **Tier 2** — `≥ $10,000`; comprehensive identity verification + AML
-
-Valuation uses Chainlink oracles to convert lending-asset / rental-value
-to USD-equivalent at offer-acceptance time. Activation is gated behind
-explicit governance / admin opt-in; not assumed during Phase 1.
-
-### 17.4 Terms of Service Gate
-
-App routes may be gated behind a versioned on-chain Terms acceptance.
-`currentTosVersion == 0` is a disabled / testnet state. Once activated,
-users must accept the current Terms version + content hash before using
-`/app/*` routes; version bumps or hash changes invalidate prior
-acceptances.
-
----
-
-## 18. Verification and Testing
-
-### 18.1 Test Footprint (Phase 1)
+### 17.1 Test Footprint
 
 The Foundry test suite has 91 test files covering:
 
@@ -1493,7 +1435,7 @@ The Foundry test suite has 91 test files covering:
 Test settings: 1000 fuzz runs, 100 invariant runs × 50k calls.
 Compiler: Solidity 0.8.29 with `viaIR = true`, optimizer at 200 runs.
 
-### 18.2 Mainnet-Cutover Gate
+### 17.2 Mainnet-Cutover Gate
 
 Before any mainnet `-rc` tag, every `Scenario*.t.sol` and every
 `invariants/*.invariant.t.sol` must be green on the target network's
@@ -1509,12 +1451,12 @@ fork. Specific load-bearing tests:
   Permit2 (expired deadline, wrong amount, nonce reuse, spender
   mismatch, happy path)
 
-### 18.3 External Audits
+### 17.3 External Audits
 
 Mandatory third-party security audits before mainnet launch on each
 network. Audit scope includes the Diamond core, the four-DEX swap
 failover, the secondary oracle quorum, the cross-chain reward mesh,
-the Phase 5 borrower LIF custody, and the LayerZero OApp surface.
+the borrower LIF custody, and the LayerZero OApp surface.
 
 Audit reports will be published where appropriate. The static analysis
 toolchain includes Slither and Mythril. Bug bounty scope, severity, and
@@ -1522,65 +1464,7 @@ reward ranges will be public before mainnet launch.
 
 ---
 
-## 19. Roadmap
-
-### 19.1 Phase 1 (Current)
-
-Shipped, regression-green:
-
-- Core P2P lending with ERC-20 + ERC-721 + ERC-1155 collateral
-- Permissionless HF-based liquidation
-- Time-based default with NFT rental support
-- Chainlink oracle integration with hybrid peg-aware staleness
-- VPFI token deployment + initial mint + fixed-rate buy program
-- Tiered fee discounts (lender Yield Fee + borrower LIF)
-- Escrow-based 5% APR staking
-- 8-band interaction reward emission with cross-chain denominator
-- 4-DEX swap failover (Phase 7a)
-- Secondary oracle quorum: Tellor + API3 + DIA (Phase 7b.2)
-- 3-V3-clone OR-logic liquidity classification (Phase 7b.1)
-- Phase 5 time-weighted borrower LIF rebate
-- Phase 6 keeper per-action authorization
-- Phase 8a UX polish (ENS, liquidation calc, HF alerts, revoke UI)
-- Phase 8b Permit2 + Blockaid simulation
-- Phase 9 PWA + Farcaster Frame + standalone keeper-bot reference repo
-- Public analytics dashboard surface
-- 91-file Foundry test suite
-
-Pending operational items before mainnet cutover:
-
-- final DVN operator address selection (3 required + 2 optional)
-- mainnet runbook execution (`ConfigureLZConfig.s.sol`, governance
-  handover, swap-adapter registration)
-- third-party audit completion
-- bug bounty program publication
-
-### 19.2 Phase 2 (Planned)
-
-- Activation of governance via `OpenZeppelin Governor` or equivalent
-  (proposals, voting, quorum, majority threshold)
-- Real KYC / AML enforcement (admin-toggled, retains tiered framework)
-- Country-pair sanctions reactivation (via existing `allowedTrades`
-  many-to-many mapping)
-- Phase 5 protocol auto-defender bot (whitelisted-by-default keeper for
-  opted-in users, executing HF-rescue actions)
-- Polygon PoS reactivation if AggLayer matures
-- Partial lending and borrowing (multiple loans per offer)
-- Flexible interest (dynamic re-pricing for very short loans)
-- Staking reward batch claim
-- Broader claimable-reward UI surface
-
-### 19.3 Phase 3+ (Indicative)
-
-- Additional non-rollup chain expansion (BSC, Avalanche, Solana once
-  policy permits)
-- Multi-language frontend support
-- Decentralized KYC integration (Civic / Verite / ComplyCube)
-- Insurance pool maturity beyond the 2% surplus rule
-
----
-
-## 20. References
+## 18. References
 
 1. `EIP-2535` Diamond Standard
 2. `ERC-20`, `ERC-721`, `ERC-1155`, `ERC-4907` standards

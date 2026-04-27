@@ -905,6 +905,12 @@
     "ariaLabel": "حول هذه البطاقة",
     "learnMore": "معرفة المزيد"
   },
+  "helpTabs": {
+    "ariaLabel": "تنقل قسم المساعدة",
+    "overview": "نظرة عامة",
+    "userGuide": "دليل المستخدم",
+    "technical": "تقني"
+  },
   "pageNotice": {
     "englishOnlyTitle": "متاح بالإنجليزية فقط",
     "englishOnlyBody": "هذا المستند متاح بالإنجليزية فقط. قد تُضاف نسخة مترجمة في تحديث مستقبلي.",

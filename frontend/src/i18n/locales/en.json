@@ -88,6 +88,12 @@
     "ariaLabel": "About this card",
     "learnMore": "Learn more"
   },
+  "helpTabs": {
+    "ariaLabel": "Help section navigation",
+    "overview": "Overview",
+    "userGuide": "User Guide",
+    "technical": "Technical"
+  },
   "pageNotice": {
     "englishOnlyTitle": "Available in English only",
     "englishOnlyBody": "This document is available in English only. A translated version may be added in a future update.",

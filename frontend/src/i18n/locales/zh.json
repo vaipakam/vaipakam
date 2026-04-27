@@ -905,6 +905,12 @@
     "ariaLabel": "关于此卡片",
     "learnMore": "了解更多"
   },
+  "helpTabs": {
+    "ariaLabel": "帮助部分导航",
+    "overview": "概览",
+    "userGuide": "用户指南",
+    "technical": "技术"
+  },
   "pageNotice": {
     "englishOnlyTitle": "仅提供英文版",
     "englishOnlyBody": "本文档仅提供英文版。翻译版本可能会在未来的更新中添加。",

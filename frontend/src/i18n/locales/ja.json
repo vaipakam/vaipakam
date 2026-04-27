@@ -905,6 +905,12 @@
     "ariaLabel": "このカードについて",
     "learnMore": "詳細を見る"
   },
+  "helpTabs": {
+    "ariaLabel": "ヘルプセクションのナビゲーション",
+    "overview": "概要",
+    "userGuide": "ユーザーガイド",
+    "technical": "技術仕様"
+  },
   "pageNotice": {
     "englishOnlyTitle": "英語のみ提供",
     "englishOnlyBody": "このドキュメントは英語のみで提供されています。翻訳版は今後のアップデートで追加される可能性があります。",

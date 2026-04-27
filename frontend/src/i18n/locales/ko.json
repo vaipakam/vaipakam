@@ -905,6 +905,12 @@
     "ariaLabel": "이 카드 정보",
     "learnMore": "자세히 알아보기"
   },
+  "helpTabs": {
+    "ariaLabel": "도움말 섹션 탐색",
+    "overview": "개요",
+    "userGuide": "사용 가이드",
+    "technical": "기술"
+  },
   "pageNotice": {
     "englishOnlyTitle": "영어로만 제공",
     "englishOnlyBody": "이 문서는 영어로만 제공됩니다. 번역본은 향후 업데이트에서 추가될 수 있습니다.",
