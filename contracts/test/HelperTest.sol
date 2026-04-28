@@ -540,7 +540,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](15);
+        selectors = new bytes4[](16);
         selectors[0] = ConfigFacet.setFeesConfig.selector;
         selectors[1] = ConfigFacet.setLiquidationConfig.selector;
         selectors[2] = ConfigFacet.setRiskConfig.selector;
@@ -556,6 +556,7 @@ contract HelperTest {
         selectors[12] = ConfigFacet.getProtocolConfigBundle.selector;
         selectors[13] = ConfigFacet.setFallbackSplit.selector;
         selectors[14] = ConfigFacet.getFallbackSplit.selector;
+        selectors[15] = ConfigFacet.getProtocolConstants.selector;
         return selectors;
     }
 

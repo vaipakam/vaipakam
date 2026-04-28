@@ -32,7 +32,7 @@ import { useUserVPFI } from "../hooks/useUserVPFI";
 import {
   useVPFIDiscount,
   useEscrowVPFIBalance,
-  VPFI_TIER_TABLE,
+  useVpfiTierTable,
   ethWeiToVpfi,
   formatVpfiUnits,
 } from "../hooks/useVPFIDiscount";
@@ -1281,11 +1281,15 @@ export function DiscountStatusCard({
   // (not from a parent prop) so this component stays self-contained
   // — it's mounted on both the Dashboard and historically on Buy VPFI.
   const { aprPct } = useStakingApr();
+  // Live tier table — derived from on-chain `getVpfiTierThresholds` /
+  // `getVpfiTierDiscountBps` so governance changes flow through to the
+  // displayed thresholds and discounts without a frontend redeploy.
+  const tierTable = useVpfiTierTable();
   const escrowUnits = formatVpfiUnits(escrowVpfi);
-  const nextTier = VPFI_TIER_TABLE.find((tt) => tt.tier === tier + 1) ?? null;
+  const nextTier = tierTable.find((tt) => tt.tier === tier + 1) ?? null;
   const gapToNext = nextTier ? Math.max(0, nextTier.minVpfi - escrowUnits) : 0;
   const currentTierRow =
-    tier > 0 ? (VPFI_TIER_TABLE.find((tt) => tt.tier === tier) ?? null) : null;
+    tier > 0 ? (tierTable.find((tt) => tt.tier === tier) ?? null) : null;
 
   let qualificationLabel: string;
   let qualificationColor: string;
@@ -1293,7 +1297,9 @@ export function DiscountStatusCard({
     qualificationLabel = t('buyVpfiCards.inactiveOff');
     qualificationColor = "var(--accent-yellow)";
   } else if (tier === 0) {
-    qualificationLabel = t('buyVpfiCards.inactiveBelowTier1');
+    qualificationLabel = t('buyVpfiCards.inactiveBelowTier1', {
+      tier1Min: tierTable[0]?.minVpfi ?? 100,
+    });
     qualificationColor = "var(--text-secondary)";
   } else {
     qualificationLabel = t('buyVpfiCards.activeTier', { tier, pct: discountBps / 100 });
@@ -1401,7 +1407,7 @@ export function DiscountStatusCard({
             </tr>
           </thead>
           <tbody>
-            {VPFI_TIER_TABLE.map((row) => {
+            {tierTable.map((row) => {
               const active = row.tier === tier;
               return (
                 <tr

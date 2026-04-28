@@ -46,6 +46,22 @@ export interface ProtocolConfig {
   tierDiscountBps: [number, number, number, number];
   /** Per-tier discount as a decimal fraction, same index as {@link tierDiscountBps}. */
   tierDiscountPct: [number, number, number, number];
+  // ── Compile-time constants from `getProtocolConstants` ─────────────
+  /** 1e18-scaled HF floor at loan initiation / cure / withdrawal. */
+  minHealthFactor: bigint;
+  /** Same as {@link minHealthFactor} but as a display-ready decimal
+   *  ("1.5", "1.25"). */
+  minHealthFactorDisplay: string;
+  /** Hard cap on the staking-rewards pool (wei). */
+  vpfiStakingPoolCap: bigint;
+  /** Compact "55.2M" / "69M" string for marketing-style display. */
+  vpfiStakingPoolCapCompact: string;
+  /** Hard cap on the interaction-rewards pool (wei). */
+  vpfiInteractionPoolCap: bigint;
+  /** Compact display version of {@link vpfiInteractionPoolCap}. */
+  vpfiInteractionPoolCapCompact: string;
+  /** Max days an interaction-rewards claim walks per tx. */
+  maxInteractionClaimDays: number;
   fetchedAt: number;
 }
 
@@ -72,6 +88,43 @@ type BundleTuple = [
 
 function bpsToPct(bps: bigint | number): number {
   return Number(bps) / BASIS_POINTS;
+}
+
+/**
+ * Format a basis-points value as a percentage string suitable for i18n
+ * `{{placeholder}}` interpolation. 100 → "1", 10 → "0.1", 1500 → "15",
+ * 575 → "5.75". Whole-percent values render without decimals; the
+ * trailing zero on round fractional values is stripped (1050 → "10.5").
+ *
+ * NOTE: takes BPS not the decimal-fraction `*Pct` field.
+ */
+export function bpsToPctString(bps: bigint | number): string {
+  const b = typeof bps === 'bigint' ? bps : BigInt(bps);
+  if (b % 100n === 0n) return (b / 100n).toString();
+  return (Number(b) / 100).toFixed(2).replace(/\.?0+$/, '');
+}
+
+/**
+ * Format a wei amount as a compact "55.2M" / "69M" / "1.2k" string
+ * for VPFI pool-cap displays in marketing-style copy.
+ */
+export function vpfiCapToCompact(weiAmount: bigint): string {
+  const whole = Number(weiAmount / 10n ** 18n);
+  if (whole >= 1_000_000) {
+    const m = whole / 1_000_000;
+    return m % 1 === 0 ? `${m}M` : `${m.toFixed(1)}M`;
+  }
+  if (whole >= 1_000) {
+    const k = whole / 1_000;
+    return k % 1 === 0 ? `${k}k` : `${k.toFixed(1)}k`;
+  }
+  return whole.toString();
+}
+
+/** Format 1e18-scaled HF as a decimal string ("1.5", "1.25"). */
+export function hfToDisplay(hf18: bigint): string {
+  const n = Number(hf18) / 1e18;
+  return n % 1 === 0 ? n.toString() : n.toFixed(2).replace(/\.?0+$/, '');
 }
 
 /**
@@ -111,8 +164,22 @@ export function useProtocolConfig() {
     try {
       const d = diamond as unknown as {
         getProtocolConfigBundle: () => Promise<BundleTuple>;
+        getProtocolConstants: () => Promise<[bigint, bigint, bigint, bigint]>;
       };
-      const tuple = await d.getProtocolConfigBundle();
+      // Fetch the governance bundle and the compile-time constants in
+      // parallel — both surface in the same `ProtocolConfig` shape so
+      // consumers don't have to thread two hooks. Constants degrade to
+      // the contract defaults if the view is missing on an older
+      // Diamond deploy without that selector cut in.
+      const [tuple, consts] = await Promise.all([
+        d.getProtocolConfigBundle(),
+        d.getProtocolConstants().catch(() => [
+          1500000000000000000n, // MIN_HEALTH_FACTOR default 1.5e18
+          55_200_000n * 10n ** 18n,
+          69_000_000n * 10n ** 18n,
+          30n,
+        ] as [bigint, bigint, bigint, bigint]),
+      ]);
       const [
         treasuryFeeBps,
         loanInitiationFeeBps,
@@ -125,6 +192,7 @@ export function useProtocolConfig() {
         tierThresholds,
         tierDiscountBps,
       ] = tuple;
+      const [minHealthFactor, vpfiStakingPoolCap, vpfiInteractionPoolCap, maxInteractionClaimDays] = consts;
 
       const next: ProtocolConfig = {
         treasuryFeeBps: Number(treasuryFeeBps),
@@ -161,6 +229,13 @@ export function useProtocolConfig() {
           bpsToPct(tierDiscountBps[2]),
           bpsToPct(tierDiscountBps[3]),
         ],
+        minHealthFactor,
+        minHealthFactorDisplay: hfToDisplay(minHealthFactor),
+        vpfiStakingPoolCap,
+        vpfiStakingPoolCapCompact: vpfiCapToCompact(vpfiStakingPoolCap),
+        vpfiInteractionPoolCap,
+        vpfiInteractionPoolCapCompact: vpfiCapToCompact(vpfiInteractionPoolCap),
+        maxInteractionClaimDays: Number(maxInteractionClaimDays),
         fetchedAt: Date.now(),
       };
       cached = { data: next, at: Date.now(), key: cacheKey };

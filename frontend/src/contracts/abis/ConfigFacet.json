@@ -118,6 +118,34 @@
   },
   {
     "type": "function",
+    "name": "getProtocolConstants",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "minHealthFactor",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "vpfiStakingPoolCap",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "vpfiInteractionPoolCap",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "maxInteractionClaimDays",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "pure"
+  },
+  {
+    "type": "function",
     "name": "getRiskConfig",
     "inputs": [],
     "outputs": [

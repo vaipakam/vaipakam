@@ -393,4 +393,47 @@ contract ConfigFacet is DiamondAccessControl {
             LibVaipakam.cfgVpfiTierDiscountBps(4)
         ];
     }
+
+    /// @notice Read-only bundle of protocol-wide compile-time constants
+    ///         that surface in user-facing copy. Returned via a single
+    ///         RPC so frontends never have to hardcode these values
+    ///         (and so the UI auto-tracks any future contract redeploy
+    ///         that bumps a constant).
+    /// @dev    These are `constant` declarations in {LibVaipakam}, NOT
+    ///         governance-mutable storage — there's no setter pair and
+    ///         the values are baked into bytecode. The view exists
+    ///         purely to give the frontend a single source of truth so
+    ///         tooltip / explainer copy never drifts from the deployed
+    ///         contract. For governance-mutable values (treasury fee,
+    ///         tier thresholds, staking APR, ...) use
+    ///         {getProtocolConfigBundle}.
+    /// @return minHealthFactor       1e18-scaled HF floor at loan
+    ///                               initiation and after partial-
+    ///                               withdrawal / cure / refinance.
+    /// @return vpfiStakingPoolCap    Hard cap on the staking-rewards
+    ///                               pool (55.2M VPFI = 24% of total).
+    /// @return vpfiInteractionPoolCap Hard cap on the interaction-
+    ///                               rewards pool (69M VPFI = 30%).
+    /// @return maxInteractionClaimDays Per-tx upper bound on the days
+    ///                               an interaction-rewards claim can
+    ///                               walk in one window (split across
+    ///                               multiple claims if it'd otherwise
+    ///                               exceed this).
+    function getProtocolConstants()
+        external
+        pure
+        returns (
+            uint256 minHealthFactor,
+            uint256 vpfiStakingPoolCap,
+            uint256 vpfiInteractionPoolCap,
+            uint256 maxInteractionClaimDays
+        )
+    {
+        return (
+            LibVaipakam.MIN_HEALTH_FACTOR,
+            LibVaipakam.VPFI_STAKING_POOL_CAP,
+            LibVaipakam.VPFI_INTERACTION_POOL_CAP,
+            LibVaipakam.MAX_INTERACTION_CLAIM_DAYS
+        );
+    }
 }

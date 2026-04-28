@@ -360,4 +360,22 @@ contract ConfigFacetTest is Test {
         assertEq(disc[0], LibVaipakam.VPFI_TIER1_DISCOUNT_BPS);
         assertEq(disc[3], LibVaipakam.VPFI_TIER4_DISCOUNT_BPS);
     }
+
+    /// @dev `getProtocolConstants` returns the four compile-time constants
+    ///      surfaced in user-facing copy. Pure view — values can never
+    ///      drift away from {LibVaipakam}'s constant declarations
+    ///      because there's no setter pair. Mirrors the existing
+    ///      `getProtocolConfigBundle` test pattern.
+    function testGetProtocolConstantsMatchesLibrary() public view {
+        (
+            uint256 minHf,
+            uint256 stakingCap,
+            uint256 interactionCap,
+            uint256 maxClaimDays
+        ) = ConfigFacet(address(diamond)).getProtocolConstants();
+        assertEq(minHf, LibVaipakam.MIN_HEALTH_FACTOR);
+        assertEq(stakingCap, LibVaipakam.VPFI_STAKING_POOL_CAP);
+        assertEq(interactionCap, LibVaipakam.VPFI_INTERACTION_POOL_CAP);
+        assertEq(maxClaimDays, LibVaipakam.MAX_INTERACTION_CLAIM_DAYS);
+    }
 }

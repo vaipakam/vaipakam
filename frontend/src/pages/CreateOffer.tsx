@@ -8,6 +8,7 @@ import { useMode } from "../context/ModeContext";
 import { useDiamondContract } from "../contracts/useDiamond";
 import { useERC20 } from "../contracts/useERC20";
 import { useOfferForm } from "../hooks/useOfferForm";
+import { useProtocolConfig } from "../hooks/useProtocolConfig";
 import {
   isNFTRental,
   gracePeriodLabel,
@@ -38,7 +39,10 @@ import "./CreateOffer.css";
 
 type SubmitStep = "form" | "approving" | "creating" | "success";
 
-const RENTAL_BUFFER_BPS = 500n;
+// Math constant only — `RENTAL_BUFFER_BPS` was previously hardcoded
+// here at 500n (5%) but now flows from the live protocol-config bundle
+// (`getProtocolConfigBundle().rentalBufferBps`). The component reads it
+// via `useProtocolConfig()` and feeds it into the prepay calculation.
 const BASIS_POINTS = 10000n;
 
 const NFT_APPROVAL_ABI = parseAbi([
@@ -60,6 +64,34 @@ export default function CreateOffer() {
   const showAdvanced = mode === "advanced";
   const diamond = useDiamondContract();
   const { sign: permit2Sign, canSign: permit2CanSign } = usePermit2Signing();
+  // Live protocol config — `rentalBufferBps` was previously hardcoded
+  // at 500n (5%) on this page; the contract exposes it via
+  // `getProtocolConfigBundle` and any governance change should flow
+  // straight through to the prepay calculation below.
+  const { config: protocolConfig } = useProtocolConfig();
+  const rentalBufferBps = protocolConfig
+    ? BigInt(protocolConfig.rentalBufferBps)
+    : 500n; // fall back to compile-time default during the first render
+  // Banner-copy interpolation params for the lender / borrower discount
+  // banners — surface live treasury fee, loan-initiation fee, and the
+  // top-tier discount % so governance changes flow into the marketing
+  // copy without a frontend redeploy.
+  const discountBannerParams = protocolConfig
+    ? {
+        treasuryFee: protocolConfig.treasuryFeeBps % 100 === 0
+          ? (protocolConfig.treasuryFeeBps / 100).toString()
+          : (protocolConfig.treasuryFeeBps / 100).toFixed(2).replace(/\.?0+$/, ''),
+        loanInitiationFee: protocolConfig.loanInitiationFeeBps % 100 === 0
+          ? (protocolConfig.loanInitiationFeeBps / 100).toString()
+          : (protocolConfig.loanInitiationFeeBps / 100).toFixed(2).replace(/\.?0+$/, ''),
+        maxDiscount: (() => {
+          const max = Math.max(...protocolConfig.tierDiscountBps);
+          return max % 100 === 0
+            ? (max / 100).toString()
+            : (max / 100).toFixed(2).replace(/\.?0+$/, '');
+        })(),
+      }
+    : { treasuryFee: '1', loanInitiationFee: '0.1', maxDiscount: '24' };
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
 
@@ -302,7 +334,7 @@ export default function CreateOffer() {
         }
         const prepayBase = payload.amount * BigInt(payload.durationDays);
         const totalPrepay =
-          (prepayBase * (BASIS_POINTS + RENTAL_BUFFER_BPS)) / BASIS_POINTS;
+          (prepayBase * (BASIS_POINTS + rentalBufferBps)) / BASIS_POINTS;
         return { token: form.prepayAsset as Address, amount: totalPrepay };
       })();
 
@@ -373,7 +405,7 @@ export default function CreateOffer() {
             }
             const prepayBase = payload.amount * BigInt(payload.durationDays);
             const totalPrepay =
-              (prepayBase * (BASIS_POINTS + RENTAL_BUFFER_BPS)) / BASIS_POINTS;
+              (prepayBase * (BASIS_POINTS + rentalBufferBps)) / BASIS_POINTS;
             const current = (await publicClient.readContract({
               address: form.prepayAsset as Address,
               abi: ERC20_APPROVE_ABI,
@@ -588,10 +620,10 @@ export default function CreateOffer() {
                 {form.offerType === "borrower" ? (
                   <>
                     <div style={{ fontWeight: 600, marginBottom: 2 }}>
-                      {t('lenderDiscountCard.borrowerTitle')}
+                      {t('lenderDiscountCard.borrowerTitle', discountBannerParams)}
                     </div>
                     <p className="stat-label" style={{ margin: "0 0 8px" }}>
-                      {t('lenderDiscountCard.borrowerBody1')}
+                      {t('lenderDiscountCard.borrowerBody1', discountBannerParams)}
                       <a href="/buy-vpfi" target="_blank" rel="noopener noreferrer">
                         {t('lenderDiscountCard.buyVpfi')}
                       </a>
@@ -601,10 +633,10 @@ export default function CreateOffer() {
                 ) : (
                   <>
                     <div style={{ fontWeight: 600, marginBottom: 2 }}>
-                      {t('lenderDiscountCard.lenderTitle')}
+                      {t('lenderDiscountCard.lenderTitle', discountBannerParams)}
                     </div>
                     <p className="stat-label" style={{ margin: "0 0 8px" }}>
-                      {t('lenderDiscountCard.lenderBody1')}
+                      {t('lenderDiscountCard.lenderBody1', discountBannerParams)}
                       <a href="/buy-vpfi" target="_blank" rel="noopener noreferrer">
                         {t('lenderDiscountCard.buyVpfi')}
                       </a>
@@ -832,7 +864,11 @@ export default function CreateOffer() {
                 hint={
                   lockAssetContinuity
                     ? t('createOffer.hintAddressLockedShort')
-                    : t('createOffer.prepayAssetHint')
+                    : t('createOffer.prepayAssetHint', {
+                        rentalBuffer: protocolConfig
+                          ? protocolConfig.rentalBufferBps / 100
+                          : 5,
+                      })
                 }
                 disabled={lockAssetContinuity}
               />
@@ -1081,17 +1117,33 @@ export default function CreateOffer() {
           <span>{t('createOffer.lockAssetsAlert')}</span>
         </div>
 
-        {form.assetType === "erc20" && (
-          <div className="alert alert-info" style={{ marginTop: 12 }}>
-            <Info size={18} />
-            <span>
-              <strong>{t('createOffer.lifLabel')}</strong>{' '}
-              {form.offerType === "lender"
-                ? t('createOffer.lifLenderBody')
-                : t('createOffer.lifBorrowerBody')}
-            </span>
-          </div>
-        )}
+        {form.assetType === "erc20" && (() => {
+          // Pre-compute the LIF interpolation params from the live
+          // protocol-config so the alert reads "Loan Initiation Fee
+          // (0.1%): … remaining 99.9%" using the deployed bps, not a
+          // baked-in `0.1` / `99.9`.
+          const lifBps = protocolConfig ? protocolConfig.loanInitiationFeeBps : 10;
+          const lifPctNum = lifBps / 100;
+          const lifPct = lifPctNum % 1 === 0
+            ? lifPctNum.toString()
+            : lifPctNum.toFixed(2).replace(/\.?0+$/, '');
+          const netNum = 100 - lifPctNum;
+          const netPct = netNum % 1 === 0
+            ? netNum.toString()
+            : netNum.toFixed(2).replace(/\.?0+$/, '');
+          const lifParams = { loanInitiationFee: lifPct, borrowerNet: netPct };
+          return (
+            <div className="alert alert-info" style={{ marginTop: 12 }}>
+              <Info size={18} />
+              <span>
+                <strong>{t('createOffer.lifLabel', lifParams)}</strong>{' '}
+                {form.offerType === "lender"
+                  ? t('createOffer.lifLenderBody', lifParams)
+                  : t('createOffer.lifBorrowerBody', lifParams)}
+              </span>
+            </div>
+          );
+        })()}
       </form>
     </div>
   );

@@ -3,9 +3,18 @@ import { ShieldCheck, AlertTriangle, ExternalLink } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { useWallet } from "../../context/WalletContext";
 import { useDiamondContract } from "../../contracts/useDiamond";
+import { useProtocolConfig } from "../../hooks/useProtocolConfig";
 import { decodeContractError } from "../../lib/decodeContractError";
 import { beginStep } from "../../lib/journeyLog";
 import { CardInfo } from "../CardInfo";
+
+/** 100 → "1", 1500 → "15", 575 → "5.75". Whole-percent BPS render
+ *  without decimals; fractional get up to 2 stripped of trailing 0. */
+function bpsAsPctStr(bps: number | bigint): string {
+  const b = typeof bps === 'bigint' ? Number(bps) : bps;
+  if (b % 100 === 0) return (b / 100).toString();
+  return (b / 100).toFixed(2).replace(/\.?0+$/, '');
+}
 
 /**
  * Platform-level opt-in card for the VPFI fee-discount flow.
@@ -31,6 +40,25 @@ export default function VPFIDiscountConsentCard() {
   const { t } = useTranslation();
   const { address } = useWallet();
   const diamond = useDiamondContract();
+  // Live tier thresholds + discounts for the body-prefix interpolation —
+  // governance can change these via `setVpfiTierThresholds` /
+  // `setVpfiTierDiscountBps`, so don't hardcode them in the copy.
+  const { config } = useProtocolConfig();
+  const tierParams = config
+    ? {
+        tier1Min: Number(config.tierThresholds[0]).toLocaleString(),
+        tier2Min: Number(config.tierThresholds[1]).toLocaleString(),
+        tier3Min: Number(config.tierThresholds[2]).toLocaleString(),
+        tier4Min: Number(config.tierThresholds[3]).toLocaleString(),
+        tier1Discount: bpsAsPctStr(config.tierDiscountBps[0]),
+        tier2Discount: bpsAsPctStr(config.tierDiscountBps[1]),
+        tier3Discount: bpsAsPctStr(config.tierDiscountBps[2]),
+        tier4Discount: bpsAsPctStr(config.tierDiscountBps[3]),
+      }
+    : {
+        tier1Min: '100', tier2Min: '1,000', tier3Min: '5,000', tier4Min: '20,000',
+        tier1Discount: '10', tier2Discount: '15', tier3Discount: '20', tier4Discount: '24',
+      };
 
   const [consent, setConsent] = useState<boolean | null>(null);
   const [pending, setPending] = useState(false);
@@ -105,7 +133,7 @@ export default function VPFIDiscountConsentCard() {
             <CardInfo id="dashboard.fee-discount-consent" />
           </div>
           <p className="stat-label" style={{ margin: "0 0 10px" }}>
-            {t('vpfiDiscountConsent.bodyPrefix')}
+            {t('vpfiDiscountConsent.bodyPrefix', tierParams)}
             <a
               href="/buy-vpfi"
               target="_blank"

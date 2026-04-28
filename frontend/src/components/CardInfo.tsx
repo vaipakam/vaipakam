@@ -3,8 +3,16 @@ import { useTranslation } from 'react-i18next';
 import { InfoTip } from './InfoTip';
 import { getCardHelp } from '../lib/cardHelp';
 import { useMode } from '../context/ModeContext';
+import { useProtocolConfig } from '../hooks/useProtocolConfig';
 import { isSupportedLocale, withLocalePrefix } from './LocaleResolver';
 import type { SupportedLocale } from '../i18n/glossary';
+
+/** Format basis points as a percentage string (100 → "1", 575 → "5.75"). */
+function bpsAsPctStr(bps: number | bigint): string {
+  const b = typeof bps === 'bigint' ? Number(bps) : bps;
+  if (b % 100 === 0) return (b / 100).toString();
+  return (b / 100).toFixed(2).replace(/\.?0+$/, '');
+}
 
 /**
  * `<CardInfo id="…">` — drop-in (i) icon next to a card title that
@@ -75,6 +83,44 @@ export function CardInfo({ id, role, params }: CardInfoProps) {
   const { t, i18n } = useTranslation();
   const entry = getCardHelp(id);
   const { mode } = useMode();
+  // Live protocol-config snapshot — auto-injected into every cardHelp
+  // tooltip so summary strings can use `{{treasuryFee}}` /
+  // `{{tier1Min}}` / `{{maxSlippage}}` / etc. without per-call-site
+  // wiring. Per-call `params` (passed by the caller) override these
+  // auto-injected values when there's a name collision, so callers
+  // can still customise per-context values like `{{apr}}` if needed.
+  const { config } = useProtocolConfig();
+  const autoParams = config
+    ? {
+        treasuryFee: bpsAsPctStr(config.treasuryFeeBps),
+        loanInitiationFee: bpsAsPctStr(config.loanInitiationFeeBps),
+        liquidationHandlingFee: bpsAsPctStr(config.liquidationHandlingFeeBps),
+        maxSlippage: bpsAsPctStr(config.maxLiquidationSlippageBps),
+        maxLiquidatorIncentive: bpsAsPctStr(config.maxLiquidatorIncentiveBps),
+        volatilityLtv: bpsAsPctStr(config.volatilityLtvThresholdBps),
+        rentalBuffer: bpsAsPctStr(config.rentalBufferBps),
+        apr: bpsAsPctStr(config.vpfiStakingAprBps),
+        tier1Min: Number(config.tierThresholds[0]).toLocaleString(),
+        tier2Min: Number(config.tierThresholds[1]).toLocaleString(),
+        tier3Min: Number(config.tierThresholds[2]).toLocaleString(),
+        tier4Min: Number(config.tierThresholds[3]).toLocaleString(),
+        tier1Discount: bpsAsPctStr(config.tierDiscountBps[0]),
+        tier2Discount: bpsAsPctStr(config.tierDiscountBps[1]),
+        tier3Discount: bpsAsPctStr(config.tierDiscountBps[2]),
+        tier4Discount: bpsAsPctStr(config.tierDiscountBps[3]),
+        maxDiscount: bpsAsPctStr(
+          Math.max(
+            config.tierDiscountBps[0],
+            config.tierDiscountBps[1],
+            config.tierDiscountBps[2],
+            config.tierDiscountBps[3],
+          ),
+        ),
+        minHealthFactor: config.minHealthFactorDisplay,
+        vpfiStakingPoolCap: config.vpfiStakingPoolCapCompact,
+        vpfiInteractionPoolCap: config.vpfiInteractionPoolCapCompact,
+      }
+    : {};
   const locale: SupportedLocale = isSupportedLocale(i18n.resolvedLanguage)
     ? i18n.resolvedLanguage
     : 'en';
@@ -95,7 +141,10 @@ export function CardInfo({ id, role, params }: CardInfoProps) {
     typeof entry.summary === 'string'
       ? entry.summary
       : entry.summary[role ?? 'lender'];
-  const summary = t(summaryKey, params);
+  // Merge auto-injected protocol params with caller-provided params;
+  // caller wins on name collisions so per-call overrides still work.
+  const mergedParams = { ...autoParams, ...(params ?? {}) };
+  const summary = t(summaryKey, mergedParams);
   const roleSuffix =
     typeof entry.summary !== 'string' && role ? `:${role}` : '';
   const learnMoreHref = buildLearnMoreHref(mode, id, roleSuffix, locale);

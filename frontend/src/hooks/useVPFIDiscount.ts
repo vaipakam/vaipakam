@@ -7,6 +7,7 @@ import {
 } from 'viem';
 import { useDiamondPublicClient, useReadChain } from '../contracts/useDiamond';
 import { useWallet } from '../context/WalletContext';
+import { useProtocolConfig } from './useProtocolConfig';
 import { beginStep } from '../lib/journeyLog';
 import { DIAMOND_ABI_VIEM as DIAMOND_ABI } from '../contracts/abis';
 import type { ChainConfig } from '../contracts/config';
@@ -343,56 +344,74 @@ export function useVPFIDiscountTier(user: string | null) {
 }
 
 /**
- * Tier metadata (label + thresholds) so UI can render the tier table without
- * re-encoding the on-chain constants. Bounds are VPFI (18-dec), inclusive
- * unless noted.
+ * Per-tier metadata for the VPFI discount table. Was previously a static
+ * `VPFI_TIER_TABLE` export with hardcoded 100 / 1k / 5k / 20k thresholds
+ * and 10 / 15 / 20 / 24% discounts; that drifted from the on-chain values
+ * the moment governance called `setVpfiTierThresholds` or
+ * `setVpfiTierDiscountBps`. The hook derives every field from live
+ * {@link useProtocolConfig} reads so the table always matches the
+ * deployed contract.
+ *
+ * Returns an empty array until the protocol-config snapshot loads (the
+ * first paint is briefly empty rather than showing stale defaults). UI
+ * callers should treat the loading window as a no-op.
  */
-export const VPFI_TIER_TABLE: ReadonlyArray<{
+export interface VpfiTierRow {
   tier: number;
   label: string;
   minVpfi: number;
   maxVpfi: number | null; // null = open-ended (Tier 4)
   discountLabel: string;
-  borrowerFeeLabel: string;
-  lenderFeeLabel: string;
-}> = [
-  {
-    tier: 1,
-    label: 'Tier 1',
-    minVpfi: 100,
-    maxVpfi: 999.999999,
-    discountLabel: '10% off',
-    borrowerFeeLabel: '0.09% loan fee',
-    lenderFeeLabel: '0.9% yield fee',
-  },
-  {
-    tier: 2,
-    label: 'Tier 2',
-    minVpfi: 1_000,
-    maxVpfi: 4_999.999999,
-    discountLabel: '15% off',
-    borrowerFeeLabel: '0.085% loan fee',
-    lenderFeeLabel: '0.85% yield fee',
-  },
-  {
-    tier: 3,
-    label: 'Tier 3',
-    minVpfi: 5_000,
-    maxVpfi: 20_000,
-    discountLabel: '20% off',
-    borrowerFeeLabel: '0.08% loan fee',
-    lenderFeeLabel: '0.8% yield fee',
-  },
-  {
-    tier: 4,
-    label: 'Tier 4',
-    minVpfi: 20_000.000001,
-    maxVpfi: null,
-    discountLabel: '24% off',
-    borrowerFeeLabel: '0.076% loan fee',
-    lenderFeeLabel: '0.76% yield fee',
-  },
-];
+}
+
+export function useVpfiTierTable(): ReadonlyArray<VpfiTierRow> {
+  const { config } = useProtocolConfig();
+  return useMemo<ReadonlyArray<VpfiTierRow>>(() => {
+    if (!config) return [];
+    const t = config.tierThresholds;
+    const d = config.tierDiscountBps;
+    // `tierThresholds` is the inclusive minimum VPFI (whole tokens) for
+    // entering each tier. The previous static table used a `0.000001`
+    // gap between tiers (e.g. T1 max = 999.999999, T2 min = 1000) so
+    // ranges read continuously without overlap; preserve that.
+    const epsilon = 0.000001;
+    const tier1Min = Number(t[0]);
+    const tier2Min = Number(t[1]);
+    const tier3Min = Number(t[2]);
+    const tier4Min = Number(t[3]);
+    const fmtPct = (bps: number) => `${bps % 100 === 0 ? bps / 100 : (bps / 100).toFixed(2).replace(/\.?0+$/, '')}% off`;
+    return [
+      {
+        tier: 1,
+        label: 'Tier 1',
+        minVpfi: tier1Min,
+        maxVpfi: tier2Min - epsilon,
+        discountLabel: fmtPct(d[0]),
+      },
+      {
+        tier: 2,
+        label: 'Tier 2',
+        minVpfi: tier2Min,
+        maxVpfi: tier3Min - epsilon,
+        discountLabel: fmtPct(d[1]),
+      },
+      {
+        tier: 3,
+        label: 'Tier 3',
+        minVpfi: tier3Min,
+        maxVpfi: tier4Min - epsilon,
+        discountLabel: fmtPct(d[2]),
+      },
+      {
+        tier: 4,
+        label: 'Tier 4',
+        minVpfi: tier4Min,
+        maxVpfi: null,
+        discountLabel: fmtPct(d[3]),
+      },
+    ];
+  }, [config]);
+}
 
 /**
  * Platform-level consent flag for using escrowed VPFI on fee discounts.

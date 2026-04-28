@@ -754,7 +754,7 @@ contract DeployDiamond is Script {
     }
 
     function _getConfigSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](15);
+        s = new bytes4[](16);
         // Setters
         s[0] = ConfigFacet.setFeesConfig.selector;
         s[1] = ConfigFacet.setLiquidationConfig.selector;
@@ -775,6 +775,7 @@ contract DeployDiamond is Script {
         s[12] = ConfigFacet.getVpfiTierThresholds.selector;
         s[13] = ConfigFacet.getVpfiTierDiscountBps.selector;
         s[14] = ConfigFacet.getProtocolConfigBundle.selector;
+        s[15] = ConfigFacet.getProtocolConstants.selector;
     }
 
     function _getRewardAggregatorSelectors() internal pure returns (bytes4[] memory s) {
