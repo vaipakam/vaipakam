@@ -10,9 +10,15 @@ cache reader** that backfills the rolling list of recently-accepted
 offer IDs from the cached events array on hydrate, so existing
 users whose browsers had already scanned past the relevant
 `OfferAccepted` block under the previous code still see the market-
-anchor rate-deviation badges in the Offer Book — and a fresh
+anchor rate-deviation badges in the Offer Book; a fresh
 **production deploy** to the public Cloudflare Worker that ships
-the day's bundle.
+the day's bundle; a **fixed-position-Navbar clearance** on the
+public Privacy and Terms pages (the top of those pages used to sit
+behind the Navbar); and a series of **Buy VPFI copy cleanups** —
+tighter Step 2 / Step 3 subtitles, a single user-friendly Info
+callout on the Stake card explaining open staking + auto-escrow-
+on-first-deposit, and removal of duplicated framing copy that
+existed twice on the page.
 
 ## Market-anchor cache backfill — no rescan needed
 
@@ -54,6 +60,61 @@ Cache key stays at v7 — no full rescan forced. The migration is
 load-bearing-on-hydrate only; once a cache has been written under
 the new code path it carries the rolling list directly and the
 backfill clause is a no-op.
+
+## Privacy + Terms — Navbar clearance fix
+
+The public Privacy Policy and Terms of Service pages share a
+single stylesheet (`LegalPage.css`). The top-of-page layout used a
+32 px `padding-top` on the main content block, which assumed a
+non-fixed Navbar. The site Navbar is `position: fixed` at 72 px
+height, so the page heading (`Vaipakam Privacy Policy` / `Vaipakam
+Terms of Service`) and the version metadata line directly under it
+were sitting behind the Navbar on every page load. `padding-top`
+bumped to 104 px (72 px Navbar height + the original 32 px
+breathing room), matching the per-page clearance pattern used by
+the User Guide page.
+
+## Buy VPFI — Step 2 / Step 3 copy cleanup
+
+The Buy VPFI page had grown two layers of overlapping framing copy
+between iterations:
+
+- A page-top "Staking is open to anyone — you don't need an
+  existing loan to participate. Depositing VPFI into your escrow
+  earns the 5% APR yield, and the protocol auto-creates an escrow
+  for you on first deposit." paragraph under the page subtitle.
+- A long blue Info callout inside the **Step 2 — Deposit / Stake
+  VPFI into your escrow** card that re-explained the same things
+  in spec-document language ("Per spec, moving VPFI into escrow is
+  always an explicit user action. The protocol never auto-funds
+  escrow after a buy or bridge…").
+- A Step 2 subtitle ("Required on every chain — including the
+  canonical one. Earns 5% APR staking yield while it sits there.")
+  whose first half was protocol-internals trivia for end users.
+- A Step 3 subtitle that duplicated the warning rendered just
+  below it inside the unstake form.
+
+Cleanup pass:
+
+- **Step 2 subtitle** is gone. The card title and the new Info
+  callout below carry the message.
+- **Step 2 Info callout** rewritten in plain second-person prose:
+  *"Staking is open to everyone — you don't need a loan to
+  participate. Any VPFI you deposit into your escrow earns 5% APR
+  for as long as it stays there. First time staking? Your escrow
+  is created for you automatically on your first deposit — no
+  setup needed."* Translated across all 10 locales.
+- **Step 3 subtitle** is gone. The unstake-form's existing
+  discount-tier-impact warning carries the discussion.
+- **Page-top open-staking paragraph** is gone — the Step 2
+  callout is the single canonical home for that message.
+
+The Step-Header component grew an `optional` flag on the subtitle
+prop so the omission renders cleanly without an empty `<p>` slot.
+
+`step2Subtitle`, `step3Subtitle`, and `openStakingNote`
+translation keys were dropped from every locale file; only
+`step2Info` remains in the Stake area.
 
 ## Production deploy
 
