@@ -197,7 +197,7 @@ contract VolatilityLTVTest is SetupTest, IVaipakamErrors {
         loan.collateralLiquidity = LibVaipakam.LiquidityStatus.Illiquid;
         TestMutatorFacet(address(diamond)).setLoan(loanId, loan);
 
-        vm.expectRevert(IVaipakamErrors.NonLiquidAsset.selector);
+        vm.expectRevert(IVaipakamErrors.IlliquidLoanNoRiskMath.selector);
         RiskFacet(address(diamond)).isCollateralValueCollapsed(loanId);
     }
 

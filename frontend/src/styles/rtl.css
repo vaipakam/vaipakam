@@ -87,9 +87,17 @@
 }
 
 /* ─── Diagnostics FAB + drawer: bottom-left in RTL ──────────────────
- * The "Support" floating button anchors bottom-right by default; flip
- * to bottom-left in RTL. The slide-out drawer also enters from the
- * left side instead of the right. */
+ * The "Report Issue" floating button anchors bottom-right by default;
+ * flip to bottom-left in RTL. The drawer panel mirrors to the left
+ * edge with the border swapped accordingly.
+ *
+ * No slide-in transform here — the LTR base is mount-toggled (the
+ * drawer is conditionally rendered, not animated), and the JSX never
+ * applies an `.open` className. An earlier version of this rule used
+ * `transform: translateX(-100%)` paired with `.diag-drawer.open` to
+ * unset it, which left the RTL drawer permanently off-screen because
+ * the `.open` class never arrives. Keeping it simple — RTL just flips
+ * the anchor edge and the border. */
 [dir="rtl"] .diag-fab {
   right: auto;
   left: 1rem;
@@ -99,10 +107,6 @@
   left: 0;
   border-left: none;
   border-right: 1px solid var(--border-color, #333);
-  transform: translateX(-100%);
-}
-[dir="rtl"] .diag-drawer.open {
-  transform: translateX(0);
 }
 
 /* ─── Tooltip / popover alignment ───────────────────────────────────
