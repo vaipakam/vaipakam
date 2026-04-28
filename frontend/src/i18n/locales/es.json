@@ -26,7 +26,10 @@
     "owner": "Propietario",
     "interestRate": "Tasa de interés",
     "newRate": "Nueva tasa",
-    "remainingTerm": "Plazo restante"
+    "remainingTerm": "Plazo restante",
+    "all": "Todos",
+    "noMatches": "Ningún préstamo coincide con los filtros actuales.",
+    "clearFilters": "Borrar filtros"
   },
   "footer": {
     "rightsReserved": "Todos los derechos reservados.",

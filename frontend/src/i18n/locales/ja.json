@@ -26,7 +26,10 @@
     "owner": "オーナー",
     "interestRate": "金利",
     "newRate": "新しい金利",
-    "remainingTerm": "残り期間"
+    "remainingTerm": "残り期間",
+    "all": "すべて",
+    "noMatches": "現在のフィルターに一致するローンはありません。",
+    "clearFilters": "フィルターをクリア"
   },
   "footer": {
     "rightsReserved": "すべての権利を保有します。",

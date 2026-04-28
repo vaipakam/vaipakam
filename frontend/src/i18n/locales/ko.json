@@ -26,7 +26,10 @@
     "owner": "소유자",
     "interestRate": "이자율",
     "newRate": "새 이자율",
-    "remainingTerm": "남은 기간"
+    "remainingTerm": "남은 기간",
+    "all": "전체",
+    "noMatches": "현재 필터와 일치하는 대출이 없습니다.",
+    "clearFilters": "필터 초기화"
   },
   "footer": {
     "rightsReserved": "모든 권리 보유.",

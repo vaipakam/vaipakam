@@ -26,7 +26,10 @@
     "owner": "所有者",
     "interestRate": "利率",
     "newRate": "新利率",
-    "remainingTerm": "剩余期限"
+    "remainingTerm": "剩余期限",
+    "all": "全部",
+    "noMatches": "没有 loan 与当前筛选条件匹配。",
+    "clearFilters": "清除筛选"
   },
   "footer": {
     "rightsReserved": "保留所有权利。",

@@ -26,7 +26,10 @@
     "owner": "Eigentümer",
     "interestRate": "Zinssatz",
     "newRate": "Neuer Satz",
-    "remainingTerm": "Restlaufzeit"
+    "remainingTerm": "Restlaufzeit",
+    "all": "Alle",
+    "noMatches": "Keine Kredite entsprechen den aktuellen Filtern.",
+    "clearFilters": "Filter zurücksetzen"
   },
   "footer": {
     "rightsReserved": "Alle Rechte vorbehalten.",

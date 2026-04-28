@@ -47,6 +47,8 @@ export default function Dashboard() {
   const { balance: escrowVpfiWei } = useEscrowVPFIBalance(address);
   const [escrow, setEscrow] = useState<string | null>(null);
   const [loansPage, setLoansPage] = useState(0);
+  const [roleFilter, setRoleFilter] = useState<'all' | 'lender' | 'borrower'>('all');
+  const [statusFilter, setStatusFilter] = useState<'all' | LoanStatus>('all');
 
   useEffect(() => {
     // No address = disconnected; the `escrow` slot is derived as null below,
@@ -75,13 +77,31 @@ export default function Dashboard() {
   const lentCount = loans.filter((l) => l.role === 'lender').length;
   const borrowedCount = loans.filter((l) => l.role === 'borrower').length;
 
+  // Filter pipeline: apply role + status filters BEFORE paginating, so the
+  // page count and Pager total reflect the filtered set, not the raw set.
+  const filteredLoans = useMemo(
+    () =>
+      loans.filter((l) =>
+        (roleFilter === 'all' || l.role === roleFilter) &&
+        (statusFilter === 'all' || l.status === statusFilter),
+      ),
+    [loans, roleFilter, statusFilter],
+  );
+
+  // Snap back to page 0 whenever a filter narrows the set past the current
+  // cursor — otherwise the table renders blank with a paginator stuck on a
+  // page that no longer exists.
+  useEffect(() => {
+    setLoansPage(0);
+  }, [roleFilter, statusFilter]);
+
   const pagedLoans = useMemo(
     () =>
-      loans.slice(
+      filteredLoans.slice(
         loansPage * LOANS_PAGE_SIZE,
         (loansPage + 1) * LOANS_PAGE_SIZE,
       ),
-    [loans, loansPage],
+    [filteredLoans, loansPage],
   );
 
   // Batch LTV + HF for every visible row in two multicalls instead of firing
@@ -189,14 +209,44 @@ export default function Dashboard() {
 
       {/* Active loans */}
       <div className="card">
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16, gap: 12, flexWrap: 'wrap' }}>
           <div className="card-title" style={{ marginBottom: 0 }}>
             {t('dashboard.yourLoans')}
             <CardInfo id="dashboard.your-loans" />
           </div>
-          <Link to="/app/create-offer" className="btn btn-primary btn-sm">
-            <PlusCircle size={16} /> {t('dashboard.newOffer')}
-          </Link>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+            <label style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 13, opacity: 0.85 }}>
+              {t('common.role')}
+              <select
+                value={roleFilter}
+                onChange={(e) => setRoleFilter(e.target.value as 'all' | 'lender' | 'borrower')}
+                style={{ padding: '4px 8px', borderRadius: 6 }}
+              >
+                <option value="all">{t('common.all')}</option>
+                <option value="lender">{t('common.lender')}</option>
+                <option value="borrower">{t('common.borrower')}</option>
+              </select>
+            </label>
+            <label style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 13, opacity: 0.85 }}>
+              {t('common.status')}
+              <select
+                value={statusFilter === 'all' ? 'all' : String(statusFilter)}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  setStatusFilter(v === 'all' ? 'all' : (Number(v) as LoanStatus));
+                }}
+                style={{ padding: '4px 8px', borderRadius: 6 }}
+              >
+                <option value="all">{t('common.all')}</option>
+                {(Object.values(LoanStatus) as LoanStatus[]).map((s) => (
+                  <option key={s} value={String(s)}>{LOAN_STATUS_LABELS[s]}</option>
+                ))}
+              </select>
+            </label>
+            <Link to="/app/create-offer" className="btn btn-primary btn-sm">
+              <PlusCircle size={16} /> {t('dashboard.newOffer')}
+            </Link>
+          </div>
         </div>
 
         {loading ? (
@@ -218,6 +268,17 @@ export default function Dashboard() {
                 {t('dashboard.browseOffers')}
               </Link>
             </div>
+          </div>
+        ) : filteredLoans.length === 0 ? (
+          <div className="empty-state">
+            <p>{t('common.noMatches')}</p>
+            <button
+              type="button"
+              className="btn btn-secondary btn-sm"
+              onClick={() => { setRoleFilter('all'); setStatusFilter('all'); }}
+            >
+              {t('common.clearFilters')}
+            </button>
           </div>
         ) : (
           <div className="loans-table-wrap">
@@ -277,7 +338,7 @@ export default function Dashboard() {
               </tbody>
             </table>
             <Pager
-              total={loans.length}
+              total={filteredLoans.length}
               pageSize={LOANS_PAGE_SIZE}
               page={loansPage}
               onPageChange={setLoansPage}

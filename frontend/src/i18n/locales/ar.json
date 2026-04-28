@@ -26,7 +26,10 @@
     "owner": "المالك",
     "interestRate": "سعر الفائدة",
     "newRate": "سعر جديد",
-    "remainingTerm": "المدة المتبقية"
+    "remainingTerm": "المدة المتبقية",
+    "all": "الكل",
+    "noMatches": "لا توجد قروض تطابق المرشحات الحالية.",
+    "clearFilters": "مسح المرشحات"
   },
   "footer": {
     "rightsReserved": "جميع الحقوق محفوظة.",

@@ -26,7 +26,10 @@
     "owner": "Owner",
     "interestRate": "Interest Rate",
     "newRate": "New rate",
-    "remainingTerm": "Remaining term"
+    "remainingTerm": "Remaining term",
+    "all": "All",
+    "noMatches": "No loans match the current filters.",
+    "clearFilters": "Clear filters"
   },
   "footer": {
     "rightsReserved": "All rights reserved.",

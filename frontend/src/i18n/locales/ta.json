@@ -26,7 +26,10 @@
     "owner": "உரிமையாளர்",
     "interestRate": "வட்டி விகிதம்",
     "newRate": "புதிய விகிதம்",
-    "remainingTerm": "மீதமுள்ள காலம்"
+    "remainingTerm": "மீதமுள்ள காலம்",
+    "all": "அனைத்தும்",
+    "noMatches": "தற்போதைய filters-உடன் பொருந்தும் loans இல்லை.",
+    "clearFilters": "Filters-ஐ அழி"
   },
   "footer": {
     "rightsReserved": "அனைத்து உரிமைகளும் பாதுகாக்கப்பட்டவை.",

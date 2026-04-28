@@ -26,7 +26,10 @@
     "owner": "स्वामी",
     "interestRate": "ब्याज दर",
     "newRate": "नई दर",
-    "remainingTerm": "शेष अवधि"
+    "remainingTerm": "शेष अवधि",
+    "all": "सभी",
+    "noMatches": "वर्तमान फ़िल्टर से कोई लोन मेल नहीं खाता।",
+    "clearFilters": "फ़िल्टर साफ़ करें"
   },
   "footer": {
     "rightsReserved": "सर्वाधिकार सुरक्षित।",
