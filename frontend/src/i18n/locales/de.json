@@ -409,9 +409,12 @@
     "nftIdQuantity": "{{qty}} × NFT #{{id}}"
   },
   "stakingRewards": {
-    "title": "VPFI-Staking-Belohnungen verfügbar",
+    "titleAvailable": "VPFI-Staking-Belohnungen verfügbar",
+    "titleEmpty": "VPFI-Staking-Belohnungen",
     "subtitle": "Ihr Escrow-VPFI verdient zum Protokoll-APR. Einlösen überträgt das angesammelte VPFI an Ihre Wallet.",
+    "subtitleEmpty": "Staken Sie VPFI in Schritt 2 oben und Ihr Escrow-Saldo verdient {{apr}}% APR — angesammelte Belohnungen können Sie hier einlösen.",
     "pendingLabel": "Ausstehend",
+    "lifetimeClaimedLabel": "Lebenszeit eingelöst",
     "claim": "Einlösen",
     "claiming": "Wird eingelöst…",
     "claimFailed": "Einlösen fehlgeschlagen",
@@ -441,7 +444,7 @@
   "allowances": {
     "connectBody": "Verbinden Sie Ihre Wallet, um Genehmigungen anzuzeigen.",
     "switchChainBody": "Wechseln Sie zu einer unterstützten Chain, um Genehmigungen anzuzeigen.",
-    "pageSubtitle": "Jede ERC-20-Genehmigung, die die verbundene Wallet dem Vaipakam Diamond auf dieser Chain erteilt hat. Widerrufen Sie alle nicht mehr benötigten mit einem Klick — entspricht dem In-App-Widerrufsfluss, der von Uniswap und 1inch verwendet wird. Genehmigungen ungleich null erscheinen zuerst; die Zeilen mit Null-Genehmigung darunter sind eine Referenz, um zu bestätigen, dass die Liste sauber ist.",
+    "pageSubtitle": "Jede ERC-20-Genehmigung, die die verbundene Wallet dem Vaipakam Diamond auf dieser Chain erteilt hat. Widerrufen Sie alle nicht mehr benötigten mit einem Klick. Genehmigungen ungleich null erscheinen zuerst; die Zeilen mit Null-Genehmigung darunter sind eine Referenz, um zu bestätigen, dass die Liste sauber ist.",
     "refresh": "Aktualisieren",
     "refreshing": "Wird aktualisiert…",
     "reading": "Genehmigungen werden gelesen…",
@@ -1222,7 +1225,7 @@
     "openTelegram": "Telegram öffnen →"
   },
   "allowancesPage": {
-    "subtitle": "Jede ERC-20-Genehmigung, die das verbundene Wallet dem Vaipakam Diamond auf dieser Chain erteilt hat. Nicht mehr benötigte mit einem Klick widerrufen — entspricht dem In-App-Widerrufs-Flow von Uniswap und 1inch. Genehmigungen ungleich Null erscheinen zuerst; Zeilen mit Null-Genehmigung darunter dienen als Referenz, um zu bestätigen, dass die Liste sauber ist.",
+    "subtitle": "Jede ERC-20-Genehmigung, die das verbundene Wallet dem Vaipakam Diamond auf dieser Chain erteilt hat. Nicht mehr benötigte mit einem Klick widerrufen. Genehmigungen ungleich Null erscheinen zuerst; Zeilen mit Null-Genehmigung darunter dienen als Referenz, um zu bestätigen, dass die Liste sauber ist.",
     "refresh": "Aktualisieren",
     "scannedSummary_one": "{{count}} Token gescannt · {{nonZero}} mit Genehmigung ungleich Null",
     "scannedSummary_other": "{{count}} Tokens gescannt · {{nonZero}} mit Genehmigung ungleich Null",

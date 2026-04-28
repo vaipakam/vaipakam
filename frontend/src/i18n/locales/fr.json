@@ -409,9 +409,12 @@
     "nftIdQuantity": "{{qty}} × NFT #{{id}}"
   },
   "stakingRewards": {
-    "title": "Récompenses de staking VPFI disponibles",
+    "titleAvailable": "Récompenses de staking VPFI disponibles",
+    "titleEmpty": "Récompenses de staking VPFI",
     "subtitle": "Votre VPFI en Escrow gagne au TAEG du protocole. Réclamer transfère le VPFI accumulé vers votre portefeuille.",
+    "subtitleEmpty": "Stakez VPFI à l’Étape 2 ci-dessus et votre solde Escrow gagnera {{apr}}% APR — vous pourrez réclamer les récompenses accumulées ici.",
     "pendingLabel": "En attente",
+    "lifetimeClaimedLabel": "Réclamé à vie",
     "claim": "Réclamer",
     "claiming": "Réclamation…",
     "claimFailed": "Réclamation échouée",
@@ -441,7 +444,7 @@
   "allowances": {
     "connectBody": "Connectez votre portefeuille pour voir les autorisations.",
     "switchChainBody": "Passez à une chaîne prise en charge pour voir les autorisations.",
-    "pageSubtitle": "Chaque autorisation ERC-20 que le portefeuille connecté a accordée au Vaipakam Diamond sur cette chaîne. Révoquez celles dont vous n'avez plus besoin en un clic — reflète le flux de révocation in-app utilisé par Uniswap et 1inch. Les autorisations non nulles apparaissent en premier ; les lignes à autorisation zéro ci-dessous sont une référence pour confirmer que la liste est propre.",
+    "pageSubtitle": "Chaque autorisation ERC-20 que le portefeuille connecté a accordée au Vaipakam Diamond sur cette chaîne. Révoquez celles dont vous n'avez plus besoin en un clic. Les autorisations non nulles apparaissent en premier ; les lignes à autorisation zéro ci-dessous sont une référence pour confirmer que la liste est propre.",
     "refresh": "Actualiser",
     "refreshing": "Actualisation…",
     "reading": "Lecture des autorisations…",
@@ -1222,7 +1225,7 @@
     "openTelegram": "Ouvrir Telegram →"
   },
   "allowancesPage": {
-    "subtitle": "Toute approbation ERC-20 accordée au Vaipakam Diamond par le portefeuille connecté sur cette chaîne. Révoquer celles qui ne sont plus nécessaires en un clic — reflète le flux de révocation in-app utilisé par Uniswap et 1inch. Les autorisations non nulles apparaissent en premier ; les lignes à autorisation nulle figurent en dessous comme référence pour confirmer que la liste est propre.",
+    "subtitle": "Toute approbation ERC-20 accordée au Vaipakam Diamond par le portefeuille connecté sur cette chaîne. Révoquer celles qui ne sont plus nécessaires en un clic. Les autorisations non nulles apparaissent en premier ; les lignes à autorisation nulle figurent en dessous comme référence pour confirmer que la liste est propre.",
     "refresh": "Actualiser",
     "scannedSummary_one": "{{count}} token analysé · {{nonZero}} avec autorisation non nulle",
     "scannedSummary_other": "{{count}} tokens analysés · {{nonZero}} avec autorisation non nulle",

@@ -409,9 +409,12 @@
     "nftIdQuantity": "{{qty}} × NFT #{{id}}"
   },
   "stakingRewards": {
-    "title": "VPFI 스테이킹 보상 사용 가능",
+    "titleAvailable": "VPFI 스테이킹 보상 사용 가능",
+    "titleEmpty": "VPFI 스테이킹 보상",
     "subtitle": "Escrow의 VPFI가 프로토콜 APR로 수익을 얻고 있습니다. 청구하면 누적된 VPFI가 지갑으로 전송됩니다.",
+    "subtitleEmpty": "위 2단계에서 VPFI를 스테이킹하면 Escrow 잔액이 {{apr}}% APR을 얻습니다 — 누적된 보상을 여기서 청구할 수 있습니다.",
     "pendingLabel": "대기 중",
+    "lifetimeClaimedLabel": "누적 청구됨",
     "claim": "청구",
     "claiming": "청구 중…",
     "claimFailed": "청구 실패",
@@ -441,7 +444,7 @@
   "allowances": {
     "connectBody": "승인을 보려면 지갑을 연결하세요.",
     "switchChainBody": "승인을 보려면 지원되는 체인으로 전환하세요.",
-    "pageSubtitle": "연결된 지갑이 이 체인에서 Vaipakam Diamond에 부여한 모든 ERC-20 승인입니다. 더 이상 필요하지 않은 항목을 한 번의 클릭으로 취소 — Uniswap과 1inch가 사용하는 앱 내 취소 흐름을 반영합니다. 0이 아닌 승인이 먼저 표시되고, 아래의 0 승인 행은 목록이 깨끗한지 확인하기 위한 참조입니다.",
+    "pageSubtitle": "연결된 지갑이 이 체인에서 Vaipakam Diamond에 부여한 모든 ERC-20 승인입니다. 더 이상 필요하지 않은 항목을 한 번의 클릭으로 취소. 0이 아닌 승인이 먼저 표시되고, 아래의 0 승인 행은 목록이 깨끗한지 확인하기 위한 참조입니다.",
     "refresh": "새로고침",
     "refreshing": "새로고침 중…",
     "reading": "승인을 읽는 중…",
@@ -1222,7 +1225,7 @@
     "openTelegram": "Telegram 열기 →"
   },
   "allowancesPage": {
-    "subtitle": "이 체인에서 연결된 지갑이 Vaipakam Diamond에 부여한 모든 ERC-20 승인입니다. 더 이상 필요하지 않은 항목을 한 번의 클릭으로 취소하십시오 — Uniswap과 1inch에서 사용하는 인앱 취소 흐름을 반영합니다. 0이 아닌 승인이 먼저 표시되며, 0 승인 행은 목록이 깨끗한지 확인하기 위한 참조로 아래에 표시됩니다.",
+    "subtitle": "이 체인에서 연결된 지갑이 Vaipakam Diamond에 부여한 모든 ERC-20 승인입니다. 더 이상 필요하지 않은 항목을 한 번의 클릭으로 취소하십시오. 0이 아닌 승인이 먼저 표시되며, 0 승인 행은 목록이 깨끗한지 확인하기 위한 참조로 아래에 표시됩니다.",
     "refresh": "새로 고침",
     "scannedSummary_one": "{{count}}개 토큰 스캔됨 · {{nonZero}}개의 0이 아닌 승인",
     "scannedSummary_other": "{{count}}개 토큰 스캔됨 · {{nonZero}}개의 0이 아닌 승인",

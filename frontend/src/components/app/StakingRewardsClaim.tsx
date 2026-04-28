@@ -1,8 +1,9 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Coins, CheckCircle, ExternalLink } from 'lucide-react';
 import { useDiamondContract } from '../../contracts/useDiamond';
 import { useStakingRewards } from '../../hooks/useStakingRewards';
+import { useLogIndex } from '../../hooks/useLogIndex';
 import { decodeContractError } from '../../lib/decodeContractError';
 import { beginStep } from '../../lib/journeyLog';
 import { TokenAmount } from './TokenAmount';
@@ -34,16 +35,43 @@ interface Props {
 export function StakingRewardsClaim({ address, chainId, blockExplorer, variant = 'card' }: Props) {
   const { t } = useTranslation();
   const diamond = useDiamondContract();
-  const { pending, staked, stale, reload, loading } = useStakingRewards(address ?? null);
+  const { pending, aprBps, stale, reload, loading } = useStakingRewards(address ?? null);
+  // Live APR from `getStakingAPRBps` (defaults to 500 = 5% but is
+  // admin-configurable via `setStakingApr`). Interpolated into the
+  // empty-state subtitle so the copy never falsely advertises 5% when
+  // governance has changed the rate. Format with up to 2 decimal
+  // places to handle non-round values like 575 → 5.75%.
+  const aprPct = (Number(aprBps) / 100).toFixed(Number(aprBps) % 100 === 0 ? 0 : 2);
+  // Lifetime claimed VPFI is summed from `StakingRewardsClaimed` events
+  // in the per-(chain, diamond) log-index — no on-chain getter for the
+  // running total exists, but the events carry the full history.
+  // Mirrors the same pattern InteractionRewardsClaim uses on Claim
+  // Center for the interaction-rewards lifetime total.
+  const { events } = useLogIndex();
+  const lifetimeClaimed = useMemo(() => {
+    if (!address) return 0n;
+    const me = address.toLowerCase();
+    let sum = 0n;
+    for (const ev of events) {
+      if (ev.kind !== 'StakingRewardsClaimed') continue;
+      if (typeof ev.args.user !== 'string' || ev.args.user !== me) continue;
+      if (typeof ev.args.amount !== 'string') continue;
+      try { sum += BigInt(ev.args.amount); } catch { /* skip malformed */ }
+    }
+    return sum;
+  }, [events, address]);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [txHash, setTxHash] = useState<string | null>(null);
 
   if (!address) return null;
   if (stale) return null;
-  // Nothing staked AND nothing pending → don't render. A user who staked
-  // before but unstaked can still see a non-zero pending until they claim.
-  if (staked === 0n && pending === 0n) return null;
+  // Render even at all-zero state. The card doubles as a promotional
+  // surface — a "0 VPFI pending" disabled-button view tells a fresh
+  // user the program exists and how to start earning. The zero-state
+  // gate previously hid the card on first visits, which made the
+  // staking program effectively invisible until the user already
+  // had escrow VPFI for some other reason.
 
   const handleClaim = async () => {
     if (pending === 0n) return;
@@ -88,6 +116,7 @@ export function StakingRewardsClaim({ address, chainId, blockExplorer, variant =
   );
 
   if (variant === 'inline') {
+    const inlineHasPending = pending > 0n;
     return (
       <div
         style={{
@@ -98,16 +127,28 @@ export function StakingRewardsClaim({ address, chainId, blockExplorer, variant =
           marginTop: 12,
           border: '1px solid var(--border)',
           borderRadius: 8,
-          background: 'rgba(16, 185, 129, 0.06)',
+          background: inlineHasPending ? 'rgba(16, 185, 129, 0.06)' : 'transparent',
         }}
       >
-        <Coins size={16} style={{ color: 'var(--accent-green)', flexShrink: 0 }} />
+        <Coins size={16} style={{ color: inlineHasPending ? 'var(--accent-green)' : 'var(--text-secondary)', flexShrink: 0 }} />
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontSize: '0.78rem', color: 'var(--text-tertiary)' }}>
             {t('stakingRewards.pendingLabel')}
           </div>
           <div style={{ fontWeight: 600 }}>{headline}</div>
         </div>
+        {/* Lifetime-claimed sub-block on the inline mirror — only renders
+            when non-zero so a fresh user keeps the row clean. */}
+        {lifetimeClaimed > 0n && (
+          <div style={{ minWidth: 0 }}>
+            <div style={{ fontSize: '0.78rem', color: 'var(--text-tertiary)' }}>
+              {t('stakingRewards.lifetimeClaimedLabel')}
+            </div>
+            <div style={{ fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}>
+              <TokenAmount amount={lifetimeClaimed} address="vpfi" decimals={18} /> VPFI
+            </div>
+          </div>
+        )}
         {button}
         {txHash && (
           <a
@@ -123,14 +164,25 @@ export function StakingRewardsClaim({ address, chainId, blockExplorer, variant =
     );
   }
 
+  // Visual states:
+  //   pending > 0 → green chrome + "available" copy. Real call to action.
+  //   pending = 0 → neutral card chrome + informational copy. Hides
+  //                 disabled-button shoutiness; reads as a passive
+  //                 promo for the program until the user has rewards
+  //                 to claim.
+  const hasPending = pending > 0n;
   return (
     <div
       className="card"
-      style={{
-        marginBottom: 12,
-        borderColor: 'var(--accent-green)',
-        background: 'rgba(16, 185, 129, 0.06)',
-      }}
+      style={
+        hasPending
+          ? {
+              marginBottom: 12,
+              borderColor: 'var(--accent-green)',
+              background: 'rgba(16, 185, 129, 0.06)',
+            }
+          : { marginBottom: 12 }
+      }
     >
       <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
         <div
@@ -141,8 +193,8 @@ export function StakingRewardsClaim({ address, chainId, blockExplorer, variant =
             width: 36,
             height: 36,
             borderRadius: '50%',
-            background: 'rgba(16, 185, 129, 0.15)',
-            color: 'var(--accent-green)',
+            background: hasPending ? 'rgba(16, 185, 129, 0.15)' : 'rgba(148, 163, 184, 0.12)',
+            color: hasPending ? 'var(--accent-green)' : 'var(--text-secondary)',
             flexShrink: 0,
           }}
         >
@@ -150,16 +202,20 @@ export function StakingRewardsClaim({ address, chainId, blockExplorer, variant =
         </div>
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontWeight: 600, marginBottom: 4 }}>
-            {t('stakingRewards.title')}
+            {hasPending
+              ? t('stakingRewards.titleAvailable')
+              : t('stakingRewards.titleEmpty')}
           </div>
           <p className="stat-label" style={{ margin: 0 }}>
-            {t('stakingRewards.subtitle')}
+            {hasPending
+              ? t('stakingRewards.subtitle')
+              : t('stakingRewards.subtitleEmpty', { apr: aprPct })}
           </p>
           <div
             style={{
               display: 'flex',
               alignItems: 'center',
-              gap: 12,
+              gap: 16,
               flexWrap: 'wrap',
               marginTop: 12,
             }}
@@ -170,6 +226,19 @@ export function StakingRewardsClaim({ address, chainId, blockExplorer, variant =
               </div>
               <div style={{ fontSize: '1.2rem', fontWeight: 600 }}>{headline}</div>
             </div>
+            {/* Lifetime-claimed total — sums every StakingRewardsClaimed
+                event in the log-index keyed to this wallet. Hidden when
+                zero so a first-time staker sees only "Pending". */}
+            {lifetimeClaimed > 0n && (
+              <div>
+                <div style={{ fontSize: '0.78rem', color: 'var(--text-tertiary)' }}>
+                  {t('stakingRewards.lifetimeClaimedLabel')}
+                </div>
+                <div style={{ fontSize: '1.05rem', fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}>
+                  <TokenAmount amount={lifetimeClaimed} address="vpfi" decimals={18} /> VPFI
+                </div>
+              </div>
+            )}
             {button}
           </div>
         </div>

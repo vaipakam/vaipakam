@@ -1043,13 +1043,6 @@ export default function BuyVPFI() {
           </p>
         </div>
 
-        <StakingRewardsClaim
-          address={address ?? null}
-          chainId={activeChain?.chainId}
-          blockExplorer={activeChain?.blockExplorer ?? readChain.blockExplorer}
-          variant="card"
-        />
-
         <div
           style={{
             display: "grid",
@@ -1117,6 +1110,19 @@ export default function BuyVPFI() {
           />
         )}
       </div>
+
+      {/* Staking-rewards claim card — sits right after Step 2 (Deposit/
+          Stake) since the rewards literally accrue from what gets
+          deposited there. Always renders (even at zero pending) so the
+          program is visible to fresh users; the chrome flips green +
+          "available" copy only when there's something to claim, otherwise
+          stays neutral with informational copy that promotes the program. */}
+      <StakingRewardsClaim
+        address={address ?? null}
+        chainId={activeChain?.chainId}
+        blockExplorer={activeChain?.blockExplorer ?? readChain.blockExplorer}
+        variant="card"
+      />
 
       {/* Unstake — pull VPFI back out of escrow into the wallet. Pairs with
           Step 2 (Deposit): same token, same chain, opposite direction.

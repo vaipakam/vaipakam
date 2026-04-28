@@ -409,9 +409,12 @@
     "nftIdQuantity": "{{qty}} × NFT #{{id}}"
   },
   "stakingRewards": {
-    "title": "VPFI 质押奖励可用",
+    "titleAvailable": "VPFI 质押奖励可用",
+    "titleEmpty": "VPFI 质押奖励",
     "subtitle": "您 Escrow 中的 VPFI 正在按协议 APR 赚取收益。领取后将累积的 VPFI 转移到您的钱包。",
+    "subtitleEmpty": "在上方第 2 步质押 VPFI，您的 Escrow 余额将获得 {{apr}}% APR — 您可以在此处领取累计的奖励。",
     "pendingLabel": "待领取",
+    "lifetimeClaimedLabel": "累计已领取",
     "claim": "领取",
     "claiming": "正在领取…",
     "claimFailed": "领取失败",
@@ -441,7 +444,7 @@
   "allowances": {
     "connectBody": "连接您的钱包以查看授权。",
     "switchChainBody": "切换到受支持的链以查看授权。",
-    "pageSubtitle": "已连接钱包在此链上授予 Vaipakam Diamond 的每个 ERC-20 授权。一键撤销您不再需要的 — 反映 Uniswap 和 1inch 使用的应用内撤销流程。非零授权显示在最前面;下面的零授权行是参考,以便您确认列表是干净的。",
+    "pageSubtitle": "已连接钱包在此链上授予 Vaipakam Diamond 的每个 ERC-20 授权。一键撤销您不再需要的授权。非零授权显示在最前面;下面的零授权行是参考,以便您确认列表是干净的。",
     "refresh": "刷新",
     "refreshing": "刷新中…",
     "reading": "正在读取授权…",
@@ -1222,7 +1225,7 @@
     "openTelegram": "打开Telegram →"
   },
   "allowancesPage": {
-    "subtitle": "已连接钱包在此链上授予Vaipakam Diamond的每一项ERC-20授权。一键撤销不再需要的授权 — 反映Uniswap和1inch使用的应用内撤销流程。非零授权显示在前；零授权行显示在下方作为参考，以确认列表干净。",
+    "subtitle": "已连接钱包在此链上授予Vaipakam Diamond的每一项ERC-20授权。一键撤销不再需要的授权。非零授权显示在前；零授权行显示在下方作为参考，以确认列表干净。",
     "refresh": "刷新",
     "scannedSummary_one": "已扫描{{count}}个代币 · {{nonZero}}个非零授权",
     "scannedSummary_other": "已扫描{{count}}个代币 · {{nonZero}}个非零授权",

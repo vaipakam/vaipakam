@@ -358,7 +358,7 @@
     "openTelegram": "Open Telegram →"
   },
   "allowancesPage": {
-    "subtitle": "Every ERC-20 approval granted to the Vaipakam Diamond by the connected wallet on this chain. Revoke ones no longer needed in one click — mirrors the in-app revoke flow used by Uniswap and 1inch. Non-zero allowances appear first; zero-allowance rows below are a reference so the list can be confirmed clean.",
+    "subtitle": "Every ERC-20 approval granted to the Vaipakam Diamond by the connected wallet on this chain. Revoke ones no longer needed in one click. Non-zero allowances appear first; zero-allowance rows below are a reference so the list can be confirmed clean.",
     "refresh": "Refresh",
     "scannedSummary_one": "{{count}} token scanned · {{nonZero}} with non-zero allowance",
     "scannedSummary_other": "{{count}} tokens scanned · {{nonZero}} with non-zero allowance",
@@ -876,9 +876,12 @@
     "nftIdQuantity": "{{qty}} × NFT #{{id}}"
   },
   "stakingRewards": {
-    "title": "VPFI staking rewards available",
+    "titleAvailable": "VPFI staking rewards available",
+    "titleEmpty": "VPFI staking rewards",
     "subtitle": "Your escrow VPFI has been earning at the protocol APR. Claim transfers the accrued VPFI to your wallet.",
+    "subtitleEmpty": "Stake VPFI in Step 2 above and your escrow balance will earn {{apr}}% APR — you can claim accumulated rewards here.",
     "pendingLabel": "Pending",
+    "lifetimeClaimedLabel": "Lifetime claimed",
     "claim": "Claim",
     "claiming": "Claiming…",
     "claimFailed": "Claim failed",
@@ -908,7 +911,7 @@
   "allowances": {
     "connectBody": "Connect your wallet to view allowances.",
     "switchChainBody": "Switch to a supported chain to view allowances.",
-    "pageSubtitle": "Every ERC-20 approval the connected wallet has granted the Vaipakam Diamond on this chain. Revoke any you no longer need in one click — mirrors the in-app revoke flow used by Uniswap and 1inch. Non-zero approvals appear first; the zero-allowance rows below are a reference so you can confirm the list is clean.",
+    "pageSubtitle": "Every ERC-20 approval the connected wallet has granted the Vaipakam Diamond on this chain. Revoke any you no longer need in one click. Non-zero approvals appear first; the zero-allowance rows below are a reference so you can confirm the list is clean.",
     "refresh": "Refresh",
     "refreshing": "Refreshing…",
     "reading": "Reading allowances…",

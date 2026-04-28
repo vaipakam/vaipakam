@@ -409,9 +409,12 @@
     "nftIdQuantity": "{{qty}} × NFT #{{id}}"
   },
   "stakingRewards": {
-    "title": "VPFIステーキング報酬が利用可能",
+    "titleAvailable": "VPFIステーキング報酬が利用可能",
+    "titleEmpty": "VPFIステーキング報酬",
     "subtitle": "Escrow内のVPFIはプロトコルAPRで稼いでいます。請求すると蓄積されたVPFIがウォレットに転送されます。",
+    "subtitleEmpty": "上のステップ2でVPFIをステーキングすると、Escrow残高が{{apr}}% APRを稼ぎます — 累積した報酬はここで請求できます。",
     "pendingLabel": "保留中",
+    "lifetimeClaimedLabel": "累計請求済み",
     "claim": "請求",
     "claiming": "請求中…",
     "claimFailed": "請求失敗",
@@ -441,7 +444,7 @@
   "allowances": {
     "connectBody": "許可額を表示するためにウォレットを接続してください。",
     "switchChainBody": "許可額を表示するためにサポートされているチェーンに切り替えてください。",
-    "pageSubtitle": "接続されたウォレットがこのチェーンでVaipakam Diamondに付与したすべてのERC-20承認。不要なものはワンクリックで取り消し — Uniswap や 1inch で使用されているアプリ内取り消しフローを反映しています。ゼロ以外の承認が最初に表示され、下の承認ゼロの行はリストがクリーンであることを確認するための参照です。",
+    "pageSubtitle": "接続されたウォレットがこのチェーンでVaipakam Diamondに付与したすべてのERC-20承認。不要なものはワンクリックで取り消しできます。ゼロ以外の承認が最初に表示され、下の承認ゼロの行はリストがクリーンであることを確認するための参照です。",
     "refresh": "更新",
     "refreshing": "更新中…",
     "reading": "許可額を読み込み中…",
@@ -1222,7 +1225,7 @@
     "openTelegram": "Telegramを開く →"
   },
   "allowancesPage": {
-    "subtitle": "このチェーン上で接続中のウォレットがVaipakam Diamondに付与しているすべてのERC-20承認です。不要なものをワンクリックで取り消せます — Uniswapおよび1inchで使われているアプリ内取消フローを反映しています。ゼロでない承認が先頭に表示され、ゼロ承認の行はリストがクリーンであることを確認するための参照として下に表示されます。",
+    "subtitle": "このチェーン上で接続中のウォレットがVaipakam Diamondに付与しているすべてのERC-20承認です。不要なものをワンクリックで取り消せます。ゼロでない承認が先頭に表示され、ゼロ承認の行はリストがクリーンであることを確認するための参照として下に表示されます。",
     "refresh": "更新",
     "scannedSummary_one": "{{count}}トークンスキャン済み · {{nonZero}}件の非ゼロ承認",
     "scannedSummary_other": "{{count}}トークンスキャン済み · {{nonZero}}件の非ゼロ承認",

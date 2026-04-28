@@ -409,9 +409,12 @@
     "nftIdQuantity": "{{qty}} × NFT #{{id}}"
   },
   "stakingRewards": {
-    "title": "Recompensas de staking VPFI disponibles",
+    "titleAvailable": "Recompensas de staking VPFI disponibles",
+    "titleEmpty": "Recompensas de staking VPFI",
     "subtitle": "Tu VPFI en escrow ha estado ganando al APR del protocolo. Reclamar transfiere el VPFI acumulado a tu billetera.",
+    "subtitleEmpty": "Haz stake de VPFI en el Paso 2 de arriba y tu saldo en Escrow ganará {{apr}}% APR — puedes reclamar las recompensas acumuladas aquí.",
     "pendingLabel": "Pendiente",
+    "lifetimeClaimedLabel": "Reclamado total",
     "claim": "Reclamar",
     "claiming": "Reclamando…",
     "claimFailed": "Reclamo fallido",
@@ -441,7 +444,7 @@
   "allowances": {
     "connectBody": "Conecta tu billetera para ver las aprobaciones.",
     "switchChainBody": "Cambia a una cadena compatible para ver las aprobaciones.",
-    "pageSubtitle": "Cada aprobación ERC-20 que la billetera conectada ha otorgado al Vaipakam Diamond en esta cadena. Revoca las que ya no necesites en un clic — refleja el flujo de revocación dentro de la app usado por Uniswap y 1inch. Las aprobaciones distintas de cero aparecen primero; las filas con aprobación cero abajo son una referencia para que confirmes que la lista está limpia.",
+    "pageSubtitle": "Cada aprobación ERC-20 que la billetera conectada ha otorgado al Vaipakam Diamond en esta cadena. Revoca las que ya no necesites en un clic. Las aprobaciones distintas de cero aparecen primero; las filas con aprobación cero abajo son una referencia para que confirmes que la lista está limpia.",
     "refresh": "Actualizar",
     "refreshing": "Actualizando…",
     "reading": "Leyendo aprobaciones…",
@@ -1222,7 +1225,7 @@
     "openTelegram": "Abrir Telegram →"
   },
   "allowancesPage": {
-    "subtitle": "Cada aprobación ERC-20 otorgada al Vaipakam Diamond por la cartera conectada en esta cadena. Revocar las que ya no se necesiten con un clic — refleja el flujo de revocación interno utilizado por Uniswap y 1inch. Las asignaciones distintas de cero aparecen primero; las filas con asignación cero aparecen abajo como referencia para confirmar que la lista está limpia.",
+    "subtitle": "Cada aprobación ERC-20 otorgada al Vaipakam Diamond por la cartera conectada en esta cadena. Revocar las que ya no se necesiten con un clic. Las asignaciones distintas de cero aparecen primero; las filas con asignación cero aparecen abajo como referencia para confirmar que la lista está limpia.",
     "refresh": "Actualizar",
     "scannedSummary_one": "{{count}} token escaneado · {{nonZero}} con asignación distinta de cero",
     "scannedSummary_other": "{{count}} tokens escaneados · {{nonZero}} con asignación distinta de cero",
