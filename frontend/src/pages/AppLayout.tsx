@@ -78,17 +78,17 @@ const BASIC_NAV = [
     end: false,
   },
   {
+    to: "/app/claims",
+    icon: <HandCoins size={20} />,
+    labelKey: "appNav.claimCenter",
+    end: false,
+  },
+  {
     to: "/buy-vpfi",
     icon: <Coins size={20} />,
     labelKey: "appNav.buyVpfi",
     end: false,
     external: true,
-  },
-  {
-    to: "/app/claims",
-    icon: <HandCoins size={20} />,
-    labelKey: "appNav.claimCenter",
-    end: false,
   },
   {
     to: "/app/activity",
