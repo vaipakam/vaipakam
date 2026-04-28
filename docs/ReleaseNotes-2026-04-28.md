@@ -26,10 +26,22 @@ list of recent matches replaces the single global "last accepted"
 rate so flipping any filter dimension no longer blanks the
 column), **column sorting** on the Dashboard "Your Loans" table
 (default: most recent first by ID descending), **Dashboard "Your
-Loans" pagination + filters** (Role / Status / Per page), and
+Loans" pagination + filters** (Role / Status / Per page),
 **chain-picker-style filter pills** rolled out across both the
 Dashboard filters and the Offer Book filters card so all three
-filter surfaces share one visual language.
+filter surfaces share one visual language, a **token-identification
+trust block** under the Create Offer asset address fields (symbol +
+name + market-cap rank + decimals + explorer link + phishing
+warning when the contract isn't in the CoinGecko top 200), a
+contract-side **lender-cannot-repay-own-loan guard** that closes a
+self-liquidation edge case, a **custom revert** on the three risk-
+math entry points when called against an illiquid loan (replaces a
+generic `NonLiquidAsset` with `IlliquidLoanNoRiskMath` so the
+frontend can surface a precise explainer), and a **Dashboard "your
+stuff" consolidation** that moves "Your Active Offers" and "Your
+VPFI Discount Status" onto the Dashboard while moving "VPFI Token
+(this chain)" out to the Buy VPFI page (with the activity table
+paginated 10 rows per page).
 
 ## Tamil + Simplified-Chinese user guides
 
@@ -398,6 +410,161 @@ entries were removed from `HEAD`. Keys remain in git history
 (public dev-mnemonic defaults — a `git filter-repo` rewrite is
 overkill); the alert closes once the pattern no longer appears
 on `HEAD`.
+
+## Token-identification trust block on Create Offer
+
+The lending-asset and collateral-asset address fields on Create
+Offer used to drop the user into a bare hex string with no help
+identifying the contract. A pasted address could be the canonical
+USDC, a legitimate but obscure long-tail token, or an outright
+phishing copy with the same symbol — the form gave no signal
+either way.
+
+A new trust block now sits inline under each address field once a
+syntactically valid `0x…40` is in the input. Per row it shows:
+
+- **Symbol + Name** — pulled from the CoinGecko registry first
+  (canonical names, market-cap rank), with an on-chain
+  `symbol()` / `name()` fallback when the contract isn't on the
+  registry. Either way the user sees identifying text instead of
+  a bare hash.
+- **Market-cap rank** — when the token is in the CoinGecko
+  registry, e.g. "Rank #14".
+- **Decimals** — Advanced-mode-only, since beginners don't need
+  to see the technical surface and the value is non-actionable
+  for them.
+- **View on explorer** link — opens the active chain's block
+  explorer to the contract's address page so the user can verify
+  source / holders / activity directly.
+- **Phishing warning** — yellow-chrome callout when the address
+  is NOT in the CoinGecko registry, OR is on the registry but
+  ranked outside the top 200. Copy explicitly tells the user to
+  confirm the contract address itself rather than relying on the
+  symbol they see in the field, since anyone can deploy a token
+  with any symbol.
+
+The on-chain "**detected ERC-20 / ERC-721 / ERC-1155**" pill that
+used to render as its own line below the address is now folded
+inline into the same row as the other identification fields. The
+pill is still Advanced-only — it's a technical diagnostic — but
+co-locating it with symbol/name/decimals avoids the previous
+double-line "trust block, then technical diagnostic stripe"
+visual stutter.
+
+The block is visible to both Basic and Advanced users so a fresh
+user pasting a sketchy address sees the warning at the same spot
+a power user does. No phishing-protection signal is Advanced-
+gated.
+
+## Lender cannot repay own loan — contract guard
+
+A loan's lender accepting a borrower's offer creates the standard
+two-sided position. There was no on-chain guard, however,
+preventing the lender from then calling `repayLoan` against their
+own loan as a third-party. In a normal repay the borrower is the
+caller; the on-chain code routes principal + interest from the
+borrower's escrow to the lender. With the lender themselves as
+caller, the contract treated them as a generous third-party
+repayer — debiting the lender's escrow and crediting the lender's
+escrow. Net economic effect: the lender pays themselves interest
+plus the protocol's treasury fee, the loan settles closed, the
+borrower's collateral becomes claimable. The borrower walks away
+with collateral they didn't earn back.
+
+A new revert `LenderCannotRepayOwnLoan` blocks this. The check
+fires when both `msg.sender == loan.lender` AND the lender's
+position NFT is still owned by the caller (the second clause
+keeps the third-party repay path open after the lender has sold
+their position). NFT-rental loans are explicitly skipped from the
+guard — those have a different settlement model where the
+"lender" address is the rental escrow and self-repay is the
+intended close path.
+
+The repay-by-third-party test in the regression suite was
+updated to use a fresh non-lender address so the new guard
+doesn't accidentally block a legitimate Good-Samaritan repay.
+
+## Illiquid loans — custom revert on risk-math entry points
+
+`calculateLTV`, `calculateHealthFactor`, and the
+`isCollateralValueCollapsed` predicate inside the risk facet used
+to revert with the generic `NonLiquidAsset` error when called
+against a loan whose collateral was illiquid (no Chainlink feed,
+no v3-style concentrated-liquidity AMM pool, or below the $1M
+volume threshold). Same error code is also used by
+`triggerLiquidation` for "this asset can't be 0x-swapped" — and
+the frontend couldn't tell the two cases apart.
+
+A new dedicated revert `IlliquidLoanNoRiskMath` was added for the
+risk-math three. The frontend on Loan Details now decodes that
+specific selector and renders a precise explainer: "this loan's
+collateral is illiquid — no LTV, no Health Factor, and no HF-
+based liquidation. The loan settles via the time-based default
+path on grace-period expiry; both parties have already consented
+to that on accept." The triggerLiquidation revert keeps its
+generic `NonLiquidAsset` selector since the explainer there
+points to "use the time-based default path" which is the same
+call-to-action.
+
+## Dashboard "your stuff" consolidation
+
+The Dashboard used to be a loans-only surface. The Offer Book
+held the user's own active offers (mixed in with the market book)
+and the Buy VPFI page held the user's discount tier status. A
+fresh user landing on the app had to navigate three pages to see
+their full position.
+
+The Dashboard now reads as a single "your stuff" surface. Three
+moves:
+
+- **Your Active Offers** card moved from the Offer Book page to
+  the Dashboard. Renders only when the connected wallet has at
+  least one open offer; otherwise the slot is skipped entirely
+  rather than rendering an empty placeholder. The card uses the
+  same `OfferTable` component the market-side cards do, with the
+  user's own row showing a "Your offer" badge + Manage keepers
+  link instead of an Accept button. The "New Offer" CTA was
+  consolidated into this card's header — when no active offers
+  exist, a fallback CTA still surfaces in the Loans card header
+  so brand-new users still have one click to first offer
+  creation.
+- **Your VPFI Discount Status** card moved from the Buy VPFI page
+  to the Dashboard, sitting directly below the Discount Consent
+  toggle (which it has always paired with). Shows the live tier,
+  effective discount %, and consent status without forcing the
+  user to navigate to the public Buy VPFI page. The "Enable the
+  shared discount consent on Dashboard" link inside the card is
+  rephrased to "Enable the shared discount consent above." across
+  all 10 locales, since the consent toggle now lives directly
+  above this card.
+- **VPFI Token (this chain)** card moved out of the Dashboard to
+  the bottom of the Buy VPFI page. The card is mostly chain-
+  level transparency (token contract, authorized minter, treasury
+  destination, circulating supply, recent VPFI transfer activity)
+  — info that's most relevant to a user already on the buy/stake/
+  unstake page rather than a returning user checking their loans.
+
+A small spacing fix between Your Active Offers and Your Loans
+sits alongside (the two cards used to butt up against each other
+without breathing room).
+
+## VPFI Token transparency on Buy VPFI — paginated activity
+
+The "Your VPFI activity" table inside the relocated VPFI Token
+card now paginates 10 rows per page with a bottom paginator. The
+underlying log-index already keeps the full transfer history; the
+old in-card view rendered all rows in one scroll, which on
+chatty wallets pushed the rest of the Buy VPFI page well below
+the fold. Page index resets to 0 on chain switch or when the
+underlying list grows.
+
+The two stat tiles that previously sat at the top of this card —
+**Wallet VPFI balance** and **Escrow VPFI balance** — were
+removed, since the same two numbers are surfaced more
+prominently on the Dashboard's Discount Status card now. The
+remaining tiles (Share of circulating, Circulating this chain,
+Remaining mintable) are chain-level transparency and don't
+duplicate anything elsewhere.
 
 ## Documentation convention
 
