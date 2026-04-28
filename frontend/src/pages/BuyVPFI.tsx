@@ -858,9 +858,6 @@ export default function BuyVPFI() {
           <CardInfo id="buy-vpfi.overview" />
         </h1>
         <p className="page-subtitle">{t('buyVpfi.pageSubtitle')}</p>
-        <p className="page-subtitle" style={{ marginTop: 8 }}>
-          {t('buyVpfi.openStakingNote')}
-        </p>
       </div>
 
       <FlowBanner
@@ -1025,26 +1022,6 @@ export default function BuyVPFI() {
           cardHelpId="buy-vpfi.deposit"
           subtitle={t('buyVpfi.step2Subtitle')}
         />
-        <div
-          style={{
-            display: "flex",
-            gap: 10,
-            alignItems: "flex-start",
-            background: "rgba(59, 130, 246, 0.06)",
-            border: "1px solid rgba(59, 130, 246, 0.25)",
-            borderRadius: 8,
-            padding: 12,
-            marginBottom: 12,
-          }}
-        >
-          <Info
-            size={18}
-            style={{ color: "var(--brand)", flexShrink: 0, marginTop: 2 }}
-          />
-          <p className="stat-label" style={{ margin: 0 }}>
-            {t('buyVpfi.step2Info')}
-          </p>
-        </div>
 
         <div
           style={{
