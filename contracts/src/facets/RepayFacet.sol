@@ -11,6 +11,7 @@ import {LibFacet} from "../libraries/LibFacet.sol";
 import {LibVPFIDiscount} from "../libraries/LibVPFIDiscount.sol";
 import {LibInteractionRewards} from "../libraries/LibInteractionRewards.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
 import {DiamondPausable} from "../libraries/LibPausable.sol";
@@ -115,8 +116,13 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
      *      Releases collateral/resets renter, burns NFTs, sets status Repaid.
      *      Reverts if past grace. For NFT rentals, reverts if not borrower
      *      (rental fees are deducted from borrower's escrowed prepayment).
-     *      For ERC-20 loans, any address may repay on the borrower's behalf;
-     *      collateral claim rights remain tied to the borrower's Vaipakam NFT.
+     *      For ERC-20 loans, any address may repay on the borrower's behalf
+     *      EXCEPT the loan's lender or the current owner of the lender-side
+     *      Vaipakam NFT — repaying your own loan is economically degenerate
+     *      (you pay yourself principal+interest minus the 1% treasury cut)
+     *      and is almost certainly a misclick. Reverts
+     *      {LenderCannotRepayOwnLoan} in that case. Collateral claim rights
+     *      remain tied to the borrower's Vaipakam NFT.
      *      Emits LoanRepaid.
      * @param loanId The loan ID to repay.
      */
@@ -131,6 +137,24 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
             loan.status != LibVaipakam.LoanStatus.FallbackPending
         ) revert InvalidLoanStatus();
         bool curingFallback = loan.status == LibVaipakam.LoanStatus.FallbackPending;
+
+        // Block lender-side self-repayment. Two checks because `loan.lender`
+        // and `ownerOf(lenderTokenId)` can diverge after a free-form ERC-721
+        // transfer (the storage field is updated by `sellLoanViaBuyOffer`
+        // and the loan-sale completion path, but a plain `transferFrom`
+        // mid-loan moves NFT custody without touching `loan.lender`). The
+        // canonical authority is NFT ownership, but we additionally guard
+        // the storage field for defence-in-depth. Skipped for NFT rentals,
+        // which intentionally require borrower (= renter) repayment to
+        // settle the rental period — the lender-side check has no meaning
+        // there since rental fees are deducted from a borrower-funded
+        // prepay escrow regardless of caller.
+        if (loan.assetType == LibVaipakam.AssetType.ERC20) {
+            if (msg.sender == loan.lender) revert LenderCannotRepayOwnLoan();
+            if (
+                IERC721(address(this)).ownerOf(loan.lenderTokenId) == msg.sender
+            ) revert LenderCannotRepayOwnLoan();
+        }
 
         uint256 endTime = loan.startTime +
             loan.durationDays *

@@ -560,6 +560,11 @@
   },
   {
     "type": "error",
+    "name": "LenderCannotRepayOwnLoan",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "LenderResolutionFailed",
     "inputs": []
   },

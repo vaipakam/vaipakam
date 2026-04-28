@@ -58,7 +58,16 @@ export function getLoanActionAvailability(ctx: LoanActionContext): LoanActionAva
   // All actions render inside the top-level `{canAct && address && ...}`
   // wrapper in LoanDetails.tsx — so every gate below inherits that AND.
   return {
-    repay: canAct,
+    // Repay is permissionless for everyone EXCEPT the lender side.
+    // Repaying your own loan is economically degenerate (lender pays
+    // themselves principal+interest minus the 1% treasury cut, borrower's
+    // collateral is released back free) and the contract reverts the
+    // call with `LenderCannotRepayOwnLoan`. The `isLender` flag here is
+    // resolved upstream from `ownerOf(lenderTokenId)` so it tracks the
+    // canonical lender even after a free-form NFT transfer or during
+    // an early-withdrawal listing window (the lock is a storage flag,
+    // ownership doesn't move).
+    repay: canAct && !isLender,
     addCollateral: canAct && isBorrower && ctx.showAdvanced,
     triggerDefault: canAct && ctx.isOverdue && isActive,
     earlyWithdrawal: canAct && isLender && !ctx.isOverdue && isActive && isErc20,

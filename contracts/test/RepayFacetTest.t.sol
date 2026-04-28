@@ -515,16 +515,37 @@ contract RepayFacetTest is Test {
     }
 
     /// @dev Tests third-party repayment succeeds for ERC-20 loans.
-    ///      Any address can repay on the borrower's behalf; collateral claim
-    ///      rights remain tied to the borrower's Vaipakam NFT.
+    ///      Any address EXCEPT the lender / lender-NFT-holder can repay on
+    ///      the borrower's behalf; collateral claim rights remain tied to
+    ///      the borrower's Vaipakam NFT.
     function testRepayLoanByThirdPartyERC20() public {
         helperOfferLoan();
-        // loanId 1 is the ERC-20 loan; lender repays on borrower's behalf
-        vm.prank(lender);
+        // loanId 1 is the ERC-20 loan; some unrelated address repays on
+        // the borrower's behalf. Fund + approve from the third party.
+        address thirdParty = makeAddr("thirdParty");
+        uint256 due = RepayFacet(address(diamond)).calculateRepaymentAmount(1);
+        ERC20Mock(mockERC20).mint(thirdParty, due);
+        vm.prank(thirdParty);
+        ERC20Mock(mockERC20).approve(address(diamond), due);
+        vm.prank(thirdParty);
         RepayFacet(address(diamond)).repayLoan(1);
         // Loan should be Repaid
         LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(1);
         assertEq(uint8(loan.status), uint8(LibVaipakam.LoanStatus.Repaid));
+    }
+
+    /// @dev Tests repayLoan reverts when the lender tries to repay their
+    ///      own loan. Two callers exercised: `loan.lender` directly, and
+    ///      the current owner of the lender-side Vaipakam NFT (which on
+    ///      a freshly-initiated loan happens to be the same address —
+    ///      the contract guards both paths defensively, since a free-form
+    ///      ERC-721 transfer can desync the two without touching
+    ///      `loan.lender`).
+    function testRepayLoanRevertsLenderCannotRepayOwnLoan() public {
+        helperOfferLoan();
+        vm.prank(lender);
+        vm.expectRevert(IVaipakamErrors.LenderCannotRepayOwnLoan.selector);
+        RepayFacet(address(diamond)).repayLoan(1);
     }
 
     /// @dev Tests repayLoan reverts if loan is not Active.

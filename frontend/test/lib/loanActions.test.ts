@@ -42,6 +42,15 @@ describe('getLoanActionAvailability', () => {
     expect(a.preclose).toBe(false);
   });
 
+  it('hides repay from the lender — lenders cannot repay their own loan', () => {
+    // Mirrors the contract guard `LenderCannotRepayOwnLoan` in
+    // RepayFacet.repayLoan: repaying your own loan is economically
+    // degenerate (lender pays themselves principal+interest minus the
+    // 1% treasury cut), so the action is removed from the lender side.
+    const a = getLoanActionAvailability(mkCtx({ role: 'lender' }));
+    expect(a.repay).toBe(false);
+  });
+
   it('hides repay once the loan is Repaid / Defaulted / Settled', () => {
     for (const status of [LoanStatus.Repaid, LoanStatus.Defaulted, LoanStatus.Settled]) {
       const a = getLoanActionAvailability(mkCtx({ status }));

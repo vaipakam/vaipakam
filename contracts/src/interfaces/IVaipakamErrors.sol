@@ -65,6 +65,14 @@ interface IVaipakamErrors {
     ///         time) where the asset *was* liquid at loan-init but isn't
     ///         anymore.
     error IlliquidLoanNoRiskMath();
+    /// @notice `repayLoan` rejected because the caller is the loan's
+    ///         lender or the current owner of the loan's lender-side
+    ///         Vaipakam NFT. Repaying your own loan is economically
+    ///         degenerate (lender pays themselves principal+interest minus
+    ///         the 1% treasury cut, borrower's collateral is released back
+    ///         free) and is almost certainly a misclick. Permissionless
+    ///         third-party repayment is still supported for everyone else.
+    error LenderCannotRepayOwnLoan();
     error InvalidAsset();
     /// @notice Offer create or accept rejected because the
     ///         abnormal-market liquidation-fallback consent was not granted
