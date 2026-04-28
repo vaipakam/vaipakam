@@ -559,6 +559,8 @@
     "colAsset": "Activo",
     "colAmount": "Monto",
     "colRate": "Tasa",
+    "rateDeltaTipAria": "Sobre la anotación de diferencia de tasa",
+    "rateDeltaTipBody": "El número entre paréntesis muestra qué tan lejos está la tasa de esta oferta del ancla del mercado — la tasa de la oferta aceptada más recientemente que coincide con los filtros actuales. +X% significa por encima del mercado (préstamo más caro / mayor rendimiento); −X% significa por debajo del mercado. La anotación aparece solo cuando hay un ancla disponible para los filtros actuales.",
     "colDuration": "Duración",
     "colCollateral": "Colateral",
     "colLiquidity": "Liquidez",

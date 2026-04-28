@@ -49,6 +49,15 @@
   border-radius: var(--radius-full);
 }
 
+/* Stretch the Liquidity Picker pill to fill its grid cell so it lines up
+ * width-wise with the surrounding text/number inputs (which are
+ * `width: 100%`). Without this the pill stays at its own `min-width`
+ * and looks conspicuously narrow at the right edge of the row. */
+.offer-book-filter-cell .chain-picker,
+.offer-book-filter-cell .chain-picker-btn {
+  width: 100%;
+}
+
 .offer-book-filter-cell .form-input:hover {
   background: var(--bg-card-hover);
   border-color: var(--border-hover);

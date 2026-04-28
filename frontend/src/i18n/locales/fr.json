@@ -559,6 +559,8 @@
     "colAsset": "Actif",
     "colAmount": "Montant",
     "colRate": "Taux",
+    "rateDeltaTipAria": "À propos de l'écart de taux",
+    "rateDeltaTipBody": "Le nombre entre parenthèses indique de combien le taux de cette offre s'écarte de l'ancre du marché — le taux de l'offre acceptée la plus récente correspondant aux filtres actuels. +X% signifie au-dessus du marché (emprunt plus coûteux / prêt plus rémunérateur) ; −X% signifie en-dessous du marché. L'annotation n'apparaît que lorsqu'une ancre est disponible pour les filtres actuels.",
     "colDuration": "Durée",
     "colCollateral": "Collatéral",
     "colLiquidity": "Liquidité",

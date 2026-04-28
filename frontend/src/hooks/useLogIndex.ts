@@ -39,6 +39,9 @@ export function useLogIndex() {
   const [lastAcceptedOfferId, setLastAcceptedOfferId] = useState<bigint | null>(
     initial?.lastAcceptedOfferId ?? null,
   );
+  const [recentAcceptedOfferIds, setRecentAcceptedOfferIds] = useState<bigint[]>(
+    initial?.recentAcceptedOfferIds ?? [],
+  );
   const [events, setEvents] = useState<ActivityEvent[]>(initial?.events ?? []);
   const [getOwner, setGetOwner] = useState<(id: bigint) => string | null>(
     () => initial?.getOwner ?? (() => null),
@@ -67,6 +70,7 @@ export function useLogIndex() {
       setOpenOfferIds(peeked.openOfferIds);
       setClosedOfferIds(peeked.closedOfferIds);
       setLastAcceptedOfferId(peeked.lastAcceptedOfferId);
+      setRecentAcceptedOfferIds(peeked.recentAcceptedOfferIds);
       setEvents(peeked.events);
       setGetOwner(() => peeked.getOwner);
       setGetLastOwner(() => peeked.getLastOwner);
@@ -87,6 +91,7 @@ export function useLogIndex() {
       setOpenOfferIds(result.openOfferIds);
       setClosedOfferIds(result.closedOfferIds);
       setLastAcceptedOfferId(result.lastAcceptedOfferId);
+      setRecentAcceptedOfferIds(result.recentAcceptedOfferIds);
       setEvents(result.events);
       // Wrap in a thunk so React treats it as a state updater argument,
       // not a reducer-style setter.
@@ -112,6 +117,7 @@ export function useLogIndex() {
     openOfferIds,
     closedOfferIds,
     lastAcceptedOfferId,
+    recentAcceptedOfferIds,
     events,
     getOwner,
     getLastOwner,

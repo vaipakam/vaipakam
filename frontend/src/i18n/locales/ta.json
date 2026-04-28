@@ -559,6 +559,8 @@
     "colAsset": "சொத்து",
     "colAmount": "தொகை",
     "colRate": "விகிதம்",
+    "rateDeltaTipAria": "Rate-delta குறிப்பு பற்றி",
+    "rateDeltaTipBody": "அடைப்புக்குறிக்குள் உள்ள எண் இந்த offer-இன் rate market anchor-இலிருந்து எவ்வளவு தூரத்தில் உள்ளது என்பதைக் காட்டுகிறது — anchor என்பது தற்போதைய filters-உடன் பொருந்தும், மிகச் சமீபத்தில் accept செய்யப்பட்ட offer-இன் rate. +X% என்றால் market-ஐ விட அதிகம் (விலை அதிகமான borrow / அதிக வருமானத்துடன் lend); −X% என்றால் market-ஐ விட குறைவு. தற்போதைய filters-க்கு anchor கிடைக்கும்போது மட்டுமே இந்தக் குறிப்பு தோன்றும்.",
     "colDuration": "காலம்",
     "colCollateral": "பிணையம்",
     "colLiquidity": "லிக்விடிட்டி",

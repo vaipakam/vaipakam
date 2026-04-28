@@ -28,8 +28,8 @@ import { bpsToPercent } from '../lib/format';
 import { batchCalls, encodeBatchCalls } from '../lib/multicall';
 import { AddressDisplay } from '../components/app/AddressDisplay';
 import { CardInfo } from '../components/CardInfo';
+import { InfoTip } from '../components/InfoTip';
 import {
-  absDelta,
   matchesFilter as matchesFilterPure,
   rankLenderSide as rankLenderSidePure,
   rankBorrowerSide as rankBorrowerSidePure,
@@ -166,7 +166,7 @@ export default function OfferBook() {
   // Used to target multicalls and build explorer links at the Diamond the
   // user's reads are actually hitting, instead of hard-coding DEFAULT_CHAIN.
   const activeReadChain = useReadChain();
-  const { openOfferIds, closedOfferIds, lastAcceptedOfferId, loading: indexLoading, reload: reloadIndex } = useLogIndex();
+  const { openOfferIds, closedOfferIds, recentAcceptedOfferIds, loading: indexLoading, reload: reloadIndex } = useLogIndex();
   const { config: protocolConfig } = useProtocolConfig();
 
   const [statusView, setStatusView] = useState<StatusView>('open');
@@ -204,11 +204,16 @@ export default function OfferBook() {
   const [maxDuration, setMaxDuration] = useState('');
   const [liquidityFilter, setLiquidityFilter] = useState<LiquidityFilter>('any');
 
-  // Anchor for the currently-filtered market. We fetch the last accepted
-  // offer once and let it flow through the filter just like any other row —
-  // if it doesn't match the filter we fall back to the median of what's
-  // loaded under the current filter.
-  const [lastAcceptedRate, setLastAcceptedRate] = useState<{ rate: bigint; lendingAsset: string; collateralAsset: string; durationDays: bigint; principalLiquidity: number } | null>(null);
+  // Anchor for the currently-filtered market. We pull the last N accepted
+  // offers from the log index and pick the freshest one that passes the
+  // current `matchesFilter` — so narrowing the filter (e.g. flipping to
+  // "Liquid only", or specifying a collateral asset) doesn't blow away the
+  // anchor when an even-fresher match exists on the OTHER side of that
+  // dimension. Each entry carries the same shape `matchesFilter` reads on
+  // visible offers so the predicate is identical for both.
+  const [recentMatchedRates, setRecentMatchedRates] = useState<
+    Array<{ rate: bigint; lendingAsset: string; collateralAsset: string; durationDays: bigint; principalLiquidity: number }>
+  >([]);
 
   const publicClient = useDiamondPublicClient();
   const loadedIdsRef = useRef<Set<string>>(new Set());
@@ -380,27 +385,52 @@ export default function OfferBook() {
     };
   }, [indexLoading, openOfferIds, closedOfferIds, fetchValidCount]);
 
-  // Fetch the last accepted offer once so we know the true market rate.
+  // Fetch the rolling list of recent accepted offers in NEWEST-FIRST order
+  // so `anchorRateBps` can pick the freshest one matching the current
+  // filter. Single multicall (already wired on this page) keeps the cost
+  // at one RPC round-trip regardless of list size.
   useEffect(() => {
-    if (lastAcceptedOfferId === null) { setLastAcceptedRate(null); return; }
+    if (recentAcceptedOfferIds.length === 0) { setRecentMatchedRates([]); return; }
     let cancelled = false;
     (async () => {
       try {
-        const raw = (await diamondRead.getOffer(lastAcceptedOfferId)) as RawOffer;
+        const target = (activeReadChain.diamondAddress ?? DEFAULT_CHAIN.diamondAddress) as Address;
+        const calls = encodeBatchCalls(
+          target,
+          DIAMOND_ABI,
+          'getOffer',
+          recentAcceptedOfferIds.map((id) => [id] as const),
+        );
+        let decoded: Array<RawOffer | null>;
+        try {
+          decoded = await batchCalls<RawOffer>(publicClient, DIAMOND_ABI, 'getOffer', calls);
+          if (decoded.every((d) => d === null)) throw new Error('multicall empty');
+        } catch {
+          // Per-call fallback on multicall failure — same pattern as fetchBatch.
+          decoded = [];
+          for (const id of recentAcceptedOfferIds) {
+            try { decoded.push((await diamondRead.getOffer(id)) as RawOffer); }
+            catch { decoded.push(null); }
+          }
+        }
         if (cancelled) return;
-        setLastAcceptedRate({
-          rate: raw.interestRateBps,
-          lendingAsset: raw.lendingAsset,
-          collateralAsset: raw.collateralAsset,
-          durationDays: raw.durationDays,
-          principalLiquidity: Number(raw.principalLiquidity),
-        });
+        setRecentMatchedRates(
+          decoded
+            .filter((raw): raw is RawOffer => raw !== null)
+            .map((raw) => ({
+              rate: raw.interestRateBps,
+              lendingAsset: raw.lendingAsset,
+              collateralAsset: raw.collateralAsset,
+              durationDays: raw.durationDays,
+              principalLiquidity: Number(raw.principalLiquidity),
+            })),
+        );
       } catch {
-        if (!cancelled) setLastAcceptedRate(null);
+        if (!cancelled) setRecentMatchedRates([]);
       }
     })();
     return () => { cancelled = true; };
-  }, [diamondRead, lastAcceptedOfferId]);
+  }, [diamondRead, publicClient, activeReadChain.diamondAddress, recentAcceptedOfferIds]);
 
   // Illiquid legs require mutual consent — the review modal exposes the
   // consent checkbox so the acceptor explicitly opts into "full collateral
@@ -606,14 +636,16 @@ export default function OfferBook() {
 
   const filtered = useMemo(() => offers.filter(matchesFilter), [offers, matchesFilter]);
 
-  // Market-scoped anchor: only the last-matched rate in the current filter's
-  // market qualifies. Per WebsiteReadme §offer-book, when no prior match
-  // exists for the active context, the UI must surface an explicit fallback
-  // state instead of synthesising one from the loaded window.
+  // Market-scoped anchor: walk the rolling recent-accepted list (newest
+  // first) and pick the freshest entry that passes the current filter.
+  // This survives narrowing on any one filter axis (liquidity, lending
+  // asset, collateral, duration range) as long as a recent match still
+  // exists somewhere in the trailing window — no more vanishing on a
+  // "Liquid only" flip when the global last-accept happened to be illiquid.
   const anchorRateBps = useMemo<bigint | null>(() => {
-    if (lastAcceptedRate && matchesFilter(lastAcceptedRate)) return lastAcceptedRate.rate;
-    return null;
-  }, [lastAcceptedRate, matchesFilter]);
+    const hit = recentMatchedRates.find(matchesFilter);
+    return hit ? hit.rate : null;
+  }, [recentMatchedRates, matchesFilter]);
 
   // Side-of-anchor ranking (pure helpers in `lib/offerBookRanking`).
   const rankLenderSide = useCallback(
@@ -814,7 +846,12 @@ export default function OfferBook() {
               className="form-input"
             />
           </div>
-          <div className="offer-book-filter-cell" style={{ justifyContent: 'flex-end' }}>
+          <div className="offer-book-filter-cell">
+            {/* Invisible label-row spacer so the pill baseline-aligns with
+                the input rows of the surrounding cells (which sit below
+                their text labels). `aria-hidden` because the pill carries
+                its own ariaLabel + triggerPrefix. */}
+            <span className="form-label" aria-hidden="true">&nbsp;</span>
             <Picker<LiquidityFilter>
               icon={<Droplet size={14} />}
               ariaLabel={t('offerBookPage.filterByLiquidity')}
@@ -1471,7 +1508,14 @@ function OfferTable({ title, subtitle, offers, anchorRateBps, address, accepting
                 <th>{t('offerTable.colType')}</th>
                 <th>{t('offerTable.colAsset')}</th>
                 <th>{t('offerTable.colAmount')}</th>
-                <th>{t('offerTable.colRate')}</th>
+                <th>
+                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                    {t('offerTable.colRate')}
+                    <InfoTip ariaLabel={t('offerTable.rateDeltaTipAria')}>
+                      {t('offerTable.rateDeltaTipBody')}
+                    </InfoTip>
+                  </span>
+                </th>
                 <th>{t('offerTable.colDuration')}</th>
                 <th>{t('offerTable.colCollateral')}</th>
                 <th>{t('offerTable.colLiquidity')}</th>
@@ -1481,7 +1525,14 @@ function OfferTable({ title, subtitle, offers, anchorRateBps, address, accepting
             <tbody>
               {offers.map((offer) => {
                 const isOwn = address?.toLowerCase() === offer.creator.toLowerCase();
-                const delta = anchorRateBps !== null ? absDelta(offer.interestRateBps, anchorRateBps) : null;
+                // Signed delta: positive => offer rate is above the market
+                // anchor (more expensive borrow / more lucrative lend);
+                // negative => below market. Direction matters for browsing,
+                // so the column shows `+0.50%` or `-0.50%` rather than the
+                // direction-stripped `±0.50%` we used to render via absDelta.
+                const signedDelta = anchorRateBps !== null
+                  ? offer.interestRateBps - anchorRateBps
+                  : null;
                 return (
                   <tr key={offer.id.toString()}>
                     <td>#{offer.id.toString()}</td>
@@ -1499,9 +1550,16 @@ function OfferTable({ title, subtitle, offers, anchorRateBps, address, accepting
                     <td className="mono"><TokenAmount amount={offer.amount} address={offer.lendingAsset} /></td>
                     <td>
                       {bpsToPercent(offer.interestRateBps)}
-                      {delta !== null && delta !== 0n && (
-                        <span style={{ fontSize: '0.75rem', opacity: 0.6, marginLeft: 4 }}>
-                          (±{bpsToPercent(delta)})
+                      {signedDelta !== null && signedDelta !== 0n && (
+                        <span
+                          style={{
+                            fontSize: '0.75rem',
+                            opacity: 0.6,
+                            marginLeft: 4,
+                            color: signedDelta > 0n ? 'var(--accent-red)' : 'var(--accent-green, #10b981)',
+                          }}
+                        >
+                          ({signedDelta > 0n ? '+' : '−'}{bpsToPercent(signedDelta > 0n ? signedDelta : -signedDelta)})
                         </span>
                       )}
                     </td>

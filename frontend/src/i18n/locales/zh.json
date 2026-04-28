@@ -559,6 +559,8 @@
     "colAsset": "资产",
     "colAmount": "金额",
     "colRate": "利率",
+    "rateDeltaTipAria": "关于利率偏差标注",
+    "rateDeltaTipBody": "括号中的数字显示此 offer 的利率与市场 anchor 之间的差距 — anchor 是与当前筛选条件匹配的最近一次接受的 offer 的利率。+X% 表示高于市场（更贵的 borrow / 更高收益的 lend）；−X% 表示低于市场。仅当当前筛选条件存在 anchor 时才会显示此标注。",
     "colDuration": "期限",
     "colCollateral": "抵押品",
     "colLiquidity": "流动性",

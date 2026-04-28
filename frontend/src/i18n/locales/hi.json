@@ -559,6 +559,8 @@
     "colAsset": "एसेट",
     "colAmount": "राशि",
     "colRate": "दर",
+    "rateDeltaTipAria": "रेट-डेल्टा एनोटेशन के बारे में",
+    "rateDeltaTipBody": "ब्रैकेट में दिखा नंबर बताता है कि इस offer की rate market anchor से कितनी दूर है — anchor यानी वर्तमान filters से मेल खाने वाले सबसे हाल में accept किए गए offer की rate। +X% यानी market से ऊपर (महंगा borrow / ज़्यादा फ़ायदेमंद lend); −X% यानी market से नीचे। यह एनोटेशन तभी दिखता है जब वर्तमान filters के लिए anchor उपलब्ध हो।",
     "colDuration": "अवधि",
     "colCollateral": "गिरवी",
     "colLiquidity": "तरलता",

@@ -1027,6 +1027,8 @@
     "colAsset": "Asset",
     "colAmount": "Amount",
     "colRate": "Rate",
+    "rateDeltaTipAria": "About the rate-delta annotation",
+    "rateDeltaTipBody": "The number in brackets shows how far this offer's rate sits from the market anchor — the rate of the most recently accepted offer matching the current filters. +X% means above market (more expensive borrow / more lucrative lend); −X% means below market. The annotation appears only when an anchor is available for the current filters.",
     "colDuration": "Duration",
     "colCollateral": "Collateral",
     "colLiquidity": "Liquidity",

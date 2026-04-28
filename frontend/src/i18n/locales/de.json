@@ -559,6 +559,8 @@
     "colAsset": "Anlage",
     "colAmount": "Betrag",
     "colRate": "Zinssatz",
+    "rateDeltaTipAria": "Über die Zinssatz-Abweichung",
+    "rateDeltaTipBody": "Die Zahl in Klammern zeigt, wie weit der Zinssatz dieses Angebots vom Markt-Anker entfernt liegt — dem Zinssatz des zuletzt angenommenen Angebots, das mit den aktuellen Filtern übereinstimmt. +X% bedeutet über Markt (teurere Aufnahme / lukrativerer Verleih); −X% bedeutet unter Markt. Die Anzeige erscheint nur, wenn für die aktuellen Filter ein Anker verfügbar ist.",
     "colDuration": "Laufzeit",
     "colCollateral": "Sicherheit",
     "colLiquidity": "Liquidität",

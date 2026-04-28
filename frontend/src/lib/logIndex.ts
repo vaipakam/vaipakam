@@ -161,6 +161,12 @@ export interface LogIndexResult {
   closedOfferIds: bigint[];
   /** Most recently accepted offer (from `OfferAccepted`), or null. */
   lastAcceptedOfferId: bigint | null;
+  /** Rolling list of the last {@link RECENT_ACCEPTED_CAP} accepted offer
+   *  IDs in NEWEST-FIRST order. Lets the OfferBook compute a per-filter
+   *  market anchor — pick the freshest match that passes the current
+   *  `matchesFilter` rather than relying on a single global "last accepted"
+   *  rate that vanishes the moment any filter narrows past it. */
+  recentAcceptedOfferIds: bigint[];
   /** All decoded user-facing events in ascending (block, logIndex) order.
    *  Consumed by the Activity page; filters on `participants`. */
   events: ActivityEvent[];
@@ -217,6 +223,9 @@ interface CachedShape {
   closedOfferIds?: string[];
   /** Highest (most recent) offerId seen in `OfferAccepted`, or null. */
   lastAcceptedOfferId?: string | null;
+  /** Last N accepted offer IDs in OLDEST-FIRST scan order. Hydrated to
+   *  newest-first on the public {@link LogIndexResult}. */
+  recentAcceptedOfferIds?: string[];
   /** Decoded activity events in scan order. Keyed by (txHash, logIndex) to
    *  keep dedupe cheap on cache merge. */
   events?: ActivityEvent[];
@@ -227,6 +236,11 @@ interface CachedShape {
 // Infura free at ~1k, publicnode at ~10k. Default to a conservative 10 so the
 // app works out-of-the-box on free Alchemy; bump it via env for real RPCs.
 const DEFAULT_CHUNK = 10;
+/** Max recent-accepted offers retained per chain. 20 is plenty for the
+ *  Offer Book's filter-scoped anchor lookup — most filters will hit a
+ *  match within the first 1–3 entries, and beyond ~20 the rates are
+ *  stale enough that "no anchor" is more honest than a dusty quote. */
+const RECENT_ACCEPTED_CAP = 20;
 const CHUNK = (() => {
   try {
     const v = Number(import.meta.env.VITE_LOG_INDEX_CHUNK);
@@ -247,6 +261,12 @@ function storageKey(chainId: number, diamond: string): string {
   // page surfaces VPFI buy / stake / unstake alongside lending events.
   // Older caches pre-date those topics in the `getLogs` OR-set and can't
   // backfill incrementally, so bumping the version forces a fresh scan.
+  //
+  // `recentAcceptedOfferIds` (added 2026-04-28 for the OfferBook
+  // filter-scoped anchor) is NOT a v-bump — `readCache` falls back to []
+  // when the field is absent, and incremental scans append new
+  // OfferAccepted events as they arrive. Older caches keep working;
+  // the rolling list just starts fresh and accumulates over time.
   return `vaipakam:logIndex:v7:${chainId}:${diamond.toLowerCase()}`;
 }
 
@@ -259,6 +279,7 @@ function emptyCache(deployBlock: number): CachedShape {
     offerIds: [],
     closedOfferIds: [],
     lastAcceptedOfferId: null,
+    recentAcceptedOfferIds: [],
     events: [],
   };
 }
@@ -277,6 +298,7 @@ function readCache(chainId: number, diamond: string): CachedShape | null {
       offerIds: Array.isArray(parsed.offerIds) ? parsed.offerIds : [],
       closedOfferIds: Array.isArray(parsed.closedOfferIds) ? parsed.closedOfferIds : [],
       lastAcceptedOfferId: parsed.lastAcceptedOfferId ?? null,
+      recentAcceptedOfferIds: Array.isArray(parsed.recentAcceptedOfferIds) ? parsed.recentAcceptedOfferIds : [],
       events: Array.isArray(parsed.events) ? parsed.events : [],
     };
   } catch {
@@ -534,6 +556,11 @@ async function runScan(
   let lastAcceptedOfferId: bigint | null = cached.lastAcceptedOfferId
     ? BigInt(cached.lastAcceptedOfferId)
     : null;
+  // Oldest-first list during scan; trimmed to RECENT_ACCEPTED_CAP at write
+  // time. Hydrated to newest-first on the public result.
+  const recentAcceptedOfferIds: string[] = [
+    ...(cached.recentAcceptedOfferIds ?? []),
+  ];
   // (txHash, logIndex) → decoded ActivityEvent. Merged rather than appended so
   // repeated scans over the same block range don't double-count.
   const eventMap = new Map<string, ActivityEvent>();
@@ -645,6 +672,7 @@ async function runScan(
         const acceptor = ('0x' + topics[2].slice(26)).toLowerCase();
         closedOfferIdSet.add(offerId.toString());
         lastAcceptedOfferId = offerId;
+        recentAcceptedOfferIds.push(offerId.toString());
         let loanId = '0';
         try {
           const [l] = decodeAbiParameters(parseAbiParameters('uint256'), event.data);
@@ -962,6 +990,10 @@ async function runScan(
     offerIds: Array.from(offerIdSet).sort((a, b) => Number(BigInt(a) - BigInt(b))),
     closedOfferIds: Array.from(closedOfferIdSet).sort((a, b) => Number(BigInt(a) - BigInt(b))),
     lastAcceptedOfferId: lastAcceptedOfferId ? lastAcceptedOfferId.toString() : null,
+    // Trim to the trailing RECENT_ACCEPTED_CAP (most recent), preserving
+    // oldest-first scan order so the cache stays append-friendly across
+    // incremental scans.
+    recentAcceptedOfferIds: recentAcceptedOfferIds.slice(-RECENT_ACCEPTED_CAP),
     events: sortedEvents,
   };
   writeCache(chainId, diamondAddress, next);
@@ -988,6 +1020,12 @@ function hydrate(cached: CachedShape): LogIndexResult {
   const lastAcceptedOfferId = cached.lastAcceptedOfferId
     ? BigInt(cached.lastAcceptedOfferId)
     : null;
+  // Cache stores oldest-first; expose newest-first so callers can do
+  // `recentAcceptedOfferIds.find(...)` to get the freshest match.
+  const recentAcceptedOfferIds = (cached.recentAcceptedOfferIds ?? [])
+    .slice()
+    .reverse()
+    .map((s) => BigInt(s));
   const events = cached.events ?? [];
   // tokenId (decimal string) → attributed `LoanInitiated` event + role. Built
   // once on hydrate so lookups are O(1). Two attribution paths:
@@ -1101,6 +1139,7 @@ function hydrate(cached: CachedShape): LogIndexResult {
     openOfferIds,
     closedOfferIds,
     lastAcceptedOfferId,
+    recentAcceptedOfferIds,
     events,
     getOwner: (tokenId: bigint) => {
       const hit = owners[tokenId.toString()];
