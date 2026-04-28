@@ -17,6 +17,10 @@ interface PickerProps<V extends string | number> {
   icon?: ReactNode;
   /** Accessible name for the trigger button. */
   ariaLabel?: string;
+  /** Optional prefix shown on the trigger only (e.g. "Role"). When set, the
+   *  trigger reads `<prefix>: <selected label>`; menu rows still render just
+   *  the bare item label so the prefix isn't duplicated on every row. */
+  triggerPrefix?: string;
   /** Width of the trigger pill. Mirrors ChainPicker's 180px default; pass a
    *  smaller number for compact filters. */
   minWidth?: number;
@@ -38,6 +42,7 @@ export function Picker<V extends string | number>({
   onSelect,
   icon,
   ariaLabel,
+  triggerPrefix,
   minWidth = 140,
   menuAlign = 'left',
 }: PickerProps<V>) {
@@ -48,7 +53,10 @@ export function Picker<V extends string | number>({
     () => items.find((it) => it.value === value),
     [items, value],
   );
-  const label = selected?.label ?? '';
+  const baseLabel = selected?.label ?? '';
+  const label = triggerPrefix && baseLabel
+    ? `${triggerPrefix}: ${baseLabel}`
+    : baseLabel;
 
   useEffect(() => {
     if (!open) return;

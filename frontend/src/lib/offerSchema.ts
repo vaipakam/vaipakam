@@ -12,6 +12,16 @@ import { AssetType } from '../types/loan';
 const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
 const ADDRESS_RE = /^0x[0-9a-fA-F]{40}$/;
 
+/**
+ * Loan-duration bounds. Single source of truth — both the Create-Offer
+ * validator and the Offer Book duration filter inputs read from here so
+ * the constraint can't drift between surfaces. Mirrored in the user-
+ * facing whitepaper / user guides ("1 day to 365 days"). The contracts
+ * don't enforce these on-chain (Phase 1); they are a product convention.
+ */
+export const MIN_OFFER_DURATION_DAYS = 1;
+export const MAX_OFFER_DURATION_DAYS = 365;
+
 export type OfferSide = 'lender' | 'borrower';
 export type OfferAssetKind = 'erc20' | 'erc721' | 'erc1155';
 
@@ -83,8 +93,8 @@ export function validateOfferForm(s: OfferFormState): string | null {
   if (!s.amount || Number(s.amount) <= 0) return 'Amount must be greater than zero.';
   if (s.interestRate === '' || Number(s.interestRate) < 0) return 'Interest rate must be non-negative.';
   const duration = Number(s.durationDays);
-  if (!Number.isFinite(duration) || duration < 1 || duration > 365) {
-    return 'Duration must be between 1 and 365 days.';
+  if (!Number.isFinite(duration) || duration < MIN_OFFER_DURATION_DAYS || duration > MAX_OFFER_DURATION_DAYS) {
+    return `Duration must be between ${MIN_OFFER_DURATION_DAYS} and ${MAX_OFFER_DURATION_DAYS} days.`;
   }
   if (isNFTRental(s.assetType) && !s.tokenId) return 'NFT Token ID is required.';
   if (s.collateralAsset && !ADDRESS_RE.test(s.collateralAsset)) {

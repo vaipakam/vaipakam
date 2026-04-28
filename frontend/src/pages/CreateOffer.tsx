@@ -11,6 +11,8 @@ import { useOfferForm } from "../hooks/useOfferForm";
 import {
   isNFTRental,
   gracePeriodLabel,
+  MIN_OFFER_DURATION_DAYS,
+  MAX_OFFER_DURATION_DAYS,
   type OfferFormState,
   type OfferAssetKind,
   type OfferSide,
@@ -143,15 +145,15 @@ export default function CreateOffer() {
   const [error, setError] = useState<string | null>(null);
   const [txHash, setTxHash] = useState<string | null>(null);
 
-  // Contract accepts 1–365 days (LoanFacet.initiateLoan bounds); flag
-  // out-of-range entries inline so the user sees the constraint before
-  // submitting. Empty string is treated as "not yet entered" rather than
+  // Bounds come from `offerSchema.ts` so the validator, this inline
+  // out-of-range check, and the Offer Book duration filter never drift
+  // apart. Empty string is treated as "not yet entered" rather than
   // invalid — submit-time validation still catches the blank case.
   const durationOutOfRange = (() => {
     const raw = form.durationDays;
     if (raw === "") return false;
     const n = Number(raw);
-    return !Number.isFinite(n) || n < 1 || n > 365;
+    return !Number.isFinite(n) || n < MIN_OFFER_DURATION_DAYS || n > MAX_OFFER_DURATION_DAYS;
   })();
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -743,8 +745,8 @@ export default function CreateOffer() {
               id="create-offer-duration"
               className={`form-input ${durationOutOfRange ? "form-input-error" : ""}`}
               type="number"
-              min="1"
-              max="365"
+              min={MIN_OFFER_DURATION_DAYS}
+              max={MAX_OFFER_DURATION_DAYS}
               step="1"
               placeholder="30"
               value={form.durationDays}

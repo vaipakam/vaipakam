@@ -223,38 +223,41 @@ export default function Dashboard() {
             <Picker<'all' | 'lender' | 'borrower'>
               icon={<Users size={14} />}
               ariaLabel={t('common.role')}
+              triggerPrefix={t('common.role')}
               value={roleFilter}
               onSelect={setRoleFilter}
               minWidth={150}
               items={[
-                { value: 'all', label: `${t('common.role')}: ${t('common.all')}` },
-                { value: 'lender', label: `${t('common.role')}: ${t('common.lender')}` },
-                { value: 'borrower', label: `${t('common.role')}: ${t('common.borrower')}` },
+                { value: 'all', label: t('common.all') },
+                { value: 'lender', label: t('common.lender') },
+                { value: 'borrower', label: t('common.borrower') },
               ]}
             />
             <Picker<'all' | LoanStatus>
               icon={<ActivityIcon size={14} />}
               ariaLabel={t('common.status')}
+              triggerPrefix={t('common.status')}
               value={statusFilter}
               onSelect={setStatusFilter}
               minWidth={180}
               items={[
-                { value: 'all', label: `${t('common.status')}: ${t('common.all')}` },
+                { value: 'all', label: t('common.all') },
                 ...(Object.values(LoanStatus) as LoanStatus[]).map((s) => ({
                   value: s,
-                  label: `${t('common.status')}: ${LOAN_STATUS_LABELS[s]}`,
+                  label: LOAN_STATUS_LABELS[s],
                 })),
               ]}
             />
             <Picker<number>
               icon={<ListOrdered size={14} />}
               ariaLabel={t('common.perPage')}
+              triggerPrefix={t('common.perPage')}
               value={pageSize}
               onSelect={setPageSize}
               minWidth={140}
               items={PAGE_SIZE_OPTIONS.map((n) => ({
                 value: n,
-                label: `${t('common.perPage')}: ${n}`,
+                label: String(n),
                 pill: n === DEFAULT_PAGE_SIZE ? 'default' : undefined,
               }))}
             />

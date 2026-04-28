@@ -34,3 +34,28 @@
 .offer-book-filter-cell > .form-label {
   margin-bottom: 6px;
 }
+
+/* Pill-shaped free-form inputs inside the filters card.
+ * Mirrors `.chain-picker-btn` chrome (radius-full, bg-card, brand focus
+ * ring) so text/number inputs sit visually next to the discrete <Picker>
+ * pills (Liquidity, Per side) without a chrome mismatch. The input
+ * stays free-form — only the appearance changes. */
+.offer-book-filter-cell .form-input,
+.offer-book-filter-cell .asset-picker-selected {
+  padding: 7px 14px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  background: var(--bg-card);
+  border-radius: var(--radius-full);
+}
+
+.offer-book-filter-cell .form-input:hover {
+  background: var(--bg-card-hover);
+  border-color: var(--border-hover);
+}
+
+.offer-book-filter-cell .form-input:focus {
+  background: var(--bg-card);
+  border-color: var(--brand);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand) 25%, transparent);
+}

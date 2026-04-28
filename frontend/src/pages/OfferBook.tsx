@@ -11,7 +11,8 @@ import { useWallet } from '../context/WalletContext';
 import { useDiamondContract, useDiamondRead, useDiamondPublicClient, useReadChain } from '../contracts/useDiamond';
 import { DIAMOND_ABI_VIEM as DIAMOND_ABI } from '../contracts/abis';
 import { L as Link } from '../components/L';
-import { BookOpen, PlusCircle, AlertTriangle, ShieldCheck } from 'lucide-react';
+import { BookOpen, PlusCircle, AlertTriangle, ShieldCheck, Droplet, ListOrdered } from 'lucide-react';
+import { Picker } from '../components/Picker';
 import { ErrorAlert } from '../components/app/ErrorAlert';
 import { SanctionsBanner } from '../components/app/SanctionsBanner';
 import { RiskDisclosures } from '../components/app/RiskDisclosures';
@@ -23,7 +24,6 @@ import { useProtocolConfig, type ProtocolConfig } from '../hooks/useProtocolConf
 import { AssetSymbol } from '../components/app/AssetSymbol';
 import { AssetPicker } from '../components/app/AssetPicker';
 import { TokenAmount } from '../components/app/TokenAmount';
-import { ThemedSelect } from '../components/app/ThemedSelect';
 import { bpsToPercent } from '../lib/format';
 import { batchCalls, encodeBatchCalls } from '../lib/multicall';
 import { AddressDisplay } from '../components/app/AddressDisplay';
@@ -46,7 +46,6 @@ const WINDOW_SIZE = 200;
  *  single-side tab all vertical space is one list, so the cap rises to 100. */
 const MAX_PER_SIDE_BOTH = 50;
 const MAX_PER_SIDE_SINGLE = 100;
-const MIN_PER_SIDE = 1;
 const DEFAULT_PER_SIDE = 20;
 const ZERO_ADDR = '0x0000000000000000000000000000000000000000';
 
@@ -795,6 +794,7 @@ export default function OfferBook() {
               id="offer-book-min-duration"
               type="number"
               min="0"
+              placeholder={t('offerBookPage.minDurationPlaceholder')}
               value={minDuration}
               onChange={(e) => setMinDuration(e.target.value)}
               className="form-input"
@@ -808,22 +808,25 @@ export default function OfferBook() {
               id="offer-book-max-duration"
               type="number"
               min="0"
+              placeholder={t('offerBookPage.maxDurationPlaceholder')}
               value={maxDuration}
               onChange={(e) => setMaxDuration(e.target.value)}
               className="form-input"
             />
           </div>
-          <div className="offer-book-filter-cell">
-            <span className="form-label">{t('offerBookPage.liquidity')}</span>
-            <ThemedSelect<LiquidityFilter>
+          <div className="offer-book-filter-cell" style={{ justifyContent: 'flex-end' }}>
+            <Picker<LiquidityFilter>
+              icon={<Droplet size={14} />}
+              ariaLabel={t('offerBookPage.filterByLiquidity')}
+              triggerPrefix={t('offerBookPage.liquidity')}
               value={liquidityFilter}
-              options={[
+              onSelect={setLiquidityFilter}
+              minWidth={170}
+              items={[
                 { value: 'any', label: t('offerBookPage.liquidityAny') },
                 { value: 'liquid', label: t('offerBookPage.liquidityLiquid') },
                 { value: 'illiquid', label: t('offerBookPage.liquidityIlliquid') },
               ]}
-              onChange={setLiquidityFilter}
-              ariaLabel={t('offerBookPage.filterByLiquidity')}
             />
           </div>
         </div>
@@ -841,22 +844,22 @@ export default function OfferBook() {
             </button>
           ))}
         </div>
-        <label style={{ fontSize: '0.85rem', display: 'inline-flex', alignItems: 'center', gap: 8 }}>
-          {t('offerBookPage.perSide', { min: MIN_PER_SIDE, max: maxPerSide })}
-          <input
-            type="number"
-            min={MIN_PER_SIDE}
-            max={maxPerSide}
-            value={perSide}
-            onChange={(e) => {
-              const n = Number(e.target.value);
-              if (Number.isNaN(n)) return;
-              setPerSide(Math.max(MIN_PER_SIDE, Math.min(maxPerSide, n)));
-            }}
-            className="form-input"
-            style={{ width: 80, padding: '6px 10px' }}
-          />
-        </label>
+        <Picker<number>
+          icon={<ListOrdered size={14} />}
+          ariaLabel={t('offerBookPage.perSide')}
+          triggerPrefix={t('offerBookPage.perSide')}
+          value={perSide}
+          onSelect={setPerSide}
+          minWidth={140}
+          menuAlign="right"
+          items={[10, 20, 50, 100]
+            .filter((n) => n <= maxPerSide)
+            .map((n) => ({
+              value: n,
+              label: String(n),
+              pill: n === DEFAULT_PER_SIDE ? 'default' : undefined,
+            }))}
+        />
       </div>
 
       {indexLoading || (loading && offers.length === 0) ? (
