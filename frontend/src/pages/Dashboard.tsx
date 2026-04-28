@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { L as Link } from '../components/L';
 import { useTranslation } from 'react-i18next';
 import i18n from '../i18n';
@@ -19,6 +19,9 @@ import {
   ExternalLink,
   Wallet,
   Coins,
+  ChevronUp,
+  ChevronDown,
+  ChevronsUpDown,
 } from 'lucide-react';
 import { DEFAULT_CHAIN } from '../contracts/config';
 import { AssetSymbol } from '../components/app/AssetSymbol';
@@ -38,6 +41,22 @@ const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
 const PAGE_SIZE_OPTIONS = [10, 25, 50] as const;
 const DEFAULT_PAGE_SIZE = 10;
 
+type SortKey =
+  | 'id'
+  | 'role'
+  | 'positionNft'
+  | 'principal'
+  | 'rate'
+  | 'duration'
+  | 'ltv'
+  | 'hf'
+  | 'status';
+type SortDir = 'asc' | 'desc';
+
+function cmpBigint(a: bigint, b: bigint): number {
+  return a < b ? -1 : a > b ? 1 : 0;
+}
+
 export default function Dashboard() {
   const { t } = useTranslation();
   const { address, activeChain, chainId } = useWallet();
@@ -53,6 +72,8 @@ export default function Dashboard() {
   const [roleFilter, setRoleFilter] = useState<'all' | 'lender' | 'borrower'>('all');
   const [statusFilter, setStatusFilter] = useState<'all' | LoanStatus>('all');
   const [pageSize, setPageSize] = useState<number>(DEFAULT_PAGE_SIZE);
+  const [sortBy, setSortBy] = useState<SortKey>('id');
+  const [sortDir, setSortDir] = useState<SortDir>('desc');
 
   useEffect(() => {
     // No address = disconnected; the `escrow` slot is derived as null below,
@@ -95,25 +116,78 @@ export default function Dashboard() {
   // Snap back to page 0 whenever a filter narrows the set past the current
   // cursor — otherwise the table renders blank with a paginator stuck on a
   // page that no longer exists. Same applies on a per-page bump that
-  // shrinks the page count.
+  // shrinks the page count, or a sort change that reorders rows.
   useEffect(() => {
     setLoansPage(0);
-  }, [roleFilter, statusFilter, pageSize]);
+  }, [roleFilter, statusFilter, pageSize, sortBy, sortDir]);
+
+  // Risks for the FULL filtered set, not just the current page — sorting by
+  // HF or LTV needs the values for every candidate row, not only the rows
+  // currently on screen. Two multicalls regardless of list size, so the
+  // perf impact is minimal for typical wallet loan counts.
+  const filteredLoanIds = useMemo(
+    () => filteredLoans.map((l) => l.id),
+    [filteredLoans],
+  );
+  const { risks } = useLoanRisks(filteredLoanIds);
+
+  const sortedLoans = useMemo(() => {
+    const arr = [...filteredLoans];
+    arr.sort((a, b) => {
+      let c = 0;
+      if (sortBy === 'id') c = cmpBigint(a.id, b.id);
+      else if (sortBy === 'role') c = a.role.localeCompare(b.role);
+      else if (sortBy === 'positionNft') {
+        const aTok = a.role === 'lender' ? a.lenderTokenId : a.borrowerTokenId;
+        const bTok = b.role === 'lender' ? b.lenderTokenId : b.borrowerTokenId;
+        c = cmpBigint(aTok, bTok);
+      }
+      else if (sortBy === 'principal') c = cmpBigint(a.principal, b.principal);
+      else if (sortBy === 'rate') c = cmpBigint(a.interestRateBps, b.interestRateBps);
+      else if (sortBy === 'duration') c = cmpBigint(a.durationDays, b.durationDays);
+      else if (sortBy === 'status') c = Number(a.status) - Number(b.status);
+      else if (sortBy === 'ltv' || sortBy === 'hf') {
+        // Nulls sink to the bottom regardless of direction — illiquid loans
+        // don't have an HF/LTV reading and shouldn't bubble to the top of
+        // either sort order.
+        const aV = risks.get(a.id.toString())?.[sortBy] ?? null;
+        const bV = risks.get(b.id.toString())?.[sortBy] ?? null;
+        if (aV === null && bV === null) c = 0;
+        else if (aV === null) return 1;
+        else if (bV === null) return -1;
+        else c = cmpBigint(aV, bV);
+      }
+      return sortDir === 'asc' ? c : -c;
+    });
+    return arr;
+  }, [filteredLoans, sortBy, sortDir, risks]);
 
   const pagedLoans = useMemo(
     () =>
-      filteredLoans.slice(
+      sortedLoans.slice(
         loansPage * pageSize,
         (loansPage + 1) * pageSize,
       ),
-    [filteredLoans, loansPage, pageSize],
+    [sortedLoans, loansPage, pageSize],
   );
 
-  // Batch LTV + HF for every visible row in two multicalls instead of firing
-  // one pair of RPCs per row. The risks map is keyed by loanId string so the
-  // cells can look up O(1) without running their own effect.
-  const pagedLoanIds = useMemo(() => pagedLoans.map((l) => l.id), [pagedLoans]);
-  const { risks } = useLoanRisks(pagedLoanIds);
+  const toggleSort = useCallback((key: SortKey) => {
+    // Don't nest one state setter inside another — React 18 strict mode
+    // invokes setSortBy's updater twice for invariant checking, which
+    // would double-fire the nested setSortDir and cancel out the flip
+    // (user-visible symptom: "first click sorts asc, second click stays
+    // asc"). Both setters at the same level keeps the strict-mode
+    // double-invoke safe.
+    if (sortBy === key) {
+      // Same column → flip direction.
+      setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
+    } else {
+      // New column → start ascending so the first click reveals the
+      // smallest values; second click flips to descending.
+      setSortBy(key);
+      setSortDir('asc');
+    }
+  }, [sortBy]);
 
   if (!address) {
     return (
@@ -303,15 +377,15 @@ export default function Dashboard() {
             <table className="loans-table">
               <thead>
                 <tr>
-                  <th>ID</th>
-                  <th>Role</th>
-                  <th>Position NFT</th>
-                  <th>Principal</th>
-                  <th>Rate (APR)</th>
-                  <th>Duration</th>
-                  <th>LTV</th>
-                  <th>HF</th>
-                  <th>Status</th>
+                  <SortTh sortKey="id" label="ID" sortBy={sortBy} sortDir={sortDir} onToggle={toggleSort} />
+                  <SortTh sortKey="role" label="Role" sortBy={sortBy} sortDir={sortDir} onToggle={toggleSort} />
+                  <SortTh sortKey="positionNft" label="Position NFT" sortBy={sortBy} sortDir={sortDir} onToggle={toggleSort} />
+                  <SortTh sortKey="principal" label="Principal" sortBy={sortBy} sortDir={sortDir} onToggle={toggleSort} />
+                  <SortTh sortKey="rate" label="Rate (APR)" sortBy={sortBy} sortDir={sortDir} onToggle={toggleSort} />
+                  <SortTh sortKey="duration" label="Duration" sortBy={sortBy} sortDir={sortDir} onToggle={toggleSort} />
+                  <SortTh sortKey="ltv" label="LTV" sortBy={sortBy} sortDir={sortDir} onToggle={toggleSort} />
+                  <SortTh sortKey="hf" label="HF" sortBy={sortBy} sortDir={sortDir} onToggle={toggleSort} />
+                  <SortTh sortKey="status" label="Status" sortBy={sortBy} sortDir={sortDir} onToggle={toggleSort} />
                   <th></th>
                 </tr>
               </thead>
@@ -369,6 +443,39 @@ export default function Dashboard() {
         )}
       </div>
     </div>
+  );
+}
+
+function SortTh({
+  sortKey,
+  label,
+  sortBy,
+  sortDir,
+  onToggle,
+}: {
+  sortKey: SortKey;
+  label: string;
+  sortBy: SortKey;
+  sortDir: SortDir;
+  onToggle: (key: SortKey) => void;
+}) {
+  const isActive = sortBy === sortKey;
+  return (
+    <th>
+      <button
+        type="button"
+        className="loan-sort-th"
+        onClick={() => onToggle(sortKey)}
+        aria-sort={isActive ? (sortDir === 'asc' ? 'ascending' : 'descending') : 'none'}
+      >
+        <span>{label}</span>
+        {isActive ? (
+          sortDir === 'asc' ? <ChevronUp size={12} /> : <ChevronDown size={12} />
+        ) : (
+          <ChevronsUpDown size={12} className="loan-sort-th-idle" />
+        )}
+      </button>
+    </th>
   );
 }
 

@@ -693,7 +693,12 @@ export default function OfferBook() {
   const myActiveOffers = useMemo(() => {
     if (!address) return [] as OfferData[];
     const lower = address.toLowerCase();
-    return offers.filter((o) => o.creator.toLowerCase() === lower);
+    // Newest first by id (descending). The market-side cards below have
+    // their own anchor-relative ranking; the user's own list has no
+    // anchor concept so chronological-newest is the most useful default.
+    return offers
+      .filter((o) => o.creator.toLowerCase() === lower)
+      .sort((a, b) => (a.id > b.id ? -1 : a.id < b.id ? 1 : 0));
   }, [offers, address]);
 
   const totalLender = lenderAll.length;
