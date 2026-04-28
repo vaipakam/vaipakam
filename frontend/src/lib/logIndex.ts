@@ -263,10 +263,11 @@ function storageKey(chainId: number, diamond: string): string {
   // backfill incrementally, so bumping the version forces a fresh scan.
   //
   // `recentAcceptedOfferIds` (added 2026-04-28 for the OfferBook
-  // filter-scoped anchor) is NOT a v-bump — `readCache` falls back to []
-  // when the field is absent, and incremental scans append new
-  // OfferAccepted events as they arrive. Older caches keep working;
-  // the rolling list just starts fresh and accumulates over time.
+  // filter-scoped anchor) is NOT a v-bump — `readCache` backfills the
+  // field from the cached `events` array on hydrate when it's missing
+  // or empty (filter `kind === 'OfferAccepted'`, take the trailing
+  // RECENT_ACCEPTED_CAP). Older caches keep working AND immediately
+  // surface the right market anchor without forcing a full rescan.
   return `vaipakam:logIndex:v7:${chainId}:${diamond.toLowerCase()}`;
 }
 
@@ -290,6 +291,24 @@ function readCache(chainId: number, diamond: string): CachedShape | null {
     if (!raw) return null;
     const parsed = JSON.parse(raw) as Partial<CachedShape>;
     if (typeof parsed.lastBlock !== 'number' || !Array.isArray(parsed.loans)) return null;
+    const events = Array.isArray(parsed.events) ? parsed.events : [];
+    // Backfill `recentAcceptedOfferIds` from the cached events array when the
+    // field is missing or empty. The field was added 2026-04-28 without a
+    // cache-key bump, so a v7 cache written before that date can have
+    // `lastBlock` past the OfferAccepted that should be the market anchor —
+    // the incremental scan only re-reads blocks beyond `lastBlock`, so the
+    // historical event would otherwise never make it into the rolling list.
+    // `events` is sorted oldest-first; we keep that order to match the
+    // mid-scan in-memory convention (the result is reversed at hydrate time).
+    const cachedRecent = Array.isArray(parsed.recentAcceptedOfferIds)
+      ? parsed.recentAcceptedOfferIds
+      : [];
+    const recentAcceptedOfferIds = cachedRecent.length > 0
+      ? cachedRecent
+      : events
+          .filter((ev) => ev.kind === 'OfferAccepted' && typeof ev.args.offerId === 'string')
+          .map((ev) => ev.args.offerId as string)
+          .slice(-RECENT_ACCEPTED_CAP);
     return {
       lastBlock: parsed.lastBlock,
       loans: parsed.loans,
@@ -298,8 +317,8 @@ function readCache(chainId: number, diamond: string): CachedShape | null {
       offerIds: Array.isArray(parsed.offerIds) ? parsed.offerIds : [],
       closedOfferIds: Array.isArray(parsed.closedOfferIds) ? parsed.closedOfferIds : [],
       lastAcceptedOfferId: parsed.lastAcceptedOfferId ?? null,
-      recentAcceptedOfferIds: Array.isArray(parsed.recentAcceptedOfferIds) ? parsed.recentAcceptedOfferIds : [],
-      events: Array.isArray(parsed.events) ? parsed.events : [],
+      recentAcceptedOfferIds,
+      events,
     };
   } catch {
     return null;
