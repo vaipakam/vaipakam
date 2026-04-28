@@ -854,6 +854,9 @@ export default function BuyVPFI() {
           <CardInfo id="buy-vpfi.overview" />
         </h1>
         <p className="page-subtitle">{t('buyVpfi.pageSubtitle')}</p>
+        <p className="page-subtitle" style={{ marginTop: 8 }}>
+          {t('buyVpfi.openStakingNote')}
+        </p>
       </div>
 
       <FlowBanner
@@ -928,8 +931,11 @@ export default function BuyVPFI() {
            calls the Diamond directly; every other chain routes through the
            VPFIBuyAdapter + LayerZero round-trip, with VPFI delivered back
            to the user's wallet on the same chain they're connected to. The
-           page never asks the user to switch chains (spec §8a). */}
-      <div className="card" style={{ marginBottom: 20 }}>
+           page never asks the user to switch chains (spec §8a).
+           `id="step-1"` is the deep-link target from the landing-page VPFI
+           dropdown (Buy item). Step 2 / Step 3 cards carry the matching
+           anchors. */}
+      <div id="step-1" className="card" style={{ marginBottom: 20 }}>
         <StepHeader
           index={1}
           title={t('buyVpfi.step1Title')}
@@ -1008,8 +1014,9 @@ export default function BuyVPFI() {
         )}
       </div>
 
-      {/* Step 2 — deposit to escrow on the lending chain (always explicit) */}
-      <div className="card" style={{ marginBottom: 20 }}>
+      {/* Step 2 — deposit to escrow on the lending chain (always explicit).
+           `id="step-2"` matches the VPFI dropdown's Stake item. */}
+      <div id="step-2" className="card" style={{ marginBottom: 20 }}>
         <StepHeader
           index={2}
           title={t('buyVpfi.step2Title')}
@@ -1112,7 +1119,8 @@ export default function BuyVPFI() {
           may drop the borrower's discount tier — surface that in the
           explainer instead of blocking the action. */}
       {tokenRegistered && (
-        <div className="card" style={{ marginBottom: 20 }}>
+        // `id="step-3"` matches the VPFI dropdown's Unstake item.
+        <div id="step-3" className="card" style={{ marginBottom: 20 }}>
           <StepHeader
             index={3}
             title={t('buyVpfi.step3Title')}

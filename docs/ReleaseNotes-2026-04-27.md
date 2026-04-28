@@ -599,6 +599,61 @@ wrong by default; everything else handles itself.
 - **Mainnet deployment**: deferred per the prior days'
   status. No translation-related blocker added today.
 
+## Late additions (post-Phase-5 polish)
+
+Tail-end work on 2026-04-27 that landed after the main Phase 2-5
+write-up above had been drafted. All of it is small, behavioural
+polish — no new architecture, no new on-chain selectors.
+
+### SEO / Cloudflare deploy correctness
+
+- **Removed per-locale SEO shells**: an earlier attempt at
+  per-locale shell HTML (one tiny static file per locale × per
+  page, holding only the metadata for crawlers) was reverted after
+  it caused a routing regression — Cloudflare's path normalisation
+  collapsed `/<locale>/` to `/<locale>` and the SPA fallback then
+  rewrote the request, breaking the deploy. The hreflang block on
+  every page already gives crawlers the locale fan-out; the per-
+  locale shells were duplicate signal and the cost outweighed the
+  benefit.
+- **`_redirects` no-`.html`-suffix**: dropped the trailing `.html`
+  from each Cloudflare `_redirects` rule that previously carried
+  it. Cloudflare's loop-detection layer was treating the
+  `…/foo.html` form as a different URL than the rewrite target
+  it produced, causing a 30x bounce loop on first-visit
+  default-locale redirects. Stripping the suffix put the redirect
+  source and target on the same canonical URL shape.
+- **First-visit default-locale redirect** path-fixed: the Spanish/
+  French/etc. entry points now resolve cleanly without a 30x loop
+  on Cloudflare Pages.
+- **SEO scoped to landing page**: the per-page metadata fan-out
+  (titles, descriptions, OG tags, hreflang) was narrowed back to
+  the landing page only, matching the earlier shell-removal
+  decision. Other public pages keep their default site-wide
+  metadata; analytics-style pages (PublicDashboard, PublicNFT
+  Verifier) don't need their own social cards.
+- **In-app sidebar logo respects active locale**: clicking the
+  sidebar wordmark used to drop the locale prefix from the URL,
+  sending a Spanish-mode user back to `/` instead of `/es`. The
+  logo link now uses the locale-aware `<L>` wrapper so the prefix
+  carries through.
+
+### User Guide locale work
+
+- **User Guide translations included**: the locale-aware loader
+  added earlier in the day now ships with translated `Basic.<lang>.md`
+  and `Advanced.<lang>.md` files for every supported app locale
+  that had its UI strings translated. The English-only fallback
+  notice in those locales becomes unnecessary; readers see the
+  guide directly in their locale.
+
+### Public chrome polish
+
+- **Side-panel table-of-contents** for the long-form Overview
+  and Whitepaper / Technical pages — anchored sticky on desktop,
+  hidden on narrow viewports. Lets readers jump between sections
+  without scrolling back to the top.
+
 ## Documentation convention
 
 Same as carried forward from prior files: every completed phase

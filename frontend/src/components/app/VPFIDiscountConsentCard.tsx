@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { L as Link } from "../L";
-import { ShieldCheck, AlertTriangle } from "lucide-react";
+import { ShieldCheck, AlertTriangle, ExternalLink } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { useWallet } from "../../context/WalletContext";
 import { useDiamondContract } from "../../contracts/useDiamond";
@@ -107,9 +106,15 @@ export default function VPFIDiscountConsentCard() {
           </div>
           <p className="stat-label" style={{ margin: "0 0 10px" }}>
             {t('vpfiDiscountConsent.bodyPrefix')}
-            <Link to="/app/buy-vpfi" style={{ color: "var(--brand)" }}>
+            <a
+              href="/buy-vpfi"
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{ color: "var(--brand)", display: 'inline-flex', alignItems: 'center', gap: 3 }}
+            >
               {t('vpfiDiscountConsent.buyVpfiLink')}
-            </Link>
+              <ExternalLink size={11} />
+            </a>
             {t('vpfiDiscountConsent.bodySuffix')}
           </p>
           <div

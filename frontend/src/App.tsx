@@ -52,6 +52,25 @@ function PublicNftVerifier() {
   );
 }
 
+// Public Buy VPFI shell — buying VPFI is permissionless (anyone with ETH on
+// a supported chain can swap), and so is the staking program (the deposit
+// flow auto-creates an escrow on first call, so non-lenders / non-borrowers
+// can earn the staking reward yield without ever opening a loan). Mounted
+// outside the AppLayout so a fresh visitor lands here directly from the
+// landing page's VPFI dropdown without going through the in-app sidebar.
+function PublicBuyVPFI() {
+  return (
+    <>
+      <Navbar />
+      <main className="container" style={{ paddingTop: 32, paddingBottom: 32 }}>
+        <BuyVPFI />
+      </main>
+      <Footer />
+      <DiagnosticsDrawer />
+    </>
+  );
+}
+
 /**
  * Renders the full route subtree using v6 *relative* nested-route
  * paths so the same JSX block can mount under either the unprefixed
@@ -65,6 +84,7 @@ function pageRoutes(): ReactElement {
       <Route index element={<LandingPage />} />
       <Route path="analytics" element={<PublicDashboard />} />
       <Route path="nft-verifier" element={<PublicNftVerifier />} />
+      <Route path="buy-vpfi" element={<PublicBuyVPFI />} />
       <Route path="discord" element={<DiscordPage />} />
       <Route path="terms" element={<TermsPage />} />
       <Route path="privacy" element={<PrivacyPage />} />
@@ -83,7 +103,6 @@ function pageRoutes(): ReactElement {
         <Route path="claims" element={<ClaimCenter />} />
         <Route path="activity" element={<Activity />} />
         <Route path="rewards" element={<Rewards />} />
-        <Route path="buy-vpfi" element={<BuyVPFI />} />
         <Route path="keepers" element={<KeeperSettings />} />
         <Route path="alerts" element={<Alerts />} />
         <Route path="allowances" element={<Allowances />} />

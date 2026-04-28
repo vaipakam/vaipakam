@@ -435,7 +435,7 @@ export default function LoanDetails() {
                 platform-level VPFI consent once on your Dashboard. Future
                 liquid loans will auto-settle the tier-discounted fee in VPFI.
                 Need VPFI?{" "}
-                <a href="/app/buy-vpfi" target="_blank" rel="noreferrer">
+                <a href="/buy-vpfi" target="_blank" rel="noopener noreferrer">
                   Buy VPFI
                 </a>{" "}
                 (buy from your preferred chain — routing is handled for you).

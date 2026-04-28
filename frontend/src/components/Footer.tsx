@@ -83,7 +83,7 @@ export default function Footer() {
             <Link to="/help/overview">{t('footer.documentation')}</Link>
             <Link to="/analytics">{t('footer.smartContracts')}</Link>
             <Link to="/nft-verifier">{t('nav.nftVerifier')}</Link>
-            <Link to="/app/buy-vpfi">{t('appNav.buyVpfi')}</Link>
+            <Link to="/buy-vpfi">{t('appNav.buyVpfi')}</Link>
           </div>
 
           <div className="footer-col">

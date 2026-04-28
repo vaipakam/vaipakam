@@ -1269,9 +1269,9 @@ function AcceptReviewModal({ offer, illiquid, consent, onConsentChange, submitti
                   <span className="mono">{Number(discountPreview.vpfiRequired) / 1e18}</span> VPFI.
                   Top up on{' '}
                   <a
-                    href="/app/buy-vpfi"
+                    href="/buy-vpfi"
                     target="_blank"
-                    rel="noreferrer"
+                    rel="noopener noreferrer"
                     style={{ textDecoration: 'underline' }}
                   >
                     Buy VPFI

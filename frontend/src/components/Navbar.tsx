@@ -73,6 +73,21 @@ const NAV_GROUPS: NavGroup[] = [
       { labelKey: 'nav.security', href: '/#security' },
     ],
   },
+  {
+    // VPFI surface — Buy / Stake / Unstake all live on the same public
+    // `/buy-vpfi` page; deep-link anchors (`#step-1` / `#step-2` /
+    // `#step-3`) jump straight to the relevant card. Staking is open to
+    // anyone (the contract auto-creates an escrow on first deposit), so
+    // a fresh visitor with ETH and no loan history can still earn the
+    // 5% APR yield from this entry-point.
+    id: 'vpfi',
+    labelKey: 'nav.vpfi',
+    links: [
+      { labelKey: 'nav.vpfiBuy', href: '/buy-vpfi#step-1' },
+      { labelKey: 'nav.vpfiStake', href: '/buy-vpfi#step-2' },
+      { labelKey: 'nav.vpfiUnstake', href: '/buy-vpfi#step-3' },
+    ],
+  },
 ];
 
 export default function Navbar() {

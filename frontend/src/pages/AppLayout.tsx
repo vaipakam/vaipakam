@@ -29,6 +29,7 @@ import {
   Bell,
   ShieldOff,
   Settings,
+  ExternalLink,
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
@@ -78,10 +79,11 @@ const BASIC_NAV = [
     end: false,
   },
   {
-    to: "/app/buy-vpfi",
+    to: "/buy-vpfi",
     icon: <Coins size={20} />,
     labelKey: "appNav.buyVpfi",
     end: false,
+    external: true,
   },
   {
     to: "/app/rewards",
@@ -272,18 +274,38 @@ export default function AppLayout() {
 
         <nav className="sidebar-nav">
           {BASIC_NAV.map((item) => (
-            <NavLink
-              key={item.to}
-              to={item.to}
-              end={item.end}
-              className={({ isActive }) =>
-                `sidebar-link ${isActive ? "active" : ""}`
-              }
-              onClick={() => setSidebarOpen(false)}
-            >
-              {item.icon}
-              <span>{t(item.labelKey)}</span>
-            </NavLink>
+            'external' in item && item.external ? (
+              // Renders as a regular anchor with `target="_blank"` so the
+              // sidebar item opens the public page (e.g. Buy VPFI) in a
+              // new tab instead of taking the user out of the app shell.
+              <a
+                key={item.to}
+                href={item.to}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="sidebar-link"
+                onClick={() => setSidebarOpen(false)}
+              >
+                {item.icon}
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                  {t(item.labelKey)}
+                  <ExternalLink size={12} />
+                </span>
+              </a>
+            ) : (
+              <NavLink
+                key={item.to}
+                to={item.to}
+                end={item.end}
+                className={({ isActive }) =>
+                  `sidebar-link ${isActive ? "active" : ""}`
+                }
+                onClick={() => setSidebarOpen(false)}
+              >
+                {item.icon}
+                <span>{t(item.labelKey)}</span>
+              </NavLink>
+            )
           ))}
 
           {isAdvanced && (
