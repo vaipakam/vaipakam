@@ -261,6 +261,12 @@
     "riskMetricsUnavailable": "जोखिम मेट्रिक्स अनुपलब्ध (अतरल पोजिशन)",
     "illiquidRiskExplainer": "ऐसे loans के लिए LTV / HF की गणना नहीं की जाती जिनमें कोई illiquid asset शामिल हो (कोई on-chain price नहीं है)। Borrower default होने पर, पूरा collateral यथा-वस्तु (in-kind) Lender को स्थानांतरित कर दिया जाता है।"
   },
+  "tokenInfoTag": {
+    "rank": "रैंक #{{rank}}",
+    "decimals": "{{decimals}} decimals",
+    "viewOnExplorer": "Explorer पर देखें",
+    "trustWarning": "कोई भी किसी भी symbol के साथ token deploy कर सकता है — symbol पर भरोसा करने के बजाय contract address की जाँच करके इस token पर अपना भरोसा पुष्टि करें।"
+  },
   "buyVpfi": {
     "connectTitle": "अपना वॉलेट कनेक्ट करें",
     "connectBody": "VPFI खरीदने और टियर डिस्काउंट अनलॉक करने के लिए अपना वॉलेट कनेक्ट करें।",

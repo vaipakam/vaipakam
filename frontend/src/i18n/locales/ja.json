@@ -261,6 +261,12 @@
     "riskMetricsUnavailable": "リスクメトリクスは利用できません (非流動性ポジション)",
     "illiquidRiskExplainer": "非流動資産を含むローンではLTV / HFは計算されません(オンチェーン価格がないため)。Borrowerがデフォルトした場合、担保全額がLenderに現物で移転されます。"
   },
+  "tokenInfoTag": {
+    "rank": "ランク #{{rank}}",
+    "decimals": "{{decimals}} 桁の小数",
+    "viewOnExplorer": "エクスプローラーで表示",
+    "trustWarning": "誰でも任意のシンボルでトークンをデプロイできます — 表示されているシンボルではなく、コントラクトアドレスそのものを確認してこのトークンを信頼できることを確認してください。"
+  },
   "buyVpfi": {
     "connectTitle": "ウォレットを接続",
     "connectBody": "VPFIを購入し階層別割引を有効にするためにウォレットを接続してください。",

@@ -261,6 +261,12 @@
     "riskMetricsUnavailable": "Risikometriken nicht verfügbar (illiquide Position)",
     "illiquidRiskExplainer": "LTV / HF werden für Kredite mit einem illiquiden Asset nicht berechnet (kein On-Chain-Preis). Bei Zahlungsausfall des Borrowers wird die gesamte Sicherheit in natura an den Lender übertragen."
   },
+  "tokenInfoTag": {
+    "rank": "Rang #{{rank}}",
+    "decimals": "{{decimals}} Dezimalstellen",
+    "viewOnExplorer": "Im Explorer ansehen",
+    "trustWarning": "Jeder kann einen Token mit beliebigem Symbol bereitstellen — bestätigen Sie Ihr Vertrauen in diesen Token, indem Sie die Contract-Adresse selbst prüfen, nicht das angezeigte Symbol."
+  },
   "buyVpfi": {
     "connectTitle": "Wallet verbinden",
     "connectBody": "Verbinden Sie Ihre Wallet, um VPFI zu kaufen und den gestaffelten Rabatt freizuschalten.",

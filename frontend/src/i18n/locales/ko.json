@@ -261,6 +261,12 @@
     "riskMetricsUnavailable": "리스크 지표 사용 불가 (비유동 포지션)",
     "illiquidRiskExplainer": "비유동 자산이 포함된 loan은 LTV / HF가 계산되지 않습니다(온체인 가격이 없음). Borrower가 default하면 전체 담보가 현물(in-kind)로 Lender에게 이전됩니다."
   },
+  "tokenInfoTag": {
+    "rank": "순위 #{{rank}}",
+    "decimals": "{{decimals}} 소수 자릿수",
+    "viewOnExplorer": "탐색기에서 보기",
+    "trustWarning": "누구나 임의의 symbol로 token을 배포할 수 있습니다 — 표시된 symbol이 아니라 contract address 자체를 확인하여 이 token을 신뢰할 수 있는지 확인하세요."
+  },
   "buyVpfi": {
     "connectTitle": "지갑을 연결하세요",
     "connectBody": "VPFI를 구매하고 계층 할인을 잠금 해제하려면 지갑을 연결하세요.",

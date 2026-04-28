@@ -261,6 +261,12 @@
     "riskMetricsUnavailable": "مقاييس المخاطر غير متاحة (مركز غير سائل)",
     "illiquidRiskExplainer": "لا يتم حساب LTV / HF للقروض التي تتضمن أصلاً غير سائل (لا يوجد سعر on-chain). عند تخلف Borrower عن السداد، يتم تحويل الضمان الكامل عينياً إلى Lender."
   },
+  "tokenInfoTag": {
+    "rank": "التصنيف #{{rank}}",
+    "decimals": "{{decimals}} منازل عشرية",
+    "viewOnExplorer": "عرض في المستكشف",
+    "trustWarning": "يمكن لأي شخص نشر token بأي symbol — تأكد من ثقتك بهذا token عن طريق التحقق من contract address نفسه، وليس من الـ symbol المعروض."
+  },
   "buyVpfi": {
     "connectTitle": "اربط محفظتك",
     "connectBody": "اربط محفظتك لشراء VPFI وفتح الخصم متعدد المستويات.",

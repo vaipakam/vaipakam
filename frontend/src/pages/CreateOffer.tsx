@@ -31,6 +31,7 @@ import { usePermit2Signing } from "../hooks/usePermit2Signing";
 import { DIAMOND_ABI_VIEM as DIAMOND_ABI } from "../contracts/abis";
 import { L as Link } from "../components/L";
 import { AssetPicker } from "../components/app/AssetPicker";
+import { TokenInfoTag } from "../components/app/TokenInfoTag";
 import { useAssetType, type DetectedAssetType } from "../hooks/useAssetType";
 import { CardInfo } from "../components/CardInfo";
 import "./CreateOffer.css";
@@ -546,18 +547,11 @@ export default function CreateOffer() {
             </button>
           </div>
 
-          {showAdvanced && (
-            <div style={{ marginTop: 20 }}>
-              <div className="form-label">
-                {t('createOffer.assetType')}
-                <DetectionBadge
-                  detection={lendingDetection}
-                  selected={form.assetType}
-                />
-              </div>
-              <div className="form-hint">{t('createOffer.hintAssetTypeAuto')}</div>
-            </div>
-          )}
+          {/* Asset-type detection indicator moved out of the Offer Type
+              card to sit inline next to the Lending Asset address field
+              (where the detection actually applies). The form-state
+              `assetType` is still auto-set by the detection effect — only
+              the visual indicator was relocated. */}
         </div>
 
         {!isIlliquidForm && (
@@ -650,20 +644,51 @@ export default function CreateOffer() {
                 </span>
               </>
             ) : (
-              <AssetPicker
-                mode="top"
-                chainId={chainId}
-                value={form.lendingAsset}
-                onChange={(addr) => setField("lendingAsset", addr)}
-                label={`${t('createOffer.tokenContractAddressLabel')}${lockAssetContinuity ? ` ${t('createOffer.lockedSuffix')}` : ""}`}
-                required
-                disabled={lockAssetContinuity}
-                hint={
-                  lockAssetContinuity
-                    ? t('createOffer.hintAddressLockedShort')
-                    : undefined
-                }
-              />
+              <>
+                <AssetPicker
+                  mode="top"
+                  chainId={chainId}
+                  value={form.lendingAsset}
+                  onChange={(addr) => setField("lendingAsset", addr)}
+                  label={`${t('createOffer.tokenContractAddressLabel')}${lockAssetContinuity ? ` ${t('createOffer.lockedSuffix')}` : ""}`}
+                  required
+                  disabled={lockAssetContinuity}
+                  hint={
+                    lockAssetContinuity
+                      ? t('createOffer.hintAddressLockedShort')
+                      : undefined
+                  }
+                />
+                {/* Trust + identification block: symbol + name + market-
+                    cap rank when the address is on the CoinGecko
+                    registry, on-chain symbol/name fallback otherwise,
+                    block-explorer link, and a phishing warning when
+                    the address is unlisted or ranked outside top 200.
+                    Visible to both Basic and Advanced users — phishing
+                    protection isn't gated. The decimals field is the
+                    only Advanced-only detail (kept inside the
+                    component). */}
+                <TokenInfoTag
+                  chainId={chainId}
+                  address={form.lendingAsset}
+                  blockExplorer={
+                    activeChain?.blockExplorer ?? DEFAULT_CHAIN.blockExplorer
+                  }
+                  showAdvanced={showAdvanced}
+                />
+                {/* The bare on-chain "detected ERC-20" classification
+                    badge stays Advanced-only — it's a technical
+                    diagnostic separate from the user-facing trust
+                    block above. */}
+                {showAdvanced && (
+                  <div className="form-hint" style={{ marginTop: 4 }}>
+                    <DetectionBadge
+                      detection={lendingDetection}
+                      selected={form.assetType}
+                    />
+                  </div>
+                )}
+              </>
             )}
           </div>
 
@@ -798,37 +823,45 @@ export default function CreateOffer() {
             </div>
           )}
 
-          {showAdvanced && (
-            <div className="form-group">
-              <label className="form-label">
-                {t('createOffer.collateralAssetType')}
-                {lockAssetContinuity && (
-                  <span className="form-lock-badge"> · locked</span>
-                )}
-                <DetectionBadge
-                  detection={collateralDetection}
-                  selected={form.collateralAssetType}
-                />
-              </label>
-              <div className="form-hint">{t('createOffer.hintCollateralAssetTypeAuto')}</div>
-            </div>
-          )}
+          {/* Collateral-asset-type detection indicator moved inline below
+              the Collateral address field (see below) — same pattern as
+              the Lending Asset card. Form-state `collateralAssetType` is
+              still auto-set by the detection effect; only the visual
+              indicator was relocated. */}
 
           <div className="form-group">
             {form.collateralAssetType === "erc20" ? (
-              <AssetPicker
-                mode="top"
-                chainId={chainId}
-                value={form.collateralAsset}
-                onChange={(addr) => setField("collateralAsset", addr)}
-                label={`${t('createOffer.collateralContractAddressLabel')}${lockAssetContinuity ? ` ${t('createOffer.lockedSuffix')}` : ""}`}
-                disabled={lockAssetContinuity}
-                hint={
-                  lockAssetContinuity
-                    ? t('createOffer.hintAddressLockedShort')
-                    : undefined
-                }
-              />
+              <>
+                <AssetPicker
+                  mode="top"
+                  chainId={chainId}
+                  value={form.collateralAsset}
+                  onChange={(addr) => setField("collateralAsset", addr)}
+                  label={`${t('createOffer.collateralContractAddressLabel')}${lockAssetContinuity ? ` ${t('createOffer.lockedSuffix')}` : ""}`}
+                  disabled={lockAssetContinuity}
+                  hint={
+                    lockAssetContinuity
+                      ? t('createOffer.hintAddressLockedShort')
+                      : undefined
+                  }
+                />
+                <TokenInfoTag
+                  chainId={chainId}
+                  address={form.collateralAsset}
+                  blockExplorer={
+                    activeChain?.blockExplorer ?? DEFAULT_CHAIN.blockExplorer
+                  }
+                  showAdvanced={showAdvanced}
+                />
+                {showAdvanced && (
+                  <div className="form-hint" style={{ marginTop: 4 }}>
+                    <DetectionBadge
+                      detection={collateralDetection}
+                      selected={form.collateralAssetType}
+                    />
+                  </div>
+                )}
+              </>
             ) : (
               <>
                 <label className="form-label">
@@ -1051,11 +1084,14 @@ function DetectionBadge({
   detection: { type: DetectedAssetType | null; loading: boolean };
   selected: OfferAssetKind;
 }) {
+  // The badge used to sit inline next to a "Asset Type" label — the
+  // leading "· " was a label/value separator. Now that the badge
+  // renders standalone below the address field, the separator is
+  // orphan visual noise, so it's gone.
   if (detection.loading) {
     return (
       <span className="asset-detect-badge asset-detect-pending">
-        {" "}
-        · detecting…
+        detecting…
       </span>
     );
   }
@@ -1063,8 +1099,7 @@ function DetectionBadge({
   if (detection.type === "unknown") {
     return (
       <span className="asset-detect-badge asset-detect-unknown">
-        {" "}
-        · could not auto-detect
+        could not auto-detect
       </span>
     );
   }
@@ -1074,8 +1109,7 @@ function DetectionBadge({
     <span
       className={`asset-detect-badge ${matches ? "asset-detect-match" : "asset-detect-mismatch"}`}
     >
-      {" "}
-      · detected {label}
+      detected {label}
     </span>
   );
 }

@@ -261,6 +261,12 @@
     "riskMetricsUnavailable": "风险指标不可用 (非流动性持仓)",
     "illiquidRiskExplainer": "涉及非流动性资产的 loan 不计算 LTV / HF（链上无价格）。当 Borrower 违约时，全部 collateral 将以实物（in-kind）形式转移给 Lender。"
   },
+  "tokenInfoTag": {
+    "rank": "排名 #{{rank}}",
+    "decimals": "{{decimals}} 位小数",
+    "viewOnExplorer": "在浏览器中查看",
+    "trustWarning": "任何人都可以使用任意 symbol 部署 token — 请通过验证 contract address 本身（而不是显示的 symbol）来确认您信任此 token。"
+  },
   "buyVpfi": {
     "connectTitle": "连接您的钱包",
     "connectBody": "连接您的钱包以购买 VPFI 并解锁分级折扣。",

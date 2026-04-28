@@ -261,6 +261,12 @@
     "riskMetricsUnavailable": "Métriques de risque indisponibles (position illiquide)",
     "illiquidRiskExplainer": "Le LTV / HF n'est pas calculé pour les prêts impliquant un actif illiquide (pas de prix on-chain). En cas de défaut du Borrower, l'intégralité du collatéral est transférée en nature au Lender."
   },
+  "tokenInfoTag": {
+    "rank": "rang #{{rank}}",
+    "decimals": "{{decimals}} décimales",
+    "viewOnExplorer": "Voir dans l'explorateur",
+    "trustWarning": "N'importe qui peut déployer un token avec n'importe quel symbole — confirmez votre confiance dans ce token en vérifiant l'adresse du contrat elle-même, pas le symbole affiché."
+  },
   "buyVpfi": {
     "connectTitle": "Connectez votre portefeuille",
     "connectBody": "Connectez votre portefeuille pour acheter VPFI et débloquer la remise par niveaux.",

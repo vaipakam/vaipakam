@@ -261,6 +261,12 @@
     "riskMetricsUnavailable": "ஆபத்து மெட்ரிக்குகள் கிடைக்கவில்லை (லிக்விடிட்டி குறைந்த நிலை)",
     "illiquidRiskExplainer": "Illiquid asset-ஐ உள்ளடக்கிய loans-க்கு LTV / HF கணக்கிடப்படாது (on-chain price இல்லை). Borrower default ஆனால், முழு collateral-ம் in-kind-ஆக Lender-க்கு transfer செய்யப்படும்."
   },
+  "tokenInfoTag": {
+    "rank": "தரவரிசை #{{rank}}",
+    "decimals": "{{decimals}} decimals",
+    "viewOnExplorer": "Explorer-இல் காண்க",
+    "trustWarning": "எந்த symbol-உடனும் யாரும் token deploy செய்யலாம் — காட்டப்படும் symbol-ஐ நம்பாமல், contract address-ஐ நேரடியாகச் சரிபார்த்து இந்த token-ஐ நீங்கள் நம்புகிறீர்கள் என்பதை உறுதிப்படுத்தவும்."
+  },
   "buyVpfi": {
     "connectTitle": "உங்கள் வாலெட்டை இணைக்கவும்",
     "connectBody": "VPFI வாங்கி அடுக்கு தள்ளுபடியைத் திறக்க உங்கள் வாலெட்டை இணைக்கவும்.",

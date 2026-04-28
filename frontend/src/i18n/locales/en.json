@@ -729,6 +729,12 @@
     "riskMetricsUnavailable": "Risk metrics unavailable (illiquid position)",
     "illiquidRiskExplainer": "LTV / HF aren't computed for loans involving an illiquid asset (no on-chain price). On Borrower default, the full collateral is transferred in-kind to the lender."
   },
+  "tokenInfoTag": {
+    "rank": "rank #{{rank}}",
+    "decimals": "{{decimals}} decimals",
+    "viewOnExplorer": "View on explorer",
+    "trustWarning": "Anyone can deploy a token with any symbol — confirm you trust this token by checking the contract address itself, not the symbol shown."
+  },
   "buyVpfi": {
     "connectTitle": "Connect Your Wallet",
     "connectBody": "Connect your wallet to buy VPFI and unlock the tiered discount.",
