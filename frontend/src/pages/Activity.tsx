@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { createPublicClient, http } from 'viem';
+import { L as Link } from '../components/L';
 import {
   Activity as ActivityIcon,
   ChevronDown,
@@ -35,6 +36,14 @@ const KIND_LABELS: Record<ActivityEventKind, string> = {
   CollateralAdded: 'Collateral added',
   LoanSold: 'Lender position sold',
   LoanObligationTransferred: 'Borrower position transferred',
+  LoanSettlementBreakdown: 'Settlement breakdown',
+  LiquidationFallback: 'Liquidation fallback',
+  LiquidationFallbackSplit: 'Fallback collateral split',
+  LoanSettled: 'Loan settled',
+  PartialRepaid: 'Partial repayment',
+  ClaimRetryExecuted: 'Claim-time swap retry',
+  BorrowerLifRebateClaimed: 'VPFI rebate claimed',
+  StakingRewardsClaimed: 'VPFI staking rewards claimed',
   VPFIPurchasedWithETH: 'VPFI bought with ETH',
   VPFIDepositedToEscrow: 'VPFI staked to escrow',
   VPFIWithdrawnFromEscrow: 'VPFI unstaked from escrow',
@@ -54,6 +63,14 @@ const KIND_ACCENT: Record<ActivityEventKind, string> = {
   CollateralAdded: 'info',
   LoanSold: 'info',
   LoanObligationTransferred: 'info',
+  LoanSettlementBreakdown: 'success',
+  LiquidationFallback: 'failure',
+  LiquidationFallbackSplit: 'failure',
+  LoanSettled: 'success',
+  PartialRepaid: 'info',
+  ClaimRetryExecuted: 'info',
+  BorrowerLifRebateClaimed: 'info',
+  StakingRewardsClaimed: 'success',
   VPFIPurchasedWithETH: 'success',
   VPFIDepositedToEscrow: 'success',
   VPFIWithdrawnFromEscrow: 'info',
@@ -432,7 +449,15 @@ export default function Activity() {
                       >
                         {ts ? formatBlockTime(ts) : `block ${g.blockNumber}`}
                       </span>
-                      {loanId && <span className="activity-pill">Loan #{loanId}</span>}
+                      {loanId && (
+                        <Link
+                          to={`/app/loans/${loanId}`}
+                          className="activity-pill activity-pill--link"
+                          aria-label={t('activity.viewLoan', { id: loanId })}
+                        >
+                          Loan #{loanId}
+                        </Link>
+                      )}
                       {offerId && <span className="activity-pill">Offer #{offerId}</span>}
                     </div>
 

@@ -14,11 +14,23 @@ anchor rate-deviation badges in the Offer Book; a fresh
 **production deploy** to the public Cloudflare Worker that ships
 the day's bundle; a **fixed-position-Navbar clearance** on the
 public Privacy and Terms pages (the top of those pages used to sit
-behind the Navbar); and a series of **Buy VPFI copy cleanups** —
+behind the Navbar); a series of **Buy VPFI copy cleanups** —
 tighter Step 2 / Step 3 subtitles, a single user-friendly Info
 callout on the Stake card explaining open staking + auto-escrow-
 on-first-deposit, and removal of duplicated framing copy that
-existed twice on the page.
+existed twice on the page; and a **major Loan Details overhaul**
+— a chronological **on-chain activity timeline** for every loan
+showing each event's friendly per-type breakdown (settlement
+splits, fallback collateral allocations, partial-repay rows, swap
+retries, VPFI fee-discount rebates), a pinned **"Ready to claim"
+action bar** at the top when the connected wallet has a claimable
+position, a clickable **Loan #X** pill on the Activity page that
+deep-links to the matching Loan Details, a green **Claim CTA** on
+the Dashboard's Your Loans table for terminal-state rows that
+have unclaimed funds, and a brand-new **VPFI staking-rewards
+claim** card that surfaces the wallet's pending APR-accrued VPFI
+on the Buy VPFI page Step 2 plus a compact mirror on the
+Dashboard's Discount Status surface.
 
 ## Market-anchor cache backfill — no rescan needed
 
@@ -125,6 +137,138 @@ self-repay guard, the illiquid risk-math custom error, and today's
 cache-backfill fix) shipped to the public Cloudflare Worker
 deployment. 23 new / modified static assets uploaded; 101 cached
 from prior bundles unchanged.
+
+## Loan Details — chronological activity timeline
+
+The loan view page used to be a static read of the loan struct
+plus the action surfaces (Repay / Add collateral / Preclose /
+Refinance). The on-chain history of *what had already happened* to
+the loan was visible only by paging through the global Activity
+page and visually filtering by loanId.
+
+A new **LoanTimeline** component now sits at the bottom of every
+Loan Details page. It pulls every event from the per-(chain,
+diamond) log-index whose `args.loanId` matches the page's loan,
+sorts by (block, log-index) ascending, and renders one row per
+event with a per-kind friendly breakdown — the numbers come
+straight from the event arguments, no on-chain re-derivation.
+
+Per-kind breakdowns rendered today:
+
+- **Loan initiated** — principal + collateral + lender + borrower.
+- **Offer accepted** — the address that accepted.
+- **Partial repayment** — amount repaid + principal remaining.
+- **Loan repaid** — interest paid + late fee (if any) + repayer.
+- **Settlement breakdown** (proper close) — principal returned,
+  interest, late fee, lender share, treasury share. Source: the
+  `LoanSettlementBreakdown` event invariant
+  `treasuryShare + lenderShare == interest + lateFee`.
+- **Loan defaulted** — dual fallback consent flag.
+- **Liquidation fallback (swap reverted)** — collateral entering
+  the fallback path.
+- **Fallback collateral split** — the three-way slice (lender /
+  treasury / borrower) on the claim-time settlement path.
+- **Lender / Borrower claimed** — amount + asset + claimant.
+- **Borrower LIF rebate claimed** — VPFI rebate paid out to the
+  borrower's NFT holder at proper close (Phase 5 §5.2b).
+- **Collateral added** — added amount + new total.
+- **Lender position sold / Borrower obligation transferred** —
+  original / new party + shortfall paid (transfer path only).
+- **Claim-time swap retry** — succeeded / failed + proceeds
+  returned on success.
+- **Loan settled** — both sides have claimed; loan is final.
+
+Each row also carries a tx-hash deep-link to the chain explorer.
+
+## Loan Details — "Ready to claim" action bar
+
+Above the loan-data grid, a new **ClaimActionBar** pins itself to
+the top of the page whenever:
+
+- the loan is in `Repaid`, `Defaulted`, or `FallbackPending` (the
+  three statuses where ClaimFacet allows a claim);
+- the connected wallet still owns one of the position NFTs;
+- the claim slot for that side hasn't been pulled yet AND the
+  side has at least one actionable claimable lane (fungible
+  amount > 0, an NFT payload, held-for-lender funds on a fallback
+  retry, a rental-NFT awaiting return, or a Phase 5 borrower-LIF
+  VPFI rebate).
+
+Headline payout from `getClaimable(loanId, isLender)`. Inline
+sub-line for any held-for-lender slice (lender side) and the
+borrower LIF rebate (borrower side). One Claim button per side
+that submits the appropriate facet call (`claimAsLender` /
+`claimAsBorrower`). After a successful submission the page
+refetches loan + claim state so the bar disappears.
+
+## Activity row — clickable Loan pill
+
+The grouped-by-tx Activity row used to render `Loan #16` as a
+non-interactive `<span>` pill. It's now a `<Link to="/app/loans/X">`
+that opens the full Loan Details (timeline + claim bar) for that
+loan. The pill keeps the same visual chrome plus a hover-underline
+treatment so it reads as clickable.
+
+## Dashboard — Claim CTA on terminal-state loans
+
+The **Your Loans** table on the Dashboard now renders a small
+green **Claim** CTA next to the existing **View** action whenever
+the connected wallet has unclaimed funds on that loan. Detection
+runs through the existing `useClaimables(address)` hook (no
+extra contract reads beyond what the Claims page already
+performs) and lights the badge for any loanId in the resulting
+set. Click sends the user straight to the Loan Details page
+where the action bar is already pinned at the top.
+
+## VPFI staking-rewards claim card
+
+The protocol's `StakingRewardsFacet` already exposes
+`previewStakingRewards`, `getUserStakedVPFI`, `getStakingAPRBps`,
+`getStakingPoolRemaining` views and a `claimStakingRewards`
+write. There was no front-end surface for it.
+
+A new **StakingRewardsClaim** component lives on the Buy VPFI
+page Step 2 (Stake) card as a full row, and mirrors itself in a
+compact inline strip on the Dashboard's Discount Status surface.
+Reads the four views in one read-multicall, shows the current
+**pending VPFI** number, and one Claim button submits
+`claimStakingRewards`. The card hides itself entirely when the
+wallet has zero pending AND zero staked — fresh users don't see
+a "0 VPFI rewards" prompt.
+
+## Contract — new fallback-snapshot view
+
+`ClaimFacet.getFallbackSnapshot(loanId)` is added to expose the
+existing `s.fallbackSnapshot[loanId]` storage struct as a
+public view. Returns the three-way collateral split
+(`lenderCollateral` / `treasuryCollateral` / `borrowerCollateral`),
+the principal-due figures (`lenderPrincipalDue` /
+`treasuryPrincipalDue`), plus the `active` and `retryAttempted`
+flags. Frontends use this where the breakdown comes from
+storage rather than from the `LiquidationFallbackSplit` event.
+Three Foundry tests assert: live-snapshot shape while in
+FallbackPending, snapshot cleared on cure, and a no-op return
+for a fresh loanId. Added to both DeployDiamond and the
+HelperTest selector lists.
+
+## Log-index — new event topics + cache version bump
+
+The frontend log-index allow-list was widened to include the
+loan-lifecycle breakdown stream powering the Loan Details
+timeline: `LoanSettlementBreakdown`, `LiquidationFallback`,
+`LiquidationFallbackSplit`, `LoanSettled`, `PartialRepaid`,
+`ClaimRetryExecuted`, `BorrowerLifRebateClaimed`, plus the per-
+user `StakingRewardsClaimed`. Each gets a topic-hash decoder
+that converts the indexed and packed event data into the
+existing `ActivityEvent` shape so Activity, the timeline, and
+any downstream consumer all read from one cache.
+
+The cache key bumped from `v7` to `v8` to force a fresh full
+scan once — older caches pre-date the new topics in the
+`getLogs` OR-set and can't backfill incrementally past
+`lastBlock`. The previous `recentAcceptedOfferIds`-style hydrate-
+time backfill doesn't help here because the new topics weren't
+captured at all in old caches.
 
 ## Documentation convention
 

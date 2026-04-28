@@ -296,13 +296,14 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](6);
+        selectors = new bytes4[](7);
         selectors[0] = ClaimFacet.claimAsLender.selector;
         selectors[1] = ClaimFacet.claimAsBorrower.selector;
         selectors[2] = ClaimFacet.getClaimableAmount.selector;
         selectors[3] = ClaimFacet.getClaimable.selector;
         selectors[4] = ClaimFacet.getBorrowerLifRebate.selector;
         selectors[5] = ClaimFacet.claimAsLenderWithRetry.selector;
+        selectors[6] = ClaimFacet.getFallbackSnapshot.selector;
         return selectors;
     }
 

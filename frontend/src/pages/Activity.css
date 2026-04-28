@@ -163,6 +163,16 @@
 .activity-pill.chain {
   background: var(--bg-card-hover);
 }
+.activity-pill--link {
+  background: var(--brand-bg);
+  color: var(--brand);
+  text-decoration: none;
+  cursor: pointer;
+}
+.activity-pill--link:hover {
+  background: var(--brand-bg-hover, var(--brand-bg));
+  text-decoration: underline;
+}
 
 .activity-row-error {
   display: inline-flex;

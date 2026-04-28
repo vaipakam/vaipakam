@@ -794,4 +794,59 @@ contract ClaimFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
                 s.loans[loanId].assetType != LibVaipakam.AssetType.ERC20;
         }
     }
+
+    /// @notice Returns the fallback-path settlement snapshot for a loan.
+    /// @dev    Emitted alongside `LiquidationFallback` and persisted to
+    ///         `s.fallbackSnapshot[loanId]` whenever a liquid-collateral
+    ///         loan falls through to the claim-time settlement path
+    ///         (DEX swap reverted or exceeded the 6% slippage ceiling).
+    ///         Frontends use this to render the lender / treasury /
+    ///         borrower three-way collateral split alongside the
+    ///         principal-due figures, without parsing logs. While
+    ///         `active == false`, the loan never entered the fallback
+    ///         path — the other view return values are zero.
+    /// @param loanId Loan to query.
+    /// @return lenderCollateral     Collateral units routed to the lender if
+    ///                              the claim-time retry fails (principal +
+    ///                              interest + late fees + 3% bonus, capped
+    ///                              at available collateral).
+    /// @return treasuryCollateral   Collateral units routed to treasury
+    ///                              (≈2% of principal, or zero if
+    ///                              undercollateralized).
+    /// @return borrowerCollateral   Remainder back to the borrower.
+    /// @return lenderPrincipalDue   Principal-asset amount the lender is
+    ///                              owed if the claim-time swap retry
+    ///                              succeeds (drives the proceeds split).
+    /// @return treasuryPrincipalDue Principal-asset amount routed to
+    ///                              treasury when the retry succeeds.
+    /// @return active               True iff this loan is in the fallback
+    ///                              path (snapshot is meaningful).
+    /// @return retryAttempted       True iff `ClaimFacet` already ran the
+    ///                              one-shot claim-time retry against this
+    ///                              snapshot.
+    function getFallbackSnapshot(uint256 loanId)
+        external
+        view
+        returns (
+            uint256 lenderCollateral,
+            uint256 treasuryCollateral,
+            uint256 borrowerCollateral,
+            uint256 lenderPrincipalDue,
+            uint256 treasuryPrincipalDue,
+            bool active,
+            bool retryAttempted
+        )
+    {
+        LibVaipakam.FallbackSnapshot storage snap =
+            LibVaipakam.storageSlot().fallbackSnapshot[loanId];
+        return (
+            snap.lenderCollateral,
+            snap.treasuryCollateral,
+            snap.borrowerCollateral,
+            snap.lenderPrincipalDue,
+            snap.treasuryPrincipalDue,
+            snap.active,
+            snap.retryAttempted
+        );
+    }
 }

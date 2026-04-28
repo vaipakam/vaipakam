@@ -9,6 +9,7 @@ import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {DefaultedFacet} from "../src/facets/DefaultedFacet.sol";
 import {RiskFacet} from "../src/facets/RiskFacet.sol";
 import {AddCollateralFacet} from "../src/facets/AddCollateralFacet.sol";
+import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
 import {EscrowFactoryFacet} from "../src/facets/EscrowFactoryFacet.sol";
 import {VaipakamNFTFacet} from "../src/facets/VaipakamNFTFacet.sol";
 import {ZeroExProxyMock} from "./mocks/ZeroExProxyMock.sol";
@@ -244,5 +245,87 @@ contract FallbackCureTest is SetupTest, IVaipakamErrors {
         vm.prank(borrower);
         vm.expectRevert(InvalidAmount.selector);
         AddCollateralFacet(address(diamond)).addCollateral(loanId, 0);
+    }
+
+    // ─── ClaimFacet.getFallbackSnapshot view ────────────────────────────────
+
+    /// @dev While a loan is in FallbackPending, the new
+    ///      `ClaimFacet.getFallbackSnapshot` view returns the live three-way
+    ///      collateral split + the principal-due figures + active=true so
+    ///      the frontend can render the breakdown without re-decoding logs.
+    function testGetFallbackSnapshotReturnsLiveSplit() public view {
+        (
+            uint256 lenderCollateral,
+            uint256 treasuryCollateral,
+            uint256 borrowerCollateral,
+            uint256 lenderPrincipalDue,
+            uint256 treasuryPrincipalDue,
+            bool active,
+            bool retryAttempted
+        ) = ClaimFacet(address(diamond)).getFallbackSnapshot(loanId);
+
+        assertTrue(active, "snapshot active while in FallbackPending");
+        assertFalse(retryAttempted, "no retry yet");
+        // The three-way split must always sum to the borrower's collateral
+        // entering the fallback path — the lender + treasury slices are
+        // capped against available collateral, so this is the load-bearing
+        // invariant the frontend will trust when rendering totals.
+        assertEq(
+            lenderCollateral + treasuryCollateral + borrowerCollateral,
+            COLLATERAL,
+            "split sums to total collateral entering fallback"
+        );
+        // Principal-due figures are only populated when present (defaulted
+        // path with proceeds expected); for this fallback fixture they
+        // mirror the same accounting and may be zero on either field —
+        // we just assert they are non-reverting reads.
+        lenderPrincipalDue;
+        treasuryPrincipalDue;
+    }
+
+    /// @dev After cure, the snapshot is cleared — `active` flips back to
+    ///      false and every numeric field returns zero. Frontends use this
+    ///      gate to hide the "fallback split" rows from the timeline.
+    function testGetFallbackSnapshotClearsAfterCure() public {
+        uint256 topUp = 100 ether;
+        ERC20Mock(mockCollateralERC20).mint(borrower, topUp);
+        vm.prank(borrower);
+        AddCollateralFacet(address(diamond)).addCollateral(loanId, topUp);
+
+        (
+            uint256 lenderCollateral,
+            uint256 treasuryCollateral,
+            uint256 borrowerCollateral,
+            uint256 lenderPrincipalDue,
+            uint256 treasuryPrincipalDue,
+            bool active,
+            bool retryAttempted
+        ) = ClaimFacet(address(diamond)).getFallbackSnapshot(loanId);
+
+        assertFalse(active, "snapshot cleared on cure");
+        assertFalse(retryAttempted);
+        assertEq(lenderCollateral, 0);
+        assertEq(treasuryCollateral, 0);
+        assertEq(borrowerCollateral, 0);
+        assertEq(lenderPrincipalDue, 0);
+        assertEq(treasuryPrincipalDue, 0);
+    }
+
+    /// @dev On a loan that never entered the fallback path, the view
+    ///      returns active=false and zeroed fields rather than reverting —
+    ///      callers can probe any loanId without first knowing its state.
+    function testGetFallbackSnapshotEmptyForFreshLoanId() public view {
+        (
+            ,
+            ,
+            ,
+            ,
+            ,
+            bool active,
+            bool retryAttempted
+        ) = ClaimFacet(address(diamond)).getFallbackSnapshot(9_999_999);
+
+        assertFalse(active, "no snapshot for unknown loan");
+        assertFalse(retryAttempted);
     }
 }

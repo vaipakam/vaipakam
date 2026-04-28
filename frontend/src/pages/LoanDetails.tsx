@@ -40,6 +40,8 @@ import { HealthFactorGauge, LTVBar } from "../components/app/RiskGauge";
 import { LiquidationProjection } from "../components/app/LiquidationProjection";
 import { LenderDiscountCard } from "../components/app/LenderDiscountCard";
 import { LiquidateButton } from "../components/app/LiquidateButton";
+import { ClaimActionBar } from "../components/app/ClaimActionBar";
+import { LoanTimeline } from "../components/app/LoanTimeline";
 import { CardInfo } from "../components/CardInfo";
 import "./LoanDetails.css";
 
@@ -419,6 +421,16 @@ export default function LoanDetails() {
           </div>
         )}
       </div>
+
+      <ClaimActionBar
+        loan={loan}
+        lenderHolder={lenderHolder ? lenderHolder.toLowerCase() : null}
+        borrowerHolder={borrowerHolder ? borrowerHolder.toLowerCase() : null}
+        address={address ? address.toLowerCase() : null}
+        chainId={chainId}
+        blockExplorer={activeBlockExplorer}
+        onClaimed={loadLoan}
+      />
 
       {isLender && Number(loan.assetType) === AssetType.ERC20 && (
         <div style={{ marginBottom: 16 }}>
@@ -951,6 +963,22 @@ export default function LoanDetails() {
           )}
         </div>
       )}
+
+      <div className="card" style={{ marginTop: 16 }}>
+        <div className="card-title" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          {t('loanTimeline.title')}
+          <CardInfo id="loan-details.timeline" />
+        </div>
+        <p className="stat-label" style={{ margin: '0 0 12px' }}>
+          {t('loanTimeline.subtitle')}
+        </p>
+        <LoanTimeline
+          loanId={loan.id.toString()}
+          blockExplorer={activeBlockExplorer}
+          principalAsset={loan.principalAsset ?? null}
+          collateralAsset={loan.collateralAsset ?? null}
+        />
+      </div>
     </div>
   );
 }

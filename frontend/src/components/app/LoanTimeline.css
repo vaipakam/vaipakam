@@ -1,0 +1,109 @@
+.loan-timeline {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.loan-timeline-empty {
+  font-size: 0.85rem;
+  color: var(--text-tertiary);
+  padding: 12px 0;
+}
+
+.loan-timeline-row {
+  display: grid;
+  grid-template-columns: 28px 1fr;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-left-width: 3px;
+  border-radius: var(--radius-md);
+  background: var(--bg-card);
+}
+
+.loan-timeline-row--success { border-left-color: var(--accent-green); }
+.loan-timeline-row--failure { border-left-color: var(--accent-red, #ef4444); }
+.loan-timeline-row--info    { border-left-color: var(--brand); }
+.loan-timeline-row--warn    { border-left-color: var(--accent-orange, #f59e0b); }
+
+.loan-timeline-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: rgba(148, 163, 184, 0.12);
+  color: var(--text-secondary);
+}
+
+.loan-timeline-row--success .loan-timeline-icon {
+  background: rgba(16, 185, 129, 0.12);
+  color: var(--accent-green);
+}
+.loan-timeline-row--failure .loan-timeline-icon {
+  background: rgba(239, 68, 68, 0.12);
+  color: var(--accent-red, #ef4444);
+}
+.loan-timeline-row--info .loan-timeline-icon {
+  background: rgba(79, 70, 229, 0.12);
+  color: var(--brand);
+}
+.loan-timeline-row--warn .loan-timeline-icon {
+  background: rgba(245, 158, 11, 0.12);
+  color: var(--accent-orange, #f59e0b);
+}
+
+.loan-timeline-headline {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.loan-timeline-label {
+  font-weight: 600;
+  font-size: 0.92rem;
+  color: var(--text-primary);
+}
+
+.loan-timeline-time {
+  font-size: 0.78rem;
+  color: var(--text-tertiary);
+  white-space: nowrap;
+}
+
+.loan-timeline-grid {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 4px 12px;
+  margin: 4px 0 4px;
+  font-size: 0.85rem;
+}
+
+.loan-timeline-grid dt {
+  color: var(--text-tertiary);
+  font-weight: 500;
+}
+
+.loan-timeline-grid dd {
+  margin: 0;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+}
+
+.loan-timeline-tx {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.78rem;
+  color: var(--brand);
+  text-decoration: none;
+  margin-top: 2px;
+}
+
+.loan-timeline-tx:hover { text-decoration: underline; }

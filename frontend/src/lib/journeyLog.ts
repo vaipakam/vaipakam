@@ -38,6 +38,7 @@ export type JourneyArea =
   | 'keeper'
   | 'config'
   | 'rewards'
+  | 'staking'
   | 'escrow-upgrade'
   | 'allowance'
   | 'alerts';

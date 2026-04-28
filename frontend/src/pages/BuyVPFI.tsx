@@ -45,6 +45,7 @@ import { beginStep } from "../lib/journeyLog";
 import { ReportIssueLink } from "../components/app/ReportIssueLink";
 import { CardInfo } from "../components/CardInfo";
 import { VPFIPanel } from "../components/app/VPFIPanel";
+import { StakingRewardsClaim } from "../components/app/StakingRewardsClaim";
 import { useVPFIToken } from "../hooks/useVPFIToken";
 import { useMode } from "../context/ModeContext";
 import "./Dashboard.css";
@@ -1041,6 +1042,13 @@ export default function BuyVPFI() {
             {t('buyVpfi.step2Info')}
           </p>
         </div>
+
+        <StakingRewardsClaim
+          address={address ?? null}
+          chainId={activeChain?.chainId}
+          blockExplorer={activeChain?.blockExplorer ?? readChain.blockExplorer}
+          variant="card"
+        />
 
         <div
           style={{

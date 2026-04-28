@@ -5,6 +5,7 @@ import { useWallet } from '../context/WalletContext';
 import { useDiamondRead } from '../contracts/useDiamond';
 import { useUserLoans } from '../hooks/useUserLoans';
 import { useMyActiveOffers } from '../hooks/useMyActiveOffers';
+import { useClaimables } from '../hooks/useClaimables';
 import { OfferTable } from './OfferBook';
 import { DiscountStatusCard } from './BuyVPFI';
 import { useVPFIDiscountTier, useVPFIDiscountConsent } from '../hooks/useVPFIDiscount';
@@ -29,6 +30,7 @@ import { TokenAmount } from '../components/app/TokenAmount';
 import { bpsToPercent } from '../lib/format';
 import { HealthFactorGauge, LTVBar } from '../components/app/RiskGauge';
 import VPFIDiscountConsentCard from '../components/app/VPFIDiscountConsentCard';
+import { StakingRewardsClaim } from '../components/app/StakingRewardsClaim';
 import { Pager } from '../components/app/Pager';
 import { CardInfo } from '../components/CardInfo';
 import { Picker } from '../components/Picker';
@@ -57,10 +59,18 @@ function cmpBigint(a: bigint, b: bigint): number {
 
 export default function Dashboard() {
   const { t } = useTranslation();
-  const { address, activeChain } = useWallet();
+  const { address, activeChain, chainId } = useWallet();
   const diamond = useDiamondRead();
   const { loans, loading } = useUserLoans(address);
   const { offers: myActiveOffers } = useMyActiveOffers(address);
+  const { claims: unclaimed } = useClaimables(address);
+  // Set of loanIds (decimal string) where the connected wallet has at least
+  // one actionable claim (lender or borrower side). Drives the inline
+  // "Claim" CTA rendered next to "View" on each terminal-status loan row.
+  const unclaimedLoanIds = useMemo(
+    () => new Set(unclaimed.map((c) => c.loanId.toString())),
+    [unclaimed],
+  );
   const { balance: escrowVpfiWei } = useEscrowVPFIBalance(address);
   const { data: discountTier } = useVPFIDiscountTier(address);
   const { enabled: consentEnabled } = useVPFIDiscountConsent();
@@ -263,6 +273,13 @@ export default function Dashboard() {
         />
       )}
 
+      <StakingRewardsClaim
+        address={address ?? null}
+        chainId={chainId}
+        blockExplorer={activeChain?.blockExplorer ?? DEFAULT_CHAIN.blockExplorer}
+        variant="inline"
+      />
+
       {/* Escrow info */}
       {currentEscrow && (
         <div className="card" style={{ marginBottom: 20 }}>
@@ -459,9 +476,20 @@ export default function Dashboard() {
                       </span>
                     </td>
                     <td>
-                      <Link to={`/app/loans/${loan.id.toString()}`} className="btn btn-ghost btn-sm">
-                        {t('common.view')}
-                      </Link>
+                      <div style={{ display: 'inline-flex', gap: 6, alignItems: 'center' }}>
+                        {unclaimedLoanIds.has(loan.id.toString()) && (
+                          <Link
+                            to={`/app/loans/${loan.id.toString()}`}
+                            className="btn btn-primary btn-sm"
+                            data-tooltip={t('dashboard.claimReadyTooltip')}
+                          >
+                            {t('dashboard.claim')}
+                          </Link>
+                        )}
+                        <Link to={`/app/loans/${loan.id.toString()}`} className="btn btn-ghost btn-sm">
+                          {t('common.view')}
+                        </Link>
+                      </div>
                     </td>
                   </tr>
                 ))}

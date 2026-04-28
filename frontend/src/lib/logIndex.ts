@@ -91,6 +91,38 @@ const VPFI_DEPOSITED_TOPIC0 = id(
 const VPFI_WITHDRAWN_TOPIC0 = id(
   'VPFIWithdrawnFromEscrow(address,uint256)',
 );
+// Loan-lifecycle breakdown events powering the Loan Details timeline.
+// `LoanSettlementBreakdown` records the proper-close split (principal
+// returned + interest split into lender-share + treasury-share + late
+// fee). `LiquidationFallback` + `LiquidationFallbackSplit` record the
+// fallback path (DEX swap reverted or > 6% slippage) — first names the
+// lender, second carries the three-way collateral allocation.
+// `LoanSettled` marks the end of life (both sides claimed).
+// `PartialRepaid` traces partial repayments. `ClaimRetryExecuted`
+// records claim-time swap-retry attempts. `BorrowerLifRebateClaimed`
+// traces the borrower's VPFI fee-discount rebate payout.
+const LOAN_SETTLEMENT_BREAKDOWN_TOPIC0 = id(
+  'LoanSettlementBreakdown(uint256,uint256,uint256,uint256,uint256,uint256)',
+);
+const LIQUIDATION_FALLBACK_TOPIC0 = id(
+  'LiquidationFallback(uint256,address,uint256)',
+);
+const LIQUIDATION_FALLBACK_SPLIT_TOPIC0 = id(
+  'LiquidationFallbackSplit(uint256,uint256,uint256,uint256)',
+);
+const LOAN_SETTLED_TOPIC0 = id('LoanSettled(uint256)');
+const PARTIAL_REPAID_TOPIC0 = id(
+  'PartialRepaid(uint256,uint256,uint256)',
+);
+const CLAIM_RETRY_EXECUTED_TOPIC0 = id(
+  'ClaimRetryExecuted(uint256,bool,uint256)',
+);
+const BORROWER_LIF_REBATE_CLAIMED_TOPIC0 = id(
+  'BorrowerLifRebateClaimed(uint256,address,uint256)',
+);
+const STAKING_REWARDS_CLAIMED_TOPIC0 = id(
+  'StakingRewardsClaimed(address,uint256)',
+);
 
 /**
  * Event-driven loan + position-NFT ownership cache.
@@ -131,6 +163,14 @@ export type ActivityEventKind =
   | 'CollateralAdded'
   | 'LoanSold'
   | 'LoanObligationTransferred'
+  | 'LoanSettlementBreakdown'
+  | 'LiquidationFallback'
+  | 'LiquidationFallbackSplit'
+  | 'LoanSettled'
+  | 'PartialRepaid'
+  | 'ClaimRetryExecuted'
+  | 'BorrowerLifRebateClaimed'
+  | 'StakingRewardsClaimed'
   | 'VPFIPurchasedWithETH'
   | 'VPFIDepositedToEscrow'
   | 'VPFIWithdrawnFromEscrow';
@@ -256,19 +296,24 @@ const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
 // a burned position NFT. v5 caches don't carry this and can't backfill
 // incrementally since the relevant Transfer is already behind `lastBlock`.
 function storageKey(chainId: number, diamond: string): string {
-  // v7: widens the event allow-list to include VPFIPurchasedWithETH,
-  // VPFIDepositedToEscrow, and VPFIWithdrawnFromEscrow so the Activity
-  // page surfaces VPFI buy / stake / unstake alongside lending events.
-  // Older caches pre-date those topics in the `getLogs` OR-set and can't
-  // backfill incrementally, so bumping the version forces a fresh scan.
+  // v8 (2026-04-29): widens the event allow-list to include the loan-
+  // lifecycle breakdown stream powering the Loan Details timeline —
+  // LoanSettlementBreakdown, LiquidationFallback,
+  // LiquidationFallbackSplit, LoanSettled, PartialRepaid,
+  // ClaimRetryExecuted, BorrowerLifRebateClaimed, and the per-user
+  // StakingRewardsClaimed. Older v7 caches pre-date these topics in the
+  // `getLogs` OR-set and can't backfill incrementally past `lastBlock`,
+  // so the bump forces a fresh full scan once and converges everyone.
+  //
+  // v7: widened the allow-list to include VPFIPurchasedWithETH,
+  // VPFIDepositedToEscrow, VPFIWithdrawnFromEscrow.
   //
   // `recentAcceptedOfferIds` (added 2026-04-28 for the OfferBook
-  // filter-scoped anchor) is NOT a v-bump — `readCache` backfills the
+  // filter-scoped anchor) was NOT a v-bump — `readCache` backfills the
   // field from the cached `events` array on hydrate when it's missing
   // or empty (filter `kind === 'OfferAccepted'`, take the trailing
-  // RECENT_ACCEPTED_CAP). Older caches keep working AND immediately
-  // surface the right market anchor without forcing a full rescan.
-  return `vaipakam:logIndex:v7:${chainId}:${diamond.toLowerCase()}`;
+  // RECENT_ACCEPTED_CAP).
+  return `vaipakam:logIndex:v8:${chainId}:${diamond.toLowerCase()}`;
 }
 
 function emptyCache(deployBlock: number): CachedShape {
@@ -631,6 +676,14 @@ async function runScan(
             COLLATERAL_ADDED_TOPIC0,
             LOAN_SOLD_TOPIC0,
             LOAN_OBLIGATION_TRANSFERRED_TOPIC0,
+            LOAN_SETTLEMENT_BREAKDOWN_TOPIC0,
+            LIQUIDATION_FALLBACK_TOPIC0,
+            LIQUIDATION_FALLBACK_SPLIT_TOPIC0,
+            LOAN_SETTLED_TOPIC0,
+            PARTIAL_REPAID_TOPIC0,
+            CLAIM_RETRY_EXECUTED_TOPIC0,
+            BORROWER_LIF_REBATE_CLAIMED_TOPIC0,
+            STAKING_REWARDS_CLAIMED_TOPIC0,
             VPFI_PURCHASED_TOPIC0,
             VPFI_DEPOSITED_TOPIC0,
             VPFI_WITHDRAWN_TOPIC0,
@@ -891,6 +944,156 @@ async function runScan(
           // malformed — keep default
         }
         addEvent('VPFIWithdrawnFromEscrow', [user], { user, amount });
+      } else if (topic0 === LOAN_SETTLEMENT_BREAKDOWN_TOPIC0) {
+        // LoanSettlementBreakdown(loanId indexed, principal, interest,
+        // lateFee, treasuryShare, lenderShare). Source-of-truth for the
+        // proper-close five-line breakdown rendered on the Loan Details
+        // timeline. No participants — surface anyone who can see the loan.
+        if (topics.length < 2) continue;
+        const loanId = BigInt(topics[1]).toString();
+        let principal = '0';
+        let interest = '0';
+        let lateFee = '0';
+        let treasuryShare = '0';
+        let lenderShare = '0';
+        try {
+          const [p, i, l, t, ls] = decodeAbiParameters(
+            parseAbiParameters('uint256, uint256, uint256, uint256, uint256'),
+            event.data,
+          );
+          principal = (p as bigint).toString();
+          interest = (i as bigint).toString();
+          lateFee = (l as bigint).toString();
+          treasuryShare = (t as bigint).toString();
+          lenderShare = (ls as bigint).toString();
+        } catch {
+          // malformed — keep defaults
+        }
+        addEvent('LoanSettlementBreakdown', [], {
+          loanId,
+          principal,
+          interest,
+          lateFee,
+          treasuryShare,
+          lenderShare,
+        });
+      } else if (topic0 === LIQUIDATION_FALLBACK_TOPIC0) {
+        // LiquidationFallback(loanId indexed, lender indexed, collateralAmount)
+        if (topics.length < 3) continue;
+        const loanId = BigInt(topics[1]).toString();
+        const lender = ('0x' + topics[2].slice(26)).toLowerCase();
+        let collateralAmount = '0';
+        try {
+          const [c] = decodeAbiParameters(parseAbiParameters('uint256'), event.data);
+          collateralAmount = (c as bigint).toString();
+        } catch {
+          // malformed — keep default
+        }
+        addEvent('LiquidationFallback', [lender], {
+          loanId,
+          lender,
+          collateralAmount,
+        });
+      } else if (topic0 === LIQUIDATION_FALLBACK_SPLIT_TOPIC0) {
+        // LiquidationFallbackSplit(loanId indexed, lenderCol, treasuryCol, borrowerCol)
+        if (topics.length < 2) continue;
+        const loanId = BigInt(topics[1]).toString();
+        let lenderCollateral = '0';
+        let treasuryCollateral = '0';
+        let borrowerCollateral = '0';
+        try {
+          const [l, t, b] = decodeAbiParameters(
+            parseAbiParameters('uint256, uint256, uint256'),
+            event.data,
+          );
+          lenderCollateral = (l as bigint).toString();
+          treasuryCollateral = (t as bigint).toString();
+          borrowerCollateral = (b as bigint).toString();
+        } catch {
+          // malformed — keep defaults
+        }
+        addEvent('LiquidationFallbackSplit', [], {
+          loanId,
+          lenderCollateral,
+          treasuryCollateral,
+          borrowerCollateral,
+        });
+      } else if (topic0 === LOAN_SETTLED_TOPIC0) {
+        // LoanSettled(loanId indexed) — both sides claimed; loan is final.
+        if (topics.length < 2) continue;
+        const loanId = BigInt(topics[1]).toString();
+        addEvent('LoanSettled', [], { loanId });
+      } else if (topic0 === PARTIAL_REPAID_TOPIC0) {
+        // PartialRepaid(loanId indexed, amountRepaid, newPrincipal)
+        if (topics.length < 2) continue;
+        const loanId = BigInt(topics[1]).toString();
+        let amountRepaid = '0';
+        let newPrincipal = '0';
+        try {
+          const [a, n] = decodeAbiParameters(
+            parseAbiParameters('uint256, uint256'),
+            event.data,
+          );
+          amountRepaid = (a as bigint).toString();
+          newPrincipal = (n as bigint).toString();
+        } catch {
+          // malformed — keep defaults
+        }
+        addEvent('PartialRepaid', [], {
+          loanId,
+          amountRepaid,
+          newPrincipal,
+        });
+      } else if (topic0 === CLAIM_RETRY_EXECUTED_TOPIC0) {
+        // ClaimRetryExecuted(loanId indexed, succeeded, proceeds)
+        if (topics.length < 2) continue;
+        const loanId = BigInt(topics[1]).toString();
+        let succeeded = false;
+        let proceeds = '0';
+        try {
+          const [s, p] = decodeAbiParameters(
+            parseAbiParameters('bool, uint256'),
+            event.data,
+          );
+          succeeded = s as boolean;
+          proceeds = (p as bigint).toString();
+        } catch {
+          // malformed — keep defaults
+        }
+        addEvent('ClaimRetryExecuted', [], {
+          loanId,
+          succeeded,
+          proceeds,
+        });
+      } else if (topic0 === BORROWER_LIF_REBATE_CLAIMED_TOPIC0) {
+        // BorrowerLifRebateClaimed(loanId indexed, claimant indexed, amount)
+        if (topics.length < 3) continue;
+        const loanId = BigInt(topics[1]).toString();
+        const claimant = ('0x' + topics[2].slice(26)).toLowerCase();
+        let amount = '0';
+        try {
+          const [a] = decodeAbiParameters(parseAbiParameters('uint256'), event.data);
+          amount = (a as bigint).toString();
+        } catch {
+          // malformed — keep default
+        }
+        addEvent('BorrowerLifRebateClaimed', [claimant], {
+          loanId,
+          claimant,
+          amount,
+        });
+      } else if (topic0 === STAKING_REWARDS_CLAIMED_TOPIC0) {
+        // StakingRewardsClaimed(user indexed, amount). Per-user, no loanId.
+        if (topics.length < 2) continue;
+        const user = ('0x' + topics[1].slice(26)).toLowerCase();
+        let amount = '0';
+        try {
+          const [a] = decodeAbiParameters(parseAbiParameters('uint256'), event.data);
+          amount = (a as bigint).toString();
+        } catch {
+          // malformed — keep default
+        }
+        addEvent('StakingRewardsClaimed', [user], { user, amount });
       } else if (topic0 === TRANSFER_TOPIC0) {
         // ERC-721 Transfer(from, to, tokenId) — all three fields indexed, so
         // topics[1..3] carry from / to / tokenId. Rows with a different topic

@@ -173,6 +173,55 @@
     "stateMutability": "view"
   },
   {
+    "type": "function",
+    "name": "getFallbackSnapshot",
+    "inputs": [
+      {
+        "name": "loanId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "lenderCollateral",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "treasuryCollateral",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "borrowerCollateral",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "lenderPrincipalDue",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "treasuryPrincipalDue",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "active",
+        "type": "bool",
+        "internalType": "bool"
+      },
+      {
+        "name": "retryAttempted",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
     "type": "event",
     "name": "BorrowerFundsClaimed",
     "inputs": [
