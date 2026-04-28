@@ -48,7 +48,9 @@ Public-navigation requirements:
 - cross-page hash-anchor navigation must work reliably from every public page and connected-app page that links back into the landing-page sections such as `Features`, `How it works`, `Security`, and `FAQ`
 - when a user clicks one of those anchor links from pages like `Buy VPFI`, `Analytics`, or any route under `/app`, the frontend should route to the landing page and then scroll to the correct section rather than dropping the user at the top of the home page
 - the implementation should tolerate route-change timing where the landing-page section may mount slightly after navigation, so hash-anchor scrolling should retry briefly until the target section exists
-- the `Buy VPFI` link from the home page must resolve to the working public purchase route
+- the `Buy VPFI` link from the home page must resolve to the working public purchase route `/buy-vpfi`
+- public navigation should expose a `VPFI` group with direct entries for `Buy`, `Stake`, and `Unstake`, each deep-linking into the relevant section of the public `Buy VPFI` page
+- app-shell links to public-only experiences such as `Buy VPFI` and `NFT Verifier` should open in a new tab and use an external-link affordance so users understand they are leaving the connected-app shell
 - the footer should expose `Terms`, `Privacy`, `Cookie settings`, and, once published, the public bug bounty program link
 
 PWA requirements:
@@ -87,11 +89,13 @@ Legal and data-rights requirements:
 
 - `/terms` and `/privacy` must be public routes that do not require wallet connection
 - the Terms page should mirror the source-of-truth text from `docs/TermsOfService.md`
+- Terms, Privacy, Risk Disclosures, and User Guide pages should use locale-aware content where available and show a clear English-only notice when the legally binding or guide content is still available only in English for the active locale
+- Risk Disclosures may show a translated helper panel beside the English source text, but the UI must identify the English text as the controlling version
 - before using `/app/*` routes, connected wallets may be required to sign or submit an on-chain acceptance of the current Terms version and content hash
 - if the Terms version or content hash changes, the app should ask the user to accept again before reopening app routes
 - a disabled Terms gate state should exist for testnet / pre-launch operation, so the code path can ship without forcing acceptance before governance activates it
 - the Privacy page should explain what Vaipakam collects, what it deliberately does not collect, who receives consented analytics data, and how users can exercise GDPR / CCPA-style data rights
-- the diagnostics drawer should include `Download my data` and `Delete my data` actions for Vaipakam-namespaced browser storage
+- the issue-details drawer should include `Download my data` and `Delete my data` actions for Vaipakam-namespaced browser storage
 - data-rights UI must clearly explain that local browser data can be exported or deleted, but public on-chain state cannot be erased by frontend action
 
 ### 2. Connected App
@@ -139,6 +143,7 @@ Keeper-bot reference UX / ops requirements:
 Borrower VPFI discount UX:
 
 - `Buy VPFI` must be a public / homepage-visible flow, not something hidden only inside the connected app
+- the canonical user-facing route is `/buy-vpfi`; the former app-shell placement should remain only as a shortcut that opens the public page
 - the homepage and other public-facing CTAs should surface the `Buy VPFI` flow for everyone
 - the borrower discount spec describes this as a public-facing purchase page that should be reachable directly from the homepage and should work from the user's preferred supported chain
 - that page should support the borrower-side VPFI discount flow described in `docs/TokenomicsTechSpec.md`
@@ -150,6 +155,8 @@ Borrower VPFI discount UX:
 - if the purchase route settles through a Base-chain receiver, VPFI must be minted or released only after the receiver actually receives ETH, and the delivered VPFI amount must be calculated from the received ETH amount
 - after purchase, the VPFI should be delivered to the user's wallet on the chain where the user chose to buy
 - the UI should then guide and facilitate a separate explicit user-intent action to move or deposit that wallet-held VPFI into the user's personal escrow for staking / discount eligibility
+- staking should be messaged as open to any VPFI holder, not only borrowers or users with an existing loan; first deposit should make clear that the user escrow can be created automatically
+- the public page should label the escrow action as `Deposit / Stake VPFI` and the reverse action as `Withdraw / Unstake VPFI`
 - the Phase 1 `30,000 VPFI` user cap is a per-chain cap, not a protocol-wide global cap across all chains
 - VPFI deposited / staked in escrow on one chain should count only toward fee-discount tiers for loans initiated on that same chain
 - the UI should expose a single common platform-level user setting for consenting to the use of escrowed VPFI for fee discounts
@@ -299,6 +306,7 @@ The Vaipakam interface should be:
 
 The frontend should support:
 
+- a system-default theme that follows the user's OS light / dark preference until the user explicitly chooses a theme
 - a selectable light theme
 - a selectable dark theme
 - consistent usability, contrast, and readability in both themes
@@ -324,8 +332,9 @@ Chrome-level layout behavior:
 - the app shell should not show a horizontal scrollbar when content fits the viewport
 - fixed or floating layout affordances must not create accidental horizontal overflow
 - status severity should match user impact; for example, `No wallet detected` should be a warning rather than a blocking error
-- public and connected-app navigation should keep wallet, network, diagnostics, footer, cookie settings, and core route controls reachable on mobile and desktop
+- public and connected-app navigation should keep wallet, network, issue-reporting / support-details, footer, cookie settings, and core route controls reachable on mobile and desktop
 - layout fixes should preserve the existing design language in both light and dark themes
+- the settings popover should group global preferences such as Basic / Advanced mode, language, and theme in one predictable place
 
 ## Interaction Modes
 
@@ -353,6 +362,7 @@ Implementation direction:
 - when the `Advanced` section is expanded or enabled, advanced-only destinations such as `NFT Verifier` and `Keepers` may be shown in the left navigation
 - when the `Advanced` section is collapsed or disabled, advanced-only destinations such as `NFT Verifier` and `Keepers` should be hidden from the left navigation
 - the navigation should make it feel like advanced tools are an optional deeper layer of the app, not the default primary mode control
+- card-level info popovers and `Learn more` links should route users to the matching Basic or Advanced guide based on the active mode, preserving role-specific anchors when the card has separate lender / borrower explanations
 
 Advanced-only or advanced-disclosure fields may include:
 
@@ -425,13 +435,16 @@ Offer book requirements:
 - in the lender-only tab, the page should support showing up to `100` lender offers for the active filter set
 - in the borrower-only tab, the page should support showing up to `100` borrower offers for the active filter set
 - the offer book should also show the connected user's currently active offers in a dedicated section above the filters card so users can quickly review and jump to their own open market positions before browsing the wider book
-- the default offer-book layout should be centered around the last matched interest rate for the relevant market / filter context
-- lender offers should appear above that center line, ordered by higher interest rates nearest the center first
-- borrower offers should appear below that center line, ordered by lower interest rates nearest the center first
-- the UI should make the center line visually distinct and label it clearly as the last matched interest rate
+- the default offer-book layout should make the market anchor readable without hiding normal rate ordering
+- the market anchor should be the rate of the freshest recently accepted offer that matches the active filter context, using a rolling recent-match window rather than a single global last-accepted offer
+- lender offers should sort by rate descending, with newest-id tie-breaks, so the highest lender rates are easiest to scan first
+- borrower offers should sort by rate ascending, with newest-id tie-breaks, so the lowest borrower rates are easiest to scan first
+- the Rate column should show a signed delta from the market anchor, e.g. `(+X%)` above market and `(-X%)` below market, with a tooltip explaining the anchor and direction
 - if no prior match exists for the active market / filter context, the UI should show a clear fallback state such as `No prior matched rate yet`
-- pagination should expand outward from that center instead of trying to load the full market into the browser at once
+- pagination should preserve the chosen market-side ordering instead of trying to load the full market into the browser at once
 - filtering and sorting should be applied in a way that keeps the visible market window relevant to the current lending asset, collateral asset, duration, liquidity, and other active filters
+- offer-book filter controls should share a pill-style visual language with chain pickers where appropriate, including discrete per-side limits such as `10`, `20`, `50`, and `100`
+- the connected user's active-offers section should default to most-recent-first by offer ID
 - tab header counts must be based on verified visible offer data, not stale raw log-index IDs
 - if reliable counts cannot be produced for a tab, the UI should omit the count rather than displaying a misleading value such as `Open (2)` when one active offer is visible
 - single-side lender and borrower tabs should support real pagination with `Previous`, `Page X of Y`, and `Next`
@@ -446,6 +459,8 @@ Activity and dashboard history requirements:
 - when the user changes the `Activity` filter, the page should reset back to the first page of results rather than leaving the user on a stale later page
 - dashboard and activity pagination should prioritize responsiveness by loading and rendering only the currently visible window where practical
 - the dashboard `Your Loans` experience should use batched on-chain reads or multicall patterns rather than row-by-row chain-wide scans so that user history remains fast even on networks with a large total loan count
+- the dashboard `Your Loans` card should provide Role and Status filters, a per-page picker, and sortable columns for core loan fields; the default sort should put the most recent loan IDs first
+- LTV and HF sorts should operate over the filtered result set, not only the currently visible page, while keeping illiquid or unavailable values from surfacing as misleading best results
 
 Repayment UX requirements:
 
@@ -475,6 +490,7 @@ Strategic-flow transfer-lock UX requirements:
 - these transfer-lock warnings should appear in the relevant transaction review / confirmation state, not only as passive helper text elsewhere on the page
 - the notice should explain in plain language that while the strategic flow is still in progress, the affected Vaipakam NFT cannot be transferred to another wallet and its ownership-driven actions remain constrained by that in-progress flow
 - refinance is different: by the time the borrower calls `refinanceLoan`, the replacement lender has already accepted the new borrower offer and the replacement loan already exists as a separate live loan; the refinance transaction itself is a single atomic settlement step, so the UI should not warn about a refinance-specific borrower-NFT transfer lock unless a later protocol version introduces one
+- before signature, lender early withdrawal, borrower preclose, and borrower refinance screens should also show the interest implication of the chosen path in plain language, including forfeited accrued interest, full-term interest, accrued-to-date interest, and rate-shortfall obligations where applicable
 
 ## Public Analytics Dashboard
 
@@ -617,6 +633,7 @@ The website/app should support:
 - correlation of related events so support and engineering can reconstruct the user journey leading up to the issue
 - user-safe diagnostics that help support teams understand what happened without exposing sensitive secrets
 - clear user-facing error states together with internal diagnostic context for debugging
+- user-facing labels should prefer friendly issue-reporting language such as `Report Issue` for the floating entry point and `Issue Details` for the drawer title, while internal code may still call the feature diagnostics
 
 Implementation requirements:
 
@@ -626,11 +643,12 @@ Implementation requirements:
 - the system should preserve enough event history to understand the sequence of user actions before the error happened
 - the UI should provide a user-friendly way to surface or export troubleshooting details when support intervention is needed
 - observability should work in both basic and advanced modes, and in both light and dark themes, without degrading the user experience
-- the diagnostics drawer / troubleshooting surface should be available not only inside the connected-app shell but also on public pages where important user actions can fail, including public `Buy VPFI` and public analytics flows
-- the floating diagnostics entry point should stay hidden on the normal happy path and should become visible when there is at least one recorded failure, when the diagnostics drawer is already open, or when the user is in `Advanced` mode
-- the diagnostics drawer should allow users to filter visible log events by `All`, `Failure`, `Start`, and `Success`, with live counts shown on each filter option
-- the default diagnostics filter should be `Failure`, because that is the most likely support-relevant subset when the user opens the drawer after something breaks
-- diagnostics filtering is a display concern only; export, copy, download, or `Report on GitHub` actions should continue to include the full unfiltered event history unless the product later explicitly adds scoped export choices
+- the issue-details / troubleshooting surface should be available not only inside the connected-app shell but also on public pages where important user actions can fail, including public `Buy VPFI` and public analytics flows
+- the floating issue-reporting entry point should stay hidden on the normal happy path and should become visible when there is at least one recorded failure, when the drawer is already open, or when the user is in `Advanced` mode
+- the drawer should allow users to filter visible log events by `All`, `Failure`, `Start`, and `Success`, with live counts shown on each filter option
+- the default event filter should be `Failure`, because that is the most likely support-relevant subset when the user opens the drawer after something breaks
+- event filtering is a display concern only; export, copy, download, or `Report on GitHub` actions should continue to include the full unfiltered event history unless the product later explicitly adds scoped export choices
+- generated GitHub issue bodies should use a human-readable summary first and place stack trace, cause chain, browser environment, and recent event details inside expandable sections
 - the filter controls should sit directly above the event list rather than being buried only near the drawer header, so users can clearly understand that the filter changes the list below
 - the layout of fixed diagnostics affordances must not cover important page controls, pagination buttons, or footer/legal text; public pages and app pages should reserve enough bottom breathing room so the floating button does not obstruct critical content
 - every shared user-facing error alert should include a `Dismiss` action when local dismissal is safe

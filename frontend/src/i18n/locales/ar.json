@@ -258,7 +258,8 @@
     "keeperHintPrefixA": "لا يزال Keeper بحاجة إلى (أ) تعيين بت الإجراء المناسب على",
     "keeperHintGlobalWhitelist": "القائمة البيضاء العالمية",
     "keeperHintSuffix": "و (ب) مفتاح الوصول الرئيسي لـ Keeper في وضع التشغيل قبل أن يتمكن من تشغيل أي شيء على هذا القرض.",
-    "riskMetricsUnavailable": "مقاييس المخاطر غير متاحة (مركز غير سائل)"
+    "riskMetricsUnavailable": "مقاييس المخاطر غير متاحة (مركز غير سائل)",
+    "illiquidRiskExplainer": "لا يتم حساب LTV / HF للقروض التي تتضمن أصلاً غير سائل (لا يوجد سعر on-chain). عند تخلف Borrower عن السداد، يتم تحويل الضمان الكامل عينياً إلى Lender."
   },
   "buyVpfi": {
     "connectTitle": "اربط محفظتك",

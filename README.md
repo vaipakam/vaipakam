@@ -514,6 +514,7 @@ Borrowers may close or transfer their obligations before the originally schedule
   - borrower-side returned collateral or refunds become claimable by the borrower against the borrower’s Vaipakam NFT
 - If the loan is an NFT rental, preclose changes user rights rather than transferring the underlying NFT to the borrower. For both ERC-721 and ERC-1155 rentals, the NFT must be held in the appropriate Vaipakam Escrow for that active rental position, with the Vaipakam admin/escrow controller as the escrow custodian/owner while escrowed. During preclose transfer, the platform revokes the original borrower’s temporary user rights and assigns temporary user rights to the new borrower only.
 - The relevant Vaipakam NFTs must be updated to reflect the new state of the position.
+- Before the borrower signs any preclose transaction, the frontend should show a path-specific interest implication warning: direct close requires full-term interest, transfer requires accrued interest plus any protected-rate shortfall, and offset requires accrued interest plus any rate shortfall and fresh principal collateral for the offsetting offer.
 
 ### Option 1: Standard Early Repayment
 
@@ -809,6 +810,7 @@ Example rule:
 ##### Frontend Warning
 
 - The frontend should display how much the original lender will net after accounting for forfeited accrued interest and any required shortfall payment before the sale is confirmed.
+- The confirmation step should explicitly state that selling the lender position forfeits interest accrued so far, with forfeited interest routed to treasury or applied toward a rate shortfall before any remainder is handled under the sale rules.
 
 #### Smart Contract Actions
 
@@ -996,12 +998,15 @@ VPFI token deployment begins in Phase 1 through the token contract and minting p
   - The borrower-side acquisition and rebate flow is defined in `docs/TokenomicsTechSpec.md`.
 
 - **Borrower VPFI Acquisition Flow:** For the borrower-side discount path:
-  - the frontend should provide a dedicated `Buy VPFI` page that works from the user's preferred supported chain
+  - the frontend should provide a dedicated public `Buy VPFI` page at `/buy-vpfi` that works from the user's preferred supported chain
+  - public navigation should expose VPFI shortcuts for `Buy`, `Stake`, and `Unstake`, each deep-linking into the relevant section of that page
   - the user should not be required to manually switch to the canonical chain before buying
   - purchased VPFI should be delivered to the borrower's wallet on that same preferred chain, not auto-deposited into escrow
   - if canonical-chain or bridge infrastructure is used under the hood, that complexity should be abstracted from the user-facing purchase flow
   - if the purchase path settles through a Base-chain receiver, VPFI must be minted or released only after that receiver actually receives ETH, and the amount delivered must be based on actual received ETH rather than a quoted amount
   - moving VPFI from wallet to user escrow should remain an explicit user-initiated action, with the frontend facilitating that step after purchase
+  - that escrow action should be presented as `Deposit / Stake VPFI`, because escrow-held VPFI earns the staking APR as well as counting toward local fee-discount tiers
+  - staking is open to any VPFI holder; an existing loan is not required, and the user's escrow can be created on first deposit
   - the Phase 1 `30,000 VPFI` wallet cap is a per-chain cap, not one shared global wallet cap across every chain
   - VPFI moved into user escrow on a given chain should count toward fee-discount eligibility only for loans initiated on that same chain
   - the shared platform-level consent for using escrowed VPFI toward `Yield Fee` and `Loan Initiation Fee` discounts should be shown in the app on `Dashboard`, so users can manage the setting independently of the `Buy VPFI` flow
@@ -1118,6 +1123,7 @@ A comprehensive user dashboard is essential for managing activities on Vaipakam.
 - **Liquidation Price View:** For liquid active loans, Loan Details should show the collateral-asset price at which HF reaches `1.0`, both as an absolute price and a percentage move from current price. This view should stay hidden for illiquid loans where no oracle-based liquidation price exists.
 - **Approval Management:** Profile should include an Approvals surface listing ERC-20, ERC-721, and ERC-1155 allowances granted to the Vaipakam Diamond, grouped by principal-eligible, collateral-eligible, and prepay-eligible assets, with one-click revoke actions.
 - **VPFI Token Management:** In Phase 1, this may include token address, supply, mint/transparency references, the dedicated `Buy VPFI` flow, wallet-to-escrow funding guidance, borrower discount eligibility views where exposed, and the shared fee-discount consent control surfaced in `Dashboard`. Governance and broader claimable-reward tools remain Phase 2 scope.
+- **Your Loans Table:** The dashboard should keep the user's loan history scannable with Role and Status filters, a per-page selector, sortable columns, and a default most-recent-first sort by loan ID. LTV and Health Factor sorting should use batched reads over the filtered result set and keep illiquid or unavailable values from appearing as misleading best results.
 - **Notification Settings:** Manage preferences for SMS/Email alerts.
 - **Analytics:** Basic analytics on lending/borrowing performance.
 - **Data Refresh:** The dashboard will update periodically (e.g., every minute or on user action) to reflect on-chain changes.
@@ -1129,6 +1135,7 @@ A comprehensive user dashboard is essential for managing activities on Vaipakam.
 - **Supported Networks:** The target Phase 1 per-network deployment set is Ethereum mainnet, Base, Polygon, Arbitrum, and Optimism. At present, the live Diamond deployment is only on Sepolia; the production-network Diamonds have not yet been deployed.
 - **Intra-Network Operations:** All aspects of a single loan (offer, acceptance, collateral, repayment) occur on the _same chosen network_.
 - **Deployment Model:** Vaipakam uses separate Diamond deployments on each supported network — each chain hosts its own independent protocol instance. There is no cross-chain loan lifecycle.
+- **Deployment Tooling:** Deployment scripts and runbooks should remain chain-parameterized so the same controlled process can deploy, wire, verify, and post-check Base, Polygon, Arbitrum, Optimism, Ethereum mainnet, and their testnet equivalents without one-off per-chain drift.
 
 ### Smart Contracts
 
@@ -1162,8 +1169,9 @@ A comprehensive user dashboard is essential for managing activities on Vaipakam.
 - **Farcaster Frame Surface:** Public read-only growth surfaces may include a Farcaster Frame such as `/frames/active-loans` that accepts a wallet address, reads active loans across supported chains, shows total active-loan count / lowest HF / per-chain breakdown, and deep-links into the public NFT Verifier for detail.
 - **Legacy Provider Policy:** The frontend should not retain ethers.js compatibility shims or ethers as a production dependency after the wagmi / viem migration.
 - **State Management:** Robust state management solution (e.g., Redux, Zustand).
-- **Languages:** Initial launch in English, with plans for multilingual support (e.g., Spanish, Mandarin) in subsequent updates.
+- **Languages:** The frontend supports 10 app locales: English, Spanish, French, German, Japanese, Simplified Chinese, Korean, Hindi, Tamil, and Arabic. Locale-aware public routes, hreflang metadata, sitemap entries, number/date/duration formatting, and Arabic RTL layout should remain part of the launch surface. Legal and long-form guide content may show an English-only notice until the locale-matched source text exists.
 - **API Standards:** Frontend will interact with smart contracts using standardized data formats (e.g., JSON-like structs or arrays returned by view functions).
+- **ABI Sync:** After any contract release that changes selectors, structs, events, or frontend-consumed ABIs, run the frontend ABI export script so `frontend/src/contracts/abis/` and `_source.json` match the deployed contract build.
 
 ### Public View Functions for Analytics, Transparency, and Integrations
 
@@ -1358,6 +1366,7 @@ All functions are pure `view` functions (zero gas for callers when invoked via R
 - **Open-Source Tests:** Test cases may be made open-source after mainnet deployment for community review.
 - **External Auditing:** Mandatory third-party security audits should be completed before mainnet launch, with reports published where appropriate.
 - **Bug Bounty:** A public bug bounty program should be defined before mainnet launch, including scope, severity levels, reward ranges, and a public reporting link. The website footer should link to that program once published.
+- **Secret Hygiene:** Repository-tracked configuration must not contain private keys, even well-known local development keys; local Anvil or testnet keys should be supplied through local-only environment files or shell configuration outside committed allowlists.
 - **Liquidation Invariants:** Tests must assert that liquidation swap calldata uses the protocol-computed oracle-derived minimum output and that callers cannot influence the slippage floor.
 - **Oracle-Hardening Tests:** Tests should cover per-feed override admin gating, staleness override behavior, minimum-answer floor behavior, secondary-oracle agreement, divergence, stale secondary data, and missing secondary data.
 - **Governance-Handover Tests:** Tests should verify that Timelock, Guardian, and KYC Ops roles are installed correctly and that the deployer EOA retains no residual privileged authority after handover.
@@ -1553,6 +1562,7 @@ The following features are planned for Phase 1:
 - **Phase 1 Scope:** Refinance applies only to active ERC-20 loans. NFT rental loans and other non-ERC20 loan/rental positions are not eligible for refinance in Phase 1.
 - **Borrower Position Authority:** The wallet that initiates refinance must be the current borrower and the current `ownerOf` the borrower-side Vaipakam NFT for that loan. A rented `userOf` address, approved keeper, or other third-party helper must not be sufficient to start a refinance flow unless a later protocol phase explicitly broadens that authority.
 - **Atomic Refinance Clarification:** By the time the borrower calls `refinanceLoan(oldLoanId, borrowerOfferId)`, the replacement lender has already accepted the borrower's new borrower offer and the replacement loan already exists as a standalone live loan. The refinance transaction itself is then a single atomic settlement step that repays the old lender, releases the original collateral, updates the old-loan NFTs, and closes the old loan. Because there is no protocol waiting state between "refinance started" and "refinance completed," Phase 1 refinance does not require a borrower-side Vaipakam NFT transfer lock.
+- **Frontend Warning:** Before signature, the refinance flow should tell the borrower that the old lender is repaid with principal plus full-term interest, not merely accrued-to-date interest, plus any rate shortfall required to keep the original lender whole.
 - **Process:**
   1.  The borrower (Alice) has an existing active ERC-20 loan from Lender A. NFT rental loans and other non-ERC20 loan/rental positions must be rejected from this refinance flow.
   2.  Alice finds or creates a new "Borrower Offer" with her desired terms.

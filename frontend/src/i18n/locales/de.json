@@ -258,7 +258,8 @@
     "keeperHintPrefixA": "Ein Keeper benötigt zudem (a) das entsprechende Aktionsbit auf der",
     "keeperHintGlobalWhitelist": "globalen Whitelist",
     "keeperHintSuffix": "und (b) den Master-Keeper-Zugangsschalter auf EIN, bevor er irgendetwas auf diesem Kredit ausführen kann.",
-    "riskMetricsUnavailable": "Risikometriken nicht verfügbar (illiquide Position)"
+    "riskMetricsUnavailable": "Risikometriken nicht verfügbar (illiquide Position)",
+    "illiquidRiskExplainer": "LTV / HF werden für Kredite mit einem illiquiden Asset nicht berechnet (kein On-Chain-Preis). Bei Zahlungsausfall des Borrowers wird die gesamte Sicherheit in natura an den Lender übertragen."
   },
   "buyVpfi": {
     "connectTitle": "Wallet verbinden",

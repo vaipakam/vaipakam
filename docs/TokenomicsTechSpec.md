@@ -380,6 +380,8 @@ Pool size:
 Design rules:
 
 - staking is unified with escrow: any VPFI held in a user escrow on a lending chain is considered staked
+- staking is open to any VPFI holder; the user does not need an existing loan, offer, or borrower position to participate
+- the first VPFI deposit may create the user's escrow automatically, then treat the deposited balance as staked immediately
 - escrow-held VPFI earns a single flat APR paid from the Staking Rewards allocation
 - the default launch APR is `5%`, but governance may raise or lower this APR over time through the protocol admin path
 - no separate staking contract is required
@@ -448,7 +450,7 @@ To enable easy early access to VPFI for discounts:
 - fixed rate: **`1 VPFI = 0.001 ETH`**
 - allocation: `1%` = `2,300,000 VPFI`
 - global cap: `2,300,000 VPFI`
-- per-wallet cap: configurable by admin, applied per chain rather than as one cross-chain wallet cap
+- per-wallet cap: configurable by admin, applied per origin-chain LayerZero endpoint ID rather than as one cross-chain wallet cap
 - initial recommendation: `30,000 VPFI` per wallet per chain — this is the live per-chain user limit surfaced on the `Buy VPFI` page until admin explicitly reconfigures it
 - ETH received from the fixed-rate purchase program is sent to Treasury and recycled according to the Treasury Recycling Rule
 - when the purchase flow routes through the Base canonical receiver, VPFI must be minted or released only after the Base receiver has actually received ETH; quoted, requested, or expected ETH amounts must never be enough to mint VPFI by themselves
@@ -461,16 +463,18 @@ The `Buy VPFI` page never asks the user to switch to the canonical `Base` chain.
 Two explicit user steps, in this order:
 
 1. **Buy** — the user, connected to their preferred supported chain (`Base`, `Arbitrum`, `Polygon`, `Optimism`, or `Ethereum mainnet`), pays ETH at the fixed rate directly from the page. Purchased VPFI is delivered to the user's wallet **on that same preferred chain** — never auto-routed into escrow, and never requiring a manual chain switch. If the flow settles on the canonical Base receiver, receipt of ETH on Base is the mint/release trigger.
-2. **Deposit to escrow** — a separate, explicit user action on the same page moves VPFI from the user's wallet into the user's personal escrow on the same chain. This step is always explicit: the protocol never auto-funds escrow after a buy or a bridge. Where supported, this deposit may use Uniswap Permit2 at `0x000000000022D473030F116dDEE9F6B43aC78BA3` so the user signs one EIP-712 authorization and executes the escrow deposit in a single transaction; the classic approve-plus-deposit path remains the fallback.
+2. **Deposit / Stake to escrow** — a separate, explicit user action on the same page moves VPFI from the user's wallet into the user's personal escrow on the same chain. This step is always explicit: the protocol never auto-funds escrow after a buy or a bridge. Once deposited, the balance immediately counts as staked for the `5% APR` model and toward local discount tiers. Where supported, this deposit may use Uniswap Permit2 at `0x000000000022D473030F116dDEE9F6B43aC78BA3` so the user signs one EIP-712 authorization and executes the escrow deposit in a single transaction; the classic approve-plus-deposit path remains the fallback.
 
 Per-wallet cap display:
 
 - when the admin has not yet configured a per-wallet cap on-chain, the `Buy VPFI` page MUST display the Phase 1 recommendation (`30,000 VPFI`) as the effective per-chain cap — `Uncapped` is not a valid user-facing state
 - the displayed "your remaining allowance" always equals `effectiveCap - soldToWallet`, where `effectiveCap` falls back to `30,000 VPFI` when `perWalletCap == 0` on-chain
-- this allowance is chain-local: buying up to the cap on one chain does not by itself consume the user's allowance on another chain unless admin later introduces an explicit cross-chain cap model
+- this allowance is keyed by `(buyer, originEid)`, where `originEid` is the LayerZero endpoint ID of the chain where the buy originated; buying up to the cap on one origin chain does not by itself consume the user's allowance on another chain unless admin later introduces an explicit cross-chain cap model
 - likewise, VPFI deposited into escrow on a given chain counts toward lender / borrower fee-discount tiers only for loans initiated on that same chain
 
 VPFI held in escrow simultaneously satisfies the staking model and the fee-discount tier table in §6 on that same chain — a single deposit serves both purposes locally, but does not qualify loans initiated on other chains.
+
+The public purchase page should expose `Buy`, `Stake`, and `Unstake` entry points as route anchors. `Stake` is a user-facing name for the wallet-to-escrow deposit step; `Unstake` is the escrow-to-wallet withdrawal path on the same chain.
 
 Permit2 requirements for VPFI utility flows:
 

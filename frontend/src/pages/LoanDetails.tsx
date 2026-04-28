@@ -92,11 +92,29 @@ export default function LoanDetails() {
   const [ltv, setLtv] = useState<bigint | null>(null);
   const [hf, setHf] = useState<bigint | null>(null);
   const [riskError, setRiskError] = useState<string | null>(null);
+  // A loan with at least one illiquid leg has no defined LTV / HF — calling
+  // `calculateLTV` / `calculateHealthFactor` reverts with
+  // `IlliquidLoanNoRiskMath`. Detect that up front from the loan struct's
+  // own liquidity flags so we can skip the multicall and render the
+  // dedicated explainer instead of letting a contract revert bubble up
+  // as raw error text.
+  const isIlliquidLoan = !!loan && (
+    Number(loan.principalLiquidity) !== 0 ||
+    Number(loan.collateralLiquidity) !== 0
+  );
   useEffect(() => {
     let cancelled = false;
     if (!loan || !loanId) {
       setLtv(null);
       setHf(null);
+      return;
+    }
+    if (isIlliquidLoan) {
+      // No on-chain price for at least one leg — risk math is undefined.
+      // Clear any prior values so the explainer renders cleanly.
+      setLtv(null);
+      setHf(null);
+      setRiskError(null);
       return;
     }
     (async () => {
@@ -121,7 +139,7 @@ export default function LoanDetails() {
     return () => {
       cancelled = true;
     };
-  }, [loan, loanId, diamond]);
+  }, [loan, loanId, diamond, isIlliquidLoan, t]);
 
   const ltvPercent = ltv === null ? null : Number(ltv) / 1e16;
   const hfScaled = hf === null ? null : Number(hf) / 1e18;
@@ -581,24 +599,38 @@ export default function LoanDetails() {
               {LIQUIDITY_LABELS[Number(loan.collateralLiquidity) as Liquidity]}
             </span>
           </div>
-          <div className="data-row">
-            <span className="data-label">{t('loanDetails.ltv')}</span>
-            <LTVBar percent={ltvPercent} />
-          </div>
-          <div className="data-row">
-            <span className="data-label">{t('loanDetails.healthFactor')}</span>
-            <HealthFactorGauge value={hfScaled} />
-          </div>
-          {riskError && (
+          {isIlliquidLoan ? (
             <div className="data-row">
               <span className="data-label">{t('loanDetails.risk')}</span>
               <span
                 className="data-value"
-                style={{ color: "var(--text-tertiary)", fontSize: "0.78rem" }}
+                style={{ fontSize: "0.85rem", lineHeight: 1.45 }}
               >
-                {riskError}
+                {t('loanDetails.illiquidRiskExplainer')}
               </span>
             </div>
+          ) : (
+            <>
+              <div className="data-row">
+                <span className="data-label">{t('loanDetails.ltv')}</span>
+                <LTVBar percent={ltvPercent} />
+              </div>
+              <div className="data-row">
+                <span className="data-label">{t('loanDetails.healthFactor')}</span>
+                <HealthFactorGauge value={hfScaled} />
+              </div>
+              {riskError && (
+                <div className="data-row">
+                  <span className="data-label">{t('loanDetails.risk')}</span>
+                  <span
+                    className="data-value"
+                    style={{ color: "var(--text-tertiary)", fontSize: "0.78rem" }}
+                  >
+                    {riskError}
+                  </span>
+                </div>
+              )}
+            </>
           )}
           {/* Phase 8a.2: liquidation-price projection + what-if sliders.
               Derived from the live HF; auto-hidden when HF is null

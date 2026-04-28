@@ -258,7 +258,8 @@
     "keeperHintPrefixA": "Keeperが動作するには、(a) 対応するアクションビットが",
     "keeperHintGlobalWhitelist": "グローバルホワイトリスト",
     "keeperHintSuffix": "上で設定されていること、および (b) マスターKeeperアクセススイッチがONであることが必要です。",
-    "riskMetricsUnavailable": "リスクメトリクスは利用できません (非流動性ポジション)"
+    "riskMetricsUnavailable": "リスクメトリクスは利用できません (非流動性ポジション)",
+    "illiquidRiskExplainer": "非流動資産を含むローンではLTV / HFは計算されません(オンチェーン価格がないため)。Borrowerがデフォルトした場合、担保全額がLenderに現物で移転されます。"
   },
   "buyVpfi": {
     "connectTitle": "ウォレットを接続",

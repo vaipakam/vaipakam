@@ -258,7 +258,8 @@
     "keeperHintPrefixA": "Un Keeper aún necesita (a) el bit de acción correspondiente activado en la",
     "keeperHintGlobalWhitelist": "lista blanca global",
     "keeperHintSuffix": "y (b) el interruptor maestro de acceso de Keepers ENCENDIDO antes de poder operar sobre este préstamo.",
-    "riskMetricsUnavailable": "Métricas de riesgo no disponibles (posición ilíquida)"
+    "riskMetricsUnavailable": "Métricas de riesgo no disponibles (posición ilíquida)",
+    "illiquidRiskExplainer": "LTV / HF no se calculan para préstamos que involucran un activo ilíquido (sin precio on-chain). Si el Borrower entra en default, el colateral completo se transfiere en especie al Lender."
   },
   "buyVpfi": {
     "connectTitle": "Conecta tu billetera",

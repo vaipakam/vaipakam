@@ -208,6 +208,11 @@
   },
   {
     "type": "error",
+    "name": "IlliquidLoanNoRiskMath",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "InsufficientProceeds",
     "inputs": []
   },

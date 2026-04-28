@@ -357,6 +357,11 @@
   },
   {
     "type": "error",
+    "name": "IlliquidLoanNoRiskMath",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "InsufficientCollateral",
     "inputs": []
   },

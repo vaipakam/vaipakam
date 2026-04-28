@@ -258,7 +258,8 @@
     "keeperHintPrefixA": "Keeper 仍需要 (a) 在",
     "keeperHintGlobalWhitelist": "全局白名单",
     "keeperHintSuffix": "上设置相应的操作位,且 (b) 主 Keeper 访问开关为开启状态,才能在此贷款上执行任何操作。",
-    "riskMetricsUnavailable": "风险指标不可用 (非流动性持仓)"
+    "riskMetricsUnavailable": "风险指标不可用 (非流动性持仓)",
+    "illiquidRiskExplainer": "涉及非流动性资产的 loan 不计算 LTV / HF（链上无价格）。当 Borrower 违约时，全部 collateral 将以实物（in-kind）形式转移给 Lender。"
   },
   "buyVpfi": {
     "connectTitle": "连接您的钱包",

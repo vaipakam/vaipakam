@@ -184,7 +184,7 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
         // Explicit revert for illiquid — HF/LTV requires prices for both assets
         if (loan.collateralLiquidity != LibVaipakam.LiquidityStatus.Liquid ||
             loan.principalLiquidity != LibVaipakam.LiquidityStatus.Liquid)
-            revert NonLiquidAsset();
+            revert IlliquidLoanNoRiskMath();
 
         (uint256 borrowedValueUSD, uint256 collateralValueUSD) = _computeUsdValues(loan);
         if (collateralValueUSD == 0) revert ZeroCollateral();
@@ -216,7 +216,7 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
         // Explicit revert for illiquid — HF requires prices for both assets
         if (loan.collateralLiquidity != LibVaipakam.LiquidityStatus.Liquid ||
             loan.principalLiquidity != LibVaipakam.LiquidityStatus.Liquid)
-            revert NonLiquidAsset();
+            revert IlliquidLoanNoRiskMath();
 
         (uint256 borrowValueUSD, uint256 collateralValueUSD) = _computeUsdValues(loan);
 
@@ -251,7 +251,7 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
         if (loan.id == 0 || loan.collateralAmount == 0) revert InvalidLoan();
         if (loan.collateralLiquidity != LibVaipakam.LiquidityStatus.Liquid ||
             loan.principalLiquidity != LibVaipakam.LiquidityStatus.Liquid)
-            revert NonLiquidAsset();
+            revert IlliquidLoanNoRiskMath();
 
         // Single-pass: fetch prices + decimals once and derive both LTV and
         // HF from the shared (borrowUSD, collateralUSD) pair.

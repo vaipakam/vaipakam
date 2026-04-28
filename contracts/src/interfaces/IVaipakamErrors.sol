@@ -55,6 +55,16 @@ interface IVaipakamErrors {
     error LTVExceeded();
     error IlliquidAsset();
     error NonLiquidAsset();
+    /// @notice Risk-math (LTV / HF / volatility-collapse check) called on a
+    ///         loan with at least one illiquid leg (no on-chain price feed).
+    ///         The on-chain risk math has no defined value for these loans —
+    ///         on default the full collateral is transferred in-kind to the
+    ///         lender per the consent both parties signed at offer creation.
+    ///         Distinct from `NonLiquidAsset`, which is reserved for runtime
+    ///         liquidity-state checks (e.g. live pool depth at liquidation
+    ///         time) where the asset *was* liquid at loan-init but isn't
+    ///         anymore.
+    error IlliquidLoanNoRiskMath();
     error InvalidAsset();
     /// @notice Offer create or accept rejected because the
     ///         abnormal-market liquidation-fallback consent was not granted

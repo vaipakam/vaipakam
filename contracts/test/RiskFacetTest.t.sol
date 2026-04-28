@@ -838,7 +838,7 @@ contract RiskFacetTest is Test {
 
     // ─── Additional branch coverage tests ────────────────────────────────────
 
-    /// @dev Tests calculateLTV reverts if loan is illiquid (NonLiquidAsset).
+    /// @dev Tests calculateLTV reverts if loan is illiquid (IlliquidLoanNoRiskMath).
     function testCalculateLTVRevertsForIlliquidLoan() public {
         uint256 loanId = createAndAcceptOffer();
 
@@ -847,7 +847,7 @@ contract RiskFacetTest is Test {
         loan.collateralLiquidity = LibVaipakam.LiquidityStatus.Illiquid;
         TestMutatorFacet(address(diamond)).setLoan(loanId, loan);
 
-        vm.expectRevert(IVaipakamErrors.NonLiquidAsset.selector);
+        vm.expectRevert(IVaipakamErrors.IlliquidLoanNoRiskMath.selector);
         RiskFacet(address(diamond)).calculateLTV(loanId);
     }
 
@@ -860,7 +860,7 @@ contract RiskFacetTest is Test {
         loan.collateralLiquidity = LibVaipakam.LiquidityStatus.Illiquid;
         TestMutatorFacet(address(diamond)).setLoan(loanId, loan);
 
-        vm.expectRevert(IVaipakamErrors.NonLiquidAsset.selector);
+        vm.expectRevert(IVaipakamErrors.IlliquidLoanNoRiskMath.selector);
         RiskFacet(address(diamond)).calculateHealthFactor(loanId);
     }
 

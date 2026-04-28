@@ -258,7 +258,8 @@
     "keeperHintPrefixA": "Keeper को अभी भी (a) संबंधित एक्शन बिट",
     "keeperHintGlobalWhitelist": "वैश्विक व्हाइटलिस्ट",
     "keeperHintSuffix": "पर सेट होना चाहिए और (b) मास्टर Keeper-एक्सेस स्विच चालू होना चाहिए, इससे पहले कि वे इस लोन पर कुछ भी निष्पादित कर सकें।",
-    "riskMetricsUnavailable": "जोखिम मेट्रिक्स अनुपलब्ध (अतरल पोजिशन)"
+    "riskMetricsUnavailable": "जोखिम मेट्रिक्स अनुपलब्ध (अतरल पोजिशन)",
+    "illiquidRiskExplainer": "ऐसे loans के लिए LTV / HF की गणना नहीं की जाती जिनमें कोई illiquid asset शामिल हो (कोई on-chain price नहीं है)। Borrower default होने पर, पूरा collateral यथा-वस्तु (in-kind) Lender को स्थानांतरित कर दिया जाता है।"
   },
   "buyVpfi": {
     "connectTitle": "अपना वॉलेट कनेक्ट करें",

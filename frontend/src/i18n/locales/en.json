@@ -726,7 +726,8 @@
     "keeperHintPrefixA": "A keeper still needs (a) the corresponding action bit set on the",
     "keeperHintGlobalWhitelist": "global whitelist",
     "keeperHintSuffix": "and (b) the master keeper-access switch ON before they can drive anything on this loan.",
-    "riskMetricsUnavailable": "Risk metrics unavailable (illiquid position)"
+    "riskMetricsUnavailable": "Risk metrics unavailable (illiquid position)",
+    "illiquidRiskExplainer": "LTV / HF aren't computed for loans involving an illiquid asset (no on-chain price). On Borrower default, the full collateral is transferred in-kind to the lender."
   },
   "buyVpfi": {
     "connectTitle": "Connect Your Wallet",
