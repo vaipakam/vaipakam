@@ -802,7 +802,13 @@ export default function FAQ() {
   const { t } = useTranslation();
   const [open, setOpen] = useState<string | null>(null);
   const [category, setCategory] = useState<Category | "all">(() => {
-    if (typeof window === "undefined") return "all";
+    // Default fresh visitors to the "Basics" (Getting Started) tab — the
+    // entries there are the welcoming-the-newcomer set (what is Vaipakam,
+    // what's a wallet, what's collateral, etc.). Returning visitors who
+    // explicitly picked another category get their last-used choice back
+    // from localStorage; the default only applies on a first visit or
+    // when the stored value is unrecognised.
+    if (typeof window === "undefined") return "basics";
     const stored = window.localStorage.getItem(LS_KEY);
     return stored === "basics" ||
       stored === "users" ||
@@ -810,7 +816,7 @@ export default function FAQ() {
       stored === "integrators" ||
       stored === "all"
       ? stored
-      : "all";
+      : "basics";
   });
   const [query, setQuery] = useState("");
   const buttonRefs = useRef<Record<string, HTMLButtonElement | null>>({});
