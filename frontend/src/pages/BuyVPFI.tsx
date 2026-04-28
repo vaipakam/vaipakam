@@ -44,6 +44,9 @@ import { formatNumber } from "../lib/format";
 import { beginStep } from "../lib/journeyLog";
 import { ReportIssueLink } from "../components/app/ReportIssueLink";
 import { CardInfo } from "../components/CardInfo";
+import { VPFIPanel } from "../components/app/VPFIPanel";
+import { useVPFIToken } from "../hooks/useVPFIToken";
+import { useMode } from "../context/ModeContext";
 import "./Dashboard.css";
 
 /**
@@ -319,8 +322,11 @@ export default function BuyVPFI() {
     reload: reloadConfig,
   } = useVPFIDiscount(isOnCanonical ? null : canonical);
   const { snapshot: userVpfi, reload: reloadUserVpfi } = useUserVPFI(address);
+  const { snapshot: vpfiSnapshot } = useVPFIToken();
   const { balance: escrowBal, reload: reloadEscrow } =
     useEscrowVPFIBalance(address);
+  const { mode } = useMode();
+  const isAdvanced = mode === 'advanced';
   // discountTier / consentEnabled hooks were used by `<DiscountStatusCard>`
   // before that card moved to the Dashboard. Removed here to keep the
   // Buy VPFI page's data dependencies tight.
@@ -1133,6 +1139,21 @@ export default function BuyVPFI() {
           />
         </div>
       )}
+
+      {/* VPFI transparency panel — wallet/escrow balances, on-chain
+          token+minter+treasury addresses, and the user's recent VPFI
+          transfer history (paginated, 10 rows per page). Lifted from the
+          Dashboard so it sits near the buy/deposit/unstake controls. */}
+      <VPFIPanel
+        vpfi={vpfiSnapshot}
+        userVpfi={userVpfi}
+        escrowVpfiWei={escrowBal}
+        networkName={activeChain?.name ?? readChain.name}
+        networkChainId={activeChain?.chainId ?? readChain.chainId}
+        blockExplorer={activeChain?.blockExplorer ?? readChain.blockExplorer}
+        isCanonicalVPFI={activeChain?.isCanonicalVPFI ?? readChain.isCanonicalVPFI}
+        isAdvanced={isAdvanced}
+      />
     </div>
   );
 }
