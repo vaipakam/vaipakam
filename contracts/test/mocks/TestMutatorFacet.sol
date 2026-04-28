@@ -289,4 +289,32 @@ contract TestMutatorFacet {
     function setLocalEidForTest(uint32 eid) external {
         LibVaipakam.storageSlot().localEid = eid;
     }
+
+    /// @notice Append a {LibVaipakam.RewardEntry} record for `user` and link
+    ///         it to their `userRewardEntryIds` index. Test-only — production
+    ///         path goes through {LibInteractionRewards.registerLoan} from
+    ///         {LoanFacet.initiateLoan}, which is heavy to drive in unit
+    ///         tests focused only on the new view's read path.
+    function pushRewardEntry(
+        address user,
+        uint64 loanId,
+        LibVaipakam.RewardSide side,
+        uint256 perDayUSD18,
+        uint32 startDay
+    ) external returns (uint256 id) {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        s.nextRewardEntryId += 1;
+        id = s.nextRewardEntryId;
+        s.rewardEntries[id] = LibVaipakam.RewardEntry({
+            user: user,
+            loanId: loanId,
+            startDay: startDay,
+            endDay: 0,
+            side: side,
+            processed: false,
+            forfeited: false,
+            perDayUSD18: perDayUSD18
+        });
+        s.userRewardEntryIds[user].push(id);
+    }
 }

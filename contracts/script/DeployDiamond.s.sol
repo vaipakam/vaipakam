@@ -717,7 +717,7 @@ contract DeployDiamond is Script {
     }
 
     function _getInteractionRewardsSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](17);
+        s = new bytes4[](18);
         s[0] = InteractionRewardsFacet.claimInteractionRewards.selector;
         s[1] = InteractionRewardsFacet.setInteractionLaunchTimestamp.selector;
         s[2] = InteractionRewardsFacet.getInteractionLaunchTimestamp.selector;
@@ -735,6 +735,7 @@ contract DeployDiamond is Script {
         s[14] = InteractionRewardsFacet.getInteractionCapVpfiPerEth.selector;
         s[15] = InteractionRewardsFacet.getInteractionCapVpfiPerEthRaw.selector;
         s[16] = InteractionRewardsFacet.sweepForfeitedInteractionRewards.selector;
+        s[17] = InteractionRewardsFacet.getUserRewardEntries.selector;
     }
 
     function _getRewardReporterSelectors() internal pure returns (bytes4[] memory s) {

@@ -356,6 +356,7 @@
     "claimRetryExecuted": "청구 시 스왑 재시도",
     "lifRebateClaimed": "VPFI 수수료 할인 환급 청구됨",
     "stakingRewardsClaimed": "VPFI 스테이킹 보상 청구됨",
+    "interactionRewardsClaimed": "플랫폼 상호작용 보상 청구됨",
     "vpfiPurchased": "ETH로 VPFI 구매",
     "vpfiDeposited": "VPFI 스테이킹",
     "vpfiWithdrawn": "VPFI 언스테이킹",
@@ -420,12 +421,22 @@
     "title": "플랫폼 상호작용 VPFI 보상",
     "subtitle": "참여한 대출에서 결제된 USD 이자 1달러마다 상호작용 보상 풀의 일일 지분을 VPFI로 받게 됩니다.",
     "pendingLabel": "대기 중",
+    "lifetimeClaimedLabel": "누적 청구됨",
     "claim": "청구",
     "claiming": "청구 중…",
     "claimFailed": "청구 실패",
     "submitted": "청구 제출됨:",
     "waiting": "{{day}}일 최종 확정 대기 중",
-    "waitingTooltip": "{{day}}일의 크로스체인 글로벌 분모가 아직 이 체인에 전파되지 않았습니다. 도착할 때까지 프로토콜 계층에서 청구가 차단됩니다. 보통 몇 분 내에 확정됩니다."
+    "waitingTooltip": "{{day}}일의 크로스체인 글로벌 분모가 아직 이 체인에 전파되지 않았습니다. 도착할 때까지 프로토콜 계층에서 청구가 차단됩니다. 보통 몇 분 내에 확정됩니다.",
+    "contributingLoans": "기여한 대출 ({{count}})",
+    "entryLoanLink": "대출 #{{id}}",
+    "entryOngoing": "진행 중 — {{rate}} USD/일 이자",
+    "entryClosed": "종료 — {{days}}일간 {{total}} USD",
+    "entryForfeited": "몰수 (Treasury로 전송)",
+    "side": {
+      "lender": "대출자",
+      "borrower": "차용자"
+    }
   },
   "allowances": {
     "connectBody": "승인을 보려면 지갑을 연결하세요.",

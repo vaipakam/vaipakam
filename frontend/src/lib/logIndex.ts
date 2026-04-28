@@ -123,6 +123,9 @@ const BORROWER_LIF_REBATE_CLAIMED_TOPIC0 = id(
 const STAKING_REWARDS_CLAIMED_TOPIC0 = id(
   'StakingRewardsClaimed(address,uint256)',
 );
+const INTERACTION_REWARDS_CLAIMED_TOPIC0 = id(
+  'InteractionRewardsClaimed(address,uint256,uint256,uint256)',
+);
 
 /**
  * Event-driven loan + position-NFT ownership cache.
@@ -171,6 +174,7 @@ export type ActivityEventKind =
   | 'ClaimRetryExecuted'
   | 'BorrowerLifRebateClaimed'
   | 'StakingRewardsClaimed'
+  | 'InteractionRewardsClaimed'
   | 'VPFIPurchasedWithETH'
   | 'VPFIDepositedToEscrow'
   | 'VPFIWithdrawnFromEscrow';
@@ -296,14 +300,18 @@ const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
 // a burned position NFT. v5 caches don't carry this and can't backfill
 // incrementally since the relevant Transfer is already behind `lastBlock`.
 function storageKey(chainId: number, diamond: string): string {
-  // v8 (2026-04-29): widens the event allow-list to include the loan-
-  // lifecycle breakdown stream powering the Loan Details timeline —
+  // v9 (2026-04-29): adds `InteractionRewardsClaimed` to the topic
+  // OR-set so the Claim Center's interaction-rewards card can sum
+  // lifetime-claimed VPFI from cached events. Same incremental-scan
+  // gap as v8 → v9 forces a one-time full scan to backfill the
+  // historical claims.
+  //
+  // v8 (2026-04-29): widened the allow-list with the loan-lifecycle
+  // breakdown stream powering the Loan Details timeline —
   // LoanSettlementBreakdown, LiquidationFallback,
   // LiquidationFallbackSplit, LoanSettled, PartialRepaid,
-  // ClaimRetryExecuted, BorrowerLifRebateClaimed, and the per-user
-  // StakingRewardsClaimed. Older v7 caches pre-date these topics in the
-  // `getLogs` OR-set and can't backfill incrementally past `lastBlock`,
-  // so the bump forces a fresh full scan once and converges everyone.
+  // ClaimRetryExecuted, BorrowerLifRebateClaimed, plus the per-user
+  // StakingRewardsClaimed.
   //
   // v7: widened the allow-list to include VPFIPurchasedWithETH,
   // VPFIDepositedToEscrow, VPFIWithdrawnFromEscrow.
@@ -313,7 +321,7 @@ function storageKey(chainId: number, diamond: string): string {
   // field from the cached `events` array on hydrate when it's missing
   // or empty (filter `kind === 'OfferAccepted'`, take the trailing
   // RECENT_ACCEPTED_CAP).
-  return `vaipakam:logIndex:v8:${chainId}:${diamond.toLowerCase()}`;
+  return `vaipakam:logIndex:v9:${chainId}:${diamond.toLowerCase()}`;
 }
 
 function emptyCache(deployBlock: number): CachedShape {
@@ -684,6 +692,7 @@ async function runScan(
             CLAIM_RETRY_EXECUTED_TOPIC0,
             BORROWER_LIF_REBATE_CLAIMED_TOPIC0,
             STAKING_REWARDS_CLAIMED_TOPIC0,
+            INTERACTION_REWARDS_CLAIMED_TOPIC0,
             VPFI_PURCHASED_TOPIC0,
             VPFI_DEPOSITED_TOPIC0,
             VPFI_WITHDRAWN_TOPIC0,
@@ -1094,6 +1103,33 @@ async function runScan(
           // malformed — keep default
         }
         addEvent('StakingRewardsClaimed', [user], { user, amount });
+      } else if (topic0 === INTERACTION_REWARDS_CLAIMED_TOPIC0) {
+        // InteractionRewardsClaimed(user indexed, fromDay, toDay, amount).
+        // Drives the lifetime-claimed total surfaced on the Claim Center
+        // interaction-rewards card — frontend sums `amount` across every
+        // matching event for the user.
+        if (topics.length < 2) continue;
+        const user = ('0x' + topics[1].slice(26)).toLowerCase();
+        let fromDay = '0';
+        let toDay = '0';
+        let amount = '0';
+        try {
+          const [f, t, a] = decodeAbiParameters(
+            parseAbiParameters('uint256, uint256, uint256'),
+            event.data,
+          );
+          fromDay = (f as bigint).toString();
+          toDay = (t as bigint).toString();
+          amount = (a as bigint).toString();
+        } catch {
+          // malformed — keep defaults
+        }
+        addEvent('InteractionRewardsClaimed', [user], {
+          user,
+          fromDay,
+          toDay,
+          amount,
+        });
       } else if (topic0 === TRANSFER_TOPIC0) {
         // ERC-721 Transfer(from, to, tokenId) — all three fields indexed, so
         // topics[1..3] carry from / to / tokenId. Rows with a different topic

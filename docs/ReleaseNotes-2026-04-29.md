@@ -30,7 +30,13 @@ the Dashboard's Your Loans table for terminal-state rows that
 have unclaimed funds, and a brand-new **VPFI staking-rewards
 claim** card that surfaces the wallet's pending APR-accrued VPFI
 on the Buy VPFI page Step 2 plus a compact mirror on the
-Dashboard's Discount Status surface.
+Dashboard's Discount Status surface; and a **rewards-architecture
+split** that retires the old in-app Rewards page entirely —
+staking rewards claim from Buy VPFI Step 2, platform-interaction
+rewards claim from a new card on Claim Center (with a lifetime-
+claimed total summed from on-chain events plus an expandable
+"contributing loans" list that links each contributing lender /
+borrower entry back to its full Loan Details page).
 
 ## Market-anchor cache backfill — no rescan needed
 
@@ -269,6 +275,96 @@ scan once — older caches pre-date the new topics in the
 `lastBlock`. The previous `recentAcceptedOfferIds`-style hydrate-
 time backfill doesn't help here because the new topics weren't
 captured at all in old caches.
+
+## Rewards architecture — split + delete
+
+The in-app Rewards page used to combine two reward streams into one
+Claim Rewards button: passive **staking rewards** (5% APR on
+escrow-VPFI) and active **platform-interaction rewards** (a daily
+share of a 69M VPFI pool, weighted by the user's settled-interest
+participation). The "Withdraw staked VPFI" card on the same page
+duplicated Step 3 (Withdraw / Unstake) on the Buy VPFI page.
+
+The streams are now split between their natural homes:
+
+- **Staking rewards** stay on Buy VPFI Step 2 (Stake) — claim
+  surface lives next to the deposit/withdraw controls. Already
+  shipped earlier today via `StakingRewardsClaim`.
+- **Platform-interaction rewards** moved to Claim Center as a new
+  inline card above the per-loan claim rows. Claim Center now
+  reads as the single home for "anywhere you can pull funds you're
+  owed."
+
+The old `/app/rewards` route, the sidebar entry, the
+`Rewards.tsx` page, and the `useRewards.ts` hook are gone.
+The duplicated Withdraw card is also gone — Buy VPFI Step 3
+remains the canonical unstake path.
+
+### Interaction-rewards card details
+
+The Claim Center card pulls `previewInteractionRewards(address)`
+for the headline pending VPFI. Cross-chain finalization gating
+(spec §4a) is preserved: when a `dayId`'s global denominator
+hasn't been broadcast to this chain yet, the Claim button swaps
+for a "Waiting on day {{day}}" pill with a tooltip explaining
+why a click would revert. The card hides itself entirely when
+the wallet has zero pending and isn't waiting — fresh users
+don't see a 0-VPFI promo.
+
+### Lifetime claimed total
+
+A new "Lifetime claimed" sub-line surfaces the cumulative VPFI
+the wallet has historically claimed from the interaction-rewards
+pool. Sourced by summing every `InteractionRewardsClaimed` event
+keyed to the wallet from the per-(chain, diamond) log-index
+cache; no on-chain getter for the running total exists, but the
+events carry the full history. The line hides itself at zero so
+first-time claimers see only "Pending."
+
+### Contributing-loans expandable list
+
+Below the headline, an expandable **Contributing loans** section
+enumerates every loan that drives the user's daily share of the
+pool — lender-side AND borrower-side rows on the same loan are
+listed separately. Each row links to the loan's full Loan Details
+timeline and shows either:
+
+- **Ongoing** entries — the snapshot interest accrual rate
+  (`{{rate}} USD/day interest`).
+- **Closed** entries — total contribution
+  (`{{total}} USD over {{days}} day(s)`).
+- **Forfeited** entries (defaulted-borrower side, early-
+  withdrawal initiator side) — visually de-emphasised since they
+  were routed to treasury and no longer feed the user's share.
+
+The display intentionally does NOT show "earned X VPFI on loan
+Y" — the rewards aren't directly attributable to a per-loan VPFI
+amount because they're daily-normalised by the global denominator,
+so showing per-loan VPFI would be a fiction. The list shows
+*participation* contribution in 18-decimal USD; the lifetime-
+claimed total above shows the actual VPFI the user has received.
+
+### Contract — new view
+
+`InteractionRewardsFacet.getUserRewardEntries(user)` exposes the
+existing `userRewardEntryIds` + `rewardEntries` storage as a
+public read. Returns the full `RewardEntry[]` array (loanId,
+side, startDay/endDay, perDayUSD18, processed, forfeited).
+Selector wired into both `DeployDiamond` (18-element array) and
+the test-side `HelperTest` cuts (also 18). Two Foundry tests
+cover the empty-state contract (`getUserRewardEntries(unknown)
+== []`) and the populated-state shape (after pushing a lender +
+borrower entry on the same loan via a new `pushRewardEntry`
+helper on `TestMutatorFacet`, the view returns both with every
+field intact).
+
+### Log-index — new event topic + cache version bump
+
+`InteractionRewardsClaimed(user, fromDay, toDay, amount)` joins
+the topic OR-set in the frontend log-index. Cache key bumped
+from `v8` to `v9` to force a one-time rescan that captures
+historical claims; without the bump, older caches couldn't
+backfill incrementally past their `lastBlock` watermark.
 
 ## Documentation convention
 

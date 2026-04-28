@@ -356,6 +356,7 @@
     "claimRetryExecuted": "Swap-Wiederholung beim Einlösen",
     "lifRebateClaimed": "VPFI-Gebührenrabatt eingelöst",
     "stakingRewardsClaimed": "VPFI-Staking-Belohnungen eingelöst",
+    "interactionRewardsClaimed": "Plattform-Interaktions-Belohnungen eingelöst",
     "vpfiPurchased": "VPFI mit ETH gekauft",
     "vpfiDeposited": "VPFI gestaked",
     "vpfiWithdrawn": "VPFI unstaked",
@@ -420,12 +421,22 @@
     "title": "Plattform-Interaktions-VPFI-Belohnungen",
     "subtitle": "Jeder USD an Zinsen, der auf einem Kredit abgerechnet wird, an dem Sie beteiligt waren, verdient Ihnen einen täglichen Anteil am Interaktions-Rewards-Pool, ausgezahlt in VPFI.",
     "pendingLabel": "Ausstehend",
+    "lifetimeClaimedLabel": "Lebenszeit eingelöst",
     "claim": "Einlösen",
     "claiming": "Wird eingelöst…",
     "claimFailed": "Einlösen fehlgeschlagen",
     "submitted": "Anspruch eingereicht:",
     "waiting": "Warten auf Tag-{{day}}-Finalisierung",
-    "waitingTooltip": "Der Cross-Chain-Globalnenner für Tag {{day}} wurde noch nicht auf diese Chain übertragen. Der Anspruch ist auf Protokollebene blockiert, bis er eintrifft; normalerweise innerhalb von Minuten."
+    "waitingTooltip": "Der Cross-Chain-Globalnenner für Tag {{day}} wurde noch nicht auf diese Chain übertragen. Der Anspruch ist auf Protokollebene blockiert, bis er eintrifft; normalerweise innerhalb von Minuten.",
+    "contributingLoans": "Beitragende Kredite ({{count}})",
+    "entryLoanLink": "Kredit #{{id}}",
+    "entryOngoing": "Laufend — {{rate}} USD/Tag Zinsen",
+    "entryClosed": "Geschlossen — {{total}} USD über {{days}} Tag(e)",
+    "entryForfeited": "Verfallen (an Treasury geleitet)",
+    "side": {
+      "lender": "Kreditgeber",
+      "borrower": "Kreditnehmer"
+    }
   },
   "allowances": {
     "connectBody": "Verbinden Sie Ihre Wallet, um Genehmigungen anzuzeigen.",

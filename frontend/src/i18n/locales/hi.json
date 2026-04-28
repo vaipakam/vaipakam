@@ -356,6 +356,7 @@
     "claimRetryExecuted": "Claim समय पर swap पुनः प्रयास",
     "lifRebateClaimed": "VPFI शुल्क छूट claim की गई",
     "stakingRewardsClaimed": "VPFI staking rewards claim किए गए",
+    "interactionRewardsClaimed": "Platform-interaction rewards claim किए गए",
     "vpfiPurchased": "ETH से VPFI खरीदा",
     "vpfiDeposited": "VPFI staked",
     "vpfiWithdrawn": "VPFI unstaked",
@@ -420,12 +421,22 @@
     "title": "Platform-interaction VPFI rewards",
     "subtitle": "जिस loan में आपने भाग लिया है उस पर निपटाए गए ब्याज के प्रत्येक USD पर आपको interaction rewards pool का दैनिक हिस्सा मिलता है, जो VPFI में भुगतान किया जाता है।",
     "pendingLabel": "लंबित",
+    "lifetimeClaimedLabel": "अब तक claim किया गया",
     "claim": "Claim",
     "claiming": "Claim किया जा रहा है…",
     "claimFailed": "Claim विफल",
     "submitted": "Claim सबमिट किया गया:",
     "waiting": "दिन {{day}} की finalization की प्रतीक्षा है",
-    "waitingTooltip": "दिन {{day}} का cross-chain global denominator अभी तक इस chain पर प्रसारित नहीं हुआ है। आने तक protocol layer पर claim अवरुद्ध है; आमतौर पर मिनटों में finalize हो जाता है।"
+    "waitingTooltip": "दिन {{day}} का cross-chain global denominator अभी तक इस chain पर प्रसारित नहीं हुआ है। आने तक protocol layer पर claim अवरुद्ध है; आमतौर पर मिनटों में finalize हो जाता है।",
+    "contributingLoans": "योगदान देने वाले loans ({{count}})",
+    "entryLoanLink": "Loan #{{id}}",
+    "entryOngoing": "जारी — {{rate}} USD/दिन ब्याज",
+    "entryClosed": "बंद — {{days}} दिन में {{total}} USD",
+    "entryForfeited": "जब्त (treasury को भेजा गया)",
+    "side": {
+      "lender": "Lender",
+      "borrower": "Borrower"
+    }
   },
   "allowances": {
     "connectBody": "अनुमतियां देखने के लिए अपना वॉलेट कनेक्ट करें।",

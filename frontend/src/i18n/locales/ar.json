@@ -356,6 +356,7 @@
     "claimRetryExecuted": "إعادة محاولة المبادلة وقت المطالبة",
     "lifRebateClaimed": "تمت المطالبة بخصم رسوم VPFI",
     "stakingRewardsClaimed": "تمت المطالبة بمكافآت staking VPFI",
+    "interactionRewardsClaimed": "تمت المطالبة بمكافآت تفاعل المنصة",
     "vpfiPurchased": "تم شراء VPFI بـ ETH",
     "vpfiDeposited": "تم staking VPFI",
     "vpfiWithdrawn": "تم unstaking VPFI",
@@ -420,12 +421,22 @@
     "title": "مكافآت VPFI لتفاعل المنصة",
     "subtitle": "كل دولار من الفائدة التي تُسدَّد على قرض شاركت فيه يكسبك حصة يومية من مجمع مكافآت التفاعل، تُدفع بـ VPFI.",
     "pendingLabel": "قيد الانتظار",
+    "lifetimeClaimedLabel": "إجمالي ما تمت المطالبة به",
     "claim": "مطالبة",
     "claiming": "جاري المطالبة…",
     "claimFailed": "فشلت المطالبة",
     "submitted": "تم إرسال المطالبة:",
     "waiting": "في انتظار إتمام اليوم {{day}}",
-    "waitingTooltip": "لم يتم بث المقام العالمي عبر السلاسل لليوم {{day}} إلى هذه السلسلة بعد. يتم حظر المطالبة على مستوى البروتوكول حتى يصل؛ عادةً ما يكتمل خلال دقائق."
+    "waitingTooltip": "لم يتم بث المقام العالمي عبر السلاسل لليوم {{day}} إلى هذه السلسلة بعد. يتم حظر المطالبة على مستوى البروتوكول حتى يصل؛ عادةً ما يكتمل خلال دقائق.",
+    "contributingLoans": "القروض المساهمة ({{count}})",
+    "entryLoanLink": "قرض #{{id}}",
+    "entryOngoing": "جارٍ — {{rate}} USD/يوم فائدة",
+    "entryClosed": "مغلق — {{total}} USD على مدى {{days}} يوم",
+    "entryForfeited": "مُصادَر (مُحوَّل إلى الخزينة)",
+    "side": {
+      "lender": "مُقرض",
+      "borrower": "مُقترض"
+    }
   },
   "allowances": {
     "connectBody": "اربط محفظتك لعرض الأذونات.",

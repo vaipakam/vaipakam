@@ -356,6 +356,7 @@
     "claimRetryExecuted": "领取时 swap 重试",
     "lifRebateClaimed": "VPFI 费用折扣返还已领取",
     "stakingRewardsClaimed": "VPFI 质押奖励已领取",
+    "interactionRewardsClaimed": "平台交互奖励已领取",
     "vpfiPurchased": "已用 ETH 购买 VPFI",
     "vpfiDeposited": "VPFI 已质押",
     "vpfiWithdrawn": "VPFI 已取消质押",
@@ -420,12 +421,22 @@
     "title": "平台交互 VPFI 奖励",
     "subtitle": "您参与的贷款上每结算 1 USD 利息,您都将获得交互奖励池的每日份额,以 VPFI 支付。",
     "pendingLabel": "待领取",
+    "lifetimeClaimedLabel": "累计已领取",
     "claim": "领取",
     "claiming": "正在领取…",
     "claimFailed": "领取失败",
     "submitted": "领取已提交：",
     "waiting": "等待第 {{day}} 天最终确定",
-    "waitingTooltip": "第 {{day}} 天的跨链全球分母尚未广播到此链。在抵达之前,协议层会阻止领取;通常在几分钟内最终确定。"
+    "waitingTooltip": "第 {{day}} 天的跨链全球分母尚未广播到此链。在抵达之前,协议层会阻止领取;通常在几分钟内最终确定。",
+    "contributingLoans": "贡献贷款 ({{count}})",
+    "entryLoanLink": "贷款 #{{id}}",
+    "entryOngoing": "进行中 — {{rate}} USD/天 利息",
+    "entryClosed": "已关闭 — {{days}} 天共 {{total}} USD",
+    "entryForfeited": "已没收(转入 treasury)",
+    "side": {
+      "lender": "Lender",
+      "borrower": "Borrower"
+    }
   },
   "allowances": {
     "connectBody": "连接您的钱包以查看授权。",

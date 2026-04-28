@@ -38,7 +38,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](39);
+        selectors = new bytes4[](40);
         selectors[0] = TestMutatorFacet.setLoan.selector;
         selectors[1] = TestMutatorFacet.setOffer.selector;
         selectors[2] = TestMutatorFacet.setNextLoanId.selector;
@@ -82,6 +82,7 @@ contract HelperTest {
         // when `s.localEid == 0`; tests that exercise direct buys must
         // stamp a non-zero value via this selector during setUp.
         selectors[38] = TestMutatorFacet.setLocalEidForTest.selector;
+        selectors[39] = TestMutatorFacet.pushRewardEntry.selector;
         return selectors;
     }
 
@@ -563,7 +564,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](17);
+        selectors = new bytes4[](18);
         selectors[0] = InteractionRewardsFacet.claimInteractionRewards.selector;
         selectors[1] = InteractionRewardsFacet.setInteractionLaunchTimestamp.selector;
         selectors[2] = InteractionRewardsFacet.getInteractionLaunchTimestamp.selector;
@@ -581,6 +582,7 @@ contract HelperTest {
         selectors[14] = InteractionRewardsFacet.getInteractionCapVpfiPerEth.selector;
         selectors[15] = InteractionRewardsFacet.getInteractionCapVpfiPerEthRaw.selector;
         selectors[16] = InteractionRewardsFacet.sweepForfeitedInteractionRewards.selector;
+        selectors[17] = InteractionRewardsFacet.getUserRewardEntries.selector;
         return selectors;
     }
 

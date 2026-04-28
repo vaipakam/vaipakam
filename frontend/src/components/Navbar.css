@@ -57,7 +57,11 @@
   font-size: 0.9rem;
   font-weight: 500;
   color: var(--text-secondary);
-  padding: 8px 16px;
+  /* Tightened from `8px 16px` so the four nav slots (Learn / Verify /
+   * VPFI / Launch App) fit in less horizontal room and don't squeeze
+   * the brand logo. The four pills now have equal visual breathing
+   * room (10 px each side + the 8 px parent gap) without bunching. */
+  padding: 8px 10px;
   border-radius: var(--radius-full);
   transition: all 0.2s ease;
   /* Individual link text must never break across lines — the row should
@@ -434,12 +438,13 @@
      * on `.navbar-inner` strands the dropdowns mid-row, far from
      * the actions cluster they belong with. */
     margin-left: auto;
-    /* Then re-introduce a small visual seam between the Verify
-     * dropdown trigger and the Launch App pill — without it, the
-     * dropdown text reads as touching the brand-coloured Launch
-     * pill, which felt cramped. 24px is the same rhythm as the
-     * existing `.navbar-actions` gap below. */
-    margin-right: 24px;
+    /* Small visual seam between the rightmost dropdown trigger
+     * (VPFI) and the Launch App pill — without it, the dropdown
+     * text reads as touching the brand-coloured Launch pill,
+     * which felt cramped. Tightened from 24 px to 12 px so the
+     * Learn / Verify / VPFI / Launch App row consumes less
+     * horizontal space and the brand logo never has to shrink. */
+    margin-right: 12px;
   }
   .navbar-cta {
     display: inline-flex;

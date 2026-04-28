@@ -356,6 +356,7 @@
     "claimRetryExecuted": "Reintento de swap en reclamo",
     "lifRebateClaimed": "Reembolso de tarifa VPFI reclamado",
     "stakingRewardsClaimed": "Recompensas de staking VPFI reclamadas",
+    "interactionRewardsClaimed": "Recompensas por interacción reclamadas",
     "vpfiPurchased": "VPFI comprado con ETH",
     "vpfiDeposited": "VPFI puesto en stake",
     "vpfiWithdrawn": "VPFI retirado de stake",
@@ -420,12 +421,22 @@
     "title": "Recompensas VPFI por interacción con la plataforma",
     "subtitle": "Cada dólar de interés liquidado en un préstamo en el que participaste te otorga una participación diaria del pool de recompensas de interacción, pagada en VPFI.",
     "pendingLabel": "Pendiente",
+    "lifetimeClaimedLabel": "Reclamado total",
     "claim": "Reclamar",
     "claiming": "Reclamando…",
     "claimFailed": "Reclamo fallido",
     "submitted": "Reclamo enviado:",
     "waiting": "Esperando finalización del día {{day}}",
-    "waitingTooltip": "El denominador global cross-chain del día {{day}} aún no se ha transmitido a esta cadena. El reclamo está bloqueado a nivel de protocolo hasta que llegue; normalmente se finaliza en minutos."
+    "waitingTooltip": "El denominador global cross-chain del día {{day}} aún no se ha transmitido a esta cadena. El reclamo está bloqueado a nivel de protocolo hasta que llegue; normalmente se finaliza en minutos.",
+    "contributingLoans": "Préstamos contribuyentes ({{count}})",
+    "entryLoanLink": "Préstamo #{{id}}",
+    "entryOngoing": "En curso — {{rate}} USD/día de interés",
+    "entryClosed": "Cerrado — {{total}} USD durante {{days}} día(s)",
+    "entryForfeited": "Confiscado (enviado al tesoro)",
+    "side": {
+      "lender": "Prestamista",
+      "borrower": "Prestatario"
+    }
   },
   "allowances": {
     "connectBody": "Conecta tu billetera para ver las aprobaciones.",

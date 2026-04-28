@@ -512,4 +512,33 @@ contract InteractionRewardsFacet is
             aprBps = LibInteractionRewards.annualRateBpsForDay(d);
         }
     }
+
+    /// @notice Enumerate every reward entry registered for `user` —
+    ///         lender-side and borrower-side rows for each loan they
+    ///         participated in. Frontends use this to render a
+    ///         "contributing loans" breakdown alongside the
+    ///         {previewInteractionRewards} headline so users can see
+    ///         which loans drove their daily share of the pool.
+    /// @dev    Storage is sequential (`userRewardEntryIds[user]` →
+    ///         `rewardEntries[id]`); this view materialises both in one
+    ///         call. A loan that involved the user on both sides has
+    ///         two entries — one per side. Closed entries (`endDay > 0`)
+    ///         are still surfaced so the breakdown reads as a lifetime
+    ///         participation list, not just an open-now snapshot. The
+    ///         array length is bounded by the user's loan-participation
+    ///         count, so unbounded growth isn't a concern in practice.
+    /// @param  user Address whose entries to enumerate.
+    /// @return entries Full {RewardEntry} struct array in registration order.
+    function getUserRewardEntries(address user)
+        external
+        view
+        returns (LibVaipakam.RewardEntry[] memory entries)
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        uint256[] storage ids = s.userRewardEntryIds[user];
+        entries = new LibVaipakam.RewardEntry[](ids.length);
+        for (uint256 i = 0; i < ids.length; ++i) {
+            entries[i] = s.rewardEntries[ids[i]];
+        }
+    }
 }

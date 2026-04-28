@@ -280,6 +280,67 @@
   },
   {
     "type": "function",
+    "name": "getUserRewardEntries",
+    "inputs": [
+      {
+        "name": "user",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "entries",
+        "type": "tuple[]",
+        "internalType": "struct LibVaipakam.RewardEntry[]",
+        "components": [
+          {
+            "name": "user",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "loanId",
+            "type": "uint64",
+            "internalType": "uint64"
+          },
+          {
+            "name": "startDay",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "endDay",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "side",
+            "type": "uint8",
+            "internalType": "enum LibVaipakam.RewardSide"
+          },
+          {
+            "name": "processed",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
+            "name": "forfeited",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
+            "name": "perDayUSD18",
+            "type": "uint256",
+            "internalType": "uint256"
+          }
+        ]
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "previewInteractionRewards",
     "inputs": [
       {

@@ -356,6 +356,7 @@
     "claimRetryExecuted": "Nouvelle tentative de swap au moment du réclame",
     "lifRebateClaimed": "Rabais de frais VPFI réclamé",
     "stakingRewardsClaimed": "Récompenses de staking VPFI réclamées",
+    "interactionRewardsClaimed": "Récompenses d'interaction réclamées",
     "vpfiPurchased": "VPFI acheté avec ETH",
     "vpfiDeposited": "VPFI mis en stake",
     "vpfiWithdrawn": "VPFI retiré du stake",
@@ -420,12 +421,22 @@
     "title": "Récompenses VPFI d'interaction avec la plateforme",
     "subtitle": "Chaque dollar d'intérêts réglé sur un prêt auquel vous avez participé vous attribue une part quotidienne du pool de récompenses d'interaction, versée en VPFI.",
     "pendingLabel": "En attente",
+    "lifetimeClaimedLabel": "Réclamé à vie",
     "claim": "Réclamer",
     "claiming": "Réclamation…",
     "claimFailed": "Réclamation échouée",
     "submitted": "Réclamation soumise :",
     "waiting": "En attente de la finalisation du jour {{day}}",
-    "waitingTooltip": "Le dénominateur global inter-chaînes du jour {{day}} n'a pas encore été diffusé sur cette chaîne. La réclamation est bloquée au niveau du protocole jusqu'à son arrivée ; généralement finalisée en quelques minutes."
+    "waitingTooltip": "Le dénominateur global inter-chaînes du jour {{day}} n'a pas encore été diffusé sur cette chaîne. La réclamation est bloquée au niveau du protocole jusqu'à son arrivée ; généralement finalisée en quelques minutes.",
+    "contributingLoans": "Prêts contributeurs ({{count}})",
+    "entryLoanLink": "Prêt #{{id}}",
+    "entryOngoing": "En cours — {{rate}} USD/jour d'intérêts",
+    "entryClosed": "Fermé — {{total}} USD sur {{days}} jour(s)",
+    "entryForfeited": "Perdu (acheminé au trésor)",
+    "side": {
+      "lender": "Prêteur",
+      "borrower": "Emprunteur"
+    }
   },
   "allowances": {
     "connectBody": "Connectez votre portefeuille pour voir les autorisations.",

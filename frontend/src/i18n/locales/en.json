@@ -823,6 +823,7 @@
     "claimRetryExecuted": "Claim-time swap retry",
     "lifRebateClaimed": "VPFI fee-discount rebate claimed",
     "stakingRewardsClaimed": "VPFI staking rewards claimed",
+    "interactionRewardsClaimed": "Platform-interaction rewards claimed",
     "vpfiPurchased": "VPFI bought with ETH",
     "vpfiDeposited": "VPFI staked",
     "vpfiWithdrawn": "VPFI unstaked",
@@ -887,12 +888,22 @@
     "title": "Platform-interaction VPFI rewards",
     "subtitle": "Every USD of interest settled on a loan you participated in earns you a daily share of the interaction-rewards pool, paid in VPFI.",
     "pendingLabel": "Pending",
+    "lifetimeClaimedLabel": "Lifetime claimed",
     "claim": "Claim",
     "claiming": "Claiming…",
     "claimFailed": "Claim failed",
     "submitted": "Claim submitted:",
     "waiting": "Waiting on day {{day}} finalization",
-    "waitingTooltip": "Day {{day}}'s cross-chain global denominator hasn't been broadcast to this chain yet. Claim is blocked at the protocol layer until it lands; usually finalizes within minutes."
+    "waitingTooltip": "Day {{day}}'s cross-chain global denominator hasn't been broadcast to this chain yet. Claim is blocked at the protocol layer until it lands; usually finalizes within minutes.",
+    "contributingLoans": "Contributing loans ({{count}})",
+    "entryLoanLink": "Loan #{{id}}",
+    "entryOngoing": "Ongoing — {{rate}} USD/day interest",
+    "entryClosed": "Closed — {{total}} USD over {{days}} day(s)",
+    "entryForfeited": "Forfeited (routed to treasury)",
+    "side": {
+      "lender": "Lender",
+      "borrower": "Borrower"
+    }
   },
   "allowances": {
     "connectBody": "Connect your wallet to view allowances.",

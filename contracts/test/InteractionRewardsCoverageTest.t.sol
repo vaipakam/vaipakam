@@ -477,6 +477,56 @@ contract InteractionRewardsCoverageTest is SetupTest, IVaipakamErrors {
         assertEq(waitingForDay, 0, "no wait reason yet");
     }
 
+    // ─── getUserRewardEntries view ───────────────────────────────────────────
+
+    /// @dev Empty-state contract: a fresh address with no entries returns an
+    ///      empty array (not a revert), so the view is safe to call eagerly
+    ///      from frontends without first checking participation.
+    function testGetUserRewardEntriesEmptyForFreshAddress() public {
+        address fresh = makeAddr("fresh");
+        LibVaipakam.RewardEntry[] memory entries = _facet().getUserRewardEntries(fresh);
+        assertEq(entries.length, 0, "no entries for never-participated user");
+    }
+
+    /// @dev Populated state: pushing two entries (lender + borrower side of
+    ///      the same loan) materialises both back through the view, with
+    ///      every recorded field intact. Drives the bookkeeping via the
+    ///      TestMutatorFacet `pushRewardEntry` helper rather than the full
+    ///      LoanFacet.initiateLoan E2E — the view is a thin wrapper over
+    ///      storage so this exercises the read path's correctness without
+    ///      retesting registerLoan's write path (covered elsewhere).
+    function testGetUserRewardEntriesReturnsLenderAndBorrowerSides() public {
+        // Loan 42: alice as lender (5 USD/day), bob as borrower (5 USD/day).
+        _mut().pushRewardEntry(
+            alice,
+            42,
+            LibVaipakam.RewardSide.Lender,
+            5e18,
+            uint32(1)
+        );
+        _mut().pushRewardEntry(
+            bob,
+            42,
+            LibVaipakam.RewardSide.Borrower,
+            5e18,
+            uint32(1)
+        );
+
+        LibVaipakam.RewardEntry[] memory aliceEntries = _facet().getUserRewardEntries(alice);
+        LibVaipakam.RewardEntry[] memory bobEntries = _facet().getUserRewardEntries(bob);
+
+        assertEq(aliceEntries.length, 1, "alice has one entry (lender side of loan 42)");
+        assertEq(aliceEntries[0].loanId, 42);
+        assertEq(uint8(aliceEntries[0].side), uint8(LibVaipakam.RewardSide.Lender));
+        assertEq(aliceEntries[0].perDayUSD18, 5e18);
+        assertEq(aliceEntries[0].startDay, 1);
+        assertEq(aliceEntries[0].endDay, 0, "still open");
+
+        assertEq(bobEntries.length, 1, "bob has one entry (borrower side of loan 42)");
+        assertEq(bobEntries[0].loanId, 42);
+        assertEq(uint8(bobEntries[0].side), uint8(LibVaipakam.RewardSide.Borrower));
+    }
+
     // ─── Helpers ─────────────────────────────────────────────────────────────
 
     function _previewAmount(address user) internal view returns (uint256 amount) {

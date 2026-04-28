@@ -356,6 +356,7 @@
     "claimRetryExecuted": "請求時のスワップ再試行",
     "lifRebateClaimed": "VPFI手数料割引リベート請求",
     "stakingRewardsClaimed": "VPFIステーキング報酬請求",
+    "interactionRewardsClaimed": "プラットフォーム交流報酬請求",
     "vpfiPurchased": "ETHでVPFI購入",
     "vpfiDeposited": "VPFIステーキング",
     "vpfiWithdrawn": "VPFIアンステーキング",
@@ -420,12 +421,22 @@
     "title": "プラットフォーム交流VPFI報酬",
     "subtitle": "あなたが参加したローンで決済された利息1USDごとに、インタラクション報酬プールから日次シェアがVPFIで支払われます。",
     "pendingLabel": "保留中",
+    "lifetimeClaimedLabel": "累計請求済み",
     "claim": "請求",
     "claiming": "請求中…",
     "claimFailed": "請求失敗",
     "submitted": "請求送信済み:",
     "waiting": "日 {{day}} の確定待ち",
-    "waitingTooltip": "日 {{day}} のクロスチェーンのグローバル分母がまだこのチェーンにブロードキャストされていません。到着するまでプロトコルレイヤーで請求がブロックされます。通常は数分以内に確定します。"
+    "waitingTooltip": "日 {{day}} のクロスチェーンのグローバル分母がまだこのチェーンにブロードキャストされていません。到着するまでプロトコルレイヤーで請求がブロックされます。通常は数分以内に確定します。",
+    "contributingLoans": "貢献ローン ({{count}})",
+    "entryLoanLink": "ローン #{{id}}",
+    "entryOngoing": "進行中 — {{rate}} USD/日 の利息",
+    "entryClosed": "終了 — {{days}}日間で{{total}} USD",
+    "entryForfeited": "没収 (treasuryへ送付)",
+    "side": {
+      "lender": "貸し手",
+      "borrower": "借り手"
+    }
   },
   "allowances": {
     "connectBody": "許可額を表示するためにウォレットを接続してください。",

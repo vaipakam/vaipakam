@@ -356,6 +356,7 @@
     "claimRetryExecuted": "Claim நேரத்தில் swap மீண்டும் முயற்சி",
     "lifRebateClaimed": "VPFI கட்டண தள்ளுபடி திரும்பப்பெறல் claim",
     "stakingRewardsClaimed": "VPFI staking வெகுமதிகள் claim",
+    "interactionRewardsClaimed": "Platform-interaction வெகுமதிகள் claim",
     "vpfiPurchased": "ETH ஐ பயன்படுத்தி VPFI வாங்கப்பட்டது",
     "vpfiDeposited": "VPFI staked",
     "vpfiWithdrawn": "VPFI unstaked",
@@ -420,12 +421,22 @@
     "title": "Platform-interaction VPFI வெகுமதிகள்",
     "subtitle": "நீங்கள் பங்கேற்ற loan-இல் தீர்க்கப்பட்ட ஒவ்வொரு USD வட்டிக்கும், interaction rewards pool-இன் தினசரி பங்கு VPFI-ஆக பெறுகிறீர்கள்.",
     "pendingLabel": "நிலுவையில்",
+    "lifetimeClaimedLabel": "மொத்தம் claim செய்யப்பட்டது",
     "claim": "Claim",
     "claiming": "Claim செய்கிறது…",
     "claimFailed": "Claim தோல்வியடைந்தது",
     "submitted": "Claim சமர்ப்பிக்கப்பட்டது:",
     "waiting": "நாள் {{day}} முடிவுக்கு காத்திருக்கிறது",
-    "waitingTooltip": "நாள் {{day}}-இன் cross-chain global denominator இந்த chain-இற்கு இன்னும் அனுப்பப்படவில்லை. வரும் வரை protocol layer-இல் claim தடுக்கப்படுகிறது; பொதுவாக சில நிமிடங்களில் முடிவடைகிறது."
+    "waitingTooltip": "நாள் {{day}}-இன் cross-chain global denominator இந்த chain-இற்கு இன்னும் அனுப்பப்படவில்லை. வரும் வரை protocol layer-இல் claim தடுக்கப்படுகிறது; பொதுவாக சில நிமிடங்களில் முடிவடைகிறது.",
+    "contributingLoans": "பங்களிக்கும் loans ({{count}})",
+    "entryLoanLink": "Loan #{{id}}",
+    "entryOngoing": "தொடரும் — {{rate}} USD/நாள் வட்டி",
+    "entryClosed": "மூடப்பட்டது — {{days}} நாட்களில் {{total}} USD",
+    "entryForfeited": "பறிமுதல் (treasury-க்கு அனுப்பப்பட்டது)",
+    "side": {
+      "lender": "Lender",
+      "borrower": "Borrower"
+    }
   },
   "allowances": {
     "connectBody": "அனுமதிகளைக் காண உங்கள் வாலெட்டை இணைக்கவும்.",
