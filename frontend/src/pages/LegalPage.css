@@ -1,6 +1,9 @@
 .legal-page {
   max-width: 780px;
-  padding-top: 32px;
+  /* Clear the fixed 72 px Navbar with the same 32 px breathing room the
+   * page used to have when it stacked under a non-fixed nav. There's no
+   * global body padding-top, so each page provides its own. */
+  padding-top: 104px;
   padding-bottom: 48px;
   color: var(--text-primary);
   line-height: 1.6;
