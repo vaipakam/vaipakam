@@ -43,7 +43,10 @@ function PublicNftVerifier() {
   return (
     <>
       <Navbar />
-      <main className="container" style={{ paddingTop: 32, paddingBottom: 32 }}>
+      {/* The Navbar is `position: fixed` at 72 px height. paddingTop = 72
+          (Navbar) + 32 (breathing room) so the page heading isn't hidden
+          behind the bar on first paint. */}
+      <main className="container" style={{ paddingTop: 104, paddingBottom: 32 }}>
         <NftVerifier />
       </main>
       <Footer />
@@ -62,7 +65,9 @@ function PublicBuyVPFI() {
   return (
     <>
       <Navbar />
-      <main className="container" style={{ paddingTop: 32, paddingBottom: 32 }}>
+      {/* See PublicNftVerifier above — paddingTop accounts for the fixed
+          72 px Navbar plus a 32 px breathing-room buffer. */}
+      <main className="container" style={{ paddingTop: 104, paddingBottom: 32 }}>
         <BuyVPFI />
       </main>
       <Footer />

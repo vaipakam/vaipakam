@@ -1,5 +1,8 @@
 .public-dashboard {
-  padding-top: 32px;
+  /* Clear the fixed 72 px Navbar with the same 32 px breathing room the
+   * page used to have. Each public-shell page provides its own offset
+   * since there's no global body padding-top set. */
+  padding-top: 104px;
   padding-bottom: 64px;
   min-height: calc(100vh - 64px);
   background: var(--bg);
