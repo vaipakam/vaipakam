@@ -33,6 +33,8 @@ import {
   matchesFilter as matchesFilterPure,
   rankLenderSide as rankLenderSidePure,
   rankBorrowerSide as rankBorrowerSidePure,
+  rankByDistanceToAnchor as rankByDistanceToAnchorPure,
+  rankByRecency as rankByRecencyPure,
   type LiquidityFilter as LibLiquidityFilter,
 } from '../lib/offerBookRanking';
 import './OfferBook.css';
@@ -656,9 +658,31 @@ export default function OfferBook() {
     (list: OfferData[]) => rankBorrowerSidePure(list, anchorRateBps),
     [anchorRateBps],
   );
+  // Selection-step ranker. The per-side cap below uses this list (closest
+  // to anchor first) so the cap retains the most economically relevant
+  // rows. The within-card display order is then re-applied by
+  // `rankLenderSide` / `rankBorrowerSide` after the slice — closest entries
+  // get through the gate, then they're laid out top-to-bottom by rate
+  // direction (DESC for lender, ASC for borrower) so the depth-chart
+  // anchor-in-the-middle visualisation is preserved.
+  const rankByDistance = useCallback(
+    (list: OfferData[]) => rankByDistanceToAnchorPure(list, anchorRateBps),
+    [anchorRateBps],
+  );
 
-  const lenderAll = useMemo(() => rankLenderSide(filtered.filter((o: OfferData) => o.offerType === 0)), [filtered, rankLenderSide]);
-  const borrowerAll = useMemo(() => rankBorrowerSide(filtered.filter((o: OfferData) => o.offerType === 1)), [filtered, rankBorrowerSide]);
+  // Full filtered list per side. Source the per-side cap slices from and
+  // the pagination total counts. Open view ranks by closest-to-anchor
+  // (most economically relevant first); Closed view ranks by recency
+  // (most recently filled / canceled first) since the market anchor has
+  // no meaning for historical fills.
+  const lenderAll = useMemo(() => {
+    const lenders = filtered.filter((o: OfferData) => o.offerType === 0);
+    return statusView === 'closed' ? rankByRecencyPure(lenders) : rankByDistance(lenders);
+  }, [filtered, rankByDistance, statusView]);
+  const borrowerAll = useMemo(() => {
+    const borrowers = filtered.filter((o: OfferData) => o.offerType === 1);
+    return statusView === 'closed' ? rankByRecencyPure(borrowers) : rankByDistance(borrowers);
+  }, [filtered, rankByDistance, statusView]);
 
   // Single-side tabs get true pagination (page 1..N of perSide rows each);
   // the 'both' tab keeps the existing top-N-of-each-side layout so the
@@ -671,20 +695,28 @@ export default function OfferBook() {
   const totalPages = activeSideList ? Math.max(1, Math.ceil(activeSideList.length / perSide)) : 1;
   const safePage = Math.min(page, totalPages);
   const pageStart = (safePage - 1) * perSide;
-  const lenderOffers = useMemo(
-    () =>
-      tab === 'lender'
-        ? lenderAll.slice(pageStart, pageStart + perSide)
-        : lenderAll.slice(0, perSide),
-    [lenderAll, tab, pageStart, perSide],
-  );
-  const borrowerOffers = useMemo(
-    () =>
-      tab === 'borrower'
-        ? borrowerAll.slice(pageStart, pageStart + perSide)
-        : borrowerAll.slice(0, perSide),
-    [borrowerAll, tab, pageStart, perSide],
-  );
+  // Two-step pipeline per side:
+  //   1. slice from the side list (Open: closest-to-anchor first; Closed:
+  //      most recently filled first) so the per-side cap keeps the most
+  //      relevant rows.
+  //   2. Open view applies the rate-direction display sort (lender DESC /
+  //      borrower ASC) so the depth-chart anchor-in-the-middle layout
+  //      holds within each card. Closed view keeps the recency order
+  //      throughout — there's no market anchor for historical fills, so
+  //      the rate-direction sort would just shuffle them away from the
+  //      "newest first" expectation.
+  const lenderOffers = useMemo(() => {
+    const slice = tab === 'lender'
+      ? lenderAll.slice(pageStart, pageStart + perSide)
+      : lenderAll.slice(0, perSide);
+    return statusView === 'closed' ? slice : rankLenderSide(slice);
+  }, [lenderAll, tab, pageStart, perSide, rankLenderSide, statusView]);
+  const borrowerOffers = useMemo(() => {
+    const slice = tab === 'borrower'
+      ? borrowerAll.slice(pageStart, pageStart + perSide)
+      : borrowerAll.slice(0, perSide);
+    return statusView === 'closed' ? slice : rankBorrowerSide(slice);
+  }, [borrowerAll, tab, pageStart, perSide, rankBorrowerSide, statusView]);
 
   // The connected wallet's own open offers — derived BEFORE market filters
   // so a user who narrowed the view can still see their own listings. The

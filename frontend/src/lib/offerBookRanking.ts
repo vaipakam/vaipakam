@@ -47,6 +47,49 @@ export function absDelta(a: bigint, b: bigint): bigint {
 }
 
 /**
+ * Reverse-chronological ordering for the Closed offers view. The Open
+ * view uses an anchor-based ranking (closest to market first), but for
+ * the Closed view the anchor is meaningless — these offers have already
+ * been accepted or canceled, so the natural order is "most recent
+ * fill / cancel first". `id` is monotonic so higher id ≈ newer offer
+ * (≈ more recently closed in an active market).
+ */
+export function rankByRecency<T extends RankableOffer>(list: T[]): T[] {
+  return [...list].sort((a, b) => (a.id < b.id ? 1 : a.id > b.id ? -1 : 0));
+}
+
+/**
+ * Selection-step ranking: order a list by distance from the market anchor,
+ * closest first. Used by the OfferBook to decide which entries make it
+ * through the per-side cap — the rate-direction sorts (`rankLenderSide` /
+ * `rankBorrowerSide`) keep top-N entries that are FARTHEST from the
+ * anchor on the lender side because the lender list is rate-DESC. This
+ * helper inverts that selection so the per-side cap retains the most
+ * economically relevant rows (the ones nearest the clearing price)
+ * regardless of which display direction the card uses afterward.
+ *
+ * When `anchor` is null (no recently-accepted offer matches the current
+ * filter), the helper treats the anchor as 0 — which collapses
+ * "distance to anchor" into "rate itself", so the lowest-rate offers
+ * surface first. That's the most aggressive offers on each side, a
+ * sensible fallback before any market discovery has happened.
+ *
+ * Ties on distance fall back to newest-id-first.
+ */
+export function rankByDistanceToAnchor<T extends RankableOffer>(
+  list: T[],
+  anchor: bigint | null,
+): T[] {
+  const a = anchor ?? 0n;
+  return [...list].sort((x, y) => {
+    const dx = absDelta(x.interestRateBps, a);
+    const dy = absDelta(y.interestRateBps, a);
+    if (dx !== dy) return dx < dy ? -1 : 1;
+    return x.id < y.id ? 1 : -1;
+  });
+}
+
+/**
  * Lender offers: rate DESCENDING by default. With `rankBorrowerSide`
  * sorted ASCENDING, the market-anchor rate sits naturally in the visual
  * middle when both side cards are shown together (highest lender rates

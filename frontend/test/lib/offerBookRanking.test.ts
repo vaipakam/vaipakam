@@ -4,6 +4,8 @@ import {
   absDelta,
   rankLenderSide,
   rankBorrowerSide,
+  rankByDistanceToAnchor,
+  rankByRecency,
   type OfferFilters,
 } from '../../src/lib/offerBookRanking';
 
@@ -191,5 +193,55 @@ describe('rankBorrowerSide', () => {
       mkOffer({ id: 3n, interestRateBps: 400n }),
     ];
     expect(rankBorrowerSide(list, 500n).map((o) => o.id)).toEqual([5n, 3n, 1n]);
+  });
+});
+
+describe('rankByRecency', () => {
+  it('orders by id descending — newest first', () => {
+    const list = [
+      mkOffer({ id: 1n, interestRateBps: 500n }),
+      mkOffer({ id: 7n, interestRateBps: 100n }),
+      mkOffer({ id: 3n, interestRateBps: 800n }),
+    ];
+    expect(rankByRecency(list).map((o) => o.id)).toEqual([7n, 3n, 1n]);
+  });
+
+  it('returns an empty array unchanged', () => {
+    expect(rankByRecency([])).toEqual([]);
+  });
+});
+
+describe('rankByDistanceToAnchor', () => {
+  it('orders by absolute distance to the anchor, closest first', () => {
+    const list = [
+      mkOffer({ id: 1n, interestRateBps: 300n }),
+      mkOffer({ id: 2n, interestRateBps: 400n }),
+      mkOffer({ id: 3n, interestRateBps: 500n }),
+      mkOffer({ id: 4n, interestRateBps: 600n }),
+      mkOffer({ id: 5n, interestRateBps: 800n }),
+    ];
+    // Anchor 500 → distances 200, 100, 0, 100, 300. Tie at 100 broken by
+    // newest id first (id 4 over id 2), then 300 vs 800 by distance.
+    const out = rankByDistanceToAnchor(list, 500n);
+    expect(out.map((o) => o.interestRateBps)).toEqual([500n, 600n, 400n, 300n, 800n]);
+  });
+
+  it('falls back to "anchor = 0" when no anchor is provided — surfaces the most aggressive (lowest-rate) offers', () => {
+    const list = [
+      mkOffer({ id: 1n, interestRateBps: 100n }),
+      mkOffer({ id: 2n, interestRateBps: 50n }),
+      mkOffer({ id: 3n, interestRateBps: 200n }),
+    ];
+    const out = rankByDistanceToAnchor(list, null);
+    expect(out.map((o) => o.interestRateBps)).toEqual([50n, 100n, 200n]);
+  });
+
+  it('breaks ties on distance by newest id first', () => {
+    const list = [
+      mkOffer({ id: 1n, interestRateBps: 600n }),
+      mkOffer({ id: 5n, interestRateBps: 600n }),
+      mkOffer({ id: 3n, interestRateBps: 600n }),
+    ];
+    expect(rankByDistanceToAnchor(list, 500n).map((o) => o.id)).toEqual([5n, 3n, 1n]);
   });
 });
