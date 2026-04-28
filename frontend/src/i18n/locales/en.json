@@ -626,6 +626,16 @@
     "nftContractAddress": "NFT Contract Address",
     "approving": "Approving Tokens…",
     "creating": "Creating Offer…",
+    "validate": {
+      "lendingAssetInvalid": "Lending asset address is invalid.",
+      "amountNonPositive": "Amount must be greater than zero.",
+      "rateNegative": "Interest rate must be non-negative.",
+      "durationOutOfRange": "Duration must be between {{min}} and {{max}} days.",
+      "nftTokenIdRequired": "NFT Token ID is required.",
+      "collateralAssetInvalid": "Collateral asset address is invalid.",
+      "prepayAssetInvalid": "Prepayment asset address is invalid.",
+      "fallbackConsentRequired": "You must agree to the abnormal-market liquidation fallback terms before creating an offer."
+    },
     "hintAssetTypeAuto": "Auto-detected from the lending-asset contract address. Paste or pick an address below to populate this.",
     "hintCollateralAssetTypeAuto": "Auto-detected from the collateral contract address.",
     "hintNftAddressManual": "Enter the NFT collection's contract address manually.",

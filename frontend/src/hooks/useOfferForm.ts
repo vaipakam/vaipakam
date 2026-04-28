@@ -6,6 +6,7 @@ import {
   type OfferFormState,
   type CreateOfferPayload,
   type OfferPayloadDecimals,
+  type OfferFormError,
 } from '../lib/offerSchema';
 
 type FieldKey = keyof OfferFormState;
@@ -42,7 +43,7 @@ export function useOfferForm(overrides?: Partial<OfferFormState>) {
 
   const reset = () => dispatch({ type: 'RESET' });
 
-  const validate = (): string | null => validateOfferForm(state);
+  const validate = (): OfferFormError | null => validateOfferForm(state);
 
   const toPayload = (decimals: OfferPayloadDecimals = {}): CreateOfferPayload =>
     toCreateOfferPayload(state, decimals);

@@ -159,6 +159,16 @@
     "nftContractAddress": "NFT-Vertragsadresse",
     "approving": "Tokens werden genehmigt…",
     "creating": "Angebot wird erstellt…",
+    "validate": {
+      "lendingAssetInvalid": "Adresse des Kreditvermögens ist ungültig.",
+      "amountNonPositive": "Der Betrag muss größer als null sein.",
+      "rateNegative": "Der Zinssatz muss nicht-negativ sein.",
+      "durationOutOfRange": "Die Laufzeit muss zwischen {{min}} und {{max}} Tagen liegen.",
+      "nftTokenIdRequired": "NFT-Token-ID ist erforderlich.",
+      "collateralAssetInvalid": "Adresse der Sicherheit ist ungültig.",
+      "prepayAssetInvalid": "Adresse des Vorauszahlungs-Vermögens ist ungültig.",
+      "fallbackConsentRequired": "Sie müssen den Bedingungen für die Liquidation bei abnormalen Marktverhältnissen zustimmen, bevor Sie ein Angebot erstellen."
+    },
     "hintAssetTypeAuto": "Automatisch aus der Vertragsadresse des zu verleihenden Assets erkannt. Fügen Sie unten eine Adresse ein oder wählen Sie eine aus, um dieses Feld zu füllen.",
     "hintCollateralAssetTypeAuto": "Automatisch aus der Vertragsadresse der Sicherheit erkannt.",
     "hintNftAddressManual": "Geben Sie die Vertragsadresse der NFT-Sammlung manuell ein.",

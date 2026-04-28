@@ -25,37 +25,39 @@ function mkForm(over: Partial<OfferFormState> = {}): OfferFormState {
 
 describe('validateOfferForm', () => {
   it('rejects a malformed lending address', () => {
-    expect(validateOfferForm(mkForm({ lendingAsset: BAD_ADDR }))).toMatch(
-      /Lending asset address/,
-    );
+    expect(validateOfferForm(mkForm({ lendingAsset: BAD_ADDR }))).toEqual({
+      code: 'lendingAssetInvalid',
+    });
   });
 
   it('rejects a missing or non-positive amount', () => {
-    expect(validateOfferForm(mkForm({ amount: '' }))).toMatch(/Amount/);
-    expect(validateOfferForm(mkForm({ amount: '0' }))).toMatch(/Amount/);
-    expect(validateOfferForm(mkForm({ amount: '-5' }))).toMatch(/Amount/);
+    expect(validateOfferForm(mkForm({ amount: '' }))).toEqual({ code: 'amountNonPositive' });
+    expect(validateOfferForm(mkForm({ amount: '0' }))).toEqual({ code: 'amountNonPositive' });
+    expect(validateOfferForm(mkForm({ amount: '-5' }))).toEqual({ code: 'amountNonPositive' });
   });
 
   it('rejects negative or blank interest rates but allows zero', () => {
-    expect(validateOfferForm(mkForm({ interestRate: '' }))).toMatch(
-      /Interest rate/,
-    );
-    expect(validateOfferForm(mkForm({ interestRate: '-1' }))).toMatch(
-      /Interest rate/,
-    );
+    expect(validateOfferForm(mkForm({ interestRate: '' }))).toEqual({ code: 'rateNegative' });
+    expect(validateOfferForm(mkForm({ interestRate: '-1' }))).toEqual({ code: 'rateNegative' });
     expect(validateOfferForm(mkForm({ interestRate: '0' }))).toBeNull();
   });
 
   it('enforces duration bounds [1, 365]', () => {
-    expect(validateOfferForm(mkForm({ durationDays: '0' }))).toMatch(
-      /Duration/,
-    );
-    expect(validateOfferForm(mkForm({ durationDays: '366' }))).toMatch(
-      /Duration/,
-    );
-    expect(validateOfferForm(mkForm({ durationDays: 'nope' }))).toMatch(
-      /Duration/,
-    );
+    expect(validateOfferForm(mkForm({ durationDays: '0' }))).toEqual({
+      code: 'durationOutOfRange',
+      min: 1,
+      max: 365,
+    });
+    expect(validateOfferForm(mkForm({ durationDays: '366' }))).toEqual({
+      code: 'durationOutOfRange',
+      min: 1,
+      max: 365,
+    });
+    expect(validateOfferForm(mkForm({ durationDays: 'nope' }))).toEqual({
+      code: 'durationOutOfRange',
+      min: 1,
+      max: 365,
+    });
     expect(validateOfferForm(mkForm({ durationDays: '1' }))).toBeNull();
     expect(validateOfferForm(mkForm({ durationDays: '365' }))).toBeNull();
   });
@@ -63,10 +65,10 @@ describe('validateOfferForm', () => {
   it('requires a tokenId for NFT rentals (ERC-721 / ERC-1155)', () => {
     expect(
       validateOfferForm(mkForm({ assetType: 'erc721', tokenId: '' })),
-    ).toMatch(/Token ID/);
+    ).toEqual({ code: 'nftTokenIdRequired' });
     expect(
       validateOfferForm(mkForm({ assetType: 'erc1155', tokenId: '' })),
-    ).toMatch(/Token ID/);
+    ).toEqual({ code: 'nftTokenIdRequired' });
     expect(
       validateOfferForm(mkForm({ assetType: 'erc721', tokenId: '42' })),
     ).toBeNull();
@@ -75,10 +77,10 @@ describe('validateOfferForm', () => {
   it('validates collateral + prepay addresses when provided', () => {
     expect(
       validateOfferForm(mkForm({ collateralAsset: BAD_ADDR })),
-    ).toMatch(/Collateral asset address/);
+    ).toEqual({ code: 'collateralAssetInvalid' });
     expect(
       validateOfferForm(mkForm({ prepayAsset: BAD_ADDR })),
-    ).toMatch(/Prepayment asset address/);
+    ).toEqual({ code: 'prepayAssetInvalid' });
   });
 
   it('passes a minimally-valid lender-side ERC-20 offer', () => {

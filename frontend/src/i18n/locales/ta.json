@@ -159,6 +159,16 @@
     "nftContractAddress": "NFT ஒப்பந்த முகவரி",
     "approving": "டோக்கன்கள் ஒப்புதல் வழங்கப்படுகிறது…",
     "creating": "வாய்ப்பு உருவாக்கப்படுகிறது…",
+    "validate": {
+      "lendingAssetInvalid": "Lending asset முகவரி தவறானது.",
+      "amountNonPositive": "தொகை பூஜ்ஜியத்தை விட அதிகமாக இருக்க வேண்டும்.",
+      "rateNegative": "வட்டி விகிதம் எதிர்மறையாக இருக்க முடியாது.",
+      "durationOutOfRange": "காலம் {{min}} மற்றும் {{max}} நாட்களுக்கு இடையே இருக்க வேண்டும்.",
+      "nftTokenIdRequired": "NFT Token ID தேவை.",
+      "collateralAssetInvalid": "Collateral asset முகவரி தவறானது.",
+      "prepayAssetInvalid": "Prepayment asset முகவரி தவறானது.",
+      "fallbackConsentRequired": "வாய்ப்பை உருவாக்கும் முன், அசாதாரண சந்தை fallback liquidation விதிமுறைகளை ஏற்றுக்கொள்ள வேண்டும்."
+    },
     "hintAssetTypeAuto": "கடனளிக்கும் சொத்தின் ஒப்பந்த முகவரியிலிருந்து இது தானாக கண்டறியப்பட்டது. இதை நிரப்ப கீழே ஒரு முகவரியை ஒட்டவும் அல்லது தேர்வு செய்யவும்.",
     "hintCollateralAssetTypeAuto": "பிணைய ஒப்பந்த முகவரியிலிருந்து தானாக கண்டறியப்பட்டது.",
     "hintNftAddressManual": "NFT தொகுப்பின் ஒப்பந்த முகவரியை கையேடாக உள்ளிடவும்.",

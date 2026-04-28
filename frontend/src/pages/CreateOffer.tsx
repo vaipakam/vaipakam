@@ -157,6 +157,21 @@ export default function CreateOffer() {
     return !Number.isFinite(n) || n < MIN_OFFER_DURATION_DAYS || n > MAX_OFFER_DURATION_DAYS;
   })();
 
+  /**
+   * Maps a `validateOfferForm` error to a localised user-facing string.
+   * Each error code maps 1:1 to an `i18n` key under
+   * `createOffer.validate.<code>`. The duration-out-of-range case
+   * interpolates the live MIN/MAX bounds so the locale string can use
+   * `{{min}}` / `{{max}}` placeholders.
+   */
+  const formatValidationError = (err: ReturnType<typeof validate>): string => {
+    if (!err) return '';
+    if (err.code === 'durationOutOfRange') {
+      return t('createOffer.validate.durationOutOfRange', { min: err.min, max: err.max });
+    }
+    return t(`createOffer.validate.${err.code}`);
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!address) return;
@@ -173,13 +188,14 @@ export default function CreateOffer() {
 
     const validationError = validate();
     if (validationError) {
-      setError(validationError);
+      const localized = formatValidationError(validationError);
+      setError(localized);
       emit({
         ...ctx,
         step: "validate-form",
         status: "failure",
         errorType: "validation",
-        errorMessage: validationError,
+        errorMessage: localized,
       });
       return;
     }
@@ -1024,22 +1040,33 @@ export default function CreateOffer() {
         />
 
         <div className="form-actions">
-          <button
-            type="submit"
-            className="btn btn-primary"
-            disabled={step !== "form" || !form.fallbackConsent}
-            data-tooltip={
-              step === "form" && !form.fallbackConsent
-                ? t('riskDisclosures.checkboxLabel')
-                : undefined
-            }
-          >
-            {step === "approving"
-              ? t('createOffer.approving')
-              : step === "creating"
-                ? t('createOffer.creating')
-                : t('appNav.createOffer')}
-          </button>
+          {/* Pre-flight validation runs the same `validateOfferForm` shape
+              the submit handler uses. Disabling the button (with the
+              reason as a tooltip) replaces the previous "click → see
+              error" loop, so users with empty asset addresses, a zero
+              amount, an out-of-range duration, or no fallback-consent
+              checkbox now see why the button is greyed out before
+              clicking. */}
+          {(() => {
+            const validationError = validate();
+            const tooltip = step === "form" && validationError
+              ? formatValidationError(validationError)
+              : undefined;
+            return (
+              <button
+                type="submit"
+                className="btn btn-primary"
+                disabled={step !== "form" || validationError !== null}
+                data-tooltip={tooltip}
+              >
+                {step === "approving"
+                  ? t('createOffer.approving')
+                  : step === "creating"
+                    ? t('createOffer.creating')
+                    : t('appNav.createOffer')}
+              </button>
+            );
+          })()}
           <button
             type="button"
             className="btn btn-secondary"

@@ -118,12 +118,15 @@ export function AssetPicker({
 
   return (
     <div className="asset-picker" ref={rootRef}>
-      {label && (
-        <label className="form-label">
-          {label}
-          {required && <span className="asset-picker-required">*</span>}
-        </label>
-      )}
+      {/* The `required` prop still gates the underlying `<input required>` /
+          `<select required>` for browser validation hooks (and the search-
+          combobox path passes it through). The visible red asterisk used
+          to render here was dropped — it was the only field on the Create
+          Offer form with a required-marker, which made the other 8+
+          required fields look optional by comparison. The submit button's
+          `validateOfferForm` gating + tooltip already surfaces every
+          missing field's reason live, so the asterisk was redundant. */}
+      {label && <label className="form-label">{label}</label>}
 
       {platformSupported ? (
         <>

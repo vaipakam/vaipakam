@@ -84,27 +84,48 @@ export interface CreateOfferPayload {
 }
 
 /**
+ * Discriminated error returned by {@link validateOfferForm}. Each `code`
+ * maps to an `i18n` key under `createOffer.validate.<code>` so React
+ * callers can localise without the schema module needing to import any
+ * translator. `durationOutOfRange` carries the bound values as params
+ * so the locale string can interpolate them.
+ */
+export type OfferFormError =
+  | { code: 'lendingAssetInvalid' }
+  | { code: 'amountNonPositive' }
+  | { code: 'rateNegative' }
+  | { code: 'durationOutOfRange'; min: number; max: number }
+  | { code: 'nftTokenIdRequired' }
+  | { code: 'collateralAssetInvalid' }
+  | { code: 'prepayAssetInvalid' }
+  | { code: 'fallbackConsentRequired' };
+
+/**
  * Shallow field-by-field validation. Returns the first error found, or null
  * when everything looks submittable. We intentionally keep this simple —
  * the contract re-validates everything, so this is purely UX.
  */
-export function validateOfferForm(s: OfferFormState): string | null {
-  if (!ADDRESS_RE.test(s.lendingAsset)) return 'Lending asset address is invalid.';
-  if (!s.amount || Number(s.amount) <= 0) return 'Amount must be greater than zero.';
-  if (s.interestRate === '' || Number(s.interestRate) < 0) return 'Interest rate must be non-negative.';
+export function validateOfferForm(s: OfferFormState): OfferFormError | null {
+  if (!ADDRESS_RE.test(s.lendingAsset)) return { code: 'lendingAssetInvalid' };
+  if (!s.amount || Number(s.amount) <= 0) return { code: 'amountNonPositive' };
+  if (s.interestRate === '' || Number(s.interestRate) < 0) return { code: 'rateNegative' };
   const duration = Number(s.durationDays);
   if (!Number.isFinite(duration) || duration < MIN_OFFER_DURATION_DAYS || duration > MAX_OFFER_DURATION_DAYS) {
-    return `Duration must be between ${MIN_OFFER_DURATION_DAYS} and ${MAX_OFFER_DURATION_DAYS} days.`;
+    return {
+      code: 'durationOutOfRange',
+      min: MIN_OFFER_DURATION_DAYS,
+      max: MAX_OFFER_DURATION_DAYS,
+    };
   }
-  if (isNFTRental(s.assetType) && !s.tokenId) return 'NFT Token ID is required.';
+  if (isNFTRental(s.assetType) && !s.tokenId) return { code: 'nftTokenIdRequired' };
   if (s.collateralAsset && !ADDRESS_RE.test(s.collateralAsset)) {
-    return 'Collateral asset address is invalid.';
+    return { code: 'collateralAssetInvalid' };
   }
   if (s.prepayAsset && !ADDRESS_RE.test(s.prepayAsset)) {
-    return 'Prepayment asset address is invalid.';
+    return { code: 'prepayAssetInvalid' };
   }
   if (!s.fallbackConsent) {
-    return 'You must agree to the abnormal-market liquidation fallback terms before creating an offer.';
+    return { code: 'fallbackConsentRequired' };
   }
   return null;
 }

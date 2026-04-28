@@ -159,6 +159,16 @@
     "nftContractAddress": "NFT 컨트랙트 주소",
     "approving": "토큰 승인 중…",
     "creating": "오퍼 생성 중…",
+    "validate": {
+      "lendingAssetInvalid": "대출 자산 주소가 유효하지 않습니다.",
+      "amountNonPositive": "금액은 0보다 커야 합니다.",
+      "rateNegative": "금리는 음수가 아니어야 합니다.",
+      "durationOutOfRange": "기간은 {{min}}일에서 {{max}}일 사이여야 합니다.",
+      "nftTokenIdRequired": "NFT 토큰 ID가 필요합니다.",
+      "collateralAssetInvalid": "담보 자산 주소가 유효하지 않습니다.",
+      "prepayAssetInvalid": "선납 자산 주소가 유효하지 않습니다.",
+      "fallbackConsentRequired": "오퍼를 생성하기 전에 비정상 시장 청산 폴백 조건에 동의해야 합니다."
+    },
     "hintAssetTypeAuto": "대여 자산 컨트랙트 주소에서 자동 감지됩니다. 아래에 주소를 붙여넣거나 선택하여 이 항목을 채우세요.",
     "hintCollateralAssetTypeAuto": "담보 컨트랙트 주소에서 자동 감지됩니다.",
     "hintNftAddressManual": "NFT 컬렉션의 컨트랙트 주소를 수동으로 입력하세요.",

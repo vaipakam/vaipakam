@@ -159,6 +159,16 @@
     "nftContractAddress": "NFT कॉन्ट्रैक्ट पता",
     "approving": "टोकन अप्रूव हो रहे हैं…",
     "creating": "ऑफर बनाया जा रहा है…",
+    "validate": {
+      "lendingAssetInvalid": "Lending asset का पता अमान्य है।",
+      "amountNonPositive": "राशि शून्य से अधिक होनी चाहिए।",
+      "rateNegative": "ब्याज दर ऋणात्मक नहीं हो सकती।",
+      "durationOutOfRange": "अवधि {{min}} से {{max}} दिनों के बीच होनी चाहिए।",
+      "nftTokenIdRequired": "NFT Token ID आवश्यक है।",
+      "collateralAssetInvalid": "Collateral asset का पता अमान्य है।",
+      "prepayAssetInvalid": "Prepayment asset का पता अमान्य है।",
+      "fallbackConsentRequired": "ऑफर बनाने से पहले आपको असामान्य बाज़ार fallback liquidation शर्तों से सहमत होना होगा।"
+    },
     "hintAssetTypeAuto": "ऋण संपत्ति के कॉन्ट्रैक्ट पते से स्वतः पहचाना गया। इसे भरने के लिए नीचे पता पेस्ट करें या चुनें।",
     "hintCollateralAssetTypeAuto": "गिरवी कॉन्ट्रैक्ट पते से स्वतः पहचाना गया।",
     "hintNftAddressManual": "NFT संग्रह का कॉन्ट्रैक्ट पता मैन्युअल रूप से दर्ज करें।",

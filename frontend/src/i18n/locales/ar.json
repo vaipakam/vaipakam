@@ -159,6 +159,16 @@
     "nftContractAddress": "عنوان عقد NFT",
     "approving": "جارٍ اعتماد الرموز…",
     "creating": "جارٍ إنشاء العرض…",
+    "validate": {
+      "lendingAssetInvalid": "عنوان أصل الإقراض غير صالح.",
+      "amountNonPositive": "يجب أن يكون المبلغ أكبر من الصفر.",
+      "rateNegative": "يجب أن يكون سعر الفائدة غير سالب.",
+      "durationOutOfRange": "يجب أن تكون المدة بين {{min}} و {{max}} يومًا.",
+      "nftTokenIdRequired": "معرّف رمز NFT مطلوب.",
+      "collateralAssetInvalid": "عنوان أصل الضمان غير صالح.",
+      "prepayAssetInvalid": "عنوان أصل الدفع المسبق غير صالح.",
+      "fallbackConsentRequired": "يجب الموافقة على شروط الاحتياطي للتصفية في السوق غير الطبيعية قبل إنشاء عرض."
+    },
     "hintAssetTypeAuto": "تم اكتشافه تلقائيًا من عنوان عقد أصل الإقراض. الصق أو اختر عنوانًا أدناه لتعبئة هذا.",
     "hintCollateralAssetTypeAuto": "تم اكتشافه تلقائيًا من عنوان عقد الضمان.",
     "hintNftAddressManual": "أدخل عنوان عقد مجموعة NFT يدويًا.",

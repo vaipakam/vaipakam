@@ -159,6 +159,16 @@
     "nftContractAddress": "NFT 合约地址",
     "approving": "正在授权代币…",
     "creating": "正在创建报价…",
+    "validate": {
+      "lendingAssetInvalid": "Lending asset 地址无效。",
+      "amountNonPositive": "金额必须大于零。",
+      "rateNegative": "利率不能为负数。",
+      "durationOutOfRange": "期限必须在 {{min}} 到 {{max}} 天之间。",
+      "nftTokenIdRequired": "需要 NFT Token ID。",
+      "collateralAssetInvalid": "Collateral asset 地址无效。",
+      "prepayAssetInvalid": "Prepayment asset 地址无效。",
+      "fallbackConsentRequired": "创建报价前,您必须同意异常市场清算回退条款。"
+    },
     "hintAssetTypeAuto": "根据出借资产合约地址自动检测。请在下方粘贴或选择地址以填充此项。",
     "hintCollateralAssetTypeAuto": "根据抵押合约地址自动检测。",
     "hintNftAddressManual": "手动输入 NFT 集合的合约地址。",

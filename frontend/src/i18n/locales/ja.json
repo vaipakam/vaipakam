@@ -159,6 +159,16 @@
     "nftContractAddress": "NFTコントラクトアドレス",
     "approving": "トークン承認中…",
     "creating": "オファー作成中…",
+    "validate": {
+      "lendingAssetInvalid": "貸し出し資産のアドレスが無効です。",
+      "amountNonPositive": "金額はゼロより大きい必要があります。",
+      "rateNegative": "金利は非負である必要があります。",
+      "durationOutOfRange": "期間は {{min}} 日から {{max}} 日の間である必要があります。",
+      "nftTokenIdRequired": "NFTトークンIDが必要です。",
+      "collateralAssetInvalid": "担保資産のアドレスが無効です。",
+      "prepayAssetInvalid": "前払い資産のアドレスが無効です。",
+      "fallbackConsentRequired": "オファーを作成する前に、異常市場の清算フォールバック条件に同意する必要があります。"
+    },
     "hintAssetTypeAuto": "貸付資産のコントラクトアドレスから自動検出されます。下にアドレスを貼り付けるか選択して入力してください。",
     "hintCollateralAssetTypeAuto": "担保コントラクトアドレスから自動検出されます。",
     "hintNftAddressManual": "NFTコレクションのコントラクトアドレスを手動で入力してください。",

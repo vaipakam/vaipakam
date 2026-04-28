@@ -159,6 +159,16 @@
     "nftContractAddress": "Adresse du contrat du NFT",
     "approving": "Approbation des tokens…",
     "creating": "Création de l'offre…",
+    "validate": {
+      "lendingAssetInvalid": "L'adresse de l'actif prêté est invalide.",
+      "amountNonPositive": "Le montant doit être supérieur à zéro.",
+      "rateNegative": "Le taux d'intérêt doit être non-négatif.",
+      "durationOutOfRange": "La durée doit être comprise entre {{min}} et {{max}} jours.",
+      "nftTokenIdRequired": "L'ID du token NFT est requis.",
+      "collateralAssetInvalid": "L'adresse du collatéral est invalide.",
+      "prepayAssetInvalid": "L'adresse de l'actif de paiement anticipé est invalide.",
+      "fallbackConsentRequired": "Vous devez accepter les conditions de liquidation de secours en cas de marché anormal avant de créer une offre."
+    },
     "hintAssetTypeAuto": "Détecté automatiquement à partir de l'adresse du contrat de l'actif prêté. Collez ou choisissez une adresse ci-dessous pour remplir ce champ.",
     "hintCollateralAssetTypeAuto": "Détecté automatiquement à partir de l'adresse du contrat de collatéral.",
     "hintNftAddressManual": "Saisissez manuellement l'adresse du contrat de la collection NFT.",
