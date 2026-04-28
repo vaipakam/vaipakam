@@ -285,6 +285,44 @@ See `AdminKeysAndPause.md` for the full role map and the Timelock + Multisig top
 
 ---
 
+## 7.5. Sync ABIs to dependent repos / bundles
+
+Any contract change in this deploy that touches a public selector or
+struct shape needs the dependent ABI bundles regenerated, otherwise
+they encode calldata against stale shapes. Two consumers, both
+sourced via `forge inspect`:
+
+```bash
+forge build   # if not already built since the last edit
+
+# (a) Frontend — full Diamond surface (~27 facets). Run on every
+#     facet-touching deploy.
+bash contracts/script/exportFrontendAbis.sh
+cd frontend && node_modules/.bin/tsc -b --noEmit && cd ..
+git diff frontend/src/contracts/abis/
+git commit -am 'Sync frontend ABIs with contracts@<hash>'
+
+# (b) Public keeper-bot — narrow surface (Metrics / Risk / Loan).
+#     Skip if the deploy didn't touch those selectors.
+KEEPER_BOT_DIR=../../vaipakam-keeper-bot \
+  bash contracts/script/exportAbis.sh
+cd ../../vaipakam-keeper-bot
+git diff src/abis/ && npm run typecheck
+git commit -am 'Sync ABIs with vaipakam@<hash>' && git push
+```
+
+Why both: a missed frontend sync surfaces as a generic
+`"exceeds max transaction gas limit"` revert during
+`eth_estimateGas` on Base public RPCs (the calldata is one word
+too long; the RPC strips the real revert reason). A missed keeper
+sync ships a public bot with `"function selector not found"`
+failures in production. Per-chain runbooks
+(`BaseSepoliaDeploy.md` §13–14, `BNBTestnetDeploy.md`, etc.)
+inherit this step from here — don't duplicate the long form
+there, just point back.
+
+---
+
 ## Chain-specific quirks
 
 ### BNB Smart Chain Testnet (chainId 97, eid 40102)

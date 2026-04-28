@@ -530,3 +530,35 @@ git push
 If the deploy was a pure config / parameter sweep with no
 selector changes, this step is a no-op — the script still
 re-runs cleanly but the diff is empty.
+
+---
+
+## 14. Sync the frontend ABI bundle
+
+The frontend imports per-facet ABIs from
+`frontend/src/contracts/abis/` (full Diamond surface, currently
+27 facets). Any contract change that adds, removes, or reshapes a
+selector or struct must be mirrored here, otherwise the frontend's
+encoded calldata diverges from the deployed contract — and Base
+Sepolia public RPCs (publicnode, sepolia.base.org) wrap the
+resulting revert during `eth_estimateGas` as the generic
+`"exceeds max transaction gas limit"`, so the failure mode looks
+nothing like an ABI mismatch from the user's side.
+
+```bash
+forge build   # if you haven't built since the last edit
+bash contracts/script/exportFrontendAbis.sh
+cd frontend
+node_modules/.bin/tsc -b --noEmit   # confirm the frontend still typechecks
+git diff src/contracts/abis/    # review the change
+git commit -am 'Sync frontend ABIs with contracts@<commit>'
+```
+
+The script writes `_source.json` next to the JSONs with the
+contracts commit hash so the frontend bundle and the on-chain
+deploy can be correlated post-hoc.
+
+If you added a brand-new facet to the frontend, append it to the
+`FACETS=(...)` array in `contracts/script/exportFrontendAbis.sh`
+AND wire it into `frontend/src/contracts/abis/index.ts` — the
+script does not touch the re-export barrel.

@@ -925,11 +925,11 @@
     "closeModal": "Cerrar"
   },
   "diagnostics": {
-    "fabLabel": "Diagnósticos",
-    "fabAria": "Abrir diagnósticos",
-    "fabTooltip": "Solución de problemas / diagnósticos",
-    "drawerAria": "Diagnósticos",
-    "title": "Diagnósticos",
+    "fabLabel": "Reportar problema",
+    "fabAria": "Abrir reporte de problema",
+    "fabTooltip": "Reportar un problema",
+    "drawerAria": "Detalles del problema",
+    "title": "Detalles del problema",
     "closeAria": "Cerrar",
     "hint": "Aquí se guarda un registro redactado de los pasos recientes para ayudar a soporte a diagnosticar problemas. Informa directamente en GitHub (precompletado y redactado) o copia / descarga el JSON completo para soporte. Las direcciones de wallet se acortan a 0x…abcd; el user-agent y el texto libre de errores no se publican.",
     "reportOnGithub": "Informar en GitHub",

@@ -1175,6 +1175,11 @@
   },
   {
     "type": "error",
+    "name": "VPFICanonicalEidNotSet",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "VPFIEscrowBalanceInsufficient",
     "inputs": []
   },

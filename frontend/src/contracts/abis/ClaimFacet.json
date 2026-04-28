@@ -27,6 +27,60 @@
   },
   {
     "type": "function",
+    "name": "claimAsLenderWithRetry",
+    "inputs": [
+      {
+        "name": "loanId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "retryCalls",
+        "type": "tuple[]",
+        "internalType": "struct LibSwap.AdapterCall[]",
+        "components": [
+          {
+            "name": "adapterIdx",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "data",
+            "type": "bytes",
+            "internalType": "bytes"
+          }
+        ]
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "getBorrowerLifRebate",
+    "inputs": [
+      {
+        "name": "loanId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "rebateAmount",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "vpfiHeld",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "getClaimable",
     "inputs": [
       {
@@ -151,6 +205,31 @@
   },
   {
     "type": "event",
+    "name": "BorrowerLifRebateClaimed",
+    "inputs": [
+      {
+        "name": "loanId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "claimant",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "ClaimRetryExecuted",
     "inputs": [
       {
@@ -219,8 +298,125 @@
     "anonymous": false
   },
   {
+    "type": "event",
+    "name": "SwapAdapterAttempted",
+    "inputs": [
+      {
+        "name": "loanId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "adapterIdx",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "adapter",
+        "type": "address",
+        "indexed": false,
+        "internalType": "address"
+      },
+      {
+        "name": "success",
+        "type": "bool",
+        "indexed": false,
+        "internalType": "bool"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "SwapAdapterSucceeded",
+    "inputs": [
+      {
+        "name": "loanId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "adapterIdx",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "adapter",
+        "type": "address",
+        "indexed": false,
+        "internalType": "address"
+      },
+      {
+        "name": "outputAmount",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "SwapAllAdaptersFailed",
+    "inputs": [
+      {
+        "name": "loanId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "error",
+    "name": "AdapterIndexOutOfRange",
+    "inputs": [
+      {
+        "name": "adapterIdx",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "registeredCount",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
     "type": "error",
     "name": "AlreadyClaimed",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "AssetPaused",
+    "inputs": [
+      {
+        "name": "asset",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "BaseEidNotSet",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "BridgedBuyReceiverNotSet",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "ChainDayAlreadyReported",
     "inputs": []
   },
   {
@@ -241,6 +437,16 @@
   },
   {
     "type": "error",
+    "name": "DayAlreadyFinalized",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "DayNotReadyToFinalize",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "EnforcedPause",
     "inputs": []
   },
@@ -257,6 +463,11 @@
   {
     "type": "error",
     "name": "EscrowWithdrawFailed",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "FallbackConsentRequired",
     "inputs": []
   },
   {
@@ -297,6 +508,27 @@
   },
   {
     "type": "error",
+    "name": "InteractionDayGlobalNotFinalized",
+    "inputs": [
+      {
+        "name": "dayId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "InteractionEmissionsNotStarted",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InteractionPoolExhausted",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "InvalidAddress",
     "inputs": []
   },
@@ -308,6 +540,11 @@
   {
     "type": "error",
     "name": "InvalidAsset",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InvalidKeeperActions",
     "inputs": []
   },
   {
@@ -338,6 +575,11 @@
   {
     "type": "error",
     "name": "KeeperWhitelistFull",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "KnownGlobalAlreadySet",
     "inputs": []
   },
   {
@@ -397,12 +639,47 @@
   },
   {
     "type": "error",
+    "name": "NoInteractionRewardsToClaim",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NoStakingRewardsToClaim",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NoSwapAdaptersConfigured",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "NonLiquidAsset",
     "inputs": []
   },
   {
     "type": "error",
+    "name": "NotAuthorizedRewardOApp",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "NotBorrower",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NotBridgedBuyReceiver",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NotCanonicalRewardChain",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NotCanonicalVPFIChain",
     "inputs": []
   },
   {
@@ -437,7 +714,38 @@
   },
   {
     "type": "error",
+    "name": "Permit2TokenMismatch",
+    "inputs": [
+      {
+        "name": "expected",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "signed",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "ReentrancyGuardReentrantCall",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "ReportAfterFinalization",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "RewardDayNotElapsed",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "RewardOAppNotSet",
     "inputs": []
   },
   {
@@ -453,6 +761,21 @@
   },
   {
     "type": "error",
+    "name": "SelfCollateralizedOffer",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "SourceEidNotExpected",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "StakingPoolExhausted",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "TreasuryTransferFailed",
     "inputs": []
   },
@@ -464,6 +787,51 @@
   {
     "type": "error",
     "name": "UpdateNotAllowed",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "VPFIBuyAmountTooSmall",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "VPFIBuyDisabled",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "VPFIBuyRateNotSet",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "VPFICanonicalEidNotSet",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "VPFIEscrowBalanceInsufficient",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "VPFIGlobalCapExceeded",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "VPFIPerWalletCapExceeded",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "VPFIReserveInsufficient",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "VPFITokenNotSet",
     "inputs": []
   }
 ]

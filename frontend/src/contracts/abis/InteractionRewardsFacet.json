@@ -573,6 +573,11 @@
   },
   {
     "type": "error",
+    "name": "InvalidKeeperActions",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "InvalidLoanStatus",
     "inputs": []
   },
@@ -728,6 +733,22 @@
   },
   {
     "type": "error",
+    "name": "Permit2TokenMismatch",
+    "inputs": [
+      {
+        "name": "expected",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "signed",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "ReentrancyGuardReentrantCall",
     "inputs": []
   },
@@ -800,6 +821,11 @@
   {
     "type": "error",
     "name": "VPFIBuyRateNotSet",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "VPFICanonicalEidNotSet",
     "inputs": []
   },
   {

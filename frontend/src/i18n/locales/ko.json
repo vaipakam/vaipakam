@@ -925,11 +925,11 @@
     "closeModal": "닫기"
   },
   "diagnostics": {
-    "fabLabel": "진단",
-    "fabAria": "진단 열기",
-    "fabTooltip": "문제 해결 / 진단",
-    "drawerAria": "진단",
-    "title": "진단",
+    "fabLabel": "문제 신고",
+    "fabAria": "문제 신고 열기",
+    "fabTooltip": "문제 신고하기",
+    "drawerAria": "문제 세부 정보",
+    "title": "문제 세부 정보",
     "closeAria": "닫기",
     "hint": "최근 단계의 비식별화된 로그가 여기에 보관되어 지원팀이 문제를 진단하는 데 도움을 줍니다. GitHub 에서 직접 신고(미리 채워짐 & 비식별화)하거나, 지원용으로 전체 JSON 을 복사 / 다운로드하세요. 지갑 주소는 0x…abcd 로 축약됩니다. User-Agent 와 자유 형식의 오류 텍스트는 공개되지 않습니다.",
     "reportOnGithub": "GitHub 에서 신고",

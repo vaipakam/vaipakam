@@ -925,11 +925,11 @@
     "closeModal": "Fermer"
   },
   "diagnostics": {
-    "fabLabel": "Diagnostics",
-    "fabAria": "Ouvrir les diagnostics",
-    "fabTooltip": "Dépannage / diagnostics",
-    "drawerAria": "Diagnostics",
-    "title": "Diagnostics",
+    "fabLabel": "Signaler un problème",
+    "fabAria": "Ouvrir le signalement de problème",
+    "fabTooltip": "Signaler un problème",
+    "drawerAria": "Détails du problème",
+    "title": "Détails du problème",
     "closeAria": "Fermer",
     "hint": "Un journal expurgé des étapes récentes est conservé ici pour aider l'équipe support à diagnostiquer les problèmes. Signalez directement sur GitHub (préformaté et expurgé), ou copiez / téléchargez le JSON complet pour le support. Les adresses de portefeuille sont raccourcies en 0x…abcd ; l'user-agent et le texte d'erreur libre ne sont pas publiés.",
     "reportOnGithub": "Signaler sur GitHub",

@@ -134,6 +134,51 @@ opaque "function selector not found" failures. Treat this sync
 the same way you'd treat a frontend ABI bump: part of the same
 PR as the contract change.
 
+## Frontend ABI sync
+
+The frontend imports per-facet ABI JSONs from
+`frontend/src/contracts/abis/`. Unlike the keeper-bot, the frontend
+imports the **full** Diamond surface (currently 27 facets — see the
+`FACETS=(...)` list in `contracts/script/exportFrontendAbis.sh`),
+so essentially every facet edit needs a re-export.
+
+**When you change ANY facet selector** (rename, add/remove
+parameters, change struct shape, etc.), run:
+
+```bash
+forge build   # build before inspecting
+bash contracts/script/exportFrontendAbis.sh
+```
+
+The script regenerates every JSON via `forge inspect <Facet> abi
+--json`, writes `_source.json` with the contracts commit hash,
+and prints the typecheck command. Run that next:
+
+```bash
+cd frontend && node_modules/.bin/tsc -b --noEmit
+```
+
+Review the diff (`git diff frontend/src/contracts/abis/`) and
+commit alongside the contract change with a message like
+`"Sync frontend ABIs with contracts@<hash>"`.
+
+**Why this matters — failure mode is non-obvious**: if the
+deployed contract drops a struct field but the frontend ABI keeps
+it, the encoded calldata is one word too long. Base-Sepolia public
+RPCs (publicnode, sepolia.base.org) wrap the resulting revert
+during `eth_estimateGas` as the generic `"exceeds max transaction
+gas limit"` — there's no hint that the real cause is an ABI
+mismatch. Phase 6 hit exactly this when `keeperAccessEnabled` was
+removed from `CreateOfferParams` server-side but stayed in the
+frontend's `OfferFacet.json`. The sync script exists so the next
+person doesn't lose an hour to that.
+
+**Adding a new facet to the frontend**: append the contract name
+to the `FACETS=(...)` array in
+`contracts/script/exportFrontendAbis.sh` AND wire it into the
+re-export barrel `frontend/src/contracts/abis/index.ts` (the
+script does NOT touch the barrel).
+
 ## Cross-Chain Security Policy (DVN + Pause)
 
 Every LayerZero OApp / OFT in this repo (`VPFIOFTAdapter`, `VPFIMirror`,

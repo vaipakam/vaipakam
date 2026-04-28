@@ -249,6 +249,32 @@
   },
   {
     "type": "error",
+    "name": "AssetPaused",
+    "inputs": [
+      {
+        "name": "asset",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "BaseEidNotSet",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "BridgedBuyReceiverNotSet",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "ChainDayAlreadyReported",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "CountriesNotCompatible",
     "inputs": []
   },
@@ -262,6 +288,16 @@
         "internalType": "string"
       }
     ]
+  },
+  {
+    "type": "error",
+    "name": "DayAlreadyFinalized",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "DayNotReadyToFinalize",
+    "inputs": []
   },
   {
     "type": "error",
@@ -281,6 +317,11 @@
   {
     "type": "error",
     "name": "EscrowWithdrawFailed",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "FallbackConsentRequired",
     "inputs": []
   },
   {
@@ -326,6 +367,27 @@
   },
   {
     "type": "error",
+    "name": "InteractionDayGlobalNotFinalized",
+    "inputs": [
+      {
+        "name": "dayId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "InteractionEmissionsNotStarted",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InteractionPoolExhausted",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "InvalidAddress",
     "inputs": []
   },
@@ -337,6 +399,11 @@
   {
     "type": "error",
     "name": "InvalidAsset",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InvalidKeeperActions",
     "inputs": []
   },
   {
@@ -377,6 +444,11 @@
   {
     "type": "error",
     "name": "KeeperWhitelistFull",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "KnownGlobalAlreadySet",
     "inputs": []
   },
   {
@@ -436,12 +508,42 @@
   },
   {
     "type": "error",
+    "name": "NoInteractionRewardsToClaim",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NoStakingRewardsToClaim",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "NonLiquidAsset",
     "inputs": []
   },
   {
     "type": "error",
+    "name": "NotAuthorizedRewardOApp",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "NotBorrower",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NotBridgedBuyReceiver",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NotCanonicalRewardChain",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NotCanonicalVPFIChain",
     "inputs": []
   },
   {
@@ -481,7 +583,38 @@
   },
   {
     "type": "error",
+    "name": "Permit2TokenMismatch",
+    "inputs": [
+      {
+        "name": "expected",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "signed",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "ReentrancyGuardReentrantCall",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "ReportAfterFinalization",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "RewardDayNotElapsed",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "RewardOAppNotSet",
     "inputs": []
   },
   {
@@ -497,6 +630,21 @@
   },
   {
     "type": "error",
+    "name": "SelfCollateralizedOffer",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "SourceEidNotExpected",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "StakingPoolExhausted",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "TreasuryTransferFailed",
     "inputs": []
   },
@@ -508,6 +656,51 @@
   {
     "type": "error",
     "name": "UpdateNotAllowed",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "VPFIBuyAmountTooSmall",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "VPFIBuyDisabled",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "VPFIBuyRateNotSet",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "VPFICanonicalEidNotSet",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "VPFIEscrowBalanceInsufficient",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "VPFIGlobalCapExceeded",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "VPFIPerWalletCapExceeded",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "VPFIReserveInsufficient",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "VPFITokenNotSet",
     "inputs": []
   }
 ]

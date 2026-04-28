@@ -107,11 +107,11 @@
     "closeModal": "Close"
   },
   "diagnostics": {
-    "fabLabel": "Diagnostics",
-    "fabAria": "Open diagnostics",
-    "fabTooltip": "Troubleshooting / diagnostics",
-    "drawerAria": "Diagnostics",
-    "title": "Diagnostics",
+    "fabLabel": "Report Issue",
+    "fabAria": "Open issue report",
+    "fabTooltip": "Report an issue",
+    "drawerAria": "Issue Details",
+    "title": "Issue Details",
     "closeAria": "Close",
     "hint": "A redacted log of recent steps is kept here to help support diagnose problems. Report directly on GitHub (prefilled & redacted), or copy / download the full JSON for support. Wallet addresses are shortened to 0x…abcd; user-agent and free-form error text are not published.",
     "reportOnGithub": "Report on GitHub",

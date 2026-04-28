@@ -925,11 +925,11 @@
     "closeModal": "Schließen"
   },
   "diagnostics": {
-    "fabLabel": "Diagnose",
-    "fabAria": "Diagnose öffnen",
-    "fabTooltip": "Fehlerbehebung / Diagnose",
-    "drawerAria": "Diagnose",
-    "title": "Diagnose",
+    "fabLabel": "Problem melden",
+    "fabAria": "Problembericht öffnen",
+    "fabTooltip": "Ein Problem melden",
+    "drawerAria": "Problemdetails",
+    "title": "Problemdetails",
     "closeAria": "Schließen",
     "hint": "Ein redigiertes Protokoll der letzten Schritte wird hier vorgehalten, damit der Support Probleme diagnostizieren kann. Direkt auf GitHub melden (vorausgefüllt & redigiert) oder das vollständige JSON für den Support kopieren / herunterladen. Wallet-Adressen werden auf 0x…abcd verkürzt; User-Agent und freier Fehlertext werden nicht veröffentlicht.",
     "reportOnGithub": "Auf GitHub melden",

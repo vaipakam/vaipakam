@@ -7,6 +7,11 @@
         "name": "keeper",
         "type": "address",
         "internalType": "address"
+      },
+      {
+        "name": "actions",
+        "type": "uint8",
+        "internalType": "uint8"
       }
     ],
     "outputs": [],
@@ -89,6 +94,30 @@
   },
   {
     "type": "function",
+    "name": "getKeeperActions",
+    "inputs": [
+      {
+        "name": "user",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "keeper",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "actions",
+        "type": "uint8",
+        "internalType": "uint8"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "getSanctionsOracle",
     "inputs": [],
     "outputs": [
@@ -156,6 +185,54 @@
     "outputs": [
       {
         "name": "verified",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "isLoanKeeperEnabled",
+    "inputs": [
+      {
+        "name": "loanId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "keeper",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "isOfferKeeperEnabled",
+    "inputs": [
+      {
+        "name": "offerId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "keeper",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
         "type": "bool",
         "internalType": "bool"
       }
@@ -233,12 +310,35 @@
   },
   {
     "type": "function",
-    "name": "setLoanKeeperAccess",
+    "name": "setKeeperActions",
+    "inputs": [
+      {
+        "name": "keeper",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "actions",
+        "type": "uint8",
+        "internalType": "uint8"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "setLoanKeeperEnabled",
     "inputs": [
       {
         "name": "loanId",
         "type": "uint256",
         "internalType": "uint256"
+      },
+      {
+        "name": "keeper",
+        "type": "address",
+        "internalType": "address"
       },
       {
         "name": "enabled",
@@ -251,12 +351,17 @@
   },
   {
     "type": "function",
-    "name": "setOfferKeeperAccess",
+    "name": "setOfferKeeperEnabled",
     "inputs": [
       {
         "name": "offerId",
         "type": "uint256",
         "internalType": "uint256"
+      },
+      {
+        "name": "keeper",
+        "type": "address",
+        "internalType": "address"
       },
       {
         "name": "enabled",
@@ -448,7 +553,7 @@
   },
   {
     "type": "event",
-    "name": "KeeperApproved",
+    "name": "KeeperActionsUpdated",
     "inputs": [
       {
         "name": "user",
@@ -461,6 +566,12 @@
         "type": "address",
         "indexed": true,
         "internalType": "address"
+      },
+      {
+        "name": "actions",
+        "type": "uint8",
+        "indexed": false,
+        "internalType": "uint8"
       }
     ],
     "anonymous": false
@@ -486,7 +597,7 @@
   },
   {
     "type": "event",
-    "name": "LoanKeeperAccessUpdated",
+    "name": "LoanKeeperEnabled",
     "inputs": [
       {
         "name": "loanId",
@@ -495,10 +606,10 @@
         "internalType": "uint256"
       },
       {
-        "name": "side",
-        "type": "bool",
-        "indexed": false,
-        "internalType": "bool"
+        "name": "keeper",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
       },
       {
         "name": "enabled",
@@ -511,13 +622,19 @@
   },
   {
     "type": "event",
-    "name": "OfferKeeperAccessUpdated",
+    "name": "OfferKeeperEnabled",
     "inputs": [
       {
         "name": "offerId",
         "type": "uint256",
         "indexed": true,
         "internalType": "uint256"
+      },
+      {
+        "name": "keeper",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
       },
       {
         "name": "enabled",
@@ -752,6 +869,11 @@
   },
   {
     "type": "error",
+    "name": "InvalidKeeperActions",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "InvalidLoanStatus",
     "inputs": []
   },
@@ -927,6 +1049,22 @@
   },
   {
     "type": "error",
+    "name": "Permit2TokenMismatch",
+    "inputs": [
+      {
+        "name": "expected",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "signed",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "ReportAfterFinalization",
     "inputs": []
   },
@@ -994,6 +1132,11 @@
   {
     "type": "error",
     "name": "VPFIBuyRateNotSet",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "VPFICanonicalEidNotSet",
     "inputs": []
   },
   {

@@ -358,6 +358,40 @@
   },
   {
     "type": "function",
+    "name": "getEscrowVersionInfo",
+    "inputs": [
+      {
+        "name": "user",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "userVersion",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "currentVersion",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "mandatoryVersion",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "upgradeRequired",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "getOfferAmount",
     "inputs": [
       {
@@ -473,40 +507,6 @@
     "stateMutability": "nonpayable"
   },
   {
-    "type": "function",
-    "name": "getEscrowVersionInfo",
-    "inputs": [
-      {
-        "name": "user",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "userVersion",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "currentVersion",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "mandatoryVersion",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "upgradeRequired",
-        "type": "bool",
-        "internalType": "bool"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
     "type": "event",
     "name": "EscrowImplementationUpgraded",
     "inputs": [
@@ -521,6 +521,12 @@
         "type": "address",
         "indexed": true,
         "internalType": "address"
+      },
+      {
+        "name": "newVersion",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
       }
     ],
     "anonymous": false

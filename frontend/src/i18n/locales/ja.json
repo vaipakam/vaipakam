@@ -925,11 +925,11 @@
     "closeModal": "閉じる"
   },
   "diagnostics": {
-    "fabLabel": "診断",
-    "fabAria": "診断を開く",
-    "fabTooltip": "トラブルシューティング / 診断",
-    "drawerAria": "診断",
-    "title": "診断",
+    "fabLabel": "問題を報告",
+    "fabAria": "問題報告を開く",
+    "fabTooltip": "問題を報告する",
+    "drawerAria": "問題の詳細",
+    "title": "問題の詳細",
     "closeAria": "閉じる",
     "hint": "最近の操作の編集済みログがここに保持され、サポートが問題を診断するのに役立ちます。GitHub に直接報告(事前入力済み & 編集済み)するか、サポート用に JSON 全体をコピー / ダウンロードしてください。ウォレットアドレスは 0x…abcd に短縮されます。User-Agent と自由記述のエラーテキストは公開されません。",
     "reportOnGithub": "GitHub で報告",

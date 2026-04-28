@@ -1,28 +1,52 @@
 [
   {
     "type": "function",
-    "name": "getFallbackOracleConfig",
+    "name": "addSwapAdapter",
+    "inputs": [
+      {
+        "name": "adapter",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "getPancakeswapV3Factory",
     "inputs": [],
     "outputs": [
       {
-        "name": "fallbackChainlinkRegistry",
+        "name": "",
         "type": "address",
         "internalType": "address"
-      },
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getSushiswapV3Factory",
+    "inputs": [],
+    "outputs": [
       {
-        "name": "fallbackUniswapV3Factory",
+        "name": "",
         "type": "address",
         "internalType": "address"
-      },
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getSwapAdapters",
+    "inputs": [],
+    "outputs": [
       {
-        "name": "fallbackUsdtContract",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "fallbackUsdChainlinkDenominator",
-        "type": "address",
-        "internalType": "address"
+        "name": "adapters",
+        "type": "address[]",
+        "internalType": "address[]"
       }
     ],
     "stateMutability": "view"
@@ -42,8 +66,53 @@
   },
   {
     "type": "function",
+    "name": "isAssetPaused",
+    "inputs": [
+      {
+        "name": "asset",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "isKYCEnforcementEnabled",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "enforced",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "pause",
     "inputs": [],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "pauseAsset",
+    "inputs": [
+      {
+        "name": "asset",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
     "outputs": [],
     "stateMutability": "nonpayable"
   },
@@ -62,25 +131,62 @@
   },
   {
     "type": "function",
-    "name": "setFallbackOracleConfig",
+    "name": "removeSwapAdapter",
     "inputs": [
       {
-        "name": "fallbackChainlinkRegistry",
+        "name": "adapter",
         "type": "address",
         "internalType": "address"
-      },
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "reorderSwapAdapters",
+    "inputs": [
       {
-        "name": "fallbackUniswapV3Factory",
+        "name": "newOrder",
+        "type": "address[]",
+        "internalType": "address[]"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "setKYCEnforcement",
+    "inputs": [
+      {
+        "name": "enforced",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "setPancakeswapV3Factory",
+    "inputs": [
+      {
+        "name": "newFactory",
         "type": "address",
         "internalType": "address"
-      },
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "setSushiswapV3Factory",
+    "inputs": [
       {
-        "name": "fallbackUsdtContract",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "fallbackUsdChainlinkDenominator",
+        "name": "newFactory",
         "type": "address",
         "internalType": "address"
       }
@@ -135,6 +241,19 @@
     "stateMutability": "nonpayable"
   },
   {
+    "type": "function",
+    "name": "unpauseAsset",
+    "inputs": [
+      {
+        "name": "asset",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
     "type": "event",
     "name": "AllowanceTargetSet",
     "inputs": [
@@ -149,30 +268,57 @@
   },
   {
     "type": "event",
-    "name": "FallbackOracleConfigSet",
+    "name": "AssetPauseDisabled",
     "inputs": [
       {
-        "name": "fallbackChainlinkRegistry",
+        "name": "asset",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "AssetPauseEnabled",
+    "inputs": [
+      {
+        "name": "asset",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "KYCEnforcementSet",
+    "inputs": [
+      {
+        "name": "enforced",
+        "type": "bool",
+        "indexed": false,
+        "internalType": "bool"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "PancakeswapV3FactorySet",
+    "inputs": [
+      {
+        "name": "previous",
         "type": "address",
         "indexed": true,
         "internalType": "address"
       },
       {
-        "name": "fallbackUniswapV3Factory",
+        "name": "current",
         "type": "address",
         "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "fallbackUsdtContract",
-        "type": "address",
-        "indexed": false,
-        "internalType": "address"
-      },
-      {
-        "name": "fallbackUsdChainlinkDenominator",
-        "type": "address",
-        "indexed": false,
         "internalType": "address"
       }
     ],
@@ -187,6 +333,76 @@
         "type": "address",
         "indexed": false,
         "internalType": "address"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "SushiswapV3FactorySet",
+    "inputs": [
+      {
+        "name": "previous",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "current",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "SwapAdapterAdded",
+    "inputs": [
+      {
+        "name": "index",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "adapter",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "SwapAdapterRemoved",
+    "inputs": [
+      {
+        "name": "index",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "adapter",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "SwapAdaptersReordered",
+    "inputs": [
+      {
+        "name": "adapters",
+        "type": "address[]",
+        "indexed": false,
+        "internalType": "address[]"
       }
     ],
     "anonymous": false
@@ -248,6 +464,32 @@
   },
   {
     "type": "error",
+    "name": "AssetPaused",
+    "inputs": [
+      {
+        "name": "asset",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "BaseEidNotSet",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "BridgedBuyReceiverNotSet",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "ChainDayAlreadyReported",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "CountriesNotCompatible",
     "inputs": []
   },
@@ -264,6 +506,16 @@
   },
   {
     "type": "error",
+    "name": "DayAlreadyFinalized",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "DayNotReadyToFinalize",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "EscrowResolutionFailed",
     "inputs": []
   },
@@ -275,6 +527,11 @@
   {
     "type": "error",
     "name": "EscrowWithdrawFailed",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "FallbackConsentRequired",
     "inputs": []
   },
   {
@@ -299,6 +556,27 @@
   },
   {
     "type": "error",
+    "name": "InteractionDayGlobalNotFinalized",
+    "inputs": [
+      {
+        "name": "dayId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "InteractionEmissionsNotStarted",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InteractionPoolExhausted",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "InvalidAddress",
     "inputs": []
   },
@@ -310,6 +588,11 @@
   {
     "type": "error",
     "name": "InvalidAsset",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InvalidKeeperActions",
     "inputs": []
   },
   {
@@ -340,6 +623,11 @@
   {
     "type": "error",
     "name": "KeeperWhitelistFull",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "KnownGlobalAlreadySet",
     "inputs": []
   },
   {
@@ -399,12 +687,42 @@
   },
   {
     "type": "error",
+    "name": "NoInteractionRewardsToClaim",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NoStakingRewardsToClaim",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "NonLiquidAsset",
     "inputs": []
   },
   {
     "type": "error",
+    "name": "NotAuthorizedRewardOApp",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "NotBorrower",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NotBridgedBuyReceiver",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NotCanonicalRewardChain",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NotCanonicalVPFIChain",
     "inputs": []
   },
   {
@@ -434,6 +752,67 @@
   },
   {
     "type": "error",
+    "name": "Permit2TokenMismatch",
+    "inputs": [
+      {
+        "name": "expected",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "signed",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "ReportAfterFinalization",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "RewardDayNotElapsed",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "RewardOAppNotSet",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "SelfCollateralizedOffer",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "SourceEidNotExpected",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "StakingPoolExhausted",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "SwapAdapterAlreadyRegistered",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "SwapAdapterNotRegistered",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "SwapAdapterReorderMismatch",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "TreasuryTransferFailed",
     "inputs": []
   },
@@ -445,6 +824,51 @@
   {
     "type": "error",
     "name": "UpdateNotAllowed",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "VPFIBuyAmountTooSmall",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "VPFIBuyDisabled",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "VPFIBuyRateNotSet",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "VPFICanonicalEidNotSet",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "VPFIEscrowBalanceInsufficient",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "VPFIGlobalCapExceeded",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "VPFIPerWalletCapExceeded",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "VPFIReserveInsufficient",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "VPFITokenNotSet",
     "inputs": []
   }
 ]

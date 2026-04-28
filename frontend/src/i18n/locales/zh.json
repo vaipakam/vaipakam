@@ -925,11 +925,11 @@
     "closeModal": "关闭"
   },
   "diagnostics": {
-    "fabLabel": "诊断",
-    "fabAria": "打开诊断",
-    "fabTooltip": "故障排查 / 诊断",
-    "drawerAria": "诊断",
-    "title": "诊断",
+    "fabLabel": "报告问题",
+    "fabAria": "打开问题报告",
+    "fabTooltip": "报告问题",
+    "drawerAria": "问题详情",
+    "title": "问题详情",
     "closeAria": "关闭",
     "hint": "此处保留了最近操作的脱敏日志,用于帮助支持团队诊断问题。可以直接在 GitHub 上报告(预填且脱敏),或为支持复制 / 下载完整 JSON。钱包地址会被缩短为 0x…abcd;User-Agent 和自由错误文本不会被发布。",
     "reportOnGithub": "在 GitHub 上报告",
