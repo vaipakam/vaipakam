@@ -14,6 +14,7 @@ import { decodeContractError } from '../lib/decodeContractError';
 import { beginStep } from '../lib/journeyLog';
 import { DEFAULT_CHAIN } from '../contracts/config';
 import { TransferLockWarning } from '../components/app/TransferLockWarning';
+import { InterestImplicationWarning } from '../components/app/InterestImplicationWarning';
 import { AssetSymbol } from '../components/app/AssetSymbol';
 import { TokenAmount } from '../components/app/TokenAmount';
 import { bpsToPercent } from '../lib/format';
@@ -254,6 +255,7 @@ export default function LenderEarlyWithdrawal() {
                 tokenId={loan.lenderTokenId}
                 role="lender"
               />
+              <InterestImplicationWarning kind="early-withdrawal" />
               <div className="data-row" style={{ marginTop: 12 }}>
                 <span className="data-label">{t('common.newRate')}</span>
                 <span className="data-value">{rate}{t('earlyWithdrawal.ratePerYearSuffix')}</span>

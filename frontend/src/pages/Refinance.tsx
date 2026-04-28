@@ -5,6 +5,7 @@ import { useTranslation } from 'react-i18next';
 import { maxUint256 as MaxUint256 } from 'viem';
 import { AlertTriangle, ArrowLeft, CheckCircle } from 'lucide-react';
 import { ErrorAlert } from '../components/app/ErrorAlert';
+import { InterestImplicationWarning } from '../components/app/InterestImplicationWarning';
 import { useWallet } from '../context/WalletContext';
 import { useDiamondContract } from '../contracts/useDiamond';
 import { useERC20 } from '../contracts/useERC20';
@@ -293,7 +294,8 @@ export default function Refinance() {
                 NFT transfer-lock is needed because there is no intermediate
                 state to protect.
               </p>
-              <div style={{ display: 'flex', gap: 8 }}>
+              <InterestImplicationWarning kind="refinance" />
+              <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
                 <button
                   className="btn btn-primary btn-sm"
                   onClick={handleRefinance}

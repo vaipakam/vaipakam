@@ -1238,6 +1238,18 @@
     "switchAriaSuffixOn": "activé",
     "switchAriaSuffixOff": "désactivé"
   },
+  "interestWarning": {
+    "earlyWithdrawalTitle": "Vous renoncez aux intérêts cumulés",
+    "earlyWithdrawalBody": "En vendant votre position de prêteur maintenant, vous renoncez à tous les intérêts cumulés à ce jour sur ce prêt. Le montant abandonné est versé à la trésorerie du protocole, ou — si le nouveau prêteur propose un taux plus bas — appliqué d'abord au rattrapage de taux. Vous repartez avec le principal que vous avez financé (moins tout rattrapage au nouveau prêteur), mais pas avec les intérêts gagnés à ce jour.",
+    "precloseDirectTitle": "Vous paierez les intérêts du terme complet",
+    "precloseDirectBody": "Clôturer le prêt maintenant par la voie Directe exige le paiement des intérêts du TERME COMPLET comme si le prêt arrivait à échéance — pas seulement les intérêts cumulés à ce jour. Aucune remise pour clôture anticipée sur cette voie. Le prêteur reçoit 99% de ces intérêts ; 1% va à la trésorerie du protocole.",
+    "precloseTransferTitle": "Vous paierez les intérêts cumulés plus un rattrapage de taux",
+    "precloseTransferBody": "Transférer l'obligation à un nouvel emprunteur exige le paiement des intérêts cumulés à ce jour plus un rattrapage — la différence entre ce que le prêteur s'attendait à gagner sur le terme restant à votre taux d'origine et ce qu'il gagnera de l'offre du nouvel emprunteur. Si la nouvelle offre correspond à votre taux, le rattrapage est nul.",
+    "precloseOffsetTitle": "Vous paierez les intérêts cumulés + rattrapage, et bloquerez un nouveau principal",
+    "precloseOffsetBody": "La voie Offset règle votre prêt contre une nouvelle offre de prêteur que vous créez. À l'avance, vous payez les intérêts cumulés plus tout rattrapage de taux au prêteur d'origine, et vous devez déposer un nouveau principal comme garantie pour l'offre offset. Votre NFT côté emprunteur est verrouillé jusqu'à ce qu'un nouvel emprunteur accepte l'offre ou que vous l'annuliez.",
+    "refinanceTitle": "L'ancien prêt se clôt aux intérêts du terme complet + rattrapage",
+    "refinanceBody": "Le refinancement rembourse l'ancien prêteur avec le principal plus les intérêts du TERME COMPLET (pas seulement les cumulés) plus tout rattrapage de taux — exigible lorsque les intérêts attendus de la nouvelle offre sont inférieurs à ceux de l'ancien prêt. Vous payez en pratique comme si l'ancien prêt avait atteint son échéance, en échange des nouvelles conditions."
+  },
   "transferLockWarning": {
     "preconfirmTitle": "Verrouillage de transfert du NFT Vaipakam",
     "preconfirmBodyLender": "L'envoi de cette transaction verrouillera le NFT Vaipakam #{{tokenId}} côté prêteur en transfert et en approbation jusqu'à ce que ce flux {{flow}} soit terminé ou annulé. Pendant le verrouillage, le NFT ne peut pas être déplacé vers un autre portefeuille, listé, vendu ou approuvé sur un marketplace, et ses actions liées à la propriété restent attachées à ce flux en cours.",

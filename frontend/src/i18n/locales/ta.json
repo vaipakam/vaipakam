@@ -1238,6 +1238,18 @@
     "switchAriaSuffixOn": "ஆன்",
     "switchAriaSuffixOff": "ஆஃப்"
   },
+  "interestWarning": {
+    "earlyWithdrawalTitle": "Accrued interest-ஐ நீங்கள் இழப்பீர்கள்",
+    "earlyWithdrawalBody": "உங்கள் lender position-ஐ இப்போது விற்பதன் மூலம், இந்த loan-இல் இதுவரை திரண்ட அனைத்து interest-ஐயும் நீங்கள் இழக்கிறீர்கள். இழந்த தொகை protocol treasury-க்குச் செல்கிறது; புதிய lender குறைந்த rate-ஐ வழங்கினால், அது முதலில் rate shortfall-க்கு பயன்படுத்தப்படுகிறது. நீங்கள் fund செய்த principal-ஐ (புதிய lender-க்கு செலுத்த வேண்டிய shortfall-ஐக் கழித்து) எடுத்துச் செல்கிறீர்கள், ஆனால் இதுவரை சம்பாதித்த interest கிடைக்காது.",
+    "precloseDirectTitle": "Full-term interest செலுத்துவீர்கள்",
+    "precloseDirectBody": "Direct path மூலம் loan-ஐ இப்போது மூட, loan maturity வரை இயங்கியதைப் போல FULL-TERM interest செலுத்த வேண்டும் — இதுவரை திரண்ட interest மட்டுமல்ல. இந்த path-இல் early-close discount இல்லை. அந்த interest-இன் 99% lender-க்குச் செல்கிறது; 1% protocol treasury-க்குச் செல்கிறது.",
+    "precloseTransferTitle": "Accrued interest மற்றும் rate shortfall செலுத்துவீர்கள்",
+    "precloseTransferBody": "புதிய borrower-க்கு obligation-ஐ transfer செய்ய, இதுவரை திரண்ட interest மற்றும் shortfall — உங்கள் original rate-இல் மீதமுள்ள term-க்கு lender எதிர்பார்த்த earnings-க்கும், புதிய borrower-இன் offer-இலிருந்து lender பெறும் earnings-க்கும் இடையிலான வித்தியாசம் — செலுத்த வேண்டும். புதிய offer உங்கள் rate-உடன் பொருந்தினால், shortfall பூஜ்ஜியம்.",
+    "precloseOffsetTitle": "Accrued interest + shortfall செலுத்தி, புதிய principal-ஐ lock செய்வீர்கள்",
+    "precloseOffsetBody": "Offset path உங்கள் loan-ஐ நீங்கள் உருவாக்கும் புதிய lender offer-உடன் settle செய்கிறது. முதலில், இதுவரை திரண்ட interest மற்றும் original lender-க்கு rate shortfall (ஏதேனும் இருந்தால்) செலுத்துகிறீர்கள், மற்றும் offset offer-க்கு collateral-ஆக புதிய principal-ஐ deposit செய்ய வேண்டும். புதிய borrower offer-ஐ ஏற்கும் வரை அல்லது நீங்கள் cancel செய்யும் வரை உங்கள் borrower-side NFT lock-ஆக இருக்கும்.",
+    "refinanceTitle": "பழைய loan, full-term interest + shortfall-உடன் மூடப்படுகிறது",
+    "refinanceBody": "Refinance பழைய lender-க்கு principal மற்றும் FULL-TERM interest (accrued மட்டுமல்ல) மற்றும் rate shortfall — புதிய offer-இன் expected interest பழைய loan-ஐவிடக் குறைவாக இருக்கும்போது செலுத்த வேண்டியது — செலுத்தி திருப்பித் தருகிறது. புதிய terms-க்கு பதிலாக, பழைய loan maturity-ஐ அடைந்ததைப் போல நீங்கள் செலுத்துகிறீர்கள்."
+  },
   "transferLockWarning": {
     "preconfirmTitle": "Vaipakam NFT மாற்றம் பூட்டு",
     "preconfirmBodyLender": "இந்த பரிவர்த்தனையை சமர்ப்பிப்பது இந்த {{flow}} செயல்முறை முடிவடையும் அல்லது ரத்து செய்யப்படும் வரை கடன் வழங்குபவர் பக்க Vaipakam NFT #{{tokenId}} ஐ மாற்றம் மற்றும் ஒப்புதலில் இருந்து பூட்டும். பூட்டியிருக்கும் போது, NFT ஐ வேறு வாலட்டுக்கு நகர்த்த முடியாது, பட்டியலிடவோ, விற்கவோ, எந்த சந்தை இடத்திலும் ஒப்புதல் அளிக்கவோ முடியாது, மற்றும் அதன் உரிமை-உந்துதல் செயல்கள் இந்த நிறைவேற்ற-வேண்டிய ஓட்டத்துடன் இணைந்தே இருக்கும்.",

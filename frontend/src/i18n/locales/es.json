@@ -1238,6 +1238,18 @@
     "switchAriaSuffixOn": "activado",
     "switchAriaSuffixOff": "desactivado"
   },
+  "interestWarning": {
+    "earlyWithdrawalTitle": "Renunciarás al interés acumulado",
+    "earlyWithdrawalBody": "Al vender tu posición de prestamista ahora, renuncias a todo el interés acumulado hasta el momento en este préstamo. El monto renunciado se destina a la tesorería del protocolo, o — si el nuevo prestamista ofrece una tasa más baja — se aplica primero a compensar la diferencia de tasa. Te llevas el principal que financiaste (menos cualquier diferencia al nuevo prestamista), pero no el interés ganado hasta la fecha.",
+    "precloseDirectTitle": "Pagarás el interés del plazo completo",
+    "precloseDirectBody": "Cerrar el préstamo ahora por la vía Directa requiere pagar el interés del PLAZO COMPLETO como si el préstamo llegara a su vencimiento, no solo el interés acumulado hasta el momento. No hay descuento por cierre anticipado en esta vía. El prestamista recibe el 99% de ese interés; el 1% va a la tesorería del protocolo.",
+    "precloseTransferTitle": "Pagarás interés acumulado más una diferencia de tasa",
+    "precloseTransferBody": "Transferir la obligación a un nuevo prestatario requiere pagar el interés acumulado hasta la fecha más una diferencia — el desfase entre lo que el prestamista esperaba ganar en el plazo restante a tu tasa original y lo que ganará con la oferta del nuevo prestatario. Si la nueva oferta iguala tu tasa, la diferencia es cero.",
+    "precloseOffsetTitle": "Pagarás interés acumulado + diferencia, y bloquearás nuevo principal",
+    "precloseOffsetBody": "La vía Offset liquida tu préstamo contra una nueva oferta de prestamista que tú creas. Por adelantado pagas el interés acumulado más cualquier diferencia de tasa al prestamista original, y debes depositar nuevo principal como garantía para la oferta de offset. Tu NFT de prestatario queda bloqueado hasta que un nuevo prestatario acepte la oferta o tú la canceles.",
+    "refinanceTitle": "El préstamo antiguo se cierra con interés del plazo completo + diferencia",
+    "refinanceBody": "Refinanciar reembolsa al prestamista antiguo con principal más interés del PLAZO COMPLETO (no solo el acumulado) más cualquier diferencia de tasa — pagadera cuando el interés esperado de la nueva oferta es menor que el del préstamo antiguo. Estás pagando efectivamente como si el préstamo antiguo hubiera llegado a su vencimiento, a cambio de los nuevos términos."
+  },
   "transferLockWarning": {
     "preconfirmTitle": "Bloqueo de transferencia del NFT Vaipakam",
     "preconfirmBodyLender": "Enviar esta transacción bloqueará el NFT Vaipakam #{{tokenId}} del lado del prestamista para transferencia y aprobación hasta que este flujo {{flow}} se complete o se cancele. Mientras esté bloqueado, el NFT no puede moverse a otra cartera, listarse, venderse ni aprobarse en ningún marketplace, y sus acciones impulsadas por la propiedad permanecen vinculadas a este flujo en curso.",

@@ -480,6 +480,18 @@
     "switchAriaSuffixOn": "on",
     "switchAriaSuffixOff": "off"
   },
+  "interestWarning": {
+    "earlyWithdrawalTitle": "You'll forfeit accrued interest",
+    "earlyWithdrawalBody": "By selling your lender position now, you give up all interest accrued so far on this loan. The forfeited amount goes to the protocol treasury, or — if the new lender offers a lower rate — is applied toward the rate shortfall first. You walk away with the principal you funded (minus any shortfall to the new lender), but not the interest earned to date.",
+    "precloseDirectTitle": "You'll pay full-term interest",
+    "precloseDirectBody": "Closing the loan now via the Direct path requires you to pay the FULL TERM interest as if the loan ran to maturity — not just the interest accrued so far. There is no early-close discount on this path. The lender receives 99% of that interest; 1% goes to the protocol treasury.",
+    "precloseTransferTitle": "You'll pay accrued interest plus a rate shortfall",
+    "precloseTransferBody": "Transferring the obligation to a new borrower requires you to pay the interest accrued to date plus a shortfall — the difference between what the lender expected to earn over the remaining term at your original rate and what they will earn from the new borrower's offer. If the new offer matches your rate, the shortfall is zero.",
+    "precloseOffsetTitle": "You'll pay accrued interest plus shortfall, and lock new principal",
+    "precloseOffsetBody": "The Offset path settles your loan against a fresh lender offer that you create. Up front you pay the interest accrued so far plus any rate shortfall to the original lender, and you must deposit fresh principal as collateral for the offset offer. Your borrower-side NFT is locked until a new borrower accepts the offer or you cancel it.",
+    "refinanceTitle": "Old loan closes at full-term interest plus shortfall",
+    "refinanceBody": "Refinancing repays the old lender with principal plus FULL TERM interest (not just accrued) plus any rate shortfall — payable when the new offer's expected interest is lower than the old loan's. You're effectively paying as if the old loan reached maturity, in exchange for the new terms."
+  },
   "transferLockWarning": {
     "preconfirmTitle": "Vaipakam NFT transfer lock",
     "preconfirmBodyLender": "Submitting this transaction will lock the lender-side Vaipakam NFT #{{tokenId}} from transfer and approval until this {{flow}} flow completes or is cancelled. While locked, the NFT cannot be moved to another wallet, listed, sold, or approved on any marketplace, and its ownership-driven actions remain bound to this in-progress flow.",

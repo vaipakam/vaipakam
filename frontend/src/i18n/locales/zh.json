@@ -1238,6 +1238,18 @@
     "switchAriaSuffixOn": "开",
     "switchAriaSuffixOff": "关"
   },
+  "interestWarning": {
+    "earlyWithdrawalTitle": "您将放弃已累计的利息",
+    "earlyWithdrawalBody": "现在出售您的 lender 仓位，意味着放弃此 loan 上至今累计的所有利息。放弃的金额将进入 protocol treasury；如果新 lender 提供较低的利率，则首先用于补偿利率差额。您将拿回您出资的 principal（扣除给新 lender 的差额），但不包括至今赚取的利息。",
+    "precloseDirectTitle": "您将支付全期利息",
+    "precloseDirectBody": "通过 Direct 路径现在关闭 loan，需要支付如同 loan 持续到期的全期利息 — 而不是仅至今累计的利息。此路径没有提前关闭折扣。lender 收到该利息的 99%；1% 进入 protocol treasury。",
+    "precloseTransferTitle": "您将支付累计利息加利率差额",
+    "precloseTransferBody": "将义务转移给新 borrower 需要支付至今累计的利息以及差额 — 即 lender 按您原利率在剩余期限内预期收益与新 borrower 报价收益之间的差额。如果新报价与您的利率一致，差额为零。",
+    "precloseOffsetTitle": "您将支付累计利息 + 差额，并锁定新的 principal",
+    "precloseOffsetBody": "Offset 路径将您的 loan 与您创建的新 lender 报价进行结算。预先，您支付至今累计的利息以及向原 lender 的任何利率差额，并且必须为 offset 报价存入新的 principal 作为抵押。在新 borrower 接受报价或您取消之前，您的 borrower 端 NFT 将被锁定。",
+    "refinanceTitle": "旧 loan 按全期利息 + 差额关闭",
+    "refinanceBody": "Refinance 用 principal 加全期利息（不仅是累计部分）以及任何利率差额 — 当新报价的预期利息低于旧 loan 时支付 — 偿还旧 lender。实际上，您是按旧 loan 到期的方式支付，以换取新条款。"
+  },
   "transferLockWarning": {
     "preconfirmTitle": "Vaipakam NFT转移锁定",
     "preconfirmBodyLender": "提交此交易将锁定出借方一侧的Vaipakam NFT #{{tokenId}}的转移和授权，直到此{{flow}}流程完成或取消。锁定期间，NFT无法移至其他钱包、上架、出售或在任何市场上获得授权，其基于所有权的操作仍与正在进行的流程绑定。",

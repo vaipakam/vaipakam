@@ -1238,6 +1238,18 @@
     "switchAriaSuffixOn": "オン",
     "switchAriaSuffixOff": "オフ"
   },
+  "interestWarning": {
+    "earlyWithdrawalTitle": "発生済み利息を放棄します",
+    "earlyWithdrawalBody": "今ここでlenderポジションを売却すると、このローンでこれまでに発生したすべての利息を放棄することになります。放棄された金額はプロトコルのtreasuryに送られます。新しいlenderの金利が低い場合は、まず金利不足分の補填に充てられます。あなたは資金提供したprincipal(新しいlenderへの不足分を差し引いた額)は受け取れますが、現時点までに獲得した利息は受け取れません。",
+    "precloseDirectTitle": "全期間分の利息を支払います",
+    "precloseDirectBody": "Directパスでローンを今閉じるには、ローンが満期まで続いた場合と同じ全期間分の利息を支払う必要があります — これまでに発生した利息のみではありません。このパスには早期返済割引はありません。lenderはその利息の99%を受け取り、1%はプロトコルのtreasuryに送られます。",
+    "precloseTransferTitle": "発生済み利息と金利不足分を支払います",
+    "precloseTransferBody": "義務を新しいborrowerに移転するには、現時点までに発生した利息と不足分 — あなたの元の金利でlenderが残期間に得るはずだった額と、新しいborrowerのオファーから得る額との差 — を支払う必要があります。新しいオファーがあなたの金利と一致する場合、不足分はゼロです。",
+    "precloseOffsetTitle": "発生済み利息 + 不足分を支払い、新しいprincipalをロックします",
+    "precloseOffsetBody": "Offsetパスは、あなたが作成する新しいlenderオファーに対してローンを清算します。事前に、これまでに発生した利息と元のlenderへの金利不足分を支払い、offsetオファーの担保として新しいprincipalを預ける必要があります。新しいborrowerがオファーを受諾するか、あなたが取り消すまで、あなたのborrower側NFTはロックされます。",
+    "refinanceTitle": "旧ローンは全期間分の利息 + 不足分で閉鎖されます",
+    "refinanceBody": "Refinanceは、旧lenderにprincipalと全期間分の利息(発生済みのみではない)、および金利不足分 — 新しいオファーの予想利息が旧ローンより低い場合に支払われる — を返済します。新しい条件と引き換えに、実質的に旧ローンが満期に達したかのように支払うことになります。"
+  },
   "transferLockWarning": {
     "preconfirmTitle": "Vaipakam NFT転送ロック",
     "preconfirmBodyLender": "このトランザクションを送信すると、この{{flow}}フローが完了またはキャンセルされるまで、貸し手側 Vaipakam NFT #{{tokenId}}の転送と承認をロックします。ロック中、NFTを別ウォレットへ移動、出品、売却、マーケットプレイスでの承認はできず、所有権ベースのアクションは進行中のフローに紐付けられたままです。",

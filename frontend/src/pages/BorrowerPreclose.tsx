@@ -15,6 +15,7 @@ import { decodeContractError } from "../lib/decodeContractError";
 import { beginStep } from "../lib/journeyLog";
 import { DEFAULT_CHAIN } from "../contracts/config";
 import { TransferLockWarning } from "../components/app/TransferLockWarning";
+import { InterestImplicationWarning } from "../components/app/InterestImplicationWarning";
 import { RiskDisclosures } from "../components/app/RiskDisclosures";
 import { AssetSymbol } from "../components/app/AssetSymbol";
 import { TokenAmount } from "../components/app/TokenAmount";
@@ -476,7 +477,8 @@ export default function BorrowerPreclose() {
             <div className="action-group">
               <h4 className="action-title">{t('preclose.directPrecloseTitle')}</h4>
               <p className="action-desc">{t('preclose.directPrecloseDesc')}</p>
-              <div className="action-row">
+              <InterestImplicationWarning kind="preclose-direct" />
+              <div className="action-row" style={{ marginTop: 12 }}>
                 <button
                   className="btn btn-primary btn-sm"
                   onClick={handleDirect}
@@ -503,6 +505,7 @@ export default function BorrowerPreclose() {
                   <p className="action-desc" style={{ marginTop: 12 }}>
                     {t('preclose.transferReviewBody')}
                   </p>
+                  <InterestImplicationWarning kind="preclose-transfer" />
                   <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
                     <button
                       className="btn btn-primary btn-sm"
@@ -578,6 +581,7 @@ export default function BorrowerPreclose() {
                     tokenId={loan.borrowerTokenId}
                     role="borrower"
                   />
+                  <InterestImplicationWarning kind="preclose-offset" />
                   <div className="data-row" style={{ marginTop: 12 }}>
                     <span className="data-label">{t('preclose.newRateLabel')}</span>
                     <span className="data-value">{rate}%</span>

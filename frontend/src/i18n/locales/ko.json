@@ -1238,6 +1238,18 @@
     "switchAriaSuffixOn": "켜짐",
     "switchAriaSuffixOff": "꺼짐"
   },
+  "interestWarning": {
+    "earlyWithdrawalTitle": "발생된 이자를 포기하게 됩니다",
+    "earlyWithdrawalBody": "지금 lender 포지션을 판매하면, 이 대출에서 지금까지 발생한 모든 이자를 포기하게 됩니다. 포기된 금액은 protocol treasury로 이동하며, 새로운 lender가 더 낮은 금리를 제시하는 경우에는 먼저 금리 차액 보전에 사용됩니다. 자금을 공급한 principal(새 lender에게 지급될 차액을 제외한 금액)은 회수하지만, 현재까지 적립된 이자는 받지 못합니다.",
+    "precloseDirectTitle": "전체 기간 이자를 지불합니다",
+    "precloseDirectBody": "Direct 경로로 지금 대출을 종료하려면, 대출이 만기까지 진행된 것처럼 전체 기간 이자를 지불해야 합니다 — 지금까지 발생한 이자만이 아닙니다. 이 경로에는 조기 종료 할인이 없습니다. lender는 해당 이자의 99%를 받고, 1%는 protocol treasury로 이동합니다.",
+    "precloseTransferTitle": "발생된 이자와 금리 차액을 지불합니다",
+    "precloseTransferBody": "의무를 새로운 borrower에게 이전하려면, 현재까지 발생한 이자와 차액 — 원래 금리로 lender가 남은 기간 동안 얻을 것으로 예상한 금액과 새로운 borrower의 오퍼에서 얻을 금액의 차이 — 을 지불해야 합니다. 새 오퍼가 원래 금리와 일치하면 차액은 0입니다.",
+    "precloseOffsetTitle": "발생된 이자 + 차액을 지불하고, 새로운 principal을 잠급니다",
+    "precloseOffsetBody": "Offset 경로는 사용자가 생성하는 새로운 lender 오퍼에 대해 대출을 정산합니다. 먼저 현재까지 발생한 이자와 원래 lender에 대한 금리 차액을 지불하고, offset 오퍼의 담보로 새로운 principal을 예치해야 합니다. 새로운 borrower가 오퍼를 수락하거나 사용자가 취소할 때까지 borrower 측 NFT가 잠깁니다.",
+    "refinanceTitle": "기존 대출은 전체 기간 이자 + 차액으로 종료됩니다",
+    "refinanceBody": "Refinance는 기존 lender에게 principal과 전체 기간 이자(발생분만이 아님), 그리고 금리 차액 — 새 오퍼의 예상 이자가 기존 대출보다 낮을 때 지급 — 으로 상환합니다. 새로운 조건의 대가로, 실질적으로 기존 대출이 만기에 도달한 것처럼 지불하는 셈입니다."
+  },
   "transferLockWarning": {
     "preconfirmTitle": "Vaipakam NFT 전송 잠금",
     "preconfirmBodyLender": "이 트랜잭션을 제출하면 이 {{flow}} 흐름이 완료되거나 취소될 때까지 대여자 측 Vaipakam NFT #{{tokenId}}의 전송과 승인이 잠깁니다. 잠긴 동안 NFT는 다른 지갑으로 이동, 등록, 판매되거나 마켓플레이스에서 승인될 수 없으며, 소유권 기반 동작은 진행 중인 흐름에 묶여 있습니다.",

@@ -1238,6 +1238,18 @@
     "switchAriaSuffixOn": "an",
     "switchAriaSuffixOff": "aus"
   },
+  "interestWarning": {
+    "earlyWithdrawalTitle": "Sie verzichten auf aufgelaufene Zinsen",
+    "earlyWithdrawalBody": "Indem Sie Ihre Lender-Position jetzt verkaufen, geben Sie alle bisher auf diesen Kredit aufgelaufenen Zinsen auf. Der verzichtete Betrag fließt in die Protokoll-Treasury — oder, falls der neue Lender einen niedrigeren Zinssatz bietet, wird er zunächst auf den Zinsausgleich angerechnet. Sie erhalten den von Ihnen finanzierten Hauptbetrag zurück (abzüglich eines etwaigen Ausgleichs an den neuen Lender), jedoch nicht die bis heute verdienten Zinsen.",
+    "precloseDirectTitle": "Sie zahlen die Zinsen für die volle Laufzeit",
+    "precloseDirectBody": "Das vorzeitige Schließen des Kredits über den Direct-Pfad erfordert die Zahlung der GESAMTEN Laufzeitzinsen, als ob der Kredit bis zur Fälligkeit liefe — nicht nur die bisher aufgelaufenen Zinsen. Auf diesem Pfad gibt es keinen Rabatt für vorzeitige Rückzahlung. Der Lender erhält 99% dieser Zinsen; 1% fließt in die Protokoll-Treasury.",
+    "precloseTransferTitle": "Sie zahlen aufgelaufene Zinsen plus einen Zinsausgleich",
+    "precloseTransferBody": "Die Übertragung der Verpflichtung an einen neuen Borrower erfordert die Zahlung der bisher aufgelaufenen Zinsen plus eines Ausgleichs — die Differenz zwischen dem, was der Lender zu Ihrem ursprünglichen Zinssatz für die Restlaufzeit erwartet hat, und dem, was er aus dem Angebot des neuen Borrowers verdienen wird. Stimmt das neue Angebot mit Ihrem Zinssatz überein, ist der Ausgleich null.",
+    "precloseOffsetTitle": "Sie zahlen aufgelaufene Zinsen + Ausgleich und sperren neues Kapital",
+    "precloseOffsetBody": "Der Offset-Pfad gleicht Ihren Kredit mit einem neuen Lender-Angebot aus, das Sie selbst erstellen. Vorab zahlen Sie die bisher aufgelaufenen Zinsen plus etwaige Zinsausgleiche an den ursprünglichen Lender, und Sie müssen frisches Kapital als Sicherheit für das Offset-Angebot hinterlegen. Ihre Borrower-NFT ist gesperrt, bis ein neuer Borrower das Angebot annimmt oder Sie es stornieren.",
+    "refinanceTitle": "Alter Kredit schließt mit Zinsen für die volle Laufzeit + Ausgleich",
+    "refinanceBody": "Die Refinanzierung zahlt dem alten Lender den Hauptbetrag plus die Zinsen für die GESAMTE Laufzeit (nicht nur die aufgelaufenen) plus etwaige Zinsausgleiche zurück — fällig, wenn die erwarteten Zinsen des neuen Angebots niedriger sind als die des alten Kredits. Sie zahlen praktisch so, als hätte der alte Kredit die Fälligkeit erreicht, im Gegenzug für die neuen Konditionen."
+  },
   "transferLockWarning": {
     "preconfirmTitle": "Vaipakam-NFT-Transfersperre",
     "preconfirmBodyLender": "Das Senden dieser Transaktion sperrt das Vaipakam-NFT #{{tokenId}} auf Kreditgeberseite gegen Transfer und Genehmigung, bis dieser {{flow}}-Ablauf abgeschlossen oder abgebrochen ist. Während der Sperre kann das NFT nicht in ein anderes Wallet verschoben, gelistet, verkauft oder auf einem Marktplatz genehmigt werden, und seine eigentumsbasierten Aktionen bleiben an diesen laufenden Ablauf gebunden.",
