@@ -555,7 +555,6 @@
     "offerBook": "Offer Book",
     "createOffer": "Create Offer",
     "buyVpfi": "Buy VPFI",
-    "rewards": "Rewards",
     "claimCenter": "Claim Center",
     "activity": "Activity",
     "alerts": "Alerts",
@@ -773,31 +772,6 @@
     "buyTimedOut": "Buy timed out — funds returned",
     "escrowBalanceZero": "Your escrow VPFI balance is 0 — deposit VPFI first."
   },
-  "rewards": {
-    "connectTitle": "Connect your wallet",
-    "connectBody": "Rewards can only be claimed on supported lending chains. Connect a wallet on a supported chain to view and claim your staking and interaction rewards.",
-    "unsupportedNetwork": "Unsupported network",
-    "unsupportedNetworkBody": "Rewards can only be claimed on supported lending chains. Your wallet is currently on a network that does not host a Vaipakam Diamond. Switch to a supported chain to continue.",
-    "failedToLoad": "Failed to load rewards",
-    "pageSubtitle": "Escrow-held VPFI accrues a 5% APR passively, and every USD of interest settled on a loan earns you a daily share of the interaction pool.",
-    "withdrawStakedTitle": "Withdraw staked VPFI",
-    "withdrawStakedBody": "Move VPFI out of your escrow back to your wallet. Withdrawn VPFI stops accruing staking rewards and no longer counts toward your discount tier.",
-    "inEscrow": "In escrow",
-    "amountVpfi": "Amount (VPFI)",
-    "max": "Max",
-    "noVpfiInEscrow": "No VPFI in escrow to unstake",
-    "unstaking": "Unstaking…",
-    "reviewUnstake": "Review unstake",
-    "claimRewardsTitle": "Claim Rewards",
-    "mintedDirectlyOn": "Minted directly on {{chain}} — no bridging or chain switch required.",
-    "stakingRewards": "Staking rewards",
-    "interactionRewards": "Interaction rewards",
-    "totalToMint": "Total to mint",
-    "waiting": "waiting",
-    "claiming": "Claiming…",
-    "noRewardsAvailable": "No rewards available to claim on {{chain}}",
-    "claimAmount": "Claim {{amount}} VPFI"
-  },
   "claimCenter": {
     "connectTitle": "Connect Your Wallet",
     "connectBody": "Connect your wallet to view and claim your funds.",
@@ -908,6 +882,17 @@
     "claiming": "Claiming…",
     "claimFailed": "Claim failed",
     "submitted": "Claim submitted:"
+  },
+  "interactionRewards": {
+    "title": "Platform-interaction VPFI rewards",
+    "subtitle": "Every USD of interest settled on a loan you participated in earns you a daily share of the interaction-rewards pool, paid in VPFI.",
+    "pendingLabel": "Pending",
+    "claim": "Claim",
+    "claiming": "Claiming…",
+    "claimFailed": "Claim failed",
+    "submitted": "Claim submitted:",
+    "waiting": "Waiting on day {{day}} finalization",
+    "waitingTooltip": "Day {{day}}'s cross-chain global denominator hasn't been broadcast to this chain yet. Claim is blocked at the protocol layer until it lands; usually finalizes within minutes."
   },
   "allowances": {
     "connectBody": "Connect your wallet to view allowances.",

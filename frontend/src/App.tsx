@@ -15,7 +15,6 @@ import KeeperSettings from './pages/KeeperSettings';
 import Alerts from './pages/Alerts';
 import Allowances from './pages/Allowances';
 import BuyVPFI from './pages/BuyVPFI';
-import Rewards from './pages/Rewards';
 import Activity from './pages/Activity';
 import DiscordPage from './pages/Discord';
 import TermsPage from './pages/TermsPage';
@@ -107,7 +106,6 @@ function pageRoutes(): ReactElement {
         <Route path="loans/:loanId/refinance" element={<Refinance />} />
         <Route path="claims" element={<ClaimCenter />} />
         <Route path="activity" element={<Activity />} />
-        <Route path="rewards" element={<Rewards />} />
         <Route path="keepers" element={<KeeperSettings />} />
         <Route path="alerts" element={<Alerts />} />
         <Route path="allowances" element={<Allowances />} />

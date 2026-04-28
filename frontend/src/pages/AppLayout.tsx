@@ -14,7 +14,6 @@ import {
   BookOpen,
   PlusCircle,
   HandCoins,
-  Gift,
   Coins,
   ShieldCheck,
   Activity,
@@ -84,12 +83,6 @@ const BASIC_NAV = [
     labelKey: "appNav.buyVpfi",
     end: false,
     external: true,
-  },
-  {
-    to: "/app/rewards",
-    icon: <Gift size={20} />,
-    labelKey: "appNav.rewards",
-    end: false,
   },
   {
     to: "/app/claims",

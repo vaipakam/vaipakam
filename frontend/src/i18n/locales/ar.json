@@ -88,7 +88,6 @@
     "offerBook": "دفتر العروض",
     "createOffer": "إنشاء عرض",
     "buyVpfi": "شراء VPFI",
-    "rewards": "المكافآت",
     "claimCenter": "مركز المطالبات",
     "activity": "النشاط",
     "alerts": "التنبيهات",
@@ -306,31 +305,6 @@
     "buyTimedOut": "انتهت مهلة الشراء — تمت إعادة الأموال",
     "escrowBalanceZero": "رصيد VPFI في Escrow الخاص بك هو 0 — أودع VPFI أولاً."
   },
-  "rewards": {
-    "connectTitle": "اربط محفظتك",
-    "connectBody": "لا يمكن المطالبة بالمكافآت إلا على سلاسل الإقراض المدعومة. اربط محفظة على سلسلة مدعومة لعرض ومطالبة مكافآت الـ Staking والتفاعل الخاصة بك.",
-    "unsupportedNetwork": "شبكة غير مدعومة",
-    "unsupportedNetworkBody": "لا يمكن المطالبة بالمكافآت إلا على سلاسل الإقراض المدعومة. محفظتك حاليًا على شبكة لا تستضيف Vaipakam Diamond. انتقل إلى سلسلة مدعومة للمتابعة.",
-    "failedToLoad": "فشل تحميل المكافآت",
-    "pageSubtitle": "يكتسب VPFI المحتفظ به في Escrow APR بنسبة 5٪ بشكل سلبي، وكل دولار من الفائدة يتم تسويته على القرض يكسبك حصة يومية من تجمع التفاعل.",
-    "withdrawStakedTitle": "سحب VPFI المُودع في Staking",
-    "withdrawStakedBody": "انقل VPFI من Escrow الخاص بك إلى محفظتك. يتوقف VPFI المسحوب عن مراكمة مكافآت الـ Staking ولا يحتسب لمستوى الخصم الخاص بك.",
-    "inEscrow": "في Escrow",
-    "amountVpfi": "المبلغ (VPFI)",
-    "max": "الحد الأقصى",
-    "noVpfiInEscrow": "لا يوجد VPFI في Escrow للسحب",
-    "unstaking": "جارٍ السحب…",
-    "reviewUnstake": "مراجعة السحب",
-    "claimRewardsTitle": "المطالبة بالمكافآت",
-    "mintedDirectlyOn": "تم سكها مباشرة على {{chain}} — لا يلزم جسر أو تبديل سلسلة.",
-    "stakingRewards": "مكافآت Staking",
-    "interactionRewards": "مكافآت التفاعل",
-    "totalToMint": "الإجمالي للسك",
-    "waiting": "في الانتظار",
-    "claiming": "جارٍ المطالبة…",
-    "noRewardsAvailable": "لا توجد مكافآت متاحة للمطالبة على {{chain}}",
-    "claimAmount": "المطالبة بـ {{amount}} VPFI"
-  },
   "claimCenter": {
     "connectTitle": "اربط محفظتك",
     "connectBody": "اربط محفظتك لعرض أموالك والمطالبة بها.",
@@ -441,6 +415,17 @@
     "claiming": "جاري المطالبة…",
     "claimFailed": "فشلت المطالبة",
     "submitted": "تم إرسال المطالبة:"
+  },
+  "interactionRewards": {
+    "title": "مكافآت VPFI لتفاعل المنصة",
+    "subtitle": "كل دولار من الفائدة التي تُسدَّد على قرض شاركت فيه يكسبك حصة يومية من مجمع مكافآت التفاعل، تُدفع بـ VPFI.",
+    "pendingLabel": "قيد الانتظار",
+    "claim": "مطالبة",
+    "claiming": "جاري المطالبة…",
+    "claimFailed": "فشلت المطالبة",
+    "submitted": "تم إرسال المطالبة:",
+    "waiting": "في انتظار إتمام اليوم {{day}}",
+    "waitingTooltip": "لم يتم بث المقام العالمي عبر السلاسل لليوم {{day}} إلى هذه السلسلة بعد. يتم حظر المطالبة على مستوى البروتوكول حتى يصل؛ عادةً ما يكتمل خلال دقائق."
   },
   "allowances": {
     "connectBody": "اربط محفظتك لعرض الأذونات.",

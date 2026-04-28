@@ -88,7 +88,6 @@
     "offerBook": "Libro de ofertas",
     "createOffer": "Crear oferta",
     "buyVpfi": "Comprar VPFI",
-    "rewards": "Recompensas",
     "claimCenter": "Centro de reclamos",
     "activity": "Actividad",
     "alerts": "Alertas",
@@ -306,31 +305,6 @@
     "buyTimedOut": "La compra expiró — fondos devueltos",
     "escrowBalanceZero": "Tu saldo VPFI en Escrow es 0 — deposita VPFI primero."
   },
-  "rewards": {
-    "connectTitle": "Conecta tu billetera",
-    "connectBody": "Las recompensas solo se pueden reclamar en cadenas de préstamo compatibles. Conecta una billetera en una cadena compatible para ver y reclamar tus recompensas de staking e interacción.",
-    "unsupportedNetwork": "Red no compatible",
-    "unsupportedNetworkBody": "Las recompensas solo se pueden reclamar en cadenas de préstamo compatibles. Tu billetera está actualmente en una red que no aloja un Vaipakam Diamond. Cambia a una cadena compatible para continuar.",
-    "failedToLoad": "Error al cargar recompensas",
-    "pageSubtitle": "VPFI en Escrow acumula un 5% APR pasivamente, y cada USD de interés liquidado en un préstamo te otorga una parte diaria del pool de interacción.",
-    "withdrawStakedTitle": "Retirar VPFI en staking",
-    "withdrawStakedBody": "Mueve VPFI de tu Escrow de vuelta a tu billetera. El VPFI retirado deja de acumular recompensas de staking y ya no cuenta para tu nivel de descuento.",
-    "inEscrow": "En Escrow",
-    "amountVpfi": "Monto (VPFI)",
-    "max": "Máx",
-    "noVpfiInEscrow": "No hay VPFI en Escrow para retirar",
-    "unstaking": "Retirando…",
-    "reviewUnstake": "Revisar retiro",
-    "claimRewardsTitle": "Reclamar recompensas",
-    "mintedDirectlyOn": "Acuñado directamente en {{chain}} — sin puentes ni cambio de cadena.",
-    "stakingRewards": "Recompensas de staking",
-    "interactionRewards": "Recompensas de interacción",
-    "totalToMint": "Total a acuñar",
-    "waiting": "esperando",
-    "claiming": "Reclamando…",
-    "noRewardsAvailable": "No hay recompensas disponibles para reclamar en {{chain}}",
-    "claimAmount": "Reclamar {{amount}} VPFI"
-  },
   "claimCenter": {
     "connectTitle": "Conecta tu billetera",
     "connectBody": "Conecta tu billetera para ver y reclamar tus fondos.",
@@ -441,6 +415,17 @@
     "claiming": "Reclamando…",
     "claimFailed": "Reclamo fallido",
     "submitted": "Reclamo enviado:"
+  },
+  "interactionRewards": {
+    "title": "Recompensas VPFI por interacción con la plataforma",
+    "subtitle": "Cada dólar de interés liquidado en un préstamo en el que participaste te otorga una participación diaria del pool de recompensas de interacción, pagada en VPFI.",
+    "pendingLabel": "Pendiente",
+    "claim": "Reclamar",
+    "claiming": "Reclamando…",
+    "claimFailed": "Reclamo fallido",
+    "submitted": "Reclamo enviado:",
+    "waiting": "Esperando finalización del día {{day}}",
+    "waitingTooltip": "El denominador global cross-chain del día {{day}} aún no se ha transmitido a esta cadena. El reclamo está bloqueado a nivel de protocolo hasta que llegue; normalmente se finaliza en minutos."
   },
   "allowances": {
     "connectBody": "Conecta tu billetera para ver las aprobaciones.",

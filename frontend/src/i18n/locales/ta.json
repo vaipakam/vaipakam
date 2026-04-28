@@ -88,7 +88,6 @@
     "offerBook": "வாய்ப்பு புத்தகம்",
     "createOffer": "வாய்ப்பு உருவாக்கவும்",
     "buyVpfi": "VPFI வாங்கு",
-    "rewards": "வெகுமதிகள்",
     "claimCenter": "Claim மையம்",
     "activity": "செயல்பாடு",
     "alerts": "எச்சரிக்கைகள்",
@@ -306,31 +305,6 @@
     "buyTimedOut": "வாங்குதல் நேரம் முடிந்தது — நிதி திருப்பி அனுப்பப்பட்டது",
     "escrowBalanceZero": "உங்கள் Escrow VPFI இருப்பு 0 — முதலில் VPFI வைப்பு செய்யவும்."
   },
-  "rewards": {
-    "connectTitle": "உங்கள் வாலெட்டை இணைக்கவும்",
-    "connectBody": "வெகுமதிகளை ஆதரிக்கப்படும் கடன் செயின்களில் மட்டுமே கோரலாம். உங்கள் ஸ்டேக்கிங் மற்றும் தொடர்பு வெகுமதிகளைப் பார்க்கவும் கோரவும் ஆதரிக்கப்படும் செயினில் வாலெட்டை இணைக்கவும்.",
-    "unsupportedNetwork": "ஆதரிக்கப்படாத நெட்வொர்க்",
-    "unsupportedNetworkBody": "வெகுமதிகளை ஆதரிக்கப்படும் கடன் செயின்களில் மட்டுமே கோரலாம். உங்கள் வாலெட் தற்போது Vaipakam Diamond ஐ வழங்காத நெட்வொர்க்கில் உள்ளது. தொடர ஆதரிக்கப்படும் செயினுக்கு மாறவும்.",
-    "failedToLoad": "வெகுமதிகளை ஏற்ற முடியவில்லை",
-    "pageSubtitle": "Escrow இல் வைக்கப்பட்ட VPFI செயலற்ற முறையில் 5% APR ஐ சேர்க்கிறது, மற்றும் கடனில் தீர்க்கப்பட்ட ஒவ்வொரு USD வட்டியும் உங்களுக்கு தொடர்பு குழுமத்தின் தினசரி பங்கை வழங்குகிறது.",
-    "withdrawStakedTitle": "ஸ்டேக் செய்யப்பட்ட VPFI ஐ வெளியேற்று",
-    "withdrawStakedBody": "VPFI ஐ உங்கள் Escrow இலிருந்து உங்கள் வாலெட்டுக்கு திரும்ப நகர்த்து. வெளியேற்றப்பட்ட VPFI ஸ்டேக்கிங் வெகுமதிகளை சேர்ப்பதை நிறுத்துகிறது மற்றும் உங்கள் தள்ளுபடி அடுக்கை நோக்கி கணக்கிடப்படுவதில்லை.",
-    "inEscrow": "Escrow இல்",
-    "amountVpfi": "தொகை (VPFI)",
-    "max": "அதிகபட்சம்",
-    "noVpfiInEscrow": "Escrow இல் வெளியேற்ற VPFI இல்லை",
-    "unstaking": "வெளியேற்றப்படுகிறது…",
-    "reviewUnstake": "வெளியேற்றத்தை மதிப்பாய்வு செய்",
-    "claimRewardsTitle": "வெகுமதிகளை claim செய்யவும்",
-    "mintedDirectlyOn": "{{chain}} இல் நேரடியாக mint செய்யப்பட்டது — பாலம் அல்லது செயின் மாற்றம் தேவையில்லை.",
-    "stakingRewards": "ஸ்டேக்கிங் வெகுமதிகள்",
-    "interactionRewards": "தொடர்பு வெகுமதிகள்",
-    "totalToMint": "மொத்த mint",
-    "waiting": "காத்திருக்கிறது",
-    "claiming": "Claim செய்யப்படுகிறது…",
-    "noRewardsAvailable": "{{chain}} இல் claim செய்யக்கூடிய வெகுமதிகள் இல்லை",
-    "claimAmount": "{{amount}} VPFI claim செய்யவும்"
-  },
   "claimCenter": {
     "connectTitle": "உங்கள் வாலெட்டை இணைக்கவும்",
     "connectBody": "உங்கள் நிதியைப் பார்க்கவும் claim செய்யவும் உங்கள் வாலெட்டை இணைக்கவும்.",
@@ -441,6 +415,17 @@
     "claiming": "Claim செய்கிறது…",
     "claimFailed": "Claim தோல்வியடைந்தது",
     "submitted": "Claim சமர்ப்பிக்கப்பட்டது:"
+  },
+  "interactionRewards": {
+    "title": "Platform-interaction VPFI வெகுமதிகள்",
+    "subtitle": "நீங்கள் பங்கேற்ற loan-இல் தீர்க்கப்பட்ட ஒவ்வொரு USD வட்டிக்கும், interaction rewards pool-இன் தினசரி பங்கு VPFI-ஆக பெறுகிறீர்கள்.",
+    "pendingLabel": "நிலுவையில்",
+    "claim": "Claim",
+    "claiming": "Claim செய்கிறது…",
+    "claimFailed": "Claim தோல்வியடைந்தது",
+    "submitted": "Claim சமர்ப்பிக்கப்பட்டது:",
+    "waiting": "நாள் {{day}} முடிவுக்கு காத்திருக்கிறது",
+    "waitingTooltip": "நாள் {{day}}-இன் cross-chain global denominator இந்த chain-இற்கு இன்னும் அனுப்பப்படவில்லை. வரும் வரை protocol layer-இல் claim தடுக்கப்படுகிறது; பொதுவாக சில நிமிடங்களில் முடிவடைகிறது."
   },
   "allowances": {
     "connectBody": "அனுமதிகளைக் காண உங்கள் வாலெட்டை இணைக்கவும்.",

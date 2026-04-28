@@ -88,7 +88,6 @@
     "offerBook": "报价簿",
     "createOffer": "创建报价",
     "buyVpfi": "购买 VPFI",
-    "rewards": "奖励",
     "claimCenter": "领取中心",
     "activity": "活动",
     "alerts": "提醒",
@@ -306,31 +305,6 @@
     "buyTimedOut": "购买超时 — 资金已退回",
     "escrowBalanceZero": "您的 Escrow VPFI 余额为 0 — 请先存入 VPFI。"
   },
-  "rewards": {
-    "connectTitle": "连接您的钱包",
-    "connectBody": "奖励仅可在受支持的借贷链上领取。请在受支持的链上连接钱包以查看和领取您的质押和交互奖励。",
-    "unsupportedNetwork": "不支持的网络",
-    "unsupportedNetworkBody": "奖励仅可在受支持的借贷链上领取。您的钱包当前所在的网络未托管 Vaipakam Diamond。请切换到受支持的链以继续。",
-    "failedToLoad": "无法加载奖励",
-    "pageSubtitle": "Escrow 中的 VPFI 被动累积 5% APR,贷款上结算的每美元利息都让您获得每日交互池的份额。",
-    "withdrawStakedTitle": "提取已质押的 VPFI",
-    "withdrawStakedBody": "将 VPFI 从 Escrow 移回您的钱包。提取的 VPFI 将停止累积质押奖励,且不再计入您的折扣等级。",
-    "inEscrow": "在 Escrow 中",
-    "amountVpfi": "金额 (VPFI)",
-    "max": "最大",
-    "noVpfiInEscrow": "Escrow 中没有可提取的 VPFI",
-    "unstaking": "提取中…",
-    "reviewUnstake": "查看提取",
-    "claimRewardsTitle": "领取奖励",
-    "mintedDirectlyOn": "直接在 {{chain}} 铸造 — 无需桥接或切换链。",
-    "stakingRewards": "质押奖励",
-    "interactionRewards": "交互奖励",
-    "totalToMint": "总铸造额",
-    "waiting": "等待中",
-    "claiming": "领取中…",
-    "noRewardsAvailable": "{{chain}} 上没有可领取的奖励",
-    "claimAmount": "领取 {{amount}} VPFI"
-  },
   "claimCenter": {
     "connectTitle": "连接您的钱包",
     "connectBody": "连接您的钱包以查看和领取您的资金。",
@@ -441,6 +415,17 @@
     "claiming": "正在领取…",
     "claimFailed": "领取失败",
     "submitted": "领取已提交："
+  },
+  "interactionRewards": {
+    "title": "平台交互 VPFI 奖励",
+    "subtitle": "您参与的贷款上每结算 1 USD 利息,您都将获得交互奖励池的每日份额,以 VPFI 支付。",
+    "pendingLabel": "待领取",
+    "claim": "领取",
+    "claiming": "正在领取…",
+    "claimFailed": "领取失败",
+    "submitted": "领取已提交：",
+    "waiting": "等待第 {{day}} 天最终确定",
+    "waitingTooltip": "第 {{day}} 天的跨链全球分母尚未广播到此链。在抵达之前,协议层会阻止领取;通常在几分钟内最终确定。"
   },
   "allowances": {
     "connectBody": "连接您的钱包以查看授权。",

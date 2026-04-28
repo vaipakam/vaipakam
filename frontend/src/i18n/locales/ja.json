@@ -88,7 +88,6 @@
     "offerBook": "オファーブック",
     "createOffer": "オファー作成",
     "buyVpfi": "VPFIを購入",
-    "rewards": "報酬",
     "claimCenter": "クレームセンター",
     "activity": "アクティビティ",
     "alerts": "アラート",
@@ -306,31 +305,6 @@
     "buyTimedOut": "購入タイムアウト — 資金が返却されました",
     "escrowBalanceZero": "EscrowのVPFI残高が0です — 先にVPFIを預けてください。"
   },
-  "rewards": {
-    "connectTitle": "ウォレットを接続してください",
-    "connectBody": "報酬はサポートされている貸付チェーンでのみ請求できます。サポートされているチェーンのウォレットを接続してステーキングおよびインタラクション報酬を表示・請求してください。",
-    "unsupportedNetwork": "サポートされていないネットワーク",
-    "unsupportedNetworkBody": "報酬はサポートされている貸付チェーンでのみ請求できます。現在のウォレットはVaipakam Diamondをホストしていないネットワーク上にあります。続行するにはサポートされているチェーンに切り替えてください。",
-    "failedToLoad": "報酬の読み込みに失敗",
-    "pageSubtitle": "Escrow保有のVPFIは5% APRを受動的に蓄積し、ローンで決済された利息1ドルごとにインタラクションプールの日次シェアを獲得します。",
-    "withdrawStakedTitle": "ステーキングされたVPFIを引き出す",
-    "withdrawStakedBody": "VPFIをEscrowからウォレットに戻します。引き出されたVPFIはステーキング報酬の蓄積を停止し、割引階層にもカウントされなくなります。",
-    "inEscrow": "Escrow内",
-    "amountVpfi": "数量 (VPFI)",
-    "max": "最大",
-    "noVpfiInEscrow": "Escrowに引き出すVPFIがありません",
-    "unstaking": "引き出し中…",
-    "reviewUnstake": "引き出しを確認",
-    "claimRewardsTitle": "報酬を請求",
-    "mintedDirectlyOn": "{{chain}}で直接ミント — ブリッジやチェーン切り替えは不要。",
-    "stakingRewards": "ステーキング報酬",
-    "interactionRewards": "インタラクション報酬",
-    "totalToMint": "ミント総額",
-    "waiting": "待機中",
-    "claiming": "請求中…",
-    "noRewardsAvailable": "{{chain}}には請求可能な報酬がありません",
-    "claimAmount": "{{amount}} VPFIを請求"
-  },
   "claimCenter": {
     "connectTitle": "ウォレットを接続",
     "connectBody": "資金を表示・請求するにはウォレットを接続してください。",
@@ -441,6 +415,17 @@
     "claiming": "請求中…",
     "claimFailed": "請求失敗",
     "submitted": "請求送信済み:"
+  },
+  "interactionRewards": {
+    "title": "プラットフォーム交流VPFI報酬",
+    "subtitle": "あなたが参加したローンで決済された利息1USDごとに、インタラクション報酬プールから日次シェアがVPFIで支払われます。",
+    "pendingLabel": "保留中",
+    "claim": "請求",
+    "claiming": "請求中…",
+    "claimFailed": "請求失敗",
+    "submitted": "請求送信済み:",
+    "waiting": "日 {{day}} の確定待ち",
+    "waitingTooltip": "日 {{day}} のクロスチェーンのグローバル分母がまだこのチェーンにブロードキャストされていません。到着するまでプロトコルレイヤーで請求がブロックされます。通常は数分以内に確定します。"
   },
   "allowances": {
     "connectBody": "許可額を表示するためにウォレットを接続してください。",

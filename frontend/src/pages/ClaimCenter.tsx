@@ -11,6 +11,7 @@ import { HandCoins, Wallet, CheckCircle, ExternalLink } from 'lucide-react';
 import { ErrorAlert } from '../components/app/ErrorAlert';
 import { AssetSymbol } from '../components/app/AssetSymbol';
 import { TokenAmount } from '../components/app/TokenAmount';
+import { InteractionRewardsClaim } from '../components/app/InteractionRewardsClaim';
 import { CardInfo } from '../components/CardInfo';
 import './ClaimCenter.css';
 
@@ -91,6 +92,18 @@ export default function ClaimCenter() {
           </span>
         </div>
       )}
+
+      {/* Platform-interaction VPFI rewards live here as a sibling to the
+          per-loan claim rows below — Claim Center is the single home for
+          "anywhere you can pull funds you're owed." Hides itself when
+          the wallet has no pending interaction balance. The staking-
+          rewards stream lives separately on the Buy VPFI page (Step 2)
+          since it pairs naturally with the stake/unstake controls. */}
+      <InteractionRewardsClaim
+        address={address ?? null}
+        chainId={chainId}
+        blockExplorer={activeBlockExplorer}
+      />
 
       <div className="card">
         {loading ? (

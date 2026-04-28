@@ -88,7 +88,6 @@
     "offerBook": "Angebotsbuch",
     "createOffer": "Angebot erstellen",
     "buyVpfi": "VPFI kaufen",
-    "rewards": "Belohnungen",
     "claimCenter": "Anspruchszentrum",
     "activity": "Aktivität",
     "alerts": "Benachrichtigungen",
@@ -306,31 +305,6 @@
     "buyTimedOut": "Kauf-Timeout — Mittel zurückgegeben",
     "escrowBalanceZero": "Ihr VPFI-Saldo in der Escrow ist 0 — zahlen Sie zuerst VPFI ein."
   },
-  "rewards": {
-    "connectTitle": "Wallet verbinden",
-    "connectBody": "Belohnungen können nur auf unterstützten Kreditchains beansprucht werden. Verbinden Sie eine Wallet auf einer unterstützten Chain, um Ihre Staking- und Interaktionsbelohnungen anzuzeigen und zu beanspruchen.",
-    "unsupportedNetwork": "Nicht unterstütztes Netzwerk",
-    "unsupportedNetworkBody": "Belohnungen können nur auf unterstützten Kreditchains beansprucht werden. Ihre Wallet befindet sich derzeit in einem Netzwerk, das kein Vaipakam Diamond hostet. Wechseln Sie zu einer unterstützten Chain, um fortzufahren.",
-    "failedToLoad": "Belohnungen konnten nicht geladen werden",
-    "pageSubtitle": "VPFI in Escrow sammelt passiv 5% APR an, und jeder USD an Zinsen, der auf einem Kredit beglichen wird, gibt Ihnen einen täglichen Anteil am Interaktionspool.",
-    "withdrawStakedTitle": "Gestaktes VPFI abheben",
-    "withdrawStakedBody": "Verschieben Sie VPFI aus Ihrer Escrow zurück in Ihre Wallet. Abgehobenes VPFI sammelt keine Staking-Belohnungen mehr und zählt nicht mehr für Ihre Rabattstufe.",
-    "inEscrow": "In Escrow",
-    "amountVpfi": "Betrag (VPFI)",
-    "max": "Max",
-    "noVpfiInEscrow": "Kein VPFI in Escrow zum Abheben",
-    "unstaking": "Wird abgehoben…",
-    "reviewUnstake": "Abhebung prüfen",
-    "claimRewardsTitle": "Belohnungen beanspruchen",
-    "mintedDirectlyOn": "Direkt auf {{chain}} geprägt — keine Brücke oder Chain-Wechsel erforderlich.",
-    "stakingRewards": "Staking-Belohnungen",
-    "interactionRewards": "Interaktionsbelohnungen",
-    "totalToMint": "Gesamt zu prägen",
-    "waiting": "wartet",
-    "claiming": "Wird beansprucht…",
-    "noRewardsAvailable": "Keine Belohnungen zum Beanspruchen auf {{chain}}",
-    "claimAmount": "{{amount}} VPFI beanspruchen"
-  },
   "claimCenter": {
     "connectTitle": "Wallet verbinden",
     "connectBody": "Verbinden Sie Ihre Wallet, um Ihre Mittel anzuzeigen und zu beanspruchen.",
@@ -441,6 +415,17 @@
     "claiming": "Wird eingelöst…",
     "claimFailed": "Einlösen fehlgeschlagen",
     "submitted": "Anspruch eingereicht:"
+  },
+  "interactionRewards": {
+    "title": "Plattform-Interaktions-VPFI-Belohnungen",
+    "subtitle": "Jeder USD an Zinsen, der auf einem Kredit abgerechnet wird, an dem Sie beteiligt waren, verdient Ihnen einen täglichen Anteil am Interaktions-Rewards-Pool, ausgezahlt in VPFI.",
+    "pendingLabel": "Ausstehend",
+    "claim": "Einlösen",
+    "claiming": "Wird eingelöst…",
+    "claimFailed": "Einlösen fehlgeschlagen",
+    "submitted": "Anspruch eingereicht:",
+    "waiting": "Warten auf Tag-{{day}}-Finalisierung",
+    "waitingTooltip": "Der Cross-Chain-Globalnenner für Tag {{day}} wurde noch nicht auf diese Chain übertragen. Der Anspruch ist auf Protokollebene blockiert, bis er eintrifft; normalerweise innerhalb von Minuten."
   },
   "allowances": {
     "connectBody": "Verbinden Sie Ihre Wallet, um Genehmigungen anzuzeigen.",

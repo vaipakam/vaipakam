@@ -88,7 +88,6 @@
     "offerBook": "Carnet d'offres",
     "createOffer": "Créer une offre",
     "buyVpfi": "Acheter VPFI",
-    "rewards": "Récompenses",
     "claimCenter": "Centre de réclamations",
     "activity": "Activité",
     "alerts": "Alertes",
@@ -306,31 +305,6 @@
     "buyTimedOut": "Délai d'achat expiré — fonds retournés",
     "escrowBalanceZero": "Votre solde VPFI dans l'Escrow est 0 — déposez VPFI d'abord."
   },
-  "rewards": {
-    "connectTitle": "Connectez votre portefeuille",
-    "connectBody": "Les récompenses ne peuvent être réclamées que sur les chaînes de prêt prises en charge. Connectez un portefeuille sur une chaîne prise en charge pour voir et réclamer vos récompenses de staking et d'interaction.",
-    "unsupportedNetwork": "Réseau non pris en charge",
-    "unsupportedNetworkBody": "Les récompenses ne peuvent être réclamées que sur les chaînes de prêt prises en charge. Votre portefeuille est actuellement sur un réseau qui n'héberge pas de Vaipakam Diamond. Passez à une chaîne prise en charge pour continuer.",
-    "failedToLoad": "Échec du chargement des récompenses",
-    "pageSubtitle": "Le VPFI détenu en Escrow accumule passivement un APR de 5%, et chaque USD d'intérêts réglé sur un prêt vous donne droit à une part quotidienne du pool d'interaction.",
-    "withdrawStakedTitle": "Retirer le VPFI staké",
-    "withdrawStakedBody": "Déplacez le VPFI de votre Escrow vers votre portefeuille. Le VPFI retiré cesse d'accumuler des récompenses de staking et ne compte plus pour votre niveau de remise.",
-    "inEscrow": "Dans l'Escrow",
-    "amountVpfi": "Montant (VPFI)",
-    "max": "Max",
-    "noVpfiInEscrow": "Pas de VPFI dans l'Escrow à retirer",
-    "unstaking": "Retrait…",
-    "reviewUnstake": "Vérifier le retrait",
-    "claimRewardsTitle": "Réclamer les récompenses",
-    "mintedDirectlyOn": "Frappé directement sur {{chain}} — pas de pont ni de changement de chaîne requis.",
-    "stakingRewards": "Récompenses de staking",
-    "interactionRewards": "Récompenses d'interaction",
-    "totalToMint": "Total à frapper",
-    "waiting": "en attente",
-    "claiming": "Réclamation…",
-    "noRewardsAvailable": "Aucune récompense disponible à réclamer sur {{chain}}",
-    "claimAmount": "Réclamer {{amount}} VPFI"
-  },
   "claimCenter": {
     "connectTitle": "Connectez votre portefeuille",
     "connectBody": "Connectez votre portefeuille pour voir et réclamer vos fonds.",
@@ -441,6 +415,17 @@
     "claiming": "Réclamation…",
     "claimFailed": "Réclamation échouée",
     "submitted": "Réclamation soumise :"
+  },
+  "interactionRewards": {
+    "title": "Récompenses VPFI d'interaction avec la plateforme",
+    "subtitle": "Chaque dollar d'intérêts réglé sur un prêt auquel vous avez participé vous attribue une part quotidienne du pool de récompenses d'interaction, versée en VPFI.",
+    "pendingLabel": "En attente",
+    "claim": "Réclamer",
+    "claiming": "Réclamation…",
+    "claimFailed": "Réclamation échouée",
+    "submitted": "Réclamation soumise :",
+    "waiting": "En attente de la finalisation du jour {{day}}",
+    "waitingTooltip": "Le dénominateur global inter-chaînes du jour {{day}} n'a pas encore été diffusé sur cette chaîne. La réclamation est bloquée au niveau du protocole jusqu'à son arrivée ; généralement finalisée en quelques minutes."
   },
   "allowances": {
     "connectBody": "Connectez votre portefeuille pour voir les autorisations.",

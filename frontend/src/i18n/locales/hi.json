@@ -88,7 +88,6 @@
     "offerBook": "ऑफर बुक",
     "createOffer": "ऑफर बनाएं",
     "buyVpfi": "VPFI खरीदें",
-    "rewards": "रिवॉर्ड्स",
     "claimCenter": "क्लेम सेंटर",
     "activity": "गतिविधि",
     "alerts": "अलर्ट",
@@ -306,31 +305,6 @@
     "buyTimedOut": "खरीद का समय समाप्त — फंड वापस किए गए",
     "escrowBalanceZero": "आपका Escrow VPFI शेष 0 है — पहले VPFI जमा करें।"
   },
-  "rewards": {
-    "connectTitle": "अपना वॉलेट कनेक्ट करें",
-    "connectBody": "रिवॉर्ड्स केवल समर्थित ऋण चेन पर ही दावा किए जा सकते हैं। अपने स्टेकिंग और इंटरैक्शन रिवॉर्ड्स देखने और दावा करने के लिए समर्थित चेन पर वॉलेट कनेक्ट करें।",
-    "unsupportedNetwork": "असमर्थित नेटवर्क",
-    "unsupportedNetworkBody": "रिवॉर्ड्स केवल समर्थित ऋण चेन पर ही दावा किए जा सकते हैं। आपका वॉलेट वर्तमान में एक ऐसे नेटवर्क पर है जो Vaipakam Diamond होस्ट नहीं करता। जारी रखने के लिए समर्थित चेन पर स्विच करें।",
-    "failedToLoad": "रिवॉर्ड्स लोड करने में विफल",
-    "pageSubtitle": "Escrow में रखा VPFI निष्क्रिय रूप से 5% APR जमा करता है, और लोन पर निपटाए गए हर USD ब्याज से आपको इंटरैक्शन पूल का दैनिक हिस्सा मिलता है।",
-    "withdrawStakedTitle": "स्टेक किए गए VPFI को निकालें",
-    "withdrawStakedBody": "VPFI को अपने Escrow से वॉलेट में वापस ले जाएं। निकाला गया VPFI स्टेकिंग रिवॉर्ड्स जमा करना बंद कर देता है और अब आपके डिस्काउंट टियर में नहीं गिना जाता।",
-    "inEscrow": "Escrow में",
-    "amountVpfi": "राशि (VPFI)",
-    "max": "अधिकतम",
-    "noVpfiInEscrow": "Escrow में निकालने के लिए VPFI नहीं",
-    "unstaking": "निकाल रहे हैं…",
-    "reviewUnstake": "निकासी की समीक्षा करें",
-    "claimRewardsTitle": "रिवॉर्ड्स का दावा करें",
-    "mintedDirectlyOn": "{{chain}} पर सीधे मिंट किए गए — कोई ब्रिजिंग या चेन स्विच आवश्यक नहीं।",
-    "stakingRewards": "स्टेकिंग रिवॉर्ड्स",
-    "interactionRewards": "इंटरैक्शन रिवॉर्ड्स",
-    "totalToMint": "कुल मिंट करने के लिए",
-    "waiting": "प्रतीक्षारत",
-    "claiming": "दावा कर रहे हैं…",
-    "noRewardsAvailable": "{{chain}} पर दावा करने के लिए कोई रिवॉर्ड्स उपलब्ध नहीं",
-    "claimAmount": "{{amount}} VPFI का दावा करें"
-  },
   "claimCenter": {
     "connectTitle": "अपना वॉलेट कनेक्ट करें",
     "connectBody": "अपने फंड देखने और दावा करने के लिए अपना वॉलेट कनेक्ट करें।",
@@ -441,6 +415,17 @@
     "claiming": "Claim किया जा रहा है…",
     "claimFailed": "Claim विफल",
     "submitted": "Claim सबमिट किया गया:"
+  },
+  "interactionRewards": {
+    "title": "Platform-interaction VPFI rewards",
+    "subtitle": "जिस loan में आपने भाग लिया है उस पर निपटाए गए ब्याज के प्रत्येक USD पर आपको interaction rewards pool का दैनिक हिस्सा मिलता है, जो VPFI में भुगतान किया जाता है।",
+    "pendingLabel": "लंबित",
+    "claim": "Claim",
+    "claiming": "Claim किया जा रहा है…",
+    "claimFailed": "Claim विफल",
+    "submitted": "Claim सबमिट किया गया:",
+    "waiting": "दिन {{day}} की finalization की प्रतीक्षा है",
+    "waitingTooltip": "दिन {{day}} का cross-chain global denominator अभी तक इस chain पर प्रसारित नहीं हुआ है। आने तक protocol layer पर claim अवरुद्ध है; आमतौर पर मिनटों में finalize हो जाता है।"
   },
   "allowances": {
     "connectBody": "अनुमतियां देखने के लिए अपना वॉलेट कनेक्ट करें।",
