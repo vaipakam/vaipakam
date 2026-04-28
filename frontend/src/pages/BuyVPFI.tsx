@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { L as Link } from "../components/L";
 import { useTranslation } from "react-i18next";
 import {
   encodeFunctionData,
@@ -33,8 +32,6 @@ import { useUserVPFI } from "../hooks/useUserVPFI";
 import {
   useVPFIDiscount,
   useEscrowVPFIBalance,
-  useVPFIDiscountTier,
-  useVPFIDiscountConsent,
   VPFI_TIER_TABLE,
   ethWeiToVpfi,
   formatVpfiUnits,
@@ -324,8 +321,9 @@ export default function BuyVPFI() {
   const { snapshot: userVpfi, reload: reloadUserVpfi } = useUserVPFI(address);
   const { balance: escrowBal, reload: reloadEscrow } =
     useEscrowVPFIBalance(address);
-  const { data: discountTier } = useVPFIDiscountTier(address);
-  const { enabled: consentEnabled } = useVPFIDiscountConsent();
+  // discountTier / consentEnabled hooks were used by `<DiscountStatusCard>`
+  // before that card moved to the Dashboard. Removed here to keep the
+  // Buy VPFI page's data dependencies tight.
   const bridge = useVPFIBuyBridge(
     activeChain && isCorrectChain ? activeChain : null,
   );
@@ -881,12 +879,10 @@ export default function BuyVPFI() {
         canAddToWallet={!!tokenRegistered && !!tokenAddr}
       />
 
-      <DiscountStatusCard
-        tier={discountTier?.tier ?? 0}
-        escrowVpfi={escrowBal}
-        discountBps={discountTier?.discountBps ?? 0}
-        consentEnabled={consentEnabled}
-      />
+      {/* Discount status card moved to the Dashboard so users see
+          their tier / escrow VPFI / consent status on landing without
+          navigating to the public Buy VPFI page. The component itself
+          is exported below and consumed by Dashboard. */}
 
       {error && (
         <div
@@ -1230,7 +1226,7 @@ interface DiscountStatusCardProps {
  * and §8a (escrow = staked). Consent is read-only here — the toggle itself
  * lives on the Dashboard per spec.
  */
-function DiscountStatusCard({
+export function DiscountStatusCard({
   tier,
   escrowVpfi,
   discountBps,
@@ -1301,17 +1297,9 @@ function DiscountStatusCard({
             {qualificationLabel}
           </div>
           <div className="stat-label" style={{ fontSize: 11 }}>
-            {consentEnabled === false ? (
-              <>
-                {t('buyVpfiCards.enableSharedConsentPrefix')}
-                <Link to="/app" style={{ color: "var(--brand)" }}>
-                  {t('buyVpfiCards.enableSharedConsentLink')}
-                </Link>
-                .
-              </>
-            ) : (
-              t('buyVpfiCards.liquidLendingOnly')
-            )}
+            {consentEnabled === false
+              ? t('buyVpfiCards.enableSharedConsent')
+              : t('buyVpfiCards.liquidLendingOnly')}
           </div>
         </div>
       </div>

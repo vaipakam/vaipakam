@@ -7,6 +7,8 @@ import { useDiamondRead } from '../contracts/useDiamond';
 import { useUserLoans } from '../hooks/useUserLoans';
 import { useMyActiveOffers } from '../hooks/useMyActiveOffers';
 import { OfferTable } from './OfferBook';
+import { DiscountStatusCard } from './BuyVPFI';
+import { useVPFIDiscountTier, useVPFIDiscountConsent } from '../hooks/useVPFIDiscount';
 import { useLoanRisks, type LoanRisk } from '../hooks/useLoanRisks';
 import { useVPFIToken } from '../hooks/useVPFIToken';
 import { useUserVPFI } from '../hooks/useUserVPFI';
@@ -70,6 +72,8 @@ export default function Dashboard() {
   const { snapshot: vpfi } = useVPFIToken();
   const { snapshot: userVpfi } = useUserVPFI(address);
   const { balance: escrowVpfiWei } = useEscrowVPFIBalance(address);
+  const { data: discountTier } = useVPFIDiscountTier(address);
+  const { enabled: consentEnabled } = useVPFIDiscountConsent();
   const [escrow, setEscrow] = useState<string | null>(null);
   const [loansPage, setLoansPage] = useState(0);
   const [roleFilter, setRoleFilter] = useState<'all' | 'lender' | 'borrower'>('all');
@@ -254,6 +258,21 @@ export default function Dashboard() {
       {/* Platform-level VPFI fee-discount consent (per-user) */}
       <VPFIDiscountConsentCard />
 
+      {/* Live VPFI discount-tier status. Lifted from the Buy VPFI page
+          so the user sees their tier / escrow VPFI / consent status on
+          the Dashboard at a glance, without having to navigate to the
+          public Buy VPFI page. The card itself is read-only (the
+          consent toggle still lives on `<VPFIDiscountConsentCard>`
+          above) — it just summarises where the user sits today. */}
+      {address && (
+        <DiscountStatusCard
+          tier={discountTier?.tier ?? 0}
+          escrowVpfi={escrowVpfiWei}
+          discountBps={discountTier?.discountBps ?? 0}
+          consentEnabled={consentEnabled}
+        />
+      )}
+
       {/* Escrow info */}
       {currentEscrow && (
         <div className="card" style={{ marginBottom: 20 }}>
@@ -309,11 +328,16 @@ export default function Dashboard() {
           onAccept={() => { /* no-op — own offers can't be accepted */ }}
           statusView="open"
           cardHelpId="offer-book.your-active-offers"
+          headerAction={
+            <Link to="/app/create-offer" className="btn btn-primary btn-sm">
+              <PlusCircle size={16} /> {t('dashboard.newOffer')}
+            </Link>
+          }
         />
       )}
 
       {/* Active loans */}
-      <div className="card">
+      <div className="card" style={{ marginTop: 20 }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16, gap: 12, flexWrap: 'wrap' }}>
           <div className="card-title" style={{ marginBottom: 0 }}>
             {t('dashboard.yourLoans')}
@@ -361,9 +385,16 @@ export default function Dashboard() {
                 pill: n === DEFAULT_PAGE_SIZE ? 'default' : undefined,
               }))}
             />
-            <Link to="/app/create-offer" className="btn btn-primary btn-sm">
-              <PlusCircle size={16} /> {t('dashboard.newOffer')}
-            </Link>
+            {/* The "New Offer" CTA used to live here; it now sits in the
+                Your Active Offers card header (above) when the user has
+                open offers. When the user has no open offers we keep
+                the CTA here so someone with no listings yet still has
+                a one-click path to creating their first one. */}
+            {(!address || myActiveOffers.length === 0) && (
+              <Link to="/app/create-offer" className="btn btn-primary btn-sm">
+                <PlusCircle size={16} /> {t('dashboard.newOffer')}
+              </Link>
+            )}
           </div>
         </div>
 

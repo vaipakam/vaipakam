@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, useCallback, useRef } from 'react';
+import { useEffect, useMemo, useState, useCallback, useRef, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import i18n from '../i18n';
 import type { Address, Hex } from 'viem';
@@ -1503,18 +1503,26 @@ interface OfferTableProps {
    *  provided, an inline `<CardInfo>` (i) icon renders next to the
    *  title with the matching summary + Learn-more link. */
   cardHelpId?: string;
+  /** Optional element rendered on the right side of the card-title
+   *  row (e.g. a "+ New Offer" button). Used by the Dashboard's
+   *  Your Active Offers placement so the action sits with the card
+   *  it conceptually belongs to. */
+  headerAction?: ReactNode;
 }
 
-export function OfferTable({ title, subtitle, offers, anchorRateBps, address, acceptingId, onAccept, statusView, cardHelpId }: OfferTableProps) {
+export function OfferTable({ title, subtitle, offers, anchorRateBps, address, acceptingId, onAccept, statusView, cardHelpId, headerAction }: OfferTableProps) {
   const { t } = useTranslation();
   return (
     <div className="card" style={{ marginTop: 16 }}>
-      <div className="card-title" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+      <div className="card-title" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
         <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
           {title}
           {cardHelpId && <CardInfo id={cardHelpId} />}
         </span>
-        <span style={{ fontSize: '0.8rem', opacity: 0.7 }}>{subtitle}</span>
+        <div style={{ display: 'inline-flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+          <span style={{ fontSize: '0.8rem', opacity: 0.7 }}>{subtitle}</span>
+          {headerAction}
+        </div>
       </div>
       {offers.length === 0 ? (
         <div className="empty-state"><p>{t('offerTable.noOffers')}</p></div>
