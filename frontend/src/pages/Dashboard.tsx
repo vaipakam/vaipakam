@@ -308,11 +308,14 @@ export default function Dashboard() {
                     </td>
                     <td className="mono">
                       <Link
-                        to={`/app/nft-verifier?id=${(loan.role === 'lender' ? loan.lenderTokenId : loan.borrowerTokenId).toString()}`}
-                        data-tooltip="Verify on-chain metadata"
-                        style={{ color: 'var(--brand)' }}
+                        to={`/nft-verifier?id=${(loan.role === 'lender' ? loan.lenderTokenId : loan.borrowerTokenId).toString()}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        data-tooltip="Verify on-chain metadata (opens in new tab)"
+                        style={{ color: 'var(--brand)', display: 'inline-flex', alignItems: 'center', gap: 4 }}
                       >
                         #{(loan.role === 'lender' ? loan.lenderTokenId : loan.borrowerTokenId).toString()}
+                        <ExternalLink size={12} />
                       </Link>
                     </td>
                     <td className="mono">

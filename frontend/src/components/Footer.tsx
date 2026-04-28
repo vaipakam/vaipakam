@@ -82,7 +82,7 @@ export default function Footer() {
             <h4>{t('footer.colResources')}</h4>
             <Link to="/help/overview">{t('footer.documentation')}</Link>
             <Link to="/analytics">{t('footer.smartContracts')}</Link>
-            <Link to="/app/nft-verifier">{t('nav.nftVerifier')}</Link>
+            <Link to="/nft-verifier">{t('nav.nftVerifier')}</Link>
             <Link to="/app/buy-vpfi">{t('appNav.buyVpfi')}</Link>
           </div>
 

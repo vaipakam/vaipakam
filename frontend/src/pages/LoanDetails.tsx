@@ -667,22 +667,28 @@ export default function LoanDetails() {
             <span className="data-label">{t('loanDetails.lenderNftId')}</span>
             <Link
               to={`/nft-verifier?contract=${activeDiamondAddr}&id=${loan.lenderTokenId.toString()}`}
+              target="_blank"
+              rel="noopener noreferrer"
               className="data-value mono"
-              data-tooltip="Verify on-chain metadata"
-              style={{ color: "var(--brand)" }}
+              data-tooltip="Verify on-chain metadata (opens in new tab)"
+              style={{ color: "var(--brand)", display: 'inline-flex', alignItems: 'center', gap: 4 }}
             >
               #{loan.lenderTokenId.toString()}
+              <ExternalLink size={12} />
             </Link>
           </div>
           <div className="data-row">
             <span className="data-label">{t('loanDetails.borrowerNftId')}</span>
             <Link
               to={`/nft-verifier?contract=${activeDiamondAddr}&id=${loan.borrowerTokenId.toString()}`}
+              target="_blank"
+              rel="noopener noreferrer"
               className="data-value mono"
-              data-tooltip="Verify on-chain metadata"
-              style={{ color: "var(--brand)" }}
+              data-tooltip="Verify on-chain metadata (opens in new tab)"
+              style={{ color: "var(--brand)", display: 'inline-flex', alignItems: 'center', gap: 4 }}
             >
               #{loan.borrowerTokenId.toString()}
+              <ExternalLink size={12} />
             </Link>
           </div>
           <div className="data-row">
