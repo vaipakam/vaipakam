@@ -61,7 +61,13 @@
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  padding: 20px 20px 16px;
+  /* Height pinned to match `.app-topbar` exactly so the sidebar's brand
+   * row and the topbar share one horizontal divider line across the
+   * full-width app shell. Was free-flowing `padding: 20 20 16` (~68 px)
+   * which left a 4 px misalignment against the 64 px topbar. */
+  height: 64px;
+  padding: 0 20px;
+  box-sizing: border-box;
   border-bottom: 1px solid var(--border);
 }
 
@@ -141,7 +147,9 @@
 @media (min-width: 768px) {
   .app-sidebar.collapsed .sidebar-header {
     justify-content: center;
-    padding: 20px 0 16px;
+    /* Keep the 64 px height set on the base rule; only the horizontal
+     * padding flips to zero so the icon centers in the rail. */
+    padding: 0;
   }
   .app-sidebar.collapsed .sidebar-brand {
     justify-content: center;
@@ -153,7 +161,7 @@
   .app-sidebar.collapsed:not(.suppress-hover-expand):hover .sidebar-header,
   .app-sidebar.collapsed:not(.suppress-hover-expand):focus-within .sidebar-header {
     justify-content: space-between;
-    padding: 20px 20px 16px;
+    padding: 0 20px;
   }
   .app-sidebar.collapsed:not(.suppress-hover-expand):hover .sidebar-brand,
   .app-sidebar.collapsed:not(.suppress-hover-expand):focus-within .sidebar-brand {
@@ -316,8 +324,17 @@
   flex-direction: column;
   min-height: 100vh;
   /* Defence-in-depth: if any child element does overflow horizontally,
-   * swallow it at the shell rather than scrolling the whole app. */
-  overflow-x: hidden;
+   * swallow it at the shell rather than scrolling the whole app.
+   *
+   * `overflow-x: clip` (NOT `hidden`) — `hidden` would silently promote
+   * `overflow-y` from `visible` to `auto`, which makes `.app-main` a
+   * scroll-container ancestor and breaks `position: sticky` on the
+   * `.app-topbar` below (sticky tracks the nearest scroll-container
+   * scrollport, and `.app-main` doesn't actually scroll, so the topbar
+   * never stuck while the page-level body scrolled). `clip` preserves
+   * the horizontal-overflow guard without becoming a scroll ancestor,
+   * so the topbar correctly stays pinned to the viewport top. */
+  overflow-x: clip;
   transition: margin-left 0.2s ease;
 }
 
