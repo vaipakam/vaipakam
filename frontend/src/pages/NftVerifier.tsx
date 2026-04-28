@@ -16,6 +16,7 @@ import {
 } from "../contracts/config";
 import {
   decodeContractError,
+  extractRevertData,
   extractRevertSelector,
 } from "../lib/decodeContractError";
 import { beginStep } from "../lib/journeyLog";
@@ -316,7 +317,20 @@ export default function NftVerifier() {
       });
       step.success();
     } catch (err) {
-      if (extractRevertSelector(err) === ERC721_NONEXISTENT_SELECTOR) {
+      // Any revert reaching this outer catch is an `ownerOf` failure
+      // (tokenURI / getLoanDetails / HF / LTV all have their own inner
+      // try/catch). On a Diamond NFT facet, `ownerOf` either succeeds
+      // with a valid owner or reverts because the token doesn't exist
+      // — i.e. burned or never-minted. So we route every revert to the
+      // log-index warning branch, regardless of whether the selector
+      // is the recognised ERC721NonexistentToken one. Some public RPCs
+      // strip revert data, leaving only `"<fn> reverted."` with no
+      // selector, which previously fell through to a hard error.
+      const isRevert =
+        extractRevertSelector(err) === ERC721_NONEXISTENT_SELECTOR ||
+        extractRevertData(err) !== undefined ||
+        /reverted\b/i.test((err as { message?: string })?.message ?? "");
+      if (isRevert) {
         // Burned vs never-minted: load the per-chain log index (cached in
         // localStorage by chainId+diamond, so repeat lookups on the same
         // chain are instant) and consult the Transfer cache.
