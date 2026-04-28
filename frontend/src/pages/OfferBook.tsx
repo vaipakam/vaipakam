@@ -864,15 +864,17 @@ export default function OfferBook() {
             />
           </div>
           <div className="offer-book-filter-cell">
-            {/* Invisible label-row spacer so the pill baseline-aligns with
-                the input rows of the surrounding cells (which sit below
-                their text labels). `aria-hidden` because the pill carries
-                its own ariaLabel + triggerPrefix. */}
-            <span className="form-label" aria-hidden="true">&nbsp;</span>
+            {/* Real "Liquidity" label-row above the pill — mirrors the
+                "Lending asset" / "Collateral asset" / duration cells
+                so the row reads as a uniform label-on-top grid. The
+                `triggerPrefix` was dropped from the Picker because
+                the label here already carries that context; the pill
+                now shows just the bare value (Any / Liquid only /
+                Illiquid only). */}
+            <span className="form-label">{t('offerBookPage.liquidity')}</span>
             <Picker<LiquidityFilter>
               icon={<Droplet size={14} />}
               ariaLabel={t('offerBookPage.filterByLiquidity')}
-              triggerPrefix={t('offerBookPage.liquidity')}
               value={liquidityFilter}
               onSelect={setLiquidityFilter}
               minWidth={170}
