@@ -280,7 +280,6 @@
     "step2Title": "Escrow에 VPFI 예치 / 스테이킹",
     "step2Info": "스테이킹은 누구나 참여할 수 있습니다 — 대출이 필요하지 않습니다. Escrow에 예치한 VPFI는 보관되는 동안 5% APR 수익을 얻습니다. 처음 스테이킹하시나요? 첫 예치 시 Escrow가 자동으로 생성됩니다 — 별도 설정이 필요 없습니다.",
     "step3Title": "Escrow에서 VPFI 인출 / 언스테이킹",
-    "step3Subtitle": "VPFI를 Escrow에서 {{chain}}의 지갑으로 다시 전송합니다. Escrow 잔액이 임계값 아래로 떨어지면 할인 계층이 낮아집니다.",
     "buy": "VPFI 구매",
     "buying": "구매 중…",
     "approving": "승인 중…",

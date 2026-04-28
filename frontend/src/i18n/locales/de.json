@@ -280,7 +280,6 @@
     "step2Title": "VPFI in Ihre Escrow einzahlen / staken",
     "step2Info": "Staking steht jedem offen — Sie brauchen keinen Kredit, um teilzunehmen. Jedes VPFI, das Sie in Ihre Escrow einzahlen, erwirtschaftet 5% APR, solange es dort liegt. Zum ersten Mal beim Staking? Ihre Escrow wird beim ersten Deposit automatisch für Sie erstellt — keine Einrichtung erforderlich.",
     "step3Title": "VPFI aus Ihrer Escrow abziehen / unstaken",
-    "step3Subtitle": "Transferieren Sie VPFI aus Ihrer Escrow zurück in Ihre Wallet auf {{chain}}. Reduziert Ihre Rabattstufe, wenn Ihr Escrow-Saldo unter einen Schwellenwert fällt.",
     "buy": "VPFI kaufen",
     "buying": "Kaufe…",
     "approving": "Genehmige…",

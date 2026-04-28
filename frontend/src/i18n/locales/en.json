@@ -747,7 +747,6 @@
     "step2Title": "Deposit / Stake VPFI into your escrow",
     "step2Info": "Staking is open to everyone — you don't need a loan to participate. Any VPFI you deposit into your escrow earns 5% APR for as long as it stays there. First time staking? Your escrow is created for you automatically on your first deposit — no setup needed.",
     "step3Title": "Withdraw / Unstake VPFI from your escrow",
-    "step3Subtitle": "Transfer VPFI from your escrow back to your wallet on {{chain}}. Reduces your discount tier if it drops your escrow balance below a threshold.",
     "buy": "Buy VPFI",
     "buying": "Buying…",
     "approving": "Approving…",

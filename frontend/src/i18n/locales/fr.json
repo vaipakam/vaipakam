@@ -280,7 +280,6 @@
     "step2Title": "Déposer / Stake VPFI dans votre Escrow",
     "step2Info": "Le staking est ouvert à tous — vous n'avez pas besoin d'un prêt pour participer. Tout VPFI que vous déposez dans votre Escrow génère 5% APR tant qu'il y reste. Première fois que vous faites du staking ? Votre Escrow est créé automatiquement lors de votre premier dépôt — aucune configuration nécessaire.",
     "step3Title": "Retirer / Unstake VPFI de votre Escrow",
-    "step3Subtitle": "Transférez VPFI de votre Escrow vers votre portefeuille sur {{chain}}. Réduit votre niveau de remise si votre solde Escrow tombe sous un seuil.",
     "buy": "Acheter VPFI",
     "buying": "Achat en cours…",
     "approving": "Approbation…",

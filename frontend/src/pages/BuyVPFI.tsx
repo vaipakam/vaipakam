@@ -1123,7 +1123,6 @@ export default function BuyVPFI() {
             index={3}
             title={t('buyVpfi.step3Title')}
             cardHelpId="buy-vpfi.unstake"
-            subtitle={t('buyVpfi.step3Subtitle', { chain: activeChain?.name ?? readChain.name })}
           />
           <UnstakeCard
             value={unstakeInput}

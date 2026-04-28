@@ -280,7 +280,6 @@
     "step2Title": "EscrowにVPFIを預ける / ステーク",
     "step2Info": "ステーキングは誰でも参加可能です — ローンは必要ありません。Escrowに預け入れたVPFIは、そこにある間ずっと5% APRの利回りを得られます。初めてのステーキングですか？初回預け入れ時にEscrowが自動で作成されます — 事前のセットアップは不要です。",
     "step3Title": "EscrowからVPFIを引き出す / アンステーク",
-    "step3Subtitle": "VPFIをEscrowから{{chain}}のウォレットに戻します。Escrow残高がしきい値を下回ると割引階層が下がります。",
     "buy": "VPFIを購入",
     "buying": "購入中…",
     "approving": "承認中…",
