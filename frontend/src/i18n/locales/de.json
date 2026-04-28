@@ -289,7 +289,7 @@
     "step1SubtitleBridged": "Direkt von {{chain}} — jegliches Cross-Chain-Routing wird für Sie erledigt. VPFI landet in Ihrer Wallet auf dieser Chain.",
     "step1SubtitlePending": "Der Buy-Adapter wird gerade auf {{chain}} bereitgestellt. Sie können hier fortfahren — kein Chain-Wechsel erforderlich.",
     "step2Title": "VPFI in Ihre Escrow einzahlen / staken",
-    "step2Info": "Staking steht jedem offen — Sie brauchen keinen Kredit, um teilzunehmen. Jedes VPFI, das Sie in Ihre Escrow einzahlen, erwirtschaftet 5% APR, solange es dort liegt. Zum ersten Mal beim Staking? Ihre Escrow wird beim ersten Deposit automatisch für Sie erstellt — keine Einrichtung erforderlich.",
+    "step2Info": "Staking steht jedem offen — Sie brauchen keinen Kredit, um teilzunehmen. Jedes VPFI, das Sie in Ihre Escrow einzahlen, erwirtschaftet {{apr}}% APR, solange es dort liegt. Zum ersten Mal beim Staking? Ihre Escrow wird beim ersten Deposit automatisch für Sie erstellt — keine Einrichtung erforderlich.",
     "step3Title": "VPFI aus Ihrer Escrow abziehen / unstaken",
     "buy": "VPFI kaufen",
     "buying": "Kaufe…",
@@ -1130,14 +1130,15 @@
     "escrowBalance": "VPFI-Escrow-Saldo",
     "escrowTooltip": "VPFI, das derzeit im benutzerspezifischen Escrow auf dieser Chain gestaked ist. Zählt für den Gebühren-Rabatt-Tier des Kreditnehmers.",
     "shareCirculating": "Anteil am Umlauf",
-    "shareTooltip": "Effektiver Besitz am VPFI-Angebot dieser Chain — Wallet-Saldo plus im Escrow gesperrter Saldo, geteilt durch das Umlaufangebot. Das Escrow-VPFI gehört weiterhin dem Nutzer; es ist lediglich für den Tier-Rabatt / 5 % APR gesperrt.",
+    "shareTooltip": "Effektives Eigentum am VPFI-Angebot dieser Chain — Wallet-Saldo plus Escrow-gesperrter Saldo, geteilt durch zirkulierend. Escrow-VPFI gehört weiterhin dem Nutzer; es ist nur für Tier-Rabatt / {{apr}}% APR gesperrt.",
     "circulatingThisChain": "Im Umlauf (diese Chain)",
     "remainingMintable": "Verbleibend prägbar",
     "tokenLabel": "Token",
     "authorizedMinter": "Autorisierter Minter",
     "treasuryMintDestination": "Treasury (Mint-Ziel)",
     "yourActivity": "VPFI-Aktivität",
-    "noActivity": "Es gibt noch keine VPFI-Transfers, die dieses Wallet auf {{chain}} betreffen. Nutzergerichtete Verteilungen (Belohnungen, Staking) erfolgen in einer späteren Phase."
+    "noActivity": "Es gibt noch keine VPFI-Transfers, die dieses Wallet auf {{chain}} betreffen. Nutzergerichtete Verteilungen (Belohnungen, Staking) erfolgen in einer späteren Phase.",
+    "escrowCountsAsStaked": "Escrow-VPFI zählt als gestaked ({{apr}}% APR)"
   },
   "buyVpfiCards": {
     "discountStatusTitle": "VPFI-Rabattstatus",
@@ -1195,7 +1196,7 @@
     "unstakeTitle": "VPFI aus dem Escrow abheben",
     "unstakeSubtitle": "VPFI aus dem Escrow auf {{chain}} zurück ins Wallet bewegen. Fällt der Escrow-Saldo unter eine Tier-Schwelle, sinkt auch der Rabatt-Tier.",
     "unstakeAmount": "Abzuhebende VPFI-Menge",
-    "unstakeWarning": "Escrow-VPFI zählt für den Gebühren-Rabatt-Tier des Kreditnehmers und verdient 5 % APR. Eine Auszahlung verschiebt die Tokens zurück ins Wallet — fällt der verbleibende Escrow-Saldo unter eine Tier-Schwelle, sinkt der Rabatt entsprechend beim nächsten Kredit.",
+    "unstakeWarning": "Escrow-VPFI zählt zur Stufe des Kreditnehmer-Gebührenrabatts und verdient {{apr}}% APR. Unstaking verschiebt Tokens zurück in die Wallet — sinkt der verbleibende Escrow-Saldo unter eine Stufenschwelle, sinkt der Rabatt auf den nächsten Kredit entsprechend.",
     "unstakeButton": "Ins Wallet abheben"
   },
   "alertsPage": {
@@ -1439,13 +1440,13 @@
     "loanDetailsActionsLender": "Für den Kreditgeber auf diesem Kredit verfügbare Aktionen. Beanspruchen, sobald der Kredit abgewickelt ist (gibt Hauptbetrag + Zinsen zurück, abzüglich des 1% Treasury-Anteils). Vorzeitiger Ausstieg initiieren, um das Kreditgeber-NFT mitten im Kredit an einen Käufer zu verkaufen. Jeder (einschließlich des Kreditgebers) kann Liquidieren auslösen, wenn HF < 1 oder die Gnadenfrist abgelaufen ist. Deaktivierte Aktionen zeigen beim Hover einen Grund.",
     "loanDetailsActionsBorrower": "Für den Kreditnehmer auf diesem Kredit verfügbare Aktionen. Voll- oder Teilrückzahlung; Preclose direkt (ausstehenden Betrag jetzt zahlen) oder Offset (Kollateral via DEX verkaufen); Refinanzieren in einen neuen Kredit mit neuen Bedingungen. Beanspruchen gibt das Kollateral bei vollständiger Rückzahlung zurück oder eine etwaige ungenutzte VPFI-Rückerstattung. Deaktivierte Aktionen zeigen beim Hover einen Grund.",
     "buyVpfiOverview": "VPFI zum festen Frühphasen-Kurs mit ETH auf jeder unterstützten Chain kaufen. Die kanonische Chain (Base) routet direkt zum Diamond; jede andere Chain bridged via VPFIBuyAdapter + LayerZero-Round-Trip. VPFI landet stets im Wallet auf der verbundenen Chain — kein Chain-Wechsel nötig.",
-    "buyVpfiDiscountStatus": "Der aktive VPFI-Gebührenrabatt-Tier auf dieser Chain. Der Tier wird durch den VPFI-Saldo im Escrow gesetzt: Tier 1 ≥100, Tier 2 ≥1k, Tier 3 ≥5k, Tier 4 >20k. Der Rabatt gilt nur bei liquiden Krediten und nur, solange der plattformweite Zustimmungs-Toggle im Dashboard aktiv ist. VPFI im Escrow zählt zudem als gestaked und verdient den 5% Staking-APR.",
+    "buyVpfiDiscountStatus": "Die aktive Stufe des VPFI-Gebührenrabatts auf dieser Chain. Die Stufe wird durch den Escrow-VPFI-Saldo bestimmt: Tier 1 ≥100, Tier 2 ≥1k, Tier 3 ≥5k, Tier 4 >20k. Der Rabatt gilt nur für liquide Kredite und nur, solange der Plattform-Consent-Schalter auf dem Dashboard aktiviert ist. Escrow-VPFI zählt zudem als gestaked und verdient den {{apr}}% Staking-APR.",
     "buyVpfiBuy": "Schritt 1 — ETH in VPFI umwandeln. Auf der kanonischen Chain geht der Aufruf direkt an den Diamond; off-canonical über den Buy-Adapter und einen LayerZero-Round-Trip. Pro-Tx- und Rolling-Caps gelten (siehe TokenomicsTechSpec). VPFI wird ans Wallet geliefert, nicht automatisch in den Escrow eingezahlt.",
-    "buyVpfiDeposit": "Schritt 2 — VPFI vom Wallet in den Escrow auf dieser Chain verschieben. Stets eine explizite Nutzeraktion: das Protokoll finanziert den Escrow nach einem Kauf nie automatisch. Erforderlich, um sich für Gebührenrabatte und den 5% Staking-APR zu qualifizieren. Permit2 wird bei Verfügbarkeit verwendet, sodass eine einzige Signatur das Paar approve + transfer ersetzt.",
+    "buyVpfiDeposit": "Schritt 2 — VPFI von der Wallet in die Escrow auf dieser Chain verschieben. Immer eine explizite Benutzeraktion: das Protokoll finanziert die Escrow nach einem Kauf nie automatisch. Erforderlich, um Gebührenrabatte und den {{apr}}% Staking-APR zu erhalten. Permit2 wird verwendet, wenn verfügbar, sodass eine einzelne Signatur das approve + transfer-Paar ersetzt.",
     "buyVpfiUnstake": "VPFI vom Escrow zurück ins Wallet auf dieser Chain verschieben. Reduziert die Rabatt-Tier in Echtzeit — der zeitlich gewichtete Akkumulator stempelt jeden offenen Kredit sofort beim neuen (niedrigeren) Saldo neu, sodass ein Unstake ab diesem Moment für die Gebührenrabatt-Mathematik wirksam ist.",
-    "rewardsOverview": "Auf dieser Chain laufen zwei Belohnungsströme auf. Im Escrow gehaltenes VPFI verdient passive 5% APR (Staking-Pool). Jeder USD an auf einem Kredit beglichenen Zinsen verdient einen Tagesanteil am Interaction-Pool. Beide werden bei Beanspruchung direkt auf der aktuellen Chain geprägt — kein Bridging.",
+    "rewardsOverview": "Auf dieser Chain laufen zwei Belohnungs-Streams. Escrow-gehaltenes VPFI verdient einen passiven {{apr}}% APR (Staking-Pool). Jeder USD an Zinsen, der auf einem Kredit abgerechnet wird, verdient einen täglichen Anteil am Interaktions-Pool. Beide werden bei Einlösung direkt auf der aktuellen Chain geprägt — kein Bridging.",
     "rewardsClaim": "Prägt jegliche ausstehenden VPFI aus beiden Belohnungsströmen (Staking + Interaction) in das Wallet auf der aktuellen Chain in einer Transaktion. Der Interaction-Pool wird täglich finalisiert — ausstehende Interaction-Belohnungen werden kurz nach Schließung jedes Settlement-Fensters beanspruchbar.",
-    "rewardsWithdrawStaked": "VPFI aus dem Escrow zurück ins Wallet bewegen. Abgezogenes VPFI hört auf, den 5% Staking-APR zu verdienen, und zählt nicht mehr für die Gebührenrabatt-Tier — der zeitlich gewichtete Akkumulator stempelt sofort jeden offenen Kredit beim neuen (niedrigeren) Saldo neu.",
+    "rewardsWithdrawStaked": "VPFI aus der Escrow zurück in die Wallet verschieben. Abgehobenes VPFI verdient den {{apr}}% Staking-APR nicht mehr und zählt nicht mehr für die Gebührenrabatt-Stufe — der zeitgewichtete Akkumulator stempelt jeden offenen Kredit sofort mit dem neuen (niedrigeren) Saldo neu.",
     "activityFeed": "On-Chain-Ereignisse, an denen das verbundene Wallet auf der aktiven Chain beteiligt ist — erstellte oder akzeptierte Angebote, Kredite, Rückzahlungen, Beanspruchungen, Liquidationen, NFT-Mints/Burns, VPFI-Käufe/Stakes/Unstakes. Live aus den Diamond-Event-Logs bezogen (kein Backend), nach Transaktion gruppiert und neueste zuerst sortiert."
   }
 }

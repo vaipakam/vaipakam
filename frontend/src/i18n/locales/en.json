@@ -201,13 +201,13 @@
     "loanDetailsActionsLender": "Actions available to the lender on this loan. Claim once the loan settles (returns principal + interest, less the 1% treasury cut). Initiate Early Withdrawal to sell the lender NFT to a buyer mid-loan. Anyone (including the lender) can trigger Liquidate when HF < 1 or the grace period expires. Disabled actions show a hover reason.",
     "loanDetailsActionsBorrower": "Actions available to the borrower on this loan. Repay full or partial; Preclose direct (pay outstanding now) or offset (sell collateral via DEX); Refinance into a new loan with new terms. Claim returns the collateral on full repayment, or any unused VPFI rebate. Disabled actions show a hover reason.",
     "buyVpfiOverview": "Purchase VPFI at the fixed early-stage rate using ETH on any supported chain. The canonical chain (Base) routes direct to the Diamond; every other chain bridges via VPFIBuyAdapter + LayerZero round-trip. VPFI always lands in the wallet on the chain connected from — no chain switch required.",
-    "buyVpfiDiscountStatus": "The active VPFI fee-discount tier on this chain. Tier is set by the escrow VPFI balance: Tier 1 ≥100, Tier 2 ≥1k, Tier 3 ≥5k, Tier 4 >20k. Discount only applies on liquid loans and only while the platform-level consent toggle on the Dashboard is on. Escrow VPFI also counts as staked and earns the 5% staking APR.",
+    "buyVpfiDiscountStatus": "The active VPFI fee-discount tier on this chain. Tier is set by the escrow VPFI balance: Tier 1 ≥100, Tier 2 ≥1k, Tier 3 ≥5k, Tier 4 >20k. Discount only applies on liquid loans and only while the platform-level consent toggle on the Dashboard is on. Escrow VPFI also counts as staked and earns the {{apr}}% staking APR.",
     "buyVpfiBuy": "Step 1 — convert ETH to VPFI. On the canonical chain the call goes directly to the Diamond; off-canonical it goes through the buy adapter and a LayerZero round-trip. Per-tx and rolling caps apply (see TokenomicsTechSpec). VPFI is delivered to the wallet, not auto-deposited into escrow.",
-    "buyVpfiDeposit": "Step 2 — move VPFI from the wallet into the escrow on this chain. Always an explicit user action: the protocol never auto-funds escrow after a buy. Required to qualify for fee discounts and the 5% staking APR. Permit2 is used when available so a single signature replaces the approve + transfer pair.",
+    "buyVpfiDeposit": "Step 2 — move VPFI from the wallet into the escrow on this chain. Always an explicit user action: the protocol never auto-funds escrow after a buy. Required to qualify for fee discounts and the {{apr}}% staking APR. Permit2 is used when available so a single signature replaces the approve + transfer pair.",
     "buyVpfiUnstake": "Move VPFI from the escrow back to the wallet on this chain. Reduces the discount tier in real time — the time-weighted accumulator re-stamps every open loan at the new (lower) balance immediately, so an unstake is effective for fee-discount math from this moment forward.",
-    "rewardsOverview": "Two reward streams accrue on this chain. Escrow-held VPFI earns a passive 5% APR (staking pool). Every USD of interest settled on a loan earns a daily share of the interaction pool. Both are minted directly on the current chain when claimed — no bridging.",
+    "rewardsOverview": "Two reward streams accrue on this chain. Escrow-held VPFI earns a passive {{apr}}% APR (staking pool). Every USD of interest settled on a loan earns a daily share of the interaction pool. Both are minted directly on the current chain when claimed — no bridging.",
     "rewardsClaim": "Mints any pending VPFI from both reward streams (staking + interaction) into the wallet, on the current chain, in one transaction. The interaction pool finalizes daily — pending interaction rewards become claimable shortly after each settlement window closes.",
-    "rewardsWithdrawStaked": "Move VPFI out of the escrow back to the wallet. Withdrawn VPFI stops accruing the 5% staking APR and no longer counts toward the fee-discount tier — the time-weighted accumulator immediately re-stamps every open loan at the new (lower) balance.",
+    "rewardsWithdrawStaked": "Move VPFI out of the escrow back to the wallet. Withdrawn VPFI stops accruing the {{apr}}% staking APR and no longer counts toward the fee-discount tier — the time-weighted accumulator immediately re-stamps every open loan at the new (lower) balance.",
     "activityFeed": "On-chain events involving the connected wallet on the active chain — offers created or accepted, loans, repayments, claims, liquidations, NFT mints/burns, VPFI buys/stakes/unstakes. Sourced live from Diamond event logs (no backend), grouped by transaction and ordered newest-first."
   },
   "infoTip": {
@@ -263,14 +263,15 @@
     "escrowBalance": "Escrow VPFI balance",
     "escrowTooltip": "VPFI currently staked in the per-user escrow on this chain. Counts toward the borrower fee discount tier.",
     "shareCirculating": "Share of circulating",
-    "shareTooltip": "Effective ownership of this chain's VPFI supply — wallet balance plus escrow-locked balance, divided by circulating. Escrow VPFI is still owned by the user; it's just locked for tier discount / 5% APR.",
+    "shareTooltip": "Effective ownership of this chain's VPFI supply — wallet balance plus escrow-locked balance, divided by circulating. Escrow VPFI is still owned by the user; it's just locked for tier discount / {{apr}}% APR.",
     "circulatingThisChain": "Circulating (this chain)",
     "remainingMintable": "Remaining mintable",
     "tokenLabel": "Token",
     "authorizedMinter": "Authorized minter",
     "treasuryMintDestination": "Treasury (mint destination)",
     "yourActivity": "Your VPFI activity",
-    "noActivity": "No VPFI transfers touch this wallet on {{chain}} yet. User-facing distributions (rewards, staking) arrive in a later rollout phase."
+    "noActivity": "No VPFI transfers touch this wallet on {{chain}} yet. User-facing distributions (rewards, staking) arrive in a later rollout phase.",
+    "escrowCountsAsStaked": "Escrow VPFI counts as staked ({{apr}}% APR)"
   },
   "buyVpfiCards": {
     "discountStatusTitle": "Your VPFI discount status",
@@ -328,7 +329,7 @@
     "unstakeTitle": "Unstake VPFI from escrow",
     "unstakeSubtitle": "Move VPFI from the escrow on {{chain}} back to the wallet. If the escrow balance falls below a tier threshold, the discount tier drops too.",
     "unstakeAmount": "VPFI amount to unstake",
-    "unstakeWarning": "Escrow VPFI counts toward the borrower fee discount tier and earns 5% APR. Unstaking moves tokens back to the wallet — if the remaining escrow balance drops below a tier threshold the discount drops with it on the next loan.",
+    "unstakeWarning": "Escrow VPFI counts toward the borrower fee discount tier and earns {{apr}}% APR. Unstaking moves tokens back to the wallet — if the remaining escrow balance drops below a tier threshold the discount drops with it on the next loan.",
     "unstakeButton": "Withdraw to wallet"
   },
   "alertsPage": {
@@ -756,7 +757,7 @@
     "step1SubtitleBridged": "Direct from {{chain}} — any cross-chain routing is handled for you. VPFI lands in your wallet on this chain.",
     "step1SubtitlePending": "The buy adapter is being deployed to {{chain}}. You can continue here — no chain switch required.",
     "step2Title": "Deposit / Stake VPFI into your escrow",
-    "step2Info": "Staking is open to everyone — you don't need a loan to participate. Any VPFI you deposit into your escrow earns 5% APR for as long as it stays there. First time staking? Your escrow is created for you automatically on your first deposit — no setup needed.",
+    "step2Info": "Staking is open to everyone — you don't need a loan to participate. Any VPFI you deposit into your escrow earns {{apr}}% APR for as long as it stays there. First time staking? Your escrow is created for you automatically on your first deposit — no setup needed.",
     "step3Title": "Withdraw / Unstake VPFI from your escrow",
     "buy": "Buy VPFI",
     "buying": "Buying…",

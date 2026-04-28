@@ -47,6 +47,7 @@ import { CardInfo } from "../components/CardInfo";
 import { VPFIPanel } from "../components/app/VPFIPanel";
 import { StakingRewardsClaim } from "../components/app/StakingRewardsClaim";
 import { useVPFIToken } from "../hooks/useVPFIToken";
+import { useStakingApr } from "../hooks/useStakingApr";
 import { useMode } from "../context/ModeContext";
 import "./Dashboard.css";
 
@@ -324,6 +325,10 @@ export default function BuyVPFI() {
   } = useVPFIDiscount(isOnCanonical ? null : canonical);
   const { snapshot: userVpfi, reload: reloadUserVpfi } = useUserVPFI(address);
   const { snapshot: vpfiSnapshot } = useVPFIToken();
+  // Live staking APR — single read of `getStakingAPRBps`. Interpolated
+  // into i18n strings via `{{apr}}` so copy never falsely advertises
+  // 5% when governance has changed the rate via `setStakingApr`.
+  const { aprPct } = useStakingApr();
   const { balance: escrowBal, reload: reloadEscrow } =
     useEscrowVPFIBalance(address);
   const { mode } = useMode();
@@ -1021,6 +1026,7 @@ export default function BuyVPFI() {
           index={2}
           title={t('buyVpfi.step2Title')}
           cardHelpId="buy-vpfi.deposit"
+          cardHelpParams={{ apr: aprPct }}
         />
         <div
           style={{
@@ -1039,7 +1045,7 @@ export default function BuyVPFI() {
             style={{ color: "var(--brand)", flexShrink: 0, marginTop: 2 }}
           />
           <p className="stat-label" style={{ margin: 0 }}>
-            {t('buyVpfi.step2Info')}
+            {t('buyVpfi.step2Info', { apr: aprPct })}
           </p>
         </div>
 
@@ -1178,10 +1184,14 @@ interface StepHeaderProps {
   subtitle?: string;
   /** Optional CardInfo registry id to render the (i) tip next to title. */
   cardHelpId?: string;
+  /** Optional interpolation params forwarded to CardInfo → i18next.
+   *  Used by Step 2 to inject the live staking APR into the deposit-
+   *  step help tooltip (`{{apr}}` placeholder). */
+  cardHelpParams?: Record<string, unknown>;
 }
 
 /** Numbered-step header used as the card title for each stage in the flow. */
-function StepHeader({ index, title, subtitle, cardHelpId }: StepHeaderProps) {
+function StepHeader({ index, title, subtitle, cardHelpId, cardHelpParams }: StepHeaderProps) {
   return (
     <div style={{ marginBottom: 12 }}>
       <div
@@ -1210,7 +1220,7 @@ function StepHeader({ index, title, subtitle, cardHelpId }: StepHeaderProps) {
         </span>
         <div className="card-title" style={{ marginBottom: 0, display: 'flex', alignItems: 'center', gap: 6 }}>
           {title}
-          {cardHelpId && <CardInfo id={cardHelpId} />}
+          {cardHelpId && <CardInfo id={cardHelpId} params={cardHelpParams} />}
         </div>
       </div>
       {subtitle && (
@@ -1267,6 +1277,10 @@ export function DiscountStatusCard({
   consentEnabled,
 }: DiscountStatusCardProps) {
   const { t } = useTranslation();
+  // Live staking APR for the help-tooltip interpolation. Pulled here
+  // (not from a parent prop) so this component stays self-contained
+  // — it's mounted on both the Dashboard and historically on Buy VPFI.
+  const { aprPct } = useStakingApr();
   const escrowUnits = formatVpfiUnits(escrowVpfi);
   const nextTier = VPFI_TIER_TABLE.find((tt) => tt.tier === tier + 1) ?? null;
   const gapToNext = nextTier ? Math.max(0, nextTier.minVpfi - escrowUnits) : 0;
@@ -1290,7 +1304,7 @@ export function DiscountStatusCard({
     <div className="card" style={{ marginBottom: 20 }}>
       <div className="card-title" style={{ marginBottom: 12, display: 'flex', alignItems: 'center', gap: 6 }}>
         {t('buyVpfiCards.discountStatusTitle')}
-        <CardInfo id="buy-vpfi.discount-status" />
+        <CardInfo id="buy-vpfi.discount-status" params={{ apr: aprPct }} />
       </div>
 
       <div
@@ -1316,7 +1330,7 @@ export function DiscountStatusCard({
             {escrowVpfi == null ? "—" : escrowUnits.toFixed(4)}
           </div>
           <div className="stat-label" style={{ fontSize: 11 }}>
-            {t('buyVpfiCards.escrowCountsAsStaked')}
+            {t('buyVpfiCards.escrowCountsAsStaked', { apr: aprPct })}
           </div>
         </div>
         <div>
@@ -2422,6 +2436,8 @@ function UnstakeCard({
   onUnstake,
 }: UnstakeCardProps) {
   const { t } = useTranslation();
+  // Live staking APR for the unstake-warning copy. Single read.
+  const { aprPct } = useStakingApr();
   const escrowBalanceUnits = formatVpfiUnits(escrowBalance);
   const rawInput = value.trim();
   const inputEmpty = rawInput === "";
@@ -2507,7 +2523,7 @@ function UnstakeCard({
           // className="stat-label"
           style={{ margin: 0, fontSize: 12, lineHeight: 1.5 }}
         >
-          {t('buyVpfiCards.unstakeWarning')}
+          {t('buyVpfiCards.unstakeWarning', { apr: aprPct })}
         </p>
       </div>
 

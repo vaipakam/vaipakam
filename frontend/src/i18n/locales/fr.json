@@ -289,7 +289,7 @@
     "step1SubtitleBridged": "Direct depuis {{chain}} — tout routage inter-chaîne est géré pour vous. VPFI arrive dans votre portefeuille sur cette chaîne.",
     "step1SubtitlePending": "L'adaptateur d'achat est en cours de déploiement sur {{chain}}. Vous pouvez continuer ici — aucun changement de chaîne requis.",
     "step2Title": "Déposer / Stake VPFI dans votre Escrow",
-    "step2Info": "Le staking est ouvert à tous — vous n'avez pas besoin d'un prêt pour participer. Tout VPFI que vous déposez dans votre Escrow génère 5% APR tant qu'il y reste. Première fois que vous faites du staking ? Votre Escrow est créé automatiquement lors de votre premier dépôt — aucune configuration nécessaire.",
+    "step2Info": "Le staking est ouvert à tous — vous n’avez pas besoin d’un prêt pour participer. Tout VPFI que vous déposez dans votre Escrow génère {{apr}}% APR tant qu’il y reste. Première fois que vous faites du staking ? Votre Escrow est créé automatiquement lors de votre premier dépôt — aucune configuration nécessaire.",
     "step3Title": "Retirer / Unstake VPFI de votre Escrow",
     "buy": "Acheter VPFI",
     "buying": "Achat en cours…",
@@ -1130,14 +1130,15 @@
     "escrowBalance": "Solde VPFI de l'escrow",
     "escrowTooltip": "VPFI actuellement bloqué dans l'escrow par utilisateur sur cette chaîne. Compte pour le Tier de remise sur les frais de l'emprunteur.",
     "shareCirculating": "Part en circulation",
-    "shareTooltip": "Propriété effective de l'offre VPFI de cette chaîne — solde du portefeuille plus solde bloqué en escrow, divisé par l'offre en circulation. Le VPFI en escrow appartient toujours à l'utilisateur ; il est simplement bloqué pour la remise par Tier / 5 % APR.",
+    "shareTooltip": "Propriété effective de l’offre VPFI sur cette chaîne — solde du portefeuille plus solde bloqué en Escrow, divisé par le circulant. Le VPFI en Escrow appartient toujours à l’utilisateur ; il est juste bloqué pour la remise de niveau / {{apr}}% APR.",
     "circulatingThisChain": "En circulation (cette chaîne)",
     "remainingMintable": "Émission restante",
     "tokenLabel": "Token",
     "authorizedMinter": "Émetteur autorisé",
     "treasuryMintDestination": "Trésorerie (destination d'émission)",
     "yourActivity": "Votre activité VPFI",
-    "noActivity": "Aucun transfert VPFI ne touche encore ce portefeuille sur {{chain}}. Les distributions destinées aux utilisateurs (récompenses, staking) arriveront dans une phase ultérieure."
+    "noActivity": "Aucun transfert VPFI ne touche encore ce portefeuille sur {{chain}}. Les distributions destinées aux utilisateurs (récompenses, staking) arriveront dans une phase ultérieure.",
+    "escrowCountsAsStaked": "Le VPFI en Escrow compte comme staked ({{apr}}% APR)"
   },
   "buyVpfiCards": {
     "discountStatusTitle": "Votre statut de remise VPFI",
@@ -1195,7 +1196,7 @@
     "unstakeTitle": "Retirer du VPFI de l'escrow",
     "unstakeSubtitle": "Déplacer du VPFI de l'escrow sur {{chain}} vers le portefeuille. Si le solde de l'escrow tombe sous un seuil de Tier, le Tier de remise baisse également.",
     "unstakeAmount": "Quantité de VPFI à retirer",
-    "unstakeWarning": "Le VPFI en escrow compte pour le Tier de remise sur les frais de l'emprunteur et rapporte 5 % APR. Le retrait ramène les tokens dans le portefeuille — si le solde restant de l'escrow tombe sous un seuil de Tier, la remise baisse en conséquence sur le prochain prêt.",
+    "unstakeWarning": "Le VPFI en Escrow compte pour le niveau de remise de frais d’emprunteur et gagne {{apr}}% APR. Unstaking renvoie les tokens dans le portefeuille — si le solde Escrow restant tombe sous un seuil de niveau, la remise baisse avec lui sur le prochain prêt.",
     "unstakeButton": "Retirer vers le portefeuille"
   },
   "alertsPage": {
@@ -1439,13 +1440,13 @@
     "loanDetailsActionsLender": "Actions disponibles pour le prêteur sur ce prêt. Réclamer une fois le prêt réglé (restitue principal + intérêts, moins le 1% prélevé par la trésorerie). Initier une Sortie Anticipée pour vendre le NFT prêteur à un acheteur en cours de prêt. N'importe qui (y compris le prêteur) peut déclencher Liquider quand HF < 1 ou que la période de grâce a expiré. Les actions désactivées affichent une raison au survol.",
     "loanDetailsActionsBorrower": "Actions disponibles pour l'emprunteur sur ce prêt. Rembourser intégralement ou partiellement ; Preclose direct (payer le restant maintenant) ou compensation (vendre du collatéral via DEX) ; Refinancer en un nouveau prêt avec de nouveaux termes. Réclamer restitue le collatéral en cas de remboursement intégral, ou toute remise VPFI inutilisée. Les actions désactivées affichent une raison au survol.",
     "buyVpfiOverview": "Acheter du VPFI au taux fixe d'amorçage en utilisant de l'ETH sur n'importe quelle chaîne supportée. La chaîne canonique (Base) route directement vers le Diamond ; toute autre chaîne passe par VPFIBuyAdapter + un aller-retour LayerZero. Le VPFI arrive toujours dans le wallet sur la chaîne connectée — pas de changement de chaîne requis.",
-    "buyVpfiDiscountStatus": "Le tier actif de remise sur les frais VPFI sur cette chaîne. Le tier est défini par le solde VPFI en escrow : Tier 1 ≥100, Tier 2 ≥1k, Tier 3 ≥5k, Tier 4 >20k. La remise ne s'applique que sur les prêts liquides et seulement tant que le toggle de consentement au niveau plateforme du Dashboard est activé. Le VPFI en escrow compte aussi comme staked et perçoit l'APR de staking de 5%.",
+    "buyVpfiDiscountStatus": "Le niveau actif de remise de frais VPFI sur cette chaîne. Le niveau est défini par le solde Escrow VPFI : Tier 1 ≥100, Tier 2 ≥1k, Tier 3 ≥5k, Tier 4 >20k. La remise ne s’applique qu’aux prêts liquides et uniquement tant que l’interrupteur de consentement plateforme du Dashboard est activé. Le VPFI en Escrow compte aussi comme staked et gagne le {{apr}}% APR de staking.",
     "buyVpfiBuy": "Étape 1 — convertir l'ETH en VPFI. Sur la chaîne canonique l'appel va directement au Diamond ; hors canonique il passe par l'adaptateur d'achat et un aller-retour LayerZero. Plafonds par-tx et glissants applicables (voir TokenomicsTechSpec). Le VPFI est livré au wallet, pas auto-déposé en escrow.",
-    "buyVpfiDeposit": "Étape 2 — déplacer du VPFI du wallet vers l'escrow sur cette chaîne. Toujours une action explicite de l'utilisateur : le protocole ne provisionne jamais l'escrow automatiquement après un achat. Requis pour bénéficier des remises de frais et de l'APR de staking de 5%. Permit2 est utilisé quand disponible, de sorte qu'une seule signature remplace le couple approve + transfer.",
+    "buyVpfiDeposit": "Étape 2 — déplacer VPFI du portefeuille vers l’Escrow sur cette chaîne. Toujours une action utilisateur explicite : le protocole ne finance jamais automatiquement l’Escrow après un achat. Nécessaire pour bénéficier des remises de frais et du {{apr}}% APR de staking. Permit2 est utilisé lorsqu’il est disponible afin qu’une seule signature remplace la paire approve + transfer.",
     "buyVpfiUnstake": "Déplacer du VPFI de l'escrow vers le wallet sur cette chaîne. Réduit le tier de remise en temps réel — l'accumulateur pondéré dans le temps recalcule immédiatement chaque prêt ouvert au nouveau solde (plus bas), de sorte qu'un unstake est effectif pour la mécanique de remise dès cet instant.",
-    "rewardsOverview": "Deux flux de récompenses s'accumulent sur cette chaîne. Le VPFI détenu en escrow gagne un APR passif de 5% (pool de staking). Chaque USD d'intérêts réglé sur un prêt gagne une part journalière du pool d'interaction. Les deux sont mintés directement sur la chaîne courante lors de la réclamation — sans bridging.",
+    "rewardsOverview": "Deux flux de récompenses s’accumulent sur cette chaîne. Le VPFI conservé en Escrow gagne un {{apr}}% APR passif (pool de staking). Chaque dollar d’intérêts réglé sur un prêt gagne une part quotidienne du pool d’interaction. Les deux sont mintés directement sur la chaîne actuelle lors de la réclamation — sans bridging.",
     "rewardsClaim": "Mint tout VPFI en attente issu des deux flux de récompenses (staking + interaction) vers le wallet, sur la chaîne courante, en une seule transaction. Le pool d'interaction se finalise quotidiennement — les récompenses d'interaction en attente deviennent réclamables peu après la fermeture de chaque fenêtre de règlement.",
-    "rewardsWithdrawStaked": "Déplacer du VPFI hors de l'escrow vers le wallet. Le VPFI retiré cesse d'accumuler l'APR de staking de 5% et ne compte plus pour le tier de remise sur les frais — l'accumulateur pondéré dans le temps recalcule immédiatement chaque prêt ouvert au nouveau solde (plus bas).",
+    "rewardsWithdrawStaked": "Déplacer VPFI hors de l’Escrow vers le portefeuille. Le VPFI retiré cesse d’accumuler le {{apr}}% APR de staking et ne compte plus pour le niveau de remise de frais — l’accumulateur pondéré dans le temps re-stampe immédiatement chaque prêt ouvert avec le nouveau solde (inférieur).",
     "activityFeed": "Événements on-chain impliquant le wallet connecté sur la chaîne active — offres créées ou acceptées, prêts, remboursements, réclamations, liquidations, mints/burns de NFT, achats/stakes/unstakes de VPFI. Issus en direct des journaux d'événements du Diamond (sans backend), groupés par transaction et triés du plus récent au plus ancien."
   }
 }

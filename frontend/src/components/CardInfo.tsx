@@ -37,6 +37,11 @@ export interface CardInfoProps {
    *  so the user lands on the matching subsection of the user guide.
    *  Pass `form.offerType` from the Create Offer flow; omit elsewhere. */
   role?: 'lender' | 'borrower';
+  /** Optional interpolation params forwarded to i18next's `t()`. Use
+   *  when a registered help key contains `{{placeholder}}` segments
+   *  that need live values — e.g. the on-chain staking APR fetched
+   *  via {useStakingApr}. */
+  params?: Record<string, unknown>;
 }
 
 /**
@@ -66,7 +71,7 @@ function buildLearnMoreHref(
   return `${path}#${id}${roleSuffix}`;
 }
 
-export function CardInfo({ id, role }: CardInfoProps) {
+export function CardInfo({ id, role, params }: CardInfoProps) {
   const { t, i18n } = useTranslation();
   const entry = getCardHelp(id);
   const { mode } = useMode();
@@ -90,7 +95,7 @@ export function CardInfo({ id, role }: CardInfoProps) {
     typeof entry.summary === 'string'
       ? entry.summary
       : entry.summary[role ?? 'lender'];
-  const summary = t(summaryKey);
+  const summary = t(summaryKey, params);
   const roleSuffix =
     typeof entry.summary !== 'string' && role ? `:${role}` : '';
   const learnMoreHref = buildLearnMoreHref(mode, id, roleSuffix, locale);

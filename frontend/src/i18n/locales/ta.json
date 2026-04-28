@@ -289,7 +289,7 @@
     "step1SubtitleBridged": "{{chain}} இலிருந்து நேரடியாக — எந்த கிராஸ்-செயின் ரூட்டிங்கும் உங்களுக்காக கையாளப்படுகிறது. VPFI இந்த செயினில் உங்கள் வாலெட்டுக்கு வரும்.",
     "step1SubtitlePending": "வாங்கும் அடாப்டர் {{chain}} இல் வெளியீட்டில் உள்ளது. நீங்கள் இங்கே தொடரலாம் — செயின் மாற்றம் தேவையில்லை.",
     "step2Title": "உங்கள் Escrow-இல் VPFI Deposit / Stake செய்யுங்கள்",
-    "step2Info": "Staking அனைவருக்கும் திறந்திருக்கிறது — பங்கேற்க உங்களுக்கு loan தேவையில்லை. நீங்கள் Escrow-இல் deposit செய்யும் எந்த VPFI-உம் அங்கே இருக்கும் வரை 5% APR ஈட்டுகிறது. முதல் முறை staking செய்கிறீர்களா? உங்கள் முதல் deposit-இல் Escrow தானாக உருவாக்கப்படும் — எந்த setup-உம் தேவையில்லை.",
+    "step2Info": "Staking அனைவருக்கும் திறந்திருக்கிறது — பங்கேற்க உங்களுக்கு loan தேவையில்லை. நீங்கள் Escrow-இல் deposit செய்யும் எந்த VPFI-உம் அங்கே இருக்கும் வரை {{apr}}% APR ஈட்டுகிறது. முதல் முறை staking செய்கிறீர்களா? உங்கள் முதல் deposit-இல் Escrow தானாக உருவாக்கப்படும் — எந்த setup-உம் தேவையில்லை.",
     "step3Title": "உங்கள் Escrow-இலிருந்து VPFI Withdraw / Unstake செய்யுங்கள்",
     "buy": "VPFI வாங்கு",
     "buying": "வாங்கப்படுகிறது…",
@@ -1130,14 +1130,15 @@
     "escrowBalance": "எஸ்க்ரோ VPFI இருப்பு",
     "escrowTooltip": "இந்த செயினில் ஒவ்வொரு பயனர் எஸ்க்ரோவில் தற்போது staking செய்யப்பட்ட VPFI. கடன் வாங்குபவர் கட்டண தள்ளுபடி Tier இல் கணக்கிடப்படுகிறது.",
     "shareCirculating": "புழக்கத்தில் உள்ள பங்கு",
-    "shareTooltip": "இந்த செயினின் VPFI வழங்கலின் பயனுள்ள உரிமை — வாலட் இருப்பு + எஸ்க்ரோ-பூட்டப்பட்ட இருப்பு, புழக்கத்தில் உள்ளவை மூலம் வகுக்கப்படுகிறது. எஸ்க்ரோ VPFI இன்னும் பயனரிடம் சொந்தமானது; அது Tier தள்ளுபடி / 5% APR க்காக மட்டுமே பூட்டப்பட்டுள்ளது.",
+    "shareTooltip": "இந்த chain-இன் VPFI supply-இல் செயல்திறன் சார்ந்த உரிமை — wallet balance மற்றும் escrow-இல் lock செய்யப்பட்ட balance, circulating-ஆல் வகுக்கப்பட்டது. Escrow VPFI இன்னும் user-உக்கு சொந்தம்; அது tier discount / {{apr}}% APR-க்கு lock செய்யப்பட்டுள்ளது.",
     "circulatingThisChain": "புழக்கத்தில் (இந்த செயின்)",
     "remainingMintable": "மீதமுள்ள mint செய்யக்கூடியது",
     "tokenLabel": "டோக்கன்",
     "authorizedMinter": "அங்கீகரிக்கப்பட்ட மிண்டர்",
     "treasuryMintDestination": "treasuryம் (mint இலக்கு)",
     "yourActivity": "உங்கள் VPFI செயல்பாடு",
-    "noActivity": "{{chain}} இல் இந்த வாலட்டைத் தொடும் VPFI பரிமாற்றங்கள் இன்னும் இல்லை. பயனர் சார்ந்த விநியோகங்கள் (வெகுமதிகள், staking) பிற்காலம் வெளியீட்டு கட்டத்தில் வரும்."
+    "noActivity": "{{chain}} இல் இந்த வாலட்டைத் தொடும் VPFI பரிமாற்றங்கள் இன்னும் இல்லை. பயனர் சார்ந்த விநியோகங்கள் (வெகுமதிகள், staking) பிற்காலம் வெளியீட்டு கட்டத்தில் வரும்.",
+    "escrowCountsAsStaked": "Escrow VPFI staked-ஆக கணக்கிடப்படுகிறது ({{apr}}% APR)"
   },
   "buyVpfiCards": {
     "discountStatusTitle": "உங்கள் VPFI தள்ளுபடி நிலை",
@@ -1195,7 +1196,7 @@
     "unstakeTitle": "எஸ்க்ரோவில் இருந்து VPFI ஐ திரும்ப பெறு",
     "unstakeSubtitle": "{{chain}} இல் எஸ்க்ரோவில் இருந்து வாலட்டிற்கு VPFI ஐ நகர்த்து. எஸ்க்ரோ இருப்பு Tier வாசலுக்கு கீழே குறைந்தால், தள்ளுபடி Tier-ம் குறையும்.",
     "unstakeAmount": "திரும்பப் பெற VPFI அளவு",
-    "unstakeWarning": "எஸ்க்ரோ VPFI கடன் வாங்குபவர் கட்டண தள்ளுபடி Tier இல் கணக்கிடப்படுகிறது மற்றும் 5% APR ஈட்டுகிறது. திரும்பப் பெறுவது டோக்கன்களை வாலட்டிற்கு திருப்பி அனுப்புகிறது — மீதமுள்ள எஸ்க்ரோ இருப்பு Tier வாசலுக்கு கீழே குறைந்தால், அடுத்த கடனில் தள்ளுபடியும் அதனுடன் குறையும்.",
+    "unstakeWarning": "Escrow VPFI borrower fee discount tier-ஆக கணக்கிடப்பட்டு {{apr}}% APR ஈட்டுகிறது. Unstaking tokens-ஐ wallet-க்கு திருப்பும் — மீதமுள்ள escrow balance ஒரு tier threshold-க்கு கீழே குறைந்தால், அடுத்த loan-இல் discount-உம் குறையும்.",
     "unstakeButton": "வாலட்டிற்கு திரும்பப் பெறு"
   },
   "alertsPage": {
@@ -1439,13 +1440,13 @@
     "loanDetailsActionsLender": "இந்தக் கடனில் கடன் வழங்குபவருக்குக் கிடைக்கும் செயல்கள். கடன் தீர்வு செய்த பிறகு Claim செய்யவும் (1% Treasury கழிவைக் கழித்து அசல் + வட்டியை திருப்பித் தருகிறது). கடன் இடையில் கடன் வழங்குபவர் NFT-ஐ ஒரு வாங்குபவருக்கு விற்க Early Withdrawal-ஐ தொடங்கவும். HF < 1 அல்லது grace காலம் முடிந்துவிட்டால், எவரும் (கடன் வழங்குபவர் உட்பட) Liquidate-ஐ இயக்க முடியும். முடக்கப்பட்ட செயல்கள் hover-ல் காரணத்தைக் காட்டுகின்றன.",
     "loanDetailsActionsBorrower": "இந்தக் கடனில் கடன் வாங்குபவருக்குக் கிடைக்கும் செயல்கள். முழு அல்லது பகுதி Repay; Preclose direct (நிலுவையை இப்போது செலுத்தவும்) அல்லது offset (DEX வழியாக பிணையத்தை விற்கவும்); புதிய நிபந்தனைகளுடன் ஒரு புதிய கடனில் Refinance. முழு திருப்பிச் செலுத்தலில் Claim பிணையத்தைத் திருப்பித் தருகிறது, அல்லது பயன்படுத்தப்படாத VPFI rebate. முடக்கப்பட்ட செயல்கள் hover-ல் காரணத்தைக் காட்டுகின்றன.",
     "buyVpfiOverview": "ஆதரிக்கப்படும் எந்த செயினிலும் ETH-ஐப் பயன்படுத்தி நிலையான early-stage rate-இல் VPFI வாங்கவும். canonical செயின் (Base) நேரடியாக Diamond-க்கு route செய்கிறது; ஒவ்வொரு பிற செயினும் VPFIBuyAdapter + LayerZero round-trip வழியாக bridge செய்கிறது. VPFI எப்போதும் இணைக்கப்பட்ட செயினில் wallet-க்கு வந்துசேர்கிறது — chain switch தேவையில்லை.",
-    "buyVpfiDiscountStatus": "இந்தச் செயினில் செயலில் உள்ள VPFI கட்டண-தள்ளுபடி Tier. Tier escrow VPFI இருப்பால் அமைக்கப்படுகிறது: Tier 1 ≥100, Tier 2 ≥1k, Tier 3 ≥5k, Tier 4 >20k. தள்ளுபடி திரவ கடன்களுக்கு மட்டுமே மற்றும் Dashboard-இல் platform-level consent toggle on-ஆக இருக்கும் வரை மட்டுமே பொருந்தும். Escrow VPFI staked-ஆகவும் கருதப்படுகிறது மற்றும் 5% staking APR சம்பாதிக்கிறது.",
+    "buyVpfiDiscountStatus": "இந்த chain-இல் செயலில் உள்ள VPFI fee-discount tier. Tier-ஐ escrow VPFI balance நிர்ணயிக்கிறது: Tier 1 ≥100, Tier 2 ≥1k, Tier 3 ≥5k, Tier 4 >20k. Discount liquid loans-க்கு மட்டுமே மற்றும் Dashboard-இல் platform-level consent toggle ON-ஆக இருக்கும் போது மட்டுமே பொருந்தும். Escrow VPFI staked-ஆகவும் கணக்கிடப்படுகிறது மற்றும் {{apr}}% staking APR ஈட்டுகிறது.",
     "buyVpfiBuy": "படி 1 — ETH-ஐ VPFI-ஆக மாற்றவும். canonical செயினில் call நேரடியாக Diamond-க்குச் செல்கிறது; off-canonical-இல் buy adapter மற்றும் ஒரு LayerZero round-trip வழியாகச் செல்கிறது. Per-tx மற்றும் rolling caps பொருந்தும் (TokenomicsTechSpec-ஐக் காண்க). VPFI wallet-க்கு வழங்கப்படுகிறது, escrow-க்கு auto-deposit செய்யப்படவில்லை.",
-    "buyVpfiDeposit": "படி 2 — இந்தச் செயினில் VPFI-ஐ wallet-இலிருந்து escrow-க்கு நகர்த்தவும். எப்போதும் ஒரு வெளிப்படையான பயனர் செயல்: ஒரு வாங்குதலுக்குப் பிறகு புரோட்டோகால் எப்போதும் escrow-ஐ auto-fund செய்யாது. கட்டண தள்ளுபடி மற்றும் 5% staking APR-க்கு தகுதிப் பெற தேவை. கிடைக்கும்போது Permit2 பயன்படுத்தப்படுகிறது, அதனால் ஒரே signature approve + transfer ஜோடியை மாற்றுகிறது.",
+    "buyVpfiDeposit": "படி 2 — VPFI-ஐ wallet-இலிருந்து இந்த chain-இல் escrow-க்கு நகர்த்தவும். எப்போதும் ஒரு explicit user action: protocol எப்போதும் buy-க்குப் பிறகு escrow-ஐ auto-fund செய்யாது. Fee discounts மற்றும் {{apr}}% staking APR-க்குத் தகுதியடைய தேவை. கிடைக்கும் போது Permit2 பயன்படுத்தப்படுகிறது, ஒரு signature-ஆல் approve + transfer pair-ஐ மாற்றுகிறது.",
     "buyVpfiUnstake": "இந்தச் செயினில் VPFI-ஐ escrow-இலிருந்து wallet-க்கு திருப்பி நகர்த்தவும். தள்ளுபடி tier-ஐ real-time-இல் குறைக்கிறது — time-weighted accumulator திறந்திருக்கும் ஒவ்வொரு கடனையும் புதிய (குறைந்த) இருப்பில் உடனடியாக re-stamp செய்கிறது, எனவே ஒரு unstake அந்தத் தருணத்திலிருந்து கட்டண-தள்ளுபடி கணிதத்திற்கு உடனடியாக நடைமுறைக்கு வருகிறது.",
-    "rewardsOverview": "இந்தச் செயினில் இரண்டு reward streams சேர்ந்து கொண்டு வருகின்றன. Escrow-வைத்த VPFI ஒரு passive 5% APR சம்பாதிக்கிறது (staking pool). ஒரு கடனில் settle ஆகும் ஒவ்வொரு USD வட்டியும் interaction pool-இன் தினசரி பங்கைச் சம்பாதிக்கிறது. Claim-ல் இரண்டும் தற்போதைய செயினில் நேரடியாக mint செய்யப்படுகின்றன — bridging இல்லை.",
+    "rewardsOverview": "இந்த chain-இல் இரண்டு reward streams சேர்கின்றன. Escrow-இல் வைத்திருக்கும் VPFI passive {{apr}}% APR (staking pool) ஈட்டுகிறது. ஒரு loan-இல் தீர்க்கப்பட்ட ஒவ்வொரு USD வட்டியும் interaction pool-இன் தினசரி பங்கு ஈட்டுகிறது. Claim செய்யும் போது இரண்டும் தற்போதைய chain-இல் நேரடியாக mint செய்யப்படும் — bridging இல்லை.",
     "rewardsClaim": "இரண்டு reward streams (staking + interaction) ஆகியவற்றிலிருந்து நிலுவையில் உள்ள எந்த VPFI-ஐயும் தற்போதைய செயினில் wallet-க்கு ஒரே transaction-இல் mint செய்கிறது. Interaction pool தினசரி finalize ஆகிறது — நிலுவையில் உள்ள interaction rewards ஒவ்வொரு settlement window மூடிய சிறிது நேரத்திற்குப் பின் claim செய்யக்கூடியதாகின்றன.",
-    "rewardsWithdrawStaked": "VPFI-ஐ escrow-இலிருந்து wallet-க்கு திருப்பி நகர்த்தவும். திரும்பப் பெறப்பட்ட VPFI 5% staking APR சம்பாதிப்பதை நிறுத்துகிறது மற்றும் கட்டண-தள்ளுபடி tier-க்கு எண்ணிக்கையாகாது — time-weighted accumulator திறந்திருக்கும் ஒவ்வொரு கடனையும் புதிய (குறைந்த) இருப்பில் உடனடியாக re-stamp செய்கிறது.",
+    "rewardsWithdrawStaked": "VPFI-ஐ escrow-இலிருந்து wallet-க்கு திருப்பவும். எடுக்கப்பட்ட VPFI {{apr}}% staking APR சேர்வதை நிறுத்துகிறது மற்றும் இனி fee-discount tier-க்கு கணக்கிடப்படாது — time-weighted accumulator உடனடியாக ஒவ்வொரு open loan-ஐயும் புதிய (குறைந்த) balance-உடன் re-stamp செய்கிறது.",
     "activityFeed": "செயலில் உள்ள செயினில் இணைக்கப்பட்ட wallet-ஐ உள்ளடக்கிய on-chain events — உருவாக்கப்பட்ட அல்லது ஏற்றுக்கொள்ளப்பட்ட வாய்ப்புகள், கடன்கள், திருப்பிச் செலுத்தல்கள், claims, Liquidation-கள், NFT mints/burns, VPFI buys/stakes/unstakes. Diamond event log-களிலிருந்து நேரலையில் பெறப்பட்டவை (backend இல்லை), transaction வாரியாக குழுவாக்கப்பட்டு புதியது-முதலில் வரிசையில்."
   }
 }

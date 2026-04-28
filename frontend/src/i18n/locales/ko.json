@@ -289,7 +289,7 @@
     "step1SubtitleBridged": "{{chain}}에서 직접 — 모든 크로스체인 라우팅이 자동 처리됩니다. VPFI가 이 체인의 지갑으로 도착합니다.",
     "step1SubtitlePending": "구매 어댑터가 {{chain}}에 배포 중입니다. 여기서 계속할 수 있습니다 — 체인 전환이 필요하지 않습니다.",
     "step2Title": "Escrow에 VPFI 예치 / 스테이킹",
-    "step2Info": "스테이킹은 누구나 참여할 수 있습니다 — 대출이 필요하지 않습니다. Escrow에 예치한 VPFI는 보관되는 동안 5% APR 수익을 얻습니다. 처음 스테이킹하시나요? 첫 예치 시 Escrow가 자동으로 생성됩니다 — 별도 설정이 필요 없습니다.",
+    "step2Info": "스테이킹은 누구나 참여할 수 있습니다 — 대출이 필요하지 않습니다. Escrow에 예치한 VPFI는 보관되는 동안 {{apr}}% APR 수익을 얻습니다. 처음 스테이킹하시나요? 첫 예치 시 Escrow가 자동으로 생성됩니다 — 별도 설정이 필요 없습니다.",
     "step3Title": "Escrow에서 VPFI 인출 / 언스테이킹",
     "buy": "VPFI 구매",
     "buying": "구매 중…",
@@ -1130,14 +1130,15 @@
     "escrowBalance": "에스크로 VPFI 잔액",
     "escrowTooltip": "이 체인의 사용자별 에스크로에 현재 스테이킹된 VPFI. 차입자 수수료 할인 Tier에 산입됩니다.",
     "shareCirculating": "유통 비중",
-    "shareTooltip": "이 체인의 VPFI 공급량에 대한 실효 보유 — 지갑 잔액에 에스크로 잠금 잔액을 더한 후 유통 공급량으로 나눈 값. 에스크로 VPFI는 여전히 사용자의 소유이며, Tier 할인 / 5% APR을 위해 잠겨 있을 뿐입니다.",
+    "shareTooltip": "이 체인의 VPFI 공급에 대한 유효 소유권 — 지갑 잔액과 Escrow 잠금 잔액을 순환량으로 나눈 값. Escrow VPFI는 여전히 사용자 소유이며, 티어 할인 / {{apr}}% APR을 위해 잠겨 있을 뿐입니다.",
     "circulatingThisChain": "유통량(이 체인)",
     "remainingMintable": "남은 발행 가능량",
     "tokenLabel": "토큰",
     "authorizedMinter": "권한 부여된 발행자",
     "treasuryMintDestination": "트레저리(발행 대상)",
     "yourActivity": "VPFI 활동",
-    "noActivity": "아직 {{chain}}에서 이 지갑과 관련된 VPFI 전송이 없습니다. 사용자 대상 분배(보상, 스테이킹)는 이후 단계에서 도입됩니다."
+    "noActivity": "아직 {{chain}}에서 이 지갑과 관련된 VPFI 전송이 없습니다. 사용자 대상 분배(보상, 스테이킹)는 이후 단계에서 도입됩니다.",
+    "escrowCountsAsStaked": "Escrow VPFI는 스테이킹된 것으로 간주됩니다 ({{apr}}% APR)"
   },
   "buyVpfiCards": {
     "discountStatusTitle": "VPFI 할인 상태",
@@ -1195,7 +1196,7 @@
     "unstakeTitle": "에스크로에서 VPFI 언스테이크",
     "unstakeSubtitle": "{{chain}}의 에스크로에서 지갑으로 VPFI를 이동합니다. 에스크로 잔액이 Tier 임계값 아래로 떨어지면 할인 Tier도 떨어집니다.",
     "unstakeAmount": "언스테이크할 VPFI 양",
-    "unstakeWarning": "에스크로 VPFI는 차입자 수수료 할인 Tier에 산입되며 5% APR을 받습니다. 언스테이크하면 토큰이 지갑으로 돌아갑니다 — 남은 에스크로 잔액이 Tier 임계값 아래로 떨어지면 다음 대출에서 할인도 함께 떨어집니다.",
+    "unstakeWarning": "Escrow VPFI는 차용자 수수료 할인 등급에 산입되며 {{apr}}% APR을 얻습니다. 언스테이킹은 토큰을 지갑으로 돌려보냅니다 — 남은 Escrow 잔액이 등급 임계값 아래로 떨어지면 다음 대출에서 할인도 함께 낮아집니다.",
     "unstakeButton": "지갑으로 출금"
   },
   "alertsPage": {
@@ -1439,13 +1440,13 @@
     "loanDetailsActionsLender": "이 대출에서 대여자가 사용 가능한 액션입니다. 대출 정산 후 청구(원금 + 이자를 1% Treasury 차감 후 반환). 대출 도중 대여자 NFT를 매수자에게 매도하기 위해 조기 인출(Early Withdrawal) 개시. HF < 1이거나 유예 기간이 만료되면 누구나(대여자 포함) 청산을 트리거할 수 있습니다. 비활성화된 액션은 호버 시 사유를 표시합니다.",
     "loanDetailsActionsBorrower": "이 대출에서 차입자가 사용 가능한 액션입니다. 전액 또는 부분 상환, Preclose 직접(미상환분을 지금 지불) 또는 오프셋(DEX 통해 담보 매도), 새 조건의 대출로 리파이낸스. 청구는 전액 상환 시 담보를 반환하거나 미사용 VPFI 환급분을 반환합니다. 비활성화된 액션은 호버 시 사유를 표시합니다.",
     "buyVpfiOverview": "지원되는 모든 체인에서 ETH로 고정된 초기 단계 환율로 VPFI를 구매합니다. 정규 체인(Base)은 Diamond로 직접 라우팅되며, 다른 모든 체인은 VPFIBuyAdapter + LayerZero 왕복을 통해 브리지됩니다. VPFI는 항상 연결된 체인의 지갑에 도착하며, 체인 전환은 필요 없습니다.",
-    "buyVpfiDiscountStatus": "이 체인의 활성 VPFI 수수료 할인 Tier입니다. Tier는 에스크로 VPFI 잔액으로 결정됩니다: Tier 1 ≥100, Tier 2 ≥1k, Tier 3 ≥5k, Tier 4 >20k. 할인은 유동성 대출에만, 그리고 Dashboard의 플랫폼 레벨 동의 토글이 켜져 있는 동안에만 적용됩니다. 에스크로 VPFI는 staked로도 간주되어 5% staking APR을 얻습니다.",
+    "buyVpfiDiscountStatus": "이 체인에서 활성화된 VPFI 수수료 할인 등급입니다. 등급은 Escrow VPFI 잔액으로 결정됩니다: Tier 1 ≥100, Tier 2 ≥1k, Tier 3 ≥5k, Tier 4 >20k. 할인은 유동성 대출에만 적용되며, Dashboard의 플랫폼 수준 동의 토글이 켜져 있는 동안만 적용됩니다. Escrow VPFI는 스테이킹된 것으로도 간주되어 {{apr}}% 스테이킹 APR을 얻습니다.",
     "buyVpfiBuy": "1단계 — ETH를 VPFI로 변환합니다. 정규 체인에서는 호출이 Diamond로 직접 가며, 비정규에서는 buy adapter와 LayerZero 왕복을 거칩니다. 트랜잭션당 한도와 롤링 한도가 적용됩니다(TokenomicsTechSpec 참조). VPFI는 지갑으로 전달되며, 에스크로에 자동 입금되지는 않습니다.",
-    "buyVpfiDeposit": "2단계 — 이 체인에서 VPFI를 지갑에서 에스크로로 옮깁니다. 항상 사용자의 명시적 액션입니다: 프로토콜은 구매 후 에스크로에 자동 자금 공급을 절대 하지 않습니다. 수수료 할인과 5% staking APR을 받기 위해 필수입니다. 가능할 때 Permit2가 사용되어 단일 서명이 approve + transfer 쌍을 대체합니다.",
+    "buyVpfiDeposit": "2단계 — VPFI를 지갑에서 이 체인의 Escrow로 이동합니다. 항상 명시적인 사용자 작업입니다: 프로토콜은 구매 후 Escrow를 자동으로 충전하지 않습니다. 수수료 할인과 {{apr}}% 스테이킹 APR을 받으려면 필요합니다. 가능한 경우 Permit2가 사용되어 단일 서명이 approve + transfer 쌍을 대체합니다.",
     "buyVpfiUnstake": "이 체인에서 VPFI를 에스크로에서 지갑으로 다시 옮깁니다. 할인 Tier를 실시간으로 낮춥니다 — 시간 가중 누산기가 새(더 낮은) 잔액으로 모든 열린 대출을 즉시 재스탬핑하므로, unstake는 그 순간부터 수수료 할인 수식에 효력이 있습니다.",
-    "rewardsOverview": "이 체인에서 두 가지 보상 흐름이 누적됩니다. 에스크로 보유 VPFI는 수동적 5% APR(staking 풀)을 얻습니다. 대출에서 정산된 이자 1 USD마다 인터랙션 풀의 일일 지분을 얻습니다. 청구 시 둘 다 현재 체인에서 직접 발행되며, 브리징은 없습니다.",
+    "rewardsOverview": "이 체인에서 두 가지 보상 스트림이 누적됩니다. Escrow에 보유된 VPFI는 패시브 {{apr}}% APR(스테이킹 풀)을 얻습니다. 대출에서 결제된 USD 이자 1달러마다 인터랙션 풀의 일일 지분을 얻습니다. 청구 시 두 보상 모두 현재 체인에서 직접 발행됩니다 — 브리징 없음.",
     "rewardsClaim": "두 보상 흐름(staking + 인터랙션) 모두에서 대기 중인 VPFI를 현재 체인의 지갑으로 단일 트랜잭션으로 발행합니다. 인터랙션 풀은 일일로 마감되며, 대기 중인 인터랙션 보상은 각 정산 윈도우가 닫힌 직후에 청구 가능해집니다.",
-    "rewardsWithdrawStaked": "VPFI를 에스크로에서 지갑으로 옮깁니다. 인출된 VPFI는 5% staking APR 누적을 중단하고 더 이상 수수료 할인 Tier에 반영되지 않습니다 — 시간 가중 누산기가 새(더 낮은) 잔액으로 모든 열린 대출을 즉시 재스탬핑합니다.",
+    "rewardsWithdrawStaked": "VPFI를 Escrow에서 지갑으로 옮깁니다. 인출된 VPFI는 {{apr}}% 스테이킹 APR 누적을 중단하며 더 이상 수수료 할인 등급에 산입되지 않습니다 — 시간 가중 누적기는 즉시 모든 미결 대출을 새 (낮은) 잔액으로 재스탬프합니다.",
     "activityFeed": "활성 체인에서 연결된 지갑이 관여하는 온체인 이벤트 — 오퍼 생성 또는 수락, 대출, 상환, 청구, 청산, NFT 발행/소각, VPFI 매수/스테이크/언스테이크. Diamond 이벤트 로그에서 라이브로 가져오며(백엔드 없음), 트랜잭션별로 그룹화되고 최신순으로 정렬됩니다."
   }
 }
