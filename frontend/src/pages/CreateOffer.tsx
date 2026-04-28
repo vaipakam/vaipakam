@@ -668,6 +668,10 @@ export default function CreateOffer() {
                     protection isn't gated. The decimals field is the
                     only Advanced-only detail (kept inside the
                     component). */}
+                {/* The bare on-chain "detected ERC-20" classification
+                    badge stays Advanced-only — a technical diagnostic
+                    that rides on the same line as symbol/name/decimals
+                    via TokenInfoTag's inlineBadge slot. */}
                 <TokenInfoTag
                   chainId={chainId}
                   address={form.lendingAsset}
@@ -675,19 +679,15 @@ export default function CreateOffer() {
                     activeChain?.blockExplorer ?? DEFAULT_CHAIN.blockExplorer
                   }
                   showAdvanced={showAdvanced}
+                  inlineBadge={
+                    showAdvanced ? (
+                      <DetectionBadge
+                        detection={lendingDetection}
+                        selected={form.assetType}
+                      />
+                    ) : null
+                  }
                 />
-                {/* The bare on-chain "detected ERC-20" classification
-                    badge stays Advanced-only — it's a technical
-                    diagnostic separate from the user-facing trust
-                    block above. */}
-                {showAdvanced && (
-                  <div className="form-hint" style={{ marginTop: 4 }}>
-                    <DetectionBadge
-                      detection={lendingDetection}
-                      selected={form.assetType}
-                    />
-                  </div>
-                )}
               </>
             )}
           </div>
@@ -852,15 +852,15 @@ export default function CreateOffer() {
                     activeChain?.blockExplorer ?? DEFAULT_CHAIN.blockExplorer
                   }
                   showAdvanced={showAdvanced}
+                  inlineBadge={
+                    showAdvanced ? (
+                      <DetectionBadge
+                        detection={collateralDetection}
+                        selected={form.collateralAssetType}
+                      />
+                    ) : null
+                  }
                 />
-                {showAdvanced && (
-                  <div className="form-hint" style={{ marginTop: 4 }}>
-                    <DetectionBadge
-                      detection={collateralDetection}
-                      selected={form.collateralAssetType}
-                    />
-                  </div>
-                )}
               </>
             ) : (
               <>

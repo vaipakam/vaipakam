@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react';
 import { ExternalLink, AlertTriangle } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { useVerifyContract } from '../../hooks/useCoinGecko';
@@ -36,6 +37,11 @@ interface Props {
   address: string | null | undefined;
   blockExplorer: string | null | undefined;
   showAdvanced: boolean;
+  /** Optional pill rendered inline on the same row as symbol/name/decimals
+   *  (between the decimals slot and the explorer link). Used by Create
+   *  Offer to fold the on-chain "detected ERC-20 / ERC-721 / ERC-1155"
+   *  diagnostic badge into the same row instead of stacking it below. */
+  inlineBadge?: ReactNode;
 }
 
 export function TokenInfoTag({
@@ -43,6 +49,7 @@ export function TokenInfoTag({
   address,
   blockExplorer,
   showAdvanced,
+  inlineBadge,
 }: Props) {
   const { t } = useTranslation();
   const cg = useVerifyContract(chainId, address);
@@ -80,7 +87,7 @@ export function TokenInfoTag({
       className="form-hint"
       style={{ marginTop: 6, display: 'flex', flexDirection: 'column', gap: 6 }}
     >
-      {(symbol || name || decimals !== null || rank !== null) && (
+      {(symbol || name || decimals !== null || rank !== null || inlineBadge) && (
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'baseline' }}>
           {symbol && (
             <strong style={{ color: 'var(--text-primary)' }}>{symbol}</strong>
@@ -98,6 +105,7 @@ export function TokenInfoTag({
               {t('tokenInfoTag.decimals', { decimals })}
             </span>
           )}
+          {inlineBadge}
           {explorerHref && (
             <a
               href={explorerHref}
