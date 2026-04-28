@@ -258,6 +258,35 @@ Two changes:
 The tooltip uses the existing `<InfoTip>` component for
 consistency with the rest of the page-level info icons.
 
+## Offer Book — anchor-centred default sort
+
+The Lender and Borrower offer cards used to sort by "correct side
+first, nearest-to-anchor" — a nuanced ranking that prioritised
+rows on the side of the anchor matching the user's role, then
+appended the wrong-side rows. In practice it produced a list
+where the order of rates was hard to follow and the market anchor
+didn't have a consistent visual position on the page.
+
+Replaced with a depth-chart-style convention:
+
+- **Lender Offers** — sorted by **rate descending** (highest rates
+  on top, lowest at the bottom of the card).
+- **Borrower Offers** — sorted by **rate ascending** (lowest rates
+  on top, highest at the bottom of the card).
+
+Stacked together in the "Both" view, the two cards converge at
+the median rate ≈ market anchor in the visual middle, which makes
+the spread immediately readable. Single-side tabs ("Lender Only"
+/ "Borrower Only") inherit the same direction. Ties on rate fall
+back to newest-id-first so two offers at the same rate have a
+deterministic order.
+
+The pure ranking helpers in `lib/offerBookRanking.ts` and their
+unit tests were updated together. The `anchor` parameter stays in
+the helper signatures for API stability — the column-level rate-
+delta annotation still consults it — but no longer affects the
+ordering.
+
 ## Filter-scoped market anchor — rolling list of recent matches
 
 The market anchor used to be **the single global most-recently-

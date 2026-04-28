@@ -119,18 +119,22 @@ describe('matchesFilter', () => {
 });
 
 describe('rankLenderSide', () => {
-  it('orders by newest id descending when there is no anchor', () => {
+  it('sorts by rate descending — anchor is irrelevant to the ordering', () => {
     const list = [
       mkOffer({ id: 1n, interestRateBps: 300n }),
       mkOffer({ id: 3n, interestRateBps: 500n }),
       mkOffer({ id: 2n, interestRateBps: 400n }),
     ];
-    const out = rankLenderSide(list, null);
-    expect(out.map((o) => o.id)).toEqual([3n, 2n, 1n]);
+    expect(rankLenderSide(list, null).map((o) => o.interestRateBps)).toEqual(
+      [500n, 400n, 300n],
+    );
+    // Same input + anchor → same output. Anchor doesn't change the sort.
+    expect(rankLenderSide(list, 400n).map((o) => o.interestRateBps)).toEqual(
+      [500n, 400n, 300n],
+    );
   });
 
-  it('places rate>=anchor rows first, nearest to anchor', () => {
-    // Anchor is 500. Correct side = 500, 600, 800. Wrong side = 400, 300.
+  it('orders an anchored five-rate list highest-to-lowest', () => {
     const list = [
       mkOffer({ id: 1n, interestRateBps: 300n }),
       mkOffer({ id: 2n, interestRateBps: 400n }),
@@ -139,7 +143,7 @@ describe('rankLenderSide', () => {
       mkOffer({ id: 5n, interestRateBps: 800n }),
     ];
     const out = rankLenderSide(list, 500n);
-    expect(out.map((o) => o.interestRateBps)).toEqual([500n, 600n, 800n, 400n, 300n]);
+    expect(out.map((o) => o.interestRateBps)).toEqual([800n, 600n, 500n, 400n, 300n]);
   });
 
   it('breaks ties on rate by newest id first', () => {
@@ -158,7 +162,7 @@ describe('rankLenderSide', () => {
 });
 
 describe('rankBorrowerSide', () => {
-  it('places rate<=anchor rows first, nearest to anchor', () => {
+  it('sorts by rate ascending — mirror of rankLenderSide', () => {
     const list = [
       mkOffer({ id: 1n, interestRateBps: 300n }),
       mkOffer({ id: 2n, interestRateBps: 400n }),
@@ -167,16 +171,25 @@ describe('rankBorrowerSide', () => {
       mkOffer({ id: 5n, interestRateBps: 800n }),
     ];
     const out = rankBorrowerSide(list, 500n);
-    // Correct side (<=500) ordered nearest to anchor first = 500, 400, 300.
-    // Wrong side (>500) appended nearest-first = 600, 800.
-    expect(out.map((o) => o.interestRateBps)).toEqual([500n, 400n, 300n, 600n, 800n]);
+    expect(out.map((o) => o.interestRateBps)).toEqual([300n, 400n, 500n, 600n, 800n]);
   });
 
-  it('falls back to newest-id ordering with no anchor', () => {
+  it('rate-asc holds with no anchor too — anchor is irrelevant', () => {
     const list = [
-      mkOffer({ id: 1n, interestRateBps: 100n }),
-      mkOffer({ id: 2n, interestRateBps: 200n }),
+      mkOffer({ id: 1n, interestRateBps: 200n }),
+      mkOffer({ id: 2n, interestRateBps: 100n }),
     ];
-    expect(rankBorrowerSide(list, null).map((o) => o.id)).toEqual([2n, 1n]);
+    expect(rankBorrowerSide(list, null).map((o) => o.interestRateBps)).toEqual(
+      [100n, 200n],
+    );
+  });
+
+  it('breaks ties on rate by newest id first', () => {
+    const list = [
+      mkOffer({ id: 1n, interestRateBps: 400n }),
+      mkOffer({ id: 5n, interestRateBps: 400n }),
+      mkOffer({ id: 3n, interestRateBps: 400n }),
+    ];
+    expect(rankBorrowerSide(list, 500n).map((o) => o.id)).toEqual([5n, 3n, 1n]);
   });
 });

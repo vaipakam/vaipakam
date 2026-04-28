@@ -47,35 +47,46 @@ export function absDelta(a: bigint, b: bigint): bigint {
 }
 
 /**
- * Lender offers: correct side = rate >= anchor, sorted nearest to anchor.
- * Wrong-side rows (rate < anchor) are appended after the correct side, also
- * sorted nearest-first. With no anchor, rows are ordered newest-id-first.
+ * Lender offers: rate DESCENDING by default. With `rankBorrowerSide`
+ * sorted ASCENDING, the market-anchor rate sits naturally in the visual
+ * middle when both side cards are shown together (highest lender rates
+ * at top, lowest borrower rates at bottom, anchor near where the two
+ * lists' median rates meet). Mirrors the standard order-book depth-
+ * chart convention so the spread is centred and easy to read.
+ *
+ * The `anchor` parameter is kept in the signature for API stability
+ * (the rate-delta annotation still consults it) but is not used in
+ * the ordering — the sort is now purely rate-direction-based.
+ *
+ * Ties on rate fall back to newest-id-first so two offers at the same
+ * rate have a deterministic order.
  */
-export function rankLenderSide<T extends RankableOffer>(list: T[], anchor: bigint | null): T[] {
-  if (anchor === null) return [...list].sort((a, b) => (a.id < b.id ? 1 : -1));
-  const correct = list.filter((o) => o.interestRateBps >= anchor);
-  const wrong = list.filter((o) => o.interestRateBps < anchor);
-  const byDeltaThenId = (a: T, b: T) => {
-    const d = absDelta(a.interestRateBps, anchor) - absDelta(b.interestRateBps, anchor);
-    if (d !== 0n) return d < 0n ? -1 : 1;
+export function rankLenderSide<T extends RankableOffer>(
+  list: T[],
+  _anchor: bigint | null,
+): T[] {
+  return [...list].sort((a, b) => {
+    if (a.interestRateBps !== b.interestRateBps) {
+      return a.interestRateBps > b.interestRateBps ? -1 : 1;
+    }
     return a.id < b.id ? 1 : -1;
-  };
-  correct.sort(byDeltaThenId);
-  wrong.sort(byDeltaThenId);
-  return [...correct, ...wrong];
+  });
 }
 
-/** Borrower offers: mirror of `rankLenderSide` — correct side = rate <= anchor. */
-export function rankBorrowerSide<T extends RankableOffer>(list: T[], anchor: bigint | null): T[] {
-  if (anchor === null) return [...list].sort((a, b) => (a.id < b.id ? 1 : -1));
-  const correct = list.filter((o) => o.interestRateBps <= anchor);
-  const wrong = list.filter((o) => o.interestRateBps > anchor);
-  const byDeltaThenId = (a: T, b: T) => {
-    const d = absDelta(a.interestRateBps, anchor) - absDelta(b.interestRateBps, anchor);
-    if (d !== 0n) return d < 0n ? -1 : 1;
+/**
+ * Borrower offers: rate ASCENDING — mirror of `rankLenderSide`. Lowest
+ * borrower rates surface first; the highest borrower rates (closest to
+ * the lender side) sit at the bottom of the card so the market anchor
+ * lands in the visual middle when both sides are shown together.
+ */
+export function rankBorrowerSide<T extends RankableOffer>(
+  list: T[],
+  _anchor: bigint | null,
+): T[] {
+  return [...list].sort((a, b) => {
+    if (a.interestRateBps !== b.interestRateBps) {
+      return a.interestRateBps < b.interestRateBps ? -1 : 1;
+    }
     return a.id < b.id ? 1 : -1;
-  };
-  correct.sort(byDeltaThenId);
-  wrong.sort(byDeltaThenId);
-  return [...correct, ...wrong];
+  });
 }
