@@ -745,7 +745,7 @@
     "step1SubtitleBridged": "Direct from {{chain}} — any cross-chain routing is handled for you. VPFI lands in your wallet on this chain.",
     "step1SubtitlePending": "The buy adapter is being deployed to {{chain}}. You can continue here — no chain switch required.",
     "step2Title": "Deposit / Stake VPFI into your escrow",
-    "step2Subtitle": "Earns 5% APR staking yield while it sits there.",
+    "step2Info": "Staking is open to everyone — you don't need a loan to participate. Any VPFI you deposit into your escrow earns 5% APR for as long as it stays there. First time staking? Your escrow is created for you automatically on your first deposit — no setup needed.",
     "step3Title": "Withdraw / Unstake VPFI from your escrow",
     "step3Subtitle": "Transfer VPFI from your escrow back to your wallet on {{chain}}. Reduces your discount tier if it drops your escrow balance below a threshold.",
     "buy": "Buy VPFI",

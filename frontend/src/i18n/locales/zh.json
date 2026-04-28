@@ -278,7 +278,7 @@
     "step1SubtitleBridged": "从 {{chain}} 直接进行 — 任何跨链路由都会为您处理。VPFI 将进入您在此链上的钱包。",
     "step1SubtitlePending": "购买适配器正在 {{chain}} 上部署。您可以在此继续 — 无需切换链。",
     "step2Title": "将 VPFI 存入 / 质押到您的 Escrow",
-    "step2Subtitle": "VPFI 存放期间可获得 5% APR 的质押收益。",
+    "step2Info": "质押对所有人开放 — 您不需要 loan 即可参与。您存入 Escrow 的任何 VPFI 在那里存放期间都可以获得 5% APR 收益。第一次质押？首次存入时会自动为您创建 Escrow — 无需任何设置。",
     "step3Title": "从您的 Escrow 取出 / 取消质押 VPFI",
     "step3Subtitle": "将 VPFI 从您的 Escrow 转回您在 {{chain}} 的钱包。如果 Escrow 余额低于阈值,会降低您的折扣等级。",
     "buy": "购买 VPFI",

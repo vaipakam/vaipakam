@@ -278,7 +278,7 @@
     "step1SubtitleBridged": "مباشر من {{chain}} — يتم التعامل مع أي توجيه عبر السلاسل من أجلك. يصل VPFI إلى محفظتك على هذه السلسلة.",
     "step1SubtitlePending": "يتم نشر محول الشراء على {{chain}}. يمكنك المتابعة هنا — لا يلزم تبديل السلسلة.",
     "step2Title": "إيداع / Staking VPFI في Escrow الخاص بك",
-    "step2Subtitle": "يحقق عائد staking بنسبة 5% APR طالما يبقى هناك.",
+    "step2Info": "Staking مفتوح للجميع — لست بحاجة إلى قرض للمشاركة. أي VPFI تودعه في Escrow الخاص بك يحقق عائد 5% APR طالما بقي هناك. هل هذه أول مرة تقوم فيها بـ staking؟ يتم إنشاء Escrow لك تلقائيًا عند أول إيداع — لا يلزم أي إعداد.",
     "step3Title": "سحب / Unstaking VPFI من Escrow الخاص بك",
     "step3Subtitle": "انقل VPFI من Escrow الخاص بك إلى محفظتك على {{chain}}. يقلل من مستوى الخصم الخاص بك إذا انخفض رصيد Escrow عن الحد.",
     "buy": "شراء VPFI",

@@ -1020,8 +1020,27 @@ export default function BuyVPFI() {
           index={2}
           title={t('buyVpfi.step2Title')}
           cardHelpId="buy-vpfi.deposit"
-          subtitle={t('buyVpfi.step2Subtitle')}
         />
+        <div
+          style={{
+            display: "flex",
+            gap: 10,
+            alignItems: "flex-start",
+            background: "rgba(59, 130, 246, 0.06)",
+            border: "1px solid rgba(59, 130, 246, 0.25)",
+            borderRadius: 8,
+            padding: 12,
+            marginBottom: 12,
+          }}
+        >
+          <Info
+            size={18}
+            style={{ color: "var(--brand)", flexShrink: 0, marginTop: 2 }}
+          />
+          <p className="stat-label" style={{ margin: 0 }}>
+            {t('buyVpfi.step2Info')}
+          </p>
+        </div>
 
         <div
           style={{
@@ -1140,8 +1159,10 @@ interface StepHeaderProps {
   index: number;
   /** Step's large heading. */
   title: string;
-  /** Supporting copy below the title. */
-  subtitle: string;
+  /** Supporting copy below the title. Optional — when omitted, only the
+   *  title row renders (used by Step 2 where an Info callout below the
+   *  header carries the supporting copy instead). */
+  subtitle?: string;
   /** Optional CardInfo registry id to render the (i) tip next to title. */
   cardHelpId?: string;
 }
@@ -1179,9 +1200,11 @@ function StepHeader({ index, title, subtitle, cardHelpId }: StepHeaderProps) {
           {cardHelpId && <CardInfo id={cardHelpId} />}
         </div>
       </div>
-      <p className="stat-label" style={{ margin: 0, paddingLeft: 36 }}>
-        {subtitle}
-      </p>
+      {subtitle && (
+        <p className="stat-label" style={{ margin: 0, paddingLeft: 36 }}>
+          {subtitle}
+        </p>
+      )}
     </div>
   );
 }

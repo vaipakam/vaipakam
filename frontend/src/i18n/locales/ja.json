@@ -278,7 +278,7 @@
     "step1SubtitleBridged": "{{chain}}から直接 — クロスチェーンルーティングは自動処理されます。VPFIはこのチェーンのウォレットに届きます。",
     "step1SubtitlePending": "購入アダプタは{{chain}}に展開中です。ここで続行できます — チェーン切り替えは不要です。",
     "step2Title": "EscrowにVPFIを預ける / ステーク",
-    "step2Subtitle": "Escrowに置いている間は5% APRのステーキング利回りを得られます。",
+    "step2Info": "ステーキングは誰でも参加可能です — ローンは必要ありません。Escrowに預け入れたVPFIは、そこにある間ずっと5% APRの利回りを得られます。初めてのステーキングですか？初回預け入れ時にEscrowが自動で作成されます — 事前のセットアップは不要です。",
     "step3Title": "EscrowからVPFIを引き出す / アンステーク",
     "step3Subtitle": "VPFIをEscrowから{{chain}}のウォレットに戻します。Escrow残高がしきい値を下回ると割引階層が下がります。",
     "buy": "VPFIを購入",

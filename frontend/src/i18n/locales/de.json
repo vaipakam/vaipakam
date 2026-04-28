@@ -278,7 +278,7 @@
     "step1SubtitleBridged": "Direkt von {{chain}} — jegliches Cross-Chain-Routing wird für Sie erledigt. VPFI landet in Ihrer Wallet auf dieser Chain.",
     "step1SubtitlePending": "Der Buy-Adapter wird gerade auf {{chain}} bereitgestellt. Sie können hier fortfahren — kein Chain-Wechsel erforderlich.",
     "step2Title": "VPFI in Ihre Escrow einzahlen / staken",
-    "step2Subtitle": "Erwirtschaftet 5% APR Staking-Ertrag, solange das VPFI dort liegt.",
+    "step2Info": "Staking steht jedem offen — Sie brauchen keinen Kredit, um teilzunehmen. Jedes VPFI, das Sie in Ihre Escrow einzahlen, erwirtschaftet 5% APR, solange es dort liegt. Zum ersten Mal beim Staking? Ihre Escrow wird beim ersten Deposit automatisch für Sie erstellt — keine Einrichtung erforderlich.",
     "step3Title": "VPFI aus Ihrer Escrow abziehen / unstaken",
     "step3Subtitle": "Transferieren Sie VPFI aus Ihrer Escrow zurück in Ihre Wallet auf {{chain}}. Reduziert Ihre Rabattstufe, wenn Ihr Escrow-Saldo unter einen Schwellenwert fällt.",
     "buy": "VPFI kaufen",
