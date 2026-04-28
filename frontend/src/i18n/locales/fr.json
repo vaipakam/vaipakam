@@ -29,7 +29,8 @@
     "remainingTerm": "Durée restante",
     "all": "Tous",
     "noMatches": "Aucun prêt ne correspond aux filtres actuels.",
-    "clearFilters": "Effacer les filtres"
+    "clearFilters": "Effacer les filtres",
+    "perPage": "Par page"
   },
   "footer": {
     "rightsReserved": "Tous droits réservés.",

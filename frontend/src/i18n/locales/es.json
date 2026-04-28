@@ -29,7 +29,8 @@
     "remainingTerm": "Plazo restante",
     "all": "Todos",
     "noMatches": "Ningún préstamo coincide con los filtros actuales.",
-    "clearFilters": "Borrar filtros"
+    "clearFilters": "Borrar filtros",
+    "perPage": "Por página"
   },
   "footer": {
     "rightsReserved": "Todos los derechos reservados.",

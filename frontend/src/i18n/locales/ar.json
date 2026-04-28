@@ -29,7 +29,8 @@
     "remainingTerm": "المدة المتبقية",
     "all": "الكل",
     "noMatches": "لا توجد قروض تطابق المرشحات الحالية.",
-    "clearFilters": "مسح المرشحات"
+    "clearFilters": "مسح المرشحات",
+    "perPage": "لكل صفحة"
   },
   "footer": {
     "rightsReserved": "جميع الحقوق محفوظة.",

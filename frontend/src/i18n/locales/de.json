@@ -29,7 +29,8 @@
     "remainingTerm": "Restlaufzeit",
     "all": "Alle",
     "noMatches": "Keine Kredite entsprechen den aktuellen Filtern.",
-    "clearFilters": "Filter zurücksetzen"
+    "clearFilters": "Filter zurücksetzen",
+    "perPage": "Pro Seite"
   },
   "footer": {
     "rightsReserved": "Alle Rechte vorbehalten.",

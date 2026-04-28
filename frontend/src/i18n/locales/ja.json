@@ -29,7 +29,8 @@
     "remainingTerm": "残り期間",
     "all": "すべて",
     "noMatches": "現在のフィルターに一致するローンはありません。",
-    "clearFilters": "フィルターをクリア"
+    "clearFilters": "フィルターをクリア",
+    "perPage": "ページあたり"
   },
   "footer": {
     "rightsReserved": "すべての権利を保有します。",

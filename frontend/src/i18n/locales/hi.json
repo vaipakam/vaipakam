@@ -29,7 +29,8 @@
     "remainingTerm": "शेष अवधि",
     "all": "सभी",
     "noMatches": "वर्तमान फ़िल्टर से कोई लोन मेल नहीं खाता।",
-    "clearFilters": "फ़िल्टर साफ़ करें"
+    "clearFilters": "फ़िल्टर साफ़ करें",
+    "perPage": "प्रति पेज"
   },
   "footer": {
     "rightsReserved": "सर्वाधिकार सुरक्षित।",

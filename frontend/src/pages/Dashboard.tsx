@@ -29,11 +29,14 @@ import VPFIDiscountConsentCard from '../components/app/VPFIDiscountConsentCard';
 import { Pager } from '../components/app/Pager';
 import { CardInfo } from '../components/CardInfo';
 import { InfoTip } from '../components/InfoTip';
+import { Picker } from '../components/Picker';
 import { useMode } from '../context/ModeContext';
+import { Users, Activity as ActivityIcon, ListOrdered } from 'lucide-react';
 import './Dashboard.css';
 
 const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
-const LOANS_PAGE_SIZE = 15;
+const PAGE_SIZE_OPTIONS = [10, 25, 50] as const;
+const DEFAULT_PAGE_SIZE = 10;
 
 export default function Dashboard() {
   const { t } = useTranslation();
@@ -49,6 +52,7 @@ export default function Dashboard() {
   const [loansPage, setLoansPage] = useState(0);
   const [roleFilter, setRoleFilter] = useState<'all' | 'lender' | 'borrower'>('all');
   const [statusFilter, setStatusFilter] = useState<'all' | LoanStatus>('all');
+  const [pageSize, setPageSize] = useState<number>(DEFAULT_PAGE_SIZE);
 
   useEffect(() => {
     // No address = disconnected; the `escrow` slot is derived as null below,
@@ -90,18 +94,19 @@ export default function Dashboard() {
 
   // Snap back to page 0 whenever a filter narrows the set past the current
   // cursor — otherwise the table renders blank with a paginator stuck on a
-  // page that no longer exists.
+  // page that no longer exists. Same applies on a per-page bump that
+  // shrinks the page count.
   useEffect(() => {
     setLoansPage(0);
-  }, [roleFilter, statusFilter]);
+  }, [roleFilter, statusFilter, pageSize]);
 
   const pagedLoans = useMemo(
     () =>
       filteredLoans.slice(
-        loansPage * LOANS_PAGE_SIZE,
-        (loansPage + 1) * LOANS_PAGE_SIZE,
+        loansPage * pageSize,
+        (loansPage + 1) * pageSize,
       ),
-    [filteredLoans, loansPage],
+    [filteredLoans, loansPage, pageSize],
   );
 
   // Batch LTV + HF for every visible row in two multicalls instead of firing
@@ -215,34 +220,44 @@ export default function Dashboard() {
             <CardInfo id="dashboard.your-loans" />
           </div>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-            <label style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 13, opacity: 0.85 }}>
-              {t('common.role')}
-              <select
-                value={roleFilter}
-                onChange={(e) => setRoleFilter(e.target.value as 'all' | 'lender' | 'borrower')}
-                style={{ padding: '4px 8px', borderRadius: 6 }}
-              >
-                <option value="all">{t('common.all')}</option>
-                <option value="lender">{t('common.lender')}</option>
-                <option value="borrower">{t('common.borrower')}</option>
-              </select>
-            </label>
-            <label style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 13, opacity: 0.85 }}>
-              {t('common.status')}
-              <select
-                value={statusFilter === 'all' ? 'all' : String(statusFilter)}
-                onChange={(e) => {
-                  const v = e.target.value;
-                  setStatusFilter(v === 'all' ? 'all' : (Number(v) as LoanStatus));
-                }}
-                style={{ padding: '4px 8px', borderRadius: 6 }}
-              >
-                <option value="all">{t('common.all')}</option>
-                {(Object.values(LoanStatus) as LoanStatus[]).map((s) => (
-                  <option key={s} value={String(s)}>{LOAN_STATUS_LABELS[s]}</option>
-                ))}
-              </select>
-            </label>
+            <Picker<'all' | 'lender' | 'borrower'>
+              icon={<Users size={14} />}
+              ariaLabel={t('common.role')}
+              value={roleFilter}
+              onSelect={setRoleFilter}
+              minWidth={150}
+              items={[
+                { value: 'all', label: `${t('common.role')}: ${t('common.all')}` },
+                { value: 'lender', label: `${t('common.role')}: ${t('common.lender')}` },
+                { value: 'borrower', label: `${t('common.role')}: ${t('common.borrower')}` },
+              ]}
+            />
+            <Picker<'all' | LoanStatus>
+              icon={<ActivityIcon size={14} />}
+              ariaLabel={t('common.status')}
+              value={statusFilter}
+              onSelect={setStatusFilter}
+              minWidth={180}
+              items={[
+                { value: 'all', label: `${t('common.status')}: ${t('common.all')}` },
+                ...(Object.values(LoanStatus) as LoanStatus[]).map((s) => ({
+                  value: s,
+                  label: `${t('common.status')}: ${LOAN_STATUS_LABELS[s]}`,
+                })),
+              ]}
+            />
+            <Picker<number>
+              icon={<ListOrdered size={14} />}
+              ariaLabel={t('common.perPage')}
+              value={pageSize}
+              onSelect={setPageSize}
+              minWidth={140}
+              items={PAGE_SIZE_OPTIONS.map((n) => ({
+                value: n,
+                label: `${t('common.perPage')}: ${n}`,
+                pill: n === DEFAULT_PAGE_SIZE ? 'default' : undefined,
+              }))}
+            />
             <Link to="/app/create-offer" className="btn btn-primary btn-sm">
               <PlusCircle size={16} /> {t('dashboard.newOffer')}
             </Link>
@@ -342,7 +357,7 @@ export default function Dashboard() {
             </table>
             <Pager
               total={filteredLoans.length}
-              pageSize={LOANS_PAGE_SIZE}
+              pageSize={pageSize}
               page={loansPage}
               onPageChange={setLoansPage}
               unit="loan"
