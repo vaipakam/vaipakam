@@ -39,9 +39,9 @@ import {
 } from '../lib/offerBookRanking';
 import './OfferBook.css';
 
-const OFFER_TYPE_LABELS = ['Lender', 'Borrower'] as const;
-const LIQUIDITY_LABELS = ['Liquid', 'Illiquid'] as const;
-const ASSET_TYPE_LABELS = ['ERC-20', 'ERC-721', 'ERC-1155'] as const;
+export const OFFER_TYPE_LABELS = ['Lender', 'Borrower'] as const;
+export const LIQUIDITY_LABELS = ['Liquid', 'Illiquid'] as const;
+export const ASSET_TYPE_LABELS = ['ERC-20', 'ERC-721', 'ERC-1155'] as const;
 const WINDOW_SIZE = 200;
 /** Upper bound on the per-side row count the user can dial in, scoped to the
  *  active tab. `both` sees two columns so each side caps at 50 rows; on a
@@ -51,7 +51,7 @@ const MAX_PER_SIDE_SINGLE = 100;
 const DEFAULT_PER_SIDE = 20;
 const ZERO_ADDR = '0x0000000000000000000000000000000000000000';
 
-interface OfferData {
+export interface OfferData {
   id: bigint;
   creator: string;
   offerType: number;
@@ -78,7 +78,7 @@ type LiquidityFilter = LibLiquidityFilter;
 // open book and the historical (filled) offers. "Closed" intentionally omits
 // canceled offers because `cancelOffer` deletes the storage slot, so there's
 // no data left to render — only accepted offers retain full details.
-type StatusView = 'open' | 'closed';
+export type StatusView = 'open' | 'closed';
 
 // Populated when the review modal opens for an ERC20 + liquid Lender offer
 // (acceptor becomes the borrower). Drives the Loan Initiation Fee row in the
@@ -122,7 +122,7 @@ function formatBpsPct(bps: number): string {
   }).format(pct / 100);
 }
 
-type RawOffer = {
+export type RawOffer = {
   id: bigint;
   creator: string;
   offerType: bigint | number;
@@ -139,7 +139,7 @@ type RawOffer = {
   tokenId: bigint;
 };
 
-function toOfferData(r: RawOffer): OfferData {
+export function toOfferData(r: RawOffer): OfferData {
   return {
     id: r.id,
     creator: r.creator,
@@ -718,20 +718,14 @@ export default function OfferBook() {
     return statusView === 'closed' ? slice : rankBorrowerSide(slice);
   }, [borrowerAll, tab, pageStart, perSide, rankBorrowerSide, statusView]);
 
-  // The connected wallet's own open offers — derived BEFORE market filters
-  // so a user who narrowed the view can still see their own listings. The
-  // underlying `offers` array already excludes accepted rows at load time
-  // (see fetchBatch's `raw.accepted` skip), so everything here is active.
-  const myActiveOffers = useMemo(() => {
-    if (!address) return [] as OfferData[];
-    const lower = address.toLowerCase();
-    // Newest first by id (descending). The market-side cards below have
-    // their own anchor-relative ranking; the user's own list has no
-    // anchor concept so chronological-newest is the most useful default.
-    return offers
-      .filter((o) => o.creator.toLowerCase() === lower)
-      .sort((a, b) => (a.id > b.id ? -1 : a.id < b.id ? 1 : 0));
-  }, [offers, address]);
+  // The connected wallet's own active offers used to render here as a
+  // separate card above the filters, but as of the Dashboard "your
+  // stuff" consolidation the `<OfferTable>` for the user's own offers
+  // is rendered on the Dashboard page via `useMyActiveOffers`. The
+  // OfferBook page now stays focused on the market view — anyone
+  // browsing here can still see their own listings inline within the
+  // Lender / Borrower side cards (the table renders a "Your Offer"
+  // badge in the action column, same as before).
 
   const totalLender = lenderAll.length;
   const totalBorrower = borrowerAll.length;
@@ -809,25 +803,11 @@ export default function OfferBook() {
         </div>
       )}
 
-      {/* Connected wallet's own open offers, surfaced above the market
-          filters so a creator can always find their listings without
-          having to remember what filter combination matches them.
-          Rendered only when the user is connected AND has at least one
-          open offer; otherwise we skip the section entirely to avoid
-          pushing the filters card down with an empty placeholder. */}
-      {statusView === 'open' && address && myActiveOffers.length > 0 && (
-        <OfferTable
-          title={t('offerBook.yourActiveOffers')}
-          subtitle={`${myActiveOffers.length} ${t('offerBook.tabOpen').toLowerCase()}`}
-          offers={myActiveOffers}
-          anchorRateBps={anchorRateBps}
-          address={address}
-          acceptingId={acceptingId}
-          onAccept={handleAcceptOffer}
-          statusView={statusView}
-          cardHelpId="offer-book.your-active-offers"
-        />
-      )}
+      {/* Connected wallet's own offers card moved to the Dashboard
+          page (Your Active Offers) so all "your stuff" sits in one
+          place. The user's own listings are still visible inline in
+          the Lender / Borrower side cards below — the table renders
+          a "Your Offer" badge in the action column for them. */}
 
       <div className="card" style={{ marginTop: 12 }}>
         <div className="card-title">
@@ -1523,7 +1503,7 @@ interface OfferTableProps {
   cardHelpId?: string;
 }
 
-function OfferTable({ title, subtitle, offers, anchorRateBps, address, acceptingId, onAccept, statusView, cardHelpId }: OfferTableProps) {
+export function OfferTable({ title, subtitle, offers, anchorRateBps, address, acceptingId, onAccept, statusView, cardHelpId }: OfferTableProps) {
   const { t } = useTranslation();
   return (
     <div className="card" style={{ marginTop: 16 }}>

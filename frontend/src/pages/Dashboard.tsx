@@ -5,6 +5,8 @@ import i18n from '../i18n';
 import { useWallet } from '../context/WalletContext';
 import { useDiamondRead } from '../contracts/useDiamond';
 import { useUserLoans } from '../hooks/useUserLoans';
+import { useMyActiveOffers } from '../hooks/useMyActiveOffers';
+import { OfferTable } from './OfferBook';
 import { useLoanRisks, type LoanRisk } from '../hooks/useLoanRisks';
 import { useVPFIToken } from '../hooks/useVPFIToken';
 import { useUserVPFI } from '../hooks/useUserVPFI';
@@ -64,6 +66,7 @@ export default function Dashboard() {
   const isAdvanced = mode === 'advanced';
   const diamond = useDiamondRead();
   const { loans, loading } = useUserLoans(address);
+  const { offers: myActiveOffers } = useMyActiveOffers(address);
   const { snapshot: vpfi } = useVPFIToken();
   const { snapshot: userVpfi } = useUserVPFI(address);
   const { balance: escrowVpfiWei } = useEscrowVPFIBalance(address);
@@ -285,6 +288,29 @@ export default function Dashboard() {
         isCanonicalVPFI={activeChain?.isCanonicalVPFI ?? DEFAULT_CHAIN.isCanonicalVPFI}
         isAdvanced={isAdvanced}
       />
+
+      {/* Connected wallet's own currently-open offers. Lifted from the
+          OfferBook page so Dashboard reads as a single "your stuff"
+          surface (Your Loans + Your Active Offers + your VPFI). The
+          card is rendered only when the user has at least one open
+          offer; otherwise we skip it entirely to avoid an empty
+          placeholder pushing the loans card down. The OfferTable
+          component renders the user's own row with a "Your offer"
+          badge + "Manage keepers" link instead of an Accept button,
+          so no extra wiring is needed for the cancel / manage flows. */}
+      {address && myActiveOffers.length > 0 && (
+        <OfferTable
+          title={t('offerBook.yourActiveOffers')}
+          subtitle={`${myActiveOffers.length} ${t('offerBook.tabOpen').toLowerCase()}`}
+          offers={myActiveOffers}
+          anchorRateBps={null}
+          address={address}
+          acceptingId={null}
+          onAccept={() => { /* no-op — own offers can't be accepted */ }}
+          statusView="open"
+          cardHelpId="offer-book.your-active-offers"
+        />
+      )}
 
       {/* Active loans */}
       <div className="card">
