@@ -763,10 +763,27 @@ export function buildGithubIssueUrl(): string {
   // the bottom under several folded `<details>` blocks and most
   // reporters never scrolled down to it — issues landed without
   // the human context that makes triage possible.
+  // Active locale + theme on the top line: high triage value (UI bugs
+  // often only repro in a specific locale or theme) and ~zero marginal
+  // privacy cost (locale leaks via every translated label in the body
+  // already; theme is a single bit). Sourced from the DOM attributes the
+  // i18n bootstrap and ThemeContext write on every change, so they
+  // always reflect the user's CURRENT selection — no React-context
+  // coupling needed in this pure module-level builder.
+  const lang =
+    typeof document !== 'undefined'
+      ? document.documentElement.lang || 'unknown'
+      : 'unknown';
+  const theme =
+    typeof document !== 'undefined'
+      ? document.documentElement.getAttribute('data-theme') || 'unknown'
+      : 'unknown';
   const header = [
     `**Report ID:** \`${id}\``,
     `**Wallet (redacted):** \`${wallet}\``,
     `**Chain:** \`${chainLabel}\``,
+    `**Language:** \`${lang}\``,
+    `**Theme:** \`${theme}\``,
     tx ? `**Last tx hash:** \`${tx}\`` : null,
     `**Generated:** ${new Date().toISOString()}`,
     '',
