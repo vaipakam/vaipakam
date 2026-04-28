@@ -71,7 +71,6 @@ export interface CreateOfferPayload {
   collateralAssetType: 0 | 1 | 2;
   collateralTokenId: bigint;
   collateralQuantity: bigint;
-  keeperAccessEnabled: boolean;
 }
 
 /**
@@ -153,7 +152,6 @@ export function toCreateOfferPayload(
     collateralAssetType: kindToEnum(s.collateralAssetType),
     collateralTokenId: BigInt(s.collateralTokenId || '0'),
     collateralQuantity: BigInt(s.collateralQuantity || '0'),
-    keeperAccessEnabled: s.keeperAccess,
   };
 }
 
