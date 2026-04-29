@@ -9,6 +9,8 @@ import {LibERC721} from "../libraries/LibERC721.sol";
 import {LibVPFIDiscount} from "../libraries/LibVPFIDiscount.sol";
 import {LibMetricsHooks} from "../libraries/LibMetricsHooks.sol";
 import {LibPermit2, ISignatureTransfer} from "../libraries/LibPermit2.sol";
+import {LibRiskMath} from "../libraries/LibRiskMath.sol";
+import {LibOfferMatch} from "../libraries/LibOfferMatch.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
@@ -125,8 +127,77 @@ contract OfferFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
         address collateralAsset,
         uint256 collateralAmount,
         uint256 interestRateBps,
-        uint256 durationDays
+        uint256 durationDays,
+        // ── Range Orders Phase 1 (docs/RangeOffersDesign.md) ─────────
+        // Indexers reconstructing cancelled-offer state from this single
+        // event need the full range tuple, not just the legacy single
+        // values. `amountMax` / `interestRateBpsMax` mirror the offer's
+        // upper bounds; `amountFilled` is the cumulative principal
+        // consumed across matches before the cancel landed (lender-side
+        // partial-fill case). All three are zero on offers created
+        // before Range Orders Phase 1.
+        uint256 amountMax,
+        uint256 interestRateBpsMax,
+        uint256 amountFilled
     );
+
+    /// @dev Emitted by `OfferFacet.matchOffers` (and the
+    ///      `acceptOffer` / `PrecloseFacet.transferObligationViaOffer` /
+    ///      `RefinanceFacet.refinanceLoan` wrappers around the shared
+    ///      matching core, once Range Orders Phase 1 PR3 lands). Single
+    ///      source-of-truth event for the matched terms — both midpoints
+    ///      are emitted so downstream alt-rule analytics can reconstruct
+    ///      the chosen point in the overlap range. Range Orders only —
+    ///      not emitted on the legacy single-value `acceptOffer` path
+    ///      until that path is refactored to call the matching core.
+    /// @param lenderOfferId       Lender-side offer.
+    /// @param borrowerOfferId     Borrower-side offer (or 0 when the
+    ///                            acceptor synthesised a single-point
+    ///                            counterparty via legacy `acceptOffer`).
+    /// @param loanId              Loan minted by this match.
+    /// @param matcher             `msg.sender` of the matching call.
+    ///                            Recorded on `Loan.matcher` for the
+    ///                            1% LIF kickback at terminal.
+    /// @param matchAmount         Concrete principal chosen from the
+    ///                            overlap (midpoint per design §4.2).
+    /// @param matchRateBps        Concrete rate chosen from the overlap.
+    /// @param lenderRemainingPostMatch  Lender's `amountMax - amountFilled`
+    ///                            after this match. Indexers use this to
+    ///                            render the offer's fill-progress bar
+    ///                            without re-reading storage.
+    /// @param lifMatcherFee       Amount of LIF (in lending-asset units
+    ///                            on the standard path; in VPFI on the
+    ///                            Phase 5 discount path) that flowed to
+    ///                            `matcher` at this match. Zero on
+    ///                            VPFI-discount loans where the fee
+    ///                            settles at terminal instead.
+    event OfferMatched(
+        uint256 indexed lenderOfferId,
+        uint256 indexed borrowerOfferId,
+        uint256 indexed loanId,
+        address matcher,
+        uint256 matchAmount,
+        uint256 matchRateBps,
+        uint256 lenderRemainingPostMatch,
+        uint256 lifMatcherFee
+    );
+
+    /// @dev Emitted when an offer's lifecycle terminates. Three reasons
+    ///      cover every terminal state:
+    ///        - `FullyFilled`: lender offer's `amountFilled == amountMax`
+    ///          after a match (rare exact-fit; most large lenders hit
+    ///          `Dust` first).
+    ///        - `Dust`: `amountMax - amountFilled < amountMin` after a
+    ///          match — the leftover can't satisfy the lender's per-
+    ///          match minimum, so `matchOffers` auto-closes the offer
+    ///          and refunds dust.
+    ///        - `Cancelled`: explicit `cancelOffer`. Companion to the
+    ///          legacy `OfferCanceled` / `OfferCanceledDetails` events;
+    ///          this one carries the unified-reason discriminator so
+    ///          frontend pickers can group three terminal classes
+    ///          consistently.
+    enum OfferCloseReason { FullyFilled, Dust, Cancelled }
+    event OfferClosed(uint256 indexed offerId, OfferCloseReason reason);
 
     // Facet-specific errors (shared errors inherited from IVaipakamErrors)
     error InvalidOfferType();
@@ -137,6 +208,39 @@ contract OfferFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
     error InsufficientAllowance();
     error LiquidityMismatch();
     error GetUserEscrowFailed(string reason);
+
+    // ── Range Orders Phase 1 errors (docs/RangeOffersDesign.md §5.5) ─
+    /// Range invariant: `amountMin > amountMax`.
+    error InvalidAmountRange();
+    /// Range invariant: `interestRateBpsMin > interestRateBpsMax`.
+    error InvalidRateRange();
+    /// Range invariant: `interestRateBpsMax > MAX_INTEREST_BPS`.
+    error InterestRateAboveCeiling();
+    /// Lender offer's `collateralAmount` is below the system-derived
+    /// minimum needed to keep HF >= 1.5e18 at `amountMax` (worst case).
+    /// Surfaces with `(provided, floor)` so the UI can show the gap.
+    error MinCollateralBelowFloor(uint256 provided, uint256 floor);
+    /// Borrower offer's `amountMax` exceeds the system-derived ceiling
+    /// implied by the posted collateral.
+    error MaxLendingAboveCeiling(uint256 provided, uint256 ceiling);
+    /// Master kill-switch flag rejected the call. `whichFlag` identifies
+    /// the gate (1=rangeAmount, 2=rangeRate, 3=partialFill) so frontend
+    /// validation can surface a precise "feature disabled" hint.
+    error FunctionDisabled(uint8 whichFlag);
+    // Reserved for the matching core (PR3): kept here so PR1 already
+    // declares the surface ABIs depend on. Range Orders matching wraps
+    // each into the shared `LibOfferMatch` revert path.
+    error AssetMismatch();
+    error AmountNoOverlap();
+    error RateNoOverlap();
+    error CollateralBelowRequired();
+    error DurationMismatch();
+    error MatchHFTooLow();
+    /// Cancel fired before `MIN_OFFER_CANCEL_DELAY` elapsed since
+    /// `Offer.createdAt` and `amountFilled == 0` (no match landed yet).
+    /// Partial-filled offers can be cancelled immediately and don't
+    /// raise this.
+    error CancelCooldownActive();
 
     /**
      * @notice Creates a new lender or borrower offer.
@@ -289,6 +393,51 @@ contract OfferFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
 
         if (!params.creatorFallbackConsent) revert FallbackConsentRequired();
 
+        // ── Range Orders Phase 1 — system-derived bound enforcement ────
+        // Active ONLY when the master `rangeAmountEnabled` flag is on
+        // (i.e., the offer's `amountMax > amount` is permissible). When
+        // Range Orders is dormant (default), every offer is effectively
+        // single-value and the runtime HF gate at LoanFacet.initiateLoan
+        // is sufficient — there's no worst-case-corner to defend against.
+        // Apply ONLY to ERC-20-on-both-legs offers where both legs are
+        // Liquid (matches the runtime HF gate's scope; NFT rentals +
+        // illiquid pairs go through different gates).
+        LibVaipakam.ProtocolConfig storage cfg2 =
+            LibVaipakam.storageSlot().protocolCfg;
+        if (
+            cfg2.rangeAmountEnabled
+            && params.assetType == LibVaipakam.AssetType.ERC20
+            && params.collateralAssetType == LibVaipakam.AssetType.ERC20
+            && principalLiq == LibVaipakam.LiquidityStatus.Liquid
+            && collateralLiq == LibVaipakam.LiquidityStatus.Liquid
+        ) {
+            if (params.offerType == LibVaipakam.OfferType.Lender) {
+                // Lender's required collateral must clear the floor at
+                // the worst-case lending size (`offer.amountMax` after
+                // auto-collapse).
+                uint256 floor = LibRiskMath.minCollateralForLending(
+                    offer.amountMax,
+                    params.lendingAsset,
+                    params.collateralAsset
+                );
+                if (floor > 0 && params.collateralAmount < floor) {
+                    revert MinCollateralBelowFloor(params.collateralAmount, floor);
+                }
+            } else {
+                // Borrower's accepted lending ceiling (their `amountMax`)
+                // can't exceed the system-derived ceiling implied by the
+                // collateral they're posting.
+                uint256 ceiling = LibRiskMath.maxLendingForCollateral(
+                    params.collateralAmount,
+                    params.lendingAsset,
+                    params.collateralAsset
+                );
+                if (ceiling != type(uint256).max && offer.amountMax > ceiling) {
+                    revert MaxLendingAboveCeiling(offer.amountMax, ceiling);
+                }
+            }
+        }
+
         escrow = getUserEscrow(msg.sender);
     }
 
@@ -302,10 +451,18 @@ contract OfferFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
     ) private {
         if (params.offerType == LibVaipakam.OfferType.Lender) {
             if (params.assetType == LibVaipakam.AssetType.ERC20) {
+                // Range Orders Phase 1: pre-escrow the upper bound
+                // (`amountMax`) so subsequent partial fills draw from
+                // the lender's already-locked custody. Auto-collapse
+                // (params.amountMax == 0 → params.amount) keeps legacy
+                // single-value callers byte-identical.
+                uint256 lenderPull = params.amountMax == 0
+                    ? params.amount
+                    : params.amountMax;
                 IERC20(params.lendingAsset).safeTransferFrom(
                     msg.sender,
                     escrow,
-                    params.amount
+                    lenderPull
                 );
             } else if (params.assetType == LibVaipakam.AssetType.ERC721) {
                 IERC721(params.lendingAsset).safeTransferFrom(
@@ -376,7 +533,9 @@ contract OfferFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
         LibVaipakam.CreateOfferParams calldata params
     ) private view returns (uint256) {
         if (params.offerType == LibVaipakam.OfferType.Lender) {
-            return params.amount;
+            // Range Orders Phase 1: pre-escrow `amountMax` so partial
+            // fills draw from custody. Auto-collapse for legacy callers.
+            return params.amountMax == 0 ? params.amount : params.amountMax;
         }
         if (params.assetType == LibVaipakam.AssetType.ERC20) {
             return params.collateralAmount;
@@ -464,6 +623,52 @@ contract OfferFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
         offer.tokenId = params.tokenId;
         offer.quantity = params.quantity;
         offer.prepayAsset = params.prepayAsset;
+        // ── Range Orders Phase 1 (docs/RangeOffersDesign.md §2.1, §15)
+        // Auto-collapse: when caller leaves `amountMax == 0`, copy the
+        // legacy single value into `amountMax` so the offer is treated
+        // as single-value (`amountMin == amountMax`). Same for the rate
+        // pair. This preserves backward compat for every existing test
+        // / script that builds CreateOfferParams without the new fields.
+        // Range mode (`amountMax > amount`) is gated on the master flag
+        // — when off, callers must collapse client-side.
+        LibVaipakam.ProtocolConfig storage cfg =
+            LibVaipakam.storageSlot().protocolCfg;
+        uint256 effAmountMax = params.amountMax == 0
+            ? params.amount
+            : params.amountMax;
+        uint256 effRateMax = params.interestRateBpsMax == 0
+            ? params.interestRateBps
+            : params.interestRateBpsMax;
+        // Range invariants: min ≤ max, max within sanity ceiling.
+        if (effAmountMax < params.amount) revert InvalidAmountRange();
+        if (effRateMax < params.interestRateBps) revert InvalidRateRange();
+        if (effRateMax > LibVaipakam.MAX_INTEREST_BPS) {
+            revert InterestRateAboveCeiling();
+        }
+        // Master kill-switch enforcement: if the flag is off, the only
+        // permitted shape is the collapsed single-value offer.
+        if (!cfg.rangeAmountEnabled && effAmountMax != params.amount) {
+            revert FunctionDisabled(1);
+        }
+        if (!cfg.rangeRateEnabled && effRateMax != params.interestRateBps) {
+            revert FunctionDisabled(2);
+        }
+        // `partialFillEnabled` only matters on lender offers — borrower
+        // offers stay single-fill in Phase 1 regardless. Even on lender
+        // side, a single-value (collapsed) amount range can never
+        // partial-fill (one match exhausts), so the flag check is
+        // restricted to ranged-amount lender offers.
+        if (
+            !cfg.partialFillEnabled
+            && params.offerType == LibVaipakam.OfferType.Lender
+            && effAmountMax != params.amount
+        ) {
+            revert FunctionDisabled(3);
+        }
+        offer.amountMax = effAmountMax;
+        offer.interestRateBpsMax = effRateMax;
+        offer.amountFilled = 0;
+        offer.createdAt = uint64(block.timestamp);
     }
 
     function _writeOfferCollateralFields(
@@ -584,6 +789,97 @@ contract OfferFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
                 permit,
                 signature
             );
+    }
+
+    /// @notice Range Orders Phase 1 — bot-facing preview of a candidate
+    ///         (lender, borrower) match. Pure view; runs the validity
+    ///         matrix (§4.1) + computes midpoint terms (§4.2) + the
+    ///         synthetic HF check via `LibRiskMath`. Bots filter
+    ///         candidate pairs against this before submitting
+    ///         `matchOffers` to avoid paying for reverting txs.
+    /// @return result Structured outcome — see `LibOfferMatch.MatchResult`.
+    ///         `errorCode == Ok` means `matchOffers(lenderOfferId,
+    ///         borrowerOfferId)` would succeed at this block; the
+    ///         struct also carries the concrete (matchAmount,
+    ///         matchRateBps, reqCollateral, lenderRemainingPostMatch)
+    ///         values so the bot can estimate gain pre-submission.
+    function previewMatch(uint256 lenderOfferId, uint256 borrowerOfferId)
+        external
+        view
+        returns (LibOfferMatch.MatchResult memory result)
+    {
+        return LibOfferMatch.previewMatch(lenderOfferId, borrowerOfferId);
+    }
+
+    /// @notice Range Orders Phase 1 — match a lender offer against a
+    ///         borrower offer. Permissionless; `msg.sender` is recorded
+    ///         on the resulting loan as the matcher and receives the
+    ///         1% LIF kickback at terminal (lender-asset path: at
+    ///         match; VPFI path: at proper close / default).
+    /// @dev    Phase 1 ships the full matching mechanic gated on the
+    ///         `partialFillEnabled` master flag. While that flag is
+    ///         off (default on a fresh deploy), `matchOffers` reverts
+    ///         with `FunctionDisabled(3)` so users see a clear
+    ///         "feature not enabled" message rather than an opaque
+    ///         downstream revert. The full `LibOfferMatch.executeMatch`
+    ///         body (which requires the `_acceptOffer` refactor + the
+    ///         `LoanFacet.initiateLoan` signature change documented in
+    ///         the design doc PR3-B) lands in a follow-up PR. For now
+    ///         this entry validates the call shape so external
+    ///         integrators can compile against the final ABI.
+    function matchOffers(uint256 lenderOfferId, uint256 borrowerOfferId)
+        external
+        nonReentrant
+        whenNotPaused
+        returns (uint256 /*loanId*/)
+    {
+        LibVaipakam.ProtocolConfig storage cfg =
+            LibVaipakam.storageSlot().protocolCfg;
+        if (!cfg.partialFillEnabled) {
+            // Master kill-switch: matching infra dormant in Phase 1
+            // until governance enables it post-bake.
+            revert FunctionDisabled(3);
+        }
+        // Pre-flight via the shared core. Surfaces typed reverts so
+        // callers get actionable errors. Once the executeMatch
+        // implementation lands (PR3-B), this becomes the single match
+        // entry point; until then it's a strict revert.
+        LibOfferMatch.MatchResult memory mr =
+            LibOfferMatch.previewMatch(lenderOfferId, borrowerOfferId);
+        if (mr.errorCode != LibOfferMatch.MatchError.Ok) {
+            // Map the structured preview-error into the typed reverts
+            // declared on this facet so the ABI stays surface-stable.
+            if (mr.errorCode == LibOfferMatch.MatchError.AssetMismatch
+                || mr.errorCode == LibOfferMatch.MatchError.AssetTypeMismatch) {
+                revert AssetMismatch();
+            }
+            if (mr.errorCode == LibOfferMatch.MatchError.AmountNoOverlap) {
+                revert AmountNoOverlap();
+            }
+            if (mr.errorCode == LibOfferMatch.MatchError.RateNoOverlap) {
+                revert RateNoOverlap();
+            }
+            if (mr.errorCode == LibOfferMatch.MatchError.CollateralBelowRequired) {
+                revert CollateralBelowRequired();
+            }
+            if (mr.errorCode == LibOfferMatch.MatchError.OfferAccepted) {
+                revert OfferAlreadyAccepted();
+            }
+            if (mr.errorCode == LibOfferMatch.MatchError.DurationMismatch) {
+                revert DurationMismatch();
+            }
+            if (mr.errorCode == LibOfferMatch.MatchError.HFTooLow) {
+                revert MatchHFTooLow();
+            }
+            // WrongOfferType, fall-through.
+            revert InvalidOfferType();
+        }
+        // PR3-A scope ends here. PR3-B will replace this with the
+        // full executeMatch body (state mutations, escrow flows, NFT
+        // mints, OfferMatched emit, dust-close). Until then, revert
+        // with a clear marker so accidental enablement during the bake
+        // doesn't silently no-op.
+        revert FunctionDisabled(3);
     }
 
     /// @dev Zero-valued `PermitTransferFrom` for the classic accept
@@ -733,20 +1029,44 @@ contract OfferFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
                 netToBorrower = offer.amount - initiationFee;
 
                 if (initiationFee > 0) {
+                    // Range Orders Phase 1 — 1% LIF matcher kickback.
+                    // `msg.sender` of `acceptOffer` is the matcher in
+                    // the legacy single-value path (same person who
+                    // discovered + triggered the match). Future
+                    // `matchOffers` entry has the bot as msg.sender.
+                    // Either way: 99% to treasury, 1% to msg.sender.
+                    // Splits inline so a single LIF flow never lands
+                    // 100% in either bucket. See design doc §"1% match
+                    // fee mechanic" + LibOfferMatch.matcherShareOf.
+                    uint256 matcherCut =
+                        LibOfferMatch.matcherShareOf(initiationFee);
+                    uint256 treasuryCut = initiationFee - matcherCut;
                     LibFacet.crossFacetCall(
                         abi.encodeWithSelector(
                             EscrowFactoryFacet.escrowWithdrawERC20.selector,
                             lender,
                             offer.lendingAsset,
                             LibFacet.getTreasury(),
-                            initiationFee
+                            treasuryCut
                         ),
                         TreasuryTransferFailed.selector
                     );
                     LibFacet.recordTreasuryAccrual(
                         offer.lendingAsset,
-                        initiationFee
+                        treasuryCut
                     );
+                    if (matcherCut > 0) {
+                        LibFacet.crossFacetCall(
+                            abi.encodeWithSelector(
+                                EscrowFactoryFacet.escrowWithdrawERC20.selector,
+                                lender,
+                                offer.lendingAsset,
+                                msg.sender,
+                                matcherCut
+                            ),
+                            EscrowWithdrawFailed.selector
+                        );
+                    }
                 }
             }
 
@@ -871,6 +1191,17 @@ contract OfferFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
             LoanInitiationFailed.selector
         );
         loanId = abi.decode(result, (uint256));
+
+        // Range Orders Phase 1 — record the matcher on the loan so the
+        // VPFI-path 1% LIF kickback (deferred to terminal in
+        // `LibVPFIDiscount.settleBorrowerLifProper` /
+        // `forfeitBorrowerLif`) knows where to route. msg.sender is the
+        // acceptor in the legacy single-value path; under the future
+        // `matchOffers` entry it's the bot. Stored unconditionally —
+        // the lender-asset path's matcher fee was already paid above
+        // synchronously, so this only matters for VPFI-path loans, but
+        // recording on every loan keeps the read cheap and uniform.
+        s.loans[loanId].matcher = msg.sender;
 
         // Update offer
         offer.accepted = true;
@@ -1102,7 +1433,10 @@ contract OfferFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
             offer.collateralAsset,
             offer.collateralAmount,
             offer.interestRateBps,
-            offer.durationDays
+            offer.durationDays,
+            offer.amountMax,
+            offer.interestRateBpsMax,
+            offer.amountFilled
         );
 
         delete s.offers[offerId];

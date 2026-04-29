@@ -113,6 +113,13 @@ type BundleTuple = [
   bigint, // vpfiStakingAprBps
   [bigint, bigint, bigint, bigint], // tierThresholds
   [bigint, bigint, bigint, bigint], // tierDiscountBps
+  // Range Orders Phase 1 master kill-switch flags. All three default
+  // `false` on a fresh deploy. Frontend conditionals + Advanced-mode
+  // reveals for range sliders / partial-fill checkbox gate on these.
+  // See docs/RangeOffersDesign.md §15.
+  boolean, // rangeAmountEnabled
+  boolean, // rangeRateEnabled
+  boolean, // partialFillEnabled
 ];
 
 function bpsToPct(bps: bigint | number): number {

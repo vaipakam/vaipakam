@@ -52,6 +52,10 @@ contract ConfigFacet is DiamondAccessControl {
     event VpfiTierThresholdsSet(uint256 t1, uint256 t2, uint256 t3, uint256 t4);
     event VpfiTierDiscountsSet(uint16 t1, uint16 t2, uint16 t3, uint16 t4);
     event FallbackSplitSet(uint16 lenderBonusBps, uint16 treasuryBps);
+    // ── Range Orders Phase 1 master-flag setter events ──────────────────
+    event RangeAmountEnabledSet(bool enabled);
+    event RangeRateEnabledSet(bool enabled);
+    event PartialFillEnabledSet(bool enabled);
 
     // Upper bounds (sanity caps). Deliberately loose — production values
     // will sit far below these, but admin has headroom for emergency knobs.
@@ -289,6 +293,44 @@ contract ConfigFacet is DiamondAccessControl {
         emit FallbackSplitSet(lenderBonusBps, treasuryBps);
     }
 
+    /// ─── Range Orders Phase 1 master kill-switch flags ──────────────
+    /// All three default `false` on a fresh deploy. Each gates a
+    /// distinct mechanic in `OfferFacet` so governance can enable /
+    /// disable independently. See docs/RangeOffersDesign.md §15.
+
+    /// @notice Toggle whether `OfferFacet.createOffer` accepts a range
+    ///         on the lending amount (`amountMax > amount`). When false,
+    ///         every offer is forced single-value (`amountMax == amount`).
+    function setRangeAmountEnabled(bool enabled)
+        external
+        onlyRole(LibAccessControl.ADMIN_ROLE)
+    {
+        LibVaipakam.storageSlot().protocolCfg.rangeAmountEnabled = enabled;
+        emit RangeAmountEnabledSet(enabled);
+    }
+
+    /// @notice Toggle whether `OfferFacet.createOffer` accepts a range
+    ///         on the interest rate.
+    function setRangeRateEnabled(bool enabled)
+        external
+        onlyRole(LibAccessControl.ADMIN_ROLE)
+    {
+        LibVaipakam.storageSlot().protocolCfg.rangeRateEnabled = enabled;
+        emit RangeRateEnabledSet(enabled);
+    }
+
+    /// @notice Toggle whether lender offers can be filled across multiple
+    ///         matches. When false, every lender offer is single-fill
+    ///         even if `rangeAmountEnabled` permits a range — the first
+    ///         match exhausts the offer regardless of remaining capacity.
+    function setPartialFillEnabled(bool enabled)
+        external
+        onlyRole(LibAccessControl.ADMIN_ROLE)
+    {
+        LibVaipakam.storageSlot().protocolCfg.partialFillEnabled = enabled;
+        emit PartialFillEnabledSet(enabled);
+    }
+
     /// ─── Getters (effective values: override OR default) ────────────
 
     /// @notice Two-fee getter used by the frontend fee hints and pricing previews.
@@ -357,6 +399,22 @@ contract ConfigFacet is DiamondAccessControl {
         t4 = LibVaipakam.cfgVpfiTierDiscountBps(4);
     }
 
+    /// @notice Range Orders Phase 1 master kill-switch flags. All three
+    ///         default `false` on a fresh deploy. Flipped on by governance
+    ///         after the testnet bake. Frontend reads via the bundle
+    ///         below or these direct getters; conditional render of the
+    ///         range / partial-fill UI gates on these values.
+    function getMasterFlags()
+        external
+        view
+        returns (bool rangeAmount, bool rangeRate, bool partialFill)
+    {
+        LibVaipakam.ProtocolConfig storage c = LibVaipakam.storageSlot().protocolCfg;
+        rangeAmount = c.rangeAmountEnabled;
+        rangeRate = c.rangeRateEnabled;
+        partialFill = c.partialFillEnabled;
+    }
+
     /// @notice Single-call bundle for the frontend — returns every
     ///         config knob the UI needs to render fee hints, tier
     ///         tables and risk disclosures.
@@ -373,7 +431,13 @@ contract ConfigFacet is DiamondAccessControl {
             uint256 rentalBufferBps,
             uint256 vpfiStakingAprBps,
             uint256[4] memory tierThresholds,
-            uint256[4] memory tierDiscountBps
+            uint256[4] memory tierDiscountBps,
+            // Range Orders Phase 1 master kill-switch flags. Frontend
+            // conditionals + Advanced-mode reveals for range sliders /
+            // partial-fill checkbox gate on these. See §15 of design doc.
+            bool rangeAmountEnabled,
+            bool rangeRateEnabled,
+            bool partialFillEnabled
         )
     {
         treasuryFeeBps = LibVaipakam.cfgTreasuryFeeBps();
@@ -392,6 +456,10 @@ contract ConfigFacet is DiamondAccessControl {
             LibVaipakam.cfgVpfiTierDiscountBps(3),
             LibVaipakam.cfgVpfiTierDiscountBps(4)
         ];
+        LibVaipakam.ProtocolConfig storage cfg = LibVaipakam.storageSlot().protocolCfg;
+        rangeAmountEnabled = cfg.rangeAmountEnabled;
+        rangeRateEnabled = cfg.rangeRateEnabled;
+        partialFillEnabled = cfg.partialFillEnabled;
     }
 
     /// @notice Read-only bundle of protocol-wide compile-time constants

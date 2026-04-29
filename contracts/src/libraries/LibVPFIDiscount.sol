@@ -4,6 +4,8 @@ pragma solidity ^0.8.29;
 import {LibVaipakam} from "./LibVaipakam.sol";
 import {LibFacet} from "./LibFacet.sol";
 import {LibStakingRewards} from "./LibStakingRewards.sol";
+import {LibOfferMatch} from "./LibOfferMatch.sol";
+import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 import {OracleFacet} from "../facets/OracleFacet.sol";
@@ -447,7 +449,24 @@ library LibVPFIDiscount {
         r.rebateAmount = rebate;
 
         if (treasuryShare > 0) {
-            LibFacet.transferToTreasury(vpfi, treasuryShare);
+            // Range Orders Phase 1 — VPFI-path 1% LIF matcher kickback.
+            // Per design §"1% match fee mechanic": when LIF flows to
+            // treasury, 1% goes to the matcher recorded on the loan.
+            // VPFI path kickback fires here at proper-close (rather
+            // than at match) because the borrower's VPFI sits in
+            // Diamond custody until terminal. Zero-matcher loans
+            // (legacy pre-Phase-1) skip the split — full amount goes
+            // to treasury.
+            uint256 matcherCut = loan.matcher == address(0)
+                ? 0
+                : LibOfferMatch.matcherShareOf(treasuryShare);
+            uint256 net = treasuryShare - matcherCut;
+            if (matcherCut > 0) {
+                SafeERC20.safeTransfer(IERC20(vpfi), loan.matcher, matcherCut);
+            }
+            if (net > 0) {
+                LibFacet.transferToTreasury(vpfi, net);
+            }
         }
     }
 
@@ -468,7 +487,22 @@ library LibVPFIDiscount {
         if (held == 0) return;
         r.vpfiHeld = 0;
         // rebateAmount stays at 0 — no claim on forfeiture.
-        LibFacet.transferToTreasury(s.vpfiToken, held);
+        // Range Orders Phase 1 — VPFI-path 1% LIF matcher kickback.
+        // Default / HF-liquidation forfeits the full VPFI to treasury;
+        // the matcher's slice still applies because LIF reaching
+        // treasury is the trigger (per design §"1% match fee mechanic").
+        // Zero-matcher loans (legacy) skip the split.
+        address vpfi = s.vpfiToken;
+        uint256 matcherCut = loan.matcher == address(0)
+            ? 0
+            : LibOfferMatch.matcherShareOf(held);
+        uint256 net = held - matcherCut;
+        if (matcherCut > 0) {
+            SafeERC20.safeTransfer(IERC20(vpfi), loan.matcher, matcherCut);
+        }
+        if (net > 0) {
+            LibFacet.transferToTreasury(vpfi, net);
+        }
     }
 
     /**

@@ -86,6 +86,25 @@ library LibVaipakam {
     // never retroactively altered. Stored zero ⇒ use these defaults.
     uint256 constant FALLBACK_LENDER_BONUS_BPS = 300; // 3% lender bonus on fallback path
     uint256 constant FALLBACK_TREASURY_BPS = 200;     // 2% treasury cut on fallback path
+    // ─── Range Orders Phase 1 constants (docs/RangeOffersDesign.md) ─────
+    // Cancel cooldown: when an offer has zero matches against it
+    // (`amountFilled == 0`), `cancelOffer` reverts until this many seconds
+    // after `Offer.createdAt`. Blunts the cancel-front-run attack on the
+    // matching path (§9.2 of the design). Partial-filled offers can be
+    // cancelled immediately because the lender has already committed value.
+    uint256 constant MIN_OFFER_CANCEL_DELAY = 5 minutes;
+    // Matcher fee, in BPS of LIF: when LIF flows to treasury, this
+    // fraction kicks to `msg.sender` of the matching call (whoever
+    // submitted `matchOffers` / `acceptOffer` / preclose-offset /
+    // refinance). 1% of LIF — symbolic on L2s where gas is cheap;
+    // establishes the seam for Phase 2 to dial up if community bots
+    // need stronger incentives.
+    uint256 constant LIF_MATCHER_FEE_BPS = 100;
+    // Sanity ceiling on `interestRateBpsMax` at offer creation. Below
+    // 100% APR equivalent (10000 bps). Tighter would risk rejecting
+    // legitimate distressed-borrower offers; higher would let pranks
+    // / typo-grade offers spam the book.
+    uint256 constant MAX_INTEREST_BPS = 10_000;
     uint256 constant KYC_TIER0_THRESHOLD_USD = 1_000 * 1e18; // Tier0 max
     uint256 constant KYC_TIER1_THRESHOLD_USD = 10_000 * 1e18; // Tier1 max
     uint256 constant MAX_FEE_EVENTS_ITER = 10_000; // Max feeEventsLog entries scanned per window query in MetricsFacet
@@ -304,6 +323,15 @@ library LibVaipakam {
         // `setFallbackSplit` never retroactively alter dual-consent offers.
         uint16 fallbackLenderBonusBps;      // 0 ⇒ FALLBACK_LENDER_BONUS_BPS (300)
         uint16 fallbackTreasuryBps;         // 0 ⇒ FALLBACK_TREASURY_BPS (200)
+        // ── Range Orders Phase 1 master kill-switch flags ─────────────
+        // All default `false` on a fresh deploy. Flipped on by governance
+        // via `ConfigFacet.setRangeAmountEnabled` / `setRangeRateEnabled`
+        // / `setPartialFillEnabled` after the testnet bake. While off,
+        // `OfferFacet.createOffer` enforces the legacy single-value
+        // shape — see docs/RangeOffersDesign.md §15.
+        bool rangeAmountEnabled;
+        bool rangeRateEnabled;
+        bool partialFillEnabled;
         // ── VPFI discount tier thresholds (18-dec VPFI; 0 ⇒ default) ──
         uint256 vpfiTier1Min;               // 0 ⇒ VPFI_TIER1_MIN (100e18)
         uint256 vpfiTier2Min;               // 0 ⇒ VPFI_TIER2_MIN (1_000e18)
@@ -348,6 +376,16 @@ library LibVaipakam {
         // enforced at the top of `RepayFacet.repayPartial`. Default
         // `false` is the Phase-1-safe behaviour: explicit opt-in only.
         bool allowsPartialRepay;
+        // ── Range Orders Phase 1 max fields (docs/RangeOffersDesign.md
+        //    §2.2). Pair with the legacy `amount` / `interestRateBps`
+        //    fields above (= the min). Auto-collapsed to single-value
+        //    semantics when left at 0 — preserves backward compat with
+        //    every existing test / script that builds CreateOfferParams.
+        //    Range mode requires the corresponding master flag
+        //    (`rangeAmountEnabled` / `rangeRateEnabled`) to be true on
+        //    the protocol config; see §15 of the design doc.
+        uint256 amountMax;
+        uint256 interestRateBpsMax;
     }
 
     /**
@@ -396,6 +434,25 @@ library LibVaipakam {
         uint256 collateralTokenId; // Token ID for NFT collateral; 0 for ERC20
         // Slot 13
         uint256 collateralQuantity; // Quantity for ERC1155 collateral; 0 for ERC20/ERC721
+        // ── Range Orders Phase 1 fields (append-only; see
+        //    docs/RangeOffersDesign.md §2.1). The legacy `amount` and
+        //    `interestRateBps` fields above semantically equal the MIN
+        //    of each range; the matching new field is the inclusive max.
+        //    A single-value offer satisfies `amountMax == amount` and
+        //    `interestRateBpsMax == interestRateBps`. Auto-collapsed at
+        //    `createOffer` time when the caller leaves the max field
+        //    zero so existing single-value tests / scripts compile + run
+        //    unchanged.
+        // Slot 14
+        uint256 amountMax;          // ≥ amount (= the min); 0 ⇒ collapse to amount at create.
+        // Slot 15 — cumulative principal consumed across all matches
+        //          against this offer. Lender-side partial fills only;
+        //          borrower offers stay at 0 (Phase 1 single-fill).
+        uint256 amountFilled;
+        // Slot 16
+        uint256 interestRateBpsMax; // ≥ interestRateBps; 0 ⇒ collapse to interestRateBps.
+        // Slot 17 — packed: createdAt(8) + 24 bytes headroom
+        uint64 createdAt;           // Unix-seconds; stamped at createOffer.
     }
 
     /**
@@ -500,6 +557,16 @@ library LibVaipakam {
         // accept and unstakes the next block earns only a prorated
         // rebate (~0) instead of the full discount.
         uint256 borrowerDiscountAccAtInit;
+        // ── Range Orders Phase 1 — matcher address ─────────────────────
+        // Recorded at loan init from the matching write's `msg.sender`
+        // (`matchOffers` / `acceptOffer` / preclose-offset / refinance).
+        // Consumed by `LibVPFIDiscount.settleBorrowerLifProper` and
+        // `forfeitBorrowerLif` to route 1% of any LIF flowing to
+        // treasury (lender-asset path: directly at match; VPFI path:
+        // deferred to terminal). Zero on legacy loans created before
+        // the Range Orders Phase 1 cutover. See
+        // docs/RangeOffersDesign.md §"1% match fee mechanic."
+        address matcher;
     }
 
     /**

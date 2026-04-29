@@ -342,7 +342,12 @@ contract ConfigFacetTest is Test {
             uint256 rb,
             uint256 apr,
             uint256[4] memory tiers,
-            uint256[4] memory disc
+            uint256[4] memory disc,
+            // Range Orders Phase 1 master kill-switch flags. All 3
+            // default `false` on a fresh deploy.
+            bool rangeAmount,
+            bool rangeRate,
+            bool partialFill
         ) = ConfigFacet(address(diamond)).getProtocolConfigBundle();
 
         // Overridden:
@@ -359,6 +364,10 @@ contract ConfigFacetTest is Test {
         assertEq(tiers[3], LibVaipakam.VPFI_TIER4_THRESHOLD);
         assertEq(disc[0], LibVaipakam.VPFI_TIER1_DISCOUNT_BPS);
         assertEq(disc[3], LibVaipakam.VPFI_TIER4_DISCOUNT_BPS);
+        // Master flags: default off on a fresh deploy.
+        assertFalse(rangeAmount);
+        assertFalse(rangeRate);
+        assertFalse(partialFill);
     }
 
     /// @dev `getProtocolConstants` returns the four compile-time constants

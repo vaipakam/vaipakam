@@ -187,6 +187,16 @@
             "name": "allowsPartialRepay",
             "type": "bool",
             "internalType": "bool"
+          },
+          {
+            "name": "amountMax",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "interestRateBpsMax",
+            "type": "uint256",
+            "internalType": "uint256"
           }
         ]
       }
@@ -288,6 +298,16 @@
             "name": "allowsPartialRepay",
             "type": "bool",
             "internalType": "bool"
+          },
+          {
+            "name": "amountMax",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "interestRateBpsMax",
+            "type": "uint256",
+            "internalType": "uint256"
           }
         ]
       },
@@ -504,6 +524,26 @@
             "name": "collateralQuantity",
             "type": "uint256",
             "internalType": "uint256"
+          },
+          {
+            "name": "amountMax",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "amountFilled",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "interestRateBpsMax",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "createdAt",
+            "type": "uint64",
+            "internalType": "uint64"
           }
         ]
       }
@@ -640,6 +680,26 @@
             "name": "collateralQuantity",
             "type": "uint256",
             "internalType": "uint256"
+          },
+          {
+            "name": "amountMax",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "amountFilled",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "interestRateBpsMax",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "createdAt",
+            "type": "uint64",
+            "internalType": "uint64"
           }
         ]
       }
@@ -664,6 +724,81 @@
       }
     ],
     "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "matchOffers",
+    "inputs": [
+      {
+        "name": "lenderOfferId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "borrowerOfferId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "previewMatch",
+    "inputs": [
+      {
+        "name": "lenderOfferId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "borrowerOfferId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "result",
+        "type": "tuple",
+        "internalType": "struct LibOfferMatch.MatchResult",
+        "components": [
+          {
+            "name": "errorCode",
+            "type": "uint8",
+            "internalType": "enum LibOfferMatch.MatchError"
+          },
+          {
+            "name": "matchAmount",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "matchRateBps",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "reqCollateral",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "lenderRemainingPostMatch",
+            "type": "uint256",
+            "internalType": "uint256"
+          }
+        ]
+      }
+    ],
+    "stateMutability": "view"
   },
   {
     "type": "event",
@@ -778,6 +913,43 @@
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
+      },
+      {
+        "name": "amountMax",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "interestRateBpsMax",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "amountFilled",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "OfferClosed",
+    "inputs": [
+      {
+        "name": "offerId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "reason",
+        "type": "uint8",
+        "indexed": false,
+        "internalType": "enum OfferFacet.OfferCloseReason"
       }
     ],
     "anonymous": false
@@ -808,6 +980,71 @@
     "anonymous": false
   },
   {
+    "type": "event",
+    "name": "OfferMatched",
+    "inputs": [
+      {
+        "name": "lenderOfferId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "borrowerOfferId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "loanId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "matcher",
+        "type": "address",
+        "indexed": false,
+        "internalType": "address"
+      },
+      {
+        "name": "matchAmount",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "matchRateBps",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "lenderRemainingPostMatch",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "lifMatcherFee",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "error",
+    "name": "AmountNoOverlap",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "AssetMismatch",
+    "inputs": []
+  },
+  {
     "type": "error",
     "name": "AssetPaused",
     "inputs": [
@@ -830,7 +1067,17 @@
   },
   {
     "type": "error",
+    "name": "CancelCooldownActive",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "ChainDayAlreadyReported",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "CollateralBelowRequired",
     "inputs": []
   },
   {
@@ -861,6 +1108,11 @@
   },
   {
     "type": "error",
+    "name": "DurationMismatch",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "EnforcedPause",
     "inputs": []
   },
@@ -883,6 +1135,17 @@
     "type": "error",
     "name": "FallbackConsentRequired",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "FunctionDisabled",
+    "inputs": [
+      {
+        "name": "whichFlag",
+        "type": "uint8",
+        "internalType": "uint8"
+      }
+    ]
   },
   {
     "type": "error",
@@ -948,12 +1211,22 @@
   },
   {
     "type": "error",
+    "name": "InterestRateAboveCeiling",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "InvalidAddress",
     "inputs": []
   },
   {
     "type": "error",
     "name": "InvalidAmount",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InvalidAmountRange",
     "inputs": []
   },
   {
@@ -984,6 +1257,11 @@
   {
     "type": "error",
     "name": "InvalidOfferType",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InvalidRateRange",
     "inputs": []
   },
   {
@@ -1055,6 +1333,43 @@
     "type": "error",
     "name": "LoanNotActive",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "MatchHFTooLow",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "MaxLendingAboveCeiling",
+    "inputs": [
+      {
+        "name": "provided",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "ceiling",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "MinCollateralBelowFloor",
+    "inputs": [
+      {
+        "name": "provided",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "floor",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
   },
   {
     "type": "error",
@@ -1166,6 +1481,11 @@
         "internalType": "address"
       }
     ]
+  },
+  {
+    "type": "error",
+    "name": "RateNoOverlap",
+    "inputs": []
   },
   {
     "type": "error",

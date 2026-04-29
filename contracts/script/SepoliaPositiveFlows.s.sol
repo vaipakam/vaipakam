@@ -396,7 +396,9 @@ contract SepoliaPositiveFlows is Script {
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
                 collateralQuantity: 0,
-                allowsPartialRepay: false
+                allowsPartialRepay: false,
+                amountMax: 0,
+                interestRateBpsMax: 0
             })
         );
         vm.stopBroadcast();
@@ -454,7 +456,9 @@ contract SepoliaPositiveFlows is Script {
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
                 collateralQuantity: 0,
-                allowsPartialRepay: false
+                allowsPartialRepay: false,
+                amountMax: 0,
+                interestRateBpsMax: 0
             })
         );
         vm.stopBroadcast();
@@ -503,7 +507,9 @@ contract SepoliaPositiveFlows is Script {
                 collateralAssetType: LibVaipakam.AssetType.ERC721,
                 collateralTokenId: 110,
                 collateralQuantity: 0,
-                allowsPartialRepay: false
+                allowsPartialRepay: false,
+                amountMax: 0,
+                interestRateBpsMax: 0
             })
         );
         vm.stopBroadcast();
@@ -553,7 +559,9 @@ contract SepoliaPositiveFlows is Script {
                 collateralAssetType: LibVaipakam.AssetType.ERC1155,
                 collateralTokenId: 1,
                 collateralQuantity: 10,
-                allowsPartialRepay: false
+                allowsPartialRepay: false,
+                amountMax: 0,
+                interestRateBpsMax: 0
             })
         );
         vm.stopBroadcast();
@@ -607,7 +615,9 @@ contract SepoliaPositiveFlows is Script {
                     collateralAssetType: LibVaipakam.AssetType.ERC20,
                     collateralTokenId: 0,
                     collateralQuantity: 0,
-                    allowsPartialRepay: false
+                    allowsPartialRepay: false,
+                    amountMax: 0,
+                    interestRateBpsMax: 0
                 })
             );
             vm.stopBroadcast();
@@ -670,7 +680,9 @@ contract SepoliaPositiveFlows is Script {
                     collateralAssetType: LibVaipakam.AssetType.ERC20,
                     collateralTokenId: 0,
                     collateralQuantity: 0,
-                    allowsPartialRepay: false
+                    allowsPartialRepay: false,
+                    amountMax: 0,
+                    interestRateBpsMax: 0
                 })
             );
             vm.stopBroadcast();
@@ -731,7 +743,9 @@ contract SepoliaPositiveFlows is Script {
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
                 collateralQuantity: 0,
-                allowsPartialRepay: false
+                allowsPartialRepay: false,
+                amountMax: 0,
+                interestRateBpsMax: 0
             })
         );
         vm.stopBroadcast();
@@ -779,7 +793,9 @@ contract SepoliaPositiveFlows is Script {
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
                 collateralQuantity: 0,
-                allowsPartialRepay: false
+                allowsPartialRepay: false,
+                amountMax: 0,
+                interestRateBpsMax: 0
             })
         );
         vm.stopBroadcast();
@@ -853,7 +869,9 @@ contract SepoliaPositiveFlows is Script {
             collateralAssetType: LibVaipakam.AssetType.ERC20,
             collateralTokenId: 0,
             collateralQuantity: 0,
-            allowsPartialRepay: false
+            allowsPartialRepay: false,
+            amountMax: 0,
+            interestRateBpsMax: 0
         });
     }
 
@@ -874,7 +892,9 @@ contract SepoliaPositiveFlows is Script {
             collateralAssetType: LibVaipakam.AssetType.ERC20,
             collateralTokenId: 0,
             collateralQuantity: 0,
-            allowsPartialRepay: false
+            allowsPartialRepay: false,
+            amountMax: 0,
+            interestRateBpsMax: 0
         });
     }
 

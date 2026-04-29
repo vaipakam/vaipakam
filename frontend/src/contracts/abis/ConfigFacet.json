@@ -60,6 +60,29 @@
   },
   {
     "type": "function",
+    "name": "getMasterFlags",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "rangeAmount",
+        "type": "bool",
+        "internalType": "bool"
+      },
+      {
+        "name": "rangeRate",
+        "type": "bool",
+        "internalType": "bool"
+      },
+      {
+        "name": "partialFill",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "getProtocolConfigBundle",
     "inputs": [],
     "outputs": [
@@ -112,6 +135,21 @@
         "name": "tierDiscountBps",
         "type": "uint256[4]",
         "internalType": "uint256[4]"
+      },
+      {
+        "name": "rangeAmountEnabled",
+        "type": "bool",
+        "internalType": "bool"
+      },
+      {
+        "name": "rangeRateEnabled",
+        "type": "bool",
+        "internalType": "bool"
+      },
+      {
+        "name": "partialFillEnabled",
+        "type": "bool",
+        "internalType": "bool"
       }
     ],
     "stateMutability": "view"
@@ -292,6 +330,45 @@
   },
   {
     "type": "function",
+    "name": "setPartialFillEnabled",
+    "inputs": [
+      {
+        "name": "enabled",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "setRangeAmountEnabled",
+    "inputs": [
+      {
+        "name": "enabled",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "setRangeRateEnabled",
+    "inputs": [
+      {
+        "name": "enabled",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "setRiskConfig",
     "inputs": [
       {
@@ -436,6 +513,45 @@
         "type": "uint16",
         "indexed": false,
         "internalType": "uint16"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "PartialFillEnabledSet",
+    "inputs": [
+      {
+        "name": "enabled",
+        "type": "bool",
+        "indexed": false,
+        "internalType": "bool"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "RangeAmountEnabledSet",
+    "inputs": [
+      {
+        "name": "enabled",
+        "type": "bool",
+        "indexed": false,
+        "internalType": "bool"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "RangeRateEnabledSet",
+    "inputs": [
+      {
+        "name": "enabled",
+        "type": "bool",
+        "indexed": false,
+        "internalType": "bool"
       }
     ],
     "anonymous": false

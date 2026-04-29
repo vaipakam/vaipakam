@@ -197,7 +197,9 @@ contract Scenario1_ERC20LendingLifecycle is Test {
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
                 collateralQuantity: 0,
-                allowsPartialRepay: false
+                allowsPartialRepay: false,
+                amountMax: 0,
+                interestRateBpsMax: 0
             })
         );
 
@@ -276,7 +278,9 @@ contract Scenario1_ERC20LendingLifecycle is Test {
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
                 collateralQuantity: 0,
-                allowsPartialRepay: false
+                allowsPartialRepay: false,
+                amountMax: 0,
+                interestRateBpsMax: 0
             })
         );
 
@@ -358,7 +362,9 @@ contract Scenario1_ERC20LendingLifecycle is Test {
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
                 collateralQuantity: 0,
-                allowsPartialRepay: false
+                allowsPartialRepay: false,
+                amountMax: 0,
+                interestRateBpsMax: 0
             })
         );
 
