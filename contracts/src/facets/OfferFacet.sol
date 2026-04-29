@@ -93,6 +93,41 @@ contract OfferFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
     /// @param creator The address of the creator canceling the offer.
     event OfferCanceled(uint256 indexed offerId, address indexed creator);
 
+    /// @notice Emitted alongside `OfferCanceled` with the full offer terms
+    ///         that would otherwise be irrecoverable after `cancelOffer`
+    ///         executes the `delete s.offers[offerId]` storage wipe.
+    ///
+    ///         Frontends use this event to render cancelled offers in
+    ///         "Your Offers" surfaces (Dashboard) without having to keep
+    ///         a per-create localStorage snapshot. The legacy
+    ///         `OfferCanceled` event remains emitted so historical
+    ///         consumers that only care about identity (id + creator)
+    ///         keep working unchanged.
+    /// @param offerId        The ID of the canceled offer.
+    /// @param creator        The address of the creator canceling.
+    /// @param offerType      Lender (0) or Borrower (1).
+    /// @param assetType      Principal asset type (ERC20=0, ERC721=1, ERC1155=2).
+    /// @param lendingAsset   Principal asset address.
+    /// @param amount         Principal amount (wei for ERC20, quantity for ERC1155).
+    /// @param tokenId        Principal NFT id when `assetType` is ERC721/ERC1155, else 0.
+    /// @param collateralAsset   Collateral asset address.
+    /// @param collateralAmount  Collateral amount in its asset's units.
+    /// @param interestRateBps   Interest rate in basis points.
+    /// @param durationDays      Loan duration in days.
+    event OfferCanceledDetails(
+        uint256 indexed offerId,
+        address indexed creator,
+        LibVaipakam.OfferType offerType,
+        LibVaipakam.AssetType assetType,
+        address lendingAsset,
+        uint256 amount,
+        uint256 tokenId,
+        address collateralAsset,
+        uint256 collateralAmount,
+        uint256 interestRateBps,
+        uint256 durationDays
+    );
+
     // Facet-specific errors (shared errors inherited from IVaipakamErrors)
     error InvalidOfferType();
     error InvalidOffer();
@@ -1057,6 +1092,26 @@ contract OfferFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
         // "cancelled" as a terminal state read this map.
         s.offerCancelled[offerId] = true;
         LibMetricsHooks.onOfferCancelled(offerId);
+
+        // Emit the detail variant BEFORE the storage delete so the field
+        // values are still readable. Frontend "Your Offers / Cancelled"
+        // surfaces hydrate cancelled rows from this event — the
+        // companion `OfferCanceled` keeps emitting for historical
+        // consumers that only need identity (id + creator).
+        emit OfferCanceledDetails(
+            offerId,
+            msg.sender,
+            offer.offerType,
+            offer.assetType,
+            offer.lendingAsset,
+            offer.amount,
+            offer.tokenId,
+            offer.collateralAsset,
+            offer.collateralAmount,
+            offer.interestRateBps,
+            offer.durationDays
+        );
+
         delete s.offers[offerId];
 
         emit OfferCanceled(offerId, msg.sender);

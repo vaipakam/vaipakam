@@ -52,6 +52,13 @@ const OFFER_CREATED_TOPIC0 = id('OfferCreated(uint256,address,uint8)');
 // `getOffer` round-trip.
 const OFFER_ACCEPTED_TOPIC0 = id('OfferAccepted(uint256,address,uint256)');
 const OFFER_CANCELED_TOPIC0 = id('OfferCanceled(uint256,address)');
+// Companion of `OfferCanceled` that carries the full offer terms for
+// cancelled-row reconstruction (see OfferFacet.sol). The legacy
+// `OfferCanceled` keeps emitting for historical consumers; this one
+// is what hydrates the "Your Offers / Cancelled" rows.
+const OFFER_CANCELED_DETAILS_TOPIC0 = id(
+  'OfferCanceledDetails(uint256,address,uint8,uint8,address,uint256,uint256,address,uint256,uint256,uint256)',
+);
 // Extended lifecycle events surfaced by the Activity page. These are purely
 // additive: they don't feed the loan/offer aggregates above, they're
 // captured into a parallel `events[]` stream so Activity can render a
@@ -158,6 +165,7 @@ export type ActivityEventKind =
   | 'OfferCreated'
   | 'OfferAccepted'
   | 'OfferCanceled'
+  | 'OfferCanceledDetails'
   | 'LoanInitiated'
   | 'LoanRepaid'
   | 'LoanDefaulted'
@@ -321,7 +329,13 @@ function storageKey(chainId: number, diamond: string): string {
   // field from the cached `events` array on hydrate when it's missing
   // or empty (filter `kind === 'OfferAccepted'`, take the trailing
   // RECENT_ACCEPTED_CAP).
-  return `vaipakam:logIndex:v9:${chainId}:${diamond.toLowerCase()}`;
+  //
+  // v10 (2026-04-29): `OfferCanceledDetails` event added to the topic
+  // allow-list. Older v9 caches don't have these events and would
+  // miss cancelled-offer-detail reconstruction; bumping forces a
+  // fresh scan from the deploy block so existing users pick up the
+  // newly-tracked event without manual cache clear.
+  return `vaipakam:logIndex:v10:${chainId}:${diamond.toLowerCase()}`;
 }
 
 function emptyCache(deployBlock: number): CachedShape {
@@ -677,6 +691,7 @@ async function runScan(
             OFFER_CREATED_TOPIC0,
             OFFER_ACCEPTED_TOPIC0,
             OFFER_CANCELED_TOPIC0,
+            OFFER_CANCELED_DETAILS_TOPIC0,
             LOAN_REPAID_TOPIC0,
             LOAN_DEFAULTED_TOPIC0,
             LENDER_CLAIMED_TOPIC0,
@@ -772,6 +787,50 @@ async function runScan(
         const creator = ('0x' + topics[2].slice(26)).toLowerCase();
         closedOfferIdSet.add(offerId);
         addEvent('OfferCanceled', [creator], { offerId, creator });
+      } else if (topic0 === OFFER_CANCELED_DETAILS_TOPIC0) {
+        // Companion to OfferCanceled — same offer, but with the full
+        // financial terms folded into args. Decoded so `useMyOffers`
+        // can reconstruct cancelled-row detail without a per-create
+        // localStorage snapshot. `OfferCanceled` already added the
+        // id to closedOfferIdSet on the prior iteration; this branch
+        // is purely additive (event-kind-only, no extra index keys).
+        if (topics.length < 3) continue;
+        const offerId = BigInt(topics[1]).toString();
+        const creator = ('0x' + topics[2].slice(26)).toLowerCase();
+        try {
+          const [
+            offerType,
+            assetType,
+            lendingAsset,
+            amount,
+            tokenId,
+            collateralAsset,
+            collateralAmount,
+            interestRateBps,
+            durationDays,
+          ] = decodeAbiParameters(
+            parseAbiParameters(
+              'uint8, uint8, address, uint256, uint256, address, uint256, uint256, uint256',
+            ),
+            event.data,
+          );
+          addEvent('OfferCanceledDetails', [creator], {
+            offerId,
+            creator,
+            offerType: (offerType as number).toString(),
+            assetType: (assetType as number).toString(),
+            lendingAsset: (lendingAsset as string).toLowerCase(),
+            amount: (amount as bigint).toString(),
+            tokenId: (tokenId as bigint).toString(),
+            collateralAsset: (collateralAsset as string).toLowerCase(),
+            collateralAmount: (collateralAmount as bigint).toString(),
+            interestRateBps: (interestRateBps as bigint).toString(),
+            durationDays: (durationDays as bigint).toString(),
+          });
+        } catch {
+          // Malformed payload — fall back to the bare OfferCanceled
+          // entry already recorded; the cancelled row renders compact.
+        }
       } else if (topic0 === LOAN_INITIATED_TOPIC0) {
         if (topics.length < 4) continue;
         // LoanInitiated(loanId indexed, offerId indexed, lender indexed,

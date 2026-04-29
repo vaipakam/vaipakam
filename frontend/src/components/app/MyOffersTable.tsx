@@ -118,16 +118,62 @@ export function MyOffersTable({
               {rows.map((row) => {
                 const offer = row.offer;
                 if (row.status === 'cancelled') {
-                  // Compact identity-only row. Other cells render `—`
-                  // because the on-chain storage slot was deleted at
-                  // cancel time and the OfferCanceled event only carries
-                  // (offerId, creator). Showing zeros where real data
-                  // used to live would mislead — see useMyOffers docs
-                  // for the data-availability rationale.
+                  // Three-state cancelled rendering driven by data
+                  // availability — see `useMyOffers` for hydrate
+                  // priority (event > snapshot > stub). When we have
+                  // a full offer payload (the new
+                  // `OfferCanceledDetails` event OR a same-browser
+                  // localStorage snapshot survived), render every
+                  // column normally with a dimmed look. When all we
+                  // have is the identity stub (zero `lendingAsset`),
+                  // fall back to compact rendering with `—` cells.
+                  const ZERO_ADDR =
+                    '0x0000000000000000000000000000000000000000';
+                  const hasFullData =
+                    offer.lendingAsset.toLowerCase() !== ZERO_ADDR;
+                  if (!hasFullData) {
+                    return (
+                      <tr
+                        key={offer.id.toString()}
+                        style={{ opacity: 0.7 }}
+                      >
+                        <td>#{offer.id.toString()}</td>
+                        <td>
+                          <span
+                            className={`status-badge ${
+                              offer.offerType === 0 ? 'lender' : 'borrower'
+                            }`}
+                          >
+                            {OFFER_TYPE_LABELS[offer.offerType]}
+                          </span>
+                        </td>
+                        <td>—</td>
+                        <td>—</td>
+                        <td>—</td>
+                        <td>—</td>
+                        <td>
+                          <span
+                            className="status-badge"
+                            style={{
+                              background: 'var(--surface-2)',
+                              color: 'var(--muted)',
+                            }}
+                            data-tooltip={t('myOffersTable.cancelledTooltip')}
+                          >
+                            {t('myOffersTable.statusCancelled')}
+                          </span>
+                        </td>
+                        <td></td>
+                      </tr>
+                    );
+                  }
+                  // Full-data cancelled row: same shape as active rows,
+                  // but dimmed and with a Cancelled pill instead of
+                  // active/filled status.
                   return (
                     <tr
                       key={offer.id.toString()}
-                      style={{ opacity: 0.7 }}
+                      style={{ opacity: 0.65 }}
                     >
                       <td>#{offer.id.toString()}</td>
                       <td>
@@ -139,10 +185,27 @@ export function MyOffersTable({
                           {OFFER_TYPE_LABELS[offer.offerType]}
                         </span>
                       </td>
-                      <td>—</td>
-                      <td>—</td>
-                      <td>—</td>
-                      <td>—</td>
+                      <td>
+                        <PrincipalCell
+                          assetType={offer.assetType}
+                          asset={offer.lendingAsset}
+                          amount={offer.amount}
+                          tokenId={offer.tokenId}
+                          blockExplorer={blockExplorer}
+                        />
+                      </td>
+                      <td>{bpsToPercent(offer.interestRateBps)}</td>
+                      <td>
+                        {offer.durationDays.toString()}{' '}
+                        {t('loanDetails.daysSuffix')}
+                      </td>
+                      <td>
+                        <PrincipalCell
+                          assetType={0}
+                          asset={offer.collateralAsset}
+                          amount={offer.collateralAmount}
+                        />
+                      </td>
                       <td>
                         <span
                           className="status-badge"
@@ -150,7 +213,6 @@ export function MyOffersTable({
                             background: 'var(--surface-2)',
                             color: 'var(--muted)',
                           }}
-                          data-tooltip={t('myOffersTable.cancelledTooltip')}
                         >
                           {t('myOffersTable.statusCancelled')}
                         </span>

@@ -657,6 +657,55 @@ contract OfferFacetTest is Test {
         assertEq(ERC20(mockERC20).balanceOf(user1), balanceBefore + 1000); // Released
     }
 
+    /// @dev Verifies cancelOffer emits the rich `OfferCanceledDetails`
+    ///      companion event with every offer-term field, alongside the
+    ///      legacy `OfferCanceled`. Frontend "Your Offers / Cancelled"
+    ///      reconstructs row detail from this event since
+    ///      `delete s.offers[offerId]` wipes the storage slot.
+    function testCancelOfferEmitsRichDetailsEvent() public {
+        vm.prank(user1);
+        uint256 offerId = OfferFacet(address(diamond)).createOffer(
+            LibVaipakam.CreateOfferParams({
+                offerType: LibVaipakam.OfferType.Lender,
+                lendingAsset: mockERC20,
+                amount: 1000,
+                interestRateBps: 500,
+                collateralAsset: mockCollateralERC20,
+                collateralAmount: 1500,
+                durationDays: 30,
+                assetType: LibVaipakam.AssetType.ERC20,
+                tokenId: 0,
+                quantity: 0,
+                creatorFallbackConsent: true,
+                prepayAsset: mockERC20,
+                collateralAssetType: LibVaipakam.AssetType.ERC20,
+                collateralTokenId: 0,
+                collateralQuantity: 0
+            })
+        );
+
+        // Both events are expected: the rich detail one + the legacy.
+        vm.expectEmit(true, true, false, true, address(diamond));
+        emit OfferFacet.OfferCanceledDetails(
+            offerId,
+            user1,
+            LibVaipakam.OfferType.Lender,
+            LibVaipakam.AssetType.ERC20,
+            mockERC20,
+            1000,
+            0,
+            mockCollateralERC20,
+            1500,
+            500,
+            30
+        );
+        vm.expectEmit(true, true, false, false, address(diamond));
+        emit OfferFacet.OfferCanceled(offerId, user1);
+
+        vm.prank(user1);
+        OfferFacet(address(diamond)).cancelOffer(offerId);
+    }
+
     function testGetCompatibleOffersFiltersCountries() public {
         vm.prank(owner);
         ProfileFacet(address(diamond)).setTradeAllowance("US", "FR", true);

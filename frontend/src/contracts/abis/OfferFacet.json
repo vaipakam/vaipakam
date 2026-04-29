@@ -691,6 +691,79 @@
   },
   {
     "type": "event",
+    "name": "OfferCanceledDetails",
+    "inputs": [
+      {
+        "name": "offerId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "creator",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "offerType",
+        "type": "uint8",
+        "indexed": false,
+        "internalType": "enum LibVaipakam.OfferType"
+      },
+      {
+        "name": "assetType",
+        "type": "uint8",
+        "indexed": false,
+        "internalType": "enum LibVaipakam.AssetType"
+      },
+      {
+        "name": "lendingAsset",
+        "type": "address",
+        "indexed": false,
+        "internalType": "address"
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "tokenId",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "collateralAsset",
+        "type": "address",
+        "indexed": false,
+        "internalType": "address"
+      },
+      {
+        "name": "collateralAmount",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "interestRateBps",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "durationDays",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "OfferCreated",
     "inputs": [
       {

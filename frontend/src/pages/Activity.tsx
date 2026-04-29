@@ -28,6 +28,11 @@ const KIND_LABELS: Record<ActivityEventKind, string> = {
   OfferCreated: 'Offer created',
   OfferAccepted: 'Offer accepted',
   OfferCanceled: 'Offer canceled',
+  // OfferCanceledDetails is a companion event emitted alongside
+  // OfferCanceled — same user action, just with the full offer terms
+  // for cancelled-row reconstruction. Hidden from the Activity feed
+  // (filtered out below) so it doesn't show up as a duplicate row.
+  OfferCanceledDetails: 'Offer canceled (detail)',
   LoanInitiated: 'Loan initiated',
   LoanRepaid: 'Loan repaid',
   LoanDefaulted: 'Loan defaulted',
@@ -56,6 +61,7 @@ const KIND_ACCENT: Record<ActivityEventKind, string> = {
   OfferCreated: 'info',
   OfferAccepted: 'success',
   OfferCanceled: 'failure',
+  OfferCanceledDetails: 'failure',
   LoanInitiated: 'success',
   LoanRepaid: 'success',
   LoanDefaulted: 'failure',
@@ -235,6 +241,10 @@ export default function Activity() {
     if (!address) return [] as ActivityEvent[];
     const me = address.toLowerCase();
     return events.filter((ev) => {
+      // OfferCanceledDetails is a hydrate-only companion to
+      // OfferCanceled (same user action, richer payload). Skip from
+      // the Activity feed so cancellations don't double up.
+      if (ev.kind === 'OfferCanceledDetails') return false;
       if (ev.participants.includes(me)) return true;
       // LoanDefaulted has no participants — include it if the event's loanId
       // is one the current wallet actually participates in.

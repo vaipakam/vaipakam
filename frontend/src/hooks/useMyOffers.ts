@@ -9,6 +9,7 @@ import { DEFAULT_CHAIN } from '../contracts/config';
 import { DIAMOND_ABI_VIEM as DIAMOND_ABI } from '../contracts/abis';
 import { batchCalls, encodeBatchCalls } from '../lib/multicall';
 import { useLogIndex } from './useLogIndex';
+import { readOfferSnapshot, writeOfferSnapshot } from '../lib/offerSnapshot';
 import { toOfferData, type OfferData, type RawOffer } from '../pages/OfferBook';
 
 const ZERO_ADDR = '0x0000000000000000000000000000000000000000';
@@ -103,8 +104,16 @@ export function useMyOffers(
     }
 
     // Second pass: classify accepts + cancels for ids I authored.
+    // Cancelled offers carry two flavours of event in the log-index:
+    //   - `OfferCanceled`: legacy lightweight (id + creator only)
+    //   - `OfferCanceledDetails`: companion with full offer terms
+    // Newer deploys emit both; older deploys emit only the legacy.
+    // We index both — `OfferCanceledDetails` populates the rich
+    // payload map below, the legacy is the marker that drives
+    // `cancelledIds`.
     const filledLoanByOffer = new Map<string, string>();
     const cancelledIds = new Set<string>();
+    const cancelledDetailsByOffer = new Map<string, OfferData>();
     for (const ev of events) {
       if (ev.kind === 'OfferAccepted') {
         const offerId = ev.args.offerId;
@@ -117,18 +126,60 @@ export function useMyOffers(
         if (typeof offerId !== 'string') continue;
         if (!myCreates.has(offerId)) continue;
         cancelledIds.add(offerId);
+      } else if (ev.kind === 'OfferCanceledDetails') {
+        const offerId = ev.args.offerId;
+        if (typeof offerId !== 'string') continue;
+        if (!myCreates.has(offerId)) continue;
+        // Reconstruct an OfferData from the rich event payload — every
+        // field the table needs is in the args bag.
+        try {
+          const offer: OfferData = {
+            id: BigInt(offerId),
+            creator: address,
+            offerType: typeof ev.args.offerType === 'string' ? Number(ev.args.offerType) : 0,
+            lendingAsset: typeof ev.args.lendingAsset === 'string' ? ev.args.lendingAsset : ZERO_ADDR,
+            amount: typeof ev.args.amount === 'string' ? BigInt(ev.args.amount) : 0n,
+            interestRateBps: typeof ev.args.interestRateBps === 'string'
+              ? BigInt(ev.args.interestRateBps)
+              : 0n,
+            collateralAsset: typeof ev.args.collateralAsset === 'string'
+              ? ev.args.collateralAsset
+              : ZERO_ADDR,
+            collateralAmount: typeof ev.args.collateralAmount === 'string'
+              ? BigInt(ev.args.collateralAmount)
+              : 0n,
+            durationDays: typeof ev.args.durationDays === 'string'
+              ? BigInt(ev.args.durationDays)
+              : 0n,
+            principalLiquidity: 0,
+            collateralLiquidity: 0,
+            accepted: false,
+            assetType: typeof ev.args.assetType === 'string' ? Number(ev.args.assetType) : 0,
+            tokenId: typeof ev.args.tokenId === 'string' ? BigInt(ev.args.tokenId) : 0n,
+          };
+          cancelledDetailsByOffer.set(offerId, offer);
+        } catch {
+          // Malformed args — fall through to legacy + snapshot path.
+        }
       }
     }
 
     // Final classification.
+    const diamondAddrLc = (activeReadChain.diamondAddress ?? '').toLowerCase();
     for (const [offerId, meta] of myCreates) {
       if (cancelledIds.has(offerId)) {
-        // Cancelled — build an identity-only stub. Most fields are
-        // zero-defaulted; the rendering layer must use `status` to
-        // gate which columns to show.
-        result.cancelledStubs.push({
-          status: 'cancelled',
-          offer: {
+        // Three-tier hydrate:
+        //   1. OfferCanceledDetails event payload (best — on-chain,
+        //      universally readable on a synced cache).
+        //   2. localStorage snapshot written when the offer was active
+        //      (same-browser fallback for older deploys / fresh caches).
+        //   3. Identity-only stub (last resort: `—` cells in the UI).
+        const fromEvent = cancelledDetailsByOffer.get(offerId);
+        const fromSnapshot = !fromEvent && diamondAddrLc
+          ? readOfferSnapshot(activeReadChain.chainId, diamondAddrLc, offerId)
+          : null;
+        const offer: OfferData = fromEvent ??
+          fromSnapshot ?? {
             id: BigInt(offerId),
             creator: address,
             offerType: meta.offerType,
@@ -143,8 +194,8 @@ export function useMyOffers(
             accepted: false,
             assetType: 0,
             tokenId: 0n,
-          },
-        });
+          };
+        result.cancelledStubs.push({ status: 'cancelled', offer });
       } else if (filledLoanByOffer.has(offerId)) {
         result.filledIds.push({
           offerId,
@@ -209,6 +260,18 @@ export function useMyOffers(
         const fresh = decoded
           .filter((raw): raw is RawOffer => !!raw && raw.creator?.toLowerCase() !== ZERO_ADDR)
           .map(toOfferData);
+        // Snapshot every live-fetched offer to localStorage. Cheap
+        // (one synchronous setItem per row) and gives us a same-
+        // browser fallback for cancelled rows whose on-chain
+        // `OfferCanceledDetails` event isn't available (older Diamond
+        // deploy that pre-dates the rich event, or fresh cache that
+        // hasn't backfilled the relevant block range yet).
+        const diamondAddr = activeReadChain.diamondAddress ?? '';
+        if (diamondAddr) {
+          for (const o of fresh) {
+            writeOfferSnapshot(activeReadChain.chainId, diamondAddr, o);
+          }
+        }
         setLiveOffers(fresh);
       } finally {
         if (!aborted) setLoading(false);

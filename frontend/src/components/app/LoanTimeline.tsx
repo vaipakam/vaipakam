@@ -42,6 +42,10 @@ const KIND_LABEL_KEY: Record<ActivityEventKind, string> = {
   OfferCreated: 'loanTimeline.offerCreated',
   OfferAccepted: 'loanTimeline.offerAccepted',
   OfferCanceled: 'loanTimeline.offerCanceled',
+  // Companion to OfferCanceled — same user action, just the rich
+  // payload variant. Filtered out at render time so it doesn't show
+  // up as a duplicate row, but the keymap stays exhaustive.
+  OfferCanceledDetails: 'loanTimeline.offerCanceled',
   LoanInitiated: 'loanTimeline.loanInitiated',
   LoanRepaid: 'loanTimeline.loanRepaid',
   LoanDefaulted: 'loanTimeline.loanDefaulted',
@@ -72,6 +76,7 @@ const KIND_ACCENT: Record<ActivityEventKind, 'success' | 'failure' | 'info' | 'w
   OfferCreated: 'info',
   OfferAccepted: 'success',
   OfferCanceled: 'failure',
+  OfferCanceledDetails: 'failure',
   LoanInitiated: 'success',
   LoanRepaid: 'success',
   LoanDefaulted: 'failure',
