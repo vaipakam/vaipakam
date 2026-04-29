@@ -10,6 +10,7 @@ import {LibSettlement} from "../libraries/LibSettlement.sol";
 import {LibCompliance} from "../libraries/LibCompliance.sol";
 import {LibLoan} from "../libraries/LibLoan.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
+import {LibOfferMatch} from "../libraries/LibOfferMatch.sol";
 import {LibERC721} from "../libraries/LibERC721.sol";
 import {LibVPFIDiscount} from "../libraries/LibVPFIDiscount.sol";
 import {LibMetricsHooks} from "../libraries/LibMetricsHooks.sol";
@@ -341,21 +342,33 @@ contract PrecloseFacet is
         LibVaipakam.Offer storage offer = s.offers[borrowerOfferId];
         if (offer.offerType != LibVaipakam.OfferType.Borrower || offer.accepted)
             revert InvalidOfferTerms();
-        // Same asset types as original loan (lending, collateral, and prepay)
-        if (offer.lendingAsset != loan.principalAsset)
+        // Range Orders Phase 1 — single source of truth for the per-
+        // asset invariants (lendingAsset / collateralAsset /
+        // collateralAssetType / prepayAsset). The amount / duration /
+        // collateral-amount checks below stay flow-specific because
+        // their semantics differ between Preclose (exact principal +
+        // strict collateral floor) and Refinance (allows overage).
+        if (!LibOfferMatch.assertAssetContinuity(loan, offer))
             revert InvalidOfferTerms();
-        if (offer.collateralAsset != loan.collateralAsset)
-            revert InvalidOfferTerms();
-        if (offer.collateralAssetType != loan.collateralAssetType)
-            revert InvalidOfferTerms();
-        if (offer.prepayAsset != loan.prepayAsset) revert InvalidOfferTerms();
 
         // Lender-favorability: replacement terms must not reduce Liam's protection
         uint256 remainingDays = _remainingDays(loan);
         if (offer.durationDays > remainingDays) revert InvalidOfferTerms();
         if (offer.collateralAmount < loan.collateralAmount)
             revert InsufficientCollateral();
-        if (offer.amount != loan.principal) revert InvalidOfferTerms();
+        // Range-aware amount check: legacy single-value offers satisfy
+        // `amount == amountMax`; range offers satisfy `amount <=
+        // loan.principal <= amountMax`. The borrower's range must
+        // accommodate the existing loan's exact principal — preclose
+        // is a transfer-of-obligation, not a fresh fill, so principal
+        // doesn't get re-derived as a midpoint. With auto-collapse
+        // (`amountMax == 0` → treated as `amount`) legacy offers fall
+        // through unchanged.
+        uint256 effAmountMax = offer.amountMax == 0
+            ? offer.amount
+            : offer.amountMax;
+        if (offer.amount > loan.principal || loan.principal > effAmountMax)
+            revert InvalidOfferTerms();
 
         address newBorrower = offer.creator;
         if (newBorrower == address(0) || newBorrower == msg.sender)

@@ -65,6 +65,30 @@ library LibOfferMatch {
         uint256 lenderRemainingPostMatch;
     }
 
+    /// @notice Asset-continuity check between an existing loan and a
+    ///         replacement offer (Preclose's `transferObligationViaOffer`
+    ///         + Refinance's `refinanceLoan`). Returns `true` iff the
+    ///         offer carries the same lendingAsset, collateralAsset,
+    ///         collateralAssetType, and prepayAsset as the loan.
+    /// @dev    Returns bool (rather than reverting) so each caller can
+    ///         wrap in its own facet-specific revert (`InvalidOfferTerms`
+    ///         in Preclose, `InvalidRefinanceOffer` in Refinance) — the
+    ///         test suites depend on those typed errors. Single source
+    ///         of truth for the per-asset invariants; flow-specific
+    ///         amount / duration / collateral-amount checks stay
+    ///         inlined per caller (their semantics differ — Preclose
+    ///         requires exact principal match, Refinance allows overage).
+    function assertAssetContinuity(
+        LibVaipakam.Loan storage loan,
+        LibVaipakam.Offer storage offer
+    ) internal view returns (bool) {
+        if (offer.lendingAsset != loan.principalAsset) return false;
+        if (offer.collateralAsset != loan.collateralAsset) return false;
+        if (offer.collateralAssetType != loan.collateralAssetType) return false;
+        if (offer.prepayAsset != loan.prepayAsset) return false;
+        return true;
+    }
+
     /// @notice The 1% match-fee BPS slice of any totalFee. Pure.
     /// @dev    Used by both the lender-asset path (immediate at
     ///         `_acceptOffer`) and the VPFI path (deferred to

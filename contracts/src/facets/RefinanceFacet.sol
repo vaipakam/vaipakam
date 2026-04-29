@@ -8,6 +8,7 @@ import {LibAuth} from "../libraries/LibAuth.sol";
 import {LibEntitlement} from "../libraries/LibEntitlement.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
 import {LibVPFIDiscount} from "../libraries/LibVPFIDiscount.sol";
+import {LibOfferMatch} from "../libraries/LibOfferMatch.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
@@ -104,12 +105,24 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
             offer.creator != msg.sender
         ) revert InvalidRefinanceOffer();
         if (!offer.accepted) revert OfferNotAccepted();
-        if (offer.amount < oldLoan.principal) revert InvalidRefinanceOffer();
-        // README: same lending, collateral, and prepay asset types as original loan
-        if (offer.lendingAsset != oldLoan.principalAsset) revert InvalidRefinanceOffer();
-        if (offer.collateralAsset != oldLoan.collateralAsset) revert InvalidRefinanceOffer();
-        if (offer.collateralAssetType != oldLoan.collateralAssetType) revert InvalidRefinanceOffer();
-        if (offer.prepayAsset != oldLoan.prepayAsset) revert InvalidRefinanceOffer();
+        // Range-aware amount check: legacy single-value offers satisfy
+        // `amount == amountMax`; range offers satisfy
+        // `amount <= oldLoan.principal <= amountMax` (the borrower's
+        // range must accommodate the existing loan's principal). With
+        // auto-collapse (`amountMax == 0` → treated as `amount`),
+        // legacy single-value offers fall through to the original
+        // `offer.amount >= oldLoan.principal` check unchanged.
+        uint256 effAmountMax = offer.amountMax == 0
+            ? offer.amount
+            : offer.amountMax;
+        if (offer.amount > oldLoan.principal || oldLoan.principal > effAmountMax)
+            revert InvalidRefinanceOffer();
+        // Range Orders Phase 1 — single source of truth for the per-
+        // asset invariants (lendingAsset / collateralAsset /
+        // collateralAssetType / prepayAsset). README: same lending,
+        // collateral, and prepay asset types as original loan.
+        if (!LibOfferMatch.assertAssetContinuity(oldLoan, offer))
+            revert InvalidRefinanceOffer();
 
         // Find the new loan created when Lender B accepted Alice's offer
         uint256 newLoanId = s.offerIdToLoanId[borrowerOfferId];
