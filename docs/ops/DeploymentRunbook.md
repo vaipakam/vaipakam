@@ -429,3 +429,174 @@ A `[push] send failed …` line means either `PUSH_CHANNEL_PK` is
 wrong format or the channel hasn't cleared the post-stake delay
 (~10 blocks after channel-create tx on mainnet). Re-stake confirmations
 take a few minutes; nothing else to do.
+
+---
+
+## 9. LayerZero security watcher (one-time, not per-chain)
+
+The `ops/lz-watcher` Cloudflare Worker is **separate from** the
+hf-watcher in §8. It is internal-only — it has no public HTTP
+surface, no fetch handler, no user-facing notification rails.
+Its single job is detection + alert into a private ops Telegram
+channel for three LayerZero security drift conditions:
+
+- **DVN-set drift** (every `(chain × OApp × peer eid × send/receive)`
+  pair must keep `requiredDVNCount=3`, `optionalDVNCount=2`,
+  `optionalDVNThreshold=1`).
+- **OFT mint/burn imbalance** (Base-locked VPFI must equal sum
+  of mirror supplies — exact, by construction).
+- **Oversized single-tx VPFI flow** (any `Transfer` event with
+  `value > FLOW_THRESHOLD_VPFI`, default 100,000 VPFI).
+
+The split from hf-watcher is deliberate: hf-watcher doubles as
+a competitive autonomous keeper that any operator can clone via
+the sibling `vaipakam-keeper-bot` repo (Phase 9.A) and run from
+their own infrastructure. Co-locating internal security ops on
+that same Worker would conflate two adversarial postures and
+risk leaking incident state to the public surface. lz-watcher's
+incident-response procedures live in `IncidentRunbook.md` §5.
+
+### 9a. D1 database
+
+```bash
+cd ops/lz-watcher
+npm install
+npx wrangler d1 create vaipakam-lz-alerts-db
+```
+
+Wrangler prints the new database id. Paste it into
+`wrangler.jsonc`'s `d1_databases[0].database_id` (replacing the
+`REPLACE_AFTER_d1_create` placeholder).
+
+Apply the schema migration (creates `lz_alert_state`,
+`scan_cursor`, `oft_balance_history`):
+
+```bash
+npm run db:migrate
+```
+
+### 9b. Per-chain RPC keys
+
+Use Alchemy / QuickNode / Infura — public RPCs (publicnode,
+sepolia.base.org, polygon-rpc) rate-limit `eth_getLogs`
+aggressively and the flow scanner will silently throttle into
+uselessness. One key per chain in scope:
+
+```bash
+npx wrangler secret put RPC_BASE
+npx wrangler secret put RPC_ETH
+npx wrangler secret put RPC_ARB
+npx wrangler secret put RPC_OP
+npx wrangler secret put RPC_ZKEVM
+npx wrangler secret put RPC_BNB
+```
+
+Skip any chain that's not yet live — the watcher silently
+skips chains with empty RPC and the corresponding alerts are
+not generated for that chain.
+
+### 9c. Telegram bot — reuse vs. fresh
+
+The Telegram bot token can be **reused** from hf-watcher
+(`@VaipakamBot`) — chat IDs alone don't grant posting access
+without the token, so a single bot serving two chats is fine.
+What MUST be different is the destination chat: the ops
+channel for lz-watcher is internal-only and must not be the
+same chat as the user-facing alert handle.
+
+```bash
+npx wrangler secret put TG_BOT_TOKEN   # paste @VaipakamBot's token (same as hf-watcher)
+```
+
+Then add `@VaipakamBot` to the internal ops Telegram channel,
+send any message in the channel, and read the chat id via:
+
+```bash
+curl "https://api.telegram.org/bot<TG_BOT_TOKEN>/getUpdates" | jq '.result[].message.chat.id'
+```
+
+The chat id is a negative integer for channels and groups. Set
+it as a public var in `wrangler.jsonc`'s `vars` block:
+
+```jsonc
+"TG_OPS_CHAT_ID": "-1001234567890"
+```
+
+Not a secret — chat ids alone don't authorize posting.
+
+If the security team prefers a separate bot identity for ops
+channels (so a future hf-watcher token compromise can't post to
+ops, and vice versa), create a fresh bot via @BotFather and
+keep the two `TG_BOT_TOKEN` secrets distinct between Workers.
+
+### 9d. LZ inventory (vars)
+
+Edit `ops/lz-watcher/wrangler.jsonc`'s `vars` block — paste, per
+chain, the LZ V2 endpoint address, the ULN302 send + receive
+library addresses, and every Vaipakam OApp deployed on that
+chain. Optional vars: `VPFI_TOKEN_BASE` (only needed for the
+OFT-imbalance check), `FLOW_THRESHOLD_VPFI` (default 100,000
+VPFI in base units = `100000000000000000000000`).
+
+Empty values are OK — the watcher silently skips chains /
+OApps with empty addresses, useful while bringing the mesh up
+incrementally.
+
+### 9e. Deploy
+
+```bash
+npm run deploy
+```
+
+The cron `*/5 * * * *` is wired in `wrangler.jsonc`. First tick
+fires within 5 minutes.
+
+### 9f. Smoke test
+
+```bash
+npx wrangler tail   # in another terminal
+```
+
+Empty cron ticks log `[lz-watcher] tick clean — no alerts`. To
+verify the alert path end-to-end without engineering a real
+drift, drop the threshold for the flow detector to a value
+below current daily VPFI volume:
+
+```bash
+# In wrangler.jsonc temporarily:
+"FLOW_THRESHOLD_VPFI": "1"
+```
+
+Redeploy. Within 5 minutes a Telegram alert should land in the
+ops channel for any recent VPFI Transfer event. Restore the
+production threshold and redeploy.
+
+To verify the dedup path: keep the bad threshold in place
+across two cron ticks. Only the first tick should produce a
+fresh alert; subsequent ticks should log without delivering.
+
+### 9g. Free-tier sizing
+
+| Limit | Free tier | This Worker |
+|---|---|---|
+| Requests / day | 100,000 | 1,440 (5-min cron) — 1.4 % |
+| CPU time / invocation | 10 ms | idle ≈ 2 ms; per-alert ≈ 3 ms |
+| Subrequests / invocation | 50 | 18-25 steady state, more on backfill ticks |
+| D1 storage / writes | 5 GB / 50K writes/day | ~10 writes/day |
+
+If volume grows past those budgets (Phase 2 traffic, sub-minute
+polling needs), upgrade to Workers Standard ($5/mo) for 1000
+subrequests + 30 s CPU. No per-cron-tick code changes needed.
+
+### 9h. When to redeploy
+
+This Worker only redeploys when:
+- New chain comes online → new RPC secret + new `vars` block.
+- New OApp deployed → new `vars` entry.
+- Threshold tuning (`FLOW_THRESHOLD_VPFI`).
+- Incident-driven changes to the alert surface.
+
+It does **not** need a redeploy when contract code changes —
+the ABIs it uses are LZ V2 standard surface (`endpoint.getConfig`,
+`oapp.peers`, ERC20 `Transfer` / `balanceOf` / `totalSupply`),
+not Vaipakam Diamond selectors.

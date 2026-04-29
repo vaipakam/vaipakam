@@ -71,7 +71,22 @@ protocol-config placeholders** (`{{treasuryFee}}`, `{{tier1Min}}`,
 ~16 i18n strings across 10 locales swept to use those
 placeholders so governance changes (or even a contract redeploy
 that bumps a constant) flow into the UI without a frontend
-redeploy.
+redeploy; and finally a **LayerZero Phase-1 hardening pass**
+that closes the last two gaps from the post-Kelp-incident plan
+— a strict 128-byte **per-packet size sanity check** added to
+`VaipakamRewardOApp._lzReceive` (rejects malformed / oversized
+payloads with a typed `PayloadSizeMismatch` error before
+`abi.decode` can silently swallow trailing bytes), and a
+brand-new internal-only **`ops/lz-watcher` Cloudflare Worker**
+that runs three off-chain detectors on a 5-minute cron — DVN-set
+drift on every `(chain × OApp × peer eid × send/receive)` pair,
+OFT mint/burn imbalance between Base's canonical adapter lock
+and the sum of every mirror chain's `totalSupply()`, and
+oversized single-tx VPFI flows above a configurable threshold
+— alerting to a private ops Telegram channel, deliberately
+separated from the public-facing `ops/hf-watcher` Worker which
+doubles as a competitive autonomous keeper that anyone can
+clone.
 
 ## Market-anchor cache backfill — no rescan needed
 
@@ -702,6 +717,128 @@ frontend deploy. A future contract redeploy that bumps
 same. The compile-time constants `whitepaper.md` references
 (in the long-form tokenomics spec) were intentionally left
 hardcoded — they're spec content, not live UI.
+
+## LayerZero Phase-1 hardening — closing the last two gaps
+
+The post-Kelp-incident hardening plan from earlier this month
+already shipped the bulk of its work: a 3-required + 2-optional
+DVN policy with a 1-of-2 threshold; the `ConfigureLZConfig.s.sol`
+deploy script that writes that policy onto every (OApp, eid)
+pair via `setSendLibrary` + `setReceiveLibrary` + `setConfig`;
+per-chain confirmation counts (Eth 15 / Base 10 / OP 10 / Arb 10
+/ zkEVM 20 / BNB 15); a chain-scope swap that drops Polygon PoS
+(weaker bridge trust) in favour of Polygon zkEVM; a `Pausable`
+mixin (`LZGuardianPausable`) on every LZ-facing contract with
+guardian-or-owner pause + owner-only unpause; per-request +
+rolling-24h rate limits on `VPFIBuyAdapter` (default
+`type(uint256).max` = disabled, governance must call
+`setRateLimits(50_000e18, 500_000e18)` post-deploy as documented
+in CLAUDE.md's mainnet gate); and a Foundry-side conformance
+test (`LZConfig.t.sol`) that asserts the policy shape against
+the build artifact for every chain in the table.
+
+Two open items remained from that plan: an off-chain monitoring
+surface, and a per-packet size sanity check on the reward OApp.
+Both landed today.
+
+### `VaipakamRewardOApp._lzReceive` — 128-byte payload pin
+
+Every legitimate REPORT or BROADCAST packet abi-encodes the
+same four-field tuple (`uint8` msg-type plus three `uint256`s)
+which always serialises to four 32-byte words = 128 bytes
+exactly. The previous receive path called `abi.decode` directly,
+which silently ignores any bytes past the head — meaning a
+forged packet could carry extra trailing data and still parse.
+The receiver now strict-equality-checks `_message.length ==
+128` at the top of `_lzReceive` and reverts `PayloadSizeMismatch
+(got, expected)` if anything else lands. The error carries the
+actual length so off-chain monitoring can correlate against
+LayerZero scan traces.
+
+Two new Foundry tests in `RewardOAppDeliveryTest.t.sol` confirm
+the check works in both directions — one forges an oversized
+160-byte payload (5-field encode) and one forges an undersized
+96-byte payload (3-field encode). Both pranks the LZ endpoint
+to call `lzReceive` directly with the bad bytes (skipping the
+legitimate send + DVN-verify path — what an attacker would land
+if they ever bypassed peer + DVN auth) and asserts the typed
+revert. The original four delivery / quote tests still pass,
+so no regression on the canonical 128-byte path.
+
+### `ops/lz-watcher` — internal-only security monitor
+
+A new Cloudflare Worker, deliberately separated from the
+existing `ops/hf-watcher`. The split matters: hf-watcher is a
+**public-facing competitive surface** — it polls user HF and
+also runs the autonomous keeper that anyone can clone via the
+sibling `vaipakam-keeper-bot` repo. lz-watcher is **internal
+ops only** — its alerts go to a private Telegram channel. Mixing
+these on the same Worker would conflate audit trails and risk
+leaking incident state.
+
+Three detectors run every 5 minutes:
+
+- **DVN-count drift.** For every `(chain × OApp × peer eid)`
+  triple where `peers(eid) != 0`, read `endpoint.getConfig` for
+  both the send library and the receive library, decode the
+  returned `UlnConfig` bytes, and assert `requiredDVNCount == 3`,
+  `optionalDVNCount == 2`, `optionalDVNThreshold == 1`. Any
+  deviation indicates either an accidental misconfiguration
+  (someone called `setConfig` without going through
+  `ConfigureLZConfig.s.sol`) or — worst case — a successful
+  compromise of the OApp delegate key writing a weakened policy.
+  The Foundry-side `LZConfig.t.sol` only catches drift in the
+  builder pre-deploy; this Worker catches drift in the on-chain
+  state post-deploy.
+
+- **OFT mint/burn imbalance.** The VPFI OFT design pins all real
+  VPFI on Base — every cross-chain transfer locks tokens in the
+  canonical adapter and mints an equal amount on the destination
+  mirror; reverse path burns mirror supply and unlocks on Base.
+  The invariant is therefore exact equality between
+  `VPFI.balanceOf(VPFIOFTAdapter)` on Base and the sum of
+  `VPFIMirror.totalSupply()` across every mirror chain. Any
+  drift, even by 1 wei, means cross-chain messaging integrity
+  has failed somewhere — highest-severity alert. Each check
+  records a snapshot row in `oft_balance_history` (30-day
+  retention) so post-incident forensics can correlate the
+  drift's appearance time against on-chain events.
+
+- **Oversized single-tx VPFI flow.** Per chain, `eth_getLogs`
+  for ERC20 `Transfer` events on the VPFI / VPFIMirror contract
+  since the per-(chain, contract) block cursor stored in the
+  `scan_cursor` D1 table. Any event with `value >
+  FLOW_THRESHOLD_VPFI` (default 100,000 VPFI in base units)
+  triggers an alert with the tx hash, block number, from / to,
+  and the value. Catches a successful forge that mints to an
+  attacker's wallet on a mirror, a drained adapter / mirror
+  moving above expected per-tx volume, or a buggy upgrade that
+  lets a borrower extract above the cap. Cap on blocks scanned
+  per tick (5,000) bounds the subrequest budget after RPC
+  outages cause a multi-day backlog.
+
+Alert dedup is keyed on `(kind, key)` in the `lz_alert_state` D1
+table. First fire on transition to bad state, re-fire only if
+the offending value changes or 1 hour elapses with the same
+value, recovery clears the row + sends a one-time recovery
+ping. This keeps Telegram noise low even when a bad config
+persists for days.
+
+The Worker is sized for the Cloudflare free tier — 5-min cron
+uses 1.4 % of the 100k requests/day budget; steady-state
+subrequest count per invocation is ≈ 18-25 (out of 50 free-tier
+ceiling); D1 writes ≈ 10/day. RPC keys per chain (Alchemy /
+QuickNode / Infura) are required — public RPCs rate-limit
+`eth_getLogs` aggressively and the watcher will throttle into
+uselessness without dedicated keys.
+
+Three new ops-runbook updates landed alongside the Worker —
+`docs/ops/DeploymentRunbook.md` §9 (one-time Worker setup),
+`docs/ops/IncidentRunbook.md` §5 (per-alert response SOP for
+each of the three detectors), and `docs/ops/AdminKeysAndPause.md`
+(extended off-chain operator keys table covering the new
+`TG_OPS_CHAT_ID` and per-chain RPC keys held by the lz-watcher
+Worker).
 
 ## Documentation convention
 

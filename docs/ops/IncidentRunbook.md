@@ -265,6 +265,227 @@ No subscriber action required — the bot's @-handle stays
 
 ---
 
+## 5. LayerZero security alerts (lz-watcher)
+
+The `ops/lz-watcher` Cloudflare Worker (separate from
+`ops/hf-watcher` — see DeploymentRunbook.md §9 for setup) fires
+three alert kinds into the internal ops Telegram channel. Each
+has its own SOP. All three are **detection-only** — there is no
+automated response wired up. The watcher pages humans; humans
+decide.
+
+Alerts are deduped in the `lz_alert_state` D1 table: first fire
+on transition to bad state, re-fire only when the offending
+value changes or 1 hour has elapsed with the same value,
+recovery clears the row + sends a one-time recovery ping. So a
+persistent bad state at most pages once per hour, not once per
+5-minute tick.
+
+### 5.1 — `dvn_count` drift
+
+#### Symptom
+Telegram: `[lz-watcher] NEW dvn_count drift` (or `ESCALATED` /
+`PERSISTENT` / `RECOVERED`) with chain name, OApp role + address,
+peer eid, and `send` or `receive` side.
+
+Body shows `Found: req=N opt=M th=K` vs. `Expected: req=3 opt=2
+th=1`.
+
+#### Detect
+The watcher already detected it. Don't wait for the next tick —
+treat the alert as authoritative and start verifying.
+
+#### Diagnose
+Pull the on-chain config directly:
+
+```bash
+cast call $LZ_ENDPOINT \
+  "getConfig(address,address,uint32,uint32)(bytes)" \
+  $OAPP $LIB $PEER_EID 2 \
+  --rpc-url $RPC
+```
+
+Decode the returned bytes with `cast --abi-decode '(uint64,uint8,uint8,uint8,address[],address[])'`.
+Compare to the policy in `contracts/script/ConfigureLZConfig.s.sol`'s
+`_policyForChain`.
+
+**Root-cause buckets:**
+- **A. Accidental misconfiguration.** Someone ran `setConfig`
+  manually (e.g. via a gov tx) without going through
+  `ConfigureLZConfig.s.sol`. The DVN set is wrong but probably
+  benign. Verify by checking who holds the OApp's delegate key
+  on this chain — should be the timelock / multisig only.
+- **B. Stale post-deploy state.** A new (OApp, eid) pair was
+  added but `ConfigureLZConfig.s.sol` wasn't re-run for the new
+  peer. Should never reach mainnet (the deploy runbook gates on
+  it) but possible during testnet bring-up.
+- **C. Delegate-key compromise.** The OApp delegate key signed a
+  weakened config. **Treat as critical.** Pause every LZ-facing
+  contract immediately (§3 emergency pause), then investigate.
+
+#### Decide
+| Bucket | Action |
+|---|---|
+| A or B (no compromise evidence) | Re-run `ConfigureLZConfig.s.sol` for the affected (OApp, eid) pair. Confirm watcher fires `RECOVERED` on next tick. |
+| C (compromise evidence) | Pause the affected OApp via its `pause()` lever (callable by guardian or owner). Rotate the delegate key. Re-run `ConfigureLZConfig.s.sol` from a fresh delegate. Only unpause after `LZConfig.t.sol`-equivalent on-chain readback confirms policy + watcher fires `RECOVERED`. |
+
+#### Execute
+For bucket A/B:
+```bash
+export PRIVATE_KEY=...   # OApp delegate (timelock / multisig)
+export OAPP=...          # affected OApp
+export SEND_LIB=...
+export RECV_LIB=...
+export REMOTE_EIDS=$PEER_EID
+export DVN_REQUIRED_1=...
+# ... (full DVN env per the script docstring)
+forge script script/ConfigureLZConfig.s.sol:ConfigureLZConfig \
+  --rpc-url $RPC --broadcast
+```
+
+For bucket C, the pause lever sequence — from the guardian or
+owner key on **each** affected LZ-facing contract:
+```bash
+cast send $OAPP "pause()" --rpc-url $RPC --private-key $PAUSER_KEY
+```
+
+#### Communicate
+- Bucket A/B: post in the ops channel with the diagnosis +
+  remediation tx hash. No public statement needed.
+- Bucket C: status page within 30 min; full incident-response
+  protocol kicks in (treat as a §3 emergency pause scenario).
+
+#### Post-mortem
+Within 72 h. Required even for bucket A/B — the watcher firing
+means our `ConfigureLZConfig.s.sol`-as-single-source-of-truth
+discipline has slipped. Document who ran the manual `setConfig`
+and why the script wasn't used.
+
+---
+
+### 5.2 — `oft_imbalance` (CRITICAL)
+
+This is the highest-severity alert in the whole system.
+`VPFI.balanceOf(VPFIOFTAdapter)` on Base equalling
+`sum(VPFIMirror.totalSupply())` across every mirror chain is an
+exact invariant by construction — every legitimate cross-chain
+transfer locks-and-mints or burns-and-unlocks an exactly equal
+amount. **Any non-zero drift, even 1 wei, means cross-chain
+messaging integrity has failed.**
+
+#### Symptom
+Telegram: `[lz-watcher] NEW oft_imbalance — CRITICAL`. Body
+contains the Base-locked amount, sum of mirror supplies, signed
+drift, and the per-chain mirror supply breakdown.
+
+#### Detect
+Already detected. Treat the alert as authoritative.
+
+#### Decide (immediately)
+**Pause every LZ-facing contract on every chain.** Do not pause
+the user-facing Diamond — repayments and claims still need to
+work. Pause:
+- `VPFIOFTAdapter` on Base
+- Every `VPFIMirror`
+- `VPFIBuyAdapter` on every non-Base chain
+- `VPFIBuyReceiver` on Base
+- `VaipakamRewardOApp` on every chain
+
+Each contract's `pause()` is callable by guardian or owner.
+
+#### Execute
+```bash
+# In parallel, from the ops hot-key multisig — one tx per
+# (chain, contract). Pre-batched in the ops Gnosis Safe template.
+for chain in base eth arb op zkevm bnb; do
+  cast send $CONTRACT "pause()" --rpc-url $RPC_$chain --private-key $PAUSER
+done
+```
+
+#### Diagnose (after pause has landed)
+Decide which side has the wrong number:
+- Pull every `OFTSent` and `OFTReceived` event from every OFT
+  contract for the past 24 h via subgraph or `eth_getLogs`.
+- Reconcile sum-locked-on-Base against the mirror events. The
+  side that doesn't match is the side that took the unauthorized
+  mint or unlock.
+- The watcher's own `oft_balance_history` D1 table holds 30 days
+  of snapshots — useful to identify when drift first appeared.
+
+Most likely root cause: a forged inbound LZ message that landed
+on a mirror's `VPFIMirror._credit` (mint without a corresponding
+Base lock) or on the canonical `VPFIOFTAdapter._credit` (unlock
+without a corresponding mirror burn). Both paths are gated by
+DVN verification + peer auth, so a successful forge implies
+either DVN compromise or a peer-table compromise.
+
+#### Communicate
+- Status page within 30 min: "Cross-chain VPFI integrity check
+  failed. All cross-chain transfers paused. User funds on Base
+  are unaffected. Investigation in progress."
+- Discord + Twitter links to the status post.
+- Do **not** publish drift amount or affected chains until
+  forensics is complete.
+
+#### Post-mortem
+Required within 72 h. Must include: forensics timeline (when
+drift first observed, when the responsible event landed),
+exact reconciliation amount, attacker addresses if applicable,
+funding source for any user remediation, the DVN / peer / signer
+hardening change committed to before unpause.
+
+---
+
+### 5.3 — `oversized_flow`
+
+A single ERC20 `Transfer` event on a VPFI / VPFIMirror contract
+moved more than the configured threshold (default 100,000 VPFI).
+This is a **noisy** detector by design — legitimate large
+transfers do happen, especially at protocol launch / when
+governance moves treasury slugs. The right response is fast
+verification, not automatic pause.
+
+#### Symptom
+Telegram: `[lz-watcher] NEW oversized_flow` with chain, contract,
+tx hash, block number, from / to, value, threshold.
+
+#### Detect
+Already detected.
+
+#### Diagnose
+Pull the tx and its event log:
+```bash
+cast tx $TX_HASH --rpc-url $RPC
+cast receipt $TX_HASH --rpc-url $RPC
+```
+
+Cross-reference:
+- Does the same tx contain an `OFTSent` (mirror chain) or
+  `OFTReceived` (Base) event from our adapter / mirror? If yes,
+  this is a legitimate cross-chain transfer.
+- Does the `from` address correspond to our treasury / governance
+  multisig / a known operator wallet? If yes, treasury movement.
+- Is the tx initiated by an unknown EOA, with no matching OFT
+  event, moving to another unknown EOA? **Suspicious — escalate.**
+
+#### Decide
+| Pattern | Action |
+|---|---|
+| Legitimate cross-chain transfer (matching OFT event) | No action. Optionally raise the `FLOW_THRESHOLD_VPFI` env var if Phase 2 traffic produces frequent benign large transfers. |
+| Treasury / governance movement | No action. Verify the tx sender is the documented multisig. |
+| Suspicious — no matching OFT event, unknown counterparty | Escalate to the on-call security lead. Consider pausing the affected mirror / adapter while investigating. Cross-check with the `oft_imbalance` watcher's last reading — a true forge would also trip that detector within 5 minutes. |
+
+#### Execute
+No standard execute step. If escalating to pause, follow §5.2's
+pause sequence for the affected chain only.
+
+#### Communicate
+Internal only unless §5.2 has also fired. The threshold is set
+low enough that we expect periodic benign hits — do not
+publicly comment on each one.
+
+---
+
 ## Deployment log
 
 Append here on every mainnet deploy / upgrade. Format: `YYYY-MM-DD  chain  tag  diamond-address  summary`.

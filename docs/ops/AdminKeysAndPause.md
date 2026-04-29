@@ -172,21 +172,58 @@ Verify against `ChainByChainChecks.md` after every change.
 
 ---
 
-## Off-chain operator keys (alert watcher)
+## Off-chain operator keys (alert watchers)
 
-The alert watcher at `ops/hf-watcher/` holds two long-lived secrets
-and one public address. None of these are Diamond roles — losing or
-rotating them affects only the off-chain notification rails, never
-on-chain protocol authority.
+Two Cloudflare Workers hold long-lived secrets that are **not**
+Diamond roles. Losing or rotating them affects only the
+off-chain notification rails, never on-chain protocol authority.
+
+### `ops/hf-watcher` (public-facing — user HF alerts + autonomous keeper)
 
 | Key | Purpose | Storage | Compromise blast radius |
 |---|---|---|---|
 | `TG_BOT_TOKEN` | Authenticates the worker as `@VaipakamBot` for Telegram message sends + webhook receives. | `wrangler secret put TG_BOT_TOKEN` (encrypted at rest in Cloudflare Workers). | Attacker can spam our subscriber base with arbitrary Telegram messages branded as the bot. Rotate via @BotFather → `/revoke` → re-issue → re-set the secret. |
-| `PUSH_CHANNEL_PK` | Channel signer privkey for the Vaipakam Push channel `0x6F5847A0CA1F2cB1bbEf944124cE5995988a1D6b` (<https://app.push.org/channels/0x6F5847A0CA1F2cB1bbEf944124cE5995988a1D6b>). Used by `@pushprotocol/restapi` to sign outbound notifications. | `wrangler secret put PUSH_CHANNEL_PK` (encrypted at rest). | Attacker can push arbitrary notifications to every Vaipakam Push subscriber. The channel-owner wallet should hold ONLY the 50 PUSH staking deposit + ~$50 of native gas — never operator funds, never connected to a treasury workflow. Rotate by transferring channel ownership at app.push.org to a fresh EOA, updating the secret, redeploying the worker (procedure in `IncidentRunbook.md`). |
+| `PUSH_CHANNEL_PK` | Channel signer privkey for the Vaipakam Push channel `0x6F5847A0CA1F2cB1bbEf944124cE5995988a1D6b` (<https://app.push.org/channels/0x6F5847A0CA1F2cB1bbEf944124cE5995988a1D6b>). Used by `@pushprotocol/restapi` to sign outbound notifications. | `wrangler secret put PUSH_CHANNEL_PK` (encrypted at rest). | Attacker can push arbitrary notifications to every Vaipakam Push subscriber. The channel-owner wallet should hold ONLY the 50 PUSH staking deposit + ~$50 of native gas — never operator funds, never connected to a treasury workflow. Rotate by transferring channel ownership at app.push.org to a fresh EOA, updating the secret, redeploying the worker (procedure in `IncidentRunbook.md` §4). |
+| `KEEPER_PRIVATE_KEY` | Hot-key signer for the autonomous-keeper liquidation path inside hf-watcher. Submits `triggerLiquidation` from this EOA when on-chain HF crosses 1.0. Holds **zero** Diamond roles. | `wrangler secret put KEEPER_PRIVATE_KEY` (encrypted at rest). | Attacker who steals the key can submit liquidations with our identity but earns the bonus into the same key — no fund-extraction path against the protocol. They can also drain the keeper EOA's gas balance; bound that balance with a per-chain top-up policy (≤ $200 each). Rotate by writing a fresh privkey, redeploying the worker, then sweeping the old key's residual gas. |
 | `0x6F5847A0CA1F2cB1bbEf944124cE5995988a1D6b` (public address) | The Push channel-owner wallet's public side. Surfaced on the frontend via `VITE_PUSH_CHANNEL_ADDRESS` and rendered on `/app/alerts` as a "Subscribe on Push →" deep link. | Public — committed to `frontend/.env.example`, displayed to every user. | Public info; no compromise model. Changing it requires creating a new Push channel + 50-PUSH stake + frontend redeploy. |
+| `RPC_*` (one per chain) | Dedicated RPC URLs — Alchemy / QuickNode / Infura. | `wrangler secret put RPC_BASE` etc. | Quota theft (attacker exhausts our RPC budget). Limited blast radius. Rotate by re-issuing the upstream key + re-setting the secret. |
 
-These keys are **independent** of the Diamond key topology above.
-Compromise of `TG_BOT_TOKEN` or `PUSH_CHANNEL_PK` does **not** require
-on-chain pause — see `IncidentRunbook.md` for the off-chain rotation
-SOP. Conversely, rotating Diamond admin roles does not require
-touching the watcher secrets.
+### `ops/lz-watcher` (internal-only — LayerZero security alerts)
+
+This Worker is internal ops only. Its alerts go to a private
+Telegram channel. No public surface, no autonomous keeper, no
+user-facing notifications. See `IncidentRunbook.md` §5 for the
+per-alert response SOPs.
+
+| Key | Purpose | Storage | Compromise blast radius |
+|---|---|---|---|
+| `TG_BOT_TOKEN` | Authenticates the worker as the ops Telegram bot. **MAY** be the same `@VaipakamBot` token used by hf-watcher (chat IDs alone don't grant posting access without the token, so one bot serving two chats is fine), or a separate bot identity. The latter limits cross-Worker contagion if either token leaks. | `wrangler secret put TG_BOT_TOKEN` on the lz-watcher Worker — independent secret store from hf-watcher's despite (potentially) the same value. | Attacker can post arbitrary messages into the ops channel — same blast radius as hf-watcher's `TG_BOT_TOKEN`. Rotate via @BotFather. |
+| `RPC_*` (one per chain) | Dedicated RPC URLs for log scans + `endpoint.getConfig` reads + `balanceOf` / `totalSupply` reads. Public RPCs rate-limit `eth_getLogs` aggressively — must use Alchemy / QuickNode / Infura. | `wrangler secret put RPC_BASE` etc. — independent secret store from hf-watcher's. | Quota theft only. Limited blast radius. Rotate by re-issuing the upstream key + re-setting the secret. |
+| `TG_OPS_CHAT_ID` | Numeric chat id of the internal ops Telegram channel that receives lz-watcher alerts. Negative integer for channels / groups. | `vars` block in `wrangler.jsonc` — **not** a secret. Chat ids alone don't authorize posting; the bot token does. | None — public info. Changing it just retargets where alerts land. |
+
+### Key independence
+
+These watcher secrets are **independent** of the Diamond key
+topology in the upper sections. Compromise of any of them does
+**not** require an on-chain pause — see `IncidentRunbook.md` §4
+for hf-watcher rotation, §5 for lz-watcher response. Conversely,
+rotating Diamond admin roles does not require touching any
+watcher secret.
+
+### Why the two Workers don't share a Cloudflare account secret store
+
+Cloudflare Workers `secret put` is per-Worker. So even if both
+Workers use the same value for, say, `TG_BOT_TOKEN`, they hold
+independent encrypted copies. This means:
+
+- A Cloudflare account compromise that exfiltrates one Worker's
+  secrets does not automatically expose the other's, **but**
+- Anyone with `Workers Edit` permission on the account can read
+  both. So account-level access controls (2FA, IP allowlisting,
+  member audit) are the real protection. Audit annually.
+
+Per the LayerZero hardening plan: a Cloudflare account
+compromise drops both Workers, which is one reason our DVN
+configuration uses 3 required + 2 optional with a 1-of-2
+optional threshold — no single off-chain surface compromise
+should be sufficient to break a Vaipakam cross-chain message.
