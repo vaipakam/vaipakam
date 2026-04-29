@@ -34,7 +34,7 @@
     "remark-gfm": "^4.0.1",
     "valtio": "^1.13.2",
     "viem": "^2.48.4",
-    "wagmi": "^2.19.5"
+    "wagmi": "^3.6.8"
   },
   "overrides": {
     "axios": "^1.15.0"
