@@ -70,6 +70,19 @@ contract VaipakamRewardOApp is
     /// @notice Payload kind: Base → mirrors finalized denominator broadcast.
     uint8 internal constant MSG_TYPE_BROADCAST = 2;
 
+    /// @notice Canonical inbound payload size — `abi.encode(uint8,
+    ///         uint256, uint256, uint256)` always produces four 32-byte
+    ///         words. Both REPORT and BROADCAST share this shape, so a
+    ///         single constant covers both message kinds.
+    /// @dev    Strict-equality size check in `_lzReceive` rejects any
+    ///         oversized or undersized packet outright. `abi.decode`
+    ///         silently ignores trailing bytes past the head, so an
+    ///         attacker who somehow lands a forged packet could otherwise
+    ///         pad the payload with arbitrary tail data and have it parse.
+    ///         This length pin closes that hole as defence-in-depth on
+    ///         top of the DVN-set + peer-table guards.
+    uint256 internal constant EXPECTED_PAYLOAD_SIZE = 4 * 32;
+
     // ─── Storage ────────────────────────────────────────────────────────────
 
     /// @notice Paired Vaipakam Diamond on the local chain. Only this
@@ -177,6 +190,10 @@ contract VaipakamRewardOApp is
     error NoBroadcastDestinations();
     /// @notice `baseEid` has not been configured on a mirror OApp.
     error BaseEidNotConfigured();
+    /// @notice Inbound packet length does not match the canonical 4-word
+    ///         payload shape. Carries the actual length so off-chain
+    ///         monitoring can correlate with LayerZero scan traces.
+    error PayloadSizeMismatch(uint256 got, uint256 expected);
 
     // ─── Construction ───────────────────────────────────────────────────────
 
@@ -430,6 +447,9 @@ contract VaipakamRewardOApp is
         address /*_executor*/,
         bytes calldata /*_extraData*/
     ) internal override whenNotPaused {
+        if (_message.length != EXPECTED_PAYLOAD_SIZE) {
+            revert PayloadSizeMismatch(_message.length, EXPECTED_PAYLOAD_SIZE);
+        }
         (uint8 msgType, uint256 dayId, uint256 a, uint256 b) = abi.decode(
             _message,
             (uint8, uint256, uint256, uint256)

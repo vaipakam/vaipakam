@@ -4,6 +4,7 @@ pragma solidity ^0.8.29;
 import {TestHelperOz5} from "@layerzerolabs/test-devtools-evm-foundry/contracts/TestHelperOz5.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import {OptionsBuilder} from "@layerzerolabs/oapp-evm/contracts/oapp/libs/OptionsBuilder.sol";
+import {Origin} from "@layerzerolabs/lz-evm-protocol-v2/contracts/interfaces/ILayerZeroEndpointV2.sol";
 import {VaipakamRewardOApp} from "../src/token/VaipakamRewardOApp.sol";
 
 /// @title RewardOAppDeliveryTest
@@ -167,6 +168,73 @@ contract RewardOAppDeliveryTest is TestHelperOz5 {
         // accidentally enabling mirror→mirror fan-out.
         uint256 fee = mirror.quoteBroadcastGlobal(1, 2, 3);
         assertEq(fee, 0, "mirror should quote zero for broadcastGlobal");
+    }
+
+    // ─── Negative: oversized / undersized payload rejected ─────────────
+    //
+    // The canonical REPORT and BROADCAST shapes both encode to 4 × 32 = 128
+    // bytes (`abi.encode(uint8, uint256, uint256, uint256)`). The strict
+    // size pin in `_lzReceive` rejects anything else. These tests forge a
+    // packet directly against the OApp's `lzReceive` from the endpoint
+    // (skipping the legitimate send + DVN verify path) — what an attacker
+    // would land if they ever bypassed peer + DVN auth.
+
+    function test_lzReceive_oversizedPayload_reverts() public {
+        // 5-field encode = 160 bytes. abi.decode would silently ignore the
+        // trailing word; the size pin rejects it outright.
+        bytes memory bad = abi.encode(
+            uint8(1),
+            uint256(20260419),
+            uint256(1e18),
+            uint256(2e18),
+            uint256(0xdeadbeef)
+        );
+        assertEq(bad.length, 160, "5-field abi.encode is 160 bytes");
+
+        Origin memory origin = Origin({
+            srcEid: MIRROR_EID,
+            sender: addressToBytes32(address(mirror)),
+            nonce: 1
+        });
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                VaipakamRewardOApp.PayloadSizeMismatch.selector,
+                uint256(160),
+                uint256(128)
+            )
+        );
+        vm.prank(address(endpoints[CANONICAL_EID]));
+        canonical.lzReceive(origin, bytes32(0), bad, address(0), "");
+    }
+
+    function test_lzReceive_undersizedPayload_reverts() public {
+        // 3-field encode = 96 bytes. Without the size pin, abi.decode of
+        // a (uint8, uint256, uint256, uint256) tuple from a too-short
+        // calldata would revert deep in the decoder; the explicit error
+        // here gives off-chain monitoring something correlatable.
+        bytes memory bad = abi.encode(
+            uint8(1),
+            uint256(20260419),
+            uint256(1e18)
+        );
+        assertEq(bad.length, 96, "3-field abi.encode is 96 bytes");
+
+        Origin memory origin = Origin({
+            srcEid: MIRROR_EID,
+            sender: addressToBytes32(address(mirror)),
+            nonce: 1
+        });
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                VaipakamRewardOApp.PayloadSizeMismatch.selector,
+                uint256(96),
+                uint256(128)
+            )
+        );
+        vm.prank(address(endpoints[CANONICAL_EID]));
+        canonical.lzReceive(origin, bytes32(0), bad, address(0), "");
     }
 }
 
