@@ -4,6 +4,7 @@ pragma solidity ^0.8.29;
 import {Script} from "forge-std/Script.sol";
 import {console} from "forge-std/console.sol";
 import {VPFIDiscountFacet} from "../src/facets/VPFIDiscountFacet.sol";
+import {AccessControlFacet} from "../src/facets/AccessControlFacet.sol";
 import {Deployments} from "./lib/Deployments.sol";
 
 /**
@@ -63,6 +64,24 @@ contract ConfigureVPFIBuy is Script {
         console.log("Global cap:       ", globalCap);
         console.log("Per-wallet cap:   ", perWalletCap);
         console.log("Enabled:          ", enabled);
+
+        // Pre-flight role check. VPFIDiscountFacet setters enforce
+        // `onlyRole(LibAccessControl.ADMIN_ROLE)`. Without ADMIN_ROLE
+        // the broadcasted txs revert on-chain with no useful surface.
+        address broadcaster = vm.addr(adminKey);
+        bool hasAdmin = AccessControlFacet(diamond).hasRole(
+            keccak256("ADMIN_ROLE"),
+            broadcaster
+        );
+        require(
+            hasAdmin,
+            string.concat(
+                "ConfigureVPFIBuy: broadcaster ",
+                vm.toString(broadcaster),
+                " missing ADMIN_ROLE on Diamond"
+            )
+        );
+        console.log("Pre-flight: broadcaster holds ADMIN_ROLE");
 
         vm.startBroadcast(adminKey);
         VPFIDiscountFacet v = VPFIDiscountFacet(diamond);

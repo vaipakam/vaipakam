@@ -5,6 +5,8 @@ import {Script} from "forge-std/Script.sol";
 import {console} from "forge-std/console.sol";
 import {OracleAdminFacet} from "../src/facets/OracleAdminFacet.sol";
 import {AdminFacet} from "../src/facets/AdminFacet.sol";
+import {AccessControlFacet} from "../src/facets/AccessControlFacet.sol";
+import {IERC173} from "@diamond-3/interfaces/IERC173.sol";
 import {Deployments} from "./lib/Deployments.sol";
 
 /**
@@ -21,7 +23,10 @@ import {Deployments} from "./lib/Deployments.sol";
  *
  *      Required env vars (resolve per chain via <CHAIN>_* prefix,
  *      falling back to the unprefixed key):
- *        - PRIVATE_KEY               : admin-role key (broadcaster)
+ *        - ADMIN_PRIVATE_KEY         : admin-role key (broadcaster; must
+ *                                      match the long-lived admin EOA
+ *                                      that received ownership + ADMIN_ROLE
+ *                                      from `DeployDiamond.s.sol` step 6)
  *        - <CHAIN>_DIAMOND_ADDRESS   : VaipakamDiamond for this chain
  *        - <CHAIN>_WETH_ADDRESS      : canonical WETH
  *        - <CHAIN>_UNISWAP_V3_FACTORY: v3 factory for liquidity depth check
@@ -72,7 +77,7 @@ contract ConfigureOracle is Script {
     }
 
     function run() external {
-        uint256 deployerKey = vm.envUint("PRIVATE_KEY");
+        uint256 deployerKey = vm.envUint("ADMIN_PRIVATE_KEY");
 
         // Diamond is mandatory. Reads from
         // deployments/<chain>/addresses.json (with legacy
@@ -104,6 +109,35 @@ contract ConfigureOracle is Script {
         console.log("0x proxy:              ", zeroEx);
         console.log("0x allowanceTarget:    ", allowanceTarget);
         console.log("Feed Registry:         ", feedRegistry);
+
+        // Pre-flight role/owner check. OracleAdminFacet setters require
+        // the Diamond's ERC-173 owner (LibDiamond.enforceIsContractOwner);
+        // AdminFacet setters require ADMIN_ROLE. Both must hold or the
+        // broadcasted txs revert on-chain with no useful surface.
+        address broadcaster = vm.addr(deployerKey);
+        address diamondOwner = IERC173(diamond).owner();
+        require(
+            broadcaster == diamondOwner,
+            string.concat(
+                "ConfigureOracle: broadcaster ",
+                vm.toString(broadcaster),
+                " is not Diamond owner ",
+                vm.toString(diamondOwner)
+            )
+        );
+        bool hasAdmin = AccessControlFacet(diamond).hasRole(
+            keccak256("ADMIN_ROLE"),
+            broadcaster
+        );
+        require(
+            hasAdmin,
+            string.concat(
+                "ConfigureOracle: broadcaster ",
+                vm.toString(broadcaster),
+                " missing ADMIN_ROLE on Diamond"
+            )
+        );
+        console.log("Pre-flight: broadcaster holds Diamond owner + ADMIN_ROLE");
 
         vm.startBroadcast(deployerKey);
 

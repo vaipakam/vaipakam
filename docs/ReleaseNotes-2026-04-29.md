@@ -1405,6 +1405,85 @@ need the rich payload (rare — only when both the localStorage
 snapshot and the event-emit flow have been bypassed), it can be
 re-added incrementally without re-introducing the cap problem.
 
+## Asset linking — NFT to OpenSea / Verifier, ERC-20 to CoinGecko
+
+Every place that renders a token symbol in the app now lets the
+user click through to the most useful third-party page for that
+asset, with the destination chosen automatically per asset kind +
+chain:
+
+- **Vaipakam position NFTs** (lender / borrower NFTs minted per
+  loan against the Diamond's own ERC-721 surface) — link to the
+  in-app `/nft-verifier` page, since OpenSea would only show the
+  image; the verifier proves the position is live + un-transferred
+  against the on-chain loan struct.
+- **Third-party NFTs** (rental loan principals, NFT collateral) —
+  route to OpenSea where the chain has a v2 surface (Ethereum,
+  Base, Arbitrum, Optimism mainnet + Sepolia / Base Sepolia /
+  Arbitrum Sepolia / Optimism Sepolia testnets); fall back to the
+  chain explorer's `/nft/<contract>/<tokenId>` viewer on chains
+  OpenSea doesn't index (BNB Chain, Polygon zkEVM, BNB testnet,
+  Polygon zkEVM Cardona).
+- **ERC-20 tokens** — route to CoinGecko's `/coins/<id>` page when
+  the token is indexed there; fall back to the chain explorer's
+  `/address/<contract>` page when CoinGecko returns "unknown."
+  Resolution runs through `useVerifyContract` (existing debounced
+  + localStorage-cached helper), so the first render falls back to
+  the explorer link for ~400ms until the lookup lands; subsequent
+  renders are free.
+
+Three new modules drive this:
+
+- `frontend/src/lib/nftLink.ts` — pure helper
+  `nftLinkFor(chainId, contract, tokenId)` returning
+  `{href, kind: 'verifier' | 'opensea' | 'explorer'}`. Diamond
+  address comparison decides the verifier route; chain registry
+  decides OpenSea vs explorer.
+- `frontend/src/lib/erc20Link.ts` — pure helper
+  `erc20LinkFor(chainId, contract, coinGeckoId | null)` returning
+  `{href, kind: 'coingecko' | 'explorer'}`. Caller passes the
+  CoinGecko id (or null) — keeps the helper sync + testable.
+- `frontend/src/components/app/AssetLink.tsx` — React component
+  that wraps `<AssetSymbol>` (or a custom label) with the right
+  href; auto-fetches the CoinGecko id internally on the ERC-20
+  path. Renders an inline external-link icon next to the symbol.
+  In-app verifier links use `react-router` SPA navigation; the
+  rest open in a new tab.
+
+Consumers updated:
+
+- `<PrincipalCell>` (Dashboard Your Loans, OfferBook, MyOffersTable)
+  — drops the per-row `blockExplorer` prop, takes `chainId`
+  instead. Both ERC-20 and NFT rows now wrap their symbol in
+  `<AssetLink>`. The OfferBook public table picked up clickable
+  ERC-20 links it didn't have before.
+- `<OfferTable>` interface gains a `chainId` prop; both call sites
+  in `OfferBook.tsx` pass `activeReadChain.chainId`.
+- `<MyOffersTable>` prop renamed `blockExplorer → chainId`; the
+  Dashboard caller updated.
+- `LoanDetails.tsx` principal-asset and collateral-asset rows: the
+  inline `<a href={blockExplorer}/address/{loan.principalAsset}>`
+  patterns replaced with `<AssetLink>` that branches on
+  `loan.assetType` (ERC-20 vs NFT) so rental loans correctly route
+  to OpenSea / verifier instead of the address page.
+
+i18n: 4 new keys under `assetLink.*` namespace (`openOnCoinGecko`,
+`openOnOpenSea`, `openOnExplorer`, `openOnVerifier`) translated
+across all 10 locales. `tsc -b` clean.
+
+OpenSea chain coverage table for the Phase 1 chain set:
+
+| Chain | OpenSea support | Fallback |
+|---|---|---|
+| Ethereum mainnet | ✅ `opensea.io/assets/ethereum` | — |
+| Base | ✅ `opensea.io/assets/base` | — |
+| Arbitrum | ✅ `opensea.io/assets/arbitrum` | — |
+| Optimism | ✅ `opensea.io/assets/optimism` | — |
+| Polygon zkEVM | ❌ no v2 surface | zkevm.polygonscan.com |
+| BNB Chain | ❌ no v2 surface | bscscan.com |
+| Sepolia / Base Sepolia / Arb Sepolia / Op Sepolia | ✅ `testnets.opensea.io` | — |
+| BNB Testnet / zkEVM Cardona | ❌ | block explorer |
+
 ## Documentation convention
 
 Same as carried forward from prior files: every completed phase

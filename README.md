@@ -185,6 +185,7 @@ Vaipakam mints unique NFTs to represent offers, enhancing traceability and user 
 
 **NFT Metadata:**
 
+- **Collection Identity:** The position NFT collection should initialize as `Vaipakam NFT` with symbol `VAIPAK`. Name and symbol are contract identity and should remain one-shot initialization values rather than mutable admin-set fields.
 - **On-Chain Data:** Key offer details are stored directly on-chain as part of the NFT's metadata. This includes asset types, amounts, rates, duration, and status (e.g., "Offer Created," "Offer Cancelled," "Offer Matched"). The status is updated by authorized smart contract roles (e.g., `VaipakamOfferManagement.sol`) as the offer progresses.
 - **`tokenURI()` Implementation:** The platform's NFT contract will implement a `tokenURI()` function that dynamically generates a JSON string containing all relevant loan information. This JSON can be consumed by third-party NFT marketplaces to display offer details.
 - **Off-Chain Image Storage (IPFS):** Four distinct images representing different states/roles will be stored in IPFS:
@@ -203,6 +204,8 @@ Vaipakam mints unique NFTs to represent offers, enhancing traceability and user 
 - **Event Emission:** Detailed events are emitted for each relevant state change to support frontend tracking and off-chain services such as notifications and analytics.
   - Where a protocol action is represented through an intermediate or repurposed offer flow, the protocol should emit an explicit linking event so indexers and frontends do not need to infer the relationship through traces alone.
   - In particular, lender loan-sale / early-withdrawal flows should emit a first-class event that links the live loan ID to the generated sale or transition offer ID.
+  - Offer acceptance events should expose the resulting loan ID so filled-offer rows and Activity surfaces can deep-link from `Offer #X` to `Loan #Y`.
+  - Offer cancellation should emit both the existing identity event and a richer companion event containing the cancelled offer's terms before storage is deleted, so dashboards can reconstruct cancelled-offer rows from on-chain history without relying only on browser-local snapshots.
 
 ### Example:
 
@@ -337,6 +340,8 @@ Vaipakam mints unique NFTs to represent offers, enhancing traceability and user 
 - **Auto-Matching (Suggestion Engine):** The frontend can suggest potentially compatible offers to users based on their currently defined preferences or draft offers.
 - **Clear Indicators:** The frontend will use clear indicators for network selection, asset liquidity status, and potential risks.
 - **Information Icons & Tooltips:** Key fields and terms should include concise helper text, tooltips, and links to deeper documentation or FAQs where appropriate.
+- **Closed Offer Navigation:** Filled / closed offer rows should show the resulting loan link when the accepted-offer event maps that offer to a loan.
+- **Market-Anchor Cache:** Frontend log-index caches that already contain accepted-offer events should be able to hydrate recent accepted-offer IDs from cached events without forcing a full rescan; when new event topics are added to the index allow-list, the cache key should be bumped so historical logs are captured once.
 
 ## 5. Loan Initiation
 
@@ -414,6 +419,7 @@ Vaipakam mints unique NFTs to represent offers, enhancing traceability and user 
 - **Borrower:** To claim back their collateral (for ERC-20 loans, after full repayment) or their prepayment buffer (for NFT renting, after proper return and fee settlement), or after liquidation (if any remaining asset after covering total repayment and fees) the borrower must interact with the platform and present their "Vaipakam NFT" to claim thier funds.
 - **Third-Party Repayer Clarification:** A wallet that repays a loan without holding the borrower's Vaipakam NFT is treated only as the payment sender. That wallet must not receive the collateral automatically and must not gain collateral-claim rights merely because it funded the repayment. The collateral claim remains exclusively tied to the borrower-side Vaipakam NFT.
 - **Liquidation-Fallback Claim Clarification:** For liquid-collateral loans whose initial liquidation fails, there is no borrower-only waiting window; the lender may claim immediately. Until that lender claim is actually executed, the borrower may still fully repay the loan or add enough collateral to restore the position above the required LTV / Health Factor thresholds. Full repayment cancels the fallback path and preserves normal borrower collateral-claim rights. A collateral top-up may keep the loan active again only if the protocol thresholds are again satisfied before lender claim execution finalizes. Once lender claim execution starts, that execution path should not be auto-reversed during the same claim transaction. During lender claim, the system may attempt liquidation one more time. If that retry also fails, settlement must be done in collateral units: collateral equivalent to `lending asset due + accrued interest + 3% of the lending asset amount` goes to the lender, collateral equivalent to `2% of the lending asset amount` goes to treasury, and the remaining collateral stays attributable to the borrower. If the remaining collateral value is below the lender-side fallback entitlement, then the lender receives the full remaining collateral instead.
+- **Fallback Snapshot View:** The claim surface should expose a read-only fallback snapshot for each loan, including lender / treasury / borrower collateral slices, principal-due figures, `active`, and `retryAttempted` state. Frontends should use this view when fallback breakdown data comes from storage rather than from the lifecycle event stream.
 
 ### NFT Status Updates on Closure
 
@@ -1011,6 +1017,7 @@ VPFI token deployment begins in Phase 1 through the token contract and minting p
   - VPFI moved into user escrow on a given chain should count toward fee-discount eligibility only for loans initiated on that same chain
   - the shared platform-level consent for using escrowed VPFI toward `Yield Fee` and `Loan Initiation Fee` discounts should be shown in the app on `Dashboard`, so users can manage the setting independently of the `Buy VPFI` flow
 - **Escrow-Based Staking:** Any VPFI held in a user's escrow on a lending chain should be treated as staked for tokenomics purposes and should accrue the escrow-based `5% APR` staking rewards defined in the tokenomics spec. That escrow balance also counts toward tiered fee discounts only for loans initiated on that same chain.
+- **Reward Claim Surfaces:** Staking rewards should be claimed from the `Buy VPFI` staking card, platform-interaction rewards should be claimed from `Claim Center`, and `Dashboard` may summarize both streams without becoming the canonical claim route for either one.
 - **VPFI Received From Protocol-Fee Flows:** VPFI received through protocol-fee utility paths should be handled as:
   - `38%` converted into ETH through the configured on-chain swap-aggregator proxy
   - `38%` converted into wBTC through the approved treasury recycling path
@@ -1075,6 +1082,8 @@ The VPFI governance token will be distributed to align incentives and encourage 
   5. Keep token symbol and metadata consistent as `VPFI` across supported chains.
 - **Architecture Clarification:** `VPFI` is cross-chain, and the interaction-reward denominator / reward-funding path also uses cross-chain messaging so each chain can claim against one protocol-wide daily interest total. The Vaipakam lending / borrowing / rental core protocol itself still remains single-chain per deployment, with a separate Diamond deployment on each supported network. Loans, offers, collateral, repayment, liquidation, preclose, refinance, and keeper actions always remain local to the network of that specific Diamond instance.
 - **Canonical Address Rule:** The Base deployment is the documented source of truth and should be published in `docs/` and surfaced through Vaipakam transparency / dashboard tooling.
+- **LayerZero Hardening:** Reward OApp packets should validate the exact encoded payload size for the current report / broadcast message shape before decoding. The intended Phase 1 tuple is 128 bytes; malformed, undersized, or oversized payloads should revert with a typed size-mismatch error.
+- **Private LayerZero Watcher:** Cross-chain VPFI operations should have an internal Cloudflare Worker or equivalent monitor that checks DVN policy drift, Base adapter lock versus mirror-chain supply balance, and oversized VPFI transfers. This monitor is private ops infrastructure and should remain separate from the public HF watcher / liquidation keeper reference.
 
 ## 11. Notifications and Alerts
 
@@ -1153,6 +1162,8 @@ A comprehensive user dashboard is essential for managing activities on Vaipakam.
   - `VaipakamGovernance.sol` (Phase 2): Manages proposals and voting.
   - `VaipakamTreasury.sol`: Collects and manages platform fees.
   - `StakingRewardsFacet` / VPFI tokenomics facets (Phase 1): Manage escrow-based VPFI staking rewards and reward claims without a separate staking contract.
+  - `ConfigFacet`: Exposes mutable governance configuration and compile-time protocol constants that the frontend uses for live copy, tier tables, thresholds, and tooltips.
+  - `ClaimFacet`: Exposes claimable positions and fallback-settlement snapshots used by Loan Details, Claim Center, and claim readiness surfaces.
 - **Libraries:**
   - OpenZeppelin Contracts: For robust implementations of ERC-20, ERC-721, ERC-1155 (if Vaipakam mints its own utility NFTs beyond offer/loan representations), AccessControl, ReentrancyGuard, and potentially Governor.
 - **Security Considerations:**
@@ -1163,7 +1174,7 @@ A comprehensive user dashboard is essential for managing activities on Vaipakam.
   - **Access Control:** Granular roles (e.g., `LOAN_MANAGER_ROLE`, `OFFER_MANAGER_ROLE`, `TREASURY_ADMIN_ROLE`) managed via OpenZeppelin's AccessControl. Roles will be assigned initially by the contract deployer/owner, with plans to transition control to governance in Phase 2 where appropriate.
   - **Three-Role Governance Handover:** Privileged production surfaces should be split between a Governance Safe, a Guardian Safe, and KYC Ops. The Governance Safe controls slow admin surfaces through a 48-hour timelock. The Guardian Safe can pause quickly during incidents but cannot unpause. KYC Ops holds only the user-tier operational role where that role is active.
   - **OApp Guardian Pause:** LayerZero OApps and VPFI bridge-related contracts should allow Guardian or Owner pause, but unpause must remain Owner / Timelock controlled.
-  - **LayerZero Payload Sanity:** Reward OApp packets should enforce the exact expected payload size before `abi.decode`; malformed, undersized, or oversized packets must revert with a typed error so off-chain monitoring can correlate the incident with LayerZero traces.
+  - **LayerZero Payload Sanity:** Reward OApp packets should enforce the exact expected payload size before `abi.decode`; malformed, undersized, or oversized packets must revert with a typed error carrying observed and expected sizes so off-chain monitoring can correlate the incident with LayerZero traces.
   - **Emergency Updates:** Critical security patches may be fast-tracked through the initial admin/multi-sig model when needed to protect user funds or protocol integrity, with those emergency powers limited to critical fixes.
   - **Batch Processing:** Support for batch processing of certain operations where feasible to optimize gas costs, without weakening pull-based reward and claim semantics.
 
@@ -1179,6 +1190,8 @@ A comprehensive user dashboard is essential for managing activities on Vaipakam.
 - **User Guide Locales:** Basic and Advanced user-guide markdown should be maintained for all 10 supported locales with card-link anchors preserved verbatim, so every in-app `(i)` card-title link opens the matching localized guide section.
 - **API Standards:** Frontend will interact with smart contracts using standardized data formats (e.g., JSON-like structs or arrays returned by view functions).
 - **ABI Sync:** After any contract release that changes selectors, structs, events, or frontend-consumed ABIs, run the frontend ABI export script (`contracts/script/exportFrontendAbis.sh` after `forge build`) so `frontend/src/contracts/abis/` and `_source.json` match the deployed contract build and carry the source commit hash.
+- **Live Protocol Config:** Frontend copy that displays protocol fees, liquidation thresholds, rental buffer, staking APR, VPFI tier thresholds, pool caps, and minimum Health Factor should read from `getProtocolConfigBundle()` and `getProtocolConstants()` rather than hardcoded locale strings. Token-unit formatting for VPFI should use the token contract's live `decimals()` value where available.
+- **Log-Index Contract:** The frontend log index is the shared source for Activity, Loan Details timelines, reward lifetime totals, filled-offer loan links, and cancelled-offer reconstruction. Event-topic allow-list additions that need historical data should bump the cache key; hydrate-only migrations are appropriate only when the relevant event data was already captured in older caches.
 
 ### Public View Functions for Analytics, Transparency, and Integrations
 
@@ -1192,6 +1205,7 @@ General design requirements:
 - values intended for dashboards, listings, and external analytics should be easy to verify against underlying on-chain state and events
 - these helper functions add real value for DefiLlama-style TVL trackers, Dune-style analytics, portfolio applications, auditors, regulators, and other DeFi integrations
 - these functions should be multicall-friendly so public dashboards can batch reads efficiently
+- user-facing frontend helpers should prefer one bundled config read for mutable values and one bundled constants read for compile-time values, so a governance change or redeploy updates visible protocol numbers on next page load
 
 #### 1. Protocol-Wide Metrics
 
@@ -1222,6 +1236,22 @@ function getTotalInterestEarnedUSD() external view returns (uint256);
 ```
 
 These functions are intended to support the Vaipakam public analytics dashboard and external TVL / protocol-tracker integrations.
+
+#### 1a. Protocol Configuration and Constants
+
+Config and constant views should include:
+
+```solidity
+function getProtocolConfigBundle() external view returns (...);
+function getProtocolConstants() external pure returns (
+    uint256 minHealthFactor,
+    uint256 vpfiStakingPoolCap,
+    uint256 vpfiInteractionPoolCap,
+    uint256 maxInteractionClaimDays
+);
+```
+
+`getProtocolConfigBundle()` is the source for governance-mutable values such as fees, slippage settings, rental buffer, staking APR, and VPFI discount tiers. `getProtocolConstants()` is the source for compile-time constants such as `MIN_HEALTH_FACTOR`, VPFI pool caps, and the maximum interaction-reward claim window.
 
 #### 2. Treasury and Revenue Metrics
 

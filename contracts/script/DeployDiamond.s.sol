@@ -290,6 +290,7 @@ contract DeployDiamond is Script {
         Deployments.writeFacet("rewardReporterFacet",     address(rewardReporterFacet));
         Deployments.writeFacet("rewardAggregatorFacet",   address(rewardAggregatorFacet));
         Deployments.writeFacet("configFacet",             address(configFacet));
+        Deployments.writeFacet("legalFacet",              address(legalFacet));
 
         console.log(
             "Wrote addresses to deployments/",

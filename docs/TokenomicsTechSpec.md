@@ -49,6 +49,7 @@ Implementation target:
 - token contract path: `contracts/src/token/VPFIToken.sol`
 - omnichain token standard: `LayerZero OFT V2`
 - Phase 1 active scope here: token deployment, cap enforcement, initial mint, mint registration, mint-control plumbing, and live fee-utility integration
+- frontend consumers should read the token contract's live `decimals()` value for VPFI unit formatting, with `18` as the graceful fallback while reads are loading or unavailable
 
 ---
 
@@ -140,6 +141,7 @@ Public read surface:
 - `previewInteractionRewards(user)` returns the current pending VPFI headline for the active chain
 - `getUserRewardEntries(user)` returns the full `RewardEntry[]` array from storage, including loan ID, side, start / end day, per-day USD contribution, processed state, and forfeited state
 - `InteractionRewardsClaimed(user, fromDay, toDay, amount)` events are the source for lifetime-claimed totals in the UI and log-index cache
+- the Dashboard may summarize interaction pending + lifetime claimed alongside staking rewards, but Claim Center remains the canonical interaction-reward claim surface
 
 ---
 
@@ -427,6 +429,7 @@ Frontend claim surface:
 - staking rewards are claimed from the public `Buy VPFI` page, colocated with the `Deposit / Stake` step
 - a compact mirror may appear on the Dashboard's discount-status surface, but `Buy VPFI` remains the canonical full claim surface
 - the card should show pending VPFI, lifetime claimed VPFI reconstructed from `StakingRewardsClaimed(user, amount)` events, and neutral / inactive chrome when `pending == 0`
+- the Dashboard may include a combined rewards summary that adds staking pending, staking lifetime claimed, interaction pending, and interaction lifetime claimed into a single discovery surface with links back to the canonical claim cards
 - the former combined in-app Rewards route should not be treated as the canonical reward-claiming surface; staking rewards and platform-interaction rewards have separate natural homes
 
 ### 7a. Functional Staking-APR Mechanics
@@ -660,8 +663,10 @@ Frontend integration requirements:
 - Phase 1 frontend requirements should focus on token-address transparency, supply visibility, mint/cap visibility where exposed, and clear separation between the cross-chain VPFI token and the single-chain core protocol
 - `Dashboard`, `ClaimCenter`, staking views, and reward hooks may gain broader VPFI utility surfaces in `Phase 1`
 - `Dashboard` should specifically surface the shared fee-discount consent control for escrowed VPFI usage
+- the read-only VPFI tier / discount-status table should live near the public `Buy VPFI` purchase decision, while Dashboard remains the home for the fee-discount consent toggle and combined rewards summary
 - protocol-config-dependent UI copy should read live values from the Diamond wherever possible, including mutable config from `getProtocolConfigBundle()` and compile-time constants exposed through `getProtocolConstants()`
 - tier tables, staking APR labels, pool-cap labels, rental buffer displays, max slippage, treasury fee, LIF, and minimum Health Factor copy should use live config placeholders instead of hardcoded locale text
+- VPFI tier thresholds returned in base units should be converted through shared token-display helpers before they appear in tier tables, consent copy, or tooltip placeholders
 - a dedicated `Buy VPFI` page should let users buy from their preferred supported chain without manually switching to canonical `Base`
 - the `Buy VPFI` page is the single user-facing purchase flow; any bridge, canonical-chain settlement, OFT routing, or Base-receiver complexity must be abstracted behind that flow
 - the purchase page must show the exact ETH required, resulting VPFI amount, fixed rate, remaining global supply, and chain-local wallet allowance

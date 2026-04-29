@@ -52,6 +52,7 @@ Public-navigation requirements:
 - public navigation should expose a `VPFI` group with direct entries for `Buy`, `Stake`, and `Unstake`, each deep-linking into the relevant section of the public `Buy VPFI` page
 - app-shell links to public-only experiences such as `Buy VPFI` and `NFT Verifier` should open in a new tab and use an external-link affordance so users understand they are leaving the connected-app shell
 - public-shell pages that sit below the fixed Navbar, including `Analytics`, `NFT Verifier`, `Buy VPFI`, `Terms`, and `Privacy`, must include enough top clearance that their headings never render under the Navbar
+- public navigation must preserve the Vaipakam brand mark at its natural size across desktop widths; link spacing and right-cluster spacing should compress before the logo is allowed to shrink
 - the footer should expose `Terms`, `Privacy`, `Cookie settings`, and, once published, the public bug bounty program link
 
 PWA requirements:
@@ -116,13 +117,15 @@ This section will later define:
 
 Current connected-app surface expectations:
 
-- `Dashboard` is the user's "your stuff" surface: it should include active loans with Role / Status filters, pagination, sortable columns, a most-recent-first default sort, active offers, the shared VPFI fee-discount consent, discount status, and a green `Claim` CTA for terminal loans with unclaimed funds
+- `Dashboard` is the user's "your stuff" surface: it should include active loans with Role / Status filters, pagination, sortable columns, a most-recent-first default sort, the user's offers across active / filled / cancelled states, the shared VPFI fee-discount consent, a VPFI rewards summary, and a green `Claim` CTA for terminal loans with unclaimed funds
 - `Offer Book` should keep market browsing filterable by side, asset, status, liquidity, duration, and per-side count; market-rate annotations should use a filter-scoped recent-acceptance anchor with signed deltas and a mobile-friendly explanatory tooltip
+- closed / filled offer rows should link to the loan they created when an `OfferAccepted(offerId, acceptor, loanId)` event is available
 - `Create Offer` should disable submit until full form validation passes, with typed validator error codes mapped through i18n, and should show token-identification trust blocks under address fields so users can distinguish canonical assets from unknown or suspicious contracts
 - `Loan Details` should show the live loan state, role-gated actions, a chronological on-chain timeline, claimable-state action bar, and precise event breakdowns for settlement splits, fallback collateral allocations, partial repayments, swap retries, and VPFI rebates
 - `Activity` rows that reference a loan should use a clickable `Loan #X` pill linking to that loan's full details page
 - `Claim Center` is the home for loan claims and platform-interaction rewards; the former standalone in-app `Rewards` page should not be treated as a live route
 - `Buy VPFI` is the public home for buying, staking / depositing, unstaking / withdrawing, staking-rewards claims, and chain-level VPFI transparency
+- in the connected-app sidebar, `Claim Center` should sit with the core lending actions before `Buy VPFI`, while token-purchase and advanced utility destinations remain secondary to loan management
 - the app's issue drawer should be labelled as `Report Issue` / `Issue Details`, not `Diagnostics`, and should generate a redacted report suitable for GitHub issue filing
 
 Transaction-safety and single-signature flows:
@@ -172,6 +175,8 @@ Borrower VPFI discount UX:
 - staking should be messaged as open to any VPFI holder, not only borrowers or users with an existing loan; first deposit should make clear that the user escrow can be created automatically
 - the public page should label the escrow action as `Deposit / Stake VPFI` and the reverse action as `Withdraw / Unstake VPFI`
 - the `Deposit / Stake` card should contain the canonical open-staking explanation in one user-friendly Info callout; duplicate page-level or step-subtitle copies should be avoided
+- the read-only VPFI discount-status table belongs on the `Buy VPFI` page near the purchase decision, while the shared fee-discount consent toggle remains on `Dashboard`
+- the discount-status table should render only for connected wallets and should link users back to `Dashboard` when consent is disabled
 - the Phase 1 `30,000 VPFI` user cap is a per-chain cap, not a protocol-wide global cap across all chains
 - VPFI deposited / staked in escrow on one chain should count only toward fee-discount tiers for loans initiated on that same chain
 - the UI should expose a single common platform-level user setting for consenting to the use of escrowed VPFI for fee discounts
@@ -181,6 +186,7 @@ Borrower VPFI discount UX:
 - the connected app should show the user's escrowed VPFI balance, the implied discount tier, and the fact that escrow-held VPFI also counts as staked for the `5% APR` staking model
 - on the `Buy VPFI` page, the `Your VPFI discount status` area should provide a chain selector rather than only showing the currently inferred chain name in the title / balance label
 - that chain selector should let the user inspect chain-specific escrowed VPFI, discount-tier status, and discount eligibility because those values are local to the selected lending chain
+- VPFI tier thresholds should display in token units rather than raw 1e18-scaled base units across discount-status cards, tier tables, tooltip placeholders, and consent copy
 - borrower and lender fee-discount messaging should follow the tiered model from `docs/TokenomicsTechSpec.md`, not a single flat `25%` discount
 - app pages such as `Create Offer` and `Loan Details` may still link users into this `Buy VPFI` flow as secondary shortcuts when the borrower discount is relevant
 - if a `Buy VPFI` action fails, the page should show a clean error card with secondary actions such as `Report on GitHub` and `Dismiss` aligned consistently and visibly as one grouped action area rather than appearing visually misaligned
@@ -203,6 +209,8 @@ Reward-claiming UX:
 - reward surfaces should be split by user intent rather than combined into one `Rewards` page:
   - `Staking Rewards` should be claimed from the `Buy VPFI` page's `Deposit / Stake` card, with a compact mirror on Dashboard discount status
   - `Platform Interaction Rewards` should be claimed from Claim Center above the per-loan claim rows
+- Dashboard should include a combined `Your VPFI rewards` summary for connected wallets, showing total earned across staking and interaction rewards, per-stream pending / claimed amounts, and deep links to the canonical claim cards
+- the combined rewards summary should render even when all values are zero so new users can discover how the rewards programs work
 - the old `/app/rewards` route and sidebar entry should remain retired unless a later approved design reintroduces a combined rewards hub
 - staking-rewards cards should show pending VPFI, lifetime claimed VPFI reconstructed from `StakingRewardsClaimed` events, and neutral chrome when pending is zero
 - interaction-rewards cards should show pending VPFI, lifetime claimed VPFI reconstructed from `InteractionRewardsClaimed` events, and an expandable `Contributing loans` list
@@ -214,7 +222,7 @@ Reward-claiming UX:
   - offer an optional one-click `Bridge to another chain` action through the official LayerZero bridge flow if the user wants to move claimed VPFI, including a direct link to `https://layerzero.superbridge.app/` when appropriate
 - if the user has no pending rewards on the current chain, the `Claim Rewards` action should be disabled or hidden with a helpful message such as `No rewards available to claim on this chain`
 - if the user recently changed escrow balance through deposit, withdrawal, or fee deduction, reward displays must still calculate correctly up to the current block
-- if the user switches chains, the `Rewards` page should refresh and show rewards specific to the newly connected chain
+- if the user switches chains, the active reward surfaces should refresh and show rewards specific to the newly connected chain
 - if the network is unsupported or the wallet is not connected, the UI should clearly explain that rewards can only be claimed on supported lending chains
 - reward data should be fetched from the Diamond on the currently connected chain using the existing hooks and helpers where appropriate
 - the shared fee-discount consent flag is separate from reward claiming and must not gate reward visibility or reward-claim actions
@@ -239,7 +247,7 @@ Unstaking VPFI:
 - after unstaking, the UI may offer the standard LayerZero bridge flow if the user wants to move that VPFI to another chain, including a direct link to `https://layerzero.superbridge.app/`
 - if the user has zero VPFI in escrow, the unstake action should be hidden or disabled with a helpful message
 - if active loans currently rely on escrowed VPFI for fee-discount eligibility, the unstake flow should show a clear warning before confirmation
-- if the user switches chains, the `Rewards` page should refresh and show the escrow balance and unstake availability for the newly connected chain
+- if the user switches chains, the `Buy VPFI` page should refresh and show the escrow balance, staking rewards, and unstake availability for the newly connected chain
 - unstaking should be implemented as a local chain action only; no cross-chain messaging should be required for the unstake itself
 
 Connected-app network model in Phase 1:
@@ -282,6 +290,8 @@ Governance-configuration visibility:
 - user-facing constants, thresholds, and percentages should flow from live protocol config reads rather than hardcoded locale strings where they can change through governance or redeploy
 - `useProtocolConfig` should read both mutable config and compile-time constants exposed by the Diamond, and reusable info components should inject common placeholders such as treasury fee, LIF, staking APR, tier thresholds, max slippage, and min Health Factor into translated tooltip copy
 - tier tables, rental-buffer math, and validation copy should derive from live config where possible, so governance changes appear on next page load without a frontend redeploy
+- VPFI unit displays should use the token contract's live `decimals()` value where available, with an 18-decimal fallback during transient read failures
+- raw wei-denominated config values such as VPFI tier thresholds should be converted through shared display helpers before reaching cards, tooltips, translated strings, or tier tables
 
 Foundational frontend migration requirements:
 
@@ -350,6 +360,8 @@ Chrome-level layout behavior:
 
 - the left-side app panel toggle should collapse or expand immediately on the first click
 - the app shell should not show a horizontal scrollbar when content fits the viewport
+- the in-app top bar should remain sticky during page scroll; horizontal overflow guards on ancestors must not accidentally create a scroll container that breaks sticky positioning
+- the sidebar header and app top bar should maintain matching height so the shell divider line stays aligned in expanded, collapsed, and hover-expanded states
 - fixed or floating layout affordances must not create accidental horizontal overflow
 - status severity should match user impact; for example, `No wallet detected` should be a warning rather than a blocking error
 - public and connected-app navigation should keep wallet, network, issue-reporting / support-details, footer, cookie settings, and core route controls reachable on mobile and desktop
@@ -413,6 +425,7 @@ The website/app should clearly communicate:
 - when the token ID was never minted on the selected chain, the verifier should show a clear chain-specific error explaining that the token does not exist on that chain and the user may need to switch to the chain where the position was originally opened
 - active theme and view-mode controls when relevant
 - ENS and Basenames should be resolved for wallet-address display in Activity, Loan Details, Offer Book, and header/profile surfaces; unresolved names should silently fall back to shortened addresses
+- allowance-management copy should stand on Vaipakam's own revoke flow and avoid unnecessary competitor references in page subtitles or helper text
 - liquid active loan details should show the collateral-asset liquidation price at which HF reaches `1.0`, both as an absolute price and as a percent move from the current oracle price
 - liquidation-price views should be hidden for illiquid loans where no oracle-priced liquidation threshold exists
 - borrowers should be able to subscribe to loan-specific HF alerts with a chosen threshold such as `1.20`
@@ -424,6 +437,7 @@ The website/app should clearly communicate:
 - whenever a user directly enters a contract address or selects an asset from a picker/list in a flow where the website/app actually needs to know the asset type, the system should automatically determine that contract's type and treat it as either `ERC20`, `ERC721`, or `ERC1155` without requiring the user to manually classify it first
 - interest-rate formatting in user-facing screens should be shown as percentages (`%`) rather than raw basis points (`BPS`), unless the user is in an explicit advanced or developer-oriented diagnostic view
 - lending amounts, collateral amounts, repayment amounts, and claimable amounts should be shown in human-readable token units using the token decimals and sensible rounding, not as full raw on-chain integer values
+- offer, loan, and dashboard tables should use a shared principal display model where the asset and amount are readable in one cell; ERC-721 and ERC-1155 rows should include token IDs and an explorer link for NFT inspection
 - on the Loan Details page and related position-detail views, LTV and Health Factor should be shown clearly when the loan uses liquid collateral and those metrics are applicable; the UI should avoid showing misleading placeholder HF/LTV values for asset types where protocol valuation does not apply in the same way
 - when a user is creating or accepting an offer, the UI must show one combined pre-confirmation warning-and-consent area covering both abnormal-market fallback for liquid assets and the illiquid full-collateral-in-kind path when applicable
 - liquidity status should be determined only from the current active network's oracle and usable DEX liquidity conditions; the website/app should not rely on Ethereum mainnet liquidity as a substitute for the current network and should not frame asset handling around a required mainnet fallback
@@ -472,6 +486,14 @@ Offer book requirements:
 - the combined both-sides view may keep a top-N layout without competing per-column paginators
 - users should be able to toggle keeper access on their own open offer before acceptance, without cancelling and re-posting the offer
 
+Dashboard offer-management requirements:
+
+- the dashboard should include a `Your Offers` card with `Active`, `Filled`, `Cancelled`, and `All` chip filters
+- active offer rows should include a `Cancel` action wired to the protocol's offer-cancel function, disabling the control while the transaction is pending
+- filled offer rows should show the resulting `Loan #X` link when the accepted-offer event maps the offer to a loan
+- cancelled offer rows should reconstruct terms from the richest available source: first a detailed on-chain cancel event, then a browser-local snapshot captured while the offer was active, then an identity-only fallback with clear unavailable fields
+- cancelled-offer reconstruction helpers should stay out of the user-facing Activity feed and Loan Details timeline when they duplicate a single cancel action rather than representing a separate user-visible lifecycle event
+
 Activity and dashboard history requirements:
 
 - the in-app `Activity` page and the `Your Loans` card on the user dashboard should not dump the user's full history in one long unbounded list
@@ -480,6 +502,7 @@ Activity and dashboard history requirements:
 - dashboard and activity pagination should prioritize responsiveness by loading and rendering only the currently visible window where practical
 - the dashboard `Your Loans` experience should use batched on-chain reads or multicall patterns rather than row-by-row chain-wide scans so that user history remains fast even on networks with a large total loan count
 - the dashboard `Your Loans` card should provide Role and Status filters, a per-page picker, and sortable columns for core loan fields; the default sort should put the most recent loan IDs first
+- loan IDs in the dashboard `Your Loans` table should be direct links to Loan Details, in addition to any explicit `View` button in the action column
 - LTV and HF sorts should operate over the filtered result set, not only the currently visible page, while keeping illiquid or unavailable values from surfacing as misleading best results
 
 Repayment UX requirements:
