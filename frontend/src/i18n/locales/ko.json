@@ -411,7 +411,7 @@
   "rewardsSummary": {
     "title": "내 VPFI 보상",
     "totalEarnedLabel": "총 획득액",
-    "freshUserHint": "아직 획득한 VPFI 보상이 없습니다. 에스크로에 VPFI를 스테이킹하여 프로토콜 APR을 획득하거나, 대출을 받아 플랫폼 상호작용 리베이트를 누적하세요.",
+    "freshUserHint": "아직 획득한 VPFI 보상이 없습니다. 에스크로에 VPFI를 스테이킹하여 {{apr}}% APR을 획득하거나, 대출을 받아 플랫폼 상호작용 리베이트를 누적하세요.",
     "stakingTitle": "스테이킹 수익",
     "stakingSubtitle": "에스크로에 있는 VPFI에서 프로토콜 APR을 획득합니다.",
     "interactionTitle": "플랫폼 상호작용 보상",
@@ -697,7 +697,7 @@
     "titleLine1": "P2P 대출",
     "titleLine2": "완전 온체인",
     "subtitlePrefix": "Vaipakam",
-    "subtitleBody": "은(는) 토큰의 대출과 차입, NFT 임대, 사용자 지정 조건 설정을 지원합니다. 모든 포지션은 고유한 NFT로 추적되어 오퍼부터 정산까지 투명하고 추적 가능하며 신뢰가 필요 없는 방식으로 운영됩니다.",
+    "subtitleBody": "광범위한 토큰을 대출하고 차용하고, NFT를 임대하고, 자체 조건을 설정할 수 있도록 합니다. 모든 포지션은 고유한 NFT로 추적됩니다 — 제안에서 정산까지 투명하고 추적 가능하며 신뢰가 필요 없습니다.",
     "launchApp": "앱 실행",
     "buyVpfi": "VPFI 구매",
     "howItWorks": "작동 방식",

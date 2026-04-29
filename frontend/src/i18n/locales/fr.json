@@ -411,7 +411,7 @@
   "rewardsSummary": {
     "title": "Vos récompenses VPFI",
     "totalEarnedLabel": "Total gagné",
-    "freshUserHint": "Vous n'avez pas encore gagné de récompenses VPFI. Déposez du VPFI dans votre escrow pour gagner l'APR du protocole, ou prenez un prêt pour commencer à accumuler le rabais d'interaction avec la plateforme.",
+    "freshUserHint": "Vous n'avez pas encore gagné de récompenses VPFI. Déposez du VPFI dans votre escrow pour gagner {{apr}}% APR, ou prenez un prêt pour commencer à accumuler le rabais d'interaction avec la plateforme.",
     "stakingTitle": "Rendement du staking",
     "stakingSubtitle": "Gagnez l'APR du protocole sur le VPFI de votre escrow.",
     "interactionTitle": "Récompenses d'interaction avec la plateforme",
@@ -697,7 +697,7 @@
     "titleLine1": "Prêts pair-à-pair",
     "titleLine2": "Entièrement on-chain",
     "subtitlePrefix": "Vaipakam",
-    "subtitleBody": "permet de prêter et d'emprunter des tokens, de louer des NFT et de définir ses propres conditions. Chaque position est suivie via un NFT unique — transparent, traçable et sans tiers de confiance, de l'offre au règlement.",
+    "subtitleBody": "vous permet de prêter et emprunter une large gamme de tokens, de louer des NFTs et de définir vos propres conditions. Chaque position est suivie par un NFT unique — transparente, traçable et sans confiance de l'offre au règlement.",
     "launchApp": "Ouvrir l'app",
     "buyVpfi": "Acheter VPFI",
     "howItWorks": "Comment ça marche",

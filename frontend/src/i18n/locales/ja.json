@@ -411,7 +411,7 @@
   "rewardsSummary": {
     "title": "あなたの VPFI 報酬",
     "totalEarnedLabel": "合計獲得額",
-    "freshUserHint": "まだ VPFI 報酬を獲得していません。エスクローに VPFI をステークしてプロトコル APR を獲得するか、ローンを組んでプラットフォーム・インタラクション・リベートの蓄積を始めましょう。",
+    "freshUserHint": "まだ VPFI 報酬を獲得していません。エスクローに VPFI をステークして {{apr}}% APR を獲得するか、ローンを組んでプラットフォーム・インタラクション・リベートの蓄積を始めましょう。",
     "stakingTitle": "ステーキング利回り",
     "stakingSubtitle": "エスクロー内の VPFI でプロトコル APR を獲得します。",
     "interactionTitle": "プラットフォーム・インタラクション報酬",
@@ -697,7 +697,7 @@
     "titleLine1": "ピアツーピア・レンディング",
     "titleLine2": "完全オンチェーン",
     "subtitlePrefix": "Vaipakam",
-    "subtitleBody": "は、トークンの貸借、NFTのレンタル、独自条件の設定を可能にします。すべてのポジションは固有のNFTで追跡され、オファーから決済まで透明・追跡可能・トラストレスです。",
+    "subtitleBody": "は幅広いトークンの貸し借り、NFT のレンタル、独自の条件設定を可能にします。すべてのポジションはユニークな NFT によって追跡されます — 提供から決済まで、透明で追跡可能、信頼不要です。",
     "launchApp": "アプリを起動",
     "buyVpfi": "VPFIを購入",
     "howItWorks": "仕組み",

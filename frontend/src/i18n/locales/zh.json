@@ -411,7 +411,7 @@
   "rewardsSummary": {
     "title": "您的 VPFI 奖励",
     "totalEarnedLabel": "总收益",
-    "freshUserHint": "您尚未获得任何 VPFI 奖励。将 VPFI 质押到您的托管账户以赚取协议 APR，或贷款开始累积平台交互返利。",
+    "freshUserHint": "您尚未获得任何 VPFI 奖励。将 VPFI 质押到您的托管账户以赚取 {{apr}}% APR，或贷款开始累积平台交互返利。",
     "stakingTitle": "质押收益",
     "stakingSubtitle": "在您托管账户中的 VPFI 上赚取协议 APR。",
     "interactionTitle": "平台交互奖励",
@@ -697,7 +697,7 @@
     "titleLine1": "点对点借贷",
     "titleLine2": "完全链上",
     "subtitlePrefix": "Vaipakam",
-    "subtitleBody": "支持出借与借入代币、租赁 NFT，并自定义条款。每一笔头寸都由独一无二的 NFT 进行追踪，从挂单到结算全程透明、可追溯且无需信任。",
+    "subtitleBody": "让您可以借出和借入广泛的代币、租赁 NFT 并设置自己的条款。每个仓位都通过独特的 NFT 进行跟踪 — 从报价到结算都是透明、可追溯和无需信任的。",
     "launchApp": "启动应用",
     "buyVpfi": "购买 VPFI",
     "howItWorks": "运作机制",

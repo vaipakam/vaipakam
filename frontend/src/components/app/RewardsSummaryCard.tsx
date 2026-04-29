@@ -2,6 +2,7 @@ import { useTranslation } from 'react-i18next';
 import { Coins, Activity, ChevronRight } from 'lucide-react';
 import { L as Link } from '../L';
 import { useStakingRewards } from '../../hooks/useStakingRewards';
+import { useStakingApr } from '../../hooks/useStakingApr';
 import { useInteractionRewards } from '../../hooks/useInteractionRewards';
 import { useRewardsClaimedHistory } from '../../hooks/useRewardsClaimedHistory';
 import { TokenAmount } from './TokenAmount';
@@ -42,6 +43,11 @@ export function RewardsSummaryCard({ address }: Props) {
     useInteractionRewards(address ?? null);
   const { stakingLifetimeClaimed, interactionLifetimeClaimed } =
     useRewardsClaimedHistory(address);
+  // Live staking APR for the empty-state hint's `{{apr}}%` placeholder.
+  // Goes through the live read so governance rate changes flow through
+  // to the copy without a frontend redeploy — same convention as the
+  // rest of the app's APR-mentioning surfaces.
+  const { aprPct } = useStakingApr();
 
   if (!address) return null;
 
@@ -106,7 +112,7 @@ export function RewardsSummaryCard({ address }: Props) {
               marginTop: 6,
             }}
           >
-            {t('rewardsSummary.freshUserHint')}
+            {t('rewardsSummary.freshUserHint', { apr: aprPct })}
           </div>
         )}
       </div>

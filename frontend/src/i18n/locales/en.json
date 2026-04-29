@@ -880,7 +880,7 @@
   "rewardsSummary": {
     "title": "Your VPFI rewards",
     "totalEarnedLabel": "Total earned",
-    "freshUserHint": "You haven't earned any VPFI rewards yet. Stake VPFI in your escrow to earn the protocol APR, or take a loan to start accruing the platform-interaction rebate.",
+    "freshUserHint": "You haven't earned any VPFI rewards yet. Stake VPFI in your escrow to earn {{apr}}% APR, or take a loan to start accruing the platform-interaction rebate.",
     "stakingTitle": "Staking yield",
     "stakingSubtitle": "Earn the protocol APR on VPFI sitting in your escrow.",
     "interactionTitle": "Platform-interaction rewards",
@@ -1166,7 +1166,7 @@
     "titleLine1": "Peer-to-Peer Lending",
     "titleLine2": "Fully On-Chain",
     "subtitlePrefix": "Vaipakam",
-    "subtitleBody": "lets you lend and borrow tokens, rent NFTs, and set your own terms. Every position is tracked by a unique NFT — transparent, traceable and trustless from offer to settlement.",
+    "subtitleBody": "lets you lend and borrow a wide range of tokens, rent NFTs, and set your own terms. Every position is tracked by a unique NFT — transparent, traceable and trustless from offer to settlement.",
     "launchApp": "Launch App",
     "buyVpfi": "Buy VPFI",
     "howItWorks": "How It Works",
