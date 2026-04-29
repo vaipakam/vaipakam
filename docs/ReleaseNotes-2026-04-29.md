@@ -966,6 +966,259 @@ including the new dashboard rewards card — now scrolls the
 user guide to the right section on click in every supported
 locale and both modes.
 
+## VPFI decimals — read live from the token contract, not hardcoded
+
+The frontend had seven separate hardcoded references to the VPFI
+token's 18 decimals scattered across `useProtocolConfig.ts`,
+`useVPFIDiscount.ts` (`SCALE_18` constant + `formatVpfiUnits` /
+`vpfiToEthWei` / `ethWeiToVpfi` helpers), `useVPFIToken.ts`
+(`TOKEN_DECIMALS_SCALE`), and `useUserVPFI.ts` (a fourth copy of
+the same `1e18` constant). All seven are now driven from a single
+live `decimals()` read on the registered VPFI token contract.
+
+How it works: `useProtocolConfig` already fetches the governance
+bundle in parallel with the compile-time constants. It now also
+reads `getVPFIToken()` to get the token address, then calls
+`decimals()` on that address, and exposes the resolved value as
+`vpfiDecimals: number` on the `ProtocolConfig` object. Every
+display helper takes an optional `decimals` parameter that
+defaults to 18 (the contract truth — every Vaipakam VPFI deploy
+on every chain must use 18 by OFT-bridge requirement), and
+callers that have access to the loaded config pass the live
+value explicitly. A failed `decimals()` read falls back to 18
+gracefully so the UI keeps rendering correctly while the read
+is in flight or after a transient RPC failure.
+
+Why it matters in principle: VPFI's decimals is fixed at 18 in
+the contract source today (OpenZeppelin ERC20 default, no
+override), but pinning every display path to a hardcoded 18
+locks in an assumption that requires a multi-file sweep to
+unwind if VPFI ever needs to be redeployed with different
+decimals. Reading from the contract makes the invariant
+self-enforcing — if a future deploy ever changes the value,
+the UI auto-adjusts on next page load.
+
+## VPFI Discount Status card — moved from Dashboard to Buy VPFI
+
+The read-only `<DiscountStatusCard>` (current tier + escrow VPFI
++ shared-consent qualification status + the four-row tier
+reference table) lifted from the Dashboard to the Buy VPFI page,
+slotted between the page hero and Step 1 — Buy VPFI with ETH.
+
+The move mirrors the buying-decision UX: when a user is sizing
+how much VPFI to acquire, the question they're answering is
+"what tier does this purchase land me in?" — and the answer
+needs to be co-located with the question. The Dashboard kept
+the **consent toggle** (the actionable surface where the user
+opts in / out of the shared-fee-discount path); the read-only
+status table is now where the buying decision happens.
+
+The card renders only for connected wallets. A disconnected
+visitor seeing "Inactive · below Tier 1 (100 VPFI in escrow)"
+on the public Buy VPFI page would read as a problem rather than
+a not-yet state. Same `useVPFIDiscountTier` / `useEscrowVPFIBalance`
+/ `useVPFIDiscountConsent` reads as before, just rendered in a
+different home.
+
+Bonus picked up by the move: the consent-status sub-text
+(*"Enable the shared discount consent above."*) is now
+*"Enable the shared discount consent on the **Dashboard**."*
+with the word "Dashboard" rendered as an inline `<L>` link
+that drops the user one click away from the toggle. The link
+is locale-aware via `react-i18next`'s `<Trans>` component with
+a `<dashboardLink>` placeholder; all 10 locales updated with
+the link wrapper in the matching position.
+
+## Offer book closed view — loan-link next to the Filled pill
+
+In OfferBook's *Closed* status view, every row has been a
+filled offer (cancelled offers are filtered out at the data-
+source level since `cancelOffer` deletes the on-chain storage
+slot). Until today the only signal that a row was *closed*
+was the green Filled pill in the action column — there was no
+way to jump from the offer to the loan it became.
+
+The action cell now reads `[ Filled ]  Loan #87 →` where the
+loan id is a clickable `<L>` link to `/app/loans/87`. Data path:
+the existing log-index already captures `OfferAccepted(offerId,
+acceptor, loanId)` events; the OfferBook page now derives a
+`Map<offerId, loanId>` once via `useMemo` over the events array,
+passes it to both `<OfferTable>` instances (lender + borrower),
+and the row renderer looks up the loan id when in Closed view.
+Zero new RPC, zero new contract surface — pure client-side
+join over data the index was already streaming.
+
+Cancelled offers don't appear in the Closed view (the storage
+slot is deleted on cancel) and so don't get a link — that case
+is handled by the new Your Offers card below.
+
+## Dashboard — Your Offers card with chip filter
+
+The Dashboard's "Your Active Offers" card became "Your Offers"
+with a four-state chip filter — `Active · Filled · Cancelled ·
+All` — surfaced via the existing `<Picker>` control. The
+filter switches the underlying data source between live offer
+reads and event-driven reconstruction, with each row's render
+gated on its lifecycle state.
+
+This addresses the missing-feature gap that until today
+**users had no way to cancel an offer from the website**.
+`cancelOffer` existed on-chain but had no UI button anywhere
+in the frontend. Active rows in the new card now carry a
+**Cancel button** alongside the existing "Manage keepers"
+deep-link; clicking it submits the `cancelOffer(offerId)`
+write directly. The button disables while the tx is in
+flight to prevent double-clicks. Failure toasts surface the
+typed error (most commonly `OfferAlreadyAccepted` if a
+concurrent `acceptOffer` won the block-ordering race —
+handled cleanly on-chain so only one of the two txs ever
+takes effect; the loser reverts without state corruption).
+
+Filled rows in the new card render with the same `[ Filled ]
+Loan #N →` link the OfferBook Closed view introduced — so
+the user has a single canonical home for "the offers I
+created and what happened to them."
+
+The chip-filter UX defaults to **Active**, preserving the
+exact behaviour of the previous Your Active Offers card. A
+user who never touches the chip group sees no UX change.
+
+## Cancelled-offer reconstruction — `OfferCanceledDetails` event + localStorage snapshot
+
+Showing cancelled offers ran into a data-availability wall:
+`cancelOffer` does `delete s.offers[offerId]` on the storage
+slot, and the legacy `OfferCanceled` event only emits
+`(offerId, creator)` — no financial terms. So a freshly-loaded
+"Your Offers / Cancelled" view had no source for the asset,
+amount, rate, duration, or collateral of the cancelled offer
+beyond the user's memory.
+
+Two complementary fixes shipped together:
+
+**Contract change — `OfferCanceledDetails` companion event.**
+A new event emitted alongside the legacy `OfferCanceled` with
+the full offer-term tuple: `offerType`, `assetType`,
+`lendingAsset`, `amount`, `tokenId`, `collateralAsset`,
+`collateralAmount`, `interestRateBps`, `durationDays`. The
+emit happens **before** the storage delete so every field is
+still readable. The legacy `OfferCanceled` keeps emitting
+unchanged so historical consumers that only need identity
+(id + creator) work without modification — purely additive.
+A new Foundry test (`testCancelOfferEmitsRichDetailsEvent`)
+asserts both events fire with the expected args.
+
+**Frontend — `offerSnapshot` localStorage helper.** A small
+browser-local cache keyed by `(chainId, diamondAddress,
+offerId)`. `useMyOffers` writes a snapshot on every live-fetch
+of an active offer (cheap synchronous setItem per row), so by
+the time a user cancels their own offer the terms are already
+cached. Read at render time when a cancelled row needs
+rehydration. Quota-overflow handling prunes oldest entries
+when localStorage hits its limit.
+
+**Three-tier hydration priority** for cancelled rows in
+`useMyOffers`: (1) `OfferCanceledDetails` event from the
+log-index — best, on-chain, works on any synced cache;
+(2) `offerSnapshot` localStorage — fallback, same-browser-only,
+covers offers cancelled before the new event was deployed;
+(3) identity-only stub — last resort, renders compact `—`
+cells with a tooltip explaining the constraint.
+
+The `MyOffersTable` renderer branches on data availability
+per cancelled row: if the row has full data (event or snapshot
+hit), it renders every column normally with a dimmed style
+(opacity 0.65) and a Cancelled pill in the status column. If
+the row is identity-only, it falls back to compact rendering
+with `—` cells.
+
+Log-index cache version bumped v9 → v10 to force a fresh
+scan that picks up the new `OfferCanceledDetails` event for
+existing users without manual cache clear. The
+`OfferCanceledDetails` event kind is filtered out of the
+user-facing Activity feed and Loan Timeline — it's a hydrate-
+only companion to `OfferCanceled` (same user action), not a
+distinct timeline-worthy event.
+
+## Unified `<PrincipalCell>` — Asset + Amount merged into one column
+
+`OfferTable` historically split the principal display across
+two columns ("Asset" — type label + symbol; "Amount" — number).
+Your Loans had merged them into a single Principal column long
+ago, leading to inconsistent row layouts between the two
+surfaces. A new `<PrincipalCell>` component unifies the
+rendering across three asset-type cases:
+
+- **ERC20**: amount + symbol stacked (e.g. `1,000` / `USDC`).
+- **ERC721**: `NFT #42` + collection symbol with an inline
+  `<ExternalLink>` icon to the chain explorer's NFT-page
+  viewer (`<base>/nft/<contract>/<tokenId>`) — the explorer
+  page renders the image, traits, and ownership history,
+  qualitatively new info beyond the symbol.
+- **ERC1155**: `5 × NFT #42` + collection symbol with the
+  same explorer link.
+
+The component renders an explorer link **only for NFTs** by
+intent. Adding link icons to every ERC20 row would clutter
+the table for marginal payoff — major-token symbols (USDC,
+ETH, USDT) are self-explanatory; pre-action token vetting
+already lives on the Create Offer review surface where
+`<TokenInfoTag>` shows CoinGecko rank / "unknown token"
+warning.
+
+`OfferTable` (public OfferBook), the new `MyOffersTable`
+(Your Offers card), and Your Loans on the Dashboard all use
+the same component. Your Loans previously rendered NFT-
+principal loans (rentals) as `1 [Symbol]` — dropping the
+tokenId entirely; now they render as `NFT #N` correctly.
+Adding `assetType` + `principalTokenId` to `LoanSummary` and
+threading them through `useUserLoans` enabled this.
+
+## Loan ID — clickable in Your Loans
+
+The Your Loans table's first column (the loan id, e.g.
+`#142`) now wraps the id in a `<L>` link to
+`/app/loans/142` instead of rendering as plain text. The
+"View" button in the last column stays — same destination,
+just two click targets so the leftmost cell users read first
+is also the one they can act on. Removes the hidden-action
+problem on narrow viewports where the action column scrolled
+off-screen.
+
+## Position NFT — name + symbol changed to "Vaipakam NFT" / `VAIPAK`
+
+The position NFT (the ERC-721 collection that mints one token
+per loan side, tracking lender / borrower positions) was
+previously initialised as `name = "VaipakamNFT"`,
+`symbol = "VNGK"`. Both were chosen ad-hoc early in the
+project's life and never matched the protocol's brand
+elsewhere — VPFI is the token, Vaipakam is the protocol, and
+VNGK was an orphan abbreviation that didn't appear anywhere
+else in the user-facing surface.
+
+New values: `name = "Vaipakam NFT"`, `symbol = "VAIPAK"`. The
+name reads naturally on OpenSea / wallet collection pages;
+the symbol is six characters (matches DOODLE's length, sits
+within the comfortable range for NFT marketplace UIs) and
+stays brand-recognisable.
+
+**Deliberately no admin setter.** `LibERC721.initialize`
+already enforces one-shot via `ERC721AlreadyInitialized` —
+preserving that is the right move. NFT name/symbol are part
+of contract identity that marketplaces, wallets, and indexers
+cache at first index; mutable identity is both an attack
+surface (compromised admin → rename to scam) and a UX hazard
+(wallets can't tell if it's still the same collection).
+Existing testnet deploys retain the old `VaipakamNFT` /
+`VNGK` baked in until redeployed; mainnet locks in the new
+values at first deploy.
+
+The on-chain test (`testNameAndSymbol` in
+`VaipakamNFTFacetTest.t.sol`) was updated to assert the new
+values. The frontend has zero hardcoded references to the
+old name / symbol — it reads `name()` / `symbol()` live from
+the contract — so all UI surfaces auto-pick up the new
+values on next deploy with no frontend change required.
+
 ## Documentation convention
 
 Same as carried forward from prior files: every completed phase

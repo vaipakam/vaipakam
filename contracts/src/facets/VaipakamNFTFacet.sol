@@ -61,9 +61,18 @@ contract VaipakamNFTFacet is IERC721, IERC721Metadata, IERC721Enumerable, Diamon
      *      Replaces the constructor which cannot initialize diamond proxy storage.
      */
     function initializeNFT() external onlyRole(LibAccessControl.ADMIN_ROLE) {
+        // Name + symbol are intentionally one-shot at deploy time —
+        // `LibERC721.initialize` reverts on second call. No admin
+        // setter exists by design: NFT collection identity is part of
+        // the contract's surface that marketplaces, wallets, and
+        // indexers cache, and a mutable identity is both an attack
+        // surface (compromised admin → rename to scam) and a UX
+        // hazard (wallets can't tell if it's still the same collection).
+        // Get the values right before the first mainnet deploy; future
+        // changes mean redeploy, not in-place mutation.
         LibERC721.initialize(
-            "VaipakamNFT",
-            "VNGK",
+            "Vaipakam NFT",
+            "VAIPAK",
             "https://ipfs.io/ipfs/QmahNt61bcS6dySxy2qszmXC3AsRMoUxapttrj4WLHNc7k",
             "https://ipfs.io/ipfs/QmahNt61bcS6dySxy2qszmXC3AsRMoUxapttrj4WLHNc7k",
             "https://ipfs.io/ipfs/QmahNt61bcS6dySxy2qszmXC3AsRMoUxapttrj4WLHNc7k",

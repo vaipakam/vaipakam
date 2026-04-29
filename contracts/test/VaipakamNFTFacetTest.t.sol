@@ -301,8 +301,8 @@ contract VaipakamNFTFacetTest is Test {
     // ─── ERC721 Interface ────────────────────────────────────────────────────
 
     function testNameAndSymbol() public {
-        assertEq(VaipakamNFTFacet(address(diamond)).name(), "VaipakamNFT");
-        assertEq(VaipakamNFTFacet(address(diamond)).symbol(), "VNGK");
+        assertEq(VaipakamNFTFacet(address(diamond)).name(), "Vaipakam NFT");
+        assertEq(VaipakamNFTFacet(address(diamond)).symbol(), "VAIPAK");
     }
 
     function testBalanceOf() public {
