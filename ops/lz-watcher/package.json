@@ -1,0 +1,21 @@
+{
+  "name": "vaipakam-lz-watcher",
+  "private": true,
+  "type": "module",
+  "description": "Internal-only Cloudflare Worker that watches Vaipakam's LayerZero V2 surface for security drift: DVN-set / confirmation drift on every wired (OApp, eid) pair, OFT mint/burn imbalance between the Base canonical adapter and every mirror chain, and oversized single-tx VPFI flows. Alerts go to a private Telegram channel — distinct from the public hf-watcher Worker which doubles as a competitive keeper surface.",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "db:migrate": "wrangler d1 migrations apply vaipakam-lz-alerts-db --remote",
+    "db:migrate:local": "wrangler d1 migrations apply vaipakam-lz-alerts-db --local",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "viem": "^2.21.0"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20240924.0",
+    "typescript": "^5.5.0",
+    "wrangler": "^4.85.0"
+  }
+}

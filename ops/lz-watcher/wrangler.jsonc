@@ -1,0 +1,116 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "vaipakam-lz-watcher",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-04-29",
+  "compatibility_flags": ["nodejs_compat"],
+  "observability": {
+    "enabled": true,
+  },
+  // Cron — every 5 minutes. The three watchers (DVN-count drift, OFT
+  // mint/burn imbalance, oversized VPFI flow) are all detection-only
+  // surfaces; a 5-min lag is irrelevant compared to the on-chain pause
+  // levers that respond to the alert. 5-min also keeps us well under
+  // the free-tier 100k-requests/day budget (5/min × 1440 = 1.4%).
+  "triggers": {
+    "crons": ["*/5 * * * *"],
+  },
+  // D1 — alert dedup + per-chain block cursors for the log scanners.
+  // SEPARATE database from hf-watcher's `vaipakam-alerts-db` on purpose:
+  // hf-watcher is a public-facing surface (alerts subscribed users +
+  // doubles as the autonomous-keeper that anyone can clone via the
+  // sibling `vaipakam-keeper-bot` repo). This Worker is internal ops
+  // only; co-locating its bookkeeping with user-facing data on a
+  // shared DB would conflate audit trails.
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "vaipakam-lz-alerts-db",
+      // database_id will be filled in by `wrangler d1 create
+      // vaipakam-lz-alerts-db` on first deploy; replace this stub.
+      "database_id": "REPLACE_AFTER_d1_create",
+      "remote": false,
+    },
+  ],
+  // Env-scoped secrets (set via `wrangler secret put`):
+  //   RPC_BASE / RPC_ETH / RPC_ARB / RPC_OP / RPC_ZKEVM / RPC_BNB
+  //                 — dedicated RPC endpoints per chain. Use Alchemy /
+  //                   QuickNode / Infura — public RPCs (publicnode,
+  //                   sepolia.base.org) rate-limit aggressively and
+  //                   the watcher's `eth_getLogs` calls will get
+  //                   throttled into uselessness.
+  //   TG_BOT_TOKEN  — Telegram bot token from BotFather. The same bot
+  //                   used by hf-watcher CAN be reused here, but the
+  //                   destination chat id is different (`TG_OPS_CHAT_ID`).
+  //
+  // Plain vars (public — set here or via `wrangler secret put` if you
+  // prefer): every Vaipakam OApp / endpoint / library address per
+  // chain, plus the LZ V2 eids the mesh is wired across. Empty values
+  // skip that chain's path this tick.
+  "vars": {
+    // ── Telegram destination ─────────────────────────────────────────
+    // Numeric chat id of the internal ops channel. Add the bot to the
+    // channel + read the chat id via @userinfobot or curl
+    // `https://api.telegram.org/bot<TG_BOT_TOKEN>/getUpdates` after
+    // sending a message. NOT a secret — chat ids alone don't grant
+    // posting access without the bot token.
+    "TG_OPS_CHAT_ID": "",
+
+    // ── Chain inventory: LayerZero wiring ───────────────────────────
+    // LZ V2 endpoint, ULN302 send/receive libraries, our OApp suite.
+    // Empty string means "skip this chain this tick" — useful while
+    // bringing chains online one at a time.
+    //
+    // Base (canonical OFT lock + buy-receiver + reward aggregator):
+    "LZ_ENDPOINT_BASE": "",
+    "ULN302_SEND_LIB_BASE": "",
+    "ULN302_RECV_LIB_BASE": "",
+    "OAPP_VPFI_OFT_ADAPTER_BASE": "",
+    "OAPP_VPFI_BUY_RECEIVER_BASE": "",
+    "OAPP_REWARD_BASE": "",
+    "VPFI_TOKEN_BASE": "",
+
+    // Mirror chains (VPFIMirror + buy-adapter + reward mirror):
+    "LZ_ENDPOINT_ETH": "",
+    "ULN302_SEND_LIB_ETH": "",
+    "ULN302_RECV_LIB_ETH": "",
+    "OAPP_VPFI_MIRROR_ETH": "",
+    "OAPP_VPFI_BUY_ADAPTER_ETH": "",
+    "OAPP_REWARD_ETH": "",
+
+    "LZ_ENDPOINT_ARB": "",
+    "ULN302_SEND_LIB_ARB": "",
+    "ULN302_RECV_LIB_ARB": "",
+    "OAPP_VPFI_MIRROR_ARB": "",
+    "OAPP_VPFI_BUY_ADAPTER_ARB": "",
+    "OAPP_REWARD_ARB": "",
+
+    "LZ_ENDPOINT_OP": "",
+    "ULN302_SEND_LIB_OP": "",
+    "ULN302_RECV_LIB_OP": "",
+    "OAPP_VPFI_MIRROR_OP": "",
+    "OAPP_VPFI_BUY_ADAPTER_OP": "",
+    "OAPP_REWARD_OP": "",
+
+    "LZ_ENDPOINT_ZKEVM": "",
+    "ULN302_SEND_LIB_ZKEVM": "",
+    "ULN302_RECV_LIB_ZKEVM": "",
+    "OAPP_VPFI_MIRROR_ZKEVM": "",
+    "OAPP_VPFI_BUY_ADAPTER_ZKEVM": "",
+    "OAPP_REWARD_ZKEVM": "",
+
+    "LZ_ENDPOINT_BNB": "",
+    "ULN302_SEND_LIB_BNB": "",
+    "ULN302_RECV_LIB_BNB": "",
+    "OAPP_VPFI_MIRROR_BNB": "",
+    "OAPP_VPFI_BUY_ADAPTER_BNB": "",
+    "OAPP_REWARD_BNB": "",
+
+    // ── Oversized-flow threshold (VPFI base units, 18 decimals) ─────
+    // Default 100,000 VPFI = 100_000e18. Above this, a single Transfer
+    // event on any VPFI / VPFIMirror contract triggers an alert. Tune
+    // post-deploy via `wrangler deploy --var FLOW_THRESHOLD_VPFI=...`
+    // if Phase 2 traffic genuinely warrants larger swings.
+    "FLOW_THRESHOLD_VPFI": "100000000000000000000000",
+  },
+}
