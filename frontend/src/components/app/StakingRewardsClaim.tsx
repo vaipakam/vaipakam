@@ -1,9 +1,9 @@
-import { useMemo, useState } from 'react';
+import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Coins, CheckCircle, ExternalLink } from 'lucide-react';
 import { useDiamondContract } from '../../contracts/useDiamond';
 import { useStakingRewards } from '../../hooks/useStakingRewards';
-import { useLogIndex } from '../../hooks/useLogIndex';
+import { useRewardsClaimedHistory } from '../../hooks/useRewardsClaimedHistory';
 import { decodeContractError } from '../../lib/decodeContractError';
 import { beginStep } from '../../lib/journeyLog';
 import { TokenAmount } from './TokenAmount';
@@ -42,24 +42,12 @@ export function StakingRewardsClaim({ address, chainId, blockExplorer, variant =
   // governance has changed the rate. Format with up to 2 decimal
   // places to handle non-round values like 575 → 5.75%.
   const aprPct = (Number(aprBps) / 100).toFixed(Number(aprBps) % 100 === 0 ? 0 : 2);
-  // Lifetime claimed VPFI is summed from `StakingRewardsClaimed` events
-  // in the per-(chain, diamond) log-index — no on-chain getter for the
-  // running total exists, but the events carry the full history.
-  // Mirrors the same pattern InteractionRewardsClaim uses on Claim
-  // Center for the interaction-rewards lifetime total.
-  const { events } = useLogIndex();
-  const lifetimeClaimed = useMemo(() => {
-    if (!address) return 0n;
-    const me = address.toLowerCase();
-    let sum = 0n;
-    for (const ev of events) {
-      if (ev.kind !== 'StakingRewardsClaimed') continue;
-      if (typeof ev.args.user !== 'string' || ev.args.user !== me) continue;
-      if (typeof ev.args.amount !== 'string') continue;
-      try { sum += BigInt(ev.args.amount); } catch { /* skip malformed */ }
-    }
-    return sum;
-  }, [events, address]);
+  // Lifetime claimed VPFI — derived from the shared
+  // `useRewardsClaimedHistory` hook so this card, InteractionRewardsClaim
+  // on Claim Center, and the new RewardsSummaryCard on Dashboard all
+  // agree on the running total. See that hook's docstring for the
+  // log-index scan and partial-cache caveat.
+  const { stakingLifetimeClaimed: lifetimeClaimed } = useRewardsClaimedHistory(address);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [txHash, setTxHash] = useState<string | null>(null);
@@ -174,6 +162,9 @@ export function StakingRewardsClaim({ address, chainId, blockExplorer, variant =
   return (
     <div
       className="card"
+      // `id` doubles as the deep-link anchor target the Dashboard
+      // RewardsSummaryCard scrolls to via `/buy-vpfi#staking-rewards`.
+      id="staking-rewards"
       style={
         hasPending
           ? {

@@ -42,6 +42,14 @@ export interface ProtocolConfig {
   vpfiStakingAprPct: number;
   /** VPFI tier thresholds (token wei, 18-dec): T1 entry, T2 entry, T3 entry, T4 cutoff. */
   tierThresholds: [bigint, bigint, bigint, bigint];
+  /** Same thresholds as {@link tierThresholds} but pre-divided to whole VPFI
+   *  tokens for display. Tier thresholds are integer-token-multiples on-chain
+   *  (e.g. 100, 1_000, 10_000, 100_000), so this conversion is lossless in
+   *  practice. Use this in any UI surface — auto-injected `<CardInfo>`
+   *  placeholders, the discount-status card, the tier table — so a wei-
+   *  denominated `100000000000000000000000` doesn't render as
+   *  "100,000,000,000,000,000,000". */
+  tierThresholdsTokens: [number, number, number, number];
   /** Per-tier discount BPS: index 0 = T1, index 3 = T4. */
   tierDiscountBps: [number, number, number, number];
   /** Per-tier discount as a decimal fraction, same index as {@link tierDiscountBps}. */
@@ -216,6 +224,15 @@ export function useProtocolConfig() {
           tierThresholds[1],
           tierThresholds[2],
           tierThresholds[3],
+        ],
+        // Pre-divide to whole tokens for display. Bigint divide first
+        // (lossless) before Number cast — `Number(100_000n * 10n**18n)`
+        // would silently round at 2^53.
+        tierThresholdsTokens: [
+          Number(tierThresholds[0] / 10n ** 18n),
+          Number(tierThresholds[1] / 10n ** 18n),
+          Number(tierThresholds[2] / 10n ** 18n),
+          Number(tierThresholds[3] / 10n ** 18n),
         ],
         tierDiscountBps: [
           Number(tierDiscountBps[0]),

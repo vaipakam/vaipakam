@@ -155,6 +155,7 @@
     "dashboardYourLoans": "Every loan the connected wallet is part of on this chain — as lender, borrower, or both. Each row links to the full position page with HF, LTV, collateral, repay, and claim controls.",
     "dashboardVpfiPanel": "VPFI is the protocol token. This card shows the wallet + escrow balance on this chain, the share of circulating supply, and the remaining mintable cap. Canonical chain mints/burns; mirror chains lock/release via LayerZero OFT.",
     "dashboardFeeDiscountConsent": "Opt-in for the protocol to pay discounted fees in VPFI from the escrow. Discount scales with the escrow VPFI balance: {{tier1Discount}}% at Tier 1 (≥{{tier1Min}} VPFI), {{tier2Discount}}% Tier 2 (≥{{tier2Min}}), {{tier3Discount}}% Tier 3 (≥{{tier3Min}}), {{tier4Discount}}% Tier 4 (>{{tier4Min}}).",
+    "dashboardRewardsSummary": "Combined view of your VPFI rewards across both streams: staking yield ({{apr}}% APR on escrow VPFI) and platform-interaction rewards (daily VPFI share for every loan you're part of). Click a row to jump to the full claim card on the matching page.",
     "offerBookFilters": "Narrow the market lists below by asset, side, status, and other criteria. Filters apply to Lender / Borrower offers — the connected wallet's own active offers (shown above) are always visible regardless.",
     "offerBookYourActiveOffers": "Offers the connected wallet created on this chain that haven't been filled yet. Cancel any time before someone accepts; once accepted, the loan lifecycle moves to \"Your Loans\" on the Dashboard.",
     "offerBookLenderOffers": "Offers posted by lenders ready to lend. A borrower accepting one initiates a loan: the borrower's collateral is locked, the principal asset arrives in the borrower's wallet, and interest accrues until repayment. HF must be ≥ 1.5 at initiation.",
@@ -875,6 +876,19 @@
     "plusLifRebate": "+ VPFI fee-discount rebate",
     "nftId": "NFT #{{id}}",
     "nftIdQuantity": "{{qty}} × NFT #{{id}}"
+  },
+  "rewardsSummary": {
+    "title": "Your VPFI rewards",
+    "totalEarnedLabel": "Total earned",
+    "freshUserHint": "You haven't earned any VPFI rewards yet. Stake VPFI in your escrow to earn the protocol APR, or take a loan to start accruing the platform-interaction rebate.",
+    "stakingTitle": "Staking yield",
+    "stakingSubtitle": "Earn the protocol APR on VPFI sitting in your escrow.",
+    "interactionTitle": "Platform-interaction rewards",
+    "interactionSubtitle": "Earn a daily VPFI share for every loan you participate in.",
+    "pendingLabel": "Pending",
+    "claimedLabel": "Claimed",
+    "manageOnBuyVpfi": "Manage staking on Buy VPFI",
+    "openClaimCenter": "Claim on Claim Center"
   },
   "stakingRewards": {
     "titleAvailable": "VPFI staking rewards available",

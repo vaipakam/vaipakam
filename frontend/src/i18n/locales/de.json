@@ -408,6 +408,19 @@
     "nftId": "NFT #{{id}}",
     "nftIdQuantity": "{{qty}} × NFT #{{id}}"
   },
+  "rewardsSummary": {
+    "title": "Ihre VPFI-Belohnungen",
+    "totalEarnedLabel": "Insgesamt verdient",
+    "freshUserHint": "Sie haben noch keine VPFI-Belohnungen verdient. Staken Sie VPFI in Ihrem Escrow, um den Protokoll-APR zu erhalten, oder nehmen Sie einen Kredit auf, um den Plattform-Interaktions-Rabatt zu sammeln.",
+    "stakingTitle": "Staking-Rendite",
+    "stakingSubtitle": "Verdienen Sie den Protokoll-APR auf VPFI in Ihrem Escrow.",
+    "interactionTitle": "Plattform-Interaktions-Belohnungen",
+    "interactionSubtitle": "Verdienen Sie täglich VPFI-Anteile für jeden Kredit, an dem Sie teilnehmen.",
+    "pendingLabel": "Ausstehend",
+    "claimedLabel": "Beansprucht",
+    "manageOnBuyVpfi": "Staking auf Buy VPFI verwalten",
+    "openClaimCenter": "Im Claim Center beanspruchen"
+  },
   "stakingRewards": {
     "titleAvailable": "VPFI-Staking-Belohnungen verfügbar",
     "titleEmpty": "VPFI-Staking-Belohnungen",
@@ -1394,6 +1407,7 @@
     "dashboardYourLoans": "Jeder Kredit, an dem das verbundene Wallet auf dieser Chain beteiligt ist — als Kreditgeber, Kreditnehmer oder beides. Jede Zeile verlinkt auf die vollständige Positionsseite mit HF, LTV, Kollateral sowie Rückzahlungs- und Claim-Steuerelementen.",
     "dashboardVpfiPanel": "VPFI ist der Protokoll-Token. Diese Karte zeigt den Wallet- + Escrow-Saldo auf dieser Chain, den Anteil am zirkulierenden Angebot und das verbleibende mintbare Cap. Die kanonische Chain prägt/verbrennt; Mirror-Chains sperren/freigeben über LayerZero OFT.",
     "dashboardFeeDiscountConsent": "Opt-in dafür, dass das Protokoll vergünstigte Gebühren in VPFI aus dem Escrow zahlt. Der Rabatt skaliert mit dem VPFI-Saldo im Escrow: 10% bei Tier 1 (≥{{tier1Min}} VPFI), 15% Tier 2 (≥{{tier2Min}}), 20% Tier 3 (≥{{tier3Min}}), 24% Tier 4 (>{{tier4Min}}).",
+    "dashboardRewardsSummary": "Kombinierte Ansicht Ihrer VPFI-Belohnungen aus beiden Strömen: Staking-Rendite ({{apr}}% APR auf Escrow-VPFI) und Plattform-Interaktions-Belohnungen (täglicher VPFI-Anteil für jeden Kredit, an dem Sie beteiligt sind). Klicken Sie auf eine Zeile, um zur vollständigen Anspruchskarte auf der entsprechenden Seite zu springen.",
     "offerBookFilters": "Schränkt die unten stehenden Marktlisten nach Asset, Seite, Status und weiteren Kriterien ein. Filter wirken auf Kreditgeber- / Kreditnehmer-Angebote — die eigenen aktiven Angebote des verbundenen Wallets (oben angezeigt) bleiben stets sichtbar.",
     "offerBookYourActiveOffers": "Angebote, die das verbundene Wallet auf dieser Chain erstellt hat und die noch nicht angenommen wurden. Jederzeit stornierbar, bevor jemand sie annimmt; nach Annahme wandert der Kreditlebenszyklus in „Deine Kredite“ im Dashboard.",
     "offerBookLenderOffers": "Angebote von Kreditgebern, die zur Kreditvergabe bereit sind. Nimmt ein Kreditnehmer eines an, wird ein Kredit initiiert: das Kollateral des Kreditnehmers wird gesperrt, der Hauptbetrag landet in dessen Wallet, und Zinsen laufen bis zur Rückzahlung auf. Der HF muss bei Initiierung ≥ 1.5 sein.",

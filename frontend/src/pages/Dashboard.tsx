@@ -30,7 +30,7 @@ import { TokenAmount } from '../components/app/TokenAmount';
 import { bpsToPercent } from '../lib/format';
 import { HealthFactorGauge, LTVBar } from '../components/app/RiskGauge';
 import VPFIDiscountConsentCard from '../components/app/VPFIDiscountConsentCard';
-import { StakingRewardsClaim } from '../components/app/StakingRewardsClaim';
+import { RewardsSummaryCard } from '../components/app/RewardsSummaryCard';
 import { Pager } from '../components/app/Pager';
 import { CardInfo } from '../components/CardInfo';
 import { Picker } from '../components/Picker';
@@ -59,7 +59,7 @@ function cmpBigint(a: bigint, b: bigint): number {
 
 export default function Dashboard() {
   const { t } = useTranslation();
-  const { address, activeChain, chainId } = useWallet();
+  const { address, activeChain } = useWallet();
   const diamond = useDiamondRead();
   const { loans, loading } = useUserLoans(address);
   const { offers: myActiveOffers } = useMyActiveOffers(address);
@@ -273,12 +273,14 @@ export default function Dashboard() {
         />
       )}
 
-      <StakingRewardsClaim
-        address={address ?? null}
-        chainId={chainId}
-        blockExplorer={activeChain?.blockExplorer ?? DEFAULT_CHAIN.blockExplorer}
-        variant="inline"
-      />
+      {/* Aspirational rewards summary — combined view of pending +
+          lifetime-claimed across both reward streams (staking yield
+          on escrow VPFI; platform-interaction rebate). Each row deep-
+          links to the full claim card on its native page so the user
+          can act with one click. Replaces the old inline-variant
+          StakingRewardsClaim mirror — that variant only ever lived
+          here, the new card supersedes it with broader coverage. */}
+      <RewardsSummaryCard address={address ?? null} />
 
       {/* Escrow info */}
       {currentEscrow && (

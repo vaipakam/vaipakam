@@ -408,6 +408,19 @@
     "nftId": "NFT #{{id}}",
     "nftIdQuantity": "{{qty}} × NFT #{{id}}"
   },
+  "rewardsSummary": {
+    "title": "あなたの VPFI 報酬",
+    "totalEarnedLabel": "合計獲得額",
+    "freshUserHint": "まだ VPFI 報酬を獲得していません。エスクローに VPFI をステークしてプロトコル APR を獲得するか、ローンを組んでプラットフォーム・インタラクション・リベートの蓄積を始めましょう。",
+    "stakingTitle": "ステーキング利回り",
+    "stakingSubtitle": "エスクロー内の VPFI でプロトコル APR を獲得します。",
+    "interactionTitle": "プラットフォーム・インタラクション報酬",
+    "interactionSubtitle": "参加した各ローンに対して毎日 VPFI シェアを獲得します。",
+    "pendingLabel": "保留中",
+    "claimedLabel": "請求済み",
+    "manageOnBuyVpfi": "Buy VPFI でステーキングを管理",
+    "openClaimCenter": "Claim Center で請求"
+  },
   "stakingRewards": {
     "titleAvailable": "VPFIステーキング報酬が利用可能",
     "titleEmpty": "VPFIステーキング報酬",
@@ -1394,6 +1407,7 @@
     "dashboardYourLoans": "このチェーン上で接続中のウォレットが関与するすべてのローン（貸し手、借り手、または両方として）を表示します。各行は HF、LTV、担保、返済、クレーム操作を含むポジションページにリンクします。",
     "dashboardVpfiPanel": "VPFI はプロトコルのトークンです。このカードは、このチェーン上のウォレット + エスクロー残高、流通供給量に占める割合、残りのミント可能上限を表示します。カノニカルチェーンが mint/burn を行い、ミラーチェーンは LayerZero OFT 経由で lock/release します。",
     "dashboardFeeDiscountConsent": "プロトコルがエスクローから VPFI で割引手数料を支払うことへのオプトインです。割引はエスクロー VPFI 残高に応じてスケールします: Tier 1 (≥{{tier1Min}} VPFI) で 10%、Tier 2 (≥{{tier2Min}}) で 15%、Tier 3 (≥{{tier3Min}}) で 20%、Tier 4 (>{{tier4Min}}) で 24%。",
+    "dashboardRewardsSummary": "両方のストリームにわたる VPFI 報酬の統合ビュー: ステーキング利回り (エスクロー VPFI に対する {{apr}}% APR) およびプラットフォーム・インタラクション報酬 (参加している各ローンに対する毎日の VPFI シェア)。行をクリックして、対応するページの完全な請求カードに移動します。",
     "offerBookFilters": "下のマーケットリストを資産、サイド、ステータス、その他の条件で絞り込みます。フィルターは貸し手 / 借り手のオファーに適用されます。接続中のウォレット自身のアクティブオファー（上部に表示）はフィルターに関係なく常に表示されます。",
     "offerBookYourActiveOffers": "このチェーン上で接続中のウォレットが作成し、まだマッチしていないオファーです。誰かが受諾する前であればいつでもキャンセル可能です。受諾されると、ローンライフサイクルはダッシュボードの「あなたのローン」へ移行します。",
     "offerBookLenderOffers": "貸し出し準備ができている貸し手が掲載したオファーです。借り手が受諾するとローンが開始されます: 借り手の担保がロックされ、元本資産が借り手のウォレットに到着し、返済まで利息が発生します。開始時点で HF は ≥ 1.5 である必要があります。",

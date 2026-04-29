@@ -100,10 +100,13 @@ export function CardInfo({ id, role, params }: CardInfoProps) {
         volatilityLtv: bpsAsPctStr(config.volatilityLtvThresholdBps),
         rentalBuffer: bpsAsPctStr(config.rentalBufferBps),
         apr: bpsAsPctStr(config.vpfiStakingAprBps),
-        tier1Min: Number(config.tierThresholds[0]).toLocaleString(),
-        tier2Min: Number(config.tierThresholds[1]).toLocaleString(),
-        tier3Min: Number(config.tierThresholds[2]).toLocaleString(),
-        tier4Min: Number(config.tierThresholds[3]).toLocaleString(),
+        // Use the pre-divided `tierThresholdsTokens` so a wei value of
+        // `100_000_000_000_000_000_000_000` renders as "100,000" not
+        // "100,000,000,000,000,000,000". See useProtocolConfig.
+        tier1Min: config.tierThresholdsTokens[0].toLocaleString(),
+        tier2Min: config.tierThresholdsTokens[1].toLocaleString(),
+        tier3Min: config.tierThresholdsTokens[2].toLocaleString(),
+        tier4Min: config.tierThresholdsTokens[3].toLocaleString(),
         tier1Discount: bpsAsPctStr(config.tierDiscountBps[0]),
         tier2Discount: bpsAsPctStr(config.tierDiscountBps[1]),
         tier3Discount: bpsAsPctStr(config.tierDiscountBps[2]),

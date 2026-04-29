@@ -46,10 +46,11 @@ export default function VPFIDiscountConsentCard() {
   const { config } = useProtocolConfig();
   const tierParams = config
     ? {
-        tier1Min: Number(config.tierThresholds[0]).toLocaleString(),
-        tier2Min: Number(config.tierThresholds[1]).toLocaleString(),
-        tier3Min: Number(config.tierThresholds[2]).toLocaleString(),
-        tier4Min: Number(config.tierThresholds[3]).toLocaleString(),
+        // Pre-divided to whole VPFI tokens — see useProtocolConfig.
+        tier1Min: config.tierThresholdsTokens[0].toLocaleString(),
+        tier2Min: config.tierThresholdsTokens[1].toLocaleString(),
+        tier3Min: config.tierThresholdsTokens[2].toLocaleString(),
+        tier4Min: config.tierThresholdsTokens[3].toLocaleString(),
         tier1Discount: bpsAsPctStr(config.tierDiscountBps[0]),
         tier2Discount: bpsAsPctStr(config.tierDiscountBps[1]),
         tier3Discount: bpsAsPctStr(config.tierDiscountBps[2]),

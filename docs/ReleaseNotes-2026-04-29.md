@@ -840,6 +840,151 @@ each of the three detectors), and `docs/ops/AdminKeysAndPause.md`
 `TG_OPS_CHAT_ID` and per-chain RPC keys held by the lz-watcher
 Worker).
 
+## Dashboard — combined rewards summary card
+
+The Dashboard previously surfaced staking rewards via a thin
+inline mirror of the Buy VPFI staking-claim card and said nothing
+at all about the platform-interaction reward stream. A connected
+wallet had no single place to see how much VPFI it had earned
+from the protocol overall — only stream-by-stream views, one
+buried on Buy VPFI Step 2 and the other inside the Claim Center.
+
+A new **Your VPFI rewards** card now sits between *Discount
+Status* and *Your Loans* on the Dashboard. It shows:
+
+- A big *Total earned* headline = staking pending + staking
+  lifetime claimed + interaction pending + interaction lifetime
+  claimed. Aspirational sum across both streams.
+- A staking-yield row (escrow APR) with pending + claimed and
+  a chevron deep-link to the Buy VPFI page anchored to
+  `#staking-rewards`.
+- An interaction-rewards row (per-loan rebate) with pending +
+  claimed and a chevron deep-link to the Claim Center anchored
+  to `#interaction-rewards`.
+
+The card always renders for connected wallets, even at all-zero
+state. A fresh user sees *Total earned: 0 VPFI* with a
+"haven't earned yet — here's how to start" hint and the deep
+links into both pages still active. Hiding the card on zero
+state was rejected because it makes the rewards programs
+effectively invisible until a user happens to wander into
+either page.
+
+A new shared hook `useRewardsClaimedHistory(address)` consolidates
+the lifetime-claimed log-index scan that previously lived
+duplicated inside the staking and interaction claim cards.
+All three reward surfaces now read from the same scan, so a
+user clicking through Dashboard → Buy VPFI → claim → return
+sees the lifetime number tick up consistently across all three
+on the next render. Both existing claim cards
+(`<StakingRewardsClaim>` on Buy VPFI, `<InteractionRewardsClaim>`
+on Claim Center) gained `id` attributes so the new card's
+deep-link chevrons scroll the user to the right card on arrival.
+
+i18n added a fresh `rewardsSummary.*` namespace (11 keys)
+across all 10 locales — title, totalEarnedLabel, freshUserHint,
+the per-stream titles + subtitles, pending/claimed labels, and
+the "Manage on Buy VPFI" / "Claim on Claim Center" link copy.
+The CardInfo (i)-tooltip registry got a matching entry under
+`dashboard.rewards-summary` with auto-injected `{{apr}}`
+placeholder so the description stays accurate when governance
+changes the staking APR.
+
+## VPFI tier thresholds — wei → tokens display fix
+
+The Dashboard's **Your VPFI discount status** card was
+rendering tier-threshold values as
+`100,000,000,000,000,000,000` instead of `100,000`. Same bug
+on the tier-table rows, the *inactive below Tier 1* status
+copy, the *Deposit X more to reach Tier N* hint, and every
+`<CardInfo>` (i)-tooltip that interpolates a `{{tier1Min}}` /
+`{{tier2Min}}` / `{{tier3Min}}` / `{{tier4Min}}` placeholder
+(e.g. the dashboard's *Fee discount consent* card help, the
+Buy VPFI *Discount status* card help, the platform-level
+discount-consent card body copy).
+
+Root cause: the on-chain getter returns tier thresholds in
+VPFI base units (1e18-scaled wei). Three call sites —
+`useVpfiTierTable`, the `<CardInfo>` auto-injection block, and
+the `<VPFIDiscountConsentCard>` body-prefix interpolation —
+each ran `Number(config.tierThresholds[i])` and
+`.toLocaleString()` on the raw wei bigint, getting back a
+20-digit number with thousands separators that read like a
+catastrophe rather than a tier minimum.
+
+Fix: a new derived field `tierThresholdsTokens:
+[number, number, number, number]` on `ProtocolConfig`,
+pre-divided by 1e18 inside `useProtocolConfig` (bigint divide
+first to stay lossless above 2^53, then `Number` cast). All
+three call sites now consume `tierThresholdsTokens` instead
+of `tierThresholds`. Same pattern as the existing
+`minHealthFactor` → `minHealthFactorDisplay` and
+`vpfiStakingPoolCap` → `vpfiStakingPoolCapCompact` display
+helpers — the raw bigint stays available on the config object
+for any future math caller, but every UI surface goes through
+the pre-formatted variant.
+
+A wider audit caught the only three affected locations
+(grep for `Number(config.tierThresholds` etc. is now empty
+across the whole `frontend/src/` tree). The other wei-
+denominated config fields (`minHealthFactor`, the two pool
+caps) were already using their `*Display` / `*Compact`
+helpers so they rendered correctly all along.
+
+## CardInfo "Learn more →" anchors — pre-existing limitation noted
+
+Every CardInfo (i)-tooltip in the app surfaces a
+*Learn more →* external link to `/help/basic#<id>` or
+`/help/advanced#<id>` based on the active UI mode. The
+expectation was that each registered id would resolve to an
+`<a id="<id>"></a>` anchor inside the corresponding user-guide
+markdown — adding the (i) icon to a card without the doc
+content would just hide the icon, but with both in place the
+link would scroll to the right section of the guide.
+
+Audit today found that **none** of the 53 registered CardInfo
+ids actually have a matching `<a id>` anchor in either
+`docs/UserGuide-Basic.md` or `docs/UserGuide-Advanced.md` —
+both files have zero anchors total. So today every "Learn
+more →" link lands at the top of the user guide regardless
+of which card the user clicked from.
+
+Not a regression introduced by today's work — it's a pre-
+existing gap that today's audit happened to surface. The
+new dashboard *Your VPFI rewards* card inherits the same
+behavior. Adding the anchors across both user-guide files
+is a separate authorial pass scheduled later (the registry +
+id-routing infrastructure is already wired correctly; only
+the markdown content needs the inline anchor lines added).
+For visibility, the 53 currently unresolved ids are:
+
+```
+dashboard.your-escrow, dashboard.your-loans, dashboard.vpfi-panel,
+dashboard.fee-discount-consent, dashboard.rewards-summary,
+offer-book.filters, offer-book.your-active-offers,
+offer-book.lender-offers, offer-book.borrower-offers,
+create-offer.offer-type, create-offer.lending-asset,
+create-offer.nft-details, create-offer.collateral,
+create-offer.risk-disclosures, create-offer.advanced-options,
+claim-center.claims, refinance.overview,
+refinance.position-summary, refinance.step-1-post-offer,
+refinance.step-2-complete, preclose.overview,
+preclose.position-summary, preclose.in-progress,
+preclose.choose-path, early-withdrawal.overview,
+early-withdrawal.position-summary,
+early-withdrawal.initiate-sale, public-dashboard.overview,
+public-dashboard.combined, public-dashboard.per-chain,
+public-dashboard.vpfi-transparency, public-dashboard.transparency,
+keeper-settings.overview, keeper-settings.approved-list,
+nft-verifier.lookup, alerts.overview, alerts.threshold-ladder,
+alerts.delivery-channels, allowances.list, loan-details.overview,
+loan-details.terms, loan-details.collateral-risk,
+loan-details.parties, loan-details.actions, buy-vpfi.overview,
+buy-vpfi.discount-status, buy-vpfi.buy, buy-vpfi.deposit,
+buy-vpfi.unstake, rewards.overview, rewards.claim,
+rewards.withdraw-staked, activity.feed
+```
+
 ## Documentation convention
 
 Same as carried forward from prior files: every completed phase

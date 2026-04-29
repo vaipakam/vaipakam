@@ -408,6 +408,19 @@
     "nftId": "NFT #{{id}}",
     "nftIdQuantity": "{{qty}} × NFT #{{id}}"
   },
+  "rewardsSummary": {
+    "title": "내 VPFI 보상",
+    "totalEarnedLabel": "총 획득액",
+    "freshUserHint": "아직 획득한 VPFI 보상이 없습니다. 에스크로에 VPFI를 스테이킹하여 프로토콜 APR을 획득하거나, 대출을 받아 플랫폼 상호작용 리베이트를 누적하세요.",
+    "stakingTitle": "스테이킹 수익",
+    "stakingSubtitle": "에스크로에 있는 VPFI에서 프로토콜 APR을 획득합니다.",
+    "interactionTitle": "플랫폼 상호작용 보상",
+    "interactionSubtitle": "참여하는 모든 대출에 대해 매일 VPFI 지분을 획득합니다.",
+    "pendingLabel": "대기 중",
+    "claimedLabel": "청구됨",
+    "manageOnBuyVpfi": "Buy VPFI에서 스테이킹 관리",
+    "openClaimCenter": "Claim Center에서 청구"
+  },
   "stakingRewards": {
     "titleAvailable": "VPFI 스테이킹 보상 사용 가능",
     "titleEmpty": "VPFI 스테이킹 보상",
@@ -1394,6 +1407,7 @@
     "dashboardYourLoans": "연결된 지갑이 이 체인에서 참여하고 있는 모든 대출입니다 — 대여자, 차입자, 또는 양쪽 모두로서. 각 행은 HF, LTV, 담보, 상환 및 청구 컨트롤이 포함된 전체 포지션 페이지로 연결됩니다.",
     "dashboardVpfiPanel": "VPFI는 프로토콜 토큰입니다. 이 카드는 이 체인의 지갑 + 에스크로 잔액, 유통 공급량 대비 비중, 남은 발행 가능 한도를 보여줍니다. 정규 체인이 발행/소각하며, 미러 체인은 LayerZero OFT를 통해 잠금/해제합니다.",
     "dashboardFeeDiscountConsent": "프로토콜이 에스크로의 VPFI로 할인된 수수료를 지급하도록 옵트인합니다. 할인은 에스크로 VPFI 잔액에 따라 단계적으로 증가합니다: Tier 1 (≥{{tier1Min}} VPFI) 10%, Tier 2 (≥{{tier2Min}}) 15%, Tier 3 (≥{{tier3Min}}) 20%, Tier 4 (>{{tier4Min}}) 24%.",
+    "dashboardRewardsSummary": "두 가지 스트림에 걸친 VPFI 보상의 통합 보기: 스테이킹 수익 (에스크로 VPFI에 대한 {{apr}}% APR) 및 플랫폼 상호작용 보상 (참여하는 각 대출에 대한 일일 VPFI 지분). 행을 클릭하여 해당 페이지의 전체 청구 카드로 이동합니다.",
     "offerBookFilters": "아래 마켓 목록을 자산, 사이드, 상태 및 기타 조건으로 좁힙니다. 필터는 대여자 / 차입자 오퍼에 적용되며, 연결된 지갑 자신의 활성 오퍼(상단 표시)는 필터와 무관하게 항상 표시됩니다.",
     "offerBookYourActiveOffers": "연결된 지갑이 이 체인에서 생성했지만 아직 체결되지 않은 오퍼입니다. 누군가 수락하기 전이라면 언제든지 취소할 수 있으며, 수락된 후에는 대출 라이프사이클이 Dashboard의 \"Your Loans\"로 이동합니다.",
     "offerBookLenderOffers": "대여 준비가 된 대여자가 게시한 오퍼입니다. 차입자가 하나를 수락하면 대출이 시작됩니다: 차입자의 담보가 잠기고, 원금 자산이 차입자의 지갑에 도착하며, 상환까지 이자가 누적됩니다. 시작 시점에 HF는 ≥ 1.5여야 합니다.",

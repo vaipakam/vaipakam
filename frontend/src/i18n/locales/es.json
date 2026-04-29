@@ -408,6 +408,19 @@
     "nftId": "NFT #{{id}}",
     "nftIdQuantity": "{{qty}} × NFT #{{id}}"
   },
+  "rewardsSummary": {
+    "title": "Tus recompensas VPFI",
+    "totalEarnedLabel": "Total ganado",
+    "freshUserHint": "Aún no has ganado recompensas VPFI. Deposita VPFI en tu escrow para ganar el APR del protocolo, o toma un préstamo para empezar a acumular el rebate de interacción con la plataforma.",
+    "stakingTitle": "Rendimiento de staking",
+    "stakingSubtitle": "Gana el APR del protocolo sobre el VPFI en tu escrow.",
+    "interactionTitle": "Recompensas de interacción con la plataforma",
+    "interactionSubtitle": "Gana una porción diaria de VPFI por cada préstamo en el que participes.",
+    "pendingLabel": "Pendiente",
+    "claimedLabel": "Reclamado",
+    "manageOnBuyVpfi": "Gestionar staking en Buy VPFI",
+    "openClaimCenter": "Reclamar en Claim Center"
+  },
   "stakingRewards": {
     "titleAvailable": "Recompensas de staking VPFI disponibles",
     "titleEmpty": "Recompensas de staking VPFI",
@@ -1394,6 +1407,7 @@
     "dashboardYourLoans": "Cada préstamo del que la wallet conectada forma parte en esta cadena — como prestamista, prestatario o ambos. Cada fila enlaza con la página completa de la posición, con HF, LTV, colateral y los controles de pago y reclamación.",
     "dashboardVpfiPanel": "VPFI es el token del protocolo. Esta tarjeta muestra el saldo en wallet + escrow en esta cadena, la cuota del suministro circulante y el límite acuñable restante. La cadena canónica acuña/quema; las cadenas espejo bloquean/liberan mediante OFT de LayerZero.",
     "dashboardFeeDiscountConsent": "Aceptación voluntaria para que el protocolo pague comisiones descontadas en VPFI desde el escrow. El descuento escala con el saldo de VPFI en escrow: 10% en Tier 1 (≥{{tier1Min}} VPFI), 15% Tier 2 (≥{{tier2Min}}), 20% Tier 3 (≥{{tier3Min}}), 24% Tier 4 (>{{tier4Min}}).",
+    "dashboardRewardsSummary": "Vista combinada de tus recompensas VPFI en ambos flujos: rendimiento de staking ({{apr}}% APR sobre VPFI en escrow) y recompensas de interacción con la plataforma (porción diaria de VPFI por cada préstamo en el que participes). Haz clic en una fila para ir a la tarjeta de reclamación completa en la página correspondiente.",
     "offerBookFilters": "Reduce las listas de mercado de abajo por activo, lado, estado y otros criterios. Los filtros se aplican a las ofertas de prestamista / prestatario — las propias ofertas activas de la wallet conectada (mostradas arriba) siempre permanecen visibles.",
     "offerBookYourActiveOffers": "Ofertas que la wallet conectada creó en esta cadena y que aún no han sido aceptadas. Pueden cancelarse en cualquier momento antes de que alguien las acepte; una vez aceptadas, el ciclo del préstamo pasa a \"Tus préstamos\" en el Dashboard.",
     "offerBookLenderOffers": "Ofertas publicadas por prestamistas listos para prestar. Un prestatario que acepta una inicia un préstamo: el colateral del prestatario queda bloqueado, el activo principal llega a su wallet y los intereses se acumulan hasta el reembolso. El HF debe ser ≥ 1.5 al iniciarse.",

@@ -408,6 +408,19 @@
     "nftId": "NFT #{{id}}",
     "nftIdQuantity": "{{qty}} × NFT #{{id}}"
   },
+  "rewardsSummary": {
+    "title": "您的 VPFI 奖励",
+    "totalEarnedLabel": "总收益",
+    "freshUserHint": "您尚未获得任何 VPFI 奖励。将 VPFI 质押到您的托管账户以赚取协议 APR，或贷款开始累积平台交互返利。",
+    "stakingTitle": "质押收益",
+    "stakingSubtitle": "在您托管账户中的 VPFI 上赚取协议 APR。",
+    "interactionTitle": "平台交互奖励",
+    "interactionSubtitle": "为您参与的每笔贷款赚取每日 VPFI 份额。",
+    "pendingLabel": "待领取",
+    "claimedLabel": "已领取",
+    "manageOnBuyVpfi": "在 Buy VPFI 管理质押",
+    "openClaimCenter": "在 Claim Center 领取"
+  },
   "stakingRewards": {
     "titleAvailable": "VPFI 质押奖励可用",
     "titleEmpty": "VPFI 质押奖励",
@@ -1394,6 +1407,7 @@
     "dashboardYourLoans": "已连接钱包在本链上参与的所有贷款 — 作为出借方、借款方或两者皆是。每行链接到包含 HF、LTV、抵押品、还款及领取控件的完整仓位页面。",
     "dashboardVpfiPanel": "VPFI 是协议代币。本卡片显示本链上的钱包 + 托管余额、占流通供应量的份额以及剩余可铸造上限。Canonical 链负责 mint/burn；镜像链通过 LayerZero OFT 进行 lock/release。",
     "dashboardFeeDiscountConsent": "选择允许协议从托管中以 VPFI 支付折扣手续费。折扣随托管 VPFI 余额按等级递增：Tier 1 (≥{{tier1Min}} VPFI) 10%、Tier 2 (≥{{tier2Min}}) 15%、Tier 3 (≥{{tier3Min}}) 20%、Tier 4 (>{{tier4Min}}) 24%。",
+    "dashboardRewardsSummary": "您在两个流中的 VPFI 奖励的合并视图：质押收益（托管 VPFI 上的 {{apr}}% APR）和平台交互奖励（您参与的每笔贷款的每日 VPFI 份额）。单击一行以跳转到相应页面上的完整领取卡。",
     "offerBookFilters": "按资产、方向、状态及其他条件筛选下方的市场列表。筛选作用于出借方 / 借款方报价 — 已连接钱包自身的活跃报价（位于上方）始终保持可见，不受筛选影响。",
     "offerBookYourActiveOffers": "已连接钱包在本链上创建且尚未被接受的报价。在被任何人接受之前可随时取消；一旦被接受，贷款生命周期将转入 Dashboard 中的「您的贷款」。",
     "offerBookLenderOffers": "由准备出借的出借方发布的报价。借款方接受其中之一即开启贷款：借款方的抵押品被锁定，本金资产送达借款方钱包，利息累积至偿还为止。开启时 HF 必须 ≥ 1.5。",

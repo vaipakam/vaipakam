@@ -368,17 +368,21 @@ export function useVpfiTierTable(): ReadonlyArray<VpfiTierRow> {
   const { config } = useProtocolConfig();
   return useMemo<ReadonlyArray<VpfiTierRow>>(() => {
     if (!config) return [];
-    const t = config.tierThresholds;
+    const t = config.tierThresholdsTokens;
     const d = config.tierDiscountBps;
-    // `tierThresholds` is the inclusive minimum VPFI (whole tokens) for
-    // entering each tier. The previous static table used a `0.000001`
-    // gap between tiers (e.g. T1 max = 999.999999, T2 min = 1000) so
-    // ranges read continuously without overlap; preserve that.
+    // `tierThresholdsTokens` is the inclusive minimum VPFI (whole tokens)
+    // for entering each tier — already divided down from the on-chain
+    // wei representation by `useProtocolConfig` so we don't render an
+    // 18-decimal-too-large number here.
+    //
+    // The previous static table used a `0.000001` gap between tiers
+    // (e.g. T1 max = 999.999999, T2 min = 1000) so ranges read
+    // continuously without overlap; preserve that.
     const epsilon = 0.000001;
-    const tier1Min = Number(t[0]);
-    const tier2Min = Number(t[1]);
-    const tier3Min = Number(t[2]);
-    const tier4Min = Number(t[3]);
+    const tier1Min = t[0];
+    const tier2Min = t[1];
+    const tier3Min = t[2];
+    const tier4Min = t[3];
     const fmtPct = (bps: number) => `${bps % 100 === 0 ? bps / 100 : (bps / 100).toFixed(2).replace(/\.?0+$/, '')}% off`;
     return [
       {

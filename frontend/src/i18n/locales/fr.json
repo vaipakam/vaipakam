@@ -408,6 +408,19 @@
     "nftId": "NFT #{{id}}",
     "nftIdQuantity": "{{qty}} × NFT #{{id}}"
   },
+  "rewardsSummary": {
+    "title": "Vos récompenses VPFI",
+    "totalEarnedLabel": "Total gagné",
+    "freshUserHint": "Vous n'avez pas encore gagné de récompenses VPFI. Déposez du VPFI dans votre escrow pour gagner l'APR du protocole, ou prenez un prêt pour commencer à accumuler le rabais d'interaction avec la plateforme.",
+    "stakingTitle": "Rendement du staking",
+    "stakingSubtitle": "Gagnez l'APR du protocole sur le VPFI de votre escrow.",
+    "interactionTitle": "Récompenses d'interaction avec la plateforme",
+    "interactionSubtitle": "Gagnez une part quotidienne de VPFI pour chaque prêt auquel vous participez.",
+    "pendingLabel": "En attente",
+    "claimedLabel": "Réclamé",
+    "manageOnBuyVpfi": "Gérer le staking sur Buy VPFI",
+    "openClaimCenter": "Réclamer dans le Claim Center"
+  },
   "stakingRewards": {
     "titleAvailable": "Récompenses de staking VPFI disponibles",
     "titleEmpty": "Récompenses de staking VPFI",
@@ -1394,6 +1407,7 @@
     "dashboardYourLoans": "Chaque prêt auquel le wallet connecté participe sur cette chaîne — en tant que prêteur, emprunteur ou les deux. Chaque ligne renvoie à la page complète de la position, avec HF, LTV, collatéral et les contrôles de remboursement et de réclamation.",
     "dashboardVpfiPanel": "VPFI est le token du protocole. Cette carte affiche le solde wallet + escrow sur cette chaîne, la part de l'offre en circulation et le plafond mintable restant. La chaîne canonique mint/burn ; les chaînes miroirs verrouillent/libèrent via l'OFT LayerZero.",
     "dashboardFeeDiscountConsent": "Opt-in pour que le protocole paie les frais escomptés en VPFI depuis l'escrow. La remise évolue avec le solde VPFI en escrow : 10% au Tier 1 (≥{{tier1Min}} VPFI), 15% Tier 2 (≥{{tier2Min}}), 20% Tier 3 (≥{{tier3Min}}), 24% Tier 4 (>{{tier4Min}}).",
+    "dashboardRewardsSummary": "Vue combinée de vos récompenses VPFI sur les deux flux : rendement du staking ({{apr}}% APR sur le VPFI en escrow) et récompenses d'interaction avec la plateforme (part quotidienne de VPFI pour chaque prêt auquel vous participez). Cliquez sur une ligne pour aller à la carte de réclamation complète sur la page correspondante.",
     "offerBookFilters": "Restreint les listes du marché ci-dessous par actif, côté, statut et autres critères. Les filtres s'appliquent aux offres prêteur / emprunteur — les offres actives propres au wallet connecté (montrées au-dessus) restent toujours visibles.",
     "offerBookYourActiveOffers": "Offres créées par le wallet connecté sur cette chaîne et qui n'ont pas encore été acceptées. Annulables à tout moment avant qu'elles ne soient acceptées ; une fois acceptées, le cycle du prêt passe dans « Vos prêts » sur le Dashboard.",
     "offerBookLenderOffers": "Offres publiées par des prêteurs prêts à prêter. Un emprunteur qui en accepte une initie un prêt : le collatéral de l'emprunteur est verrouillé, l'actif principal arrive dans son wallet et les intérêts s'accumulent jusqu'au remboursement. Le HF doit être ≥ 1.5 à l'initiation.",

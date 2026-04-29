@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Activity, CheckCircle, ChevronDown, ChevronRight, ExternalLink } from 'lucide-react';
 import { L as Link } from '../L';
@@ -8,7 +8,7 @@ import {
   useInteractionRewardEntries,
   type InteractionRewardEntry,
 } from '../../hooks/useInteractionRewardEntries';
-import { useLogIndex } from '../../hooks/useLogIndex';
+import { useRewardsClaimedHistory } from '../../hooks/useRewardsClaimedHistory';
 import { decodeContractError } from '../../lib/decodeContractError';
 import { beginStep } from '../../lib/journeyLog';
 import { TokenAmount } from './TokenAmount';
@@ -42,23 +42,12 @@ export function InteractionRewardsClaim({ address, chainId, blockExplorer }: Pro
   const { pending, finalizedPrefix, waitingForDay, stale, reload, loading } =
     useInteractionRewards(address ?? null);
   const { entries, reload: reloadEntries } = useInteractionRewardEntries(address ?? null);
-  // Lifetime claimed VPFI is summed from `InteractionRewardsClaimed`
-  // events in the log-index — no on-chain getter exists for that
-  // running total, but the events carry the full history. Filter to
-  // events touching the connected wallet.
-  const { events } = useLogIndex();
-  const lifetimeClaimed = useMemo(() => {
-    if (!address) return 0n;
-    const me = address.toLowerCase();
-    let sum = 0n;
-    for (const ev of events) {
-      if (ev.kind !== 'InteractionRewardsClaimed') continue;
-      if (typeof ev.args.user !== 'string' || ev.args.user !== me) continue;
-      if (typeof ev.args.amount !== 'string') continue;
-      try { sum += BigInt(ev.args.amount); } catch { /* skip malformed */ }
-    }
-    return sum;
-  }, [events, address]);
+  // Lifetime claimed VPFI — derived from the shared
+  // `useRewardsClaimedHistory` hook so this card, StakingRewardsClaim
+  // on Buy VPFI, and the new RewardsSummaryCard on Dashboard all
+  // agree on the running total. See that hook's docstring for the
+  // log-index scan + partial-cache caveat.
+  const { interactionLifetimeClaimed: lifetimeClaimed } = useRewardsClaimedHistory(address);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [txHash, setTxHash] = useState<string | null>(null);
@@ -107,6 +96,9 @@ export function InteractionRewardsClaim({ address, chainId, blockExplorer }: Pro
   return (
     <div
       className="card"
+      // `id` doubles as the deep-link anchor target the Dashboard
+      // RewardsSummaryCard scrolls to via `/app/claims#interaction-rewards`.
+      id="interaction-rewards"
       style={{
         marginBottom: 16,
         borderColor: 'var(--brand)',

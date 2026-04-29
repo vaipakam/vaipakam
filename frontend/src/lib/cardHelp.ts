@@ -68,6 +68,10 @@ export const CARD_HELP: Record<string, CardHelpEntry> = {
     summary: "cardHelp.dashboardFeeDiscountConsent",
     learnMoreHref: `${TOKENOMICS}#6-fee-discounts-and-vpfi-utility`,
   },
+  "dashboard.rewards-summary": {
+    summary: "cardHelp.dashboardRewardsSummary",
+    learnMoreHref: `${TOKENOMICS}#7-rewards`,
+  },
 
   // ── Offer Book ─────────────────────────────────────────────────────────
   "offer-book.filters": {
