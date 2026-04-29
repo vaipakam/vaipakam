@@ -51,6 +51,7 @@ Public-navigation requirements:
 - the `Buy VPFI` link from the home page must resolve to the working public purchase route `/buy-vpfi`
 - public navigation should expose a `VPFI` group with direct entries for `Buy`, `Stake`, and `Unstake`, each deep-linking into the relevant section of the public `Buy VPFI` page
 - app-shell links to public-only experiences such as `Buy VPFI` and `NFT Verifier` should open in a new tab and use an external-link affordance so users understand they are leaving the connected-app shell
+- public-shell pages that sit below the fixed Navbar, including `Analytics`, `NFT Verifier`, `Buy VPFI`, `Terms`, and `Privacy`, must include enough top clearance that their headings never render under the Navbar
 - the footer should expose `Terms`, `Privacy`, `Cookie settings`, and, once published, the public bug bounty program link
 
 PWA requirements:
@@ -103,6 +104,7 @@ Legal and data-rights requirements:
 This section will later define:
 
 - dashboard
+- dashboard consolidation of user-owned state: active loans, active offers, fee-discount consent, VPFI discount tier, staking-rewards mirror, and claimable terminal-state shortcuts
 - VPFI token transparency, escrow-staking, and fee-discount surfaces in Phase 1, with broader governance UI reserved for Phase 2
 - multi-network connected-app behavior for the separate Phase 1 Diamond deployments on `Base`, `Polygon`, `Arbitrum`, `Optimism`, and `Ethereum mainnet`
 - create offer flows
@@ -110,6 +112,18 @@ This section will later define:
 - repayment and claim flows
 - liquidation and warning states
 - preclose, refinance, and lender early-withdrawal flows
+- loan details timelines, claim readiness, and lifecycle-event breakdowns
+
+Current connected-app surface expectations:
+
+- `Dashboard` is the user's "your stuff" surface: it should include active loans with Role / Status filters, pagination, sortable columns, a most-recent-first default sort, active offers, the shared VPFI fee-discount consent, discount status, and a green `Claim` CTA for terminal loans with unclaimed funds
+- `Offer Book` should keep market browsing filterable by side, asset, status, liquidity, duration, and per-side count; market-rate annotations should use a filter-scoped recent-acceptance anchor with signed deltas and a mobile-friendly explanatory tooltip
+- `Create Offer` should disable submit until full form validation passes, with typed validator error codes mapped through i18n, and should show token-identification trust blocks under address fields so users can distinguish canonical assets from unknown or suspicious contracts
+- `Loan Details` should show the live loan state, role-gated actions, a chronological on-chain timeline, claimable-state action bar, and precise event breakdowns for settlement splits, fallback collateral allocations, partial repayments, swap retries, and VPFI rebates
+- `Activity` rows that reference a loan should use a clickable `Loan #X` pill linking to that loan's full details page
+- `Claim Center` is the home for loan claims and platform-interaction rewards; the former standalone in-app `Rewards` page should not be treated as a live route
+- `Buy VPFI` is the public home for buying, staking / depositing, unstaking / withdrawing, staking-rewards claims, and chain-level VPFI transparency
+- the app's issue drawer should be labelled as `Report Issue` / `Issue Details`, not `Diagnostics`, and should generate a redacted report suitable for GitHub issue filing
 
 Transaction-safety and single-signature flows:
 
@@ -157,6 +171,7 @@ Borrower VPFI discount UX:
 - the UI should then guide and facilitate a separate explicit user-intent action to move or deposit that wallet-held VPFI into the user's personal escrow for staking / discount eligibility
 - staking should be messaged as open to any VPFI holder, not only borrowers or users with an existing loan; first deposit should make clear that the user escrow can be created automatically
 - the public page should label the escrow action as `Deposit / Stake VPFI` and the reverse action as `Withdraw / Unstake VPFI`
+- the `Deposit / Stake` card should contain the canonical open-staking explanation in one user-friendly Info callout; duplicate page-level or step-subtitle copies should be avoided
 - the Phase 1 `30,000 VPFI` user cap is a per-chain cap, not a protocol-wide global cap across all chains
 - VPFI deposited / staked in escrow on one chain should count only toward fee-discount tiers for loans initiated on that same chain
 - the UI should expose a single common platform-level user setting for consenting to the use of escrowed VPFI for fee discounts
@@ -185,12 +200,14 @@ Reward-claiming UX:
 - no cross-chain messaging or mandatory network switching should be required during the claim flow itself
 - the user's escrowed VPFI balance on that chain should be treated as the staked balance for reward purposes
 - if the user wants to move claimed VPFI elsewhere afterward, bridging should remain optional
-- the connected app should provide a dedicated `Rewards` page for VPFI reward management
-- the `Rewards` page should show a prominent `Claim Rewards` action whenever the user has pending rewards on the currently connected chain
-- when the user chooses `Claim Rewards`, the UI should:
-  - display a clear breakdown of pending `Staking Rewards` and `Platform Interaction Rewards`
-  - show the total VPFI that will be minted
-  - confirm that the rewards will be minted directly on the current chain
+- reward surfaces should be split by user intent rather than combined into one `Rewards` page:
+  - `Staking Rewards` should be claimed from the `Buy VPFI` page's `Deposit / Stake` card, with a compact mirror on Dashboard discount status
+  - `Platform Interaction Rewards` should be claimed from Claim Center above the per-loan claim rows
+- the old `/app/rewards` route and sidebar entry should remain retired unless a later approved design reintroduces a combined rewards hub
+- staking-rewards cards should show pending VPFI, lifetime claimed VPFI reconstructed from `StakingRewardsClaimed` events, and neutral chrome when pending is zero
+- interaction-rewards cards should show pending VPFI, lifetime claimed VPFI reconstructed from `InteractionRewardsClaimed` events, and an expandable `Contributing loans` list
+- contributing-loan rows should link to Loan Details and describe the user's USD-denominated participation contribution, not pretend that a precise per-loan VPFI amount exists
+- when a global interaction-reward denominator has not yet been broadcast to the local chain, the Claim Center should show a waiting state for that day rather than offering a transaction that would revert
 - after a successful claim, the UI should:
   - show a success state with the exact amount claimed
   - refresh wallet balance and escrow balance in real time
@@ -205,7 +222,7 @@ Reward-claiming UX:
 Unstaking VPFI:
 
 - because VPFI held in user escrow is automatically treated as staked, users should be able to unstake by moving VPFI from escrow back to their wallet on the same chain
-- the UI should provide a clear and prominent `Unstake VPFI` action on the dedicated `Rewards` page
+- the UI should provide a clear and prominent `Withdraw / Unstake VPFI` action on the public `Buy VPFI` page
 - the unstake action should show the user's current escrowed VPFI balance and the maximum amount available to unstake
 - when the user selects `Unstake VPFI`, the UI should:
   - show a simple amount-entry form
@@ -262,6 +279,9 @@ Governance-configuration visibility:
 - this effective discount may be computed client-side by extrapolating the open-loan window against on-chain discount-curve data
 - the frontend should expose a shared hook for reading the protocol fallback-split configuration
 - fallback-split data should be available as lender / borrower split values so pages can read it without custom one-off contract calls
+- user-facing constants, thresholds, and percentages should flow from live protocol config reads rather than hardcoded locale strings where they can change through governance or redeploy
+- `useProtocolConfig` should read both mutable config and compile-time constants exposed by the Diamond, and reusable info components should inject common placeholders such as treasury fee, LIF, staking APR, tier thresholds, max slippage, and min Health Factor into translated tooltip copy
+- tier tables, rental-buffer math, and validation copy should derive from live config where possible, so governance changes appear on next page load without a frontend redeploy
 
 Foundational frontend migration requirements:
 

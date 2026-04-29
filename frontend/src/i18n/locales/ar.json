@@ -106,6 +106,7 @@
     "yourEscrow": "Escrow الخاص بك",
     "escrowAddress": "عنوان Escrow",
     "yourLoans": "قروضك",
+    "yourOffers": "عروضك",
     "newOffer": "عرض جديد",
     "loadingPositions": "جارٍ تحميل مراكزك…",
     "noLoansYet": "لا توجد قروض بعد",
@@ -678,6 +679,7 @@
     "colType": "النوع",
     "colAsset": "الأصل",
     "colAmount": "المبلغ",
+    "colPrincipal": "الأصل",
     "colRate": "المعدل",
     "rateDeltaTipAria": "حول مؤشر الفرق في المعدل",
     "rateDeltaTipBody": "الرقم بين القوسين يوضح مدى بُعد معدل هذا العرض عن مرساة السوق — معدل أحدث عرض مقبول مطابق للمرشحات الحالية. ‎+X%‎ يعني أعلى من السوق (اقتراض أغلى / إقراض أكثر ربحاً)؛ ‎−X%‎ يعني أقل من السوق. يظهر هذا المؤشر فقط عند توفر مرساة للمرشحات الحالية.",
@@ -685,6 +687,7 @@
     "colCollateral": "الضمان",
     "colLiquidity": "السيولة",
     "filled": "مُنفّذ",
+    "linkedLoan": "القرض #{{id}}",
     "yourOffer": "عرضك",
     "manageKeepers": "إدارة Keepers ←",
     "accept": "قبول",
@@ -692,6 +695,27 @@
     "confirmAndAccept": "تأكيد وقبول",
     "acceptingDots": "جارٍ القبول…"
   },
+    "principalCell": {
+      "nftId": "NFT #{{id}}",
+      "nftIdQuantity": "{{qty}} × NFT #{{id}}",
+      "openOnExplorer": "فتح NFT في مستكشف البلوكشين"
+    },
+    "myOffersTable": {
+      "empty": "لا توجد عروض في هذا العرض بعد.",
+      "subtitle": "{{count}} معروض",
+      "colStatus": "الحالة",
+      "statusFilter": "الحالة",
+      "statusActive": "نشط",
+      "statusFilled": "مكتمل",
+      "statusCancelled": "ملغى",
+      "cancelledTooltip": "العروض الملغاة لا تحتفظ بالتفاصيل المالية على البلوكشين — فقط معرف العرض والجانب يُحتفظ بهما.",
+      "manageKeepersTooltip": "تفعيل keepers محددة لتشغيل هذا العرض عبر صفحة Keeper Settings.",
+      "cancelTooltip": "سحب العرض وإعادة الأصل / الضمان المقفل إلى حسابك المضمون.",
+      "cancel": "إلغاء",
+      "cancelling": "جاري الإلغاء…",
+      "assetTypeLegend": "أنواع الأصول: {{kinds}}"
+    },
+
   "hero": {
     "brand": "Vaipakam",
     "titleLine1": "إقراض من نظير إلى نظير",

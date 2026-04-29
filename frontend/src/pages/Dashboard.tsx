@@ -2,11 +2,11 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { L as Link } from '../components/L';
 import { useTranslation } from 'react-i18next';
 import { useWallet } from '../context/WalletContext';
-import { useDiamondRead } from '../contracts/useDiamond';
+import { useDiamondContract, useDiamondRead } from '../contracts/useDiamond';
 import { useUserLoans } from '../hooks/useUserLoans';
-import { useMyActiveOffers } from '../hooks/useMyActiveOffers';
+import { useMyOffers, type MyOfferStatus } from '../hooks/useMyOffers';
 import { useClaimables } from '../hooks/useClaimables';
-import { OfferTable } from './OfferBook';
+import { MyOffersTable } from '../components/app/MyOffersTable';
 import { useLoanRisks, type LoanRisk } from '../hooks/useLoanRisks';
 import { LoanStatus, LOAN_STATUS_LABELS } from '../types/loan';
 import {
@@ -22,8 +22,7 @@ import {
   ChevronsUpDown,
 } from 'lucide-react';
 import { DEFAULT_CHAIN } from '../contracts/config';
-import { AssetSymbol } from '../components/app/AssetSymbol';
-import { TokenAmount } from '../components/app/TokenAmount';
+import { PrincipalCell } from '../components/app/PrincipalCell';
 import { bpsToPercent } from '../lib/format';
 import { HealthFactorGauge, LTVBar } from '../components/app/RiskGauge';
 import VPFIDiscountConsentCard from '../components/app/VPFIDiscountConsentCard';
@@ -58,9 +57,12 @@ export default function Dashboard() {
   const { t } = useTranslation();
   const { address, activeChain } = useWallet();
   const diamond = useDiamondRead();
+  const diamondWrite = useDiamondContract();
   const { loans, loading } = useUserLoans(address);
-  const { offers: myActiveOffers } = useMyActiveOffers(address);
+  const [myOfferStatus, setMyOfferStatus] = useState<MyOfferStatus>('active');
+  const { rows: myOfferRows } = useMyOffers(address, myOfferStatus);
   const { claims: unclaimed } = useClaimables(address);
+  const [cancellingOfferId, setCancellingOfferId] = useState<bigint | null>(null);
   // Set of loanIds (decimal string) where the connected wallet has at least
   // one actionable claim (lender or borrower side). Drives the inline
   // "Claim" CTA rendered next to "View" on each terminal-status loan row.
@@ -299,23 +301,72 @@ export default function Dashboard() {
           component renders the user's own row with a "Your offer"
           badge + "Manage keepers" link instead of an Accept button,
           so no extra wiring is needed for the cancel / manage flows. */}
-      {address && myActiveOffers.length > 0 && (
-        <OfferTable
-          title={t('offerBook.yourActiveOffers')}
-          subtitle={`${myActiveOffers.length} ${t('offerBook.tabOpen').toLowerCase()}`}
-          offers={myActiveOffers}
-          anchorRateBps={null}
-          address={address}
-          acceptingId={null}
-          onAccept={() => { /* no-op — own offers can't be accepted */ }}
-          statusView="open"
-          cardHelpId="offer-book.your-active-offers"
-          headerAction={
-            <Link to="/app/create-offer" className="btn btn-primary btn-sm">
-              <PlusCircle size={16} /> {t('dashboard.newOffer')}
-            </Link>
-          }
-        />
+      {/* Your Offers — connected wallet's offers in three lifecycle
+          states (active / filled / cancelled / all). Replaces the
+          previous "Your Active Offers" card; the new chip filter
+          surfaces cancelled offers (which previously had no UI home)
+          and filled offers (with an inline `Loan #N` link to the loan
+          they became). */}
+      {address && (
+        <div style={{ marginTop: 16 }}>
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8,
+              flexWrap: 'wrap',
+              marginBottom: 8,
+            }}
+          >
+            <Picker<MyOfferStatus>
+              icon={<ListOrdered size={14} />}
+              ariaLabel={t('myOffersTable.statusFilter')}
+              triggerPrefix={t('myOffersTable.statusFilter')}
+              value={myOfferStatus}
+              onSelect={setMyOfferStatus}
+              minWidth={170}
+              items={[
+                { value: 'active', label: t('myOffersTable.statusActive') },
+                { value: 'filled', label: t('myOffersTable.statusFilled') },
+                { value: 'cancelled', label: t('myOffersTable.statusCancelled') },
+                { value: 'all', label: t('common.all') },
+              ]}
+            />
+          </div>
+          <MyOffersTable
+            rows={myOfferRows}
+            onCancel={async (offerId) => {
+              if (cancellingOfferId !== null) return;
+              setCancellingOfferId(offerId);
+              try {
+                const tx = await diamondWrite.cancelOffer(offerId);
+                await tx.wait();
+              } catch (err) {
+                // Surface failures via the global error toast surface
+                // — `console.error` is a placeholder; the existing
+                // `<ErrorAlert>` infra used in OfferBook is per-page
+                // and not lifted to Dashboard yet. A user-visible
+                // failure here is rare in practice (the only typed
+                // revert is OfferAlreadyAccepted, which races a
+                // concurrent acceptOffer — uncommon).
+                // eslint-disable-next-line no-console
+                console.error('cancelOffer failed:', err);
+              } finally {
+                setCancellingOfferId(null);
+              }
+            }}
+            cancellingId={cancellingOfferId}
+            blockExplorer={activeChain?.blockExplorer ?? DEFAULT_CHAIN.blockExplorer}
+            title={t('dashboard.yourOffers')}
+            subtitle={t('myOffersTable.subtitle', { count: myOfferRows.length })}
+            cardHelpId="offer-book.your-active-offers"
+            headerAction={
+              <Link to="/app/create-offer" className="btn btn-primary btn-sm">
+                <PlusCircle size={16} /> {t('dashboard.newOffer')}
+              </Link>
+            }
+          />
+        </div>
       )}
 
       {/* Active loans */}
@@ -367,12 +418,12 @@ export default function Dashboard() {
                 pill: n === DEFAULT_PAGE_SIZE ? 'default' : undefined,
               }))}
             />
-            {/* The "New Offer" CTA used to live here; it now sits in the
-                Your Active Offers card header (above) when the user has
-                open offers. When the user has no open offers we keep
-                the CTA here so someone with no listings yet still has
-                a one-click path to creating their first one. */}
-            {(!address || myActiveOffers.length === 0) && (
+            {/* The "New Offer" CTA on this row only renders for
+                disconnected users — once connected the Your Offers
+                card directly above always renders (with its own
+                "+ New Offer" header action), so a duplicate here
+                would just be visual noise. */}
+            {!address && (
               <Link to="/app/create-offer" className="btn btn-primary btn-sm">
                 <PlusCircle size={16} /> {t('dashboard.newOffer')}
               </Link>
@@ -431,7 +482,20 @@ export default function Dashboard() {
               <tbody>
                 {pagedLoans.map((loan) => (
                   <tr key={loan.id.toString()}>
-                    <td>#{loan.id.toString()}</td>
+                    <td>
+                      {/* Loan id doubles as a deep-link to the loan
+                          details page. The "View" button still lives in
+                          the last column for users who scroll, but on
+                          a wide table the leftmost cell is what users
+                          read first; making it the click target removes
+                          the hidden-action problem on narrow viewports. */}
+                      <Link
+                        to={`/app/loans/${loan.id.toString()}`}
+                        style={{ color: 'var(--brand)', textDecoration: 'none' }}
+                      >
+                        #{loan.id.toString()}
+                      </Link>
+                    </td>
                     <td>
                       <span className={`status-badge ${loan.role}`}>
                         {loan.role === 'lender' ? t('common.lender') : t('common.borrower')}
@@ -449,9 +513,19 @@ export default function Dashboard() {
                         <ExternalLink size={12} />
                       </Link>
                     </td>
-                    <td className="mono">
-                      <TokenAmount amount={loan.principal} address={loan.principalAsset} />{' '}
-                      <span className="asset-addr"><AssetSymbol address={loan.principalAsset} /></span>
+                    <td>
+                      {/* Unified principal renderer — handles ERC20
+                          (amount + symbol), ERC721 (`NFT #N` + collection),
+                          and ERC1155 (`Q × NFT #N`). For NFT principals
+                          (rental loans) the explorer's NFT-page viewer
+                          link surfaces inline. */}
+                      <PrincipalCell
+                        assetType={loan.assetType}
+                        asset={loan.principalAsset}
+                        amount={loan.principal}
+                        tokenId={loan.principalTokenId}
+                        blockExplorer={activeChain?.blockExplorer ?? DEFAULT_CHAIN.blockExplorer}
+                      />
                     </td>
                     <td>{bpsToPercent(loan.interestRateBps)}</td>
                     <td>{loan.durationDays.toString()} days</td>

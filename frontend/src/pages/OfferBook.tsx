@@ -24,6 +24,7 @@ import { useProtocolConfig, type ProtocolConfig } from '../hooks/useProtocolConf
 import { AssetSymbol } from '../components/app/AssetSymbol';
 import { AssetPicker } from '../components/app/AssetPicker';
 import { TokenAmount } from '../components/app/TokenAmount';
+import { PrincipalCell } from '../components/app/PrincipalCell';
 import { bpsToPercent } from '../lib/format';
 import { batchCalls, encodeBatchCalls } from '../lib/multicall';
 import { AddressDisplay } from '../components/app/AddressDisplay';
@@ -168,7 +169,23 @@ export default function OfferBook() {
   // Used to target multicalls and build explorer links at the Diamond the
   // user's reads are actually hitting, instead of hard-coding DEFAULT_CHAIN.
   const activeReadChain = useReadChain();
-  const { openOfferIds, closedOfferIds, recentAcceptedOfferIds, loading: indexLoading, reload: reloadIndex } = useLogIndex();
+  const { openOfferIds, closedOfferIds, recentAcceptedOfferIds, events: indexEvents, loading: indexLoading, reload: reloadIndex } = useLogIndex();
+  // Map<offerId, loanId> derived from `OfferAccepted` events in the
+  // log-index. Each accepted offer's event carries its resulting loanId,
+  // so we can render an inline `Loan #N →` link next to the Filled pill
+  // in the Closed view without any extra RPC. Cancelled offers are
+  // absent from this map (only OfferAccepted populates it), so the link
+  // never appears for cancelled rows.
+  const offerToLoan = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const ev of indexEvents) {
+      if (ev.kind !== 'OfferAccepted') continue;
+      if (typeof ev.args.offerId !== 'string') continue;
+      if (typeof ev.args.loanId !== 'string') continue;
+      m.set(ev.args.offerId, ev.args.loanId);
+    }
+    return m;
+  }, [indexEvents]);
   const { config: protocolConfig } = useProtocolConfig();
 
   const [statusView, setStatusView] = useState<StatusView>('open');
@@ -956,6 +973,7 @@ export default function OfferBook() {
                 acceptingId={acceptingId}
                 onAccept={handleAcceptOffer}
                 statusView={statusView}
+                offerToLoan={offerToLoan}
                 cardHelpId="offer-book.lender-offers"
               />
               {tab === 'lender' && totalLender > perSide && (
@@ -994,6 +1012,7 @@ export default function OfferBook() {
                 acceptingId={acceptingId}
                 onAccept={handleAcceptOffer}
                 statusView={statusView}
+                offerToLoan={offerToLoan}
                 cardHelpId="offer-book.borrower-offers"
               />
               {tab === 'borrower' && totalBorrower > perSide && (
@@ -1499,6 +1518,13 @@ interface OfferTableProps {
   acceptingId: bigint | null;
   onAccept: (id: bigint) => void;
   statusView: StatusView;
+  /** Map of `offerId → loanId` (both decimal strings) derived from the
+   *  log-index `OfferAccepted` events. When the Closed view renders a
+   *  filled offer, it looks up the resulting loan id here and renders
+   *  an inline `Loan #N` link next to the Filled pill. Absent / undefined
+   *  → no loan link, just the pill (graceful degradation while the log-
+   *  index is still backfilling). */
+  offerToLoan?: Map<string, string>;
   /** Optional registry id (`offer-book.lender-offers` etc.) — when
    *  provided, an inline `<CardInfo>` (i) icon renders next to the
    *  title with the matching summary + Learn-more link. */
@@ -1510,7 +1536,7 @@ interface OfferTableProps {
   headerAction?: ReactNode;
 }
 
-export function OfferTable({ title, subtitle, offers, anchorRateBps, address, acceptingId, onAccept, statusView, cardHelpId, headerAction }: OfferTableProps) {
+export function OfferTable({ title, subtitle, offers, anchorRateBps, address, acceptingId, onAccept, statusView, offerToLoan, cardHelpId, headerAction }: OfferTableProps) {
   const { t } = useTranslation();
   return (
     <div className="card" style={{ marginTop: 16 }}>
@@ -1533,8 +1559,13 @@ export function OfferTable({ title, subtitle, offers, anchorRateBps, address, ac
               <tr>
                 <th>{t('offerTable.colId')}</th>
                 <th>{t('offerTable.colType')}</th>
-                <th>{t('offerTable.colAsset')}</th>
-                <th>{t('offerTable.colAmount')}</th>
+                {/* Asset + Amount merged into a single Principal column
+                    via `<PrincipalCell>` so the row reads consistently
+                    with Your Loans (which already uses this layout for
+                    its principal column). NFT rows render as
+                    `NFT #42` + collection symbol with an inline link to
+                    the explorer's NFT-page viewer. */}
+                <th>{t('offerTable.colPrincipal')}</th>
                 <th>
                   <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
                     {t('offerTable.colRate')}
@@ -1569,12 +1600,13 @@ export function OfferTable({ title, subtitle, offers, anchorRateBps, address, ac
                       </span>
                     </td>
                     <td>
-                      <div>
-                        <span className="mono">{ASSET_TYPE_LABELS[offer.assetType]}</span>
-                        <div className="asset-addr"><AssetSymbol address={offer.lendingAsset} /></div>
-                      </div>
+                      <PrincipalCell
+                        assetType={offer.assetType}
+                        asset={offer.lendingAsset}
+                        amount={offer.amount}
+                        tokenId={offer.tokenId}
+                      />
                     </td>
-                    <td className="mono"><TokenAmount amount={offer.amount} address={offer.lendingAsset} /></td>
                     <td>
                       {bpsToPercent(offer.interestRateBps)}
                       {signedDelta !== null && signedDelta !== 0n && (
@@ -1604,7 +1636,28 @@ export function OfferTable({ title, subtitle, offers, anchorRateBps, address, ac
                     </td>
                     <td>
                       {statusView === 'closed' ? (
-                        <span className="status-badge settled">{t('offerTable.filled')}</span>
+                        // Filled offers show the resulting loan id inline
+                        // next to the pill so the user can jump straight
+                        // to the loan that this offer became. Loan id
+                        // comes from the `OfferAccepted` event in the
+                        // log-index; if the index hasn't yet seen the
+                        // event the link is omitted gracefully.
+                        (() => {
+                          const loanIdStr = offerToLoan?.get(offer.id.toString());
+                          return (
+                            <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                              <span className="status-badge settled">{t('offerTable.filled')}</span>
+                              {loanIdStr && (
+                                <Link
+                                  to={`/app/loans/${loanIdStr}`}
+                                  style={{ fontSize: '0.78rem', color: 'var(--brand)' }}
+                                >
+                                  {t('offerTable.linkedLoan', { id: loanIdStr })}
+                                </Link>
+                              )}
+                            </div>
+                          );
+                        })()
                       ) : isOwn ? (
                         // Phase 6: Offer creator sees Your-Offer badge + a
                         // "Manage keepers" deep-link. Per-keeper enables for

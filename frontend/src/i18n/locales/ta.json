@@ -106,6 +106,7 @@
     "yourEscrow": "உங்கள் Escrow",
     "escrowAddress": "Escrow முகவரி",
     "yourLoans": "உங்கள் கடன்கள்",
+    "yourOffers": "உங்கள் சலுகைகள்",
     "newOffer": "புதிய வாய்ப்பு",
     "loadingPositions": "உங்கள் நிலைகள் ஏற்றப்படுகின்றன…",
     "noLoansYet": "இன்னும் கடன்கள் இல்லை",
@@ -678,6 +679,7 @@
     "colType": "வகை",
     "colAsset": "சொத்து",
     "colAmount": "தொகை",
+    "colPrincipal": "அசல்",
     "colRate": "விகிதம்",
     "rateDeltaTipAria": "Rate-delta குறிப்பு பற்றி",
     "rateDeltaTipBody": "அடைப்புக்குறிக்குள் உள்ள எண் இந்த offer-இன் rate market anchor-இலிருந்து எவ்வளவு தூரத்தில் உள்ளது என்பதைக் காட்டுகிறது — anchor என்பது தற்போதைய filters-உடன் பொருந்தும், மிகச் சமீபத்தில் accept செய்யப்பட்ட offer-இன் rate. +X% என்றால் market-ஐ விட அதிகம் (விலை அதிகமான borrow / அதிக வருமானத்துடன் lend); −X% என்றால் market-ஐ விட குறைவு. தற்போதைய filters-க்கு anchor கிடைக்கும்போது மட்டுமே இந்தக் குறிப்பு தோன்றும்.",
@@ -685,6 +687,7 @@
     "colCollateral": "பிணையம்",
     "colLiquidity": "லிக்விடிட்டி",
     "filled": "நிறைந்தது",
+    "linkedLoan": "கடன் #{{id}}",
     "yourOffer": "உங்கள் வாய்ப்பு",
     "manageKeepers": "Keepers ஐ நிர்வகி →",
     "accept": "ஏற்றுக்கொள்",
@@ -692,6 +695,27 @@
     "confirmAndAccept": "உறுதிப்படுத்தி ஏற்றுக்கொள்",
     "acceptingDots": "ஏற்றுக்கொள்ளப்படுகிறது…"
   },
+    "principalCell": {
+      "nftId": "NFT #{{id}}",
+      "nftIdQuantity": "{{qty}} × NFT #{{id}}",
+      "openOnExplorer": "பிளாக் எக்ஸ்ப்ளோரரில் NFT-ஐ திறக்கவும்"
+    },
+    "myOffersTable": {
+      "empty": "இந்த பார்வையில் இன்னும் சலுகைகள் இல்லை.",
+      "subtitle": "{{count}} காட்டப்படுகின்றன",
+      "colStatus": "நிலை",
+      "statusFilter": "நிலை",
+      "statusActive": "செயலில்",
+      "statusFilled": "நிறைவு",
+      "statusCancelled": "ரத்து",
+      "cancelledTooltip": "ரத்து செய்யப்பட்ட சலுகைகள் ஆன்-செயினில் நிதி விவரங்களைத் தக்கவைக்காது — சலுகை ID மற்றும் பக்கம் மட்டுமே வைக்கப்படுகிறது.",
+      "manageKeepersTooltip": "Keeper Settings பக்கம் வழியாக இந்த சலுகைக்கு குறிப்பிட்ட keepers-ஐ இயக்கவும்.",
+      "cancelTooltip": "சலுகையை திரும்பப் பெற்று பூட்டப்பட்ட அசல் / பிணையை உங்கள் எஸ்க்ரோவுக்கு திருப்பவும்.",
+      "cancel": "ரத்து",
+      "cancelling": "ரத்து செய்கிறது…",
+      "assetTypeLegend": "சொத்து வகைகள்: {{kinds}}"
+    },
+
   "hero": {
     "brand": "Vaipakam",
     "titleLine1": "பீர்-டு-பீர் கடன் வழங்கல்",

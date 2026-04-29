@@ -106,6 +106,7 @@
     "yourEscrow": "您的 Escrow",
     "escrowAddress": "Escrow 地址",
     "yourLoans": "您的贷款",
+    "yourOffers": "您的报价",
     "newOffer": "新建报价",
     "loadingPositions": "正在加载您的持仓…",
     "noLoansYet": "暂无贷款",
@@ -678,6 +679,7 @@
     "colType": "类型",
     "colAsset": "资产",
     "colAmount": "金额",
+    "colPrincipal": "本金",
     "colRate": "利率",
     "rateDeltaTipAria": "关于利率偏差标注",
     "rateDeltaTipBody": "括号中的数字显示此 offer 的利率与市场 anchor 之间的差距 — anchor 是与当前筛选条件匹配的最近一次接受的 offer 的利率。+X% 表示高于市场（更贵的 borrow / 更高收益的 lend）；−X% 表示低于市场。仅当当前筛选条件存在 anchor 时才会显示此标注。",
@@ -685,6 +687,7 @@
     "colCollateral": "抵押品",
     "colLiquidity": "流动性",
     "filled": "已成交",
+    "linkedLoan": "贷款 #{{id}}",
     "yourOffer": "您的报价",
     "manageKeepers": "管理 Keeper →",
     "accept": "接受",
@@ -692,6 +695,27 @@
     "confirmAndAccept": "确认并接受",
     "acceptingDots": "接受中…"
   },
+    "principalCell": {
+      "nftId": "NFT #{{id}}",
+      "nftIdQuantity": "{{qty}} × NFT #{{id}}",
+      "openOnExplorer": "在区块浏览器上打开 NFT"
+    },
+    "myOffersTable": {
+      "empty": "此视图中暂无报价。",
+      "subtitle": "显示 {{count}} 条",
+      "colStatus": "状态",
+      "statusFilter": "状态",
+      "statusActive": "活跃",
+      "statusFilled": "已成交",
+      "statusCancelled": "已取消",
+      "cancelledTooltip": "已取消的报价不在链上保留财务详情 — 仅保留报价 id 和方向。",
+      "manageKeepersTooltip": "通过 Keeper Settings 页面为此报价启用特定 keepers。",
+      "cancelTooltip": "撤回报价并将锁定的本金 / 抵押品返回到您的托管账户。",
+      "cancel": "取消",
+      "cancelling": "取消中…",
+      "assetTypeLegend": "资产类型：{{kinds}}"
+    },
+
   "hero": {
     "brand": "Vaipakam",
     "titleLine1": "点对点借贷",

@@ -1089,6 +1089,7 @@ Effective communication is key for user experience and risk management. Vaipakam
 - **HF Alert Channels:** Telegram alerts are delivered through the official Vaipakam bot linked to the wallet. Push Protocol is supported as a decentralized opt-in channel; the send path may remain staged until the production Push channel is registered.
 - **Autonomous Liquidation Watcher:** Operators may enable a keeper mode on the same watcher so it submits permissionless `triggerLiquidation` transactions when subscribed loans cross HF `1.0`. This mode is disabled by default and requires explicit worker secrets plus a funded keeper EOA per target chain.
 - **Public Keeper-Bot Reference:** Vaipakam should maintain a standalone keeper-bot reference implementation for third-party operators. The bot should be able to page through active loans, read Health Factor, quote 0x / 1inch / UniV3 / Balancer routes, rank them, and submit permissionless liquidations from the operator's own EOA.
+- **LayerZero Ops Watcher:** Cross-chain VPFI and reward plumbing should also have a private ops watcher, separate from the public HF watcher / keeper, that checks DVN-set drift, OFT mint/burn imbalance between Base's canonical adapter and mirror supplies, and oversized single-transaction VPFI flows. Alerts should go to private operator channels rather than public user channels.
 - **Funding:** The cost of sending these SMS/Email notifications will be covered by the Vaipakam platform, funded from its treasury.
 - **Criticality:** Notifications will be primarily for critical events to avoid alert fatigue.
 - **Style:** Notifications should remain concise, actionable, and focused on essential events.
@@ -1117,13 +1118,17 @@ A comprehensive user dashboard is essential for managing activities on Vaipakam.
 - **Offer Management:** View and manage created offers (active, matched, cancelled, expired).
 - **NFT Portfolio:** Display of Vaipakam-minted NFTs (Vaipakam NFTs) held by the user, along with their status and associated loan/offer details.
 - **Claim Center:** Clear interface to claim pending funds (repayments, rental fees) or collateral.
+- **Claim Center Rewards:** Platform-interaction rewards should live in Claim Center rather than a standalone Rewards page. The card should show pending VPFI, lifetime claimed VPFI reconstructed from `InteractionRewardsClaimed` events, and an expandable contributing-loans list with links back to Loan Details.
 - **Transaction History:** Record of all platform interactions.
-- **Activity Page:** A dedicated Activity page should be available inside the app so users can review recent platform interactions, lifecycle events, and account activity in one place.
+- **Activity Page:** A dedicated Activity page should be available inside the app so users can review recent platform interactions, lifecycle events, and account activity in one place. Loan references should render as clickable `Loan #X` pills that deep-link to the matching Loan Details page.
 - **Identity Labels:** Where wallet addresses appear in the dashboard, Activity, loan details, offer book, or profile chip, the frontend should resolve and display ENS / Basenames handles when available, while falling back silently to shortened addresses.
 - **Liquidation Price View:** For liquid active loans, Loan Details should show the collateral-asset price at which HF reaches `1.0`, both as an absolute price and a percentage move from current price. This view should stay hidden for illiquid loans where no oracle-based liquidation price exists.
 - **Approval Management:** Profile should include an Approvals surface listing ERC-20, ERC-721, and ERC-1155 allowances granted to the Vaipakam Diamond, grouped by principal-eligible, collateral-eligible, and prepay-eligible assets, with one-click revoke actions.
-- **VPFI Token Management:** In Phase 1, this may include token address, supply, mint/transparency references, the dedicated `Buy VPFI` flow, wallet-to-escrow funding guidance, borrower discount eligibility views where exposed, and the shared fee-discount consent control surfaced in `Dashboard`. Governance and broader claimable-reward tools remain Phase 2 scope.
+- **VPFI Token Management:** In Phase 1, this includes the dedicated public `Buy VPFI` flow, wallet-to-escrow funding guidance, staking / unstaking, staking-rewards claim surfaces, borrower discount eligibility views where exposed, and the shared fee-discount consent control surfaced in `Dashboard`. Chain-level token transparency belongs with the Buy VPFI page rather than the returning-user dashboard.
 - **Your Loans Table:** The dashboard should keep the user's loan history scannable with Role and Status filters, a per-page selector, sortable columns, and a default most-recent-first sort by loan ID. LTV and Health Factor sorting should use batched reads over the filtered result set and keep illiquid or unavailable values from appearing as misleading best results.
+- **Claimable-Loan CTA:** Terminal-state loans with unclaimed funds should show a visible `Claim` action that opens Loan Details, where the claim action bar can present the exact lender / borrower payout.
+- **Loan Details Timeline:** Each Loan Details page should include a chronological event timeline sourced from the frontend log index, with per-event breakdowns for initiation, repayment, settlement, fallback collateral splits, swap retries, collateral additions, VPFI rebates, and final claims.
+- **Staking Rewards Surface:** Staking rewards should be claimed from the `Buy VPFI` Step 2 stake card, with a compact Dashboard mirror. The former combined in-app Rewards route is retired unless a later design explicitly restores it.
 - **Notification Settings:** Manage preferences for SMS/Email alerts.
 - **Analytics:** Basic analytics on lending/borrowing performance.
 - **Data Refresh:** The dashboard will update periodically (e.g., every minute or on user action) to reflect on-chain changes.
@@ -1147,7 +1152,7 @@ A comprehensive user dashboard is essential for managing activities on Vaipakam.
   - `VaipakamNFT.sol`: The ERC-721 contract responsible for minting and managing Vaipakam NFTs.
   - `VaipakamGovernance.sol` (Phase 2): Manages proposals and voting.
   - `VaipakamTreasury.sol`: Collects and manages platform fees.
-  - `VaipakamStaking.sol` (Phase 2): Manages VPFI token staking and reward distribution.
+  - `StakingRewardsFacet` / VPFI tokenomics facets (Phase 1): Manage escrow-based VPFI staking rewards and reward claims without a separate staking contract.
 - **Libraries:**
   - OpenZeppelin Contracts: For robust implementations of ERC-20, ERC-721, ERC-1155 (if Vaipakam mints its own utility NFTs beyond offer/loan representations), AccessControl, ReentrancyGuard, and potentially Governor.
 - **Security Considerations:**
@@ -1158,8 +1163,9 @@ A comprehensive user dashboard is essential for managing activities on Vaipakam.
   - **Access Control:** Granular roles (e.g., `LOAN_MANAGER_ROLE`, `OFFER_MANAGER_ROLE`, `TREASURY_ADMIN_ROLE`) managed via OpenZeppelin's AccessControl. Roles will be assigned initially by the contract deployer/owner, with plans to transition control to governance in Phase 2 where appropriate.
   - **Three-Role Governance Handover:** Privileged production surfaces should be split between a Governance Safe, a Guardian Safe, and KYC Ops. The Governance Safe controls slow admin surfaces through a 48-hour timelock. The Guardian Safe can pause quickly during incidents but cannot unpause. KYC Ops holds only the user-tier operational role where that role is active.
   - **OApp Guardian Pause:** LayerZero OApps and VPFI bridge-related contracts should allow Guardian or Owner pause, but unpause must remain Owner / Timelock controlled.
+  - **LayerZero Payload Sanity:** Reward OApp packets should enforce the exact expected payload size before `abi.decode`; malformed, undersized, or oversized packets must revert with a typed error so off-chain monitoring can correlate the incident with LayerZero traces.
   - **Emergency Updates:** Critical security patches may be fast-tracked through the initial admin/multi-sig model when needed to protect user funds or protocol integrity, with those emergency powers limited to critical fixes.
-  - **Batch Processing:** Support for batch processing of certain operations where feasible to optimize gas costs. Staking reward batch processing is Phase 2 scope.
+  - **Batch Processing:** Support for batch processing of certain operations where feasible to optimize gas costs, without weakening pull-based reward and claim semantics.
 
 ### Frontend
 
@@ -1170,8 +1176,9 @@ A comprehensive user dashboard is essential for managing activities on Vaipakam.
 - **Legacy Provider Policy:** The frontend should not retain ethers.js compatibility shims or ethers as a production dependency after the wagmi / viem migration.
 - **State Management:** Robust state management solution (e.g., Redux, Zustand).
 - **Languages:** The frontend supports 10 app locales: English, Spanish, French, German, Japanese, Simplified Chinese, Korean, Hindi, Tamil, and Arabic. Locale-aware public routes, hreflang metadata, sitemap entries, number/date/duration formatting, and Arabic RTL layout should remain part of the launch surface. Legal and long-form guide content may show an English-only notice until the locale-matched source text exists.
+- **User Guide Locales:** Basic and Advanced user-guide markdown should be maintained for all 10 supported locales with card-link anchors preserved verbatim, so every in-app `(i)` card-title link opens the matching localized guide section.
 - **API Standards:** Frontend will interact with smart contracts using standardized data formats (e.g., JSON-like structs or arrays returned by view functions).
-- **ABI Sync:** After any contract release that changes selectors, structs, events, or frontend-consumed ABIs, run the frontend ABI export script so `frontend/src/contracts/abis/` and `_source.json` match the deployed contract build.
+- **ABI Sync:** After any contract release that changes selectors, structs, events, or frontend-consumed ABIs, run the frontend ABI export script (`contracts/script/exportFrontendAbis.sh` after `forge build`) so `frontend/src/contracts/abis/` and `_source.json` match the deployed contract build and carry the source commit hash.
 
 ### Public View Functions for Analytics, Transparency, and Integrations
 

@@ -106,6 +106,7 @@
     "yourEscrow": "あなたのEscrow",
     "escrowAddress": "Escrowアドレス",
     "yourLoans": "あなたの貸付",
+    "yourOffers": "あなたのオファー",
     "newOffer": "新規オファー",
     "loadingPositions": "ポジションを読み込み中…",
     "noLoansYet": "まだ貸付はありません",
@@ -678,6 +679,7 @@
     "colType": "タイプ",
     "colAsset": "資産",
     "colAmount": "数量",
+    "colPrincipal": "元本",
     "colRate": "金利",
     "rateDeltaTipAria": "金利差表示について",
     "rateDeltaTipBody": "括弧内の数値は、このオファーの金利が市場アンカーからどれだけ離れているかを示します — アンカーとは、現在のフィルターに一致する最も新しい受諾済みオファーの金利です。+X% は市場より高い(借入が高コスト / 貸出が高収益)、−X% は市場より低いことを意味します。この表示は現在のフィルターにアンカーが存在する場合のみ表示されます。",
@@ -685,6 +687,7 @@
     "colCollateral": "担保",
     "colLiquidity": "流動性",
     "filled": "成立",
+    "linkedLoan": "ローン #{{id}}",
     "yourOffer": "あなたのオファー",
     "manageKeepers": "キーパー管理 →",
     "accept": "承諾",
@@ -692,6 +695,27 @@
     "confirmAndAccept": "確認して承諾",
     "acceptingDots": "承諾中…"
   },
+    "principalCell": {
+      "nftId": "NFT #{{id}}",
+      "nftIdQuantity": "{{qty}} × NFT #{{id}}",
+      "openOnExplorer": "ブロックエクスプローラーで NFT を開く"
+    },
+    "myOffersTable": {
+      "empty": "このビューにはまだオファーがありません。",
+      "subtitle": "{{count}} 件表示",
+      "colStatus": "ステータス",
+      "statusFilter": "ステータス",
+      "statusActive": "アクティブ",
+      "statusFilled": "成立",
+      "statusCancelled": "キャンセル",
+      "cancelledTooltip": "キャンセルされたオファーはオンチェーンに金融詳細を保持しません — オファー ID とサイドのみが保持されます。",
+      "manageKeepersTooltip": "Keeper Settings ページでこのオファー向けに特定の keepers を有効化します。",
+      "cancelTooltip": "オファーを取り下げ、ロックされた元本 / 担保をエスクローに返します。",
+      "cancel": "キャンセル",
+      "cancelling": "キャンセル中…",
+      "assetTypeLegend": "アセットタイプ: {{kinds}}"
+    },
+
   "hero": {
     "brand": "Vaipakam",
     "titleLine1": "ピアツーピア・レンディング",

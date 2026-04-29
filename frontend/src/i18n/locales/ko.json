@@ -106,6 +106,7 @@
     "yourEscrow": "내 Escrow",
     "escrowAddress": "Escrow 주소",
     "yourLoans": "내 대출",
+    "yourOffers": "내 오퍼",
     "newOffer": "새 오퍼",
     "loadingPositions": "포지션을 불러오는 중…",
     "noLoansYet": "아직 대출이 없습니다",
@@ -678,6 +679,7 @@
     "colType": "유형",
     "colAsset": "자산",
     "colAmount": "금액",
+    "colPrincipal": "원금",
     "colRate": "이자율",
     "rateDeltaTipAria": "이자율 차이 표시에 대하여",
     "rateDeltaTipBody": "괄호 안의 숫자는 이 offer의 이자율이 market anchor로부터 얼마나 떨어져 있는지를 나타냅니다 — anchor는 현재 필터와 일치하는 가장 최근 수락된 offer의 이자율입니다. +X%는 시장보다 높음(borrow가 더 비싸거나 lend 수익이 더 높음), −X%는 시장보다 낮음을 의미합니다. 이 표시는 현재 필터에 대한 anchor가 있을 때만 나타납니다.",
@@ -685,6 +687,7 @@
     "colCollateral": "담보",
     "colLiquidity": "유동성",
     "filled": "체결",
+    "linkedLoan": "대출 #{{id}}",
     "yourOffer": "내 오퍼",
     "manageKeepers": "키퍼 관리 →",
     "accept": "수락",
@@ -692,6 +695,27 @@
     "confirmAndAccept": "확인 및 수락",
     "acceptingDots": "수락 중…"
   },
+    "principalCell": {
+      "nftId": "NFT #{{id}}",
+      "nftIdQuantity": "{{qty}} × NFT #{{id}}",
+      "openOnExplorer": "블록 탐색기에서 NFT 열기"
+    },
+    "myOffersTable": {
+      "empty": "이 뷰에는 아직 오퍼가 없습니다.",
+      "subtitle": "{{count}}개 표시",
+      "colStatus": "상태",
+      "statusFilter": "상태",
+      "statusActive": "활성",
+      "statusFilled": "체결",
+      "statusCancelled": "취소",
+      "cancelledTooltip": "취소된 오퍼는 온체인에 금융 세부 정보를 유지하지 않습니다 — 오퍼 ID와 사이드만 보존됩니다.",
+      "manageKeepersTooltip": "Keeper Settings 페이지에서 이 오퍼에 대해 특정 keepers를 활성화합니다.",
+      "cancelTooltip": "오퍼를 철회하고 잠긴 원금 / 담보를 에스크로로 반환합니다.",
+      "cancel": "취소",
+      "cancelling": "취소 중…",
+      "assetTypeLegend": "자산 유형: {{kinds}}"
+    },
+
   "hero": {
     "brand": "Vaipakam",
     "titleLine1": "P2P 대출",

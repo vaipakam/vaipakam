@@ -106,6 +106,7 @@
     "yourEscrow": "आपका Escrow",
     "escrowAddress": "Escrow पता",
     "yourLoans": "आपके लोन",
+    "yourOffers": "आपके ऑफ़र",
     "newOffer": "नया ऑफर",
     "loadingPositions": "आपकी पोजिशन लोड हो रही हैं…",
     "noLoansYet": "अभी तक कोई लोन नहीं",
@@ -678,6 +679,7 @@
     "colType": "प्रकार",
     "colAsset": "एसेट",
     "colAmount": "राशि",
+    "colPrincipal": "मूलधन",
     "colRate": "दर",
     "rateDeltaTipAria": "रेट-डेल्टा एनोटेशन के बारे में",
     "rateDeltaTipBody": "ब्रैकेट में दिखा नंबर बताता है कि इस offer की rate market anchor से कितनी दूर है — anchor यानी वर्तमान filters से मेल खाने वाले सबसे हाल में accept किए गए offer की rate। +X% यानी market से ऊपर (महंगा borrow / ज़्यादा फ़ायदेमंद lend); −X% यानी market से नीचे। यह एनोटेशन तभी दिखता है जब वर्तमान filters के लिए anchor उपलब्ध हो।",
@@ -685,6 +687,7 @@
     "colCollateral": "गिरवी",
     "colLiquidity": "तरलता",
     "filled": "भरा हुआ",
+    "linkedLoan": "ऋण #{{id}}",
     "yourOffer": "आपका ऑफर",
     "manageKeepers": "Keepers प्रबंधित करें →",
     "accept": "स्वीकार करें",
@@ -692,6 +695,27 @@
     "confirmAndAccept": "पुष्टि करें और स्वीकार करें",
     "acceptingDots": "स्वीकार कर रहे हैं…"
   },
+    "principalCell": {
+      "nftId": "NFT #{{id}}",
+      "nftIdQuantity": "{{qty}} × NFT #{{id}}",
+      "openOnExplorer": "ब्लॉक एक्सप्लोरर पर NFT खोलें"
+    },
+    "myOffersTable": {
+      "empty": "इस दृश्य में अभी तक कोई ऑफ़र नहीं हैं।",
+      "subtitle": "{{count}} दिखाए गए",
+      "colStatus": "स्थिति",
+      "statusFilter": "स्थिति",
+      "statusActive": "सक्रिय",
+      "statusFilled": "पूर्ण",
+      "statusCancelled": "रद्द",
+      "cancelledTooltip": "रद्द किए गए ऑफ़र ऑन-चेन वित्तीय विवरण नहीं रखते — केवल ऑफ़र आईडी और साइड रखे जाते हैं।",
+      "manageKeepersTooltip": "इस ऑफ़र को Keeper Settings पेज के माध्यम से चलाने के लिए विशिष्ट keepers सक्षम करें।",
+      "cancelTooltip": "ऑफ़र वापस लें और लॉक किए गए मूलधन / कोलैटरल को अपने एस्क्रो में वापस पाएं।",
+      "cancel": "रद्द करें",
+      "cancelling": "रद्द कर रहे हैं…",
+      "assetTypeLegend": "एसेट प्रकार: {{kinds}}"
+    },
+
   "hero": {
     "brand": "Vaipakam",
     "titleLine1": "पीयर-टू-पीयर ऋण",

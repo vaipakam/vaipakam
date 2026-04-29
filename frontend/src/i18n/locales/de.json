@@ -106,6 +106,7 @@
     "yourEscrow": "Ihr Escrow",
     "escrowAddress": "Escrow-Adresse",
     "yourLoans": "Ihre Kredite",
+    "yourOffers": "Ihre Angebote",
     "newOffer": "Neues Angebot",
     "loadingPositions": "Positionen werden geladen…",
     "noLoansYet": "Noch keine Kredite",
@@ -678,6 +679,7 @@
     "colType": "Typ",
     "colAsset": "Anlage",
     "colAmount": "Betrag",
+    "colPrincipal": "Hauptbetrag",
     "colRate": "Zinssatz",
     "rateDeltaTipAria": "Über die Zinssatz-Abweichung",
     "rateDeltaTipBody": "Die Zahl in Klammern zeigt, wie weit der Zinssatz dieses Angebots vom Markt-Anker entfernt liegt — dem Zinssatz des zuletzt angenommenen Angebots, das mit den aktuellen Filtern übereinstimmt. +X% bedeutet über Markt (teurere Aufnahme / lukrativerer Verleih); −X% bedeutet unter Markt. Die Anzeige erscheint nur, wenn für die aktuellen Filter ein Anker verfügbar ist.",
@@ -685,6 +687,7 @@
     "colCollateral": "Sicherheit",
     "colLiquidity": "Liquidität",
     "filled": "Ausgeführt",
+    "linkedLoan": "Kredit #{{id}}",
     "yourOffer": "Ihr Angebot",
     "manageKeepers": "Keeper verwalten →",
     "accept": "Annehmen",
@@ -692,6 +695,27 @@
     "confirmAndAccept": "Bestätigen & annehmen",
     "acceptingDots": "Wird angenommen…"
   },
+    "principalCell": {
+      "nftId": "NFT #{{id}}",
+      "nftIdQuantity": "{{qty}} × NFT #{{id}}",
+      "openOnExplorer": "NFT im Block-Explorer öffnen"
+    },
+    "myOffersTable": {
+      "empty": "Noch keine Angebote in dieser Ansicht.",
+      "subtitle": "{{count}} angezeigt",
+      "colStatus": "Status",
+      "statusFilter": "Status",
+      "statusActive": "Aktiv",
+      "statusFilled": "Erfüllt",
+      "statusCancelled": "Storniert",
+      "cancelledTooltip": "Stornierte Angebote behalten on-chain keine finanziellen Details — nur die Angebots-ID und die Seite werden gespeichert.",
+      "manageKeepersTooltip": "Spezifische Keeper über die Keeper-Einstellungsseite für dieses Angebot aktivieren.",
+      "cancelTooltip": "Das Angebot zurückziehen und gesperrten Hauptbetrag / Sicherheit an Ihren Escrow zurückgeben.",
+      "cancel": "Stornieren",
+      "cancelling": "Storniere…",
+      "assetTypeLegend": "Asset-Typen: {{kinds}}"
+    },
+
   "hero": {
     "brand": "Vaipakam",
     "titleLine1": "Peer-to-Peer-Kreditvergabe",

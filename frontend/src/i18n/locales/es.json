@@ -106,6 +106,7 @@
     "yourEscrow": "Tu Escrow",
     "escrowAddress": "Dirección del Escrow",
     "yourLoans": "Tus préstamos",
+    "yourOffers": "Tus ofertas",
     "newOffer": "Nueva oferta",
     "loadingPositions": "Cargando tus posiciones…",
     "noLoansYet": "Sin préstamos aún",
@@ -678,6 +679,7 @@
     "colType": "Tipo",
     "colAsset": "Activo",
     "colAmount": "Monto",
+    "colPrincipal": "Principal",
     "colRate": "Tasa",
     "rateDeltaTipAria": "Sobre la anotación de diferencia de tasa",
     "rateDeltaTipBody": "El número entre paréntesis muestra qué tan lejos está la tasa de esta oferta del ancla del mercado — la tasa de la oferta aceptada más recientemente que coincide con los filtros actuales. +X% significa por encima del mercado (préstamo más caro / mayor rendimiento); −X% significa por debajo del mercado. La anotación aparece solo cuando hay un ancla disponible para los filtros actuales.",
@@ -685,6 +687,7 @@
     "colCollateral": "Colateral",
     "colLiquidity": "Liquidez",
     "filled": "Completada",
+    "linkedLoan": "Préstamo #{{id}}",
     "yourOffer": "Tu oferta",
     "manageKeepers": "Gestionar Keepers →",
     "accept": "Aceptar",
@@ -692,6 +695,27 @@
     "confirmAndAccept": "Confirmar y aceptar",
     "acceptingDots": "Aceptando…"
   },
+    "principalCell": {
+      "nftId": "NFT #{{id}}",
+      "nftIdQuantity": "{{qty}} × NFT #{{id}}",
+      "openOnExplorer": "Abrir NFT en el explorador de bloques"
+    },
+    "myOffersTable": {
+      "empty": "Aún no hay ofertas en esta vista.",
+      "subtitle": "{{count}} mostradas",
+      "colStatus": "Estado",
+      "statusFilter": "Estado",
+      "statusActive": "Activa",
+      "statusFilled": "Cumplida",
+      "statusCancelled": "Cancelada",
+      "cancelledTooltip": "Las ofertas canceladas no conservan detalles financieros on-chain — solo se mantienen el id de la oferta y el lado.",
+      "manageKeepersTooltip": "Habilita keepers específicos para gestionar esta oferta vía la página Keeper Settings.",
+      "cancelTooltip": "Retirar la oferta y devolver el principal / colateral bloqueado a tu escrow.",
+      "cancel": "Cancelar",
+      "cancelling": "Cancelando…",
+      "assetTypeLegend": "Tipos de activo: {{kinds}}"
+    },
+
   "hero": {
     "brand": "Vaipakam",
     "titleLine1": "Préstamos entre pares",

@@ -106,6 +106,7 @@
     "yourEscrow": "Votre Escrow",
     "escrowAddress": "Adresse de l'Escrow",
     "yourLoans": "Vos prêts",
+    "yourOffers": "Vos offres",
     "newOffer": "Nouvelle offre",
     "loadingPositions": "Chargement de vos positions…",
     "noLoansYet": "Pas encore de prêts",
@@ -678,6 +679,7 @@
     "colType": "Type",
     "colAsset": "Actif",
     "colAmount": "Montant",
+    "colPrincipal": "Principal",
     "colRate": "Taux",
     "rateDeltaTipAria": "À propos de l'écart de taux",
     "rateDeltaTipBody": "Le nombre entre parenthèses indique de combien le taux de cette offre s'écarte de l'ancre du marché — le taux de l'offre acceptée la plus récente correspondant aux filtres actuels. +X% signifie au-dessus du marché (emprunt plus coûteux / prêt plus rémunérateur) ; −X% signifie en-dessous du marché. L'annotation n'apparaît que lorsqu'une ancre est disponible pour les filtres actuels.",
@@ -685,6 +687,7 @@
     "colCollateral": "Collatéral",
     "colLiquidity": "Liquidité",
     "filled": "Remplie",
+    "linkedLoan": "Prêt #{{id}}",
     "yourOffer": "Votre offre",
     "manageKeepers": "Gérer les Keepers →",
     "accept": "Accepter",
@@ -692,6 +695,27 @@
     "confirmAndAccept": "Confirmer et accepter",
     "acceptingDots": "Acceptation…"
   },
+    "principalCell": {
+      "nftId": "NFT #{{id}}",
+      "nftIdQuantity": "{{qty}} × NFT #{{id}}",
+      "openOnExplorer": "Ouvrir le NFT dans l'explorateur de blocs"
+    },
+    "myOffersTable": {
+      "empty": "Aucune offre dans cette vue pour le moment.",
+      "subtitle": "{{count}} affichées",
+      "colStatus": "Statut",
+      "statusFilter": "Statut",
+      "statusActive": "Active",
+      "statusFilled": "Remplie",
+      "statusCancelled": "Annulée",
+      "cancelledTooltip": "Les offres annulées ne conservent pas de détails financiers on-chain — seul l'id de l'offre et le côté sont conservés.",
+      "manageKeepersTooltip": "Activez des keepers spécifiques pour cette offre via la page Keeper Settings.",
+      "cancelTooltip": "Retirer l'offre et restituer le principal / collatéral verrouillé à votre escrow.",
+      "cancel": "Annuler",
+      "cancelling": "Annulation…",
+      "assetTypeLegend": "Types d'actif : {{kinds}}"
+    },
+
   "hero": {
     "brand": "Vaipakam",
     "titleLine1": "Prêts pair-à-pair",

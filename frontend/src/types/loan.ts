@@ -98,6 +98,12 @@ export interface LoanSummary {
   id: bigint;
   principal: bigint;
   principalAsset: string;
+  /** Principal asset type (0 = ERC20, 1 = ERC721, 2 = ERC1155). Drives
+   *  the row's `<PrincipalCell>` rendering — ERC721/1155 principals
+   *  (rental loans) need `principalTokenId` to render `NFT #N`. */
+  assetType: number;
+  /** NFT id when `assetType` is ERC721 or ERC1155. Zero on ERC20. */
+  principalTokenId: bigint;
   interestRateBps: bigint;
   durationDays: bigint;
   startTime: bigint;

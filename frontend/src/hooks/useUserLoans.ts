@@ -113,6 +113,8 @@ export function useUserLoans(address: string | null) {
           id: loan.id,
           principal: loan.principal,
           principalAsset: loan.principalAsset,
+          assetType: Number(loan.assetType ?? 0n),
+          principalTokenId: (loan.tokenId as bigint | undefined) ?? 0n,
           interestRateBps: loan.interestRateBps,
           durationDays: loan.durationDays,
           startTime: loan.startTime,

@@ -127,6 +127,19 @@ Distribution rules:
 - if the proportional formula produces a value above the user's cap, the user receives only the capped amount and the unused remainder stays in the interaction-reward allocation rather than being re-assigned to other users for that day
 - once the `69,000,000` VPFI category cap is exhausted, platform interaction rewards must stop
 - distribution must follow a pull model only via `claimInteractionRewards()`
+- the frontend claim surface for interaction rewards belongs in `Claim Center`, above per-loan claim rows, rather than on a combined Rewards page
+- the interaction-rewards UI should show:
+  - pending claimable VPFI from `previewInteractionRewards(user)`
+  - lifetime claimed VPFI reconstructed from `InteractionRewardsClaimed` events
+  - an expandable list of contributing loans, with lender-side and borrower-side participation shown separately when both exist on the same loan
+- the contributing-loans list should report USD-denominated participation (`perDayUSD18`, total contribution, day window, processed / forfeited state) and link each row to Loan Details; it should not imply a precise per-loan VPFI amount because rewards are normalized by the protocol-wide daily denominator
+- if a day is waiting for the global denominator to be finalized or broadcast to the local chain, the frontend should show a waiting state instead of submitting a claim that would revert
+
+Public read surface:
+
+- `previewInteractionRewards(user)` returns the current pending VPFI headline for the active chain
+- `getUserRewardEntries(user)` returns the full `RewardEntry[]` array from storage, including loan ID, side, start / end day, per-day USD contribution, processed state, and forfeited state
+- `InteractionRewardsClaimed(user, fromDay, toDay, amount)` events are the source for lifetime-claimed totals in the UI and log-index cache
 
 ---
 
@@ -409,6 +422,13 @@ Primary reward claim path:
 
 - `claimStakingRewards()`
 
+Frontend claim surface:
+
+- staking rewards are claimed from the public `Buy VPFI` page, colocated with the `Deposit / Stake` step
+- a compact mirror may appear on the Dashboard's discount-status surface, but `Buy VPFI` remains the canonical full claim surface
+- the card should show pending VPFI, lifetime claimed VPFI reconstructed from `StakingRewardsClaimed(user, amount)` events, and neutral / inactive chrome when `pending == 0`
+- the former combined in-app Rewards route should not be treated as the canonical reward-claiming surface; staking rewards and platform-interaction rewards have separate natural homes
+
 ### 7a. Functional Staking-APR Mechanics
 
 Era semantics:
@@ -476,6 +496,8 @@ VPFI held in escrow simultaneously satisfies the staking model and the fee-disco
 
 The public purchase page should expose `Buy`, `Stake`, and `Unstake` entry points as route anchors. `Stake` is a user-facing name for the wallet-to-escrow deposit step; `Unstake` is the escrow-to-wallet withdrawal path on the same chain.
 
+The `Deposit / Stake` step should carry the single canonical user-facing open-staking message: staking is open to everyone, no existing loan is required, escrow-held VPFI earns the staking APR while it remains deposited, and the user's escrow can be created automatically on first deposit. Duplicated page-level staking prose should be avoided so this card remains the source of truth.
+
 Permit2 requirements for VPFI utility flows:
 
 - Permit2 support is an optional convenience path for VPFI deposits and other eligible ERC-20 actions; it must not remove or weaken the classic ERC-20 allowance flow.
@@ -538,6 +560,15 @@ Canonical-address rule:
 - the Base deployment is the documented source of truth
 - canonical addresses must be published in `docs/` and surfaced on the public dashboard / transparency UI
 
+LayerZero hardening requirements:
+
+- each reward OApp packet type must validate the exact expected encoded payload size before decoding; for the current report / broadcast tuple this is `128` bytes
+- malformed, undersized, or oversized reward packets must revert with a typed payload-size error carrying the observed and expected sizes
+- off-chain monitoring should watch DVN-set drift for each configured `(chain, OApp, peer eid, send / receive)` pair
+- off-chain monitoring should check OFT supply invariants by comparing Base canonical-adapter locked VPFI against the sum of mirror-chain `totalSupply()` values
+- off-chain monitoring should alert on oversized single-transaction VPFI flows above an operator-configured threshold
+- the LayerZero ops watcher should remain internal / private and separate from the public HF watcher / keeper reference implementation
+
 ---
 
 ## 11. Distribution and Claiming Mechanics
@@ -570,6 +601,8 @@ Transparency expectations:
 - remaining reward pools
 - active emission rate
 - claimable user amounts
+- lifetime claimed totals derived from reward-claim events
+- per-user interaction reward entries and contributing-loan state
 - minted totals
 - discount eligibility state where applicable
 
@@ -627,6 +660,8 @@ Frontend integration requirements:
 - Phase 1 frontend requirements should focus on token-address transparency, supply visibility, mint/cap visibility where exposed, and clear separation between the cross-chain VPFI token and the single-chain core protocol
 - `Dashboard`, `ClaimCenter`, staking views, and reward hooks may gain broader VPFI utility surfaces in `Phase 1`
 - `Dashboard` should specifically surface the shared fee-discount consent control for escrowed VPFI usage
+- protocol-config-dependent UI copy should read live values from the Diamond wherever possible, including mutable config from `getProtocolConfigBundle()` and compile-time constants exposed through `getProtocolConstants()`
+- tier tables, staking APR labels, pool-cap labels, rental buffer displays, max slippage, treasury fee, LIF, and minimum Health Factor copy should use live config placeholders instead of hardcoded locale text
 - a dedicated `Buy VPFI` page should let users buy from their preferred supported chain without manually switching to canonical `Base`
 - the `Buy VPFI` page is the single user-facing purchase flow; any bridge, canonical-chain settlement, OFT routing, or Base-receiver complexity must be abstracted behind that flow
 - the purchase page must show the exact ETH required, resulting VPFI amount, fixed rate, remaining global supply, and chain-local wallet allowance
@@ -638,6 +673,8 @@ Frontend integration requirements:
 - `Offer Book` accept-review copy should explain that the borrower pays the full `0.1%` LIF up front in VPFI and earns any discount over the loan lifetime as a rebate
 - `Create Offer` borrower-tip copy should frame the benefit as earning up to a `24%` VPFI rebate, not as paying a reduced up-front fee
 - `Claim Center` should show a VPFI rebate line whenever a borrower claim includes a pending LIF rebate
+- `Claim Center` should also host platform-interaction reward claims, including lifetime claimed and contributing-loan context
+- `Buy VPFI` Step 2 should host staking reward claims, including pending and lifetime claimed values
 
 Acceptance criteria:
 
