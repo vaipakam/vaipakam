@@ -287,7 +287,7 @@
     "activeOn": "Active · discount consent ON",
     "depositGapAchieved": "The escrow balance qualifies for {{tier}} on the next loan. Ensure the discount consent is enabled above.",
     "liquidLendingOnly": "Liquid lending assets only.",
-    "enableSharedConsent": "Enable the shared discount consent above.",
+    "enableSharedConsent": "Enable the shared discount consent on the <dashboardLink>Dashboard</dashboardLink>.",
     "depositMore": "Deposit {{amount}} more VPFI into escrow to reach Tier {{tier}} ({{discount}}).",
     "tierColTier": "Tier",
     "tierColEscrow": "Escrow VPFI",

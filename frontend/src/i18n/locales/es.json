@@ -1166,7 +1166,7 @@
     "activeOn": "Activo · consentimiento de descuento ACTIVADO",
     "depositGapAchieved": "El saldo del escrow califica para {{tier}} en el próximo préstamo. Asegurarse de que el consentimiento de descuento esté habilitado arriba.",
     "liquidLendingOnly": "Solo activos de préstamo líquidos.",
-    "enableSharedConsent": "Habilitar el consentimiento compartido de descuento arriba.",
+    "enableSharedConsent": "Habilita el consentimiento compartido de descuento en el <dashboardLink>Dashboard</dashboardLink>.",
     "depositMore": "Depositar {{amount}} VPFI más en el escrow para alcanzar Tier {{tier}} ({{discount}}).",
     "tierColTier": "Tier",
     "tierColEscrow": "VPFI en escrow",

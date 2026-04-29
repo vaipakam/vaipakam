@@ -101,35 +101,39 @@ when the borrower claims).
 
 ### Your VPFI rewards
 
-Aspirational summary card. Surfaces the connected wallet's
-combined VPFI rewards picture across both streams in a single
-view, with the headline figure being
-`stakingPending + stakingLifetimeClaimed + interactionPending
-+ interactionLifetimeClaimed`.
+Aspirational summary card surfacing the connected wallet's
+combined VPFI rewards picture across both reward streams in
+one view. The headline figure is the sum of: pending staking
+rewards, lifetime-claimed staking rewards, pending
+interaction rewards, and lifetime-claimed interaction
+rewards.
 
-Per-stream breakdown rows show pending + claimed and a chevron
-deep-link to the full claim card on its native page:
+Per-stream breakdown rows show pending + claimed and a
+chevron deep-link to the full claim card on its native page:
 
-- **Staking yield** — `previewStakingRewards()` (live read) +
-  the sum of every `StakingRewardsClaimed` event for this
-  wallet from the local log-index. Deep-links to
-  `/buy-vpfi#staking-rewards`.
-- **Platform-interaction rewards** — `previewInteractionRewards()`
-  across all of the wallet's loans + sum of every
-  `InteractionRewardsClaimed` event. Deep-links to
-  `/app/claims#interaction-rewards`.
+- **Staking yield** — pending VPFI accrued at the protocol
+  APR on your escrow balance, plus every staking reward
+  you've previously claimed from this wallet. Deep-links to
+  the staking claim card on the Buy VPFI page.
+- **Platform-interaction rewards** — pending VPFI accrued
+  across every loan you've participated in (lender or
+  borrower side), plus every interaction reward you've
+  previously claimed. Deep-links to the interaction claim
+  card in the Claim Center.
 
-The lifetime-claimed numbers are derived client-side from the
-log-index event scan — there is no on-chain getter for the
-running total. A fresh browser cache shows 0 (or partial)
-lifetime until the per-(chain, diamond) scan backfills the
-historic blocks; once the scan completes the number jumps to
-truth. Same trust model as the underlying claim cards.
+The lifetime-claimed numbers are reconstructed from each
+wallet's on-chain claim history. There is no on-chain
+running total to query, so the figure is summed by walking
+the wallet's prior claim events on this chain. A fresh
+browser cache shows zero (or a partial total) until the
+historic walk completes; the number then jumps to truth.
+Same trust model as the underlying claim cards.
 
 The card always renders for connected wallets, even at all-
-zero state. The empty-state hint is intentional — hiding the
-card on zero would make the rewards programs invisible to
-fresh users until they wandered into Buy VPFI or Claim Center.
+zero state. The empty-state hint is intentional — hiding
+the card on zero would make the rewards programs invisible
+to fresh users until they wandered into Buy VPFI or Claim
+Center.
 
 ---
 

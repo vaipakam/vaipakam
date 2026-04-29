@@ -1,6 +1,6 @@
 # Vaipakam — Guía del usuario (Modo avanzado)
 
-Explicaciones precisas y técnicamente exactas de cada tarjeta de la
+Explicaciones precisas y técnicamente rigurosas de cada tarjeta de la
 aplicación. Cada sección corresponde a un icono de información `(i)`
 junto al título de una tarjeta.
 
@@ -21,28 +21,28 @@ junto al título de una tarjeta.
 ### Tu Escrow
 
 Un contrato actualizable por usuario —tu bóveda privada en esta
-cadena— desplegado para ti la primera vez que participas en un
+cadena— creado para ti la primera vez que participas en un
 préstamo. Un escrow por dirección por cadena. Mantiene saldos
 ERC-20, ERC-721 y ERC-1155 vinculados a tus posiciones de préstamo.
 No hay mezcla de fondos: los activos de otros usuarios nunca están
 en este contrato.
 
 El escrow es el único lugar donde residen el colateral, los activos
-prestados y tu VPFI bloqueado. El protocolo se autentica contra él
-en cada depósito y retiro. La implementación puede actualizarse por
-el dueño del protocolo, pero solamente a través de un timelock —
-nunca de forma instantánea.
+prestados y tu VPFI bloqueado. El protocolo lo verifica en cada
+depósito y retiro. La implementación puede actualizarla el dueño del
+protocolo, pero solamente a través de un timelock —nunca de forma
+instantánea.
 
 <a id="dashboard.your-loans"></a>
 
 ### Tus préstamos
 
-Cada préstamo que involucra a la billetera conectada en esta cadena
-—ya estés del lado prestamista, del lado prestatario, o ambos en
-posiciones distintas. Calculado en vivo a partir de los métodos de
-vista del protocolo contra tu dirección. Cada fila enlaza a la
-página de posición completa con HF, LTV, interés acumulado, la
-superficie de acciones limitada por tu rol y el estado del
+Cada préstamo en el que participa la billetera conectada en esta
+cadena —ya estés del lado prestamista, del lado prestatario, o en
+ambos mediante posiciones distintas. Se calcula en vivo a partir de
+los métodos de vista del protocolo para tu dirección. Cada fila
+enlaza a la página completa de la posición, con HF, LTV, interés
+acumulado, las acciones habilitadas según tu rol y el estado del
 préstamo, y el id de préstamo on-chain que puedes pegar en un
 explorador de bloques.
 
@@ -59,19 +59,18 @@ activa:
   en poder del protocolo).
 - Tope de minteo restante.
 
-Vaipakam transporta VPFI cross-chain sobre LayerZero V2. **Base es
-la cadena canónica** —el adaptador canónico allí ejecuta la
-semántica de bloqueo-al-enviar / liberación-al-recibir. Cualquier
-otra cadena soportada corre un mirror que mintea cuando llega un
-paquete del puente y quema en salida. El suministro total a través
-de todas las cadenas se mantiene invariante bajo bridging por
-construcción.
+Vaipakam transporta VPFI entre cadenas sobre LayerZero V2. **Base
+es la cadena canónica** —el adaptador canónico allí aplica la
+semántica de bloquear al enviar / liberar al recibir. Cualquier
+otra cadena soportada ejecuta un espejo que mintea cuando llega un
+paquete entrante del puente y quema al salir. Por construcción, el
+suministro total en todas las cadenas se mantiene invariante bajo
+bridging.
 
-La política de verificación de mensajes cross-chain endurecida tras
-el incidente de la industria de abril de 2026 es de **3 verificadores
+La política de verificación de mensajes cross-chain, endurecida tras
+el incidente del sector de abril de 2026, es de **3 verificadores
 requeridos + 2 opcionales, umbral 1-de-2**. La configuración por
-defecto de un solo verificador es rechazada en el gate de
-despliegue.
+defecto de un solo verificador se rechaza en el gate de despliegue.
 
 <a id="dashboard.fee-discount-consent"></a>
 
@@ -93,13 +92,13 @@ Escalera de niveles:
 | 3     | ≥ 5.000               | 20%       |
 | 4     | > 20.000              | 24%       |
 
-El nivel se calcula contra tu saldo de escrow **post-cambio** en el
+El nivel se calcula contra tu saldo de escrow **posterior al cambio** en el
 momento en que depositas o retiras VPFI, y luego se pondera por
 tiempo a lo largo de la vida útil de cada préstamo. Un retiro
-re-estampa la tasa al nuevo saldo más bajo inmediatamente para
+vuelve a fijar la tasa al nuevo saldo más bajo inmediatamente para
 cada préstamo abierto en el que estés —no hay ventana de gracia
 donde tu nivel anterior (más alto) aún se aplique. Esto cierra el
-patrón de gameo en el que un usuario podría recargar VPFI justo
+patrón de abuso en el que un usuario podría recargar VPFI justo
 antes del cierre de un préstamo, capturar el descuento del nivel
 completo y retirar segundos después.
 
@@ -111,41 +110,42 @@ en la liquidación, y a la Loan Initiation Fee del prestatario
 
 ### Tus recompensas VPFI
 
-Tarjeta de resumen aspiracional. Muestra la imagen combinada
-de recompensas VPFI de la wallet conectada a través de ambos
-flujos en una sola vista, siendo la cifra principal
-`stakingPending + stakingLifetimeClaimed + interactionPending
-+ interactionLifetimeClaimed`.
+Tarjeta de resumen aspiracional que muestra, en una sola vista, el
+panorama combinado de recompensas VPFI de la billetera conectada en
+ambos flujos de recompensa. La cifra principal es la suma de:
+recompensas de staking pendientes, recompensas de staking reclamadas
+históricamente, recompensas de interacción pendientes y recompensas
+de interacción reclamadas históricamente.
 
-Las filas de desglose por flujo muestran pendiente + reclamado
-y un enlace profundo de chevron a la tarjeta de reclamación
-completa en su página nativa:
+Las filas de desglose por flujo muestran pendiente + reclamado y un
+enlace profundo con chevron hacia la tarjeta de reclamación completa
+en su página nativa:
 
-- **Rendimiento de staking** — `previewStakingRewards()`
-  (lectura en vivo) + suma de cada evento
-  `StakingRewardsClaimed` para esta wallet desde el log-index
-  local. Enlace profundo a `/buy-vpfi#staking-rewards`.
-- **Recompensas de interacción con la plataforma** —
-  `previewInteractionRewards()` a través de todos los
-  préstamos de la wallet + suma de cada evento
-  `InteractionRewardsClaimed`. Enlace profundo a
-  `/app/claims#interaction-rewards`.
+- **Rendimiento de staking** — VPFI pendiente acumulado al APR del
+  protocolo sobre tu saldo de escrow, más todas las recompensas de
+  staking que hayas reclamado previamente desde esta billetera.
+  Enlaza a la tarjeta de reclamación de staking en la página Comprar
+  VPFI.
+- **Recompensas de interacción con la plataforma** — VPFI pendiente
+  acumulado en todos los préstamos en los que hayas participado
+  (lado prestamista o prestatario), más todas las recompensas de
+  interacción que hayas reclamado previamente. Enlaza a la tarjeta
+  de reclamación de interacción en el Centro de reclamaciones.
 
-Los números reclamados de por vida se derivan del lado del
-cliente del escaneo de eventos del log-index — no hay un
-getter en cadena para el total acumulado. Un caché de
-navegador fresco muestra 0 (o parcial) de por vida hasta que
-el escaneo por (cadena, diamante) rellena los bloques
-históricos; una vez que el escaneo se completa, el número
-salta a la verdad. Mismo modelo de confianza que las tarjetas
-de reclamación subyacentes.
+Los números reclamados históricamente se reconstruyen desde el
+historial on-chain de reclamaciones de cada billetera. No existe un
+total acumulado on-chain que consultar, así que la cifra se suma
+recorriendo los eventos de reclamación previos de la billetera en
+esta cadena. Un caché de navegador nuevo muestra cero (o un total
+parcial) hasta que se completa el recorrido histórico; entonces el
+número salta a su valor correcto. El modelo de confianza es el mismo
+que el de las tarjetas de reclamación subyacentes.
 
-La tarjeta siempre se renderiza para wallets conectadas,
-incluso en el estado all-zero. La pista del estado vacío es
-intencional — ocultar la tarjeta en cero haría que los
-programas de recompensas fueran invisibles para usuarios
-frescos hasta que se aventuraran en Buy VPFI o Claim Center.
-
+La tarjeta siempre se muestra para billeteras conectadas, incluso
+cuando todos los valores son cero. La pista del estado vacío es
+intencional —ocultar la tarjeta en cero haría invisibles los
+programas de recompensas para usuarios nuevos hasta que entraran a
+Comprar VPFI o al Centro de reclamaciones.
 
 ---
 
@@ -193,7 +193,7 @@ préstamo con el activo principal y mintea los NFTs de posición.
 Mismo gate de HF ≥ 1,5 en la inicialización. La APR fija se
 establece en la oferta al crearse y es inmutable durante toda la
 vida del préstamo —el refinance crea un préstamo nuevo en lugar de
-mutar el existente.
+modificar el existente.
 
 ---
 
@@ -214,7 +214,7 @@ Selecciona en qué lado de la oferta está el creador:
   y ERC-1155 alquilables. Se enruta por el flujo de alquiler en
   lugar de un préstamo de deuda; el arrendatario pre-paga el
   costo total del alquiler (duración × tarifa diaria) más un
-  buffer del 5%.
+  margen del 5%.
 
 <a id="create-offer.lending-asset"></a>
 
@@ -227,8 +227,8 @@ la APR fija y la duración en días:
 - **Monto** — principal, denominado en los decimales nativos del
   activo.
 - **APR** — tasa anual fija en basis points (centésimas de
-  porcentaje), capturada en la aceptación y no reactiva
-  posteriormente.
+  porcentaje), fijada como instantánea en la aceptación y sin cambios
+  posteriores.
 - **Duración en días** — fija la ventana de gracia antes de que
   un default sea invocable.
 
@@ -267,7 +267,7 @@ el id del token (y la cantidad para ERC-1155), además de la tarifa
 diaria de alquiler en el activo principal. En la aceptación, el
 protocolo debita el alquiler prepagado desde el escrow del
 arrendatario hacia custodia —eso es duración × tarifa diaria, más
-un buffer del 5%. El NFT mismo pasa a un estado delegado (vía los
+un margen del 5%. El NFT mismo pasa a un estado delegado (vía los
 derechos de uso de ERC-4907, o el hook equivalente de alquiler de
 ERC-1155), de modo que el arrendatario tiene derechos pero no
 puede transferir el NFT.
@@ -281,7 +281,7 @@ liquidez:
 
 - **Líquido** — tiene un feed de precio de Chainlink registrado
   Y al menos un pool de Uniswap V3 / PancakeSwap V3 / SushiSwap V3
-  con ≥ $1M de profundidad en el tick actual. Aplica matemática
+  con ≥ $1M de profundidad en el tick actual. Aplica la matemática
   de LTV y HF; una liquidación basada en HF enruta el colateral
   por un failover de 4 DEX (0x → 1inch → Uniswap V3 → Balancer
   V2).
@@ -289,11 +289,12 @@ liquidez:
   en $0 on-chain. Sin matemática de HF. En default, el colateral
   íntegro se transfiere al prestamista. Ambas partes deben
   reconocer explícitamente el riesgo de colateral ilíquido en la
-  creación / aceptación de la oferta para que la oferta entre.
+  creación / aceptación de la oferta para que la oferta quede
+  registrada.
 
 El oráculo de precios tiene un quórum secundario de tres fuentes
 independientes (Tellor, API3, DIA) usando una regla de decisión
-soft 2-de-N por encima del feed primario de Chainlink. Pyth fue
+suave 2-de-N por encima del feed primario de Chainlink. Pyth fue
 evaluado y no adoptado.
 
 <a id="create-offer.collateral:lender"></a>
@@ -304,11 +305,11 @@ Cuánto quieres que el prestatario bloquee para asegurar el
 préstamo. Los ERC-20 líquidos (feed de Chainlink más ≥ $1M de
 profundidad en pool v3) entran en la matemática de LTV / HF; los
 ERC-20 ilíquidos y los NFTs no tienen valoración on-chain y
-requieren que ambas partes consientan a un escenario de
+requieren que ambas partes consientan un resultado de
 colateral-completo-en-default. El gate de HF ≥ 1,5 en la
 inicialización del préstamo se calcula contra la canasta de
 colateral que el prestatario presenta en la aceptación —
-dimensionar el requisito aquí fija directamente el headroom de HF
+dimensionar aquí el requisito fija directamente el margen de HF
 del prestatario.
 
 <a id="create-offer.collateral:borrower"></a>
@@ -319,12 +320,12 @@ Cuánto estás dispuesto a bloquear para asegurar el préstamo. Los
 ERC-20 líquidos (feed de Chainlink más ≥ $1M de profundidad en
 pool v3) entran en la matemática de LTV / HF; los ERC-20 ilíquidos
 y los NFTs no tienen valoración on-chain y requieren que ambas
-partes consientan a un escenario de colateral-completo-en-default.
+partes consientan un resultado de colateral-completo-en-default.
 Tu colateral se bloquea en tu escrow al momento de la creación de
 la oferta en una oferta de prestatario; en una oferta de
 prestamista, tu colateral se bloquea en el momento de la
 aceptación. En cualquier caso, el gate de HF ≥ 1,5 en la
-inicialización del préstamo debe liberarse con la canasta que
+inicialización del préstamo debe superarse con la canasta que
 presentes.
 
 <a id="create-offer.risk-disclosures"></a>
@@ -333,11 +334,11 @@ presentes.
 
 Gate de reconocimiento antes de enviar. La misma superficie de
 riesgo aplica a ambos lados; las pestañas específicas por rol más
-abajo explican cómo cada uno golpea distinto dependiendo de qué
-lado de la oferta firmas. Vaipakam es no-custodial: no hay clave
-admin que pueda revertir una transacción ya enviada. Existen
-palancas de pause sólo en contratos cara-a-cross-chain, limitadas
-a un timelock, y no pueden mover activos.
+abajo explican cómo impacta cada riesgo según el lado de la oferta
+que firmes. Vaipakam es non-custodial: no hay clave de admin que
+pueda revertir una transacción ya ejecutada. Existen palancas de
+pausa sólo en contratos expuestos a cross-chain, sujetas a un
+timelock, y no pueden mover activos.
 
 <a id="create-offer.risk-disclosures:lender"></a>
 
@@ -349,14 +350,14 @@ a un timelock, y no pueden mover activos.
   divergencia en la profundidad de los pools puede demorar una
   liquidación basada en HF más allá del punto donde el colateral
   cubre el principal. El quórum secundario (Tellor + API3 + DIA,
-  soft 2-de-N) atrapa derivas grandes pero un sesgo pequeño aún
+  suave 2-de-N) captura derivas grandes, pero un sesgo pequeño aún
   puede erosionar la recuperación.
 - **Slippage de liquidación** — el failover de 4 DEX enruta a la
   mejor ejecución que pueda encontrar, pero no puede garantizar
   un precio específico. La recuperación es neta de slippage y del
   1% de tesorería sobre intereses.
 - **Defaults con colateral ilíquido** — el colateral se transfiere
-  íntegro a ti en el momento del default. Sin recurso si el
+  íntegro a ti en el momento del default. No tienes recurso si el
   activo vale menos que el principal más los intereses
   acumulados.
 
@@ -367,11 +368,11 @@ a un timelock, y no pueden mover activos.
 - **Riesgo de smart contract** — el código del contrato es
   inmutable en runtime; los bugs afectarían al colateral
   bloqueado.
-- **Riesgo de oráculo** — la obsolescencia o manipulación puede
+- **Riesgo de oráculo** — datos obsoletos o manipulación pueden
   disparar una liquidación basada en HF en tu contra cuando el
   precio real de mercado se hubiera mantenido seguro. La fórmula
   de HF es reactiva a la salida del oráculo; un único tick malo
-  cruzando 1,0 es suficiente.
+  que cruce 1,0 es suficiente.
 - **Slippage de liquidación** — cuando se dispara una liquidación,
   el swap puede vender tu colateral a precios mermados por
   slippage. El swap es permissionless —cualquiera puede
@@ -385,7 +386,7 @@ a un timelock, y no pueden mover activos.
 
 ### Opciones avanzadas
 
-Ajustes menos comunes:
+Ajustes menos habituales:
 
 - **Caducidad** — la oferta se auto-cancela tras este timestamp.
   Por defecto ≈ 7 días.
@@ -395,7 +396,7 @@ Ajustes menos comunes:
 - Opciones específicas por lado expuestas por el flujo de
   creación de ofertas.
 
-Los valores por defecto son sensatos para la mayoría de usuarios.
+Los valores por defecto son razonables para la mayoría de usuarios.
 
 ---
 
@@ -406,11 +407,10 @@ Los valores por defecto son sensatos para la mayoría de usuarios.
 ### Fondos reclamables
 
 Las reclamaciones son de tipo pull por diseño —los eventos
-terminales dejan los fondos en custodia del protocolo y el
-poseedor del NFT de posición llama a reclamar para moverlos. Ambos
-tipos de reclamación pueden estar en la misma billetera al mismo
-tiempo. Las pestañas específicas por rol más abajo describen cada
-una.
+terminales dejan los fondos en custodia del protocolo y el poseedor
+del NFT de posición llama a reclamar para moverlos. Ambos tipos de
+reclamación pueden estar en la misma billetera al mismo tiempo. Las
+pestañas específicas por rol más abajo describen cada una.
 
 Cada reclamación quema el NFT de posición del poseedor de forma
 atómica. El NFT *es* el instrumento al portador —transferirlo
@@ -461,10 +461,10 @@ transacción.
 Eventos on-chain que involucran a tu billetera en la cadena
 activa, obtenidos en vivo de los logs del protocolo sobre una
 ventana deslizante de bloques. No hay caché de backend —cada
-carga re-obtiene los datos. Los eventos se agrupan por hash de
+carga vuelve a obtener los datos. Los eventos se agrupan por hash de
 transacción para que las txns multi-evento (por ejemplo, accept +
 initiate cayendo en el mismo bloque) se mantengan juntas. Los más
-nuevos primero. Surfacea ofertas, préstamos, repagos,
+nuevos primero. Muestra ofertas, préstamos, repagos,
 reclamaciones, liquidaciones, mints y burns de NFT, y compras /
 stakes / unstakes de VPFI.
 
@@ -483,13 +483,13 @@ Dos caminos:
   en Base.
 - **No canónico** — el adaptador de compra de la cadena local
   envía un paquete LayerZero al receptor canónico en Base, que
-  realiza la compra en Base y bridgea el resultado de regreso vía
+  realiza la compra en Base y puentea el resultado de regreso vía
   el estándar de token cross-chain. Latencia end-to-end ≈ 1 min
   en pares L2-a-L2. El VPFI llega a tu billetera en la cadena de
   **origen**.
 
 Límites de tasa del adaptador (post-endurecimiento): 50.000 VPFI
-por solicitud y 500.000 VPFI rolling sobre 24 horas. Ajustables
+por solicitud y 500.000 VPFI como ventana móvil de 24 horas. Ajustables
 por gobernanza a través de un timelock.
 
 <a id="buy-vpfi.discount-status"></a>
@@ -515,7 +515,7 @@ escrow ES hacer staking.
 Envía la compra. En la cadena canónica, el protocolo mintea
 directamente. En cadenas espejo, el adaptador de compra recibe el
 pago, envía un mensaje cross-chain, y el receptor ejecuta la
-compra en Base y bridgea VPFI de vuelta. La fee del puente más el
+compra en Base y puentea VPFI de vuelta. La comisión del puente más el
 costo de la red de verificadores se cotiza en vivo y se muestra
 en el formulario. El VPFI no se auto-deposita en escrow —el Paso
 2 es una acción explícita del usuario por diseño.
@@ -529,7 +529,7 @@ escrow en la misma cadena. Requerido en cada cadena —incluso la
 canónica— porque el depósito en escrow siempre es una acción
 explícita del usuario por especificación. En cadenas donde está
 configurado Permit2, la app prefiere el camino de firma única
-sobre el patrón clásico de approve + deposit; cae con elegancia
+sobre el patrón clásico de approve + deposit; hace fallback limpio
 si Permit2 no está configurado en esa cadena.
 
 <a id="buy-vpfi.unstake"></a>
@@ -538,7 +538,7 @@ si Permit2 no está configurado en esa cadena.
 
 Retira VPFI desde tu escrow de vuelta a tu billetera. No hay
 etapa de aprobación —el protocolo es dueño del escrow y se debita
-a sí mismo. El retiro dispara un re-estampado inmediato de la
+a sí mismo. El retiro dispara una refijación inmediata de la
 tasa de descuento al nuevo (más bajo) saldo, aplicado a cada
 préstamo abierto en el que estés. No hay ventana de gracia donde
 aún aplique el nivel anterior.
@@ -562,7 +562,7 @@ Dos flujos:
   liquidación después del cierre de ventana.
 
 Ambos flujos se mintean directamente en la cadena activa —no hay
-round-trip cross-chain para el usuario. La agregación cross-chain
+ida y vuelta cross-chain para el usuario. La agregación cross-chain
 de recompensas ocurre sólo entre contratos del protocolo.
 
 <a id="rewards.claim"></a>
@@ -573,7 +573,7 @@ Una sola transacción reclama ambos flujos a la vez. Las
 recompensas de staking siempre están disponibles; las recompensas
 de interacción son cero hasta que la ventana diaria relevante se
 finalice (finalización lazy disparada por la siguiente
-reclamación o liquidación no-cero en esa cadena). La UI bloquea
+reclamación o liquidación distinta de cero en esa cadena). La UI bloquea
 el botón mientras la ventana aún se está finalizando para que los
 usuarios no reclamen de menos.
 
@@ -585,8 +585,8 @@ Superficie idéntica al "Paso 3 — Unstake" en la página Comprar
 VPFI —retira VPFI desde el escrow de vuelta a tu billetera. El
 VPFI retirado sale del pool de staking inmediatamente (las
 recompensas dejan de acumularse para ese monto en ese bloque) y
-sale del acumulador de descuento inmediatamente (re-estampado
-post-saldo en cada préstamo abierto).
+sale del acumulador de descuento inmediatamente (refijación
+posterior al saldo en cada préstamo abierto).
 
 ---
 
@@ -597,9 +597,9 @@ post-saldo en cada préstamo abierto).
 ### Detalles del préstamo (esta página)
 
 Vista de un único préstamo derivada en vivo del protocolo, más HF
-y LTV en vivo del motor de riesgo. Renderiza términos, riesgo de
-colateral, partes, la superficie de acciones limitada por tu rol
-y el estado del préstamo, y estado de keeper en línea.
+y LTV en vivo del motor de riesgo. Muestra términos, riesgo de
+colateral, partes, las acciones habilitadas por tu rol y el estado
+del préstamo, y el estado de keeper en línea.
 
 <a id="loan-details.terms"></a>
 
@@ -614,7 +614,7 @@ Partes inmutables del préstamo:
 - Interés acumulado, calculado en vivo desde los segundos
   transcurridos desde el inicio.
 
-El refinance crea un préstamo nuevo en lugar de mutar estos
+El refinance crea un préstamo nuevo en lugar de modificar estos
 valores.
 
 <a id="loan-details.collateral-risk"></a>
@@ -633,7 +633,7 @@ Matemática de riesgo en vivo.
   volatilidad es del 110% LTV.
 
 El colateral ilíquido tiene valor USD on-chain de cero; HF y LTV
-colapsan a "n/a" y el único camino terminal es la transferencia
+pasan a "n/a" y el único camino terminal es la transferencia
 completa del colateral en default —ambas partes consintieron en
 la creación de la oferta vía el reconocimiento de riesgo de
 iliquidez.
@@ -644,8 +644,8 @@ iliquidez.
 
 La canasta de colateral que asegura este préstamo es tu
 protección. Un HF por encima de 1,0 significa que la posición
-está sobre-colateralizada relativa al umbral de liquidación. A
-medida que HF deriva hacia 1,0, tu protección se adelgaza. Una
+está sobrecolateralizada respecto del umbral de liquidación. A
+medida que HF deriva hacia 1,0, tu protección se estrecha. Una
 vez que HF cae por debajo de 1,0, cualquiera (tú incluido) puede
 llamar a liquidar, y el protocolo enruta el colateral por el
 failover de 4 DEX para tu activo principal. La recuperación es
@@ -660,7 +660,7 @@ en el mercado abierto es problema tuyo.
 #### Si eres el prestatario
 
 Tu colateral bloqueado. Mantén HF cómodamente por encima de 1,0
-— un objetivo común de buffer es 1,5 para aguantar volatilidad.
+— un objetivo común de margen es 1,5 para aguantar volatilidad.
 Palancas para subir HF:
 
 - **Agregar colateral** — recargar la canasta. Acción sólo de
@@ -690,7 +690,7 @@ determinísticos por dirección —misma dirección entre despliegues.
 
 Superficie de acciones, limitada por rol por el protocolo. Las
 pestañas específicas por rol más abajo enumeran las acciones
-disponibles de cada lado. Las acciones deshabilitadas surfacean
+disponibles de cada lado. Las acciones deshabilitadas muestran
 una razón en hover derivada del gate ("HF insuficiente", "Aún no
 expirado", "Préstamo bloqueado", etc.).
 
@@ -705,7 +705,7 @@ del rol:
 
 #### Si eres el prestamista
 
-- **Reclamar como prestamista** — sólo terminal. Devuelve
+- **Reclamar como prestamista** — sólo en estados terminales. Devuelve
   principal más intereses menos el 1% de tesorería (reducido aún
   más por tu descuento de yield-fee VPFI ponderado por tiempo
   cuando el consentimiento está activado). Quema el NFT de
@@ -713,7 +713,7 @@ del rol:
 - **Iniciar retiro anticipado** — pone el NFT de posición de
   prestamista a la venta a un precio que tú eliges. Un comprador
   que complete la venta se hace cargo de tu lado; recibes lo
-  recaudado. Cancelable antes del llenado de la venta.
+  recaudado. Cancelable antes de que la venta se complete.
 - Opcionalmente delegable a un keeper que tenga el permiso de
   acción relevante —ver Configuración de keepers.
 
@@ -734,7 +734,7 @@ del rol:
   términos; una vez que un prestamista acepta, completar el
   refinance intercambia los préstamos atómicamente sin que el
   colateral salga de tu escrow.
-- **Reclamar como prestatario** — sólo terminal. Devuelve el
+- **Reclamar como prestatario** — sólo en estados terminales. Devuelve el
   colateral en repago total, o el reembolso de VPFI Loan
   Initiation Fee no usado en default / liquidación. Quema el NFT
   de posición de prestatario.
@@ -756,7 +756,7 @@ Conforme a la política de aprobación de monto exacto, el
 protocolo nunca pide allowances ilimitados, así que la lista
 típica de revocación es corta.
 
-Nota: los flujos al estilo Permit2 bypassean el allowance por
+Nota: los flujos al estilo Permit2 omiten el allowance por
 activo en el protocolo usando una sola firma en su lugar, así que
 una lista limpia aquí no impide depósitos futuros.
 
@@ -779,9 +779,9 @@ on-chain ni gas. Las alertas son informativas —no mueven fondos.
 ### Escalera de umbrales
 
 Una escalera de bandas de HF configurada por el usuario. Cruzar
-a una banda más peligrosa dispara una vez y arma el siguiente
-umbral más profundo; cruzar de vuelta por encima de una banda la
-re-arma. Por defecto: 1,5 → 1,3 → 1,1. Números más altos son
+a una banda más peligrosa dispara una alerta una vez y arma el
+siguiente umbral más profundo; cruzar de vuelta por encima de una
+banda la rearma. Por defecto: 1,5 → 1,3 → 1,1. Números más altos son
 apropiados para colateral volátil. El único trabajo de la
 escalera es sacarte antes de que HF caiga por debajo de 1,0 y
 dispare la liquidación.
@@ -799,7 +799,7 @@ Dos canales:
 
 Ambos comparten la escalera de umbrales; los niveles de
 advertencia por canal no se exponen intencionalmente para evitar
-deriva. La publicación del canal Push está actualmente en stub
+deriva. La publicación del canal Push está actualmente como stub,
 pendiente de la creación del canal.
 
 ---
@@ -820,10 +820,10 @@ verificador obtiene:
   préstamo subyacente desde los metadatos y lee los detalles del
   préstamo desde el protocolo para confirmar el estado.
 
-Surfacea: ¿minteado por Vaipakam? ¿qué cadena? ¿estado del
+Muestra: ¿minteado por Vaipakam? ¿qué cadena? ¿estado del
 préstamo? ¿poseedor actual? Te permite detectar una falsificación,
 una posición ya reclamada (quemada), o una posición cuyo préstamo
-se liquidó y está mid-claim.
+se liquidó y está en medio del proceso de reclamación.
 
 El NFT de posición es el instrumento al portador —verifica antes
 de comprar en un mercado secundario.
@@ -836,17 +836,17 @@ de comprar en un mercado secundario.
 
 ### Sobre los keepers
 
-Una whitelist de keepers por billetera de hasta 5 keepers. Cada
+Una allowlist de keepers por billetera de hasta 5 keepers. Cada
 keeper tiene un conjunto de permisos de acción autorizando
 llamadas de mantenimiento específicas sobre **tu lado** de un
 préstamo. Los caminos de salida-de-dinero (repagar, reclamar,
 agregar colateral, liquidar) son sólo de usuario por diseño y no
 pueden delegarse.
 
-Aplican dos gates adicionales en el momento de la acción:
+Se aplican dos gates adicionales en el momento de la acción:
 
 1. El interruptor maestro de acceso a keepers —un freno de
-   emergencia de un solo flip que deshabilita a todos los
+   emergencia de un solo cambio que deshabilita a todos los
    keepers sin tocar la allowlist.
 2. Un toggle de opt-in por préstamo, configurado en la
    superficie del Libro de ofertas o de Detalles del préstamo.
@@ -896,10 +896,10 @@ verificabilidad.
 
 ### Combinado — Todas las cadenas
 
-Rollup cross-chain. La cabecera reporta cuántas cadenas se
-cubrieron y cuántas fallaron, así que un RPC inalcanzable en el
-momento del fetch es explícito. Cuando una o más cadenas fallaron,
-la tabla por-cadena marca cuál —los totales de TVL aún se
+Rollup cross-chain. La cabecera informa cuántas cadenas se
+cubrieron y cuántas fallaron, de modo que un RPC inalcanzable en el
+momento de la consulta queda explícito. Cuando una o más cadenas fallaron,
+la tabla por cadena marca cuáles —los totales de TVL aún se
 reportan, pero reconocen el hueco.
 
 <a id="public-dashboard.per-chain"></a>
@@ -908,7 +908,7 @@ reportan, pero reconocen el hueco.
 
 División por cadena de las métricas combinadas. Útil para
 detectar concentración de TVL, suministros de espejos VPFI
-desemparejados (la suma de los suministros espejo debería igualar
+desalineados (la suma de los suministros espejo debería igualar
 el saldo bloqueado del adaptador canónico), o cadenas estancadas.
 
 <a id="public-dashboard.vpfi-transparency"></a>
@@ -937,8 +937,8 @@ deriva.
 
 Para cada métrica, la página lista:
 
-- El número de bloque usado como snapshot.
-- Frescura de los datos (staleness máximo entre cadenas).
+- El número de bloque usado como instantánea.
+- Frescura de los datos (antigüedad máxima entre cadenas).
 - La dirección del protocolo y la llamada de función view.
 
 Cualquiera puede re-derivar cualquier número de esta página desde
@@ -950,13 +950,13 @@ es el listón.
 ## Refinanciar
 
 Esta página es sólo para prestatarios —el refinance lo inicia el
-prestatario sobre el préstamo del prestatario.
+prestatario sobre su préstamo.
 
 <a id="refinance.overview"></a>
 
 ### Sobre refinanciar
 
-El refinance paga atómicamente tu préstamo existente desde un
+El refinance paga atómicamente tu préstamo existente con un
 nuevo principal y abre un préstamo fresco con los nuevos
 términos, todo en una transacción. El colateral se queda en tu
 escrow durante todo el proceso —no hay ventana sin garantizar.
@@ -970,7 +970,7 @@ viejo se liquida correctamente como parte del intercambio.
 
 ### Tu posición actual
 
-Snapshot del préstamo siendo refinanciado —principal actual,
+Snapshot del préstamo que se está refinanciando —principal actual,
 intereses acumulados hasta ahora, HF / LTV y la canasta de
 colateral. La nueva oferta debería dimensionarse al menos al
 monto pendiente (principal + intereses acumulados); cualquier
@@ -1002,7 +1002,7 @@ aceptado:
 5. Liquida el reembolso no usado de la Loan Initiation Fee del
    préstamo viejo.
 
-Revierte si HF sobre los nuevos términos quedaría por debajo de
+Revierte si HF bajo los nuevos términos quedaría por debajo de
 1,5.
 
 ---
@@ -1010,7 +1010,7 @@ Revierte si HF sobre los nuevos términos quedaría por debajo de
 ## Cierre anticipado
 
 Esta página es sólo para prestatarios —el preclose lo inicia el
-prestatario sobre el préstamo del prestatario.
+prestatario sobre su préstamo.
 
 <a id="preclose.overview"></a>
 
@@ -1035,7 +1035,7 @@ ponderada por tiempo maneja la equidad.
 
 ### Tu posición actual
 
-Snapshot del préstamo siendo precerrado —principal pendiente,
+Snapshot del préstamo en preclose —principal pendiente,
 intereses acumulados, HF / LTV actuales. El flujo de preclose
 **no** requiere HF ≥ 1,5 al salir (es un cierre, no una
 re-init).
@@ -1044,8 +1044,8 @@ re-init).
 
 ### Offset en progreso
 
-Estado: el offset se ha iniciado, el swap está en mid-execution
-(o la cotización fue consumida pero el settle final está
+Estado: el offset se ha iniciado, el swap está en ejecución
+(o la cotización fue consumida pero el settlement final está
 pendiente). Dos salidas:
 
 - **Completar offset** — liquida el préstamo desde lo recaudado,
@@ -1081,7 +1081,7 @@ Pones a la venta tu NFT de posición a un precio elegido; en la
 aceptación, el comprador paga, la propiedad del NFT de prestamista
 se transfiere al comprador, y el comprador se convierte en el
 prestamista de registro para toda liquidación futura (claim al
-final, etc.). Tú te vas con lo recaudado por la venta.
+final, etc.). Tú recibes lo recaudado por la venta.
 
 Las liquidaciones siguen siendo sólo de usuario y NO se delegan a
 través de la venta —sólo se transfiere el derecho a reclamar.
@@ -1102,6 +1102,6 @@ de liquidación durante el tiempo restante.
 
 Pone el NFT de posición a la venta vía el protocolo a tu precio
 de oferta. Un comprador completa la venta; puedes cancelar antes
-de que la venta se llene. Opcionalmente delegable a un keeper
+de que la venta se complete. Opcionalmente delegable a un keeper
 que tenga el permiso de "completar venta de préstamo"; el paso
 de iniciar en sí permanece sólo de usuario.

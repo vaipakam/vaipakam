@@ -1166,7 +1166,7 @@
     "activeOn": "アクティブ · 割引同意 ON",
     "depositGapAchieved": "エスクロー残高は次回ローンで{{tier}}に該当します。上で割引同意が有効になっていることを確認してください。",
     "liquidLendingOnly": "流動性のある貸付資産のみ。",
-    "enableSharedConsent": "上で共有割引同意を有効化してください。",
+    "enableSharedConsent": "<dashboardLink>Dashboard</dashboardLink> で共有割引同意を有効化してください。",
     "depositMore": "Tier {{tier}}（{{discount}}）に到達するため、エスクローにさらに{{amount}} VPFIを入金してください。",
     "tierColTier": "Tier",
     "tierColEscrow": "エスクローVPFI",

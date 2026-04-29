@@ -1166,7 +1166,7 @@
     "activeOn": "सक्रिय · छूट सहमति चालू",
     "depositGapAchieved": "एस्क्रो शेष अगले ऋण पर {{tier}} के लिए योग्य है। सुनिश्चित करें कि छूट सहमति ऊपर सक्षम है।",
     "liquidLendingOnly": "केवल तरल ऋण संपत्तियाँ।",
-    "enableSharedConsent": "साझा छूट सहमति ऊपर सक्षम करें।",
+    "enableSharedConsent": "<dashboardLink>Dashboard</dashboardLink> पर साझा छूट सहमति सक्षम करें।",
     "depositMore": "Tier {{tier}} ({{discount}}) तक पहुँचने के लिए एस्क्रो में {{amount}} और VPFI जमा करें।",
     "tierColTier": "Tier",
     "tierColEscrow": "एस्क्रो VPFI",

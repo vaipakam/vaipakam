@@ -1166,7 +1166,7 @@
     "activeOn": "Actif · consentement de remise ACTIVÉ",
     "depositGapAchieved": "Le solde de l'escrow qualifie pour {{tier}} sur le prochain prêt. S'assurer que le consentement de remise est activé ci-dessus.",
     "liquidLendingOnly": "Actifs de prêt liquides uniquement.",
-    "enableSharedConsent": "Activer le consentement de remise partagé ci-dessus.",
+    "enableSharedConsent": "Activer le consentement de remise partagé sur le <dashboardLink>Tableau de bord</dashboardLink>.",
     "depositMore": "Déposer {{amount}} VPFI supplémentaires dans l'escrow pour atteindre Tier {{tier}} ({{discount}}).",
     "tierColTier": "Tier",
     "tierColEscrow": "VPFI en escrow",

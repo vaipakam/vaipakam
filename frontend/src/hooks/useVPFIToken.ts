@@ -1,10 +1,14 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useDiamondRead, useReadChain } from '../contracts/useDiamond';
+import { useProtocolConfig } from './useProtocolConfig';
 import { beginStep } from '../lib/journeyLog';
 
 const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
 const STALE_MS = 30_000;
-const TOKEN_DECIMALS_SCALE = 1e18;
+/** Fallback when the live `vpfiDecimals` from `useProtocolConfig`
+ *  hasn't loaded yet. Every Vaipakam VPFI deploy uses 18 by OFT-mesh
+ *  requirement, so the fallback matches contract truth. */
+const VPFI_DECIMALS_DEFAULT = 18;
 
 export interface VPFITokenSnapshot {
   /** Registered VPFI token proxy address on this chain, or zero if unset. */
@@ -37,7 +41,12 @@ let cached: { data: VPFITokenSnapshot; at: number; key: string } | null = null;
 export function useVPFIToken() {
   const diamond = useDiamondRead();
   const chain = useReadChain();
-  const cacheKey = `${chain.chainId}:${(chain.diamondAddress ?? '').toLowerCase()}`;
+  const { config } = useProtocolConfig();
+  const vpfiDecimals = config?.vpfiDecimals ?? VPFI_DECIMALS_DEFAULT;
+  // Cache key includes the resolved decimals so a future redeploy
+  // with different decimals produces a fresh snapshot rather than a
+  // stale one keyed under the old scale.
+  const cacheKey = `${chain.chainId}:${(chain.diamondAddress ?? '').toLowerCase()}:${vpfiDecimals}`;
 
   const [snapshot, setSnapshot] = useState<VPFITokenSnapshot | null>(() =>
     cached && cached.key === cacheKey ? cached.data : null,
@@ -70,9 +79,10 @@ export function useVPFIToken() {
         d.getVPFIMinter(),
       ]);
 
-      const cap = Number(capRaw) / TOKEN_DECIMALS_SCALE;
-      const totalSupply = Number(totalSupplyRaw) / TOKEN_DECIMALS_SCALE;
-      const capHeadroom = Number(headroomRaw) / TOKEN_DECIMALS_SCALE;
+      const scale = 10 ** vpfiDecimals;
+      const cap = Number(capRaw) / scale;
+      const totalSupply = Number(totalSupplyRaw) / scale;
+      const capHeadroom = Number(headroomRaw) / scale;
       const circulatingShare = cap === 0 ? 0 : totalSupply / cap;
 
       const next: VPFITokenSnapshot = {
@@ -98,7 +108,7 @@ export function useVPFIToken() {
     } finally {
       setLoading(false);
     }
-  }, [diamond, cacheKey]);
+  }, [diamond, cacheKey, vpfiDecimals]);
 
   useEffect(() => {
     load();

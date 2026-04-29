@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useTranslation } from "react-i18next";
+import { Trans, useTranslation } from "react-i18next";
+import { L as Link } from "../components/L";
 import {
   encodeFunctionData,
   parseAbi,
@@ -31,6 +32,8 @@ import {
 import { useUserVPFI } from "../hooks/useUserVPFI";
 import {
   useVPFIDiscount,
+  useVPFIDiscountTier,
+  useVPFIDiscountConsent,
   useEscrowVPFIBalance,
   useVpfiTierTable,
   ethWeiToVpfi,
@@ -333,9 +336,12 @@ export default function BuyVPFI() {
     useEscrowVPFIBalance(address);
   const { mode } = useMode();
   const isAdvanced = mode === 'advanced';
-  // discountTier / consentEnabled hooks were used by `<DiscountStatusCard>`
-  // before that card moved to the Dashboard. Removed here to keep the
-  // Buy VPFI page's data dependencies tight.
+  // Discount-tier + consent reads back the connected wallet's current
+  // tier so `<DiscountStatusCard>` can render below. Was on the
+  // Dashboard previously; moved here so the tier-thresholds reference
+  // is co-located with the buying decision.
+  const { data: discountTier } = useVPFIDiscountTier(address);
+  const { enabled: consentEnabled } = useVPFIDiscountConsent();
   const bridge = useVPFIBuyBridge(
     activeChain && isCorrectChain ? activeChain : null,
   );
@@ -932,6 +938,22 @@ export default function BuyVPFI() {
         </div>
       )}
 
+      {/* Live VPFI discount-tier status. Surfaces tier table + current
+          tier the moment a user hits the buy page so they can size
+          their purchase against the next tier threshold without
+          context-switching. Renders only when a wallet is connected
+          — for disconnected users the page already explains buying;
+          showing "Inactive · below Tier 1" with a 0 escrow balance
+          would read as a problem rather than a not-yet state. */}
+      {address && (
+        <DiscountStatusCard
+          tier={discountTier?.tier ?? 0}
+          escrowVpfi={escrowBal}
+          discountBps={discountTier?.discountBps ?? 0}
+          consentEnabled={consentEnabled}
+        />
+      )}
+
       {/* Step 1 — buy VPFI from the user's preferred chain. Canonical chain
            calls the Diamond directly; every other chain routes through the
            VPFIBuyAdapter + LayerZero round-trip, with VPFI delivered back
@@ -1351,9 +1373,28 @@ export function DiscountStatusCard({
             {qualificationLabel}
           </div>
           <div className="stat-label" style={{ fontSize: 11 }}>
-            {consentEnabled === false
-              ? t('buyVpfiCards.enableSharedConsent')
-              : t('buyVpfiCards.liquidLendingOnly')}
+            {consentEnabled === false ? (
+              // The consent toggle lives on the Dashboard now (it
+              // moved off the Buy VPFI page in the same release that
+              // dropped the inline staking-rewards mirror — see the
+              // Dashboard's `<VPFIDiscountConsentCard>`). The inline
+              // <dashboardLink> placeholder lets the i18n string
+              // stay one sentence with the link inline rather than
+              // a tacked-on "(see Dashboard)" suffix.
+              <Trans
+                i18nKey="buyVpfiCards.enableSharedConsent"
+                components={{
+                  dashboardLink: (
+                    <Link
+                      to="/app"
+                      style={{ color: 'var(--brand)', textDecoration: 'underline' }}
+                    />
+                  ),
+                }}
+              />
+            ) : (
+              t('buyVpfiCards.liquidLendingOnly')
+            )}
           </div>
         </div>
       </div>

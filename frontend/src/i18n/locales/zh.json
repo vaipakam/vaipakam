@@ -1166,7 +1166,7 @@
     "activeOn": "已激活 · 折扣同意 开启",
     "depositGapAchieved": "Escrow余额在下一笔贷款上符合{{tier}}的资格。请确保上方已启用折扣同意。",
     "liquidLendingOnly": "仅限流动性贷款资产。",
-    "enableSharedConsent": "请在上方启用共享折扣同意。",
+    "enableSharedConsent": "请在 <dashboardLink>Dashboard</dashboardLink> 中启用共享折扣同意。",
     "depositMore": "再向escrow中存入{{amount}} VPFI以达到Tier {{tier}}（{{discount}}）。",
     "tierColTier": "Tier",
     "tierColEscrow": "Escrow VPFI",

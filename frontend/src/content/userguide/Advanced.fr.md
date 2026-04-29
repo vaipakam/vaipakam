@@ -1,14 +1,14 @@
 # Vaipakam — Guide utilisateur (Mode Avancé)
 
-Explications précises et techniquement exactes de chaque carte de
+Explications précises et techniquement rigoureuses de chaque carte de
 l'application. Chaque section correspond à une icône d'information
 `(i)` à côté du titre d'une carte.
 
-> **Vous lisez la version Avancée.** Elle correspond au mode
+> **Tu lis la version Avancée.** Elle correspond au mode
 > **Avancé** de l'app (contrôles plus denses, diagnostics et
 > détails de configuration du protocole). Pour une explication
-> plus accessible et simple, basculez l'app en mode **Basique** —
-> ouvrez les Paramètres (icône d'engrenage en haut à droite) →
+> plus accessible et simple, bascule l'app en mode **Basique** —
+> ouvre les Paramètres (icône d'engrenage en haut à droite) →
 > **Mode** → **Basique**. Les liens « En savoir plus » (i) dans
 > l'app ouvriront alors le guide Basique.
 
@@ -18,10 +18,10 @@ l'application. Chaque section correspond à une icône d'information
 
 <a id="dashboard.your-escrow"></a>
 
-### Votre Escrow
+### Ton Escrow
 
 Un contrat upgradable par utilisateur — ton coffre privé sur cette
-chaîne — déployé pour toi la première fois que tu participes à un
+chaîne — créé pour toi la première fois que tu participes à un
 prêt. Un escrow par adresse par chaîne. Détient les soldes ERC-20,
 ERC-721 et ERC-1155 liés à tes positions de prêt. Aucune mise en
 commun : les actifs des autres utilisateurs ne sont jamais dans ce
@@ -35,15 +35,15 @@ un timelock — jamais instantanément.
 
 <a id="dashboard.your-loans"></a>
 
-### Vos prêts
+### Tes prêts
 
 Chaque prêt impliquant le wallet connecté sur cette chaîne — que
 tu sois côté prêteur, côté emprunteur, ou les deux sur des
-positions distinctes. Calculé en direct à partir des méthodes de
-vue du protocole contre ton adresse. Chaque ligne renvoie vers la
-page de position complète avec HF, LTV, intérêts accumulés, la
-surface d'actions filtrée par ton rôle et le statut du prêt, et
-l'identifiant de prêt on-chain que tu peux coller dans un
+positions distinctes. Les données sont calculées en direct à partir
+des méthodes de vue du protocole pour ton adresse. Chaque ligne
+renvoie vers la page de position complète avec HF, LTV, intérêts
+accumulés, les actions autorisées par ton rôle et le statut du prêt,
+ainsi que l'identifiant de prêt on-chain que tu peux coller dans un
 explorateur de blocs.
 
 <a id="dashboard.vpfi-panel"></a>
@@ -59,16 +59,15 @@ active :
   détenus par le protocole).
 - Plafond de minting restant.
 
-Vaipakam transporte VPFI cross-chain via LayerZero V2. **Base est
-la chaîne canonique** — l'adapter canonique y exécute la
-sémantique de verrouillage-à-l'envoi / libération-à-la-réception.
-Toute autre chaîne supportée exécute un mirror qui mint quand un
-paquet du pont arrive et burn en sortie. L'offre totale sur toutes
-les chaînes reste invariante par construction sous l'effet du
-bridging.
+Vaipakam transporte VPFI entre chaînes via LayerZero V2. **Base est
+la chaîne canonique** — l'adaptateur canonique y applique la sémantique
+verrouillage à l'envoi / libération à la réception. Toute autre
+chaîne supportée exécute un mirror qui mint à l'arrivée d'un paquet
+de bridge entrant et brûle en sortie. Par construction, l'offre
+totale sur toutes les chaînes reste invariante pendant le bridging.
 
 La politique de vérification des messages cross-chain durcie
-après l'incident industriel d'avril 2026 est de **3 vérificateurs
+après l'incident du secteur d'avril 2026 est de **3 vérificateurs
 requis + 2 optionnels, seuil 1 sur 2**. La configuration par
 défaut à un seul vérificateur est rejetée à la porte de
 déploiement.
@@ -95,11 +94,11 @@ s'applique.
 
 Le tier est calculé contre ton solde d'escrow **après changement**
 au moment où tu déposes ou retires du VPFI, puis pondéré dans le
-temps sur la durée de vie de chaque prêt. Un retrait re-tamponne
+temps sur la durée de vie de chaque prêt. Un retrait refixe
 le taux au nouveau solde plus bas immédiatement pour chaque prêt
 ouvert te concernant — il n'y a pas de fenêtre de grâce où ton
 ancien tier (plus haut) s'applique encore. Cela ferme le schéma
-de gaming où un utilisateur pourrait recharger du VPFI juste
+d'abus où un utilisateur pourrait recharger du VPFI juste
 avant la fin d'un prêt, capturer la remise du tier complet, et
 retirer quelques secondes plus tard.
 
@@ -109,43 +108,43 @@ rabais VPFI lorsque l'emprunteur réclame).
 
 <a id="dashboard.rewards-summary"></a>
 
-### Vos récompenses VPFI
+### Tes récompenses VPFI
 
-Carte de résumé aspirationnelle. Affiche l'image combinée des
-récompenses VPFI du portefeuille connecté à travers les deux
-flux dans une seule vue, le chiffre principal étant
-`stakingPending + stakingLifetimeClaimed + interactionPending
-+ interactionLifetimeClaimed`.
+Carte de résumé ambitieuse qui affiche, dans une seule vue, l'image
+combinée des récompenses VPFI du wallet connecté sur les deux flux
+de récompenses. Le chiffre principal est la somme de : récompenses
+de staking en attente, récompenses de staking déjà réclamées,
+récompenses d'interaction en attente et récompenses d'interaction
+déjà réclamées.
 
-Les lignes de ventilation par flux affichent en attente +
-réclamé et un lien profond chevron vers la carte de
-réclamation complète sur sa page native :
+Les lignes de ventilation par flux affichent en attente + réclamé,
+avec un lien profond en chevron vers la carte de réclamation
+complète sur sa page native :
 
-- **Rendement du staking** — `previewStakingRewards()`
-  (lecture en direct) + somme de chaque événement
-  `StakingRewardsClaimed` pour ce portefeuille depuis le
-  log-index local. Lien profond vers
-  `/buy-vpfi#staking-rewards`.
-- **Récompenses d'interaction avec la plateforme** —
-  `previewInteractionRewards()` sur tous les prêts du
-  portefeuille + somme de chaque événement
-  `InteractionRewardsClaimed`. Lien profond vers
-  `/app/claims#interaction-rewards`.
+- **Rendement du staking** — VPFI en attente accumulé à l'APR du
+  protocole sur ton solde d'escrow, plus toutes les récompenses de
+  staking que tu as déjà réclamées depuis ce wallet. Lien vers la
+  carte de réclamation de staking sur la page Acheter VPFI.
+- **Récompenses d'interaction avec la plateforme** — VPFI en attente
+  accumulé sur tous les prêts auxquels tu as participé (côté prêteur
+  ou emprunteur), plus toutes les récompenses d'interaction que tu
+  as déjà réclamées. Lien vers la carte de réclamation d'interaction
+  dans le Centre de réclamations.
 
-Les nombres réclamés à vie sont dérivés côté client du scan
-d'événements log-index — il n'y a pas de getter on-chain pour
-le total cumulé. Un cache de navigateur frais affiche 0 (ou
-partiel) à vie jusqu'à ce que le scan par (chaîne, diamant)
-remplisse les blocs historiques ; une fois le scan terminé,
-le nombre saute à la vérité. Même modèle de confiance que
-les cartes de réclamation sous-jacentes.
+Les montants déjà réclamés sont reconstruits depuis l'historique
+on-chain des réclamations de chaque wallet. Il n'existe pas de total
+cumulé on-chain à interroger ; le chiffre est donc calculé en
+parcourant les événements de réclamation précédents du wallet sur
+cette chaîne. Un cache de navigateur neuf affiche zéro (ou un total
+partiel) jusqu'à la fin du parcours historique ; le nombre passe
+ensuite à sa valeur correcte. Le modèle de confiance est le même que
+celui des cartes de réclamation sous-jacentes.
 
-La carte s'affiche toujours pour les portefeuilles connectés,
-même dans l'état all-zero. L'indice d'état vide est
-intentionnel — masquer la carte à zéro rendrait les programmes
-de récompenses invisibles pour les nouveaux utilisateurs
-jusqu'à ce qu'ils s'aventurent dans Buy VPFI ou Claim Center.
-
+La carte s'affiche toujours pour les wallets connectés, même quand
+toutes les valeurs sont à zéro. L'indice d'état vide est
+intentionnel — masquer la carte à zéro rendrait les programmes de
+récompenses invisibles pour les nouveaux utilisateurs jusqu'à ce
+qu'ils ouvrent Acheter VPFI ou le Centre de réclamations.
 
 ---
 
@@ -157,19 +156,19 @@ jusqu'à ce qu'ils s'aventurent dans Buy VPFI ou Claim Center.
 
 Filtres côté client sur les listes d'offres de prêteur /
 d'emprunteur. Filtre par actif, côté, statut, et quelques autres
-axes. Les filtres n'affectent pas « Vos offres actives » — cette
+axes. Les filtres n'affectent pas « Tes offres actives » — cette
 liste est toujours affichée intégralement.
 
 <a id="offer-book.your-active-offers"></a>
 
-### Vos offres actives
+### Tes offres actives
 
 Offres ouvertes (statut Active, expiration non encore atteinte)
 que tu as créées. Annulables à tout moment avant acceptation —
 l'annulation est gratuite. L'acceptation fait passer l'offre à
 Accepted et déclenche l'initialisation du prêt, qui mint les deux
 NFT de position (un pour le prêteur et un pour l'emprunteur) et
-ouvre le prêt en état Active.
+ouvre le prêt à l'état Active.
 
 <a id="offer-book.lender-offers"></a>
 
@@ -193,7 +192,7 @@ finance le prêt avec l'actif principal et mint les NFT de
 position. Même verrou HF ≥ 1,5 à l'initialisation. L'APR fixe
 est défini sur l'offre à la création et immuable durant toute la
 vie du prêt — le refinancement crée un nouveau prêt plutôt que de
-muter celui existant.
+modifier celui existant.
 
 ---
 
@@ -214,7 +213,7 @@ Sélectionne le côté de l'offre où se trouve le créateur :
   louable) et les ERC-1155 louables. Passe par le flux de
   location plutôt que par un prêt avec dette ; le locataire
   pré-paie le coût total de la location (durée × frais
-  journalier) plus un buffer de 5%.
+  journalier) plus une marge de 5%.
 
 <a id="create-offer.lending-asset"></a>
 
@@ -227,7 +226,7 @@ principal, l'APR fixe et la durée en jours :
 - **Montant** — principal, libellé dans les décimales natives de
   l'actif.
 - **APR** — taux annuel fixe en basis points (centièmes de
-  pourcent), figé à l'acceptation et non réactif ensuite.
+  pourcent), figé à l'acceptation et inchangé ensuite.
 - **Durée en jours** — fixe la fenêtre de grâce avant qu'un
   défaut puisse être déclenché.
 
@@ -266,7 +265,7 @@ l'identifiant du token (et la quantité pour ERC-1155), plus le
 frais journalier de location dans l'actif principal. À
 l'acceptation, le protocole prélève la location pré-payée depuis
 l'escrow du locataire vers la garde — soit durée × frais
-journalier, plus un buffer de 5%. Le NFT lui-même passe en état
+journalier, plus une marge de 5%. Le NFT lui-même passe en état
 délégué (via les droits d'utilisation ERC-4907, ou le hook
 équivalent de location ERC-1155), de sorte que le locataire a
 les droits mais ne peut pas transférer le NFT.
@@ -289,11 +288,11 @@ de liquidité :
   intégral est transféré au prêteur. Les deux parties doivent
   reconnaître explicitement le risque de collatéral illiquide à
   la création / acceptation de l'offre pour que celle-ci soit
-  posée.
+  enregistrée.
 
 L'oracle de prix possède un quorum secondaire de trois sources
 indépendantes (Tellor, API3, DIA) utilisant une règle de décision
-soft 2-sur-N par-dessus le flux primaire Chainlink. Pyth a été
+souple 2-sur-N par-dessus le flux primaire Chainlink. Pyth a été
 évalué et non adopté.
 
 <a id="create-offer.collateral:lender"></a>
@@ -332,12 +331,12 @@ avec le panier que tu présentes.
 ### Avertissements de risque
 
 Porte de consentement avant la soumission. La même surface de
-risque s'applique aux deux côtés ; les onglets spécifiques au
-rôle ci-dessous expliquent comment chacun mord différemment selon
-le côté de l'offre que tu signes. Vaipakam est non-custodial : il
-n'existe pas de clé admin pouvant inverser une transaction
-passée. Des leviers de pause existent uniquement sur les contrats
-face au cross-chain, gardés par un timelock, et ne peuvent pas
+risque s'applique aux deux côtés ; les onglets spécifiques au rôle
+ci-dessous expliquent comment chaque risque se manifeste selon le
+côté de l'offre que tu signes. Vaipakam est non-custodial : il
+n'existe pas de clé admin pouvant annuler une transaction passée.
+Des leviers de pause existent uniquement sur les contrats exposés
+au cross-chain, sont protégés par un timelock et ne peuvent pas
 déplacer d'actifs.
 
 <a id="create-offer.risk-disclosures:lender"></a>
@@ -349,8 +348,8 @@ déplacer d'actifs.
 - **Risque oracle** — l'obsolescence Chainlink ou la divergence
   de profondeur de pool peut retarder une liquidation basée sur
   HF au-delà du point où le collatéral couvre le principal. Le
-  quorum secondaire (Tellor + API3 + DIA, soft 2-sur-N) attrape
-  les dérives importantes mais un petit biais peut encore éroder
+  quorum secondaire (Tellor + API3 + DIA, souple 2-sur-N) capte
+  les dérives importantes, mais un petit biais peut encore éroder
   la récupération.
 - **Slippage de liquidation** — le failover 4-DEX route vers la
   meilleure exécution qu'il puisse trouver, mais ne peut garantir
@@ -366,11 +365,11 @@ déplacer d'actifs.
 
 - **Risque smart contract** — code immuable au runtime ; les
   bugs affecteraient le collatéral verrouillé.
-- **Risque oracle** — obsolescence ou manipulation peut
+- **Risque oracle** — des données obsolètes ou une manipulation peuvent
   déclencher une liquidation basée sur HF contre toi alors que
   le prix de marché réel serait resté sûr. La formule HF est
   réactive à la sortie de l'oracle ; un seul mauvais tick
-  traversant 1,0 suffit.
+  franchissant 1,0 suffit.
 - **Slippage de liquidation** — quand une liquidation se
   déclenche, le swap peut vendre ton collatéral à des prix
   érodés par le slippage. Le swap est permissionless —
@@ -413,7 +412,7 @@ déplacer. Les deux types de réclamation peuvent coexister dans
 le même wallet en même temps. Les onglets spécifiques au rôle
 ci-dessous décrivent chacun.
 
-Chaque réclamation burn le NFT de position du détenteur de manière
+Chaque réclamation brûle le NFT de position du détenteur de manière
 atomique. Le NFT *est* l'instrument au porteur — le transférer
 avant de réclamer donne au nouveau détenteur le droit
 d'encaisser.
@@ -432,7 +431,7 @@ La réclamation du prêteur rend :
 
 Réclamable dès que le prêt atteint un état terminal (Settled,
 Defaulted ou Liquidated). Le NFT de position de prêteur est
-burné dans la même transaction.
+brûlé dans la même transaction.
 
 <a id="claim-center.claims:borrower"></a>
 
@@ -449,7 +448,7 @@ prêt s'est réglé :
   zéro à moins d'être explicitement préservé. Le collatéral est
   déjà passé au prêteur.
 
-Le NFT de position d'emprunteur est burné dans la même
+Le NFT de position d'emprunteur est brûlé dans la même
 transaction.
 
 ---
@@ -463,7 +462,7 @@ transaction.
 Événements on-chain impliquant ton wallet sur la chaîne active,
 sourcés en direct depuis les logs du protocole sur une fenêtre
 glissante de blocs. Aucun cache backend — chaque chargement
-re-fetche. Les événements sont regroupés par hash de transaction
+récupère les données à nouveau. Les événements sont regroupés par hash de transaction
 pour que les txns multi-événements (par exemple, accept +
 initiate dans le même bloc) restent ensemble. Les plus récents
 en premier. Affiche offres, prêts, remboursements, réclamations,
@@ -483,20 +482,20 @@ Deux voies :
 - **Canonique (Base)** — appel direct au flux d'achat canonique
   sur le protocole. Mint VPFI directement vers ton wallet sur
   Base.
-- **Hors canonique** — l'adapter d'achat de la chaîne locale
-  envoie un paquet LayerZero au receveur canonique sur Base, qui
-  exécute l'achat sur Base et bridgea le résultat de retour via
+- **Hors canonique** — l'adaptateur d'achat de la chaîne locale
+  envoie un paquet LayerZero au récepteur canonique sur Base, qui
+  exécute l'achat sur Base et renvoie le résultat par bridge via
   le standard de token cross-chain. Latence end-to-end ≈ 1 min
   sur les paires L2-vers-L2. Le VPFI atterrit dans ton wallet
   sur la chaîne d'**origine**.
 
-Limites de débit de l'adapter (post-durcissement) : 50 000 VPFI
+Limites de débit de l'adaptateur (post-durcissement) : 50 000 VPFI
 par requête et 500 000 VPFI glissants sur 24 heures. Réglables
 par la gouvernance via un timelock.
 
 <a id="buy-vpfi.discount-status"></a>
 
-### Votre statut de remise VPFI
+### Ton statut de remise VPFI
 
 Statut en direct :
 
@@ -514,9 +513,9 @@ du VPFI dans ton escrow EST staker.
 ### Étape 1 — Achète du VPFI avec de l'ETH
 
 Soumet l'achat. Sur la chaîne canonique, le protocole mint
-directement. Sur les chaînes mirror, l'adapter d'achat encaisse,
-envoie un message cross-chain, et le receveur exécute l'achat
-sur Base et bridgea le VPFI de retour. Le frais de pont plus le
+directement. Sur les chaînes mirror, l'adaptateur d'achat encaisse,
+envoie un message cross-chain, et le récepteur exécute l'achat
+sur Base et renvoie le VPFI par bridge. Les frais de pont plus le
 coût du réseau de vérificateurs est coté en direct et affiché
 dans le formulaire. Le VPFI ne se dépose pas automatiquement en
 escrow — l'étape 2 est une action explicite de l'utilisateur par
@@ -531,8 +530,8 @@ escrow sur la même chaîne. Requise sur chaque chaîne — même la
 canonique — car le dépôt en escrow est toujours une action
 explicite de l'utilisateur par spécification. Sur les chaînes
 où Permit2 est configuré, l'app préfère la voie en signature
-unique au pattern classique approve + deposit ; elle retombe
-gracieusement si Permit2 n'est pas configuré sur cette chaîne.
+unique au pattern classique approve + deposit ; elle bascule proprement
+si Permit2 n'est pas configuré sur cette chaîne.
 
 <a id="buy-vpfi.unstake"></a>
 
@@ -540,7 +539,7 @@ gracieusement si Permit2 n'est pas configuré sur cette chaîne.
 
 Retire du VPFI de ton escrow vers ton wallet. Pas d'étape
 d'approbation — le protocole possède l'escrow et se prélève
-lui-même. Le retrait déclenche un re-tamponnage immédiat du
+lui-même. Le retrait déclenche une refixation immédiate du
 taux de remise au nouveau solde plus bas, appliqué à chaque
 prêt ouvert te concernant. Il n'y a pas de fenêtre de grâce où
 l'ancien tier s'applique encore.
@@ -585,12 +584,12 @@ ne sous-réclament pas.
 
 ### Retirer le VPFI staké
 
-Surface identique à « Étape 3 — Désengage » sur la page Acheter
+Interface identique à « Étape 3 — Désengage » sur la page Acheter
 VPFI — retire du VPFI de l'escrow vers ton wallet. Le VPFI
 retiré sort du pool de staking immédiatement (les récompenses
 cessent de s'accumuler pour ce montant à ce bloc) et sort de
-l'accumulateur de remise immédiatement (re-tamponnage du solde
-post sur chaque prêt ouvert).
+l'accumulateur de remise immédiatement (refixation après solde sur
+chaque prêt ouvert).
 
 ---
 
@@ -601,9 +600,9 @@ post sur chaque prêt ouvert).
 ### Détails du prêt (cette page)
 
 Vue d'un prêt unique dérivée en direct du protocole, plus HF et
-LTV en direct du moteur de risque. Rend les conditions, le
-risque de collatéral, les parties, la surface d'actions filtrée
-par ton rôle et le statut du prêt, et le statut keeper en ligne.
+LTV en direct du moteur de risque. Affiche les conditions, le
+risque de collatéral, les parties, les actions autorisées par ton
+rôle et le statut du prêt, ainsi que le statut keeper en ligne.
 
 <a id="loan-details.terms"></a>
 
@@ -618,7 +617,7 @@ Parties immuables du prêt :
 - Intérêts accumulés, calculés en direct depuis les secondes
   écoulées depuis le début.
 
-Le refinancement crée un nouveau prêt plutôt que de muter ces
+Le refinancement crée un nouveau prêt plutôt que de modifier ces
 valeurs.
 
 <a id="loan-details.collateral-risk"></a>
@@ -637,7 +636,7 @@ Mathématique de risque en direct.
   volatilité est de 110% LTV.
 
 Le collatéral illiquide a une valeur USD on-chain de zéro ; HF
-et LTV s'effondrent à « n/a » et le seul chemin terminal est le
+et LTV passent à « n/a » et le seul chemin terminal est le
 transfert intégral du collatéral en défaut — les deux parties
 ont consenti à la création de l'offre via la reconnaissance de
 risque illiquide.
@@ -647,9 +646,9 @@ risque illiquide.
 #### Si tu es le prêteur
 
 Le panier de collatéral sécurisant ce prêt est ta protection. Un
-HF au-dessus de 1,0 signifie que la position est sur-
-collatéralisée par rapport au seuil de liquidation. À mesure
-que HF dérive vers 1,0, ta protection s'amincit. Une fois HF
+HF au-dessus de 1,0 signifie que la position est surcollatéralisée
+par rapport au seuil de liquidation. À mesure que HF dérive vers
+1,0, ta protection s'amenuise. Une fois HF
 descendu sous 1,0, n'importe qui (toi inclus) peut appeler
 liquider, et le protocole route le collatéral via le failover
 4-DEX vers ton actif principal. La récupération est nette de
@@ -657,14 +656,14 @@ slippage.
 
 Pour le collatéral illiquide, en défaut le panier te revient
 intégralement au moment du défaut — sa valeur réelle sur le
-marché ouvert est ton problème.
+marché ouvert devient ton risque.
 
 <a id="loan-details.collateral-risk:borrower"></a>
 
 #### Si tu es l'emprunteur
 
 Ton collatéral verrouillé. Garde HF confortablement au-dessus de
-1,0 — une cible de buffer courante est 1,5 pour absorber la
+1,0 — une cible de marge courante est 1,5 pour absorber la
 volatilité. Leviers pour remonter HF :
 
 - **Ajouter du collatéral** — recharger le panier. Action
@@ -693,10 +692,10 @@ déploiements.
 
 ### Actions
 
-Surface d'actions, gardée par rôle par le protocole. Les onglets
+Interface d'actions, contrôlée par rôle par le protocole. Les onglets
 spécifiques au rôle ci-dessous listent les actions disponibles
 de chaque côté. Les actions désactivées affichent un motif au
-survol dérivé de la garde (« HF insuffisant », « Pas encore
+survol dérivé du verrou (« HF insuffisant », « Pas encore
 expiré », « Prêt verrouillé », etc.).
 
 Actions permissionless disponibles à tous quel que soit le rôle :
@@ -709,15 +708,15 @@ Actions permissionless disponibles à tous quel que soit le rôle :
 
 #### Si tu es le prêteur
 
-- **Réclamer en tant que prêteur** — terminal uniquement. Rend
+- **Réclamer en tant que prêteur** — uniquement en état terminal. Rend
   principal plus intérêts moins la coupe de trésorerie de 1%
   (encore réduite par ta remise yield-fee VPFI pondérée dans le
-  temps quand le consentement est activé). Burn le NFT de
+  temps quand le consentement est activé). Brûle le NFT de
   position de prêteur.
 - **Initier un retrait anticipé** — liste le NFT de position de
   prêteur à la vente à un prix que tu choisis. Un acheteur qui
   finalise la vente prend ton côté ; tu reçois le produit.
-  Annulable avant remplissage de la vente.
+  Annulable avant exécution de la vente.
 - Optionnellement délégable à un keeper détenant la permission
   d'action pertinente — voir Paramètres des keepers.
 
@@ -738,10 +737,10 @@ Actions permissionless disponibles à tous quel que soit le rôle :
   nouvelles conditions ; une fois qu'un prêteur accepte,
   finaliser le refinancement échange les prêts atomiquement
   sans que le collatéral ne quitte ton escrow.
-- **Réclamer en tant qu'emprunteur** — terminal uniquement. Rend
+- **Réclamer en tant qu'emprunteur** — uniquement en état terminal. Rend
   le collatéral en cas de remboursement total, ou le rabais
   VPFI Loan Initiation Fee inutilisé en défaut / liquidation.
-  Burn le NFT de position d'emprunteur.
+  Brûle le NFT de position d'emprunteur.
 
 ---
 
@@ -806,7 +805,7 @@ Deux canaux :
 Les deux partagent l'échelle de seuils ; les niveaux
 d'avertissement par canal ne sont volontairement pas exposés
 pour éviter la dérive. La publication sur le canal Push est
-actuellement en stub en attendant la création du canal.
+actuellement stubée en attendant la création du canal.
 
 ---
 
@@ -820,16 +819,16 @@ actuellement en stub en attendant la création du canal.
 token, le vérificateur récupère :
 
 - Le propriétaire actuel (ou un signal de burn si le token est
-  déjà burné).
+  déjà brûlé).
 - Les métadonnées JSON on-chain.
 - Une vérification croisée avec le protocole : dérive
   l'identifiant de prêt sous-jacent depuis les métadonnées et
   lit les détails du prêt depuis le protocole pour confirmer
   l'état.
 
-Fait surface : minté par Vaipakam ? quelle chaîne ? statut du
+Affiche : minté par Vaipakam ? quelle chaîne ? statut du
 prêt ? détenteur courant ? Te permet de repérer une
-contrefaçon, une position déjà réclamée (burnée), ou une
+contrefaçon, une position déjà réclamée (brûlée), ou une
 position dont le prêt est réglé et en cours de réclamation.
 
 Le NFT de position est l'instrument au porteur — vérifie avant
@@ -843,23 +842,23 @@ d'acheter sur un marché secondaire.
 
 ### À propos des keepers
 
-Une liste blanche de keepers par wallet de jusqu'à 5 keepers.
+Une allowlist de keepers par wallet, jusqu'à 5 keepers.
 Chaque keeper a un ensemble de permissions d'action autorisant
 des appels de maintenance spécifiques sur **ton côté** d'un
-prêt. Les chemins sortie-d'argent (rembourser, réclamer, ajouter
+prêt. Les chemins de sortie de fonds (rembourser, réclamer, ajouter
 du collatéral, liquider) sont réservés à l'utilisateur par
 conception et ne peuvent pas être délégués.
 
 Deux gardes supplémentaires s'appliquent au moment de l'action :
 
 1. L'interrupteur principal d'accès keeper — un frein d'urgence
-   à un seul flip qui désactive tous les keepers sans toucher à
+   à un seul basculement qui désactive tous les keepers sans toucher à
    l'allowlist.
 2. Un toggle d'opt-in par prêt, réglé sur la surface du Carnet
    d'offres ou des Détails du prêt.
 
 Un keeper ne peut agir que quand les quatre conditions sont
-vraies : approuvé, interrupteur principal activé, toggle
+remplies : approuvé, interrupteur principal activé, toggle
 par-prêt activé et la permission d'action spécifique configurée
 sur ce keeper.
 
@@ -905,7 +904,7 @@ métrique sont affichées pour la vérifiabilité.
 
 Rollup cross-chain. L'en-tête rapporte combien de chaînes ont
 été couvertes et combien ont échoué, donc un RPC inaccessible
-au moment du fetch est explicite. Quand une ou plusieurs
+au moment de la récupération est explicite. Quand une ou plusieurs
 chaînes ont échoué, le tableau par chaîne signale laquelle —
 les totaux TVL sont quand même rapportés, mais reconnaissent
 l'écart.
@@ -915,9 +914,9 @@ l'écart.
 ### Détail par chaîne
 
 Ventilation par chaîne des métriques combinées. Utile pour
-repérer une concentration de TVL, des offres mirror VPFI
-incohérentes (la somme des offres mirror devrait égaler le
-solde verrouillé de l'adapter canonique), ou des chaînes à
+repérer une concentration de TVL, des supplies mirror VPFI
+incohérents (la somme des supplies mirror devrait égaler le
+solde verrouillé de l'adaptateur canonique), ou des chaînes à
 l'arrêt.
 
 <a id="public-dashboard.vpfi-transparency"></a>
@@ -935,8 +934,8 @@ Comptabilité VPFI on-chain sur la chaîne active :
   plafond car les mints y sont pilotés par le pont, pas mintés
   depuis le plafond.
 
-Invariant cross-chain : la somme des offres mirror sur toutes
-les chaînes mirror égale le solde verrouillé de l'adapter
+Invariant cross-chain : la somme des supplies mirror sur toutes
+les chaînes mirror égale le solde verrouillé de l'adaptateur
 canonique. Un watcher surveille cela et alerte sur la dérive.
 
 <a id="public-dashboard.transparency"></a>
@@ -945,8 +944,8 @@ canonique. Un watcher surveille cela et alerte sur la dérive.
 
 Pour chaque métrique, la page liste :
 
-- Le numéro de bloc utilisé comme snapshot.
-- Fraîcheur des données (staleness max parmi les chaînes).
+- Le numéro de bloc utilisé comme instantané.
+- Fraîcheur des données (ancienneté maximale parmi les chaînes).
 - L'adresse du protocole et l'appel de fonction view.
 
 N'importe qui peut redériver n'importe quel chiffre de cette
@@ -958,7 +957,7 @@ fonction — c'est le standard.
 ## Refinancer
 
 Cette page est réservée aux emprunteurs — le refinancement est
-initié par l'emprunteur sur le prêt de l'emprunteur.
+initié par l'emprunteur sur son prêt.
 
 <a id="refinance.overview"></a>
 
@@ -976,7 +975,7 @@ est correctement réglé dans le cadre de l'échange.
 
 <a id="refinance.position-summary"></a>
 
-### Votre position actuelle
+### Ta position actuelle
 
 Snapshot du prêt en cours de refinancement — principal courant,
 intérêts accumulés à ce stade, HF / LTV et le panier de
@@ -1004,12 +1003,12 @@ Règlement atomique après que le nouveau prêteur a accepté :
 1. Finance le nouveau prêt depuis le prêteur acceptant.
 2. Rembourse l'ancien prêt en totalité (principal + intérêts,
    moins la coupe de trésorerie).
-3. Burn les anciens NFT de position.
+3. Brûle les anciens NFT de position.
 4. Mint les nouveaux NFT de position.
 5. Règle le rabais inutilisé de la Loan Initiation Fee de
    l'ancien prêt.
 
-Revert si HF sur les nouvelles conditions serait sous 1,5.
+Revert si HF sous les nouvelles conditions serait inférieur à 1,5.
 
 ---
 
@@ -1038,7 +1037,7 @@ mathématique VPFI pondérée dans le temps gère l'équité.
 
 <a id="preclose.position-summary"></a>
 
-### Votre position actuelle
+### Ta position actuelle
 
 Snapshot du prêt en cours de preclose — principal restant,
 intérêts accumulés, HF / LTV courants. Le flux de preclose
@@ -1087,7 +1086,7 @@ Tu listes ton NFT de position en vente à un prix choisi ; à
 l'acceptation, l'acheteur paie, la propriété du NFT de prêteur
 est transférée à l'acheteur, et l'acheteur devient le prêteur
 de référence pour tout règlement futur (claim au terminal,
-etc.). Tu repars avec le produit de la vente.
+etc.). Tu reçois le produit de la vente.
 
 Les liquidations restent réservées à l'utilisateur et ne sont
 PAS déléguées par la vente — seul le droit de réclamer est
@@ -1095,7 +1094,7 @@ transféré.
 
 <a id="early-withdrawal.position-summary"></a>
 
-### Votre position actuelle
+### Ta position actuelle
 
 Snapshot — principal restant, intérêts accumulés, temps
 restant, HF / LTV courants du côté emprunteur. Cela fixe le
@@ -1109,6 +1108,6 @@ risque de liquidation sur le temps restant.
 
 Liste le NFT de position en vente via le protocole à ton prix
 demandé. Un acheteur finalise la vente ; tu peux annuler avant
-que la vente ne se remplisse. Optionnellement délégable à un
+que la vente ne soit exécutée. Optionnellement délégable à un
 keeper détenant la permission « finaliser une vente de prêt » ;
 l'étape d'initiation reste réservée à l'utilisateur.

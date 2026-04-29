@@ -1166,7 +1166,7 @@
     "activeOn": "نشط · موافقة الخصم مفعّلة",
     "depositGapAchieved": "رصيد الضمان مؤهل لـ {{tier}} في القرض التالي. يُرجى التأكد من تفعيل موافقة الخصم في الأعلى.",
     "liquidLendingOnly": "أصول الإقراض السائلة فقط.",
-    "enableSharedConsent": "تفعيل موافقة الخصم المشتركة في الأعلى.",
+    "enableSharedConsent": "تفعيل موافقة الخصم المشتركة في <dashboardLink>لوحة التحكم</dashboardLink>.",
     "depositMore": "إيداع {{amount}} VPFI إضافية في الضمان للوصول إلى Tier {{tier}} ({{discount}}).",
     "tierColTier": "Tier",
     "tierColEscrow": "VPFI في الضمان",

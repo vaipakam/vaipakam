@@ -1166,7 +1166,7 @@
     "activeOn": "Aktiv · Rabatt-Zustimmung AN",
     "depositGapAchieved": "Der Escrow-Saldo qualifiziert für {{tier}} beim nächsten Kredit. Sicherstellen, dass die Rabatt-Zustimmung oben aktiviert ist.",
     "liquidLendingOnly": "Nur liquide Kreditvermögenswerte.",
-    "enableSharedConsent": "Die geteilte Rabatt-Zustimmung oben aktivieren.",
+    "enableSharedConsent": "Die geteilte Rabatt-Zustimmung im <dashboardLink>Dashboard</dashboardLink> aktivieren.",
     "depositMore": "{{amount}} weitere VPFI in den Escrow einzahlen, um Tier {{tier}} ({{discount}}) zu erreichen.",
     "tierColTier": "Tier",
     "tierColEscrow": "Escrow-VPFI",

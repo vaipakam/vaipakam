@@ -7,10 +7,7 @@ import { useUserLoans } from '../hooks/useUserLoans';
 import { useMyActiveOffers } from '../hooks/useMyActiveOffers';
 import { useClaimables } from '../hooks/useClaimables';
 import { OfferTable } from './OfferBook';
-import { DiscountStatusCard } from './BuyVPFI';
-import { useVPFIDiscountTier, useVPFIDiscountConsent } from '../hooks/useVPFIDiscount';
 import { useLoanRisks, type LoanRisk } from '../hooks/useLoanRisks';
-import { useEscrowVPFIBalance } from '../hooks/useVPFIDiscount';
 import { LoanStatus, LOAN_STATUS_LABELS } from '../types/loan';
 import {
   LayoutDashboard,
@@ -71,9 +68,6 @@ export default function Dashboard() {
     () => new Set(unclaimed.map((c) => c.loanId.toString())),
     [unclaimed],
   );
-  const { balance: escrowVpfiWei } = useEscrowVPFIBalance(address);
-  const { data: discountTier } = useVPFIDiscountTier(address);
-  const { enabled: consentEnabled } = useVPFIDiscountConsent();
   const [escrow, setEscrow] = useState<string | null>(null);
   const [loansPage, setLoansPage] = useState(0);
   const [roleFilter, setRoleFilter] = useState<'all' | 'lender' | 'borrower'>('all');
@@ -255,23 +249,14 @@ export default function Dashboard() {
         </div>
       </div>
 
-      {/* Platform-level VPFI fee-discount consent (per-user) */}
+      {/* Platform-level VPFI fee-discount consent (per-user). The
+          read-only `<DiscountStatusCard>` that used to live here was
+          moved to the Buy VPFI page — that's where buying decisions
+          happen and the tier-thresholds reference is most relevant.
+          Dashboard keeps the consent toggle (the actionable surface)
+          and links into Buy VPFI via the rewards-summary chevron
+          below for users who want to inspect their tier status. */}
       <VPFIDiscountConsentCard />
-
-      {/* Live VPFI discount-tier status. Lifted from the Buy VPFI page
-          so the user sees their tier / escrow VPFI / consent status on
-          the Dashboard at a glance, without having to navigate to the
-          public Buy VPFI page. The card itself is read-only (the
-          consent toggle still lives on `<VPFIDiscountConsentCard>`
-          above) — it just summarises where the user sits today. */}
-      {address && (
-        <DiscountStatusCard
-          tier={discountTier?.tier ?? 0}
-          escrowVpfi={escrowVpfiWei}
-          discountBps={discountTier?.discountBps ?? 0}
-          consentEnabled={consentEnabled}
-        />
-      )}
 
       {/* Aspirational rewards summary — combined view of pending +
           lifetime-claimed across both reward streams (staking yield

@@ -1,12 +1,16 @@
 import { useCallback, useEffect, useState } from 'react';
 import { parseAbiItem, type Address, type PublicClient } from 'viem';
 import { useDiamondPublicClient, useReadChain } from '../contracts/useDiamond';
+import { useProtocolConfig } from './useProtocolConfig';
 import { DEFAULT_CHAIN } from '../contracts/config';
 import { DIAMOND_ABI_VIEM as DIAMOND_ABI } from '../contracts/abis';
 import { beginStep } from '../lib/journeyLog';
 
 const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
-const TOKEN_DECIMALS_SCALE = 1e18;
+/** Fallback when the live `vpfiDecimals` from `useProtocolConfig`
+ *  hasn't loaded yet. Every Vaipakam VPFI deploy uses 18 by OFT-mesh
+ *  requirement, so the fallback matches contract truth. */
+const VPFI_DECIMALS_DEFAULT = 18;
 const STALE_MS = 30_000;
 const MINT_HISTORY_LIMIT = 10;
 const TRANSFER_HISTORY_LIMIT = 20;
@@ -88,8 +92,14 @@ let cached: CacheEntry | null = null;
 export function useUserVPFI(address: string | null) {
   const publicClient = useDiamondPublicClient();
   const chain = useReadChain();
+  const { config } = useProtocolConfig();
+  const vpfiDecimals = config?.vpfiDecimals ?? VPFI_DECIMALS_DEFAULT;
   const diamondAddress = (chain.diamondAddress ?? DEFAULT_CHAIN.diamondAddress) as Address;
-  const cacheKey = buildCacheKey(chain.chainId, chain.diamondAddress, address);
+  // Cache key includes the resolved decimals so a later decimals
+  // change (in practice: the live `decimals()` read landing after
+  // initial render) produces a fresh snapshot rather than serving
+  // a stale one keyed under the fallback scale.
+  const cacheKey = `${buildCacheKey(chain.chainId, chain.diamondAddress, address)}:${vpfiDecimals}`;
 
   const [snapshot, setSnapshot] = useState<UserVPFISnapshot | null>(() => {
     if (!cached) return null;
@@ -137,12 +147,13 @@ export function useUserVPFI(address: string | null) {
 
       const registered = token !== ZERO_ADDRESS;
 
+      const scale = 10 ** vpfiDecimals;
       let balance = 0;
       if (address && registered) {
         const raw = await readDiamond<bigint>('getVPFIBalanceOf', [address as Address]);
-        balance = Number(raw) / TOKEN_DECIMALS_SCALE;
+        balance = Number(raw) / scale;
       }
-      const totalSupply = Number(totalSupplyRaw) / TOKEN_DECIMALS_SCALE;
+      const totalSupply = Number(totalSupplyRaw) / scale;
       const shareOfCirculating = totalSupply === 0 ? 0 : balance / totalSupply;
 
       // Protocol-level mint history: Diamond-emitted VPFIMinted events.
@@ -158,7 +169,7 @@ export function useUserVPFI(address: string | null) {
         recentMints = logs
           .map((log) => ({
             to: String(log.args.to ?? ''),
-            amount: Number(log.args.amount ?? 0n) / TOKEN_DECIMALS_SCALE,
+            amount: Number(log.args.amount ?? 0n) / scale,
             blockNumber: Number(log.blockNumber ?? 0n),
             txHash: String(log.transactionHash ?? ''),
           }))
@@ -181,6 +192,7 @@ export function useUserVPFI(address: string | null) {
             token as Address,
             address as Address,
             chain.deployBlock > 0 ? BigInt(chain.deployBlock) : 0n,
+            vpfiDecimals,
           );
         } catch {
           recentTransfers = [];
@@ -208,7 +220,7 @@ export function useUserVPFI(address: string | null) {
     } finally {
       setLoading(false);
     }
-  }, [address, publicClient, diamondAddress, cacheKey, chain.deployBlock]);
+  }, [address, publicClient, diamondAddress, cacheKey, chain.deployBlock, vpfiDecimals]);
 
   useEffect(() => {
     load();
@@ -244,6 +256,7 @@ async function fetchTransferHistory(
   tokenAddress: Address,
   user: Address,
   fromBlock: bigint,
+  decimals: number,
 ): Promise<VPFITransferRecord[]> {
   const [outgoing, incoming] = await Promise.all([
     publicClient.getLogs({
@@ -274,7 +287,7 @@ async function fetchTransferHistory(
 
     const from = String(log.args.from ?? '').toLowerCase();
     const to = String(log.args.to ?? '').toLowerCase();
-    const amount = Number(log.args.value ?? 0n) / TOKEN_DECIMALS_SCALE;
+    const amount = Number(log.args.value ?? 0n) / 10 ** decimals;
 
     let direction: VPFITransferRecord['direction'];
     let counterparty: string;

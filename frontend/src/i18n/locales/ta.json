@@ -1166,7 +1166,7 @@
     "activeOn": "செயலில் · தள்ளுபடி ஒப்புதல் ON",
     "depositGapAchieved": "எஸ்க்ரோ இருப்பு அடுத்த கடனில் {{tier}}க்கு தகுதியானது. மேலே தள்ளுபடி ஒப்புதல் செயல்படுத்தப்பட்டுள்ளதை உறுதிப்படுத்தவும்.",
     "liquidLendingOnly": "திரவ கடன் சொத்துகள் மட்டும்.",
-    "enableSharedConsent": "பகிரப்பட்ட தள்ளுபடி ஒப்புதலை மேலே செயல்படுத்தவும்.",
+    "enableSharedConsent": "<dashboardLink>Dashboard</dashboardLink>-ல் பகிரப்பட்ட தள்ளுபடி ஒப்புதலை இயக்கவும்.",
     "depositMore": "Tier {{tier}} ({{discount}})ஐ அடைய எஸ்க்ரோவில் இன்னும் {{amount}} VPFI ஐ வைப்பு செய்யவும்.",
     "tierColTier": "Tier",
     "tierColEscrow": "எஸ்க்ரோ VPFI",

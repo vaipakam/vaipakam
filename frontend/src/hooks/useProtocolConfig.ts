@@ -1,9 +1,23 @@
 import { useCallback, useEffect, useState } from 'react';
-import { useDiamondRead, useReadChain } from '../contracts/useDiamond';
+import { parseAbi, type Address } from 'viem';
+import { useDiamondPublicClient, useDiamondRead, useReadChain } from '../contracts/useDiamond';
 import { beginStep } from '../lib/journeyLog';
 
 const STALE_MS = 60_000;
 const BASIS_POINTS = 10_000;
+/**
+ * Fallback when the live `decimals()` read on the VPFI token contract
+ * fails (e.g. the address isn't registered on this chain yet, RPC
+ * dropped). All Vaipakam VPFI deploys (canonical Base + every mirror)
+ * are required to use 18 by the OFT bridge spec, so this fallback is
+ * safe — it just means we'll render display values correctly even
+ * before the read resolves.
+ */
+const VPFI_DECIMALS_FALLBACK = 18;
+const VPFI_DECIMALS_ABI = parseAbi([
+  'function decimals() view returns (uint8)',
+]);
+const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
 
 /**
  * Effective (override OR library default) value of every admin-tunable
@@ -70,6 +84,13 @@ export interface ProtocolConfig {
   vpfiInteractionPoolCapCompact: string;
   /** Max days an interaction-rewards claim walks per tx. */
   maxInteractionClaimDays: number;
+  /** VPFI ERC-20 `decimals()` read live from the token contract on the
+   *  active chain. All Vaipakam VPFI deploys must use 18 (the OFT bridge
+   *  spec requires identical decimals across canonical + mirrors), but
+   *  reading at runtime keeps every display path bound to contract
+   *  truth rather than a hardcoded constant. Falls back to 18 if the
+   *  read fails (no token registered yet, RPC blip). */
+  vpfiDecimals: number;
   fetchedAt: number;
 }
 
@@ -114,10 +135,13 @@ export function bpsToPctString(bps: bigint | number): string {
 
 /**
  * Format a wei amount as a compact "55.2M" / "69M" / "1.2k" string
- * for VPFI pool-cap displays in marketing-style copy.
+ * for VPFI pool-cap displays in marketing-style copy. `decimals`
+ * defaults to 18 (the only value Vaipakam VPFI ever uses on-chain)
+ * but is parameterized so callers with the live `vpfiDecimals` from
+ * `useProtocolConfig` can pass it explicitly.
  */
-export function vpfiCapToCompact(weiAmount: bigint): string {
-  const whole = Number(weiAmount / 10n ** 18n);
+export function vpfiCapToCompact(weiAmount: bigint, decimals: number = VPFI_DECIMALS_FALLBACK): string {
+  const whole = Number(weiAmount / 10n ** BigInt(decimals));
   if (whole >= 1_000_000) {
     const m = whole / 1_000_000;
     return m % 1 === 0 ? `${m}M` : `${m.toFixed(1)}M`;
@@ -129,7 +153,9 @@ export function vpfiCapToCompact(weiAmount: bigint): string {
   return whole.toString();
 }
 
-/** Format 1e18-scaled HF as a decimal string ("1.5", "1.25"). */
+/** Format 1e18-scaled HF as a decimal string ("1.5", "1.25"). HF is a
+ *  protocol-internal scalar, not a token amount — it's always 1e18-
+ *  scaled by spec, regardless of any token's decimals. */
 export function hfToDisplay(hf18: bigint): string {
   const n = Number(hf18) / 1e18;
   return n % 1 === 0 ? n.toString() : n.toFixed(2).replace(/\.?0+$/, '');
@@ -147,6 +173,7 @@ export function hfToDisplay(hf18: bigint): string {
  */
 export function useProtocolConfig() {
   const diamond = useDiamondRead();
+  const publicClient = useDiamondPublicClient();
   const chain = useReadChain();
   const cacheKey = `${chain.chainId}:${(chain.diamondAddress ?? 'none').toLowerCase()}`;
 
@@ -173,13 +200,16 @@ export function useProtocolConfig() {
       const d = diamond as unknown as {
         getProtocolConfigBundle: () => Promise<BundleTuple>;
         getProtocolConstants: () => Promise<[bigint, bigint, bigint, bigint]>;
+        getVPFIToken: () => Promise<string>;
       };
-      // Fetch the governance bundle and the compile-time constants in
-      // parallel — both surface in the same `ProtocolConfig` shape so
-      // consumers don't have to thread two hooks. Constants degrade to
-      // the contract defaults if the view is missing on an older
-      // Diamond deploy without that selector cut in.
-      const [tuple, consts] = await Promise.all([
+      // Fetch the governance bundle, the compile-time constants, and
+      // the registered VPFI token address in parallel. All three feed
+      // the same `ProtocolConfig` shape so consumers don't have to
+      // thread three hooks. Constants degrade to the contract defaults
+      // if the view is missing on an older Diamond deploy. VPFI token
+      // address can be zero if the token hasn't been registered on
+      // this chain yet — handled below.
+      const [tuple, consts, vpfiTokenAddr] = await Promise.all([
         d.getProtocolConfigBundle(),
         d.getProtocolConstants().catch(() => [
           1500000000000000000n, // MIN_HEALTH_FACTOR default 1.5e18
@@ -187,7 +217,34 @@ export function useProtocolConfig() {
           69_000_000n * 10n ** 18n,
           30n,
         ] as [bigint, bigint, bigint, bigint]),
+        d.getVPFIToken().catch(() => ZERO_ADDRESS),
       ]);
+
+      // Live `decimals()` read on the VPFI token contract. Done as a
+      // sequenced second-phase fetch since we need the address from
+      // `getVPFIToken()` first. Falls back to 18 if the token isn't
+      // registered or the read fails — matches the contract source
+      // (every Vaipakam VPFI deploy is 18-decimal by OFT-mesh
+      // requirement) so display paths render correctly while the
+      // read is in flight or after a transient failure.
+      let vpfiDecimals: number = VPFI_DECIMALS_FALLBACK;
+      if (
+        vpfiTokenAddr &&
+        vpfiTokenAddr !== ZERO_ADDRESS &&
+        /^0x[0-9a-fA-F]{40}$/.test(vpfiTokenAddr)
+      ) {
+        try {
+          const decRaw = await publicClient.readContract({
+            address: vpfiTokenAddr as Address,
+            abi: VPFI_DECIMALS_ABI,
+            functionName: 'decimals',
+          });
+          vpfiDecimals = Number(decRaw);
+        } catch {
+          // Swallow — fallback already in place.
+        }
+      }
+      const decScale = 10n ** BigInt(vpfiDecimals);
       const [
         treasuryFeeBps,
         loanInitiationFeeBps,
@@ -227,12 +284,14 @@ export function useProtocolConfig() {
         ],
         // Pre-divide to whole tokens for display. Bigint divide first
         // (lossless) before Number cast — `Number(100_000n * 10n**18n)`
-        // would silently round at 2^53.
+        // would silently round at 2^53. Uses the live `vpfiDecimals`
+        // read from the VPFI token contract above, falling back to 18
+        // if the read failed.
         tierThresholdsTokens: [
-          Number(tierThresholds[0] / 10n ** 18n),
-          Number(tierThresholds[1] / 10n ** 18n),
-          Number(tierThresholds[2] / 10n ** 18n),
-          Number(tierThresholds[3] / 10n ** 18n),
+          Number(tierThresholds[0] / decScale),
+          Number(tierThresholds[1] / decScale),
+          Number(tierThresholds[2] / decScale),
+          Number(tierThresholds[3] / decScale),
         ],
         tierDiscountBps: [
           Number(tierDiscountBps[0]),
@@ -249,10 +308,11 @@ export function useProtocolConfig() {
         minHealthFactor,
         minHealthFactorDisplay: hfToDisplay(minHealthFactor),
         vpfiStakingPoolCap,
-        vpfiStakingPoolCapCompact: vpfiCapToCompact(vpfiStakingPoolCap),
+        vpfiStakingPoolCapCompact: vpfiCapToCompact(vpfiStakingPoolCap, vpfiDecimals),
         vpfiInteractionPoolCap,
-        vpfiInteractionPoolCapCompact: vpfiCapToCompact(vpfiInteractionPoolCap),
+        vpfiInteractionPoolCapCompact: vpfiCapToCompact(vpfiInteractionPoolCap, vpfiDecimals),
         maxInteractionClaimDays: Number(maxInteractionClaimDays),
+        vpfiDecimals,
         fetchedAt: Date.now(),
       };
       cached = { data: next, at: Date.now(), key: cacheKey };

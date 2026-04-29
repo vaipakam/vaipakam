@@ -13,8 +13,17 @@ import { DIAMOND_ABI_VIEM as DIAMOND_ABI } from '../contracts/abis';
 import type { ChainConfig } from '../contracts/config';
 
 const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
-const SCALE_18 = 1_000_000_000_000_000_000n;
+/** Default decimals scale used when a caller hasn't threaded the live
+ *  `vpfiDecimals` from `useProtocolConfig` yet. Every Vaipakam VPFI
+ *  deploy uses 18 by OFT-mesh requirement, so the fallback matches
+ *  contract truth on every chain. Hooks that have access to the live
+ *  config should pass `decimals` explicitly. */
+const VPFI_DECIMALS_DEFAULT = 18;
 const STALE_MS = 30_000;
+
+function decimalsScale(decimals: number): bigint {
+  return 10n ** BigInt(decimals);
+}
 
 /**
  * Current VPFI buy-side config + running totals, plus the caller's
@@ -500,22 +509,40 @@ export function useVPFIDiscountConsent() {
   return { enabled, loading, saving, error, reload: load, setConsent };
 }
 
-/** Convert VPFI wei amount (18-dec) to a JS number. */
-export function formatVpfiUnits(v: bigint | null | undefined): number {
+/** Convert a VPFI wei amount to a JS number using the supplied
+ *  `decimals`. Defaults to 18 (matches every Vaipakam VPFI deploy on
+ *  every chain — see `useProtocolConfig.vpfiDecimals` for the live
+ *  read; pass that value explicitly when available so a hypothetical
+ *  future redeploy with different decimals flows through). */
+export function formatVpfiUnits(
+  v: bigint | null | undefined,
+  decimals: number = VPFI_DECIMALS_DEFAULT,
+): number {
   if (v == null) return 0;
-  return Number(v) / 1e18;
+  return Number(v) / Number(decimalsScale(decimals));
 }
 
-/** Compute ETH wei needed to receive exactly `vpfiOut` VPFI at `weiPerVpfi`. */
-export function vpfiToEthWei(vpfiOut: bigint, weiPerVpfi: bigint): bigint {
+/** Compute ETH wei needed to receive exactly `vpfiOut` VPFI at
+ *  `weiPerVpfi`. `decimals` is the VPFI ERC-20 decimals; defaults to
+ *  18 to match contract truth. */
+export function vpfiToEthWei(
+  vpfiOut: bigint,
+  weiPerVpfi: bigint,
+  decimals: number = VPFI_DECIMALS_DEFAULT,
+): bigint {
   if (weiPerVpfi === 0n) return 0n;
-  return (vpfiOut * weiPerVpfi) / SCALE_18;
+  return (vpfiOut * weiPerVpfi) / decimalsScale(decimals);
 }
 
-/** Compute VPFI out (18-dec) received for `ethWei` at `weiPerVpfi`. */
-export function ethWeiToVpfi(ethWei: bigint, weiPerVpfi: bigint): bigint {
+/** Compute VPFI out received for `ethWei` at `weiPerVpfi`. `decimals`
+ *  is the VPFI ERC-20 decimals; defaults to 18 to match contract truth. */
+export function ethWeiToVpfi(
+  ethWei: bigint,
+  weiPerVpfi: bigint,
+  decimals: number = VPFI_DECIMALS_DEFAULT,
+): bigint {
   if (weiPerVpfi === 0n) return 0n;
-  return (ethWei * SCALE_18) / weiPerVpfi;
+  return (ethWei * decimalsScale(decimals)) / weiPerVpfi;
 }
 
 /**
