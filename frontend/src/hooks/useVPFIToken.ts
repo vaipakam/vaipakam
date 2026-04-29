@@ -130,9 +130,9 @@ export function useVPFIToken() {
         getVPFIBalanceOf: (a: string) => Promise<bigint>;
       };
       const raw = await d.getVPFIBalanceOf(account);
-      return Number(raw) / TOKEN_DECIMALS_SCALE;
+      return Number(raw) / 10 ** vpfiDecimals;
     },
-    [diamond],
+    [diamond, vpfiDecimals],
   );
 
   return { snapshot, loading, error, reload, getBalanceOf };
