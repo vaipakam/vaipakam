@@ -19,9 +19,11 @@ interface Props {
   /** Set of offer ids whose `cancelOffer` tx is currently submitting.
    *  Disables the Cancel button so the user can't double-click. */
   cancellingId: bigint | null;
-  /** Block-explorer base URL (no trailing slash). Threaded through to
-   *  `<PrincipalCell>` for the NFT-page `<a>` icon on NFT rows. */
-  blockExplorer: string;
+  /** Chain id this table's offers live on. Threaded through to
+   *  `<PrincipalCell>` so each row's "open externally" link routes to
+   *  CoinGecko / OpenSea / explorer / Vaipakam-verifier as appropriate
+   *  for the row's asset and the connected chain. */
+  chainId: number;
   /** Title rendered in the card header. */
   title: string;
   /** Subtitle rendered next to the title. */
@@ -58,7 +60,7 @@ export function MyOffersTable({
   rows,
   onCancel,
   cancellingId,
-  blockExplorer,
+  chainId,
   title,
   subtitle,
   cardHelpId,
@@ -191,7 +193,7 @@ export function MyOffersTable({
                           asset={offer.lendingAsset}
                           amount={offer.amount}
                           tokenId={offer.tokenId}
-                          blockExplorer={blockExplorer}
+                          chainId={chainId}
                         />
                       </td>
                       <td>{bpsToPercent(offer.interestRateBps)}</td>
@@ -204,6 +206,7 @@ export function MyOffersTable({
                           assetType={0}
                           asset={offer.collateralAsset}
                           amount={offer.collateralAmount}
+                          chainId={chainId}
                         />
                       </td>
                       <td>
@@ -243,7 +246,7 @@ export function MyOffersTable({
                         asset={offer.lendingAsset}
                         amount={offer.amount}
                         tokenId={offer.tokenId}
-                        blockExplorer={blockExplorer}
+                        chainId={chainId}
                       />
                     </td>
                     <td>{bpsToPercent(offer.interestRateBps)}</td>
@@ -266,6 +269,7 @@ export function MyOffersTable({
                         }
                         asset={offer.collateralAsset}
                         amount={offer.collateralAmount}
+                        chainId={chainId}
                       />
                     </td>
                     <td>

@@ -1493,5 +1493,11 @@
     "partialRepayLabel": "பகுதி திருப்பிச்செலுத்தல்",
     "partialRepayAllowed": "அனுமதிக்கப்பட்டது — கடன் வாங்குபவர் இந்தக் கடனை பகுதிகளாகத் திருப்பிச்செலுத்த முடியும்",
     "partialRepayNotAllowed": "அனுமதிக்கப்படவில்லை — முழுத் திருப்பிச்செலுத்தல் மட்டுமே ஏற்கப்படும்"
+  },
+  "assetLink": {
+    "openOnCoinGecko": "CoinGecko-இல் திற",
+    "openOnOpenSea": "OpenSea-இல் திற",
+    "openOnExplorer": "செயின் எக்ஸ்ப்ளோரரில் திற",
+    "openOnVerifier": "Vaipakam NFT வேரிஃபையரில் திற"
   }
 }

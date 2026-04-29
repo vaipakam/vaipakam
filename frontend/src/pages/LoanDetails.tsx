@@ -31,7 +31,7 @@ import {
 import { parseUnits, encodeFunctionData, type Address, type Hex } from "viem";
 import { SimulationPreview } from "../components/app/SimulationPreview";
 import { DIAMOND_ABI_VIEM as DIAMOND_ABI } from "../contracts/abis";
-import { AssetSymbol } from "../components/app/AssetSymbol";
+import { AssetLink } from "../components/app/AssetLink";
 import { TokenAmount } from "../components/app/TokenAmount";
 import { ErrorAlert } from "../components/app/ErrorAlert";
 import { bpsToPercent, formatDate } from "../lib/format";
@@ -515,21 +515,25 @@ export default function LoanDetails() {
           </div>
           <div className="data-row">
             <span className="data-label">{t('loanDetails.principalAsset')}</span>
-            <a
-              href={`${activeBlockExplorer}/address/${loan.principalAsset}`}
-              target="_blank"
-              rel="noreferrer"
+            <span
               className="data-value"
-              style={{
-                color: "var(--brand)",
-                display: "inline-flex",
-                alignItems: "center",
-                gap: 4,
-              }}
+              style={{ color: "var(--brand)" }}
             >
-              <AssetSymbol address={loan.principalAsset} />{" "}
-              <ExternalLink size={12} />
-            </a>
+              {Number(loan.assetType) === 0 ? (
+                <AssetLink
+                  kind="erc20"
+                  chainId={chainId ?? 0}
+                  address={loan.principalAsset}
+                />
+              ) : (
+                <AssetLink
+                  kind="nft"
+                  chainId={chainId ?? 0}
+                  address={loan.principalAsset}
+                  tokenId={loan.tokenId ?? 0n}
+                />
+              )}
+            </span>
           </div>
           <div className="data-row">
             <span className="data-label">{t('loanDetails.interestRateApr')}</span>
@@ -579,21 +583,25 @@ export default function LoanDetails() {
           </div>
           <div className="data-row">
             <span className="data-label">{t('loanDetails.collateralAsset')}</span>
-            <a
-              href={`${activeBlockExplorer}/address/${loan.collateralAsset}`}
-              target="_blank"
-              rel="noreferrer"
+            <span
               className="data-value"
-              style={{
-                color: "var(--brand)",
-                display: "inline-flex",
-                alignItems: "center",
-                gap: 4,
-              }}
+              style={{ color: "var(--brand)" }}
             >
-              <AssetSymbol address={loan.collateralAsset} />{" "}
-              <ExternalLink size={12} />
-            </a>
+              {Number(loan.collateralAssetType) === 0 ? (
+                <AssetLink
+                  kind="erc20"
+                  chainId={chainId ?? 0}
+                  address={loan.collateralAsset}
+                />
+              ) : (
+                <AssetLink
+                  kind="nft"
+                  chainId={chainId ?? 0}
+                  address={loan.collateralAsset}
+                  tokenId={loan.collateralTokenId ?? 0n}
+                />
+              )}
+            </span>
           </div>
           <div className="data-row">
             <span className="data-label">{t('loanDetails.principalLiquidity')}</span>

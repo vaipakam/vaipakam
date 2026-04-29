@@ -1493,5 +1493,11 @@
     "partialRepayLabel": "部分还款",
     "partialRepayAllowed": "允许 — 借款人可分批偿还此贷款",
     "partialRepayNotAllowed": "不允许 — 仅接受全额还款"
+  },
+  "assetLink": {
+    "openOnCoinGecko": "在 CoinGecko 上打开",
+    "openOnOpenSea": "在 OpenSea 上打开",
+    "openOnExplorer": "在区块浏览器中打开",
+    "openOnVerifier": "在 Vaipakam NFT 验证器中打开"
   }
 }

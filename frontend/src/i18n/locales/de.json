@@ -1493,5 +1493,11 @@
     "partialRepayLabel": "Teilrückzahlung",
     "partialRepayAllowed": "Zulässig — Kreditnehmer kann dieses Darlehen in Teilen zurückzahlen",
     "partialRepayNotAllowed": "Nicht zulässig — nur die vollständige Rückzahlung wird akzeptiert"
+  },
+  "assetLink": {
+    "openOnCoinGecko": "Auf CoinGecko öffnen",
+    "openOnOpenSea": "Auf OpenSea öffnen",
+    "openOnExplorer": "Im Block-Explorer öffnen",
+    "openOnVerifier": "Im Vaipakam-NFT-Verifier öffnen"
   }
 }

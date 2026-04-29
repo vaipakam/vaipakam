@@ -980,6 +980,7 @@ export default function OfferBook() {
                 acceptingId={acceptingId}
                 onAccept={handleAcceptOffer}
                 statusView={statusView}
+                chainId={activeReadChain.chainId}
                 offerToLoan={offerToLoan}
                 cardHelpId="offer-book.lender-offers"
               />
@@ -1019,6 +1020,7 @@ export default function OfferBook() {
                 acceptingId={acceptingId}
                 onAccept={handleAcceptOffer}
                 statusView={statusView}
+                chainId={activeReadChain.chainId}
                 offerToLoan={offerToLoan}
                 cardHelpId="offer-book.borrower-offers"
               />
@@ -1536,6 +1538,10 @@ interface OfferTableProps {
   acceptingId: bigint | null;
   onAccept: (id: bigint) => void;
   statusView: StatusView;
+  /** Chain id this table's offers live on. Threaded into
+   *  `<PrincipalCell>` so each row's "open externally" link routes
+   *  to the right destination per asset type and chain. */
+  chainId: number;
   /** Map of `offerId → loanId` (both decimal strings) derived from the
    *  log-index `OfferAccepted` events. When the Closed view renders a
    *  filled offer, it looks up the resulting loan id here and renders
@@ -1554,7 +1560,7 @@ interface OfferTableProps {
   headerAction?: ReactNode;
 }
 
-export function OfferTable({ title, subtitle, offers, anchorRateBps, address, acceptingId, onAccept, statusView, offerToLoan, cardHelpId, headerAction }: OfferTableProps) {
+export function OfferTable({ title, subtitle, offers, anchorRateBps, address, acceptingId, onAccept, statusView, chainId, offerToLoan, cardHelpId, headerAction }: OfferTableProps) {
   const { t } = useTranslation();
   return (
     <div className="card" style={{ marginTop: 16 }}>
@@ -1623,6 +1629,7 @@ export function OfferTable({ title, subtitle, offers, anchorRateBps, address, ac
                         asset={offer.lendingAsset}
                         amount={offer.amount}
                         tokenId={offer.tokenId}
+                        chainId={chainId}
                       />
                     </td>
                     <td>

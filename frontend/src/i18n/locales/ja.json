@@ -1493,5 +1493,11 @@
     "partialRepayLabel": "部分返済",
     "partialRepayAllowed": "許可 — 借り手はこのローンを分割で返済できます",
     "partialRepayNotAllowed": "不許可 — 全額返済のみ受け付けます"
+  },
+  "assetLink": {
+    "openOnCoinGecko": "CoinGeckoで開く",
+    "openOnOpenSea": "OpenSeaで開く",
+    "openOnExplorer": "ブロックエクスプローラで開く",
+    "openOnVerifier": "Vaipakam NFTベリファイアで開く"
   }
 }

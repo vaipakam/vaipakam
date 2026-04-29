@@ -1493,5 +1493,11 @@
     "partialRepayLabel": "부분 상환",
     "partialRepayAllowed": "허용됨 — 차용인은 이 대출을 분할로 상환할 수 있습니다",
     "partialRepayNotAllowed": "허용되지 않음 — 전액 상환만 허용됩니다"
+  },
+  "assetLink": {
+    "openOnCoinGecko": "CoinGecko에서 열기",
+    "openOnOpenSea": "OpenSea에서 열기",
+    "openOnExplorer": "블록 탐색기에서 열기",
+    "openOnVerifier": "Vaipakam NFT 베리파이어에서 열기"
   }
 }

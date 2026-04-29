@@ -1493,5 +1493,11 @@
     "partialRepayLabel": "आंशिक पुनर्भुगतान",
     "partialRepayAllowed": "अनुमत — उधारकर्ता इस ऋण को भागों में चुका सकता है",
     "partialRepayNotAllowed": "अनुमत नहीं — केवल पूर्ण पुनर्भुगतान स्वीकार किया जाता है"
+  },
+  "assetLink": {
+    "openOnCoinGecko": "CoinGecko पर खोलें",
+    "openOnOpenSea": "OpenSea पर खोलें",
+    "openOnExplorer": "चेन एक्सप्लोरर पर खोलें",
+    "openOnVerifier": "Vaipakam NFT वेरिफायर में खोलें"
   }
 }

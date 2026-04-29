@@ -1219,6 +1219,192 @@ old name / symbol — it reads `name()` / `symbol()` live from
 the contract — so all UI surfaces auto-pick up the new
 values on next deploy with no frontend change required.
 
+## Partial repayment — lender-gated opt-in
+
+Borrower-initiated partial repayment (`RepayFacet.repayPartial`)
+existed on-chain since Phase 1 but was an unconditional borrower
+right — any borrower could partially pay down any loan at any
+time. Today's change converts it into an explicit consent gate
+between the offer's two sides: the **offer creator opts in** when
+they author the offer; the acceptor consents implicitly by
+accepting it. Default is off — when no one opts in, only full
+repayment is accepted on-chain and any `repayPartial` attempt
+reverts with a typed `PartialRepayNotAllowed` error.
+
+The mechanic is symmetric across both offer sides because the
+contract treats the offer-side as the configuration layer, not the
+acceptor:
+
+- **Lender offer with the flag set** — the lender is permitting
+  partial repay up front. Any borrower who accepts is signing on to
+  a loan that can be partially repaid. The lender knows their cash
+  flow won't be a single lump sum at maturity.
+- **Borrower offer with the flag set** — the borrower is requesting
+  the right to repay in chunks. The lender either accepts (and
+  thereby consents to that arrangement) or skips the offer.
+
+There's no `acceptOffer` signature change and no acceptor-side
+override. The single creator-set flag carries the entire
+consent semantics; the act of accepting is the acceptor's
+agreement.
+
+**Storage shape.** A new `bool allowsPartialRepay` field on the
+`Offer` struct (slot-1 packed alongside the creator address +
+type/asset enums — zero gas overhead) and on the `Loan` struct
+(slot-3 packed alongside the borrower address). Snapshotted from
+offer to loan at `LoanFacet.initiateLoan` and immutable thereafter
+— a loan's terms can't drift mid-flight from the deal both sides
+agreed to.
+
+**Enforcement.** `RepayFacet.repayPartial` reads `loan.allowsPartialRepay`
+at the top of the call and reverts `PartialRepayNotAllowed()` if
+false. Two new Foundry tests (`testRepayPartialRevertsWhenLenderOfferDisallowed`
++ `testRepayPartialSucceedsWhenBorrowerOfferAllowed`) lock the
+default-off + opt-in-true posture for both offer sides. All 18
+existing partial-repay tests stay green; full no-invariants
+regression 1402 / 0 failed / 5 skipped (the 5 are fork-gated
+Permit2 tests that need `FORK_URL_MAINNET`).
+
+**UI surfaces.**
+
+- **Create Offer** — a new checkbox in the Advanced Options card
+  (alongside the keeper-access toggle) labelled *"Allow borrower-
+  initiated partial repayment"*. The hint text underneath flips
+  with the offer side: a lender-offer creator sees "the borrower
+  can call repayPartial to pay down principal in chunks before the
+  term ends"; a borrower-offer creator sees "request the right to
+  repay this loan in partial chunks. The lender consents
+  implicitly by accepting your offer." Both forms localised across
+  all 10 locales (`createOffer.allowsPartialRepayLabel` +
+  `createOffer.allowsPartialRepayHintLender` +
+  `createOffer.allowsPartialRepayHintBorrower`).
+
+- **Accept Review modal** — a new "Partial repay" row in the offer-
+  terms data-list, between Liquidity and the discount-preview
+  block. Renders either *"Allowed — borrower may repay this loan
+  in chunks"* or *"Not allowed — only full repayment is accepted"*.
+  Localised under the new `acceptReview.*` namespace
+  (`partialRepayLabel` + `partialRepayAllowed` +
+  `partialRepayNotAllowed`).
+
+- **Liquidation Projection (Loan Details)** — the partial-repay
+  what-if slider on the existing projection card now hides itself
+  when the loan's `allowsPartialRepay` is false. Showing a slider
+  whose action would revert with `PartialRepayNotAllowed` would be
+  a UX trap; matching the on-chain truth is the right shape. The
+  add-collateral and price-drop sliders stay regardless.
+
+`LoanSummary` and `LoanDetails` types both gained the field;
+`useUserLoans` projects it through to the Dashboard's Your Loans
+table; `OfferData` and `RawOffer` carry it from `getOffer`
+through `useMyOffers` to the AcceptReviewModal. ABI re-export
+covered every consumer in one pass.
+
+## Liquidation Projection — collateral-drop slider shows the resulting price
+
+The **Collateral price drop** slider on the Liquidation Projection
+card (Loan Details) used to render only the percentage value
+("30%") next to the range input. A raw percent doesn't tell users
+what the collateral would actually be worth at that drop — they
+had to do the dollar-math in their head against the live oracle
+price.
+
+The label now interpolates the resulting absolute price alongside
+the percent: `30% · $42.18`. Sourced by multiplying the cached
+`collPriceUsd` (read once on mount via `OracleFacet.getAssetPrice`)
+by `(1 - dropPct / 100)` on each render. Gracefully degrades to
+percent-only when the oracle is unavailable
+(`collPriceUsd === null`) — no `"30% — $—"` half-rendered state.
+
+## In-app shell — ambient gradient backdrop
+
+The in-app shell's background was a flat solid colour while the
+public landing page hero carried a subtle dual radial gradient
+(brand-purple top-center + brand-light bottom-right) that sets the
+visual tone. Crossing the wallet-connect threshold from the
+landing page into the app dropped that ambience entirely.
+
+Two CSS pseudo-elements on `.app-layout` (`::before` + `::after`)
+now mirror the same dual radial pattern as fixed-position
+backdrops behind every in-app page. Brand-purple `rgba(79, 70,
+229, 0.08)` ellipse top-center; brand-light `rgba(129, 140, 248,
+0.06)` ellipse bottom-right. Opacity intentionally lower than the
+landing page (0.08 vs 0.12) since the in-app surface carries
+denser foreground content — the gradient should set tone without
+competing with cards / tables / forms.
+
+`pointer-events: none` + `z-index: -1` on both pseudo-elements so
+they stay purely decorative and don't intercept interaction. The
+backdrop tracks viewport (not page-content) via `position: fixed`,
+so scrolling a long page doesn't drag the gradient with the
+content.
+
+## Navbar dropdown — `aria-hidden` → `inert`
+
+Chrome DevTools was warning on every Navbar dropdown interaction:
+*"Blocked aria-hidden on an element because its descendant
+retained focus. The focus must not be hidden from assistive
+technology users."* Triggered when a dropdown item received focus
+inside a sibling group whose collapsed-state was using
+`aria-hidden={true}` to hide it from assistive tech.
+
+The intent was right (collapsed dropdown groups shouldn't be
+exposed to screen readers); the implementation was wrong.
+`aria-hidden` is for nodes that visually exist but should be
+invisible to AT — it explicitly conflicts with focusable
+descendants because focus lands on a node that screen readers
+can't read out, breaking keyboard navigation.
+
+The correct primitive for "this whole subtree is non-interactive
+and should not appear in a11y tree" is the `inert` attribute,
+which atomically blocks both focus and AT exposure. Replacing
+`aria-hidden={openGroup !== group.id}` with
+`inert={openGroup !== group.id}` resolves the warning and is the
+strictly-correct semantic — `inert` is exactly the API the W3C
+added in 2022 for this case.
+
+## Log-index cache — version reset to v1, topic OR-array slimmed
+
+Two tightly-related fixes: a versioning cleanup and a silent-bug
+recovery.
+
+**Versioning reset to v1.** The browser-side log-index cache key
+had inflated to `v10` over the past two weeks of incremental
+schema changes. Each change forced a full-rescan migration on the
+next page load — fine on a live deploy where preserving cached
+state across schema bumps is non-negotiable, but the project is
+**still pre-live**: every deploy so far has been against
+testnet/dev, no real user data flows through the cache, and the
+inflating version number was telegraphing a maturity the codebase
+doesn't have yet. Reset to `v1` with a one-line policy comment in
+the source: *"This is the cache key version. The number bumps
+when the schema of cached data changes in a way that requires a
+full rescan to reconstruct. While pre-live, we don't bump — every
+schema change just resets to v1 and forces every browser to
+rescan once."* Once mainnet ships, the version-bump discipline
+flips back on.
+
+**`OfferCanceledDetails` dropped from the topic OR-array.** The
+log-index `eth_getLogs` call passes a single OR-array of every
+event topic the cache cares about. Adding the new
+`OfferCanceledDetails` topic earlier today pushed the array past
+~24 entries, which is the silent cap publicnode's free RPC
+applies — past that count the call returns an empty array with
+no error, no warning, and a 200 status. Symptom in the field:
+offers and loans stopped loading on Sepolia despite zero browser-
+console errors. Diagnosis took an hour because the failure mode
+was indistinguishable from "no events match the filter."
+
+`OfferCanceledDetails` is hydrate-only — it has no surface in the
+Activity feed or Loan Timeline; its only consumer is the
+"Cancelled" tab on Your Offers, which already three-tier-hydrates
+from event → snapshot → identity-stub. Pulling it out of the OR-
+array drops the count back below the cap; the topic constant +
+its decoder branch stay defined so when the hydrate path *does*
+need the rich payload (rare — only when both the localStorage
+snapshot and the event-emit flow have been bypassed), it can be
+re-added incrementally without re-introducing the cap problem.
+
 ## Documentation convention
 
 Same as carried forward from prior files: every completed phase

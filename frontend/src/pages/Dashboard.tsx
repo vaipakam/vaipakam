@@ -356,7 +356,7 @@ export default function Dashboard() {
               }
             }}
             cancellingId={cancellingOfferId}
-            blockExplorer={activeChain?.blockExplorer ?? DEFAULT_CHAIN.blockExplorer}
+            chainId={activeChain?.chainId ?? DEFAULT_CHAIN.chainId}
             title={t('dashboard.yourOffers')}
             subtitle={t('myOffersTable.subtitle', { count: myOfferRows.length })}
             cardHelpId="offer-book.your-active-offers"
@@ -524,7 +524,7 @@ export default function Dashboard() {
                         asset={loan.principalAsset}
                         amount={loan.principal}
                         tokenId={loan.principalTokenId}
-                        blockExplorer={activeChain?.blockExplorer ?? DEFAULT_CHAIN.blockExplorer}
+                        chainId={activeChain?.chainId ?? DEFAULT_CHAIN.chainId}
                       />
                     </td>
                     <td>{bpsToPercent(loan.interestRateBps)}</td>

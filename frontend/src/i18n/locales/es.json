@@ -1493,5 +1493,11 @@
     "partialRepayLabel": "Reembolso parcial",
     "partialRepayAllowed": "Permitido — el prestatario puede reembolsar este préstamo en partes",
     "partialRepayNotAllowed": "No permitido — sólo se acepta el reembolso completo"
+  },
+  "assetLink": {
+    "openOnCoinGecko": "Abrir en CoinGecko",
+    "openOnOpenSea": "Abrir en OpenSea",
+    "openOnExplorer": "Abrir en el explorador de la cadena",
+    "openOnVerifier": "Abrir en el verificador de NFT de Vaipakam"
   }
 }

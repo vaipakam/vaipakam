@@ -1493,5 +1493,11 @@
     "partialRepayLabel": "السداد الجزئي",
     "partialRepayAllowed": "مسموح — يمكن للمقترض سداد هذا القرض على دفعات",
     "partialRepayNotAllowed": "غير مسموح — لا يُقبل إلا السداد الكامل"
+  },
+  "assetLink": {
+    "openOnCoinGecko": "فتح في CoinGecko",
+    "openOnOpenSea": "فتح في OpenSea",
+    "openOnExplorer": "فتح في مستكشف السلسلة",
+    "openOnVerifier": "فتح في مدقق NFT في Vaipakam"
   }
 }

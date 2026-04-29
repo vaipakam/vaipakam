@@ -1493,5 +1493,11 @@
     "partialRepayLabel": "Partial repay",
     "partialRepayAllowed": "Allowed — borrower may repay this loan in chunks",
     "partialRepayNotAllowed": "Not allowed — only full repayment is accepted"
+  },
+  "assetLink": {
+    "openOnCoinGecko": "Open on CoinGecko",
+    "openOnOpenSea": "Open on OpenSea",
+    "openOnExplorer": "Open on chain explorer",
+    "openOnVerifier": "Open in Vaipakam NFT Verifier"
   }
 }
