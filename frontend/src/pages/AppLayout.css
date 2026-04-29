@@ -1,6 +1,56 @@
 .app-layout {
+  position: relative;
   display: flex;
   min-height: 100vh;
+}
+
+/* Ambient brand-glow backdrop — same radial-gradient language the
+ * landing-page hero uses (`.hero-bg-glow`), but viewport-fixed so it
+ * persists as the user scrolls long pages (Dashboard with multi-loan
+ * tables, OfferBook with paginated lists). Two soft passes give the
+ * shell a subtly layered feel without competing with card content
+ * for attention.
+ *
+ * Sidebar (`.app-sidebar`, z:1100) and topbar (`.app-topbar`, z:100)
+ * both sit on opaque backgrounds and naturally render above; in-page
+ * content sits above the pseudo via document order. `pointer-events:
+ * none` on both passes keeps clicks falling through.
+ */
+.app-layout::before,
+.app-layout::after {
+  content: '';
+  position: fixed;
+  pointer-events: none;
+  z-index: 0;
+}
+
+.app-layout::before {
+  /* Primary glow — brand purple, top-center, fades down. */
+  top: -300px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 1200px;
+  height: 900px;
+  background: radial-gradient(ellipse, rgba(79, 70, 229, 0.08) 0%, transparent 65%);
+}
+
+.app-layout::after {
+  /* Secondary glow — lighter brand-light, bottom-right, off-axis from
+   * the primary so the two don't visually merge. Adds depth without
+   * making the background read as a single uniform tint. */
+  bottom: -200px;
+  right: -200px;
+  width: 800px;
+  height: 600px;
+  background: radial-gradient(ellipse, rgba(129, 140, 248, 0.06) 0%, transparent 70%);
+}
+
+[data-theme='dark'] .app-layout::before {
+  background: radial-gradient(ellipse, rgba(129, 140, 248, 0.07) 0%, transparent 65%);
+}
+
+[data-theme='dark'] .app-layout::after {
+  background: radial-gradient(ellipse, rgba(167, 139, 250, 0.05) 0%, transparent 70%);
 }
 
 /* ── Sidebar ──
