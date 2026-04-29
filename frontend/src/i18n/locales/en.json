@@ -580,7 +580,9 @@
     "loadingPositions": "Loading your positions…",
     "noLoansYet": "No Loans Yet",
     "noLoansBody": "Create an offer or browse the offer book to get started.",
-    "browseOffers": "Browse Offers"
+    "browseOffers": "Browse Offers",
+    "claim": "Claim",
+    "claimReadyTooltip": "This loan has unclaimed funds for you — open it to see the breakdown and claim."
   },
   "offerBook": {
     "subtitleClosed": "Historical view of filled offers — accepted liquidity that's already been matched to a loan. Use this to see past market rates even after the live book clears.",

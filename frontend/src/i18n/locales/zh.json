@@ -111,7 +111,9 @@
     "loadingPositions": "正在加载您的持仓…",
     "noLoansYet": "暂无贷款",
     "noLoansBody": "创建报价或浏览报价簿以开始。",
-    "browseOffers": "浏览报价"
+    "browseOffers": "浏览报价",
+    "claim": "领取",
+    "claimReadyTooltip": "此贷款有未领取的资金 — 打开以查看明细并领取。"
   },
   "offerBook": {
     "subtitleClosed": "已成交报价的历史视图 — 已经匹配到贷款的已接受流动性。即便实时簿清空后，也可用来查看过往市场利率。",

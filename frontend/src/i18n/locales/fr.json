@@ -111,7 +111,9 @@
     "loadingPositions": "Chargement de vos positions…",
     "noLoansYet": "Pas encore de prêts",
     "noLoansBody": "Créez une offre ou explorez le carnet d'offres pour commencer.",
-    "browseOffers": "Parcourir les offres"
+    "browseOffers": "Parcourir les offres",
+    "claim": "Réclamer",
+    "claimReadyTooltip": "Ce prêt a des fonds non réclamés pour vous — ouvrez-le pour voir la répartition et réclamer."
   },
   "offerBook": {
     "subtitleClosed": "Vue historique des offres exécutées — liquidité acceptée déjà appariée à un prêt. Utile pour consulter les anciens taux de marché même après la vidange du carnet en direct.",

@@ -111,7 +111,9 @@
     "loadingPositions": "포지션을 불러오는 중…",
     "noLoansYet": "아직 대출이 없습니다",
     "noLoansBody": "오퍼를 생성하거나 오퍼북을 살펴보고 시작하세요.",
-    "browseOffers": "오퍼 보기"
+    "browseOffers": "오퍼 보기",
+    "claim": "청구",
+    "claimReadyTooltip": "이 대출에는 미청구 자금이 있습니다 — 열어서 내역을 확인하고 청구하세요."
   },
   "offerBook": {
     "subtitleClosed": "체결된 오퍼의 과거 보기 — 이미 대출과 매칭된 수락 유동성입니다. 라이브 북이 비워진 뒤에도 과거 시장 금리를 확인하는 데 유용합니다.",

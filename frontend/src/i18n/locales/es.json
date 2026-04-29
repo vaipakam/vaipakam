@@ -111,7 +111,9 @@
     "loadingPositions": "Cargando tus posiciones…",
     "noLoansYet": "Sin préstamos aún",
     "noLoansBody": "Crea una oferta o explora el libro de ofertas para comenzar.",
-    "browseOffers": "Explorar ofertas"
+    "browseOffers": "Explorar ofertas",
+    "claim": "Reclamar",
+    "claimReadyTooltip": "Este préstamo tiene fondos no reclamados para ti — ábrelo para ver el desglose y reclamar."
   },
   "offerBook": {
     "subtitleClosed": "Vista histórica de ofertas completadas — liquidez aceptada que ya se ha emparejado con un préstamo. Útil para ver tasas pasadas del mercado incluso después de que se borre el libro en vivo.",

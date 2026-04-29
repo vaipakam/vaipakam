@@ -111,7 +111,9 @@
     "loadingPositions": "Positionen werden geladen…",
     "noLoansYet": "Noch keine Kredite",
     "noLoansBody": "Erstellen Sie ein Angebot oder durchsuchen Sie das Angebotsbuch, um zu beginnen.",
-    "browseOffers": "Angebote durchsuchen"
+    "browseOffers": "Angebote durchsuchen",
+    "claim": "Beanspruchen",
+    "claimReadyTooltip": "Dieses Darlehen hat unbeanspruchte Mittel für Sie — öffnen Sie es, um die Aufschlüsselung zu sehen und zu beanspruchen."
   },
   "offerBook": {
     "subtitleClosed": "Verlaufsansicht ausgeführter Angebote — angenommene Liquidität, die bereits einem Kredit zugeordnet wurde. Nützlich, um vergangene Marktraten zu sehen, auch nachdem das Live-Buch geleert wurde.",
