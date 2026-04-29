@@ -89,6 +89,35 @@ VPFI 以拿到 full-tier discount，然后几秒钟后 withdraw。
 discount 在 settlement 时适用于 lender yield fee，也适用于 borrower
 Loan Initiation Fee (borrower claim 时以 VPFI rebate 形式支付)。
 
+<a id="dashboard.rewards-summary"></a>
+
+### 您的 VPFI 奖励
+
+愿景摘要卡。在单一视图中显示已连接钱包跨两个流的合并 VPFI
+奖励画面，标题数字为
+`stakingPending + stakingLifetimeClaimed + interactionPending
++ interactionLifetimeClaimed`。
+
+每流细分行显示待领取 + 已领取，以及指向其原生页面上完整领取
+卡的 V 形深层链接：
+
+- **质押收益** — `previewStakingRewards()` (实时读取) + 来
+  自本地 log-index 的此钱包的每个 `StakingRewardsClaimed`
+  事件的总和。深层链接到 `/buy-vpfi#staking-rewards`。
+- **平台交互奖励** — `previewInteractionRewards()` 跨所有
+  钱包的贷款 + 每个 `InteractionRewardsClaimed` 事件的总和。
+  深层链接到 `/app/claims#interaction-rewards`。
+
+终生领取数字从 log-index 事件扫描的客户端派生 — 没有用于运
+行总数的链上 getter。新的浏览器缓存显示终生为 0 (或部分)，
+直到每 (chain, diamond) 扫描回填历史块；扫描完成后，数字跳
+到真相。与底层领取卡相同的信任模型。
+
+卡片始终为已连接的钱包渲染，即使在 all-zero 状态下也是如此。
+空状态提示是有意为之 — 在零时隐藏卡片会使奖励程序对新用户
+不可见，直到他们漫步进入 Buy VPFI 或 Claim Center。
+
+
 ---
 
 ## Offer Book

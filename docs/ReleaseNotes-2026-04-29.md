@@ -931,59 +931,40 @@ denominated config fields (`minHealthFactor`, the two pool
 caps) were already using their `*Display` / `*Compact`
 helpers so they rendered correctly all along.
 
-## CardInfo "Learn more →" anchors — pre-existing limitation noted
+## CardInfo "Learn more →" anchors — only the new card needed wiring
 
 Every CardInfo (i)-tooltip in the app surfaces a
 *Learn more →* external link to `/help/basic#<id>` or
 `/help/advanced#<id>` based on the active UI mode. The
-expectation was that each registered id would resolve to an
-`<a id="<id>"></a>` anchor inside the corresponding user-guide
-markdown — adding the (i) icon to a card without the doc
-content would just hide the icon, but with both in place the
-link would scroll to the right section of the guide.
+expectation: each registered id resolves to an
+`<a id="<id>"></a>` anchor inside the user-guide markdown so
+the click scrolls the guide to the matching section.
 
-Audit today found that **none** of the 53 registered CardInfo
-ids actually have a matching `<a id>` anchor in either
-`docs/UserGuide-Basic.md` or `docs/UserGuide-Advanced.md` —
-both files have zero anchors total. So today every "Learn
-more →" link lands at the top of the user guide regardless
-of which card the user clicked from.
+An initial audit today flagged this as broken across all 53
+registered CardInfo ids. That diagnosis was wrong — it was
+based on the stub redirect files at `docs/UserGuide-Basic.md`
+and `docs/UserGuide-Advanced.md`, which have zero anchors but
+also zero content. The actual canonical user-guide source
+lives at `frontend/src/content/userguide/{Basic,Advanced}.<locale>.md`
+(20 files: 2 modes × 10 locales) and those files already
+contain anchored sections for every existing CardInfo id —
+including the role-keyed `:lender` / `:borrower` variants
+where the registry uses a role-keyed summary.
 
-Not a regression introduced by today's work — it's a pre-
-existing gap that today's audit happened to surface. The
-new dashboard *Your VPFI rewards* card inherits the same
-behavior. Adding the anchors across both user-guide files
-is a separate authorial pass scheduled later (the registry +
-id-routing infrastructure is already wired correctly; only
-the markdown content needs the inline anchor lines added).
-For visibility, the 53 currently unresolved ids are:
+The only id that genuinely had no anchor was the new
+`dashboard.rewards-summary` shipped today. Fix: a "Your VPFI
+rewards" section was added to all 20 files (Basic + Advanced
+× 10 locales) immediately after the existing fee-discount-
+consent section, with the matching `<a id="dashboard.rewards-summary"></a>`
+anchor and locale-appropriate body copy (Basic mode keeps the
+register friendly + conversational; Advanced uses the
+function-name + log-index-event-scan vocabulary that matches
+that mode's voice elsewhere).
 
-```
-dashboard.your-escrow, dashboard.your-loans, dashboard.vpfi-panel,
-dashboard.fee-discount-consent, dashboard.rewards-summary,
-offer-book.filters, offer-book.your-active-offers,
-offer-book.lender-offers, offer-book.borrower-offers,
-create-offer.offer-type, create-offer.lending-asset,
-create-offer.nft-details, create-offer.collateral,
-create-offer.risk-disclosures, create-offer.advanced-options,
-claim-center.claims, refinance.overview,
-refinance.position-summary, refinance.step-1-post-offer,
-refinance.step-2-complete, preclose.overview,
-preclose.position-summary, preclose.in-progress,
-preclose.choose-path, early-withdrawal.overview,
-early-withdrawal.position-summary,
-early-withdrawal.initiate-sale, public-dashboard.overview,
-public-dashboard.combined, public-dashboard.per-chain,
-public-dashboard.vpfi-transparency, public-dashboard.transparency,
-keeper-settings.overview, keeper-settings.approved-list,
-nft-verifier.lookup, alerts.overview, alerts.threshold-ladder,
-alerts.delivery-channels, allowances.list, loan-details.overview,
-loan-details.terms, loan-details.collateral-risk,
-loan-details.parties, loan-details.actions, buy-vpfi.overview,
-buy-vpfi.discount-status, buy-vpfi.buy, buy-vpfi.deposit,
-buy-vpfi.unstake, rewards.overview, rewards.claim,
-rewards.withdraw-staked, activity.feed
-```
+Net effect: every CardInfo (i)-tooltip in the entire app —
+including the new dashboard rewards card — now scrolls the
+user guide to the right section on click in every supported
+locale and both modes.
 
 ## Documentation convention
 

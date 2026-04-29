@@ -107,6 +107,46 @@ La remise s'applique au yield-fee du prêteur au moment du
 règlement et au Loan Initiation Fee de l'emprunteur (versé comme
 rabais VPFI lorsque l'emprunteur réclame).
 
+<a id="dashboard.rewards-summary"></a>
+
+### Vos récompenses VPFI
+
+Carte de résumé aspirationnelle. Affiche l'image combinée des
+récompenses VPFI du portefeuille connecté à travers les deux
+flux dans une seule vue, le chiffre principal étant
+`stakingPending + stakingLifetimeClaimed + interactionPending
++ interactionLifetimeClaimed`.
+
+Les lignes de ventilation par flux affichent en attente +
+réclamé et un lien profond chevron vers la carte de
+réclamation complète sur sa page native :
+
+- **Rendement du staking** — `previewStakingRewards()`
+  (lecture en direct) + somme de chaque événement
+  `StakingRewardsClaimed` pour ce portefeuille depuis le
+  log-index local. Lien profond vers
+  `/buy-vpfi#staking-rewards`.
+- **Récompenses d'interaction avec la plateforme** —
+  `previewInteractionRewards()` sur tous les prêts du
+  portefeuille + somme de chaque événement
+  `InteractionRewardsClaimed`. Lien profond vers
+  `/app/claims#interaction-rewards`.
+
+Les nombres réclamés à vie sont dérivés côté client du scan
+d'événements log-index — il n'y a pas de getter on-chain pour
+le total cumulé. Un cache de navigateur frais affiche 0 (ou
+partiel) à vie jusqu'à ce que le scan par (chaîne, diamant)
+remplisse les blocs historiques ; une fois le scan terminé,
+le nombre saute à la vérité. Même modèle de confiance que
+les cartes de réclamation sous-jacentes.
+
+La carte s'affiche toujours pour les portefeuilles connectés,
+même dans l'état all-zero. L'indice d'état vide est
+intentionnel — masquer la carte à zéro rendrait les programmes
+de récompenses invisibles pour les nouveaux utilisateurs
+jusqu'à ce qu'ils s'aventurent dans Buy VPFI ou Claim Center.
+
+
 ---
 
 ## Carnet d'offres

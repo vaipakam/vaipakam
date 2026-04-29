@@ -86,6 +86,37 @@ escrow:
 Puedes apagar el interruptor en cualquier momento. Si retiras VPFI
 del escrow, tu tier baja en tiempo real.
 
+<a id="dashboard.rewards-summary"></a>
+
+### Tus recompensas VPFI
+
+Esta tarjeta reúne en un solo lugar cada recompensa VPFI que
+has ganado del protocolo. El número grande en la parte superior
+es el total combinado — lo que ya has reclamado más lo que
+está esperando ser reclamado.
+
+Hay dos flujos de recompensas y la tarjeta desglosa el total
+por cada uno:
+
+- **Rendimiento de staking** — ganado automáticamente sobre
+  cualquier VPFI que mantengas en tu escrow. La tasa es el APR
+  del protocolo mostrado en la página Buy VPFI.
+- **Recompensas de interacción con la plataforma** — ganado un
+  poco cada día por cada préstamo en el que participes, en
+  cualquier lado. Pagado en VPFI en la cadena en la que estás,
+  sin puente.
+
+Cada fila tiene una pequeña flecha de chevron a la derecha.
+Haz clic en ella para saltar directamente a la tarjeta de
+reclamación completa de ese flujo — staking vive en la página
+Buy VPFI, interacción con la plataforma vive en el Claim Center.
+
+Si aún no has ganado nada, la tarjeta se renderiza igualmente
+con *Total ganado: 0 VPFI* más una pista sobre cómo empezar.
+No has hecho nada mal — simplemente no hay historial que
+mostrar.
+
+
 ---
 
 ## Libro de ofertas

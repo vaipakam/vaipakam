@@ -105,6 +105,44 @@ Der Rabatt gilt auf der Lender-Yield-Fee beim Settlement und auf
 der Borrower-Loan-Initiation-Fee (ausgezahlt als VPFI-Rebate, wenn
 der Borrower claimt).
 
+<a id="dashboard.rewards-summary"></a>
+
+### Ihre VPFI-Belohnungen
+
+Aspirations-Übersichtskarte. Zeigt das kombinierte VPFI-
+Belohnungsbild der verbundenen Wallet über beide Ströme in
+einer einzigen Ansicht, wobei die Schlagzeilenzahl
+`stakingPending + stakingLifetimeClaimed + interactionPending
++ interactionLifetimeClaimed` ist.
+
+Pro-Strom-Aufschlüsselungszeilen zeigen Ausstehend +
+Beansprucht und einen Chevron-Deep-Link zur vollständigen
+Anspruchskarte auf ihrer ursprünglichen Seite:
+
+- **Staking-Rendite** — `previewStakingRewards()` (Live-Read) +
+  Summe jedes `StakingRewardsClaimed`-Events für diese Wallet
+  aus dem lokalen Log-Index. Deep-Links zu
+  `/buy-vpfi#staking-rewards`.
+- **Plattform-Interaktions-Belohnungen** —
+  `previewInteractionRewards()` über alle Kredite der Wallet
+  + Summe jedes `InteractionRewardsClaimed`-Events. Deep-Links
+  zu `/app/claims#interaction-rewards`.
+
+Die Lifetime-Beansprucht-Zahlen werden client-seitig aus dem
+Log-Index-Event-Scan abgeleitet — es gibt keinen On-Chain-
+Getter für die laufende Summe. Ein frischer Browser-Cache
+zeigt 0 (oder partiell) Lifetime, bis der per-(Chain, Diamond)-
+Scan die historischen Blöcke nachfüllt; sobald der Scan
+abgeschlossen ist, springt die Zahl auf die Wahrheit. Gleiches
+Vertrauensmodell wie die zugrunde liegenden Anspruchskarten.
+
+Die Karte rendert immer für verbundene Wallets, auch im
+All-Zero-Zustand. Der Empty-State-Hinweis ist beabsichtigt —
+das Ausblenden der Karte bei Null würde die Belohnungsprogramme
+für frische Benutzer unsichtbar machen, bis sie in Buy VPFI
+oder Claim Center wandern.
+
+
 ---
 
 ## Offer Book

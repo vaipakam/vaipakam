@@ -82,6 +82,34 @@ How big the discount is depends on how much VPFI you keep in escrow:
 You can turn the switch off at any time. If you withdraw VPFI from
 escrow your tier drops in real time.
 
+<a id="dashboard.rewards-summary"></a>
+
+### Your VPFI rewards
+
+This card brings together every VPFI reward you've earned from
+the protocol in one place. The big number at the top is the
+combined total — what you've already claimed plus what's
+sitting waiting to be claimed.
+
+There are two reward streams and the card breaks the total
+down by each one:
+
+- **Staking yield** — earned automatically on any VPFI you keep
+  in your escrow. Rate is the protocol APR shown on the Buy
+  VPFI page.
+- **Platform-interaction rewards** — earned a little bit every
+  day for each loan you're part of, on either side. Paid out
+  in VPFI on the chain you're on, no bridging.
+
+Each row has a small chevron arrow on the right. Click it to
+jump straight to the full claim card for that stream — staking
+lives on the Buy VPFI page, platform-interaction lives on the
+Claim Center.
+
+If you haven't earned anything yet the card still renders with
+*Total earned: 0 VPFI* plus a hint on how to start. You haven't
+done anything wrong — there's just no history to show.
+
 ---
 
 ## Offer Book

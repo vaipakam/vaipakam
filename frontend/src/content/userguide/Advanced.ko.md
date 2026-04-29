@@ -91,6 +91,40 @@ pattern을 막습니다.
 discount는 settlement 시 lender yield fee와 borrower의 Loan Initiation
 Fee에 적용됩니다(이는 borrower가 claim할 때 VPFI rebate로 지급됩니다).
 
+<a id="dashboard.rewards-summary"></a>
+
+### 내 VPFI 보상
+
+열망 요약 카드. 연결된 지갑의 두 가지 스트림에 걸친 통합
+VPFI 보상 그림을 단일 뷰로 표시하며, 헤드라인 수치는
+`stakingPending + stakingLifetimeClaimed + interactionPending
++ interactionLifetimeClaimed` 입니다.
+
+스트림별 분류 행은 대기 중 + 청구됨을 표시하고 네이티브 페이
+지의 전체 청구 카드에 대한 셰브론 딥 링크를 제공합니다:
+
+- **스테이킹 수익** — `previewStakingRewards()` (실시간 읽
+  기) + 로컬 log-index에서 이 지갑의 모든
+  `StakingRewardsClaimed` 이벤트 합계.
+  `/buy-vpfi#staking-rewards` 로 딥 링크.
+- **플랫폼 상호작용 보상** — `previewInteractionRewards()`
+  모든 지갑의 대출에서 + 모든 `InteractionRewardsClaimed`
+  이벤트 합계. `/app/claims#interaction-rewards` 로 딥
+  링크.
+
+평생 청구된 숫자는 log-index 이벤트 스캔에서 클라이언트 측에
+서 파생됩니다 — 누계에 대한 온체인 getter는 없습니다. 새로
+운 브라우저 캐시는 (chain, diamond) 스캔이 과거 블록을 채울
+때까지 평생에 대해 0 (또는 부분)을 표시합니다; 스캔이 완료
+되면 숫자가 진실로 이동합니다. 기본 청구 카드와 동일한 신뢰
+모델.
+
+카드는 연결된 지갑에 대해 항상 렌더링되며, all-zero 상태에
+서도 마찬가지입니다. 빈 상태 힌트는 의도적입니다 — 0에서
+카드를 숨기면 신규 사용자가 Buy VPFI 또는 Claim Center로 이
+동할 때까지 보상 프로그램이 보이지 않게 됩니다.
+
+
 ---
 
 ## Offer Book

@@ -101,6 +101,43 @@ discount は settlement 時の lender yield fee と borrower の
 Loan Initiation Fee に適用されます (borrower が claim するときに
 VPFI rebate として支払われます)。
 
+<a id="dashboard.rewards-summary"></a>
+
+### あなたの VPFI 報酬
+
+アスピレーショナル・サマリー・カード。接続されたウォレットの
+両方のストリームにわたる統合された VPFI 報酬画像を単一のビュ
+ーで表示し、主要な数字は
+`stakingPending + stakingLifetimeClaimed + interactionPending
++ interactionLifetimeClaimed` です。
+
+ストリームごとの内訳行は保留中 + 請求済みを表示し、ネイティ
+ブページ上の完全な請求カードへのシェブロン・ディープリンク：
+
+- **ステーキング利回り** — `previewStakingRewards()` (ライ
+  ブ読み取り) + ローカル log-index からこのウォレットの全
+  `StakingRewardsClaimed` イベントの合計。
+  `/buy-vpfi#staking-rewards` へのディープリンク。
+- **プラットフォーム・インタラクション報酬** —
+  `previewInteractionRewards()` ウォレットのすべてのローン
+  + 全 `InteractionRewardsClaimed` イベントの合計。
+  `/app/claims#interaction-rewards` へのディープリンク。
+
+ライフタイム請求済みの数字は log-index イベントスキャンから
+クライアント側で導出されます — 累計のためのオンチェーン
+getter はありません。新しいブラウザキャッシュは、
+(chain, diamond) スキャンが履歴ブロックを補充するまで、ライ
+フタイムに対して 0 (または部分的) を表示します；スキャンが
+完了すると、数字は真実にジャンプします。基礎となる請求カー
+ドと同じ信頼モデル。
+
+カードは接続されたウォレットに対して常にレンダリングされ、
+all-zero 状態でも同様です。空の状態のヒントは意図的なもので
+す — ゼロでカードを非表示にすると、新規ユーザーが Buy VPFI
+や Claim Center に立ち寄るまで報酬プログラムが見えなくなり
+ます。
+
+
 ---
 
 ## Offer Book

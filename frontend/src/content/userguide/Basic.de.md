@@ -91,6 +91,37 @@ Escrow hältst:
 Du kannst den Schalter jederzeit ausschalten. Wenn du VPFI aus dem
 Escrow abhebst, fällt dein Tier in Echtzeit.
 
+<a id="dashboard.rewards-summary"></a>
+
+### Ihre VPFI-Belohnungen
+
+Diese Karte fasst alle VPFI-Belohnungen, die Sie vom Protokoll
+verdient haben, an einem Ort zusammen. Die große Zahl oben ist
+die kombinierte Summe — was Sie bereits beansprucht haben plus
+was darauf wartet, beansprucht zu werden.
+
+Es gibt zwei Belohnungsströme und die Karte schlüsselt die
+Summe nach jedem auf:
+
+- **Staking-Rendite** — automatisch auf jedem VPFI verdient,
+  das Sie in Ihrem Escrow halten. Der Satz ist der Protokoll-
+  APR, der auf der Buy-VPFI-Seite angezeigt wird.
+- **Plattform-Interaktions-Belohnungen** — täglich ein wenig
+  für jeden Kredit verdient, an dem Sie auf einer Seite
+  beteiligt sind. Ausgezahlt in VPFI auf der Kette, auf der
+  Sie sich befinden, ohne Bridge.
+
+Jede Zeile hat einen kleinen Pfeil rechts. Klicken Sie darauf,
+um direkt zur vollständigen Anspruchskarte für diesen Strom zu
+springen — Staking lebt auf der Buy-VPFI-Seite, Plattform-
+Interaktion lebt im Claim Center.
+
+Wenn Sie noch nichts verdient haben, wird die Karte trotzdem
+mit *Insgesamt verdient: 0 VPFI* plus einem Hinweis zum
+Einstieg gerendert. Sie haben nichts falsch gemacht — es gibt
+nur keine Historie zu zeigen.
+
+
 ---
 
 ## Offer Book

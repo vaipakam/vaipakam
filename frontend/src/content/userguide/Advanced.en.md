@@ -97,6 +97,40 @@ The discount applies to the lender yield fee at settlement, and
 to the borrower Loan Initiation Fee (paid out as a VPFI rebate
 when the borrower claims).
 
+<a id="dashboard.rewards-summary"></a>
+
+### Your VPFI rewards
+
+Aspirational summary card. Surfaces the connected wallet's
+combined VPFI rewards picture across both streams in a single
+view, with the headline figure being
+`stakingPending + stakingLifetimeClaimed + interactionPending
++ interactionLifetimeClaimed`.
+
+Per-stream breakdown rows show pending + claimed and a chevron
+deep-link to the full claim card on its native page:
+
+- **Staking yield** — `previewStakingRewards()` (live read) +
+  the sum of every `StakingRewardsClaimed` event for this
+  wallet from the local log-index. Deep-links to
+  `/buy-vpfi#staking-rewards`.
+- **Platform-interaction rewards** — `previewInteractionRewards()`
+  across all of the wallet's loans + sum of every
+  `InteractionRewardsClaimed` event. Deep-links to
+  `/app/claims#interaction-rewards`.
+
+The lifetime-claimed numbers are derived client-side from the
+log-index event scan — there is no on-chain getter for the
+running total. A fresh browser cache shows 0 (or partial)
+lifetime until the per-(chain, diamond) scan backfills the
+historic blocks; once the scan completes the number jumps to
+truth. Same trust model as the underlying claim cards.
+
+The card always renders for connected wallets, even at all-
+zero state. The empty-state hint is intentional — hiding the
+card on zero would make the rewards programs invisible to
+fresh users until they wandered into Buy VPFI or Claim Center.
+
 ---
 
 ## Offer Book

@@ -107,6 +107,46 @@ El descuento se aplica a la comisión por rendimiento del prestamista
 en la liquidación, y a la Loan Initiation Fee del prestatario
 (entregada como un reembolso de VPFI cuando el prestatario reclama).
 
+<a id="dashboard.rewards-summary"></a>
+
+### Tus recompensas VPFI
+
+Tarjeta de resumen aspiracional. Muestra la imagen combinada
+de recompensas VPFI de la wallet conectada a través de ambos
+flujos en una sola vista, siendo la cifra principal
+`stakingPending + stakingLifetimeClaimed + interactionPending
++ interactionLifetimeClaimed`.
+
+Las filas de desglose por flujo muestran pendiente + reclamado
+y un enlace profundo de chevron a la tarjeta de reclamación
+completa en su página nativa:
+
+- **Rendimiento de staking** — `previewStakingRewards()`
+  (lectura en vivo) + suma de cada evento
+  `StakingRewardsClaimed` para esta wallet desde el log-index
+  local. Enlace profundo a `/buy-vpfi#staking-rewards`.
+- **Recompensas de interacción con la plataforma** —
+  `previewInteractionRewards()` a través de todos los
+  préstamos de la wallet + suma de cada evento
+  `InteractionRewardsClaimed`. Enlace profundo a
+  `/app/claims#interaction-rewards`.
+
+Los números reclamados de por vida se derivan del lado del
+cliente del escaneo de eventos del log-index — no hay un
+getter en cadena para el total acumulado. Un caché de
+navegador fresco muestra 0 (o parcial) de por vida hasta que
+el escaneo por (cadena, diamante) rellena los bloques
+históricos; una vez que el escaneo se completa, el número
+salta a la verdad. Mismo modelo de confianza que las tarjetas
+de reclamación subyacentes.
+
+La tarjeta siempre se renderiza para wallets conectadas,
+incluso en el estado all-zero. La pista del estado vacío es
+intencional — ocultar la tarjeta en cero haría que los
+programas de recompensas fueran invisibles para usuarios
+frescos hasta que se aventuraran en Buy VPFI o Claim Center.
+
+
 ---
 
 ## Libro de ofertas
