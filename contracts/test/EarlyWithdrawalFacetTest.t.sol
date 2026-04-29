@@ -261,7 +261,8 @@ contract EarlyWithdrawalFacetTest is Test {
                 prepayAsset: mockERC20,
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
-                collateralQuantity: 0
+                collateralQuantity: 0,
+                allowsPartialRepay: false
             })
         );
         vm.prank(borrower);
@@ -285,7 +286,8 @@ contract EarlyWithdrawalFacetTest is Test {
                 prepayAsset: mockERC20,
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
-                collateralQuantity: 0
+                collateralQuantity: 0,
+                allowsPartialRepay: false
             })
         );
 
@@ -404,7 +406,8 @@ contract EarlyWithdrawalFacetTest is Test {
                 prepayAsset: mockERC20,
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
-                collateralQuantity: 0
+                collateralQuantity: 0,
+                allowsPartialRepay: false
             })
         );
 
@@ -462,7 +465,8 @@ contract EarlyWithdrawalFacetTest is Test {
                 prepayAsset: mockERC20,
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
-                collateralQuantity: 0
+                collateralQuantity: 0,
+                allowsPartialRepay: false
             })
         );
 
@@ -504,7 +508,8 @@ contract EarlyWithdrawalFacetTest is Test {
                 prepayAsset: mockERC20,
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
-                collateralQuantity: 0
+                collateralQuantity: 0,
+                allowsPartialRepay: false
             })
         );
 
@@ -542,7 +547,8 @@ contract EarlyWithdrawalFacetTest is Test {
                 prepayAsset: mockERC20,
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
-                collateralQuantity: 0
+                collateralQuantity: 0,
+                allowsPartialRepay: false
             })
         );
 
@@ -591,7 +597,8 @@ contract EarlyWithdrawalFacetTest is Test {
                 prepayAsset: mockERC20,
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
-                collateralQuantity: 0
+                collateralQuantity: 0,
+                allowsPartialRepay: false
             })
         );
 
@@ -626,7 +633,8 @@ contract EarlyWithdrawalFacetTest is Test {
                 prepayAsset: mockERC20,
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
-                collateralQuantity: 0
+                collateralQuantity: 0,
+                allowsPartialRepay: false
             })
         );
 
@@ -658,7 +666,8 @@ contract EarlyWithdrawalFacetTest is Test {
                 prepayAsset: mockERC20,
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
-                collateralQuantity: 0
+                collateralQuantity: 0,
+                allowsPartialRepay: false
             })
         );
 
@@ -703,7 +712,8 @@ contract EarlyWithdrawalFacetTest is Test {
                 prepayAsset: differentAsset,
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
-                collateralQuantity: 0
+                collateralQuantity: 0,
+                allowsPartialRepay: false
             })
         );
         vm.prank(lender);
@@ -730,7 +740,8 @@ contract EarlyWithdrawalFacetTest is Test {
                 prepayAsset: mockERC20,
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
-                collateralQuantity: 0
+                collateralQuantity: 0,
+                allowsPartialRepay: false
             })
         );
         vm.mockCall(address(diamond), abi.encodeWithSelector(EscrowFactoryFacet.escrowWithdrawERC20.selector), abi.encode(true));
@@ -765,7 +776,8 @@ contract EarlyWithdrawalFacetTest is Test {
                 prepayAsset: mockERC20,
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
-                collateralQuantity: 0
+                collateralQuantity: 0,
+                allowsPartialRepay: false
             })
         );
 
@@ -793,7 +805,8 @@ contract EarlyWithdrawalFacetTest is Test {
                 prepayAsset: mockERC20,
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
-                collateralQuantity: 0
+                collateralQuantity: 0,
+                allowsPartialRepay: false
             })
         );
 
@@ -887,7 +900,8 @@ contract EarlyWithdrawalFacetTest is Test {
                 prepayAsset: mockERC20,
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
-                collateralQuantity: 0
+                collateralQuantity: 0,
+                allowsPartialRepay: false
             })
         );
 
@@ -922,7 +936,8 @@ contract EarlyWithdrawalFacetTest is Test {
                 prepayAsset: mockERC20,
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
-                collateralQuantity: 0
+                collateralQuantity: 0,
+                allowsPartialRepay: false
             })
         );
 
@@ -976,7 +991,8 @@ contract EarlyWithdrawalFacetTest is Test {
                 prepayAsset: otherToken,
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
-                collateralQuantity: 0
+                collateralQuantity: 0,
+                allowsPartialRepay: false
             })
         );
 
@@ -1013,7 +1029,8 @@ contract EarlyWithdrawalFacetTest is Test {
                 prepayAsset: mockERC20,
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
-                collateralQuantity: 0
+                collateralQuantity: 0,
+                allowsPartialRepay: false
             })
         );
 
@@ -1042,7 +1059,8 @@ contract EarlyWithdrawalFacetTest is Test {
                 prepayAsset: mockERC20,
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
-                collateralQuantity: 0
+                collateralQuantity: 0,
+                allowsPartialRepay: false
             })
         );
 
@@ -1077,7 +1095,8 @@ contract EarlyWithdrawalFacetTest is Test {
                 prepayAsset: mockERC20,
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
-                collateralQuantity: 0
+                collateralQuantity: 0,
+                allowsPartialRepay: false
             })
         );
 
@@ -1873,7 +1892,8 @@ contract EarlyWithdrawalFacetTest is Test {
                 prepayAsset: mockERC20,
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
-                collateralQuantity: 0
+                collateralQuantity: 0,
+                allowsPartialRepay: false
             })
         );
 
@@ -1918,7 +1938,8 @@ contract EarlyWithdrawalFacetTest is Test {
                 prepayAsset: mockERC20,
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
-                collateralQuantity: 0
+                collateralQuantity: 0,
+                allowsPartialRepay: false
             })
         );
 

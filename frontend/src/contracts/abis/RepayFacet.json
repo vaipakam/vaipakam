@@ -521,6 +521,11 @@
   },
   {
     "type": "error",
+    "name": "PartialRepayNotAllowed",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "Permit2TokenMismatch",
     "inputs": [
       {

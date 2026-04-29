@@ -230,7 +230,8 @@ contract Scenario2b_ERC1155RentalLending is Test {
                 prepayAsset: mockUSDC,
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
-                collateralQuantity: 0
+                collateralQuantity: 0,
+                allowsPartialRepay: false
             })
         );
 

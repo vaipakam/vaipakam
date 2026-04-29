@@ -182,6 +182,11 @@
             "name": "collateralQuantity",
             "type": "uint256",
             "internalType": "uint256"
+          },
+          {
+            "name": "allowsPartialRepay",
+            "type": "bool",
+            "internalType": "bool"
           }
         ]
       }
@@ -278,6 +283,11 @@
             "name": "collateralQuantity",
             "type": "uint256",
             "internalType": "uint256"
+          },
+          {
+            "name": "allowsPartialRepay",
+            "type": "bool",
+            "internalType": "bool"
           }
         ]
       },
@@ -431,6 +441,11 @@
             "internalType": "enum LibVaipakam.AssetType"
           },
           {
+            "name": "allowsPartialRepay",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
             "name": "lendingAsset",
             "type": "address",
             "internalType": "address"
@@ -560,6 +575,11 @@
             "name": "collateralAssetType",
             "type": "uint8",
             "internalType": "enum LibVaipakam.AssetType"
+          },
+          {
+            "name": "allowsPartialRepay",
+            "type": "bool",
+            "internalType": "bool"
           },
           {
             "name": "lendingAsset",

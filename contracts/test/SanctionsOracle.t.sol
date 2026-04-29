@@ -186,7 +186,8 @@ contract SanctionsOracleTest is RiskFacetTest {
             prepayAsset: mockERC20,
             collateralAssetType: LibVaipakam.AssetType.ERC20,
             collateralTokenId: 0,
-            collateralQuantity: 0
+            collateralQuantity: 0,
+            allowsPartialRepay: false
         });
     }
 }

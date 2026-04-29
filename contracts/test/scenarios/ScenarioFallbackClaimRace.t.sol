@@ -70,7 +70,8 @@ contract ScenarioFallbackClaimRaceTest is Test {
             prepayAsset: address(0),
             collateralAssetType: LibVaipakam.AssetType.ERC20,
             collateralTokenId: 0,
-            collateralQuantity: 0
+            collateralQuantity: 0,
+            allowsPartialRepay: true
         });
         vm.prank(lender);
         offerId = OfferFacet(diamond).createOffer(p);

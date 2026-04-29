@@ -196,7 +196,10 @@
     "keeperAccessHintNot": "ليست",
     "keeperAccessHintMid2": " كافية — قبل أن يتمكن أي Keeper من التصرف نيابة عن منشئ العرض، يجب على المنشئ ",
     "keeperAccessHintAlso": "أيضًا",
-    "keeperAccessHintSuffix": " تمكين وصول Keeper وإضافة Keeper إلى القائمة البيضاء في ملفه الشخصي المتقدم (صفحة Keepers). صلاحية Keeper محددة الدور: قبول ملف منشئ العرض + القائمة البيضاء يحكمان فقط الإجراءات التي يحق لجانب المنشئ القيام بها."
+    "keeperAccessHintSuffix": " تمكين وصول Keeper وإضافة Keeper إلى القائمة البيضاء في ملفه الشخصي المتقدم (صفحة Keepers). صلاحية Keeper محددة الدور: قبول ملف منشئ العرض + القائمة البيضاء يحكمان فقط الإجراءات التي يحق لجانب المنشئ القيام بها.",
+    "allowsPartialRepayLabel": "السماح بالسداد الجزئي بمبادرة من المقترض",
+    "allowsPartialRepayHintLender": "عند التفعيل، يمكن للمقترض استدعاء repayPartial على القرض الناتج لسداد المبلغ الأصلي على دفعات قبل انتهاء المدة. مُعطَّل افتراضياً — عند التعطيل لا يُقبل على السلسلة إلا السداد الكامل.",
+    "allowsPartialRepayHintBorrower": "اطلب الحق في سداد هذا القرض على دفعات. يوافق المُقرض ضمنياً بقبول عرضك؛ إذا لم يرغب في السداد الجزئي فسيتخطى ذلك. مُعطَّل افتراضياً."
   },
   "loanDetails": {
     "loadingLoan": "جارٍ تحميل القرض #{{id}}…",
@@ -695,27 +698,26 @@
     "confirmAndAccept": "تأكيد وقبول",
     "acceptingDots": "جارٍ القبول…"
   },
-    "principalCell": {
-      "nftId": "NFT #{{id}}",
-      "nftIdQuantity": "{{qty}} × NFT #{{id}}",
-      "openOnExplorer": "فتح NFT في مستكشف البلوكشين"
-    },
-    "myOffersTable": {
-      "empty": "لا توجد عروض في هذا العرض بعد.",
-      "subtitle": "{{count}} معروض",
-      "colStatus": "الحالة",
-      "statusFilter": "الحالة",
-      "statusActive": "نشط",
-      "statusFilled": "مكتمل",
-      "statusCancelled": "ملغى",
-      "cancelledTooltip": "العروض الملغاة لا تحتفظ بالتفاصيل المالية على البلوكشين — فقط معرف العرض والجانب يُحتفظ بهما.",
-      "manageKeepersTooltip": "تفعيل keepers محددة لتشغيل هذا العرض عبر صفحة Keeper Settings.",
-      "cancelTooltip": "سحب العرض وإعادة الأصل / الضمان المقفل إلى حسابك المضمون.",
-      "cancel": "إلغاء",
-      "cancelling": "جاري الإلغاء…",
-      "assetTypeLegend": "أنواع الأصول: {{kinds}}"
-    },
-
+  "principalCell": {
+    "nftId": "NFT #{{id}}",
+    "nftIdQuantity": "{{qty}} × NFT #{{id}}",
+    "openOnExplorer": "فتح NFT في مستكشف البلوكشين"
+  },
+  "myOffersTable": {
+    "empty": "لا توجد عروض في هذا العرض بعد.",
+    "subtitle": "{{count}} معروض",
+    "colStatus": "الحالة",
+    "statusFilter": "الحالة",
+    "statusActive": "نشط",
+    "statusFilled": "مكتمل",
+    "statusCancelled": "ملغى",
+    "cancelledTooltip": "العروض الملغاة لا تحتفظ بالتفاصيل المالية على البلوكشين — فقط معرف العرض والجانب يُحتفظ بهما.",
+    "manageKeepersTooltip": "تفعيل keepers محددة لتشغيل هذا العرض عبر صفحة Keeper Settings.",
+    "cancelTooltip": "سحب العرض وإعادة الأصل / الضمان المقفل إلى حسابك المضمون.",
+    "cancel": "إلغاء",
+    "cancelling": "جاري الإلغاء…",
+    "assetTypeLegend": "أنواع الأصول: {{kinds}}"
+  },
   "hero": {
     "brand": "Vaipakam",
     "titleLine1": "إقراض من نظير إلى نظير",
@@ -1486,5 +1488,10 @@
     "rewardsClaim": "يسكّ أيّ VPFI معلَّق من تيّاري المكافآت (staking + التفاعل) إلى المحفظة، على السلسلة الحالية، في معاملة واحدة. تُختَم بِركة التفاعل يومياً — وتصبح مكافآت التفاعل المعلَّقة قابلة للمطالبة بُعيد إغلاق كل نافذة تسوية.",
     "rewardsWithdrawStaked": "نقل VPFI من Escrow إلى المحفظة. يتوقف VPFI المسحوب عن تراكم {{apr}}% staking APR ولا يعد يحتسب نحو مستوى خصم الرسوم — يقوم المجمع الموزون زمنياً فورًا بإعادة ختم كل قرض مفتوح بالرصيد الجديد (الأدنى).",
     "activityFeed": "أحداث على السلسلة تشترك فيها المحفظة المتصلة على السلسلة النشطة — عروض أُنشئت أو قُبلت، قروض، عمليات سداد، مطالبات، تصفيات، عمليات سكّ/حرق NFT، عمليات شراء/staking/unstaking لـVPFI. تُجلَب مباشرة من سجلّات أحداث الـDiamond (دون backend)، مُجمَّعة حسب المعاملة ومرتَّبة من الأحدث إلى الأقدم."
+  },
+  "acceptReview": {
+    "partialRepayLabel": "السداد الجزئي",
+    "partialRepayAllowed": "مسموح — يمكن للمقترض سداد هذا القرض على دفعات",
+    "partialRepayNotAllowed": "غير مسموح — لا يُقبل إلا السداد الكامل"
   }
 }

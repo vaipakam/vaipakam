@@ -86,6 +86,10 @@ export interface LoanDetails {
   prepayAsset: string;
   collateralTokenId: bigint;
   collateralQuantity: bigint;
+  /** Lender-opt-in gate snapshotted from the source offer at loan
+   *  init. Gates `RepayFacet.repayPartial` — when false, partial-repay
+   *  attempts revert with `PartialRepayNotAllowed`. */
+  allowsPartialRepay: boolean;
 }
 
 export type LoanRole = 'lender' | 'borrower';
@@ -113,6 +117,12 @@ export interface LoanSummary {
   collateralAmount: bigint;
   lenderTokenId: bigint;
   borrowerTokenId: bigint;
+  /** Whether the lender opted in to allow borrower-initiated partial
+   *  repayment on this loan. Snapshotted from `Offer.allowsPartialRepay`
+   *  at loan init; immutable thereafter. Drives the partial-repay
+   *  projection slider on `<LiquidationProjection>` and the
+   *  partial-repay action button (when re-enabled). Default false. */
+  allowsPartialRepay: boolean;
 }
 
 /**

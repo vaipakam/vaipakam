@@ -38,6 +38,9 @@ interface SerializedOffer {
   accepted: boolean;
   assetType: number;
   tokenId: string;
+  /** Optional — older snapshots predate this field, so reads must
+   *  default to false if absent. */
+  allowsPartialRepay?: boolean;
   /** Unix-seconds timestamp the snapshot was last written. Used for
    *  pruning when storage gets full. */
   capturedAt: number;
@@ -86,6 +89,7 @@ export function writeOfferSnapshot(
     accepted: offer.accepted,
     assetType: offer.assetType,
     tokenId: offer.tokenId.toString(),
+    allowsPartialRepay: offer.allowsPartialRepay,
     capturedAt: Math.floor(Date.now() / 1000),
   };
   try {
@@ -132,6 +136,7 @@ export function readOfferSnapshot(
       accepted: p.accepted,
       assetType: p.assetType,
       tokenId: BigInt(p.tokenId),
+      allowsPartialRepay: p.allowsPartialRepay ?? false,
     };
   } catch {
     // Corrupted entry — clear it and move on.

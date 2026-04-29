@@ -275,7 +275,8 @@ contract WorkflowComplianceAndRejection is Test {
                 prepayAsset: address(mockUSDC),
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
-                collateralQuantity: 0
+                collateralQuantity: 0,
+                allowsPartialRepay: false
             })
         );
         vm.prank(borrower);
@@ -325,7 +326,8 @@ contract WorkflowComplianceAndRejection is Test {
                 prepayAsset: address(mockUSDC),
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
-                collateralQuantity: 0
+                collateralQuantity: 0,
+                allowsPartialRepay: false
             })
         );
 
@@ -361,7 +363,8 @@ contract WorkflowComplianceAndRejection is Test {
                 prepayAsset: address(mockUSDC),
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
-                collateralQuantity: 0
+                collateralQuantity: 0,
+                allowsPartialRepay: false
             })
         );
 
@@ -394,7 +397,8 @@ contract WorkflowComplianceAndRejection is Test {
                 prepayAsset: address(mockUSDC),
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
-                collateralQuantity: 0
+                collateralQuantity: 0,
+                allowsPartialRepay: false
             })
         );
 
@@ -428,7 +432,8 @@ contract WorkflowComplianceAndRejection is Test {
                 prepayAsset: address(mockUSDC),
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
-                collateralQuantity: 0
+                collateralQuantity: 0,
+                allowsPartialRepay: false
             })
         );
 
@@ -475,7 +480,8 @@ contract WorkflowComplianceAndRejection is Test {
                 prepayAsset: address(mockUSDC),
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
-                collateralQuantity: 0
+                collateralQuantity: 0,
+                allowsPartialRepay: false
             })
         );
 
@@ -517,7 +523,8 @@ contract WorkflowComplianceAndRejection is Test {
                 prepayAsset: address(mockUSDC),
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
-                collateralQuantity: 0
+                collateralQuantity: 0,
+                allowsPartialRepay: false
             })
         );
 
@@ -551,7 +558,8 @@ contract WorkflowComplianceAndRejection is Test {
                 prepayAsset: address(mockUSDC),
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
-                collateralQuantity: 0
+                collateralQuantity: 0,
+                allowsPartialRepay: false
             })
         );
 
@@ -589,7 +597,8 @@ contract WorkflowComplianceAndRejection is Test {
                 prepayAsset: address(mockUSDC),
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
-                collateralQuantity: 0
+                collateralQuantity: 0,
+                allowsPartialRepay: false
             })
         );
 

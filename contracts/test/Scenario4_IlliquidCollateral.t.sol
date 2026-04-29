@@ -190,7 +190,8 @@ contract Scenario4_IlliquidCollateral is Test {
                 prepayAsset: mockUSDC,
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
-                collateralQuantity: 0
+                collateralQuantity: 0,
+                allowsPartialRepay: false
             })
         );
 

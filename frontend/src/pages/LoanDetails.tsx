@@ -654,6 +654,12 @@ export default function LoanDetails() {
                 collateralAmount: loan.collateralAmount,
                 principalAsset: loan.principalAsset,
                 collateralAsset: loan.collateralAsset,
+                // Lender-opt-in gate — drives whether the partial-repay
+                // slider renders. Loan struct carries the flag from
+                // the source offer; default false matches contract.
+                allowsPartialRepay:
+                  (loan as { allowsPartialRepay?: boolean }).allowsPartialRepay ??
+                  false,
               }}
               hfScaled={hfScaled}
               collateralDecimals={18}

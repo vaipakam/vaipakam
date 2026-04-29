@@ -2,40 +2,21 @@ import { useEffect, useMemo, useState } from 'react';
 import { useDiamondRead } from '../../contracts/useDiamond';
 import { AssetSymbol } from './AssetSymbol';
 
-/**
- * Feature flag for the partial-repay projection control. Off today
- * because the on-chain borrower repay path is all-or-nothing in
- * Phase 1 — letting the user dial in a partial-repay number on the
- * UI without a matching on-chain action would mislead.
- *
- * Future design note: when partial repay re-lands, **gate it on
- * lender opt-in at offer creation / acceptance time**. Partial
- * repayment changes the lender's interest stream (early principal
- * return reduces accrual) and risk profile (smaller-than-expected
- * repayment cadence), so the lender should opt in explicitly
- * rather than have it forced on every loan. Likely shape: a
- * `bool allowsPartialRepay` field on the offer struct, defaulted
- * false; UI disables the slider on this card when the loan's
- * source offer didn't carry the flag.
- *
- * Pairs with partial offer-filling on the lender side (relaxing
- * the same Phase-1 all-or-nothing constraint), and the two should
- * ship together so the borrower's projection sliders match the
- * actions actually available on the loan.
- *
- * The state + math wiring (`partialRepay`, `repayMultiplier`)
- * stays in place so the only change to re-enable the projection
- * UI is flipping this constant — no untangle / re-tangle of the
- * projection derivation.
- */
-const SHOW_PARTIAL_REPAY = false;
-
 interface LiquidationProjectionProps {
   loan: {
     principal: bigint;
     collateralAmount: bigint;
     principalAsset: string;
     collateralAsset: string;
+    /** Lender-opt-in gate snapshotted from the source offer at loan
+     *  init. When true, the borrower can call `repayPartial` on this
+     *  loan, so the partial-repay projection slider is meaningful and
+     *  rendered. When false (default), the slider is hidden because
+     *  any partial-repay attempt would revert with
+     *  `PartialRepayNotAllowed`. See
+     *  `LibVaipakam.Offer.allowsPartialRepay` for the consent
+     *  mechanics across both offer sides. */
+    allowsPartialRepay: boolean;
   };
   /** Current on-chain HF scaled to 1e18 from `RiskFacet.calculateHealthFactor`.
    *  `null` while loading, unavailable on illiquid loans or missing oracle. */
@@ -240,16 +221,14 @@ export function LiquidationProjection({
           />
         </div>
 
-        {/* Partial repay control hidden behind a feature flag — partial
-            repayment isn't allowed today (the borrower repay path is
-            full-only on-chain). Will be turned back on when partial
-            offer fills land for the lender side too, since the two
-            features are conceptually paired (both relax the all-or-
-            nothing constraint that simplifies Phase 1). Code stays in
-            place so the projection-math wiring (which still references
-            `partialRepay` state and the `repayMultiplier` derivation)
-            doesn't need to be untangled and re-tangled. */}
-        {SHOW_PARTIAL_REPAY && (
+        {/* Partial-repay slider gated on the loan's lender-opt-in flag
+            (snapshotted from the source offer at loan init). When the
+            lender didn't opt in, hiding the slider matches the on-
+            chain truth — any `repayPartial` attempt would revert with
+            `PartialRepayNotAllowed`. See
+            `LibVaipakam.Offer.allowsPartialRepay` for the consent
+            mechanics across both offer sides. */}
+        {loan.allowsPartialRepay && (
           <div className="data-row" style={{ alignItems: 'center' }}>
             <span className="data-label">
               Partial repay (

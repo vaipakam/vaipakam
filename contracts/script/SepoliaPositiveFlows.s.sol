@@ -395,7 +395,8 @@ contract SepoliaPositiveFlows is Script {
                 prepayAsset: address(usdc),
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
-                collateralQuantity: 0
+                collateralQuantity: 0,
+                allowsPartialRepay: false
             })
         );
         vm.stopBroadcast();
@@ -452,7 +453,8 @@ contract SepoliaPositiveFlows is Script {
                 prepayAsset: address(usdc),
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
-                collateralQuantity: 0
+                collateralQuantity: 0,
+                allowsPartialRepay: false
             })
         );
         vm.stopBroadcast();
@@ -500,7 +502,8 @@ contract SepoliaPositiveFlows is Script {
                 prepayAsset: address(usdc),
                 collateralAssetType: LibVaipakam.AssetType.ERC721,
                 collateralTokenId: 110,
-                collateralQuantity: 0
+                collateralQuantity: 0,
+                allowsPartialRepay: false
             })
         );
         vm.stopBroadcast();
@@ -549,7 +552,8 @@ contract SepoliaPositiveFlows is Script {
                 prepayAsset: address(usdc),
                 collateralAssetType: LibVaipakam.AssetType.ERC1155,
                 collateralTokenId: 1,
-                collateralQuantity: 10
+                collateralQuantity: 10,
+                allowsPartialRepay: false
             })
         );
         vm.stopBroadcast();
@@ -602,7 +606,8 @@ contract SepoliaPositiveFlows is Script {
                     prepayAsset: address(usdc),
                     collateralAssetType: LibVaipakam.AssetType.ERC20,
                     collateralTokenId: 0,
-                    collateralQuantity: 0
+                    collateralQuantity: 0,
+                    allowsPartialRepay: false
                 })
             );
             vm.stopBroadcast();
@@ -664,7 +669,8 @@ contract SepoliaPositiveFlows is Script {
                     prepayAsset: address(usdc),
                     collateralAssetType: LibVaipakam.AssetType.ERC20,
                     collateralTokenId: 0,
-                    collateralQuantity: 0
+                    collateralQuantity: 0,
+                    allowsPartialRepay: false
                 })
             );
             vm.stopBroadcast();
@@ -724,7 +730,8 @@ contract SepoliaPositiveFlows is Script {
                 prepayAsset: address(illiquidLending),
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
-                collateralQuantity: 0
+                collateralQuantity: 0,
+                allowsPartialRepay: false
             })
         );
         vm.stopBroadcast();
@@ -771,7 +778,8 @@ contract SepoliaPositiveFlows is Script {
                 prepayAsset: address(illiquidToken),
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
-                collateralQuantity: 0
+                collateralQuantity: 0,
+                allowsPartialRepay: false
             })
         );
         vm.stopBroadcast();
@@ -844,7 +852,8 @@ contract SepoliaPositiveFlows is Script {
             prepayAsset: address(usdc),
             collateralAssetType: LibVaipakam.AssetType.ERC20,
             collateralTokenId: 0,
-            collateralQuantity: 0
+            collateralQuantity: 0,
+            allowsPartialRepay: false
         });
     }
 
@@ -864,7 +873,8 @@ contract SepoliaPositiveFlows is Script {
             prepayAsset: address(usdc),
             collateralAssetType: LibVaipakam.AssetType.ERC20,
             collateralTokenId: 0,
-            collateralQuantity: 0
+            collateralQuantity: 0,
+            allowsPartialRepay: false
         });
     }
 

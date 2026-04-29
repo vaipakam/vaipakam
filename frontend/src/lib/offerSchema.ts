@@ -43,6 +43,11 @@ export interface OfferFormState {
   collateralAssetType: OfferAssetKind;
   collateralTokenId: string;
   collateralQuantity: string;
+  /** Lender-opt-in gate for borrower-initiated partial repay on the
+   *  resulting loan. The acceptor consents implicitly by accepting; the
+   *  flag is set by whichever side authored the offer. Snapshotted to
+   *  `Loan.allowsPartialRepay` at init and read by `RepayFacet.repayPartial`. */
+  allowsPartialRepay: boolean;
 }
 
 export const initialOfferForm: OfferFormState = {
@@ -62,6 +67,7 @@ export const initialOfferForm: OfferFormState = {
   collateralAssetType: 'erc20',
   collateralTokenId: '',
   collateralQuantity: '0',
+  allowsPartialRepay: false,
 };
 
 /** Payload shape expected by `Diamond.createOffer`. */
@@ -81,6 +87,7 @@ export interface CreateOfferPayload {
   collateralAssetType: 0 | 1 | 2;
   collateralTokenId: bigint;
   collateralQuantity: bigint;
+  allowsPartialRepay: boolean;
 }
 
 /**
@@ -183,6 +190,7 @@ export function toCreateOfferPayload(
     collateralAssetType: kindToEnum(s.collateralAssetType),
     collateralTokenId: BigInt(s.collateralTokenId || '0'),
     collateralQuantity: BigInt(s.collateralQuantity || '0'),
+    allowsPartialRepay: s.allowsPartialRepay,
   };
 }
 

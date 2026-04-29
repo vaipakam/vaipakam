@@ -335,7 +335,8 @@ contract RepayFacetTest is Test {
                 prepayAsset: mockERC20,
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
-                collateralQuantity: 0
+                collateralQuantity: 0,
+                allowsPartialRepay: true
             })
         );
 
@@ -362,7 +363,8 @@ contract RepayFacetTest is Test {
                 prepayAsset: mockERC20,
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
-                collateralQuantity: 0
+                collateralQuantity: 0,
+                allowsPartialRepay: true
             })
         );
 
@@ -576,6 +578,101 @@ contract RepayFacetTest is Test {
         vm.prank(lender);
         vm.expectRevert(IVaipakamErrors.NotBorrower.selector);
         RepayFacet(address(diamond)).repayPartial(1, 500);
+    }
+
+    /// @dev Lender-offer with `allowsPartialRepay = false` → borrower
+    ///      cannot partial-repay. Default-false is the Phase-1-safe
+    ///      shape; the lender must explicitly opt in for the gate to
+    ///      open. See `LibVaipakam.Offer.allowsPartialRepay` doc.
+    function testRepayPartialRevertsWhenLenderOfferDisallowed() public {
+        vm.prank(lender);
+        uint256 offerId = OfferFacet(address(diamond)).createOffer(
+            LibVaipakam.CreateOfferParams({
+                offerType: LibVaipakam.OfferType.Lender,
+                lendingAsset: mockERC20,
+                amount: 1000,
+                interestRateBps: 500,
+                collateralAsset: mockCollateralERC20,
+                collateralAmount: 1500,
+                durationDays: 30,
+                assetType: LibVaipakam.AssetType.ERC20,
+                tokenId: 0,
+                quantity: 0,
+                creatorFallbackConsent: true,
+                prepayAsset: mockERC20,
+                collateralAssetType: LibVaipakam.AssetType.ERC20,
+                collateralTokenId: 0,
+                collateralQuantity: 0,
+                allowsPartialRepay: false
+            })
+        );
+        vm.prank(borrower);
+        uint256 loanId = OfferFacet(address(diamond)).acceptOffer(offerId, true);
+
+        // Snapshot reads correctly: loan inherits the offer's flag.
+        LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(loanId);
+        assertFalse(loan.allowsPartialRepay, "snapshot mismatch");
+
+        vm.prank(borrower);
+        vm.expectRevert(RepayFacet.PartialRepayNotAllowed.selector);
+        RepayFacet(address(diamond)).repayPartial(loanId, 200);
+    }
+
+    /// @dev Borrower-offer with `allowsPartialRepay = true` (the
+    ///      borrower requested the option at create-time, the lender's
+    ///      accept = consent) → borrower can partial-repay against the
+    ///      resulting loan. Mirror of the lender-offer-allowed case
+    ///      since the contract treats both offer sides symmetrically:
+    ///      the offer carries the flag, the loan-init snapshots it,
+    ///      and `repayPartial` reads from the loan.
+    function testRepayPartialSucceedsWhenBorrowerOfferAllowed() public {
+        // Borrower offer ⇒ borrower posts collateral at create (pulled
+        // into borrower escrow), then lender funds principal at accept
+        // (pulled from lender escrow). The standard setUp() approves the
+        // diamond on lender's wallet but never pre-deposits into the
+        // lender's escrow; for a borrower-offer-accept the lender's
+        // escrow needs ≥ principal + LIF treasury fee, so fund it via
+        // deal() against the proxy address.
+        vm.prank(borrower);
+        uint256 offerId = OfferFacet(address(diamond)).createOffer(
+            LibVaipakam.CreateOfferParams({
+                offerType: LibVaipakam.OfferType.Borrower,
+                lendingAsset: mockERC20,
+                amount: 1000,
+                interestRateBps: 500,
+                collateralAsset: mockCollateralERC20,
+                collateralAmount: 1500,
+                durationDays: 30,
+                assetType: LibVaipakam.AssetType.ERC20,
+                tokenId: 0,
+                quantity: 0,
+                creatorFallbackConsent: true,
+                prepayAsset: mockERC20,
+                collateralAssetType: LibVaipakam.AssetType.ERC20,
+                collateralTokenId: 0,
+                collateralQuantity: 0,
+                allowsPartialRepay: true
+            })
+        );
+
+        address lenderEscrow = EscrowFactoryFacet(address(diamond)).getOrCreateUserEscrow(lender);
+        deal(mockERC20, lenderEscrow, 2000); // covers 1 wei LIF + 1000 principal pull
+
+        vm.prank(lender);
+        uint256 loanId = OfferFacet(address(diamond)).acceptOffer(offerId, true);
+
+        LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(loanId);
+        assertTrue(loan.allowsPartialRepay, "snapshot should reflect borrower's request");
+
+        // Repay 200 of 1000 principal; expected post-state principal = 800.
+        // Borrower received the principal at accept; fund their escrow
+        // for the partial pull.
+        address borrowerEscrow = EscrowFactoryFacet(address(diamond)).getOrCreateUserEscrow(borrower);
+        deal(mockERC20, borrowerEscrow, 1000);
+        vm.prank(borrower);
+        RepayFacet(address(diamond)).repayPartial(loanId, 200);
+        loan = LoanFacet(address(diamond)).getLoanDetails(loanId);
+        assertEq(loan.principal, 800, "principal didn't decrement");
     }
 
     /// @dev Tests repayPartial with NFT loan (covers NFT else branch in repayPartial).
@@ -1171,7 +1268,8 @@ contract RepayFacetTest is Test {
                 prepayAsset: mockERC20,
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
-                collateralQuantity: 0
+                collateralQuantity: 0,
+                allowsPartialRepay: true
             })
         );
 

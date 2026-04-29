@@ -665,7 +665,10 @@
     "keeperAccessHintNot": "not",
     "keeperAccessHintMid2": " sufficient — before any keeper can act on the offer creator's behalf the creator must ",
     "keeperAccessHintAlso": "also",
-    "keeperAccessHintSuffix": " enable keeper access and add the keeper to the whitelist in the advanced profile (Keepers page). Keeper authority is role-scoped: the offer creator's own profile opt-in + whitelist govern only the actions the creator's side is entitled to."
+    "keeperAccessHintSuffix": " enable keeper access and add the keeper to the whitelist in the advanced profile (Keepers page). Keeper authority is role-scoped: the offer creator's own profile opt-in + whitelist govern only the actions the creator's side is entitled to.",
+    "allowsPartialRepayLabel": "Allow borrower-initiated partial repayment",
+    "allowsPartialRepayHintLender": "When enabled, the borrower can call repayPartial on the resulting loan to pay down principal in chunks before the term ends. Default off — when off, only full repayment is accepted on-chain.",
+    "allowsPartialRepayHintBorrower": "Request the right to repay this loan in partial chunks. The lender consents implicitly by accepting your offer; if they don't want partial repay they will skip it. Default off."
   },
   "loanDetails": {
     "loadingLoan": "Loading loan #{{id}}…",
@@ -1485,5 +1488,10 @@
         "li5": "<c>LiquidationFallback</c> — DEX path blocked; collateral-equivalent + premium paid out"
       }
     }
+  },
+  "acceptReview": {
+    "partialRepayLabel": "Partial repay",
+    "partialRepayAllowed": "Allowed — borrower may repay this loan in chunks",
+    "partialRepayNotAllowed": "Not allowed — only full repayment is accepted"
   }
 }

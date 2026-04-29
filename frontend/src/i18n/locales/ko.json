@@ -196,7 +196,10 @@
     "keeperAccessHintNot": "충분하지 않습니다",
     "keeperAccessHintMid2": " — Keeper가 오퍼 작성자를 대신하여 행동하기 전에, 작성자는 ",
     "keeperAccessHintAlso": "추가로",
-    "keeperAccessHintSuffix": " 고급 프로필 (Keepers 페이지) 에서 Keeper 접근을 활성화하고 Keeper를 화이트리스트에 추가해야 합니다. Keeper 권한은 역할 범위로 제한됩니다: 작성자 자신의 프로필 opt-in + 화이트리스트는 작성자 측에 허용된 작업만 관리합니다."
+    "keeperAccessHintSuffix": " 고급 프로필 (Keepers 페이지) 에서 Keeper 접근을 활성화하고 Keeper를 화이트리스트에 추가해야 합니다. Keeper 권한은 역할 범위로 제한됩니다: 작성자 자신의 프로필 opt-in + 화이트리스트는 작성자 측에 허용된 작업만 관리합니다.",
+    "allowsPartialRepayLabel": "차용인 주도 부분 상환 허용",
+    "allowsPartialRepayHintLender": "활성화하면 차용인은 만기 전에 원금을 분할 상환하기 위해 결과 대출에 대해 repayPartial을 호출할 수 있습니다. 기본값은 꺼짐 — 꺼져 있을 때는 온체인에서 전액 상환만 허용됩니다.",
+    "allowsPartialRepayHintBorrower": "이 대출을 분할 상환할 권리를 요청합니다. 대출자는 오퍼를 수락함으로써 암묵적으로 동의합니다. 부분 상환을 원하지 않으면 건너뜁니다. 기본값은 꺼짐."
   },
   "loanDetails": {
     "loadingLoan": "대출 #{{id}}을(를) 불러오는 중…",
@@ -695,27 +698,26 @@
     "confirmAndAccept": "확인 및 수락",
     "acceptingDots": "수락 중…"
   },
-    "principalCell": {
-      "nftId": "NFT #{{id}}",
-      "nftIdQuantity": "{{qty}} × NFT #{{id}}",
-      "openOnExplorer": "블록 탐색기에서 NFT 열기"
-    },
-    "myOffersTable": {
-      "empty": "이 뷰에는 아직 오퍼가 없습니다.",
-      "subtitle": "{{count}}개 표시",
-      "colStatus": "상태",
-      "statusFilter": "상태",
-      "statusActive": "활성",
-      "statusFilled": "체결",
-      "statusCancelled": "취소",
-      "cancelledTooltip": "취소된 오퍼는 온체인에 금융 세부 정보를 유지하지 않습니다 — 오퍼 ID와 사이드만 보존됩니다.",
-      "manageKeepersTooltip": "Keeper Settings 페이지에서 이 오퍼에 대해 특정 keepers를 활성화합니다.",
-      "cancelTooltip": "오퍼를 철회하고 잠긴 원금 / 담보를 에스크로로 반환합니다.",
-      "cancel": "취소",
-      "cancelling": "취소 중…",
-      "assetTypeLegend": "자산 유형: {{kinds}}"
-    },
-
+  "principalCell": {
+    "nftId": "NFT #{{id}}",
+    "nftIdQuantity": "{{qty}} × NFT #{{id}}",
+    "openOnExplorer": "블록 탐색기에서 NFT 열기"
+  },
+  "myOffersTable": {
+    "empty": "이 뷰에는 아직 오퍼가 없습니다.",
+    "subtitle": "{{count}}개 표시",
+    "colStatus": "상태",
+    "statusFilter": "상태",
+    "statusActive": "활성",
+    "statusFilled": "체결",
+    "statusCancelled": "취소",
+    "cancelledTooltip": "취소된 오퍼는 온체인에 금융 세부 정보를 유지하지 않습니다 — 오퍼 ID와 사이드만 보존됩니다.",
+    "manageKeepersTooltip": "Keeper Settings 페이지에서 이 오퍼에 대해 특정 keepers를 활성화합니다.",
+    "cancelTooltip": "오퍼를 철회하고 잠긴 원금 / 담보를 에스크로로 반환합니다.",
+    "cancel": "취소",
+    "cancelling": "취소 중…",
+    "assetTypeLegend": "자산 유형: {{kinds}}"
+  },
   "hero": {
     "brand": "Vaipakam",
     "titleLine1": "P2P 대출",
@@ -1486,5 +1488,10 @@
     "rewardsClaim": "두 보상 흐름(staking + 인터랙션) 모두에서 대기 중인 VPFI를 현재 체인의 지갑으로 단일 트랜잭션으로 발행합니다. 인터랙션 풀은 일일로 마감되며, 대기 중인 인터랙션 보상은 각 정산 윈도우가 닫힌 직후에 청구 가능해집니다.",
     "rewardsWithdrawStaked": "VPFI를 Escrow에서 지갑으로 옮깁니다. 인출된 VPFI는 {{apr}}% 스테이킹 APR 누적을 중단하며 더 이상 수수료 할인 등급에 산입되지 않습니다 — 시간 가중 누적기는 즉시 모든 미결 대출을 새 (낮은) 잔액으로 재스탬프합니다.",
     "activityFeed": "활성 체인에서 연결된 지갑이 관여하는 온체인 이벤트 — 오퍼 생성 또는 수락, 대출, 상환, 청구, 청산, NFT 발행/소각, VPFI 매수/스테이크/언스테이크. Diamond 이벤트 로그에서 라이브로 가져오며(백엔드 없음), 트랜잭션별로 그룹화되고 최신순으로 정렬됩니다."
+  },
+  "acceptReview": {
+    "partialRepayLabel": "부분 상환",
+    "partialRepayAllowed": "허용됨 — 차용인은 이 대출을 분할로 상환할 수 있습니다",
+    "partialRepayNotAllowed": "허용되지 않음 — 전액 상환만 허용됩니다"
   }
 }

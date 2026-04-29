@@ -506,6 +506,16 @@ contract LoanFacet is DiamondPausable, IVaipakamErrors {
         loan.collateralLiquidity = collateralLiquidity;
         loan.useFullTermInterest = offer.useFullTermInterest;
         loan.prepayAsset = offer.prepayAsset;
+        // Snapshot the lender-opt-in flag for borrower-initiated partial
+        // repayment. Carried verbatim from the offer; immutable for the
+        // loan's lifetime regardless of any later offer-level change
+        // (offers can't be edited post-create, but this matches the
+        // snapshot-and-lock pattern used for fallback consent / split
+        // bps elsewhere on this struct). Read by
+        // {RepayFacet.repayPartial} as the sole gate on partial repay
+        // authorisation; default false reverts the call with
+        // {PartialRepayNotAllowed}.
+        loan.allowsPartialRepay = offer.allowsPartialRepay;
         // Snapshot the effective fallback-path split right now so any future
         // governance change via `ConfigFacet.setFallbackSplit` applies
         // prospectively — dual-consent at offer creation guarantees both

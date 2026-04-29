@@ -124,6 +124,8 @@ export function useUserLoans(address: string | null) {
           collateralAmount: loan.collateralAmount,
           lenderTokenId: loan.lenderTokenId,
           borrowerTokenId: loan.borrowerTokenId,
+          allowsPartialRepay:
+            (loan.allowsPartialRepay as boolean | undefined) ?? false,
         });
       }
       setLoans(found);

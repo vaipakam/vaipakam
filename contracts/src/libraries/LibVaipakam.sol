@@ -335,6 +335,19 @@ library LibVaipakam {
         // `offerKeeperEnabled[offerId][keeper]`. No single keeper bool on
         // the params; the creator enables specific keepers after create
         // (or before acceptance) via `ProfileFacet.setOfferKeeperEnabled`.
+
+        // Lender-controlled gate for borrower-initiated partial repay
+        // (`RepayFacet.repayPartial`). Semantics differ by offer side:
+        //   - Lender offer: lender at create says "I allow my borrower
+        //     to partial-repay". Borrower's accept = consent.
+        //   - Borrower offer: borrower at create says "I want the option
+        //     to partial-repay". Lender's accept = consent.
+        // In both cases the offer is a take-it-or-leave-it package; an
+        // acceptor who disagrees with the flag simply doesn't accept.
+        // Snapshotted onto `Loan.allowsPartialRepay` at loan init and
+        // enforced at the top of `RepayFacet.repayPartial`. Default
+        // `false` is the Phase-1-safe behaviour: explicit opt-in only.
+        bool allowsPartialRepay;
     }
 
     /**
@@ -346,7 +359,7 @@ library LibVaipakam {
     struct Offer {
         // Slot 0
         uint256 id;
-        // Slot 1: creator(20) + 9 small fields (9) = 29 bytes packed
+        // Slot 1: creator(20) + 10 small fields (10) = 30 bytes packed
         address creator;
         OfferType offerType;
         LiquidityStatus principalLiquidity;
@@ -356,6 +369,9 @@ library LibVaipakam {
         bool useFullTermInterest;
         bool creatorFallbackConsent;
         AssetType collateralAssetType;
+        // Carried into `Loan.allowsPartialRepay` at offer acceptance.
+        // See {CreateOfferParams.allowsPartialRepay} for full semantics.
+        bool allowsPartialRepay;
         // Slot 2
         address lendingAsset; // ERC20 or NFT contract
         // Slot 3
@@ -417,8 +433,16 @@ library LibVaipakam {
         // in `LibFallback` (backfill-safe).
         uint16 fallbackLenderBonusBpsAtInit;
         uint16 fallbackTreasuryBpsAtInit;
-        // Slot 3
+        // Slot 3: borrower(20) + 1 small field (1) = 21 bytes packed
         address borrower;
+        // Snapshotted from `Offer.allowsPartialRepay` at loan init.
+        // Read by `RepayFacet.repayPartial` to gate borrower-initiated
+        // partial repayment — when false, the call reverts with
+        // `PartialRepayNotAllowed`. Snapshot semantics mirror other
+        // loan-time invariants (fallback consent, fallback split bps):
+        // immutable for the loan's lifetime regardless of any later
+        // governance / offer-level change.
+        bool allowsPartialRepay;
         // Slot 4
         uint256 lenderTokenId;
         // Slot 5

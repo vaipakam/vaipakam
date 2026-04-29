@@ -196,7 +196,10 @@
     "keeperAccessHintNot": "nicht",
     "keeperAccessHintMid2": " ausreichend — bevor ein Keeper im Namen des Angebotsgebers handeln kann, muss der Angebotsgeber ",
     "keeperAccessHintAlso": "zusätzlich",
-    "keeperAccessHintSuffix": " den Keeper-Zugriff aktivieren und den Keeper im erweiterten Profil (Keepers-Seite) zur Whitelist hinzufügen. Die Keeper-Berechtigung ist rollenbasiert: das Profil-Opt-in des Angebotsgebers + die Whitelist regeln nur die Aktionen, zu denen die Seite des Angebotsgebers berechtigt ist."
+    "keeperAccessHintSuffix": " den Keeper-Zugriff aktivieren und den Keeper im erweiterten Profil (Keepers-Seite) zur Whitelist hinzufügen. Die Keeper-Berechtigung ist rollenbasiert: das Profil-Opt-in des Angebotsgebers + die Whitelist regeln nur die Aktionen, zu denen die Seite des Angebotsgebers berechtigt ist.",
+    "allowsPartialRepayLabel": "Vom Kreditnehmer initiierte Teilrückzahlung erlauben",
+    "allowsPartialRepayHintLender": "Wenn aktiviert, kann der Kreditnehmer repayPartial für das resultierende Darlehen aufrufen, um das Kapital vor Ablauf in Teilen zu tilgen. Standardmäßig deaktiviert — On-Chain wird sonst nur die vollständige Rückzahlung akzeptiert.",
+    "allowsPartialRepayHintBorrower": "Beantragen Sie das Recht, dieses Darlehen in Teilen zurückzuzahlen. Der Kreditgeber stimmt implizit zu, indem er Ihr Angebot annimmt; wenn er keine Teilrückzahlung wünscht, überspringt er es. Standardmäßig deaktiviert."
   },
   "loanDetails": {
     "loadingLoan": "Kredit #{{id}} wird geladen…",
@@ -695,27 +698,26 @@
     "confirmAndAccept": "Bestätigen & annehmen",
     "acceptingDots": "Wird angenommen…"
   },
-    "principalCell": {
-      "nftId": "NFT #{{id}}",
-      "nftIdQuantity": "{{qty}} × NFT #{{id}}",
-      "openOnExplorer": "NFT im Block-Explorer öffnen"
-    },
-    "myOffersTable": {
-      "empty": "Noch keine Angebote in dieser Ansicht.",
-      "subtitle": "{{count}} angezeigt",
-      "colStatus": "Status",
-      "statusFilter": "Status",
-      "statusActive": "Aktiv",
-      "statusFilled": "Erfüllt",
-      "statusCancelled": "Storniert",
-      "cancelledTooltip": "Stornierte Angebote behalten on-chain keine finanziellen Details — nur die Angebots-ID und die Seite werden gespeichert.",
-      "manageKeepersTooltip": "Spezifische Keeper über die Keeper-Einstellungsseite für dieses Angebot aktivieren.",
-      "cancelTooltip": "Das Angebot zurückziehen und gesperrten Hauptbetrag / Sicherheit an Ihren Escrow zurückgeben.",
-      "cancel": "Stornieren",
-      "cancelling": "Storniere…",
-      "assetTypeLegend": "Asset-Typen: {{kinds}}"
-    },
-
+  "principalCell": {
+    "nftId": "NFT #{{id}}",
+    "nftIdQuantity": "{{qty}} × NFT #{{id}}",
+    "openOnExplorer": "NFT im Block-Explorer öffnen"
+  },
+  "myOffersTable": {
+    "empty": "Noch keine Angebote in dieser Ansicht.",
+    "subtitle": "{{count}} angezeigt",
+    "colStatus": "Status",
+    "statusFilter": "Status",
+    "statusActive": "Aktiv",
+    "statusFilled": "Erfüllt",
+    "statusCancelled": "Storniert",
+    "cancelledTooltip": "Stornierte Angebote behalten on-chain keine finanziellen Details — nur die Angebots-ID und die Seite werden gespeichert.",
+    "manageKeepersTooltip": "Spezifische Keeper über die Keeper-Einstellungsseite für dieses Angebot aktivieren.",
+    "cancelTooltip": "Das Angebot zurückziehen und gesperrten Hauptbetrag / Sicherheit an Ihren Escrow zurückgeben.",
+    "cancel": "Stornieren",
+    "cancelling": "Storniere…",
+    "assetTypeLegend": "Asset-Typen: {{kinds}}"
+  },
   "hero": {
     "brand": "Vaipakam",
     "titleLine1": "Peer-to-Peer-Kreditvergabe",
@@ -1486,5 +1488,10 @@
     "rewardsClaim": "Prägt jegliche ausstehenden VPFI aus beiden Belohnungsströmen (Staking + Interaction) in das Wallet auf der aktuellen Chain in einer Transaktion. Der Interaction-Pool wird täglich finalisiert — ausstehende Interaction-Belohnungen werden kurz nach Schließung jedes Settlement-Fensters beanspruchbar.",
     "rewardsWithdrawStaked": "VPFI aus der Escrow zurück in die Wallet verschieben. Abgehobenes VPFI verdient den {{apr}}% Staking-APR nicht mehr und zählt nicht mehr für die Gebührenrabatt-Stufe — der zeitgewichtete Akkumulator stempelt jeden offenen Kredit sofort mit dem neuen (niedrigeren) Saldo neu.",
     "activityFeed": "On-Chain-Ereignisse, an denen das verbundene Wallet auf der aktiven Chain beteiligt ist — erstellte oder akzeptierte Angebote, Kredite, Rückzahlungen, Beanspruchungen, Liquidationen, NFT-Mints/Burns, VPFI-Käufe/Stakes/Unstakes. Live aus den Diamond-Event-Logs bezogen (kein Backend), nach Transaktion gruppiert und neueste zuerst sortiert."
+  },
+  "acceptReview": {
+    "partialRepayLabel": "Teilrückzahlung",
+    "partialRepayAllowed": "Zulässig — Kreditnehmer kann dieses Darlehen in Teilen zurückzahlen",
+    "partialRepayNotAllowed": "Nicht zulässig — nur die vollständige Rückzahlung wird akzeptiert"
   }
 }

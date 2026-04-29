@@ -156,6 +156,10 @@ export function useMyOffers(
             accepted: false,
             assetType: typeof ev.args.assetType === 'string' ? Number(ev.args.assetType) : 0,
             tokenId: typeof ev.args.tokenId === 'string' ? BigInt(ev.args.tokenId) : 0n,
+            // Cancelled-offer event payload doesn't carry the partial-
+            // repay flag (no resulting loan exists, so the field has no
+            // surface meaning); default to false for the stub render.
+            allowsPartialRepay: false,
           };
           cancelledDetailsByOffer.set(offerId, offer);
         } catch {
@@ -194,6 +198,7 @@ export function useMyOffers(
             accepted: false,
             assetType: 0,
             tokenId: 0n,
+            allowsPartialRepay: false,
           };
         result.cancelledStubs.push({ status: 'cancelled', offer });
       } else if (filledLoanByOffer.has(offerId)) {

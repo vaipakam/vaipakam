@@ -196,7 +196,10 @@
     "keeperAccessHintNot": "n'est pas",
     "keeperAccessHintMid2": " suffisant — avant qu'un Keeper puisse agir au nom du créateur de l'offre, ce dernier doit ",
     "keeperAccessHintAlso": "également",
-    "keeperAccessHintSuffix": " activer l'accès Keeper et ajouter le Keeper à sa liste blanche dans son profil avancé (page Keepers). L'autorité du Keeper est limitée par rôle : l'activation du profil du créateur + la liste blanche ne régissent que les actions auxquelles le côté du créateur a droit."
+    "keeperAccessHintSuffix": " activer l'accès Keeper et ajouter le Keeper à sa liste blanche dans son profil avancé (page Keepers). L'autorité du Keeper est limitée par rôle : l'activation du profil du créateur + la liste blanche ne régissent que les actions auxquelles le côté du créateur a droit.",
+    "allowsPartialRepayLabel": "Autoriser le remboursement partiel à l'initiative de l'emprunteur",
+    "allowsPartialRepayHintLender": "Lorsqu'activé, l'emprunteur peut appeler repayPartial sur le prêt résultant pour rembourser le principal par fractions avant l'échéance. Désactivé par défaut — seul le remboursement intégral est accepté sur la chaîne.",
+    "allowsPartialRepayHintBorrower": "Demandez le droit de rembourser ce prêt par fractions. Le prêteur consent implicitement en acceptant votre offre ; s'il ne veut pas du remboursement partiel, il l'ignorera. Désactivé par défaut."
   },
   "loanDetails": {
     "loadingLoan": "Chargement du prêt #{{id}}…",
@@ -695,27 +698,26 @@
     "confirmAndAccept": "Confirmer et accepter",
     "acceptingDots": "Acceptation…"
   },
-    "principalCell": {
-      "nftId": "NFT #{{id}}",
-      "nftIdQuantity": "{{qty}} × NFT #{{id}}",
-      "openOnExplorer": "Ouvrir le NFT dans l'explorateur de blocs"
-    },
-    "myOffersTable": {
-      "empty": "Aucune offre dans cette vue pour le moment.",
-      "subtitle": "{{count}} affichées",
-      "colStatus": "Statut",
-      "statusFilter": "Statut",
-      "statusActive": "Active",
-      "statusFilled": "Remplie",
-      "statusCancelled": "Annulée",
-      "cancelledTooltip": "Les offres annulées ne conservent pas de détails financiers on-chain — seul l'id de l'offre et le côté sont conservés.",
-      "manageKeepersTooltip": "Activez des keepers spécifiques pour cette offre via la page Keeper Settings.",
-      "cancelTooltip": "Retirer l'offre et restituer le principal / collatéral verrouillé à votre escrow.",
-      "cancel": "Annuler",
-      "cancelling": "Annulation…",
-      "assetTypeLegend": "Types d'actif : {{kinds}}"
-    },
-
+  "principalCell": {
+    "nftId": "NFT #{{id}}",
+    "nftIdQuantity": "{{qty}} × NFT #{{id}}",
+    "openOnExplorer": "Ouvrir le NFT dans l'explorateur de blocs"
+  },
+  "myOffersTable": {
+    "empty": "Aucune offre dans cette vue pour le moment.",
+    "subtitle": "{{count}} affichées",
+    "colStatus": "Statut",
+    "statusFilter": "Statut",
+    "statusActive": "Active",
+    "statusFilled": "Remplie",
+    "statusCancelled": "Annulée",
+    "cancelledTooltip": "Les offres annulées ne conservent pas de détails financiers on-chain — seul l'id de l'offre et le côté sont conservés.",
+    "manageKeepersTooltip": "Activez des keepers spécifiques pour cette offre via la page Keeper Settings.",
+    "cancelTooltip": "Retirer l'offre et restituer le principal / collatéral verrouillé à votre escrow.",
+    "cancel": "Annuler",
+    "cancelling": "Annulation…",
+    "assetTypeLegend": "Types d'actif : {{kinds}}"
+  },
   "hero": {
     "brand": "Vaipakam",
     "titleLine1": "Prêts pair-à-pair",
@@ -1486,5 +1488,10 @@
     "rewardsClaim": "Mint tout VPFI en attente issu des deux flux de récompenses (staking + interaction) vers le wallet, sur la chaîne courante, en une seule transaction. Le pool d'interaction se finalise quotidiennement — les récompenses d'interaction en attente deviennent réclamables peu après la fermeture de chaque fenêtre de règlement.",
     "rewardsWithdrawStaked": "Déplacer VPFI hors de l’Escrow vers le portefeuille. Le VPFI retiré cesse d’accumuler le {{apr}}% APR de staking et ne compte plus pour le niveau de remise de frais — l’accumulateur pondéré dans le temps re-stampe immédiatement chaque prêt ouvert avec le nouveau solde (inférieur).",
     "activityFeed": "Événements on-chain impliquant le wallet connecté sur la chaîne active — offres créées ou acceptées, prêts, remboursements, réclamations, liquidations, mints/burns de NFT, achats/stakes/unstakes de VPFI. Issus en direct des journaux d'événements du Diamond (sans backend), groupés par transaction et triés du plus récent au plus ancien."
+  },
+  "acceptReview": {
+    "partialRepayLabel": "Remboursement partiel",
+    "partialRepayAllowed": "Autorisé — l'emprunteur peut rembourser ce prêt par fractions",
+    "partialRepayNotAllowed": "Non autorisé — seul le remboursement intégral est accepté"
   }
 }

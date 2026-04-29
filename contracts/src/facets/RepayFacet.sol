@@ -106,6 +106,14 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
     error InsufficientPartialAmount();
     error NotDailyYet();
     error NotNFTRental();
+    /// @notice Reverted when {repayPartial} is called on a loan whose
+    ///         `allowsPartialRepay` flag is false. The flag is
+    ///         lender-controlled — set on the offer at create-time
+    ///         (lender offers) or carried from the source offer at
+    ///         loan init (borrower offers, where the lender's accept
+    ///         is consent to the borrower's create-time request).
+    ///         Default-false: every loan must opt in explicitly.
+    error PartialRepayNotAllowed();
 
     /**
      * @notice Repays an active loan in full.
@@ -448,6 +456,12 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
         LibAuth.requireBorrower(loan);
         if (loan.status != LibVaipakam.LoanStatus.Active)
             revert InvalidLoanStatus();
+        // Lender-opt-in gate. The flag was snapshotted onto the loan
+        // at init from `Offer.allowsPartialRepay` — see
+        // {LibVaipakam.Offer.allowsPartialRepay} for the consent
+        // mechanism on each offer side. Default-false: a loan with
+        // no explicit opt-in cannot be partial-repaid.
+        if (!loan.allowsPartialRepay) revert PartialRepayNotAllowed();
         if (partialAmount == 0) revert InsufficientPartialAmount();
         uint256 minPartial = (loan.principal *
             s.assetRiskParams[loan.principalAsset].minPartialBps) /

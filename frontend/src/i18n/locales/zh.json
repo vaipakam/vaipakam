@@ -196,7 +196,10 @@
     "keeperAccessHintNot": "不",
     "keeperAccessHintMid2": "足够 — Keeper 可代表报价创建者执行操作之前，创建者还必须",
     "keeperAccessHintAlso": "另外",
-    "keeperAccessHintSuffix": "在高级资料（Keepers 页面）中启用 Keeper 访问，并将该 Keeper 加入许可名单。Keeper 权限按角色限定：创建者自己的资料 opt-in + 许可名单只管理创建者一侧有权执行的操作。"
+    "keeperAccessHintSuffix": "在高级资料（Keepers 页面）中启用 Keeper 访问，并将该 Keeper 加入许可名单。Keeper 权限按角色限定：创建者自己的资料 opt-in + 许可名单只管理创建者一侧有权执行的操作。",
+    "allowsPartialRepayLabel": "允许借款人发起部分还款",
+    "allowsPartialRepayHintLender": "启用后,借款人可在到期前对所产生的贷款调用 repayPartial,分批偿还本金。默认关闭 — 关闭时链上仅接受全额还款。",
+    "allowsPartialRepayHintBorrower": "请求分批偿还此贷款的权利。出借人通过接受您的报价默示同意;如果不希望部分还款则会跳过。默认关闭。"
   },
   "loanDetails": {
     "loadingLoan": "正在加载贷款 #{{id}}…",
@@ -695,27 +698,26 @@
     "confirmAndAccept": "确认并接受",
     "acceptingDots": "接受中…"
   },
-    "principalCell": {
-      "nftId": "NFT #{{id}}",
-      "nftIdQuantity": "{{qty}} × NFT #{{id}}",
-      "openOnExplorer": "在区块浏览器上打开 NFT"
-    },
-    "myOffersTable": {
-      "empty": "此视图中暂无报价。",
-      "subtitle": "显示 {{count}} 条",
-      "colStatus": "状态",
-      "statusFilter": "状态",
-      "statusActive": "活跃",
-      "statusFilled": "已成交",
-      "statusCancelled": "已取消",
-      "cancelledTooltip": "已取消的报价不在链上保留财务详情 — 仅保留报价 id 和方向。",
-      "manageKeepersTooltip": "通过 Keeper Settings 页面为此报价启用特定 keepers。",
-      "cancelTooltip": "撤回报价并将锁定的本金 / 抵押品返回到您的托管账户。",
-      "cancel": "取消",
-      "cancelling": "取消中…",
-      "assetTypeLegend": "资产类型：{{kinds}}"
-    },
-
+  "principalCell": {
+    "nftId": "NFT #{{id}}",
+    "nftIdQuantity": "{{qty}} × NFT #{{id}}",
+    "openOnExplorer": "在区块浏览器上打开 NFT"
+  },
+  "myOffersTable": {
+    "empty": "此视图中暂无报价。",
+    "subtitle": "显示 {{count}} 条",
+    "colStatus": "状态",
+    "statusFilter": "状态",
+    "statusActive": "活跃",
+    "statusFilled": "已成交",
+    "statusCancelled": "已取消",
+    "cancelledTooltip": "已取消的报价不在链上保留财务详情 — 仅保留报价 id 和方向。",
+    "manageKeepersTooltip": "通过 Keeper Settings 页面为此报价启用特定 keepers。",
+    "cancelTooltip": "撤回报价并将锁定的本金 / 抵押品返回到您的托管账户。",
+    "cancel": "取消",
+    "cancelling": "取消中…",
+    "assetTypeLegend": "资产类型：{{kinds}}"
+  },
   "hero": {
     "brand": "Vaipakam",
     "titleLine1": "点对点借贷",
@@ -1486,5 +1488,10 @@
     "rewardsClaim": "在当前链上、单笔交易内将两条奖励流（staking + 交互）的待领 VPFI 铸造至钱包。交互池按日定稿 — 待领交互奖励在每个结算窗口关闭后不久即可领取。",
     "rewardsWithdrawStaked": "将 VPFI 从 escrow 移回钱包。提取的 VPFI 停止累积 {{apr}}% 质押 APR，并不再计入手续费折扣等级 — 时间加权累加器立即以新的（较低）余额重新标记每笔未结贷款。",
     "activityFeed": "已连接钱包在活跃链上参与的链上事件 — 报价创建或接受、贷款、还款、领取、清算、NFT 铸造/销毁、VPFI 购买/质押/解押。直接来自 Diamond 事件日志（无后端），按交易分组并按最新优先排序。"
+  },
+  "acceptReview": {
+    "partialRepayLabel": "部分还款",
+    "partialRepayAllowed": "允许 — 借款人可分批偿还此贷款",
+    "partialRepayNotAllowed": "不允许 — 仅接受全额还款"
   }
 }

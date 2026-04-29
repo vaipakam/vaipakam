@@ -680,7 +680,8 @@ contract RiskFacetTest is Test {
                 prepayAsset: mockERC20,
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
-                collateralQuantity: 0
+                collateralQuantity: 0,
+                allowsPartialRepay: false
             })
         );
 
@@ -941,7 +942,8 @@ contract RiskFacetTest is Test {
                 prepayAsset: mockERC20,
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
-                collateralQuantity: 0
+                collateralQuantity: 0,
+                allowsPartialRepay: false
             })
         );
         vm.prank(borrower);
@@ -1508,7 +1510,8 @@ contract RiskFacetTest is Test {
                 prepayAsset: mockERC20,
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
-                collateralQuantity: 0
+                collateralQuantity: 0,
+                allowsPartialRepay: false
             })
         );
         vm.prank(borrower);

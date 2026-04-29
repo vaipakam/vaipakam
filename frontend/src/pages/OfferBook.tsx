@@ -67,6 +67,11 @@ export interface OfferData {
   accepted: boolean;
   assetType: number;
   tokenId: bigint;
+  /** Creator-set opt-in for borrower-initiated partial repay on the
+   *  resulting loan. The acceptor's act of accepting IS their consent;
+   *  there's no acceptor-side override. Snapshotted to
+   *  `Loan.allowsPartialRepay` at init and gates `RepayFacet.repayPartial`. */
+  allowsPartialRepay: boolean;
   // Phase 6: per-keeper per-offer enable flags live in
   // `s.offerKeeperEnabled[offerId][keeper]`. No single flag on the offer
   // struct. Per-offer keeper selection is surfaced on the offer card
@@ -138,6 +143,7 @@ export type RawOffer = {
   accepted: boolean;
   assetType: bigint | number;
   tokenId: bigint;
+  allowsPartialRepay?: boolean;
 };
 
 export function toOfferData(r: RawOffer): OfferData {
@@ -156,6 +162,7 @@ export function toOfferData(r: RawOffer): OfferData {
     accepted: r.accepted,
     assetType: Number(r.assetType),
     tokenId: r.tokenId,
+    allowsPartialRepay: r.allowsPartialRepay ?? false,
   };
 }
 
@@ -1246,6 +1253,17 @@ function AcceptReviewModal({ offer, illiquid, consent, onConsentChange, submitti
             <span className={`status-badge ${offer.collateralLiquidity === 0 ? 'active' : 'defaulted'}`}>
               Collateral: {LIQUIDITY_LABELS[offer.collateralLiquidity]}
             </span>
+          </dd>
+
+          {/* Borrower-initiated partial repay is gated by the offer
+              creator at create-time. Show the resulting loan's posture
+              so the acceptor sees what they're agreeing to — accepting
+              the offer is itself the consent. */}
+          <dt style={{ opacity: 0.7 }}>{t('acceptReview.partialRepayLabel')}</dt>
+          <dd style={{ margin: 0 }}>
+            {offer.allowsPartialRepay
+              ? t('acceptReview.partialRepayAllowed')
+              : t('acceptReview.partialRepayNotAllowed')}
           </dd>
         </dl>
 

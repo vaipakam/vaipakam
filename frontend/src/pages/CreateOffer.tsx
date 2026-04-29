@@ -1039,6 +1039,31 @@ export default function CreateOffer() {
                 </small>
               </span>
             </label>
+
+            {/* Borrower-initiated partial repay is off by default — the
+                acceptor's act of accepting IS their consent, so the
+                creator must opt in for the gate to open. Hint text
+                varies by offer side because the consent semantics flip:
+                a lender-offer creator is the lender consenting up
+                front; a borrower-offer creator is asking for partial-
+                repay rights and the lender's accept = consent. */}
+            <label className="checkbox-row" style={{ marginTop: 12 }}>
+              <input
+                type="checkbox"
+                checked={form.allowsPartialRepay}
+                onChange={(e) => setField("allowsPartialRepay", e.target.checked)}
+              />
+              <span>
+                {t('createOffer.allowsPartialRepayLabel')}
+                <small
+                  style={{ display: "block", opacity: 0.75, marginTop: 2 }}
+                >
+                  {form.offerType === 'lender'
+                    ? t('createOffer.allowsPartialRepayHintLender')
+                    : t('createOffer.allowsPartialRepayHintBorrower')}
+                </small>
+              </span>
+            </label>
           </div>
         )}
 

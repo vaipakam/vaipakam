@@ -196,7 +196,10 @@
     "keeperAccessHintNot": "不十分",
     "keeperAccessHintMid2": "です — Keeperがオファー作成者の代理として行動する前に、作成者は",
     "keeperAccessHintAlso": "さらに",
-    "keeperAccessHintSuffix": "アドバンスドプロフィール (Keepersページ) でKeeperアクセスを有効にし、Keeperをホワイトリストに追加する必要があります。Keeperの権限はロールスコープです: 作成者自身のプロフィール opt-in + ホワイトリストは、作成者側に許可されたアクションのみを統制します。"
+    "keeperAccessHintSuffix": "アドバンスドプロフィール (Keepersページ) でKeeperアクセスを有効にし、Keeperをホワイトリストに追加する必要があります。Keeperの権限はロールスコープです: 作成者自身のプロフィール opt-in + ホワイトリストは、作成者側に許可されたアクションのみを統制します。",
+    "allowsPartialRepayLabel": "借り手による部分的な返済を許可する",
+    "allowsPartialRepayHintLender": "有効にすると、借り手は期限前に元本を分割して返済するために、結果として生じるローンに対して repayPartial を呼び出せます。デフォルトはオフ — オフのときはオンチェーンで全額返済のみ受け付けます。",
+    "allowsPartialRepayHintBorrower": "このローンを分割で返済する権利を要求します。貸し手はオファーを承認することで暗黙的に同意します。部分返済を望まない場合は承認をスキップします。デフォルトはオフ。"
   },
   "loanDetails": {
     "loadingLoan": "ローン #{{id}} を読み込み中…",
@@ -695,27 +698,26 @@
     "confirmAndAccept": "確認して承諾",
     "acceptingDots": "承諾中…"
   },
-    "principalCell": {
-      "nftId": "NFT #{{id}}",
-      "nftIdQuantity": "{{qty}} × NFT #{{id}}",
-      "openOnExplorer": "ブロックエクスプローラーで NFT を開く"
-    },
-    "myOffersTable": {
-      "empty": "このビューにはまだオファーがありません。",
-      "subtitle": "{{count}} 件表示",
-      "colStatus": "ステータス",
-      "statusFilter": "ステータス",
-      "statusActive": "アクティブ",
-      "statusFilled": "成立",
-      "statusCancelled": "キャンセル",
-      "cancelledTooltip": "キャンセルされたオファーはオンチェーンに金融詳細を保持しません — オファー ID とサイドのみが保持されます。",
-      "manageKeepersTooltip": "Keeper Settings ページでこのオファー向けに特定の keepers を有効化します。",
-      "cancelTooltip": "オファーを取り下げ、ロックされた元本 / 担保をエスクローに返します。",
-      "cancel": "キャンセル",
-      "cancelling": "キャンセル中…",
-      "assetTypeLegend": "アセットタイプ: {{kinds}}"
-    },
-
+  "principalCell": {
+    "nftId": "NFT #{{id}}",
+    "nftIdQuantity": "{{qty}} × NFT #{{id}}",
+    "openOnExplorer": "ブロックエクスプローラーで NFT を開く"
+  },
+  "myOffersTable": {
+    "empty": "このビューにはまだオファーがありません。",
+    "subtitle": "{{count}} 件表示",
+    "colStatus": "ステータス",
+    "statusFilter": "ステータス",
+    "statusActive": "アクティブ",
+    "statusFilled": "成立",
+    "statusCancelled": "キャンセル",
+    "cancelledTooltip": "キャンセルされたオファーはオンチェーンに金融詳細を保持しません — オファー ID とサイドのみが保持されます。",
+    "manageKeepersTooltip": "Keeper Settings ページでこのオファー向けに特定の keepers を有効化します。",
+    "cancelTooltip": "オファーを取り下げ、ロックされた元本 / 担保をエスクローに返します。",
+    "cancel": "キャンセル",
+    "cancelling": "キャンセル中…",
+    "assetTypeLegend": "アセットタイプ: {{kinds}}"
+  },
   "hero": {
     "brand": "Vaipakam",
     "titleLine1": "ピアツーピア・レンディング",
@@ -1486,5 +1488,10 @@
     "rewardsClaim": "両方の報酬ストリーム（ステーキング + インタラクション）からの保留中の VPFI を、現在のチェーン上のウォレットへ 1 トランザクションでミントします。インタラクションプールは日次でファイナライズされます — 保留中のインタラクション報酬は各決済ウィンドウ終了直後にクレーム可能になります。",
     "rewardsWithdrawStaked": "VPFIをEscrowからウォレットに戻します。引き出されたVPFIは{{apr}}%ステーキングAPRの累積を停止し、手数料割引ティアにもカウントされなくなります — 時間加重アキュムレータは直ちにすべての未決済ローンを新しい（低い）残高で再スタンプします。",
     "activityFeed": "アクティブなチェーン上で接続中のウォレットが関与するオンチェーンイベント — オファー作成 / 受諾、ローン、返済、クレーム、清算、NFT のミント / バーン、VPFI の購入 / ステーク / アンステーク。Diamond のイベントログからライブで取得され（バックエンドなし）、トランザクション単位でグループ化され、最新順に並びます。"
+  },
+  "acceptReview": {
+    "partialRepayLabel": "部分返済",
+    "partialRepayAllowed": "許可 — 借り手はこのローンを分割で返済できます",
+    "partialRepayNotAllowed": "不許可 — 全額返済のみ受け付けます"
   }
 }

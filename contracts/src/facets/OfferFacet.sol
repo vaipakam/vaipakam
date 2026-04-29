@@ -354,7 +354,7 @@ contract OfferFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
                 params.assetType == LibVaipakam.AssetType.ERC721 ||
                 params.assetType == LibVaipakam.AssetType.ERC1155
             ) {
-                uint256 totalPrepay = _nftRentalPrepayTotal(params);
+                uint256 totalPrepay = _nftRentalPrepayTotal(params.amount, params.durationDays);
                 IERC20(params.prepayAsset).safeTransferFrom(
                     msg.sender,
                     escrow,
@@ -383,32 +383,22 @@ contract OfferFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
         }
         // NFT rental borrower offer — Permit2 pulls the prepay.
         LibVaipakam.Offer storage offer = LibVaipakam.storageSlot().offers[offerId];
-        return _nftRentalPrepayTotal(LibVaipakam.CreateOfferParams({
-            offerType: params.offerType,
-            lendingAsset: params.lendingAsset,
-            amount: offer.amount,
-            interestRateBps: params.interestRateBps,
-            collateralAsset: params.collateralAsset,
-            collateralAmount: params.collateralAmount,
-            durationDays: offer.durationDays,
-            assetType: params.assetType,
-            tokenId: params.tokenId,
-            quantity: params.quantity,
-            creatorFallbackConsent: params.creatorFallbackConsent,
-            prepayAsset: params.prepayAsset,
-            collateralAssetType: params.collateralAssetType,
-            collateralTokenId: params.collateralTokenId,
-            collateralQuantity: params.collateralQuantity
-        }));
+        return _nftRentalPrepayTotal(offer.amount, offer.durationDays);
     }
 
     /// @dev Rental prepay total = amount × days + (amount × days ×
     ///      rentalBufferBps / BASIS_POINTS). Isolated from the pull
     ///      helper so the Permit2 path can call the same formula.
+    /// @dev Takes the two fields it actually needs (`amount` and
+    ///      `durationDays`) instead of the full `CreateOfferParams`
+    ///      struct — passing the whole struct in memory used to push
+    ///      the calling helper over Yul's stack-depth ceiling once
+    ///      the struct grew (16-field via `allowsPartialRepay`).
     function _nftRentalPrepayTotal(
-        LibVaipakam.CreateOfferParams memory params
+        uint256 amount,
+        uint256 durationDays
     ) private view returns (uint256) {
-        uint256 prepayAmount = params.amount * params.durationDays;
+        uint256 prepayAmount = amount * durationDays;
         uint256 buffer = (prepayAmount * LibVaipakam.cfgRentalBufferBps()) /
             LibVaipakam.BASIS_POINTS;
         return prepayAmount + buffer;
@@ -486,6 +476,9 @@ contract OfferFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
         offer.collateralAssetType = params.collateralAssetType;
         offer.collateralTokenId = params.collateralTokenId;
         offer.collateralQuantity = params.collateralQuantity;
+        // Lender-controlled gate for borrower-initiated partial repay.
+        // See {CreateOfferParams.allowsPartialRepay} for full semantics.
+        offer.allowsPartialRepay = params.allowsPartialRepay;
         // Phase 6: keeper access is per-keeper via
         // `offerKeeperEnabled[offerId][keeper]`. Creator enables specific
         // keepers post-create via `ProfileFacet.setOfferKeeperEnabled`.
