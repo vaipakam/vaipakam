@@ -36,7 +36,42 @@ staking rewards claim from Buy VPFI Step 2, platform-interaction
 rewards claim from a new card on Claim Center (with a lifetime-
 claimed total summed from on-chain events plus an expandable
 "contributing loans" list that links each contributing lender /
-borrower entry back to its full Loan Details page).
+borrower entry back to its full Loan Details page; a **lifetime-
+claimed total** added to the staking-rewards card on Buy VPFI
+(Step 2) so historical claimers see how much VPFI they've pulled
+from the program over time, and conditional chrome that flips
+green only when `pending > 0`; **navbar tightening** so the brand
+logo never gets squeezed by the four nav slots; **in-app sticky
+top bar** fix (`overflow-x: hidden → clip` so the topbar actually
+sticks during page scroll); **sidebar/topbar height parity** at
+64 px so the divider line aligns across the app shell; **Create
+Offer button gating** that disables the submit until
+`validateOfferForm` passes, with the validator now returning
+typed error codes mapped to localised strings across all 10
+locales; an asset-picker UX cleanup that **drops the lone red
+asterisk** on the Create Offer address field (button gating +
+tooltip already disambiguates required state); a sweep that
+**removes the "mirrors the in-app revoke flow used by Uniswap
+and 1inch" reference** from the Allowances page subtitle in
+every locale; an **interaction-rewards card upgrade** showing
+lifetime claimed + an expandable contributing-loans list (each
+row linking to Loan Details); and finally a **full
+protocol-config sweep** — `useProtocolConfig` extended to also
+fetch a new `getProtocolConstants()` view returning the four
+compile-time constants (`MIN_HEALTH_FACTOR`, the two VPFI pool
+caps, `MAX_INTERACTION_CLAIM_DAYS`); the `VPFI_TIER_TABLE`
+static export retired in favour of a `useVpfiTierTable()` hook
+that derives tier rows from the live tier-thresholds + tier-
+discount-bps reads; the hardcoded `RENTAL_BUFFER_BPS` constant
+in Create Offer replaced with the live `rentalBufferBps`
+config field; `<CardInfo>` extended to **auto-inject 18
+protocol-config placeholders** (`{{treasuryFee}}`, `{{tier1Min}}`,
+`{{maxSlippage}}`, `{{minHealthFactor}}`, `{{vpfiStakingPoolCap}}`,
+…) into every `cardHelp.*` tooltip without per-call-site wiring;
+~16 i18n strings across 10 locales swept to use those
+placeholders so governance changes (or even a contract redeploy
+that bumps a constant) flow into the UI without a frontend
+redeploy.
 
 ## Market-anchor cache backfill — no rescan needed
 
@@ -365,6 +400,308 @@ the topic OR-set in the frontend log-index. Cache key bumped
 from `v8` to `v9` to force a one-time rescan that captures
 historical claims; without the bump, older caches couldn't
 backfill incrementally past their `lastBlock` watermark.
+
+## Buy VPFI staking-rewards card — lifetime-claimed total + conditional chrome
+
+The staking-rewards claim card on Buy VPFI Step 2 used to show
+only the pending VPFI balance with an always-green chrome and an
+"available" headline regardless of state. Two changes:
+
+- **Lifetime-claimed sub-line** added next to "Pending". Sourced
+  by summing every `StakingRewardsClaimed(user, amount)` event
+  in the per-(chain, diamond) log-index keyed to the connected
+  wallet — no on-chain getter for the running total exists, but
+  the events carry the full history. Hidden when zero so a
+  first-time staker sees only "Pending".
+- **Conditional chrome**: green border + tinted background +
+  green icon only when `pending > 0` (i.e. there's an actual
+  Claim button to press). When pending is zero the card flips to
+  neutral chrome with the title "VPFI staking rewards" and the
+  body copy: *"Stake VPFI in Step 2 above and your escrow balance
+  will earn {{apr}}% APR — you can claim accumulated rewards
+  here."* The same conditional applies to the Dashboard inline
+  mirror (transparent background + grey icon when empty).
+- **Repositioned** to sit right after Step 2 (Deposit / Stake)
+  rather than between Step 3 and the VPFI Token panel. Reads as
+  a natural causal pairing: deposit here → reward here → claim
+  here.
+
+## Navbar polish — link spacing + brand-logo non-shrink
+
+The public Navbar previously had `padding: 8px 16px` on each nav
+link and a 24 px `margin-right` between the rightmost dropdown
+trigger (VPFI) and the Launch App pill. With four slots
+(Learn / Verify / VPFI / Launch App) plus the wallet pill +
+gear, the row consumed enough horizontal width that the brand
+logo got flex-squeezed below its natural 36 px height on
+mid-width desktop. Two CSS-only edits:
+
+- `.navbar-link` horizontal padding `16 → 10` px — saves
+  ~12 px per link, ~48 px across the four-slot cluster while
+  keeping the four pills visually equivalent (10 px padding
+  either side + 8 px parent `gap`).
+- `.navbar-links` `margin-right` `24 → 12` px — tightens the
+  seam between VPFI dropdown and the Launch App / wallet
+  cluster.
+
+Net: ~60 px of horizontal room reclaimed for the brand area;
+logo no longer has to shrink on any desktop viewport.
+
+## In-app sticky top bar — `overflow-x: hidden → clip`
+
+The in-app top bar (wallet pill + gear icon + page title) had
+`position: sticky` with `top: 0` set on `.app-topbar` for as
+long as the AppLayout has existed, but it never actually
+stuck — it scrolled away with the page on the first scroll.
+Root cause: `.app-main` (the topbar's parent) was set to
+`overflow-x: hidden` to swallow horizontal overflow from any
+wide child. The `hidden` value silently promotes `overflow-y`
+from `visible` to `auto`, which makes `.app-main` a
+scroll-container ancestor for sticky-positioning purposes.
+Since `.app-main` doesn't actually have a fixed height (it
+just `min-height: 100vh`), it never scrolls — but sticky
+tracks the nearest scroll-container scrollport, so the topbar
+had nothing to stick to relative to that ancestor.
+
+Single-line fix: `overflow-x: hidden → clip`. `clip` preserves
+the horizontal-overflow guard without becoming a scroll
+container, so sticky now correctly resolves against the
+viewport scroll. Topbar pins to the top of the viewport while
+the body scrolls behind it, exactly as the original intent.
+
+## Sidebar header / app top bar height parity
+
+The in-app sidebar's brand-row header had free-flowing
+`padding: 20px 20px 16px` (~68 px tall) while `.app-topbar` was
+fixed at `64 px`, so the horizontal divider underlining both
+was 4 px misaligned across the full-width app shell. Sidebar
+header now uses `height: 64px; padding: 0 20px;
+box-sizing: border-box` so both elements share one continuous
+divider line. The collapsed-rail and hover-expand variants got
+the same treatment (only the horizontal padding flips between
+those states; height stays 64 px in all three).
+
+## Create Offer — submit button properly gated
+
+The Create Offer submit button used to be enabled as long as
+`step === "form" && form.fallbackConsent`, which meant a user
+could click "Create Offer" with an empty asset address, a zero
+amount, an out-of-range duration, etc. and only THEN see the
+validation error appear. Eight other required fields — lending
+asset address validity, amount > 0, interest rate ≥ 0, duration
+in [1, 365], NFT token ID on rentals, collateral / prepay
+address validity — were checked exclusively inside the post-
+click `handleSubmit` handler.
+
+The button is now disabled whenever `validateOfferForm` returns
+an error, and the specific reason renders as the button's
+hover-tooltip — so users see what's blocking them live as they
+type, without having to click first to discover the gate.
+
+Alongside, the validator was refactored from returning English
+strings to returning a discriminated `OfferFormError` union
+with typed `code` fields (`lendingAssetInvalid`,
+`amountNonPositive`, `rateNegative`, `durationOutOfRange`,
+`nftTokenIdRequired`, `collateralAssetInvalid`,
+`prepayAssetInvalid`, `fallbackConsentRequired`). The Create
+Offer page maps each code to `t('createOffer.validate.<code>')`
+with the duration error interpolating the bounds via `{{min}}`
+/ `{{max}}` placeholders. Validator strings are now i18n'd
+across all 10 locales; the validator itself stays React-free
+and can still be unit-tested without a translator.
+
+## Asset-picker red asterisk dropped
+
+The `<AssetPicker>` component (used for both lending and
+collateral asset addresses on Create Offer) used to render a
+red `*` next to its label when `required` was set. Of the
+8+ required fields on the page, only those two showed any
+required-marker — Amount, Interest Rate, Duration, NFT Token
+ID, Collateral Amount, Quantity, Prepay Asset, and the
+fallback-consent checkbox all had plain labels. The lone `*`
+gave the misleading impression that only the asset address
+was required.
+
+The asterisk is gone. The new submit-button gating (above)
+already disambiguates required state — disabled button + hover
+tooltip beats per-field marker, especially when consistency
+across all required fields would otherwise demand a much
+bigger UX rewrite. The `required` prop on AssetPicker still
+threads through to the underlying `<input>` / `<select>` for
+browser-side validation hooks; only the visible marker
+disappeared. The orphan `.asset-picker-required` CSS rule was
+cleaned up too.
+
+## Allowances — drop the Uniswap / 1inch reference
+
+The Allowances page subtitle used to read:
+*"… Revoke any you no longer need in one click — mirrors the
+in-app revoke flow used by Uniswap and 1inch. Non-zero
+approvals appear first; …"*
+
+The "mirrors the in-app revoke flow used by Uniswap and 1inch"
+clause is gone. The functionality stands on its own; the
+competitive name-drop didn't add information for users.
+Removed from both `allowances.pageSubtitle` (the live string)
+and the orphan duplicate `allowancesPage.subtitle`, in all 10
+locales.
+
+## Claim Center — interaction-rewards card upgrade
+
+The interaction-rewards card on Claim Center now shows three
+streams of information instead of one:
+
+1. **Pending** (existing) — `previewInteractionRewards(user)`.
+2. **Lifetime claimed** — sum of every `InteractionRewardsClaimed`
+   event in the log-index keyed to the wallet. `InteractionRewardsClaimed`
+   is now in the topic OR-set; cache version bumped `v8 → v9`
+   to force a one-time rescan that captures historical claims.
+3. **Contributing loans** (expandable) — every loan that drives
+   the wallet's daily share of the pool, lender-side and
+   borrower-side rows separately. Each row links to the loan's
+   full Loan Details timeline and shows ongoing
+   (`{{rate}} USD/day interest`) / closed
+   (`{{total}} USD over {{days}} day(s)`) / forfeited
+   (visually de-emphasised) state.
+
+Backed by a new contract view `getUserRewardEntries(user)` on
+`InteractionRewardsFacet` that returns the full `RewardEntry[]`
+array (loanId, side, startDay/endDay, perDayUSD18, processed,
+forfeited). Selector wired into both DeployDiamond (18-element
+array) and HelperTest. Two Foundry tests: empty-state shape and
+populated lender + borrower split via a new `pushRewardEntry`
+helper on `TestMutatorFacet`.
+
+The display intentionally does NOT show "earned X VPFI on loan
+Y" — interaction rewards aren't directly attributable to a per-
+loan VPFI amount because they're daily-normalised by the global
+denominator, so showing per-loan VPFI would be a fiction. The
+list shows participation contribution in 18-decimal USD; the
+lifetime-claimed total above shows the actual VPFI received.
+
+## Sidebar order — Claim Center above Buy VPFI
+
+The in-app sidebar's lending block now reads top-to-bottom:
+Dashboard → Offer Book → Create Offer → Claim Center → Buy VPFI
+→ Activity → Keepers → Alerts → Allowances. Claim Center sits
+next to the lending-action items (collecting what loans have
+settled or what platform interaction has earned belongs in the
+same conceptual block as creating / managing those loans). Buy
+VPFI follows as the discretionary token-purchase flow.
+
+## Public-page Navbar clearance — Analytics, NFT Verifier, Buy VPFI
+
+Three more public-shell pages had the same Navbar-overlap bug
+the Privacy and Terms pages had earlier today: a 32 px page
+top-padding versus the 72 px fixed Navbar height, so the page
+heading sat behind the bar on first paint. All three fixed by
+bumping to 104 px (72 + 32 breathing room):
+
+- `.public-dashboard` `padding-top` 32 → 104 px on the Analytics
+  page CSS.
+- `<main>` inline `paddingTop` 32 → 104 on the `PublicNftVerifier`
+  shell wrapper in `App.tsx`.
+- Same fix on the `PublicBuyVPFI` shell wrapper.
+
+## Protocol-config sweep — every hardcoded number replaced with a live read
+
+The most-impactful piece of today's work. Every percentage,
+threshold, and constant the UI used to display from a hardcoded
+literal now flows from a single contract source.
+
+**Background.** The site was full of strings like
+*"5% APR"*, *"1% treasury cut"*, *"0.1% initiation fee"*,
+*"6% slippage cap"*, *"5% buffer"*, *"24% off"*, *"≥ 100 VPFI"*,
+*"≥ 1k"*, *"≥ 5k"*, *"> 20k"*, etc. Each of these is a
+governance-mutable value (settable via `ConfigFacet` —
+`setFeesConfig`, `setVpfiTierThresholds`, `setVpfiTierDiscountBps`,
+`setStakingApr`, etc.) or a compile-time constant in
+`LibVaipakam`. If governance ever changed a value, or the
+contract was redeployed with a bumped constant, the UI would
+silently lie to users until someone manually swept ~16 strings
+across 10 locales.
+
+**The plan.** The contract already exposed
+`ConfigFacet.getProtocolConfigBundle()` returning 8 governance-
+mutable values in one read; the only missing piece was the
+compile-time constants.
+
+**Contract change.** `ConfigFacet.getProtocolConstants()` view
+added — pure, returns `MIN_HEALTH_FACTOR`,
+`VPFI_STAKING_POOL_CAP`, `VPFI_INTERACTION_POOL_CAP`,
+`MAX_INTERACTION_CLAIM_DAYS`. Selector wired into both
+`DeployDiamond` (16-element ConfigFacet array) and the
+`HelperTest` test-cuts. New Foundry test
+`testGetProtocolConstantsMatchesLibrary` asserts each return
+value equals its `LibVaipakam` constant declaration.
+
+**Frontend hook.** `useProtocolConfig` (existing module-cached
+hook over `getProtocolConfigBundle`) extended to also fetch
+`getProtocolConstants` in parallel and surface every value
+plus pre-formatted display helpers (`minHealthFactorDisplay`,
+`vpfiStakingPoolCapCompact` → "55.2M", etc.). One RPC pair per
+page load shared across every consumer via the existing
+module-scope cache.
+
+**Static tier table retired.** The `VPFI_TIER_TABLE` static
+export — which had hardcoded `100` / `1k` / `5k` / `20k`
+thresholds and `10%` / `15%` / `20%` / `24%` discount labels —
+is gone. New `useVpfiTierTable()` hook derives every row's
+threshold + discount label from the live `tierThresholds` +
+`tierDiscountBps` arrays. The `BuyVPFI.tsx` Discount Status
+card (3 consumer sites) migrated to the hook.
+
+**`RENTAL_BUFFER_BPS` constant retired.** The `500n`
+hardcoded BigInt constant in `CreateOffer.tsx` (used in the NFT-
+rental prepay calculation) replaced with a read from
+`protocolConfig.rentalBufferBps`.
+
+**`<CardInfo>` auto-injection.** Rather than wire each
+individual `<CardInfo id="…" />` call site to pass live
+parameters to its tooltip, the component itself now reads
+`useProtocolConfig` and auto-injects 18 named placeholders
+into every `cardHelp.*` summary's `t()` call:
+`treasuryFee`, `loanInitiationFee`, `liquidationHandlingFee`,
+`maxSlippage`, `maxLiquidatorIncentive`, `volatilityLtv`,
+`rentalBuffer`, `apr`, `tier1Min..tier4Min`,
+`tier1Discount..tier4Discount`, `maxDiscount`,
+`minHealthFactor`, `vpfiStakingPoolCap`,
+`vpfiInteractionPoolCap`. Per-call `params` still override on
+collision.
+
+**i18n sweep.** ~16 strings × 10 locales updated to use
+`{{placeholder}}` interpolation in the relevant keys:
+- `cardHelp.dashboardFeeDiscountConsent`
+- `cardHelp.buyVpfiDiscountStatus`
+- `cardHelp.buyVpfiDeposit`
+- `cardHelp.offerBookBorrowerOffers`
+- `cardHelp.claimCenterClaimsLender`
+- `cardHelp.loanDetailsActionsLender`
+- `cardHelp.createOfferNftDetails`
+- `cardHelp.rewardsOverview`
+- `cardHelp.rewardsWithdrawStaked`
+- `vpfiDiscountConsent.bodyPrefix`
+- `vpfiTokenCard.shareTooltip`
+- `vpfiTokenCard.escrowCountsAsStaked`
+- `buyVpfiCards.escrowCountsAsStaked`
+- `buyVpfiCards.unstakeWarning`
+- `buyVpfiCards.inactiveBelowTier1`
+- `buyVpfi.step2Info`
+- `stakingRewards.subtitleEmpty`
+- `lenderDiscountCard.borrowerTitle / borrowerBody1 / lenderTitle / lenderBody1`
+- `banners.preflightThinSuffix`
+- `createOffer.lifLabel / lifLenderBody / lifBorrowerBody`
+- `createOffer.prepayAssetHint`
+
+Net impact: governance can call `setStakingApr(700)` (or
+`setVpfiTierThresholds`, or `setFeesConfig`, …) and every UI
+surface — tooltips, banner copy, validation messages, tier
+tables — picks up the new value on next page load with zero
+frontend deploy. A future contract redeploy that bumps
+`MIN_HEALTH_FACTOR` or one of the VPFI pool caps does the
+same. The compile-time constants `whitepaper.md` references
+(in the long-form tokenomics spec) were intentionally left
+hardcoded — they're spec content, not live UI.
 
 ## Documentation convention
 
