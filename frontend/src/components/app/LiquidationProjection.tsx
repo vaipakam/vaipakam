@@ -2,6 +2,34 @@ import { useEffect, useMemo, useState } from 'react';
 import { useDiamondRead } from '../../contracts/useDiamond';
 import { AssetSymbol } from './AssetSymbol';
 
+/**
+ * Feature flag for the partial-repay projection control. Off today
+ * because the on-chain borrower repay path is all-or-nothing in
+ * Phase 1 — letting the user dial in a partial-repay number on the
+ * UI without a matching on-chain action would mislead.
+ *
+ * Future design note: when partial repay re-lands, **gate it on
+ * lender opt-in at offer creation / acceptance time**. Partial
+ * repayment changes the lender's interest stream (early principal
+ * return reduces accrual) and risk profile (smaller-than-expected
+ * repayment cadence), so the lender should opt in explicitly
+ * rather than have it forced on every loan. Likely shape: a
+ * `bool allowsPartialRepay` field on the offer struct, defaulted
+ * false; UI disables the slider on this card when the loan's
+ * source offer didn't carry the flag.
+ *
+ * Pairs with partial offer-filling on the lender side (relaxing
+ * the same Phase-1 all-or-nothing constraint), and the two should
+ * ship together so the borrower's projection sliders match the
+ * actions actually available on the loan.
+ *
+ * The state + math wiring (`partialRepay`, `repayMultiplier`)
+ * stays in place so the only change to re-enable the projection
+ * UI is flipping this constant — no untangle / re-tangle of the
+ * projection derivation.
+ */
+const SHOW_PARTIAL_REPAY = false;
+
 interface LiquidationProjectionProps {
   loan: {
     principal: bigint;
@@ -212,22 +240,33 @@ export function LiquidationProjection({
           />
         </div>
 
-        <div className="data-row" style={{ alignItems: 'center' }}>
-          <span className="data-label">
-            Partial repay (
-            <AssetSymbol address={loan.principalAsset} />)
-          </span>
-          <input
-            type="number"
-            min="0"
-            step="any"
-            value={partialRepay}
-            onChange={(e) => setPartialRepay(e.target.value)}
-            placeholder="0"
-            className="form-input"
-            style={{ width: 140 }}
-          />
-        </div>
+        {/* Partial repay control hidden behind a feature flag — partial
+            repayment isn't allowed today (the borrower repay path is
+            full-only on-chain). Will be turned back on when partial
+            offer fills land for the lender side too, since the two
+            features are conceptually paired (both relax the all-or-
+            nothing constraint that simplifies Phase 1). Code stays in
+            place so the projection-math wiring (which still references
+            `partialRepay` state and the `repayMultiplier` derivation)
+            doesn't need to be untangled and re-tangled. */}
+        {SHOW_PARTIAL_REPAY && (
+          <div className="data-row" style={{ alignItems: 'center' }}>
+            <span className="data-label">
+              Partial repay (
+              <AssetSymbol address={loan.principalAsset} />)
+            </span>
+            <input
+              type="number"
+              min="0"
+              step="any"
+              value={partialRepay}
+              onChange={(e) => setPartialRepay(e.target.value)}
+              placeholder="0"
+              className="form-input"
+              style={{ width: 140 }}
+            />
+          </div>
+        )}
 
         <div className="data-row" style={{ alignItems: 'center' }}>
           <span className="data-label">
@@ -251,7 +290,19 @@ export function LiquidationProjection({
               onChange={(e) => setDropPct(Number(e.target.value))}
               style={{ width: 120 }}
             />
-            <span style={{ width: 40 }}>{dropPct}%</span>
+            {/* Show the resulting absolute price alongside the percent —
+                a raw "30%" doesn't tell users what the collateral would
+                actually be worth. Skips the dollar-side when the oracle
+                is unavailable (collPriceUsd === null) so the row
+                degrades to percent-only rather than "30% — $—". */}
+            <span style={{ minWidth: 40 }}>
+              {dropPct}%
+              {collPriceUsd !== null && (
+                <span style={{ opacity: 0.7, marginLeft: 4 }}>
+                  · ${(collPriceUsd * (1 - dropPct / 100)).toFixed(2)}
+                </span>
+              )}
+            </span>
           </span>
         </div>
 

@@ -303,39 +303,25 @@ const CHUNK = (() => {
 })();
 const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
 
-// v6: captures the pre-burn owner (`from` on the Transfer-to-zero) into a
-// `prevOwners` map so the NFT Verifier can display the last known holder of
-// a burned position NFT. v5 caches don't carry this and can't backfill
-// incrementally since the relevant Transfer is already behind `lastBlock`.
+/**
+ * Cache version is part of the localStorage key. Bumping forces a
+ * fresh scan from `deployBlock` for every existing browser cache
+ * (the old key becomes unreachable, the new key is empty).
+ *
+ * **Bump when** the cache shape changes, the topic-filter OR-set
+ * changes, or the scanner logic changes in a way that affects
+ * stored data (so historical caches would be silently wrong).
+ *
+ * **Don't bump for** purely-additive client-side projections
+ * (e.g., `recentAcceptedOfferIds` was added without a bump because
+ * `readCache` backfills it from the cached `events` array on hydrate).
+ *
+ * Started fresh at `v1` during pre-live development — no production
+ * users existed yet, so historical migration carries no value. Going
+ * forward, increment normally when invalidation is required.
+ */
 function storageKey(chainId: number, diamond: string): string {
-  // v9 (2026-04-29): adds `InteractionRewardsClaimed` to the topic
-  // OR-set so the Claim Center's interaction-rewards card can sum
-  // lifetime-claimed VPFI from cached events. Same incremental-scan
-  // gap as v8 → v9 forces a one-time full scan to backfill the
-  // historical claims.
-  //
-  // v8 (2026-04-29): widened the allow-list with the loan-lifecycle
-  // breakdown stream powering the Loan Details timeline —
-  // LoanSettlementBreakdown, LiquidationFallback,
-  // LiquidationFallbackSplit, LoanSettled, PartialRepaid,
-  // ClaimRetryExecuted, BorrowerLifRebateClaimed, plus the per-user
-  // StakingRewardsClaimed.
-  //
-  // v7: widened the allow-list to include VPFIPurchasedWithETH,
-  // VPFIDepositedToEscrow, VPFIWithdrawnFromEscrow.
-  //
-  // `recentAcceptedOfferIds` (added 2026-04-28 for the OfferBook
-  // filter-scoped anchor) was NOT a v-bump — `readCache` backfills the
-  // field from the cached `events` array on hydrate when it's missing
-  // or empty (filter `kind === 'OfferAccepted'`, take the trailing
-  // RECENT_ACCEPTED_CAP).
-  //
-  // v10 (2026-04-29): `OfferCanceledDetails` event added to the topic
-  // allow-list. Older v9 caches don't have these events and would
-  // miss cancelled-offer-detail reconstruction; bumping forces a
-  // fresh scan from the deploy block so existing users pick up the
-  // newly-tracked event without manual cache clear.
-  return `vaipakam:logIndex:v10:${chainId}:${diamond.toLowerCase()}`;
+  return `vaipakam:logIndex:v1:${chainId}:${diamond.toLowerCase()}`;
 }
 
 function emptyCache(deployBlock: number): CachedShape {
@@ -691,7 +677,18 @@ async function runScan(
             OFFER_CREATED_TOPIC0,
             OFFER_ACCEPTED_TOPIC0,
             OFFER_CANCELED_TOPIC0,
-            OFFER_CANCELED_DETAILS_TOPIC0,
+            // OFFER_CANCELED_DETAILS_TOPIC0 intentionally omitted from
+            // the filter array. publicnode (and other free-tier RPCs)
+            // silently return empty results when the topic OR-list
+            // exceeds an internal cap (~24 entries observed). Adding
+            // this topic pushed the array to 25 and broke event capture
+            // for every event kind. The companion event isn't emitted
+            // by any deployed Vaipakam Diamond on Sepolia today
+            // (contract redeploy hasn't happened yet) so omitting it
+            // costs nothing in practice. Re-add when (a) we move off
+            // free-tier RPC OR (b) split into a second eth_getLogs
+            // call. The decoder branch below stays in case logs of
+            // this kind ever land via a wider scan.
             LOAN_REPAID_TOPIC0,
             LOAN_DEFAULTED_TOPIC0,
             LENDER_CLAIMED_TOPIC0,

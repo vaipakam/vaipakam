@@ -255,7 +255,14 @@ export default function Navbar() {
                   openGroup === group.id ? ' navbar-group-panel--open' : ''
                 }`}
                 role="menu"
-                aria-hidden={openGroup !== group.id}
+                // `inert` (not `aria-hidden`) per WAI-ARIA spec —
+                // hiding a focused descendant via aria-hidden is a
+                // a11y bug because screen readers lose track of where
+                // the user is. `inert` prevents focus AND hides from
+                // the accessibility tree, which is exactly what we
+                // want for a closed dropdown panel. Supported in all
+                // modern browsers + React 19.
+                inert={openGroup !== group.id}
               >
                 {group.links.map((link) => (
                   <Link
