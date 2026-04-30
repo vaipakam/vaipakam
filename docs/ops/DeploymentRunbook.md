@@ -101,6 +101,27 @@ mirroring the matching keys (e.g. `diamond` → `VITE_<CHAIN>_DIAMOND_ADDRESS`,
 `facets.metricsFacet` → `VITE_<CHAIN>_METRICS_FACET_ADDRESS`,
 `vpfiBuyAdapter` → `VITE_<CHAIN>_VPFI_BUY_ADAPTER`).
 
+Don't copy these by hand — the helper
+
+```bash
+bash contracts/script/syncFrontendEnv.sh
+```
+
+walks every `deployments/<chain>/addresses.json`, replaces the
+matching `VITE_*` lines in `frontend/.env.local` in place (or
+appends them if missing), and skips empty / null /
+zero-address values so a half-populated artifact can't blank an
+existing value. Idempotent: re-running on an already-synced env
+leaves it byte-identical. Run it after every contract redeploy
+*before* `cd frontend && npm run deploy` so the new addresses
+make it into the bundle.
+
+Caveat for CI: `frontend/.env.local` is gitignored, so a
+Cloudflare-Pages-dashboard or GitHub-Actions build won't see
+anything written by the helper. For CI deploys, mirror the
+values into the Cloudflare Pages → Settings → Environment
+variables panel (or commit a `frontend/.env.production`).
+
 ---
 
 ## 0. Pre-flight (before broadcasting any tx)
@@ -145,7 +166,7 @@ If any check fails → **do not broadcast**.
    forge script script/DeployDiamond.s.sol:DeployDiamond \
      --rpc-url $RPC_URL --broadcast --verify
    ```
-4. Record the logged addresses in `deployments/<chain>/addresses.json` and populate `<CHAIN>_DIAMOND_ADDRESS` in `contracts/.env` plus `VITE_<CHAIN>_DIAMOND_ADDRESS` / `VITE_<CHAIN>_DEPLOY_BLOCK` in `frontend/.env.local`.
+4. Record the logged addresses in `deployments/<chain>/addresses.json` and populate `<CHAIN>_DIAMOND_ADDRESS` in `contracts/.env`. The frontend side is one command — `bash contracts/script/syncFrontendEnv.sh` walks all chain artifacts and updates `frontend/.env.local` in place (Diamond, deploy block, escrow impl, metrics / risk / profile facet addresses, and VPFI buy adapter where present). Idempotent.
 
 **Post-step verification:**
 - `diamondLoupe.facetAddresses()` returns 30 non-zero facets (DiamondCutFacet + 29 cut in).

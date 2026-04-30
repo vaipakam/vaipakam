@@ -55,6 +55,7 @@ Center the connect wallet inside the button which is on top bar, so that in mobi
 
 ---
 
+- [x] Update frontend/wrangler.jsonc file to have all required en.local variables in it, so that before deployment we will run a script to update these variables in cloudflare, add that in appropriate runnook, because not all the variables are baked into VITE during wrangler run deploy, so it is the required step. All while deploying the contract (or immediately after contract deployment) it self, script or a .sh file should update values in frontend/wrangler.jsonc file, what do you say? Let me know if there is a better approach.
 - [x] The new offer created globally should appear automatically in offer book, based on the sort that we have already defined, hope the sort is not customisable by user, in offer book page.
 - [x] we need to provide slider to adjust the lending amount and collateral amount. also based on it, we should also show HF/LTV visually with animation, this need to be shown during offer creation in advanced mode, like the one that is shown in loan view page in `Liquidation-price projection` card, inside card `Collateral & Risk`, enhace for offer creation if possible.
 - [x] Is there any contract that went beyond max size limit that has been reported by anvil, don't we need to fix it?
