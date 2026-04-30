@@ -503,7 +503,7 @@ contract DeployDiamond is Script {
         // that selector. _registerNFTInterfaces() writes the ERC-721 / metadata
         // interface IDs into LibDiamond storage so the Loupe's implementation
         // returns true for them.
-        s = new bytes4[](26);
+        s = new bytes4[](29);
         s[0] = VaipakamNFTFacet.mintNFT.selector;
         s[1] = VaipakamNFTFacet.updateNFTStatus.selector;
         s[2] = VaipakamNFTFacet.burnNFT.selector;
@@ -514,7 +514,10 @@ contract DeployDiamond is Script {
         s[7] = VaipakamNFTFacet.setContractImageURI.selector;
         s[8] = VaipakamNFTFacet.royaltyInfo.selector;
         s[9] = VaipakamNFTFacet.setDefaultRoyalty.selector;
-        s[10] = VaipakamNFTFacet.setLoanImageURIs.selector;
+        // Status-keyed image URI scheme (replaces the prior 4-slot
+        // setLoanImageURIs). Granular per-(LoanPositionStatus,
+        // isLender) overrides + per-side defaults + a read-back view.
+        s[10] = VaipakamNFTFacet.setImageURIForStatus.selector;
         // Native ERC-721 + lock API added in the transfer-lock refactor.
         s[11] = VaipakamNFTFacet.name.selector;
         s[12] = VaipakamNFTFacet.symbol.selector;
@@ -533,6 +536,12 @@ contract DeployDiamond is Script {
         s[23] = bytes4(keccak256("tokenByIndex(uint256)"));
         s[24] = bytes4(keccak256("tokenOfOwnerByIndex(address,uint256)"));
         s[25] = VaipakamNFTFacet.nftStatusOf.selector;
+        // OpenSea `external_url` admin config — sets the base URL
+        // emitted in tokenURI's JSON for marketplace deep-links.
+        s[26] = VaipakamNFTFacet.setExternalUrlBase.selector;
+        // Status-keyed image URI scheme companions:
+        s[27] = VaipakamNFTFacet.setDefaultImage.selector;
+        s[28] = VaipakamNFTFacet.getImageURIFor.selector;
     }
 
     function _getEscrowFactorySelectors() internal pure returns (bytes4[] memory s) {

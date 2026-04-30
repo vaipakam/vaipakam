@@ -40,10 +40,22 @@ library LibERC721 {
         mapping(uint256 => uint256) offerIds;
         mapping(uint256 => uint256) loanIds;
         mapping(uint256 => bool) isLenderRoles;
-        string lenderActiveIPFS;
-        string lenderClosedIPFS;
-        string borrowerActiveIPFS;
-        string borrowerClosedIPFS;
+        // Image-URI configuration — granular per (LoanPositionStatus,
+        // isLender) pair, with per-side defaults for any state that
+        // wasn't explicitly populated. Lookup chain consumed by
+        // `VaipakamNFTFacet.tokenURI`:
+        //   1. statusImageURIs[status][isLender]      — exact match
+        //   2. defaultLenderImage / defaultBorrowerImage — per-side fallback
+        //   3. contractImageURI                          — collection-level fallback
+        //   4. empty string                              — last resort
+        // Replaces the prior 4-slot scheme (lenderActive/Closed +
+        // borrowerActive/Closed). Pre-launch reorder; admin-only
+        // setters via VaipakamNFTFacet.setImageURIForStatus +
+        // setDefaultImage. Governance-transferable at any time by
+        // rotating ADMIN_ROLE.
+        mapping(LibVaipakam.LoanPositionStatus => mapping(bool => string)) statusImageURIs;
+        string defaultLenderImage;
+        string defaultBorrowerImage;
         // Collection-level metadata (contractURI convention + EIP-2981 royalties).
         string contractImageURI;
         address royaltyReceiver;
@@ -66,6 +78,15 @@ library LibERC721 {
         mapping(uint256 => uint256) ownedTokensIndex;
         uint256[] allTokens;
         mapping(uint256 => uint256) allTokensIndex;
+
+        // ─── External-URL base for OpenSea metadata (Tier 2) ────────────
+        // Admin-set base URL appended with `?loan=<loanId>&side=<...>`
+        // (or `?token=<tokenId>` when no loan exists yet) and emitted
+        // in tokenURI's JSON `external_url` field. OpenSea renders a
+        // "View on Vaipakam" link that deep-links from the marketplace
+        // back into the dApp. Empty string ⇒ field is omitted from
+        // the JSON; setter is `VaipakamNFTFacet.setExternalUrlBase`.
+        string externalUrlBase;
     }
 
     event Transfer(address indexed from, address indexed to, uint256 indexed tokenId);
@@ -111,22 +132,23 @@ library LibERC721 {
         if (r != LockReason.None) revert ERC721Locked(tokenId, r);
     }
 
+    /// @dev Initialize the ERC721 surface for a fresh diamond. Only
+    ///      the per-side default image URLs seed at deploy; granular
+    ///      per-(status, isLender) overrides are set later by the
+    ///      admin via `VaipakamNFTFacet.setImageURIForStatus` (or via
+    ///      `ConfigureNFTImageURIs.s.sol`). Reverts on second call.
     function initialize(
         string memory name_,
         string memory symbol_,
-        string memory lenderActiveIPFS_,
-        string memory lenderClosedIPFS_,
-        string memory borrowerActiveIPFS_,
-        string memory borrowerClosedIPFS_
+        string memory defaultLenderImage_,
+        string memory defaultBorrowerImage_
     ) internal {
         ERC721Storage storage es = _storage();
         if (es.initialized) revert ERC721AlreadyInitialized();
         es.name = name_;
         es.symbol = symbol_;
-        es.lenderActiveIPFS = lenderActiveIPFS_;
-        es.lenderClosedIPFS = lenderClosedIPFS_;
-        es.borrowerActiveIPFS = borrowerActiveIPFS_;
-        es.borrowerClosedIPFS = borrowerClosedIPFS_;
+        es.defaultLenderImage = defaultLenderImage_;
+        es.defaultBorrowerImage = defaultBorrowerImage_;
         es.initialized = true;
     }
 

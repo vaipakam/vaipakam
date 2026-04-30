@@ -834,6 +834,70 @@ function LiveCard({
               )}
             </>
           )}
+
+          {/* Range Orders Phase 1 follow-up — surface the live position
+              traits the contract's tokenURI now exposes (Locked
+              Collateral, Claimable Now, VPFI Rebate Pending, Created
+              At). Read straight from the metadata.attributes array
+              already parsed above; falls back gracefully when an older-
+              facet NFT doesn't carry these traits. */}
+          {(() => {
+            const lockedCollateral = readAttr(metadata, "Locked Collateral");
+            const claimableNow = readAttr(metadata, "Claimable Now");
+            const vpfiRebate = readAttr(metadata, "VPFI Rebate Pending");
+            const loanState = readAttr(metadata, "Loan State");
+            const createdAt = readAttr(metadata, "Created At");
+            const showLocked = lockedCollateral && lockedCollateral !== "None";
+            const showClaimable = claimableNow && claimableNow !== "None";
+            const showVpfi = vpfiRebate && vpfiRebate !== "0";
+            const showCreated = createdAt && createdAt !== "0";
+            if (
+              !showLocked && !showClaimable && !showVpfi && !showCreated && !loanState
+            ) {
+              return null;
+            }
+            return (
+              <>
+                {loanState && (
+                  <div className="data-row">
+                    <span className="data-label">Loan State</span>
+                    <span className="data-value">{loanState}</span>
+                  </div>
+                )}
+                {showLocked && (
+                  <div className="data-row">
+                    <span className="data-label">Locked in Escrow</span>
+                    <span className="data-value">{lockedCollateral}</span>
+                  </div>
+                )}
+                {showClaimable && (
+                  <div className="data-row">
+                    <span className="data-label">Claimable Now</span>
+                    <span
+                      className="data-value"
+                      style={{ color: "var(--accent-green, #10b981)" }}
+                    >
+                      {claimableNow}
+                    </span>
+                  </div>
+                )}
+                {showVpfi && (
+                  <div className="data-row">
+                    <span className="data-label">VPFI Rebate Pending</span>
+                    <span className="data-value">{vpfiRebate} VPFI</span>
+                  </div>
+                )}
+                {showCreated && (
+                  <div className="data-row">
+                    <span className="data-label">Created</span>
+                    <span className="data-value">
+                      {new Date(Number(createdAt) * 1000).toLocaleString()}
+                    </span>
+                  </div>
+                )}
+              </>
+            );
+          })()}
         </div>
       </div>
 

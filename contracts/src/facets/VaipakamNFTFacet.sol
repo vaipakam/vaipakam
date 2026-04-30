@@ -71,33 +71,106 @@ contract VaipakamNFTFacet is IERC721, IERC721Metadata, IERC721Enumerable, Diamon
         // hazard (wallets can't tell if it's still the same collection).
         // Get the values right before the first mainnet deploy; future
         // changes mean redeploy, not in-place mutation.
-        LibERC721.initialize(
-            "Vaipakam NFT",
-            "VAIPAK",
-            "https://ipfs.io/ipfs/QmahNt61bcS6dySxy2qszmXC3AsRMoUxapttrj4WLHNc7k",
-            "https://ipfs.io/ipfs/QmahNt61bcS6dySxy2qszmXC3AsRMoUxapttrj4WLHNc7k",
-            "https://ipfs.io/ipfs/QmahNt61bcS6dySxy2qszmXC3AsRMoUxapttrj4WLHNc7k",
-            "https://ipfs.io/ipfs/QmahNt61bcS6dySxy2qszmXC3AsRMoUxapttrj4WLHNc7k"
-        );
+        //
+        // Image URIs: only the two per-side defaults seed at init;
+        // granular per-(status, isLender) overrides are populated
+        // afterwards via `setImageURIForStatus` (or via
+        // `ConfigureNFTImageURIs.s.sol` post-deploy). Default IPFS
+        // URL here is a placeholder — operators MUST swap it via the
+        // setter before mainnet launch.
+        string memory defaultIpfs =
+            "https://ipfs.io/ipfs/QmahNt61bcS6dySxy2qszmXC3AsRMoUxapttrj4WLHNc7k";
+        LibERC721.initialize("Vaipakam NFT", "VAIPAK", defaultIpfs, defaultIpfs);
         _registerNFTInterfaces();
     }
 
+    /// @notice Emitted when the image URI for a (status, isLender) pair
+    ///         is rotated. Indexers + frontends can listen for this to
+    ///         invalidate any cached `tokenURI` reads downstream.
+    event StatusImageURIUpdated(
+        LibVaipakam.LoanPositionStatus indexed status,
+        bool indexed isLender,
+        string uri
+    );
+
+    /// @notice Emitted when the per-side default image URL is rotated.
+    event DefaultImageURIUpdated(bool indexed isLender, string uri);
+
     /**
-     * @notice Overrides the four position-NFT image URIs set at initialize-time.
-     * @dev Admin-only. Lets governance rotate collection artwork without
-     *      re-running `initializeNFT()`.
+     * @notice Sets the image URI for a specific (LoanPositionStatus,
+     *         isLender) pair. Granular: changing the borrower-defaulted
+     *         art doesn't affect the lender-active art.
+     * @dev    Admin-only; ADMIN_ROLE is governance-transferable. Pass
+     *         an empty string to clear the override and fall back to
+     *         the per-side default image. Lookup chain consumed by
+     *         `tokenURI`:
+     *           1. statusImageURIs[status][isLender]
+     *           2. defaultLenderImage / defaultBorrowerImage
+     *           3. contractImageURI
+     *           4. empty string
+     * @param status   The position-status enum value to override.
+     * @param isLender `true` for lender NFTs, `false` for borrower NFTs.
+     * @param uri      Image URL (IPFS, https, or data URI).
      */
-    function setLoanImageURIs(
-        string calldata lenderActive,
-        string calldata lenderClosed,
-        string calldata borrowerActive,
-        string calldata borrowerClosed
+    function setImageURIForStatus(
+        LibVaipakam.LoanPositionStatus status,
+        bool isLender,
+        string calldata uri
     ) external onlyRole(LibAccessControl.ADMIN_ROLE) {
+        LibERC721._storage().statusImageURIs[status][isLender] = uri;
+        emit StatusImageURIUpdated(status, isLender, uri);
+    }
+
+    /**
+     * @notice Sets the per-side default image URL. Used by `tokenURI`
+     *         when no granular `(status, isLender)` override is set.
+     * @dev    Admin-only. Empty string disables the side-level default,
+     *         pushing the fallback to `contractImageURI`.
+     * @param isLender `true` for lender default, `false` for borrower.
+     * @param uri      Image URL (IPFS, https, or data URI).
+     */
+    function setDefaultImage(bool isLender, string calldata uri)
+        external
+        onlyRole(LibAccessControl.ADMIN_ROLE)
+    {
+        if (isLender) {
+            LibERC721._storage().defaultLenderImage = uri;
+        } else {
+            LibERC721._storage().defaultBorrowerImage = uri;
+        }
+        emit DefaultImageURIUpdated(isLender, uri);
+    }
+
+    /**
+     * @notice Read the resolved image URI for a given `(status, isLender)`
+     *         pair, walking the same fallback chain `tokenURI` uses.
+     *         Lets the frontend admin dashboard preview which image
+     *         will render before broadcasting an override.
+     * @return uri The resolved image URI string. Empty when no entry is
+     *             set at any level of the chain.
+     */
+    function getImageURIFor(
+        LibVaipakam.LoanPositionStatus status,
+        bool isLender
+    ) external view returns (string memory) {
+        return _resolveImageURI(status, isLender);
+    }
+
+    /// @dev Image-URI resolution. See {setImageURIForStatus} for the
+    ///      lookup-chain spec. Pure storage reads; gas-cheap.
+    function _resolveImageURI(
+        LibVaipakam.LoanPositionStatus status,
+        bool isLender
+    ) internal view returns (string memory) {
         LibERC721.ERC721Storage storage es = LibERC721._storage();
-        es.lenderActiveIPFS = lenderActive;
-        es.lenderClosedIPFS = lenderClosed;
-        es.borrowerActiveIPFS = borrowerActive;
-        es.borrowerClosedIPFS = borrowerClosed;
+        string memory specific = es.statusImageURIs[status][isLender];
+        if (bytes(specific).length > 0) return specific;
+        string memory sideDefault = isLender
+            ? es.defaultLenderImage
+            : es.defaultBorrowerImage;
+        if (bytes(sideDefault).length > 0) return sideDefault;
+        if (bytes(es.contractImageURI).length > 0) return es.contractImageURI;
+        return "";
     }
 
     function _registerNFTInterfaces() internal {
@@ -273,8 +346,6 @@ contract VaipakamNFTFacet is IERC721, IERC721Metadata, IERC721Enumerable, Diamon
         ownerOf(tokenId); // Reverts for non-existent tokens
 
         LibERC721.ERC721Storage storage es = LibERC721._storage();
-        bool isClosed = _isClosedStatus(es.nftStatuses[tokenId]);
-        bool isLender = es.isLenderRoles[tokenId];
 
         // Single-source-of-truth read for everything the metadata
         // surfaces. MetricsFacet computes loan-vs-offer fallback,
@@ -282,9 +353,16 @@ contract VaipakamNFTFacet is IERC721, IERC721Metadata, IERC721Enumerable, Diamon
         MetricsFacet.NFTPositionSummary memory s =
             MetricsFacet(address(this)).getNFTPositionSummary(tokenId);
 
-        string memory image = isLender
-            ? (isClosed ? es.lenderClosedIPFS : es.lenderActiveIPFS)
-            : (isClosed ? es.borrowerClosedIPFS : es.borrowerActiveIPFS);
+        // Image lookup walks the per-(status, isLender) → per-side
+        // default → contractImageURI chain. Granular over the prior
+        // 4-slot active/closed binary so a defaulted lender NFT can
+        // render distinct art from a repaid one.
+        string memory image = _resolveImageURI(s.nftStatus, s.isLender);
+
+        // Optional `external_url` — only emitted when an admin has
+        // configured the base URL. Empty base ⇒ field omitted, JSON
+        // stays lean.
+        string memory externalUrlField = _externalUrlField(es.externalUrlBase, s);
 
         string memory json = string(
             abi.encodePacked(
@@ -294,7 +372,11 @@ contract VaipakamNFTFacet is IERC721, IERC721Metadata, IERC721Enumerable, Diamon
                 _buildDescription(s),
                 '","image":"',
                 image,
-                '","attributes":',
+                '","background_color":"',
+                _backgroundColor(s),
+                '"',
+                externalUrlField,
+                ',"attributes":',
                 _buildAttributes(s),
                 "}"
             )
@@ -518,6 +600,61 @@ contract VaipakamNFTFacet is IERC721, IERC721Metadata, IERC721Enumerable, Diamon
         return "Unknown";
     }
 
+    /// @dev Builds the optional OpenSea `external_url` JSON fragment
+    ///      (`,"external_url":"…"`) for tokenURI. Returns an empty
+    ///      string when no base URL is configured so the JSON stays
+    ///      lean. Encodes a deep-link query so marketplace clicks
+    ///      land on the right dashboard view:
+    ///        - With a loan: `?loan=<id>&side=lender|borrower`
+    ///        - Offer-only:  `?token=<tokenId>`
+    function _externalUrlField(
+        string memory base,
+        MetricsFacet.NFTPositionSummary memory s
+    ) internal pure returns (string memory) {
+        if (bytes(base).length == 0) return "";
+        string memory query;
+        if (s.loanId != 0) {
+            query = string(abi.encodePacked(
+                "?loan=", s.loanId.toString(),
+                "&side=", s.isLender ? "lender" : "borrower"
+            ));
+        } else {
+            query = string(abi.encodePacked("?token=", s.tokenId.toString()));
+        }
+        return string(abi.encodePacked(',"external_url":"', base, query, '"'));
+    }
+
+    /// @dev OpenSea `background_color` for the position card — six-char
+    ///      lowercase hex (no `#` prefix per the spec). Pinned per
+    ///      side + terminal so a marketplace grid view differentiates
+    ///      lender / borrower / defaulted at a glance:
+    ///        - Lender (active):   forest green   (2f855a)
+    ///        - Borrower (active): steel blue     (2b6cb0)
+    ///        - Defaulted / Liquidated: muted red (c53030)
+    ///        - Closed (terminal-fine): slate     (4a5568)
+    ///      Status takes precedence over role for terminal cases so a
+    ///      defaulted lender position renders red, not green.
+    function _backgroundColor(
+        MetricsFacet.NFTPositionSummary memory s
+    ) internal pure returns (string memory) {
+        if (
+            s.loanStatus == LibVaipakam.LoanStatus.Defaulted ||
+            s.nftStatus == LibVaipakam.LoanPositionStatus.LoanDefaulted ||
+            s.nftStatus == LibVaipakam.LoanPositionStatus.LoanLiquidated
+        ) {
+            return "c53030";
+        }
+        if (
+            s.nftStatus == LibVaipakam.LoanPositionStatus.LoanClosed ||
+            s.nftStatus == LibVaipakam.LoanPositionStatus.LoanRepaid ||
+            s.loanStatus == LibVaipakam.LoanStatus.Repaid ||
+            s.loanStatus == LibVaipakam.LoanStatus.Settled
+        ) {
+            return "4a5568";
+        }
+        return s.isLender ? "2f855a" : "2b6cb0";
+    }
+
     /// @dev Offer-state vs active-loan vs resolved-loan bucket. Keeps
     ///      third-party renderers from conflating a cancellable offer with
     ///      a live claim-bearing position.
@@ -559,14 +696,14 @@ contract VaipakamNFTFacet is IERC721, IERC721Metadata, IERC721Enumerable, Diamon
      * @dev Returns a base64-encoded JSON blob describing the collection
      *      (name, description, image). Marketplaces read this to render
      *      the collection page and fall back to tokenURI for items.
-     *      Image defaults to the lender-active IPFS asset unless the admin
-     *      has set a dedicated `contractImageURI`.
+     *      Image defaults to the lender-side default image asset unless
+     *      the admin has set a dedicated `contractImageURI`.
      */
     function contractURI() external view returns (string memory) {
         LibERC721.ERC721Storage storage es = LibERC721._storage();
         string memory image = bytes(es.contractImageURI).length > 0
             ? es.contractImageURI
-            : es.lenderActiveIPFS;
+            : es.defaultLenderImage;
 
         string memory json = string(
             abi.encodePacked(
@@ -596,6 +733,30 @@ contract VaipakamNFTFacet is IERC721, IERC721Metadata, IERC721Enumerable, Diamon
         onlyRole(LibAccessControl.ADMIN_ROLE)
     {
         LibERC721._storage().contractImageURI = uri;
+    }
+
+    /**
+     * @notice Sets the base URL emitted in `tokenURI`'s OpenSea
+     *         `external_url` field. Admin-only. Marketplaces render
+     *         a "View on Vaipakam" deep-link against this URL,
+     *         appending `?loan=<id>&side=<…>` (or `?token=<id>`
+     *         when the NFT hasn't been linked to a loan yet).
+     *
+     *         Pass an empty string to omit `external_url` from the
+     *         metadata entirely (the default — leaves the JSON
+     *         lean on chains where the dApp isn't deployed).
+     *
+     *         Per chain: e.g. `https://vaipakam.com` on mainnet,
+     *         `https://testnet.vaipakam.com` on testnets, or the
+     *         operator's own fork's URL.
+     */
+    event ExternalUrlBaseUpdated(string newBase);
+    function setExternalUrlBase(string calldata newBase)
+        external
+        onlyRole(LibAccessControl.ADMIN_ROLE)
+    {
+        LibERC721._storage().externalUrlBase = newBase;
+        emit ExternalUrlBaseUpdated(newBase);
     }
 
     // ==================== EIP-2981 Royalties ====================

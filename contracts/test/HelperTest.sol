@@ -198,7 +198,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](14);
+        selectors = new bytes4[](17);
         selectors[0] = VaipakamNFTFacet.mintNFT.selector;
         selectors[1] = VaipakamNFTFacet.updateNFTStatus.selector;
         selectors[2] = VaipakamNFTFacet.burnNFT.selector;
@@ -209,11 +209,18 @@ contract HelperTest {
         selectors[7] = VaipakamNFTFacet.setContractImageURI.selector;
         selectors[8] = VaipakamNFTFacet.royaltyInfo.selector;
         selectors[9] = VaipakamNFTFacet.setDefaultRoyalty.selector;
-        selectors[10] = VaipakamNFTFacet.setLoanImageURIs.selector;
+        // Status-keyed image URI scheme (replaces the prior 4-slot
+        // setLoanImageURIs).
+        selectors[10] = VaipakamNFTFacet.setImageURIForStatus.selector;
         // IERC721Enumerable views (totalSupply, tokenByIndex, tokenOfOwnerByIndex)
         selectors[11] = bytes4(keccak256("totalSupply()"));
         selectors[12] = bytes4(keccak256("tokenByIndex(uint256)"));
         selectors[13] = bytes4(keccak256("tokenOfOwnerByIndex(address,uint256)"));
+        // OpenSea external_url admin config (Tier 2 metadata polish).
+        selectors[14] = VaipakamNFTFacet.setExternalUrlBase.selector;
+        // Status-keyed image scheme companions.
+        selectors[15] = VaipakamNFTFacet.setDefaultImage.selector;
+        selectors[16] = VaipakamNFTFacet.getImageURIFor.selector;
         return selectors;
     }
 

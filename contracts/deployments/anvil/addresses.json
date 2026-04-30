@@ -1,6 +1,6 @@
 {
   "chainId": 31337,
-  "deployedAt": "1777546625-unix",
+  "deployedAt": "1777562798-unix",
   "diamond": "0xc3e53F4d16Ae77Db1c982e75a937B9f60FE63690",
   "chainSlug": "anvil",
   "lzEid": 31337,
