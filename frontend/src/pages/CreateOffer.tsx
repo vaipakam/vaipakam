@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
-import { parseAbi, parseUnits, type Abi, type Address, type Hex, encodeFunctionData } from "viem";
+import { parseAbi, parseUnits, formatUnits, type Abi, type Address, type Hex, encodeFunctionData } from "viem";
 import { usePublicClient, useWalletClient } from "wagmi";
 import { useWallet } from "../context/WalletContext";
 import { useMode } from "../context/ModeContext";
@@ -182,6 +182,108 @@ export default function CreateOffer() {
     lockAssetContinuity,
     setField,
   ]);
+
+  // Live wallet-balance check. Compares the wallet's current balance
+  // of the asset that will be pulled at offer-create time (lender →
+  // lendingAsset, borrower-ERC20 → collateralAsset) against the
+  // required amount, and surfaces a `balanceShortfall` shape the
+  // form renders inline under the relevant input. Re-runs whenever
+  // the asset, amount, max, or wallet changes — so a user who is
+  // mid-typing sees the shortfall update in real time and can adjust
+  // before the approve / create roundtrips. Uses a 250ms debounce
+  // so each keystroke doesn't fire an RPC roundtrip.
+  useEffect(() => {
+    if (!address) {
+      setBalanceShortfall(null);
+      return;
+    }
+    type BalanceReader = {
+      balanceOf: (a: string) => Promise<bigint>;
+      decimals: () => Promise<number | bigint>;
+      symbol: () => Promise<string>;
+    };
+    const readMeta = async (
+      token: BalanceReader,
+    ): Promise<{ decimals: number; symbol: string }> => {
+      const [d, s] = await Promise.all([
+        token.decimals().catch(() => 18 as number),
+        token.symbol().catch(() => "tokens"),
+      ]);
+      return { decimals: Number(d), symbol: s };
+    };
+    let cancelled = false;
+    const handle = setTimeout(async () => {
+      try {
+        if (form.offerType === "lender" && form.assetType === "erc20" && erc20) {
+          const { decimals, symbol } = await readMeta(
+            erc20 as unknown as BalanceReader,
+          );
+          // Use amountMax if present, else amount.
+          const minStr = form.amount.trim();
+          const maxStr = form.amountMax.trim();
+          const target = maxStr !== "" ? maxStr : minStr;
+          if (target === "" || Number(target) <= 0) {
+            if (!cancelled) setBalanceShortfall(null);
+            return;
+          }
+          const need = parseUnits(target, decimals);
+          const have = await (erc20 as unknown as BalanceReader).balanceOf(
+            address as string,
+          );
+          if (cancelled) return;
+          setBalanceShortfall(
+            have < need
+              ? { have, need, decimals, symbol, side: "lender" }
+              : null,
+          );
+        } else if (
+          form.offerType === "borrower" &&
+          form.assetType === "erc20" &&
+          form.collateralAssetType === "erc20" &&
+          collateralErc20
+        ) {
+          const { decimals, symbol } = await readMeta(
+            collateralErc20 as unknown as BalanceReader,
+          );
+          const target = form.collateralAmount.trim();
+          if (target === "" || Number(target) <= 0) {
+            if (!cancelled) setBalanceShortfall(null);
+            return;
+          }
+          const need = parseUnits(target, decimals);
+          const have = await (
+            collateralErc20 as unknown as BalanceReader
+          ).balanceOf(address as string);
+          if (cancelled) return;
+          setBalanceShortfall(
+            have < need
+              ? { have, need, decimals, symbol, side: "collateral" }
+              : null,
+          );
+        } else {
+          if (!cancelled) setBalanceShortfall(null);
+        }
+      } catch {
+        // Swallow — a transient RPC blip shouldn't paint a stale or
+        // misleading shortfall warning.
+        if (!cancelled) setBalanceShortfall(null);
+      }
+    }, 250);
+    return () => {
+      cancelled = true;
+      clearTimeout(handle);
+    };
+  }, [
+    address,
+    form.offerType,
+    form.assetType,
+    form.collateralAssetType,
+    form.amount,
+    form.amountMax,
+    form.collateralAmount,
+    erc20,
+    collateralErc20,
+  ]);
   // Statically-detectable illiquid leg: any non-ERC-20 asset is illiquid by
   // definition (no Chainlink feed). ERC-20/ERC-20 pairs may still turn out
   // illiquid on-chain if the token lacks an oracle / deep pool — we can't
@@ -193,6 +295,17 @@ export default function CreateOffer() {
   const [step, setStep] = useState<SubmitStep>("form");
   const [error, setError] = useState<string | null>(null);
   const [txHash, setTxHash] = useState<string | null>(null);
+  // Live "you don't have enough X" feedback rendered under the
+  // amount/collateral input so the user catches the shortfall before
+  // hitting submit. Computed in a useEffect that re-runs as the
+  // user types — see `balanceShortfall` block below.
+  const [balanceShortfall, setBalanceShortfall] = useState<{
+    have: bigint;
+    need: bigint;
+    decimals: number;
+    symbol: string;
+    side: "lender" | "collateral";
+  } | null>(null);
 
   // Bounds come from `offerSchema.ts` so the validator, this inline
   // out-of-range check, and the Offer Book duration filter never drift
@@ -337,51 +450,27 @@ export default function CreateOffer() {
         ? payload.amountMax
         : payload.amount;
 
-      // Wallet-balance pre-check. Approvals succeed regardless of
-      // current balance (ERC-20 allowance != available funds), so a
-      // user with too little of the lending or collateral asset
-      // would see the approve step pass and the create step revert
-      // mid-flight. Catching this client-side renders an actionable
-      // error before any MetaMask popup.
-      //   - Lender ERC-20:    balance of lendingAsset    >= lenderPullAmount
-      //                       (the upper bound when ranged, else amount)
-      //   - Borrower ERC-20:  balance of collateralAsset >= collateralAmount
-      // NFT-side checks are skipped — the contract surfaces those
-      // failures clearly enough on its own.
-      type BalanceReader = { balanceOf: (a: string) => Promise<bigint> };
-      try {
-        if (form.offerType === "lender" && form.assetType === "erc20" && erc20) {
-          const bal = await (erc20 as unknown as BalanceReader).balanceOf(
-            address as string,
-          );
-          if (bal < lenderPullAmount) {
-            throw new Error(
-              `Insufficient lending-asset balance: wallet holds ${bal}, ` +
-                `offer requires ${lenderPullAmount} ` +
-                `(the maximum amount you offered to lend). ` +
-                `Top up before submitting.`,
-            );
-          }
-        } else if (
-          form.offerType === "borrower" &&
-          form.assetType === "erc20" &&
-          form.collateralAssetType === "erc20" &&
-          collateralErc20
-        ) {
-          const bal = await (
-            collateralErc20 as unknown as BalanceReader
-          ).balanceOf(address as string);
-          if (bal < payload.collateralAmount) {
-            throw new Error(
-              `Insufficient collateral balance: wallet holds ${bal}, ` +
-                `offer requires ${payload.collateralAmount}. ` +
-                `Top up before submitting.`,
-            );
-          }
-        }
-      } catch (balErr) {
-        setError(balErr instanceof Error ? balErr.message : String(balErr));
-        submit.failure(balErr);
+      // Final guard against the inline `balanceShortfall` useEffect:
+      // if the user fired submit while the inline check still flags
+      // a shortfall, refuse to call any approve/create txs. The
+      // inline UI already shows the actionable message under the
+      // relevant input.
+      if (balanceShortfall) {
+        const have = formatUnits(
+          balanceShortfall.have,
+          balanceShortfall.decimals,
+        );
+        const need = formatUnits(
+          balanceShortfall.need,
+          balanceShortfall.decimals,
+        );
+        const sym = balanceShortfall.symbol;
+        const msg =
+          balanceShortfall.side === "lender"
+            ? `Insufficient ${sym} balance: wallet holds ${have} ${sym}, offer requires ${need} ${sym}.`
+            : `Insufficient ${sym} balance: wallet holds ${have} ${sym}, offer requires ${need} ${sym}.`;
+        setError(msg);
+        submit.failure(new Error(msg));
         return;
       }
       // Permit2 eligibility: OfferFacet.createOfferWithPermit only accepts
@@ -919,6 +1008,28 @@ export default function CreateOffer() {
             </div>
           )}
 
+          {/* Live wallet-balance shortfall — see the
+              `balanceShortfall` useEffect above. Renders only on
+              the lender side (the borrower-side render lives
+              under the collateral-amount input below) and once
+              the user has typed enough to compute a meaningful
+              shortfall. Red text is the same `--accent-red`
+              token used by validation errors elsewhere on the
+              form so the visual treatment is consistent. */}
+          {balanceShortfall?.side === "lender" && (
+            <p
+              className="form-hint"
+              style={{ color: "var(--accent-red, #ef4444)", marginTop: -4 }}
+            >
+              Insufficient {balanceShortfall.symbol} balance — wallet holds{" "}
+              {formatUnits(balanceShortfall.have, balanceShortfall.decimals)}{" "}
+              {balanceShortfall.symbol}, offer requires{" "}
+              {formatUnits(balanceShortfall.need, balanceShortfall.decimals)}{" "}
+              {balanceShortfall.symbol}
+              {showAmountRange ? " (the maximum amount you offered to lend)" : ""}.
+            </p>
+          )}
+
           {isRental && (
             <div className="form-row">
               <div className="form-group">
@@ -1093,6 +1204,28 @@ export default function CreateOffer() {
                 value={form.collateralAmount}
                 onChange={(e) => setField("collateralAmount", e.target.value)}
               />
+              {/* Live shortfall hint for borrower-side ERC-20
+                  collateral pulls — see the `balanceShortfall`
+                  useEffect above. Same shape as the lender hint
+                  rendered under the amount row. */}
+              {balanceShortfall?.side === "collateral" && (
+                <span
+                  className="form-hint"
+                  style={{ color: "var(--accent-red, #ef4444)" }}
+                >
+                  Insufficient {balanceShortfall.symbol} balance — wallet holds{" "}
+                  {formatUnits(
+                    balanceShortfall.have,
+                    balanceShortfall.decimals,
+                  )}{" "}
+                  {balanceShortfall.symbol}, offer requires{" "}
+                  {formatUnits(
+                    balanceShortfall.need,
+                    balanceShortfall.decimals,
+                  )}{" "}
+                  {balanceShortfall.symbol}.
+                </span>
+              )}
             </div>
             {form.collateralAssetType !== "erc20" && (
               <div className="form-group">

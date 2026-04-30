@@ -927,6 +927,43 @@ contract OfferFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
         // path.
         delete s.matchOverride;
 
+        // ── Borrower-side excess-collateral refund (Range Orders
+        // Phase 1, symmetric with the lender-side dust-close below).
+        //
+        // The match locked `mr.reqCollateral` of collateral against
+        // the loan, but the borrower may have posted MORE at offer-
+        // create time (over-collateralized). Since borrower offers
+        // are single-fill in Phase 1, the excess can never be reused
+        // by another match — leaving it in escrow would trap the
+        // funds. Refund it to the borrower's wallet immediately so
+        // the invariant "escrow only holds collateral committed to
+        // an active offer or live loan" stays clean.
+        //
+        // ERC-20 collateral only: NFT collateral (ERC-721 / ERC-1155)
+        // is whole-or-nothing — the borrower posts exactly the token
+        // ids and quantity the offer references, so reqCollateral
+        // always equals borrowerOffer.collateralAmount and there's
+        // never overage to refund.
+        {
+            LibVaipakam.Offer storage B = s.offers[borrowerOfferId];
+            if (
+                B.collateralAssetType == LibVaipakam.AssetType.ERC20
+                && B.collateralAmount > mr.reqCollateral
+            ) {
+                uint256 excess = B.collateralAmount - mr.reqCollateral;
+                LibFacet.crossFacetCall(
+                    abi.encodeWithSelector(
+                        EscrowFactoryFacet.escrowWithdrawERC20.selector,
+                        B.creator,           // pull from borrower's escrow
+                        B.collateralAsset,
+                        B.creator,           // refund to borrower's wallet
+                        excess
+                    ),
+                    EscrowWithdrawFailed.selector
+                );
+            }
+        }
+
         // ── Lender-side post-match accounting. The borrower offer is
         // already marked `accepted = true` by `_acceptOffer`. The
         // lender offer survives unless this match exhausted it.
