@@ -84,14 +84,27 @@
   flex-wrap: wrap;
 }
 
-/* Wrapper for an action button paired with its `<InfoTip>` (i) icon.
- * The pair stays glued together when the parent `.diag-actions` row
- * wraps on narrow viewports — without this, the (i) icon could end
- * up on a different row from the button it explains. */
-.diag-action-with-info {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
+/* Mobile: the drawer is full-width (100vw). Aggressively trim the
+ * top section's vertical footprint so the events list (the actual
+ * value of the drawer) gets most of the screen. The hint text is
+ * already short; the actions row scales down via smaller padding /
+ * font-size. */
+@media (max-width: 640px) {
+  .diag-drawer {
+    padding: 0.6rem 0.75rem;
+    gap: 0.4rem;
+  }
+  .diag-hint {
+    font-size: 0.72rem;
+    line-height: 1.3;
+  }
+  .diag-actions {
+    gap: 0.35rem;
+  }
+  .diag-actions .btn {
+    padding: 6px 10px;
+    font-size: 0.78rem;
+  }
 }
 
 .diag-filters {

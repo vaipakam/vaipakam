@@ -101,6 +101,68 @@ a { color: inherit; text-decoration: none; }
 button { cursor: pointer; font-family: inherit; }
 img { max-width: 100%; display: block; }
 
+/* ── Public-page ambient backdrop ──
+ *
+ * Same dual radial-glow pattern the in-app shell uses (see
+ * `.app-layout::before/::after` in AppLayout.css). Applied via the
+ * `.public-page-glow` co-class on the wrapping <main> of any public
+ * page that wants the same depth: Buy VPFI, Analytics (PublicDashboard),
+ * NFT Verifier. Position: fixed so the glow stays anchored to the
+ * viewport as the user scrolls. pointer-events: none so the user can
+ * still click through to anything underneath. Theme-aware via the
+ * dark-mode override below. */
+.public-page-glow::before,
+.public-page-glow::after {
+  content: '';
+  position: fixed;
+  pointer-events: none;
+  z-index: 0;
+}
+
+.public-page-glow::before {
+  /* Primary glow — brand purple, top-center. */
+  top: -300px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 1200px;
+  height: 900px;
+  background: radial-gradient(
+    ellipse,
+    rgba(79, 70, 229, 0.08) 0%,
+    transparent 65%
+  );
+}
+
+.public-page-glow::after {
+  /* Secondary glow — brand-light, bottom-right, off-axis from the
+   * primary so the two don't visually merge. */
+  bottom: -200px;
+  right: -200px;
+  width: 800px;
+  height: 600px;
+  background: radial-gradient(
+    ellipse,
+    rgba(129, 140, 248, 0.06) 0%,
+    transparent 70%
+  );
+}
+
+[data-theme='dark'] .public-page-glow::before {
+  background: radial-gradient(
+    ellipse,
+    rgba(129, 140, 248, 0.07) 0%,
+    transparent 65%
+  );
+}
+
+[data-theme='dark'] .public-page-glow::after {
+  background: radial-gradient(
+    ellipse,
+    rgba(167, 139, 250, 0.05) 0%,
+    transparent 70%
+  );
+}
+
 /* ── Themed scrollbars ──
  * Applied globally so scrollbars on <html>, inner scroll containers,
  * and overflow panes all match the current theme instead of the

@@ -197,7 +197,12 @@ export function HoverTip({ text, children, placement = 'above' }: HoverTipProps)
               pointerEvents: 'none',
               opacity: coords ? 1 : 0,
               transition: 'opacity 0.15s ease',
-              zIndex: 1000,
+              // Same z-index tier as `<InfoTip>`'s bubble (see
+              // global.css comment "Above modals (z-index 1100),
+              // drawers (1200), sticky topbar"). The Diagnostics
+              // drawer sits at 1001, so the bubble must outrank it
+              // or the tooltip renders behind the drawer surface.
+              zIndex: 5000,
             }}
           >
             {text}

@@ -29,6 +29,7 @@ import {
   ShieldOff,
   Settings,
   ExternalLink,
+  Lock,
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
@@ -106,6 +107,12 @@ const BASIC_NAV = [
     to: "/app/allowances",
     icon: <ShieldOff size={20} />,
     labelKey: "appNav.allowances",
+    end: false,
+  },
+  {
+    to: "/app/data-rights",
+    icon: <Lock size={20} />,
+    labelKey: "appNav.dataRights",
     end: false,
   },
 ];

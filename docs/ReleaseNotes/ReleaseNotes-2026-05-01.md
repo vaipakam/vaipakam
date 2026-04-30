@@ -471,6 +471,101 @@ truth for chain selection — the wallet), and the BuyVPFI page
 has something useful to say to first-time visitors instead of
 a placeholder.
 
+## Subtle colour gradients on sidebar + cards
+
+Two purely-CSS additions to give the in-app and public surfaces
+a quieter sense of depth without introducing new design tokens
+or breaking theme support:
+
+- The in-app sidebar (`.app-sidebar`) now renders a vertical
+  `linear-gradient(180deg, var(--brand-bg) 0%, var(--bg-secondary) 35%)`
+  — a faint brand-tinted wash at the top fading into the
+  standard secondary surface by ~35% down. Stays within
+  existing tokens (so dark / light themes both produce the
+  same on-brand effect) and keeps the lower half of the
+  sidebar in the standard surface so the language picker /
+  footer rows remain readable.
+- All `.card` instances (in-app dashboard cards, BuyVPFI
+  marketing cards, NFT Verifier result cards, etc.) now use
+  a 165° gradient between `--bg-card` and `--bg-card-hover`
+  — a directional shading from top-left bright to
+  bottom-right slightly cooler. The token pair already
+  exists for hover states in both themes, so no new design
+  tokens were introduced.
+- The public Analytics page's `.pd-section` cards picked up
+  the same 165° gradient. They were previously referencing
+  an undefined `var(--surface)` token (resolved to "no
+  background" — transparent against the page); now they
+  match the in-app cards visually.
+
+Net effect: stacked cards on the dashboard / BuyVPFI /
+Analytics pages read as discrete surfaces instead of a flat
+panel, and the sidebar gets a subtle on-brand cue from above.
+No JavaScript change.
+
+## Data rights (GDPR / UK GDPR / CCPA) own page
+
+The broader "Download my data" / "Delete my data" pair used
+to live in the Diagnostics drawer alongside the journey-log
+controls. Two problems with that placement:
+
+- **Wrong context.** The drawer is a support-debug surface
+  ("report this issue, here's the events buffer"); a user
+  reflexively clicking "Delete my data" there could wipe
+  cookies, consent, and cached event indexes — surprising
+  and irreversible client-side.
+- **No room to caution.** A drawer row can't surface a
+  proper "what happens after deleting" itemised list.
+
+Resolution:
+
+- New `/app/data-rights` page with sidebar nav entry under
+  Allowances (`Lock` icon, `appNav.dataRights` label).
+- Two action cards: **Download my data** (immediate JSON
+  export, success-tick affordance) and **Delete my data**
+  (red left border, two-step confirm — first click arms,
+  second click in red deletes — and an itemised list of the
+  four concrete effects: cookie banner returns, journey log
+  wiped, cached event indexes purged, theme/language/mode
+  preferences reset). Explicit "on-chain positions are
+  unaffected" callout.
+- Diagnostics drawer trimmed to journey-log scope only:
+  Download / Clear act on the in-memory journey buffer (not
+  cookies / not cached event indexes), with a small inline
+  link pointing at the new page for users who want the
+  broader controls.
+
+Right-to-access + right-to-erasure are still satisfied
+end-to-end; the controls just live in the right place now.
+
+## i18n sync deferred
+
+Today's session added new English keys across multiple
+namespaces:
+
+- `lenderDiscountCard.consentMissing*` / `consentEnabledNoVpfi*`
+  (Lender Yield-Fee Discount card consent banner).
+- `legalGate.englishOnlyBody` / `translationPendingTitle` /
+  `translationPendingBody` (English-only notice copy
+  reworded — no longer promises a future translation).
+- `buyVpfi.title` / `buyVpfi.preconnect.*` (BuyVPFI
+  pre-connect marketing block).
+- `offerBookPage.connectTitle` / `connectBody`,
+  `loanDetails.connectTitle` / `connectBody` (wallet-gating
+  empty states for OfferBook + LoanDetails).
+- `appNav.dataRights`, `dataRights.*` (new Data Rights page).
+- `diagnostics.journeyBufferScope`, `downloadJourney*`,
+  `clearJourney*`, `dataRightsLink` (Diagnostics drawer
+  rewire).
+
+i18next's `fallbackLng: 'en'` chain renders these as the
+English text in every other locale until the canonical
+`npm run translate` step runs. So nothing is broken in the
+non-English UIs — just untranslated for these strings. Run
+`ANTHROPIC_API_KEY=… npm run translate` from `frontend/` to
+sync. Review the diff and commit alongside the en.json
+changes.
+
 ## Outstanding for the testnet redeploy gate
 
 Before fresh testnet diamonds can land:

@@ -268,7 +268,7 @@ export default function PublicDashboard() {
   return (
     <>
       <Navbar />
-      <main className="public-dashboard">
+      <main className="public-dashboard public-page-glow">
         <div className="container">
           <header className="pd-header">
             <div>

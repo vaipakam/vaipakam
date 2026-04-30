@@ -15,21 +15,9 @@
 
 - [ ] Provide notification, not only on HF health, but also on all other major transactions based on user config. Also mention that notification also costs user (if any)
 
-- [ ] Provide colour gradients in the left side panel inside the app and also in each and every card in the app
-      Also the cards in Buy VPI page, NFT Veifier page and Analytics page.
-
 - [ ] Check if all the links in the page is working fine including the links in footer and in all other places
 
 - [ ] Need to have a separate ID for each reported error on github from our website, so that we can cross check with that id in our system to see if that error really come from website and thats the error that it really said or is it just manually created issue post or any thing in the error has been modified except for the section that says `<!-- Please describe in your own words what you were trying to do. -->` from user. so that on real dispute if any we can cross check it from our end. hope in defi no such things are supported, but still we need to have things in place.
-
-- [ ] Bring the
-
-```
-Data rights (GDPR / CCPA)
-Download my data and Delete my data
-```
-
-in a separate page inside the app and provide a link in the left side panel, provide download and clear button in Report issue (diagnostics. because the ) drawer Delete my data deletes even the cookies and all other related data. Just caution the user, before deleting my data, what happens after deleting it.
 
 - [ ] Move Terms of service and privacy policy to required folder inside /frontend
 
@@ -37,6 +25,8 @@ in a separate page inside the app and provide a link in the left side panel, pro
 
 ---
 
+- [x] Provide colour gradients in the left side panel inside the app and also in each and every card in the app — vertical brand-bg → bg-secondary wash on `.app-sidebar`, 165° gradient between `--bg-card` and `--bg-card-hover` on `.card` (in-app) and `.pd-section` (public Analytics). Subtle, theme-aware, applies to every card on Dashboard / Buy VPFI / NFT Verifier / Analytics automatically.
+- [x] Bring Data rights (GDPR / CCPA) Download/Delete to a separate page in the left side panel — new `/app/data-rights` page with itemised "what gets cleared" list + two-step confirm; sidebar nav entry under Allowances; Diagnostics drawer's broader pair removed and replaced with narrower journey-log Download/Clear + a small link to the new page.
 - [x] In mobile inside app in top bar, the chain selector is appearing near the connect wallet button even before the wallet got connected, I hope that chain selector is not required at all, as of now we already combined with wallet connect button, what do you say? — dropped pre-connect on every viewport (mobile + desktop). Standalone picker now only renders when wallet is connected but on an unsupported chain (the one actionable recovery state). Pre-connect viewer auto-uses canonical Base Sepolia (already the DEFAULT_CHAIN); post-connect picker is folded into WalletMenu.
 - [x] Topbar chain visibility — replaced WalletMenu's tiny ChainIcon with **icon + chain name** pill so the user always knows which network they're transacting on. OfferBook + LoanDetails are now wallet-gated like every other in-app page (no more pre-connect read-only render). BuyVPFI's pre-connect placeholder replaced with a marketing block (tiered fee discount + staking yield + how-it-works + Analytics page link for protocol stats). NFT Verifier stays chain-agnostic (it already walks every CHAIN_REGISTRY entry to match a pasted address).
 - [x] Change the icons for Loans as lender and loans as borrower, it looks nice but we need to either have different icon or need to remove the icon, because the icon for `as lender` shows green and trending higher, but for `as borrower` shows amber colour and graph trending down (which is not good to look from borrower perspective)
