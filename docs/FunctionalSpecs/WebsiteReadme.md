@@ -121,6 +121,7 @@ Current connected-app surface expectations:
 - `Offer Book` should keep market browsing filterable by side, asset, status, liquidity, duration, and per-side count; market-rate annotations should use a filter-scoped recent-acceptance anchor with signed deltas and a mobile-friendly explanatory tooltip
 - closed / filled offer rows should link to the loan they created when an `OfferAccepted(offerId, acceptor, loanId)` event is available
 - `Create Offer` should disable submit until full form validation passes, with typed validator error codes mapped through i18n, and should show token-identification trust blocks under address fields so users can distinguish canonical assets from unknown or suspicious contracts
+- Range Orders controls should appear only when the corresponding live protocol flags are enabled. Basic mode should keep the existing single amount / single rate flow; Advanced mode may expose min / max amount and min / max rate inputs, approve or Permit2-sign the upper amount bound, and show live balance warnings before submission.
 - `Loan Details` should show the live loan state, role-gated actions, a chronological on-chain timeline, claimable-state action bar, and precise event breakdowns for settlement splits, fallback collateral allocations, partial repayments, swap retries, and VPFI rebates
 - `Activity` rows that reference a loan should use a clickable `Loan #X` pill linking to that loan's full details page
 - `Claim Center` is the home for loan claims and platform-interaction rewards; the former standalone in-app `Rewards` page should not be treated as a live route
@@ -154,6 +155,7 @@ Keeper-bot reference UX / ops requirements:
 
 - Vaipakam should support a standalone public keeper-bot reference implementation for third-party liquidators once mainnet selectors are stable
 - the bot should mirror the frontend / worker liquidation route orchestration: list active loans, read Health Factor, quote 0x / 1inch / UniV3 / Balancer V2, rank routes, and submit `triggerLiquidation`
+- the bot may also include a Range Orders matcher detector: page active offers, bucket compatible lender / borrower candidates, call match preview, submit `matchOffers` for valid pairs, respect per-tick preview / submit caps, and keep polling quietly while the partial-fill master flag is off
 - the public bot documentation should describe setup, chain coverage, optional aggregator API keys, logging, MEV-protection options, and clear scope limits
 - bot ABI files should be generated from the monorepo contract surface rather than maintained as hand-written selector strings
 
@@ -226,6 +228,13 @@ Reward-claiming UX:
 - if the network is unsupported or the wallet is not connected, the UI should clearly explain that rewards can only be claimed on supported lending chains
 - reward data should be fetched from the Diamond on the currently connected chain using the existing hooks and helpers where appropriate
 - the shared fee-discount consent flag is separate from reward claiming and must not gate reward visibility or reward-claim actions
+
+Activity and local log-index requirements:
+
+- the frontend log index should be the common source for Activity, Loan Details timelines, reward lifetime totals, filled-offer links, cancelled-offer reconstruction, staking / interaction claim history, and Range Orders match / close events
+- cache-reader migrations may reconstruct newly derived fields from already-cached events on hydrate when the old cache captured the necessary event data
+- adding brand-new event topics to the `getLogs` allow-list should bump the cache key so historical events are captured once through a deliberate rescan
+- user-facing success states for writes must be driven by successful transaction receipts, not merely by inclusion in a block; reverted receipts should propagate as errors across shared Diamond and ERC-20 helpers
 
 Unstaking VPFI:
 

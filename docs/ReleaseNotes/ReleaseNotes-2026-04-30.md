@@ -565,6 +565,16 @@ get range-orders without multi-match support).
 - Testnet redeploy of the feat-branch contracts (deferred —
   `main` is what the testnets currently run; merge gates
   redeploy).
+- Matcher kickback BPS hardcoded as a constant — flagged as a
+  Phase 2 governance-economics item per the original plan
+  ("dial up to 5-10% if community bot operators need a stronger
+  incentive"). **Addressed 2026-05-01** — see
+  [`ReleaseNotes-2026-05-01.md`](./ReleaseNotes-2026-05-01.md).
+- `OfferFacet` runtime bytecode exceeds the EIP-170 24576-byte
+  ceiling (~28KB after Range Orders Phase 1 work). Anvil
+  bootstrap currently relies on `--code-size-limit 50000` to
+  deploy; mainnet has no such override. **Tracked for a split**
+  — see the 2026-05-01 release notes.
 
 ## Range Orders Phase 1 — post-PR follow-ups
 

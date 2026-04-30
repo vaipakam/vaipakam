@@ -235,6 +235,19 @@ The protocol charges a **Yield Fee of `1%`** on all interest accrued by lenders.
 
 This fee is automatically collected and directed to Treasury for protocol sustainability, buybacks, reward distribution, and ecosystem growth.
 
+### 5a. Loan Initiation Fee Matcher Share
+
+For ERC-20 loans, the borrower-facing `Loan Initiation Fee` remains the normal fee source documented in the borrower VPFI path below. When a loan is initiated by a permissionless Range Orders matcher, a configurable share of the treasury-directed LIF flow is paid to the matcher / relayer that submitted the transaction.
+
+Rules:
+
+- the default matcher share is `1%` of the LIF amount that would otherwise flow to treasury
+- governance may tune the matcher share through live protocol config, with zero meaning "use the default"
+- the setter should enforce a bounded maximum so a bad governance or admin action cannot accidentally starve Treasury
+- the matcher share applies to both the lending-asset LIF path and the VPFI LIF custody path; for deferred VPFI settlements, the matched loan must retain the matcher address so the share can be paid on proper settlement or forfeiture
+- the frontend and bot should read the live matcher-fee BPS from `getProtocolConfigBundle()` where they display economics or compute expected match outcomes
+- this incentive is intentionally compatible with permissionless matching: community bots can compete to find valid pairs, while protocol logic still determines terms and protects both offer creators
+
 ---
 
 ## 6. Fee Discounts and VPFI Utility
