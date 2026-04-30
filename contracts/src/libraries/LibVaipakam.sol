@@ -1567,12 +1567,30 @@ library LibVaipakam {
     }
 
     /// @dev Range Orders Phase 1 — set by matchOffers, read by
-    ///      LoanFacet._copyFinancialFields, cleared post-match. See
-    ///      `Storage.matchOverride` for full semantics.
+    ///      LoanFacet._copyFinancialFields + OfferFacet._acceptOffer,
+    ///      cleared post-match. See `Storage.matchOverride` for full
+    ///      semantics. Carries both the concrete match terms (amount /
+    ///      rateBps / collateralAmount) AND the address-resolution
+    ///      override (counterparty / matcher) needed when matchOffers
+    ///      processes a lender offer with msg.sender = bot rather than
+    ///      a counterparty.
     struct MatchOverride {
+        // Match terms read by LoanFacet._copyFinancialFields.
         uint256 amount;
         uint256 rateBps;
         uint256 collateralAmount;
+        // Address-resolution override read by OfferFacet._acceptOffer.
+        // counterparty: the OTHER party in the match (= the borrower
+        // when matchOffers processes a lender offer). _acceptOffer
+        // uses this in place of msg.sender for sanctions/country/KYC
+        // checks + the borrower-resolution branch + the borrower
+        // collateral pull (which is SKIPPED when override active
+        // because the borrower already escrowed at borrower-offer
+        // create time).
+        address counterparty;
+        // matcher: receives the 1% LIF kickback. Same as msg.sender on
+        // the legacy acceptOffer path (set client-side from msg.sender
+        // there), distinct from msg.sender on the matchOffers path.
         address matcher;
         bool active;
     }

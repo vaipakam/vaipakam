@@ -876,19 +876,43 @@ contract OfferFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
         // ── State mutation: install the match override so
         // `LoanFacet._copyFinancialFields` populates the new loan with
         // the midpoint match terms instead of the lender offer's raw
-        // amount/rate/collateral fields.
+        // amount/rate/collateral fields. Also captures the address-
+        // resolution data so `_acceptOffer` doesn't conflate the
+        // matcher (msg.sender — bot) with the actual counterparty:
+        //   - `counterparty` = the lender-offer's creator (the OTHER
+        //     party to the borrower offer being processed). Used for
+        //     sanctions/country/KYC screening and lender/borrower role
+        //     resolution inside `_acceptOffer`. Without this, the
+        //     legacy `acceptor = msg.sender` path would mis-pull
+        //     principal + LIF from the bot's escrow instead of the
+        //     real lender's escrow.
+        //   - `matcher` = `msg.sender`. Receives the 1% LIF kickback
+        //     synchronously on lender-asset matches and asynchronously
+        //     (at terminal) on VPFI matches via `loan.matcher`.
         LibVaipakam.MatchOverride storage mo = s.matchOverride;
         mo.amount = mr.matchAmount;
         mo.rateBps = mr.matchRateBps;
         mo.collateralAmount = mr.reqCollateral;
+        mo.counterparty = s.offers[lenderOfferId].creator;
         mo.matcher = msg.sender;
         mo.active = true;
 
         // Reuse `_acceptOffer`'s escrow + LIF + NFT-mint + initiateLoan
-        // plumbing by acting as the borrower-creator's "self-match" via
-        // the borrower offer (which is single-fill, so it gets fully
-        // consumed here). The acceptor's fallback consent is implicit
-        // — the borrower already consented at create time.
+        // plumbing by processing the BORROWER offer with the lender as
+        // injected counterparty. Picking the borrower offer (rather
+        // than the lender offer) means:
+        //   - `offer.offerType == Borrower`, so the line-1241
+        //     borrower-collateral pull block naturally short-circuits
+        //     (its existing comment: "already in escrow for Borrower
+        //     offers") — the borrower's collateral was pre-escrowed at
+        //     borrower-offer create time.
+        //   - `offer.creator == borrower`, so the loan correctly
+        //     records the borrower-offer's creator as the borrower.
+        //   - `offer.accepted = true` (line ~1304) flips the borrower
+        //     offer to terminal, which is what we want — borrower-side
+        //     is single-fill in Phase 1.
+        // The acceptor's fallback consent is implicit — the lender
+        // already consented at lender-offer create time.
         loanId = _acceptOffer(
             borrowerOfferId,
             /* acceptorFallbackConsent */ true,
@@ -996,14 +1020,29 @@ contract OfferFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
         if (offer.creator == address(0)) revert InvalidOffer();
         if (offer.accepted) revert OfferAlreadyAccepted();
 
+        // ── Range Orders Phase 1 — address-resolution override ────────
+        // When matchOffers is in flight (matchOverride.active), msg.sender
+        // is the matcher (= bot, third party). The actual COUNTERPARTY
+        // to the offer being processed is matchOverride.counterparty (= the
+        // borrower-offer's creator when the lender offer is being
+        // processed via matchOffers). Sanctions/country/KYC checks +
+        // role resolution must use the real party, not the bot. The
+        // matcher (= LIF kickback recipient) is matchOverride.matcher.
+        // On the legacy acceptOffer path, override.active = false; both
+        // `acceptor` and `matcher` resolve to msg.sender (preserving
+        // pre-Phase-1 behaviour byte-identically).
+        LibVaipakam.MatchOverride storage moAddr = s.matchOverride;
+        address acceptor = moAddr.active ? moAddr.counterparty : msg.sender;
+        address matcher = moAddr.active ? moAddr.matcher : msg.sender;
+
         // Phase 4.3 — address-level sanctions screening on both sides
         // of the match. The acceptor's check is obvious; the creator's
         // catches the edge case where a user was clean when they
         // posted the offer but was sanctioned before anyone matched.
         // No-op on chains where governance has not configured the
         // oracle address.
-        if (LibVaipakam.isSanctionedAddress(msg.sender)) {
-            revert ProfileFacet.SanctionedAddress(msg.sender);
+        if (LibVaipakam.isSanctionedAddress(acceptor)) {
+            revert ProfileFacet.SanctionedAddress(acceptor);
         }
         if (LibVaipakam.isSanctionedAddress(offer.creator)) {
             revert ProfileFacet.SanctionedAddress(offer.creator);
@@ -1019,7 +1058,7 @@ contract OfferFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
         string memory creatorCountry = ProfileFacet(address(this))
             .getUserCountry(offer.creator);
         string memory acceptorCountry = ProfileFacet(address(this))
-            .getUserCountry(msg.sender);
+            .getUserCountry(acceptor);
         if (
             keccak256(abi.encodePacked(creatorCountry)) !=
             keccak256(abi.encodePacked(acceptorCountry))
@@ -1045,7 +1084,7 @@ contract OfferFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
         uint256 valueUSD = _calculateTransactionValueUSD(offer);
         if (
             !ProfileFacet(address(this)).meetsKYCRequirement(offer.creator, valueUSD) ||
-            !ProfileFacet(address(this)).meetsKYCRequirement(msg.sender, valueUSD)
+            !ProfileFacet(address(this)).meetsKYCRequirement(acceptor, valueUSD)
         ) {
             revert KYCRequired();
         }
@@ -1057,11 +1096,11 @@ contract OfferFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
 
         if (offer.offerType == LibVaipakam.OfferType.Lender) {
             lender = offer.creator;
-            borrower = msg.sender;
+            borrower = acceptor;
             lenderEscrow = getUserEscrow(lender);
             borrowerEscrow = getUserEscrow(borrower);
         } else {
-            lender = msg.sender;
+            lender = acceptor;
             borrower = offer.creator;
             lenderEscrow = getUserEscrow(lender);
             borrowerEscrow = getUserEscrow(borrower);
@@ -1113,14 +1152,13 @@ contract OfferFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
 
                 if (initiationFee > 0) {
                     // Range Orders Phase 1 — 1% LIF matcher kickback.
-                    // `msg.sender` of `acceptOffer` is the matcher in
-                    // the legacy single-value path (same person who
-                    // discovered + triggered the match). Future
-                    // `matchOffers` entry has the bot as msg.sender.
-                    // Either way: 99% to treasury, 1% to msg.sender.
-                    // Splits inline so a single LIF flow never lands
-                    // 100% in either bucket. See design doc §"1% match
-                    // fee mechanic" + LibOfferMatch.matcherShareOf.
+                    // `matcher` resolves to msg.sender on the legacy
+                    // acceptOffer path (same person who triggered the
+                    // match). Under matchOffers, matcher is the bot
+                    // recorded in the matchOverride slot. Either way:
+                    // 99% to treasury, 1% to matcher. Splits inline so
+                    // a single LIF flow never lands 100% in either
+                    // bucket. See design §"1% match fee mechanic".
                     uint256 matcherCut =
                         LibOfferMatch.matcherShareOf(initiationFee);
                     uint256 treasuryCut = initiationFee - matcherCut;
@@ -1144,7 +1182,7 @@ contract OfferFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
                                 EscrowFactoryFacet.escrowWithdrawERC20.selector,
                                 lender,
                                 offer.lendingAsset,
-                                msg.sender,
+                                matcher,
                                 matcherCut
                             ),
                             EscrowWithdrawFailed.selector
@@ -1278,13 +1316,17 @@ contract OfferFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
         // Range Orders Phase 1 — record the matcher on the loan so the
         // VPFI-path 1% LIF kickback (deferred to terminal in
         // `LibVPFIDiscount.settleBorrowerLifProper` /
-        // `forfeitBorrowerLif`) knows where to route. msg.sender is the
-        // acceptor in the legacy single-value path; under the future
-        // `matchOffers` entry it's the bot. Stored unconditionally —
-        // the lender-asset path's matcher fee was already paid above
-        // synchronously, so this only matters for VPFI-path loans, but
-        // recording on every loan keeps the read cheap and uniform.
-        s.loans[loanId].matcher = msg.sender;
+        // `forfeitBorrowerLif`) knows where to route. On the legacy
+        // `acceptOffer` path, `matcher` resolves to `msg.sender` (the
+        // acceptor — same person who triggered the match). Under
+        // `matchOffers`, `matcher` resolves via the matchOverride slot
+        // to the bot/relayer that submitted the match (NOT the
+        // borrower-offer's creator, which would otherwise be
+        // `msg.sender` of the inner _acceptOffer call frame). Stored
+        // unconditionally — lender-asset paths already paid the matcher
+        // synchronously above, so this only matters for VPFI-path loans,
+        // but recording on every loan keeps the read cheap and uniform.
+        s.loans[loanId].matcher = matcher;
 
         // Update offer
         offer.accepted = true;
