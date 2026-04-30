@@ -382,6 +382,35 @@ Continuing the same polish batch as above:
    the `fullWidth` branch so it matches the sibling "Launch
    App" CTA.
 
+## In-app pre-connect chain selector dropped
+
+Inside the app, the topbar's standalone chain switcher used
+to render next to the Connect Wallet button whenever the
+wallet was disconnected (so a pre-connect viewer could pick
+which chain's read-only data to view). The chip crowded the
+right edge of the topbar without giving most users a useful
+action — pre-connect viewers almost always want the canonical
+default chain, and the existing read-only fallback
+(`DEFAULT_CHAIN`, currently Base Sepolia via
+`VITE_DEFAULT_CHAIN_ID=84532`) already routes them there.
+Outside-app pages (landing, public Analytics, public Buy
+VPFI) never had a pre-connect topbar picker in the first
+place; the in-app surface was the lone outlier.
+
+Change: the standalone chain switcher is now dropped from
+the topbar pre-connect on every viewport (mobile + desktop).
+The chip still renders when the wallet IS connected but on
+an unsupported chain — that's an actionable recovery state
+and the switcher is the right affordance there. When fully
+connected on a supported chain, the chain picker is folded
+into `<WalletMenu>` instead, same as before.
+
+No JavaScript state change beyond the conditional itself —
+the picker is simply not mounted when `!address`. A power
+user who explicitly wants to preview a non-default chain
+pre-connect can still do so via the public Analytics page's
+in-page chain picker, which is preserved.
+
 ## Outstanding for the testnet redeploy gate
 
 Before fresh testnet diamonds can land:

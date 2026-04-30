@@ -33,12 +33,11 @@ in a separate page inside the app and provide a link in the left side panel, pro
 
 - [ ] Move Terms of service and privacy policy to required folder inside /frontend
 
-- [ ] In mobile inside app in top bar, the chain selector is appearing near the connect wallet button even before the wallet got connected, I hope that chain selector is not required at all, as of now we already combined with wallet connect button, what do you say?
-
 - [ ] Is it possible to ensure even for cross chain that only after the required ETH received in treasury, the equivalent amount of VPFI will be minted and send to the same wallet from where the ETH has been came from?
 
 ---
 
+- [x] In mobile inside app in top bar, the chain selector is appearing near the connect wallet button even before the wallet got connected, I hope that chain selector is not required at all, as of now we already combined with wallet connect button, what do you say? — dropped pre-connect on every viewport (mobile + desktop). Standalone picker now only renders when wallet is connected but on an unsupported chain (the one actionable recovery state). Pre-connect viewer auto-uses canonical Base Sepolia (already the DEFAULT_CHAIN); post-connect picker is folded into WalletMenu.
 - [x] Change the icons for Loans as lender and loans as borrower, it looks nice but we need to either have different icon or need to remove the icon, because the icon for `as lender` shows green and trending higher, but for `as borrower` shows amber colour and graph trending down (which is not good to look from borrower perspective)
 - [x] In "translation pending" notice, say like this is available only in English. don't say it may be avialble in future update.
 - [x] Center the connect wallet inside the button which is on top bar, so that in mobile it matches launch app button appearance

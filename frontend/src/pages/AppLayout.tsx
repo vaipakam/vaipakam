@@ -357,13 +357,18 @@ export default function AppLayout() {
           </button>
 
           <div className="topbar-right">
-            {/* When disconnected or on an unsupported chain, the
-             *  chain switcher is the standalone read-only mode picker.
-             *  When fully connected, the chain switcher slots between
-             *  the wallet pill and the disconnect button (see below)
-             *  so all session-state controls live as inline siblings
-             *  rather than nested inside a popover. */}
-            {(!address || !isCorrectChain) && <ChainSwitcher />}
+            {/* The standalone chain switcher only renders when the
+             *  wallet is connected but on an unsupported chain — the
+             *  one actionable state where the user needs the picker
+             *  as a recovery affordance. Pre-connect viewers
+             *  (`!address`) auto-route to the canonical default
+             *  chain (Base Sepolia via `VITE_DEFAULT_CHAIN_ID`),
+             *  which is the right read-only fallback; the picker
+             *  added clutter next to the Connect Wallet button
+             *  without giving most users a useful action there.
+             *  When fully connected on a supported chain, the chain
+             *  picker is folded into `<WalletMenu>` instead. */}
+            {address && !isCorrectChain && <ChainSwitcher />}
 
             {!address ? (
               <ConnectWalletButton className="btn-sm" />
