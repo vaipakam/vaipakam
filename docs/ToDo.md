@@ -55,7 +55,7 @@ Whoa there!
 Your request URL is too long.
 ```
 
-We need to trim, unnecessary details, and / or may be cut short the events from 15+5 to 10+2 what do you say?
+We need to trim, unnecessary details, and / or may be cut short the events from 15+5 to 10+2 what do you say? if it exceeds the threshold of x characters, x need to be configurable
 
 - [ ] Move Terms of service and privacy policy to required folder inside /frontend
 

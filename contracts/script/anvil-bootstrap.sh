@@ -86,10 +86,10 @@ export ADMIN_ADDRESS="$ADMIN_ADDR"
 export TREASURY_ADDRESS="$TREASURY_ADDR"
 
 echo "[1/5] DeployDiamond"
-forge script script/DeployDiamond.s.sol --rpc-url "$RPC" --broadcast --disable-code-size-limit --slow
+forge script script/DeployDiamond.s.sol --rpc-url "$RPC" --broadcast --slow
 
 echo "[2/5] DeployTestnetLiquidityMocks (mUSDC, mWBTC, mock WETH, oracles, Univ3)"
-forge script script/DeployTestnetLiquidityMocks.s.sol --rpc-url "$RPC" --broadcast --disable-code-size-limit --slow
+forge script script/DeployTestnetLiquidityMocks.s.sol --rpc-url "$RPC" --broadcast --slow
 
 # Etch Multicall3 at the canonical address. The frontend's
 # `lib/multicall.ts` calls `aggregate3` at
@@ -122,10 +122,10 @@ cast rpc anvil_setCode \
 echo "    Multicall3 etched (mock at $MULTICALL3_DEPLOYED → canonical 0xcA11…cA11)"
 
 echo "[4/5] BootstrapAnvil (flip Range Orders master flags ON)"
-forge script script/BootstrapAnvil.s.sol --rpc-url "$RPC" --broadcast --disable-code-size-limit --slow
+forge script script/BootstrapAnvil.s.sol --rpc-url "$RPC" --broadcast --slow
 
 echo "[5/5] SeedAnvilOffers (one matchable lender + borrower pair)"
-forge script script/SeedAnvilOffers.s.sol --rpc-url "$RPC" --broadcast --disable-code-size-limit --slow
+forge script script/SeedAnvilOffers.s.sol --rpc-url "$RPC" --broadcast --slow
 
 echo
 echo "=== Anvil playground ready ==="
