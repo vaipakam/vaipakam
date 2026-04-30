@@ -29,6 +29,7 @@ import VPFIDiscountConsentCard from '../components/app/VPFIDiscountConsentCard';
 import { RewardsSummaryCard } from '../components/app/RewardsSummaryCard';
 import { Pager } from '../components/app/Pager';
 import { CardInfo } from '../components/CardInfo';
+import { HoverTip } from '../components/HoverTip';
 import { Picker } from '../components/Picker';
 import { Users, Activity as ActivityIcon, ListOrdered } from 'lucide-react';
 import './Dashboard.css';
@@ -309,30 +310,6 @@ export default function Dashboard() {
           they became). */}
       {address && (
         <div style={{ marginTop: 16 }}>
-          <div
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: 8,
-              flexWrap: 'wrap',
-              marginBottom: 8,
-            }}
-          >
-            <Picker<MyOfferStatus>
-              icon={<ListOrdered size={14} />}
-              ariaLabel={t('myOffersTable.statusFilter')}
-              triggerPrefix={t('myOffersTable.statusFilter')}
-              value={myOfferStatus}
-              onSelect={setMyOfferStatus}
-              minWidth={170}
-              items={[
-                { value: 'active', label: t('myOffersTable.statusActive') },
-                { value: 'filled', label: t('myOffersTable.statusFilled') },
-                { value: 'cancelled', label: t('myOffersTable.statusCancelled') },
-                { value: 'all', label: t('common.all') },
-              ]}
-            />
-          </div>
           <MyOffersTable
             rows={myOfferRows}
             onCancel={async (offerId) => {
@@ -361,9 +338,33 @@ export default function Dashboard() {
             subtitle={t('myOffersTable.subtitle', { count: myOfferRows.length })}
             cardHelpId="offer-book.your-active-offers"
             headerAction={
-              <Link to="/app/create-offer" className="btn btn-primary btn-sm">
-                <PlusCircle size={16} /> {t('dashboard.newOffer')}
-              </Link>
+              <>
+                {/* Status filter sits inline with the New Offer button
+                    (status chip first, action button after) so the
+                    card title row reads "Your Offers · n offers
+                    [Status: …] [+ New Offer]" left to right. The
+                    filter previously rendered outside the card; moved
+                    in per ToDo polish so the user doesn't lose track
+                    of which filter is in effect when they scroll the
+                    table. */}
+                <Picker<MyOfferStatus>
+                  icon={<ListOrdered size={14} />}
+                  ariaLabel={t('myOffersTable.statusFilter')}
+                  triggerPrefix={t('myOffersTable.statusFilter')}
+                  value={myOfferStatus}
+                  onSelect={setMyOfferStatus}
+                  minWidth={170}
+                  items={[
+                    { value: 'active', label: t('myOffersTable.statusActive') },
+                    { value: 'filled', label: t('myOffersTable.statusFilled') },
+                    { value: 'cancelled', label: t('myOffersTable.statusCancelled') },
+                    { value: 'all', label: t('common.all') },
+                  ]}
+                />
+                <Link to="/app/create-offer" className="btn btn-primary btn-sm">
+                  <PlusCircle size={16} /> {t('dashboard.newOffer')}
+                </Link>
+              </>
             }
           />
         </div>
@@ -471,6 +472,7 @@ export default function Dashboard() {
                   <SortTh sortKey="role" label="Role" sortBy={sortBy} sortDir={sortDir} onToggle={toggleSort} />
                   <SortTh sortKey="positionNft" label="Position NFT" sortBy={sortBy} sortDir={sortDir} onToggle={toggleSort} />
                   <SortTh sortKey="principal" label="Principal" sortBy={sortBy} sortDir={sortDir} onToggle={toggleSort} />
+                  <th>Collateral</th>
                   <SortTh sortKey="rate" label="Rate (APR)" sortBy={sortBy} sortDir={sortDir} onToggle={toggleSort} />
                   <SortTh sortKey="duration" label="Duration" sortBy={sortBy} sortDir={sortDir} onToggle={toggleSort} />
                   <SortTh sortKey="ltv" label="LTV" sortBy={sortBy} sortDir={sortDir} onToggle={toggleSort} />
@@ -502,16 +504,17 @@ export default function Dashboard() {
                       </span>
                     </td>
                     <td className="mono">
-                      <Link
-                        to={`/nft-verifier?id=${(loan.role === 'lender' ? loan.lenderTokenId : loan.borrowerTokenId).toString()}`}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        data-tooltip="Verify on-chain metadata (opens in new tab)"
-                        style={{ color: 'var(--brand)', display: 'inline-flex', alignItems: 'center', gap: 4 }}
-                      >
-                        #{(loan.role === 'lender' ? loan.lenderTokenId : loan.borrowerTokenId).toString()}
-                        <ExternalLink size={12} />
-                      </Link>
+                      <HoverTip text="Verify on-chain metadata (opens in new tab)">
+                        <Link
+                          to={`/nft-verifier?id=${(loan.role === 'lender' ? loan.lenderTokenId : loan.borrowerTokenId).toString()}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          style={{ color: 'var(--brand)', display: 'inline-flex', alignItems: 'center', gap: 4 }}
+                        >
+                          #{(loan.role === 'lender' ? loan.lenderTokenId : loan.borrowerTokenId).toString()}
+                          <ExternalLink size={12} />
+                        </Link>
+                      </HoverTip>
                     </td>
                     <td>
                       {/* Unified principal renderer — handles ERC20
@@ -527,6 +530,26 @@ export default function Dashboard() {
                         chainId={activeChain?.chainId ?? DEFAULT_CHAIN.chainId}
                       />
                     </td>
+                    <td>
+                      {/* Collateral leg — same renderer as principal so
+                          ERC-20 amount, ERC-721 `NFT #id`, and ERC-1155
+                          `Q × NFT #id` all show consistently. Empty
+                          asset address (rare — historical zero-address
+                          mock loans) renders as a dash to avoid the
+                          renderer flagging an "unknown" asset. */}
+                      {loan.collateralAsset &&
+                      loan.collateralAsset !== '0x0000000000000000000000000000000000000000' ? (
+                        <PrincipalCell
+                          assetType={loan.collateralAssetType}
+                          asset={loan.collateralAsset}
+                          amount={loan.collateralAmount}
+                          tokenId={loan.collateralTokenId}
+                          chainId={activeChain?.chainId ?? DEFAULT_CHAIN.chainId}
+                        />
+                      ) : (
+                        <span style={{ opacity: 0.5 }}>—</span>
+                      )}
+                    </td>
                     <td>{bpsToPercent(loan.interestRateBps)}</td>
                     <td>{loan.durationDays.toString()} days</td>
                     <td><LoanLtvCell risk={risks.get(loan.id.toString())} /></td>
@@ -539,13 +562,14 @@ export default function Dashboard() {
                     <td>
                       <div style={{ display: 'inline-flex', gap: 6, alignItems: 'center' }}>
                         {unclaimedLoanIds.has(loan.id.toString()) && (
-                          <Link
-                            to={`/app/loans/${loan.id.toString()}`}
-                            className="btn btn-primary btn-sm"
-                            data-tooltip={t('dashboard.claimReadyTooltip')}
-                          >
-                            {t('dashboard.claim')}
-                          </Link>
+                          <HoverTip text={t('dashboard.claimReadyTooltip')}>
+                            <Link
+                              to={`/app/loans/${loan.id.toString()}`}
+                              className="btn btn-primary btn-sm"
+                            >
+                              {t('dashboard.claim')}
+                            </Link>
+                          </HoverTip>
                         )}
                         <Link to={`/app/loans/${loan.id.toString()}`} className="btn btn-ghost btn-sm">
                           {t('common.view')}

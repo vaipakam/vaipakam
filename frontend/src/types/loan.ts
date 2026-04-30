@@ -115,6 +115,13 @@ export interface LoanSummary {
   role: LoanRole;
   collateralAsset: string;
   collateralAmount: bigint;
+  /** Collateral asset type (0 = ERC20, 1 = ERC721, 2 = ERC1155). Drives
+   *  the dashboard row's collateral renderer the same way `assetType`
+   *  drives the principal column. */
+  collateralAssetType: number;
+  /** NFT id when `collateralAssetType` is ERC721 or ERC1155. Zero on
+   *  ERC20 collateral. */
+  collateralTokenId: bigint;
   lenderTokenId: bigint;
   borrowerTokenId: bigint;
   /** Whether the lender opted in to allow borrower-initiated partial

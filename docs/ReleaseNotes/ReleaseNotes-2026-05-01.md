@@ -259,6 +259,82 @@ dashboard, OR a `frontend/.env.production` is committed. The
 script is for the developer's local `npm run deploy` flow; the
 CI mirror remains a one-time setup step.
 
+## UX polish batch — five Tier-4 dashboard / loan-view fixes
+
+A grouped set of small UX issues shipped together since they
+all touched the same dashboard / loan-detail surfaces and
+reviewing them as one diff is cleaner than five micro-PRs:
+
+1. **Tooltips inside scrolling tables now escape clipping.**
+   The dashboard's `Your Offers` and `Your Loans` cards and the
+   Offer Book's row table all wrap their `<table>` in an
+   `overflow-x: auto` container so the table scrolls
+   horizontally on small viewports. The CSS-only
+   `[data-tooltip]` pseudo-element pattern can't escape that
+   ancestor's clipping rectangle (CSS Level 2: `overflow-x:
+   auto` with `overflow-y: visible` resolves both axes to
+   `auto`), so a tooltip popping up off a table row was
+   getting cropped or hidden entirely. A new `<HoverTip
+   text="…">` wrapper component (mirrors `<InfoTip>`'s portal
+   trick — bubble rendered into `document.body` via
+   `createPortal`, positioned with JS-computed coordinates
+   relative to the viewport) is now used for the in-row
+   tooltips that previously clipped: the cancelled-offer
+   pill, the manage-keepers and cancel-offer action triggers
+   in `MyOffersTable`, the position-NFT verifier link and the
+   claim button on the Dashboard's Your Loans, and the
+   manage-keepers link on the Offer Book row. Same look and
+   delay as the CSS tooltip — only the rendering surface
+   differs.
+
+2. **Lender Yield-Fee Discount card: discount-tier consent
+   banner.** When a lender opens the loan-detail page and
+   their platform-level VPFI fee-discount consent is **off**,
+   the card now surfaces an amber `Discount tier disabled`
+   banner that explains the yield fee will be charged at the
+   full treasury rate with no VPFI rebate, and links straight
+   to the Dashboard where the consent toggle lives. When
+   consent is on but the lender has zero eligible VPFI in
+   escrow on this chain, a quieter informational banner says
+   `Consent enabled, no eligible VPFI` so the user knows the
+   next step is to top up VPFI rather than to flip a switch.
+   Both banners are silent in the normal case (consent on +
+   VPFI staked) so day-to-day operation is unchanged.
+
+3. **Status filter for `Your Offers` moved into the card
+   header.** The Active / Filled / Cancelled / All filter chip
+   used to render in a separate flex row above the card,
+   making it easy for a user who scrolled past the card title
+   to lose track of which filter was in effect. It now sits
+   inline with the New Offer button in the card's header row,
+   so the title row reads "Your Offers · n offers · [Status:
+   …] · [+ New Offer]" left to right. No behaviour change —
+   just relocation.
+
+4. **Collateral column added to the Dashboard's `Your Loans`
+   table.** Previously the table only showed Principal — a
+   user reviewing their loans couldn't see the collateral
+   asset or amount without clicking through to the loan
+   detail page. The new Collateral column re-uses the same
+   `<PrincipalCell>` renderer the Principal column uses, so
+   ERC-20 amount + symbol, ERC-721 `NFT #N`, and ERC-1155 `Q
+   × NFT #N` all render consistently. The underlying
+   `LoanSummary` type and the `useUserLoans` hook were
+   extended to surface `collateralAssetType` and
+   `collateralTokenId` from the existing `getLoanDetails`
+   return — they were already on the contract side, just
+   never plumbed through.
+
+5. **Claim Center loan IDs now deep-link to the loan-detail
+   page.** When a user opens the Claim Center to claim a
+   pending payout, each row's `Loan #N` label is now a link
+   to `/app/loans/N`. Reviewing the loan's full timeline /
+   risk panel before claiming no longer requires bouncing back
+   to the dashboard.
+
+All five land behind the existing chain-keyed dashboard fetch
+paths — no contract changes, no ABI re-export needed.
+
 ## Outstanding for the testnet redeploy gate
 
 Before fresh testnet diamonds can land:

@@ -11,16 +11,6 @@
 - [ ] Defer: Group languages based on the locality of that continent and display only those group belonging to that continent. Note: exception is for japanese can be displayed together with western countries too
 - [ ] Borrower can pay interest at any time but it is mandatory to pay complete interest at the end of 1 (or each) year completion, the cumulative paid interest for that year should be equal or more than a full year accured interest, otherwise system will use collateral to pay interst to lender after grace period of 2 weeks (buy selling the required collateral asset to but lending asset), this may incur higher fees and may also drastically change the HF/LTV and may triger liquidation too.
 - [ ] For pyth, if we provide only price feed for ETH/USD, ETH/EUR, ETH/JPY, ETH/XAU and all other asset can be checked with respect to ETH right, so that it is not required for us to configure all the asset price feed right?
-- [ ] tooltips provided inside the list of offers and loans in both dashboard page and offer book is not fully visible, may need to wrap it.
-
-- [ ] in card `Lender Yield-Fee Discount` in loan view page, provide `consent not given in dashboard` kind of info, so that users will know that they need to enable `discount tier` by providing consent to use the staked / deposited VPFI in their escrow.
-
-- [ ] Bring the filter `status` inside the card `Your Offers` in dashboard page, just before `new offer` button
-
-- [ ] Collateral asset and amount is not shown in the list of loans in the `Your Loans` card in the dashboard page
-
-- [ ] From claim center there should be a link to respective loan view page from the Loan ID that is displayed in the claim center page
-
 - [ ] Change the icons for Loans as lender and loans as borrower, it looks nice but we need to either have different icon or need to remove the icon, because the icon for `as lender` shows green and trending higher, but for `as borrower` shows amber colour and graph trending down (which is not good to look from borrower perspective)
 
 - [ ] Where ever we show redacted address, we should provide an option to copy the full address with animation. the one in the list of assets in the card `Asset-wise Breakdown` in Analytics page.
@@ -55,6 +45,11 @@ Center the connect wallet inside the button which is on top bar, so that in mobi
 
 ---
 
+- [x] tooltips provided inside the list of offers and loans in both dashboard page and offer book is not fully visible, may need to wrap it.
+- [x] in card `Lender Yield-Fee Discount` in loan view page, provide `consent not given in dashboard` kind of info, so that users will know that they need to enable `discount tier` by providing consent to use the staked / deposited VPFI in their escrow.
+- [x] Bring the filter `status` inside the card `Your Offers` in dashboard page, just before `new offer` button
+- [x] Collateral asset and amount is not shown in the list of loans in the `Your Loans` card in the dashboard page
+- [x] From claim center there should be a link to respective loan view page from the Loan ID that is displayed in the claim center page
 - [x] Update frontend/wrangler.jsonc file to have all required en.local variables in it, so that before deployment we will run a script to update these variables in cloudflare, add that in appropriate runnook, because not all the variables are baked into VITE during wrangler run deploy, so it is the required step. All while deploying the contract (or immediately after contract deployment) it self, script or a .sh file should update values in frontend/wrangler.jsonc file, what do you say? Let me know if there is a better approach.
 - [x] The new offer created globally should appear automatically in offer book, based on the sort that we have already defined, hope the sort is not customisable by user, in offer book page.
 - [x] we need to provide slider to adjust the lending amount and collateral amount. also based on it, we should also show HF/LTV visually with animation, this need to be shown during offer creation in advanced mode, like the one that is shown in loan view page in `Liquidation-price projection` card, inside card `Collateral & Risk`, enhace for offer creation if possible.

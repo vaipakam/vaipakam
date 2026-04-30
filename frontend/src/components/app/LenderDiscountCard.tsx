@@ -1,7 +1,10 @@
-import { Gift, Info, Clock } from 'lucide-react';
+import { Gift, Info, Clock, AlertTriangle } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import type { TFunction } from 'i18next';
 import { useLoanLenderDiscount } from '../../hooks/useLoanLenderDiscount';
+import { useVPFIDiscountConsent } from '../../hooks/useVPFIDiscount';
+import { useProtocolConfig } from '../../hooks/useProtocolConfig';
+import { L as Link } from '../L';
 
 interface Props {
   loanId: string | null | undefined;
@@ -33,6 +36,13 @@ export function LenderDiscountCard({ loanId, lender }: Props) {
     loanIdBig,
     lenderAddr,
   );
+  // Platform-level VPFI discount consent for the connected wallet (only
+  // rendered to the lender's own viewer per the LoanDetails gate). When
+  // consent is off, every loan keeps charging the full treasury cut on
+  // yield with no VPFI rebate — surface that explicitly so the user
+  // doesn't wonder why the effective tier stays at 0%.
+  const { enabled: consentEnabled } = useVPFIDiscountConsent();
+  const { config: protocolConfig } = useProtocolConfig();
 
   if (!loanIdBig || !lenderAddr) return null;
   if (isLoading && !data) return null;
@@ -45,6 +55,20 @@ export function LenderDiscountCard({ loanId, lender }: Props) {
     data.effectiveAvgBps > 0 &&
     data.stampedBpsAtPreviousRollup > 0 &&
     Math.abs(data.effectiveAvgBps - data.stampedBpsAtPreviousRollup) >= 10; // ≥0.1 pp
+  // Banner state. `enabled === null` means we're still loading (or the
+  // wallet isn't connected, which can't happen here per the LoanDetails
+  // gate but is handled defensively). Showing "missing" while loading
+  // would flash the wrong banner on first paint, so we wait.
+  const showConsentMissing = consentEnabled === false;
+  const showConsentEnabledNoVpfi =
+    consentEnabled === true &&
+    data.effectiveAvgBps === 0 &&
+    data.stampedBpsAtPreviousRollup === 0;
+  const treasuryFeePct = protocolConfig
+    ? (protocolConfig.treasuryFeeBps / 100).toFixed(
+        protocolConfig.treasuryFeeBps % 100 === 0 ? 0 : 2,
+      )
+    : '1';
 
   return (
     <div className="card">
@@ -82,6 +106,44 @@ export function LenderDiscountCard({ loanId, lender }: Props) {
             {t('lenderDiscountCard.tiersDifferAlertMid')}
             <strong>{stampedPct}%</strong>
             {t('lenderDiscountCard.tiersDifferAlertSuffix')}
+          </div>
+        </div>
+      )}
+
+      {showConsentMissing && (
+        <div
+          className="alert alert-warning"
+          style={{ marginTop: 12 }}
+          role="status"
+        >
+          <AlertTriangle size={14} />
+          <div>
+            <strong>{t('lenderDiscountCard.consentMissingTitle')}</strong>
+            <br />
+            {t('lenderDiscountCard.consentMissingBody', {
+              treasuryFee: treasuryFeePct,
+            })}{' '}
+            <Link
+              to="/app"
+              style={{ color: 'var(--brand)', textDecoration: 'underline' }}
+            >
+              {t('lenderDiscountCard.consentMissingCta')}
+            </Link>
+          </div>
+        </div>
+      )}
+
+      {showConsentEnabledNoVpfi && (
+        <div
+          className="alert alert-info"
+          style={{ marginTop: 12 }}
+          role="status"
+        >
+          <Info size={14} />
+          <div>
+            <strong>{t('lenderDiscountCard.consentEnabledNoVpfiTitle')}</strong>
+            <br />
+            {t('lenderDiscountCard.consentEnabledNoVpfiBody')}
           </div>
         </div>
       )}

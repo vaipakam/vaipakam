@@ -30,6 +30,7 @@ import { batchCalls, encodeBatchCalls } from '../lib/multicall';
 import { AddressDisplay } from '../components/app/AddressDisplay';
 import { CardInfo } from '../components/CardInfo';
 import { InfoTip } from '../components/InfoTip';
+import { HoverTip } from '../components/HoverTip';
 import {
   matchesFilter as matchesFilterPure,
   rankLenderSide as rankLenderSidePure,
@@ -1692,13 +1693,14 @@ export function OfferTable({ title, subtitle, offers, anchorRateBps, address, ac
                         // whitelisted keepers to enable for which offer.
                         <div style={{ display: 'flex', flexDirection: 'column', gap: 4, alignItems: 'flex-end' }}>
                           <span className="status-badge settled">{t('offerTable.yourOffer')}</span>
-                          <Link
-                            to="/app/keepers"
-                            data-tooltip="Enable specific keepers to drive this offer via the Keeper Settings page."
-                            style={{ fontSize: '0.72rem', padding: '3px 8px', color: 'var(--brand)' }}
-                          >
-                            {t('offerTable.manageKeepers')}
-                          </Link>
+                          <HoverTip text="Enable specific keepers to drive this offer via the Keeper Settings page.">
+                            <Link
+                              to="/app/keepers"
+                              style={{ fontSize: '0.72rem', padding: '3px 8px', color: 'var(--brand)' }}
+                            >
+                              {t('offerTable.manageKeepers')}
+                            </Link>
+                          </HoverTip>
                         </div>
                       ) : address ? (
                         <button

@@ -122,6 +122,9 @@ export function useUserLoans(address: string | null) {
           role: isLender ? 'lender' : 'borrower',
           collateralAsset: loan.collateralAsset,
           collateralAmount: loan.collateralAmount,
+          collateralAssetType: Number(loan.collateralAssetType ?? 0n),
+          collateralTokenId:
+            (loan.collateralTokenId as bigint | undefined) ?? 0n,
           lenderTokenId: loan.lenderTokenId,
           borrowerTokenId: loan.borrowerTokenId,
           allowsPartialRepay:

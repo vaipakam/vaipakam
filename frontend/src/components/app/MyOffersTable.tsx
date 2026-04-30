@@ -7,6 +7,7 @@ import {
 } from '../../pages/OfferBook';
 import type { MyOfferRow } from '../../hooks/useMyOffers';
 import { CardInfo } from '../CardInfo';
+import { HoverTip } from '../HoverTip';
 import { PrincipalCell } from './PrincipalCell';
 
 interface Props {
@@ -154,16 +155,17 @@ export function MyOffersTable({
                         <td>—</td>
                         <td>—</td>
                         <td>
-                          <span
-                            className="status-badge"
-                            style={{
-                              background: 'var(--surface-2)',
-                              color: 'var(--muted)',
-                            }}
-                            data-tooltip={t('myOffersTable.cancelledTooltip')}
-                          >
-                            {t('myOffersTable.statusCancelled')}
-                          </span>
+                          <HoverTip text={t('myOffersTable.cancelledTooltip')}>
+                            <span
+                              className="status-badge"
+                              style={{
+                                background: 'var(--surface-2)',
+                                color: 'var(--muted)',
+                              }}
+                            >
+                              {t('myOffersTable.statusCancelled')}
+                            </span>
+                          </HoverTip>
                         </td>
                         <td></td>
                       </tr>
@@ -321,27 +323,29 @@ export function MyOffersTable({
                             flexWrap: 'wrap',
                           }}
                         >
-                          <Link
-                            to="/app/keepers"
-                            data-tooltip={t('myOffersTable.manageKeepersTooltip')}
-                            style={{
-                              fontSize: '0.72rem',
-                              padding: '3px 8px',
-                              color: 'var(--brand)',
-                            }}
-                          >
-                            {t('offerTable.manageKeepers')}
-                          </Link>
-                          <button
-                            className="btn btn-secondary btn-sm"
-                            onClick={() => onCancel(offer.id)}
-                            disabled={cancellingId === offer.id}
-                            data-tooltip={t('myOffersTable.cancelTooltip')}
-                          >
-                            {cancellingId === offer.id
-                              ? t('myOffersTable.cancelling')
-                              : t('myOffersTable.cancel')}
-                          </button>
+                          <HoverTip text={t('myOffersTable.manageKeepersTooltip')}>
+                            <Link
+                              to="/app/keepers"
+                              style={{
+                                fontSize: '0.72rem',
+                                padding: '3px 8px',
+                                color: 'var(--brand)',
+                              }}
+                            >
+                              {t('offerTable.manageKeepers')}
+                            </Link>
+                          </HoverTip>
+                          <HoverTip text={t('myOffersTable.cancelTooltip')}>
+                            <button
+                              className="btn btn-secondary btn-sm"
+                              onClick={() => onCancel(offer.id)}
+                              disabled={cancellingId === offer.id}
+                            >
+                              {cancellingId === offer.id
+                                ? t('myOffersTable.cancelling')
+                                : t('myOffersTable.cancel')}
+                            </button>
+                          </HoverTip>
                         </div>
                       )}
                       {/* Filled row's column is empty — the loan link
