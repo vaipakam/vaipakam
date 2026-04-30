@@ -80,7 +80,22 @@ function buildErc20Proxy(
         });
         return {
           hash,
-          wait: () => publicClient.waitForTransactionReceipt({ hash }),
+          // Throw on reverted txs — see the matching docstring on
+          // `useDiamond.ts`'s wait(). Failed approvals are common
+          // enough (insufficient balance to spend, paused token,
+          // etc.) that swallowing the receipt's failure status
+          // produces the wrong end-state (page renders "approved"
+          // while the allowance is still 0).
+          wait: async () => {
+            const receipt = await publicClient.waitForTransactionReceipt({ hash });
+            if (receipt.status !== 'success') {
+              throw new Error(
+                `ERC20 ${prop} reverted on-chain (status=${receipt.status}). ` +
+                `Tx ${hash} mined but did not succeed.`,
+              );
+            }
+            return receipt;
+          },
         };
       };
     },

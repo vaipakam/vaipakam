@@ -149,7 +149,25 @@ function buildDiamondProxy({
         });
         return {
           hash,
-          wait: () => publicClient.waitForTransactionReceipt({ hash }),
+          // Wait for inclusion AND verify the receipt's `status` is
+          // 'success'. viem's `waitForTransactionReceipt` resolves on
+          // any inclusion (status 0 or 1), so a reverted tx would
+          // otherwise look identical to a successful one — the
+          // calling page would render "submitted successfully" while
+          // the on-chain state never changed. Throwing here lets the
+          // common `try { await tx.wait() } catch { … }` shape
+          // surface the failure to the user.
+          wait: async () => {
+            const receipt = await publicClient.waitForTransactionReceipt({ hash });
+            if (receipt.status !== 'success') {
+              throw new Error(
+                `Transaction reverted on-chain (status=${receipt.status}). ` +
+                `Tx ${hash} mined but did not succeed — check the explorer ` +
+                `for the revert reason.`,
+              );
+            }
+            return receipt;
+          },
         };
       };
       (invoke as { staticCall?: unknown }).staticCall = staticCall(prop);

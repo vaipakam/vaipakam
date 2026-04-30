@@ -336,6 +336,54 @@ export default function CreateOffer() {
       const lenderPullAmount = payload.amountMax > 0n
         ? payload.amountMax
         : payload.amount;
+
+      // Wallet-balance pre-check. Approvals succeed regardless of
+      // current balance (ERC-20 allowance != available funds), so a
+      // user with too little of the lending or collateral asset
+      // would see the approve step pass and the create step revert
+      // mid-flight. Catching this client-side renders an actionable
+      // error before any MetaMask popup.
+      //   - Lender ERC-20:    balance of lendingAsset    >= lenderPullAmount
+      //                       (the upper bound when ranged, else amount)
+      //   - Borrower ERC-20:  balance of collateralAsset >= collateralAmount
+      // NFT-side checks are skipped — the contract surfaces those
+      // failures clearly enough on its own.
+      type BalanceReader = { balanceOf: (a: string) => Promise<bigint> };
+      try {
+        if (form.offerType === "lender" && form.assetType === "erc20" && erc20) {
+          const bal = await (erc20 as unknown as BalanceReader).balanceOf(
+            address as string,
+          );
+          if (bal < lenderPullAmount) {
+            throw new Error(
+              `Insufficient lending-asset balance: wallet holds ${bal}, ` +
+                `offer requires ${lenderPullAmount} ` +
+                `(the maximum amount you offered to lend). ` +
+                `Top up before submitting.`,
+            );
+          }
+        } else if (
+          form.offerType === "borrower" &&
+          form.assetType === "erc20" &&
+          form.collateralAssetType === "erc20" &&
+          collateralErc20
+        ) {
+          const bal = await (
+            collateralErc20 as unknown as BalanceReader
+          ).balanceOf(address as string);
+          if (bal < payload.collateralAmount) {
+            throw new Error(
+              `Insufficient collateral balance: wallet holds ${bal}, ` +
+                `offer requires ${payload.collateralAmount}. ` +
+                `Top up before submitting.`,
+            );
+          }
+        }
+      } catch (balErr) {
+        setError(balErr instanceof Error ? balErr.message : String(balErr));
+        submit.failure(balErr);
+        return;
+      }
       // Permit2 eligibility: OfferFacet.createOfferWithPermit only accepts
       // ERC-20 creator pulls. Pre-compute the target token+amount so we
       // can skip the classic `approve` leg entirely when the wallet can

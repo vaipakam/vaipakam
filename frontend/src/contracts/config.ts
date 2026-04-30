@@ -403,6 +403,37 @@ const OPTIMISM_SEPOLIA: ChainConfig = {
   profileFacetAddress: optStr('VITE_OPTIMISM_SEPOLIA_PROFILE_FACET_ADDRESS', null),
 };
 
+// Anvil — local foundry node used for end-to-end smoke tests
+// (Range Orders Phase 1 bot/UI playground via
+// `contracts/script/anvil-bootstrap.sh`). Tagged `testnet: true` so
+// every "this is a testnet" UI gate (faucets, orange banner, etc.)
+// fires the same way it does for Sepolia. Diamond / mocks addresses
+// are deterministic across anvil restarts (deployer #0 always lands
+// the diamond at the same address from a clean state) so the
+// hardcoded fallback is the value the bootstrap script produces by
+// default; override per session via VITE_ANVIL_DIAMOND_ADDRESS.
+const ANVIL: ChainConfig = {
+  chainId: 31337,
+  chainIdHex: '0x7a69',
+  name: 'Anvil Local',
+  shortName: 'anvil',
+  rpcUrl: str('VITE_ANVIL_RPC_URL', 'http://localhost:8545'),
+  blockExplorer: '',
+  diamondAddress:
+    optStr('VITE_ANVIL_DIAMOND_ADDRESS', null) ??
+    '0xc3e53F4d16Ae77Db1c982e75a937B9f60FE63690',
+  deployBlock: num('VITE_ANVIL_DEPLOY_BLOCK', 0),
+  isCanonicalVPFI: false,
+  lzEid: 31337,
+  testnet: true,
+  vpfiBuyAdapter: optStr('VITE_ANVIL_VPFI_BUY_ADAPTER', null),
+  vpfiBuyPaymentToken: optStr('VITE_ANVIL_VPFI_BUY_PAYMENT_TOKEN', null),
+  metricsFacetAddress: optStr('VITE_ANVIL_METRICS_FACET_ADDRESS', null),
+  escrowImplAddress: optStr('VITE_ANVIL_ESCROW_IMPL', null),
+  riskFacetAddress: optStr('VITE_ANVIL_RISK_FACET_ADDRESS', null),
+  profileFacetAddress: optStr('VITE_ANVIL_PROFILE_FACET_ADDRESS', null),
+};
+
 // Normalise every env-configured address to canonical EIP-55 checksum so a
 // mis-cased operator entry doesn't propagate to `new Contract(addr, ...)`
 // and blow up with "bad address checksum" at first use. Done once at module
@@ -420,6 +451,7 @@ for (const c of [
   ARBITRUM_SEPOLIA,
   OPTIMISM_SEPOLIA,
   BNB_TESTNET,
+  ANVIL,
 ]) {
   c.diamondAddress = normalizeAddress(c.diamondAddress);
   c.vpfiBuyAdapter = normalizeAddress(c.vpfiBuyAdapter);
@@ -439,6 +471,7 @@ export const CHAIN_REGISTRY: Record<number, ChainConfig> = {
   [ARBITRUM_SEPOLIA.chainId]: ARBITRUM_SEPOLIA,
   [OPTIMISM_SEPOLIA.chainId]: OPTIMISM_SEPOLIA,
   [BNB_TESTNET.chainId]: BNB_TESTNET,
+  [ANVIL.chainId]: ANVIL,
 };
 
 // Ethereum family (L1 + its canonical testnet) — pinned to the top of every

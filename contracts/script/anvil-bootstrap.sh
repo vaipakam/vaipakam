@@ -85,16 +85,46 @@ export ADMIN_PRIVATE_KEY="$ADMIN_KEY"
 export ADMIN_ADDRESS="$ADMIN_ADDR"
 export TREASURY_ADDRESS="$TREASURY_ADDR"
 
-echo "[1/4] DeployDiamond"
+echo "[1/5] DeployDiamond"
 forge script script/DeployDiamond.s.sol --rpc-url "$RPC" --broadcast --disable-code-size-limit --slow
 
-echo "[2/4] DeployTestnetLiquidityMocks (mUSDC, mWBTC, mock WETH, oracles, Univ3)"
+echo "[2/5] DeployTestnetLiquidityMocks (mUSDC, mWBTC, mock WETH, oracles, Univ3)"
 forge script script/DeployTestnetLiquidityMocks.s.sol --rpc-url "$RPC" --broadcast --disable-code-size-limit --slow
 
-echo "[3/4] BootstrapAnvil (flip Range Orders master flags ON)"
+# Etch Multicall3 at the canonical address. The frontend's
+# `lib/multicall.ts` calls `aggregate3` at
+# 0xcA11bde05977b3631167028862bE2a173976CA11, which is empty on a
+# fresh anvil node — every dashboard read using batched multicall
+# (useUserLoans, useTVL, useRecentOffers, etc.) reverts with
+# "aggregate3 returned no data" until something is at that address.
+# Deploy a fresh stub via `forge create`, then copy its runtime
+# bytecode to the canonical address via `anvil_setCode`. Idempotent —
+# safe to re-run.
+echo "[3/5] Etching Multicall3 at canonical address"
+# `forge create --json` emits a pretty-printed multi-line JSON object.
+# Pipe through `jq -r '.deployedTo'` directly — jq parses across
+# newlines — rather than snipping with `tail -1` which would only
+# capture the closing brace.
+MULTICALL3_DEPLOYED=$(forge create --rpc-url "$RPC" \
+  --private-key "$DEPLOYER_KEY" \
+  --broadcast \
+  test/mocks/Multicall3Mock.sol:Multicall3Mock \
+  --json 2>/dev/null | jq -r '.deployedTo // empty')
+if [ -z "$MULTICALL3_DEPLOYED" ] || [ "$MULTICALL3_DEPLOYED" = "null" ]; then
+  echo "Error: failed to deploy Multicall3Mock — frontend dashboard reads will fail" >&2
+  exit 1
+fi
+MULTICALL3_CODE=$(cast code "$MULTICALL3_DEPLOYED" --rpc-url "$RPC")
+cast rpc anvil_setCode \
+  "0xcA11bde05977b3631167028862bE2a173976CA11" \
+  "$MULTICALL3_CODE" \
+  --rpc-url "$RPC" >/dev/null
+echo "    Multicall3 etched (mock at $MULTICALL3_DEPLOYED → canonical 0xcA11…cA11)"
+
+echo "[4/5] BootstrapAnvil (flip Range Orders master flags ON)"
 forge script script/BootstrapAnvil.s.sol --rpc-url "$RPC" --broadcast --disable-code-size-limit --slow
 
-echo "[4/4] SeedAnvilOffers (one matchable lender + borrower pair)"
+echo "[5/5] SeedAnvilOffers (one matchable lender + borrower pair)"
 forge script script/SeedAnvilOffers.s.sol --rpc-url "$RPC" --broadcast --disable-code-size-limit --slow
 
 echo
