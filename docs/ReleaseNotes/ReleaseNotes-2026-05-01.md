@@ -411,6 +411,66 @@ user who explicitly wants to preview a non-default chain
 pre-connect can still do so via the public Analytics page's
 in-page chain picker, which is preserved.
 
+## Topbar chain visibility + in-app wallet-gating cleanup
+
+Follow-up to the pre-connect chain-picker removal. The user
+flagged that "you need to know absolutely which chain you're
+in" — and the post-connect topbar's only chain cue was an
+18 px icon with no name. Easy to miss before signing a
+transaction on the wrong network. Audited the surface and
+shipped a four-part fix:
+
+1. **WalletMenu now shows icon + chain name.** The trigger
+   pill renders a small chain badge ("Base Sepolia Testnet",
+   "BNB Smart Chain Testnet", etc.) with the existing chain
+   icon, sitting on the trailing edge of the wallet pill so
+   the user always reads the network they're connected to.
+   On viewports < 480 px the label collapses to icon-only to
+   keep the pill from overflowing the topbar; the screen-
+   reader name is preserved via `aria-label`. Unsupported
+   chains read "Unsupported (chainId)"; read-only fallback
+   reads "Read-only".
+
+2. **OfferBook is now fully wallet-gated.** Previously the
+   table rendered read-only pre-connect (since offer state
+   is public on-chain) and only the `acceptOffer` action
+   required a wallet. The post-batch UX direction is "every
+   in-app page is wallet-gated; the public Analytics page is
+   the read-only surface for protocol-wide data". OfferBook
+   now shows the same Connect-Wallet empty state as the rest
+   of `/app/*` pages pre-connect.
+
+3. **LoanDetails is now fully wallet-gated.** Same
+   reasoning. The page used to render every on-chain field
+   read-only pre-connect; now it shows a Connect-Wallet
+   empty state until a wallet is bound.
+
+4. **BuyVPFI pre-connect: marketing block instead of empty
+   state.** Pre-connect, the page used to show a one-line
+   "Connect your wallet to buy VPFI" empty state — wasted
+   real estate. Now shows three short cards explaining the
+   *user-facing* pitch: tiered fee discount on lending and
+   borrowing (lender treasury cut reduced + borrower
+   loan-initiation rebate), staking yield on whatever VPFI
+   sits in your escrow, and a how-it-works summary. Crucially
+   no read-only protocol stats (those live on the public
+   Analytics page) and no token-economics deep dive — this
+   surface stays focused on the pitch. The Connect-Wallet
+   empty state is preserved at the bottom as the call to
+   action.
+
+NFT Verifier stays chain-agnostic by design — it walks
+`CHAIN_REGISTRY` to match a pasted address against every
+deployed Diamond, so chain context is irrelevant to its
+behaviour. No change there.
+
+Net effect: a connected user always sees the network they're
+about to transact on prominently in the topbar; the in-app
+chrome no longer renders any state pre-connect (one source of
+truth for chain selection — the wallet), and the BuyVPFI page
+has something useful to say to first-time visitors instead of
+a placeholder.
+
 ## Outstanding for the testnet redeploy gate
 
 Before fresh testnet diamonds can land:

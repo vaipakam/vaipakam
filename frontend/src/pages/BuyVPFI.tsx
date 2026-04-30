@@ -22,6 +22,9 @@ import {
   AlertTriangle,
   CheckCircle,
   Info,
+  Gift,
+  TrendingUp,
+  ShieldCheck,
 } from "lucide-react";
 import { useWallet } from "../context/WalletContext";
 import {
@@ -821,13 +824,74 @@ export default function BuyVPFI() {
   };
 
   if (!address) {
+    // Pre-connect — render a marketing block (what VPFI buys you)
+    // instead of the empty "connect wallet" placeholder. Read-only
+    // protocol stats live on the public Analytics page; here the
+    // pitch is the user's *own* benefit (yield-fee discount on
+    // lending, initiation-fee rebate on borrowing, ETH→VPFI buy at
+    // a fixed protocol rate). Once the wallet connects, the buy
+    // surface below renders as before.
     return (
-      <div className="empty-state" style={{ minHeight: "60vh" }}>
-        <div className="empty-state-icon">
-          <Wallet size={28} />
+      <div className="buy-vpfi" style={{ maxWidth: 760, margin: '0 auto' }}>
+        <div className="page-header">
+          <h1 className="page-title">{t('buyVpfi.title')}</h1>
+          <p className="page-subtitle">{t('buyVpfi.preconnect.tagline')}</p>
         </div>
-        <h3>{t('buyVpfi.connectTitle')}</h3>
-        <p>{t('buyVpfi.connectBody')}</p>
+
+        <div className="card" style={{ marginTop: 16 }}>
+          <div
+            className="card-title"
+            style={{ display: 'flex', alignItems: 'center', gap: 8 }}
+          >
+            <Gift size={16} />
+            {t('buyVpfi.preconnect.discountTitle')}
+          </div>
+          <p>{t('buyVpfi.preconnect.discountBody')}</p>
+          <ul style={{ margin: '8px 0 0 0', paddingLeft: 20 }}>
+            <li>{t('buyVpfi.preconnect.discountBullet1')}</li>
+            <li>{t('buyVpfi.preconnect.discountBullet2')}</li>
+          </ul>
+        </div>
+
+        <div className="card" style={{ marginTop: 16 }}>
+          <div
+            className="card-title"
+            style={{ display: 'flex', alignItems: 'center', gap: 8 }}
+          >
+            <TrendingUp size={16} />
+            {t('buyVpfi.preconnect.stakingTitle')}
+          </div>
+          <p>{t('buyVpfi.preconnect.stakingBody')}</p>
+        </div>
+
+        <div className="card" style={{ marginTop: 16 }}>
+          <div
+            className="card-title"
+            style={{ display: 'flex', alignItems: 'center', gap: 8 }}
+          >
+            <ShieldCheck size={16} />
+            {t('buyVpfi.preconnect.howTitle')}
+          </div>
+          <p>{t('buyVpfi.preconnect.howBody')}</p>
+          <p style={{ marginTop: 12, opacity: 0.75, fontSize: '0.85rem' }}>
+            {t('buyVpfi.preconnect.analyticsHint')}{' '}
+            <Link to="/analytics" style={{ color: 'var(--brand)' }}>
+              {t('buyVpfi.preconnect.analyticsLink')}
+            </Link>
+            .
+          </p>
+        </div>
+
+        <div
+          className="empty-state"
+          style={{ marginTop: 24, minHeight: 'auto' }}
+        >
+          <div className="empty-state-icon">
+            <Wallet size={24} />
+          </div>
+          <h3>{t('buyVpfi.connectTitle')}</h3>
+          <p>{t('buyVpfi.connectBody')}</p>
+        </div>
       </div>
     );
   }

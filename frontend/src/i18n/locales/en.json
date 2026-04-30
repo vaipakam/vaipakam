@@ -394,6 +394,8 @@
     "fallbackToken": "Token"
   },
   "offerBookPage": {
+    "connectTitle": "Connect Your Wallet",
+    "connectBody": "Connect your wallet to browse and accept offers on Vaipakam.",
     "subtitleOpenPrefix": "Ranked outward from the market anchor",
     "subtitleOpenAnchorPrefix": " — currently ",
     "subtitleOpenSuffix": ".",
@@ -686,6 +688,8 @@
     "allowsPartialRepayHintBorrower": "Request the right to repay this loan in partial chunks. The lender consents implicitly by accepting your offer; if they don't want partial repay they will skip it. Default off."
   },
   "loanDetails": {
+    "connectTitle": "Connect Your Wallet",
+    "connectBody": "Connect your wallet to view loan details, repay, claim, or manage your position.",
     "loadingLoan": "Loading loan #{{id}}…",
     "loanNotFound": "Loan Not Found",
     "loanNotFoundBody": "Loan #{{id}} does not exist.",
@@ -767,6 +771,20 @@
     "trustWarning": "Anyone can deploy a token with any symbol — confirm you trust this token by checking the contract address itself, not the symbol shown."
   },
   "buyVpfi": {
+    "title": "Buy VPFI",
+    "preconnect": {
+      "tagline": "Pay lower fees on your loans, earn yield on what you stake.",
+      "discountTitle": "Tiered fee discount",
+      "discountBody": "VPFI you hold in your personal escrow earns you a time-weighted discount on Vaipakam's protocol fees — applied automatically when each loan settles, no separate claim step:",
+      "discountBullet1": "Lenders: a discount on the treasury cut taken from interest earned. The more VPFI you've held across the loan's lifetime, the smaller the cut.",
+      "discountBullet2": "Borrowers: a VPFI rebate on the loan-initiation fee, paid back at proper close (repay / preclose / refinance). Default forfeits the rebate.",
+      "stakingTitle": "Staking yield while you wait",
+      "stakingBody": "Any VPFI sitting in your personal escrow earns staking APR for as long as it stays there. No loan required — staking is open to everyone, and the same balance also counts toward your fee-discount tier.",
+      "howTitle": "How it works",
+      "howBody": "Buy VPFI with ETH at the fixed early-stage rate, then deposit it into your escrow to start earning. Cross-chain routing is handled for you — VPFI lands on whichever chain you bought from.",
+      "analyticsHint": "Looking for protocol-wide stats and circulating supply? See the",
+      "analyticsLink": "Analytics page"
+    },
     "connectTitle": "Connect Your Wallet",
     "connectBody": "Connect your wallet to buy VPFI and unlock the tiered discount.",
     "unsupportedNetwork": "Unsupported network",

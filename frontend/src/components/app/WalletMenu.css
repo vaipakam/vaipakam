@@ -76,6 +76,47 @@
   white-space: nowrap;
 }
 
+/* Chain badge inside the trigger pill — icon + chain name. The label
+ * gives users an explicit "you are on chain X" cue before they hit any
+ * transaction surface; the icon alone was too easy to miss. The badge
+ * has its own subtle background so it reads as a discrete chip rather
+ * than blending into the address text. Truncates on narrow viewports
+ * before the address (which is more recognisable to the user). */
+.wallet-menu-chain {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 8px;
+  border-radius: var(--radius-full);
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  flex-shrink: 1;
+  min-width: 0;
+}
+
+.wallet-menu-chain-label {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 14ch;
+}
+
+@media (max-width: 480px) {
+  /* On the smallest viewports the chain label collapses to icon-only
+   * to keep the trigger pill from pushing the wallet address off
+   * screen. The accessible name is still set on the wrapping
+   * <span aria-label="Network: …"> so screen readers still get it. */
+  .wallet-menu-chain-label {
+    display: none;
+  }
+  .wallet-menu-chain {
+    padding: 3px 6px;
+  }
+}
+
 .wallet-menu-chevron {
   color: var(--text-tertiary);
   transition: transform 0.15s ease, color 0.15s ease;

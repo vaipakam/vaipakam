@@ -27,6 +27,7 @@ import {
   CheckCircle,
   Clock,
   Coins,
+  Wallet,
 } from "lucide-react";
 import { parseUnits, encodeFunctionData, type Address, type Hex } from "viem";
 import { SimulationPreview } from "../components/app/SimulationPreview";
@@ -355,6 +356,25 @@ export default function LoanDetails() {
       setActionLoading(false);
     }
   };
+
+  // Phase 4 polish — every page inside `<AppLayout>` requires a
+  // connected wallet. LoanDetails used to render the full panel
+  // read-only pre-connect (since loan state is public on-chain), but
+  // the post-batch UX direction is "all in-app pages are wallet-gated;
+  // public Analytics is the read-only surface". This avoids two sources
+  // of truth for chain selection (read chain vs wallet chain) and
+  // matches the rest of the in-app empty-state pattern.
+  if (!address) {
+    return (
+      <div className="empty-state" style={{ minHeight: "60vh" }}>
+        <div className="empty-state-icon">
+          <Wallet size={28} />
+        </div>
+        <h3>{t('loanDetails.connectTitle')}</h3>
+        <p>{t('loanDetails.connectBody')}</p>
+      </div>
+    );
+  }
 
   if (loading) {
     return (

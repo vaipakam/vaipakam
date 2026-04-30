@@ -11,7 +11,7 @@ import { useWallet } from '../context/WalletContext';
 import { useDiamondContract, useDiamondRead, useDiamondPublicClient, useReadChain } from '../contracts/useDiamond';
 import { DIAMOND_ABI_VIEM as DIAMOND_ABI } from '../contracts/abis';
 import { L as Link } from '../components/L';
-import { BookOpen, PlusCircle, AlertTriangle, ShieldCheck, Droplet, ListOrdered } from 'lucide-react';
+import { BookOpen, PlusCircle, AlertTriangle, ShieldCheck, Droplet, ListOrdered, Wallet } from 'lucide-react';
 import { Picker } from '../components/Picker';
 import { ErrorAlert } from '../components/app/ErrorAlert';
 import { SanctionsBanner } from '../components/app/SanctionsBanner';
@@ -773,6 +773,26 @@ export default function OfferBook() {
     if (anchorRateBps === null) return 'No prior matched rate yet';
     return 'Last matched in this market';
   }, [anchorRateBps]);
+
+  // Phase 4 polish — every page inside `<AppLayout>` now requires a
+  // connected wallet. OfferBook used to render the full table read-only
+  // pre-connect (since offer state is public on-chain), but the
+  // post-batch UX direction is "all in-app pages are wallet-gated; the
+  // public Analytics page is the read-only surface". This avoids two
+  // sources of truth for chain selection (read chain vs wallet chain)
+  // inside /app/* and matches the rest of the in-app empty-state
+  // pattern (Dashboard, ClaimCenter, etc.).
+  if (!address) {
+    return (
+      <div className="empty-state" style={{ minHeight: '60vh' }}>
+        <div className="empty-state-icon">
+          <Wallet size={28} />
+        </div>
+        <h3>{t('offerBookPage.connectTitle')}</h3>
+        <p>{t('offerBookPage.connectBody')}</p>
+      </div>
+    );
+  }
 
   return (
     <div>
