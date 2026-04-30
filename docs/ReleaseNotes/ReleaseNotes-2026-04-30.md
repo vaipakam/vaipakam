@@ -565,12 +565,319 @@ get range-orders without multi-match support).
 - Testnet redeploy of the feat-branch contracts (deferred —
   `main` is what the testnets currently run; merge gates
   redeploy).
-- Bot-side matching detector in
-  `vaipakam-keeper-bot/src/detectors/offerMatcher.ts` (deferred
-  per the design — not on the contract critical path).
-- Frontend sliders + Advanced-mode reveal for range / partial-
-  fill UI (deferred — dormant flags mean the UI doesn't need
-  the controls until governance flips at least one flag on).
+
+## Range Orders Phase 1 — post-PR follow-ups
+
+A second batch of work landed on `feat/range-orders-phase1`
+after the five core PRs. Each item closed a concrete loose end
+discovered during smoke-testing the matching flow end-to-end on
+a local anvil node. None changed the protocol's load-bearing
+behaviour — they're correctness fixes, UX polish, and operator
+ergonomics.
+
+### Borrower excess-collateral refund (Option A)
+
+Range Orders pro-rate the lender's posted collateral against the
+matched amount: a 1000 mUSDC match against a lender who locked
+2000 mUSDC requires only half the lender's collateral coverage,
+not all of it. The borrower may have posted more collateral than
+that pro-rated requirement (over-collateralised when creating
+their offer). Phase 1 borrower offers are single-fill, so the
+excess can never be reused for another match — it would sit
+trapped in escrow.
+
+Fixed: `matchOffers` now refunds the difference
+(`borrowerOffer.collateralAmount − pro-rated requirement`) to
+the borrower's wallet inside the same transaction, immediately
+after the loan is initiated. ERC-20 collateral only — NFT
+collateral is whole-or-nothing and can never have a fractional
+overage. The result is a single, simple invariant across both
+sides: escrow only ever holds collateral or principal that's
+actively committed to a live offer or loan. Lender side already
+worked this way (dust-close on partial-fill remainder); now
+borrower side mirrors it.
+
+Verified end-to-end on anvil: 0.05 mWBTC excess (0.15 posted
+minus 0.10 pro-rated requirement) lands in the borrower's
+wallet inside the `matchOffers` tx.
+
+### Position NFT metadata — Tier 1 (correctness + live state)
+
+The `tokenURI` rendered by `VaipakamNFTFacet` was reading
+`offer.amount` for the principal display. After the Range
+Orders refactor that field is the lender's range minimum, not
+the realised loan principal — so a partial-fill loan's NFT
+showed "500 mUSDC" when the actual matched amount was 1000.
+Fixed by introducing a single live-state read view:
+
+- New `MetricsFacet.getNFTPositionSummary(tokenId)` returns a
+  structured summary: realised loan terms (matched amount /
+  rate / collateral, not the offer's range), plus live escrow
+  state, plus claim availability, plus VPFI rebate state for
+  borrower-side LIF positions, plus token symbols + decimals
+  resolved via `IERC20Metadata` with safe try/catch fallbacks.
+- `tokenURI` rewired to consume that summary. Now renders:
+  - Symbols not hex addresses ("mUSDC", "mWBTC") for both
+    lending and collateral assets.
+  - Decimal-formatted amounts ("1000 mUSDC", "0.1 mWBTC") not
+    raw wei.
+  - Interest rate as `boost_percentage` display type (5.00 with
+    OpenSea rendering it as "5.00%") rather than raw BPS (500).
+  - Duration as `display_type: number`.
+  - "Locked Collateral" trait — what's actually in escrow
+    against this loan right now (0.1 mWBTC for the example
+    above, "Already claimed" once claimed at terminal).
+  - "Claimable Now" trait — what the holder can call
+    `claimAsLender` / `claimAsBorrower` for. None for live
+    loans, populated at terminal.
+  - "VPFI Rebate Pending" — borrower-side custody slice that
+    settles via `LibVPFIDiscount.settleBorrowerLifProper` at
+    proper close.
+  - "Created At" trait — `display_type: date` so OpenSea
+    localises the offer-creation timestamp.
+  - Both an "Loan State" trait (the on-chain loan-status enum)
+    and the existing NFT-lifecycle "Status" trait, since they
+    can drift (a loan can be Repaid while the lender NFT is
+    still Active pre-claim).
+
+Verified end-to-end on anvil: `tokenURI(3)` for a freshly
+matched lender NFT renders "1000 mUSDC" principal at "5%" with
+"0.1 mWBTC" collateral and "0.1 mWBTC" locked, all dynamically
+pulled from `loan` storage.
+
+### Position NFT metadata — Tier 2 (marketplace polish)
+
+Two OpenSea-spec fields added to `tokenURI`'s JSON:
+
+- **`background_color`**: six-character hex picked by
+  side + terminal state. Lender (active) renders forest-green
+  `2f855a`, borrower (active) steel-blue `2b6cb0`,
+  defaulted/liquidated muted-red `c53030`, repaid/closed slate
+  `4a5568`. Marketplace grid views differentiate lender from
+  borrower from defaulted at a glance.
+- **`external_url`**: admin-set base URL emitted with a
+  position-aware query (`?loan=<id>&side=<…>` for matched
+  loans, `?token=<id>` for offer-only NFTs). Marketplaces
+  render a "View on Vaipakam" deep-link from OpenSea straight
+  into the dApp's dashboard. New admin setter
+  `setExternalUrlBase(string)` stores the per-chain base in
+  `LibERC721` storage; empty string omits the field from the
+  JSON entirely.
+
+### Status-keyed image URI scheme
+
+The previous four-slot scheme (`lenderActive`, `lenderClosed`,
+`borrowerActive`, `borrowerClosed`) collapsed every terminal
+state into a single "closed" image — a defaulted lender NFT
+looked identical to a fully-repaid one. Replaced by a granular
+status-keyed mapping:
+
+- `statusImageURIs[LoanPositionStatus][isLender]` — one image
+  per (status, side) pair. Each of the eight position-status
+  enum values (None, OfferCreated, LoanInitiated, LoanRepaid,
+  LoanDefaulted, LoanLiquidated, LoanClosed,
+  LoanFallbackPending) can carry distinct artwork for both
+  sides.
+- `defaultLenderImage` / `defaultBorrowerImage` — per-side
+  fallbacks when no status-specific override is configured.
+
+Lookup chain in `tokenURI`:
+1. Exact `(status, isLender)` override.
+2. Per-side default.
+3. Collection-level `contractImageURI`.
+4. Empty string.
+
+New admin setters: `setImageURIForStatus(status, isLender, uri)`
+(granular, single-state), `setDefaultImage(isLender, uri)`
+(per-side fallback). A read-back view
+`getImageURIFor(status, isLender)` lets the frontend admin
+dashboard preview the resolved URL before broadcasting an
+override. All admin-gated; ADMIN_ROLE is governance-transferable
+without any contract change.
+
+Companion script: `ConfigureNFTImageURIs.s.sol` — a one-shot
+post-deploy URL rotation tool that reads from env vars (one per
+side per status, plus `NFT_DEFAULT_IMAGE_LENDER` /
+`NFT_DEFAULT_IMAGE_BORROWER` and `NFT_EXTERNAL_URL_BASE`) and
+calls the relevant setters in a single transaction. Idempotent
+and partial — only env vars that are populated trigger their
+setter, so a designer shipping just the "defaulted" art doesn't
+overwrite the other states.
+
+### Bot detector — `offerMatcher.ts`
+
+Reference matching detector in `vaipakam-keeper-bot/src/detectors/
+offerMatcher.ts`. Per-tick logic:
+
+1. Read `getActiveOffersCount` (O(1)) and short-circuit on zero.
+2. Page through `getActiveOffersPaginated` to gather every live
+   offer id.
+3. Hydrate each offer via `getOffer(id)` and partition into
+   lender / borrower buckets keyed by the cheap continuity tuple
+   `(lendingAsset, collateralAsset, assetType,
+   collateralAssetType, durationDays)`. Buckets that lack offers
+   on both sides can never produce a valid match and are
+   skipped — cuts the cartesian to a per-bucket nested loop.
+4. For each candidate pair within a bucket, call `previewMatch`.
+   Skip on any structured error code; submit `matchOffers` on
+   `Ok`. First-come-first-served.
+5. Per-tick caps: 2000 preview calls, 25 submits. Per-tick
+   dedupe via `${lenderId}:${borrowerId}` set so a partial fill
+   can't be re-attempted in the same tick.
+
+Master kill-switch behaviour: when `partialFillEnabled` is off
+on chain, `matchOffers` reverts with `FunctionDisabled(3)`. The
+detector logs that revert once per chain at INFO and keeps
+polling — when governance flips the flag the very next tick
+succeeds, no bot restart needed.
+
+Wired into the bot's existing per-chain `tickChain` immediately
+after the liquidation pass, so a freshly liquidated loan never
+blocks a lender offer's matching capacity in the same tick.
+Wrapped in try/catch — a matcher crash never aborts the
+liquidation sweep.
+
+ABI export: `contracts/script/exportAbis.sh` extended with
+`OfferFacet` so the bot picks up `previewMatch` + `matchOffers`
+ABIs from the same export pipeline as the existing
+`MetricsFacet` / `RiskFacet` / `LoanFacet` ones.
+
+### MetricsFacet — `getActiveOffersPaginated`
+
+New view, symmetric with the existing `getActiveLoansPaginated`
+but for offers. Asset-agnostic (existing `getActiveOffersByAsset`
+filters by asset). Consumed by the bot's enumeration loop above;
+also useful for any UI that wants to render the order book
+without an event scan.
+
+### Frontend — Range Orders UI behind master flags
+
+`useProtocolConfig` extended to surface the three master flags
+(`rangeAmountEnabled`, `rangeRateEnabled`, `partialFillEnabled`)
+from `getProtocolConfigBundle`. Create-Offer form gates new
+controls on those:
+
+- Min/Max amount inputs replace the single Amount input when
+  `rangeAmountEnabled` AND the user is in Advanced mode.
+  Otherwise the existing single-value flow stays byte-identical.
+- Min/Max interest-rate inputs do the same when
+  `rangeRateEnabled`.
+- Lender's classic ERC-20 approval and Permit2 sign now cover
+  the upper bound (`amountMax` when range mode is active, else
+  `amount`). Without this, lender range offers would revert at
+  the escrow pull because the contract pulls `params.amountMax`
+  but the wallet only approved `amount`.
+- New form-state fields `amountMax` + `interestRateMax` carry
+  empty string when not populated; `toCreateOfferPayload`
+  converts blank to `0n` / `0` (the contract's auto-collapse
+  semantics — single-value offer).
+- Validation guards: `amountMax >= amount` and
+  `interestRateMax >= interestRate` when populated.
+
+Plus a live wallet-balance pre-check: as the user types the
+amount, a 250ms-debounced `useEffect` resolves
+`IERC20Metadata.balanceOf(walletAddress)` for the relevant
+asset (lending for lender-side, collateral for borrower-side)
+and renders an inline "Insufficient X balance — wallet holds Y,
+offer requires Z" hint with both quantities decimal-formatted
+and labelled with the token symbol. Submit handler still
+re-checks on broadcast as a final guard.
+
+### Frontend — false-success bug fix on reverted txs
+
+`useDiamond.wait()` and `useERC20.wait()` previously resolved
+on any tx inclusion regardless of receipt status. A reverted
+tx (status 0) looked identical to a successful one — the page
+showed "Offer Created Successfully" while the on-chain state
+never changed. Both helpers now throw on `receipt.status !==
+'success'`, which propagates through every page using the
+common `try { await tx.wait(); …setStep("success") } catch`
+shape. Catches reverted approvals, reverted creates, reverted
+liquidations — surfaces the actual on-chain failure to the
+user instead of a green checkmark.
+
+### Frontend NFT Verifier — Tier 1 traits surfaced
+
+The verifier's "Live" card now reads the new metadata traits
+and renders them in the structured details column: Loan State,
+Locked in Escrow, Claimable Now (color-coded green when
+populated), VPFI Rebate Pending, and Created (Unix timestamp
+rendered via `Date#toLocaleString`). All four fields hide when
+their value is empty so older-facet NFTs without the new
+traits render gracefully against the old shape.
+
+### Anvil playground scaffolding
+
+End-to-end smoke-test infrastructure for the matching flow on a
+local foundry node. Three new artifacts in
+`contracts/script/`:
+
+- `BootstrapAnvil.s.sol` — flips the three Range Orders master
+  flags ON via `ConfigFacet`, gated to `block.chainid == 31337`.
+  Verifies via `getProtocolConfigBundle` readback so a silently
+  failed setter can't pass.
+- `SeedAnvilOffers.s.sol` — creates one matchable lender +
+  borrower offer pair using the mock USDC / mock WBTC
+  liquidity. Lender posts a range (500–2000 mUSDC at
+  4–6% APR), borrower posts a single-fill 1000 mUSDC
+  request at 4.5–5.5% APR. Midpoint match: 1000 mUSDC at 5%
+  with 0.1 mWBTC pro-rated collateral against $60k/BTC mock
+  prices — HF ≈ 6, well above the 1.5 floor.
+- `anvil-bootstrap.sh` — orchestrator. Pre-flight-checks anvil
+  RPC reachability and chain id (refuses to run unless 31337),
+  then chains: `DeployDiamond` → `DeployTestnetLiquidityMocks`
+  (extended to support 31337 with an inline mock WETH) →
+  Multicall3 etch → `BootstrapAnvil` → `SeedAnvilOffers`. Prints
+  the bot's launch command at the end with the freshly-deployed
+  Diamond address baked in.
+
+Plus a `Multicall3Mock` contract under `contracts/test/mocks/`
+that the bootstrap deploys and `anvil_setCode`-etches to the
+canonical `0xcA11…cA11` address. Without this, the frontend's
+`lib/multicall.ts` (which calls `aggregate3` at the canonical
+address) reverts with "no data" on every dashboard read because
+fresh anvil nodes don't pre-deploy the canonical Multicall3.
+
+`Deployments` library + `DeployTestnetLiquidityMocks` taught
+about chain 31337 (`anvil` slug, `ANVIL_` env prefix, sentinel
+LZ EID 31337 since no real LZ traffic on a local node).
+`DeployDiamond._getMetricsSelectors` /
+`_getOfferSelectors` / `_getConfigSelectors` were extended to
+include selectors that the Range Orders work added but didn't
+have a fresh-deploy registration: `getActiveOffersPaginated`,
+`previewMatch`, `matchOffers`, `setRangeAmountEnabled`,
+`setRangeRateEnabled`, `setPartialFillEnabled`, `getMasterFlags`.
+
+### Critical bug fix surfaced by the smoke test
+
+The smoke test caught a load-bearing bug that the unit-test
+suite did not: `_acceptOffer` resolved an override-aware
+`acceptor` for sanctions / country / KYC / role checks but
+passed `msg.sender` to `LoanFacet.initiateLoan` for the loan's
+`acceptor` argument. Under `matchOffers` `msg.sender` is the
+bot, not the actual counterparty — so the resulting loan
+recorded the bot as the lender (when the borrower offer was
+processed via override). Fixed by threading the resolved
+`acceptor` through to `initiateLoan`. Refactored matcher
+resolution to inline storage reads to stay under viaIR's
+stack-too-deep budget (the local `matcher` variable was the
+straw that broke the camel's back).
+
+### Verification
+
+- `forge build` clean across all post-PR commits.
+- `forge test --no-match-path "test/invariants/*"` →
+  **1402/1407 passing, 0 failed, 5 skipped** at every checkpoint
+  through the post-PR follow-ups. The 5 skips remain the
+  fork-gated Permit2 tests requiring `FORK_URL_MAINNET`.
+- Anvil end-to-end smoke test: bootstrap → bot fires
+  `matchOffers` within one tick → loan created with correct
+  lender + borrower (verified via `getLoanDetails`) → 0.05 mWBTC
+  excess refund landed in borrower wallet → `tokenURI(3)`
+  decoded JSON shows symbols + decimal-formatted amounts +
+  display_type annotations + locked-collateral trait + created
+  timestamp.
+- Frontend `tsc -b --noEmit` clean across every UI change.
 
 ## Documentation convention
 
