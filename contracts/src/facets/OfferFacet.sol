@@ -815,40 +815,39 @@ contract OfferFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
     ///         borrower offer. Permissionless; `msg.sender` is recorded
     ///         on the resulting loan as the matcher and receives the
     ///         1% LIF kickback at terminal (lender-asset path: at
-    ///         match; VPFI path: at proper close / default).
-    /// @dev    Phase 1 ships the full matching mechanic gated on the
-    ///         `partialFillEnabled` master flag. While that flag is
-    ///         off (default on a fresh deploy), `matchOffers` reverts
-    ///         with `FunctionDisabled(3)` so users see a clear
-    ///         "feature not enabled" message rather than an opaque
-    ///         downstream revert. The full `LibOfferMatch.executeMatch`
-    ///         body (which requires the `_acceptOffer` refactor + the
-    ///         `LoanFacet.initiateLoan` signature change documented in
-    ///         the design doc PR3-B) lands in a follow-up PR. For now
-    ///         this entry validates the call shape so external
-    ///         integrators can compile against the final ABI.
+    ///         match via `_acceptOffer` LIF split; VPFI path: at
+    ///         proper close / default via `LibVPFIDiscount`).
+    /// @dev    Gated on the `partialFillEnabled` master flag (default
+    ///         off on a fresh deploy). When active, validates via
+    ///         `LibOfferMatch.previewMatch`, sets the per-tx
+    ///         `matchOverride` slot with midpoint terms, calls into
+    ///         `_acceptOffer` reusing the existing escrow + LIF + NFT
+    ///         + LoanFacet plumbing, then increments the lender
+    ///         offer's `amountFilled` and auto-closes on dust.
+    ///         The borrower offer is single-fill in Phase 1 (per
+    ///         design §10.1), so `_acceptOffer` flips its `accepted`
+    ///         to true; the lender offer is preserved (storage stays)
+    ///         when partial-filled, deleted when fully filled or
+    ///         dust-closed.
+    /// @return loanId  The newly initiated loan.
     function matchOffers(uint256 lenderOfferId, uint256 borrowerOfferId)
         external
         nonReentrant
         whenNotPaused
-        returns (uint256 /*loanId*/)
+        returns (uint256 loanId)
     {
-        LibVaipakam.ProtocolConfig storage cfg =
-            LibVaipakam.storageSlot().protocolCfg;
-        if (!cfg.partialFillEnabled) {
-            // Master kill-switch: matching infra dormant in Phase 1
-            // until governance enables it post-bake.
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        if (!s.protocolCfg.partialFillEnabled) {
+            // Master kill-switch: matching infra dormant until governance
+            // enables it post-bake.
             revert FunctionDisabled(3);
         }
-        // Pre-flight via the shared core. Surfaces typed reverts so
-        // callers get actionable errors. Once the executeMatch
-        // implementation lands (PR3-B), this becomes the single match
-        // entry point; until then it's a strict revert.
+
+        // Pre-flight via the shared core; map structured errors into
+        // typed reverts declared on this facet.
         LibOfferMatch.MatchResult memory mr =
             LibOfferMatch.previewMatch(lenderOfferId, borrowerOfferId);
         if (mr.errorCode != LibOfferMatch.MatchError.Ok) {
-            // Map the structured preview-error into the typed reverts
-            // declared on this facet so the ABI stays surface-stable.
             if (mr.errorCode == LibOfferMatch.MatchError.AssetMismatch
                 || mr.errorCode == LibOfferMatch.MatchError.AssetTypeMismatch) {
                 revert AssetMismatch();
@@ -871,15 +870,99 @@ contract OfferFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
             if (mr.errorCode == LibOfferMatch.MatchError.HFTooLow) {
                 revert MatchHFTooLow();
             }
-            // WrongOfferType, fall-through.
             revert InvalidOfferType();
         }
-        // PR3-A scope ends here. PR3-B will replace this with the
-        // full executeMatch body (state mutations, escrow flows, NFT
-        // mints, OfferMatched emit, dust-close). Until then, revert
-        // with a clear marker so accidental enablement during the bake
-        // doesn't silently no-op.
-        revert FunctionDisabled(3);
+
+        // ── State mutation: install the match override so
+        // `LoanFacet._copyFinancialFields` populates the new loan with
+        // the midpoint match terms instead of the lender offer's raw
+        // amount/rate/collateral fields.
+        LibVaipakam.MatchOverride storage mo = s.matchOverride;
+        mo.amount = mr.matchAmount;
+        mo.rateBps = mr.matchRateBps;
+        mo.collateralAmount = mr.reqCollateral;
+        mo.matcher = msg.sender;
+        mo.active = true;
+
+        // Reuse `_acceptOffer`'s escrow + LIF + NFT-mint + initiateLoan
+        // plumbing by acting as the borrower-creator's "self-match" via
+        // the borrower offer (which is single-fill, so it gets fully
+        // consumed here). The acceptor's fallback consent is implicit
+        // — the borrower already consented at create time.
+        loanId = _acceptOffer(
+            borrowerOfferId,
+            /* acceptorFallbackConsent */ true,
+            /* usePermit */ false,
+            _emptyPermit(),
+            ""
+        );
+
+        // Clear the override now that the loan is initiated. Critical:
+        // any subsequent same-tx initiateLoan calls (e.g., a follow-up
+        // strategic flow) MUST fall through to the legacy field-read
+        // path.
+        delete s.matchOverride;
+
+        // ── Lender-side post-match accounting. The borrower offer is
+        // already marked `accepted = true` by `_acceptOffer`. The
+        // lender offer survives unless this match exhausted it.
+        LibVaipakam.Offer storage L = s.offers[lenderOfferId];
+        L.amountFilled += mr.matchAmount;
+        uint256 lenderRemaining = L.amountMax - L.amountFilled;
+
+        // Auto-close on dust: if the leftover can't satisfy the
+        // lender's per-match minimum (`L.amount`), refund the dust to
+        // the lender's escrow and flip `accepted = true`. The same
+        // condition fires when the lender is fully filled
+        // (`lenderRemaining == 0`).
+        if (lenderRemaining < L.amount) {
+            if (lenderRemaining > 0) {
+                // Dust refund: pull the unfilled remainder back to the
+                // lender's escrow. createOffer pre-escrowed amountMax;
+                // _acceptOffer already pulled `mr.matchAmount` for the
+                // borrower's principal, leaving `lenderRemaining` still
+                // in custody. Returning it via escrowDepositERC20
+                // ensures `escrowWithdrawERC20` accounting stays balanced.
+                // Lender ERC20 only — NFT / ERC1155 lender offers are
+                // single-fill (amount == amountMax) so this branch is
+                // unreachable for them in practice.
+                LibFacet.crossFacetCall(
+                    abi.encodeWithSelector(
+                        EscrowFactoryFacet.escrowWithdrawERC20.selector,
+                        L.creator,
+                        L.lendingAsset,
+                        L.creator,
+                        lenderRemaining
+                    ),
+                    EscrowWithdrawFailed.selector
+                );
+            }
+            L.accepted = true;
+            emit OfferClosed(
+                lenderOfferId,
+                lenderRemaining == 0
+                    ? OfferCloseReason.FullyFilled
+                    : OfferCloseReason.Dust
+            );
+        }
+
+        emit OfferMatched(
+            lenderOfferId,
+            borrowerOfferId,
+            loanId,
+            msg.sender,
+            mr.matchAmount,
+            mr.matchRateBps,
+            lenderRemaining,
+            // lifMatcherFee: paid synchronously inside `_acceptOffer`'s
+            // LIF split (lender-asset path) or zero (VPFI path —
+            // settles at terminal). Computed here for the event so
+            // downstream indexers can render the matcher's earnings
+            // without re-deriving from the LIF settings.
+            (mr.matchAmount * LibVaipakam.cfgLoanInitiationFeeBps()
+                * LibVaipakam.LIF_MATCHER_FEE_BPS)
+                / (LibVaipakam.BASIS_POINTS * LibVaipakam.BASIS_POINTS)
+        );
     }
 
     /// @dev Zero-valued `PermitTransferFrom` for the classic accept
@@ -1282,6 +1365,27 @@ contract OfferFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
         LibAuth.requireOfferCreator(offer);
         if (offer.accepted) revert OfferAlreadyAccepted();
 
+        // ── Range Orders Phase 1 — cancel cooldown ─────────────────
+        // Active ONLY when the master `partialFillEnabled` flag is on.
+        // The cooldown defends against the cancel-front-run vector on
+        // the matching path (design §9.2): an attacker can't watch
+        // matchOffers in mempool, race a cancelOffer in, and reclaim
+        // escrowed assets before the match lands. With matching
+        // dormant (default), there's no front-run vector to defend
+        // against, so the cooldown stays off and existing
+        // create-then-cancel test flows compile-clean. Partial-filled
+        // offers (`amountFilled > 0`) bypass the cooldown
+        // unconditionally because the lender has already committed
+        // value through prior matches — no front-run surface left.
+        if (
+            LibVaipakam.storageSlot().protocolCfg.partialFillEnabled
+            && offer.amountFilled == 0
+            && offer.createdAt != 0
+            && block.timestamp < uint256(offer.createdAt) + LibVaipakam.MIN_OFFER_CANCEL_DELAY
+        ) {
+            revert CancelCooldownActive();
+        }
+
         // ── Strategic-flow NFT unlock on cancel ─────────────────────────────
         // requireOfferCreator above has bound msg.sender to offer.creator. For
         // the native-lock design the position NFT never leaves its owner; we
@@ -1306,16 +1410,29 @@ contract OfferFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
 
         if (offer.offerType == LibVaipakam.OfferType.Lender) {
             if (offer.assetType == LibVaipakam.AssetType.ERC20) {
-                LibFacet.crossFacetCall(
-                    abi.encodeWithSelector(
-                        EscrowFactoryFacet.escrowWithdrawERC20.selector,
-                        msg.sender,
-                        offer.lendingAsset,
-                        msg.sender,
-                        offer.amount
-                    ),
-                    EscrowWithdrawFailed.selector
-                );
+                // Range Orders Phase 1 — refund only the UNFILLED
+                // portion. createOffer pre-escrowed `amountMax`; each
+                // partial match consumed a slice via matchOffers (PR3-B
+                // body, dormant until then). Cancel reclaims the
+                // remainder. Legacy single-value offers satisfy
+                // `amountMax == amount && amountFilled == 0`, so the
+                // refund equals `amount` — byte-identical to pre-Phase-1.
+                uint256 effAmountMax = offer.amountMax == 0
+                    ? offer.amount
+                    : offer.amountMax;
+                uint256 refund = effAmountMax - offer.amountFilled;
+                if (refund > 0) {
+                    LibFacet.crossFacetCall(
+                        abi.encodeWithSelector(
+                            EscrowFactoryFacet.escrowWithdrawERC20.selector,
+                            msg.sender,
+                            offer.lendingAsset,
+                            msg.sender,
+                            refund
+                        ),
+                        EscrowWithdrawFailed.selector
+                    );
+                }
             } else if (offer.assetType == LibVaipakam.AssetType.ERC721) {
                 LibFacet.crossFacetCall(
                     abi.encodeWithSelector(
@@ -1439,9 +1556,22 @@ contract OfferFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
             offer.amountFilled
         );
 
-        delete s.offers[offerId];
+        // Range Orders Phase 1 — preserve storage on partial-filled
+        // cancel. The N existing loans spawned by prior matches still
+        // reference this offer's terms via `Loan.offerId`, and the
+        // position NFTs' metadata (if any future renderer pulls offer
+        // details) needs them. Mark `accepted = true` so the open-book
+        // queries skip it; the storage slot stays intact. Zero-fill
+        // cancels (no matches) delete normally — frees the slot for
+        // gas refund.
+        if (offer.amountFilled > 0) {
+            offer.accepted = true;
+        } else {
+            delete s.offers[offerId];
+        }
 
         emit OfferCanceled(offerId, msg.sender);
+        emit OfferClosed(offerId, OfferCloseReason.Cancelled);
     }
 
     /**

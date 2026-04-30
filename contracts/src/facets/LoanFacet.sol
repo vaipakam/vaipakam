@@ -468,9 +468,29 @@ contract LoanFacet is DiamondPausable, IVaipakamErrors {
         loan.offerId = offerId;
         loan.startTime = block.timestamp;
         loan.durationDays = offer.durationDays;
-        loan.interestRateBps = offer.interestRateBps;
-        loan.principal = offer.amount;
-        loan.collateralAmount = offer.collateralAmount;
+        // Range Orders Phase 1 — when matchOffers (PR3-B) is in flight,
+        // the per-tx `matchOverride` slot carries the midpoint match
+        // terms (amount / rate / collateral) and the matcher address.
+        // Read from override; fall back to offer fields on the legacy
+        // single-value path that doesn't set the override. matcher
+        // also stamped here when active so the VPFI-path 1% LIF
+        // kickback (deferred to terminal in
+        // `LibVPFIDiscount.settleBorrowerLifProper` / `forfeitBorrowerLif`)
+        // knows where to route on a matched-via-bot loan.
+        LibVaipakam.MatchOverride storage mo =
+            LibVaipakam.storageSlot().matchOverride;
+        if (mo.active) {
+            loan.principal = mo.amount;
+            loan.interestRateBps = mo.rateBps;
+            loan.collateralAmount = mo.collateralAmount;
+            loan.matcher = mo.matcher;
+        } else {
+            loan.interestRateBps = offer.interestRateBps;
+            loan.principal = offer.amount;
+            loan.collateralAmount = offer.collateralAmount;
+            // matcher stamped by the legacy `_acceptOffer` post-init
+            // hook (already in PR3-A).
+        }
     }
 
     function _copyAssetFields(

@@ -267,6 +267,279 @@ to capture any ABI deltas from the 31 commits of contract
 changes since the last frontend sync. Coordinated frontend
 deploy after the address sweep + ABI re-export + `tsc -b` clean.
 
+## Range Orders Phase 1 — feature branch landed
+
+Per the locked design at
+[`docs/RangeOffersDesign.md`](./RangeOffersDesign.md), the
+Range Orders + lender-side partial fills + bot-driven matching
+work landed today on a dedicated **`feat/range-orders-phase1`**
+branch. Main remains at `cac7487` (last stable, currently
+deployed to Cloudflare + the three testnets from earlier today)
+so any minor production fixes can land on `main` without
+mingling with the new feature work. Merge to `main` is held
+pending the testnet bake — every new mechanic ships behind a
+master kill-switch that defaults `false` on a fresh deploy, so
+the new code is dormant until governance flips it on after the
+~2-week bake the design plan calls for.
+
+The work split across five PRs (each landing as a discrete commit
+on the feature branch). All five passed the same forge regression
+baseline as `main`: **1402 / 1407 tests, 0 failed, 5 skipped**
+(the 5 skips are fork-gated Permit2 tests requiring
+`FORK_URL_MAINNET`).
+
+### PR1 — Storage + types + master kill-switch flags
+
+Foundational additive change: every new field is **append-only**
+to existing structs so legacy single-value offers stay byte-
+identical at runtime through an auto-collapse mechanic. Three
+new fields on `Offer` (`amountMax`, `amountFilled`,
+`interestRateBpsMax`, `createdAt`), one on `Loan` (`matcher`),
+two on `CreateOfferParams` (`amountMax`, `interestRateBpsMax`),
+three on `ProtocolConfig` (the master kill-switch flags
+`rangeAmountEnabled` / `rangeRateEnabled` / `partialFillEnabled`,
+all default `false`). Three new constants
+(`MIN_OFFER_CANCEL_DELAY = 5 minutes`, `LIF_MATCHER_FEE_BPS =
+100`, `MAX_INTEREST_BPS = 10_000`).
+
+The `OfferCanceledDetails` event picked up the three new range
+fields so cancelled-offer hydration still has the full term
+tuple. New events (`OfferMatched`, `OfferClosed`) declared.
+Eleven new error types declared on `OfferFacet` covering range-
+invariant violations, system-derived bound failures, master-flag
+gates, matching-core preview reverts, cancel cooldown.
+
+`ConfigFacet` gained three setters
+(`setRangeAmountEnabled` / `setRangeRateEnabled` /
+`setPartialFillEnabled`, all `onlyRole(ADMIN_ROLE)`) plus a
+`getMasterFlags()` view, and `getProtocolConfigBundle()` was
+extended with the three flags so the frontend `useProtocolConfig`
+hook surfaces them alongside the existing fee BPS bundle.
+
+`OfferFacet._writeOfferPrincipalFields` stamps `createdAt`,
+auto-collapses `amountMax == 0 → amount` (and the same for the
+rate pair), validates range invariants, and enforces the master-
+flag gates so a range-shaped offer reverts cleanly when the
+flag's off.
+
+Bulk update across 33 test/script files added
+`amountMax: 0, interestRateBpsMax: 0` to every existing
+`CreateOfferParams` literal. Auto-collapse made every test
+behaviour-identical without any per-test-case logic changes.
+
+### PR2 — `LibRiskMath` + side-specific bound enforcement
+
+New pure library `LibRiskMath` exposes
+`minCollateralForLending(amountMax, principalAsset, collateralAsset)`
+and `maxLendingForCollateral(collateralAmount, principalAsset,
+collateralAsset)`. Both solve `HF = 1.5e18` analytically using
+the same Chainlink-feed conversion as
+`RiskFacet._computeUsdValues` so create-time bounds match the
+runtime HF gate semantics 1:1. Skips when collateral asset has
+no registered risk params (treats missing-params as "fall through
+to runtime gate").
+
+`OfferFacet.createOffer` validates the side-specific bounds:
+
+- **Lender offer**: required `collateralAmount >=
+  minCollateralForLending(amountMax)` — lender's posted
+  collateral floor is sized to the worst-case lending amount, so
+  partial fills at any size land HF ≥ 1.5.
+- **Borrower offer**: `amountMax <=
+  maxLendingForCollateral(collateralAmount)` — borrower's
+  willingness to receive can't exceed the collateral they posted.
+
+Both checks are **gated on `rangeAmountEnabled`** so the create-
+time bound only fires when range mode is actually permitted —
+single-value offers (the default-flag-off path) fall through to
+the runtime HF gate at `LoanFacet.initiateLoan` exactly as
+before. The lender ERC-20 pull at create-time was updated to
+use `params.amountMax` (auto-collapsed to `params.amount` for
+legacy callers); same for the Permit2 path's `_creatorPullAmount`.
+
+### PR3-A — `LibOfferMatch` + matchOffers entry + 1% LIF matcher kickback
+
+New library `LibOfferMatch` carries:
+
+- **`previewMatch(lenderOfferId, borrowerOfferId)` view** — runs
+  the validity matrix from design §4.1 + computes midpoint terms
+  from §4.2 + a synthetic HF check via `LibRiskMath`. Returns a
+  structured `MatchResult` so off-chain matching bots can filter
+  candidate pairs without paying for reverting txs.
+- **`assertAssetContinuity(loan, offer)`** — single source of
+  truth for the per-asset invariants (lendingAsset /
+  collateralAsset / collateralAssetType / prepayAsset) consumed
+  by Preclose + Refinance in PR4.
+- **`matcherShareOf(totalFee)` pure helper** — the 1% slice math
+  used by both LIF settlement paths.
+- **`splitLifToMatcher(asset, totalFee, lender, matcher)`** —
+  routes the matcher's slice from lender escrow to matcher
+  address (kept for the future `executeMatch` body in PR3-B
+  variants).
+
+`OfferFacet` gained two external entries:
+
+- **`previewMatch(lenderOfferId, borrowerOfferId)` view** — bot-
+  facing wrapper around `LibOfferMatch.previewMatch`.
+- **`matchOffers(lenderOfferId, borrowerOfferId)`** — main
+  matching entry; gated on `partialFillEnabled` master flag
+  (default off), so reverts cleanly with `FunctionDisabled(3)`
+  in Phase 1 dormant state. Body landed in PR3-B (below).
+
+The **1% LIF matcher kickback** went live on the legacy single-
+value `acceptOffer` path immediately:
+
+- **Lender-asset path** (most accepts): the existing LIF-to-
+  treasury transfer split into 99% to treasury + 1% to
+  `msg.sender`. Inline at the LIF site so a single LIF flow
+  never lands 100% in either bucket.
+- **VPFI path** (Phase 5 borrower-LIF rebate): the matcher slice
+  is deferred to terminal in
+  `LibVPFIDiscount.settleBorrowerLifProper` (1% of treasury share
+  at proper close) and `LibVPFIDiscount.forfeitBorrowerLif` (1%
+  of full forfeit at default / HF-liquidation). Matcher address
+  read from the new `Loan.matcher` field which `_acceptOffer`
+  stamps with `msg.sender` post-init.
+
+Four existing tests updated for the new 99/1 split semantics.
+Zero behavioural regressions.
+
+### PR4 — Preclose + Refinance consume `LibOfferMatch.assertAssetContinuity`
+
+`PrecloseFacet.transferObligationViaOffer` and
+`RefinanceFacet.refinanceLoan` had identical inline asset-
+continuity check blocks (4 lines each). Both now call
+`LibOfferMatch.assertAssetContinuity(loan, offer)` and surface
+their facet-specific reverts (`InvalidOfferTerms` /
+`InvalidRefinanceOffer`) on failure — each suite's typed-revert
+expectations preserved.
+
+The flow-specific amount checks became range-aware:
+
+- **Preclose**: `offer.amount <= loan.principal <= offer.amountMax`
+  (the borrower's range must accommodate the existing loan's
+  exact principal — preclose is a transfer-of-obligation, not a
+  fresh fill).
+- **Refinance**: `offer.amount <= oldLoan.principal <=
+  offer.amountMax` (the borrower's range must accommodate the
+  loan being refinanced).
+
+With auto-collapse (`amountMax == 0` → treated as `amount`),
+legacy single-value offers fall through to the original equality
+checks unchanged.
+
+The smaller flows confirmed the right shape for the
+`executeMatch` core: **per-offer state mutations** (validity +
+amountFilled increment + dust-close + accepted flag) belong in
+the shared core; **escrow flows + loan-state mutations** stay
+flow-specific because they vary widely.
+
+### PR5 — Cancel cooldown + partial-fill cancel semantics
+
+`OfferFacet.cancelOffer` gained three Range-Orders-aware
+behaviours:
+
+- **Cancel cooldown** — when `amountFilled == 0` AND
+  `partialFillEnabled` is on, `cancelOffer` reverts
+  `CancelCooldownActive()` until 5 minutes after the offer's
+  `createdAt`. Blunts the cancel-front-run vector on the matching
+  path (an attacker watching `matchOffers` in mempool can't race
+  a cancel in to reclaim escrowed assets before the match
+  lands). Gated on the master flag — when matching is dormant
+  there's no front-run vector, so the cooldown stays off and
+  every existing create-then-cancel test flow stays byte-
+  identical.
+- **Range-aware refund** — lender ERC-20 cancels refund
+  `(amountMax - amountFilled)`, not `offer.amount`. Auto-collapse
+  preserves backcompat: legacy single-value offers satisfy
+  `amountMax == amount && amountFilled == 0`, so the refund
+  equals `amount` exactly.
+- **Storage preservation on partial-filled cancel** — when
+  `amountFilled > 0`, `cancelOffer` skips
+  `delete s.offers[offerId]` and instead flips
+  `accepted = true`. The N existing loans spawned by prior
+  matches still reference the offer's terms via `Loan.offerId`,
+  so the storage slot must stay readable. Zero-fill cancels
+  delete normally and free the slot for gas refund.
+
+A new `OfferClosed(offerId, reason)` event fires on every cancel
+(reason = `Cancelled`) alongside the legacy `OfferCanceled` /
+`OfferCanceledDetails`, so the unified-reason discriminator
+groups every terminal class consistently for indexers.
+
+### PR3-B — true `matchOffers` body + matchOverride slot
+
+The deferred half of PR3 — the actual match-execution body —
+landed by introducing a `MatchOverride` per-tx storage slot
+that lets `matchOffers` inject midpoint match terms into
+`LoanFacet.initiateLoan` without changing its cross-facet
+signature. The storage slot has a clean active-flag pattern: set
+at the top of `matchOffers`, read by
+`LoanFacet._copyFinancialFields` if active (else falls through
+to the legacy field-read path), cleared post-match.
+
+`matchOffers` now has its full body:
+
+1. Validate via `LibOfferMatch.previewMatch`; map structured
+   errors to typed reverts.
+2. Set `s.matchOverride = (matchAmount, matchRateBps,
+   reqCollateral, msg.sender, active=true)`.
+3. Reuse `_acceptOffer`'s escrow + LIF + NFT-mint + initiateLoan
+   plumbing by invoking it on the borrower offer (single-fill in
+   Phase 1, fully consumed). The new loan picks up midpoint
+   terms via the override path in `_copyFinancialFields`; the
+   matcher gets stamped on `Loan.matcher` directly from the
+   override.
+4. Clear `s.matchOverride` to prevent same-tx leakage.
+5. Increment `lenderOffer.amountFilled += matchAmount`.
+6. **Auto-close on dust**: if remaining capacity falls below the
+   lender's per-match minimum (`L.amount`), refund the dust to
+   the lender's escrow + flip `accepted = true` + emit
+   `OfferClosed(reason)` (FullyFilled when remaining hit 0
+   exactly, Dust otherwise).
+7. Emit `OfferMatched` with the matched terms + the lender's
+   post-match remaining + the synchronous LIF kickback amount.
+
+### Master kill-switch posture on a fresh deploy
+
+All three flags default `false`. With matching dormant:
+
+- `createOffer` enforces `amountMax == amount` and
+  `interestRateBpsMax == interestRateBps` (collapsed range only).
+- `matchOffers` reverts immediately with `FunctionDisabled(3)`.
+- The cancel cooldown is inactive — `cancelOffer` works exactly
+  as before.
+- The `Loan.matcher` field still stamps on every accepted offer
+  (legacy path) and the 1% LIF kickback to `msg.sender` still
+  fires — these don't depend on the master flags.
+
+Governance flips a flag → relevant Range Orders mechanic comes
+online. Each flag can be flipped independently for staged
+enablement (e.g., enable amount-range but not partial-fills to
+get range-orders without multi-match support).
+
+### Verification
+
+- `forge build --silent` clean across all five PR landings.
+- `forge test --no-match-path "test/invariants/*"` →
+  **1402/1407 passing, 0 failed, 5 skipped** at every PR
+  checkpoint. The 5 skips are the fork-gated Permit2 tests
+  requiring `FORK_URL_MAINNET`.
+- Frontend ABIs re-exported after each contract-touching PR;
+  `tsc -b --noEmit` clean.
+
+### Outstanding
+
+- Testnet redeploy of the feat-branch contracts (deferred —
+  `main` is what the testnets currently run; merge gates
+  redeploy).
+- Bot-side matching detector in
+  `vaipakam-keeper-bot/src/detectors/offerMatcher.ts` (deferred
+  per the design — not on the contract critical path).
+- Frontend sliders + Advanced-mode reveal for range / partial-
+  fill UI (deferred — dormant flags mean the UI doesn't need
+  the controls until governance flips at least one flag on).
+
 ## Documentation convention
 
 Same as carried forward from prior files: every completed phase

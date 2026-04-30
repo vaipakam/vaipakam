@@ -742,7 +742,7 @@
     ],
     "outputs": [
       {
-        "name": "",
+        "name": "loanId",
         "type": "uint256",
         "internalType": "uint256"
       }

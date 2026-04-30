@@ -1549,6 +1549,32 @@ library LibVaipakam {
         ///      caller-asserted `originEid` argument carried from the
         ///      OFT message.
         mapping(address => mapping(uint32 => uint256)) vpfiFixedRateSoldToByEid;
+
+        // ── Range Orders Phase 1 — match-override slot ─────────────────
+        // Set by `OfferFacet.matchOffers` immediately before
+        // cross-facet-calling `LoanFacet.initiateLoan`, read by
+        // `LoanFacet._copyFinancialFields`, cleared at the end of the
+        // matchOffers tx. Lets matchOffers inject the midpoint match
+        // terms (amount / rateBps / collateralAmount) into the loan
+        // without changing `LoanFacet.initiateLoan`'s signature. The
+        // `active` flag distinguishes "matchOffers in flight" from
+        // "legacy single-value path" — the latter never sets it, so
+        // _copyFinancialFields falls back to reading offer.amount /
+        // offer.interestRateBps / offer.collateralAmount as before
+        // (auto-collapse keeps that semantically correct because in
+        // single-value mode amountMax == amount).
+        MatchOverride matchOverride;
+    }
+
+    /// @dev Range Orders Phase 1 — set by matchOffers, read by
+    ///      LoanFacet._copyFinancialFields, cleared post-match. See
+    ///      `Storage.matchOverride` for full semantics.
+    struct MatchOverride {
+        uint256 amount;
+        uint256 rateBps;
+        uint256 collateralAmount;
+        address matcher;
+        bool active;
     }
 
     /// @dev Default secondary-oracle deviation tolerance: 5%.
