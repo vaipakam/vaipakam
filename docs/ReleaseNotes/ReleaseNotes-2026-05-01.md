@@ -566,6 +566,62 @@ non-English UIs — just untranslated for these strings. Run
 sync. Review the diff and commit alongside the en.json
 changes.
 
+## Copyable-address sweep across remaining surfaces
+
+Earlier today the new `<CopyableAddress>` component shipped
+into the Asset-wise Breakdown table on Analytics. The user's
+underlying ToDo asked for the same affordance "wherever we
+show redacted address" — followup sweep landed today.
+
+Approach: rather than swap every `<AddressDisplay>` site for
+`<CopyableAddress>`, the existing `<AddressDisplay>`
+component grew an opt-in `copyable` prop. Setting `copyable`
+renders a small copy icon next to the address that flips to a
+green check for ~1.5 s on click while the full hex goes onto
+the clipboard. Same icon size and animation as
+`<CopyableAddress>`, so the affordance feels identical
+wherever it appears.
+
+Surfaces opted in:
+
+- **Loan parties on the loan-detail page** —
+  `<AddressDisplay copyable>` on the lender + borrower rows
+  next to the existing explorer-link icon, so a user
+  reviewing a loan can grab either party's full address
+  without switching to the explorer first.
+- **Offer creator on the offer-detail row** in OfferBook.
+- **Keeper whitelist rows** — both the per-user list on
+  `/app/keepers` and the per-loan keeper picker on
+  LoanDetails. Useful for an operator copying a keeper's
+  address into an off-chain whitelist.
+- **Timeline event participants** in `<LoanTimeline>` —
+  lender / borrower (LoanInitiated event), acceptor
+  (OfferAccepted event). Each rendered with the new copy
+  icon so users reading historical event detail can pull
+  the parties straight from the timeline.
+- **Per-chain asset distribution row on Analytics** — the
+  `pd-dist-row` blocks that show "{symbol} {address}" now
+  use `<CopyableAddress>` directly, replacing the bare
+  `shortenAddr` text.
+
+Surfaces intentionally NOT changed:
+
+- Address display sites that already sit inside an `<a>`
+  tag pointing at the block explorer (e.g. the VPFI token
+  address on Analytics, the wallet pill in the topbar).
+  The explorer link is the primary action there; nesting a
+  `<button>` inside the `<a>` would invalidate the markup,
+  and a duplicate copy affordance next to the existing link
+  would crowd the row without adding meaningful value
+  (right-click → "Copy link address" already covers it).
+- Symbol-fallback rendering on Analytics (where
+  `shortenAddr` is shown only if symbol lookup failed) —
+  rare fallback path, low value.
+
+`tsc -b --noEmit` clean. No behaviour change to the address
+display when `copyable` is omitted; existing call sites read
+identically to before the prop was added.
+
 ## Outstanding for the testnet redeploy gate
 
 Before fresh testnet diamonds can land:

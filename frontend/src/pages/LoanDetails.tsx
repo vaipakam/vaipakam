@@ -726,7 +726,7 @@ export default function LoanDetails() {
               className="data-value"
               style={{ color: "var(--brand)", fontSize: "0.82rem" }}
             >
-              <AddressDisplay address={loan.lender} withTooltip /> <ExternalLink size={12} />
+              <AddressDisplay address={loan.lender} withTooltip copyable /> <ExternalLink size={12} />
             </a>
           </div>
           <div className="data-row">
@@ -738,7 +738,7 @@ export default function LoanDetails() {
               className="data-value"
               style={{ color: "var(--brand)", fontSize: "0.82rem" }}
             >
-              <AddressDisplay address={loan.borrower} withTooltip /> <ExternalLink size={12} />
+              <AddressDisplay address={loan.borrower} withTooltip copyable /> <ExternalLink size={12} />
             </a>
           </div>
           <div className="data-row">
@@ -1109,7 +1109,7 @@ function LoanKeeperPicker({ loanId, actionLoading, onToggle }: LoanKeeperPickerP
                   }}
                 />
                 <span style={{ fontSize: "0.78rem", fontFamily: 'var(--font-mono, monospace)' }}>
-                  <AddressDisplay address={k} withTooltip />
+                  <AddressDisplay address={k} withTooltip copyable />
                 </span>
               </label>
             );

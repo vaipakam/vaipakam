@@ -579,7 +579,7 @@ export default function PublicDashboard() {
                         <div className="pd-dist-label">
                           <span>
                             <strong>{row.symbol}</strong>{' '}
-                            <span className="mono pd-subtle">{shortenAddr(row.asset)}</span>
+                            <CopyableAddress address={row.asset} className="pd-subtle" />
                           </span>
                           <span className="pd-dist-share">
                             {row.liquid ? `${row.share.toFixed(1)}%` : 'illiquid'}

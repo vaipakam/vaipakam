@@ -394,7 +394,7 @@ export default function KeeperSettings() {
                 }}
               >
                 <span style={{ wordBreak: "break-all", fontFamily: 'var(--font-mono, monospace)' }}>
-                  <AddressDisplay address={k} withTooltip />
+                  <AddressDisplay address={k} withTooltip copyable />
                 </span>
                 <div style={{ display: "flex", gap: 8 }}>
                   <button

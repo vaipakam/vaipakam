@@ -286,12 +286,12 @@ function Breakdown({ ev, principalAsset, collateralAsset }: BreakdownProps) {
           </Row>
           {typeof args.lender === 'string' && (
             <Row label={t('loanTimeline.lblLender')}>
-              <AddressDisplay address={args.lender as string} />
+              <AddressDisplay address={args.lender as string} copyable />
             </Row>
           )}
           {typeof args.borrower === 'string' && (
             <Row label={t('loanTimeline.lblBorrower')}>
-              <AddressDisplay address={args.borrower as string} />
+              <AddressDisplay address={args.borrower as string} copyable />
             </Row>
           )}
         </dl>
@@ -302,7 +302,7 @@ function Breakdown({ ev, principalAsset, collateralAsset }: BreakdownProps) {
         <dl className="loan-timeline-grid">
           {typeof args.acceptor === 'string' && (
             <Row label={t('loanTimeline.lblAcceptor')}>
-              <AddressDisplay address={args.acceptor as string} />
+              <AddressDisplay address={args.acceptor as string} copyable />
             </Row>
           )}
         </dl>

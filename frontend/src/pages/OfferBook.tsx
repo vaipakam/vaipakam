@@ -1194,7 +1194,7 @@ function AcceptReviewModal({ offer, illiquid, consent, onConsentChange, submitti
           <dd style={{ margin: 0 }}>{OFFER_TYPE_LABELS[offer.offerType]} · {sideLabel}</dd>
 
           <dt style={{ opacity: 0.7 }}>Counterparty</dt>
-          <dd style={{ margin: 0 }}><AddressDisplay address={offer.creator} withTooltip /></dd>
+          <dd style={{ margin: 0 }}><AddressDisplay address={offer.creator} withTooltip copyable /></dd>
 
           <dt style={{ opacity: 0.7 }}>{isERC20 ? 'Principal' : 'Daily rental fee'}</dt>
           <dd style={{ margin: 0 }}>
