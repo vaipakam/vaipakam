@@ -177,30 +177,98 @@ rejected" support questions, and a friendlier ramp into Range
 Orders for users who don't yet have an intuition for how a
 [min, max] range maps to risk.
 
+## Auto-refresh of the offer book on chain events (Tier 2 #22)
+
+Previously, a new offer (or a fresh acceptance / cancellation /
+range-orders match) would only show up in the Offer Book after
+the user explicitly clicked the "Rescan chain" button or
+hard-reloaded the page. Two open browsers — one creating an
+offer, one watching the book — would diverge until either side
+manually refreshed.
+
+What landed:
+
+- The shared event-backed loan / offer index (`useLogIndex`,
+  consumed by both Offer Book and the Dashboard) now subscribes
+  to four offer-affecting events on the Diamond:
+  **OfferCreated**, **OfferAccepted**, **OfferCanceled**, and
+  **OfferMatched**. Any one firing on-chain triggers a
+  debounced incremental rescan.
+- The 750 ms debounce coalesces the multiple events that a
+  single user action emits (a `matchOffers` call emits
+  `OfferAccepted` plus `OfferMatched`, optionally a dust-close
+  `OfferCanceled`) into one rescan rather than three.
+- The underlying scan is already incremental — it only re-reads
+  blocks past the last cached block — so the per-trigger cost
+  is small even on a slow public RPC.
+- Because the Offer Book page already re-fetches its row data
+  whenever the index's open-offer ID set changes, no
+  Offer-Book-side change was needed: as soon as the index
+  emits the new id, the page renders it. The existing
+  "Rescan chain" button is preserved for the case where a
+  filter drops a log (it now functions purely as a manual
+  failsafe).
+- Sort order is unchanged — the Offer Book's sort is fixed
+  (descending by ID, newest first), not user-configurable, so
+  a freshly indexed offer slots in at the top automatically.
+
+Net effect: the offer book is now live. A new offer published
+in one tab appears in another tab within ~1 s of its inclusion
+block.
+
+## Frontend env sync from deployment artifacts (Tier 3 #20)
+
+The previous redeploy loop was: redeploy a contract on a chain →
+open `contracts/deployments/<slug>/addresses.json` → manually
+copy seven values per chain into `frontend/.env.local`. Easy to
+transpose a digit, easy to forget a chain.
+
+What landed: a small idempotent shell helper at
+`contracts/script/syncFrontendEnv.sh`.
+
+- Walks every `contracts/deployments/<chain-slug>/addresses.json`
+  and writes the per-chain values back into
+  `frontend/.env.local`. Diamond, deploy block, escrow impl,
+  metrics / risk / profile facet addresses, and (where present)
+  the VPFI buy adapter.
+- Skips `anvil` (local-only — would otherwise pollute an
+  .env.local that's also used for production builds).
+- Replaces `KEY=...` lines in place when they exist; appends
+  to EOF when they don't. Comments and unrelated lines (RPC
+  URLs, manually-tuned values like `VITE_LOG_INDEX_CHUNK`) are
+  preserved untouched. Empty / null / zero-address values are
+  skipped silently so a half-populated artifact can't blank an
+  existing value.
+- Re-running on an already-synced env leaves it byte-identical.
+
+The earlier draft of this same task in this file proposed
+syncing into `frontend/wrangler.jsonc`'s `vars` block instead.
+That was the wrong surface: the frontend ships as a Cloudflare
+Pages-style static-asset deploy (`wrangler.jsonc` only declares
+`assets` + SPA fallback, no Worker code), so a `vars` block
+wouldn't reach the browser bundle at all. `VITE_*` values are
+inlined at `vite build` time from `.env.local` — that's the
+right surface to keep in sync, and it's what the script now
+writes.
+
+Deploy-flow caveat: `frontend/.env.local` is gitignored, so a
+CI build (Cloudflare Pages dashboard, GitHub Actions) won't see
+anything written by this script unless the values are also
+mirrored into the Cloudflare Pages Build-Environment-Variables
+dashboard, OR a `frontend/.env.production` is committed. The
+script is for the developer's local `npm run deploy` flow; the
+CI mirror remains a one-time setup step.
+
 ## Outstanding for the testnet redeploy gate
 
 Before fresh testnet diamonds can land:
 
-1. **OfferFacet split for EIP-170** — flagged for the next
-   commit on `feat/range-orders-phase1`. The Range Orders Phase
-   1 work pushed the facet's runtime bytecode to ~28KB, and
-   anvil bootstrap currently relies on `--code-size-limit
-   50000` + `forge --disable-code-size-limit` to deploy. Real
-   testnets / mainnet enforce the 24576-byte ceiling. Plan:
-   extract the matching surface (`matchOffers` + `previewMatch`
-   + the matchOverride storage management) into a new
-   `OfferMatchFacet`, share `_acceptOffer` plumbing via a thin
-   internal-cross-facet entry point on OfferFacet. Conceptually
-   the right cut anyway — matching is bot-facing and
-   semantically distinct from create / accept / cancel.
-2. **wrangler.jsonc env sync runbook** — fresh testnet diamond
-   addresses need to land in the Cloudflare Worker's vars
-   block automatically rather than being manually copied. Plan:
-   small `bash contracts/script/syncFrontendEnv.sh` that
-   rewrites `frontend/wrangler.jsonc` from `frontend/.env.local`.
-   Idempotent.
+1. **OfferFacet split for EIP-170** — already shipped earlier
+   today. Closed.
+2. **Frontend env sync runbook** — shipped above as
+   `contracts/script/syncFrontendEnv.sh`. Closed.
 
-Both land before the next testnet redeploy.
+The redeploy gate is now clear.
 
 ## Documentation convention
 

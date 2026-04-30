@@ -1,12 +1,28 @@
-import { useCallback, useEffect, useState } from 'react';
-import { useReadChain } from '../contracts/useDiamond';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import type { Address } from 'viem';
+import { useDiamondPublicClient, useReadChain } from '../contracts/useDiamond';
 import { DEFAULT_CHAIN } from '../contracts/config';
+import { DIAMOND_ABI_VIEM } from '../contracts/abis';
 import {
   loadLoanIndex,
   peekLoanIndex,
   type LoanIndexEntry,
   type ActivityEvent,
 } from '../lib/logIndex';
+
+/** Tier 2 #22 — events that can change the offer-book set; any of them
+ *  firing on-chain triggers a debounced incremental rescan so the
+ *  offer book + dashboard reflect the new state without the user
+ *  hitting "Rescan chain" by hand. The list intentionally covers
+ *  *both* sides of the matching surface (`OfferAccepted` from
+ *  `acceptOffer`, `OfferMatched` from `matchOffers`) so range-order
+ *  partial fills don't slip through. */
+const OFFER_BOOK_EVENTS = [
+  'OfferCreated',
+  'OfferAccepted',
+  'OfferCanceled',
+  'OfferMatched',
+] as const;
 
 type LoanInitiatedForToken = {
   loanId: string;
@@ -110,6 +126,49 @@ export function useLogIndex() {
   useEffect(() => {
     load();
   }, [load]);
+
+  // Tier 2 #22 — auto-refresh the index when any offer-book-affecting
+  // event fires on-chain. Without this, a freshly created offer (or a
+  // freshly matched / cancelled one) doesn't appear in the offer book
+  // until the user reloads the page or clicks "Rescan chain". The
+  // underlying scan is incremental (only blocks past `lastBlock`), so
+  // the cost per trigger is small.
+  //
+  // Debounce: a single user action can emit multiple events in the
+  // same tx (a `matchOffers` call emits both `OfferAccepted` and
+  // `OfferMatched`, plus optionally a dust-close `OfferCanceled`).
+  // Coalesce them into one rescan ~750ms after the last log lands.
+  const publicClient = useDiamondPublicClient();
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    if (!publicClient || !diamondAddress) return;
+    const scheduleReload = () => {
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+      debounceRef.current = setTimeout(() => {
+        debounceRef.current = null;
+        void load();
+      }, 750);
+    };
+    const unwatchers = OFFER_BOOK_EVENTS.map((eventName) =>
+      publicClient.watchContractEvent({
+        address: diamondAddress as Address,
+        abi: DIAMOND_ABI_VIEM,
+        eventName,
+        onLogs: scheduleReload,
+        // Suppress noisy onError logs — public RPCs sometimes drop the
+        // filter and viem retries internally; we don't need to show
+        // anything to the user.
+        onError: () => {},
+      }),
+    );
+    return () => {
+      if (debounceRef.current) {
+        clearTimeout(debounceRef.current);
+        debounceRef.current = null;
+      }
+      for (const unwatch of unwatchers) unwatch();
+    };
+  }, [publicClient, diamondAddress, load]);
 
   return {
     loans,

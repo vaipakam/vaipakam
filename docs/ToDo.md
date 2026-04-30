@@ -49,16 +49,13 @@ In "translation pending" notice, say like this is available only in English. don
 
 Center the connect wallet inside the button which is on top bar, so that in mobile it matches launch app button appearance
 
-- [ ] Update frontend/wrangler.jsonc file to have all required en.local variables in it, so that before deployment we will run a script to update these variables in cloudflare, add that in appropriate runnook, because not all the variables are baked into VITE during wrangler run deploy, so it is the required step. All while deploying the contract (or immediately after contract deployment) it self, script or a .sh file should update values in frontend/wrangler.jsonc file, what do you say? Let me know if there is a better approach.
-
 - [ ] In mobile inside app in top bar, the chain selector is appearing near the connect wallet button even before the wallet got connected, I hope that chain selector is not required at all, as of now we already combined with wallet connect button, what do you say?
-
-- [ ] The new offer created globally should appear automatically in offer book, based on the sort that we have already defined, hope the sort is not customisable by user.
 
 - [ ] Is it possible to ensure even for cross chain that only after the required ETH received in treasury, the equivalent amount of VPFI will be minted and send to the same wallet from where the ETH has been came from?
 
 ---
 
+- [x] The new offer created globally should appear automatically in offer book, based on the sort that we have already defined, hope the sort is not customisable by user, in offer book page.
 - [x] we need to provide slider to adjust the lending amount and collateral amount. also based on it, we should also show HF/LTV visually with animation, this need to be shown during offer creation in advanced mode, like the one that is shown in loan view page in `Liquidation-price projection` card, inside card `Collateral & Risk`, enhace for offer creation if possible.
 - [x] Is there any contract that went beyond max size limit that has been reported by anvil, don't we need to fix it?
 - [x] Got the below message while reporting a bug on github (`Whoa there! Your request URL is too long.`) — trim unnecessary details and/or cut events from 15+5 to 10+2; if it exceeds the threshold of x characters, x needs to be configurable.
