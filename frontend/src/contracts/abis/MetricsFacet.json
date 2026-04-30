@@ -80,6 +80,30 @@
   },
   {
     "type": "function",
+    "name": "getActiveOffersPaginated",
+    "inputs": [
+      {
+        "name": "offset",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "limit",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "offerIds",
+        "type": "uint256[]",
+        "internalType": "uint256[]"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "getAllLoansPaginated",
     "inputs": [
       {
@@ -243,6 +267,152 @@
         "name": "matched",
         "type": "uint256",
         "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getNFTPositionSummary",
+    "inputs": [
+      {
+        "name": "tokenId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "s",
+        "type": "tuple",
+        "internalType": "struct MetricsFacet.NFTPositionSummary",
+        "components": [
+          {
+            "name": "tokenId",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "offerId",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "loanId",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "isLender",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
+            "name": "nftStatus",
+            "type": "uint8",
+            "internalType": "enum LibVaipakam.LoanPositionStatus"
+          },
+          {
+            "name": "loanStatus",
+            "type": "uint8",
+            "internalType": "enum LibVaipakam.LoanStatus"
+          },
+          {
+            "name": "principalAsset",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "principalSymbol",
+            "type": "string",
+            "internalType": "string"
+          },
+          {
+            "name": "principalDecimals",
+            "type": "uint8",
+            "internalType": "uint8"
+          },
+          {
+            "name": "principalAmount",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "interestRateBps",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "durationDays",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "collateralAsset",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "collateralSymbol",
+            "type": "string",
+            "internalType": "string"
+          },
+          {
+            "name": "collateralDecimals",
+            "type": "uint8",
+            "internalType": "uint8"
+          },
+          {
+            "name": "collateralAmount",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "collateralAssetType",
+            "type": "uint8",
+            "internalType": "enum LibVaipakam.AssetType"
+          },
+          {
+            "name": "collateralLockedNow",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "claimableAsset",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "claimableAmount",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "isClaimable",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
+            "name": "vpfiHeld",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "vpfiRebatePending",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "createdAt",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "chainId",
+            "type": "uint256",
+            "internalType": "uint256"
+          }
+        ]
       }
     ],
     "stateMutability": "view"

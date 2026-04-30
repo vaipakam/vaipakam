@@ -3,6 +3,7 @@
 pragma solidity ^0.8.29;
 
 import {OfferFacet} from "../src/facets/OfferFacet.sol";
+import {OfferMatchFacet} from "../src/facets/OfferMatchFacet.sol";
 import {OracleFacet} from "../src/facets/OracleFacet.sol";
 import {VaipakamNFTFacet} from "../src/facets/VaipakamNFTFacet.sol";
 import {EscrowFactoryFacet} from "../src/facets/EscrowFactoryFacet.sol";
@@ -92,7 +93,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](9);
+        selectors = new bytes4[](10);
         selectors[0] = OfferFacet.createOffer.selector;
         // Single `acceptOffer(uint256,bool)` signature — the VPFI discount
         // path is governed by the platform-level consent flag set via
@@ -107,6 +108,24 @@ contract HelperTest {
         // with the classic `createOffer` / `acceptOffer` paths.
         selectors[7] = OfferFacet.createOfferWithPermit.selector;
         selectors[8] = OfferFacet.acceptOfferWithPermit.selector;
+        // Cross-facet entry consumed by OfferMatchFacet.matchOffers
+        // (Range Orders Phase 1 EIP-170 split).
+        selectors[9] = OfferFacet.acceptOfferInternal.selector;
+        return selectors;
+    }
+
+    /// @dev OfferMatchFacet — Range Orders Phase 1 matching surface
+    ///      carved out of OfferFacet for EIP-170. Tests that exercise
+    ///      `matchOffers` / `previewMatch` need this facet cut into
+    ///      the test diamond.
+    function getOfferMatchFacetSelectors()
+        public
+        pure
+        returns (bytes4[] memory selectors)
+    {
+        selectors = new bytes4[](2);
+        selectors[0] = OfferMatchFacet.matchOffers.selector;
+        selectors[1] = OfferMatchFacet.previewMatch.selector;
         return selectors;
     }
 

@@ -150,6 +150,11 @@
         "name": "partialFillEnabled",
         "type": "bool",
         "internalType": "bool"
+      },
+      {
+        "name": "lifMatcherFeeBps",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
     "stateMutability": "view"
@@ -298,6 +303,19 @@
       },
       {
         "name": "loanInitiationFeeBps",
+        "type": "uint16",
+        "internalType": "uint16"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "setLifMatcherFeeBps",
+    "inputs": [
+      {
+        "name": "newBps",
         "type": "uint16",
         "internalType": "uint16"
       }
@@ -485,6 +503,19 @@
       },
       {
         "name": "loanInitiationFeeBps",
+        "type": "uint16",
+        "indexed": false,
+        "internalType": "uint16"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "LifMatcherFeeBpsSet",
+    "inputs": [
+      {
+        "name": "newBps",
         "type": "uint16",
         "indexed": false,
         "internalType": "uint16"
