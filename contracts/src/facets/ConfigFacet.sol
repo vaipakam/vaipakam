@@ -144,6 +144,49 @@ contract ConfigFacet is DiamondAccessControl {
         emit LifMatcherFeeBpsSet(newBps);
     }
 
+    /// @notice Emitted on every change to the auto-pause window.
+    event AutoPauseDurationSet(uint32 newSeconds);
+    /// @notice Auto-pause duration outside the [MIN, MAX] bounds.
+    error InvalidAutoPauseDuration(uint32 provided, uint256 minSec, uint256 maxSec);
+
+    /**
+     * @notice Set the auto-pause window duration (seconds). Used by
+     *         the off-chain anomaly watcher's `AdminFacet.autoPause`
+     *         entry to freeze the protocol while humans investigate.
+     * @dev ADMIN_ROLE-only. Bounded inside `[MIN_AUTO_PAUSE_SECONDS,
+     *      MAX_AUTO_PAUSE_SECONDS]` (5 min – 2 hours) — floor
+     *      prevents stealth-disable via "set to 0", ceiling caps
+     *      a compromised-watcher worst case. Pass any value in the
+     *      bounds; pass exactly 0 to reset to the library default
+     *      (`AUTO_PAUSE_DURATION_DEFAULT = 1800` ≡ 30 min).
+     * @param newSeconds New duration in seconds.
+     */
+    function setAutoPauseDurationSeconds(uint32 newSeconds)
+        external
+        onlyRole(LibAccessControl.ADMIN_ROLE)
+    {
+        // 0 is a valid sentinel meaning "use library default" (the
+        // accessor handles the fallback). Non-zero values must fall
+        // inside the [MIN, MAX] bounds so a misfire can't disable
+        // the safety net or set an indefinite freeze ceiling.
+        if (
+            newSeconds != 0 &&
+            (
+                uint256(newSeconds) < LibVaipakam.MIN_AUTO_PAUSE_SECONDS ||
+                uint256(newSeconds) > LibVaipakam.MAX_AUTO_PAUSE_SECONDS
+            )
+        ) {
+            revert InvalidAutoPauseDuration(
+                newSeconds,
+                LibVaipakam.MIN_AUTO_PAUSE_SECONDS,
+                LibVaipakam.MAX_AUTO_PAUSE_SECONDS
+            );
+        }
+        LibVaipakam.storageSlot().protocolCfg.autoPauseDurationSeconds =
+            newSeconds;
+        emit AutoPauseDurationSet(newSeconds);
+    }
+
     /**
      * @notice Update the liquidation-path risk knobs atomically.
      * @param handlingFeeBps Treasury cut on successful DEX liquidation (default 200 ≡ 2%).
@@ -472,7 +515,12 @@ contract ConfigFacet is DiamondAccessControl {
             // Governance-tunable via `setLifMatcherFeeBps`; default
             // 100 (1%). Frontend uses this to render bot-economics
             // copy on the matcher dashboard.
-            uint256 lifMatcherFeeBps
+            uint256 lifMatcherFeeBps,
+            // Auto-pause window duration (seconds). Governance-tunable
+            // via `setAutoPauseDurationSeconds` within [5min, 2h];
+            // default 1800 (30 min). Frontend renders countdown +
+            // policy disclosure against this.
+            uint256 autoPauseDurationSeconds
         )
     {
         treasuryFeeBps = LibVaipakam.cfgTreasuryFeeBps();
@@ -496,6 +544,7 @@ contract ConfigFacet is DiamondAccessControl {
         rangeRateEnabled = cfg.rangeRateEnabled;
         partialFillEnabled = cfg.partialFillEnabled;
         lifMatcherFeeBps = LibVaipakam.cfgLifMatcherFeeBps();
+        autoPauseDurationSeconds = LibVaipakam.cfgAutoPauseDurationSeconds();
     }
 
     /// @notice Read-only bundle of protocol-wide compile-time constants

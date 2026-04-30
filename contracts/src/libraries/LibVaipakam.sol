@@ -100,6 +100,16 @@ library LibVaipakam {
     // establishes the seam for Phase 2 to dial up if community bots
     // need stronger incentives.
     uint256 constant LIF_MATCHER_FEE_BPS = 100;
+
+    /// @dev Auto-pause defaults + bounds (Phase 1 follow-up). Default
+    ///      30 min: long enough for human incident-response, short
+    ///      enough that a false-positive doesn't strand users. Floor
+    ///      5 min so admin can't stealth-disable by setting to ~0.
+    ///      Ceiling 2 hours so a compromised watcher's worst case is
+    ///      a 2-hour freeze (admin can short-circuit via `unpause()`).
+    uint256 constant AUTO_PAUSE_DURATION_DEFAULT = 1800;   // 30 min
+    uint256 constant MIN_AUTO_PAUSE_SECONDS = 300;         // 5 min
+    uint256 constant MAX_AUTO_PAUSE_SECONDS = 7200;        // 2 hours
     // Sanity ceiling on `interestRateBpsMax` at offer creation. Below
     // 100% APR equivalent (10000 bps). Tighter would risk rejecting
     // legitimate distressed-borrower offers; higher would let pranks
@@ -331,6 +341,14 @@ library LibVaipakam {
         // "Match-fee economics revisit" Phase 2 item). Capped at
         // MAX_FEE_BPS (50%) by the setter.
         uint16 lifMatcherFeeBps;            // 0 ⇒ LIF_MATCHER_FEE_BPS (100)
+        // Auto-pause window (Phase 1 follow-up). Duration in seconds
+        // for an off-chain anomaly-watcher's `autoPause()` to freeze
+        // the protocol while humans investigate. 0 ⇒
+        // AUTO_PAUSE_DURATION_DEFAULT (1800 = 30 min). Capped at
+        // [MIN_AUTO_PAUSE_SECONDS, MAX_AUTO_PAUSE_SECONDS] by the
+        // setter — floor prevents "set to 0" disable-by-stealth,
+        // ceiling caps a compromised watcher's worst-case freeze.
+        uint32 autoPauseDurationSeconds;    // 0 ⇒ AUTO_PAUSE_DURATION_DEFAULT
         // ── Range Orders Phase 1 master kill-switch flags ─────────────
         // All default `false` on a fresh deploy. Flipped on by governance
         // via `ConfigFacet.setRangeAmountEnabled` / `setRangeRateEnabled`
@@ -1743,6 +1761,17 @@ library LibVaipakam {
     function cfgLifMatcherFeeBps() internal view returns (uint256) {
         uint16 v = storageSlot().protocolCfg.lifMatcherFeeBps;
         return v == 0 ? LIF_MATCHER_FEE_BPS : uint256(v);
+    }
+
+    /// @dev Phase 1 follow-up — auto-pause duration (seconds) used by
+    ///      `LibPausable.autoPause`. Governance-tunable via
+    ///      `ConfigFacet.setAutoPauseDurationSeconds` within
+    ///      [MIN_AUTO_PAUSE_SECONDS, MAX_AUTO_PAUSE_SECONDS]. Falls
+    ///      back to AUTO_PAUSE_DURATION_DEFAULT (1800 = 30 min)
+    ///      when unset.
+    function cfgAutoPauseDurationSeconds() internal view returns (uint256) {
+        uint32 v = storageSlot().protocolCfg.autoPauseDurationSeconds;
+        return v == 0 ? AUTO_PAUSE_DURATION_DEFAULT : uint256(v);
     }
 
     /// @dev Returns the four tier thresholds (T1 min, T2 min, T3 min, T4 min-exclusive).

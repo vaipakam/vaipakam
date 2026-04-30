@@ -402,7 +402,7 @@ contract DeployDiamond is Script {
     }
 
     function _getAdminSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](20);
+        s = new bytes4[](22);
         s[0] = AdminFacet.setTreasury.selector;
         s[1] = AdminFacet.getTreasury.selector;
         s[2] = AdminFacet.setZeroExProxy.selector;
@@ -423,6 +423,12 @@ contract DeployDiamond is Script {
         s[17] = AdminFacet.getPancakeswapV3Factory.selector;
         s[18] = AdminFacet.setSushiswapV3Factory.selector;
         s[19] = AdminFacet.getSushiswapV3Factory.selector;
+        // Auto-pause primitive (Phase 1 follow-up): WATCHER_ROLE-gated
+        // entry that freezes the protocol for
+        // `cfgAutoPauseDurationSeconds` while humans investigate. Plus
+        // a `pausedUntil` view for the frontend countdown.
+        s[20] = AdminFacet.autoPause.selector;
+        s[21] = AdminFacet.pausedUntil.selector;
     }
 
     function _getProfileSelectors() internal pure returns (bytes4[] memory s) {
@@ -792,7 +798,7 @@ contract DeployDiamond is Script {
     }
 
     function _getConfigSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](21);
+        s = new bytes4[](22);
         // Setters
         s[0] = ConfigFacet.setFeesConfig.selector;
         s[1] = ConfigFacet.setLiquidationConfig.selector;
@@ -825,6 +831,8 @@ contract DeployDiamond is Script {
         s[19] = ConfigFacet.getMasterFlags.selector;
         // Range Orders Phase 1 — governance-tunable matcher BPS.
         s[20] = ConfigFacet.setLifMatcherFeeBps.selector;
+        // Auto-pause window duration setter (Phase 1 follow-up).
+        s[21] = ConfigFacet.setAutoPauseDurationSeconds.selector;
     }
 
     function _getRewardAggregatorSelectors() internal pure returns (bytes4[] memory s) {

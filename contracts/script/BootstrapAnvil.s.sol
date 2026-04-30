@@ -78,8 +78,10 @@ contract BootstrapAnvil is Script {
             bool rangeAmount,
             bool rangeRate,
             bool partialFill,
-            // matcher BPS field — destructure but don't assert here;
-            // it's tested separately in ConfigFacetTest.
+            // matcher BPS + auto-pause duration fields — destructure
+            // but don't assert here; they're tested separately in
+            // ConfigFacetTest.
+            ,
         ) = cfg.getProtocolConfigBundle();
         require(
             rangeAmount && rangeRate && partialFill,

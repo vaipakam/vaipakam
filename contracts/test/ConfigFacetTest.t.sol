@@ -351,7 +351,11 @@ contract ConfigFacetTest is Test {
             // Matcher kickback BPS — defaults to LIF_MATCHER_FEE_BPS
             // (100 = 1%) when unset; governance-tunable via
             // setLifMatcherFeeBps.
-            uint256 matcherFeeBps
+            uint256 matcherFeeBps,
+            // Auto-pause window duration (seconds). Defaults to
+            // AUTO_PAUSE_DURATION_DEFAULT (1800 = 30 min);
+            // governance-tunable via setAutoPauseDurationSeconds.
+            uint256 autoPauseDur
         ) = ConfigFacet(address(diamond)).getProtocolConfigBundle();
 
         // Overridden:

@@ -104,6 +104,11 @@ export interface ProtocolConfig {
    *  propagates without redeploy. */
   lifMatcherFeeBps: number;
   lifMatcherFeePct: number;
+  /** Auto-pause window duration (seconds). Default 1800 (30 min);
+   *  governance-tunable via setAutoPauseDurationSeconds within
+   *  [300, 7200]. Frontend renders the security disclosure + the
+   *  live countdown when AdminFacet.pausedUntil() returns non-zero. */
+  autoPauseDurationSeconds: number;
   fetchedAt: number;
 }
 
@@ -138,6 +143,11 @@ type BundleTuple = [
   // capped at 5000 (50%). Surfaced so the bot-economics dashboard
   // can render "you earn X% of the LIF" copy without recompiling.
   bigint, // lifMatcherFeeBps
+  // Auto-pause window duration (seconds). Default 1800 (30 min);
+  // governance-tunable via setAutoPauseDurationSeconds within
+  // [300, 7200] (5 min – 2h). Frontend renders the security
+  // disclosure + the live countdown when an auto-pause is active.
+  bigint, // autoPauseDurationSeconds
 ];
 
 function bpsToPct(bps: bigint | number): number {
@@ -285,6 +295,7 @@ export function useProtocolConfig() {
         rangeRateEnabled,
         partialFillEnabled,
         lifMatcherFeeBps,
+        autoPauseDurationSeconds,
       ] = tuple;
       const [minHealthFactor, vpfiStakingPoolCap, vpfiInteractionPoolCap, maxInteractionClaimDays] = consts;
 
@@ -347,6 +358,7 @@ export function useProtocolConfig() {
         partialFillEnabled,
         lifMatcherFeeBps: Number(lifMatcherFeeBps),
         lifMatcherFeePct: bpsToPct(lifMatcherFeeBps),
+        autoPauseDurationSeconds: Number(autoPauseDurationSeconds),
         fetchedAt: Date.now(),
       };
       cached = { data: next, at: Date.now(), key: cacheKey };

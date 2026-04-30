@@ -135,7 +135,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](20);
+        selectors = new bytes4[](22);
         selectors[0] = AdminFacet.setTreasury.selector;
         selectors[1] = AdminFacet.getTreasury.selector;
         selectors[2] = AdminFacet.setZeroExProxy.selector;
@@ -156,6 +156,9 @@ contract HelperTest {
         selectors[17] = AdminFacet.getPancakeswapV3Factory.selector;
         selectors[18] = AdminFacet.setSushiswapV3Factory.selector;
         selectors[19] = AdminFacet.getSushiswapV3Factory.selector;
+        // Auto-pause primitive (Phase 1 follow-up).
+        selectors[20] = AdminFacet.autoPause.selector;
+        selectors[21] = AdminFacet.pausedUntil.selector;
         return selectors;
     }
 
@@ -572,7 +575,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](16);
+        selectors = new bytes4[](18);
         selectors[0] = ConfigFacet.setFeesConfig.selector;
         selectors[1] = ConfigFacet.setLiquidationConfig.selector;
         selectors[2] = ConfigFacet.setRiskConfig.selector;
@@ -589,6 +592,10 @@ contract HelperTest {
         selectors[13] = ConfigFacet.setFallbackSplit.selector;
         selectors[14] = ConfigFacet.getFallbackSplit.selector;
         selectors[15] = ConfigFacet.getProtocolConstants.selector;
+        // Range Orders Phase 1 — governance-tunable matcher BPS.
+        selectors[16] = ConfigFacet.setLifMatcherFeeBps.selector;
+        // Phase 1 follow-up — auto-pause window duration setter.
+        selectors[17] = ConfigFacet.setAutoPauseDurationSeconds.selector;
         return selectors;
     }
 

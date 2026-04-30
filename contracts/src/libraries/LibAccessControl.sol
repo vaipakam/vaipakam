@@ -24,6 +24,18 @@ library LibAccessControl {
     bytes32 internal constant ORACLE_ADMIN_ROLE = keccak256("ORACLE_ADMIN_ROLE");
     bytes32 internal constant RISK_ADMIN_ROLE = keccak256("RISK_ADMIN_ROLE");
     bytes32 internal constant ESCROW_ADMIN_ROLE = keccak256("ESCROW_ADMIN_ROLE");
+    /// @dev Off-chain anomaly-watcher role (Phase 1 follow-up). Granted
+    ///      to the Cloudflare Worker / cron EOA that monitors the
+    ///      protocol for incident-class anomaly signals (treasury
+    ///      drain rate, liquidation spike, etc.) and fires
+    ///      `AdminFacet.autoPause(...)` to freeze the protocol for
+    ///      `cfgAutoPauseDurationSeconds()` while humans investigate.
+    ///      Strictly write-only-pause: the role can call autoPause
+    ///      but NOT unpause — admin (PAUSER_ROLE) retains the
+    ///      unpause lever, so a compromised watcher's worst case is
+    ///      a max-window freeze (capped at 2h via the duration
+    ///      ceiling), not indefinite lockup.
+    bytes32 internal constant WATCHER_ROLE = keccak256("WATCHER_ROLE");
 
     struct RoleData {
         mapping(address => bool) hasRole;
