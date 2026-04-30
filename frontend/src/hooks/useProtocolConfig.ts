@@ -98,6 +98,12 @@ export interface ProtocolConfig {
   rangeAmountEnabled: boolean;
   rangeRateEnabled: boolean;
   partialFillEnabled: boolean;
+  /** Matcher's slice of LIF that flows to treasury, in BPS. Default
+   *  100 (1%) but governance-tunable up to 5000 (50%). Frontend
+   *  bot-economics copy renders against this so a flag flip
+   *  propagates without redeploy. */
+  lifMatcherFeeBps: number;
+  lifMatcherFeePct: number;
   fetchedAt: number;
 }
 
@@ -127,6 +133,11 @@ type BundleTuple = [
   boolean, // rangeAmountEnabled
   boolean, // rangeRateEnabled
   boolean, // partialFillEnabled
+  // Matcher's slice of any LIF that flows to treasury (BPS).
+  // Default 100 (1%); governance-tunable via setLifMatcherFeeBps,
+  // capped at 5000 (50%). Surfaced so the bot-economics dashboard
+  // can render "you earn X% of the LIF" copy without recompiling.
+  bigint, // lifMatcherFeeBps
 ];
 
 function bpsToPct(bps: bigint | number): number {
@@ -273,6 +284,7 @@ export function useProtocolConfig() {
         rangeAmountEnabled,
         rangeRateEnabled,
         partialFillEnabled,
+        lifMatcherFeeBps,
       ] = tuple;
       const [minHealthFactor, vpfiStakingPoolCap, vpfiInteractionPoolCap, maxInteractionClaimDays] = consts;
 
@@ -333,6 +345,8 @@ export function useProtocolConfig() {
         rangeAmountEnabled,
         rangeRateEnabled,
         partialFillEnabled,
+        lifMatcherFeeBps: Number(lifMatcherFeeBps),
+        lifMatcherFeePct: bpsToPct(lifMatcherFeeBps),
         fetchedAt: Date.now(),
       };
       cached = { data: next, at: Date.now(), key: cacheKey };

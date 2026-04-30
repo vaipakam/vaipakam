@@ -771,7 +771,7 @@ contract DeployDiamond is Script {
     }
 
     function _getConfigSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](20);
+        s = new bytes4[](21);
         // Setters
         s[0] = ConfigFacet.setFeesConfig.selector;
         s[1] = ConfigFacet.setLiquidationConfig.selector;
@@ -802,6 +802,8 @@ contract DeployDiamond is Script {
         s[17] = ConfigFacet.setRangeRateEnabled.selector;
         s[18] = ConfigFacet.setPartialFillEnabled.selector;
         s[19] = ConfigFacet.getMasterFlags.selector;
+        // Range Orders Phase 1 — governance-tunable matcher BPS.
+        s[20] = ConfigFacet.setLifMatcherFeeBps.selector;
     }
 
     function _getRewardAggregatorSelectors() internal pure returns (bytes4[] memory s) {

@@ -347,7 +347,11 @@ contract ConfigFacetTest is Test {
             // default `false` on a fresh deploy.
             bool rangeAmount,
             bool rangeRate,
-            bool partialFill
+            bool partialFill,
+            // Matcher kickback BPS — defaults to LIF_MATCHER_FEE_BPS
+            // (100 = 1%) when unset; governance-tunable via
+            // setLifMatcherFeeBps.
+            uint256 matcherFeeBps
         ) = ConfigFacet(address(diamond)).getProtocolConfigBundle();
 
         // Overridden:

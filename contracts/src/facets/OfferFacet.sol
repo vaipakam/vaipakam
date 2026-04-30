@@ -1019,9 +1019,11 @@ contract OfferFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
             // LIF split (lender-asset path) or zero (VPFI path —
             // settles at terminal). Computed here for the event so
             // downstream indexers can render the matcher's earnings
-            // without re-deriving from the LIF settings.
+            // without re-deriving from the LIF settings. Reads the
+            // governance-tunable matcher BPS from cfg, not the
+            // constant.
             (mr.matchAmount * LibVaipakam.cfgLoanInitiationFeeBps()
-                * LibVaipakam.LIF_MATCHER_FEE_BPS)
+                * LibVaipakam.cfgLifMatcherFeeBps())
                 / (LibVaipakam.BASIS_POINTS * LibVaipakam.BASIS_POINTS)
         );
     }

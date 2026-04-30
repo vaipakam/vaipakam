@@ -323,6 +323,14 @@ library LibVaipakam {
         // `setFallbackSplit` never retroactively alter dual-consent offers.
         uint16 fallbackLenderBonusBps;      // 0 ⇒ FALLBACK_LENDER_BONUS_BPS (300)
         uint16 fallbackTreasuryBps;         // 0 ⇒ FALLBACK_TREASURY_BPS (200)
+        // Range Orders Phase 1: matcher's slice of the LIF that flows
+        // to treasury at match-time (lender-asset path) or at terminal
+        // (VPFI path). 0 ⇒ LIF_MATCHER_FEE_BPS (100 = 1%). Tunable so
+        // governance can dial up to 5-10% if community bot operators
+        // need a stronger incentive to compete (per the design plan's
+        // "Match-fee economics revisit" Phase 2 item). Capped at
+        // MAX_FEE_BPS (50%) by the setter.
+        uint16 lifMatcherFeeBps;            // 0 ⇒ LIF_MATCHER_FEE_BPS (100)
         // ── Range Orders Phase 1 master kill-switch flags ─────────────
         // All default `false` on a fresh deploy. Flipped on by governance
         // via `ConfigFacet.setRangeAmountEnabled` / `setRangeRateEnabled`
@@ -1726,6 +1734,15 @@ library LibVaipakam {
     function cfgFallbackTreasuryBps() internal view returns (uint256) {
         uint16 v = storageSlot().protocolCfg.fallbackTreasuryBps;
         return v == 0 ? FALLBACK_TREASURY_BPS : uint256(v);
+    }
+
+    /// @dev Range Orders Phase 1 — matcher's slice of any LIF that
+    ///      flows to treasury, in BPS. Governance-tunable via
+    ///      `ConfigFacet.setLifMatcherFeeBps`; falls back to the
+    ///      LIF_MATCHER_FEE_BPS constant (100 = 1%) when unset.
+    function cfgLifMatcherFeeBps() internal view returns (uint256) {
+        uint16 v = storageSlot().protocolCfg.lifMatcherFeeBps;
+        return v == 0 ? LIF_MATCHER_FEE_BPS : uint256(v);
     }
 
     /// @dev Returns the four tier thresholds (T1 min, T2 min, T3 min, T4 min-exclusive).

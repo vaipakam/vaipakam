@@ -95,8 +95,12 @@ library LibOfferMatch {
     ///         settlement via `LibVPFIDiscount.settleBorrowerLifProper`
     ///         / `forfeitBorrowerLif`). Single source of truth so the
     ///         99/1 split semantics never drift between call sites.
-    function matcherShareOf(uint256 totalFee) internal pure returns (uint256) {
-        return (totalFee * LibVaipakam.LIF_MATCHER_FEE_BPS) / LibVaipakam.BASIS_POINTS;
+    function matcherShareOf(uint256 totalFee) internal view returns (uint256) {
+        // Reads governance-tunable BPS from storage so the kickback
+        // can be dialed without a contract upgrade. Falls back to
+        // LIF_MATCHER_FEE_BPS (100 = 1%) when unset; capped at 50%
+        // by the setter (`ConfigFacet.setLifMatcherFeeBps`).
+        return (totalFee * LibVaipakam.cfgLifMatcherFeeBps()) / LibVaipakam.BASIS_POINTS;
     }
 
     /// @notice Pull the matcher's 1% slice of `totalFee` from the

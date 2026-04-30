@@ -77,7 +77,9 @@ contract BootstrapAnvil is Script {
             ,
             bool rangeAmount,
             bool rangeRate,
-            bool partialFill
+            bool partialFill,
+            // matcher BPS field — destructure but don't assert here;
+            // it's tested separately in ConfigFacetTest.
         ) = cfg.getProtocolConfigBundle();
         require(
             rangeAmount && rangeRate && partialFill,

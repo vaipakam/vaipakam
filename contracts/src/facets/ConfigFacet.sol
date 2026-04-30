@@ -114,6 +114,36 @@ contract ConfigFacet is DiamondAccessControl {
         emit FeesConfigSet(treasuryFeeBps, loanInitiationFeeBps);
     }
 
+    /// @notice Emitted when the matcher's slice of the LIF kickback is
+    ///         rotated. Default 100 BPS (1%); the design allows up to
+    ///         5–10% if community bot operators need a stronger
+    ///         incentive.
+    event LifMatcherFeeBpsSet(uint16 newBps);
+
+    /**
+     * @notice Update the Range Orders matcher's BPS slice of any LIF
+     *         that flows to treasury. Tunable so governance can dial
+     *         the kickback up to attract more third-party matchers
+     *         (or down to redirect more of the LIF to treasury).
+     * @dev ADMIN_ROLE-only. Pass `0` to reset to the library default
+     *      (`LIF_MATCHER_FEE_BPS = 100` ≡ 1%). Capped at
+     *      {MAX_FEE_BPS} (50%) so a misfire can't starve treasury.
+     *      The kickback applies on both the lender-asset path
+     *      (synchronous, paid at match) and the VPFI path (deferred
+     *      to terminal via `LibVPFIDiscount`).
+     * @param newBps New matcher BPS, 0–MAX_FEE_BPS. Stored on
+     *               `ProtocolConfig.lifMatcherFeeBps` and consumed
+     *               by `LibVaipakam.cfgLifMatcherFeeBps()`.
+     */
+    function setLifMatcherFeeBps(uint16 newBps)
+        external
+        onlyRole(LibAccessControl.ADMIN_ROLE)
+    {
+        if (newBps > MAX_FEE_BPS) revert InvalidFeeBps(newBps, MAX_FEE_BPS);
+        LibVaipakam.storageSlot().protocolCfg.lifMatcherFeeBps = newBps;
+        emit LifMatcherFeeBpsSet(newBps);
+    }
+
     /**
      * @notice Update the liquidation-path risk knobs atomically.
      * @param handlingFeeBps Treasury cut on successful DEX liquidation (default 200 ≡ 2%).
@@ -437,7 +467,12 @@ contract ConfigFacet is DiamondAccessControl {
             // partial-fill checkbox gate on these. See §15 of design doc.
             bool rangeAmountEnabled,
             bool rangeRateEnabled,
-            bool partialFillEnabled
+            bool partialFillEnabled,
+            // Matcher's slice of the LIF kickback (BPS).
+            // Governance-tunable via `setLifMatcherFeeBps`; default
+            // 100 (1%). Frontend uses this to render bot-economics
+            // copy on the matcher dashboard.
+            uint256 lifMatcherFeeBps
         )
     {
         treasuryFeeBps = LibVaipakam.cfgTreasuryFeeBps();
@@ -460,6 +495,7 @@ contract ConfigFacet is DiamondAccessControl {
         rangeAmountEnabled = cfg.rangeAmountEnabled;
         rangeRateEnabled = cfg.rangeRateEnabled;
         partialFillEnabled = cfg.partialFillEnabled;
+        lifMatcherFeeBps = LibVaipakam.cfgLifMatcherFeeBps();
     }
 
     /// @notice Read-only bundle of protocol-wide compile-time constants
