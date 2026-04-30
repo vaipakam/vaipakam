@@ -27,6 +27,7 @@ import { SanctionsBanner } from "../components/app/SanctionsBanner";
 import { RiskDisclosures } from "../components/app/RiskDisclosures";
 import { SimulationPreview } from "../components/app/SimulationPreview";
 import { LiquidityPreflightBanner } from "../components/app/LiquidityPreflightBanner";
+import { OfferRiskPreview } from "../components/app/OfferRiskPreview";
 import { useLiquidityPreflight } from "../hooks/useLiquidityPreflight";
 import { usePermit2Signing } from "../hooks/usePermit2Signing";
 import { DIAMOND_ABI_VIEM as DIAMOND_ABI } from "../contracts/abis";
@@ -1258,6 +1259,32 @@ export default function CreateOffer() {
               </div>
             )}
           </div>
+
+          {/* Tier 2 #4 — live HF / LTV preview during offer creation.
+              Renders only in Advanced mode, only for ERC-20 / ERC-20
+              pairs (NFT-rental loans don't have a meaningful HF). The
+              component itself bails to `null` if the asset addresses
+              aren't valid yet or the oracles revert, so it's safe to
+              mount unconditionally inside the gate. The two-way bound
+              sliders update form state via `setField` so dragging them
+              also updates the number inputs above. */}
+          {showAdvanced && (
+            <OfferRiskPreview
+              lendingAsset={form.lendingAsset}
+              collateralAsset={form.collateralAsset}
+              amountMin={form.amount}
+              amountMax={form.amountMax}
+              collateralAmount={form.collateralAmount}
+              lendingAssetType={form.assetType}
+              collateralAssetType={form.collateralAssetType}
+              showAmountRange={showAmountRange}
+              onAmountMinChange={(v) => setField("amount", v)}
+              onAmountMaxChange={(v) => setField("amountMax", v)}
+              onCollateralAmountChange={(v) =>
+                setField("collateralAmount", v)
+              }
+            />
+          )}
         </div>
 
         {/* Risk disclosures — per README §Frontend Warnings, these must be

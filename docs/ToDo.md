@@ -11,8 +11,6 @@
 - [ ] Defer: Group languages based on the locality of that continent and display only those group belonging to that continent. Note: exception is for japanese can be displayed together with western countries too
 - [ ] Borrower can pay interest at any time but it is mandatory to pay complete interest at the end of 1 (or each) year completion, the cumulative paid interest for that year should be equal or more than a full year accured interest, otherwise system will use collateral to pay interst to lender after grace period of 2 weeks (buy selling the required collateral asset to but lending asset), this may incur higher fees and may also drastically change the HF/LTV and may triger liquidation too.
 - [ ] For pyth, if we provide only price feed for ETH/USD, ETH/EUR, ETH/JPY, ETH/XAU and all other asset can be checked with respect to ETH right, so that it is not required for us to configure all the asset price feed right?
-- [ ] we need to provide slider to adjust the lending amount and collateral amount. also based on it, we should also show HF/LTV visually with animation, this need to be shown during offer creation in advanced mode, like the one that is shown in loan view page in `Liquidation-price projection` card, inside card `Collateral & Risk`, enhace for offer creation if possible.
-
 - [ ] tooltips provided inside the list of offers and loans in both dashboard page and offer book is not fully visible, may need to wrap it.
 
 - [ ] in card `Lender Yield-Fee Discount` in loan view page, provide `consent not given in dashboard` kind of info, so that users will know that they need to enable `discount tier` by providing consent to use the staked / deposited VPFI in their escrow.
@@ -61,6 +59,7 @@ Center the connect wallet inside the button which is on top bar, so that in mobi
 
 ---
 
+- [x] we need to provide slider to adjust the lending amount and collateral amount. also based on it, we should also show HF/LTV visually with animation, this need to be shown during offer creation in advanced mode, like the one that is shown in loan view page in `Liquidation-price projection` card, inside card `Collateral & Risk`, enhace for offer creation if possible.
 - [x] Is there any contract that went beyond max size limit that has been reported by anvil, don't we need to fix it?
 - [x] Got the below message while reporting a bug on github (`Whoa there! Your request URL is too long.`) — trim unnecessary details and/or cut events from 15+5 to 10+2; if it exceeds the threshold of x characters, x needs to be configurable.
 - [x] Need to set a pause policy in such a way that, after abnormal activity or due to any circumstances, if the system has to be paused and if it is not done within 15 min, can it be paused automatically?

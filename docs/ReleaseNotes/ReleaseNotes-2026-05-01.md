@@ -122,6 +122,61 @@ Frontend `useProtocolConfig` already updated to read the new
 slot; bot doesn't consume the bundle so its sync is purely
 provenance.
 
+## Offer-creation HF / LTV live preview (Tier 2 #4)
+
+Until today, an offer creator typed an amount and a collateral
+amount blind: there was no live indication of where their
+choice would land on the Health Factor or LTV curve until they
+hit submit, watched the on-chain `LoanFacet.initiateLoan`
+reject, and tried again. The dashboard's existing
+**Liquidation-price projection** card already does the exact
+right shape of work for an *active* loan; this change brings
+the same idea into the *creation* flow.
+
+What landed (Advanced mode only, ERC-20 / ERC-20 pairs only —
+NFT-rental loans don't have a meaningful HF):
+
+- A new **Risk preview** card renders inside the Collateral
+  card on `Create Offer`. It reads the collateral asset's
+  on-chain liquidation threshold (the same bps the on-chain HF
+  formula uses) plus live oracle prices for both the lending
+  and the collateral leg, and computes the projected Health
+  Factor and LTV for the user's typed amounts.
+- For a **Range Orders** offer (where the user has set a
+  separate maximum amount above the minimum), the card renders
+  HF and LTV at *both* ends of the range — labelled "best" and
+  "worst" — so the user can see the worst-case position before
+  publishing.
+- A clear amber warning fires when the worst-case HF dips
+  below the on-chain initiation floor of 1.5: at that point
+  partial fills at the upper end of the range will revert with
+  `HFTooLow`. The fix is mechanical (add collateral or tighten
+  the ceiling) and the message says so.
+- A "Collateral can drop X% before liquidation" line, derived
+  the same way the existing Liquidation-price projection card
+  does it, so the user has a concrete intuition for how much
+  market move their offer can absorb.
+- Two-way bound **sliders** for lending amount, lending amount
+  max (when range mode is on), and collateral amount, mirroring
+  the number inputs above. Drag the slider → the input value
+  updates → the HF / LTV bars animate. The bars use the same
+  shared component (`HealthFactorGauge` / `LTVBar`) and CSS
+  transitions as everywhere else in the app, so the visual
+  feedback is consistent with what the user sees on the
+  dashboard and the loan view page.
+- The card bails to a placeholder message while inputs are
+  empty, and to a single-line "oracle unavailable" notice if a
+  feed reverts — never to a broken `—` row. The on-chain HF
+  check is still authoritative; the preview is a *guide*, not
+  a guarantee.
+
+The on-chain side of this is already correct (the HF gate at
+`LoanFacet.initiateLoan` was always there); this is purely a
+front-end pre-flight. Net effect: fewer "why did my loan get
+rejected" support questions, and a friendlier ramp into Range
+Orders for users who don't yet have an intuition for how a
+[min, max] range maps to risk.
+
 ## Outstanding for the testnet redeploy gate
 
 Before fresh testnet diamonds can land:
