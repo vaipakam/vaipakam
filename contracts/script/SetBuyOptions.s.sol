@@ -28,8 +28,22 @@ import {Deployments} from "./lib/Deployments.sol";
  *      mis-keyed run fails locally with an explicit message rather
  *      than reverting on-chain with an opaque revert.
  *
- *      Required env vars:
- *        - PRIVATE_KEY         : OApp owner key for this chain.
+ *      Owner-key resolution (first hit wins):
+ *        - VPFI_OWNER_PRIVATE_KEY : explicit name; preferred when the
+ *                                   OApp owner is governed separately
+ *                                   from the Diamond admin.
+ *        - ADMIN_PRIVATE_KEY      : matches the retail-deploy
+ *                                   convention where `VPFI_OWNER ==
+ *                                   ADMIN_ADDRESS`. Already populated
+ *                                   in this repo's `.env` for the
+ *                                   `ConfigureVPFIBuy.s.sol` flow, so
+ *                                   most operators don't need a new
+ *                                   var.
+ *        - PRIVATE_KEY            : last-resort fallback for the
+ *                                   "deployer == OApp owner" historical
+ *                                   case (matches
+ *                                   `ConfigureLZConfig.s.sol` /
+ *                                   `WireVPFIPeers.s.sol`).
  *
  *      Optional env vars (with sensible defaults):
  *        - LZ_RECEIVE_GAS      : gas allotted to the destination
@@ -52,8 +66,22 @@ import {Deployments} from "./lib/Deployments.sol";
 contract SetBuyOptions is Script {
     using OptionsBuilder for bytes;
 
+    /// @dev Resolve the OApp owner key from a fallback chain: explicit
+    ///      `VPFI_OWNER_PRIVATE_KEY` first, then `ADMIN_PRIVATE_KEY`
+    ///      (most retail deploys set `VPFI_OWNER == ADMIN_ADDRESS`), then
+    ///      `PRIVATE_KEY` as the last-resort historical default. Reverts
+    ///      with a clear message if none of the three are populated.
+    function _resolveOwnerKey() internal view returns (uint256) {
+        try vm.envUint("VPFI_OWNER_PRIVATE_KEY") returns (uint256 k) { return k; } catch {}
+        try vm.envUint("ADMIN_PRIVATE_KEY") returns (uint256 k) { return k; } catch {}
+        try vm.envUint("PRIVATE_KEY") returns (uint256 k) { return k; } catch {}
+        revert(
+            "SetBuyOptions: no owner key in env (VPFI_OWNER_PRIVATE_KEY / ADMIN_PRIVATE_KEY / PRIVATE_KEY)"
+        );
+    }
+
     function run() external {
-        uint256 ownerKey = vm.envUint("PRIVATE_KEY");
+        uint256 ownerKey = _resolveOwnerKey();
         address broadcaster = vm.addr(ownerKey);
 
         address adapterAddr = Deployments.readVPFIBuyAdapter();
