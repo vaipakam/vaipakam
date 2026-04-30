@@ -42,6 +42,7 @@ import { useReadChain } from '../contracts/useDiamond';
 import { useWallet } from '../context/WalletContext';
 import { useChainOverride } from '../context/ChainContext';
 import { shortenAddr, bpsToPercent, formatUnitsPretty } from '../lib/format';
+import { CopyableAddress } from '../components/app/CopyableAddress';
 import { AssetType, LoanStatus, LOAN_STATUS_LABELS } from '../types/loan';
 import { Pager } from '../components/app/Pager';
 import './PublicDashboard.css';
@@ -719,7 +720,9 @@ export default function PublicDashboard() {
                             const share = totalUsd === 0 ? 0 : (row.usd / totalUsd) * 100;
                             return (
                               <tr key={row.asset}>
-                                <td className="mono">{shortenAddr(row.asset)}</td>
+                                <td>
+                                  <CopyableAddress address={row.asset} />
+                                </td>
                                 <td>{row.symbol}</td>
                                 <td className="mono">
                                   {formatUnitsPretty(row.amount, row.decimals)}

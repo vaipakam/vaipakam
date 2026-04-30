@@ -335,6 +335,53 @@ reviewing them as one diff is cleaner than five micro-PRs:
 All five land behind the existing chain-keyed dashboard fetch
 paths — no contract changes, no ABI re-export needed.
 
+## More UX polish — three small fixes + one new helper
+
+Continuing the same polish batch as above:
+
+1. **Lender / borrower role tiles use neutral icons.** The
+   Dashboard's "as lender" tile rendered a green
+   `TrendingUp` icon and the "as borrower" tile rendered an
+   amber `TrendingDown` icon — visual semantics that
+   accidentally said "lending = good, borrowing = bad" on a
+   peer-to-peer marketplace where both sides are equally
+   valid market participants. Both tiles now use the same
+   brand-tinted background; lender shows `Coins` (you have
+   coins to lend) and borrower shows `HandCoins` (you receive
+   coins). Same domain meaning, no colour bias.
+
+2. **One-click copy on redacted addresses (initial surface).**
+   New shared `<CopyableAddress address="0x…">` component:
+   renders the standard `0x1234…abcd` shortform alongside a
+   small copy icon; clicking flips the icon to a green check
+   for ~1.5 s while the full address goes onto the clipboard
+   (mirrors GitHub's commit-hash copy affordance). Hovering
+   the icon shows the full address as a tooltip so the user
+   can verify before they paste. Wired into the Asset-wise
+   Breakdown table on the Analytics page; a follow-up sweep
+   will roll the same component into the loan-detail parties
+   block, claim-center counterparty rows, and any other
+   surface that currently shows a redacted address with no
+   way to grab the full hex.
+
+3. **`Translation pending` notice copy.** The legal pages
+   (Terms of Service, Privacy Policy) showed a notice that
+   read "This document is available in English only. A
+   translated version may be added in a future update." —
+   raising an expectation we haven't actually committed to.
+   Reworded to simply state the current fact: "This document
+   is available in English only. The English text below is
+   the canonical reference." No promise of future translation.
+
+4. **Connect-Wallet button content centered on mobile.** The
+   `<ConnectWalletButton>` at `width: 100%` (the mobile
+   navbar's full-row CTA) was inheriting `.btn`'s default
+   `justify-content: flex-start`, so the icon + label slid
+   to the left edge of the button instead of sitting in the
+   middle. Now explicitly sets `justifyContent: 'center'` in
+   the `fullWidth` branch so it matches the sibling "Launch
+   App" CTA.
+
 ## Outstanding for the testnet redeploy gate
 
 Before fresh testnet diamonds can land:

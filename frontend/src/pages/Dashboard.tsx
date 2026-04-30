@@ -11,8 +11,8 @@ import { useLoanRisks, type LoanRisk } from '../hooks/useLoanRisks';
 import { LoanStatus, LOAN_STATUS_LABELS } from '../types/loan';
 import {
   LayoutDashboard,
-  TrendingUp,
-  TrendingDown,
+  HandCoins,
+  Coins,
   Clock,
   PlusCircle,
   ExternalLink,
@@ -223,9 +223,23 @@ export default function Dashboard() {
             <div className="stat-label">{t('dashboard.activeLoans')}</div>
           </div>
         </div>
+        {/* Lender / borrower role tiles use neutral, role-symmetric
+            icons + the same brand-tinted background. The previous
+            TrendingUp (green) / TrendingDown (amber) pair carried an
+            unintended emotional skew — "lender = good / borrowing =
+            bad" — that's wrong on a peer-to-peer lending app where
+            both sides are equally valid market participants. Coins
+            (lender funds) / HandCoins (borrower receives) keeps the
+            domain semantics without the colour bias. */}
         <div className="stat-card">
-          <div className="stat-icon" style={{ background: 'rgba(16, 185, 129, 0.1)', color: 'var(--accent-green)' }}>
-            <TrendingUp size={20} />
+          <div
+            className="stat-icon"
+            style={{
+              background: 'rgba(99, 102, 241, 0.1)',
+              color: 'var(--brand)',
+            }}
+          >
+            <Coins size={20} />
           </div>
           <div>
             <div className="stat-value">{lentCount}</div>
@@ -233,8 +247,14 @@ export default function Dashboard() {
           </div>
         </div>
         <div className="stat-card">
-          <div className="stat-icon" style={{ background: 'rgba(245, 158, 11, 0.1)', color: 'var(--accent-orange)' }}>
-            <TrendingDown size={20} />
+          <div
+            className="stat-icon"
+            style={{
+              background: 'rgba(99, 102, 241, 0.1)',
+              color: 'var(--brand)',
+            }}
+          >
+            <HandCoins size={20} />
           </div>
           <div>
             <div className="stat-value">{borrowedCount}</div>

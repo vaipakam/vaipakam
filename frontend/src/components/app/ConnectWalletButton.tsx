@@ -41,7 +41,18 @@ export function ConnectWalletButton({ className = '', fullWidth = false }: Props
           className={`btn btn-primary ${className}`}
           onClick={() => show?.()}
           disabled={isConnecting}
-          style={fullWidth ? { width: '100%' } : undefined}
+          // Mobile / fullWidth render: explicitly centre the icon +
+          // label inside the button so the visual matches the
+          // sibling "Launch App" CTA. The `.btn` base sets
+          // `display: inline-flex; align-items: center` but defaults
+          // to `justify-content: flex-start` — fine when the button
+          // wraps its content tightly, but at `width: 100%` the
+          // content slid to the left edge instead of centering.
+          style={
+            fullWidth
+              ? { width: '100%', justifyContent: 'center' }
+              : undefined
+          }
         >
           <Wallet size={16} />
           {isConnecting ? t('shared.connecting') : t('common.connectWallet')}

@@ -100,9 +100,9 @@
   },
   "pageNotice": {
     "englishOnlyTitle": "Available in English only",
-    "englishOnlyBody": "This document is available in English only. A translated version may be added in a future update.",
-    "translationPendingTitle": "Translation pending",
-    "translationPendingBody": "This guide is currently available in English only. A localised version is planned for a future release; until it lands the English text below is the canonical reference."
+    "englishOnlyBody": "This document is available in English only.",
+    "translationPendingTitle": "Available in English only",
+    "translationPendingBody": "This guide is available in English only. The English text below is the canonical reference."
   },
   "riskDisclosuresNotice": {
     "translatedSummary": "This translated copy is for reference. The legally-binding text is in English.",

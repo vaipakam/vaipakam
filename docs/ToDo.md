@@ -11,9 +11,7 @@
 - [ ] Defer: Group languages based on the locality of that continent and display only those group belonging to that continent. Note: exception is for japanese can be displayed together with western countries too
 - [ ] Borrower can pay interest at any time but it is mandatory to pay complete interest at the end of 1 (or each) year completion, the cumulative paid interest for that year should be equal or more than a full year accured interest, otherwise system will use collateral to pay interst to lender after grace period of 2 weeks (buy selling the required collateral asset to but lending asset), this may incur higher fees and may also drastically change the HF/LTV and may triger liquidation too.
 - [ ] For pyth, if we provide only price feed for ETH/USD, ETH/EUR, ETH/JPY, ETH/XAU and all other asset can be checked with respect to ETH right, so that it is not required for us to configure all the asset price feed right?
-- [ ] Change the icons for Loans as lender and loans as borrower, it looks nice but we need to either have different icon or need to remove the icon, because the icon for `as lender` shows green and trending higher, but for `as borrower` shows amber colour and graph trending down (which is not good to look from borrower perspective)
-
-- [ ] Where ever we show redacted address, we should provide an option to copy the full address with animation. the one in the list of assets in the card `Asset-wise Breakdown` in Analytics page.
+- [ ] Where ever we show redacted address, we should provide an option to copy the full address with animation. the one in the list of assets in the card `Asset-wise Breakdown` in Analytics page. — landed for Asset-wise Breakdown via new `<CopyableAddress>`; rolling out to other surfaces (loan parties, claim center counterparty, etc) in a follow-up sweep.
 
 - [ ] Provide notification, not only on HF health, but also on all other major transactions based on user config. Also mention that notification also costs user (if any)
 
@@ -35,16 +33,15 @@ in a separate page inside the app and provide a link in the left side panel, pro
 
 - [ ] Move Terms of service and privacy policy to required folder inside /frontend
 
-In "translation pending" notice, say like this is available only in English. don't say it may be avialble in future update.
-
-Center the connect wallet inside the button which is on top bar, so that in mobile it matches launch app button appearance
-
 - [ ] In mobile inside app in top bar, the chain selector is appearing near the connect wallet button even before the wallet got connected, I hope that chain selector is not required at all, as of now we already combined with wallet connect button, what do you say?
 
 - [ ] Is it possible to ensure even for cross chain that only after the required ETH received in treasury, the equivalent amount of VPFI will be minted and send to the same wallet from where the ETH has been came from?
 
 ---
 
+- [x] Change the icons for Loans as lender and loans as borrower, it looks nice but we need to either have different icon or need to remove the icon, because the icon for `as lender` shows green and trending higher, but for `as borrower` shows amber colour and graph trending down (which is not good to look from borrower perspective)
+- [x] In "translation pending" notice, say like this is available only in English. don't say it may be avialble in future update.
+- [x] Center the connect wallet inside the button which is on top bar, so that in mobile it matches launch app button appearance
 - [x] tooltips provided inside the list of offers and loans in both dashboard page and offer book is not fully visible, may need to wrap it.
 - [x] in card `Lender Yield-Fee Discount` in loan view page, provide `consent not given in dashboard` kind of info, so that users will know that they need to enable `discount tier` by providing consent to use the staked / deposited VPFI in their escrow.
 - [x] Bring the filter `status` inside the card `Your Offers` in dashboard page, just before `new offer` button
