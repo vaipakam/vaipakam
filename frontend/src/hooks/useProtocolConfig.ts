@@ -91,6 +91,13 @@ export interface ProtocolConfig {
    *  truth rather than a hardcoded constant. Falls back to 18 if the
    *  read fails (no token registered yet, RPC blip). */
   vpfiDecimals: number;
+  /** Range Orders Phase 1 master kill-switch flags. All three default
+   *  `false` on a fresh deploy. UI gates (range sliders, partial-fill
+   *  checkbox, advanced-mode reveals) must consult these so users
+   *  never see controls for mechanics governance hasn't enabled. */
+  rangeAmountEnabled: boolean;
+  rangeRateEnabled: boolean;
+  partialFillEnabled: boolean;
   fetchedAt: number;
 }
 
@@ -263,6 +270,9 @@ export function useProtocolConfig() {
         vpfiStakingAprBps,
         tierThresholds,
         tierDiscountBps,
+        rangeAmountEnabled,
+        rangeRateEnabled,
+        partialFillEnabled,
       ] = tuple;
       const [minHealthFactor, vpfiStakingPoolCap, vpfiInteractionPoolCap, maxInteractionClaimDays] = consts;
 
@@ -320,6 +330,9 @@ export function useProtocolConfig() {
         vpfiInteractionPoolCapCompact: vpfiCapToCompact(vpfiInteractionPoolCap, vpfiDecimals),
         maxInteractionClaimDays: Number(maxInteractionClaimDays),
         vpfiDecimals,
+        rangeAmountEnabled,
+        rangeRateEnabled,
+        partialFillEnabled,
         fetchedAt: Date.now(),
       };
       cached = { data: next, at: Date.now(), key: cacheKey };

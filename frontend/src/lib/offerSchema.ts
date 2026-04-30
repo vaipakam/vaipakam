@@ -48,6 +48,18 @@ export interface OfferFormState {
    *  flag is set by whichever side authored the offer. Snapshotted to
    *  `Loan.allowsPartialRepay` at init and read by `RepayFacet.repayPartial`. */
   allowsPartialRepay: boolean;
+  /** Range Orders Phase 1 — upper bound of the amount range. Empty
+   *  string ⇒ single-value mode (auto-collapses to `amountMax = 0`
+   *  in the payload, which the contract reads as "match exactly
+   *  `amount`"). Only populated by the UI when the
+   *  `rangeAmountEnabled` master flag is on AND the user is in
+   *  Advanced mode. */
+  amountMax: string;
+  /** Range Orders Phase 1 — upper bound of the interest-rate range
+   *  (entered as a percent like the base `interestRate` field, e.g.
+   *  "5.5"). Empty ⇒ single-value mode. Gated on `rangeRateEnabled`
+   *  + Advanced mode in the UI. */
+  interestRateMax: string;
 }
 
 export const initialOfferForm: OfferFormState = {
@@ -68,6 +80,8 @@ export const initialOfferForm: OfferFormState = {
   collateralTokenId: '',
   collateralQuantity: '0',
   allowsPartialRepay: false,
+  amountMax: '',
+  interestRateMax: '',
 };
 
 /** Payload shape expected by `Diamond.createOffer`. */
@@ -88,6 +102,14 @@ export interface CreateOfferPayload {
   collateralTokenId: bigint;
   collateralQuantity: bigint;
   allowsPartialRepay: boolean;
+  /** Range Orders Phase 1 — upper bound of the amount range.
+   *  `0n` ⇒ auto-collapse to single value (the contract reads
+   *  `amountMax == 0` as "use `amount`"). Otherwise must be
+   *  ≥ `amount`. */
+  amountMax: bigint;
+  /** Range Orders Phase 1 — upper bound of the interest-rate range
+   *  (BPS). `0` ⇒ auto-collapse. Otherwise must be ≥ `interestRateBps`. */
+  interestRateBpsMax: number;
 }
 
 /**
@@ -105,7 +127,9 @@ export type OfferFormError =
   | { code: 'nftTokenIdRequired' }
   | { code: 'collateralAssetInvalid' }
   | { code: 'prepayAssetInvalid' }
-  | { code: 'fallbackConsentRequired' };
+  | { code: 'fallbackConsentRequired' }
+  | { code: 'amountMaxBelowMin' }
+  | { code: 'rateMaxBelowMin' };
 
 /**
  * Shallow field-by-field validation. Returns the first error found, or null
@@ -133,6 +157,20 @@ export function validateOfferForm(s: OfferFormState): OfferFormError | null {
   }
   if (!s.fallbackConsent) {
     return { code: 'fallbackConsentRequired' };
+  }
+  // Range Orders Phase 1 — when an upper bound is populated it must
+  // be ≥ the corresponding minimum. Empty bounds auto-collapse and
+  // are not validated. Numeric comparison here is fine because both
+  // fields share units and parseFloat tolerates the input shape (the
+  // payload-stage `parseUnits` is the integer-precision conversion).
+  if (s.amountMax.trim() !== '' && Number(s.amountMax) < Number(s.amount)) {
+    return { code: 'amountMaxBelowMin' };
+  }
+  if (
+    s.interestRateMax.trim() !== ''
+    && Number(s.interestRateMax) < Number(s.interestRate)
+  ) {
+    return { code: 'rateMaxBelowMin' };
   }
   return null;
 }
@@ -174,6 +212,21 @@ export function toCreateOfferPayload(
     ? parseUnits(s.amount, lendingDecimals)
     : BigInt(s.amount);
 
+  // Range Orders Phase 1 auto-collapse: blank `amountMax` /
+  // `interestRateMax` produces 0 in the payload, which the contract's
+  // `_writeOfferPrincipalFields` reads as "treat as single value"
+  // (`amountMax = amount`, `interestRateBpsMax = interestRateBps`).
+  // Keeps the payload shape stable across basic and advanced modes —
+  // the UI just leaves the bound fields empty when ranges are off.
+  const amountMax = s.amountMax.trim() === ''
+    ? 0n
+    : (s.assetType === 'erc20'
+      ? parseUnits(s.amountMax, lendingDecimals)
+      : BigInt(s.amountMax));
+  const interestRateBpsMax = s.interestRateMax.trim() === ''
+    ? 0
+    : Math.round(parseFloat(s.interestRateMax) * 100);
+
   return {
     offerType: s.offerType === 'lender' ? 0 : 1,
     lendingAsset: s.lendingAsset,
@@ -191,6 +244,8 @@ export function toCreateOfferPayload(
     collateralTokenId: BigInt(s.collateralTokenId || '0'),
     collateralQuantity: BigInt(s.collateralQuantity || '0'),
     allowsPartialRepay: s.allowsPartialRepay,
+    amountMax,
+    interestRateBpsMax,
   };
 }
 

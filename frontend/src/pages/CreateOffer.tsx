@@ -62,6 +62,16 @@ export default function CreateOffer() {
   const { data: walletClient } = useWalletClient();
   const { mode } = useMode();
   const showAdvanced = mode === "advanced";
+  // Range Orders Phase 1 — the two range-input UIs are gated on BOTH
+  // the user being in Advanced mode AND governance having flipped
+  // the relevant master flag on. When either is false we render the
+  // single-value form unchanged (form.amountMax / form.interestRateMax
+  // stay empty → the schema's auto-collapse produces 0 in the payload
+  // → the contract treats the offer as single-value).
+  // protocolConfig is fetched below; the flags are surfaced through
+  // its bundle. While the config is still loading (`null`) we err on
+  // the side of "ranges off" so users never see broken sliders during
+  // the first render.
   const diamond = useDiamondContract();
   const { sign: permit2Sign, canSign: permit2CanSign } = usePermit2Signing();
   // Live protocol config — `rentalBufferBps` was previously hardcoded
@@ -72,6 +82,12 @@ export default function CreateOffer() {
   const rentalBufferBps = protocolConfig
     ? BigInt(protocolConfig.rentalBufferBps)
     : 500n; // fall back to compile-time default during the first render
+  const showAmountRange = Boolean(
+    showAdvanced && protocolConfig?.rangeAmountEnabled,
+  );
+  const showRateRange = Boolean(
+    showAdvanced && protocolConfig?.rangeRateEnabled,
+  );
   // Banner-copy interpolation params for the lender / borrower discount
   // banners — surface live treasury fee, loan-initiation fee, and the
   // top-tier discount % so governance changes flow into the marketing
@@ -309,6 +325,17 @@ export default function CreateOffer() {
         }
       };
 
+      // Range Orders Phase 1 — lender pre-escrows the upper bound of
+      // the amount range so partial fills can draw from the same
+      // pool. `payload.amountMax` is 0 in single-value / collapsed
+      // mode, in which case we fall back to `payload.amount` (the
+      // single value the contract will use). When range mode is
+      // active, the lender's approval / Permit2 sign covers the
+      // ceiling, not the minimum — otherwise the contract's pull
+      // (`params.amountMax`) would revert on insufficient allowance.
+      const lenderPullAmount = payload.amountMax > 0n
+        ? payload.amountMax
+        : payload.amount;
       // Permit2 eligibility: OfferFacet.createOfferWithPermit only accepts
       // ERC-20 creator pulls. Pre-compute the target token+amount so we
       // can skip the classic `approve` leg entirely when the wallet can
@@ -318,7 +345,7 @@ export default function CreateOffer() {
           if (form.assetType === "erc20") {
             return {
               token: form.lendingAsset as Address,
-              amount: payload.amount,
+              amount: lenderPullAmount,
             };
           }
           return null;
@@ -376,7 +403,9 @@ export default function CreateOffer() {
       try {
         if (form.offerType === "lender") {
           if (form.assetType === "erc20" && erc20) {
-            await ensureErc20(asErc20Approvable(erc20), payload.amount);
+            // Approve the upper bound of the range — see
+            // lenderPullAmount derivation above.
+            await ensureErc20(asErc20Approvable(erc20), lenderPullAmount);
           } else if (
             form.assetType === "erc721" ||
             form.assetType === "erc1155"
@@ -743,7 +772,11 @@ export default function CreateOffer() {
           <div className="form-row">
             <div className="form-group">
               <label className="form-label">
-                {isRental ? t('createOffer.dailyRentalFee') : t('createOffer.amount')}
+                {isRental
+                  ? t('createOffer.dailyRentalFee')
+                  : showAmountRange
+                    ? t('createOffer.amountMin')
+                    : t('createOffer.amount')}
               </label>
               <input
                 className="form-input"
@@ -763,7 +796,9 @@ export default function CreateOffer() {
             </div>
             <div className="form-group">
               <label className="form-label">
-                {t('createOffer.interestRate')}
+                {showRateRange
+                  ? t('createOffer.interestRateMin')
+                  : t('createOffer.interestRate')}
               </label>
               <input
                 className="form-input"
@@ -778,6 +813,63 @@ export default function CreateOffer() {
               <span className="form-hint">{t('createOffer.hintInterestBps')}</span>
             </div>
           </div>
+
+          {/* Range Orders Phase 1 — upper-bound inputs. Rendered only
+              when (a) governance has flipped the relevant master flag
+              ON via ConfigFacet AND (b) the user opted into Advanced
+              mode AND (c) we're not on an NFT-rental offer (rentals
+              are single-fill in Phase 1). When this row is hidden
+              `form.amountMax` / `form.interestRateMax` stay empty,
+              `toCreateOfferPayload` collapses them to 0, and the
+              contract treats the offer as single-value. */}
+          {(showAmountRange || showRateRange) && !isRental && (
+            <div className="form-row">
+              {showAmountRange ? (
+                <div className="form-group">
+                  <label className="form-label">
+                    {t('createOffer.amountMax')}
+                  </label>
+                  <input
+                    className="form-input"
+                    type="number"
+                    step="any"
+                    min="0"
+                    placeholder={form.amount || "2000"}
+                    value={form.amountMax}
+                    onChange={(e) => setField("amountMax", e.target.value)}
+                  />
+                  <span className="form-hint">
+                    {t('createOffer.hintAmountMax')}
+                  </span>
+                </div>
+              ) : (
+                <div className="form-group" />
+              )}
+              {showRateRange ? (
+                <div className="form-group">
+                  <label className="form-label">
+                    {t('createOffer.interestRateMax')}
+                  </label>
+                  <input
+                    className="form-input"
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    placeholder={form.interestRate || "6.00"}
+                    value={form.interestRateMax}
+                    onChange={(e) =>
+                      setField("interestRateMax", e.target.value)
+                    }
+                  />
+                  <span className="form-hint">
+                    {t('createOffer.hintInterestRateMax')}
+                  </span>
+                </div>
+              ) : (
+                <div className="form-group" />
+              )}
+            </div>
+          )}
 
           {isRental && (
             <div className="form-row">
