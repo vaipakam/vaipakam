@@ -8,8 +8,7 @@
 
 ---
 
-- [ ] Make the 15 mins auto pause by bot a admin configurable (later by governance), flag for auto pause and a config for 15 mins (to change duration), do you think 15 mins default is reasonable? or you prefer any better duration?
-- [ ] Group languages based on the locality of that continent and display only those group belonging to that continent. Note: exception is for japanese can be displayed together with western countries too
+- [ ] Defer: Group languages based on the locality of that continent and display only those group belonging to that continent. Note: exception is for japanese can be displayed together with western countries too
 - [ ] Borrower can pay interest at any time but it is mandatory to pay complete interest at the end of 1 (or each) year completion, the cumulative paid interest for that year should be equal or more than a full year accured interest, otherwise system will use collateral to pay interst to lender after grace period of 2 weeks (buy selling the required collateral asset to but lending asset), this may incur higher fees and may also drastically change the HF/LTV and may triger liquidation too.
 - [ ] For pyth, if we provide only price feed for ETH/USD, ETH/EUR, ETH/JPY, ETH/XAU and all other asset can be checked with respect to ETH right, so that it is not required for us to configure all the asset price feed right?
 - [ ] we need to provide slider to adjust the lending amount and collateral amount. also based on it, we should also show HF/LTV visually with animation, this need to be shown during offer creation in advanced mode, like the one that is shown in loan view page in `Liquidation-price projection` card, inside card `Collateral & Risk`, enhace for offer creation if possible.
@@ -37,8 +36,6 @@
 
 - [ ] Need to have a separate ID for each reported error on github from our website, so that we can cross check with that id in our system to see if that error really come from website and thats the error that it really said or is it just manually created issue post or any thing in the error has been modified except for the section that says `<!-- Please describe in your own words what you were trying to do. -->` from user. so that on real dispute if any we can cross check it from our end. hope in defi no such things are supported, but still we need to have things in place.
 
-- [ ] Is there any contract that went beyond max size limit that has been reported by anvil, don't we need to fix it?
-
 - [ ] Bring the
 
 ```
@@ -47,15 +44,6 @@ Download my data and Delete my data
 ```
 
 in a separate page inside the app and provide a link in the left side panel, provide download and clear button in Report issue (diagnostics. because the ) drawer Delete my data deletes even the cookies and all other related data. Just caution the user, before deleting my data, what happens after deleting it.
-
-- [ ] Got the below message while reporting a bug on github
-
-```
-Whoa there!
-Your request URL is too long.
-```
-
-We need to trim, unnecessary details, and / or may be cut short the events from 15+5 to 10+2 what do you say? if it exceeds the threshold of x characters, x need to be configurable
 
 - [ ] Move Terms of service and privacy policy to required folder inside /frontend
 
@@ -71,10 +59,12 @@ Center the connect wallet inside the button which is on top bar, so that in mobi
 
 - [ ] Is it possible to ensure even for cross chain that only after the required ETH received in treasury, the equivalent amount of VPFI will be minted and send to the same wallet from where the ETH has been came from?
 
-- [ ] Need to set a pause policy in such a way that , after abnormal activity or due to any circumstances, if the system has to be paused and if it is not done within 15min, can it be paused automatically?
-
 ---
 
+- [x] Is there any contract that went beyond max size limit that has been reported by anvil, don't we need to fix it?
+- [x] Got the below message while reporting a bug on github (`Whoa there! Your request URL is too long.`) — trim unnecessary details and/or cut events from 15+5 to 10+2; if it exceeds the threshold of x characters, x needs to be configurable.
+- [x] Need to set a pause policy in such a way that, after abnormal activity or due to any circumstances, if the system has to be paused and if it is not done within 15 min, can it be paused automatically?
+- [x] Make the 15 min auto-pause by bot admin-configurable (later by governance), flag for auto-pause and a config for 15 min (to change duration); 15 min reasonable? — landed at 30 min default, governance-tunable within [5 min, 2 h], no enable/disable flag (always-armed safety net), separate WATCHER_ROLE.
 - [x] Provide multiple language
 - [x] we may also need to provide permission matching for bots to find two offers with matching conditions between lender offer and borrwer offer with same lending and borrowing asset type. and we may need to get max and min for duration, lending asset amount and borrowing asset amount from both lender and borrower during offer creation. together with with lender specifying min collateral amount (to have healthy HF and LTV) as he is the risk taker. Once these are all available, bots can match the offers based on conditions and the loan will be active. any way both users (lender and borrower) have provided consent during the offer creation itself. we should HF/LTV for worst case case condition based on max / min lending / collateral asset amount during offer creation, we may need to provide sliders and make things easy to understand. also system should decide on how much min collateral asset amount (minCollateralAmount) will be allowed based on lender max lending asset amount and provide him option to set minimum collateral amount required, only above the system set minCollateralAmount, also providing option for max collateral amount (contract should revert if min collateral is provided by lender is below minCollateralAmount). Like wise for borrower, system need to set max lending amount (maxLendingAmount) based on min collateral amount beyond which the borrower can't move the slider to ask for more (contract should revert if max lending amount is provided by borrower is above maxLendingAmount), but borrower can still set max lending amount below the system set maxLendingAmount, also borrower can set minimum lending asset amount he needs. so the current values without range will look like only a maximum lending amount available and minimum collateral amount needed by lender and likewise for borrower, it is minimum lending amount needed and maximum collateral amount available. loan fields cannot have min and max values, only offers can have min and max values for lending asset amount, collateral asset amount, duration and interest. we can put these under advanced mode in front end. What do you say?
 - [x] update the release notes in docs/ReleaseNotes-2026-04-25.md and create new relase notes for today

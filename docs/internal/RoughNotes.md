@@ -108,8 +108,3 @@ If we're heading toward testnet redeploy → 2-week bake → audit:
 - Phase 2 design discussions: Tier 5 items, in the audit window.
 
 ---
-
-when you work on auto pause
-Make the 15 mins auto pause by bot a admin configurable (later by governance), flag for auto pause and a config for 15 mins (to change duration), do you think 15 mins default is reasonable? or you prefer any better duration?
-
----

@@ -23,6 +23,7 @@ Vaipakam is a decentralized peer-to-peer (P2P) lending and borrowing platform bu
     - [Frontend Warnings (Reiteration)](#frontend-warnings-reiteration)
   - [4. Offer Book Display](#4-offer-book-display)
     - [Frontend Implementation](#frontend-implementation)
+    - [Range Orders and Permissionless Matching](#range-orders-and-permissionless-matching)
   - [5. Loan Initiation](#5-loan-initiation)
     - [Initiation:](#initiation)
     - [Smart Contract Actions:](#smart-contract-actions)
