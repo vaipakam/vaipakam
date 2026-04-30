@@ -812,7 +812,7 @@ contract DeployDiamond is Script {
     }
 
     function _getMetricsSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](33);
+        s = new bytes4[](34);
         s[0] = MetricsFacet.getProtocolTVL.selector;
         s[1] = MetricsFacet.getProtocolStats.selector;
         s[2] = MetricsFacet.getUserCount.selector;
@@ -851,6 +851,11 @@ contract DeployDiamond is Script {
         // the keeper-bot's `offerMatcher` detector to enumerate the
         // order book each tick.
         s[32] = MetricsFacet.getActiveOffersPaginated.selector;
+        // Position-NFT live summary — single source of truth for
+        // marketplace `tokenURI` rendering AND the frontend's NFT
+        // verifier UI. Returns realized loan terms, locked collateral,
+        // and claim state in one structured read.
+        s[33] = MetricsFacet.getNFTPositionSummary.selector;
     }
 
     /// Phase 4.1 — Terms-of-Service acceptance gate. The gate stays

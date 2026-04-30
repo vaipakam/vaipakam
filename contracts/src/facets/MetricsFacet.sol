@@ -3,9 +3,11 @@
 pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
+import {LibERC721} from "../libraries/LibERC721.sol";
 import {LibPausable} from "../libraries/LibPausable.sol";
 import {OracleFacet} from "./OracleFacet.sol";
 import {RiskFacet} from "./RiskFacet.sol";
+import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 
 /**
  * @title MetricsFacet
@@ -864,6 +866,191 @@ contract MetricsFacet {
             uint256 v = uint256(ev.usdValue);
             sum7d += v;
             if (ev.timestamp >= since24h) sum24h += v;
+        }
+    }
+
+    // ─── 6. NFT Position Summary (Range Orders Phase 1 follow-up) ──────────
+
+    /// @notice Live snapshot of everything an NFT-holder needs to know about
+    ///         the position represented by a Vaipakam position NFT — the
+    ///         loan's current state, what's locked in escrow against it,
+    ///         and what (if anything) is claimable right now.
+    /// @dev    Pure view. Consumed by:
+    ///           1. `VaipakamNFTFacet.tokenURI` for marketplace metadata
+    ///              (OpenSea reads the JSON returned there).
+    ///           2. The frontend's NFT verifier UI for a structured render
+    ///              that doesn't need to parse JSON.
+    ///         Reads from `loan` storage when `loanId != 0` so a partial-
+    ///         fill NFT shows the matched principal/rate/collateral, NOT
+    ///         the lender offer's range bounds. Pre-Range-Orders the NFT
+    ///         derived from `offer.amount`; that's incorrect after PR3-B.
+    struct NFTPositionSummary {
+        uint256 tokenId;
+        uint256 offerId;
+        uint256 loanId;
+        bool isLender;
+        LibVaipakam.LoanPositionStatus nftStatus;
+        LibVaipakam.LoanStatus loanStatus;
+        // The realized loan terms (or offer terms for offer-only NFTs,
+        // though Phase 1 only mints NFTs at loan-init).
+        address principalAsset;
+        string principalSymbol;
+        uint8 principalDecimals;
+        uint256 principalAmount;
+        uint256 interestRateBps;
+        uint256 durationDays;
+        address collateralAsset;
+        string collateralSymbol;
+        uint8 collateralDecimals;
+        uint256 collateralAmount;
+        LibVaipakam.AssetType collateralAssetType;
+        // Live escrow + claim state.
+        uint256 collateralLockedNow;     // collateral still in borrower escrow against this loan; 0 once claimed/forfeit
+        address claimableAsset;          // asset the holder receives at terminal (0x0 if none)
+        uint256 claimableAmount;
+        bool    isClaimable;             // !claim.claimed && something to claim
+        uint256 vpfiHeld;                // borrower-side: still in Diamond custody (Active loans on VPFI path)
+        uint256 vpfiRebatePending;       // borrower-side: claimable VPFI after proper close
+        uint256 createdAt;               // Unix timestamp from offer.createdAt — display_type "date"
+        uint256 chainId;
+    }
+
+    /// @notice Full position summary for a Vaipakam position NFT.
+    /// @param tokenId Position NFT id (works for both lender + borrower
+    ///                NFTs; the `isLender` flag in the return shape
+    ///                disambiguates).
+    /// @return s     The structured summary; see {NFTPositionSummary}.
+    function getNFTPositionSummary(uint256 tokenId)
+        external
+        view
+        returns (NFTPositionSummary memory s)
+    {
+        LibERC721.ERC721Storage storage es = LibERC721._storage();
+        // Reverts when token doesn't exist — same UX as ownerOf.
+        if (es.owners[tokenId] == address(0)) revert("NFT does not exist");
+
+        s.tokenId = tokenId;
+        s.offerId = es.offerIds[tokenId];
+        s.loanId = es.loanIds[tokenId];
+        s.isLender = es.isLenderRoles[tokenId];
+        s.nftStatus = es.nftStatuses[tokenId];
+        s.chainId = block.chainid;
+
+        LibVaipakam.Storage storage vs = LibVaipakam.storageSlot();
+        LibVaipakam.Offer storage offer = vs.offers[s.offerId];
+        s.createdAt = offer.createdAt;
+
+        // Resolve realized loan terms when a loan exists (the common case
+        // since Phase 1 only mints NFTs at loan-init); otherwise fall back
+        // to the offer's bounds as a defensive default.
+        if (s.loanId != 0) {
+            LibVaipakam.Loan storage loan = vs.loans[s.loanId];
+            s.loanStatus = loan.status;
+            s.principalAsset = loan.principalAsset;
+            s.principalAmount = loan.principal;
+            s.interestRateBps = loan.interestRateBps;
+            s.durationDays = loan.durationDays;
+            s.collateralAsset = loan.collateralAsset;
+            s.collateralAmount = loan.collateralAmount;
+            s.collateralAssetType = loan.collateralAssetType;
+        } else {
+            s.principalAsset = offer.lendingAsset;
+            s.principalAmount = offer.amount;
+            s.interestRateBps = offer.interestRateBps;
+            s.durationDays = offer.durationDays;
+            s.collateralAsset = offer.collateralAsset;
+            s.collateralAmount = offer.collateralAmount;
+            s.collateralAssetType = offer.collateralAssetType;
+        }
+
+        // Symbol + decimals — try/catch each so any non-standard token
+        // doesn't block the whole tokenURI render. Falls back to "?" /
+        // 18 which is what a marketplace would render anyway for a
+        // contract that doesn't implement IERC20Metadata.
+        (s.principalSymbol, s.principalDecimals) = _erc20Meta(s.principalAsset);
+        if (s.collateralAssetType == LibVaipakam.AssetType.ERC20) {
+            (s.collateralSymbol, s.collateralDecimals) = _erc20Meta(s.collateralAsset);
+        } else {
+            // NFT collateral: surface the contract's name() if available
+            // for marketplace display; decimals is a no-op for NFTs.
+            s.collateralSymbol = _erc721Name(s.collateralAsset);
+            s.collateralDecimals = 0;
+        }
+
+        // Claim state — read whichever side this NFT represents.
+        if (s.loanId != 0) {
+            LibVaipakam.ClaimInfo storage claim = s.isLender
+                ? vs.lenderClaims[s.loanId]
+                : vs.borrowerClaims[s.loanId];
+            s.claimableAsset = claim.asset;
+            s.claimableAmount = claim.amount;
+            // A claim is actionable when it's been recorded (claim.asset != 0)
+            // and not yet collected. Mirrors the gate in claimAsLender /
+            // claimAsBorrower; doesn't capture every nuance (heldForLender,
+            // rental-NFT-return) but is the right top-line signal for the
+            // marketplace card.
+            s.isClaimable = claim.asset != address(0) && !claim.claimed;
+
+            // Borrower-side: live escrow custody + pending VPFI rebate.
+            if (!s.isLender) {
+                LibVaipakam.BorrowerLifRebate storage r =
+                    vs.borrowerLifRebate[s.loanId];
+                s.vpfiHeld = r.vpfiHeld;
+                s.vpfiRebatePending = r.rebateAmount;
+            }
+
+            // Locked-collateral signal: still in escrow against this loan
+            // until terminal + claimed/forfeit. Conservative: shows
+            // `loan.collateralAmount` while loan is Active or
+            // FallbackPending; zero once the loan is in any terminal
+            // state (the actual escrow accounting at terminal is
+            // governed by the swap / claim path and not directly
+            // reflected by a single mapping read).
+            if (
+                s.loanStatus == LibVaipakam.LoanStatus.Active ||
+                s.loanStatus == LibVaipakam.LoanStatus.FallbackPending
+            ) {
+                s.collateralLockedNow = s.collateralAmount;
+            }
+        }
+    }
+
+    /// @dev Best-effort ERC-20 symbol + decimals lookup. Falls back to
+    ///      `("?" , 18)` when the asset doesn't implement IERC20Metadata
+    ///      (rare on production tokens but possible on bespoke deploys).
+    function _erc20Meta(address asset)
+        private
+        view
+        returns (string memory symbol, uint8 decimals)
+    {
+        if (asset == address(0)) return ("", 18);
+        try IERC20Metadata(asset).symbol() returns (string memory s) {
+            symbol = s;
+        } catch {
+            symbol = "?";
+        }
+        try IERC20Metadata(asset).decimals() returns (uint8 d) {
+            decimals = d;
+        } catch {
+            decimals = 18;
+        }
+    }
+
+    /// @dev Best-effort ERC-721 collection name lookup for NFT-collateral
+    ///      offers. ERC-721 metadata is optional; falls back to "?".
+    function _erc721Name(address asset)
+        private
+        view
+        returns (string memory)
+    {
+        if (asset == address(0)) return "";
+        // Interface signature `name() returns (string)` — same selector
+        // as IERC20Metadata.name, which we reuse here to avoid a second
+        // import.
+        try IERC20Metadata(asset).symbol() returns (string memory s) {
+            return s;
+        } catch {
+            return "?";
         }
     }
 }

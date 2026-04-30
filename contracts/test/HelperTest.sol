@@ -428,7 +428,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](32);
+        selectors = new bytes4[](34);
         selectors[0] = MetricsFacet.getProtocolTVL.selector;
         selectors[1] = MetricsFacet.getProtocolStats.selector;
         selectors[2] = MetricsFacet.getUserCount.selector;
@@ -462,6 +462,12 @@ contract HelperTest {
         selectors[29] = MetricsFacet.getAllOffersPaginated.selector;
         selectors[30] = MetricsFacet.getLoansByStatusPaginated.selector;
         selectors[31] = MetricsFacet.getOffersByStatePaginated.selector;
+        // Range Orders Phase 1 follow-ups: asset-agnostic active-offer
+        // pagination (consumed by the keeper-bot matching detector) +
+        // NFT position summary (consumed by tokenURI + frontend
+        // verifier UI).
+        selectors[32] = MetricsFacet.getActiveOffersPaginated.selector;
+        selectors[33] = MetricsFacet.getNFTPositionSummary.selector;
         return selectors;
     }
 
