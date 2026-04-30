@@ -471,25 +471,57 @@ groups every terminal class consistently for indexers.
 
 The deferred half of PR3 — the actual match-execution body —
 landed by introducing a `MatchOverride` per-tx storage slot
-that lets `matchOffers` inject midpoint match terms into
-`LoanFacet.initiateLoan` without changing its cross-facet
-signature. The storage slot has a clean active-flag pattern: set
-at the top of `matchOffers`, read by
-`LoanFacet._copyFinancialFields` if active (else falls through
-to the legacy field-read path), cleared post-match.
+that lets `matchOffers` inject **both** the midpoint match terms
+(amount / rateBps / collateralAmount, consumed by
+`LoanFacet._copyFinancialFields`) **and** the address-resolution
+override (counterparty / matcher, consumed by
+`OfferFacet._acceptOffer`). The storage slot has a clean
+active-flag pattern: set at the top of `matchOffers`, read by
+both downstream consumers when active (else they fall through to
+legacy `msg.sender` / offer-field paths), cleared post-match.
+
+The two address-resolution fields land independently, addressing
+a bug in the first cut: when `matchOffers` runs, `msg.sender` is
+the matcher (a bot or relayer) — not the actual counterparty to
+the offer being processed. The legacy `acceptOffer` path reads
+`acceptor = msg.sender` for sanctions / country / KYC screening
+AND for lender/borrower role resolution. Without an override,
+those checks would target the bot's wallet and the principal +
+LIF would be pulled from the bot's escrow instead of the actual
+lender's.
+
+- **`counterparty`**: carries the lender-offer creator's address
+  into `_acceptOffer`, which reads it in place of `msg.sender`
+  whenever the override is active.
+- **`matcher`**: receives the 1% LIF kickback. On the legacy
+  path matcher = `msg.sender` (same person who triggered the
+  match). Under matchOffers, matcher = `msg.sender` of the outer
+  matchOffers call frame, propagated through to the LIF
+  kickback site inside `_acceptOffer` and stamped on
+  `loan.matcher` for VPFI-path terminal kickbacks.
 
 `matchOffers` now has its full body:
 
 1. Validate via `LibOfferMatch.previewMatch`; map structured
    errors to typed reverts.
 2. Set `s.matchOverride = (matchAmount, matchRateBps,
-   reqCollateral, msg.sender, active=true)`.
+   reqCollateral, lenderOffer.creator, msg.sender, active=true)`.
 3. Reuse `_acceptOffer`'s escrow + LIF + NFT-mint + initiateLoan
-   plumbing by invoking it on the borrower offer (single-fill in
-   Phase 1, fully consumed). The new loan picks up midpoint
-   terms via the override path in `_copyFinancialFields`; the
-   matcher gets stamped on `Loan.matcher` directly from the
-   override.
+   plumbing by invoking it on the BORROWER offer. Picking the
+   borrower offer (rather than the lender offer) means:
+   - `offer.offerType == Borrower`, so the borrower-collateral
+     pull block in `_acceptOffer` naturally short-circuits (the
+     borrower's collateral was pre-escrowed at borrower-offer
+     create time — exactly the case the existing comment
+     "already in escrow for Borrower offers" describes).
+   - `offer.creator == borrower`, so the loan correctly records
+     the borrower-offer's creator as the borrower.
+   - `offer.accepted = true` flips the borrower offer to
+     terminal — exactly what's needed since borrower-side is
+     single-fill in Phase 1.
+   - The lender's escrow path is correctly reached because
+     `lender = acceptor = matchOverride.counterparty` (the
+     lender-offer creator) inside `_acceptOffer`.
 4. Clear `s.matchOverride` to prevent same-tx leakage.
 5. Increment `lenderOffer.amountFilled += matchAmount`.
 6. **Auto-close on dust**: if remaining capacity falls below the
