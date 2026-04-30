@@ -24,3 +24,10 @@ dist/
 .wrangler
 .dev.vars
 **/.dev.vars
+
+# Claude Code per-machine / per-session runtime state. The
+# scheduled_tasks.lock file rewrites every session with a fresh
+# sessionId/PID/timestamp, settings.local.json is per-user, and
+# worktrees/ holds ephemeral agent worktrees. None of these are
+# meaningful across machines.
+.claude/
