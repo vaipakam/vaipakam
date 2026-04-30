@@ -80,6 +80,7 @@ library Deployments {
         if (cid == 42161)     return "arbitrum";
         if (cid == 10)        return "optimism";
         if (cid == 137)       return "polygon";
+        if (cid == 31337)     return "anvil";
         revert(
             string.concat(
                 "Deployments: unknown chainid ",
@@ -108,6 +109,7 @@ library Deployments {
         if (cid == 42161)     return "ARBITRUM_";
         if (cid == 10)        return "OPTIMISM_";
         if (cid == 137)       return "POLYGON_";
+        if (cid == 31337)     return "ANVIL_";
         revert("Deployments: unknown chainid for env prefix");
     }
 
@@ -238,6 +240,7 @@ library Deployments {
         if (cid == 42161)     return 30110; // Arbitrum
         if (cid == 10)        return 30111; // Optimism
         if (cid == 137)       return 30109; // Polygon
+        if (cid == 31337)     return 31337; // Anvil — sentinel only; no real LZ traffic on a local node.
         revert("Deployments: no LZ EID mapped for chainid");
     }
 

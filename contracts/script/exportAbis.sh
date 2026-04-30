@@ -67,9 +67,10 @@ fi
 # reads only the surface it actually uses, so additions here are
 # meaningful and should be paired with a bot-side update.
 FACETS=(
-  "MetricsFacet"   # getActiveLoansCount, getActiveLoansPaginated
+  "MetricsFacet"   # getActiveLoansCount, getActiveLoansPaginated, getActiveOffersCount, getActiveOffersPaginated
   "RiskFacet"      # calculateHealthFactor, triggerLiquidation
   "LoanFacet"      # getLoanDetails
+  "OfferFacet"     # previewMatch, matchOffers (Range Orders Phase 1 matching detector)
 )
 
 echo "Exporting ABIs to $OUT_DIR"

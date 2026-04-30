@@ -264,6 +264,21 @@ contract MetricsFacet {
         loanIds = _slice(src, offset, limit);
     }
 
+    /// @notice Paginated slice of the active-offer list. O(limit) — the
+    ///         underlying list is maintained swap-and-pop by LibMetricsHooks.
+    /// @dev Symmetric with `getActiveLoansPaginated` so off-chain consumers
+    ///      (matching bot, indexers) can scan the order book the same way
+    ///      they scan the loan book. Asset-agnostic; for filtered scans use
+    ///      `getActiveOffersByAsset` below.
+    function getActiveOffersPaginated(uint256 offset, uint256 limit)
+        external
+        view
+        returns (uint256[] memory offerIds)
+    {
+        uint256[] storage src = LibVaipakam.storageSlot().activeOfferIdsList;
+        offerIds = _slice(src, offset, limit);
+    }
+
     /// @notice Paginated list of open offer IDs filtered by lending asset.
     /// @dev Walks `activeOfferIdsList` — bounded by `activeOffersCount`.
     function getActiveOffersByAsset(address asset, uint256 offset, uint256 limit)

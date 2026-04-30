@@ -1031,9 +1031,14 @@ contract OfferFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
         // On the legacy acceptOffer path, override.active = false; both
         // `acceptor` and `matcher` resolve to msg.sender (preserving
         // pre-Phase-1 behaviour byte-identically).
-        LibVaipakam.MatchOverride storage moAddr = s.matchOverride;
-        address acceptor = moAddr.active ? moAddr.counterparty : msg.sender;
-        address matcher = moAddr.active ? moAddr.matcher : msg.sender;
+        // `acceptor` resolved here is consumed throughout the function;
+        // the matcher (LIF kickback recipient) is read inline at the
+        // two use sites (lender-asset LIF split + `loan.matcher`
+        // recording) so we don't pay a stack slot for it. viaIR's
+        // stack-too-deep budget is tight in this function.
+        address acceptor = s.matchOverride.active
+            ? s.matchOverride.counterparty
+            : msg.sender;
 
         // Phase 4.3 — address-level sanctions screening on both sides
         // of the match. The acceptor's check is obvious; the creator's
@@ -1182,7 +1187,12 @@ contract OfferFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
                                 EscrowFactoryFacet.escrowWithdrawERC20.selector,
                                 lender,
                                 offer.lendingAsset,
-                                matcher,
+                                // Read matcher inline from storage to
+                                // keep this function under viaIR's
+                                // stack-too-deep budget.
+                                s.matchOverride.active
+                                    ? s.matchOverride.matcher
+                                    : msg.sender,
                                 matcherCut
                             ),
                             EscrowWithdrawFailed.selector
@@ -1301,12 +1311,19 @@ contract OfferFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
             // ERC721/ERC1155 lender offers: borrower prepay already transferred above
         }
 
-        // Initiate loan
+        // Initiate loan. Pass the override-aware `acceptor` (resolved
+        // at the top of this function) — under matchOffers msg.sender
+        // is the bot/relayer, not the actual counterparty. Without
+        // this, `LoanFacet._copyPartyFields` would record the bot as
+        // `loan.lender` (when the offer being processed is borrower-
+        // type), which is exactly the bug PR3-B's address-resolution
+        // refactor was meant to close. Legacy acceptOffer path:
+        // `acceptor == msg.sender`, byte-identical to pre-refactor.
         bytes memory result = LibFacet.crossFacetCallReturn(
             abi.encodeWithSelector(
                 LoanFacet.initiateLoan.selector,
                 offerId,
-                msg.sender,
+                acceptor,
                 acceptorFallbackConsent
             ),
             LoanInitiationFailed.selector
@@ -1326,7 +1343,9 @@ contract OfferFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
         // unconditionally — lender-asset paths already paid the matcher
         // synchronously above, so this only matters for VPFI-path loans,
         // but recording on every loan keeps the read cheap and uniform.
-        s.loans[loanId].matcher = matcher;
+        s.loans[loanId].matcher = s.matchOverride.active
+            ? s.matchOverride.matcher
+            : msg.sender;
 
         // Update offer
         offer.accepted = true;

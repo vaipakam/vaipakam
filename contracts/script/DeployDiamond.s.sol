@@ -562,7 +562,7 @@ contract DeployDiamond is Script {
     }
 
     function _getOfferSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](9);
+        s = new bytes4[](11);
         s[0] = OfferFacet.createOffer.selector;
         s[1] = OfferFacet.acceptOffer.selector;
         s[2] = OfferFacet.cancelOffer.selector;
@@ -573,6 +573,13 @@ contract DeployDiamond is Script {
         // Phase 8b.1 Permit2 additions.
         s[7] = OfferFacet.createOfferWithPermit.selector;
         s[8] = OfferFacet.acceptOfferWithPermit.selector;
+        // Range Orders Phase 1 — bot-driven offer matching. `matchOffers`
+        // is the write entry that bots submit; `previewMatch` is the
+        // structured-error view bots use to filter pairs without paying
+        // for a reverting tx. Both gated on the `partialFillEnabled`
+        // master flag inside the facet body.
+        s[9] = OfferFacet.matchOffers.selector;
+        s[10] = OfferFacet.previewMatch.selector;
     }
 
     function _getLoanSelectors() internal pure returns (bytes4[] memory s) {
@@ -755,7 +762,7 @@ contract DeployDiamond is Script {
     }
 
     function _getConfigSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](16);
+        s = new bytes4[](20);
         // Setters
         s[0] = ConfigFacet.setFeesConfig.selector;
         s[1] = ConfigFacet.setLiquidationConfig.selector;
@@ -777,6 +784,15 @@ contract DeployDiamond is Script {
         s[13] = ConfigFacet.getVpfiTierDiscountBps.selector;
         s[14] = ConfigFacet.getProtocolConfigBundle.selector;
         s[15] = ConfigFacet.getProtocolConstants.selector;
+        // Range Orders Phase 1 master kill-switch flags. Default false
+        // on a fresh deploy; governance flips them via the setters
+        // below. See docs/RangeOffersDesign.md §15 for the staged-
+        // enablement rationale (each flag can be toggled
+        // independently to roll out range / partial-fill behavior).
+        s[16] = ConfigFacet.setRangeAmountEnabled.selector;
+        s[17] = ConfigFacet.setRangeRateEnabled.selector;
+        s[18] = ConfigFacet.setPartialFillEnabled.selector;
+        s[19] = ConfigFacet.getMasterFlags.selector;
     }
 
     function _getRewardAggregatorSelectors() internal pure returns (bytes4[] memory s) {
@@ -796,7 +812,7 @@ contract DeployDiamond is Script {
     }
 
     function _getMetricsSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](32);
+        s = new bytes4[](33);
         s[0] = MetricsFacet.getProtocolTVL.selector;
         s[1] = MetricsFacet.getProtocolStats.selector;
         s[2] = MetricsFacet.getUserCount.selector;
@@ -830,6 +846,11 @@ contract DeployDiamond is Script {
         s[29] = MetricsFacet.getAllOffersPaginated.selector;
         s[30] = MetricsFacet.getLoansByStatusPaginated.selector;
         s[31] = MetricsFacet.getOffersByStatePaginated.selector;
+        // Range Orders Phase 1 — asset-agnostic paginated active-offer
+        // scan, symmetric with `getActiveLoansPaginated`. Consumed by
+        // the keeper-bot's `offerMatcher` detector to enumerate the
+        // order book each tick.
+        s[32] = MetricsFacet.getActiveOffersPaginated.selector;
     }
 
     /// Phase 4.1 — Terms-of-Service acceptance gate. The gate stays
