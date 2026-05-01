@@ -55,10 +55,13 @@ contract DeployVPFIBuyAdapter is Script {
         return vm.envOr(key, vm.envAddress("TREASURY_ADDRESS"));
     }
 
-    /// @dev Payment token resolves to address(0) on native-gas chains
-    ///      (ETH on Sepolia/OP/Arb, BNB on BNB Testnet) and to the
-    ///      canonical wrapped-native on Polygon Amoy where MATIC is
-    ///      not the buy-currency surface.
+    /// @dev Payment token resolves to address(0) on chains where the
+    ///      native gas token is treated as ETH-equivalent for the
+    ///      receiver's wei-per-VPFI rate (Ethereum / Sepolia / OP /
+    ///      Arbitrum / Base testnets), and to the canonical bridged
+    ///      WETH9 ERC20 on chains where the native gas token is
+    ///      something else (BNB, Polygon mainnet — see
+    ///      {_chainRequiresWethPaymentToken} for the gating).
     function _paymentToken() internal view returns (address) {
         uint256 chainId = block.chainid;
         string memory key =
@@ -67,8 +70,25 @@ contract DeployVPFIBuyAdapter is Script {
             : chainId == 11155420 ? "OP_SEPOLIA_VPFI_BUY_PAYMENT_TOKEN"
             : chainId == 80002 ? "POLYGON_AMOY_VPFI_BUY_PAYMENT_TOKEN"
             : chainId == 97 ? "BNB_TESTNET_VPFI_BUY_PAYMENT_TOKEN"
+            : chainId == 137 ? "POLYGON_VPFI_BUY_PAYMENT_TOKEN"
+            : chainId == 56 ? "BNB_VPFI_BUY_PAYMENT_TOKEN"
             : "VPFI_BUY_PAYMENT_TOKEN";
         return vm.envOr(key, address(0));
+    }
+
+    /// @dev True when the native gas token of this chain is NOT
+    ///      ETH-equivalent for the buy-rate. The receiver quotes a
+    ///      single global wei-per-VPFI rate denominated in
+    ///      ETH-equivalent value; on chains where 1 unit of native
+    ///      gas ≠ 1 ETH (BNB mainnet, Polygon mainnet) the adapter
+    ///      MUST be in WETH-pull mode against the chain's bridged
+    ///      WETH9 ERC20, or every buy mis-prices vs. the global rate.
+    ///      Mainnet only — BNB / Polygon testnets are exempted because
+    ///      their gas tokens have no real value and the testnet rate
+    ///      is symbolic (see contracts/.env.example notes).
+    function _chainRequiresWethPaymentToken(uint256 chainId) internal pure returns (bool) {
+        return chainId == 56 /* BNB Smart Chain mainnet */
+            || chainId == 137 /* Polygon PoS mainnet */;
     }
 
     function run() external {
@@ -87,9 +107,38 @@ contract DeployVPFIBuyAdapter is Script {
         console.log("Owner:           ", owner);
         console.log("Receiver eid:    ", uint256(receiverEid));
         console.log("Treasury:        ", treasury);
-        console.log("Payment token:   ", paymentToken == address(0) ? "native ETH" : "ERC20 (see above)");
+        console.log("Payment token:   ", paymentToken == address(0) ? "native gas" : "ERC20 (see address below)");
         console.log("Payment token @: ", paymentToken);
         console.log("Refund timeout:  ", uint256(refundTimeoutSeconds));
+
+        // Pre-flight: chains whose native gas token is NOT ETH-equivalent
+        // (BNB mainnet, Polygon mainnet) must run in WETH-pull mode. The
+        // receiver's wei-per-VPFI rate is denominated in ETH-equivalent
+        // value; native-gas mode on these chains would mean the user
+        // pays 1 BNB / 1 POL where the receiver expects 1 ETH worth of
+        // value — every buy mis-prices. The contract-side validation
+        // in `VPFIBuyAdapter.initialize` catches the misconfigured
+        // *token* (EOA, wrong-decimals, non-ERC20); this pre-flight
+        // catches the misconfigured *mode* (zero token on a chain that
+        // requires WETH-pull). Testnet equivalents (BNB Testnet 97,
+        // Polygon Amoy 80002) are intentionally NOT in the strict list
+        // — their gas tokens have no real value and the testnet rate
+        // is symbolic, so native-gas mode is acceptable there for
+        // dev-loop convenience.
+        if (_chainRequiresWethPaymentToken(block.chainid) && paymentToken == address(0)) {
+            revert(
+                string.concat(
+                    "DeployVPFIBuyAdapter: chainId ",
+                    vm.toString(block.chainid),
+                    " requires WETH-pull mode (set ",
+                    block.chainid == 56 ? "BNB_VPFI_BUY_PAYMENT_TOKEN"
+                        : "POLYGON_VPFI_BUY_PAYMENT_TOKEN",
+                    " env var to the canonical bridged-WETH9 address; ",
+                    "native-gas mode would mis-price every buy vs. the ",
+                    "receiver's ETH-denominated wei-per-VPFI rate)"
+                )
+            );
+        }
 
         vm.startBroadcast(deployerKey);
 

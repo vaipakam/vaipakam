@@ -1682,6 +1682,123 @@ Implementation:
 Verified: `tsc -b --noEmit` clean, `npm run build` clean (Node 25,
 1.97s), vite emits the bundle with the bucket list inlined.
 
+## VPFIBuyAdapter — payment-token mode validation (T-036)
+
+Per ToDo item T-036. Long-term path for the
+"WETH-only on non-ETH chains" enforcement.
+
+**Background.** The cross-chain VPFI buy adapter pulls funds from
+the user on the source chain and forwards a BUY_REQUEST via
+LayerZero to the canonical Base receiver, which mints + sends VPFI
+to the buyer. The receiver quotes a single global wei-per-VPFI rate
+denominated in **ETH-equivalent value**. Native-gas mode
+(`paymentToken == address(0)`) is only valid on chains where 1 unit
+of native gas == 1 ETH for rate purposes — Ethereum, Base,
+Arbitrum, Optimism, Polygon zkEVM, and their public testnets. On
+chains where the native gas token is something else (BNB Chain,
+Polygon PoS), the adapter MUST be in WETH-pull mode against the
+chain's bridged WETH9 ERC20, or every buy mis-prices vs. the
+receiver's ETH-denominated rate.
+
+The user's question — "how does the contract ensure user provides
+only WETH and not other tokens?" — has a key insight at its heart:
+**the contract holds a single `paymentToken` storage slot and pulls
+only that token, regardless of any user input**. The user calling
+`buy(amountIn, ...)` doesn't choose the token; the adapter
+unconditionally does
+`IERC20(paymentToken).safeTransferFrom(msg.sender, ...)`. The risk
+vector is therefore not "user chooses wrong token" (impossible by
+design) but **"operator misconfigures the storage slot at deploy
+time"** — pointing it at an EOA, the wrong-decimals stablecoin, a
+non-ERC20 contract, or `address(0)` on a chain that requires WETH
+mode. The work this session adds two layers of defence against
+that operator-side misconfig.
+
+**Layer 1 — `VPFIBuyAdapter` contract-side validation.** New
+internal helper `_assertPaymentTokenSane(token)` runs at every
+state-mutation site: `initialize()` AND `setPaymentToken()`. When
+`token != address(0)`:
+
+- The address must have bytecode (`token.code.length > 0`) — catches
+  an EOA pasted into the env var.
+- `IERC20Metadata(token).decimals()` must succeed AND return exactly
+  18 — catches the most common honest-mistake misconfig (USDC's 6-dec
+  address pasted where WETH belongs) and the non-ERC20-contract case
+  (decimals() reverts because the function doesn't exist on the
+  bytecode).
+
+Three new errors surface the failure modes precisely:
+`PaymentTokenNotContract(address)`,
+`PaymentTokenDecimalsNot18(address, uint8)`,
+`PaymentTokenDecimalsCallFailed(address)`. Plain text in the error
+name + the offending address in the payload, so operators reading
+the revert immediately see what's wrong. `IERC20Metadata` import
+added.
+
+**Layer 2 — `DeployVPFIBuyAdapter.s.sol` chainId pre-flight.** New
+helper `_chainRequiresWethPaymentToken(chainId)` returns true for
+**BNB Chain mainnet (chainId 56)** and **Polygon PoS mainnet
+(chainId 137)**. The script's `run()` reverts before broadcasting
+if that helper returns true AND the resolved `paymentToken` is
+zero. The error message names the env var the operator should set
+(`BNB_VPFI_BUY_PAYMENT_TOKEN` or `POLYGON_VPFI_BUY_PAYMENT_TOKEN`)
+plus the rationale — "native-gas mode would mis-price every buy
+vs. the receiver's ETH-denominated wei-per-VPFI rate". Script also
+gained env-var resolution for the two new mainnet keys (the
+existing testnet keys `BNB_TESTNET_VPFI_BUY_PAYMENT_TOKEN`,
+`POLYGON_AMOY_VPFI_BUY_PAYMENT_TOKEN` are unchanged — testnet
+equivalents are intentionally NOT in the strict list because their
+gas tokens have no real value and the testnet rate is symbolic).
+
+**What's NOT validated on-chain — and why.** There's no on-chain
+registry that says "this is the *canonical* bridged WETH9 on chain
+X." A determined operator (or an attacker at deploy time) could
+deploy a fake contract that returns the right decimals and bytecode
+shape. The defence against that is **operational**: the deploy
+script logs `name()` / `symbol()` of the configured token for human-
+eyeball confirmation against the chain's published WETH9 address,
+and CLAUDE.md now lists the canonical addresses (BNB:
+`0x2170Ed0880ac9A755fd29B2688956BD959F933F8`, Polygon:
+`0x7ceB23fD6bC0adD59E62ac25578270cFf1b9f619`) so the operator pasting
+a wrong address gets caught against the published reference. The
+contract guard catches the obvious-misconfig class
+(EOA / wrong-decimals / non-ERC20); the operational check catches
+the canonical-impostor class.
+
+**Test coverage**: new
+`contracts/test/token/VPFIBuyAdapterPaymentTokenTest.t.sol`,
+10 cases — every revert path on `initialize` AND on
+`setPaymentToken` rotation, plus the two acceptance paths
+(`address(0)` for native-gas mode, valid mock WETH9 for WETH-pull
+mode). Three minimal mock contracts (MockLZEndpoint, MockWETH9,
+MockUSDC, NotAnERC20) exercise the failure modes precisely without
+needing a live LZ endpoint. All 10 pass.
+
+**Documentation**: CLAUDE.md gained a "VPFIBuyAdapter — payment-
+token mode by chain" section right after the Cross-Chain Security
+Policy block, documenting the per-chain mode selection rule, the
+two-layer enforcement, and the canonical bridged-WETH addresses
+operators should paste in for the strict-WETH-pull chains.
+
+**Verified**: forge build clean, targeted suite green
+(10 / 0 / 0).
+
+## Bucketed duration i18n — full locale coverage (T-030 follow-up)
+
+Tying off the i18n loose end on T-030. The bucketed
+duration picker shipped with English-only strings; this round adds
+the three new keys (`createOffer.durationBucket_one`,
+`createOffer.durationBucket_other`,
+`createOffer.durationPickerAria`) to all 9 non-English locales
+already supported by the app: Spanish, French, German, Japanese,
+Chinese, Hindi, Arabic, Tamil, Korean. Plurals follow each
+language's natural form (`día` / `días`, `Tag` / `Tage`, `jour` /
+`jours`); languages without singular/plural distinction (`日`,
+`天`, `दिन`, `일`) duplicate the form for both keys so i18next's
+fallback chain returns the right value regardless of the count.
+Aria label translated per language. JSON validity verified across
+all 10 locale files; tsc clean.
+
 ## Outstanding for the testnet redeploy gate
 
 Before fresh testnet diamonds can land:

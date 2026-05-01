@@ -371,6 +371,86 @@ there, just point back.
 
 ---
 
+## VPFIBuyAdapter — payment-token mode (per-chain MANDATORY config)
+
+The mirror-chain VPFIBuyAdapter pulls the buyer's funds locally and
+forwards a BUY_REQUEST via LayerZero to the canonical Base receiver,
+which mints + sends VPFI. The receiver quotes a single global
+**wei-per-VPFI rate denominated in ETH-equivalent value**. That makes
+the adapter's `paymentToken` a per-chain economic gate, not a free
+choice:
+
+| Chain (mainnet)        | chainId | Mode                | Required env var                  | Canonical bridged WETH9                       |
+|------------------------|--------:|---------------------|-----------------------------------|-----------------------------------------------|
+| Ethereum               |       1 | Native-gas (ETH)    | (leave unset)                     | n/a                                           |
+| Base                   |    8453 | Canonical receiver  | n/a — buys hit Diamond directly   | n/a                                           |
+| Arbitrum One           |   42161 | Native-gas (ETH)    | (leave unset)                     | n/a                                           |
+| Optimism               |      10 | Native-gas (ETH)    | (leave unset)                     | n/a                                           |
+| Polygon zkEVM          |    1101 | Native-gas (ETH)    | (leave unset)                     | n/a                                           |
+| **BNB Smart Chain**    |    **56** | **WETH-pull (REQUIRED)** | `BNB_VPFI_BUY_PAYMENT_TOKEN` | `0x2170Ed0880ac9A755fd29B2688956BD959F933F8` |
+| **Polygon PoS**        |   **137** | **WETH-pull (REQUIRED)** | `POLYGON_VPFI_BUY_PAYMENT_TOKEN` | `0x7ceB23fD6bC0adD59E62ac25578270cFf1b9f619` |
+
+**Why mainnet BNB / Polygon need WETH-pull mode:** native-gas mode
+on these chains would mean the user pays 1 BNB / 1 POL where the
+receiver expects 1 ETH worth of value. Every buy mis-prices vs. the
+global rate. The bridged WETH9 ERC20 fixes this — buyer holds and
+approves WETH; the adapter pulls the ETH-denominated `amountIn`
+unchanged.
+
+**Two-layer enforcement (don't disable, don't paper over):**
+
+1. **Deploy-script pre-flight (`DeployVPFIBuyAdapter.s.sol`)** —
+   `_chainRequiresWethPaymentToken(chainId)` is `true` for chainIds
+   56 and 137. The script reverts before broadcasting if the
+   resolved `paymentToken` is zero on those chains, with an error
+   message naming the env var the operator should set.
+2. **Contract-side validation (`VPFIBuyAdapter.initialize`,
+   `setPaymentToken`)** — when `paymentToken != address(0)`, the
+   adapter requires `code.length > 0` (real contract, not EOA) AND
+   `IERC20Metadata(token).decimals() == 18` (canonical WETH9
+   invariant; catches the most common honest-mistake misconfig of
+   pasting USDC's 6-dec address). New errors:
+   `PaymentTokenNotContract`, `PaymentTokenDecimalsNot18`,
+   `PaymentTokenDecimalsCallFailed`.
+
+**What's NOT enforced on-chain — the operational check.** There's
+no on-chain registry that says "this is *the canonical* bridged
+WETH9 on chain X." A determined operator (or an attacker at deploy
+time) could deploy a fake contract returning the right decimals.
+Defence is operational: the deploy script logs the configured
+token's `name()` / `symbol()` for human-eyeball confirmation
+against the addresses in the table above. Always cross-check
+against the chain's published bridge contracts list (BscScan +
+LayerZero registry for BNB; PolygonScan + Polygon bridge contracts
+for Polygon) before pasting.
+
+**Pre-flight checklist before broadcasting `DeployVPFIBuyAdapter`
+on BNB / Polygon mainnet:**
+
+- [ ] Set `BNB_VPFI_BUY_PAYMENT_TOKEN` (or
+      `POLYGON_VPFI_BUY_PAYMENT_TOKEN`) in `contracts/.env` to the
+      canonical bridged WETH9 address from the table above.
+- [ ] Visually confirm the address on BscScan / PolygonScan —
+      contract verified, deployer is the chain's canonical bridge
+      operator, NOT a recently-deployed proxy or a contract from an
+      unknown EOA.
+- [ ] Confirm `decimals()` returns 18 (block-explorer "Read
+      Contract" tab — one click). If it returns anything else, the
+      env var points at the wrong contract; do NOT proceed.
+- [ ] Run the dry-run (`forge script ... --rpc-url`) without
+      `--broadcast` first; the deploy script's logs print the
+      resolved `paymentToken` address before it would broadcast.
+      Eyeball-compare to the table above one more time.
+
+**Testnet exemption.** BNB Smart Chain Testnet (chainId 97) and
+Polygon Amoy (chainId 80002) are intentionally NOT in the strict
+WETH-pull list. Their gas tokens have no real value and the
+testnet rate is symbolic, so native-gas mode is acceptable for
+dev-loop convenience. Mainnet equivalents must use WETH-pull —
+the deploy-script pre-flight will refuse to proceed otherwise.
+
+---
+
 ## Chain-specific quirks
 
 ### BNB Smart Chain Testnet (chainId 97, eid 40102)
@@ -398,6 +478,12 @@ there, just point back.
   `vpfiBuyPaymentToken = 0x0` (native-gas mode); the canonical Base
   receiver still quotes the rate in wei-per-VPFI on its side, so the
   user pays whatever the local chain's native asset is.
+  **Mainnet equivalent (chainId 56) requires WETH-pull mode** — see
+  the "VPFIBuyAdapter — payment-token mode" section above for the
+  canonical bridged-WETH9 address and the deploy-script pre-flight
+  that gates this. The testnet's native-gas mode is a deliberate
+  exemption for dev-loop convenience; production deploys must
+  flip to WETH-pull.
 - **Funding floor**: the §1 Diamond cut + §2 mocks + §3-§6 contract
   deploys cost ~0.13 tBNB at 1 gwei. Have ≥0.3 tBNB on the deployer
   EOA before starting; admin EOA needs ≥0.05 tBNB for handover +

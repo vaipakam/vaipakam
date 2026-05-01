@@ -7,6 +7,7 @@ import {OwnableUpgradeable} from "@openzeppelin/contracts-upgradeable/access/Own
 import {Ownable2StepUpgradeable} from "@openzeppelin/contracts-upgradeable/access/Ownable2StepUpgradeable.sol";
 import {OAppUpgradeable, Origin, MessagingFee, MessagingReceipt} from "@layerzerolabs/oapp-evm-upgradeable/contracts/oapp/OAppUpgradeable.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {IVPFIBuyMessages} from "../interfaces/IVPFIBuyMessages.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
@@ -230,6 +231,22 @@ contract VPFIBuyAdapter is
     error RescueWouldTouchPendingLock();
     error BuyExceedsPerRequestCap(uint256 amountIn, uint256 cap);
     error BuyExceedsDailyCap(uint256 attemptedTotal, uint256 cap);
+    /// @dev Operator passed a non-zero `paymentToken` whose address has no
+    ///      bytecode (an EOA, or zero-code precompile slot). The receiver's
+    ///      wei-per-VPFI rate is denominated in ETH-equivalent value, so on
+    ///      non-ETH-native chains the adapter MUST be in WETH-pull mode
+    ///      against a real ERC20 contract.
+    error PaymentTokenNotContract(address token);
+    /// @dev Operator passed a non-zero `paymentToken` whose `decimals()`
+    ///      returns ≠ 18. Canonical WETH9 (every chain's bridged-ETH
+    ///      ERC20) is 18-dec; an honest wrapped-ETH is 18-dec by
+    ///      convention. Most common misconfig this catches: pasting the
+    ///      6-dec USDC address by mistake.
+    error PaymentTokenDecimalsNot18(address token, uint8 decimals);
+    /// @dev `paymentToken.decimals()` reverted (non-IERC20Metadata
+    ///      contract, or contract with no view function). Catches the
+    ///      operator pasting a random non-ERC20 contract address.
+    error PaymentTokenDecimalsCallFailed(address token);
 
     // ─── Construction ───────────────────────────────────────────────────────
 
@@ -261,6 +278,21 @@ contract VPFIBuyAdapter is
         if (owner_ == address(0) || treasury_ == address(0)) {
             revert InvalidAddress();
         }
+        // Validate `paymentToken_` BEFORE any state writes. On non-ETH-
+        // native chains (BNB, Polygon, etc.) the receiver's wei-per-VPFI
+        // rate is denominated in ETH-equivalent value, so the adapter
+        // MUST pull a bridged-WETH ERC20 with decimals() == 18 from the
+        // user. Native-gas mode (paymentToken_ == address(0)) is only
+        // valid on chains where 1 unit of native gas == 1 ETH for the
+        // purpose of the rate (Sepolia / OP / Arbitrum / Base / Ethereum
+        // mainnet). Operators selecting native-gas mode on BNB / Polygon
+        // mainnet would silently mis-price every buy — the deploy
+        // script's pre-flight (DeployVPFIBuyAdapter) catches that case
+        // by chainId; this contract-side guard catches the operator-
+        // misconfig flavour where paymentToken_ is non-zero but points
+        // at the wrong contract (an EOA, the wrong-decimals stablecoin,
+        // a non-ERC20).
+        _assertPaymentTokenSane(paymentToken_);
 
         __OApp_init(owner_);
         __Ownable_init(owner_);
@@ -619,10 +651,44 @@ contract VPFIBuyAdapter is
     ///         flips the adapter into WETH-pull mode. CAUTION: only
     ///         change when there are no PENDING buys — existing locked
     ///         balances would refund in the wrong asset.
+    /// @dev    Validates the new token via {_assertPaymentTokenSane}
+    ///         before mutating storage so a misconfigured rotation
+    ///         (EOA, non-ERC20, wrong-decimals token) reverts up-front
+    ///         rather than corrupting the buy path.
     function setPaymentToken(address newToken) external onlyOwner {
+        _assertPaymentTokenSane(newToken);
         address old = paymentToken;
         paymentToken = newToken;
         emit PaymentTokenSet(old, newToken);
+    }
+
+    /// @dev Sanity-checks `token` for the WETH-pull mode contract:
+    ///        - `address(0)` is the native-gas-mode sentinel — passes
+    ///          unconditionally (the deploy-script pre-flight is
+    ///          responsible for catching native-gas-mode-on-BNB-mainnet
+    ///          and similar economic misconfigs by chainId).
+    ///        - Any non-zero token must (a) have bytecode (not an EOA),
+    ///          (b) respond to `decimals()`, and (c) return exactly 18.
+    ///      The 18-decimal check is the canonical WETH9 invariant and
+    ///      catches the most common operator-side misconfig: pasting a
+    ///      6-dec stablecoin address (USDC / USDT) where a bridged-WETH
+    ///      address belongs. It does NOT prove the token is the
+    ///      *canonical* bridged WETH on this chain — that's an
+    ///      operational check (deploy-script pre-flight prints
+    ///      `name()` / `symbol()` for human-eyeball confirmation
+    ///      against the chain's published WETH9 address).
+    function _assertPaymentTokenSane(address token) internal view {
+        if (token == address(0)) return;
+        if (token.code.length == 0) {
+            revert PaymentTokenNotContract(token);
+        }
+        try IERC20Metadata(token).decimals() returns (uint8 d) {
+            if (d != 18) {
+                revert PaymentTokenDecimalsNot18(token, d);
+            }
+        } catch {
+            revert PaymentTokenDecimalsCallFailed(token);
+        }
     }
 
     function setRefundTimeout(uint64 newSeconds) external onlyOwner {

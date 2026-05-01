@@ -289,6 +289,72 @@ incident (a 46-minute pause) blocked ~$200M of follow-up drain.
 Full detail in [`contracts/README.md`](contracts/README.md) under
 "Cross-Chain Security".
 
+## VPFIBuyAdapter — payment-token mode by chain
+
+The cross-chain VPFI buy adapter pulls funds from the user on the
+source chain and forwards a BUY_REQUEST via LayerZero to the
+canonical Base receiver, which mints + sends VPFI to the buyer.
+The receiver quotes a single global wei-per-VPFI rate denominated in
+**ETH-equivalent value** — not in the source chain's native gas. This
+makes the payment-token mode a load-bearing per-chain config:
+
+- **Native-gas mode** (`paymentToken == address(0)`): valid only on
+  chains where 1 unit of native gas == 1 ETH for rate purposes. That
+  set is Ethereum / Base / Arbitrum / Optimism / Polygon zkEVM and
+  their public testnets (Sepolia / Base Sepolia / Arb Sepolia / OP
+  Sepolia / Cardona). Buyer sends ETH as `msg.value`.
+- **WETH-pull mode** (`paymentToken == <bridged WETH9>`): required on
+  any chain where native gas isn't ETH-priced. That's **BNB Chain
+  mainnet (chainId 56)** and **Polygon PoS mainnet (chainId 137)**
+  if/when those land. Buyer must hold and approve a bridged-WETH
+  ERC20; the adapter `safeTransferFrom`s the ETH-denominated amount.
+  Native-gas mode on these chains would mean the user pays 1 BNB
+  where the receiver expects 1 ETH worth of value — every buy
+  mis-prices.
+- **Testnet exemption**: BNB Smart Chain Testnet (chainId 97) and
+  Polygon Amoy (chainId 80002) are intentionally NOT in the strict
+  WETH-pull list. Their gas tokens have no real value and the
+  testnet rate is symbolic, so native-gas mode is acceptable for
+  dev-loop convenience. Mainnet equivalents must use WETH-pull.
+
+**Deploy-time enforcement (two layers)**:
+
+1. `DeployVPFIBuyAdapter.s.sol` pre-flight reverts if
+   `_chainRequiresWethPaymentToken(chainId) && paymentToken_ == address(0)`.
+   Catches "operator chose the wrong mode for this chain" — the
+   error message names the env var the operator should set.
+2. `VPFIBuyAdapter.initialize` (and `setPaymentToken` rotation)
+   runs `_assertPaymentTokenSane(token)` before any state writes:
+   - Non-zero `token` must have bytecode (`token.code.length > 0`)
+     — catches an EOA address pasted into the env var.
+   - `IERC20Metadata(token).decimals()` must succeed AND return
+     exactly 18 — catches the most common honest-mistake misconfig
+     (USDC's 6-dec address pasted where a bridged-WETH belongs)
+     and the non-ERC20-contract case (`decimals()` reverts).
+
+**What's NOT validated on-chain**: there's no on-chain registry that
+says "this is the canonical bridged WETH9 on chain X". Confirming the
+configured address really is the chain's published WETH9 (and not an
+attacker-deployed mock that returns the right decimals) is an
+**operational check**: the deploy script logs `name()`/`symbol()` for
+human-eyeball confirmation, and the operator pastes the address from
+the chain's canonical contracts list. Reference addresses for the
+strict-WETH-pull chains:
+
+- BNB Chain mainnet (56): canonical bridged WETH on BNB —
+  `0x2170Ed0880ac9A755fd29B2688956BD959F933F8`. Confirm against
+  bscscan + the LayerZero bridged-asset registry before pasting
+  into `BNB_VPFI_BUY_PAYMENT_TOKEN`.
+- Polygon PoS mainnet (137): canonical WETH9 on Polygon —
+  `0x7ceB23fD6bC0adD59E62ac25578270cFf1b9f619`. Confirm against
+  polygonscan + the Polygon bridge contracts list before pasting
+  into `POLYGON_VPFI_BUY_PAYMENT_TOKEN`.
+
+Test coverage: `contracts/test/token/VPFIBuyAdapterPaymentTokenTest.t.sol`
+(10 cases — every revert path on init AND on `setPaymentToken`
+rotation, plus the two acceptance paths). Add to that file when
+extending the validation surface.
+
 ## VPFI Fee Discounts — Time-Weighted + Claim-Based (Phase 5)
 
 Both sides of the VPFI fee discount (lender yield-fee + borrower Loan

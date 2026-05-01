@@ -127,6 +127,22 @@ defaults `vpfiBuyPaymentToken` to `0x0` (native BNB) when no
 `vpfiBuyAdapter`, `vpfiBuyAdapterImpl`, `lzEndpoint`,
 `vpfiBuyReceiverEid`, `vpfiBuyPaymentToken` to the artifact.
 
+**Mainnet warning — DO NOT carry native-gas mode forward to BNB
+Smart Chain mainnet (chainId 56).** The receiver's wei-per-VPFI
+rate is denominated in ETH-equivalent value; native-gas mode on
+mainnet would mean users pay 1 BNB where the receiver expects 1 ETH
+worth of value, mis-pricing every buy. For mainnet, set
+`BNB_VPFI_BUY_PAYMENT_TOKEN` to the canonical bridged WETH9 on BNB
+(`0x2170Ed0880ac9A755fd29B2688956BD959F933F8` — verify against
+BscScan and the LayerZero bridged-asset registry before pasting).
+The deploy script's pre-flight will refuse to proceed otherwise —
+that's by design. Same gate applies to Polygon PoS mainnet
+(chainId 137) with `POLYGON_VPFI_BUY_PAYMENT_TOKEN` and the
+canonical Polygon WETH9 (`0x7ceB23fD6bC0adD59E62ac25578270cFf1b9f619`).
+Full per-chain table in
+[`DeploymentRunbook.md`](DeploymentRunbook.md) under "VPFIBuyAdapter —
+payment-token mode".
+
 ---
 
 ## 5. Set the discount ETH price asset (mirror-side §5)
