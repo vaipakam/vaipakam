@@ -68,24 +68,6 @@ const NAV_GROUPS: NavGroup[] = [
       { labelKey: 'nav.security', href: '/#security' },
     ],
   },
-  {
-    // VPFI surface — three entry points after the Buy-VPFI split:
-    //   1. Learn about VPFI → /buy-vpfi (public marketing page,
-    //      same tab — the user clicked from the Navbar to read).
-    //   2. Buy VPFI → /app/buy-vpfi#step-1 (wallet-gated, opens the
-    //      app in a new tab so the marketing tab stays open).
-    //   3. Stake / Unstake → /app/buy-vpfi#step-2 (deposit + unstake
-    //      controls share the same card; deep-linking to step-2
-    //      lands on the deposit panel and the withdraw panel sits
-    //      directly below in the same scroll view).
-    id: 'vpfi',
-    labelKey: 'nav.vpfi',
-    links: [
-      { labelKey: 'nav.vpfiLearn', href: '/buy-vpfi' },
-      { labelKey: 'nav.vpfiBuy', href: '/app/buy-vpfi#step-1', newTab: true },
-      { labelKey: 'nav.vpfiStakeUnstake', href: '/app/buy-vpfi#step-2', newTab: true },
-    ],
-  },
 ];
 
 export default function Navbar() {
