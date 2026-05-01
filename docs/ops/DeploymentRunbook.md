@@ -6,6 +6,34 @@ Audience: release engineer + signing multisig.
 
 ---
 
+## TL;DR — pick the right script
+
+| Target | Script | Notes |
+|---|---|---|
+| Local dev (anvil) | `bash contracts/script/anvil-bootstrap.sh` | Full local playground — diamond + mocks + Multicall3 etch + Range Orders flags ON + seed offers + ABI/JSON sync (one command). |
+| Testnet one-shot | `bash contracts/script/deploy-chain.sh <chain-slug>` | Auto-chains build → diamond → timelock → VPFI lane (canonical / mirror branched on slug) → reward OApp → ABI/JSON sync → frontend wrangler deploy → watcher wrangler deploy. Refuses any mainnet slug. |
+| Mainnet | `bash contracts/script/deploy-mainnet.sh <chain-slug> --phase <phase>` | Tiered. Each phase (`preflight`, `contracts`, `lz-config`, `abi-sync`, `cf-frontend`, `cf-watcher`, `verify`) is a deliberate operator action. Confirm flags gate the irreversible phases (`--confirm-i-have-multisig-ready`, `--confirm-dvn-policy-reviewed`). Refuses testnet slugs. |
+
+**What the scripts deliberately do NOT do** (every chain — these stay
+manual for safety):
+
+- **Role rotation** to governance multisig + timelock — multi-party
+  ceremony, see §6 below.
+- **LayerZero peer wiring** across chains — needs both legs deployed
+  first; run `WireVPFIPeers.s.sol` on each (canonical, mirror) pair.
+- **Wrangler secrets** — operator-specific (TG_BOT_TOKEN, RPC API
+  keys, push-channel PK, aggregator keys, keeper PK). `wrangler secret
+  put <KEY>` per the watcher's docs; never in any repo.
+- **Mainnet phases auto-chained** — each `--phase` invocation lands
+  one stage so the operator eyeballs the diff before the next.
+
+The sections below remain the canonical step-by-step. The new scripts
+just bundle the routine forge-script + export-script + wrangler steps
+into reproducible flows; the ceremonies (§6 role rotation, LZ peer
+wiring) stay one-by-one.
+
+---
+
 ## Adding support for a new chain
 
 Before you can run a single deploy step on a chain, the codebase must
@@ -368,6 +396,18 @@ failures in production. Per-chain runbooks
 (`BaseSepoliaDeploy.md` §13–14, `BNBTestnetDeploy.md`, etc.)
 inherit this step from here — don't duplicate the long form
 there, just point back.
+
+**Local anvil playground** — `contracts/script/anvil-bootstrap.sh`
+ships with this same sync wired in as its final step (6/6) so a
+`bash anvil-bootstrap.sh` lands a fresh diamond, etches Multicall3,
+flips Range Orders flags on, seeds offers, AND regenerates
+`frontend/src/contracts/abis/`, `frontend/src/contracts/deployments.json`,
+`ops/hf-watcher/src/deployments.json`, and (when the sibling repo is
+present) `vaipakam-keeper-bot/src/abis/` — all in one command. The
+keeper-bot export is gated on `../../vaipakam-keeper-bot` existing
+so a contributor without that checkout still gets a clean run. For
+the production deploy path the sync stays manual on purpose so the
+operator can review each diff before committing.
 
 ---
 

@@ -10,6 +10,10 @@
 
 ---
 
+- [ ] **T-040**: In the list of offers in offr book the link from symbol for asset should go to coingecko and if not available, should go the blockchain explorer (but it is not linked properly), that should be the case where ever in the frontpage when we show the symbol (of any assets) should behave, what do you say.
+
+---
+
 - [ ] **T-039**: Provide search for documentation
 
 ---

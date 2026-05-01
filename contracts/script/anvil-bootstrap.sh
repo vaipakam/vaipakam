@@ -85,10 +85,10 @@ export ADMIN_PRIVATE_KEY="$ADMIN_KEY"
 export ADMIN_ADDRESS="$ADMIN_ADDR"
 export TREASURY_ADDRESS="$TREASURY_ADDR"
 
-echo "[1/5] DeployDiamond"
+echo "[1/6] DeployDiamond"
 forge script script/DeployDiamond.s.sol --rpc-url "$RPC" --broadcast --slow
 
-echo "[2/5] DeployTestnetLiquidityMocks (mUSDC, mWBTC, mock WETH, oracles, Univ3)"
+echo "[2/6] DeployTestnetLiquidityMocks (mUSDC, mWBTC, mock WETH, oracles, Univ3)"
 forge script script/DeployTestnetLiquidityMocks.s.sol --rpc-url "$RPC" --broadcast --slow
 
 # Etch Multicall3 at the canonical address. The frontend's
@@ -100,7 +100,7 @@ forge script script/DeployTestnetLiquidityMocks.s.sol --rpc-url "$RPC" --broadca
 # Deploy a fresh stub via `forge create`, then copy its runtime
 # bytecode to the canonical address via `anvil_setCode`. Idempotent —
 # safe to re-run.
-echo "[3/5] Etching Multicall3 at canonical address"
+echo "[3/6] Etching Multicall3 at canonical address"
 # `forge create --json` emits a pretty-printed multi-line JSON object.
 # Pipe through `jq -r '.deployedTo'` directly — jq parses across
 # newlines — rather than snipping with `tail -1` which would only
@@ -121,11 +121,29 @@ cast rpc anvil_setCode \
   --rpc-url "$RPC" >/dev/null
 echo "    Multicall3 etched (mock at $MULTICALL3_DEPLOYED → canonical 0xcA11…cA11)"
 
-echo "[4/5] BootstrapAnvil (flip Range Orders master flags ON)"
+echo "[4/6] BootstrapAnvil (flip Range Orders master flags ON)"
 forge script script/BootstrapAnvil.s.sol --rpc-url "$RPC" --broadcast --slow
 
-echo "[5/5] SeedAnvilOffers (one matchable lender + borrower pair)"
+echo "[5/6] SeedAnvilOffers (one matchable lender + borrower pair)"
 forge script script/SeedAnvilOffers.s.sol --rpc-url "$RPC" --broadcast --slow
+
+# [6/6] Sync ABI bundles + consolidated deployments JSON to dependent
+# repos so frontend / hf-watcher / keeper-bot pick up the freshly-
+# deployed anvil diamond on next reload. All three exports are
+# idempotent and fast (forge inspect reads cached artifacts; jq
+# merges per-chain addresses.json into a single keyed object).
+# The keeper-bot export is gated on the sibling repo being present
+# so a contributor without that checkout still gets a clean run.
+echo "[6/6] Sync frontend ABIs + consolidated deployments + (optional) keeper-bot ABIs"
+bash "$SCRIPT_DIR/exportFrontendAbis.sh"
+bash "$SCRIPT_DIR/exportFrontendDeployments.sh"
+
+KEEPER_BOT_DIR_DEFAULT="$CONTRACTS_DIR/../../vaipakam-keeper-bot"
+if [ -d "$KEEPER_BOT_DIR_DEFAULT" ]; then
+  bash "$SCRIPT_DIR/exportAbis.sh"
+else
+  echo "    (skipping keeper-bot ABI export — sibling repo not at $KEEPER_BOT_DIR_DEFAULT)"
+fi
 
 echo
 echo "=== Anvil playground ready ==="
