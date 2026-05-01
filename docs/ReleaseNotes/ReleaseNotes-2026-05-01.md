@@ -828,6 +828,85 @@ width. Pinned both to `flex-shrink: 0`. The CSS comment
 above the rule already promised "the logo never has to
 shrink" — now it actually doesn't.
 
+## Link audit — full sweep, one fix
+
+Walked every internal link target across the codebase and
+cross-referenced against the route table. Checked
+`<Link to="...">`, `<NavLink to="...">`, `<a href="...">`,
+and `linkTo=` props on shared components.
+
+Single issue surfaced and fixed:
+
+- The Footer's **"Smart Contracts"** link in the
+  `Resources` column previously pointed at `/analytics`
+  (the Public Dashboard / Analytics page). Linguistically
+  opaque — a user clicking "Smart Contracts" expects a
+  contracts surface, not a dashboard. The Analytics page
+  does have a *Transparency & Source* section that lists
+  every deployed contract address with explorer links, so
+  the link target was right in spirit; just the user had
+  to scroll to find it. Fix: added an `id="transparency"`
+  anchor to that section and changed the Footer link to
+  `/analytics#transparency` so users land directly on the
+  contracts table.
+
+Everything else checked out:
+
+- All landing-page section anchors (`/#features`,
+  `/#how-it-works`, `/#security`, `/#faq`) have matching
+  `id` attributes on their respective section components.
+- `RewardsSummaryCard`'s deep-link anchors
+  (`/app/buy-vpfi#staking-rewards`,
+  `/app/claims#interaction-rewards`) land on
+  components that carry the matching `id`s
+  (`StakingRewardsClaim` and `InteractionRewardsClaim`).
+- `BuyVPFI`'s `#step-1` / `#step-2` / `#step-3` anchors
+  used by the Navbar VPFI dropdown all exist as `<div id="step-N">`
+  cards.
+- Help routes (`/help/basic`, `/help/advanced`,
+  `/help/technical`) are reachable via the in-page
+  `<HelpTabs>` component which constructs the URLs
+  dynamically.
+- Loan-action sub-routes (`/app/loans/:id/preclose`,
+  `/app/loans/:id/refinance`,
+  `/app/loans/:id/early-withdrawal`) all linked from the
+  LoanDetails action panel.
+- External links (Discord, Reddit, X, GitHub, CoinGecko,
+  LayerZero docs, Push notifications docs, Balancer
+  subgraphs, Arbitrum RPC) all canonical.
+
+In-app sidebar nav verified item-by-item against the
+`/app/*` route table — every entry resolves. (Buy VPFI
+sidebar entry is the one we just internalised this morning;
+the audit confirmed it now points at `/app/buy-vpfi` and
+not the public marketing page.)
+
+## VPFI dropdown removed from public Navbar
+
+The `VPFI ▾` dropdown (Learn / Buy / Stake-Unstake) was a
+holdover from when Buy VPFI was a featured public page.
+After the Buy-VPFI move-into-app earlier today, the public
+`/buy-vpfi` is now a marketing surface reachable from:
+
+- the **Hero** CTA (visible `Buy VPFI` button next to
+  `Launch App` on the Landing page)
+- the **Footer** "Resources" column (`Buy VPFI` link)
+- the **in-app sidebar** (for users already in the app)
+
+The Navbar dropdown was duplicating those entry points
+without adding a new path. Removed entirely. Trade-off is
+1 extra click for returning users wanting to stake straight
+from a deep public page — they go Footer → marketing page
+→ "Launch App to Buy / Stake / Unstake" CTA — but no path
+is broken, just slightly longer for that narrow case.
+
+Public Navbar's right side is now just `Learn ▾ · Verify ▾
+· Launch App · Settings gear` — three menus shorter than
+this morning. The orphaned `nav.vpfi*` i18n keys
+(`vpfi`, `vpfiLearn`, `vpfiBuy`, `vpfiStakeUnstake`,
+`vpfiStake`, `vpfiUnstake`) stayed in `en.json` unused —
+cheap to keep around in case the dropdown comes back.
+
 ## Outstanding for the testnet redeploy gate
 
 Before fresh testnet diamonds can land:

@@ -14,8 +14,6 @@
 
 - [ ] Provide notification, not only on HF health, but also on all other major transactions based on user config. Also mention that notification also costs user (if any)
 
-- [ ] Check if all the links in the page is working fine including the links in footer and in all other places
-
 - [ ] Need to have a separate ID for each reported error on github from our website, so that we can cross check with that id in our system to see if that error really come from website and thats the error that it really said or is it just manually created issue post or any thing in the error has been modified except for the section that says `<!-- Please describe in your own words what you were trying to do. -->` from user. so that on real dispute if any we can cross check it from our end. hope in defi no such things are supported, but still we need to have things in place.
 
 - [ ] Move Terms of service and privacy policy to required folder inside /frontend
@@ -24,6 +22,7 @@
 
 ---
 
+- [x] Check if all the links in the page is working fine including the links in footer and in all other places — full audit; one fix shipped (Footer "Smart Contracts" link now lands on `/analytics#transparency` with a matching `id="transparency"` anchor on the Transparency & Source section). Every other internal `to=`/`href=`/`linkTo=` target resolves to a declared route; landing-page section anchors all match; help routes reachable via HelpTabs; external links all canonical.
 - [x] Where ever we show redacted address, we should provide an option to copy the full address with animation — sweep complete. New `<CopyableAddress>` for bare-`shortenAddr` sites + `copyable` prop on `<AddressDisplay>` opted in on loan parties (lender / borrower in LoanDetails), offer creator (OfferBook detail), keeper whitelist rows (KeeperSettings + LoanDetails per-loan keepers), and timeline event participants (lender / borrower / acceptor in LoanTimeline). Asset-wise Breakdown table + per-chain asset distribution row on Analytics also covered.
 - [x] Provide colour gradients in the left side panel inside the app and also in each and every card in the app — page-level ambient glow shipped on the public pages (Buy VPFI, Analytics, NFT Verifier) via shared `.public-page-glow` class. In-app shell already had its own ambient glow. Card-level gradient experiments reverted; kept `.pd-section` Analytics-only at user request.
 - [x] Bring Data rights (GDPR / CCPA) Download/Delete to a separate page in the left side panel — new `/app/data-rights` page with itemised "what gets cleared" list + two-step confirm; sidebar nav entry under Allowances; Diagnostics drawer's broader pair removed and replaced with narrower journey-log Download/Clear + a small link to the new page.

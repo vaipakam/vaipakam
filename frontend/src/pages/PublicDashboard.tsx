@@ -909,7 +909,10 @@ export default function PublicDashboard() {
                 </>
               )}
 
-              <section className="pd-section pd-transparency">
+              <section
+                id="transparency"
+                className="pd-section pd-transparency"
+              >
                 <h2 style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                   Transparency &amp; Source
                   <CardInfo id="public-dashboard.transparency" />
