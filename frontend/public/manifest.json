@@ -43,12 +43,12 @@
     },
     {
       "name": "My Loans",
-      "url": "/app/loans",
+      "url": "/app",
       "description": "View your active loans and rentals"
     },
     {
       "name": "Buy VPFI",
-      "url": "/app/buy",
+      "url": "/app/buy-vpfi",
       "description": "Acquire VPFI for fee discounts"
     },
     {

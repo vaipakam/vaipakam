@@ -255,11 +255,20 @@ function recordFailureToServer(ev: JourneyEvent): void {
   // Module-level state guard. Wrapped in try because the env var read
   // can throw in some bundler edge cases.
   let origin: string;
+  let enabled: string;
   try {
     origin = (import.meta.env.VITE_HF_WATCHER_ORIGIN as string | undefined) ?? '';
+    enabled = (import.meta.env.VITE_DIAG_RECORD_ENABLED as string | undefined) ?? '';
   } catch {
     return;
   }
+  // Master kill-switch — defaults OFF (must be explicitly set to the
+  // literal string "true" to enable). Until the worker's D1 migration
+  // has been applied + the endpoint smoke-tested in production, we
+  // don't want a flood of POSTs hitting an endpoint that might 500
+  // or rate-limit us into our own bucket. Flip to "true" only once
+  // the operator has run through DeploymentRunbook §8d.
+  if (enabled.toLowerCase() !== 'true') return;
   if (!origin) return;
 
   const fp = failureFingerprint(ev);

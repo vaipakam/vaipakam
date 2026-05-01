@@ -1000,6 +1000,103 @@ healthy in production.
    dashboard) and redeploy the frontend to hide the
    user-facing drawer.
 
+## Audit pass — tests, deploy scripts, FunctionalSpecs cross-check
+
+End-of-day audit batch (operator was resting). Three slices:
+
+**Test-suite baseline**:
+- Forge: **1388 passed / 0 failed / 5 skipped** across 66 suites
+  (excluded `test/invariants/*` and `test/fork/*` per CLAUDE.md
+  guidance). Clean.
+- Frontend (`npm test`): **BLOCKED** — 44/44 test files fail at
+  module resolution because `@testing-library/dom` is a peer dep of
+  `@testing-library/react@16.3.2` but isn't declared in
+  `frontend/package.json`. Local Node version (18.19.1) also
+  predates the engine requirement (≥ 20.19) and triggers a
+  separate vitest startup error. Logged as finding 00009.
+
+**Anvil deploy-script smoke test**:
+The existing anvil bootstrap state was probed and found healthy
+(diamond live at `0x84eA…7fEB`, 1 active loan + 1 active offer
+from `SeedAnvilOffers`, paused = false). The 32 `contracts/script/*.s.sol`
+files were then audited statically against the current contract
+shape. 13 new findings logged as 00010–00022. Top 3 to
+prioritise:
+- 00010 (HIGH) — `WATCHER_ROLE` is never granted on a fresh
+  `DeployDiamond` run; the auto-pause primitive is unreachable
+  post-deploy until governance grants the role explicitly.
+- 00011 / 00012 / 00013 (HIGH) — `RedeployFacets` /
+  `ReplaceStaleFacets` / `UpgradeOracle` carry stale selector
+  lists that drifted from the canonical `DeployDiamond` lists.
+  Replace-cuts only update the listed selectors → unlisted ones
+  keep pointing at the prior bytecode → Diamond ends up with
+  state split across two facet implementations.
+- 00014 (HIGH) — `UpgradeOracle.s.sol` uses `PRIVATE_KEY` for the
+  diamondCut, which reverts post-handover when the deployer EOA
+  has zero roles. Sister script `UpgradeOracleFacet.s.sol`
+  correctly uses `ADMIN_PRIVATE_KEY`.
+
+The other 9 findings (00015–00022) are MEDIUM / LOW: env-var
+mismatches, broadcaster-key bugs in configure-scripts, missing
+non-zero asserts on UUPS owner addresses, idempotency claims
+that aren't actually idempotent, and a LayerZero confirmations
+asymmetry on the receive-library config.
+
+**FunctionalSpecs cross-check**:
+The three canonical spec docs in `docs/FunctionalSpecs/` were
+cross-checked against the codebase. 8 new findings logged as
+00023–00030. Highlights:
+- 00024 (MEDIUM) — `getAssetRiskProfile` return-tuple shape
+  diverges from what the spec advertises to external integrators
+  (DefiLlama / portfolio apps) — different field order, missing
+  `currentPriceUSD`, extra `liqBonusBps`, `bool isLiquid`
+  replaced by an enum.
+- 00025 (MEDIUM) — ERC-20 loan duration has no on-chain upper
+  bound. Spec mandates 1–365 days; OfferFacet only checks
+  `durationDays != 0`. Frontend validation is the only gate.
+- 00028 (MEDIUM) — Treasury Recycling Rule (38/38/24 ETH /
+  wBTC / retain) prescribed in TokenomicsTechSpec §9 has no
+  on-chain implementation in TreasuryFacet.
+- 00023 (LOW) — VPFI on-chain `name()` is "Vaipakam DeFi Token"
+  but TokenomicsTechSpec mandates "Vaipakam Finance Token". The
+  two FunctionalSpecs disagree internally; deployed bytecode
+  follows ProjectDetailsREADME. Decide which name is canonical.
+
+The other 4 (00026 / 00027 / 00029 / 00030) are LOW: spec
+references to renamed surfaces, missing audit-trail timestamp
+on governance events, and a self-contradiction in the spec
+about borrower-LIF forfeiture splits.
+
+**Side-effect fixes shipped during the audit**:
+- Server-side error capture (yesterday's batch) flipped OFF by
+  default via new `VITE_DIAG_RECORD_ENABLED` env var. The
+  worker endpoint, D1 schema, and frontend POST hook all stay
+  in place; user must explicitly set the var to `"true"` after
+  running through DeploymentRunbook §8d. Diagnostics drawer
+  default stays ON. Net: zero risk of the frontend flooding
+  an unprepared endpoint at next deploy.
+- Finding 00001 (public Navbar wallet display) and 00004 (PWA
+  Buy VPFI shortcut `/app/buy` → `/app/buy-vpfi`, plus a
+  sibling `/app/loans` → `/app` shortcut that was also broken)
+  ticked off — both already-fixed by today's earlier work.
+
+**What NOT done** (intentional — operator scoping required):
+- Test-coverage enhancement skipped. Each of the 22 new
+  findings represents a potential test gap, but every one needs
+  a scoping decision (which side is canonical when spec ↔ code
+  diverge?). Listed as "discuss next session" rather than
+  silently fixed.
+- None of the HIGH-severity deploy-script findings were
+  autonomously fixed. Same reason — getting `WATCHER_ROLE`
+  granted properly, or rebuilding the selector-list discipline
+  for `RedeployFacets` / `ReplaceStaleFacets`, are real
+  operator-ops decisions that need the operator at the keyboard.
+
+Findings file: [`docs/FindingsAndFixes/Findings01052026.md`](../FindingsAndFixes/Findings01052026.md).
+30 active findings logged (00001 + 00004 ticked, 00002 +
+00003 + 00005 + 00006 + 00007 + 00008 still pending from the
+prior session, 00009–00030 added today).
+
 ## Outstanding for the testnet redeploy gate
 
 Before fresh testnet diamonds can land:
