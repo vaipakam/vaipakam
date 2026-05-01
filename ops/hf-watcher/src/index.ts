@@ -8,6 +8,7 @@
 
 import type { Env } from './env';
 import { runWatcher } from './watcher';
+import { runBuyWatchdog } from './buyWatchdog';
 import {
   consumeTelegramLinkCode,
   issueTelegramLinkCode,
@@ -40,6 +41,15 @@ export default {
       pruneOldDiagErrors(env).catch(() => {
         // Swallow — a transient D1 hiccup shouldn't fail the
         // whole scheduled tick. Next tick retries.
+      }),
+    );
+    // T-031 Layer 4a — cross-chain reconciliation watchdog.
+    // Piggybacks on the existing scheduled cron. Same swallow-and-
+    // log policy as the diagnostics prune so a transient RPC hiccup
+    // on a source chain can't wedge the HF watcher pass.
+    ctx.waitUntil(
+      runBuyWatchdog(env).catch((err) => {
+        console.error('[buyWatchdog] pass failed:', err);
       }),
     );
   },

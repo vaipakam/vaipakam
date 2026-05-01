@@ -10,6 +10,17 @@ export interface Env {
   RPC_OP?: string;
   RPC_ZKEVM?: string;
   RPC_BNB?: string;
+  // T-031 Layer 4a — buy-watchdog needs to read source-chain adapters
+  // on every chain that has a VPFIBuyAdapter deployed (mainnet +
+  // testnet lanes). HF-watcher itself only reads the canonical
+  // chains; these extra slots are for reconciliation only.
+  RPC_POLYGON?: string;
+  RPC_SEPOLIA?: string;
+  RPC_ARB_SEPOLIA?: string;
+  RPC_OP_SEPOLIA?: string;
+  RPC_POLYGON_AMOY?: string;
+  RPC_BNB_TESTNET?: string;
+  RPC_BASE_SEPOLIA?: string;
 
   // Diamond addresses per chain are NO LONGER env vars. They come from
   // the consolidated `deployments.json` (sibling file in src/), which
