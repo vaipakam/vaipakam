@@ -279,4 +279,77 @@ contract OracleAdminFacet {
     function getSecondaryOracleMaxStaleness() external view returns (uint40) {
         return LibVaipakam.effectiveSecondaryOracleMaxStaleness();
     }
+
+    // ─── T-033 — Pyth numeraire-redundancy admin surface ───────────────────
+    //
+    // Single Pyth feed per chain (ETH/USD, or bridged WETH/USD on
+    // BNB / Polygon mainnet). Used as a sanity gate alongside the
+    // existing Chainlink WETH/USD reading — divergence > tolerance
+    // reverts the price view (`OracleNumeraireDivergence`). Per-asset
+    // redundancy is unchanged: the symbol-derived Tellor + API3 +
+    // DIA quorum continues to handle that. Pyth here is specifically
+    // the redundancy on the most load-bearing oracle reading in the
+    // protocol, with zero per-asset governance overhead.
+    //
+    // Every tunable below is bounded by compiled-in min/max so a
+    // compromised admin / governance multisig can't push the value
+    // outside the policy range without a contract upgrade.
+
+    /// @notice Set the chain's Pyth contract address. Zero disables
+    ///         the numeraire gate globally — protocol falls back to
+    ///         Chainlink-only on the WETH/USD leg.
+    function setPythOracle(address oracle) external {
+        LibVaipakam.setPythOracle(oracle);
+    }
+
+    /// @notice Read the configured Pyth contract address.
+    function getPythOracle() external view returns (address) {
+        return LibVaipakam.storageSlot().pythOracle;
+    }
+
+    /// @notice Set the Pyth feed id used as the chain's numeraire
+    ///         (ETH/USD on ETH-native chains; bridged-WETH/USD on
+    ///         non-ETH-native chains).
+    function setPythNumeraireFeedId(bytes32 feedId) external {
+        LibVaipakam.setPythNumeraireFeedId(feedId);
+    }
+
+    /// @notice Read the configured Pyth numeraire feed id.
+    function getPythNumeraireFeedId() external view returns (bytes32) {
+        return LibVaipakam.storageSlot().pythNumeraireFeedId;
+    }
+
+    /// @notice Set the Pyth max-staleness budget (seconds). Bounded
+    ///         to [60, 3600]. See `PYTH_MAX_STALENESS_*` constants
+    ///         in {LibVaipakam} for the policy rationale.
+    function setPythMaxStalenessSeconds(uint64 secondsBudget) external {
+        LibVaipakam.setPythMaxStalenessSeconds(secondsBudget);
+    }
+
+    /// @notice Read the effective Pyth max-staleness budget.
+    function getPythMaxStalenessSeconds() external view returns (uint64) {
+        return LibVaipakam.effectivePythMaxStalenessSeconds();
+    }
+
+    /// @notice Set the Chainlink ↔ Pyth max-deviation tolerance, in
+    ///         basis points. Bounded to [100, 2000] (1% to 20%).
+    function setPythNumeraireMaxDeviationBps(uint16 bps) external {
+        LibVaipakam.setPythNumeraireMaxDeviationBps(bps);
+    }
+
+    /// @notice Read the effective Pyth deviation tolerance.
+    function getPythNumeraireMaxDeviationBps() external view returns (uint16) {
+        return LibVaipakam.effectivePythNumeraireMaxDeviationBps();
+    }
+
+    /// @notice Set the Pyth confidence-fraction ceiling, in basis
+    ///         points. Bounded to [50, 500] (0.5% to 5%).
+    function setPythConfidenceMaxBps(uint16 bps) external {
+        LibVaipakam.setPythConfidenceMaxBps(bps);
+    }
+
+    /// @notice Read the effective Pyth confidence ceiling.
+    function getPythConfidenceMaxBps() external view returns (uint16) {
+        return LibVaipakam.effectivePythConfidenceMaxBps();
+    }
 }

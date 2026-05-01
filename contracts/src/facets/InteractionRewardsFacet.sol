@@ -266,6 +266,27 @@ contract InteractionRewardsFacet is
         external
         onlyRole(LibAccessControl.ADMIN_ROLE)
     {
+        // Setter-range audit (2026-05-02): bound the in-range
+        // regime to `[INTERACTION_CAP_VPFI_PER_ETH_MIN,
+        // INTERACTION_CAP_VPFI_PER_ETH_MAX]`. The two documented
+        // sentinels are preserved: `value == 0` resets to the
+        // library default at read time, `value == type(uint256).max`
+        // is the emergency "disable cap" knob.
+        if (
+            value != 0 &&
+            value != type(uint256).max &&
+            (
+                value < LibVaipakam.INTERACTION_CAP_VPFI_PER_ETH_MIN ||
+                value > LibVaipakam.INTERACTION_CAP_VPFI_PER_ETH_MAX
+            )
+        ) {
+            revert IVaipakamErrors.ParameterOutOfRange(
+                "interactionCapVpfiPerEth",
+                value,
+                LibVaipakam.INTERACTION_CAP_VPFI_PER_ETH_MIN,
+                LibVaipakam.INTERACTION_CAP_VPFI_PER_ETH_MAX
+            );
+        }
         LibVaipakam.storageSlot().interactionCapVpfiPerEth = value;
         emit InteractionCapVpfiPerEthSet(value);
     }

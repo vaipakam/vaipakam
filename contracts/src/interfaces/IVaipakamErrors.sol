@@ -45,6 +45,17 @@ interface IVaipakamErrors {
     error NotOfferCreator();
     error InvalidAddress();
     error InvalidAmount();
+    /// @notice A governance-tunable parameter setter rejected the
+    ///         write because the new value sits outside its
+    ///         compiled-in min/max range. The `name` is a short
+    ///         bytes32 tag for the parameter (e.g.
+    ///         `bytes32("pythNumeraireMaxDeviationBps")`) so callers
+    ///         can disambiguate without parsing reverts. Used as the
+    ///         shared "every governance knob is bounded" error —
+    ///         even a compromised admin / governance multisig can't
+    ///         push a tunable beyond the policy range without a
+    ///         contract upgrade.
+    error ParameterOutOfRange(bytes32 name, uint256 value, uint256 min, uint256 max);
 
     // ─── Loan State ──────────────────────────────────────────────────────────
     error LoanNotActive();

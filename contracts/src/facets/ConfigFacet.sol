@@ -4,6 +4,7 @@ pragma solidity ^0.8.29;
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibAccessControl, DiamondAccessControl} from "../libraries/LibAccessControl.sol";
 import {LibStakingRewards} from "../libraries/LibStakingRewards.sol";
+import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 
 /**
  * @title ConfigFacet
@@ -397,7 +398,20 @@ contract ConfigFacet is DiamondAccessControl {
      *      stakers (the global counter stores the full historical integral).
      */
     function setStakingApr(uint16 aprBps) external onlyRole(LibAccessControl.ADMIN_ROLE) {
-        if (aprBps > uint16(LibVaipakam.BASIS_POINTS)) revert InvalidStakingAprBps(aprBps);
+        // Setter-range audit (2026-05-02): tightened from
+        // `≤ BASIS_POINTS` (100% APR) to `≤ STAKING_APR_BPS_MAX`
+        // (20% APR). Above 20% is unrealistic for VPFI staking and
+        // a compromised admin pushing past it is a governance-error
+        // vector. Zero is permitted (disables rewards while
+        // preserving the staked principal accounting).
+        if (aprBps > LibVaipakam.STAKING_APR_BPS_MAX) {
+            revert IVaipakamErrors.ParameterOutOfRange(
+                "stakingAprBps",
+                uint256(aprBps),
+                0,
+                uint256(LibVaipakam.STAKING_APR_BPS_MAX)
+            );
+        }
         LibStakingRewards.checkpointGlobal();
         LibVaipakam.storageSlot().protocolCfg.vpfiStakingAprBps = aprBps;
         emit StakingAprSet(aprBps);

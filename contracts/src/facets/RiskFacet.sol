@@ -143,13 +143,50 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
         uint256 reserveFactorBps
     ) external whenNotPaused onlyRole(LibAccessControl.RISK_ADMIN_ROLE) {
         if (asset == address(0)) revert InvalidAsset();
-        if (maxLtvBps == 0 || maxLtvBps > LibVaipakam.BASIS_POINTS) revert UpdateNotAllowed();
-        if (liqThresholdBps <= maxLtvBps || liqThresholdBps > LibVaipakam.BASIS_POINTS) revert UpdateNotAllowed();
+        // Setter-range audit (2026-05-02): bounded floors on the
+        // numeric tunables. Previously: maxLtv only `> 0` (allowed
+        // degenerate `1`-bp setting that disables borrowing for the
+        // asset); reserveFactor only `≤ BASIS_POINTS` (allowed 100%
+        // = lender receives 0% interest). Tightened to credible
+        // ranges; surfaced via `ParameterOutOfRange`.
+        if (
+            maxLtvBps < LibVaipakam.RISK_PARAMS_MAX_LTV_BPS_MIN ||
+            maxLtvBps > LibVaipakam.BASIS_POINTS
+        ) {
+            revert IVaipakamErrors.ParameterOutOfRange(
+                "maxLtvBps",
+                maxLtvBps,
+                uint256(LibVaipakam.RISK_PARAMS_MAX_LTV_BPS_MIN),
+                LibVaipakam.BASIS_POINTS
+            );
+        }
+        if (
+            liqThresholdBps < LibVaipakam.RISK_PARAMS_LIQ_THRESHOLD_BPS_MIN ||
+            liqThresholdBps <= maxLtvBps ||
+            liqThresholdBps > LibVaipakam.BASIS_POINTS
+        ) {
+            // Composite check: the relative `> maxLtvBps` rule is
+            // load-bearing for the liquidation math, so it stays.
+            // The absolute floor + ceiling are the new guards.
+            revert IVaipakamErrors.ParameterOutOfRange(
+                "liqThresholdBps",
+                liqThresholdBps,
+                uint256(LibVaipakam.RISK_PARAMS_LIQ_THRESHOLD_BPS_MIN),
+                LibVaipakam.BASIS_POINTS
+            );
+        }
         // README §3: liquidator incentive is dynamic (6% − realized slippage)
         // and capped at 3% of liquidation proceeds. The stored `liqBonusBps`
         // is a legacy ceiling and must never be configured above that cap.
         if (liqBonusBps > LibVaipakam.cfgMaxLiquidatorIncentiveBps()) revert UpdateNotAllowed();
-        if (reserveFactorBps > LibVaipakam.BASIS_POINTS) revert UpdateNotAllowed();
+        if (reserveFactorBps > LibVaipakam.RISK_PARAMS_RESERVE_FACTOR_BPS_MAX) {
+            revert IVaipakamErrors.ParameterOutOfRange(
+                "reserveFactorBps",
+                reserveFactorBps,
+                0,
+                uint256(LibVaipakam.RISK_PARAMS_RESERVE_FACTOR_BPS_MAX)
+            );
+        }
 
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.RiskParams storage params = s.assetRiskParams[asset];

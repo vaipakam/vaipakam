@@ -13,6 +13,7 @@ import {DiamondAccessControl} from "../libraries/LibAccessControl.sol";
 import {ITellor} from "../interfaces/ITellor.sol";
 import {IApi3ServerV1} from "../interfaces/IApi3ServerV1.sol";
 import {IDIAOracleV2} from "../interfaces/IDIAOracleV2.sol";
+import {IPyth} from "../interfaces/IPyth.sol";
 
 /**
  * @title OracleFacet
@@ -58,6 +59,20 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
     error NoDexPool();
     error StalePriceData();
     error InsufficientLiquidity();
+    /// @notice T-033 — Chainlink ETH/USD and Pyth ETH/USD diverged
+    ///         beyond the governance-tunable
+    ///         `pythNumeraireMaxDeviationBps`. Fail-closed: a
+    ///         numeraire reading the protocol can't agree on between
+    ///         two independent oracles is a strong signal that one
+    ///         of them has been compromised; we'd rather block
+    ///         protocol ops than accept a price the system itself
+    ///         can't trust.
+    error OracleNumeraireDivergence(
+        uint256 chainlinkPrice,
+        uint256 pythPrice,
+        uint256 deviationBps,
+        uint256 maxDeviationBps
+    );
 
     /// @notice Chainlink and a configured secondary oracle (Tellor /
     ///         API3 / DIA) disagreed beyond the chain-level
@@ -291,6 +306,11 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
         if (asset != address(0) && asset == weth) {
             if (ethFeed == address(0)) revert NoPriceFeed();
             (uint256 p, uint8 d) = _readAggregatorStrict(ethFeed, /*allowStablePeg=*/ false);
+            // T-033 numeraire-redundancy gate: cross-validate the
+            // Chainlink ETH/USD reading against Pyth's snapshot.
+            // Soft-skips if Pyth is unset / stale / low-confidence;
+            // reverts on divergence beyond tolerance.
+            _validatePythNumeraire(p, d);
             return (p, d);
         }
 
@@ -319,12 +339,127 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
                 // asset/ETH feeds); ethPerUsd in `ethDec` (1e8).
                 // Combined USD price scales to `ethDec` decimals by
                 // dividing out the ETH feed's native scale.
+                // T-033 — same numeraire-redundancy gate as the
+                // direct WETH branch: the load-bearing leg of this
+                // fallback is `ethPerUsd`, so cross-validate it
+                // against Pyth before composing.
+                _validatePythNumeraire(ethPerUsd, ethDec);
                 uint256 combined = (assetPerEth * ethPerUsd) / (10 ** assetPerEthDec);
                 return (combined, ethDec);
             }
         }
 
         revert NoPriceFeed();
+    }
+
+    // ─── T-033 — Pyth numeraire-redundancy gate ────────────────────────────
+
+    /// @dev Cross-validate a Chainlink ETH/USD reading against Pyth's
+    ///      latest snapshot. Soft-skips (no-op) when the gate is
+    ///      effectively disabled or Pyth's data isn't trustworthy
+    ///      for this read; reverts on a real divergence.
+    ///
+    ///      Soft-skip cases (gate degrades to Chainlink-only):
+    ///        - `pythOracle` unset (governance-disabled).
+    ///        - `pythNumeraireFeedId` unset (governance-disabled at
+    ///          the feed-id layer).
+    ///        - `getPriceUnsafe` reverts (Pyth contract misbehaves /
+    ///          missing on this chain).
+    ///        - Pyth `publishTime` older than the staleness budget.
+    ///        - Pyth `conf / |price|` exceeds the confidence ceiling
+    ///          (publisher window too thin to trust on this read).
+    ///        - Pyth `price <= 0` (negative or zero, never expected
+    ///          on a USD peg).
+    ///
+    ///      Hard-fail case:
+    ///        - `|chainlinkPx - pythPx| / chainlinkPx >
+    ///          maxDeviationBps`. Reverts with
+    ///          {OracleNumeraireDivergence} so the caller surfaces a
+    ///          structured error instead of a generic price-failure.
+    function _validatePythNumeraire(
+        uint256 chainlinkPrice,
+        uint8 chainlinkDecimals
+    ) private view {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        address pyth = s.pythOracle;
+        bytes32 feedId = s.pythNumeraireFeedId;
+        if (pyth == address(0) || feedId == bytes32(0)) return;
+
+        IPyth.Price memory snap;
+        try IPyth(pyth).getPriceUnsafe(feedId) returns (
+            IPyth.Price memory p
+        ) {
+            snap = p;
+        } catch {
+            return; // Pyth contract misbehaved — soft-skip.
+        }
+
+        // Negative / zero price is non-credible on a USD peg.
+        if (snap.price <= 0) return;
+
+        // Staleness gate.
+        uint64 maxStale = LibVaipakam.effectivePythMaxStalenessSeconds();
+        if (block.timestamp > snap.publishTime + maxStale) return;
+
+        // Normalize Pyth's (price, expo) → uint256 in `chainlinkDecimals`-
+        // scale so the deviation comparison is unit-consistent.
+        uint256 pythScaled = _pythPriceToScale(
+            uint256(uint64(snap.price)),
+            snap.expo,
+            chainlinkDecimals
+        );
+        if (pythScaled == 0) return;
+
+        // Confidence-fraction gate: skip when conf/price exceeds
+        // `pythConfidenceMaxBps`. Computed in Pyth's native scale
+        // (no normalization needed for the ratio).
+        uint16 confMax = LibVaipakam.effectivePythConfidenceMaxBps();
+        uint256 confBps = (uint256(snap.conf) * LibVaipakam.BASIS_POINTS) /
+            uint256(uint64(snap.price));
+        if (confBps > confMax) return;
+
+        // Divergence gate (the load-bearing check). Computed against
+        // the Chainlink reading as the reference; either direction
+        // breaches the tolerance.
+        uint256 absDelta = chainlinkPrice > pythScaled
+            ? chainlinkPrice - pythScaled
+            : pythScaled - chainlinkPrice;
+        uint256 deviationBps = (absDelta * LibVaipakam.BASIS_POINTS) / chainlinkPrice;
+        uint256 maxDev = uint256(LibVaipakam.effectivePythNumeraireMaxDeviationBps());
+        if (deviationBps > maxDev) {
+            revert OracleNumeraireDivergence(
+                chainlinkPrice,
+                pythScaled,
+                deviationBps,
+                maxDev
+            );
+        }
+    }
+
+    /// @dev Convert Pyth's (price, expo) representation into a
+    ///      uint256 expressed in `targetDecimals`. Pyth feeds carry
+    ///      a signed `expo` (typically negative — e.g. ETH/USD =
+    ///      price * 10^-8). We compose:
+    ///        scaled = price * 10^(targetDecimals + expo)
+    ///      where `targetDecimals + expo` may be negative (Pyth
+    ///      precision finer than Chainlink) or positive (coarser).
+    function _pythPriceToScale(
+        uint256 priceMagnitude,
+        int32 expo,
+        uint8 targetDecimals
+    ) private pure returns (uint256) {
+        int256 net = int256(uint256(targetDecimals)) + int256(expo);
+        if (net >= 0) {
+            // Multiply up. Bound the exponent to avoid overflow in
+            // pathological feed configurations (Pyth's documented
+            // expo range is -18..0; we cap at 30 for hardening).
+            if (net > 30) return 0;
+            return priceMagnitude * (10 ** uint256(net));
+        } else {
+            uint256 down = uint256(-net);
+            if (down > 30) return 0;
+            return priceMagnitude / (10 ** down);
+        }
     }
 
     // ─── Phase 7b.2 — symbol-derived secondary oracles + Soft 2-of-N ─

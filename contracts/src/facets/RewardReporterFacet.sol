@@ -332,6 +332,23 @@ contract RewardReporterFacet is
     function setRewardGraceSeconds(
         uint64 secondsValue
     ) external onlyRole(LibAccessControl.ADMIN_ROLE) {
+        // Setter-range audit (2026-05-02): added bounds. Without
+        // them, a compromised admin could set `secondsValue=0`
+        // (collapsing grace to instant) or `type(uint64).max`
+        // (effectively infinite grace, defeating the purpose).
+        // Zero is rejected — operators wanting "library default"
+        // can pass {LibVaipakam.REWARD_GRACE_MIN_SECONDS} explicitly.
+        if (
+            secondsValue < LibVaipakam.REWARD_GRACE_MIN_SECONDS ||
+            secondsValue > LibVaipakam.REWARD_GRACE_MAX_SECONDS
+        ) {
+            revert IVaipakamErrors.ParameterOutOfRange(
+                "rewardGraceSeconds",
+                uint256(secondsValue),
+                uint256(LibVaipakam.REWARD_GRACE_MIN_SECONDS),
+                uint256(LibVaipakam.REWARD_GRACE_MAX_SECONDS)
+            );
+        }
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         uint64 old = s.rewardGraceSeconds;
         s.rewardGraceSeconds = secondsValue;

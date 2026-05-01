@@ -229,6 +229,33 @@ contract ProfileFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors 
         uint256 tier1ThresholdUSD
     ) external whenNotPaused onlyRole(LibAccessControl.ADMIN_ROLE) {
         if (tier0ThresholdUSD >= tier1ThresholdUSD) revert InvalidThresholds();
+        // Setter-range audit (2026-05-02): added absolute floor +
+        // ceiling on both tiers. KYC is OFF on the retail deploy
+        // (per CLAUDE.md), so these are belt-and-suspenders there;
+        // on the industrial fork they cap the tunable to a
+        // credible per-tier USD window.
+        if (
+            tier0ThresholdUSD < LibVaipakam.KYC_THRESHOLD_USD_MIN_FLOOR ||
+            tier0ThresholdUSD > LibVaipakam.KYC_THRESHOLD_USD_MAX_CEIL
+        ) {
+            revert IVaipakamErrors.ParameterOutOfRange(
+                "kycTier0ThresholdUSD",
+                tier0ThresholdUSD,
+                LibVaipakam.KYC_THRESHOLD_USD_MIN_FLOOR,
+                LibVaipakam.KYC_THRESHOLD_USD_MAX_CEIL
+            );
+        }
+        if (
+            tier1ThresholdUSD < LibVaipakam.KYC_THRESHOLD_USD_MIN_FLOOR ||
+            tier1ThresholdUSD > LibVaipakam.KYC_THRESHOLD_USD_MAX_CEIL
+        ) {
+            revert IVaipakamErrors.ParameterOutOfRange(
+                "kycTier1ThresholdUSD",
+                tier1ThresholdUSD,
+                LibVaipakam.KYC_THRESHOLD_USD_MIN_FLOOR,
+                LibVaipakam.KYC_THRESHOLD_USD_MAX_CEIL
+            );
+        }
 
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         s.kycTier0ThresholdUSD = tier0ThresholdUSD;
