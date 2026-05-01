@@ -575,7 +575,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](18);
+        selectors = new bytes4[](19);
         selectors[0] = ConfigFacet.setFeesConfig.selector;
         selectors[1] = ConfigFacet.setLiquidationConfig.selector;
         selectors[2] = ConfigFacet.setRiskConfig.selector;
@@ -596,6 +596,8 @@ contract HelperTest {
         selectors[16] = ConfigFacet.setLifMatcherFeeBps.selector;
         // Phase 1 follow-up — auto-pause window duration setter.
         selectors[17] = ConfigFacet.setAutoPauseDurationSeconds.selector;
+        // Findings 00025 — governance-tunable max loan duration.
+        selectors[18] = ConfigFacet.setMaxOfferDurationDays.selector;
         return selectors;
     }
 

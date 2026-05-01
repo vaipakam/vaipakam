@@ -187,6 +187,49 @@ contract ConfigFacet is DiamondAccessControl {
         emit AutoPauseDurationSet(newSeconds);
     }
 
+    /// @notice Emitted on every change to the offer-creation duration cap.
+    event MaxOfferDurationDaysSet(uint16 newDays);
+    /// @notice Max-offer-duration outside the [floor, ceil] bounds.
+    error InvalidMaxOfferDurationDays(uint16 provided, uint256 floorDays, uint256 ceilDays);
+
+    /**
+     * @notice Update the maximum loan duration in days that
+     *         `OfferFacet.createOffer` accepts (Findings 00025).
+     * @dev ADMIN_ROLE-only. Bounded inside
+     *      `[MIN_OFFER_DURATION_DAYS_FLOOR, MAX_OFFER_DURATION_DAYS_CEIL]`
+     *      (7 days – 5 years) — the floor prevents an accidental
+     *      "1 day max" lockout that would brick offer creation; the
+     *      ceiling caps how far governance can stretch the
+     *      `principal × rate × days / 365` interest formula's
+     *      accuracy. Pass exactly 0 to reset to the library default
+     *      (`MAX_OFFER_DURATION_DAYS_DEFAULT = 365` ≡ 1 year). Lower
+     *      bound (1 day floor on every loan) is enforced separately
+     *      at offer creation via the existing `durationDays == 0 →
+     *      InvalidOfferType` check and is NOT governance-tunable.
+     * @param newDays New maximum loan duration in days; pass 0 to
+     *                reset to the library default.
+     */
+    function setMaxOfferDurationDays(uint16 newDays)
+        external
+        onlyRole(LibAccessControl.ADMIN_ROLE)
+    {
+        if (
+            newDays != 0 &&
+            (
+                newDays < LibVaipakam.MIN_OFFER_DURATION_DAYS_FLOOR ||
+                newDays > LibVaipakam.MAX_OFFER_DURATION_DAYS_CEIL
+            )
+        ) {
+            revert InvalidMaxOfferDurationDays(
+                newDays,
+                LibVaipakam.MIN_OFFER_DURATION_DAYS_FLOOR,
+                LibVaipakam.MAX_OFFER_DURATION_DAYS_CEIL
+            );
+        }
+        LibVaipakam.storageSlot().protocolCfg.maxOfferDurationDays = newDays;
+        emit MaxOfferDurationDaysSet(newDays);
+    }
+
     /**
      * @notice Update the liquidation-path risk knobs atomically.
      * @param handlingFeeBps Treasury cut on successful DEX liquidation (default 200 ≡ 2%).
@@ -520,7 +563,13 @@ contract ConfigFacet is DiamondAccessControl {
             // via `setAutoPauseDurationSeconds` within [5min, 2h];
             // default 1800 (30 min). Frontend renders countdown +
             // policy disclosure against this.
-            uint256 autoPauseDurationSeconds
+            uint256 autoPauseDurationSeconds,
+            // Maximum loan duration in days that `createOffer` accepts.
+            // Governance-tunable via `setMaxOfferDurationDays` within
+            // [7d, 5y]; default 365 days. Frontend's offer-creation
+            // duration input enforces this so users don't get a
+            // server-side revert on submit.
+            uint256 maxOfferDurationDays
         )
     {
         treasuryFeeBps = LibVaipakam.cfgTreasuryFeeBps();
@@ -545,6 +594,7 @@ contract ConfigFacet is DiamondAccessControl {
         partialFillEnabled = cfg.partialFillEnabled;
         lifMatcherFeeBps = LibVaipakam.cfgLifMatcherFeeBps();
         autoPauseDurationSeconds = LibVaipakam.cfgAutoPauseDurationSeconds();
+        maxOfferDurationDays = LibVaipakam.cfgMaxOfferDurationDays();
     }
 
     /// @notice Read-only bundle of protocol-wide compile-time constants

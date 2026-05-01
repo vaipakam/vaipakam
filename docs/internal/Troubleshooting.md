@@ -8,3 +8,13 @@ find .git/objects/ -type f -empty -delete
 git fetch -p
 git fsck --full
 ```
+
+## To softly remove top N commits from local
+
+`git reset --soft HEAD~N`
+
+replace N with number of top commits that need to be reverted
+
+## To untrack a file, in case if its added to gitignore
+
+`git rm --cached docs/internal/RoughNotes.md`

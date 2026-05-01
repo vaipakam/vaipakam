@@ -93,6 +93,22 @@ library LibVaipakam {
     // matching path (§9.2 of the design). Partial-filled offers can be
     // cancelled immediately because the lender has already committed value.
     uint256 constant MIN_OFFER_CANCEL_DELAY = 5 minutes;
+    // Loan duration cap defaults + bounds (Findings 00025).
+    // ProjectDetailsREADME §2 mandates `1 ≤ durationDays ≤ 365` with
+    // on-chain enforcement so external callers cannot bypass the
+    // frontend validation. Default is 365 days; admin can re-tune via
+    // `ConfigFacet.setMaxOfferDurationDays(uint16)` within the
+    // [floor, ceil] bounds below. The floor prevents an accidental
+    // "1 day max" lockout (a bricked governance call that locks every
+    // user out of placing a meaningful offer); the ceiling caps how
+    // far governance can stretch the interest formula
+    // `principal × rate × days / 365` before its accuracy degrades
+    // for multi-year loans. Lower bound at offer creation is the
+    // existing `durationDays == 0 → InvalidOfferType` check (so the
+    // minimum loan duration is 1 day; that's not governance-tunable).
+    uint16 constant MAX_OFFER_DURATION_DAYS_DEFAULT = 365;
+    uint16 constant MIN_OFFER_DURATION_DAYS_FLOOR = 7;
+    uint16 constant MAX_OFFER_DURATION_DAYS_CEIL = 1825;   // 5 years
     // Matcher fee, in BPS of LIF: when LIF flows to treasury, this
     // fraction kicks to `msg.sender` of the matching call (whoever
     // submitted `matchOffers` / `acceptOffer` / preclose-offset /
@@ -349,6 +365,14 @@ library LibVaipakam {
         // setter — floor prevents "set to 0" disable-by-stealth,
         // ceiling caps a compromised watcher's worst-case freeze.
         uint32 autoPauseDurationSeconds;    // 0 ⇒ AUTO_PAUSE_DURATION_DEFAULT
+        // Maximum offer durationDays (Findings 00025). 0 ⇒
+        // MAX_OFFER_DURATION_DAYS_DEFAULT (365). Bounded at the setter
+        // by [MIN_OFFER_DURATION_DAYS_FLOOR, MAX_OFFER_DURATION_DAYS_CEIL]
+        // — floor prevents an accidental "1 day max" lockout, ceiling
+        // caps how far governance can stretch the duration interest
+        // formula's accuracy. Stored as uint16 so the slot stays
+        // packed; the runtime read returns uint256 via `cfgMaxOfferDurationDays`.
+        uint16 maxOfferDurationDays;        // 0 ⇒ MAX_OFFER_DURATION_DAYS_DEFAULT (365)
         // ── Range Orders Phase 1 master kill-switch flags ─────────────
         // All default `false` on a fresh deploy. Flipped on by governance
         // via `ConfigFacet.setRangeAmountEnabled` / `setRangeRateEnabled`
@@ -1772,6 +1796,16 @@ library LibVaipakam {
     function cfgAutoPauseDurationSeconds() internal view returns (uint256) {
         uint32 v = storageSlot().protocolCfg.autoPauseDurationSeconds;
         return v == 0 ? AUTO_PAUSE_DURATION_DEFAULT : uint256(v);
+    }
+
+    /// @dev Maximum offer duration in days (Findings 00025).
+    ///      Governance-tunable via `ConfigFacet.setMaxOfferDurationDays`
+    ///      within [MIN_OFFER_DURATION_DAYS_FLOOR,
+    ///      MAX_OFFER_DURATION_DAYS_CEIL]. Falls back to
+    ///      MAX_OFFER_DURATION_DAYS_DEFAULT (365) when unset.
+    function cfgMaxOfferDurationDays() internal view returns (uint256) {
+        uint16 v = storageSlot().protocolCfg.maxOfferDurationDays;
+        return v == 0 ? MAX_OFFER_DURATION_DAYS_DEFAULT : uint256(v);
     }
 
     /// @dev Returns the four tier thresholds (T1 min, T2 min, T3 min, T4 min-exclusive).

@@ -1097,6 +1097,124 @@ Findings file: [`docs/FindingsAndFixes/Findings01052026.md`](../FindingsAndFixes
 00003 + 00005 + 00006 + 00007 + 00008 still pending from the
 prior session, 00009–00030 added today).
 
+## Findings batch — high-severity audit follow-ups
+
+Three audit findings shipped this session, all high-severity
+correctness/safety issues surfaced during yesterday's audit pass.
+
+### 00010 — `WATCHER_ROLE` granted at init + canonical role list
+
+`AdminFacet.autoPause` (the always-armed safety net documented in
+CLAUDE.md) was unreachable on a fresh deploy because
+`WATCHER_ROLE` was declared in `LibAccessControl` but never granted
+during `initializeAccessControl`, and the `DeployDiamond.s.sol`
+handover loop only iterated the seven older roles. Result: post-
+deploy `hasRole(WATCHER_ROLE, *)` returned false for everyone.
+
+Fix landed in three places:
+
+- `LibAccessControl.initializeAccessControl()` now grants
+  `WATCHER_ROLE` to the initial owner alongside the other seven
+  roles (and sets its admin to `DEFAULT_ADMIN_ROLE`).
+- New `LibAccessControl.grantableRoles()` exposes the canonical
+  role list as the single source of truth. `DeployDiamond.s.sol`
+  consumes it directly so the inline `bytes32[7]` array is gone —
+  adding a future role flows through automatically without the
+  drift hazard that caused this bug.
+- `DeployerZeroRolesTest.t.sol` extended with two regression
+  tests: `testRoleListsParity` (asserts library list ↔ test
+  ALL_ROLES match byte-for-byte) and
+  `testEveryGrantableRoleGrantedAtInit` (would have caught the
+  original bug). The rotation dance also gained a `watcherBot`
+  recipient so the post-rotation state assertions still hold.
+
+`WATCHER_ROLE` scope confirmed narrow: only gates
+`AdminFacet.autoPause(string)` — a time-bounded pause (default
+30 min, max 2 hours, governance-tunable within those bounds) that
+is a no-op when the protocol is already paused. It cannot
+unpause. A compromised watcher's worst case is a 2-hour freeze;
+PAUSER_ROLE retains the unpause lever.
+
+### 00013 + 00014 — `UpgradeOracle.s.sol` deleted
+
+Two related findings on the same broken script:
+
+- `UpgradeOracle.s.sol:48,110` used `PRIVATE_KEY` for the
+  diamondCut, which reverts post-handover when the deployer EOA
+  has zero roles. The sister script `UpgradeOracleFacet.s.sol`
+  already does the deployer/admin key split correctly.
+- `UpgradeOracle.s.sol:82-87` listed only 4 of 9 OracleFacet
+  selectors for the Replace cut; the un-listed 5 selectors would
+  have kept pointing at the prior bytecode, splitting Diamond
+  state across two implementations.
+
+Both resolved by deleting the broken script. The
+`UpgradeOracleFacet.s.sol` sibling is the working alternative,
+and the mock-Chainlink wiring `UpgradeOracle` also did is
+already covered by `DeployTestnetLiquidityMocks.s.sol` in the
+bootstrap flow. No functionality lost.
+
+### 00025 — Loan duration cap (governance-tunable)
+
+ProjectDetailsREADME §2 mandates `1 ≤ durationDays ≤ 365` with
+on-chain enforcement. Code only enforced `> 0`; nothing capped
+the upper bound. A misclick or malicious offer could post a
+1000-day loan, and `interest = principal × rate × days / 365`
+over-charges past 365 days.
+
+Fix shipped as a governance-tunable knob (per operator
+direction — "make the max duration of loan admin configurable,
+later by governance"):
+
+- New `ProtocolConfig.maxOfferDurationDays` storage slot;
+  default `MAX_OFFER_DURATION_DAYS_DEFAULT = 365` resolved via
+  the standard zero-sentinel pattern. Bounded floor / ceil
+  constants `MIN_OFFER_DURATION_DAYS_FLOOR = 7` and
+  `MAX_OFFER_DURATION_DAYS_CEIL = 1825` (5 years) — floor
+  prevents an accidental "1 day max" lockout, ceiling caps how
+  far governance can stretch the interest formula's accuracy.
+- `OfferFacet._createOfferSetup` reverts with
+  `OfferDurationExceedsCap(provided, cap)` when the offer
+  duration exceeds the live cap.
+- `ConfigFacet.setMaxOfferDurationDays(uint16)` admin-gated
+  setter with `[floor, ceil]` validation; emits
+  `MaxOfferDurationDaysSet`. Pass 0 to reset to library default.
+- `getProtocolConfigBundle` extended to expose the live cap so
+  the frontend's offer-creation duration input can read it
+  rather than hard-coding 365. (Frontend hook update is a small
+  follow-up; tracked separately.)
+- Selector wired into `_getConfigSelectors()` (DeployDiamond)
+  and `getConfigFacetSelectors()` (HelperTest).
+- Regression test in `OfferFacetTest.t.sol` asserts revert at
+  366 days; `ConfigFacetTest` bundle test asserts the default
+  comes back as 365.
+
+Forge suite: **1391 / 0 / 5 skipped**, up from 1390 with the
+new test.
+
+### Findings re-evaluation against updated FunctionalSpecs
+
+Operator updated `docs/FunctionalSpecs/*` to reflect latest design
+flows mid-session. Re-walked all 14 findings that cite those specs;
+3 closed by the spec update and 11 remain open with code still
+diverging:
+
+- **00003** (Liquidation UI fallback) — closed: WebsiteReadme
+  now scopes fallback submit to "from the remaining sources where
+  possible", matching the disabled-on-zero-quotes frontend.
+- **00023** (token name "DeFi" vs "Finance") — closed:
+  TokenomicsTechSpec now reads "Vaipakam DeFi Token", matching
+  ProjectDetailsREADME and the deployed bytecode.
+- **00024** (`getAssetRiskProfile` return shape) — closed:
+  ProjectDetailsREADME now declares the 5-field tuple shape
+  exactly matching `OracleFacet.sol`, and explicitly notes no
+  `currentPriceUSD` is returned.
+
+Remaining open findings (00005, 00006, 00007, 00008, 00026,
+00027, 00028, 00029, 00030) all have spec language preserved
+load-bearingly; code still diverges. These remain for the
+operator's queue.
+
 ## Outstanding for the testnet redeploy gate
 
 Before fresh testnet diamonds can land:

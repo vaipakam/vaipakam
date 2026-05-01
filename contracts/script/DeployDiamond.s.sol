@@ -798,7 +798,7 @@ contract DeployDiamond is Script {
     }
 
     function _getConfigSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](22);
+        s = new bytes4[](23);
         // Setters
         s[0] = ConfigFacet.setFeesConfig.selector;
         s[1] = ConfigFacet.setLiquidationConfig.selector;
@@ -833,6 +833,8 @@ contract DeployDiamond is Script {
         s[20] = ConfigFacet.setLifMatcherFeeBps.selector;
         // Auto-pause window duration setter (Phase 1 follow-up).
         s[21] = ConfigFacet.setAutoPauseDurationSeconds.selector;
+        // Findings 00025 — governance-tunable max loan duration.
+        s[22] = ConfigFacet.setMaxOfferDurationDays.selector;
     }
 
     function _getRewardAggregatorSelectors() internal pure returns (bytes4[] memory s) {

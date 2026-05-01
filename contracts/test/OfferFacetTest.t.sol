@@ -873,6 +873,43 @@ contract OfferFacetTest is Test {
         );
     }
 
+    /// @dev Findings 00025 — durationDays > governance cap → revert.
+    ///      Default cap is 365 days; at 366 the offer must revert with
+    ///      `OfferDurationExceedsCap(provided, cap)` so external callers
+    ///      can't bypass the frontend validation that already caps at 365.
+    function testCreateOfferRevertsIfDurationAboveCap() public {
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                OfferFacet.OfferDurationExceedsCap.selector,
+                uint256(366),
+                uint256(LibVaipakam.MAX_OFFER_DURATION_DAYS_DEFAULT)
+            )
+        );
+        vm.prank(user1);
+        OfferFacet(address(diamond)).createOffer(
+            LibVaipakam.CreateOfferParams({
+                offerType: LibVaipakam.OfferType.Lender,
+                lendingAsset: mockERC20,
+                amount: 1000,
+                interestRateBps: 500,
+                collateralAsset: mockCollateralERC20,
+                collateralAmount: 1500,
+                durationDays: 366,
+                assetType: LibVaipakam.AssetType.ERC20,
+                tokenId: 0,
+                quantity: 0,
+                creatorFallbackConsent: true,
+                prepayAsset: mockERC20,
+                collateralAssetType: LibVaipakam.AssetType.ERC20,
+                collateralTokenId: 0,
+                collateralQuantity: 0,
+                allowsPartialRepay: false,
+                amountMax: 0,
+                interestRateBpsMax: 0
+            })
+        );
+    }
+
     /// @dev Covers illiquid asset + no illiquid consent → LiquidityMismatch revert
     function testCreateOfferRevertsIfIlliquidWithoutConsent() public {
         mockOracleLiquidity(mockNFT721, LibVaipakam.LiquidityStatus.Illiquid);

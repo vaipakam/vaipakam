@@ -203,6 +203,9 @@ contract OfferFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
     error InsufficientAllowance();
     error LiquidityMismatch();
     error GetUserEscrowFailed(string reason);
+    /// Findings 00025 — `params.durationDays > MAX_OFFER_DURATION_DAYS`.
+    /// Surfaces `(provided, cap)` so the UI / SDK can show the gap.
+    error OfferDurationExceedsCap(uint256 provided, uint256 cap);
 
     // ── Range Orders Phase 1 errors (docs/RangeOffersDesign.md §5.5) ─
     /// Range invariant: `amountMin > amountMax`.
@@ -347,6 +350,19 @@ contract OfferFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
         LibVaipakam.CreateOfferParams calldata params
     ) private returns (uint256 offerId, address escrow) {
         if (params.durationDays == 0) revert InvalidOfferType();
+        // Findings 00025 — ProjectDetailsREADME §2 mandates
+        // 1 ≤ durationDays ≤ 365 with on-chain enforcement so external
+        // callers can't bypass the frontend validation and create a
+        // 1000-day loan whose interest formula over-charges (interest
+        // = principal × rate × days / 365). The lower bound is the
+        // previous `== 0` check (caught by `InvalidOfferType`); this
+        // is the on-chain upper bound. Cap is governance-tunable via
+        // `ConfigFacet.setMaxOfferDurationDays` within bounded floor
+        // / ceiling — defaults to 365 on a fresh deploy.
+        uint256 maxDuration = LibVaipakam.cfgMaxOfferDurationDays();
+        if (params.durationDays > maxDuration) {
+            revert OfferDurationExceedsCap(params.durationDays, maxDuration);
+        }
         if (params.amount <= 0) revert InvalidAmount();
 
         // Phase 4.3 — address-level sanctions screening at the "entering

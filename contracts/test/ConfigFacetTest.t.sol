@@ -355,7 +355,11 @@ contract ConfigFacetTest is Test {
             // Auto-pause window duration (seconds). Defaults to
             // AUTO_PAUSE_DURATION_DEFAULT (1800 = 30 min);
             // governance-tunable via setAutoPauseDurationSeconds.
-            uint256 autoPauseDur
+            uint256 autoPauseDur,
+            // Max offer duration in days. Defaults to
+            // MAX_OFFER_DURATION_DAYS_DEFAULT (365 = 1 year);
+            // governance-tunable via setMaxOfferDurationDays.
+            uint256 maxDur
         ) = ConfigFacet(address(diamond)).getProtocolConfigBundle();
 
         // Overridden:
@@ -376,6 +380,8 @@ contract ConfigFacetTest is Test {
         assertFalse(rangeAmount);
         assertFalse(rangeRate);
         assertFalse(partialFill);
+        // Max offer duration default — 365 days unless governance has tuned.
+        assertEq(maxDur, LibVaipakam.MAX_OFFER_DURATION_DAYS_DEFAULT);
     }
 
     /// @dev `getProtocolConstants` returns the four compile-time constants
