@@ -218,14 +218,22 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
                 LibFacet.recordTreasuryAccrual(loan.principalAsset, plan.treasuryShare);
             }
 
-            // Lender's due: transfer borrower → Diamond → lender's escrow for claim
+            // T-037 — Lender's due: borrower → lender's escrow in ONE
+            // transfer. The Diamond carries the borrower's allowance
+            // (granted by the prior `approve()`) so a direct
+            // `safeTransferFrom` pushes the asset from the borrower's
+            // wallet into the lender's escrow without ever residing on
+            // the Diamond. Order matters: deploy the escrow first via
+            // `getOrCreateEscrow` so the destination contract exists
+            // when the ERC20 transferFrom lands. Saves one storage-
+            // touching transfer and removes a transient
+            // Diamond-balance-of(principalAsset) state.
+            address lenderEscrow = LibFacet.getOrCreateEscrow(loan.lender);
             IERC20(loan.principalAsset).safeTransferFrom(
                 msg.sender,
-                address(this),
+                lenderEscrow,
                 plan.lenderDue
             );
-            address lenderEscrow = LibFacet.getOrCreateEscrow(loan.lender);
-            IERC20(loan.principalAsset).safeTransfer(lenderEscrow, plan.lenderDue);
 
             // Record lender's claimable (principal + interest). heldForLender handled by ClaimFacet.
             s.lenderClaims[loanId] = LibVaipakam.ClaimInfo({

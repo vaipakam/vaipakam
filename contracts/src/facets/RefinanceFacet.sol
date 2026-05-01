@@ -177,24 +177,30 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
             }
         }
         uint256 lenderDue = oldLoan.principal + lenderInterest;
-        uint256 totalFromBorrower = lenderDue + treasuryFee;
 
-        // Pull total from borrower (who received new principal from Lender B)
-        IERC20(oldLoan.principalAsset).safeTransferFrom(
-            msg.sender,
-            address(this),
-            totalFromBorrower
-        );
-
-        // Treasury fee transferred immediately (skipped when satisfied in VPFI).
+        // T-037 — pay each party directly from the borrower without
+        // the Diamond holding the asset between transfers. The
+        // borrower's prior `approve()` to the Diamond covers the
+        // total; two `safeTransferFrom` calls (one to treasury, one
+        // to the old lender's escrow) replace the prior pull-and-
+        // split pattern. Treasury share skipped entirely if the
+        // VPFI-discount path satisfied it.
         if (treasuryFee > 0) {
-            IERC20(oldLoan.principalAsset).safeTransfer(LibFacet.getTreasury(), treasuryFee);
+            IERC20(oldLoan.principalAsset).safeTransferFrom(
+                msg.sender,
+                LibFacet.getTreasury(),
+                treasuryFee
+            );
             LibFacet.recordTreasuryAccrual(oldLoan.principalAsset, treasuryFee);
         }
 
-        // Route lender's share to old lender's escrow
+        // Route lender's share to old lender's escrow.
         address lenderEscrow = LibFacet.getOrCreateEscrow(oldLoan.lender);
-        IERC20(oldLoan.principalAsset).safeTransfer(lenderEscrow, lenderDue);
+        IERC20(oldLoan.principalAsset).safeTransferFrom(
+            msg.sender,
+            lenderEscrow,
+            lenderDue
+        );
 
         // Record lender's claimable. heldForLender handled by ClaimFacet.
         s.lenderClaims[oldLoanId] = LibVaipakam.ClaimInfo({

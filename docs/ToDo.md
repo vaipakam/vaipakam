@@ -10,6 +10,10 @@
 
 ---
 
+- [ ] **T-039**: Provide search for documentation
+
+---
+
 - [x] **T-038**: BuyVPFI page UX — on chains where the adapter is in WETH-pull mode (BNB mainnet 56, Polygon mainnet 137), label the input asset as "WETH" instead of "ETH" + render a CoinGecko deep-link on the asset symbol so users can confirm exactly which token they need (WETH on BNB ≠ WETH on Polygon — different bridged contracts). Same CoinGecko link UX on every other chain (so the asset surface is consistent regardless of native vs WETH-pull). Identify any other small things needed for the cross-chain UX while doing this (balance read against the right asset, approval flow when in WETH-pull mode, etc.). — landed. New `frontend/src/lib/buyAssetInfo.ts` helper resolves `(chainConfig, mode?) → { symbol, coinGeckoUrl, isWethPullMode }`. Mode source: runtime `useVPFIBuyBridge.quote()` returns `mode: 'native' | 'token'` after the adapter's `paymentToken()` read; falls back to chain-config inference (`vpfiBuyPaymentToken` from deployments JSON) until the quote lands. ChainConfig extended with three new static fields: `nativeGasSymbol`, `nativeGasCoinGeckoSlug`, `bridgedWethCoinGeckoSlug` — populated for all 13 chains in the registry. CoinGecko slugs: `ethereum` for ETH-native chains, `binancecoin` + `weth` for BNB / BNB Testnet, `weth` bridged on Polygon mainnet. BuyCard (canonical-Base direct buy) + BridgedBuyCard (mirror chains with the LayerZero bridge) both render the rate-stat and pay-label using the dynamic asset symbol; symbol wraps in an `<a>` to the CoinGecko page (dotted underline + new-tab) when slug is set. WETH-pull approval flow already existed in `useVPFIBuyBridge` (the `s.status === "approving"` branch) — verified it dispatches the `safeTransferFrom`-prereq approval before submitting the buy when `paymentToken != address(0)`. i18n `buyVpfiCards.assetCoinGeckoAria` added to all 10 locales. Tsc + vite build clean (Node 25). What's NOT in this batch: replacing the remaining hardcoded "ETH" strings in BridgedBuyCard's tooltip / error copy ("ETH for the LayerZero fee" etc. — the LZ fee IS always native gas across chains so labeling those "ETH" on a non-ETH-native chain is wrong but a smaller follow-up). Per-asset balance read in WETH-pull mode (currently shows native-gas balance even when WETH-pull is active — also a follow-up; the `useVPFIBuyBridge` quote returns the right `paymentToken` address, just need to read its `balanceOf` instead of native ETH balance).
 
 ---
@@ -28,7 +32,7 @@
 
 ---
 
-- [ ] **T-033**: For pyth, if we provide only price feed for ETH/USD, ETH/EUR, ETH/JPY, ETH/XAU and all other asset can be checked with respect to ETH right, so that it is not required for us to configure all the asset price feed right?
+- [ ] **T-033**: For pyth, if we provide only price feed for ETH/USD, ETH/EUR, ETH/JPY, ETH/XAU and all other asset can be checked with respect to ETH right, so that it is not required for us to configure all the asset price feed right? (on Non ETH gas chain we need to have WETH/USD, WETH/EUR, WETH/JPY, WETH/XAU), suggest me if there are any better appraoch, don't want to gate every asset and also need redandancy for chainlink, currently we have alternative for chainlink only as optionals
 
 ---
 

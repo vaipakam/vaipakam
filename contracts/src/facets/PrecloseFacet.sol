@@ -166,14 +166,16 @@ contract PrecloseFacet is
                 LibFacet.recordTreasuryAccrual(loan.principalAsset, plan.treasuryShare);
             }
 
-            // Lender's due: borrower -> Diamond -> lender's escrow for claim
+            // T-037 — Lender's due: direct borrower → lender's escrow.
+            // See RepayFacet's matching site for the rationale; same
+            // pattern saves one transfer + removes a transient Diamond
+            // balance of the principal asset.
+            address lenderEscrow = LibFacet.getOrCreateEscrow(loan.lender);
             IERC20(loan.principalAsset).safeTransferFrom(
                 msg.sender,
-                address(this),
+                lenderEscrow,
                 plan.lenderDue
             );
-            address lenderEscrow = LibFacet.getOrCreateEscrow(loan.lender);
-            IERC20(loan.principalAsset).safeTransfer(lenderEscrow, plan.lenderDue);
 
             // Record lender's claimable (principal + interest)
             s.lenderClaims[loanId] = LibVaipakam.ClaimInfo({
@@ -258,19 +260,23 @@ contract PrecloseFacet is
                 LibFacet.recordTreasuryAccrual(loan.prepayAsset, treasuryFee);
             }
 
-            // Deduct from borrower's prepay escrow: lender share
+            // T-037 — escrow → escrow direct, no Diamond intermediate.
+            // `escrowWithdrawERC20` accepts an arbitrary recipient
+            // (it's just `safeTransfer(recipient, amount)` from inside
+            // the borrower's escrow), so we pass the lender's escrow
+            // straight in. Saves one transfer + removes a transient
+            // Diamond `prepayAsset` balance.
             address lenderEscrow = LibFacet.getOrCreateEscrow(loan.lender);
             LibFacet.crossFacetCall(
                 abi.encodeWithSelector(
                     EscrowFactoryFacet.escrowWithdrawERC20.selector,
                     msg.sender,
                     loan.prepayAsset,
-                    address(this),
+                    lenderEscrow,
                     lenderShare
                 ),
                 IVaipakamErrors.EscrowWithdrawFailed.selector
             );
-            IERC20(loan.prepayAsset).safeTransfer(lenderEscrow, lenderShare);
 
             // Record lender's claimable (rental fees in prepayAsset)
             s.lenderClaims[loanId] = LibVaipakam.ClaimInfo({
@@ -429,13 +435,14 @@ contract PrecloseFacet is
             LibFacet.recordTreasuryAccrual(payAsset, treasuryFee);
         }
         if (lenderShare > 0) {
+            // T-037 — direct borrower → lender's escrow; no Diamond
+            // intermediation. See RepayFacet for the pattern rationale.
+            address lenderEscrow = LibFacet.getOrCreateEscrow(loan.lender);
             IERC20(payAsset).safeTransferFrom(
                 msg.sender,
-                address(this),
+                lenderEscrow,
                 lenderShare
             );
-            address lenderEscrow = LibFacet.getOrCreateEscrow(loan.lender);
-            IERC20(payAsset).safeTransfer(lenderEscrow, lenderShare);
             s.heldForLender[loanId] += lenderShare;
         }
 
@@ -749,17 +756,18 @@ contract PrecloseFacet is
             LibFacet.recordTreasuryAccrual(payAssetOffset, treasuryFee);
         }
 
-        // Repay original principal + interest/shortfall to lender's escrow.
-        // Alice must return Liam's principal; the new offer deposit is
-        // separate capital Alice puts up to become the new lender.
+        // T-037 — Repay original principal + interest/shortfall direct
+        // to old lender's escrow. Alice must return Liam's principal;
+        // the new offer deposit is separate capital Alice puts up to
+        // become the new lender. Direct `safeTransferFrom` avoids the
+        // Diamond holding the lender's funds even momentarily.
         uint256 lenderTotal = loan.principal + interestToLender;
+        address lenderEscrow = LibFacet.getOrCreateEscrow(loan.lender);
         IERC20(payAssetOffset).safeTransferFrom(
             msg.sender,
-            address(this),
+            lenderEscrow,
             lenderTotal
         );
-        address lenderEscrow = LibFacet.getOrCreateEscrow(loan.lender);
-        IERC20(payAssetOffset).safeTransfer(lenderEscrow, lenderTotal);
         s.heldForLender[loanId] += lenderTotal;
     }
 

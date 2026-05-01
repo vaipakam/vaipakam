@@ -162,6 +162,47 @@ library LibFacet {
         LibVaipakam.storageSlot().heldForLender[loanId] += amount;
     }
 
+    /// @dev T-037 — `safeTransferFrom`-based variant of
+    ///      {transferToTreasury}: pulls `amount` directly from `payer` to
+    ///      the configured treasury, skipping the Diamond as an
+    ///      atomic-transit intermediary. Requires `payer` to have
+    ///      previously approved the Diamond to spend `amount` of `asset`.
+    ///      Records the accrual via {recordTreasuryAccrual} the same way
+    ///      the Diamond-resident variant does, so `treasuryBalances` stays
+    ///      self-consistent on Diamond-as-treasury deployments. No-op on
+    ///      zero.
+    function transferFromPayerToTreasury(
+        address payer,
+        address asset,
+        uint256 amount
+    ) internal {
+        if (amount == 0) return;
+        IERC20(asset).safeTransferFrom(
+            payer,
+            LibVaipakam.storageSlot().treasury,
+            amount
+        );
+        recordTreasuryAccrual(asset, amount);
+    }
+
+    /// @dev T-037 — `safeTransferFrom`-based variant of
+    ///      {depositForNewLender}: pulls `amount` directly from `payer`
+    ///      into the new lender's escrow, skipping the Diamond. Same
+    ///      `heldForLender` accounting as the Diamond-resident variant.
+    ///      No-op on zero.
+    function depositFromPayerForLender(
+        address asset,
+        address payer,
+        address newLender,
+        uint256 amount,
+        uint256 loanId
+    ) internal {
+        if (amount == 0) return;
+        address escrow = getOrCreateEscrow(newLender);
+        IERC20(asset).safeTransferFrom(payer, escrow, amount);
+        LibVaipakam.storageSlot().heldForLender[loanId] += amount;
+    }
+
     /// @dev Staticcall variant for read-only cross-facet reads (e.g. HF/LTV).
     function crossFacetStaticCall(
         bytes memory data,

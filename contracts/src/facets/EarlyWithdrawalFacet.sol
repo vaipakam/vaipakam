@@ -483,21 +483,28 @@ contract EarlyWithdrawalFacet is
             remainingSecs) /
             (LibVaipakam.SECONDS_PER_YEAR * LibVaipakam.BASIS_POINTS);
 
+        // T-037 — pay each destination directly from `originalLender`
+        // (the wallet of Liam, who approved the Diamond). The previous
+        // pull-into-Diamond-then-split pattern incurred 1 transferFrom +
+        // N transfers (3 transfers total in the worst case); the new
+        // direct-transfer pattern is N transferFroms total (2 in the
+        // worst case). Same accounting via the new
+        // {transferFromPayerToTreasury} / {depositFromPayerForLender}
+        // helpers — they record `treasuryBalances` and `heldForLender`
+        // identically to the Diamond-resident variants.
         if (saleRemainingInterest > originalRemainingInterest) {
             uint256 shortfall = saleRemainingInterest -
                 originalRemainingInterest;
             if (accrued >= shortfall) {
                 uint256 excessAccrued = accrued - shortfall;
-                if (accrued > 0) {
-                    IERC20(loan.principalAsset).safeTransferFrom(
-                        originalLender,
-                        address(this),
-                        accrued
-                    );
-                }
-                LibFacet.transferToTreasury(loan.principalAsset, excessAccrued);
-                LibFacet.depositForNewLender(
+                LibFacet.transferFromPayerToTreasury(
+                    originalLender,
                     loan.principalAsset,
+                    excessAccrued
+                );
+                LibFacet.depositFromPayerForLender(
+                    loan.principalAsset,
+                    originalLender,
                     newLender,
                     shortfall,
                     loanId
@@ -505,27 +512,20 @@ contract EarlyWithdrawalFacet is
             } else {
                 uint256 remainingShortfall = shortfall - accrued;
                 uint256 totalFromLiam = accrued + remainingShortfall;
-                IERC20(loan.principalAsset).safeTransferFrom(
-                    originalLender,
-                    address(this),
-                    totalFromLiam
-                );
-                LibFacet.depositForNewLender(
+                LibFacet.depositFromPayerForLender(
                     loan.principalAsset,
+                    originalLender,
                     newLender,
                     totalFromLiam,
                     loanId
                 );
             }
         } else {
-            if (accrued > 0) {
-                IERC20(loan.principalAsset).safeTransferFrom(
-                    originalLender,
-                    address(this),
-                    accrued
-                );
-            }
-            LibFacet.transferToTreasury(loan.principalAsset, accrued);
+            LibFacet.transferFromPayerToTreasury(
+                originalLender,
+                loan.principalAsset,
+                accrued
+            );
         }
 
         // NOTE: Principal transfer already happened in acceptOffer().
