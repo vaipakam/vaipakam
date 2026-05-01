@@ -521,6 +521,8 @@ Payment-token mode requirements:
 - chains whose native gas token is not ETH-equivalent, including BNB Chain and Polygon PoS mainnet, must use WETH-pull mode with that chain's canonical bridged WETH9 token
 - adapter initialization and payment-token rotation must reject EOAs, non-ERC-20 contracts, and ERC-20s whose `decimals()` value is not `18`, so an operator cannot accidentally configure USDC or another wrong-decimal token as the ETH-equivalent payment asset
 - deployment scripts should pre-flight strict-WETH chains and refuse native-gas mode there, while logging payment-token metadata for operator confirmation against the published canonical WETH address
+- the frontend should display the actual buy asset for the active chain and adapter mode rather than hardcoding `ETH`; native-gas chains should show the chain's native gas asset, while WETH-pull chains should show the configured bridged WETH token and provide a verification link to the relevant market-data page
+- in WETH-pull mode, approval and balance checks should target the configured ERC-20 payment token; LayerZero execution fees remain paid in the chain's native gas token and should be labelled with that native symbol
 
 Permit2 requirements for VPFI utility flows:
 

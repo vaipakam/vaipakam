@@ -2003,6 +2003,94 @@ ko). All JSONs parse + tsc clean + Node-25 vite build clean
   `paymentToken` address; just need to wire the balance hook
   conditionally on the mode.
 
+## Direct user-escrow transfers — wallet→Diamond→escrow eliminated (T-037)
+
+Per ToDo item T-037. Six call sites across `RepayFacet`,
+`PrecloseFacet`, `RefinanceFacet`, and `EarlyWithdrawalFacet`
+previously routed funds **wallet → Diamond → recipient escrow** in
+two transfers — the Diamond received the asset momentarily and
+then forwarded it. The user's question (after seeing the receive
+side of the borrower-LIF flow): why the intermediate hop? Two
+reasons evaporate on inspection:
+
+1. The Diamond is the spender on `safeTransferFrom` (the borrower
+   has approved the Diamond, not the destination). `transferFrom`
+   can move tokens directly between any two addresses using the
+   spender's allowance — the Diamond doesn't need to be the
+   `to` address itself.
+2. The "lender escrow may not exist yet" was the only legitimate
+   reason for the two-step. Re-ordering — call
+   `getOrCreateEscrow` FIRST, then `safeTransferFrom(borrower,
+   lenderEscrow, amount)` — addresses that with a single transfer.
+
+Sites refactored:
+
+- `RepayFacet.sol` — full-repay yield path (line ~222). Borrower's
+  principal+interest → lender's escrow direct.
+- `PrecloseFacet.sol` — preclose-direct lender-due path (line ~170),
+  preclose-offset lender-share (line ~432), preclose-via-offer
+  offset (line ~756). All three now route the borrower's settle
+  payment directly to the old lender's escrow.
+- `PrecloseFacet.sol` — rental-prepay split (line ~263). This was
+  an *escrow → Diamond → escrow* shape: borrower's prepay-asset
+  withdrawn from their escrow, then forwarded to lender's escrow.
+  Now uses `escrowWithdrawERC20`'s arbitrary-recipient parameter
+  to route directly between the two escrows.
+- `RefinanceFacet.sol` — refinance pull-and-split (line ~183).
+  Previously pulled the entire borrower payment into the Diamond
+  then split treasury vs lender; now two direct `safeTransferFrom`
+  calls (treasury share + lender share) replace the
+  one-pull-two-push pattern.
+- `EarlyWithdrawalFacet.sol` — three branches in the loan-sale
+  recipient-funding path. Previously pulled `originalLender`'s
+  topup into the Diamond then dispatched via
+  `LibFacet.transferToTreasury` + `depositForNewLender`. Now uses
+  two new helper variants that route directly.
+
+Two new `LibFacet` helpers added to support the refactor:
+
+- `transferFromPayerToTreasury(payer, asset, amount)` —
+  `safeTransferFrom`-based variant of the existing
+  `transferToTreasury`. Records the same `treasuryBalances`
+  accrual on Diamond-as-treasury deployments.
+- `depositFromPayerForLender(asset, payer, lender, amount, loanId)`
+  — `safeTransferFrom`-based variant of `depositForNewLender`.
+  Same `heldForLender` accounting.
+
+The Diamond-resident variants stay in place — escrow-source
+flows where the Diamond is genuinely the holder (e.g.,
+liquidation-swap output staging) still use them.
+
+**Why this is more than just gas savings:**
+
+The user's framing was right: removing the transient
+Diamond-hold-of-(principalAsset) state is meaningful beyond
+the ~2-3k gas saved per call. The Diamond's `balanceOf` for the
+principal asset is now provably zero outside of the genuinely
+in-flight cases (LIF custody, liquidation-swap staging). Any
+future audit asking "where does the Diamond hold user funds" has
+a strictly shorter answer. The custody model becomes:
+*"Diamond holds VPFI for borrower-LIF custody (until terminal
+split) and SWAP output during liquidation routing — and nothing
+else."* Cleaner principal-of-least-surprise.
+
+Already-direct sites verified during the audit and left as-is:
+
+- `RepayFacet:213` (treasury share) — already a single
+  `safeTransferFrom(borrower, treasury, x)`.
+- `RepayFacet:490-499` (partial repay) — already two direct
+  `safeTransferFrom`s (lender wallet + treasury).
+- `PrecloseFacet:160` and `PrecloseFacet:743` (treasury fees) —
+  already direct.
+- `OfferFacet:470` (offer creation lender-pull) — already direct
+  `safeTransferFrom(creator, escrow, x)`.
+- `AddCollateralFacet`, `VPFIDiscountFacet.depositVPFIToEscrow`
+  — already direct.
+
+**Verified**: forge build clean. RepayFacet targeted suite 63/63
+passing. Full regression after the merge will run as part of
+the next batch.
+
 ## Outstanding for the testnet redeploy gate
 
 Before fresh testnet diamonds can land:

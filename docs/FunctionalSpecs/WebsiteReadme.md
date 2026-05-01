@@ -176,6 +176,8 @@ Borrower VPFI discount UX:
 - `/app/buy-vpfi` should be reachable from inside the connected app sidebar and from in-app CTAs that mention VPFI discounts or rewards
 - the page should not require or prompt the user to manually switch to the canonical chain in order to buy VPFI
 - if the protocol routes the purchase through canonical-chain infrastructure under the hood, that complexity should be abstracted away from the user-facing purchase flow
+- buy-card labels, rate stats, tooltips, and balance checks should be asset-aware: ETH-native chains may label the pay asset as the chain's native gas asset, while WETH-pull chains such as BNB Chain or Polygon PoS must label the configured bridged WETH payment token clearly and provide a verification link for that exact asset
+- LayerZero fee copy should label the fee in the active chain's native gas symbol, even when the VPFI purchase amount itself is paid with bridged WETH
 - the fixed-rate `Buy VPFI` flow should follow the active tokenomics spec and must not rely on a silent pre-minted sale reserve unless a later approved design explicitly reintroduces one
 - if the purchase route settles through a Base-chain receiver, VPFI must be minted or released only after the receiver actually receives ETH, and the delivered VPFI amount must be calculated from the received ETH amount
 - after purchase, the VPFI should be delivered to the user's wallet on the chain where the user chose to buy
@@ -203,6 +205,14 @@ Borrower VPFI discount UX:
 - borrower-facing shortcut copy may say `earn up to a 24% VPFI rebate`, but should not describe the up-front fee itself as reduced
 - the Claim Center should show a visible VPFI rebate line when a borrower claim includes a pending rebate
 - VPFI escrow deposit from `/app/buy-vpfi` or related app surfaces may use Permit2 when supported, with fallback to the classic approve-plus-deposit flow
+
+Alerts and notification preferences:
+
+- `/app/alerts` should let borrowers configure per-loan HF threshold alerts and delivery rails
+- HF threshold notifications stay compulsory once any delivery rail is enabled
+- paid Push notification event types should be individually toggleable, defaulting on for new subscribers: claim available, loan settled / defaulted, cross-chain VPFI buy received, offer matched, maturity approaching, and partial repayment received
+- the Push rail should disclose the current flat notification fee, explain that Telegram remains free, and make clear that the VPFI fee is deducted from escrow only on the first paid Push notification per loan side
+- the UI should warn when the user's escrowed VPFI balance appears insufficient for the notification fee, while the on-chain billing path remains authoritative
 
 Reward-claiming UX:
 
