@@ -102,6 +102,7 @@ Legal and data-rights requirements:
 - data-rights UI must live on a dedicated connected-app page at `/app/data-rights`, with action cards for exporting or deleting Vaipakam-namespaced browser storage and clear explanation that public on-chain state cannot be erased by frontend action
 - the issue-details drawer should stay scoped to support diagnostics: reporting, copying JSON, downloading / clearing the current in-memory journey log, and linking to `/app/data-rights` for broader browser-storage rights
 - the Data Rights page should also expose a `Download journey log (this session)` card so a user can share the live session buffer even when the issue drawer is hidden by operator configuration
+- Delete-my-data controls should use a deliberate confirmation step and should enumerate the concrete local effects before deleting, including consent reset, journey-log clearing, cached event-index removal, and theme / language / mode preference reset
 
 ### 2. Connected App
 
@@ -125,6 +126,7 @@ Current connected-app surface expectations:
 - closed / filled offer rows should link to the loan they created when an `OfferAccepted(offerId, acceptor, loanId)` event is available
 - `Create Offer` should disable submit until full form validation passes, with typed validator error codes mapped through i18n, and should show token-identification trust blocks under address fields so users can distinguish canonical assets from unknown or suspicious contracts
 - in Advanced mode, `Create Offer` should show an ERC-20 / ERC-20 risk-preview card that computes projected Health Factor, LTV, and liquidation-price cushion from live oracle and risk parameters; for Range Orders it should show both best-case and worst-case values and warn clearly when the worst-case Health Factor falls below the initiation floor
+- the primary Create Offer duration control should be a bucketed picker using the standard buckets `7 / 14 / 30 / 60 / 90 / 180 / 365 days`, defaulting to `30 days`; defensive validation should still reject out-of-range or non-bucket values if the form is hydrated from an external source
 - Range Orders controls should appear only when the corresponding live protocol flags are enabled. Basic mode should keep the existing single amount / single rate flow; Advanced mode may expose min / max amount and min / max rate inputs, approve or Permit2-sign the upper amount bound, and show live balance warnings before submission.
 - `Loan Details` should be wallet-gated inside `/app`; after connection it should show the live loan state, role-gated actions, a chronological on-chain timeline, claimable-state action bar, and precise event breakdowns for settlement splits, fallback collateral allocations, partial repayments, swap retries, and VPFI rebates
 - `Activity` rows that reference a loan should use a clickable `Loan #X` pill linking to that loan's full details page
@@ -232,6 +234,13 @@ Reward-claiming UX:
 - if the network is unsupported or the wallet is not connected, the UI should clearly explain that rewards can only be claimed on supported lending chains
 - reward data should be fetched from the Diamond on the currently connected chain using the existing hooks and helpers where appropriate
 - the shared fee-discount consent flag is separate from reward claiming and must not gate reward visibility or reward-claim actions
+
+Sanctions-screening UX:
+
+- when the active chain has a sanctions oracle configured, the app should show sanctions banners only for a connected wallet or relevant counterparty that actually matches the oracle
+- the banner should explain in plain language that new positions, deposits, VPFI fund-flow actions, liquidator rewards, and recipient claims are blocked for the flagged wallet, while debt close-out paths remain available where needed to protect an unflagged counterparty
+- the banner should appear on action-heavy app surfaces where the user can be affected, including Dashboard, Create Offer, Offer Book, Buy VPFI, Loan Details, and Claim Center
+- clean wallets should not see persistent sanctions education banners; the public Terms prohibited-use clause remains the general policy surface
 
 Activity and local log-index requirements:
 

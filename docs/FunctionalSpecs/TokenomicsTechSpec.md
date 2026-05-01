@@ -514,6 +514,14 @@ The app purchase page should expose `Buy`, `Stake`, and `Unstake` entry points a
 
 The `Deposit / Stake` step should carry the single canonical user-facing open-staking message: staking is open to everyone, no existing loan is required, escrow-held VPFI earns the staking APR while it remains deposited, and the user's escrow can be created automatically on first deposit. Duplicated page-level staking prose should be avoided so this card remains the source of truth.
 
+Payment-token mode requirements:
+
+- the cross-chain VPFI buy adapter owns the payment-token choice; users submit an amount but must not be able to choose an arbitrary ERC-20 at call time
+- native-gas mode (`paymentToken == address(0)`) is valid only on chains whose native gas token is ETH-equivalent for the fixed-rate quote model, such as Ethereum, Base, Arbitrum, Optimism, Polygon zkEVM, and their public testnets
+- chains whose native gas token is not ETH-equivalent, including BNB Chain and Polygon PoS mainnet, must use WETH-pull mode with that chain's canonical bridged WETH9 token
+- adapter initialization and payment-token rotation must reject EOAs, non-ERC-20 contracts, and ERC-20s whose `decimals()` value is not `18`, so an operator cannot accidentally configure USDC or another wrong-decimal token as the ETH-equivalent payment asset
+- deployment scripts should pre-flight strict-WETH chains and refuse native-gas mode there, while logging payment-token metadata for operator confirmation against the published canonical WETH address
+
 Permit2 requirements for VPFI utility flows:
 
 - Permit2 support is an optional convenience path for VPFI deposits and other eligible ERC-20 actions; it must not remove or weaken the classic ERC-20 allowance flow.
