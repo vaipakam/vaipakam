@@ -1837,6 +1837,12 @@ function BridgedBuyCard({
   // Re-quote the LayerZero fee whenever the amount changes. The on-chain
   // quoter doesn't depend on the caller, so debouncing is unnecessary — only
   // the keystroke frequency of the input rate-limits this.
+  //
+  // Failures are pushed through `journeyLog.beginStep` so the Diagnostics
+  // drawer captures them — without this hook, a `quoteBuy` revert (e.g. the
+  // `LZ_ULN_InvalidWorkerOptions` selector that fires when `buyOptions` is
+  // unset on the adapter) would only render inline as `quoteError` and
+  // never make it into the support-export buffer.
   useEffect(() => {
     let cancelled = false;
     if (!quote) {
@@ -1844,6 +1850,11 @@ function BridgedBuyCard({
       setQuoteError(null);
       return;
     }
+    const step = beginStep({
+      area: "vpfi-buy",
+      flow: "bridgedBuy",
+      step: "quoteFee",
+    });
     bridge
       .quote(quote.ethWei, quote.vpfi)
       .then((q) => {
@@ -1851,9 +1862,14 @@ function BridgedBuyCard({
         setLzFee(q.lzFee);
         setMode(q.mode);
         setQuoteError(null);
+        step.success({
+          note: `lzFee=${q.lzFee.toString()} mode=${q.mode}`,
+        });
       })
       .catch((err) => {
-        if (!cancelled) setQuoteError(decodeContractError(err, "Quote failed"));
+        if (cancelled) return;
+        setQuoteError(decodeContractError(err, "Quote failed"));
+        step.failure(err);
       });
     return () => {
       cancelled = true;
@@ -1926,11 +1942,19 @@ function BridgedBuyCard({
       ? "Enter a valid ETH amount"
       : capExceeded
         ? "This amount exceeds the remaining cap"
-        : lzFee == null
-          ? "Estimating LayerZero fee…"
-          : exceedsBalance
-            ? `Amount plus LayerZero fee exceeds your wallet balance (${formatEthTrimmed(ethBalance!)} ETH)`
-            : null;
+        : quoteError
+          // Surface the decoded quote-revert reason in the disabled-button
+          // tooltip too — without this branch the tooltip stayed at
+          // "Estimating LayerZero fee…" indefinitely on a quoteBuy revert,
+          // because `lzFee` never resolves. The inline error paragraph
+          // below also renders, but the tooltip is what the user sees on
+          // hover and is the path the troubleshooting flow points at.
+          ? `LayerZero fee estimate failed: ${quoteError}`
+          : lzFee == null
+            ? "Estimating LayerZero fee…"
+            : exceedsBalance
+              ? `Amount plus LayerZero fee exceeds your wallet balance (${formatEthTrimmed(ethBalance!)} ETH)`
+              : null;
 
   return (
     <div>

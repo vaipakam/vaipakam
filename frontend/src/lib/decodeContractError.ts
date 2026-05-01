@@ -385,6 +385,15 @@ const KNOWN_ERROR_SELECTORS: Record<string, string> = {
   '0x26e4b25d': 'AssetPaused(address)',
   '0x3baaf353': 'TradeNotAllowed()',
   '0x515faa71': 'PositionNFTLocked()',
+
+  // ── LayerZero ULN302 (cross-chain executor options) ───────────────────
+  // Thrown when the OApp's stored options bytes can't be parsed by the
+  // SendUln302 message library. Most common cause: the adapter was
+  // deployed with an empty `buyOptions` and `setBuyOptions` was never
+  // called with a valid Type-3 options payload (executor lzReceive gas).
+  // Surfaces on `quoteBuy` / `buy` for the cross-chain VPFI buy bridge.
+  '0x6592671c':
+    'LayerZero executor options are not configured on this adapter. The contract owner must call `setBuyOptions(...)` with a valid Type-3 options payload before bridged buys can quote or send.',
 };
 
 /** Extracts the raw revert data (hex string starting with 0x) from the tangle of shapes ethers/injected wallets surface. */
