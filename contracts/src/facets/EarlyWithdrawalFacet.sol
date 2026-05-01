@@ -96,6 +96,9 @@ contract EarlyWithdrawalFacet is
         uint256 loanId,
         uint256 buyOfferId
     ) external nonReentrant whenNotPaused {
+        // Tier-1 sanctions gate — selling a loan routes funds back
+        // to msg.sender (the lender exiting early).
+        LibVaipakam._assertNotSanctioned(msg.sender);
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.Loan storage loan = s.loans[loanId];
         // Strategic flow — authority binds to current lender-side NFT owner.
@@ -299,6 +302,9 @@ contract EarlyWithdrawalFacet is
         uint256 interestRateBps,
         bool creatorFallbackConsent
     ) external nonReentrant whenNotPaused {
+        // Tier-1 sanctions gate — creating a sale offer is a state-
+        // creating action by msg.sender; sanctioned wallet blocked.
+        LibVaipakam._assertNotSanctioned(msg.sender);
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.Loan storage loan = s.loans[loanId];
         // Phase 6: lender-entitled strategic flow. Authority binds to the
@@ -422,6 +428,9 @@ contract EarlyWithdrawalFacet is
     function completeLoanSale(
         uint256 loanId
     ) external nonReentrant whenNotPaused {
+        // Tier-1 sanctions gate — funds settle to msg.sender on
+        // successful sale; sanctioned recipient blocked.
+        LibVaipakam._assertNotSanctioned(msg.sender);
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.Loan storage loan = s.loans[loanId];
         if (loan.status != LibVaipakam.LoanStatus.Active)

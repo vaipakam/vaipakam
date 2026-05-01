@@ -49,6 +49,7 @@ import { decodeContractError } from "../lib/decodeContractError";
 import { formatNumber } from "../lib/format";
 import { beginStep } from "../lib/journeyLog";
 import { ReportIssueLink } from "../components/app/ReportIssueLink";
+import { SanctionsBanner } from "../components/app/SanctionsBanner";
 import { CardInfo } from "../components/CardInfo";
 import { VPFIPanel } from "../components/app/VPFIPanel";
 import { StakingRewardsClaim } from "../components/app/StakingRewardsClaim";
@@ -935,6 +936,13 @@ export default function BuyVPFI() {
         </h1>
         <p className="page-subtitle">{t('buyVpfi.pageSubtitle')}</p>
       </div>
+
+      {address && (
+        <SanctionsBanner
+          address={address as `0x${string}`}
+          label={t('banners.sanctionsLabelWallet')}
+        />
+      )}
 
       <FlowBanner
         step={step}

@@ -212,6 +212,10 @@ contract VPFIDiscountFacet is
      *      Emits {VPFIPurchasedWithETH}.
      */
     function buyVPFIWithETH() external payable nonReentrant whenNotPaused {
+        // Tier-1 sanctions gate. Sanctioned wallet cannot acquire
+        // new VPFI via the fixed-rate buy. See policy block on
+        // `LibVaipakam.isSanctionedAddress`.
+        LibVaipakam._assertNotSanctioned(msg.sender);
         // Direct buy on the canonical Base Diamond — origin = local
         // chain. The per-wallet cap is keyed on the buyer's origin
         // chain (Base in this case), so Base-direct buys do not
@@ -392,6 +396,9 @@ contract VPFIDiscountFacet is
         nonReentrant
         whenNotPaused
     {
+        // Tier-1 sanctions gate. Don't let a sanctioned wallet
+        // accumulate VPFI in their own escrow.
+        LibVaipakam._assertNotSanctioned(msg.sender);
         (address vpfi, address escrow) = _prepareDeposit(amount);
         IERC20(vpfi).safeTransferFrom(msg.sender, escrow, amount);
         emit VPFIDepositedToEscrow(msg.sender, amount);
@@ -425,6 +432,8 @@ contract VPFIDiscountFacet is
         ISignatureTransfer.PermitTransferFrom calldata permit,
         bytes calldata signature
     ) external nonReentrant whenNotPaused {
+        // Tier-1 sanctions gate (mirrors `depositVPFIToEscrow`).
+        LibVaipakam._assertNotSanctioned(msg.sender);
         (address vpfi, address escrow) = _prepareDeposit(amount);
         // Bind the Permit2 pull to the registered VPFI token. Without
         // this check a permit signed for a different ERC-20 would be
@@ -492,6 +501,8 @@ contract VPFIDiscountFacet is
         nonReentrant
         whenNotPaused
     {
+        // Tier-1 sanctions gate. Funds OUT to msg.sender — block.
+        LibVaipakam._assertNotSanctioned(msg.sender);
         if (amount == 0) revert InvalidAmount();
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         address vpfi = s.vpfiToken;

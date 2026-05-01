@@ -109,6 +109,12 @@ contract EscrowFactoryFacet is DiamondAccessControl {
     function getOrCreateUserEscrow(
         address user
     ) public returns (address proxy) {
+        // Tier-1 sanctions gate (Findings 00010 follow-up). Don't
+        // create an escrow proxy for a sanctioned wallet — even an
+        // empty escrow shouldn't exist for them. See the policy
+        // block on `LibVaipakam.isSanctionedAddress` for the full
+        // Tier-1 / Tier-2 split. No-op when the oracle is unset.
+        LibVaipakam._assertNotSanctioned(user);
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         proxy = s.userVaipakamEscrows[user];
         if (proxy == address(0)) {

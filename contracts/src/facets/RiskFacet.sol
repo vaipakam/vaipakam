@@ -296,6 +296,11 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
         uint256 loanId,
         LibSwap.AdapterCall[] calldata adapterCalls
     ) external nonReentrant whenNotPaused {
+        // Tier-1 sanctions gate. The 3% liquidator bonus flows to
+        // msg.sender — value receipt by a sanctioned wallet, blocked.
+        // Anyone unflagged can still call this; liquidation is not
+        // denied, just denied to sanctioned bots / liquidators.
+        LibVaipakam._assertNotSanctioned(msg.sender);
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.Loan storage loan = s.loans[loanId];
         if (loan.status != LibVaipakam.LoanStatus.Active) revert InvalidLoan();

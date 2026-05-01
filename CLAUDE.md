@@ -268,44 +268,72 @@ Full detail in [`docs/TokenomicsTechSpec.md`](docs/TokenomicsTechSpec.md)
 §5.2b and the Phase 5 section of
 [`docs/ReleaseNotes-2026-04-23-to-24.md`](docs/ReleaseNotes-2026-04-23-to-24.md).
 
-## Retail-deploy policy — KYC / sanctions / country-pair gates STAY OFF
+## Retail-deploy policy — sanctions ON; KYC / country-pair OFF
 
-The retail Vaipakam deploy is permissionless: KYC, sanctions-oracle
-lookups, and country-pair trade restrictions never gate user flow.
-The contracts already ship with these checks runtime-disabled by
-default; the deploy must preserve that posture.
+The retail Vaipakam deploy is permissionless for KYC and country-pair
+trade restrictions, but **does** screen wallets against an on-chain
+sanctions oracle (Chainalysis-style). Don't conflate the three —
+sanctions screening protects the protocol from OFAC-listed addresses;
+KYC and country gating are the industrial-fork knobs that stay dormant.
 
-**Three runtime knobs that must never be flipped on the retail deploy:**
+**Sanctions oracle — REQUIRED on retail post-deploy:**
+
+`ProfileFacet.setSanctionsOracle(<chainalysis-oracle>)` MUST be called
+on the retail deploy once the oracle's address is known on-chain. While
+unset (`address(0)`), `LibVaipakam.isSanctionedAddress(...)` returns
+`false` for every address (intentional fail-open during the deploy
+window). Once set, the Tier-1 entry points
+(`createOffer`, `acceptOffer`, `getOrCreateUserEscrow`, VPFI
+deposit/buy/withdraw, `triggerLiquidation`, EarlyWithdrawal,
+PrecloseFacet, RefinanceFacet, ClaimFacet) revert
+`SanctionedAddress(who)` for flagged callers, while Tier-2 close-out
+paths (`repayLoan`, `markDefaulted`, time-based liquidation) stay open
+so the unflagged counterparty can be made whole. The `_assertNotSanctioned`
+helper in `LibVaipakam` is the canonical gate — when adding a new
+state-creating or fund-receiving facet method, decide Tier-1 or Tier-2
+and gate accordingly.
+
+**Two runtime knobs that must never be flipped on the retail deploy:**
 
 1. `AdminFacet.setKYCEnforcement(true)` — flips
    `s.kycEnforcementEnabled`. While `false` (the post-deploy default),
    `ProfileFacet.meetsKYCRequirement` and `isKYCVerified` short-circuit
    to `true` so OfferFacet / LibCompliance / RiskFacet / DefaultedFacet
    call sites never block.
-2. `ProfileFacet.setSanctionsOracle(<oracle>)` — sets
-   `s.sanctionsOracle`. While unset (`address(0)` default),
-   `LibVaipakam.isSanctionedAddress(...)` returns `false` for every
-   address, so `OfferFacet.createOffer` / `acceptOffer` sanctions
-   guards are no-ops.
-3. `LibVaipakam.canTradeBetween(...)` — already returns `true`
-   unconditionally regardless of `allowedTrades` storage. Don't
-   replace it with the gated implementation.
+2. `LibVaipakam.canTradeBetween(...)` — pure-true on retail; consults
+   no storage. **Do not** replace it with the gated implementation.
+   The default-DENY gated branch lives separately as
+   `LibVaipakam._canTradeBetweenStorageGated(...)` (storage-driven, used
+   only by the industrial fork and exercised in `CountryPairGatedTest`).
+   The two helpers coexist on purpose so the industrial fork can flip
+   pair-based restrictions on without a storage migration. The
+   symmetric `setTradeAllowance` setter is shared — its writes populate
+   the gated mapping, but retail's `canTradeBetween` ignores it
+   entirely.
 
 **Don't:**
 
-- Add `setKYCEnforcement(true)` to any deploy or post-deploy script.
-- Add `setSanctionsOracle(...)` to any deploy or post-deploy script.
+- Add `setKYCEnforcement(true)` to any retail deploy or post-deploy
+  script.
 - Change `canTradeBetween` to consult the `allowedTrades` mapping.
-- Mention KYC, identity verification, sanctions screening, or
-  country gating on the website / whitepaper / overview / user
-  guide / marketing copy. The retail product is permissionless
-  end-state, not "permissionless for now".
+  Switch the call sites that need gating to
+  `_canTradeBetweenStorageGated` directly instead.
+- Mention KYC, identity verification, or country gating on the website
+  / whitepaper / overview / user guide / marketing copy. The retail
+  product is KYC-free and country-pair-free end-state, not
+  "permissionless for now."
+- Put detailed sanctions wording in publicly visible copy. ToS keeps
+  ONE defensive bullet under "Prohibited use." The full three-line
+  message ("listed by oracle / new positions blocked / close-outs
+  stay open / contact Chainalysis") is shown ONLY when a flagged
+  wallet connects (in-app `SanctionsBanner`) and in contract revert
+  messages — never on marketing surfaces.
 
-**Why the code is still there:** the industrial-user variant is a
-separate deploy on a separate fork that re-uses the same contracts
-with these gates flipped on. Don't delete the gates from the source;
-just don't enable them on the retail deploy. See
-[`docs/internal/Roadmap.md`](docs/internal/Roadmap.md) for the
+**Why the OFF gates are still in the code:** the industrial-user
+variant is a separate deploy on a separate fork that re-uses the
+same contracts with KYC + country-pair flipped on. Don't delete the
+gates from the source; just don't enable them on the retail deploy.
+See [`docs/internal/Roadmap.md`](docs/internal/Roadmap.md) for the
 fork plan.
 
 The Sepolia test scripts (`SepoliaActiveLoan.s.sol`,

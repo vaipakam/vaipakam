@@ -295,6 +295,21 @@ contract TestMutatorFacet {
     ///         path goes through {LibInteractionRewards.registerLoan} from
     ///         {LoanFacet.initiateLoan}, which is heavy to drive in unit
     ///         tests focused only on the new view's read path.
+    /// @notice Test-only accessor for the gated, default-DENY country-pair
+    ///         helper {LibVaipakam._canTradeBetweenStorageGated}. The
+    ///         retail Vaipakam deploy never calls the gated branch — its
+    ///         flow goes through the pure-true {LibVaipakam.canTradeBetween}.
+    ///         Exposing the gated helper here lets `CountryPairGatedTest`
+    ///         exercise the whitelist + symmetry + miss-defaults-to-deny
+    ///         contract without cutting in a separate test facet, and
+    ///         without changing any production call site.
+    function canTradeBetweenStorageGated(
+        string memory countryA,
+        string memory countryB
+    ) external view returns (bool) {
+        return LibVaipakam._canTradeBetweenStorageGated(countryA, countryB);
+    }
+
     function pushRewardEntry(
         address user,
         uint64 loanId,

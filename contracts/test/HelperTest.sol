@@ -39,7 +39,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](40);
+        selectors = new bytes4[](41);
         selectors[0] = TestMutatorFacet.setLoan.selector;
         selectors[1] = TestMutatorFacet.setOffer.selector;
         selectors[2] = TestMutatorFacet.setNextLoanId.selector;
@@ -84,6 +84,10 @@ contract HelperTest {
         // stamp a non-zero value via this selector during setUp.
         selectors[38] = TestMutatorFacet.setLocalEidForTest.selector;
         selectors[39] = TestMutatorFacet.pushRewardEntry.selector;
+        // Gated default-DENY country-pair check — exposed for the
+        // industrial-fork coverage in `CountryPairGatedTest`. Retail
+        // never calls the gated branch.
+        selectors[40] = TestMutatorFacet.canTradeBetweenStorageGated.selector;
         return selectors;
     }
 

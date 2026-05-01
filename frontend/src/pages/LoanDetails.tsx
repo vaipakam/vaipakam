@@ -43,6 +43,7 @@ import { LenderDiscountCard } from "../components/app/LenderDiscountCard";
 import { LiquidateButton } from "../components/app/LiquidateButton";
 import { ClaimActionBar } from "../components/app/ClaimActionBar";
 import { LoanTimeline } from "../components/app/LoanTimeline";
+import { SanctionsBanner } from "../components/app/SanctionsBanner";
 import { CardInfo } from "../components/CardInfo";
 import "./LoanDetails.css";
 
@@ -410,6 +411,13 @@ export default function LoanDetails() {
       <Link to="/app" className="back-link">
         <ArrowLeft size={16} /> {t('loanDetails.backToDashboard')}
       </Link>
+
+      {address && (
+        <SanctionsBanner
+          address={address as `0x${string}`}
+          label={t('banners.sanctionsLabelWallet')}
+        />
+      )}
 
       <div className="loan-header">
         <div>

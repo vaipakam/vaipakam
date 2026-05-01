@@ -42,8 +42,10 @@ export function SanctionsBanner({
     >
       <AlertOctagon size={18} style={{ flex: '0 0 auto', marginTop: 2 }} />
       <div style={{ fontSize: '0.86rem', lineHeight: 1.5 }}>
-        <strong>{t('banners.sanctionsMatchTitle', { label })}</strong>{' '}
-        {t('banners.sanctionsMatchBody')}
+        <strong>{t('banners.sanctionsMatchTitle', { label })}</strong>
+        <div style={{ marginTop: 6 }}>{t('banners.sanctionsMatchLine1')}</div>
+        <div style={{ marginTop: 6 }}>{t('banners.sanctionsMatchLine2')}</div>
+        <div style={{ marginTop: 6 }}>{t('banners.sanctionsMatchLine3')}</div>
       </div>
     </div>
   );

@@ -1937,6 +1937,41 @@ library LibVaipakam {
         return true;
     }
 
+    /**
+     * @notice Gated, default-DENY country-pair check. Returns `true` only
+     *         when governance has explicitly whitelisted the pair via
+     *         {setTradeAllowance}; an unset entry (and self-trade) is
+     *         denied.
+     * @dev    NOT used by the retail Vaipakam deploy. The retail flow goes
+     *         through {canTradeBetween} which is hardcoded to `true`.
+     *         This helper exists for two reasons:
+     *           1. The industrial-fork variant of the protocol switches
+     *              the gate on without a storage-layout migration; that
+     *              fork's facets call this function instead of the pure
+     *              one.
+     *           2. Test coverage: `CountryPairGatedTest` exercises the
+     *              storage-driven semantics (whitelist, symmetry, missing
+     *              pair => deny) so the gated branch stays truthful even
+     *              while it's dormant on retail.
+     *         Both helpers share the same `s.allowedTrades` storage —
+     *         {setTradeAllowance} writes are visible to both, so the
+     *         retail deploy can ship pre-populated whitelists for a
+     *         later cutover without rewriting the setter API.
+     * @param  countryA ISO-3166 alpha-2 / alpha-3 code (whatever the
+     *         operator standardised on; comparison is keccak-by-bytes).
+     * @param  countryB Same encoding as `countryA`.
+     * @return canTrade  `true` iff `s.allowedTrades[hashA][hashB]` is set.
+     */
+    function _canTradeBetweenStorageGated(
+        string memory countryA,
+        string memory countryB
+    ) internal view returns (bool canTrade) {
+        Storage storage s = storageSlot();
+        bytes32 hashA = keccak256(bytes(countryA));
+        bytes32 hashB = keccak256(bytes(countryB));
+        return s.allowedTrades[hashA][hashB];
+    }
+
     /// @dev Set the Chainlink Feed Registry USD denominator. Owner-only.
     ///      Setting to `address(0)` forces {OracleFacet.getAssetPrice} down
     ///      the NoPriceFeed branch.
@@ -2226,6 +2261,65 @@ library LibVaipakam {
     ///         every interaction on the chain whenever Chainalysis's
     ///         oracle has an outage, which would over-react to a
     ///         vendor availability issue).
+    ///
+    /// ─── Sanctions enforcement policy (Phase 1, retail deploy) ───
+    ///
+    /// The retail deploy may have a sanctions oracle configured (e.g.
+    /// Chainalysis on-chain SDN list). When set, the gate splits the
+    /// callable surface into two tiers:
+    ///
+    /// **Tier 1 — BLOCK** when `msg.sender` is sanctioned (revert
+    /// with `ProfileFacet.SanctionedAddress(who)`). Any entry point
+    /// that creates new state or routes funds TO the caller:
+    ///   - `OfferFacet.createOffer` / `acceptOffer` (creator + acceptor checks)
+    ///   - `EscrowFactoryFacet.getOrCreateUserEscrow` (no escrow ever
+    ///     exists for a sanctioned wallet)
+    ///   - `ClaimFacet.claimAsLender` / `claimAsBorrower` (funds OUT)
+    ///   - `VPFIDiscountFacet.buyVPFI` (token purchase)
+    ///   - `RiskFacet.triggerLiquidation` (3% liquidator bonus → caller)
+    ///   - `EarlyWithdrawalFacet.withdrawEarly` (lender pulls early)
+    ///   - `PrecloseFacet.transferObligationViaOffer` (funds + state)
+    ///   - `RefinanceFacet.refinanceLoan` (funds + new loan state)
+    ///
+    /// **Tier 2 — ALLOW** even when `msg.sender` is sanctioned. Each
+    /// entry point either CLOSES exposure to the sanctioned party or
+    /// is a permissionless safety action that benefits the
+    /// non-sanctioned counterparty:
+    ///   - `RepayFacet.repay` / `repayPartial` — closes the loan,
+    ///     unsanctioned lender gets paid. Refusing this would force
+    ///     default → liquidation, which routes the same value through
+    ///     a worse path; counter-productive for compliance.
+    ///   - `AddCollateralFacet.addCollateral` — borrower puts MORE
+    ///     skin in to keep loan healthy; pro-protocol.
+    ///   - `DefaultedFacet.markDefaulted` — anyone unflagged calls
+    ///     this; value flows to lender, not msg.sender.
+    ///
+    /// ─── Legal reasoning for Tier-2 carve-outs ───
+    ///
+    /// Liquidation of a sanctioned-borrower's collateral is allowed
+    /// because the lender's claim was established BEFORE the
+    /// sanction (security interest in the collateral, contractually
+    /// pledged at loan-init). Executing on a pre-existing security
+    /// interest is the pattern OFAC General Licenses authorize for
+    /// "wind-down of contracts entered into prior to designation".
+    /// The sanctioned party's residual interest (collateral surplus
+    /// after debt + bonus) stays frozen in their own escrow — Tier-1
+    /// blocks `claimAsBorrower`, so no value flows to the sanctioned
+    /// wallet. Lender (unsanctioned) receives principal+interest;
+    /// liquidator (must be unsanctioned, Tier-1 blocks the bonus)
+    /// receives the 3% bonus. Sanctioned residue is held but not
+    /// transferred to any other address.
+    ///
+    /// ─── What about funds frozen in a sanctioned wallet's escrow? ───
+    ///
+    /// The protocol does not seize, redirect, or release these funds.
+    /// They remain in the sanctioned wallet's own escrow and become
+    /// claimable again if the oracle delists the address. This is
+    /// the same behaviour as Circle's USDC blocklist — frozen, not
+    /// seized. The frontend communicates this to a sanctioned wallet
+    /// when it connects; the public Terms of Service carries one
+    /// generic disclosure line about restricted access.
+    ///
     /// @param who The address to check.
     function isSanctionedAddress(address who) internal view returns (bool) {
         address oracle = storageSlot().sanctionsOracle;
@@ -2234,6 +2328,28 @@ library LibVaipakam {
             return flagged;
         } catch {
             return false;
+        }
+    }
+
+    /// @notice Mirrors `ProfileFacet.SanctionedAddress` (same name +
+    ///         same args ⇒ same EVM selector). Declared here so
+    ///         LibVaipakam doesn't have to import ProfileFacet,
+    ///         which would create a circular dependency. Consumers
+    ///         see identical revert data regardless of which file
+    ///         emits.
+    error SanctionedAddress(address who);
+
+    /// @notice Tier-1 enforcement helper. Reverts with
+    ///         `SanctionedAddress(who)` (selector identical to
+    ///         `ProfileFacet.SanctionedAddress`) when `who` is
+    ///         flagged by the configured oracle. No-op when the
+    ///         oracle is unset or fails open. See the policy block
+    ///         above for the full Tier-1 / Tier-2 split.
+    /// @dev Plant this at every Tier-1 entry point. Co-located here
+    ///      so a single edit point dedups the boilerplate.
+    function _assertNotSanctioned(address who) internal view {
+        if (isSanctionedAddress(who)) {
+            revert SanctionedAddress(who);
         }
     }
 }

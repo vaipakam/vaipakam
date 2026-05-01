@@ -160,6 +160,12 @@ contract ClaimFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
         uint256 loanId,
         LibSwap.AdapterCall[] memory retryCalls
     ) internal {
+        // Tier-1 sanctions gate. Funds flow OUT to msg.sender on
+        // claim — bright-line OFAC violation if the recipient is
+        // sanctioned. See `LibVaipakam.isSanctionedAddress` policy
+        // block for the full Tier-1/Tier-2 split. No-op when the
+        // oracle is unset.
+        LibVaipakam._assertNotSanctioned(msg.sender);
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.Loan storage loan = s.loans[loanId];
 
@@ -331,6 +337,9 @@ contract ClaimFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
     function claimAsBorrower(
         uint256 loanId
     ) external nonReentrant whenNotPaused {
+        // Tier-1 sanctions gate. Same reasoning as claimAsLender —
+        // funds flow OUT to msg.sender; sanctioned recipient blocked.
+        LibVaipakam._assertNotSanctioned(msg.sender);
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.Loan storage loan = s.loans[loanId];
 

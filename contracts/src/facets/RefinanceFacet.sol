@@ -82,6 +82,9 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
         uint256 oldLoanId,
         uint256 borrowerOfferId
     ) external nonReentrant whenNotPaused {
+        // Tier-1 sanctions gate — refinance routes funds + creates
+        // new loan state for msg.sender; sanctioned wallet blocked.
+        LibVaipakam._assertNotSanctioned(msg.sender);
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.Loan storage oldLoan = s.loans[oldLoanId];
         // Phase 6: borrower-entitled strategic flow. Authority binds to the

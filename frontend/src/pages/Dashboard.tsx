@@ -27,6 +27,7 @@ import { bpsToPercent } from '../lib/format';
 import { HealthFactorGauge, LTVBar } from '../components/app/RiskGauge';
 import VPFIDiscountConsentCard from '../components/app/VPFIDiscountConsentCard';
 import { RewardsSummaryCard } from '../components/app/RewardsSummaryCard';
+import { SanctionsBanner } from '../components/app/SanctionsBanner';
 import { Pager } from '../components/app/Pager';
 import { CardInfo } from '../components/CardInfo';
 import { HoverTip } from '../components/HoverTip';
@@ -211,6 +212,13 @@ export default function Dashboard() {
         <h1 className="page-title">{t('appNav.dashboard')}</h1>
         <p className="page-subtitle">{t('dashboard.subtitle')}</p>
       </div>
+
+      {address && (
+        <SanctionsBanner
+          address={address as `0x${string}`}
+          label={t('banners.sanctionsLabelWallet')}
+        />
+      )}
 
       {/* Stats row */}
       <div className="stats-grid">

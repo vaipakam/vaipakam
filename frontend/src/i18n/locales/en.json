@@ -56,6 +56,9 @@
   },
   "banners": {
     "sanctionsMatchTitle": "{{label}}: sanctions-screening match.",
+    "sanctionsMatchLine1": "This address is currently listed by the on-chain sanctions oracle (Chainalysis). The protocol cannot create an escrow, accept a new deposit, or open a new position for this wallet.",
+    "sanctionsMatchLine2": "Existing-position close-out paths remain open so the unflagged counterparty can be made whole — borrowers can still repay, lenders can still trigger recovery, and either side can still claim what is contractually owed back to them.",
+    "sanctionsMatchLine3": "If you believe this is a mismatch, contact Chainalysis support — Vaipakam does not maintain its own sanctions list and cannot override an oracle decision.",
     "sanctionsMatchBody": "The on-chain sanctions oracle (Chainalysis) currently lists this address. Any offer-creation or offer-acceptance transaction will revert at the protocol layer. If this is a mis-match, contact Chainalysis support — Vaipakam does not maintain its own sanctions list.",
     "sanctionsLabelWallet": "Connected wallet",
     "sanctionsLabelOfferCreator": "Offer creator",
@@ -1343,7 +1346,7 @@
     "auditDesc": "Built on OpenZeppelin contracts. ReentrancyGuard and Pausable on all facets. Mandatory third-party audits before mainnet deployment.",
     "auditVerify": "View source on GitHub",
     "kycTitle": "Non-Custodial & No KYC",
-    "kycDesc": "Phase 1 launches with KYC checks in pass-through mode. Vaipakam is non-custodial; users are responsible for their own regulatory compliance. Sanctions-country and tiered-KYC logic remains in the codebase for future governance activation.",
+    "kycDesc": "Vaipakam is non-custodial and does not require KYC. Users are responsible for their own regulatory compliance. Tiered-KYC and country-pair logic remains in the codebase for future governance activation if a separate industrial deployment ever needs it.",
     "kycVerifyFacet": "View ProfileFacet source",
     "kycVerifyDiamond": "View profile logic on Diamond"
   },

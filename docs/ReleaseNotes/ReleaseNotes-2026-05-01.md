@@ -1215,6 +1215,173 @@ Remaining open findings (00005, 00006, 00007, 00008, 00026,
 load-bearingly; code still diverges. These remain for the
 operator's queue.
 
+## Sanctions oracle — Tier-1 / Tier-2 split + retail policy clarified
+
+Earlier in the project the on-chain Chainalysis-style sanctions
+oracle was treated as one of three "industrial fork" gates that
+stay dormant on the retail deploy. Operator clarified mid-session
+that the sanctions oracle IS for retail too — only KYC and the
+country-pair check stay off. Two follow-on consequences were
+worked through:
+
+- The contract gate had to be wider. Pre-session, only
+  `OfferFacet.createOffer` and `acceptOffer` consulted
+  `_assertNotSanctioned`. A flagged wallet could still get an
+  escrow lazy-deployed, deposit/withdraw VPFI, claim recovered
+  collateral, run liquidations, or initiate a preclose-offset /
+  refinance / loan-sale obligation transfer. The on-chain check
+  was patched together but the surface had drift.
+- The user-facing message had to make the asymmetric blocking
+  legible: "your address is listed; new positions and deposits
+  blocked; close-out paths stay open so the unflagged
+  counterparty can be made whole; contact Chainalysis." Showing
+  this only when a flagged wallet connects (not on every TOS or
+  marketing surface) was the explicit operator preference.
+
+What shipped:
+
+**Tier-1 (BLOCK) entry points** — every facet method that creates
+fresh state for the caller, accepts a deposit, or hands them
+funds is now gated by `LibVaipakam._assertNotSanctioned(who)`,
+which reverts `SanctionedAddress(who)` on a positive oracle hit:
+
+- `EscrowFactoryFacet.getOrCreateUserEscrow` — a flagged wallet
+  cannot even lazy-deploy its UUPS escrow proxy. Without this,
+  every other Tier-1 gate could be sidestepped by depositing
+  directly into a self-deployed escrow.
+- `OfferFacet.createOffer` / `acceptOffer` — already gated;
+  retained.
+- `VPFIDiscountFacet.buyVPFIWithETH`, `depositVPFIToEscrow`,
+  `depositVPFIToEscrowWithPermit`, `withdrawVPFIFromEscrow` —
+  the full VPFI fund-flow surface.
+- `RiskFacet.triggerLiquidation` — a flagged wallet cannot earn
+  liquidator bonus.
+- `EarlyWithdrawalFacet.sellLoanViaBuyOffer`,
+  `createLoanSaleOffer`, `completeLoanSale` — loan-as-an-asset
+  transfer paths.
+- `PrecloseFacet.precloseDirect`, `transferObligationViaOffer`
+  — borrower obligation transfer / direct preclose entry points.
+- `RefinanceFacet.refinanceLoan` — refinance creates a fresh
+  loan, so it's a state-creating path.
+- `ClaimFacet.claimAsLender`, `claimAsBorrower` —
+  initially gated. (See the policy carve-out below.)
+
+**Tier-2 (ALLOW) entry points** — debt-closing / safety paths
+that the unflagged counterparty needs to recover funds. These
+remain ungated even when the caller is sanctioned:
+
+- `RepayFacet.repayLoan` — a flagged borrower can still repay,
+  flushing the lender's principal+interest back to the lender's
+  escrow.
+- `DefaultedFacet.markDefaulted` — time-based liquidation runs
+  regardless of the borrower's sanctions status; a flagged
+  borrower's collateral still gets routed to an unflagged lender.
+- HF-based liquidation initiated against a flagged borrower —
+  the keeper / liquidator runs the path; the borrower's address
+  is the *target*, not the *caller*, so they can't block their
+  own liquidation by being flagged.
+
+The asymmetric design rests on a clear legal foundation:
+the lender's security interest in the collateral pre-dates the
+borrower's sanctions designation, so the close-out path
+recovers an unflagged counterparty's pre-existing economic
+right rather than transferring fresh value to a flagged party.
+This mirrors Circle's USDC blocklist precedent ("frozen, not
+seized") and OFAC's standard "wind-down" provisions.
+
+**Lender-recovery walkthrough (borrower sanctioned post-loan-init):**
+
+1. Loan is Active. Borrower wallet gets flagged.
+2. Borrower can still call `repayLoan` (Tier-2 ALLOW) — full
+   repayment routes principal+interest to the lender's escrow,
+   loan settles, both parties continue normally.
+3. Borrower stops repaying. Time-based default fires
+   (`markDefaulted`, Tier-2 ALLOW); collateral transfers to the
+   lender's escrow (illiquid path) or gets swapped via 0x
+   (liquid path) — lender is whole.
+4. Or HF crashes: a third-party liquidator (Tier-1 — must be
+   unflagged, but the borrower being flagged doesn't matter) calls
+   `triggerLiquidation`. Collateral routes through the liquid
+   swap path and lender recovers.
+5. Lender claims. **Caveat**: `claimAsLender` is currently a
+   Tier-1 gate. If the *lender* gets sanctioned, they can't claim;
+   if only the *borrower* is sanctioned, the lender claims
+   normally. This matches the underlying policy: a sanctioned
+   actor cannot receive funds from the protocol, regardless of
+   which side of the loan they were on.
+
+**Frontend changes:**
+
+- New three-line `SanctionsBanner` body. Title stays the same
+  ("Connected wallet: sanctions-screening match"); body is now
+  three structured paragraphs covering (a) what's blocked, (b)
+  that close-out paths stay open, and (c) Chainalysis-only
+  recourse. Visible only when the connected wallet (or, in the
+  Offer Book, the offer creator's wallet) is flagged — clean
+  wallets see nothing.
+- Banner mounted on four additional surfaces:
+  Dashboard, BuyVPFI, LoanDetails, ClaimCenter. Previously only
+  `CreateOffer` and `OfferBook` rendered it. The Tier-2 close-out
+  paths intentionally surface the banner so the borrower sees a
+  clear explanation of what they CAN still do, not just what's
+  blocked.
+- Marketing copy under "Non-Custodial & No KYC" rewritten so it
+  doesn't claim sanctions logic is "future governance" — that
+  was misleading once the operator decided to enable the oracle
+  on retail. The line now reads "tiered-KYC and country-pair
+  logic remains in the codebase for future governance activation
+  if a separate industrial deployment ever needs it" — sanctions
+  intentionally absent because it's live.
+- ToS keeps ONE defensive bullet under "Prohibited use":
+  *"if your wallet address is listed under any sanctions
+  programme in force in the United States, European Union, or
+  United Kingdom"*. Detailed wording stays out of marketing
+  surfaces.
+
+**Country-pair gated helper (industrial-fork preview):**
+
+The retail deploy keeps `LibVaipakam.canTradeBetween` as a
+pure-true function. New helper `_canTradeBetweenStorageGated`
+implements default-DENY (whitelist) semantics by reading the
+existing `s.allowedTrades` storage. The two helpers coexist on
+purpose so the industrial fork can flip pair-based restrictions
+on without a storage migration. The symmetric `setTradeAllowance`
+setter is shared — its writes populate the gated mapping, but
+retail's `canTradeBetween` ignores it entirely.
+
+`CountryPairGatedTest.t.sol` exercises the gated branch through
+a test-only accessor on `TestMutatorFacet` (12 tests):
+default-DENY, symmetric setter, allow-doesn't-leak-into-
+unrelated-pairs, revoke-flips-back, self-trade-requires-explicit-
+allow, plus a realistic ISO-code fixture with a US/IR/RU/KP/CN/
+FR/IN whitelist matrix. Retail's `canTradeBetween` separately
+asserted to stay pure-true.
+
+**CLAUDE.md updated**: header changed from "KYC / sanctions /
+country-pair gates STAY OFF" to "Sanctions ON; KYC / country-pair
+OFF". Sanctions oracle deploy step (`setSanctionsOracle`) is now a
+post-deploy REQUIREMENT, not a forbidden flip. Two-helper coexistence
+documented inline.
+
+**Test results:**
+
+- `SanctionsOracle.t.sol`: 64/64 passing (5 new Tier-1 / Tier-2
+  cases including a sanctioned-borrower lender-recovery
+  end-to-end).
+- `CountryPairGatedTest.t.sol`: 12/12 passing.
+- Full no-invariants regression: 1396 passing / 0 failed / 5
+  skipped (Phase-7-style fork tests skipped without `FORK_URL_*`
+  env, as before).
+- Frontend `tsc -b --noEmit`: clean.
+
+Two VPFI sanctions tests (`buyVPFI`, `withdrawVPFIFromEscrow`)
+deferred to `VPFIDiscountFacetTest.t.sol` because the
+`SetupTest` test diamond doesn't cut the VPFIDiscountFacet
+selectors — those routes return `FunctionDoesNotExist` before
+the sanctions gate fires in the current fixture. The contract
+gates are in place (verified via build); the test-fixture move
+is tracked.
+
 ## Outstanding for the testnet redeploy gate
 
 Before fresh testnet diamonds can land:

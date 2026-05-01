@@ -14,11 +14,11 @@
 
 - [ ] Provide notification, not only on HF health, but also on all other major transactions based on user config. Also mention that notification also costs user (if any)
 
-- [ ] Move Terms of service and privacy policy to required folder inside /frontend
-
-- [ ] Is it possible to ensure even for cross chain that only after the required ETH received in treasury, the equivalent amount of VPFI will be minted and send to the same wallet from where the ETH has been came from?
+- [ ] Is it possible to ensure even for cross chain that only after the required ETH received in treasury, the equivalent amount of VPFI will be minted and send to the same wallet from where the ETH has been came from? what happens if signed message in layer zero is compromised, atleast we know there is incoming ETH (can be indepndantly verified without using layer zero message but only with treasury transaction) and for which we need to mint equivalent VPFI, but what about from which account the ETH is comming from, that depends only on the layer zero message, right?
 
 ---
+
+- [x] Defer: Move Terms of service and privacy policy to required folder inside /frontend
 
 - [x] Need to have a separate ID for each reported error on github from our website, so that we can cross check with that id in our system to see if that error really come from website — server-side capture endpoint (`POST /diag/record`) on the hf-watcher Worker writes a UUID-keyed row to D1 (`diag_errors` table) for every UI failure. Same UUID surfaces in the GitHub-issue prefill so support can cross-reference. Anti-spam: 5-consecutive-same-fingerprint local cap on the frontend + server-side dedup + per-IP rate limit (60 req/min) + random sampling knob (`DIAG_SAMPLE_RATE`) + 90-day retention prune via cron. Drawer kept for now behind a master flag (`VITE_DIAG_DRAWER_ENABLED`) so it can be hidden later without ripping out code; journey-log download moved onto Data Rights page so users can still grab session diagnostics when the drawer is off. Privacy Policy updated with one paragraph describing what gets captured + what doesn't + retention + GDPR Art 6(1)(f) basis.
 - [x] Check if all the links in the page is working fine including the links in footer and in all other places — full audit; one fix shipped (Footer "Smart Contracts" link now lands on `/analytics#transparency` with a matching `id="transparency"` anchor on the Transparency & Source section). Every other internal `to=`/`href=`/`linkTo=` target resolves to a declared route; landing-page section anchors all match; help routes reachable via HelpTabs; external links all canonical.

@@ -113,6 +113,9 @@ contract PrecloseFacet is
     function precloseDirect(
         uint256 loanId
     ) external nonReentrant whenNotPaused {
+        // Tier-1 sanctions gate — preclose routes funds back to
+        // msg.sender (borrower closing early); sanctioned blocked.
+        LibVaipakam._assertNotSanctioned(msg.sender);
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.Loan storage loan = s.loans[loanId];
         // Phase 6: borrower-entitled strategic flow. Authority follows the
@@ -326,6 +329,9 @@ contract PrecloseFacet is
         uint256 loanId,
         uint256 borrowerOfferId
     ) external nonReentrant whenNotPaused {
+        // Tier-1 sanctions gate — transferring an obligation closes
+        // and re-opens loan state on behalf of msg.sender.
+        LibVaipakam._assertNotSanctioned(msg.sender);
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.Loan storage loan = s.loans[loanId];
         // Phase 6: borrower-entitled strategic flow (Preclose Option 2).

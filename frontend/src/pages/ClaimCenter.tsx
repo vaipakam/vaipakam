@@ -12,6 +12,7 @@ import { ErrorAlert } from '../components/app/ErrorAlert';
 import { AssetSymbol } from '../components/app/AssetSymbol';
 import { TokenAmount } from '../components/app/TokenAmount';
 import { InteractionRewardsClaim } from '../components/app/InteractionRewardsClaim';
+import { SanctionsBanner } from '../components/app/SanctionsBanner';
 import { CardInfo } from '../components/CardInfo';
 import { L as Link } from '../components/L';
 import './ClaimCenter.css';
@@ -79,6 +80,13 @@ export default function ClaimCenter() {
         </h1>
         <p className="page-subtitle">{t('claimCenter.pageSubtitle')}</p>
       </div>
+
+      {address && (
+        <SanctionsBanner
+          address={address as `0x${string}`}
+          label={t('banners.sanctionsLabelWallet')}
+        />
+      )}
 
       {error && <ErrorAlert message={error} />}
 
