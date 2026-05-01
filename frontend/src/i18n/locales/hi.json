@@ -1277,6 +1277,7 @@
     "buySubtitle": "{{chain}} सीधे। VPFI इस चेन पर वॉलेट में पहुँचता है।",
     "fixedRate": "0.001 ETH / VPFI",
     "fixedRateLabel": "निश्चित दर",
+    "assetCoinGeckoAria": "{{symbol}} के लिए CoinGecko पेज खोलें",
     "remainingGlobal": "शेष वैश्विक प्रारंभिक खरीद",
     "remainingAllowance": "आपका शेष भत्ता",
     "payEth": "भुगतान (ETH)",

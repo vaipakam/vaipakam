@@ -1922,6 +1922,87 @@ oracle setter. All pass.
 green (15 new tests + no regressions), frontend tsc clean across
 all 10 locale JSONs.
 
+## BuyVPFI page asset-aware UX (T-038)
+
+Per ToDo item T-038. The BuyVPFI page previously labeled
+the input asset as "ETH" everywhere — accurate on Base / Ethereum /
+Arbitrum / Optimism / Polygon zkEVM (which all use ETH for native
+gas) but wrong on BNB Smart Chain (mainnet) and Polygon PoS
+(mainnet) where the BuyVPFIAdapter runs in WETH-pull mode and the
+user actually pays in a bridged WETH9 ERC20, not native ETH. Even
+worse, "WETH on BNB" and "WETH on Polygon" are different bridged
+contracts with different addresses, so a user grabbing "WETH on
+Uniswap" wouldn't necessarily have the right token. T-038 fixes
+the labeling AND adds an unambiguous per-chain CoinGecko deep-link
+so users can confirm exactly which asset they need before they go
+acquire it.
+
+**New helper**:
+[`frontend/src/lib/buyAssetInfo.ts`](../../frontend/src/lib/buyAssetInfo.ts)
+exports `getBuyAssetInfo(chainConfig, modeOverride?)` returning
+`{ symbol, coinGeckoUrl, isWethPullMode }`. Mode resolution
+priority: explicit override (`useVPFIBuyBridge.quote()` returns
+the runtime-confirmed mode after reading `adapter.paymentToken()`)
+→ chain-config inference (`vpfiBuyPaymentToken` from the
+deployments JSON). Until a quote lands, the static config is
+consulted; once a quote returns, the runtime mode takes over.
+
+**ChainConfig extension** ([config.ts](../../frontend/src/contracts/config.ts)):
+three new static fields populated per chain in the registry —
+`nativeGasSymbol`, `nativeGasCoinGeckoSlug`,
+`bridgedWethCoinGeckoSlug`. ETH-native chains
+(Ethereum / Sepolia / Base / Base Sepolia / Arbitrum / Arb
+Sepolia / Optimism / OP Sepolia / Polygon zkEVM / Cardona / Anvil)
+all use `nativeGasSymbol: 'ETH'`,
+`nativeGasCoinGeckoSlug: 'ethereum'`,
+`bridgedWethCoinGeckoSlug: null`. BNB chains use
+`'BNB'`/`'tBNB'` + `'binancecoin'` + `'weth'` (CoinGecko's
+multi-chain WETH page covers the bridged variants).
+
+**UI changes** in [BuyVPFI.tsx](../../frontend/src/pages/BuyVPFI.tsx):
+
+- BuyCard (canonical-chain direct buy on Base) — rate stat
+  rewritten from `${rateEth} ETH / VPFI` to dynamic asset symbol
+  with CoinGecko deep-link wrap.
+- BridgedBuyCard (mirror-chain LayerZero bridge buy) — same rate
+  stat treatment + the existing "Pay (tokens / ETH)" label
+  switched to the dynamic asset symbol.
+- `Stat` component's `value` prop widened from `string` to
+  `React.ReactNode` so callers can embed inline links inside
+  stat values (the rate is now a React fragment with an `<a>`
+  for the symbol).
+- Asset symbol uses dotted underline + new-tab open as the
+  visual affordance for "click for more info" without making
+  it look like a primary action button.
+- ARIA label `buyVpfiCards.assetCoinGeckoAria` so screen
+  readers announce "Open CoinGecko page for WETH" (or BNB / ETH
+  / etc.) on focus.
+
+**WETH-pull approval flow** — already implemented in
+`useVPFIBuyBridge` (the `s.status === 'approving'` branch
+dispatches the prerequisite ERC20 approval before submitting
+the buy when `paymentToken != address(0)`). Verified the path
+during this batch; no changes needed there.
+
+**i18n** — `buyVpfiCards.assetCoinGeckoAria` added to all 10
+supported locales (en / es / fr / de / ja / zh / hi / ar / ta /
+ko). All JSONs parse + tsc clean + Node-25 vite build clean
+(1.89s).
+
+**What's NOT in this batch** (deferrable as T-038 follow-ups):
+
+- Remaining hardcoded "ETH" strings in BridgedBuyCard's
+  tooltips and error copy (e.g., the LayerZero fee tooltip
+  saying "ETH for the LayerZero fee"). The LZ fee IS always
+  native gas across chains, so that label needs to use the
+  chain's `nativeGasSymbol`, not blindly "ETH".
+- Per-asset balance read in WETH-pull mode. Today the page
+  reads native ETH balance via wagmi; in WETH-pull mode it
+  should read the WETH ERC20 `balanceOf` instead. The
+  `useVPFIBuyBridge` quote already returns the right
+  `paymentToken` address; just need to wire the balance hook
+  conditionally on the mode.
+
 ## Outstanding for the testnet redeploy gate
 
 Before fresh testnet diamonds can land:

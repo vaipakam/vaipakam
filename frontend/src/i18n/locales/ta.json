@@ -1277,6 +1277,7 @@
     "buySubtitle": "{{chain}} நேரடியாக. VPFI இந்த செயினில் வாலட்டில் வந்து சேரும்.",
     "fixedRate": "0.001 ETH / VPFI",
     "fixedRateLabel": "நிலையான விகிதம்",
+    "assetCoinGeckoAria": "{{symbol}} இன் CoinGecko பக்கத்தை திறக்கவும்",
     "remainingGlobal": "மீதமுள்ள உலகளாவிய ஆரம்ப கொள்முதல்",
     "remainingAllowance": "உங்கள் மீதமுள்ள ஒதுக்கீடு",
     "payEth": "செலுத்து (ETH)",

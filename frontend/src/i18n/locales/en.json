@@ -312,6 +312,7 @@
     "buySubtitle": "{{chain}} directly. VPFI lands in the wallet on this chain.",
     "fixedRate": "0.001 ETH / VPFI",
     "fixedRateLabel": "Fixed rate",
+    "assetCoinGeckoAria": "Open CoinGecko page for {{symbol}}",
     "remainingGlobal": "Remaining global early purchase",
     "remainingAllowance": "Your remaining allowance",
     "payEth": "Pay (ETH)",

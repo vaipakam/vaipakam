@@ -1277,6 +1277,7 @@
     "buySubtitle": "{{chain}}上直接购买。VPFI将到达此链上的钱包。",
     "fixedRate": "0.001 ETH / VPFI",
     "fixedRateLabel": "固定汇率",
+    "assetCoinGeckoAria": "打开 {{symbol}} 的 CoinGecko 页面",
     "remainingGlobal": "剩余全局早期购买",
     "remainingAllowance": "剩余个人额度",
     "payEth": "支付（ETH）",

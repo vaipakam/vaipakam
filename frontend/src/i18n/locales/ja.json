@@ -1277,6 +1277,7 @@
     "buySubtitle": "{{chain}}で直接。VPFIはこのチェーンのウォレットに入金されます。",
     "fixedRate": "0.001 ETH / VPFI",
     "fixedRateLabel": "固定レート",
+    "assetCoinGeckoAria": "{{symbol}} の CoinGecko ページを開く",
     "remainingGlobal": "残りのグローバル早期購入枠",
     "remainingAllowance": "残り個別枠",
     "payEth": "支払い（ETH）",

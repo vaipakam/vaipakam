@@ -1277,6 +1277,7 @@
     "buySubtitle": "{{chain}}에서 직접. VPFI는 이 체인의 지갑으로 전달됩니다.",
     "fixedRate": "0.001 ETH / VPFI",
     "fixedRateLabel": "고정 환율",
+    "assetCoinGeckoAria": "{{symbol}}의 CoinGecko 페이지 열기",
     "remainingGlobal": "남은 글로벌 조기 구매",
     "remainingAllowance": "남은 개인 한도",
     "payEth": "지불(ETH)",

@@ -51,6 +51,7 @@ import { beginStep } from "../lib/journeyLog";
 import { ReportIssueLink } from "../components/app/ReportIssueLink";
 import { SanctionsBanner } from "../components/app/SanctionsBanner";
 import { CardInfo } from "../components/CardInfo";
+import { getBuyAssetInfo } from "../lib/buyAssetInfo";
 import { VPFIPanel } from "../components/app/VPFIPanel";
 import { StakingRewardsClaim } from "../components/app/StakingRewardsClaim";
 import { useVPFIToken } from "../hooks/useVPFIToken";
@@ -1329,8 +1330,10 @@ function StepHeader({ index, title, subtitle, cardHelpId, cardHelpParams }: Step
 interface StatProps {
   /** Caption shown below the value. */
   label: string;
-  /** Pre-formatted display value (caller controls units / precision). */
-  value: string;
+  /** Pre-formatted display value (caller controls units / precision).
+   *  Accepts ReactNode so callers can embed inline elements
+   *  (e.g. a CoinGecko deep-link on the asset symbol — see T-038). */
+  value: React.ReactNode;
 }
 
 /** Compact stat block used inside the buy / deposit cards. */
@@ -1646,7 +1649,31 @@ function BuyCard({
           marginBottom: 16,
         }}
       >
-        <Stat label={t('buyVpfiCards.fixedRateLabel')} value={`${rateEth} ETH / VPFI`} />
+        {/* T-038 — render the rate using the live asset symbol of
+            this chain (always "ETH" on the canonical Base chain, but
+            this keeps the path uniform with the bridged path below
+            and lets the symbol deep-link to its CoinGecko page so
+            users can confirm exactly which asset they need.) */}
+        <Stat
+          label={t('buyVpfiCards.fixedRateLabel')}
+          value={(() => {
+            const asset = getBuyAssetInfo(canonical);
+            const symbolNode = asset.coinGeckoUrl ? (
+              <a
+                href={asset.coinGeckoUrl}
+                target="_blank"
+                rel="noreferrer"
+                aria-label={t('buyVpfiCards.assetCoinGeckoAria', { symbol: asset.symbol })}
+                style={{ textDecoration: 'underline dotted', textUnderlineOffset: 2 }}
+              >
+                {asset.symbol}
+              </a>
+            ) : (
+              asset.symbol
+            );
+            return <>{rateEth} {symbolNode} / VPFI</>;
+          })()}
+        />
         <Stat
           label={t('buyVpfiCards.remainingGlobal')}
           value={formatAmount(formatVpfiUnits(buyConfig.globalHeadroom))}
@@ -1915,7 +1942,33 @@ function BridgedBuyCard({
           marginBottom: 16,
         }}
       >
-        <Stat label="Fixed rate" value={`${rateEth} ETH / VPFI`} />
+        {/* T-038 — render the rate using the live asset symbol of
+            the origin chain. Mode comes from the bridge's
+            `paymentToken()` quote read; falls back to chain-config
+            inference (`vpfiBuyPaymentToken` from deployments JSON)
+            until the quote lands. CoinGecko deep-link confirms
+            exactly which asset (WETH on BNB ≠ WETH on Polygon —
+            different bridged contracts). */}
+        <Stat
+          label="Fixed rate"
+          value={(() => {
+            const asset = getBuyAssetInfo(originChain, mode);
+            const symbolNode = asset.coinGeckoUrl ? (
+              <a
+                href={asset.coinGeckoUrl}
+                target="_blank"
+                rel="noreferrer"
+                aria-label={`Open CoinGecko page for ${asset.symbol}`}
+                style={{ textDecoration: 'underline dotted', textUnderlineOffset: 2 }}
+              >
+                {asset.symbol}
+              </a>
+            ) : (
+              asset.symbol
+            );
+            return <>{rateEth} {symbolNode} / VPFI</>;
+          })()}
+        />
         <Stat
           label="Remaining global supply"
           value={formatAmount(formatVpfiUnits(buyConfig.globalHeadroom))}
@@ -1935,7 +1988,7 @@ function BridgedBuyCard({
         }}
       >
         <label className="stat-label" style={{ margin: 0, fontWeight: 500 }}>
-          Pay ({mode === "token" ? "tokens" : "ETH"})
+          Pay ({getBuyAssetInfo(originChain, mode).symbol})
         </label>
         {maxSpendEth && maxSpendWei > 0n && (
           <button

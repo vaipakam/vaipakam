@@ -99,6 +99,26 @@ export interface ChainConfig {
   /** Standalone ProfileFacet implementation address. Null falls back
    *  to the Diamond proxy. */
   profileFacetAddress: string | null;
+  /** Symbol of this chain's native gas token — used in the BuyVPFI
+   *  card and balance displays so the UI says "ETH" / "BNB" / "POL"
+   *  appropriately rather than always "ETH". On native-gas-mode buy
+   *  adapter chains this is also what the user actually pays in. */
+  nativeGasSymbol: string;
+  /** CoinGecko coin slug for this chain's native gas token. Used to
+   *  render a deep-link from the BuyVPFI asset symbol so users can
+   *  cross-reference exactly which asset they need to acquire (and
+   *  on which chain, since WETH on BNB ≠ WETH on Polygon — different
+   *  bridged contracts even though both use the symbol "WETH").
+   *  Null when no canonical CoinGecko page exists. */
+  nativeGasCoinGeckoSlug: string | null;
+  /** CoinGecko slug for the chain's canonical bridged WETH9 ERC20.
+   *  Only meaningful when the BuyAdapter is in WETH-pull mode
+   *  (`vpfiBuyPaymentToken != null`); the BuyVPFI card uses this
+   *  to link the "WETH" label to the right CoinGecko page for the
+   *  chain's specific bridged variant. Null on chains where the
+   *  adapter is in native-gas mode (no WETH user-facing) or where
+   *  no canonical CoinGecko page tracks the bridged WETH. */
+  bridgedWethCoinGeckoSlug: string | null;
 }
 
 function str(key: string, fallback: string): string {
@@ -120,6 +140,9 @@ interface ChainMeta {
   isCanonicalVPFI: boolean;
   lzEid: number | null;
   testnet: boolean;
+  nativeGasSymbol: string;
+  nativeGasCoinGeckoSlug: string | null;
+  bridgedWethCoinGeckoSlug: string | null;
 }
 
 /** Folds a `ChainMeta` + the matching deployments-JSON record into a
@@ -145,6 +168,9 @@ function buildChainConfig(meta: ChainMeta): ChainConfig {
     escrowImplAddress: dep?.escrowImpl ?? null,
     riskFacetAddress: dep?.facets?.riskFacet ?? null,
     profileFacetAddress: dep?.facets?.profileFacet ?? null,
+    nativeGasSymbol: meta.nativeGasSymbol,
+    nativeGasCoinGeckoSlug: meta.nativeGasCoinGeckoSlug,
+    bridgedWethCoinGeckoSlug: meta.bridgedWethCoinGeckoSlug,
   };
 }
 
@@ -161,6 +187,9 @@ const ETHEREUM = buildChainConfig({
   isCanonicalVPFI: false,
   lzEid: 30101,
   testnet: false,
+  nativeGasSymbol: 'ETH',
+  nativeGasCoinGeckoSlug: 'ethereum',
+  bridgedWethCoinGeckoSlug: null,
 });
 
 const BASE = buildChainConfig({
@@ -174,6 +203,9 @@ const BASE = buildChainConfig({
   isCanonicalVPFI: true,
   lzEid: 30184,
   testnet: false,
+  nativeGasSymbol: 'ETH',
+  nativeGasCoinGeckoSlug: 'ethereum',
+  bridgedWethCoinGeckoSlug: null,
 });
 
 // Polygon PoS was dropped from Phase 1 (weaker multi-sig bridge trust +
@@ -194,6 +226,11 @@ const POLYGON_ZKEVM = buildChainConfig({
   // before mainnet deploy — the numeric registry evolves.
   lzEid: 30267,
   testnet: false,
+  // Polygon zkEVM uses ETH for gas (not POL/MATIC) — it's a zk-rollup
+  // settling on Ethereum, so native gas mirrors mainnet.
+  nativeGasSymbol: 'ETH',
+  nativeGasCoinGeckoSlug: 'ethereum',
+  bridgedWethCoinGeckoSlug: null,
 });
 
 const BNB = buildChainConfig({
@@ -207,6 +244,15 @@ const BNB = buildChainConfig({
   isCanonicalVPFI: false,
   lzEid: 30102,
   testnet: false,
+  // BNB Smart Chain mainnet — native gas is BNB. The BuyVPFIAdapter
+  // here MUST be in WETH-pull mode (DeployVPFIBuyAdapter pre-flight
+  // enforces this — see T-036), so the BuyVPFI page shows the bridged
+  // WETH9 ERC20 (`0x2170Ed0880ac9A755fd29B2688956BD959F933F8` per
+  // CLAUDE.md) as the actual asset users pay in. Linking BNB
+  // separately for users who land here in native-gas testnet mode.
+  nativeGasSymbol: 'BNB',
+  nativeGasCoinGeckoSlug: 'binancecoin',
+  bridgedWethCoinGeckoSlug: 'weth',
 });
 
 const ARBITRUM = buildChainConfig({
@@ -220,6 +266,9 @@ const ARBITRUM = buildChainConfig({
   isCanonicalVPFI: false,
   lzEid: 30110,
   testnet: false,
+  nativeGasSymbol: 'ETH',
+  nativeGasCoinGeckoSlug: 'ethereum',
+  bridgedWethCoinGeckoSlug: null,
 });
 
 const OPTIMISM = buildChainConfig({
@@ -233,6 +282,9 @@ const OPTIMISM = buildChainConfig({
   isCanonicalVPFI: false,
   lzEid: 30111,
   testnet: false,
+  nativeGasSymbol: 'ETH',
+  nativeGasCoinGeckoSlug: 'ethereum',
+  bridgedWethCoinGeckoSlug: null,
 });
 
 // ── Testnet ──────────────────────────────────────────────────────────────
@@ -248,6 +300,9 @@ const SEPOLIA = buildChainConfig({
   isCanonicalVPFI: false,
   lzEid: 40161,
   testnet: true,
+  nativeGasSymbol: 'ETH',
+  nativeGasCoinGeckoSlug: 'ethereum',
+  bridgedWethCoinGeckoSlug: null,
 });
 
 const BASE_SEPOLIA = buildChainConfig({
@@ -261,6 +316,9 @@ const BASE_SEPOLIA = buildChainConfig({
   isCanonicalVPFI: true,
   lzEid: 40245,
   testnet: true,
+  nativeGasSymbol: 'ETH',
+  nativeGasCoinGeckoSlug: 'ethereum',
+  bridgedWethCoinGeckoSlug: null,
 });
 
 // Cardona is the Polygon zkEVM public testnet. Replaces Polygon Amoy from
@@ -276,6 +334,10 @@ const POLYGON_ZKEVM_CARDONA = buildChainConfig({
   isCanonicalVPFI: false,
   lzEid: 40271,
   testnet: true,
+  // Polygon zkEVM uses ETH for gas (mirror of mainnet zkEVM).
+  nativeGasSymbol: 'ETH',
+  nativeGasCoinGeckoSlug: 'ethereum',
+  bridgedWethCoinGeckoSlug: null,
 });
 
 const BNB_TESTNET = buildChainConfig({
@@ -289,6 +351,14 @@ const BNB_TESTNET = buildChainConfig({
   isCanonicalVPFI: false,
   lzEid: 40102,
   testnet: true,
+  // Testnet currently runs the BuyAdapter in native-gas mode (per
+  // BNBTestnetDeploy.md §4 — symbolic rate, dev-loop convenience).
+  // Mainnet flips to WETH-pull. We populate both slugs so the
+  // BuyVPFI card shows the right asset for whichever mode the
+  // adapter actually reports at runtime.
+  nativeGasSymbol: 'tBNB',
+  nativeGasCoinGeckoSlug: 'binancecoin',
+  bridgedWethCoinGeckoSlug: 'weth',
 });
 
 const ARBITRUM_SEPOLIA = buildChainConfig({
@@ -302,6 +372,9 @@ const ARBITRUM_SEPOLIA = buildChainConfig({
   isCanonicalVPFI: false,
   lzEid: 40231,
   testnet: true,
+  nativeGasSymbol: 'ETH',
+  nativeGasCoinGeckoSlug: 'ethereum',
+  bridgedWethCoinGeckoSlug: null,
 });
 
 const OPTIMISM_SEPOLIA = buildChainConfig({
@@ -315,6 +388,9 @@ const OPTIMISM_SEPOLIA = buildChainConfig({
   isCanonicalVPFI: false,
   lzEid: 40232,
   testnet: true,
+  nativeGasSymbol: 'ETH',
+  nativeGasCoinGeckoSlug: 'ethereum',
+  bridgedWethCoinGeckoSlug: null,
 });
 
 // Anvil — local foundry node used for end-to-end smoke tests.
@@ -332,6 +408,9 @@ const ANVIL = buildChainConfig({
   isCanonicalVPFI: false,
   lzEid: 31337,
   testnet: true,
+  nativeGasSymbol: 'ETH',
+  nativeGasCoinGeckoSlug: 'ethereum',
+  bridgedWethCoinGeckoSlug: null,
 });
 
 // Normalise every deployments-sourced address to canonical EIP-55

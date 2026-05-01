@@ -40,6 +40,7 @@ contract DeployerZeroRolesTest is Test {
     // small hot multisig). DEFAULT_ADMIN governance can re-key any
     // time via grantRole/renounceRole.
     address internal watcherBot;
+    address internal notifBillerBot;
 
     bytes32[] internal ALL_ROLES;
 
@@ -49,6 +50,7 @@ contract DeployerZeroRolesTest is Test {
         adminTimelock = makeAddr("admin-timelock");
         pauserMultisig = makeAddr("pauser-multisig");
         watcherBot = makeAddr("watcher-bot");
+        notifBillerBot = makeAddr("notif-biller-bot");
 
         cutFacet = new DiamondCutFacet();
         diamond = new VaipakamDiamond(deployer, address(cutFacet));
@@ -118,7 +120,9 @@ contract DeployerZeroRolesTest is Test {
         ac.grantRole(LibAccessControl.RISK_ADMIN_ROLE, adminTimelock);
         ac.grantRole(LibAccessControl.ESCROW_ADMIN_ROLE, adminTimelock);
         ac.grantRole(LibAccessControl.WATCHER_ROLE, watcherBot);
+        ac.grantRole(LibAccessControl.NOTIF_BILLER_ROLE, notifBillerBot);
 
+        ac.renounceRole(LibAccessControl.NOTIF_BILLER_ROLE, deployer);
         ac.renounceRole(LibAccessControl.WATCHER_ROLE, deployer);
         ac.renounceRole(LibAccessControl.ESCROW_ADMIN_ROLE, deployer);
         ac.renounceRole(LibAccessControl.RISK_ADMIN_ROLE, deployer);
@@ -160,6 +164,7 @@ contract DeployerZeroRolesTest is Test {
         assertTrue(ac.hasRole(LibAccessControl.RISK_ADMIN_ROLE, adminTimelock));
         assertTrue(ac.hasRole(LibAccessControl.ESCROW_ADMIN_ROLE, adminTimelock));
         assertTrue(ac.hasRole(LibAccessControl.WATCHER_ROLE, watcherBot));
+        assertTrue(ac.hasRole(LibAccessControl.NOTIF_BILLER_ROLE, notifBillerBot));
     }
 
     /// @notice **Findings 00010 regression test.** Asserts that the
