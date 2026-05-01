@@ -285,10 +285,15 @@ Cross-chain invariants (all three must hold):
 ## 11. Publish
 
 - Commit `deployments/bnb-testnet/addresses.json`.
-- Update `frontend/.env.local` with the freshly written values
-  (`VITE_BNB_TESTNET_DIAMOND_ADDRESS`, `VITE_BNB_TESTNET_DEPLOY_BLOCK`,
-  `VITE_BNB_TESTNET_METRICS_FACET_ADDRESS`,
-  `VITE_BNB_TESTNET_VPFI_BUY_ADAPTER`).
+- Sync the merged JSON to both consumers in one command:
+  `bash contracts/script/exportFrontendDeployments.sh`. This
+  rewrites `frontend/src/contracts/deployments.json` AND
+  `ops/hf-watcher/src/deployments.json` from the canonical
+  `addresses.json` files. No more `VITE_BNB_TESTNET_DIAMOND_ADDRESS`
+  / `VITE_BNB_TESTNET_*_FACET_ADDRESS` edits in `.env.local` —
+  those env vars were removed when the JSON-import pattern landed.
+- Commit the regenerated `deployments.json` files alongside the
+  contracts change.
 - Update `contracts/.env` chain-prefixed legacy keys
   (`BNB_TESTNET_DIAMOND_ADDRESS` etc.) — these are still consulted as
   env-fallback by some legacy scripts.

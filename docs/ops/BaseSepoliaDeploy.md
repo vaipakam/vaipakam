@@ -562,3 +562,40 @@ If you added a brand-new facet to the frontend, append it to the
 `FACETS=(...)` array in `contracts/script/exportFrontendAbis.sh`
 AND wire it into `frontend/src/contracts/abis/index.ts` — the
 script does not touch the re-export barrel.
+
+---
+
+## 15. Sync the deployments JSON (frontend + hf-watcher)
+
+Every deploy (even a pure parameter sweep that didn't change
+selectors) writes new addresses to
+`contracts/deployments/<chain-slug>/addresses.json`. Both the
+frontend AND the hf-watcher Worker read those addresses from a
+consolidated, committed JSON in their respective trees. Keeping
+those in sync with the canonical artifacts is one command:
+
+```bash
+bash contracts/script/exportFrontendDeployments.sh
+cd frontend && node_modules/.bin/tsc -b --noEmit
+cd ../ops/hf-watcher && npx tsc -p . --noEmit
+git diff frontend/src/contracts/deployments.json ops/hf-watcher/src/deployments.json
+git commit -am 'Sync deployments with contracts@<commit>'
+```
+
+The script merges every per-chain `addresses.json` into both
+`frontend/src/contracts/deployments.json` and
+`ops/hf-watcher/src/deployments.json` (auto-detecting the watcher
+target via the sibling layout), plus a `_deployments_source.json`
+provenance stamp at each target. Idempotent: re-running with no
+upstream changes leaves both outputs byte-identical.
+
+This replaces the previous fan-out of
+`VITE_<CHAIN>_DIAMOND_ADDRESS` /
+`VITE_<CHAIN>_*_FACET_ADDRESS` env vars in `frontend/.env.local`
+and the empty `DIAMOND_ADDR_*` placeholders in
+`ops/hf-watcher/wrangler.jsonc:vars` — both surfaces are now
+read from the consolidated JSON. After running the script:
+- `cd frontend && npm run deploy` — vite inlines the new
+  addresses into the JS bundle.
+- `cd ops/hf-watcher && wrangler deploy` — the watcher picks up
+  the new Diamond addresses on its next cron tick.

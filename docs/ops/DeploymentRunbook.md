@@ -95,32 +95,59 @@ The schema each script populates (no manual editing needed since the
 | `interactionLaunchTimestamp`, `interactionCapVpfiPerEth` | `SetInteractionLaunch` |
 | `weth`, `mockChainlinkAggregator`, `mockUniswapV3Factory`, `mockERC20A/B`, `mockUSDC/WBTC/WETHFeed` | `DeployTestnetLiquidityMocks` |
 
-Frontend `.env.local` and `frontend/.env.example` consume these by
-mirroring the matching keys (e.g. `diamond` → `VITE_<CHAIN>_DIAMOND_ADDRESS`,
-`deployBlock` → `VITE_<CHAIN>_DEPLOY_BLOCK`,
-`facets.metricsFacet` → `VITE_<CHAIN>_METRICS_FACET_ADDRESS`,
-`vpfiBuyAdapter` → `VITE_<CHAIN>_VPFI_BUY_ADAPTER`).
+Both the frontend and the hf-watcher Worker consume these via a
+single consolidated `deployments.json` keyed by `chainId`:
 
-Don't copy these by hand — the helper
+- `frontend/src/contracts/deployments.json` — read by
+  [`frontend/src/contracts/deployments.ts`](../../frontend/src/contracts/deployments.ts)
+  (`getDeployment(chainId)`) and folded into the
+  `CHAIN_REGISTRY` by `frontend/src/contracts/config.ts`.
+- `ops/hf-watcher/src/deployments.json` — read by
+  [`ops/hf-watcher/src/deployments.ts`](../../ops/hf-watcher/src/deployments.ts)
+  and consumed by `getChainConfigs(env)` in `env.ts`.
+
+Both files are byte-identical merges of every per-chain
+`addresses.json`. Don't hand-edit either; both are emitted by:
 
 ```bash
-bash contracts/script/syncFrontendEnv.sh
+bash contracts/script/exportFrontendDeployments.sh
 ```
 
-walks every `deployments/<chain>/addresses.json`, replaces the
-matching `VITE_*` lines in `frontend/.env.local` in place (or
-appends them if missing), and skips empty / null /
-zero-address values so a half-populated artifact can't blank an
-existing value. Idempotent: re-running on an already-synced env
-leaves it byte-identical. Run it after every contract redeploy
-*before* `cd frontend && npm run deploy` so the new addresses
-make it into the bundle.
+The script auto-detects both consumers via the sibling layout
+(`vaipakam/frontend` and `vaipakam/ops/hf-watcher`), merges every
+`deployments/<chain>/addresses.json`, and writes the merged JSON
++ a `_deployments_source.json` provenance stamp into each
+target's `src/contracts/` (frontend) / `src/` (watcher). Pass
+`WATCHER_DIR=` (empty) to skip the watcher target. Idempotent:
+re-running with no upstream changes leaves both outputs
+byte-identical.
 
-Caveat for CI: `frontend/.env.local` is gitignored, so a
-Cloudflare-Pages-dashboard or GitHub-Actions build won't see
-anything written by the helper. For CI deploys, mirror the
-values into the Cloudflare Pages → Settings → Environment
-variables panel (or commit a `frontend/.env.production`).
+Run it after every contract redeploy *before*:
+- `cd frontend && npm run deploy` (so new addresses inline into
+  the JS bundle), AND
+- `cd ops/hf-watcher && wrangler deploy` (so the watcher reads
+  the new addresses on its next cron tick).
+
+What stays operator-side after this consolidation:
+
+- Frontend `.env.local`: per-chain RPC URLs (with API key),
+  WalletConnect project ID, default chain ID, log-chunk tuning,
+  feature flags, push channel address.
+- Watcher `wrangler.jsonc:vars`: `FRONTEND_ORIGIN`,
+  `TG_BOT_USERNAME`, `DIAG_*` knobs.
+- Watcher Cloudflare secrets (`wrangler secret put …`):
+  `RPC_*` URLs (carry API keys), `TG_BOT_TOKEN`,
+  `PUSH_CHANNEL_PK`, aggregator API keys, keeper private key.
+
+Caveat for CI: `frontend/.env.local` is gitignored. The
+addresses themselves are NOT in `.env.local` anymore, so a CI
+build that doesn't have the operator's local file will still get
+correct Diamond / facet addresses from the committed
+`frontend/src/contracts/deployments.json`. The CI environment
+only needs the operator-side values listed above (RPC URLs,
+WalletConnect ID, etc.) — set those in the Cloudflare Workers
+Builds → Build environment variables panel one-time, then every
+push picks them up.
 
 ---
 
@@ -166,7 +193,7 @@ If any check fails → **do not broadcast**.
    forge script script/DeployDiamond.s.sol:DeployDiamond \
      --rpc-url $RPC_URL --broadcast --verify
    ```
-4. Record the logged addresses in `deployments/<chain>/addresses.json` and populate `<CHAIN>_DIAMOND_ADDRESS` in `contracts/.env`. The frontend side is one command — `bash contracts/script/syncFrontendEnv.sh` walks all chain artifacts and updates `frontend/.env.local` in place (Diamond, deploy block, escrow impl, metrics / risk / profile facet addresses, and VPFI buy adapter where present). Idempotent.
+4. Record the logged addresses in `deployments/<chain>/addresses.json` and populate `<CHAIN>_DIAMOND_ADDRESS` in `contracts/.env`. The frontend + watcher consumer side is one command — `bash contracts/script/exportFrontendDeployments.sh` merges every chain artifact into `frontend/src/contracts/deployments.json` AND `ops/hf-watcher/src/deployments.json`, plus provenance stamps for both. The frontend's `getDeployment(chainId)` and the watcher's `getChainConfigs(env)` both read from the merged JSON. Idempotent.
 
 **Post-step verification:**
 - `diamondLoupe.facetAddresses()` returns 30 non-zero facets (DiamondCutFacet + 29 cut in).

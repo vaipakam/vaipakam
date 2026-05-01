@@ -114,6 +114,22 @@ contract ConfigureOracle is Script {
         // the Diamond's ERC-173 owner (LibDiamond.enforceIsContractOwner);
         // AdminFacet setters require ADMIN_ROLE. Both must hold or the
         // broadcasted txs revert on-chain with no useful surface.
+        //
+        // SCOPE: this script is the pre-handover bootstrap path. Per the
+        // BaseSepoliaDeploy / DeploymentRunbook ordering, ConfigureOracle
+        // runs in §2 (right after the Diamond is cut), well before §11.5
+        // (`TransferAdminToTimelock`) hands ERC-173 ownership to the
+        // governance timelock. After the timelock takes ownership, every
+        // OracleAdminFacet setter must go through the timelock proposer
+        // flow (encode the calldata, schedule with the documented delay,
+        // execute). This script intentionally does NOT support that path
+        // — it would require splitting the ADMIN_ROLE-only calls
+        // (`AdminFacet.setZeroExProxy` / `setallowanceTarget`) from the
+        // owner-gated calls (every OracleAdminFacet setter), and the
+        // operational complexity of running half a script via direct
+        // broadcast and half via timelock proposals isn't worth the
+        // automation. For post-handover oracle changes, hand-encode the
+        // calldata for each setter and submit through the timelock UI.
         address broadcaster = vm.addr(deployerKey);
         address diamondOwner = IERC173(diamond).owner();
         require(
@@ -122,7 +138,10 @@ contract ConfigureOracle is Script {
                 "ConfigureOracle: broadcaster ",
                 vm.toString(broadcaster),
                 " is not Diamond owner ",
-                vm.toString(diamondOwner)
+                vm.toString(diamondOwner),
+                ". This script is the pre-handover bootstrap path; ",
+                "post-handover oracle changes must go through the ",
+                "timelock proposer flow (see DeploymentRunbook)."
             )
         );
         bool hasAdmin = AccessControlFacet(diamond).hasRole(

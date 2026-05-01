@@ -23,7 +23,18 @@ import {Deployments} from "./lib/Deployments.sol";
  *        6. (Base only) setExpectedSourceEids(list of mirror eids)
  *
  *      Required env vars:
- *        - PRIVATE_KEY              : admin-role key
+ *        - ADMIN_PRIVATE_KEY        : ADMIN_ROLE-holding EOA. The
+ *                                      RewardReporterFacet setters this
+ *                                      script broadcasts (`setLocalEid`,
+ *                                      `setBaseEid`, `setRewardOApp`,
+ *                                      `setIsCanonicalRewardChain`,
+ *                                      `setExpectedSourceEids`) all gate
+ *                                      on `ADMIN_ROLE` — same key the
+ *                                      sibling `ConfigureOracle` /
+ *                                      `ConfigureVPFIBuy` scripts use.
+ *                                      Post-handover the deployer EOA
+ *                                      holds zero roles, so the legacy
+ *                                      `PRIVATE_KEY` would revert here.
  *        - <CHAIN>_DIAMOND_ADDRESS  : Diamond proxy for this chain
  *        - REWARD_OAPP_PROXY        : VaipakamRewardOApp proxy address
  *                                      (deterministic across chains under
@@ -44,7 +55,7 @@ contract ConfigureRewardReporter is Script {
     }
 
     function run() external {
-        uint256 deployerKey = vm.envUint("PRIVATE_KEY");
+        uint256 deployerKey = vm.envUint("ADMIN_PRIVATE_KEY");
         // Read prior deploy artifacts. Diamond reads from
         // deployments/<chain>/addresses.json with chain-prefixed env
         // fallback. RewardOApp is special-cased: the CREATE2-bootstrap

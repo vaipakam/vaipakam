@@ -1382,6 +1382,242 @@ the sanctions gate fires in the current fixture. The contract
 gates are in place (verified via build); the test-fixture move
 is tracked.
 
+## Deployments JSON — single source of truth, frontend + hf-watcher
+
+Pre-session, every contract redeploy meant the operator had to
+copy ~25 addresses (Diamond, escrow impl, three "verify-link"
+facet addresses, a buy adapter, the deploy block) from each
+chain's freshly-written `contracts/deployments/<slug>/addresses.json`
+into matching `VITE_<CHAIN>_DIAMOND_ADDRESS` /
+`VITE_<CHAIN>_ESCROW_IMPL` / `VITE_<CHAIN>_*_FACET_ADDRESS` lines
+in `frontend/.env.local`. A helper script existed
+(`contracts/script/syncFrontendEnv.sh`) but it was a write-back
+into `.env.local`, which is gitignored — CI builds couldn't see
+the values, and a missed sync silently shipped a frontend with
+empty addresses. The hf-watcher Worker had a parallel problem:
+six empty `DIAMOND_ADDR_BASE` / `DIAMOND_ADDR_ETH` / etc.
+placeholders in `wrangler.jsonc:vars` that the operator had to
+hand-fill in the dashboard or in a re-deployed `wrangler.jsonc`.
+
+This session collapsed both surfaces onto a single committed
+artifact.
+
+**The consolidation:**
+
+- New `contracts/script/exportFrontendDeployments.sh` merges every
+  per-chain `addresses.json` into one JSON keyed by `chainId`,
+  written to BOTH `frontend/src/contracts/deployments.json` AND
+  `ops/hf-watcher/src/deployments.json` (auto-detects the watcher
+  target via the sibling repo layout; `WATCHER_DIR=` skips it).
+  Each target also receives a `_deployments_source.json`
+  provenance stamp so a deployed bundle / Worker can be
+  correlated to a specific contracts commit.
+- New `frontend/src/contracts/deployments.ts` and
+  `ops/hf-watcher/src/deployments.ts` — typed loaders. Each
+  exports `getDeployment(chainId)` against a `Deployment`
+  interface. The frontend's interface is the canonical full
+  shape; the watcher's is a minimal subset (only the fields it
+  reads at runtime — `diamond`, `chainId`, optional `riskFacet`).
+- `frontend/src/contracts/config.ts` rewritten so every
+  `ChainConfig` is built by `buildChainConfig(staticMeta)` —
+  static metadata (chainId, display name, blockExplorer, lzEid,
+  isCanonicalVPFI flag) stays hand-maintained in the file because
+  it never changes between deploys; the dynamic fields
+  (`diamondAddress`, `deployBlock`, `escrowImplAddress`,
+  `riskFacetAddress`, `profileFacetAddress`, `metricsFacetAddress`,
+  `vpfiBuyAdapter`, `vpfiBuyPaymentToken`) all flow from
+  `getDeployment(meta.chainId)`. The existing EIP-55 normalisation
+  pass at module load is preserved so a mis-cased address in any
+  per-chain JSON still surfaces at startup with a clear error.
+- `ops/hf-watcher/src/env.ts` — `getChainConfigs(env)` now folds
+  per-chain RPC env vars (still operator-specific Worker secrets)
+  with `getDeployment(id)` lookups; chains without a recorded
+  deployment are auto-filtered. The six `DIAMOND_ADDR_*` entries
+  on the `Env` interface are gone.
+- `ops/hf-watcher/wrangler.jsonc:vars` — six empty
+  `DIAMOND_ADDR_*` placeholders dropped. Comment in the same
+  spot now points at the deployments JSON.
+- `frontend/.env.example` and `frontend/.env.local` shrunk from
+  37 keys to ~15. What remains is genuinely operator-specific —
+  per-chain RPC URLs (with API keys), WalletConnect project ID,
+  default chain ID, log-chunk tuning, feature flags, push channel
+  address. Nothing else.
+- `contracts/script/syncFrontendEnv.sh` retired (deleted). Its
+  whole job is now done by the export script's frontend target.
+- `frontend/scripts/uploadEnvToCloudflare.sh` retired (deleted).
+  That script targeted Cloudflare Pages — wrong tool for this
+  project, which deploys via Workers Static Assets and inlines
+  `VITE_*` at LOCAL `vite build` time.
+
+**Omit-keys policy:**
+
+Different chains have legitimately different shapes — the
+canonical-VPFI chain has `vpfiOftAdapter` + `vpfiBuyReceiver`;
+mirror chains have `vpfiMirror` + `vpfiBuyAdapter`. The merged
+JSON preserves this variance: each chain's stanza only carries
+the keys present in its `addresses.json`. There are NO
+zero-address sentinels for "doesn't apply on this chain" because
+`address(0)` already means real things in Solidity (the ETH
+sentinel, the burn address, default-treasury). Conflating
+"missing field" with "intentionally zero" is a bug class we
+designed out. The TS `Deployment` interface marks non-universal
+fields as optional, and consumers narrow on the
+`isCanonicalVPFI` / `isCanonicalReward` discriminators (already
+present in every per-chain JSON) before reading scoped fields.
+
+The one exception: `vpfiBuyPaymentToken` carries
+`0x0000…0000` to mean "pay in native gas (ETH/BNB)". That's a
+meaningful runtime sentinel (the Solidity convention for
+native-gas mode in payment-token slots), not a missing field.
+The frontend's `nullIfZero` boundary maps it to `null` for
+JS-truthiness ergonomics; the JSON keeps it raw.
+
+**Verified end-to-end:**
+
+- Frontend `tsc -b --noEmit` clean.
+- Watcher `npm run typecheck` clean.
+- `npm run build` (Node 25) on the frontend produced a clean
+  bundle. The Base Sepolia and Sepolia Diamond addresses each
+  appear exactly once in the main JS chunk
+  (`dist/assets/index-*.js`) and zero times in any other chunk —
+  vite inlined the JSON correctly with no duplication and no
+  tree-shaking surprises.
+- Export script ran cleanly against all 4 existing per-chain
+  dirs (anvil 31337, base-sepolia 84532, bnb-testnet 97,
+  sepolia 11155111), wrote both targets + provenance stamps.
+
+**Operator workflow after a redeploy:**
+
+```
+[deploy contracts on chain X]                # writes contracts/deployments/<x>/addresses.json
+bash contracts/script/exportFrontendDeployments.sh   # syncs both consumers
+cd frontend && npm run deploy                # ships frontend
+cd ops/hf-watcher && wrangler deploy         # ships watcher
+```
+
+No `.env.local` edits, no `wrangler.jsonc:vars` edits, no
+Cloudflare dashboard touches for the address change. The merged
+JSON is committed to git, so CI builds (if/when introduced) see
+the addresses without needing an env-var dance.
+
+**What stays manual / one-time:**
+
+- `wrangler secret put TG_BOT_TOKEN` (and the other watcher
+  secrets — `RPC_*`, `PUSH_CHANNEL_PK`, aggregator keys,
+  `KEEPER_PRIVATE_KEY`). Secrets cannot live in `wrangler.jsonc`
+  because that file is committed; they go in the encrypted
+  secret store via the wrangler CLI, once per worker per env.
+- `frontend/.env.local` per-chain RPC URLs (with API key).
+  Still operator-specific.
+- For a future migration to GitHub auto-deploy via Cloudflare
+  Workers Builds: the build environment variables panel
+  (separate from `wrangler.jsonc:vars` — those are runtime
+  vars on the Worker; build-env-vars are what `vite build`
+  reads at compile time). One-time setup, then every push
+  picks them up.
+
+**Documentation updated:**
+
+- `CLAUDE.md` — section retitled "Deployments sync (frontend +
+  hf-watcher)" with both consumer paths documented + the
+  omit-keys policy spelled out.
+- `docs/ops/DeploymentRunbook.md` — replaced the old
+  `syncFrontendEnv.sh` walkthrough with the new
+  `exportFrontendDeployments.sh` flow; explicitly notes that
+  addresses are no longer in `.env.local` so CI builds see
+  them via the committed JSON.
+- `docs/ops/BaseSepoliaDeploy.md` — new §15 "Sync the deployments
+  JSON (frontend + hf-watcher)" appended after the existing
+  "Sync the frontend ABI bundle" section.
+- `docs/ops/BNBTestnetDeploy.md` — Publish-step rewritten to use
+  the export script instead of hand-editing
+  `VITE_BNB_TESTNET_*` lines.
+
+## Deploy-script auth cleanup — 00015 / 00016 / 00017 / 00018
+
+Four post-handover-runnability findings in the deploy-script
+collection, all small, all related. After yesterday's
+`TransferAdminToTimelock` flow lands in production, the deployer
+EOA holds zero ERC-173 ownership and zero roles — any admin-side
+script that still reads the legacy `PRIVATE_KEY` reverts with
+`NotContractOwner` or `AccessControlUnauthorizedAccount`.
+
+**00015 — `AddOracleAdmin.s.sol` deleted.** Its stated purpose
+("DeployDiamond didn't register OracleAdminFacet so add it via a
+follow-up cut") is structurally impossible today — `DeployDiamond.s.sol`
+already cuts the full 20-selector OracleAdminFacet surface at
+line 131, so the follow-up `AddFacet` cut would revert with
+`CannotAddSelectorThatAlreadyExists` even if the auth issue
+were fixed. Operators who need to swap the OracleAdminFacet
+implementation post-deploy use the working `UpgradeOracleFacet.s.sol`
+sibling, which correctly splits `PRIVATE_KEY` (deploy a new impl)
+and `ADMIN_PRIVATE_KEY` (broadcast the `Replace` cut from the
+admin EOA). Same shape as the `UpgradeOracle.s.sol` deletion in
+yesterday's findings 00013 + 00014. `contracts/README.md`
+script-table cleaned up — dropped the `AddOracleAdmin.s.sol`
+row and fixed the stale `UpgradeOracle.s.sol` reference (now
+points at `UpgradeOracleFacet.s.sol`).
+
+**00016 — `ConfigureRewardReporter.s.sol`.** Now reads
+`ADMIN_PRIVATE_KEY` instead of `PRIVATE_KEY` at the broadcaster
+line, matching the sibling-script convention used by
+`ConfigureOracle`, `ConfigureVPFIBuy`, `ConfigureNFTImageURIs`.
+The NatSpec env-var block was expanded to spell out the
+rationale: every setter the script calls (`setLocalEid`,
+`setBaseEid`, `setRewardOApp`, `setIsCanonicalRewardChain`,
+`setExpectedSourceEids`) gates on `ADMIN_ROLE`, so
+post-handover the legacy `PRIVATE_KEY` would no-op-revert.
+
+**00017 — `SetInteractionLaunch.s.sol`.** Same fix shape as
+00016 — `PRIVATE_KEY` → `ADMIN_PRIVATE_KEY` at line 34, plus
+NatSpec rationale. The two setters it calls
+(`setInteractionLaunchTimestamp`,
+`setInteractionCapVpfiPerEth`) are both `ADMIN_ROLE`-gated.
+
+**00018 — `ConfigureOracle.s.sol` scope clarified, not
+loosened.** Verified the underlying authorisation surface
+before fixing: every OracleAdminFacet setter the script
+broadcasts (`setUsdChainlinkDenominator`,
+`setEthChainlinkDenominator`, `setWethContract`,
+`setEthUsdFeed`, `setUniswapV3Factory`,
+`setSequencerUptimeFeed`, `setChainlinkRegistry`,
+`setStableTokenFeed`, plus the secondary-oracle setters)
+genuinely gates on `LibDiamond.enforceIsContractOwner()` —
+not `ADMIN_ROLE`. Only the two `AdminFacet.setZeroExProxy` /
+`setallowanceTarget` calls would tolerate ADMIN_ROLE alone.
+The finding's "just relax the gate" framing would have meant
+half the script silently broadcasts and half the script
+reverts on-chain after the timelock takes ownership — worse
+than the current loud-fail.
+
+The right framing is: this is the **pre-handover bootstrap
+path**. Per the BaseSepoliaDeploy / DeploymentRunbook
+ordering, ConfigureOracle runs in §2 (right after
+DeployDiamond, before any `TransferAdminToTimelock`). After
+the timelock takes ownership, every OracleAdminFacet setter
+must go through the timelock proposer flow (encode the
+calldata, schedule with the documented delay, execute) —
+not via this script. Splitting the script to support both
+paths would force a half-broadcast / half-timelock-proposal
+flow that's not worth the operational complexity for a
+one-shot bootstrap.
+
+What changed in the script:
+- Doc-comment block above the pre-flight check expanded to
+  document the scope explicitly.
+- Pre-flight revert message now educates the operator
+  hitting it post-handover: "This script is the
+  pre-handover bootstrap path; post-handover oracle
+  changes must go through the timelock proposer flow (see
+  DeploymentRunbook)." No code-path change for the
+  legitimate (pre-handover) caller — the
+  ownership-required gate is preserved.
+
+**Verified:** `forge build` clean across all four edits +
+the `AddOracleAdmin` deletion (no compilation errors;
+trailing notes are pre-existing lint warnings on unrelated
+files).
+
 ## Outstanding for the testnet redeploy gate
 
 Before fresh testnet diamonds can land:

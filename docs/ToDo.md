@@ -8,6 +8,7 @@
 
 ---
 
+- [ ] ensure in BNB chain since the BNB is native chain toke and WETH is what we need to get from it (to buy VPFI) and this is different from other chains (except for Polygon where the native token is POL), so do we need to have contract address on WETH on BNB and Polygon chain (chains which have different native tokens instead of ETH), to cross check it from our side before initiating the layerzero VPFI cross chain purchase. contracts also need to revert on those chains if user is not providing WETH (verified with contract addres may be set in config or set as immutable constant) to buy VPFI, what do you say?
 - [ ] Provide dropdown for duration, so that it would be bucketed and would help the matching offers in a better way, what do you say?
 - [ ] Defer: Group languages based on the locality of that continent and display only those group belonging to that continent. Note: exception is for japanese can be displayed together with western countries too
 - [ ] Borrower can pay interest at any time but it is mandatory to pay complete interest at the end of 1 (or each) year completion, the cumulative paid interest for that year should be equal or more than a full year accured interest, otherwise system will use collateral to pay interst to lender after grace period of 2 weeks (buy selling the required collateral asset to but lending asset), this may incur higher fees and may also drastically change the HF/LTV and may triger liquidation too.

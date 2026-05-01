@@ -23,7 +23,18 @@ import {Deployments} from "./lib/Deployments.sol";
  *      the daily pool.
  *
  *      Required env vars:
- *        - PRIVATE_KEY                 : admin-role key
+ *        - ADMIN_PRIVATE_KEY           : ADMIN_ROLE-holding EOA. The
+ *                                         setters here
+ *                                         (`setInteractionLaunchTimestamp`,
+ *                                         `setInteractionCapVpfiPerEth`)
+ *                                         gate on `ADMIN_ROLE`. Same key
+ *                                         the sibling `ConfigureOracle` /
+ *                                         `ConfigureVPFIBuy` /
+ *                                         `ConfigureNFTImageURIs` scripts
+ *                                         use. Post-handover the deployer
+ *                                         EOA holds zero roles, so the
+ *                                         legacy `PRIVATE_KEY` would
+ *                                         revert here.
  *        - <CHAIN>_DIAMOND_ADDRESS     : Diamond proxy for this chain
  *        - INTERACTION_LAUNCH_TIMESTAMP: unix seconds of day 0, same on every chain
  *        - INTERACTION_CAP_VPFI_PER_ETH: optional, 1e18-scaled cap
@@ -31,7 +42,7 @@ import {Deployments} from "./lib/Deployments.sol";
  */
 contract SetInteractionLaunch is Script {
     function run() external {
-        uint256 deployerKey = vm.envUint("PRIVATE_KEY");
+        uint256 deployerKey = vm.envUint("ADMIN_PRIVATE_KEY");
         address diamond = Deployments.readDiamond();
         uint256 launchTs = vm.envUint("INTERACTION_LAUNCH_TIMESTAMP");
         uint256 cap = vm.envOr("INTERACTION_CAP_VPFI_PER_ETH", uint256(0));
