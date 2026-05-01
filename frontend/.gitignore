@@ -30,3 +30,6 @@ coverage
 !.dev.vars.example
 .env*
 !.env.example
+
+# internal scribles
+docs/internal/RoughNotes.md
