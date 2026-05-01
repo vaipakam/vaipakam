@@ -1,15 +1,16 @@
 # Bienvenido a Vaipakam
 
-Vaipakam es una plataforma de préstamos entre pares. Tú prestas
-activos y ganas intereses. Tomas prestados activos y aportas garantía.
-Alquilas NFTs y el propietario recibe pagos diarios. Todo ocurre
+Vaipakam es una plataforma de préstamos entre pares. Prestas activos
+y ganas intereses. Tomas activos prestados y aportas garantía.
+Alquilas NFTs y el propietario cobra renta diaria. Todo ocurre
 directamente entre dos billeteras, con los contratos inteligentes
-custodiando los activos hasta que termina el préstamo o el alquiler.
+manteniendo los activos en escrow hasta que termina el préstamo o el
+alquiler.
 
-Esta página es el **recorrido amigable**. Si quieres profundidad
-técnica, usa la pestaña **Guía de usuario** para ayuda por pantalla,
-o la pestaña **Técnico** para el whitepaper completo. Si solo quieres
-saber "qué es esto y cómo lo uso" — sigue leyendo.
+Esta página es el **recorrido amigable**. Si buscas más profundidad
+técnica, usa la pestaña **Guía de usuario** para ayuda pantalla por
+pantalla, o la pestaña **Técnico** para el whitepaper completo. Si
+solo quieres saber "qué es esto y cómo lo uso" — sigue leyendo.
 
 ---
 
@@ -18,8 +19,8 @@ saber "qué es esto y cómo lo uso" — sigue leyendo.
 Vaipakam es para cuatro tipos de personas:
 
 - **Prestamistas** — tienes un activo (USDC, ETH, USDT, etc.) sin uso.
-  Te gustaría que generara intereses sin perder seguridad. Publicas
-  una oferta de prestamista; un prestatario la acepta; ganas
+  Te gustaría que generara intereses sin renunciar a la seguridad.
+  Publicas una oferta de prestamista; un prestatario la acepta; ganas
   intereses según tus condiciones.
 - **Prestatarios** — necesitas efectivo durante unos días, semanas o
   meses y no quieres vender tu garantía (porque crees que va a subir,
@@ -42,7 +43,7 @@ puedes prestar, pedir prestado o alquilar.
 
 ## Cómo funciona un préstamo (ejemplo concreto)
 
-Supongamos que tienes **1.000 USDC** parados en tu billetera en Base.
+Supongamos que tienes **1.000 USDC** quietos en tu billetera en Base.
 Te gustaría ganar intereses. Aquí está el ciclo completo.
 
 ### Paso 1 — Crear una oferta
@@ -62,7 +63,7 @@ Permanecen ahí hasta que un prestatario acepte tu oferta.
 ### Paso 2 — Un prestatario acepta
 
 Tal vez una hora después, otra persona ve tu oferta en el **Libro
-de ofertas**. Tiene WETH y quiere pedir prestado USDC contra él
+de ofertas**. Tiene WETH y quiere pedir prestado USDC usando ese WETH
 durante un mes. Hace clic en **Aceptar** y aporta WETH por valor,
 digamos, de 1.500 $ (un LTV de aproximadamente 67% — por debajo de
 tu límite del 70%, así que la oferta se acepta).
@@ -75,7 +76,7 @@ En el momento que acepta:
   USDC + intereses"; el suyo dice "Se me debe mi WETH cuando pague"
 - El cronómetro del préstamo empieza a correr
 
-Una pequeña **Comisión de iniciación del préstamo (0,1%)** se toma
+Una pequeña **Comisión de iniciación del préstamo (0,1%)** se descuenta
 del importe prestado y se envía al tesoro del protocolo. Así que el
 prestatario recibe 999 USDC, no 1.000. (Puedes pagar la comisión en
 **VPFI** y entonces el prestatario recibe los 1.000 completos —
@@ -93,8 +94,7 @@ Hace clic en **Devolver**, firma una transacción, y 1.006,58 USDC
 entran en la liquidación del préstamo. De ahí:
 
 - Tú recibes **1.005,51 USDC** (principal + intereses menos una
-  Comisión sobre Rendimiento del 1% sobre la parte de intereses
-  únicamente)
+  Comisión sobre Rendimiento del 1% aplicada únicamente a los intereses)
 - El tesoro recibe **1,07 USDC** como Comisión sobre Rendimiento
 - El WETH del prestatario se desbloquea
 
@@ -227,8 +227,8 @@ préstamo fallido.
 
 No hay comisiones de retirada, ni comisiones por inactividad, ni
 comisiones de streaming, ni comisiones de "rendimiento" sobre el
-principal. El único dinero que toma el protocolo son los dos números
-de arriba.
+principal. Los únicos importes que toma el protocolo son las dos
+comisiones anteriores.
 
 ---
 
@@ -282,8 +282,8 @@ Tres caminos:
 - **Comprarlo** — a tasa fija (`1 VPFI = 0,001 ETH`) en la página
   **Comprar VPFI**. El programa de tasa fija tiene tope por
   billetera por cadena.
-- **Hacer puente** — VPFI es un token LayerZero OFT V2, así que se
-  mueve entre cadenas compatibles usando el puente oficial.
+- **Moverlo por puente** — VPFI es un token LayerZero OFT V2, así que
+  se mueve entre cadenas compatibles usando el puente oficial.
 
 ---
 
@@ -294,7 +294,7 @@ compatible: **Ethereum**, **Base**, **Arbitrum**, **Optimism**,
 **Polygon zkEVM**, **BNB Chain**.
 
 Un préstamo abierto en Base se liquida en Base. Un préstamo abierto
-en Arbitrum se liquida en Arbitrum. No hay deuda multi-cadena. Lo
+en Arbitrum se liquida en Arbitrum. No hay deuda entre cadenas. Lo
 único que cruza cadenas es el token VPFI y el denominador diario de
 recompensas (que asegura que las recompensas sean justas entre
 cadenas activas y tranquilas).
@@ -347,10 +347,10 @@ deliberadamente **no**:
 - **Sin custodia por proxy.** Tus activos están en tu propio escrow,
   no en una bóveda compartida. El protocolo solo los mueve con las
   acciones que firmas.
-- **Sin bucles de apalancamiento por defecto.** Puedes retransmitir
+- **Sin bucles de apalancamiento por defecto.** Puedes volver a publicar
   los fondos prestados como nueva oferta de prestamista si quieres,
   pero el protocolo no integra el bucle automático en la UX.
-  Pensamos que es un footgun.
+  Creemos que es una trampa demasiado fácil de activar.
 - **Sin actualizaciones sorpresa.** Las actualizaciones del escrow
   están limitadas; las actualizaciones obligatorias aparecen en la
   app para que las apliques explícitamente. Nada reescribe tu
