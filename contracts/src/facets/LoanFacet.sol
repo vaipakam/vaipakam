@@ -8,6 +8,8 @@ import {LibMetricsHooks} from "../libraries/LibMetricsHooks.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
 import {LibInteractionRewards} from "../libraries/LibInteractionRewards.sol";
 import {LibVPFIDiscount} from "../libraries/LibVPFIDiscount.sol";
+import {LibNotificationFee} from "../libraries/LibNotificationFee.sol";
+import {LibAccessControl, DiamondAccessControl} from "../libraries/LibAccessControl.sol";
 import {DiamondPausable} from "../libraries/LibPausable.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {RiskFacet} from "./RiskFacet.sol";
@@ -43,7 +45,7 @@ import {OracleFacet} from "./OracleFacet.sol";
  *           and mint the counterparty's NFT.
  *      Pausable (whenNotPaused).
  */
-contract LoanFacet is DiamondPausable, IVaipakamErrors {
+contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
     /// @notice Emitted when a new loan is initiated.
     /// @param loanId           The unique ID of the loan.
     /// @param offerId          The associated offer ID.
@@ -584,6 +586,54 @@ contract LoanFacet is DiamondPausable, IVaipakamErrors {
     ) external view returns (LibVaipakam.Loan memory loan) {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         return s.loans[loanId];
+    }
+
+    /**
+     * @notice T-032 — record the FIRST PaidPush-tier notification for a
+     *         loan-side and immediately bill the corresponding party
+     *         `cfgNotificationFeeUsd()`-equivalent in VPFI from their
+     *         escrow → treasury (one transfer, no Diamond custody).
+     * @dev    Idempotent: subsequent calls on an already-billed side
+     *         no-op. Reverts on:
+     *           - caller missing `NOTIF_BILLER_ROLE`
+     *           - loanId past `nextLoanId` or never-initialized
+     *             (InvalidLoanStatus)
+     *           - oracle stale / WETH unset / VPFI not configured
+     *           - payer's escrow has insufficient VPFI (the watcher's
+     *             expected behaviour is to LOG this revert and skip
+     *             the notification — the user's billed flag stays
+     *             false until they top up VPFI)
+     *
+     *         The watcher fires this at notification-send time
+     *         **only on PaidPush tier** subscribers — FreeTelegram
+     *         subscribers are notified for free and never trigger
+     *         this call. The on-chain billed flag is the source of
+     *         truth that "this loan-side has paid for the notification
+     *         service this lifetime."
+     *
+     * @param  loanId        Loan being billed.
+     * @param  isLenderSide  true ⇒ bill `loan.lender`; false ⇒ bill
+     *                       `loan.borrower`.
+     */
+    function markNotifBilled(uint256 loanId, bool isLenderSide)
+        external
+        whenNotPaused
+        onlyRole(LibAccessControl.NOTIF_BILLER_ROLE)
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        // Loan-existence guard. `nextLoanId` is the highest id ever
+        // assigned (pre-increment in `_initiateLoanFinalize` line 158);
+        // valid range is [1, nextLoanId] inclusive. Loans are never
+        // deleted from `s.loans`, so an in-range id always resolves to
+        // a real Loan record. Out-of-range or never-initialized ids
+        // return a zeroed Loan struct (lender == address(0)) — that's
+        // the case we reject here.
+        if (loanId == 0 || loanId > s.nextLoanId) {
+            revert InvalidLoanStatus();
+        }
+        LibVaipakam.Loan storage loan = s.loans[loanId];
+        address payer = isLenderSide ? loan.lender : loan.borrower;
+        LibNotificationFee.bill(loanId, isLenderSide, payer);
     }
 
     /**

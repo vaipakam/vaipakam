@@ -78,6 +78,7 @@ contract DeployerZeroRolesTest is Test {
         ALL_ROLES.push(LibAccessControl.RISK_ADMIN_ROLE);
         ALL_ROLES.push(LibAccessControl.ESCROW_ADMIN_ROLE);
         ALL_ROLES.push(LibAccessControl.WATCHER_ROLE);
+        ALL_ROLES.push(LibAccessControl.NOTIF_BILLER_ROLE);
     }
 
     // ─── 1. Initial state (pre-rotation) ──────────────────────────────────

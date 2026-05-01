@@ -83,6 +83,29 @@
   },
   {
     "type": "function",
+    "name": "getNotificationFeeConfig",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "feeUsd1e18",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "feeOracle",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "feesAccrued",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "getProtocolConfigBundle",
     "inputs": [],
     "outputs": [
@@ -384,6 +407,32 @@
   },
   {
     "type": "function",
+    "name": "setNotificationFeeUsd",
+    "inputs": [
+      {
+        "name": "newFeeUsd1e18",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "setNotificationFeeUsdOracle",
+    "inputs": [
+      {
+        "name": "newOracle",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "setPartialFillEnabled",
     "inputs": [
       {
@@ -606,6 +655,32 @@
         "type": "uint16",
         "indexed": false,
         "internalType": "uint16"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "NotificationFeeUsdOracleSet",
+    "inputs": [
+      {
+        "name": "newOracle",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "NotificationFeeUsdSet",
+    "inputs": [
+      {
+        "name": "newFeeUsd1e18",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
       }
     ],
     "anonymous": false
@@ -881,6 +956,27 @@
       },
       {
         "name": "ceilDays",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "InvalidNotificationFeeUsd",
+    "inputs": [
+      {
+        "name": "provided",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "floorUsd",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "ceilUsd",
         "type": "uint256",
         "internalType": "uint256"
       }

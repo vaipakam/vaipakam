@@ -126,6 +126,28 @@ library LibVaipakam {
     uint256 constant AUTO_PAUSE_DURATION_DEFAULT = 1800;   // 30 min
     uint256 constant MIN_AUTO_PAUSE_SECONDS = 300;         // 5 min
     uint256 constant MAX_AUTO_PAUSE_SECONDS = 7200;        // 2 hours
+
+    /// @dev T-032 — Notification fee (per loan-side) defaults + bounds.
+    ///      Charged in VPFI, USD-denominated, deducted on first paid-tier
+    ///      notification fired by the off-chain hf-watcher. Default $2
+    ///      covers Push Protocol channel-side delivery costs at the
+    ///      operator's expected notification volumes (~5-10 notifications
+    ///      per loan lifetime ⇒ ~$0.10-0.50 actual gas). Floor $0.10
+    ///      prevents governance accidentally setting it to ~0 and
+    ///      starving the channel; ceiling $50 caps the worst-case
+    ///      bill on a per-loan basis if governance misfires upward.
+    uint256 constant NOTIFICATION_FEE_USD_DEFAULT = 2 * 1e18;
+    uint256 constant MIN_NOTIFICATION_FEE_USD_FLOOR = 1e17;     // $0.10
+    uint256 constant MAX_NOTIFICATION_FEE_USD_CEIL = 50 * 1e18; // $50
+
+    /// @dev T-032 — Phase 1 fixed VPFI/ETH rate. While VPFI doesn't have
+    ///      a real market price, the fee math uses
+    ///        `vpfiAmount = feeUsd / (ethUsdPrice × VPFI_PER_ETH_FIXED_PHASE1)`
+    ///      where `VPFI_PER_ETH_FIXED_PHASE1 = 1e15` (1 VPFI = 0.001 ETH,
+    ///      both 18-dec). When governance sets a non-zero
+    ///      `notificationFeeUsdOracle` (Phase 2 / VPFI lists), the
+    ///      oracle path is consulted ahead of this fixed-rate fallback.
+    uint256 constant VPFI_PER_ETH_FIXED_PHASE1 = 1e15;
     // Sanity ceiling on `interestRateBpsMax` at offer creation. Below
     // 100% APR equivalent (10000 bps). Tighter would risk rejecting
     // legitimate distressed-borrower offers; higher would let pranks
@@ -387,6 +409,28 @@ library LibVaipakam {
         uint256 vpfiTier2Min;               // 0 ⇒ VPFI_TIER2_MIN (1_000e18)
         uint256 vpfiTier3Min;               // 0 ⇒ VPFI_TIER3_MIN (5_000e18)
         uint256 vpfiTier4Threshold;         // 0 ⇒ VPFI_TIER4_THRESHOLD (20_000e18)
+        // ── T-032 — Notification fee config ───────────────────────────
+        // Flat per-loan-side notification fee, USD-denominated (1e18
+        // scaled). Charged in VPFI from the user's escrow at the moment
+        // the off-chain hf-watcher fires the FIRST notification on a
+        // PaidPush-tier subscription for that loan-side. Zero (default)
+        // means use the library constant `NOTIFICATION_FEE_USD_DEFAULT`
+        // ($2 in 1e18 = `2e18`); set via
+        // `ConfigFacet.setNotificationFeeUsd`. Bounded
+        // `[MIN_NOTIFICATION_FEE_USD_FLOOR, MAX_NOTIFICATION_FEE_USD_CEIL]`
+        // at the setter so a misfire can't lock users out OR drain
+        // their escrows.
+        uint256 notificationFeeUsd;         // 0 ⇒ NOTIFICATION_FEE_USD_DEFAULT (2e18)
+        // Pluggable USD-pegged price source for the notification fee.
+        // Phase 1: leave as `address(0)` — the bill uses the existing
+        // `s.ethUsdFeed` Chainlink feed plus the
+        // `VPFI_PER_ETH_FIXED_PHASE1` constant (1 VPFI = 0.001 ETH).
+        // Phase 2 / governance can swap to a direct VPFI/USD oracle
+        // (or a different denomination — EUR / JPY etc.) by setting
+        // this to the new oracle address; `LibNotificationFee`
+        // consults it ahead of the fixed-rate fallback. Setter:
+        // `ConfigFacet.setNotificationFeeUsdOracle`.
+        address notificationFeeUsdOracle;   // 0 ⇒ Phase 1 fixed-rate fallback
     }
 
     /// @dev Struct to store parameters of createOffer function, avoiding stack-too-deep.
@@ -617,6 +661,20 @@ library LibVaipakam {
         // the Range Orders Phase 1 cutover. See
         // docs/RangeOffersDesign.md §"1% match fee mechanic."
         address matcher;
+        // ── T-032 — notification-fee billed flags ──────────────────────
+        // Set by `LoanFacet.markNotifBilled` (callable only by
+        // `NOTIF_BILLER_ROLE` — held by the off-chain hf-watcher) the
+        // first time a paid-tier (Push-Protocol) notification fires
+        // for the corresponding side of this loan. Once set, the user's
+        // VPFI escrow has already been debited the
+        // `cfgNotificationFeeUsd()`-equivalent amount in VPFI,
+        // routed directly to treasury (no Diamond custody — see
+        // `LibNotificationFee.bill` for the routing). Idempotent: the
+        // facet method no-ops if the flag is already true. Free-tier
+        // (Telegram-only) subscribers and unsubscribed users always
+        // leave both flags `false` — they're billed only on PaidPush.
+        bool lenderNotifBilled;
+        bool borrowerNotifBilled;
     }
 
     /**
@@ -1293,6 +1351,13 @@ library LibVaipakam {
         /// @dev Σ interestRateBps across every loan ever initiated.
         ///      Divided by totalLoansEverCreated to yield averageAPR.
         uint256 interestRateBpsSum;
+        /// @dev T-032 — cumulative VPFI debited from user escrows and
+        ///      routed to treasury via `LoanFacet.markNotifBilled`.
+        ///      Never decremented; the operator monitors this for
+        ///      anomaly detection (a compromised NOTIF_BILLER_ROLE
+        ///      could falsely bill, capped at the per-loan-side fee
+        ///      but observable here as a spike).
+        uint256 notificationFeesAccrued;
         /// @dev Count of offers currently not accepted and not cancelled.
         uint256 activeOffersCount;
         /// @dev Count of unique wallets that have ever created an offer
@@ -1806,6 +1871,16 @@ library LibVaipakam {
     function cfgMaxOfferDurationDays() internal view returns (uint256) {
         uint16 v = storageSlot().protocolCfg.maxOfferDurationDays;
         return v == 0 ? MAX_OFFER_DURATION_DAYS_DEFAULT : uint256(v);
+    }
+
+    /// @dev T-032 — Notification fee in USD (1e18 scaled).
+    ///      Governance-tunable via `ConfigFacet.setNotificationFeeUsd`
+    ///      within [MIN_NOTIFICATION_FEE_USD_FLOOR,
+    ///      MAX_NOTIFICATION_FEE_USD_CEIL]. Falls back to
+    ///      NOTIFICATION_FEE_USD_DEFAULT ($2) when unset.
+    function cfgNotificationFeeUsd() internal view returns (uint256) {
+        uint256 v = storageSlot().protocolCfg.notificationFeeUsd;
+        return v == 0 ? NOTIFICATION_FEE_USD_DEFAULT : v;
     }
 
     /// @dev Returns the four tier thresholds (T1 min, T2 min, T3 min, T4 min-exclusive).

@@ -619,10 +619,12 @@ contract DeployDiamond is Script {
     }
 
     function _getLoanSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](3);
+        s = new bytes4[](4);
         s[0] = LoanFacet.initiateLoan.selector;
         s[1] = LoanFacet.getLoanDetails.selector;
         s[2] = LoanFacet.getLoanConsents.selector;
+        // T-032 — notification-bill writer entry. NOTIF_BILLER_ROLE-gated.
+        s[3] = LoanFacet.markNotifBilled.selector;
     }
 
     function _getRepaySelectors() internal pure returns (bytes4[] memory s) {
@@ -798,7 +800,7 @@ contract DeployDiamond is Script {
     }
 
     function _getConfigSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](23);
+        s = new bytes4[](26);
         // Setters
         s[0] = ConfigFacet.setFeesConfig.selector;
         s[1] = ConfigFacet.setLiquidationConfig.selector;
@@ -835,6 +837,11 @@ contract DeployDiamond is Script {
         s[21] = ConfigFacet.setAutoPauseDurationSeconds.selector;
         // Findings 00025 — governance-tunable max loan duration.
         s[22] = ConfigFacet.setMaxOfferDurationDays.selector;
+        // T-032 — notification fee USD knob + pluggable reference oracle
+        // + bundled getter (frontend cost-disclosure single-RPC read).
+        s[23] = ConfigFacet.setNotificationFeeUsd.selector;
+        s[24] = ConfigFacet.setNotificationFeeUsdOracle.selector;
+        s[25] = ConfigFacet.getNotificationFeeConfig.selector;
     }
 
     function _getRewardAggregatorSelectors() internal pure returns (bytes4[] memory s) {

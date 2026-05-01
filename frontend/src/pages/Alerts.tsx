@@ -59,6 +59,19 @@ export default function Alerts() {
   const [alertHf, setAlertHf] = useState(1.2);
   const [criticalHf, setCriticalHf] = useState(1.05);
 
+  // T-032 — per-event category opt-ins. Independent of HF (which is
+  // compulsory once any rail is enabled — see CLAUDE.md). All default
+  // to ON: a user opting into the alerts product almost certainly
+  // wants the high-value events too, and forcing them to flip six
+  // switches just to start receiving notifications is friction with
+  // no signal value. They can opt out individually later.
+  const [notifyClaimAvailable, setNotifyClaimAvailable] = useState(true);
+  const [notifyLoanTerminal, setNotifyLoanTerminal] = useState(true);
+  const [notifyVpfiBuyReceived, setNotifyVpfiBuyReceived] = useState(true);
+  const [notifyLoanInitiatedCreator, setNotifyLoanInitiatedCreator] = useState(true);
+  const [notifyMaturityApproaching, setNotifyMaturityApproaching] = useState(true);
+  const [notifyPartialRepayReceived, setNotifyPartialRepayReceived] = useState(true);
+
   const [tgLinkCode, setTgLinkCode] = useState<string | null>(null);
   const [tgBotUrl, setTgBotUrl] = useState<string | null>(null);
 
@@ -151,6 +164,18 @@ export default function Alerts() {
           // code; the worker falls back to 'en' for any unsupported
           // value, so a stale localStorage entry can't break delivery.
           locale: i18n.resolvedLanguage ?? "en",
+          // T-032 — per-event opt-ins. Forward-compatible with the
+          // current watcher (it stores arbitrary user_thresholds
+          // columns; unknown fields are no-ops until the backend
+          // detector for each event lands). HF bands above are
+          // always on for any rail-enabled subscriber — these flags
+          // ONLY toggle the six paid-tier event types.
+          notify_claim_available: notifyClaimAvailable,
+          notify_loan_terminal: notifyLoanTerminal,
+          notify_vpfi_buy_received: notifyVpfiBuyReceived,
+          notify_loan_initiated_creator: notifyLoanInitiatedCreator,
+          notify_maturity_approaching: notifyMaturityApproaching,
+          notify_partial_repay_received: notifyPartialRepayReceived,
         }),
       });
       if (!res.ok) {
@@ -255,6 +280,19 @@ export default function Alerts() {
           critical_hf: criticalHf,
           push_channel: "subscribed",
           locale: i18n.resolvedLanguage ?? "en",
+          // T-032 — same per-event opt-ins as the threshold-save
+          // path. See `save()` above for context. Push activation
+          // implies the user accepts the per-loan-side notification
+          // fee (charged in VPFI from escrow on the FIRST paid
+          // event fired) — that economic gate is on-chain via
+          // `LoanFacet.markNotifBilled` and independent of which
+          // event categories are toggled here.
+          notify_claim_available: notifyClaimAvailable,
+          notify_loan_terminal: notifyLoanTerminal,
+          notify_vpfi_buy_received: notifyVpfiBuyReceived,
+          notify_loan_initiated_creator: notifyLoanInitiatedCreator,
+          notify_maturity_approaching: notifyMaturityApproaching,
+          notify_partial_repay_received: notifyPartialRepayReceived,
         }),
       });
       if (!res.ok) {
@@ -404,6 +442,116 @@ export default function Alerts() {
         </button>
       </section>
 
+      {/* T-032 — per-event opt-ins. HF bands above are compulsory once
+          a rail is enabled; these six toggles control which of the
+          paid-tier events fire on top. All default-on for new users
+          (high-value events), individually opt-out-able. The "Save"
+          button under the thresholds section persists everything in
+          one PUT — the toggles share the same write surface. */}
+      <section
+        style={{
+          marginTop: 20,
+          padding: 16,
+          border: "1px solid var(--border)",
+          borderRadius: 8,
+          maxWidth: 720,
+        }}
+      >
+        <h2 style={{ fontSize: "1.05rem", margin: 0, display: "flex", alignItems: "center", gap: 6 }}>
+          {t('alertsPage.eventCategoriesTitle')}
+        </h2>
+        <p style={{ fontSize: "0.85rem", opacity: 0.8, margin: "4px 0 16px" }}>
+          {t('alertsPage.eventCategoriesBody')}
+        </p>
+
+        <div style={{ display: "grid", gap: 10 }}>
+          <label style={{ display: "flex", alignItems: "center", gap: 10, fontSize: "0.92rem" }}>
+            <input
+              type="checkbox"
+              checked={notifyClaimAvailable}
+              onChange={(e) => setNotifyClaimAvailable(e.target.checked)}
+            />
+            <span>
+              <strong>{t('alertsPage.eventClaimAvailableTitle')}</strong>
+              <br />
+              <span style={{ fontSize: "0.8rem", opacity: 0.7 }}>
+                {t('alertsPage.eventClaimAvailableDesc')}
+              </span>
+            </span>
+          </label>
+          <label style={{ display: "flex", alignItems: "center", gap: 10, fontSize: "0.92rem" }}>
+            <input
+              type="checkbox"
+              checked={notifyLoanTerminal}
+              onChange={(e) => setNotifyLoanTerminal(e.target.checked)}
+            />
+            <span>
+              <strong>{t('alertsPage.eventLoanTerminalTitle')}</strong>
+              <br />
+              <span style={{ fontSize: "0.8rem", opacity: 0.7 }}>
+                {t('alertsPage.eventLoanTerminalDesc')}
+              </span>
+            </span>
+          </label>
+          <label style={{ display: "flex", alignItems: "center", gap: 10, fontSize: "0.92rem" }}>
+            <input
+              type="checkbox"
+              checked={notifyVpfiBuyReceived}
+              onChange={(e) => setNotifyVpfiBuyReceived(e.target.checked)}
+            />
+            <span>
+              <strong>{t('alertsPage.eventVpfiBuyReceivedTitle')}</strong>
+              <br />
+              <span style={{ fontSize: "0.8rem", opacity: 0.7 }}>
+                {t('alertsPage.eventVpfiBuyReceivedDesc')}
+              </span>
+            </span>
+          </label>
+          <label style={{ display: "flex", alignItems: "center", gap: 10, fontSize: "0.92rem" }}>
+            <input
+              type="checkbox"
+              checked={notifyLoanInitiatedCreator}
+              onChange={(e) => setNotifyLoanInitiatedCreator(e.target.checked)}
+            />
+            <span>
+              <strong>{t('alertsPage.eventLoanInitiatedCreatorTitle')}</strong>
+              <br />
+              <span style={{ fontSize: "0.8rem", opacity: 0.7 }}>
+                {t('alertsPage.eventLoanInitiatedCreatorDesc')}
+              </span>
+            </span>
+          </label>
+          <label style={{ display: "flex", alignItems: "center", gap: 10, fontSize: "0.92rem" }}>
+            <input
+              type="checkbox"
+              checked={notifyMaturityApproaching}
+              onChange={(e) => setNotifyMaturityApproaching(e.target.checked)}
+            />
+            <span>
+              <strong>{t('alertsPage.eventMaturityApproachingTitle')}</strong>
+              <br />
+              <span style={{ fontSize: "0.8rem", opacity: 0.7 }}>
+                {t('alertsPage.eventMaturityApproachingDesc')}
+              </span>
+            </span>
+          </label>
+          <label style={{ display: "flex", alignItems: "center", gap: 10, fontSize: "0.92rem" }}>
+            <input
+              type="checkbox"
+              checked={notifyPartialRepayReceived}
+              onChange={(e) => setNotifyPartialRepayReceived(e.target.checked)}
+            />
+            <span>
+              <strong>{t('alertsPage.eventPartialRepayReceivedTitle')}</strong>
+              <br />
+              <span style={{ fontSize: "0.8rem", opacity: 0.7 }}>
+                {t('alertsPage.eventPartialRepayReceivedDesc')}
+              </span>
+            </span>
+          </label>
+        </div>
+      </section>
+
       {/* Delivery rails */}
       <section
         style={{
@@ -493,6 +641,33 @@ export default function Alerts() {
           <p style={{ fontSize: "0.82rem", opacity: 0.75, margin: "0 0 8px" }}>
             {t('alertsPage.pushBody')}
           </p>
+
+          {/* T-032 — Push fee disclosure. Required by the operator's
+              cost-pass-through model: the protocol's Push channel pays
+              gas to broadcast each notification, so we recoup it from
+              the user's VPFI escrow on the FIRST paid event per loan-
+              side. Telegram is free; this fee is exclusive to Push.
+              The displayed fee is governance-tunable
+              (`cfgNotificationFeeUsd`) — we currently render the
+              committed default since the live read is a follow-up
+              after the contract ABI re-export. The on-chain authority
+              `LoanFacet.markNotifBilled` is what actually charges. */}
+          <div
+            style={{
+              fontSize: "0.78rem",
+              opacity: 0.85,
+              margin: "0 0 8px",
+              padding: "10px 12px",
+              background: "var(--bg-muted)",
+              borderRadius: 6,
+              borderLeft: "3px solid var(--brand)",
+            }}
+          >
+            <strong>{t('alertsPage.pushFeeTitle')}</strong>
+            <div style={{ marginTop: 4 }}>
+              {t('alertsPage.pushFeeBody')}
+            </div>
+          </div>
 
           {PUSH_CHANNEL_ADDRESS && (
             <div

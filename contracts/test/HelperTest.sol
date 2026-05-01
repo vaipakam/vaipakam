@@ -39,7 +39,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](41);
+        selectors = new bytes4[](42);
         selectors[0] = TestMutatorFacet.setLoan.selector;
         selectors[1] = TestMutatorFacet.setOffer.selector;
         selectors[2] = TestMutatorFacet.setNextLoanId.selector;
@@ -88,6 +88,11 @@ contract HelperTest {
         // industrial-fork coverage in `CountryPairGatedTest`. Retail
         // never calls the gated branch.
         selectors[40] = TestMutatorFacet.canTradeBetweenStorageGated.selector;
+        // T-032 — direct `s.wethContract` writer for the
+        // `NotificationFeeTest` fixture (OracleAdminFacet isn't cut
+        // into the minimal test diamond, so the production
+        // owner-gated setter isn't reachable from test setUp).
+        selectors[41] = TestMutatorFacet.setWethContractRaw.selector;
         return selectors;
     }
 
@@ -283,10 +288,13 @@ contract HelperTest {
     }
 
     function getLoanFacetSelectors() public pure returns (bytes4[] memory) {
-        bytes4[] memory selectors = new bytes4[](3);
+        bytes4[] memory selectors = new bytes4[](4);
         selectors[0] = LoanFacet.initiateLoan.selector;
         selectors[1] = LoanFacet.getLoanDetails.selector;
         selectors[2] = LoanFacet.getLoanConsents.selector;
+        // T-032 — NOTIF_BILLER_ROLE-gated entry the watcher calls on
+        // first PaidPush-tier notification fired for a loan-side.
+        selectors[3] = LoanFacet.markNotifBilled.selector;
         return selectors;
     }
 
@@ -579,7 +587,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](19);
+        selectors = new bytes4[](22);
         selectors[0] = ConfigFacet.setFeesConfig.selector;
         selectors[1] = ConfigFacet.setLiquidationConfig.selector;
         selectors[2] = ConfigFacet.setRiskConfig.selector;
@@ -602,6 +610,11 @@ contract HelperTest {
         selectors[17] = ConfigFacet.setAutoPauseDurationSeconds.selector;
         // Findings 00025 — governance-tunable max loan duration.
         selectors[18] = ConfigFacet.setMaxOfferDurationDays.selector;
+        // T-032 — notification fee USD knob + pluggable oracle + bundled
+        // frontend-facing getter.
+        selectors[19] = ConfigFacet.setNotificationFeeUsd.selector;
+        selectors[20] = ConfigFacet.setNotificationFeeUsdOracle.selector;
+        selectors[21] = ConfigFacet.getNotificationFeeConfig.selector;
         return selectors;
     }
 

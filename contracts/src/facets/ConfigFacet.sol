@@ -230,6 +230,108 @@ contract ConfigFacet is DiamondAccessControl {
         emit MaxOfferDurationDaysSet(newDays);
     }
 
+    /// @notice T-032 — emitted on every change to the per-loan-side
+    ///         notification fee USD amount.
+    event NotificationFeeUsdSet(uint256 newFeeUsd1e18);
+    /// @notice T-032 — emitted on every change to the pluggable
+    ///         VPFI/<denomination> oracle. `address(0)` resets to the
+    ///         Phase 1 fixed-rate fallback (ETH/USD × 1 VPFI = 0.001 ETH).
+    event NotificationFeeUsdOracleSet(address indexed newOracle);
+    /// @notice T-032 — passed fee outside the [floor, ceil] bounds.
+    error InvalidNotificationFeeUsd(
+        uint256 provided,
+        uint256 floorUsd,
+        uint256 ceilUsd
+    );
+
+    /**
+     * @notice Update the per-loan-side notification fee, USD-denominated
+     *         (1e18 scaled). Charged in VPFI from the user's escrow on
+     *         the FIRST PaidPush-tier notification fired by the
+     *         off-chain hf-watcher.
+     * @dev ADMIN_ROLE-only. Bounded inside
+     *      `[MIN_NOTIFICATION_FEE_USD_FLOOR, MAX_NOTIFICATION_FEE_USD_CEIL]`
+     *      ($0.10 – $50). Floor prevents a misfire that sets the fee to
+     *      ~zero and starves the Push channel; ceiling caps the
+     *      worst-case user bill at $50/loan-side if governance misfires
+     *      upward. Pass exactly 0 to reset to the library default
+     *      `NOTIFICATION_FEE_USD_DEFAULT` ($2 ≡ 2e18).
+     * @param newFeeUsd1e18 New per-loan-side fee in USD-1e18 scaling;
+     *                     pass 0 to reset to the library default.
+     */
+    function setNotificationFeeUsd(uint256 newFeeUsd1e18)
+        external
+        onlyRole(LibAccessControl.ADMIN_ROLE)
+    {
+        if (
+            newFeeUsd1e18 != 0 &&
+            (
+                newFeeUsd1e18 < LibVaipakam.MIN_NOTIFICATION_FEE_USD_FLOOR ||
+                newFeeUsd1e18 > LibVaipakam.MAX_NOTIFICATION_FEE_USD_CEIL
+            )
+        ) {
+            revert InvalidNotificationFeeUsd(
+                newFeeUsd1e18,
+                LibVaipakam.MIN_NOTIFICATION_FEE_USD_FLOOR,
+                LibVaipakam.MAX_NOTIFICATION_FEE_USD_CEIL
+            );
+        }
+        LibVaipakam.storageSlot().protocolCfg.notificationFeeUsd = newFeeUsd1e18;
+        emit NotificationFeeUsdSet(newFeeUsd1e18);
+    }
+
+    /**
+     * @notice Set the pluggable price oracle for the notification fee
+     *         (Phase 2 / governance — switching denomination).
+     * @dev ADMIN_ROLE-only. Phase 1 default is `address(0)`, in which
+     *      case `LibNotificationFee.vpfiAmountForUsdFee` falls back to
+     *      ETH/USD × the fixed VPFI/ETH rate. Setting a non-zero
+     *      address here makes the library consult that
+     *      `AggregatorV3Interface` directly as a VPFI/<denomination>
+     *      feed — used when VPFI lists with a real market price OR when
+     *      governance wants to denominate the fee in something other
+     *      than USD (EUR / JPY / XAU / etc.) by pointing at a feed
+     *      whose denominator is the desired reference asset.
+     *
+     *      No on-chain validation that the address actually implements
+     *      AggregatorV3Interface — the library's `try`-shaped read
+     *      will revert if the oracle returns malformed data, which is
+     *      the right failure mode (operator catches it in dry-run
+     *      before broadcasting).
+     * @param newOracle  New oracle address; pass `address(0)` to reset
+     *                  to the Phase 1 fixed-rate fallback.
+     */
+    function setNotificationFeeUsdOracle(address newOracle)
+        external
+        onlyRole(LibAccessControl.ADMIN_ROLE)
+    {
+        LibVaipakam.storageSlot().protocolCfg.notificationFeeUsdOracle = newOracle;
+        emit NotificationFeeUsdOracleSet(newOracle);
+    }
+
+    /**
+     * @notice T-032 — read the live notification-fee config in one
+     *         RPC. Frontend reads this to render the cost disclosure
+     *         on the subscription opt-in UI ("Notification fee: $X").
+     * @return feeUsd1e18  Resolved fee — either the storage override
+     *                     or the library default.
+     * @return feeOracle   Pluggable VPFI/<denomination> oracle, or
+     *                     `address(0)` for the Phase 1 fixed-rate
+     *                     fallback.
+     * @return feesAccrued Cumulative VPFI debited via
+     *                     `markNotifBilled` since deploy. Operator
+     *                     monitors for anomalies.
+     */
+    function getNotificationFeeConfig()
+        external
+        view
+        returns (uint256 feeUsd1e18, address feeOracle, uint256 feesAccrued)
+    {
+        feeUsd1e18 = LibVaipakam.cfgNotificationFeeUsd();
+        feeOracle = LibVaipakam.storageSlot().protocolCfg.notificationFeeUsdOracle;
+        feesAccrued = LibVaipakam.storageSlot().notificationFeesAccrued;
+    }
+
     /**
      * @notice Update the liquidation-path risk knobs atomically.
      * @param handlingFeeBps Treasury cut on successful DEX liquidation (default 200 ≡ 2%).

@@ -602,6 +602,16 @@
             "name": "matcher",
             "type": "address",
             "internalType": "address"
+          },
+          {
+            "name": "lenderNotifBilled",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
+            "name": "borrowerNotifBilled",
+            "type": "bool",
+            "internalType": "bool"
           }
         ]
       }

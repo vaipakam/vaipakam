@@ -1799,6 +1799,129 @@ fallback chain returns the right value regardless of the count.
 Aria label translated per language. JSON validity verified across
 all 10 locale files; tsc clean.
 
+## Notification fee + 6 paid event types (T-032)
+
+Per ToDo item T-032. Extends the off-chain alerts product (HF-only
+Telegram + Push notifications) into a paid notification service
+covering six additional loan lifecycle events.
+
+**Design after iteration with the operator:**
+
+- HF threshold notifications stay compulsory once any rail is on.
+- Six new paid event types — all default ON for new subscribers,
+  individually opt-out-able:
+  1. **Claim available** — funds withdrawable from the Claim Center
+  2. **Loan settled or defaulted** — terminal-state notify, both sides
+  3. **Cross-chain VPFI buy received** — closing the loop on
+     LayerZero-routed mints to the canonical chain
+  4. **Your offer matched into a loan** — for the offer creator
+  5. **Loan maturity approaching** — proactive heads-up days before
+     due
+  6. **Partial repayment received** — lender-side reconciliation
+- **Telegram free; Push paid.** Push delivery costs the protocol's
+  channel gas — recouped via a flat $2 USD-equivalent (governance-
+  tunable, denominated through a pluggable oracle) deducted from
+  the user's VPFI escrow on the FIRST paid notification per
+  loan-side.
+- **Bill at first notification, not at loan init.** Mid-loan opt-in
+  works naturally — flip the off-chain flag, get notifications,
+  get billed when the first event actually fires. Loan that ends
+  Day-1 with no events fires: nobody pays.
+- **Direct user-escrow → treasury, no Diamond custody window.**
+  Confirmed during design discussion that the borrower-LIF custody
+  pattern's split-at-terminal logic doesn't apply here (no
+  rebate / split for notifications). One transfer, no commingling
+  concerns.
+
+**On-chain implementation:**
+
+- New `Loan.lenderNotifBilled` and `Loan.borrowerNotifBilled`
+  bool fields. Idempotent — set once, never re-billed.
+- New `LibNotificationFee` library with two helpers:
+  `vpfiAmountForUsdFee()` (Phase 1 ETH/USD oracle × fixed VPFI/ETH
+  rate of 0.001 ETH; Phase 2 pluggable VPFI/USD oracle when VPFI
+  lists with a real market price) and `bill(loanId, side, payer)`
+  (the orchestration: idempotency check, single
+  `escrowWithdrawERC20` call to treasury, set flag, increment
+  counter, emit event).
+- New `LoanFacet.markNotifBilled(uint256 loanId, bool isLenderSide)`
+  external entry, gated by the new
+  `LibAccessControl.NOTIF_BILLER_ROLE`. The off-chain hf-watcher
+  Worker (or whichever bot the operator runs) calls this on the
+  first PaidPush-tier notification per loan-side. Idempotent;
+  loan-existence guard via `loanId > nextLoanId` revert.
+- Three new errors in `LibNotificationFee`:
+  `NotifFeeWethNotSet`, `NotifFeeOracleStale`,
+  `NotifFeeOraclePriceZero`, `NotifFeeVpfiTokenNotSet`,
+  `NotifFeeTreasuryNotSet`, `NotifFeeOraclePriceZero`.
+- Three new ConfigFacet entries: `setNotificationFeeUsd(uint256)`
+  (admin-gated, bounded `[$0.10, $50]`),
+  `setNotificationFeeUsdOracle(address)` (admin-gated, no on-chain
+  validation — operator's responsibility), and a frontend-facing
+  read `getNotificationFeeConfig()` that returns
+  `(feeUsd1e18, feeOracle, feesAccrued)` in one RPC.
+- `s.notificationFeesAccrued` cumulative counter — operator
+  monitors for anomaly detection (a compromised
+  `NOTIF_BILLER_ROLE` could falsely bill, capped per loan-side at
+  the fee ceiling but observable as a spike here).
+- `LibAccessControl.grantableRoles()` extended with
+  `NOTIF_BILLER_ROLE`. Init grants it to the deploy owner;
+  `DeployerZeroRolesTest` extended to keep the canonical-list
+  parity invariant.
+
+**Why a separate role rather than extending WATCHER_ROLE**: blast
+radii differ. WATCHER's worst case is a 2-hour freeze (recoverable
+by PAUSER_ROLE). NOTIF_BILLER's worst case is false-billing capped
+per loan-side. Rotating one without the other lets the operator
+respond proportionally to a compromise on either side.
+
+**Test coverage**: `contracts/test/NotificationFeeTest.t.sol`,
+15 cases — happy-paths on both sides, idempotency, role-gating,
+loan-existence guard, insufficient-VPFI revert, oracle math at
+two ETH prices (verifies the Phase 1 `1 VPFI = 0.001 ETH` formula),
+both-sides-independent, treasury-accrual counter, governance
+bounds (floor/ceiling/zero-resets-default), and the pluggable
+oracle setter. All pass.
+
+**Frontend**: `/app/alerts` page extended with:
+
+- New "Event types" section between the HF threshold ladder and
+  the delivery-rails section. Six checkbox toggles, all default
+  ON, individually opt-out. Persisted via the existing
+  `PUT /thresholds` call to the hf-watcher Worker — payload
+  extended with six `notify_*` boolean fields. Forward-compatible
+  with the current watcher (which stores arbitrary
+  `user_thresholds` columns; unknown fields are no-ops until the
+  backend's per-event detector lands as a follow-up).
+- New "Push notifications: fee disclosure" callout inside the
+  Push rail block. Renders the flat `$2` figure inline (the
+  governance-tunable live read via `getNotificationFeeConfig()`
+  is a quick follow-up after the next ABI export).
+- i18n keys added across all 10 supported locales (en / es / fr /
+  de / ja / zh / hi / ar / ta / ko). Locale JSONs all parse + tsc
+  clean.
+
+**What's NOT in this batch (deferrable as separate items):**
+
+- Watcher-side D1 schema migration to add the six `notify_*`
+  columns + the per-event detectors (poll for `ClaimableRecorded`,
+  `LoanSettled`, `LoanDefaulted`, `BuySucceeded`, etc., and fan
+  out to subscribers). The frontend POSTs the new fields today;
+  the watcher stores them only when its schema catches up.
+- VPFI-balance pre-flight gate on the Push subscribe button —
+  warn the user if their escrow balance is below the fee
+  equivalent. Deferred to the watcher work above (the watcher
+  would already revert at `markNotifBilled` time on insufficient
+  VPFI; frontend pre-flight is a polish improvement).
+- Live fee read via `getNotificationFeeConfig()` instead of
+  the hardcoded `$2` figure in the disclosure copy. Quick
+  follow-up after the next ABI re-export — the contract surface
+  + ABI are ready, just need the `useReadContract` hook wiring.
+
+**Verification**: forge build clean, full no-invariants regression
+green (15 new tests + no regressions), frontend tsc clean across
+all 10 locale JSONs.
+
 ## Outstanding for the testnet redeploy gate
 
 Before fresh testnet diamonds can land:
