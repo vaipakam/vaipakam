@@ -183,15 +183,14 @@ contract DeployDiamond is Script {
         // When admin == deployer (single-EOA anvil / CI setup) this block
         // is a no-op and the deployer retains everything.
         if (admin != deployerAddr) {
-            bytes32[7] memory roles = [
-                LibAccessControl.DEFAULT_ADMIN_ROLE,
-                LibAccessControl.ADMIN_ROLE,
-                LibAccessControl.PAUSER_ROLE,
-                LibAccessControl.KYC_ADMIN_ROLE,
-                LibAccessControl.ORACLE_ADMIN_ROLE,
-                LibAccessControl.RISK_ADMIN_ROLE,
-                LibAccessControl.ESCROW_ADMIN_ROLE
-            ];
+            // Single source of truth — the library exposes the canonical
+            // role list (Findings 00010). Adding a new role to
+            // `LibAccessControl.grantableRoles()` automatically flows
+            // here AND through `initializeAccessControl`, so the deploy
+            // script can never grant a strict subset of what the
+            // library granted (which used to leave roles unowned or on
+            // the deployer post-handover).
+            bytes32[] memory roles = LibAccessControl.grantableRoles();
 
             // 6a. Grant every role to admin (deployer holds DEFAULT_ADMIN
             //     from initializeAccessControl above, which is the role
@@ -199,22 +198,23 @@ contract DeployDiamond is Script {
             for (uint256 i = 0; i < roles.length; i++) {
                 AccessControlFacet(diamond).grantRole(roles[i], admin);
             }
-            console.log("All 7 roles granted to admin.");
+            console.log("All roles granted to admin:", roles.length);
 
             // 6b. Transfer ERC-173 ownership (gates future diamondCut).
             OwnershipFacet(diamond).transferOwnership(admin);
             console.log("ERC-173 ownership transferred to:", admin);
 
-            // 6c. Renounce every role from deployer. DEFAULT_ADMIN_ROLE is
-            //     renounced LAST so if any earlier step had reverted the
-            //     deployer still holds the root admin and can recover.
+            // 6c. Renounce every role from deployer. DEFAULT_ADMIN_ROLE
+            //     (index 0 by the library's convention) is renounced
+            //     LAST so if any earlier step had reverted the deployer
+            //     still holds the root admin and can recover.
             for (uint256 i = roles.length; i > 0; i--) {
                 AccessControlFacet(diamond).renounceRole(
                     roles[i - 1],
                     deployerAddr
                 );
             }
-            console.log("Deployer renounced all 7 roles.");
+            console.log("Deployer renounced all roles:", roles.length);
         } else {
             console.log("admin == deployer, skipping handover.");
         }

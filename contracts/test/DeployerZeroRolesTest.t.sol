@@ -34,6 +34,12 @@ contract DeployerZeroRolesTest is Test {
     address internal governanceMultisig;
     address internal adminTimelock;
     address internal pauserMultisig;
+    // 2026-05-01 — WATCHER_ROLE was previously unowned post-deploy
+    // (Findings 00010). Added to the rotation; recipient is the
+    // operator's automated abnormal-activity watcher bot key (or a
+    // small hot multisig). DEFAULT_ADMIN governance can re-key any
+    // time via grantRole/renounceRole.
+    address internal watcherBot;
 
     bytes32[] internal ALL_ROLES;
 
@@ -42,6 +48,7 @@ contract DeployerZeroRolesTest is Test {
         governanceMultisig = makeAddr("governance-multisig");
         adminTimelock = makeAddr("admin-timelock");
         pauserMultisig = makeAddr("pauser-multisig");
+        watcherBot = makeAddr("watcher-bot");
 
         cutFacet = new DiamondCutFacet();
         diamond = new VaipakamDiamond(deployer, address(cutFacet));
@@ -57,6 +64,12 @@ contract DeployerZeroRolesTest is Test {
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");
         AccessControlFacet(address(diamond)).initializeAccessControl();
 
+        // Mirror `LibAccessControl.grantableRoles()` order. The
+        // `testRoleListsParity` invariant below asserts these stay in
+        // sync — adding a new role to the library without adding it
+        // here (or vice-versa) makes the parity test fail and the
+        // deploy-handover drift hazard from Findings 00010 cannot
+        // recur silently.
         ALL_ROLES.push(LibAccessControl.DEFAULT_ADMIN_ROLE);
         ALL_ROLES.push(LibAccessControl.ADMIN_ROLE);
         ALL_ROLES.push(LibAccessControl.PAUSER_ROLE);
@@ -64,6 +77,7 @@ contract DeployerZeroRolesTest is Test {
         ALL_ROLES.push(LibAccessControl.ORACLE_ADMIN_ROLE);
         ALL_ROLES.push(LibAccessControl.RISK_ADMIN_ROLE);
         ALL_ROLES.push(LibAccessControl.ESCROW_ADMIN_ROLE);
+        ALL_ROLES.push(LibAccessControl.WATCHER_ROLE);
     }
 
     // ─── 1. Initial state (pre-rotation) ──────────────────────────────────
@@ -102,7 +116,9 @@ contract DeployerZeroRolesTest is Test {
         ac.grantRole(LibAccessControl.ORACLE_ADMIN_ROLE, adminTimelock);
         ac.grantRole(LibAccessControl.RISK_ADMIN_ROLE, adminTimelock);
         ac.grantRole(LibAccessControl.ESCROW_ADMIN_ROLE, adminTimelock);
+        ac.grantRole(LibAccessControl.WATCHER_ROLE, watcherBot);
 
+        ac.renounceRole(LibAccessControl.WATCHER_ROLE, deployer);
         ac.renounceRole(LibAccessControl.ESCROW_ADMIN_ROLE, deployer);
         ac.renounceRole(LibAccessControl.RISK_ADMIN_ROLE, deployer);
         ac.renounceRole(LibAccessControl.ORACLE_ADMIN_ROLE, deployer);
@@ -142,6 +158,49 @@ contract DeployerZeroRolesTest is Test {
         assertTrue(ac.hasRole(LibAccessControl.ORACLE_ADMIN_ROLE, adminTimelock));
         assertTrue(ac.hasRole(LibAccessControl.RISK_ADMIN_ROLE, adminTimelock));
         assertTrue(ac.hasRole(LibAccessControl.ESCROW_ADMIN_ROLE, adminTimelock));
+        assertTrue(ac.hasRole(LibAccessControl.WATCHER_ROLE, watcherBot));
+    }
+
+    /// @notice **Findings 00010 regression test.** Asserts that the
+    ///         library's canonical `grantableRoles()` list equals the
+    ///         test's local `ALL_ROLES` array byte-for-byte. The deploy
+    ///         script consumes the same library list, so this test
+    ///         transitively pins the deploy handover too. If a future
+    ///         role is added to `LibAccessControl` but missed in
+    ///         `grantableRoles()` (or vice-versa), this test fails
+    ///         loudly — preventing the silent drift that left
+    ///         WATCHER_ROLE unowned post-deploy.
+    function testRoleListsParity() public view {
+        bytes32[] memory libraryRoles = LibAccessControl.grantableRoles();
+        assertEq(
+            libraryRoles.length,
+            ALL_ROLES.length,
+            "library role count must match test ALL_ROLES count"
+        );
+        for (uint256 i = 0; i < libraryRoles.length; i++) {
+            assertEq(
+                libraryRoles[i],
+                ALL_ROLES[i],
+                "library role list ordering must match test ALL_ROLES"
+            );
+        }
+    }
+
+    /// @notice **Findings 00010 init coverage.** Every role declared
+    ///         in `grantableRoles()` must be granted to the initial
+    ///         owner during `initializeAccessControl`. WATCHER_ROLE
+    ///         was previously declared but never granted, leaving the
+    ///         auto-pause primitive unreachable until governance
+    ///         remediated. This test catches that exact regression.
+    function testEveryGrantableRoleGrantedAtInit() public view {
+        AccessControlFacet ac = AccessControlFacet(address(diamond));
+        bytes32[] memory libraryRoles = LibAccessControl.grantableRoles();
+        for (uint256 i = 0; i < libraryRoles.length; i++) {
+            assertTrue(
+                ac.hasRole(libraryRoles[i], deployer),
+                "every grantableRoles() entry must be granted to initial owner at init"
+            );
+        }
     }
 
     /// @notice Pauser signer isolated from admin surface. A compromised

@@ -126,6 +126,17 @@ library LibAccessControl {
         grantRole(ORACLE_ADMIN_ROLE, owner);
         grantRole(RISK_ADMIN_ROLE, owner);
         grantRole(ESCROW_ADMIN_ROLE, owner);
+        // WATCHER_ROLE was previously declared but never granted at init —
+        // see Findings 00010. Without this grant `AdminFacet.autoPause`
+        // (the always-armed safety net documented in CLAUDE.md) is
+        // unreachable on a fresh deploy until governance grants the role
+        // explicitly. Granting at init mirrors the rest of the role list
+        // and lets `DeployDiamond`'s post-init handover loop transfer it
+        // to the operator's admin EOA the same way every other role gets
+        // transferred. If a deploy doesn't want WATCHER on the deployer
+        // EOA, the handover loop renounces it from the deployer at the
+        // end of step 6 just like every other role.
+        grantRole(WATCHER_ROLE, owner);
 
         // Set DEFAULT_ADMIN_ROLE as admin for all roles
         setRoleAdmin(ADMIN_ROLE, DEFAULT_ADMIN_ROLE);
@@ -134,6 +145,35 @@ library LibAccessControl {
         setRoleAdmin(ORACLE_ADMIN_ROLE, DEFAULT_ADMIN_ROLE);
         setRoleAdmin(RISK_ADMIN_ROLE, DEFAULT_ADMIN_ROLE);
         setRoleAdmin(ESCROW_ADMIN_ROLE, DEFAULT_ADMIN_ROLE);
+        setRoleAdmin(WATCHER_ROLE, DEFAULT_ADMIN_ROLE);
+    }
+
+    /**
+     * @notice Canonical list of every role this library defines that
+     *         should be granted to the initial owner at init time AND
+     *         transferred to the operator-admin during deploy handover.
+     * @dev Single source of truth that closes the drift hazard called
+     *      out in Findings 00010 — when a new role is added to the
+     *      library and to `initializeAccessControl` but missed in
+     *      `DeployDiamond`'s handover array (or vice-versa), the deploy
+     *      ships a Diamond where the role is unowned (or stays on the
+     *      deployer post-handover). Both sites should now consume this
+     *      list. Tests assert the library's grants match this list.
+     *      `DEFAULT_ADMIN_ROLE` is the first entry — handover code that
+     *      renounces in reverse keeps DEFAULT_ADMIN until last so an
+     *      earlier-step revert leaves the deployer recoverable.
+     */
+    function grantableRoles() internal pure returns (bytes32[] memory) {
+        bytes32[] memory roles = new bytes32[](8);
+        roles[0] = DEFAULT_ADMIN_ROLE;
+        roles[1] = ADMIN_ROLE;
+        roles[2] = PAUSER_ROLE;
+        roles[3] = KYC_ADMIN_ROLE;
+        roles[4] = ORACLE_ADMIN_ROLE;
+        roles[5] = RISK_ADMIN_ROLE;
+        roles[6] = ESCROW_ADMIN_ROLE;
+        roles[7] = WATCHER_ROLE;
+        return roles;
     }
 }
 
