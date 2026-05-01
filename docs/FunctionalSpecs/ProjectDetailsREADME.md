@@ -218,7 +218,7 @@ The platform distinguishes between liquid and illiquid assets, which affects how
 
 ### Loan Terms
 
-- **Durations:** Configurable from 1 day to 1 year.
+- **Durations:** Configurable from 1 day to 1 year (`1–365` days). Frontend validation must enforce this range, and the on-chain offer / loan initiation path should enforce the same upper bound so external callers cannot bypass the UI.
 - **Grace Periods:** Automatically and strictly assigned based on loan duration:
   - < 1 week: 1 hour
   - < 1 month: 1 day
@@ -426,6 +426,7 @@ Vaipakam mints unique NFTs to represent offers, enhancing traceability and user 
 - **Information Icons & Tooltips:** Key fields and terms should include concise helper text, tooltips, and links to deeper documentation or FAQs where appropriate.
 - **Closed Offer Navigation:** Filled / closed offer rows should show the resulting loan link when the accepted-offer event maps that offer to a loan.
 - **Market-Anchor Cache:** Frontend log-index caches that already contain accepted-offer events should be able to hydrate recent accepted-offer IDs from cached events without forcing a full rescan; when new event topics are added to the index allow-list, the cache key should be bumped so historical logs are captured once.
+- **Live Offer Index:** The shared event-backed loan / offer index should subscribe to offer-affecting Diamond events (`OfferCreated`, `OfferAccepted`, `OfferCanceled`, and `OfferMatched`) and trigger a debounced incremental rescan when any of them lands on-chain. The Offer Book should then refresh from the updated ID set without requiring a manual `Rescan chain` click, while preserving the manual button as a failsafe.
 
 ### Range Orders and Permissionless Matching
 
@@ -436,7 +437,7 @@ Range Orders extend the single-value offer model without changing the default Ph
 - **Range Offer Bounds:** Lender range offers must escrow enough lending asset for the upper amount bound and must satisfy the Health Factor floor at the worst-case fill. Borrower range offers must not request more principal than their posted collateral can support under the same risk math.
 - **Bot-Facing Preview:** Matching bots should use the read-only match preview to filter candidate lender / borrower pairs before submitting a transaction. Preview should enforce asset continuity, duration compatibility, range overlap, midpoint term calculation, and a synthetic Health Factor check.
 - **Permissionless Match Execution:** `matchOffers` is intentionally open to any caller when enabled. It is analogous to liquidation in that the caller cannot steal funds or set arbitrary terms; it can only execute a match allowed by two live offers and the protocol's deterministic matching rules.
-- **Matcher Economics:** The caller of `matchOffers` receives the configured matcher share of the Loan Initiation Fee. The default is `1%` of the LIF treasury flow, but governance may tune this through the live protocol configuration within the documented safety cap.
+- **Matcher Economics:** The caller of `matchOffers` receives the configured matcher share of the Loan Initiation Fee. The default is `1%` of the LIF treasury flow, but governance may tune this through live protocol configuration (`lifMatcherFeeBps`) within the documented safety cap (`MAX_FEE_BPS = 5000`, or 50%). Frontend and bot surfaces should read the live value from `getProtocolConfigBundle()` rather than assuming the default.
 - **Partial-Fill Semantics:** Lender offers may fill over multiple matches. The protocol tracks filled amount, refunds unusable dust when remaining capacity falls below the offer's minimum fill, and preserves offer storage for already-created loans. Borrower offers are single-fill in Phase 1; any ERC-20 excess collateral above the matched pro-rata requirement should be refunded in the match transaction.
 - **Cancel Cooldown:** When partial-fill matching is enabled, zero-fill cancellations are delayed briefly after offer creation to reduce cancel-front-run risk against an in-flight match. Once an offer has been partially filled, cancellation must preserve the storage needed by the loans already linked to that offer.
 - **Matching Surface Split:** The matching surface may live in a dedicated facet separate from ordinary create / accept / cancel offer management so the Diamond remains deployable under the EIP-170 runtime bytecode limit while keeping bot-facing matching semantics isolated.
@@ -1038,7 +1039,7 @@ VPFI token deployment begins in Phase 1 through the token contract and minting p
 
 ### Phase 1 Token Deployment and Minting
 
-- **Token Contract (VPFI):** `VPFI` is the Vaipakam DeFi Token. In Phase 1, the token contract, cap, initial mint, and minting-control path may be deployed and wired, but governance usage remains deferred to Phase 2.
+- **Token Contract (VPFI):** `VPFI` is Vaipakam's protocol token. In Phase 1, the token contract, cap, initial mint, and minting-control path may be deployed and wired, but governance usage remains deferred to Phase 2.
 - **Core Token Parameters:**
   - Name: `Vaipakam DeFi Token`
   - Symbol: `VPFI`
@@ -1103,13 +1104,14 @@ VPFI token deployment begins in Phase 1 through the token contract and minting p
   - The borrower-side acquisition and rebate flow is defined in `docs/TokenomicsTechSpec.md`.
 
 - **Borrower VPFI Acquisition Flow:** For the borrower-side discount path:
-  - the frontend should provide a dedicated public `Buy VPFI` page at `/buy-vpfi` that works from the user's preferred supported chain
-  - public navigation should expose VPFI shortcuts for `Buy`, `Stake`, and `Unstake`, each deep-linking into the relevant section of that page
+  - public `/buy-vpfi` should be a no-wallet marketing / education surface for VPFI, explaining the protocol token, tiered fee discount, staking yield, and how the app flow works
+  - wallet-bearing buy, deposit / stake, withdraw / unstake, and staking-reward claim controls should live inside the connected app at `/app/buy-vpfi`
+  - public CTAs should route users into `/app/buy-vpfi` when they choose to transact, while the public site itself remains informational and wallet-free
   - the user should not be required to manually switch to the canonical chain before buying
   - purchased VPFI should be delivered to the borrower's wallet on that same preferred chain, not auto-deposited into escrow
   - if canonical-chain or bridge infrastructure is used under the hood, that complexity should be abstracted from the user-facing purchase flow
   - if the purchase path settles through a Base-chain receiver, VPFI must be minted or released only after that receiver actually receives ETH, and the amount delivered must be based on actual received ETH rather than a quoted amount
-  - moving VPFI from wallet to user escrow should remain an explicit user-initiated action, with the frontend facilitating that step after purchase
+  - moving VPFI from wallet to user escrow should remain an explicit user-initiated action, with the connected app facilitating that step after purchase
   - that escrow action should be presented as `Deposit / Stake VPFI`, because escrow-held VPFI earns the staking APR as well as counting toward local fee-discount tiers
   - staking is open to any VPFI holder; an existing loan is not required, and the user's escrow can be created on first deposit
   - the Phase 1 `30,000 VPFI` wallet cap is a per-chain cap, not one shared global wallet cap across every chain
@@ -1156,7 +1158,7 @@ The VPFI governance token will be distributed to align incentives and encourage 
     - users still claim locally on their active lending chain; cross-chain messaging is used only to synchronize the global denominator and related reward funding, not to make the loan lifecycle cross-chain
     - once the `69,000,000` VPFI interaction-reward pool is exhausted, this category stops emitting
   - **Staking Rewards:** `24%` (`55,200,000`)
-    - distributed through the staking contract using a pull model
+    - distributed through escrow-based staking reward accounting using a pull model; no separate staking contract is required
     - aligned to the same `5%` terminal inflation profile used in the later interaction-reward schedule
 - **Distribution Mechanism:** Rewards follow a pull model through explicit claim functions such as `claimInteractionRewards()` and `claimStakingRewards()`. Initial minted and reserved allocations should be held through secure multi-sig, timelock, and vesting-wallet structures where appropriate.
 - **Representative Vesting / Release Rules:**
@@ -1232,7 +1234,10 @@ A comprehensive user dashboard is essential for managing activities on Vaipakam.
 - **Identity Labels:** Where wallet addresses appear in the dashboard, Activity, loan details, offer book, or profile chip, the frontend should resolve and display ENS / Basenames handles when available, while falling back silently to shortened addresses.
 - **Liquidation Price View:** For liquid active loans, Loan Details should show the collateral-asset price at which HF reaches `1.0`, both as an absolute price and a percentage move from current price. This view should stay hidden for illiquid loans where no oracle-based liquidation price exists.
 - **Approval Management:** Profile should include an Approvals surface listing ERC-20, ERC-721, and ERC-1155 allowances granted to the Vaipakam Diamond, grouped by principal-eligible, collateral-eligible, and prepay-eligible assets, with one-click revoke actions.
-- **VPFI Token Management:** In Phase 1, this includes the dedicated public `Buy VPFI` flow, wallet-to-escrow funding guidance, staking / unstaking, staking-rewards claim surfaces, borrower discount eligibility views where exposed, and the shared fee-discount consent control surfaced in `Dashboard`. Chain-level token transparency belongs with the Buy VPFI page rather than the returning-user dashboard.
+- **VPFI Token Management:** In Phase 1, this is split across public education and connected app execution: public `/buy-vpfi` explains VPFI and links into the app, while `/app/buy-vpfi` hosts wallet-to-escrow funding guidance, staking / unstaking, staking-rewards claim surfaces, borrower discount eligibility views where exposed, and chain-level token transparency. The shared fee-discount consent control remains surfaced in `Dashboard`.
+- **Dashboard Table Polish:** The user's loan table should show both principal and collateral columns using the same asset / NFT renderer, so users can review collateral without opening every loan detail page.
+- **Claim Center Navigation:** Claim Center rows should deep-link each `Loan #N` label to the matching Loan Details page so users can review full timeline and risk context before claiming.
+- **Copyable Address UX:** Redacted addresses on loan parties, offer creator rows, keeper lists, timeline participant rows, and analytics asset-distribution rows should expose a copy affordance for the full address without crowding explorer-link surfaces.
 - **Your Loans Table:** The dashboard should keep the user's loan history scannable with Role and Status filters, a per-page selector, sortable columns, and a default most-recent-first sort by loan ID. LTV and Health Factor sorting should use batched reads over the filtered result set and keep illiquid or unavailable values from appearing as misleading best results.
 - **Claimable-Loan CTA:** Terminal-state loans with unclaimed funds should show a visible `Claim` action that opens Loan Details, where the claim action bar can present the exact lender / borrower payout.
 - **Loan Details Timeline:** Each Loan Details page should include a chronological event timeline sourced from the frontend log index, with per-event breakdowns for initiation, repayment, settlement, fallback collateral splits, swap retries, collateral additions, VPFI rebates, and final claims.
@@ -1246,17 +1251,19 @@ A comprehensive user dashboard is essential for managing activities on Vaipakam.
 ### Blockchain and Networks (Phase 1)
 
 - **Supported Networks:** The target Phase 1 production deployment set is Ethereum mainnet, Base, Polygon, Arbitrum, and Optimism. Production-network Diamonds have not yet been deployed.
-- **Current Testnets:** The active testnet mesh uses Base Sepolia as the canonical testnet plus Sepolia and BNB Smart Chain Testnet mirrors for cross-chain VPFI, buy, and reward plumbing validation. Fresh testnet redeploys should be preferred over in-place upgrades when unreleased changes include storage struct shape changes and no testnet state needs preserving.
+- **Current Testnets:** The active testnet mesh uses Base Sepolia as the canonical testnet plus Sepolia and BNB Smart Chain Testnet mirrors for cross-chain VPFI, buy, and reward plumbing validation. Fresh testnet redeploys should be preferred over in-place upgrades when unreleased changes include storage struct shape changes and no testnet state needs preserving. As of the 2026-04-30 redeploy, the active testnet Diamonds are Base Sepolia `0x76C39e552f08556D6287A67A1e2B2D82F4E76c66`, Sepolia `0x381BA2f7959613294Cf432063fe3C33CB68625AD`, and BNB Smart Chain Testnet `0xe46F8AE352bc28998083A2EC8Cf379063A73BEf7`; the Reward OApp proxy is CREATE2-deterministic at `0x5f0Fb9F11c11AA939518f45b6BC610336156c52E` on all three.
 - **Intra-Network Operations:** All aspects of a single loan (offer, acceptance, collateral, repayment) occur on the _same chosen network_.
 - **Deployment Model:** Vaipakam uses separate Diamond deployments on each supported network — each chain hosts its own independent protocol instance. There is no cross-chain loan lifecycle.
-- **Deployment Tooling:** Deployment scripts and runbooks should remain chain-parameterized so the same controlled process can deploy, wire, verify, and post-check Base, Polygon, Arbitrum, Optimism, Ethereum mainnet, and their testnet equivalents without one-off per-chain drift.
+- **Deployment Tooling:** Deployment scripts and runbooks should remain chain-parameterized so the same controlled process can deploy, wire, verify, and post-check Base, Polygon, Arbitrum, Optimism, Ethereum mainnet, and their testnet equivalents without one-off per-chain drift. Scripts that require post-handover powers should read `ADMIN_PRIVATE_KEY` or the documented role-specific key and pre-flight the broadcaster's owner / `ADMIN_ROLE` status before broadcasting.
+- **Frontend Env Sync:** Local deploy operators should use the deployment-artifact sync helper (`contracts/script/syncFrontendEnv.sh`) to update `frontend/.env.local` from `contracts/deployments/<chain>/addresses.json`. The helper is for developer `npm run deploy` flows; CI / Cloudflare Pages builds still need their build-environment variables mirrored explicitly or a committed production env surface.
+- **BNB Testnet Gas Policy:** BNB Smart Chain Testnet forge deployments should pass an explicit gas price (currently at least `5gwei`) and keep a nonce-replacement recovery path ready, because forge auto-detection has returned 1 wei gas in prior deploys and the network silently dropped those transactions.
 
 ### Smart Contracts
 
 - **Language:** Solidity (latest stable version, e.g., 0.8.x, specify version like 0.8.29 if decided).
 - **Core Contracts (Examples):**
   - `VaipakamOfferManagement.sol`: Handles creation, cancellation, and matching of lender/borrower offers.
-  - `OfferMatchFacet` or equivalent matching facet: Hosts bot-facing Range Orders preview / match entrypoints when needed to keep the offer-management facet under the EIP-170 bytecode ceiling.
+  - `OfferMatchFacet` or equivalent matching facet: Hosts bot-facing Range Orders preview / match entrypoints when needed to keep the offer-management facet under the EIP-170 runtime bytecode ceiling. Range Orders pushed ordinary offer management past the real-chain bytecode limit, so matching and ordinary create / accept / cancel logic should remain split where necessary for deployability.
   - `VaipakamLoanManagement.sol`: Manages active loans, repayments, defaults, and liquidations.
   - `VaipakamEscrow.sol`: Holds collateral, ERC-721/1155 rental NFTs, and funds during various stages.
   - `VaipakamNFT.sol`: The ERC-721 contract responsible for minting and managing Vaipakam NFTs.
@@ -1290,7 +1297,7 @@ A comprehensive user dashboard is essential for managing activities on Vaipakam.
 - **Languages:** The frontend supports 10 app locales: English, Spanish, French, German, Japanese, Simplified Chinese, Korean, Hindi, Tamil, and Arabic. Locale-aware public routes, hreflang metadata, sitemap entries, number/date/duration formatting, and Arabic RTL layout should remain part of the launch surface. Legal and long-form guide content may show an English-only notice until the locale-matched source text exists.
 - **User Guide Locales:** Basic and Advanced user-guide markdown should be maintained for all 10 supported locales with card-link anchors preserved verbatim, so every in-app `(i)` card-title link opens the matching localized guide section.
 - **API Standards:** Frontend will interact with smart contracts using standardized data formats (e.g., JSON-like structs or arrays returned by view functions).
-- **ABI Sync:** After any contract release that changes selectors, structs, events, or frontend-consumed ABIs, run the frontend ABI export script (`contracts/script/exportFrontendAbis.sh` after `forge build`) so `frontend/src/contracts/abis/` and `_source.json` match the deployed contract build and carry the source commit hash.
+- **ABI Sync:** After any contract release that changes selectors, structs, events, or frontend-consumed ABIs, run the frontend ABI export script (`contracts/script/exportFrontendAbis.sh` after `forge build`) so `frontend/src/contracts/abis/` and `_source.json` match the deployed contract build and carry the source commit hash. When keeper-bot-consumed facets change, run the keeper-bot ABI export as well so bot JSONs and provenance stay aligned with the monorepo build.
 - **Live Protocol Config:** Frontend copy that displays protocol fees, liquidation thresholds, rental buffer, staking APR, VPFI tier thresholds, pool caps, and minimum Health Factor should read from `getProtocolConfigBundle()` and `getProtocolConstants()` rather than hardcoded locale strings. Token-unit formatting for VPFI should use the token contract's live `decimals()` value where available.
 - **Transaction Receipt Truth:** Shared write helpers should treat a mined transaction with receipt status `0` as a failure and surface the revert path to the user. Inclusion in a block is not by itself a success signal.
 - **Log-Index Contract:** The frontend log index is the shared source for Activity, Loan Details timelines, reward lifetime totals, filled-offer loan links, and cancelled-offer reconstruction. Event-topic allow-list additions that need historical data should bump the cache key; hydrate-only migrations are appropriate only when the relevant event data was already captured in older caches.
@@ -1417,18 +1424,18 @@ Risk and asset-support helpers should include:
 
 ```solidity
 function getAssetRiskProfile(address token) external view returns (
-    uint256 ltvBps,
-    uint256 liquidationThresholdBps,
-    uint256 currentPriceUSD,
-    bool isLiquid,                    // true = sufficient DEX liquidity
-    bool isSupported
+    bool isSupported,
+    uint8 status,                     // LibVaipakam.LiquidityStatus enum
+    uint256 maxLtvBps,
+    uint256 liqThresholdBps,
+    uint256 liqBonusBps
 );
 
 function getIlliquidAssets() external view returns (address[] memory);
 function isAssetSupported(address token) external view returns (bool);
 ```
 
-These functions help external dashboards and integrations understand current support, liquidity classification, and collateral risk configuration on the active network.
+These functions help external dashboards and integrations understand current support, liquidity classification, and collateral risk configuration on the active network. The risk profile helper does not return a live USD price; consumers that need pricing should use the dedicated oracle / price read surface instead of inferring it from this tuple.
 
 Additional oracle-hardening views should expose active per-feed overrides and configured secondary-oracle settings where practical, including:
 
@@ -1510,6 +1517,7 @@ All functions are pure `view` functions (zero gas for callers when invoked via R
 - **Liquidation Invariants:** Tests must assert that liquidation swap calldata uses the protocol-computed oracle-derived minimum output and that callers cannot influence the slippage floor.
 - **Oracle-Hardening Tests:** Tests should cover per-feed override admin gating, staleness override behavior, minimum-answer floor behavior, secondary-oracle agreement, divergence, stale secondary data, and missing secondary data.
 - **Governance-Handover Tests:** Tests should verify that Timelock, Guardian, and KYC Ops roles are installed correctly and that the deployer EOA retains no residual privileged authority after handover.
+- **Testnet E2E Baseline:** After a fresh testnet redeploy, operators should run the full positive-flow E2E suite on the canonical testnet and partial-flow E2Es on mirror testnets. The 2026-04-30 baseline covered 15 lifecycle scenarios on Base Sepolia with 204 / 204 successful receipts, and left Sepolia + BNB Testnet in frontend-testable midpoint states (open offers, active loans, repaid-but-unclaimed loans, NFT-collateral loans, and rental-NFT loans).
 
 #### Positive-flow coverage map
 
@@ -1626,7 +1634,7 @@ target network's fork before the `-mainnet-rc` tag is cut. See
 - **Initially Supported Lending/Collateral Assets (Examples):**
   - **ERC-20 (Liquid):** USDC, USDT, DAI, WETH, WBTC.
   - (The platform will allow any ERC-20, but these will be prominently featured or have easier frontend selection initially).
-- **Loan Durations:** 1 day to 1 year.
+- **Loan Durations:** 1 day to 1 year (`1–365` days), enforced consistently by frontend validation and the contract path.
 
 ## 15. NFT Verification Tool
 
@@ -1673,7 +1681,7 @@ Vaipakam is committed to operating in a compliant manner within the evolving reg
 - **Address-Level Sanctions Screening:** Where a supported on-chain sanctions oracle is configured for the active chain, the protocol should screen new-business boundaries: offer creation checks the caller, and offer acceptance checks both the acceptor and the original offer creator. If a checked address is flagged, the transaction must revert. Wind-down actions such as repayment, claims, add-collateral, and other existing-loan exits should remain available so non-sanctioned counterparties are not trapped in open positions.
 - **Sanctions Oracle Availability:** Sanctions oracle configuration is per chain and optional. Chains without a configured oracle should behave as no-op for this check. Oracle read failures should fail open rather than bricking all protocol actions during a vendor outage.
 - **Terms Acceptance Gate:** App routes may be gated behind a versioned on-chain Terms of Service acceptance. `currentTosVersion == 0` represents a disabled/testnet state. Once activated, users must accept the current Terms version and content hash before using `/app` routes; version bumps or hash changes invalidate prior acceptances.
-- **Privacy Policy and Data Rights:** Public `/terms` and `/privacy` pages should be available without a wallet. Browser-local Vaipakam diagnostic and consent data should support user download and deletion flows, while clearly explaining that public blockchain data cannot be deleted by frontend action.
+- **Privacy Policy and Data Rights:** Public `/terms` and `/privacy` pages should be available without a wallet. Browser-local Vaipakam diagnostic and consent data should support user download and deletion flows through `/app/data-rights`, while clearly explaining that public blockchain data cannot be deleted by frontend action. The Privacy page should also describe the optional server-side diagnostics capture path, its redaction rules, retention period, legal basis, and deletion-request route.
 - **Ongoing Monitoring:** The platform will monitor regulatory developments during Phase 1. Governance proposals to update compliance measures are Phase 2 scope after governance is launched.
 
 ## Summary (Phase 1)

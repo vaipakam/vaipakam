@@ -2,12 +2,12 @@
 
 ## 1. Token Overview
 
-- **Token Name:** Vaipakam Finance Token
+- **Token Name:** Vaipakam DeFi Token
 - **Symbol:** `VPFI`
 - **Total Supply Cap:** `230,000,000` VPFI
 - **Initial Mint:** `23,000,000` VPFI
 - **Initial Mint Location:** minted on canonical `Base` deployment at launch
-- **Primary Purpose:** utility and governance token for Vaipakam
+- **Primary Purpose:** protocol and governance token for Vaipakam
 
 Primary uses:
 
@@ -37,7 +37,7 @@ Scope note:
 
 | Parameter        |                                       Value | Notes                      |
 | ---------------- | ------------------------------------------: | -------------------------- |
-| Name             |                    `Vaipakam Finance Token` | Standard ERC-20 metadata   |
+| Name             |                       `Vaipakam DeFi Token` | Standard ERC-20 metadata   |
 | Symbol           |                                      `VPFI` | Same symbol across chains  |
 | Decimals         |                                        `18` | Standard ERC-20 precision  |
 | Total Supply Cap |                         `230_000_000 ether` | Hard cap enforced on-chain |
@@ -242,8 +242,8 @@ For ERC-20 loans, the borrower-facing `Loan Initiation Fee` remains the normal f
 Rules:
 
 - the default matcher share is `1%` of the LIF amount that would otherwise flow to treasury
-- governance may tune the matcher share through live protocol config, with zero meaning "use the default"
-- the setter should enforce a bounded maximum so a bad governance or admin action cannot accidentally starve Treasury
+- governance may tune the matcher share through live protocol config (`ProtocolConfig.lifMatcherFeeBps` / `ConfigFacet.setLifMatcherFeeBps(uint16)`), with zero meaning "use the default"
+- the setter should enforce `MAX_FEE_BPS = 5000` (50%) so a bad governance or admin action cannot accidentally starve Treasury
 - the matcher share applies to both the lending-asset LIF path and the VPFI LIF custody path; for deferred VPFI settlements, the matched loan must retain the matcher address so the share can be paid on proper settlement or forfeiture
 - the frontend and bot should read the live matcher-fee BPS from `getProtocolConfigBundle()` where they display economics or compute expected match outcomes
 - this incentive is intentionally compatible with permissionless matching: community bots can compete to find valid pairs, while protocol logic still determines terms and protects both offer creators
@@ -439,8 +439,8 @@ Primary reward claim path:
 
 Frontend claim surface:
 
-- staking rewards are claimed from the public `Buy VPFI` page, colocated with the `Deposit / Stake` step
-- a compact mirror may appear on the Dashboard's discount-status surface, but `Buy VPFI` remains the canonical full claim surface
+- staking rewards are claimed from the connected-app `Buy VPFI` page (`/app/buy-vpfi`), colocated with the `Deposit / Stake` step
+- a compact mirror may appear on the Dashboard's discount-status surface, but `/app/buy-vpfi` remains the canonical full claim surface
 - the card should show pending VPFI, lifetime claimed VPFI reconstructed from `StakingRewardsClaimed(user, amount)` events, and neutral / inactive chrome when `pending == 0`
 - the Dashboard may include a combined rewards summary that adds staking pending, staking lifetime claimed, interaction pending, and interaction lifetime claimed into a single discovery surface with links back to the canonical claim cards
 - the former combined in-app Rewards route should not be treated as the canonical reward-claiming surface; staking rewards and platform-interaction rewards have separate natural homes
@@ -487,30 +487,30 @@ To enable easy early access to VPFI for discounts:
 - allocation: `1%` = `2,300,000 VPFI`
 - global cap: `2,300,000 VPFI`
 - per-wallet cap: configurable by admin, applied per origin-chain LayerZero endpoint ID rather than as one cross-chain wallet cap
-- initial recommendation: `30,000 VPFI` per wallet per chain — this is the live per-chain user limit surfaced on the `Buy VPFI` page until admin explicitly reconfigures it
+- initial recommendation: `30,000 VPFI` per wallet per chain — this is the live per-chain user limit surfaced on `/app/buy-vpfi` until admin explicitly reconfigures it
 - ETH received from the fixed-rate purchase program is sent to Treasury and recycled according to the Treasury Recycling Rule
 - when the purchase flow routes through the Base canonical receiver, VPFI must be minted or released only after the Base receiver has actually received ETH; quoted, requested, or expected ETH amounts must never be enough to mint VPFI by themselves
 - the VPFI amount delivered to the buyer must be based on the ETH amount actually received by the Base receiver
 
 ### 8a. User-Facing Purchase Flow
 
-The `Buy VPFI` page never asks the user to switch to the canonical `Base` chain. Any cross-chain routing, canonical-chain settlement, or LayerZero OFT activity needed under the hood is abstracted away by the page itself.
+The public `/buy-vpfi` route is a no-wallet marketing / education surface. The wallet-bearing `Buy VPFI` controls live inside the connected app at `/app/buy-vpfi`. The app page never asks the user to switch manually to the canonical `Base` chain. Any cross-chain routing, canonical-chain settlement, or LayerZero OFT activity needed under the hood is abstracted away by the page itself.
 
 Two explicit user steps, in this order:
 
 1. **Buy** — the user, connected to their preferred supported chain (`Base`, `Arbitrum`, `Polygon`, `Optimism`, or `Ethereum mainnet`), pays ETH at the fixed rate directly from the page. Purchased VPFI is delivered to the user's wallet **on that same preferred chain** — never auto-routed into escrow, and never requiring a manual chain switch. If the flow settles on the canonical Base receiver, receipt of ETH on Base is the mint/release trigger.
-2. **Deposit / Stake to escrow** — a separate, explicit user action on the same page moves VPFI from the user's wallet into the user's personal escrow on the same chain. This step is always explicit: the protocol never auto-funds escrow after a buy or a bridge. Once deposited, the balance immediately counts as staked for the `5% APR` model and toward local discount tiers. Where supported, this deposit may use Uniswap Permit2 at `0x000000000022D473030F116dDEE9F6B43aC78BA3` so the user signs one EIP-712 authorization and executes the escrow deposit in a single transaction; the classic approve-plus-deposit path remains the fallback.
+2. **Deposit / Stake to escrow** — a separate, explicit user action on the same app page moves VPFI from the user's wallet into the user's personal escrow on the same chain. This step is always explicit: the protocol never auto-funds escrow after a buy or a bridge. Once deposited, the balance immediately counts as staked for the `5% APR` model and toward local discount tiers. Where supported, this deposit may use Uniswap Permit2 at `0x000000000022D473030F116dDEE9F6B43aC78BA3` so the user signs one EIP-712 authorization and executes the escrow deposit in a single transaction; the classic approve-plus-deposit path remains the fallback.
 
 Per-wallet cap display:
 
-- when the admin has not yet configured a per-wallet cap on-chain, the `Buy VPFI` page MUST display the Phase 1 recommendation (`30,000 VPFI`) as the effective per-chain cap — `Uncapped` is not a valid user-facing state
+- when the admin has not yet configured a per-wallet cap on-chain, `/app/buy-vpfi` MUST display the Phase 1 recommendation (`30,000 VPFI`) as the effective per-chain cap — `Uncapped` is not a valid user-facing state
 - the displayed "your remaining allowance" always equals `effectiveCap - soldToWallet`, where `effectiveCap` falls back to `30,000 VPFI` when `perWalletCap == 0` on-chain
 - this allowance is keyed by `(buyer, originEid)`, where `originEid` is the LayerZero endpoint ID of the chain where the buy originated; buying up to the cap on one origin chain does not by itself consume the user's allowance on another chain unless admin later introduces an explicit cross-chain cap model
 - likewise, VPFI deposited into escrow on a given chain counts toward lender / borrower fee-discount tiers only for loans initiated on that same chain
 
 VPFI held in escrow simultaneously satisfies the staking model and the fee-discount tier table in §6 on that same chain — a single deposit serves both purposes locally, but does not qualify loans initiated on other chains.
 
-The public purchase page should expose `Buy`, `Stake`, and `Unstake` entry points as route anchors. `Stake` is a user-facing name for the wallet-to-escrow deposit step; `Unstake` is the escrow-to-wallet withdrawal path on the same chain.
+The app purchase page should expose `Buy`, `Stake`, and `Unstake` entry points as route anchors. `Stake` is a user-facing name for the wallet-to-escrow deposit step; `Unstake` is the escrow-to-wallet withdrawal path on the same chain. The public marketing route may link into those anchors, but should not itself mount wallet controls.
 
 The `Deposit / Stake` step should carry the single canonical user-facing open-staking message: staking is open to everyone, no existing loan is required, escrow-held VPFI earns the staking APR while it remains deposited, and the user's escrow can be created automatically on first deposit. Duplicated page-level staking prose should be avoided so this card remains the source of truth.
 
@@ -676,27 +676,27 @@ Frontend integration requirements:
 - Phase 1 frontend requirements should focus on token-address transparency, supply visibility, mint/cap visibility where exposed, and clear separation between the cross-chain VPFI token and the single-chain core protocol
 - `Dashboard`, `ClaimCenter`, staking views, and reward hooks may gain broader VPFI utility surfaces in `Phase 1`
 - `Dashboard` should specifically surface the shared fee-discount consent control for escrowed VPFI usage
-- the read-only VPFI tier / discount-status table should live near the public `Buy VPFI` purchase decision, while Dashboard remains the home for the fee-discount consent toggle and combined rewards summary
+- the VPFI tier / discount-status table should live near the connected-app `Buy VPFI` purchase / deposit decision, while Dashboard remains the home for the fee-discount consent toggle and combined rewards summary
 - protocol-config-dependent UI copy should read live values from the Diamond wherever possible, including mutable config from `getProtocolConfigBundle()` and compile-time constants exposed through `getProtocolConstants()`
 - tier tables, staking APR labels, pool-cap labels, rental buffer displays, max slippage, treasury fee, LIF, and minimum Health Factor copy should use live config placeholders instead of hardcoded locale text
 - VPFI tier thresholds returned in base units should be converted through shared token-display helpers before they appear in tier tables, consent copy, or tooltip placeholders
-- a dedicated `Buy VPFI` page should let users buy from their preferred supported chain without manually switching to canonical `Base`
-- the `Buy VPFI` page is the single user-facing purchase flow; any bridge, canonical-chain settlement, OFT routing, or Base-receiver complexity must be abstracted behind that flow
+- `/app/buy-vpfi` should let users buy from their preferred supported chain without manually switching to canonical `Base`
+- `/app/buy-vpfi` is the single user-facing purchase / stake / unstake flow; public `/buy-vpfi` is the education surface. Any bridge, canonical-chain settlement, OFT routing, or Base-receiver complexity must be abstracted behind the app flow.
 - the purchase page must show the exact ETH required, resulting VPFI amount, fixed rate, remaining global supply, and chain-local wallet allowance
 - after purchase, the page should guide a separate explicit wallet-to-escrow deposit action on the same chain; it must not auto-deposit purchased VPFI into escrow
 - the deposit step should prefer Permit2 where supported, fall back cleanly to classic approval, and explain that Permit2 is optional convenience rather than a replacement for token-level allowance control
 - transaction review for buying VPFI, depositing VPFI to escrow, and accepting a loan through the VPFI path should include the standard transaction-preview surface where available and fail soft if preview is unavailable
 - borrower-facing pages should show current escrowed VPFI balance, current tier, discount eligibility for liquid assets, and the fact that escrow-held VPFI also counts as staked
-- `Create Offer` and `Loan Details` should provide clear entry points into the dedicated `Buy VPFI` page
+- `Create Offer` and `Loan Details` should provide clear entry points into `/app/buy-vpfi`
 - `Offer Book` accept-review copy should explain that the borrower pays the full `0.1%` LIF up front in VPFI and earns any discount over the loan lifetime as a rebate
 - `Create Offer` borrower-tip copy should frame the benefit as earning up to a `24%` VPFI rebate, not as paying a reduced up-front fee
 - `Claim Center` should show a VPFI rebate line whenever a borrower claim includes a pending LIF rebate
 - `Claim Center` should also host platform-interaction reward claims, including lifetime claimed and contributing-loan context
-- `Buy VPFI` Step 2 should host staking reward claims, including pending and lifetime claimed values
+- `/app/buy-vpfi` Step 2 should host staking reward claims, including pending and lifetime claimed values
 
 Acceptance criteria:
 
-- borrowers can purchase VPFI with ETH from the dedicated preferred-chain purchase page and receive VPFI in their wallet on that same chain
+- borrowers can purchase VPFI with ETH from the dedicated preferred-chain app page and receive VPFI in their wallet on that same chain
 - borrowers can explicitly move that VPFI from wallet to personal escrow on that same chain
 - eligible liquid-asset loan acceptance checks liquidity, fee-discount consent, borrower escrow balance, discount snapshot, Chainlink-led ETH conversion, full `0.1%` LIF computation, and exact VPFI deduction before sending `100%` of requested lending asset to the borrower
 - properly closed loans credit a time-weighted VPFI rebate; defaulted or HF-liquidated loans forfeit the held VPFI to Treasury

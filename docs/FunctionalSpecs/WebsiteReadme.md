@@ -48,12 +48,14 @@ Public-navigation requirements:
 - cross-page hash-anchor navigation must work reliably from every public page and connected-app page that links back into the landing-page sections such as `Features`, `How it works`, `Security`, and `FAQ`
 - when a user clicks one of those anchor links from pages like `Buy VPFI`, `Analytics`, or any route under `/app`, the frontend should route to the landing page and then scroll to the correct section rather than dropping the user at the top of the home page
 - the implementation should tolerate route-change timing where the landing-page section may mount slightly after navigation, so hash-anchor scrolling should retry briefly until the target section exists
-- the `Buy VPFI` link from the home page must resolve to the working public purchase route `/buy-vpfi`
-- public navigation should expose a `VPFI` group with direct entries for `Buy`, `Stake`, and `Unstake`, each deep-linking into the relevant section of the public `Buy VPFI` page
-- app-shell links to public-only experiences such as `Buy VPFI` and `NFT Verifier` should open in a new tab and use an external-link affordance so users understand they are leaving the connected-app shell
+- the public `Buy VPFI` link from the home page and footer must resolve to `/buy-vpfi`, which is a no-wallet marketing / education route for VPFI
+- the actual buy, deposit / stake, withdraw / unstake, and staking-reward claim controls live inside the connected app at `/app/buy-vpfi`; public CTAs should open that app route when the user chooses to transact
+- public navigation should stay informational and should not carry wallet UI, wallet-connected banners, or a VPFI action dropdown unless a later design intentionally restores it
+- app-shell links to public-only experiences such as `NFT Verifier` should open in a new tab and use an external-link affordance so users understand they are leaving the connected-app shell
 - public-shell pages that sit below the fixed Navbar, including `Analytics`, `NFT Verifier`, `Buy VPFI`, `Terms`, and `Privacy`, must include enough top clearance that their headings never render under the Navbar
 - public navigation must preserve the Vaipakam brand mark at its natural size across desktop widths; link spacing and right-cluster spacing should compress before the logo is allowed to shrink
 - the footer should expose `Terms`, `Privacy`, `Cookie settings`, and, once published, the public bug bounty program link
+- footer resource links that describe deployed contracts should land directly on the Analytics transparency section (`/analytics#transparency`) rather than a generic dashboard top
 
 PWA requirements:
 
@@ -97,8 +99,9 @@ Legal and data-rights requirements:
 - if the Terms version or content hash changes, the app should ask the user to accept again before reopening app routes
 - a disabled Terms gate state should exist for testnet / pre-launch operation, so the code path can ship without forcing acceptance before governance activates it
 - the Privacy page should explain what Vaipakam collects, what it deliberately does not collect, who receives consented analytics data, and how users can exercise GDPR / CCPA-style data rights
-- the issue-details drawer should include `Download my data` and `Delete my data` actions for Vaipakam-namespaced browser storage
-- data-rights UI must clearly explain that local browser data can be exported or deleted, but public on-chain state cannot be erased by frontend action
+- data-rights UI must live on a dedicated connected-app page at `/app/data-rights`, with action cards for exporting or deleting Vaipakam-namespaced browser storage and clear explanation that public on-chain state cannot be erased by frontend action
+- the issue-details drawer should stay scoped to support diagnostics: reporting, copying JSON, downloading / clearing the current in-memory journey log, and linking to `/app/data-rights` for broader browser-storage rights
+- the Data Rights page should also expose a `Download journey log (this session)` card so a user can share the live session buffer even when the issue drawer is hidden by operator configuration
 
 ### 2. Connected App
 
@@ -118,14 +121,15 @@ This section will later define:
 Current connected-app surface expectations:
 
 - `Dashboard` is the user's "your stuff" surface: it should include active loans with Role / Status filters, pagination, sortable columns, a most-recent-first default sort, the user's offers across active / filled / cancelled states, the shared VPFI fee-discount consent, a VPFI rewards summary, and a green `Claim` CTA for terminal loans with unclaimed funds
-- `Offer Book` should keep market browsing filterable by side, asset, status, liquidity, duration, and per-side count; market-rate annotations should use a filter-scoped recent-acceptance anchor with signed deltas and a mobile-friendly explanatory tooltip
+- `Offer Book` should be wallet-gated inside `/app`; after connection it should keep market browsing filterable by side, asset, status, liquidity, duration, and per-side count; market-rate annotations should use a filter-scoped recent-acceptance anchor with signed deltas and a mobile-friendly explanatory tooltip
 - closed / filled offer rows should link to the loan they created when an `OfferAccepted(offerId, acceptor, loanId)` event is available
 - `Create Offer` should disable submit until full form validation passes, with typed validator error codes mapped through i18n, and should show token-identification trust blocks under address fields so users can distinguish canonical assets from unknown or suspicious contracts
+- in Advanced mode, `Create Offer` should show an ERC-20 / ERC-20 risk-preview card that computes projected Health Factor, LTV, and liquidation-price cushion from live oracle and risk parameters; for Range Orders it should show both best-case and worst-case values and warn clearly when the worst-case Health Factor falls below the initiation floor
 - Range Orders controls should appear only when the corresponding live protocol flags are enabled. Basic mode should keep the existing single amount / single rate flow; Advanced mode may expose min / max amount and min / max rate inputs, approve or Permit2-sign the upper amount bound, and show live balance warnings before submission.
-- `Loan Details` should show the live loan state, role-gated actions, a chronological on-chain timeline, claimable-state action bar, and precise event breakdowns for settlement splits, fallback collateral allocations, partial repayments, swap retries, and VPFI rebates
+- `Loan Details` should be wallet-gated inside `/app`; after connection it should show the live loan state, role-gated actions, a chronological on-chain timeline, claimable-state action bar, and precise event breakdowns for settlement splits, fallback collateral allocations, partial repayments, swap retries, and VPFI rebates
 - `Activity` rows that reference a loan should use a clickable `Loan #X` pill linking to that loan's full details page
 - `Claim Center` is the home for loan claims and platform-interaction rewards; the former standalone in-app `Rewards` page should not be treated as a live route
-- `Buy VPFI` is the public home for buying, staking / depositing, unstaking / withdrawing, staking-rewards claims, and chain-level VPFI transparency
+- public `/buy-vpfi` is the marketing / education surface for VPFI; connected `/app/buy-vpfi` is the wallet-gated home for buying, staking / depositing, unstaking / withdrawing, staking-rewards claims, and chain-level VPFI transparency
 - in the connected-app sidebar, `Claim Center` should sit with the core lending actions before `Buy VPFI`, while token-purchase and advanced utility destinations remain secondary to loan management
 - the app's issue drawer should be labelled as `Report Issue` / `Issue Details`, not `Diagnostics`, and should generate a redacted report suitable for GitHub issue filing
 
@@ -161,13 +165,13 @@ Keeper-bot reference UX / ops requirements:
 
 Borrower VPFI discount UX:
 
-- `Buy VPFI` must be a public / homepage-visible flow, not something hidden only inside the connected app
-- the canonical user-facing route is `/buy-vpfi`; the former app-shell placement should remain only as a shortcut that opens the public page
-- the homepage and other public-facing CTAs should surface the `Buy VPFI` flow for everyone
-- the borrower discount spec describes this as a public-facing purchase page that should be reachable directly from the homepage and should work from the user's preferred supported chain
-- that page should support the borrower-side VPFI discount flow described in `docs/TokenomicsTechSpec.md`
+- `Buy VPFI` must remain homepage-visible through the public `/buy-vpfi` marketing page, but wallet-bearing purchase / stake / unstake controls must live in the connected app at `/app/buy-vpfi`
+- the canonical learn route is `/buy-vpfi`; the canonical transaction route is `/app/buy-vpfi`
+- the homepage and other public-facing CTAs should surface the public VPFI learn flow for everyone and then route users into `/app/buy-vpfi` when they choose to buy, stake, or unstake
+- the borrower discount spec describes a VPFI acquisition flow that should work from the user's preferred supported chain once the user is in the connected app
+- the app page should support the borrower-side VPFI discount flow described in `docs/TokenomicsTechSpec.md`
 - the page should make clear that the user can buy from their currently preferred supported chain, even if canonical-chain infrastructure is used behind the scenes
-- the `Buy VPFI` page should also be reachable from inside the connected app
+- `/app/buy-vpfi` should be reachable from inside the connected app sidebar and from in-app CTAs that mention VPFI discounts or rewards
 - the page should not require or prompt the user to manually switch to the canonical chain in order to buy VPFI
 - if the protocol routes the purchase through canonical-chain infrastructure under the hood, that complexity should be abstracted away from the user-facing purchase flow
 - the fixed-rate `Buy VPFI` flow should follow the active tokenomics spec and must not rely on a silent pre-minted sale reserve unless a later approved design explicitly reintroduces one
@@ -175,9 +179,9 @@ Borrower VPFI discount UX:
 - after purchase, the VPFI should be delivered to the user's wallet on the chain where the user chose to buy
 - the UI should then guide and facilitate a separate explicit user-intent action to move or deposit that wallet-held VPFI into the user's personal escrow for staking / discount eligibility
 - staking should be messaged as open to any VPFI holder, not only borrowers or users with an existing loan; first deposit should make clear that the user escrow can be created automatically
-- the public page should label the escrow action as `Deposit / Stake VPFI` and the reverse action as `Withdraw / Unstake VPFI`
+- the public marketing page should explain that VPFI can be bought, deposited / staked, and withdrawn / unstaked; the actual app controls should label the escrow action as `Deposit / Stake VPFI` and the reverse action as `Withdraw / Unstake VPFI`
 - the `Deposit / Stake` card should contain the canonical open-staking explanation in one user-friendly Info callout; duplicate page-level or step-subtitle copies should be avoided
-- the read-only VPFI discount-status table belongs on the `Buy VPFI` page near the purchase decision, while the shared fee-discount consent toggle remains on `Dashboard`
+- the VPFI discount-status table belongs on `/app/buy-vpfi` near the purchase / deposit decision, while the shared fee-discount consent toggle remains on `Dashboard`
 - the discount-status table should render only for connected wallets and should link users back to `Dashboard` when consent is disabled
 - the Phase 1 `30,000 VPFI` user cap is a per-chain cap, not a protocol-wide global cap across all chains
 - VPFI deposited / staked in escrow on one chain should count only toward fee-discount tiers for loans initiated on that same chain
@@ -186,17 +190,17 @@ Borrower VPFI discount UX:
 - the consent control should not be treated as a `Buy VPFI`-page-only setting
 - offer-level or loan-level consent toggles are not required for VPFI fee discounts once that common platform-level setting is enabled
 - the connected app should show the user's escrowed VPFI balance, the implied discount tier, and the fact that escrow-held VPFI also counts as staked for the `5% APR` staking model
-- on the `Buy VPFI` page, the `Your VPFI discount status` area should provide a chain selector rather than only showing the currently inferred chain name in the title / balance label
+- on `/app/buy-vpfi`, the `Your VPFI discount status` area should provide a chain selector rather than only showing the currently inferred chain name in the title / balance label
 - that chain selector should let the user inspect chain-specific escrowed VPFI, discount-tier status, and discount eligibility because those values are local to the selected lending chain
 - VPFI tier thresholds should display in token units rather than raw 1e18-scaled base units across discount-status cards, tier tables, tooltip placeholders, and consent copy
 - borrower and lender fee-discount messaging should follow the tiered model from `docs/TokenomicsTechSpec.md`, not a single flat `25%` discount
 - app pages such as `Create Offer` and `Loan Details` may still link users into this `Buy VPFI` flow as secondary shortcuts when the borrower discount is relevant
-- if a `Buy VPFI` action fails, the page should show a clean error card with secondary actions such as `Report on GitHub` and `Dismiss` aligned consistently and visibly as one grouped action area rather than appearing visually misaligned
+- if a `Buy VPFI` app action fails, the page should show a clean error card with secondary actions such as `Report on GitHub` and `Dismiss` aligned consistently and visibly as one grouped action area rather than appearing visually misaligned
 - borrower VPFI-discount copy must follow the Phase 5 model: users pay the full `0.1%` LIF up front in VPFI, earn the discount time-weighted during the loan, and receive any earned rebate through the borrower claim on proper close
 - the Offer Book accept-review modal should explain the up-front VPFI payment plus time-weighted rebate model before the user accepts a loan through the VPFI path
 - borrower-facing shortcut copy may say `earn up to a 24% VPFI rebate`, but should not describe the up-front fee itself as reduced
 - the Claim Center should show a visible VPFI rebate line when a borrower claim includes a pending rebate
-- VPFI escrow deposit from the `Buy VPFI` page or related app surfaces may use Permit2 when supported, with fallback to the classic approve-plus-deposit flow
+- VPFI escrow deposit from `/app/buy-vpfi` or related app surfaces may use Permit2 when supported, with fallback to the classic approve-plus-deposit flow
 
 Reward-claiming UX:
 
@@ -209,7 +213,7 @@ Reward-claiming UX:
 - the user's escrowed VPFI balance on that chain should be treated as the staked balance for reward purposes
 - if the user wants to move claimed VPFI elsewhere afterward, bridging should remain optional
 - reward surfaces should be split by user intent rather than combined into one `Rewards` page:
-  - `Staking Rewards` should be claimed from the `Buy VPFI` page's `Deposit / Stake` card, with a compact mirror on Dashboard discount status
+  - `Staking Rewards` should be claimed from `/app/buy-vpfi`'s `Deposit / Stake` card, with a compact mirror on Dashboard discount status
   - `Platform Interaction Rewards` should be claimed from Claim Center above the per-loan claim rows
 - Dashboard should include a combined `Your VPFI rewards` summary for connected wallets, showing total earned across staking and interaction rewards, per-stream pending / claimed amounts, and deep links to the canonical claim cards
 - the combined rewards summary should render even when all values are zero so new users can discover how the rewards programs work
@@ -239,7 +243,7 @@ Activity and local log-index requirements:
 Unstaking VPFI:
 
 - because VPFI held in user escrow is automatically treated as staked, users should be able to unstake by moving VPFI from escrow back to their wallet on the same chain
-- the UI should provide a clear and prominent `Withdraw / Unstake VPFI` action on the public `Buy VPFI` page
+- the UI should provide a clear and prominent `Withdraw / Unstake VPFI` action on `/app/buy-vpfi`
 - the unstake action should show the user's current escrowed VPFI balance and the maximum amount available to unstake
 - when the user selects `Unstake VPFI`, the UI should:
   - show a simple amount-entry form
@@ -256,7 +260,7 @@ Unstaking VPFI:
 - after unstaking, the UI may offer the standard LayerZero bridge flow if the user wants to move that VPFI to another chain, including a direct link to `https://layerzero.superbridge.app/`
 - if the user has zero VPFI in escrow, the unstake action should be hidden or disabled with a helpful message
 - if active loans currently rely on escrowed VPFI for fee-discount eligibility, the unstake flow should show a clear warning before confirmation
-- if the user switches chains, the `Buy VPFI` page should refresh and show the escrow balance, staking rewards, and unstake availability for the newly connected chain
+- if the user switches chains, `/app/buy-vpfi` should refresh and show the escrow balance, staking rewards, and unstake availability for the newly connected chain
 - unstaking should be implemented as a local chain action only; no cross-chain messaging should be required for the unstake itself
 
 Connected-app network model in Phase 1:
@@ -265,6 +269,8 @@ Connected-app network model in Phase 1:
 - supported Phase 1 networks are `Base`, `Polygon`, `Arbitrum`, `Optimism`, and `Ethereum mainnet`
 - `VPFI` is cross-chain, and the interaction-reward denominator / reward-funding path also uses cross-chain messaging so each chain can claim against one protocol-wide daily interest total; loans, offers, collateral, repayment, liquidation, preclose, refinance, and keeper actions still stay on the currently selected network
 - the app should make the active network clear and treat each network as its own local protocol instance with a dedicated Diamond deployment per network
+- the connected topbar / wallet menu should show both chain icon and chain name after connection, collapsing to icon-only only on very narrow viewports while preserving the accessible chain name
+- in-app pages should not mount a standalone pre-connect chain picker; read-only pre-connect chain exploration belongs on public Analytics, while wallet-gated app pages should take chain context from the connected wallet
 
 Wallet connection requirements:
 
@@ -351,6 +357,7 @@ The frontend should support:
 - consistent usability, contrast, and readability in both themes
 - persistent theme preference across sessions where possible
 - all states and components designed intentionally for both themes, not just color-inverted afterthoughts
+- public Analytics, Buy VPFI marketing, and NFT Verifier pages may use the shared page-level ambient glow used by the app shell, but cards should remain flat unless a page-specific sparse analytics layout benefits from a subtle card gradient
 
 ## Responsive Strategy
 
@@ -373,7 +380,7 @@ Chrome-level layout behavior:
 - the sidebar header and app top bar should maintain matching height so the shell divider line stays aligned in expanded, collapsed, and hover-expanded states
 - fixed or floating layout affordances must not create accidental horizontal overflow
 - status severity should match user impact; for example, `No wallet detected` should be a warning rather than a blocking error
-- public and connected-app navigation should keep wallet, network, issue-reporting / support-details, footer, cookie settings, and core route controls reachable on mobile and desktop
+- public navigation should remain wallet-free and focused on informational routes, footer links, cookie settings, and core public CTAs; connected-app navigation should keep wallet, network, issue-reporting / support-details, and core app route controls reachable on mobile and desktop
 - layout fixes should preserve the existing design language in both light and dark themes
 - the settings popover should group global preferences such as Basic / Advanced mode, language, and theme in one predictable place
 
@@ -691,11 +698,13 @@ Implementation requirements:
 
 - every important action path should emit frontend telemetry or logs for step start, step success, and step failure
 - logs should identify the relevant area such as wallet connect, create offer, accept offer, repay, claim, liquidation-related view, preclose, refinance, or early withdrawal
-- logs should capture the active wallet address, chain/network, loan ID or offer ID when available, Vaipakam NFT role context when relevant, and the exact error message or revert reason when available
+- local logs should capture the active wallet address, chain/network, loan ID or offer ID when available, Vaipakam NFT role context when relevant, and the exact error message or revert reason when available, then redact sensitive fields before any user-submitted report is generated
+- server-side diagnostics capture, when explicitly enabled by `VITE_DIAG_RECORD_ENABLED`, should send only minimized redacted failure records to the Worker `/diag/record` endpoint using sendBeacon / keepalive fetch; it must never include full wallet addresses, localStorage, cookies, user-agent strings, or freeform error text
+- server-side diagnostics capture should fail soft, deduplicate repeated failures locally and server-side, respect CORS / rate-limit / sampling controls, and retain records only for the configured retention period
 - the system should preserve enough event history to understand the sequence of user actions before the error happened
 - the UI should provide a user-friendly way to surface or export troubleshooting details when support intervention is needed
 - observability should work in both basic and advanced modes, and in both light and dark themes, without degrading the user experience
-- the issue-details / troubleshooting surface should be available not only inside the connected-app shell but also on public pages where important user actions can fail, including public `Buy VPFI` and public analytics flows
+- the issue-details / troubleshooting surface should be available where the operator leaves `VITE_DIAG_DRAWER_ENABLED` on; hiding the drawer must not disable the separate server-side failure capture when that capture is enabled
 - the floating issue-reporting entry point should stay hidden on the normal happy path and should become visible when there is at least one recorded failure, when the drawer is already open, or when the user is in `Advanced` mode
 - the drawer should allow users to filter visible log events by `All`, `Failure`, `Start`, and `Success`, with live counts shown on each filter option
 - the default event filter should be `Failure`, because that is the most likely support-relevant subset when the user opens the drawer after something breaks
