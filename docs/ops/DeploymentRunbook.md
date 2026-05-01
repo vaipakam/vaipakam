@@ -451,6 +451,101 @@ wrong format or the channel hasn't cleared the post-stake delay
 (~10 blocks after channel-create tx on mainnet). Re-stake confirmations
 take a few minutes; nothing else to do.
 
+### 8d. Server-side error capture
+
+The hf-watcher Worker also serves `POST /diag/record` — the
+frontend fires-and-forgets one POST per UI failure event so
+support has a server-side audit trail (UUID embedded in any
+GitHub-issue prefill cross-references back to a real session).
+Lives on the same Worker and the same D1 binding as §8a/§8b
+above; no separate deploy.
+
+**One-time setup (per environment)**:
+
+1. Apply the new migration to the production database:
+   ```bash
+   cd ops/hf-watcher
+   npx wrangler d1 migrations apply vaipakam-alerts-db --remote
+   ```
+   This creates the `diag_errors` table + indexes. Idempotent
+   (uses `CREATE TABLE IF NOT EXISTS`).
+
+2. Deploy the worker (same command as §8b — pushes the new
+   `/diag/record` route + the per-IP rate-limit binding):
+   ```bash
+   npx wrangler deploy
+   ```
+
+3. Smoke test the endpoint:
+   ```bash
+   # From a shell on a host the FRONTEND_ORIGIN allows (or via
+   # `curl --resolve` to bypass DNS):
+   curl -X POST https://alerts.vaipakam.com/diag/record \
+     -H 'origin: https://vaipakam.com' \
+     -H 'content-type: application/json' \
+     -d '{
+       "id":"123e4567-e89b-42d3-a456-426614174000",
+       "client_at":'"$(date +%s)"',
+       "area":"smoke-test",
+       "flow":"runbook-8d"
+     }'
+   # Expect: {"recorded":true,"id":"123e4567-…"}
+   ```
+
+   Then verify the row landed:
+   ```bash
+   npx wrangler d1 execute vaipakam-alerts-db --remote \
+     --command "SELECT id, area, flow, recorded_at FROM diag_errors ORDER BY recorded_at DESC LIMIT 1"
+   ```
+
+**Tunable knobs** (all in `ops/hf-watcher/wrangler.jsonc`,
+override per-environment via `wrangler vars` or the dashboard):
+
+| Var | Default | What it does |
+|---|---|---|
+| `DIAG_SAMPLE_RATE` | `1.0` | Random write sampling. Drop to `0.1` to write 10% when error volume spikes. |
+| `DIAG_RETENTION_DAYS` | `90` | Cron-driven prune deletes rows older than this. Bumped on every 5-min tick. |
+| `DIAG_RECORD_RATELIMIT.simple.limit` / `period` | `60 / 60` | Per-IP rate limit. Tune in the `unsafe.bindings` block. |
+
+**Frontend coupling**:
+
+The frontend reads `VITE_HF_WATCHER_ORIGIN` (already set —
+same origin as the Alerts page uses). No new frontend env var
+is required for capture itself; the optional
+`VITE_APP_VERSION` (CI-injected commit hash) gets stamped on
+each captured row for release-correlation.
+
+A second frontend var, `VITE_DIAG_DRAWER_ENABLED` (default
+`true`), gates the user-facing Diagnostics drawer + FAB. Set
+to `"false"` once server capture is observed healthy in
+production to hide the drawer entirely — server capture
+keeps running regardless. The user can still grab their
+session journey log from the Data Rights page when the
+drawer is hidden.
+
+**GitHub-issue cross-reference workflow** (support team):
+
+When a user files a GitHub issue using the prefill, the body
+contains `**Report ID:** \`<UUID>\``. Look it up:
+
+```bash
+cd ops/hf-watcher
+npx wrangler d1 execute vaipakam-alerts-db --remote \
+  --command "SELECT * FROM diag_errors WHERE id = '<UUID>'"
+```
+
+If the row exists with a matching error fingerprint, the
+report came from a real session. If not, the user fabricated
+or altered the UUID — the surrounding error metadata in their
+issue body is unverified.
+
+**Privacy note**: the `diag_errors` table stores only what
+the existing GitHub-issue prefill already publishes (redacted
+wallet `0x…abcd`, error metadata, locale, viewport). No
+user-agent, no full address, no localStorage / cookies / free-form
+text. The Privacy Policy on the website carries one paragraph
+describing this; keep them in sync if you change the schema.
+
 ---
 
 ## 9. LayerZero security watcher (one-time, not per-chain)

@@ -28,6 +28,27 @@ const FILTERS: { key: StatusFilter; labelKey: string }[] = [
   { key: 'success', labelKey: 'diagnostics.filterSuccess' },
 ];
 
+/**
+ * Master flag — when `VITE_DIAG_DRAWER_ENABLED` is the literal string
+ * "false" the drawer (floating LifeBuoy button + slide-over panel)
+ * doesn't mount at all. Lets the operator hide the user-facing
+ * "report issue" affordance once server-side error capture is the
+ * canonical reporting channel — no other major DeFi platform asks
+ * users to hand-author bug reports, and the drawer's mere presence
+ * signals "this might break". Default behaviour (env var unset OR
+ * any value other than "false") is to render the drawer, so existing
+ * deploys are unchanged. Read once at module load — no hot-toggle;
+ * a redeploy with the new env value flips the behaviour.
+ */
+const DRAWER_ENABLED = (() => {
+  try {
+    const raw = (import.meta.env.VITE_DIAG_DRAWER_ENABLED as string | undefined) ?? '';
+    return raw.toLowerCase() !== 'false';
+  } catch {
+    return true;
+  }
+})();
+
 export default function DiagnosticsDrawer() {
   const { t } = useTranslation();
   const { mode } = useMode();
@@ -67,6 +88,13 @@ export default function DiagnosticsDrawer() {
   const visibleEvents = filter === 'all'
     ? events
     : events.filter((e) => e.status === filter);
+
+  // Master flag (see DRAWER_ENABLED constant above). When the
+  // operator has opted out, render nothing — no FAB, no drawer.
+  // Server-side error capture in `lib/journeyLog.ts` continues to
+  // run in the background regardless, so the support team still
+  // sees every failure even when the user-facing affordance is off.
+  if (!DRAWER_ENABLED) return null;
 
   return (
     <>

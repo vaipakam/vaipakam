@@ -72,6 +72,24 @@ export interface Env {
   // proxy so a noisy /scan/* caller can't drain the /quote/* budget.
   SCAN_BLOCKAID_RATELIMIT?: { limit(input: { key: string }): Promise<{ success: boolean }> };
 
+  // 2026-05-01 — diagnostics error capture endpoint (POST /diag/record).
+  // Per-IP rate-limit binding; same shape as the quote-proxy buckets
+  // above. Defaults to 60 req/min per IP — see wrangler.jsonc.
+  DIAG_RECORD_RATELIMIT?: { limit(input: { key: string }): Promise<{ success: boolean }> };
+
+  // 2026-05-01 — diagnostics sample rate (0.0-1.0). When 1.0 (default)
+  // the worker writes every accepted POST. Set to e.g. 0.1 to write
+  // 10% of accepted POSTs (random sampling) when error volume spikes
+  // and you want to keep storage in check without losing all
+  // visibility. Coerced from string to float at read time. Out-of-
+  // range values clamp to [0, 1].
+  DIAG_SAMPLE_RATE?: string;
+
+  // 2026-05-01 — diagnostics retention in days. Cron-driven prune
+  // deletes rows older than this many days. Default 90. Coerced from
+  // string to int; values < 1 are clamped up to 1.
+  DIAG_RETENTION_DAYS?: string;
+
   // CORS origin the HTTP endpoints will accept. Set to the frontend
   // origin(s); defaults to the vars entry in wrangler.jsonc.
   FRONTEND_ORIGIN: string;

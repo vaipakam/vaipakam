@@ -24,3 +24,7 @@ dist/
 .wrangler
 .dev.vars
 **/.dev.vars
+
+# Personal scratchpad — kept on disk for the operator's own notes
+# but not committed.
+docs/internal/RoughNotes.md

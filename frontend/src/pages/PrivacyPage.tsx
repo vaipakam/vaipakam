@@ -56,6 +56,27 @@ export default function PrivacyPage() {
           </p>
 
           <p>
+            <strong>Server-side error capture.</strong> Every UI error
+            (e.g. a transaction reverts, an oracle read fails) is
+            recorded server-side at a Cloudflare Worker endpoint with
+            a per-event UUID. The record carries: the redacted wallet
+            (<code>0x…abcd</code>), error type / name / selector,
+            which screen / flow / step you were in, your chain id,
+            interface locale, theme, viewport size, and the app
+            version. <strong>Not</strong> recorded: full wallet
+            address, browser user-agent string, IP address (beyond
+            transient rate-limiting), localStorage contents, cookies,
+            or any free-form text you typed. The same UUID surfaces
+            in any GitHub issue you choose to file, so support can
+            cross-reference an external report against a real session
+            on our side. Records are pruned after 90 days. The legal
+            basis is "legitimate interest" (security, fraud prevention,
+            and improving service reliability) under GDPR Art 6(1)(f).
+            To request deletion of records associated with your
+            redacted wallet, contact support.
+          </p>
+
+          <p>
             <strong>Google Analytics — only with consent.</strong> If
             you accept analytics cookies in the{' '}
             <button

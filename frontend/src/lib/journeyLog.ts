@@ -116,7 +116,16 @@ function notify() {
 }
 
 function randomId(): string {
-  // Short opaque id; avoids pulling in a uuid dep for a debug aid.
+  // UUIDv4 — satisfies the worker's `/diag/record` validation when
+  // this id is sent as the per-failure row PK, AND doubles as the
+  // GitHub-issue cross-reference key. Falls back to a short base36
+  // string in environments without crypto.randomUUID (extremely old
+  // browsers); those calls will still produce a working in-memory
+  // event id but won't pass server validation, so the server simply
+  // won't record them — fail-soft.
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
   return Math.random().toString(36).slice(2, 10);
 }
 
@@ -188,7 +197,150 @@ export function emit(input: EmitInput): JourneyEvent {
   if (buffer.length > BUFFER_SIZE) buffer = buffer.slice(-BUFFER_SIZE);
   persist();
   notify();
+  // 2026-05-01 — server-side error capture. Only fires for `failure`
+  // events (success / start telemetry stays client-side). Fire-and-
+  // forget; non-blocking even on slow networks. See
+  // `recordFailureToServer` for the local 5-streak dedup that keeps
+  // a runaway re-render loop from flooding the worker.
+  if (ev.status === 'failure') {
+    recordFailureToServer(ev);
+  }
   return ev;
+}
+
+// ─── Server-side error capture (2026-05-01) ───────────────────────────
+//
+// Every `failure` event is fired-and-forgotten to the hf-watcher
+// Worker's `/diag/record` endpoint. The Worker writes a row to D1
+// (`diag_errors` table) with a UUIDv4 PK matching `ev.id`. That id
+// also surfaces in the GitHub-issue prefill as the report id, so a
+// support engineer can cross-reference any reported issue against
+// the server-side audit trail to confirm the report came from a
+// real session — not fabricated.
+//
+// Defenses (frontend side):
+//
+//   1. **5-streak local cap.** If the last 5 failures all had the
+//      same fingerprint (area+flow+step+errorType+errorName+
+//      errorSelector), stop POSTing until a different fingerprint
+//      arrives. Saves Worker invocations against a runaway re-render
+//      loop or a stuck retry path. The Worker has a secondary cap as
+//      belt-and-suspenders.
+//   2. **No-op when origin not configured.** If
+//      `VITE_HF_WATCHER_ORIGIN` is unset (local dev without the
+//      worker), capture silently disabled.
+//   3. **`navigator.sendBeacon` first, fetch fallback.** Beacon
+//      survives page-unload and is non-blocking by definition;
+//      `fetch` with `keepalive: true` is the modern fallback for
+//      browsers where Beacon refused the payload (rare).
+//   4. **Never throws upward.** Capture failure cannot break the
+//      app's error-handling path. The catch is silent on purpose.
+
+let lastFingerprint: string | null = null;
+let consecutiveCount = 0;
+const STREAK_CAP = 5;
+
+function failureFingerprint(ev: JourneyEvent): string {
+  return [
+    ev.area,
+    ev.flow,
+    ev.step ?? '',
+    ev.errorType ?? '',
+    ev.errorName ?? '',
+    ev.errorSelector ?? '',
+  ].join('|');
+}
+
+function recordFailureToServer(ev: JourneyEvent): void {
+  // Module-level state guard. Wrapped in try because the env var read
+  // can throw in some bundler edge cases.
+  let origin: string;
+  try {
+    origin = (import.meta.env.VITE_HF_WATCHER_ORIGIN as string | undefined) ?? '';
+  } catch {
+    return;
+  }
+  if (!origin) return;
+
+  const fp = failureFingerprint(ev);
+  if (fp === lastFingerprint) {
+    consecutiveCount++;
+    if (consecutiveCount > STREAK_CAP) return;
+  } else {
+    lastFingerprint = fp;
+    consecutiveCount = 1;
+  }
+
+  // Build the redacted payload. Wallet is shortened via the existing
+  // contract; error message is left as-is here (the Worker truncates
+  // server-side). The Worker validates field types + lengths and
+  // returns 400 on garbage; we don't retry.
+  const payload = {
+    id: ev.id,
+    client_at: Math.floor(ev.timestamp / 1000),
+    area: ev.area,
+    flow: ev.flow,
+    step: ev.step ?? null,
+    errorType: ev.errorType ?? null,
+    errorName: ev.errorName ?? null,
+    errorSelector: ev.errorSelector ?? null,
+    errorMessage: ev.errorMessage ? ev.errorMessage.slice(0, 1000) : null,
+    redactedWallet: redactAddress(ev.wallet ?? null),
+    chainId: ev.chainId ?? null,
+    loanId: ev.loanId ?? null,
+    offerId: ev.offerId ?? null,
+    appLocale:
+      typeof document !== 'undefined'
+        ? document.documentElement.lang || null
+        : null,
+    appTheme:
+      typeof document !== 'undefined'
+        ? document.documentElement.getAttribute('data-theme') || null
+        : null,
+    viewport:
+      typeof window !== 'undefined' && typeof window.innerWidth === 'number'
+        ? `${window.innerWidth}x${window.innerHeight}`
+        : null,
+    appVersion:
+      ((import.meta.env.VITE_APP_VERSION as string | undefined) ?? null) ||
+      null,
+  };
+
+  const url = `${origin.replace(/\/$/, '')}/diag/record`;
+  const json = JSON.stringify(payload);
+
+  // Beacon path — survives page-unload, doesn't block the UI thread.
+  // `sendBeacon` only accepts opaque CORS POSTs without a content-type
+  // header you can set, so we wrap the JSON in a Blob with the right
+  // MIME type. Returns false when the browser refused (e.g. payload
+  // too large) — fall through to fetch in that case.
+  if (typeof navigator !== 'undefined' && typeof navigator.sendBeacon === 'function') {
+    try {
+      const blob = new Blob([json], { type: 'application/json' });
+      const sent = navigator.sendBeacon(url, blob);
+      if (sent) return;
+    } catch {
+      // Fall through to fetch.
+    }
+  }
+
+  // Fetch fallback — keepalive: true so the request survives the page
+  // closing right after a failure (e.g. user instinctively closes the
+  // tab when something errors). No await, no .then — this is fire-and-
+  // forget by design.
+  try {
+    void fetch(url, {
+      method: 'POST',
+      mode: 'cors',
+      keepalive: true,
+      headers: { 'content-type': 'application/json' },
+      body: json,
+    }).catch(() => {
+      // Silent — capture failure cannot break the app's error path.
+    });
+  } catch {
+    // Same — never throw upward.
+  }
 }
 
 /**
@@ -423,7 +575,7 @@ export function enrichFetchError(err: unknown, url: string): unknown {
 let activeReportId: string | null = null;
 function reportId(): string {
   if (!activeReportId) {
-    activeReportId = Math.random().toString(36).slice(2, 10);
+    activeReportId = randomId();
   }
   return activeReportId;
 }

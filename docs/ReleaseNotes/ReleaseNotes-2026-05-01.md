@@ -907,6 +907,99 @@ this morning. The orphaned `nav.vpfi*` i18n keys
 `vpfiStake`, `vpfiUnstake`) stayed in `en.json` unused —
 cheap to keep around in case the dropdown comes back.
 
+## Server-side error capture (D1) + Diagnostics drawer master flag
+
+Foundation for proactive triage + defensible cross-reference
+on user-submitted GitHub issues. Three slices, all landed
+together:
+
+**Worker side** (`ops/hf-watcher/`):
+
+- New D1 migration `0003_diag_errors.sql` — single
+  `diag_errors` table keyed by UUIDv4 PK. Stores only what
+  the existing GitHub-issue prefill already publishes
+  (redacted wallet, error type/name/selector, area/flow/
+  step, locale, theme, viewport). No user-agent string,
+  no full address, no localStorage / cookies / freeform
+  text. Indexed on (fingerprint, recorded_at) for the
+  dedup check + on (recorded_at) for the retention prune.
+- New endpoint `POST /diag/record` (handler in
+  `src/diagRecord.ts`). Wired into `src/index.ts`. Each
+  POST: validates UUID + required fields, computes
+  fingerprint server-side (don't trust client), checks
+  whether the last 5 records all share that fingerprint
+  (server-side dedup belt), inserts. Always returns 200
+  even on dedup-skip — caller doesn't retry.
+- Three defenses on the endpoint: (a) CORS-locked to
+  `FRONTEND_ORIGIN` env var, (b) per-IP rate-limit binding
+  `DIAG_RECORD_RATELIMIT` (default 60 req/min, tunable via
+  the `simple` block in wrangler.jsonc), (c) random
+  sampling via `DIAG_SAMPLE_RATE` env var (default `1.0`,
+  set to `0.1` etc. when error volume spikes).
+- Retention prune piggybacks on the existing 5-minute
+  cron — one indexed `DELETE WHERE recorded_at < cutoff`
+  per tick, gated by `DIAG_RETENTION_DAYS` env var
+  (default `90`). Wrapped in catch so a transient D1
+  hiccup can't break the watcher tick.
+
+**Frontend side**:
+
+- `lib/journeyLog.ts` — UUID upgrade (now uses
+  `crypto.randomUUID()` so the per-event id satisfies the
+  Worker's UUIDv4 validation; falls back to base36 in
+  ancient browsers, which fail-soft when the Worker
+  rejects them). New `recordFailureToServer()` fires from
+  inside `emit()` for every `failure` event:
+  `navigator.sendBeacon` first (survives page-unload),
+  fetch with `keepalive: true` as fallback, never throws
+  upward. Local 5-streak dedup keeps a runaway re-render
+  loop from flooding the worker.
+- `components/app/DiagnosticsDrawer.tsx` — master flag
+  `VITE_DIAG_DRAWER_ENABLED` (default `true`, set to
+  `"false"` to hide the drawer + FAB entirely). Server
+  capture continues regardless of the flag, so the
+  support team always sees errors. Lets the operator
+  flip off the user-facing "report issue" affordance
+  once server capture is observed working — matches the
+  pattern of every other major DeFi platform (Uniswap /
+  Aave / Compound / dYdX / Lido) which don't ask users
+  to file bug reports.
+- `pages/DataRights.tsx` — new "Download journey log
+  (this session)" card. Saves the in-memory journey-log
+  buffer as JSON for users sharing diagnostics in a
+  Discord DM / 1:1 support thread. Available even when
+  the Diagnostics drawer is hidden.
+
+**Privacy** ([PrivacyPage.tsx](frontend/src/pages/PrivacyPage.tsx)):
+
+One new paragraph under "What we collect" describing
+exactly what gets captured server-side, what doesn't,
+retention (90 days), legal basis (GDPR Art 6(1)(f)
+"legitimate interest" — security, fraud prevention,
+service-reliability), and how to request deletion.
+
+**Net effect**: every UI error now has a defensible
+server-side audit trail, support can cross-reference any
+GitHub issue against a real session via UUID, and we have
+visibility into errors users hit but don't report. The
+drawer stays for now (master flag off-by-default);
+operator can hide it once server capture is observed
+healthy in production.
+
+**Operator setup steps** (one-time):
+
+1. Apply the new D1 migration to the production worker:
+   `cd ops/hf-watcher && npx wrangler d1 migrations apply
+   vaipakam-alerts-db --remote`
+2. Deploy the worker: `npx wrangler deploy`
+3. Confirm `/diag/record` accepts a test POST from the
+   frontend origin.
+4. (Later, when comfortable) set
+   `VITE_DIAG_DRAWER_ENABLED=false` in
+   `frontend/.env.production` (or the Cloudflare Pages
+   dashboard) and redeploy the frontend to hide the
+   user-facing drawer.
+
 ## Outstanding for the testnet redeploy gate
 
 Before fresh testnet diamonds can land:

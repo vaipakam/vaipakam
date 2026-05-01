@@ -108,3 +108,21 @@ If we're heading toward testnet redeploy → 2-week bake → audit:
 - Phase 2 design discussions: Tier 5 items, in the audit window.
 
 ---
+
+Worker: D1 migration 0003_diag_errors.sql
+
+Worker: env.ts + wrangler.jsonc rate-limit binding + sample rate + retention vars
+
+Worker: /diag/record handler (validate, dedup, insert)
+
+Worker: cron prune for retention
+
+Frontend: journeyLog.ts POST hook with sendBeacon + 5-streak local cap
+
+Frontend: Diagnostics drawer master flag (env-driven)
+
+Frontend: journey-log download button on Data Rights page
+
+Frontend: PrivacyPage paragraph on server-side error capture
+
+---

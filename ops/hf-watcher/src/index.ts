@@ -18,6 +18,7 @@ import { extractLinkCode, sendMessage, type TelegramUpdate } from './telegram';
 import { handshakeExpired, handshakeLinked } from './i18n';
 import { handle0xQuote, handle1inchQuote } from './quoteProxy';
 import { handleBlockaidScan } from './scanProxy';
+import { handleDiagRecord, pruneOldDiagErrors } from './diagRecord';
 import {
   handleActiveLoansFrameInitial,
   handleActiveLoansFramePost,
@@ -31,6 +32,16 @@ export default {
     ctx: ExecutionContext,
   ): Promise<void> {
     ctx.waitUntil(runWatcher(env));
+    // 2026-05-01 — diagnostics retention prune. Cheap (one DELETE
+    // gated by an indexed predicate). Piggybacks on the existing
+    // 5-min cron — no separate trigger needed. Failing here must
+    // not break the watcher, so wrap in catch.
+    ctx.waitUntil(
+      pruneOldDiagErrors(env).catch(() => {
+        // Swallow — a transient D1 hiccup shouldn't fail the
+        // whole scheduled tick. Next tick retries.
+      }),
+    );
   },
 
   async fetch(req: Request, env: Env): Promise<Response> {
@@ -98,6 +109,18 @@ export default {
     // preview hook on review modals.
     if (url.pathname === '/scan/blockaid' && req.method === 'POST') {
       return handleBlockaidScan(req, env);
+    }
+
+    // 2026-05-01 — diagnostics error capture endpoint. Frontend
+    // fires-and-forgets one POST per `failure` journey event so
+    // support has a server-side audit trail (UUID embedded in any
+    // GitHub-issue prefill cross-references back to a real session).
+    // CORS-locked to FRONTEND_ORIGIN, per-IP rate-limited via the
+    // DIAG_RECORD_RATELIMIT binding, dedup'd at the 5-consecutive-
+    // same-fingerprint threshold. Always returns 200 even on dedup
+    // skip — caller doesn't retry.
+    if (url.pathname === '/diag/record') {
+      return handleDiagRecord(req, env);
     }
 
     return new Response('Not found', { status: 404 });
