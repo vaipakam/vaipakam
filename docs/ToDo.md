@@ -8,6 +8,7 @@
 
 ---
 
+- [ ] Provide dropdown for duration, so that it would be bucketed and would help the matching offers in a better way, what do you say?
 - [ ] Defer: Group languages based on the locality of that continent and display only those group belonging to that continent. Note: exception is for japanese can be displayed together with western countries too
 - [ ] Borrower can pay interest at any time but it is mandatory to pay complete interest at the end of 1 (or each) year completion, the cumulative paid interest for that year should be equal or more than a full year accured interest, otherwise system will use collateral to pay interst to lender after grace period of 2 weeks (buy selling the required collateral asset to but lending asset), this may incur higher fees and may also drastically change the HF/LTV and may triger liquidation too.
 - [ ] For pyth, if we provide only price feed for ETH/USD, ETH/EUR, ETH/JPY, ETH/XAU and all other asset can be checked with respect to ETH right, so that it is not required for us to configure all the asset price feed right?

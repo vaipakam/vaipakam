@@ -99,13 +99,13 @@
   //                           TG_BOT_TOKEN. Distinct from any
   //                           operator's personal Telegram handle —
   //                           Telegram bots are their own accounts.
+  // Diamond addresses per chain are NO LONGER set here. They live in
+  // `src/deployments.json`, generated from
+  // `contracts/deployments/<chain-slug>/addresses.json` by
+  // `contracts/script/exportFrontendDeployments.sh`. The Worker
+  // imports the merged JSON at build time; no `DIAMOND_ADDR_*` env
+  // vars are read.
   "vars": {
-    "DIAMOND_ADDR_BASE": "",
-    "DIAMOND_ADDR_ETH": "",
-    "DIAMOND_ADDR_ARB": "",
-    "DIAMOND_ADDR_OP": "",
-    "DIAMOND_ADDR_ZKEVM": "",
-    "DIAMOND_ADDR_BNB": "",
     "FRONTEND_ORIGIN": "https://vaipakam.com",
     // "FRONTEND_ORIGIN": "https://vaipakam.com",
 
