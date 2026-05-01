@@ -24,11 +24,20 @@
   font-size: 1.3rem;
   font-weight: 700;
   color: var(--text-primary);
+  /* Without `flex-shrink: 0` the brand cell shrinks first when the
+   * right-side actions cluster (Launch App + wallet) competes for
+   * width on narrow viewports — the logo's `height: 36px; width: auto`
+   * means the image dimensions change as the flex item shrinks.
+   * Pinning the brand fixes the logo at its intended size; if room
+   * gets tight, the nav-links cluster wraps into the hamburger
+   * (already handled at the 768 px breakpoint below). */
+  flex-shrink: 0;
 }
 
 .navbar-logo {
   height: 36px;
   width: auto;
+  flex-shrink: 0;
 }
 
 .navbar-logo--icon {

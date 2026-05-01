@@ -10,7 +10,7 @@ Vaipakam is a decentralized peer-to-peer protocol for chain-local ERC-20 lending
 
 ## Keywords
 
-Decentralized finance, peer-to-peer lending, NFT rental, Diamond Standard, escrow architecture, liquidation fallback, position NFTs, cross-chain utility token, on-chain risk management, chain-local credit.
+Decentralized finance, peer-to-peer lending, NFT rental, Diamond Standard, escrow architecture, liquidation fallback, position NFTs, cross-chain protocol token, on-chain risk management, chain-local credit.
 
 ## 1. Introduction
 
@@ -32,7 +32,7 @@ The resulting system aims to combine:
 - isolated custody through per-user escrow
 - explicit lender-side and borrower-side rights through position NFTs
 - liquidity-aware handling of collateral and defaults
-- a utility-token layer that augments, rather than replaces, the core credit marketplace
+- a protocol-token layer that augments, rather than replaces, the core credit marketplace
 
 ## 2. Network and Token Model
 
@@ -280,7 +280,7 @@ For loans with illiquid assets, the lender takes the collateral in-kind on defau
 
 ## 12. VPFI Utility
 
-VPFI is the operational utility token.
+VPFI is the operational protocol token.
 
 ### 12.1 Token Parameters
 

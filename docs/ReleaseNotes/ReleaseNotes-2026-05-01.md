@@ -471,37 +471,42 @@ truth for chain selection — the wallet), and the BuyVPFI page
 has something useful to say to first-time visitors instead of
 a placeholder.
 
-## Subtle colour gradients on sidebar + cards
+## Page-level ambient gradient on public pages
 
-Two purely-CSS additions to give the in-app and public surfaces
-a quieter sense of depth without introducing new design tokens
-or breaking theme support:
+After several rounds of in-place experimentation (sidebar
+gradient, card-level gradient, etc. — all reverted), the
+final shipped shape gives the public pages the same ambient
+depth the in-app shell already had, without touching cards
+or the sidebar:
 
-- The in-app sidebar (`.app-sidebar`) now renders a vertical
-  `linear-gradient(180deg, var(--brand-bg) 0%, var(--bg-secondary) 35%)`
-  — a faint brand-tinted wash at the top fading into the
-  standard secondary surface by ~35% down. Stays within
-  existing tokens (so dark / light themes both produce the
-  same on-brand effect) and keeps the lower half of the
-  sidebar in the standard surface so the language picker /
-  footer rows remain readable.
-- All `.card` instances (in-app dashboard cards, BuyVPFI
-  marketing cards, NFT Verifier result cards, etc.) now use
-  a 165° gradient between `--bg-card` and `--bg-card-hover`
-  — a directional shading from top-left bright to
-  bottom-right slightly cooler. The token pair already
-  exists for hover states in both themes, so no new design
-  tokens were introduced.
-- The public Analytics page's `.pd-section` cards picked up
-  the same 165° gradient. They were previously referencing
-  an undefined `var(--surface)` token (resolved to "no
-  background" — transparent against the page); now they
-  match the in-app cards visually.
-
-Net effect: stacked cards on the dashboard / BuyVPFI /
-Analytics pages read as discrete surfaces instead of a flat
-panel, and the sidebar gets a subtle on-brand cue from above.
-No JavaScript change.
+- New shared CSS class `.public-page-glow` (in
+  `frontend/src/styles/global.css`) mirroring the in-app
+  `.app-layout::before/::after` ambient backdrop — two soft
+  radial gradients (primary brand-purple top-center,
+  secondary brand-light bottom-right) that stay anchored to
+  the viewport via `position: fixed`. Theme-aware via a
+  `[data-theme='dark']` override.
+- Co-class added to the wrapping `<main>` of all three
+  public-route pages: Buy VPFI marketing, Analytics
+  (PublicDashboard), NFT Verifier. Every public surface now
+  carries the same ambient depth as the in-app dashboard.
+- Cards stay flat. Earlier experiments adding directional
+  gradients to `.card` and `.app-sidebar` were reverted —
+  the page-level ambient is enough; layering card-level
+  gradients on top fought visually with the cards' own
+  borders.
+- One **exception**: the Analytics page's `.pd-section`
+  cards keep a subtle 165° `linear-gradient(--bg-card →
+  --bg-card-hover)` at user request. Analytics is sparser
+  than the in-app dashboard so the directional shading
+  there reads as depth rather than noise. In-app cards
+  remain flat.
+- Bonus fix along the way: Analytics' `.pd-section` rule
+  used to reference an undefined `var(--surface)` token
+  (resolved to "no background" — transparent against the
+  page). Now points at `--bg-card` so the cards actually
+  have a defined surface in addition to the gradient
+  overlay.
 
 ## Data rights (GDPR / UK GDPR / CCPA) own page
 
@@ -621,6 +626,207 @@ Surfaces intentionally NOT changed:
 `tsc -b --noEmit` clean. No behaviour change to the address
 display when `copyable` is omitted; existing call sites read
 identically to before the prop was added.
+
+## Diagnostics drawer — collapsed, trimmed, mobile-tightened
+
+User reported that on mobile the Report-Issue (Diagnostics)
+drawer's top section was hiding most of the events list. Two
+rounds of trim:
+
+- **Layout collapse.** The two action rows ("Report on GitHub
+  / Copy JSON" + a separate "Journey buffer …" header with
+  Download / Clear) folded into a single row containing four
+  buttons: `Report on GitHub` · `Copy JSON` · `Download` ·
+  `Delete`. The standalone "Journey buffer (this drawer's
+  events only)" header label and the per-button `<InfoTip>`
+  wrappers were removed — the hint paragraph above already
+  establishes the scope, so verbose tooltips on each button
+  were redundant. Button labels shortened from "Download
+  journey log" / "Clear journey log" to "Download" /
+  "Delete".
+- **Hint copy shortened** from a 4-sentence paragraph to one
+  line: *"A redacted log of recent steps to report. Wallet
+  addresses are shortened to 0x…abcd; free-form error text
+  is not published."* Copy still asserts the redaction
+  guarantee; just no narration of the support workflow.
+- **Mobile-compact CSS overrides** at viewports < 640 px
+  reduce the drawer's padding, hint font size, action-button
+  padding and font size, so the events list (the drawer's
+  actual value) gets the maximum vertical real estate.
+- Data Rights link preserved as a small inline link directly
+  below the actions row, pointing at the standalone
+  `/app/data-rights` page for the broader Download/Delete
+  pair.
+
+## Report-issue tooltip portal-rendered
+
+`<ReportIssueLink>`'s tooltip (the explanation of what gets
+shared in the prefilled GitHub issue) used CSS-only
+`[data-tooltip]`, which clips against `overflow:hidden`
+ancestors. Inside the Diagnostics drawer (which sets
+`overflow-x/y: hidden` on `.diag-drawer`) and inside each
+event row in the same drawer, the tooltip was getting
+cropped or rendered behind the drawer surface. Switched
+to the existing `<HoverTip>` portal-based wrapper (added
+earlier today for the same problem on table rows). The
+`<HoverTip>` bubble's z-index was bumped from 1000 → 5000
+to outrank the drawer's z-index 1001, matching the existing
+`<InfoTip>` bubble's tier. Same hover/focus behaviour, same
+copy.
+
+## GitHub-issue body trimmed against URL-length cap
+
+GitHub returns "Whoa there! Your request URL is too long" for
+issue-creation links beyond a threshold. The diagnostics body
+was already running a multi-tier trim ladder, but had three
+genuine redundancies bloating the first-view tier:
+
+- **Preamble** collapsed from 8 lines to 1: privacy
+  disclosure preserved verbatim, structure tour for
+  developers dropped (a developer can read the body's
+  structure in 2 seconds by scrolling).
+- **`Chain id`** and **`Tx hash`** lines removed from the
+  first-level error-details block — both were already
+  surfaced in the report header (`**Chain:** Base Sepolia
+  (chainId 84532)` is strictly more informative than the
+  bare chainId).
+- **`Document language`** removed from the browser-env
+  section — already in the header (`**Language:**`),
+  drawn from the same `document.documentElement.lang`
+  attribute.
+
+Net saving: ~680 chars off a default report. The existing
+tier-trim ladder (events 10+2 → 5+1 etc.) now has more
+headroom before kicking in, so reports keep more events
+visible by default.
+
+## Buy VPFI moved inside the app + public-side cleanup
+
+The biggest UX restructure of the day. Before: Buy VPFI was
+a public route at `/buy-vpfi`, mounted inside the public
+`<Navbar>`/`<Footer>` chrome. It was the **only** public
+route that needed wallet connection — every other public
+page (landing, Analytics, NFT Verifier, Discord, Terms,
+Privacy, Help) is read-only or marketing. That asymmetry
+forced the public Navbar to carry a wallet pill / chain
+picker / Connect Wallet button just for one page.
+
+After:
+
+- **New `/app/buy-vpfi` route** mounting the existing
+  `<BuyVPFI>` component inside `<AppLayout>`. Wallet-gated
+  like every other in-app page; the WalletMenu's chain
+  pill (icon + name) is always prominent at the top.
+- **Public `/buy-vpfi`** is now a marketing-only page
+  (`<BuyVPFIMarketing>`). Three cards (Tiered fee discount,
+  Staking yield, How it works) plus a brand-coloured
+  "Launch App to Buy / Stake / Unstake" CTA at the bottom
+  that opens `/app/buy-vpfi` in a new tab. No wallet
+  connection on this surface.
+- **Sidebar nav** — the `Buy VPFI` item flipped from
+  `external: true` (jumping out of `/app/*` to the public
+  route) to a normal internal `<NavLink>` to
+  `/app/buy-vpfi`.
+- **In-app CTAs retargeted** — six callsites that
+  previously linked to `/buy-vpfi` now point at
+  `/app/buy-vpfi` (CreateOffer 2× banners,
+  VPFIDiscountConsentCard, RewardsSummaryCard, OfferBook
+  empty-state, LoanDetails consent banner).
+- **Public Navbar VPFI dropdown reworked** to match the
+  split (Option C in the planning discussion):
+  ```
+  VPFI ▾
+  ├─ Learn about VPFI    → /buy-vpfi              (same tab)
+  ├─ Buy VPFI            → /app/buy-vpfi#step-1   (new tab)
+  └─ Stake / Unstake     → /app/buy-vpfi#step-2   (new tab)
+  ```
+  First item opens the marketing page in the same tab
+  (user clicked the Navbar to read); the two action items
+  open the in-app surface in a new tab so the marketing
+  page stays open behind. New `newTab?: boolean` field on
+  the `NavLink` type drives the per-item behaviour
+  (renders as a plain `<a target="_blank">` instead of a
+  react-router `<Link>` when set).
+- **Launch App CTA** (Navbar desktop + mobile + Hero) now
+  opens in a new tab too — same pattern as the VPFI
+  dropdown's action items, so users land on the same
+  expectation regardless of entry point.
+- **Public Navbar wallet UI removed entirely.** With
+  `/buy-vpfi` no longer needing a wallet, no public route
+  does. Stripped: `<ConnectWalletButton>`, `<WalletMenu>`,
+  `<WalletAddressPill>`, `<ChainPicker>`, the wrong-network
+  warning button, the wallet-connected mobile triplet
+  (pill + chain picker + disconnect), and the
+  bottom-of-Navbar wallet error / warning banners. Imports
+  and useWallet hook usage in `Navbar.tsx` cleaned up
+  alongside.
+
+Net effect: the public site is now purely informational —
+no wallet UI on any page. Every wallet-bearing surface
+lives inside `<AppLayout>`, where chain visibility is
+always prominent. The chrome is much cleaner: public
+Navbar's right side is now just `Learn ▾ · Verify ▾ ·
+VPFI ▾ · Launch App · Settings gear`.
+
+## "What is VPFI?" intro on the marketing page
+
+Added as the first card on `<BuyVPFIMarketing>` so a
+first-time visitor clicking "Learn about VPFI" actually
+gets a learn surface, not just three benefit cards. Three
+short paragraphs in plain language, no jargon:
+
+1. *VPFI is Vaipakam's protocol token — you can buy with
+   ETH, hold in your personal escrow, and use across the
+   platform. No lockup period, freely transferable.*
+2. *Holding VPFI ties you to the protocol's success in two
+   practical ways: it earns you discounts on the fees
+   Vaipakam charges (so you keep more of what you lend,
+   and pay less when you borrow), and it earns staking
+   yield while it sits in your escrow.*
+3. *Anyone with ETH can buy and stake. The two benefit
+   cards below show exactly what holding VPFI gets you.*
+
+## Token classification standardized to "protocol token"
+
+Question came up whether VPFI should be called a "utility
+token" instead of "protocol token". The whitepaper had
+been using "utility token" in two places already, but the
+term carries a defined regulatory meaning under MiCA
+(Article 3(1)(9): "only accepted by the issuer of that
+token") that doesn't cleanly fit a freely-transferable
+ERC-20. To avoid creating contradictions a regulator or
+litigant could exploit, standardized everything on
+**"protocol token"** — descriptive, consistent, makes no
+formal classification claim.
+
+Updated 8 hits across English source surfaces (localized
+files re-sync via `npm run translate`):
+
+- `frontend/src/i18n/locales/en.json` (Buy VPFI marketing
+  intro card)
+- `frontend/src/content/whitepaper/Whitepaper.en.md` —
+  3 hits across lines 20 / 87 / 89
+- `frontend/src/content/overview/Overview.en.md` — 1 hit
+  at line 217
+- Root `README.md` — 2 hits
+- `docs/FunctionalSpecs/ProjectDetailsREADME.md` — 1 hit
+  (Phase 2 governance description)
+- `docs/OlderDocs/Whitepaper.md` — 2 hits
+- `docs/OlderDocs/Whitepaper01.md` — 3 hits
+
+`grep -rn "utility token"` excluding localized files now
+returns zero. UserGuide-Basic / UserGuide-Advanced English
+sources never used the term.
+
+## Logo flex-shrink fix
+
+Public Navbar's brand logo was shrinking on narrow
+viewports because `.navbar-brand` and `.navbar-logo` had no
+`flex-shrink: 0` while the surrounding `.navbar-inner` is
+`display: flex` with the actions cluster competing for
+width. Pinned both to `flex-shrink: 0`. The CSS comment
+above the rule already promised "the logo never has to
+shrink" — now it actually doesn't.
 
 ## Outstanding for the testnet redeploy gate
 

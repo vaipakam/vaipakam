@@ -214,7 +214,7 @@ is the two numbers above.
 
 ## What's VPFI?
 
-**VPFI** is Vaipakam's utility token. It does three things:
+**VPFI** is Vaipakam's protocol token. It does three things:
 
 ### 1. Fee discounts
 

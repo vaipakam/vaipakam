@@ -25,7 +25,7 @@ The protocol is non-custodial. Users negotiate terms directly through on-chain o
 
 ## 2. System Model
 
-Vaipakam should be understood as a chain-local credit marketplace with a cross-chain utility token.
+Vaipakam should be understood as a chain-local credit marketplace with a cross-chain protocol token.
 
 ### 2.1 Chain Model
 
@@ -235,7 +235,7 @@ For loans with illiquid assets on either the lending side or collateral side, th
 
 ## 9. VPFI Utility
 
-VPFI is the protocol utility-token layer. It does not replace the bilateral lending model; it augments it.
+VPFI is the protocol-token layer. It does not replace the bilateral lending model; it augments it.
 
 ### 9.1 Core Parameters
 

@@ -17,7 +17,7 @@ repayment, claim, refinance, and liquidation state remaining local to a single
 chain. The protocol couples bilateral offer negotiation with per-user isolated
 escrows, tokenized lender / borrower position rights, an oracle stack hardened
 by a Soft 2-of-N secondary quorum, a four-DEX swap-failover liquidation
-pipeline, and a `LayerZero OFT V2` utility token (`VPFI`) wired for fee
+pipeline, and a `LayerZero OFT V2` protocol token (`VPFI`) wired for fee
 discounts, escrow-based staking, and locally-claimable interaction rewards
 that share a protocol-wide daily denominator.
 
@@ -84,10 +84,10 @@ The protocol's defining commitments are:
 - **Permissionless safety.** Any address may liquidate when conditions are
   met. Non-liquidation third-party execution is opt-in, role-scoped, and
   whitelisted per user.
-- **Chain-local lifecycle, cross-chain utility token.** Loans, offers,
+- **Chain-local lifecycle, cross-chain protocol token.** Loans, offers,
   collateral, repayment, liquidation, preclose, refinance, and keeper
-  actions remain local to the deployment chain. Only `VPFI` (the utility
-  token) and the daily reward denominator cross chains.
+  actions remain local to the deployment chain. Only `VPFI` (the
+  protocol token) and the daily reward denominator cross chains.
 
 Vaipakam is non-custodial. Users negotiate terms directly through on-chain
 offers; Vaipakam smart contracts enforce custody, repayment, default,

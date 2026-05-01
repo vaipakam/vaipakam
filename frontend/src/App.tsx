@@ -16,6 +16,7 @@ import Alerts from './pages/Alerts';
 import Allowances from './pages/Allowances';
 import DataRights from './pages/DataRights';
 import BuyVPFI from './pages/BuyVPFI';
+import BuyVPFIMarketing from './pages/BuyVPFIMarketing';
 import Activity from './pages/Activity';
 import DiscordPage from './pages/Discord';
 import TermsPage from './pages/TermsPage';
@@ -62,13 +63,17 @@ function PublicNftVerifier() {
 // outside the AppLayout so a fresh visitor lands here directly from the
 // landing page's VPFI dropdown without going through the in-app sidebar.
 function PublicBuyVPFI() {
+  // Public route is now marketing-only — the actual buy / stake /
+  // unstake form lives at /app/buy-vpfi (wallet-gated like every other
+  // in-app page). Marketing component CTA opens /app/buy-vpfi in a
+  // new tab so the visitor's marketing tab stays open behind.
   return (
     <>
       <Navbar />
       {/* See PublicNftVerifier above — paddingTop accounts for the fixed
           72 px Navbar plus a 32 px breathing-room buffer. */}
       <main className="container public-page-glow" style={{ paddingTop: 104, paddingBottom: 32 }}>
-        <BuyVPFI />
+        <BuyVPFIMarketing />
       </main>
       <Footer />
       <DiagnosticsDrawer />
@@ -111,6 +116,7 @@ function pageRoutes(): ReactElement {
         <Route path="alerts" element={<Alerts />} />
         <Route path="allowances" element={<Allowances />} />
         <Route path="data-rights" element={<DataRights />} />
+        <Route path="buy-vpfi" element={<BuyVPFI />} />
       </Route>
     </>
   );

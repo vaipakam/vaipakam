@@ -1050,7 +1050,7 @@ VPFI token deployment begins in Phase 1 through the token contract and minting p
 
 ### Governance (Phase 2)
 
-- **Governance Token (VPFI):** VPFI becomes the governance and broader utility token in Phase 2.
+- **Governance Token (VPFI):** VPFI becomes the governance and broader protocol token in Phase 2.
 - **Proposal Scope:** Proposals can cover:
   - Adjustments to treasury fee percentages.
   - Changes to late fee structures and caps.
