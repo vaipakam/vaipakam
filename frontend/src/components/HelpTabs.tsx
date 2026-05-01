@@ -1,5 +1,7 @@
-import { Link, useLocation } from 'react-router-dom';
+import { useState } from 'react';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
+import { Search } from 'lucide-react';
 import { useMode } from '../context/ModeContext';
 import { isSupportedLocale, withLocalePrefix } from './LocaleResolver';
 import type { SupportedLocale } from '../i18n/glossary';
@@ -28,7 +30,14 @@ import type { SupportedLocale } from '../i18n/glossary';
 export function HelpTabs() {
   const { t, i18n } = useTranslation();
   const { mode } = useMode();
-  const { pathname } = useLocation();
+  const { pathname, search } = useLocation();
+  const navigate = useNavigate();
+  // Pre-fill the inline search box with the current `?q=` so a
+  // visitor on /help/search can refine their query inline without
+  // re-typing. The empty default keeps the input clean on every other
+  // /help/* page.
+  const initialQuery = new URLSearchParams(search).get('q') ?? '';
+  const [searchQuery, setSearchQuery] = useState(initialQuery);
 
   const locale: SupportedLocale = isSupportedLocale(i18n.resolvedLanguage)
     ? i18n.resolvedLanguage
@@ -48,9 +57,23 @@ export function HelpTabs() {
     locale,
   );
   const technicalHref = withLocalePrefix('/help/technical', locale);
+  const searchHref = withLocalePrefix('/help/search', locale);
+  const isSearch = stripped.startsWith('/help/search');
+
+  const onSearchSubmit = (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    const q = searchQuery.trim();
+    if (q.length === 0) return;
+    navigate(`${searchHref}?q=${encodeURIComponent(q)}`);
+  };
 
   return (
-    <div className="help-tabs" role="tablist" aria-label={t('helpTabs.ariaLabel')}>
+    <div
+      className="help-tabs"
+      role="tablist"
+      aria-label={t('helpTabs.ariaLabel')}
+      style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}
+    >
       <Link
         to={overviewHref}
         role="tab"
@@ -75,6 +98,34 @@ export function HelpTabs() {
       >
         {t('helpTabs.technical')}
       </Link>
+      <form
+        onSubmit={onSearchSubmit}
+        role="search"
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 4,
+          marginLeft: 'auto',
+          flex: '0 1 auto',
+        }}
+      >
+        <Search size={14} aria-hidden="true" style={{ opacity: 0.65 }} />
+        <input
+          type="search"
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+          placeholder={t('helpTabs.searchPlaceholder')}
+          aria-label={t('helpTabs.searchPlaceholder')}
+          className="form-input"
+          aria-current={isSearch ? 'page' : undefined}
+          style={{
+            padding: '4px 8px',
+            fontSize: '0.85rem',
+            minWidth: 160,
+            width: '20ch',
+          }}
+        />
+      </form>
     </div>
   );
 }

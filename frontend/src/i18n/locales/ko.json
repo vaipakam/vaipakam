@@ -1125,7 +1125,8 @@
     "ariaLabel": "도움말 섹션 탐색",
     "overview": "개요",
     "userGuide": "사용 가이드",
-    "technical": "기술"
+    "technical": "기술",
+    "searchPlaceholder": "문서 검색"
   },
   "pageNotice": {
     "englishOnlyTitle": "영어로만 제공",
@@ -1581,5 +1582,23 @@
     "openOnOpenSea": "OpenSea에서 열기",
     "openOnExplorer": "블록 탐색기에서 열기",
     "openOnVerifier": "Vaipakam NFT 베리파이어에서 열기"
+  },
+  "helpSearch": {
+    "heading": "문서 검색",
+    "placeholder": "개요, 사용자 가이드, 백서 검색",
+    "submit": "검색",
+    "emptyHint": "개요, 사용자 가이드(기본 + 고급), 백서를 검색하려면 검색어를 입력하세요.",
+    "tooShort": "2자 이상 입력하세요.",
+    "noResults": "\"{{query}}\"에 대한 결과가 없습니다.",
+    "resultCount_one": "\"{{query}}\"에 대한 결과 {{count}}개",
+    "resultCount_other": "\"{{query}}\"에 대한 결과 {{count}}개",
+    "searchTheWeb": "vaipakam.com에서 \"{{query}}\" 웹 검색",
+    "whitepaperEnglishOnly": "백서 결과는 영어로 표시됩니다 — 기술 사양은 의도적으로 번역되지 않습니다.",
+    "docKind": {
+      "overview": "개요",
+      "userguideBasic": "사용자 가이드 — 기본",
+      "userguideAdvanced": "사용자 가이드 — 고급",
+      "whitepaper": "백서"
+    }
   }
 }

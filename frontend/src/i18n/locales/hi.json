@@ -1125,7 +1125,8 @@
     "ariaLabel": "सहायता अनुभाग नेविगेशन",
     "overview": "अवलोकन",
     "userGuide": "उपयोगकर्ता मार्गदर्शिका",
-    "technical": "तकनीकी"
+    "technical": "तकनीकी",
+    "searchPlaceholder": "दस्तावेज़ खोजें"
   },
   "pageNotice": {
     "englishOnlyTitle": "केवल अंग्रेज़ी में उपलब्ध",
@@ -1581,5 +1582,23 @@
     "openOnOpenSea": "OpenSea पर खोलें",
     "openOnExplorer": "चेन एक्सप्लोरर पर खोलें",
     "openOnVerifier": "Vaipakam NFT वेरिफायर में खोलें"
+  },
+  "helpSearch": {
+    "heading": "दस्तावेज़ में खोजें",
+    "placeholder": "अवलोकन, उपयोगकर्ता मार्गदर्शिका और श्वेतपत्र में खोजें",
+    "submit": "खोजें",
+    "emptyHint": "अवलोकन, उपयोगकर्ता मार्गदर्शिका (बेसिक + उन्नत) और श्वेतपत्र में खोज के लिए शब्द टाइप करें.",
+    "tooShort": "कम से कम 2 अक्षर टाइप करें.",
+    "noResults": "\"{{query}}\" के लिए कोई परिणाम नहीं।",
+    "resultCount_one": "\"{{query}}\" के लिए {{count}} परिणाम",
+    "resultCount_other": "\"{{query}}\" के लिए {{count}} परिणाम",
+    "searchTheWeb": "vaipakam.com पर \"{{query}}\" वेब खोज",
+    "whitepaperEnglishOnly": "श्वेतपत्र परिणाम अंग्रेज़ी में हैं — तकनीकी विनिर्देश जानबूझकर अनुवादित नहीं हैं।",
+    "docKind": {
+      "overview": "अवलोकन",
+      "userguideBasic": "उपयोगकर्ता मार्गदर्शिका — बेसिक",
+      "userguideAdvanced": "उपयोगकर्ता मार्गदर्शिका — उन्नत",
+      "whitepaper": "श्वेतपत्र"
+    }
   }
 }

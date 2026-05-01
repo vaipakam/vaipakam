@@ -1125,7 +1125,8 @@
     "ariaLabel": "帮助部分导航",
     "overview": "概览",
     "userGuide": "用户指南",
-    "technical": "技术"
+    "technical": "技术",
+    "searchPlaceholder": "搜索文档"
   },
   "pageNotice": {
     "englishOnlyTitle": "仅提供英文版",
@@ -1581,5 +1582,23 @@
     "openOnOpenSea": "在 OpenSea 上打开",
     "openOnExplorer": "在区块浏览器中打开",
     "openOnVerifier": "在 Vaipakam NFT 验证器中打开"
+  },
+  "helpSearch": {
+    "heading": "搜索文档",
+    "placeholder": "搜索概览、用户指南和白皮书",
+    "submit": "搜索",
+    "emptyHint": "输入关键词以在概览、用户指南(基础+高级)和白皮书中搜索。",
+    "tooShort": "请至少输入 2 个字符。",
+    "noResults": "未找到「{{query}}」的结果。",
+    "resultCount_one": "「{{query}}」的 {{count}} 条结果",
+    "resultCount_other": "「{{query}}」的 {{count}} 条结果",
+    "searchTheWeb": "在 vaipakam.com 网上搜索「{{query}}」",
+    "whitepaperEnglishOnly": "白皮书结果为英文 — 技术规范有意未翻译。",
+    "docKind": {
+      "overview": "概览",
+      "userguideBasic": "用户指南 — 基础",
+      "userguideAdvanced": "用户指南 — 高级",
+      "whitepaper": "白皮书"
+    }
   }
 }

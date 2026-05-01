@@ -24,6 +24,7 @@ import PrivacyPage from './pages/PrivacyPage';
 import UserGuide from './pages/UserGuide';
 import Overview from './pages/Overview';
 import Whitepaper from './pages/Whitepaper';
+import HelpSearch from './pages/HelpSearch';
 import Navbar from './components/Navbar';
 import Footer from './components/Footer';
 import ConsentBanner from './components/ConsentBanner';
@@ -102,6 +103,7 @@ function pageRoutes(): ReactElement {
       <Route path="help/basic" element={<UserGuide variant="basic" />} />
       <Route path="help/advanced" element={<UserGuide variant="advanced" />} />
       <Route path="help/technical" element={<Whitepaper />} />
+      <Route path="help/search" element={<HelpSearch />} />
       <Route path="app" element={<AppLayout />}>
         <Route index element={<Dashboard />} />
         <Route path="offers" element={<OfferBook />} />

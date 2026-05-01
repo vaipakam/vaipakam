@@ -1125,7 +1125,8 @@
     "ariaLabel": "ヘルプセクションのナビゲーション",
     "overview": "概要",
     "userGuide": "ユーザーガイド",
-    "technical": "技術仕様"
+    "technical": "技術仕様",
+    "searchPlaceholder": "ドキュメント検索"
   },
   "pageNotice": {
     "englishOnlyTitle": "英語のみ提供",
@@ -1581,5 +1582,23 @@
     "openOnOpenSea": "OpenSeaで開く",
     "openOnExplorer": "ブロックエクスプローラで開く",
     "openOnVerifier": "Vaipakam NFTベリファイアで開く"
+  },
+  "helpSearch": {
+    "heading": "ドキュメントを検索",
+    "placeholder": "概要・ユーザーガイド・ホワイトペーパーを検索",
+    "submit": "検索",
+    "emptyHint": "概要、ユーザーガイド(基本+詳細)、ホワイトペーパーを検索するには用語を入力してください。",
+    "tooShort": "2文字以上入力してください。",
+    "noResults": "「{{query}}」の結果はありません。",
+    "resultCount_one": "「{{query}}」の結果 {{count}} 件",
+    "resultCount_other": "「{{query}}」の結果 {{count}} 件",
+    "searchTheWeb": "vaipakam.com 内で「{{query}}」をウェブ検索",
+    "whitepaperEnglishOnly": "ホワイトペーパーのヒットは英語です — 技術仕様は意図的に翻訳されていません。",
+    "docKind": {
+      "overview": "概要",
+      "userguideBasic": "ユーザーガイド — 基本",
+      "userguideAdvanced": "ユーザーガイド — 詳細",
+      "whitepaper": "ホワイトペーパー"
+    }
   }
 }

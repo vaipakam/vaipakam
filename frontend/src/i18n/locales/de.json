@@ -1125,7 +1125,8 @@
     "ariaLabel": "Hilfebereich-Navigation",
     "overview": "Übersicht",
     "userGuide": "Benutzerhandbuch",
-    "technical": "Technisch"
+    "technical": "Technisch",
+    "searchPlaceholder": "Dokumente suchen"
   },
   "pageNotice": {
     "englishOnlyTitle": "Nur auf Englisch verfügbar",
@@ -1581,5 +1582,23 @@
     "openOnOpenSea": "Auf OpenSea öffnen",
     "openOnExplorer": "Im Block-Explorer öffnen",
     "openOnVerifier": "Im Vaipakam-NFT-Verifier öffnen"
+  },
+  "helpSearch": {
+    "heading": "Dokumentation durchsuchen",
+    "placeholder": "Übersicht, Benutzerhandbuch und Whitepaper durchsuchen",
+    "submit": "Suchen",
+    "emptyHint": "Gib einen Begriff ein, um Übersicht, Benutzerhandbuch (Basic + Advanced) und Whitepaper zu durchsuchen.",
+    "tooShort": "Gib mindestens 2 Zeichen ein.",
+    "noResults": "Keine Ergebnisse für „{{query}}\".",
+    "resultCount_one": "{{count}} Ergebnis für „{{query}}\"",
+    "resultCount_other": "{{count}} Ergebnisse für „{{query}}\"",
+    "searchTheWeb": "„{{query}}\" im Web auf vaipakam.com suchen",
+    "whitepaperEnglishOnly": "Whitepaper-Treffer sind auf Englisch — die technische Spezifikation wird absichtlich nicht übersetzt.",
+    "docKind": {
+      "overview": "Übersicht",
+      "userguideBasic": "Benutzerhandbuch — Basic",
+      "userguideAdvanced": "Benutzerhandbuch — Advanced",
+      "whitepaper": "Whitepaper"
+    }
   }
 }

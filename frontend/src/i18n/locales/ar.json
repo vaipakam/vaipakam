@@ -1125,7 +1125,8 @@
     "ariaLabel": "تنقل قسم المساعدة",
     "overview": "نظرة عامة",
     "userGuide": "دليل المستخدم",
-    "technical": "تقني"
+    "technical": "تقني",
+    "searchPlaceholder": "بحث في المستندات"
   },
   "pageNotice": {
     "englishOnlyTitle": "متاح بالإنجليزية فقط",
@@ -1581,5 +1582,23 @@
     "openOnOpenSea": "فتح في OpenSea",
     "openOnExplorer": "فتح في مستكشف السلسلة",
     "openOnVerifier": "فتح في مدقق NFT في Vaipakam"
+  },
+  "helpSearch": {
+    "heading": "البحث في الوثائق",
+    "placeholder": "البحث في النظرة العامة ودليل المستخدم والورقة البيضاء",
+    "submit": "بحث",
+    "emptyHint": "اكتب مصطلحًا للبحث في النظرة العامة ودليل المستخدم (الأساسي + المتقدم) والورقة البيضاء.",
+    "tooShort": "اكتب حرفين على الأقل.",
+    "noResults": "لا توجد نتائج لـ \"{{query}}\".",
+    "resultCount_one": "نتيجة {{count}} لـ \"{{query}}\"",
+    "resultCount_other": "{{count}} نتائج لـ \"{{query}}\"",
+    "searchTheWeb": "البحث عن \"{{query}}\" على الويب في vaipakam.com",
+    "whitepaperEnglishOnly": "نتائج الورقة البيضاء بالإنجليزية — المواصفات الفنية لم تُترجم عمداً.",
+    "docKind": {
+      "overview": "نظرة عامة",
+      "userguideBasic": "دليل المستخدم — الأساسي",
+      "userguideAdvanced": "دليل المستخدم — المتقدم",
+      "whitepaper": "الورقة البيضاء"
+    }
   }
 }

@@ -1125,7 +1125,8 @@
     "ariaLabel": "உதவி பகுதி வழிசெலுத்தல்",
     "overview": "கண்ணோட்டம்",
     "userGuide": "பயனர் வழிகாட்டி",
-    "technical": "தொழில்நுட்பம்"
+    "technical": "தொழில்நுட்பம்",
+    "searchPlaceholder": "ஆவணம் தேடு"
   },
   "pageNotice": {
     "englishOnlyTitle": "ஆங்கிலத்தில் மட்டுமே கிடைக்கிறது",
@@ -1581,5 +1582,23 @@
     "openOnOpenSea": "OpenSea-இல் திற",
     "openOnExplorer": "செயின் எக்ஸ்ப்ளோரரில் திற",
     "openOnVerifier": "Vaipakam NFT வேரிஃபையரில் திற"
+  },
+  "helpSearch": {
+    "heading": "ஆவணத்தில் தேடு",
+    "placeholder": "மேலோட்டம், பயனர் வழிகாட்டி மற்றும் வெள்ளை அறிக்கையில் தேடு",
+    "submit": "தேடு",
+    "emptyHint": "மேலோட்டம், பயனர் வழிகாட்டி (அடிப்படை + மேம்பட்டது), வெள்ளை அறிக்கையில் தேட சொல்லை தட்டச்சு செய்யுங்கள்.",
+    "tooShort": "குறைந்தது 2 எழுத்துகளை தட்டச்சு செய்யுங்கள்.",
+    "noResults": "\"{{query}}\" க்கான முடிவுகள் இல்லை.",
+    "resultCount_one": "\"{{query}}\" க்கு {{count}} முடிவு",
+    "resultCount_other": "\"{{query}}\" க்கு {{count}} முடிவுகள்",
+    "searchTheWeb": "vaipakam.com இல் \"{{query}}\" யை வலையில் தேடு",
+    "whitepaperEnglishOnly": "வெள்ளை அறிக்கை முடிவுகள் ஆங்கிலத்தில் உள்ளன — தொழில்நுட்ப வரையறை வேண்டுமென்றே மொழிபெயர்க்கப்படவில்லை.",
+    "docKind": {
+      "overview": "மேலோட்டம்",
+      "userguideBasic": "பயனர் வழிகாட்டி — அடிப்படை",
+      "userguideAdvanced": "பயனர் வழிகாட்டி — மேம்பட்டது",
+      "whitepaper": "வெள்ளை அறிக்கை"
+    }
   }
 }
