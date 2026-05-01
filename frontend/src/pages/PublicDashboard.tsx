@@ -43,6 +43,7 @@ import { useWallet } from '../context/WalletContext';
 import { useChainOverride } from '../context/ChainContext';
 import { shortenAddr, bpsToPercent, formatUnitsPretty } from '../lib/format';
 import { CopyableAddress } from '../components/app/CopyableAddress';
+import { AssetLink } from '../components/app/AssetLink';
 import { AssetType, LoanStatus, LOAN_STATUS_LABELS } from '../types/loan';
 import { Pager } from '../components/app/Pager';
 import './PublicDashboard.css';
@@ -578,7 +579,15 @@ export default function PublicDashboard() {
                       <div className="pd-dist-row" key={row.asset}>
                         <div className="pd-dist-label">
                           <span>
-                            <strong>{row.symbol}</strong>{' '}
+                            <strong>
+                              <AssetLink
+                                kind="erc20"
+                                chainId={chainId}
+                                address={row.asset}
+                                showIcon={false}
+                                label={row.symbol}
+                              />
+                            </strong>{' '}
                             <CopyableAddress address={row.asset} className="pd-subtle" />
                           </span>
                           <span className="pd-dist-share">
@@ -591,7 +600,14 @@ export default function PublicDashboard() {
                         />
                         <div className="pd-dist-meta">
                           {row.loans} loan{row.loans === 1 ? '' : 's'} ·{' '}
-                          {formatUnitsPretty(row.volume, row.decimals)} {row.symbol}
+                          {formatUnitsPretty(row.volume, row.decimals)}{' '}
+                          <AssetLink
+                            kind="erc20"
+                            chainId={chainId}
+                            address={row.asset}
+                            showIcon={false}
+                            label={row.symbol}
+                          />
                           {row.liquid && <> · {formatUsd(row.volumeUsd)}</>}
                           <a
                             href={`${blockExplorer}/address/${row.asset}`}
@@ -723,7 +739,15 @@ export default function PublicDashboard() {
                                 <td>
                                   <CopyableAddress address={row.asset} />
                                 </td>
-                                <td>{row.symbol}</td>
+                                <td>
+                                  <AssetLink
+                                    kind="erc20"
+                                    chainId={chainId}
+                                    address={row.asset}
+                                    showIcon={false}
+                                    label={row.symbol}
+                                  />
+                                </td>
                                 <td className="mono">
                                   {formatUnitsPretty(row.amount, row.decimals)}
                                 </td>

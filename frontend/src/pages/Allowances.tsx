@@ -7,6 +7,7 @@ import { useDiamondPublicClient, useReadChain } from '../contracts/useDiamond';
 import { useAllowances, type AllowanceRow } from '../hooks/useAllowances';
 import { formatUnitsPretty } from '../lib/format';
 import { AddressDisplay } from '../components/app/AddressDisplay';
+import { AssetLink } from '../components/app/AssetLink';
 import { ErrorAlert } from '../components/app/ErrorAlert';
 import { CardInfo } from '../components/CardInfo';
 import { DEFAULT_CHAIN } from '../contracts/config';
@@ -195,7 +196,15 @@ export default function Allowances() {
                       opacity: r.allowance === 0n ? 0.6 : 1,
                     }}
                   >
-                    <td style={{ fontWeight: 600 }}>{r.symbol}</td>
+                    <td style={{ fontWeight: 600 }}>
+                      <AssetLink
+                        kind="erc20"
+                        chainId={chainId ?? DEFAULT_CHAIN.chainId}
+                        address={r.token}
+                        showIcon={false}
+                        label={r.symbol}
+                      />
+                    </td>
                     <td>
                       <a
                         href={`${activeBlockExplorer}/address/${r.token}`}
