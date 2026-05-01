@@ -1,55 +1,55 @@
 # 欢迎来到 Vaipakam
 
-Vaipakam 是一个点对点借贷平台。你可以出借资产并赚取利息，也可以借入资产并提供抵押品。你还可以出租 NFT，让所有者获得每日租金。所有操作都直接发生在两个钱包之间，智能合约会在贷款或租赁结束前将资产保管在 escrow 中。
+Vaipakam 是一个 peer-to-peer lending 平台。你可以 lend assets 并赚取 interest，也可以 borrow assets 并提供 collateral。你还可以 rent NFTs，让 owner 获得 daily fees。所有操作都直接发生在两个 wallets 之间；在 loan 或 rental 结束前，smart contracts 会把 assets 保管在 escrow 中。
 
-这一页是一次**友好的导览**。如果你想深入了解技术细节，可以打开 **User Guide** 标签查看每个页面的帮助，或打开 **Technical** 标签阅读完整白皮书。如果你只是想知道“这是什么、该怎么用”，继续往下看就好。
+这一页是一份**友好的导览**。如果你想深入了解技术细节，可以打开 **User Guide** 标签查看每个 screen 的帮助，或打开 **Technical** 标签阅读完整 whitepaper。如果你只是想知道“这是什么、该怎么用”，继续往下看就好。
 
 ---
 
-## 你可以做什么
+## 你可以在 Vaipakam 做什么
 
 Vaipakam 面向四类用户：
 
-- **Lenders** - 你有一笔闲置资产，例如 USDC、ETH、USDT 等。你希望它在保持安全的同时赚取利息。你发布 lender offer；borrower 接受；你按照自己设定的条款获得利息。
-- **Borrowers** - 你需要几天、几周或几个月的资金，但不想卖掉抵押品，可能因为你认为它会升值，也可能因为那是一枚你不想失去的 NFT。你提交抵押品，获得贷款，并按约定利率还款。
-- **NFT owners** - 你拥有一枚有价值的 NFT，它可能提供游戏内或应用内的 utility。卖掉它意味着永久失去这种 utility。出租它可以让别人短期使用，同时你保留 ownership 并收取每日租金。
-- **NFT renters** - 你想临时使用某个 NFT，例如游戏资产、会员通行证或域名，但不想支付完整购买价格。你租用它，在 rental window 内使用它，而 asset 仍由 owner 保留。
+- **Lenders** - 你有一笔闲置 asset，例如 USDC、ETH、USDT 等。你希望它在保持安全的同时赚取 interest。你发布 lender offer；borrower accept；你按照自己设定的 terms 获得 interest。
+- **Borrowers** - 你需要几天、几周或几个月的资金，但不想卖掉 collateral。也许你认为它会升值，也许那是一枚你不想失去的 NFT。你 post collateral，获得 loan，并按 agreed rate repay。
+- **NFT owners** - 你拥有一枚有价值的 NFT，它可能提供游戏内或应用内的 utility。卖掉它意味着永久失去这种 utility。把它 rent 出去，可以让别人短期使用，同时你保留 ownership 并收取 daily rent。
+- **NFT renters** - 你想临时使用某个 NFT，例如 game asset、membership pass 或 domain，但不想支付 full price。你 rent 它，在 rental window 内使用它，而 asset 仍由 owner 保留。
 
-你不需要注册，不需要填写 profile。连接 wallet 后，就可以 lend、borrow 或 rent。
+不需要注册，也不需要填写 profile。连接 wallet 后，就可以 lend、borrow 或 rent。
 
 ---
 
-## Loan 如何运作（具体示例）
+## Loan 如何运作（具体例子）
 
-假设你的 Base 钱包里有 **1,000 USDC**，你想用它赚取利息。完整 lifecycle 如下。
+假设你的 Base wallet 里有 **1,000 USDC**，你想用它赚取 interest。完整 lifecycle 如下。
 
 ### Step 1 — 创建 offer
 
 你打开 Vaipakam app，连接 wallet，然后点击 **Create Offer**。你是 lender，所以填写：
 
-- 我出借 **1,000 USDC**
+- 我 lend **1,000 USDC**
 - 我希望获得 **8% APR**
 - 可接受的 collateral：**WETH**，且 **maximum 70% LTV**
 - Loan duration：**30 days**
 
-你签署一笔 transaction。你的 1,000 USDC 会从 wallet 移入你的 **personal escrow**，也就是只由你控制的 private vault。它会一直停留在那里，直到有 borrower 接受你的 offer。
+你签署一笔 transaction。你的 1,000 USDC 会从 wallet 移入你的 **personal escrow**，也就是只由你控制的 private vault。Funds 会一直停留在那里，直到有 borrower accept 你的 offer。
 
 ### Step 2 — Borrower 接受
 
-也许一小时后，其他人在 **Offer Book** 中看到了你的 offer。他们持有 WETH，并希望用它抵押借入一个月的 USDC。他们点击 **Accept**，并提交价值约 $1,500 的 WETH。这个 LTV 大约是 67%，低于你的 70% cap，因此 offer 可以被接受。
+也许一小时后，其他人在 **Offer Book** 中看到了你的 offer。他们持有 WETH，并希望用它作 collateral borrow 一个月的 USDC。他们点击 **Accept**，并 post 价值约 $1,500 的 WETH。这个 LTV 大约是 67%，低于你的 70% cap，因此 offer 可以被 accept。
 
 他们接受的瞬间：
 
 - 你的 1,000 USDC 从你的 escrow 移到他们的 escrow
 - 他们的 WETH 作为 collateral 锁定在他们的 escrow 中
-- 你们双方都会收到一个 position NFT - 你的表示“我应收到 1,000 USDC + interest”；他们的表示“我还款后应取回我的 WETH”
+- 你们双方都会收到一个 position NFT - 你的表示“我应收到 1,000 USDC + interest”；他们的表示“我 repay 后应取回我的 WETH”
 - Loan clock 开始计时
 
-系统会从 loaned amount 中收取一笔很小的 **Loan Initiation Fee (0.1%)**，并转入 protocol treasury。因此 borrower 收到的是 999 USDC，而不是 1,000。（你也可以用 **VPFI** 支付该费用，让 borrower 收到完整的 1,000；VPFI 会在下文说明。）
+系统会从 loaned amount 中收取一笔很小的 **Loan Initiation Fee (0.1%)**，并转入 protocol treasury。因此 borrower 收到的是 999 USDC，而不是 1,000。（你也可以用 **VPFI** 支付该 fee，让 borrower 收到完整的 1,000；VPFI 会在下文说明。）
 
 ### Step 3 — 时间经过；borrower 还款
 
-30 天后，borrower 需要向你偿还 principal plus interest：
+30 天后，borrower 需要 repay principal plus interest：
 
 ```
 Interest = 1,000 USDC × 8% × (30 / 365) = ~6.58 USDC
@@ -61,21 +61,21 @@ Interest = 1,000 USDC × 8% × (30 / 365) = ~6.58 USDC
 - Treasury 收到 **1.07 USDC** 作为 Yield Fee
 - Borrower 的 WETH 被 unlock
 
-你的 dashboard 上会出现 **Claim** button。点击后，1,005.51 USDC 会从 settlement 移到你的 wallet。Borrower 点击 claim 后，他们的 WETH 会回到自己的 wallet。Loan 随之 closed。
+你的 dashboard 上会出现 **Claim** button。点击后，1,005.51 USDC 会从 settlement 移到你的 wallet。Borrower 点击 claim 后，他们的 WETH 会回到自己的 wallet。Loan 随之 close。
 
 ### Step 4 — 如果 borrower 没有还款怎么办？
 
 可能出现两类问题，protocol 会自动处理。
 
-**Loan 期间 collateral price 暴跌。** Vaipakam 会跟踪每笔 loan 的 **Health Factor**，这是一个将 collateral value 与 debt 进行比较的 single number。如果它跌破 1.0，任何人 - 是的，任何人，包括路过的 bot - 都可以调用 **Liquidate**。Protocol 会通过最多四个 DEX aggregators（0x、1inch、Uniswap、Balancer）为 collateral route，选择最佳 fill，偿还你应得的金额，给 liquidator 一小笔 bonus，并将剩余部分返还给 borrower。
+**Loan 期间 collateral price 暴跌。** Vaipakam 会跟踪每笔 loan 的 **Health Factor**，这是一个将 collateral value 与 debt 进行比较的 single number。如果它跌破 1.0，任何人 - 是的，任何人，包括路过的 bot - 都可以调用 **Liquidate**。Protocol 会通过最多四个 DEX aggregators（0x、1inch、Uniswap、Balancer）route collateral，选择最佳 fill，偿还你应得的金额，给 liquidator 一小笔 bonus，并将剩余部分返还给 borrower。
 
 **Borrower 在 due date 后消失。** 在可配置的 **grace period** 结束后，任何人都可以调用 **Default**。短期 loan 的 grace period 可能是一小时，year-long loan 则可能是两周。之后会运行同一条 liquidation path。
 
-在少数情况下 - 例如所有 aggregator 都返回很差的 price，或 collateral 已严重暴跌 - protocol 会*拒绝在糟糕市场中抛售*。相反，你会收到 collateral 本身以及一小笔 premium，之后可以选择持有或在合适时卖出。这个 **fallback path** 会提前写明，并作为 loan terms 的一部分由你接受。
+在少数情况下 - 例如所有 aggregator 都返回很差的 price，或 collateral 已严重暴跌 - protocol 会*拒绝在糟糕市场中抛售*。相反，你会收到 collateral 本身以及一小笔 premium，之后可以选择 hold，或在合适时 sell。这个 **fallback path** 会提前写明，并作为 loan terms 的一部分由你 accept。
 
 ### Step 5 — 任何人都可以 repay
 
-如果朋友或 delegated keeper 想替你的 borrower 偿还 loan，他们可以这样做。Collateral 仍会回到 borrower 手中，而不是回到帮忙的 third party 手中。这是一扇单向门：替别人还 loan，不会让你获得对方的 collateral。
+如果朋友或 delegated keeper 想替 borrower pay off loan，他们可以这样做。Collateral 仍会回到 borrower 手中，而不是回到帮忙的 third party 手中。这是一扇单向门：替别人还 loan，不会让你获得对方的 collateral。
 
 ---
 
@@ -90,19 +90,19 @@ Rental 结束后（无论是 expiry 还是 default），NFT 会回到 owner 的 
 
 ---
 
-## 什么保护我？
+## Vaipakam 如何保护我？
 
 在 Vaipakam 上 lending 和 borrowing 并非 risk-free。但 protocol 内置了多层保护：
 
-- **Per-user escrow.** 你的 assets 存放在你自己的 vault 中。Protocol 从不把它们与其他 users 的 funds 混在一个池子里。这意味着即使影响了其他 user 的 bug 出现，也无法 drain 你的资产。
+- **Per-user escrow.** 你的 assets 存放在你自己的 vault 中。Protocol 从不把它们与其他 users 的 funds 混在一个池子里。这意味着即使出现影响其他 user 的 bug，也无法 drain 你的资产。
 - **Health Factor enforcement.** 只有当 collateral 在 origination 时至少为 loan value 的 1.5×，loan 才能开始。如果 loan 期间 price 朝 borrower 不利方向移动，任何人都可以在 collateral 价值低于 debt 之前 liquidate，从而保护 lender。
-- **Multi-source price oracle.** Prices 首先来自 Chainlink，然后会与 Tellor、API3 和 DIA 交叉核验。如果差异超过 configured threshold，loan 不能 open，ongoing position 也不能被 unfairly liquidated。Attacker 必须在同一个 block 中腐蚀**多个 independent oracles**，才可能伪造 price。
+- **Multi-source price oracle.** Prices 首先来自 Chainlink，然后会与 Tellor、API3 和 DIA 交叉核验。如果差异超过 configured threshold，loan 不能 open，ongoing position 也不能被 unfairly liquidated。Attacker 必须在同一个 block 中攻破**多个 independent oracles**，才可能伪造 price。
 - **Slippage cap.** Liquidations 会拒绝以超过 6% slippage 的糟糕价格抛售 collateral。如果 market 太薄，protocol 会 fallback，直接把 collateral 给你。
 - **L2 sequencer awareness.** 在 L2 chains 上，如果 chain 的 sequencer 刚从 downtime 中恢复，liquidation 会短暂停止，避免 attackers 利用 stale-price window 干扰你。
 - **Pause switches.** 每个 contract 都有 emergency pause levers。如果情况异常，operator 可以在几秒内停止 new business，同时允许 existing users 安全地 wind down positions。
 - **Independent audits.** 每条 chain 上的每个 contract 都只有在 third-party security review 完成后才会 ship。Audit reports 和 bug bounty scope 都是公开的。
 
-你仍然应该理解自己正在签署什么。每笔 loan 之前都会显示 combined **risk consent**；它解释了 abnormal-market fallback path，以及 illiquid collateral 的 in-kind settlement path。只有勾选 consent box 后，app 才会允许你 accept。
+你仍然应该理解自己正在 sign 什么。每笔 loan 之前都会显示 combined **risk consent**；它解释了 abnormal-market fallback path，以及 illiquid collateral 的 in-kind settlement path。只有勾选 consent box 后，app 才会允许你 accept。
 
 ---
 
@@ -113,7 +113,7 @@ Rental 结束后（无论是 expiry 还是 default），NFT 会回到 owner 的 
 - **Yield Fee — 1%**，按你作为 lender 赚到的 **interest** 收取 1%，不是 principal 的 1%。在一笔 1,000 USDC、30-day、8% APR 的 loan 中，lender 赚取约 6.58 USDC interest，其中约 0.066 USDC 是 Yield Fee。
 - **Loan Initiation Fee — 0.1%**，按 lending amount 收取，由 borrower 在 origination 时支付。1,000 USDC loan 的费用是 1 USDC。
 
-这两项 fees 都可以通过在 escrow 中持有 VPFI 获得**最高 24% discount**（见下文）。在 default 或 liquidation 时，recovered interest 不会收取 Yield Fee - protocol 不会从失败的 loan 中获利。
+这两项 fees 都可以通过在 escrow 中持有 VPFI 获得**最高 24% discount**（见下文）。在 default 或 liquidation 时，recovered interest 不会收取 Yield Fee - protocol 不会从 failed loan 中获利。
 
 没有 withdrawal fees，没有 idle fees，没有 streaming fees，也没有针对 principal 的 “performance” fees。Protocol 收取的只有上面两个数字。
 
@@ -127,12 +127,12 @@ Rental 结束后（无论是 expiry 还是 default），NFT 会回到 owner 的 
 
 如果你在某条 chain 的 escrow 中持有 VPFI，它会为你在该 chain 参与的 loans 折抵 protocol fees：
 
-| VPFI in escrow | Fee discount |
+| Escrow 中的 VPFI | Fee discount |
 |---|---|
 | 100 – 999 | 10% |
 | 1,000 – 4,999 | 15% |
 | 5,000 – 20,000 | 20% |
-| Above 20,000 | 24% |
+| 20,000 以上 | 24% |
 
 Discounts 适用于 lender 和 borrower fees。Discount 会在 **loan's life 中按时间加权**计算，因此在 loan 结束前临时 top up 不能 game the calculation - 你实际持有该 tier 多久，就按相应比例获得 discount。
 
@@ -142,7 +142,7 @@ Discounts 适用于 lender 和 borrower fees。Discount 会在 **loan's life 中
 
 ### 3. Platform interaction rewards
 
-每天，一个固定的 VPFI pool 会按照 protocol 中流动的 **interest** 比例分配给 lenders 和 borrowers。如果你作为 lender 赚取了 interest，或作为 borrower 干净地支付了 interest（没有 late fees、没有 default），你就会获得一份 share。
+每天，一个固定的 VPFI pool 会按照 protocol 中流动的 **interest** 比例分配给 lenders 和 borrowers。如果你作为 lender 赚取了 interest，或作为 borrower cleanly 支付了 interest（没有 late fees、没有 default），你就会获得一份 share。
 
 Reward pool 在最初六个月最大，随后在七年内逐步 taper。Early users 会获得最高的 emissions。
 
@@ -156,7 +156,7 @@ Reward pool 在最初六个月最大，随后在七年内逐步 taper。Early us
 
 ---
 
-## 哪些 chains？
+## 支持哪些 chains？
 
 Vaipakam 在每条 supported chain 上都是 independent deployment：**Ethereum**、**Base**、**Arbitrum**、**Optimism**、**Polygon zkEVM**、**BNB Chain**。
 
@@ -164,7 +164,7 @@ Vaipakam 在每条 supported chain 上都是 independent deployment：**Ethereum
 
 ---
 
-## 从哪里开始
+## 从哪里开始？
 
 如果你想 **lend**：
 
@@ -183,13 +183,13 @@ Vaipakam 在每条 supported chain 上都是 independent deployment：**Ethereum
 
 如果你想 **rent 或 list an NFT**：
 
-流程相同，但在 **Create Offer** page 中选择 “NFT rental”，而不是 ERC-20 lending。Form 会引导你完成。
+流程相同，但在 **Create Offer** page 中选择 “NFT rental”，而不是 ERC-20 lending。Form 会一步步引导你完成。
 
 如果你只是想用自己的 VPFI **earn passive yield**，在 **Dashboard** page 将它 deposit 到你的 escrow。就这么简单 - staking 从那一刻起自动开始。
 
 ---
 
-## 关于我们*不做*什么
+## 关于我们有意*不做*的事
 
 其他 DeFi platforms 会做的一些事，我们有意**不做**：
 
@@ -200,7 +200,7 @@ Vaipakam 在每条 supported chain 上都是 independent deployment：**Ethereum
 
 ---
 
-## 还想了解更多？
+## 还想进一步了解？
 
 - **User Guide** tab 会逐个 card 讲解 app 的每个 screen。适合回答“这个 button 是做什么的？”这类问题。
 - **Technical** tab 是完整 whitepaper。适合回答“liquidation engine 实际如何工作？”这类问题。

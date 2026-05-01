@@ -589,7 +589,10 @@
     "deleteOnChainNote": "On-chain positions, loans, and balances are unaffected. Vaipakam cannot erase blockchain state.",
     "deleteCta": "Delete my data",
     "deleteConfirmCta": "Click again to confirm — this is irreversible",
-    "legalFooter": "Vaipakam acts as data controller for the items above. We do not maintain any server-side personal data (no accounts, no email lists, no analytics linked to your wallet); the items above are the entire surface."
+    "journeyTitle": "Download journey log (this session)",
+    "journeyBody": "Saves the in-memory journey-log buffer (UI events from this tab's session) as a JSON file. Useful for sharing in a Discord DM or support thread. Independent of the broader Download / Delete above — those touch your stored namespace; this captures only the live event buffer.",
+    "journeyCta": "Download journey log (JSON)",
+    "legalFooter": "Vaipakam acts as data controller for the items above. We do not maintain any server-side personal data (no accounts, no email lists, no analytics linked to your wallet). For audit purposes we record every UI error event server-side with a per-event UUID — see the Privacy Policy for what's captured."
   },
   "dashboard": {
     "connectTitle": "Connect Your Wallet",
