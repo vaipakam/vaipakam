@@ -255,6 +255,8 @@ contract DeployerZeroRolesTest is Test {
         vm.assume(rando != governanceMultisig);
         vm.assume(rando != adminTimelock);
         vm.assume(rando != pauserMultisig);
+        vm.assume(rando != watcherBot);
+        vm.assume(rando != notifBillerBot);
 
         _rotateRolesToProduction();
 
