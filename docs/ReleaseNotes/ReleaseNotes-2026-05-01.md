@@ -1618,6 +1618,70 @@ the `AddOracleAdmin` deletion (no compilation errors;
 trailing notes are pre-existing lint warnings on unrelated
 files).
 
+## Bucketed duration picker on Create Offer
+
+Per ToDo item 12. The Create-Offer duration field was a free-form
+`type="number"` input — a lender could enter `47` and a borrower
+`52` and never match each other. The matching engine that lands
+in the Range Orders flow handles ranges on `amount` and
+`interestRateBps` (Phase 1) but **not** on `durationDays` —
+duration is matched single-value. So free-form entry is the wrong
+shape for the matching story.
+
+Replaced with a dropdown of seven preset buckets:
+**7 / 14 / 30 / 60 / 90 / 180 / 365 days**. Spread covers the
+typical lending window — 1 week up to the on-chain
+`MAX_OFFER_DURATION_DAYS_DEFAULT = 365` cap — with finer
+intervals (30-day steps) through the first quarter where most
+flow concentrates and quarterly steps beyond. Default selection
+is 30 days (median of the bucket list, matches the previous
+placeholder text).
+
+Why this helps matching: with seven discrete duration values,
+exact-equal matches between two compatible offers (lender + borrower
+on the same lending/collateral asset pair) happen frequently
+enough that the keeper bot's matching pass produces useful
+pairs without needing a duration-range model. Single-value
+duration is also simpler to reason about for the
+"transferability of obligation" flows (Preclose-via-offer,
+Refinance) where the new loan must literally inherit the old
+loan's duration tail.
+
+Implementation:
+
+- New `OFFER_DURATION_BUCKETS_DAYS` constant in `lib/offerSchema.ts`
+  (single source of truth) plus `OFFER_DURATION_DEFAULT_DAYS = 30`
+  for the form's initial state.
+- `lib/offerSchema.ts:initialOfferForm.durationDays` now defaults
+  to `"30"` instead of empty — the dropdown always has a sensible
+  preselected value, no "please pick something" empty state.
+- `pages/CreateOffer.tsx` swapped the duration `<input type="number">`
+  for the existing generic `<Picker>` component. Same chrome as
+  the chain selector + status filters elsewhere in the app.
+- The `<label htmlFor>` link was dropped (the Picker's trigger is
+  a `<button>`, not a native form input — `htmlFor` doesn't
+  apply). Screen-reader text comes from the Picker's
+  `ariaLabel="Loan duration"` prop; sighted users still see the
+  label above the trigger.
+- The `durationOutOfRange` validation and the grace-period hint
+  block stay in place — defensive checks for the unlikely case
+  that someone seeds the form with a non-bucket value. The
+  contract enforces `1 ≤ durationDays ≤ cfgMaxOfferDurationDays()`
+  on its side (per finding 00025), so power users hitting the
+  Diamond directly with a custom integer still get sensible
+  bounds.
+- New i18n keys `createOffer.durationBucket_one` /
+  `createOffer.durationBucket_other` (plural-aware) +
+  `createOffer.durationPickerAria` for the trigger label.
+- Other surfaces with their own duration entry (BorrowerPreclose
+  offset path, Refinance) are out of scope for this batch —
+  they're rarely-used flows where free-form entry makes sense
+  for now. They can adopt `OFFER_DURATION_BUCKETS_DAYS` later
+  if matching needs it.
+
+Verified: `tsc -b --noEmit` clean, `npm run build` clean (Node 25,
+1.97s), vite emits the bundle with the bucket list inlined.
+
 ## Outstanding for the testnet redeploy gate
 
 Before fresh testnet diamonds can land:

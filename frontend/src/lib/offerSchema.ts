@@ -22,6 +22,29 @@ const ADDRESS_RE = /^0x[0-9a-fA-F]{40}$/;
 export const MIN_OFFER_DURATION_DAYS = 1;
 export const MAX_OFFER_DURATION_DAYS = 365;
 
+/**
+ * Bucketed duration presets exposed in the Create-Offer dropdown.
+ * Frontend convention only — the contract still accepts any integer
+ * `1 ≤ durationDays ≤ MAX_OFFER_DURATION_DAYS` for power users
+ * calling the Diamond directly. The product reason for buckets is
+ * matching: with seven discrete duration values, exact-equal
+ * matches between lender and borrower offers happen frequently
+ * enough that the keeper bot's matching pass produces useful
+ * pairs without a duration-range model.
+ *
+ * Spread covers the typical lending window: 1 week → 1 year, with
+ * 30-day intervals through the first quarter (where most flow
+ * concentrates) and quarterly steps beyond. Adjust here, every
+ * surface that imports the constant follows.
+ */
+export const OFFER_DURATION_BUCKETS_DAYS: readonly number[] = [
+  7, 14, 30, 60, 90, 180, 365,
+] as const;
+
+/** Default duration selected when the form first renders. Median of
+ *  the bucket list — matches the previous placeholder "30". */
+export const OFFER_DURATION_DEFAULT_DAYS = 30;
+
 export type OfferSide = 'lender' | 'borrower';
 export type OfferAssetKind = 'erc20' | 'erc721' | 'erc1155';
 
@@ -70,7 +93,7 @@ export const initialOfferForm: OfferFormState = {
   interestRate: '',
   collateralAsset: '',
   collateralAmount: '',
-  durationDays: '',
+  durationDays: String(OFFER_DURATION_DEFAULT_DAYS),
   tokenId: '',
   quantity: '1',
   prepayAsset: '',

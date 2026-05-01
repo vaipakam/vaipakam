@@ -14,6 +14,7 @@ import {
   gracePeriodLabel,
   MIN_OFFER_DURATION_DAYS,
   MAX_OFFER_DURATION_DAYS,
+  OFFER_DURATION_BUCKETS_DAYS,
   type OfferFormState,
   type OfferAssetKind,
   type OfferSide,
@@ -33,6 +34,7 @@ import { usePermit2Signing } from "../hooks/usePermit2Signing";
 import { DIAMOND_ABI_VIEM as DIAMOND_ABI } from "../contracts/abis";
 import { L as Link } from "../components/L";
 import { AssetPicker } from "../components/app/AssetPicker";
+import { Picker } from "../components/Picker";
 import { TokenInfoTag } from "../components/app/TokenInfoTag";
 import { useAssetType, type DetectedAssetType } from "../hooks/useAssetType";
 import { CardInfo } from "../components/CardInfo";
@@ -1063,22 +1065,31 @@ export default function CreateOffer() {
           )}
 
           <div className="form-group">
-            <label className="form-label" htmlFor="create-offer-duration">
+            {/* Visual label — Picker's trigger is a <button>, not a
+                native form input, so the htmlFor association doesn't
+                apply. Screen-reader text comes from the Picker's
+                `ariaLabel` prop below; sighted users still see this
+                label above the trigger. */}
+            <span className="form-label">
               {t('createOffer.duration')}
-            </label>
-            <input
-              id="create-offer-duration"
-              className={`form-input ${durationOutOfRange ? "form-input-error" : ""}`}
-              type="number"
-              min={MIN_OFFER_DURATION_DAYS}
-              max={MAX_OFFER_DURATION_DAYS}
-              step="1"
-              placeholder="30"
+            </span>
+            {/* Bucketed duration picker. Frontend convention only — the
+                contract still accepts any integer in
+                [MIN_OFFER_DURATION_DAYS, MAX_OFFER_DURATION_DAYS]. The
+                bucket list lives on `OFFER_DURATION_BUCKETS_DAYS` so the
+                picker, the OfferBook duration filter, and any future
+                surface (preclose-via-offer, refinance) all share the
+                same set; widening or narrowing the buckets is a
+                one-line change at the source. */}
+            <Picker
+              items={OFFER_DURATION_BUCKETS_DAYS.map((d) => ({
+                value: String(d),
+                label: t('createOffer.durationBucket', { count: d }),
+              }))}
               value={form.durationDays}
-              onChange={(e) => setField("durationDays", e.target.value)}
-              aria-invalid={durationOutOfRange || undefined}
-              aria-describedby="create-offer-duration-hint"
-              required
+              onSelect={(v) => setField("durationDays", v)}
+              ariaLabel={t('createOffer.durationPickerAria')}
+              minWidth={180}
             />
             <span
               id="create-offer-duration-hint"
