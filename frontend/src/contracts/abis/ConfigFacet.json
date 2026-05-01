@@ -155,6 +155,16 @@
         "name": "lifMatcherFeeBps",
         "type": "uint256",
         "internalType": "uint256"
+      },
+      {
+        "name": "autoPauseDurationSeconds",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "maxOfferDurationDays",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
     "stateMutability": "view"
@@ -276,6 +286,19 @@
   },
   {
     "type": "function",
+    "name": "setAutoPauseDurationSeconds",
+    "inputs": [
+      {
+        "name": "newSeconds",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "setFallbackSplit",
     "inputs": [
       {
@@ -339,6 +362,19 @@
       },
       {
         "name": "maxIncentiveBps",
+        "type": "uint16",
+        "internalType": "uint16"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "setMaxOfferDurationDays",
+    "inputs": [
+      {
+        "name": "newDays",
         "type": "uint16",
         "internalType": "uint16"
       }
@@ -474,6 +510,19 @@
   },
   {
     "type": "event",
+    "name": "AutoPauseDurationSet",
+    "inputs": [
+      {
+        "name": "newSeconds",
+        "type": "uint32",
+        "indexed": false,
+        "internalType": "uint32"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "FallbackSplitSet",
     "inputs": [
       {
@@ -541,6 +590,19 @@
       },
       {
         "name": "maxIncentiveBps",
+        "type": "uint16",
+        "indexed": false,
+        "internalType": "uint16"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "MaxOfferDurationDaysSet",
+    "inputs": [
+      {
+        "name": "newDays",
         "type": "uint16",
         "indexed": false,
         "internalType": "uint16"
@@ -752,6 +814,27 @@
   },
   {
     "type": "error",
+    "name": "InvalidAutoPauseDuration",
+    "inputs": [
+      {
+        "name": "provided",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "minSec",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "maxSec",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "InvalidFeeBps",
     "inputs": [
       {
@@ -777,6 +860,27 @@
       },
       {
         "name": "maxAllowed",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "InvalidMaxOfferDurationDays",
+    "inputs": [
+      {
+        "name": "provided",
+        "type": "uint16",
+        "internalType": "uint16"
+      },
+      {
+        "name": "floorDays",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "ceilDays",
         "type": "uint256",
         "internalType": "uint256"
       }

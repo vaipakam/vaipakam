@@ -1140,6 +1140,17 @@
   },
   {
     "type": "error",
+    "name": "SanctionedAddress",
+    "inputs": [
+      {
+        "name": "who",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "SelfCollateralizedOffer",
     "inputs": []
   },
