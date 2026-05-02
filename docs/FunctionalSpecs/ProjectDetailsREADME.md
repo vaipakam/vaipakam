@@ -166,6 +166,8 @@ Vaipakam is a decentralized peer-to-peer (P2P) lending and borrowing platform bu
 
 _Note: For Phase 1, all lending, borrowing, and collateralization activities for a specific loan must occur on a single network (e.g., a loan initiated on Polygon must have its collateral and repayment on Polygon)._
 
+The chain-indexer and public analytics support layer may also fan out across the broader configured mainnet and testnet chain lists used by deployment metadata. A configured chain is active for indexing only when both its RPC secret and deployment artifact exist; missing entries should be skipped without breaking other chains.
+
 ### Asset Viability, Oracles, and Liquidity Determination
 
 The platform distinguishes between liquid and illiquid assets, which affects how defaults and LTV calculations are handled.
@@ -191,6 +193,13 @@ The platform distinguishes between liquid and illiquid assets, which affects how
   - **WETH Special Case:** WETH itself is priced directly from `ETH/USD` and is treated as the quote asset for liquidity purposes; the protocol does not perform a circular `WETH/WETH` liquidity check.
   - **Pyth Numeraire Redundancy:** A single Pyth feed per chain may sanity-check the Chainlink numeraire used for WETH-priced assets: `ETH/USD` on ETH-native chains and bridged-`WETH/USD` on chains such as BNB or Polygon mainnet where the configured payment / quote asset is bridged WETH. This is not a per-asset oracle mapping. If the Pyth feed is unset, stale, low-confidence, or non-positive it soft-skips; if it is configured and diverges beyond the governance-bounded threshold, pricing must revert fail-closed with a typed numeraire-divergence error.
   - **Bounded Oracle Knobs:** Pyth oracle address, Pyth numeraire feed id, Pyth staleness, Pyth deviation, Pyth confidence, secondary-oracle staleness, and secondary-oracle deviation setters must be range-bounded. Invalid values should revert through the shared `ParameterOutOfRange(bytes32 name, uint256 value, uint256 min, uint256 max)` error so admin misconfiguration is visible and easy to audit.
+    - `pythOracle`: non-zero contract address, or zero to disable.
+    - `pythNumeraireFeedId`: non-zero feed id, or zero to disable.
+    - `pythMaxStalenessSeconds`: 60 to 3600 seconds, default 300.
+    - `pythNumeraireMaxDeviationBps`: 100 to 2000 bps, default 500.
+    - `pythConfidenceMaxBps`: 50 to 500 bps, default 100.
+    - `secondaryOracleMaxDeviationBps`: 100 to 2000 bps.
+    - `secondaryOracleMaxStaleness`: 60 seconds to 29 hours.
   - **Peg-Aware Stable Staleness:** Stable and reference feeds may remain valid out to the protocol's longer stable staleness ceiling only when the reported price remains within tolerance of either the implicit USD `$1` peg or a governance-registered fiat / commodity reference such as `EUR/USD`, `JPY/USD`, or `XAU/USD`.
 - **Liquidity Determination Process & On-Chain Record:**
   1.  **Frontend Assessment:** The frontend interface should attempt to assess asset liquidity by checking the active network only: a valid price path and the presence of a sufficiently deep configured v3-style concentrated-liquidity AMM `asset/WETH` pool. If the active network fails the liquidity test, the frontend must treat the asset as illiquid on that network and stop there; it must not perform any Ethereum-mainnet fallback verification and must not redirect the user to another network.
@@ -222,12 +231,17 @@ The platform distinguishes between liquid and illiquid assets, which affects how
 
 - **Durations:** Configurable from 1 day to 1 year (`1–365` days), with the live maximum exposed through protocol configuration. Frontend validation must enforce this range, and the on-chain offer / loan initiation path should enforce the same upper bound so external callers cannot bypass the UI.
 - **Creation Buckets:** The primary Create Offer flow should present standard duration buckets (`7`, `14`, `30`, `60`, `90`, `180`, and `365` days) rather than a free-form number input. Range Orders still match duration as an exact value, so bucketed durations improve match density without introducing duration-range semantics. Specialized follow-on flows such as refinance or borrower preclose may keep free-form duration entry where preserving a remaining loan tail is more important than marketplace matchability.
-- **Grace Periods:** Automatically and strictly assigned based on loan duration:
+- **Grace Periods:** Assigned from a fixed six-slot duration schedule that can be configured by admin / governance within per-slot safety bounds:
   - < 1 week: 1 hour
   - < 1 month: 1 day
   - < 3 months: 3 days
   - < 6 months: 1 week
   - \le 1 year: 2 weeks
+  - > 1 year / catch-all: 30 days
+  - The first five defaults preserve the original Phase 1 behavior, and the sixth default covers year-plus loans if a later live maximum duration permits them.
+  - The schedule shape is fixed at six rows. Governance may edit each row's `maxDurationDays` and `graceSeconds` within that row's allowed bounds, but must not add or remove rows.
+  - A global grace floor of 1 hour and ceiling of 90 days applies in addition to row-level bounds. The catch-all row must use `maxDurationDays = 0`.
+  - Clearing the configured schedule reverts to the compile-time defaults.
 
 ## 3. Offer Creation
 
@@ -1294,6 +1308,14 @@ A comprehensive user dashboard is essential for managing activities on Vaipakam.
   - **Access Control:** Granular roles (e.g., `LOAN_MANAGER_ROLE`, `OFFER_MANAGER_ROLE`, `TREASURY_ADMIN_ROLE`) managed via OpenZeppelin's AccessControl. Roles will be assigned initially by the contract deployer/owner, with plans to transition control to governance in Phase 2 where appropriate.
   - **Three-Role Governance Handover:** Privileged production surfaces should be split between a Governance Safe, a Guardian Safe, and KYC Ops. The Governance Safe controls slow admin surfaces through a 48-hour timelock. The Guardian Safe can pause quickly during incidents but cannot unpause. KYC Ops holds only the user-tier operational role where that role is active.
   - **Bounded Governance Knobs:** Mutable numeric configuration surfaces must have explicit min / max ranges and use a shared typed range error. This includes reward grace windows, interaction caps, staking APR, liquidation and LTV risk parameters, reserve factor, KYC tier thresholds, oracle staleness, and oracle deviation bounds. Admin runbooks should list each knob, owner role, default, and permitted range.
+    - `setRewardGraceSeconds`: 5 minutes to 30 days.
+    - `setInteractionCapVpfiPerEth`: 1 to 1,000,000, while preserving documented sentinel values for reset / emergency-disable behavior.
+    - `setStakingApr`: no more than 20% APR.
+    - `updateRiskParams.maxLtvBps`: 10% to 100%.
+    - `updateRiskParams.liqThresholdBps`: 15% to 100%, and still strictly greater than `maxLtvBps`.
+    - `updateRiskParams.reserveFactorBps`: no more than 50%.
+    - `updateKYCThresholds`: each threshold 100 USD to 1,000,000 USD, with tier ordering still enforced.
+  - **Admin-Configurable Default Grace Schedule:** `ConfigFacet` should expose the six-slot grace-bucket table, per-slot bounds, `setGraceBuckets`, and `clearGraceBuckets`. `setGraceBuckets` must reject wrong row counts, non-zero catch-all duration, non-monotonic duration rows, and values outside the per-slot or global bounds through typed range errors where applicable. Frontend admin tooling should show whether compile-time defaults are currently in force and compose Safe transactions rather than signing directly from the app.
   - **OApp Guardian Pause:** LayerZero OApps and VPFI bridge-related contracts should allow Guardian or Owner pause, but unpause must remain Owner / Timelock controlled.
   - **LayerZero Payload Sanity:** Reward OApp packets should enforce the exact expected payload size before `abi.decode`; malformed, undersized, or oversized packets must revert with a typed error carrying observed and expected sizes so off-chain monitoring can correlate the incident with LayerZero traces.
   - **Emergency Updates:** Critical security patches may be fast-tracked through the initial admin/multi-sig model when needed to protect user funds or protocol integrity, with those emergency powers limited to critical fixes.
@@ -1302,7 +1324,7 @@ A comprehensive user dashboard is essential for managing activities on Vaipakam.
 ### Frontend
 
 - **Framework:** React with wagmi v2 and viem for wallet connection, contract reads/writes, multicall batching, and direct JSON-RPC control.
-- **Wallet UX:** ConnectKit is the wallet picker layer on top of wagmi v2. Mobile wallet selections should open wallet apps directly through deep links, while QR pairing remains available for cross-device use.
+- **Wallet UX:** ConnectKit is the wallet picker layer on top of wagmi v2. Mobile wallet selections should open wallet apps directly through deep links, while QR pairing remains available for cross-device use. Vaipakam should explicitly opt out of ConnectKit's Aave-account default so the connect modal does not show a competing-protocol `Continue with Aave` call to action unless the operator intentionally restores it.
 - **PWA Support:** The frontend should ship a web app manifest and production-only service worker so the dApp can be installed on iOS / Android through browser home-screen install flows. The service worker may cache only the static app shell; dynamic RPC, subgraph, and worker API responses must bypass service-worker caching so chain state is never served stale.
 - **Farcaster Frame Surface:** Public read-only growth surfaces may include a Farcaster Frame such as `/frames/active-loans` that accepts a wallet address, reads active loans across supported chains, shows total active-loan count / lowest HF / per-chain breakdown, and deep-links into the public NFT Verifier for detail.
 - **Legacy Provider Policy:** The frontend should not retain ethers.js compatibility shims or ethers as a production dependency after the wagmi / viem migration.
@@ -1313,7 +1335,7 @@ A comprehensive user dashboard is essential for managing activities on Vaipakam.
 - **ABI Sync:** After any contract release that changes selectors, structs, events, or frontend-consumed ABIs, run the frontend ABI export script (`contracts/script/exportFrontendAbis.sh` after `forge build`) so `frontend/src/contracts/abis/` and `_source.json` match the deployed contract build and carry the source commit hash. When keeper-bot-consumed facets change, run the keeper-bot ABI export as well so bot JSONs and provenance stay aligned with the monorepo build.
 - **Live Protocol Config:** Frontend copy that displays protocol fees, liquidation thresholds, rental buffer, staking APR, VPFI tier thresholds, pool caps, and minimum Health Factor should read from `getProtocolConfigBundle()` and `getProtocolConstants()` rather than hardcoded locale strings. Token-unit formatting for VPFI should use the token contract's live `decimals()` value where available.
 - **Transaction Receipt Truth:** Shared write helpers should treat a mined transaction with receipt status `0` as a failure and surface the revert path to the user. Inclusion in a block is not by itself a success signal.
-- **Shared Chain Indexer:** The public worker may maintain a D1-backed chain index for offers, loans, activity, and claimability hints. It should scan the full allow-listed Diamond event set once per cron tick per configured chain, persist one cursor per chain / Diamond source, and expose read APIs for active offers, active loans, wallet-filtered loans, activity, claimables, and offer stats. Browser hooks should report whether data came from the indexer or fallback path.
+- **Shared Chain Indexer:** The public worker may maintain a D1-backed chain index for offers, loans, activity, and claimability hints. It should scan the full allow-listed Diamond event set once per cron tick per configured chain, persist one cursor per chain / Diamond source, and expose read APIs for active offers, active loans, wallet-filtered loans, activity, claimables, and offer stats. Browser hooks should report whether data came from the indexer or fallback path. History belongs in D1, while current ownership-sensitive state should still be read from the chain where appropriate; for example, lender / borrower loan lists and claimability discovery may live-filter with `ownerOf(tokenId)` so transferred Vaipakam position NFTs are reflected immediately.
 - **Log-Index Fallback:** The frontend log index remains the browser fallback and local history source when the worker origin is unset, unavailable, or stale. Event-topic allow-list additions that need historical browser data should bump the cache key; hydrate-only migrations are appropriate only when the relevant event data was already captured in older caches.
 
 ### Public View Functions for Analytics, Transparency, and Integrations
@@ -1330,6 +1352,9 @@ General design requirements:
 - these functions should be multicall-friendly so public dashboards can batch reads efficiently
 - user-facing frontend helpers should prefer one bundled config read for mutable values and one bundled constants read for compile-time values, so a governance change or redeploy updates visible protocol numbers on next page load
 - the worker-backed indexer API may complement, but not replace, on-chain view verification. Expected REST surfaces include active offer lists and stats, offer lookup by id / creator, active loan lists, loan lookup by id / lender / borrower, filtered activity, and wallet claimability hints. These endpoints are cache / discovery surfaces; money-moving actions must still read directly from contracts or verify against the latest on-chain state.
+- the worker-backed activity ledger should be append-only and shared across offers, loans, VPFI protocol events, claim events, and Vaipakam NFT `Transfer` events. This lets Activity, Loan Details timelines, dashboard history, and ownership-history views filter the same event source instead of each building a private log scan.
+- `offers`, `loans`, and `activity_events` should be keyed by chain as well as domain identifiers so one Worker can fan out across configured chains without schema changes. Future horizontal scaling to one Worker per chain should not require table-shape changes.
+- loan rows should store immutable origination data from `LoanInitiated` and one-time bootstrapped loan details such as lender token id, borrower token id, interest rate, start time, and partial-repay flag. Current lender / borrower ownership should be resolved from live `ownerOf` reads at query time or direct chain reads on money-relevant screens, not from stale origination columns.
 
 #### 1. Protocol-Wide Metrics
 

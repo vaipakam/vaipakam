@@ -601,7 +601,9 @@ LayerZero hardening requirements:
 - each reward OApp packet type must validate the exact expected encoded payload size before decoding; for the current report / broadcast tuple this is `128` bytes
 - malformed, undersized, or oversized reward packets must revert with a typed payload-size error carrying the observed and expected sizes
 - fixed-rate buy reconciliation should be monitored off-chain: canonical-chain processed buy events should be cross-checked against source-chain `BuyRequested` events by request id, buyer, and amount
+- the buy-reconciliation watchdog should run from the operations Worker, read canonical-chain processed-buy events, resolve the originating LayerZero endpoint id to that source chain's RPC and adapter address, and verify that a matching source-chain `BuyRequested` event exists with the same request id, buyer, and amount
 - the buy-reconciliation watchdog should expose an on-chain kill switch for planned ceremonies; auto-pausing on mismatch is an operations decision for a later phase, not a Phase 1 requirement
+- watchdog coverage requires operator-provided source-chain RPC secrets for every configured buy lane. Missing RPC secrets should cause that lane to be skipped with an operator-visible log rather than causing the entire watchdog pass to fail.
 - off-chain monitoring should watch DVN-set drift for each configured `(chain, OApp, peer eid, send / receive)` pair
 - off-chain monitoring should check OFT supply invariants by comparing Base canonical-adapter locked VPFI against the sum of mirror-chain `totalSupply()` values
 - off-chain monitoring should alert on oversized single-transaction VPFI flows above an operator-configured threshold

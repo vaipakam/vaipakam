@@ -292,7 +292,12 @@ Connected-app network model in Phase 1:
 - the app should make the active network clear and treat each network as its own local protocol instance with a dedicated Diamond deployment per network
 - the connected topbar / wallet menu should show both chain icon and chain name after connection, collapsing to icon-only only on very narrow viewports while preserving the accessible chain name
 - in-app pages should not mount a standalone pre-connect chain picker; read-only pre-connect chain exploration belongs on public Analytics, while wallet-gated app pages should take chain context from the connected wallet
-- cached-data page titles should show an indexer status badge when relevant: green for indexed data with last-updated age and a rescan affordance, amber when the page has fallen back to live chain scanning
+- the connected-app top bar should show one shared indexer status badge for cached / live-read state rather than duplicating badges in individual page headers
+- the indexer badge should have three states:
+  - green `Cached`, showing indexed age and a rescan affordance when the Worker cache is reachable
+  - amber `Live chain scan`, explaining that the browser is reading directly from chain because the cache is unavailable and asking users to wait for page loading to finish before submitting data-dependent transactions
+  - blue `Local dev chain`, for Anvil / Hardhat chain IDs where the cloud indexer cannot reach the local node and direct local RPC reads are expected
+- the rescan affordance may force a full page reload or otherwise trigger the page's existing direct-chain reload path, as long as the user can intentionally bypass the cache
 
 Wallet connection requirements:
 
@@ -306,6 +311,7 @@ Wallet connection requirements:
 - startup should warn site operators loudly if the WalletConnect project ID is missing from the deployment environment
 - a missing WalletConnect project ID should be treated as a production misconfiguration because it can break mobile deep-linking and degrade users into a QR-only flow
 - the wallet picker should be powered by ConnectKit on top of wagmi v2 so extension wallets, WalletConnect mobile wallets, and wallet-app deep links appear through one curated picker
+- ConnectKit's Aave-account connector / `Continue with Aave` default should be explicitly disabled unless Vaipakam intentionally adopts that branded smart-wallet entry point later
 
 Safe-app embed requirements:
 
@@ -319,6 +325,8 @@ Safe-app embed requirements:
 Governance-configuration visibility:
 
 - loan-screen surfaces should reflect live on-chain governance parameters where those parameters affect the user-facing position
+- `/admin` should include a loan-default grace schedule control in the Risk category. Public / non-admin viewers may see the read-only schedule, while admin-wallet viewers can edit the six rows inline and propose the resulting `setGraceBuckets` transaction to Safe.
+- the grace-schedule admin UI should display per-slot duration and grace bounds next to inputs, validate before proposal, and show a clear badge when compile-time defaults are in force because no custom schedule is stored
 - each loan-detail page should include a `Lender Discount` card for the current lender when lender discount data is relevant
 - the `Lender Discount` card should show the effective time-weighted VPFI discount computed from the current open-loan window and the on-chain discount curve
 - this effective discount may be computed client-side by extrapolating the open-loan window against on-chain discount-curve data
@@ -666,12 +674,17 @@ Data-fetching strategy:
 - derive historical series from raw event logs when feasible
 - a shared Cloudflare Worker indexer may maintain D1-backed `offers`, `loans`, and append-only `activity_events` tables for fast first paint across offers, loans, activity, and claimability hints
 - the worker indexer should fan out across configured chains on each cron tick and silently skip chains missing an RPC secret or deployment artifact, rather than failing the whole sweep
+- the worker should perform one shared event scan per chain / tick across the full allow-list instead of separate per-domain scans; per-domain handlers then persist offers, loans, and activity rows from that shared scan output
+- a single cursor per chain / Diamond source should advance atomically so offer, loan, claim, and activity views cannot drift onto different indexed block heights
 - frontend hooks such as active offers, active loans, wallet loans, activity, claimables, and offer stats should prefer the indexer when available and return an explicit `indexer` / `fallback` source state
 - `Offer Book` should consume indexed active offers first, while keeping the existing browser event watcher so newly created global offers appear within seconds according to the existing non-user-customizable sort
 - dashboard loan lists may consume indexed loan origination data, but current lender / borrower NFT-holder views should be live-filtered through `ownerOf(tokenId)` reads so transferred loan NFTs are reflected accurately
+- the dashboard `Your Loans` card may render directly from indexed wallet-loan endpoints after the worker has live-filtered current NFT ownership; if the worker is unavailable, it should fall back to the existing direct chain / browser-index path
 - Claim Center money-relevant claim payloads should continue to read directly from chain; indexed claimability is only a discovery hint
 - VPFI token-panel scans may remain direct filtered log reads while volume stays low
+- ERC-721 `Transfer` events for Vaipakam position NFTs should enter the shared `activity_events` ledger so ownership history is queryable without maintaining a separate mutable `nft_positions` table
 - the app footer should expose one active-chain `Verify on-chain` affordance that opens the current Diamond on the relevant explorer; repeated per-row verify links are not required
+- Durable Objects and WebSocket push are not required for this cache layer while browser event watchers already refresh visible pages after relevant on-chain events. The worker's primary job is fast cold-load first paint, not replacing direct RPC truth.
 - for aggregates that are too expensive to reconstruct repeatedly on the client, the protocol may expose lightweight read-only helper functions such as `getProtocolTVL`, `getUserCount`, `getActiveLoansCountAndValue`, and `getTotalInterestEarned`
 - direct contract reads and browser log indexing remain the fallback path whenever the worker is unavailable, times out, or has no configured origin; the cache must never become an oracle for money-moving actions
 
