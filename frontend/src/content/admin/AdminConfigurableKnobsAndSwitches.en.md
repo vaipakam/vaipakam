@@ -87,6 +87,67 @@ it's a "collapse the position when LTV exceeds this" guard, must be
 above the normal liquidation threshold to be meaningful. `rentalBufferBps`
 ≤ `MAX_FEE_BPS`.
 
+### Loan-default grace buckets
+
+(`setGraceBuckets` / `clearGraceBuckets` / `getGraceBuckets` /
+`getEffectiveGraceSeconds` / `getGraceSlotBounds` — T-044)
+
+The window between a loan's `endTime` and the moment the loan
+becomes default-able is duration-tiered. Short loans get short grace;
+long loans get longer grace. The schedule is a **fixed 6-slot
+positional table** — admin can edit the values inside each slot but
+cannot add or remove rows.
+
+Default schedule (also the compile-time fallback when no override is
+configured):
+
+| Slot | Bucket label   | Default `maxDurationDays` | Default `graceSeconds` |
+|------|----------------|---------------------------|------------------------|
+| 0    | < 7 days       | 7                         | 1 hour                 |
+| 1    | < 30 days      | 30                        | 1 day                  |
+| 2    | < 90 days      | 90                        | 3 days                 |
+| 3    | < 180 days     | 180                       | 1 week                 |
+| 4    | < 365 days     | 365                       | 2 weeks                |
+| 5    | catch-all      | 0 (marker)                | 30 days                |
+
+Per-slot bounds (the admin console exposes these via `getGraceSlotBounds`
+and renders them inline next to each editable row):
+
+| Slot | `maxDurationDays` window | `graceSeconds` window |
+|------|---------------------------|------------------------|
+| 0    | [1, 14]                   | [1 hour, 5 days]       |
+| 1    | [7, 60]                   | [1 hour, 15 days]      |
+| 2    | [30, 180]                 | [1 day, 30 days]       |
+| 3    | [90, 270]                 | [3 days, 45 days]      |
+| 4    | [180, 540]                | [7 days, 60 days]      |
+| 5    | (must be 0)               | [14 days, 90 days]     |
+
+Plus two absolute global bounds applied to every slot as a defence-
+in-depth check:
+
+- `GRACE_SECONDS_MIN = 1 hour` — below this, TZ tolerance / RPC lag
+  could fire false defaults.
+- `GRACE_SECONDS_MAX = 90 days` — above this, the lender's
+  principal is effectively locked indefinitely past the loan
+  end-date.
+
+Setter validation:
+
+- The schedule must contain exactly 6 entries.
+- For slots 0-4: `maxDurationDays` lies inside the slot's window
+  AND is strictly greater than the previous slot's value
+  (monotonic). `graceSeconds` lies inside the slot's window AND
+  inside the global floor / ceiling.
+- For slot 5: `maxDurationDays == 0` (catch-all marker enforced).
+  `graceSeconds` lies inside the slot's window.
+- Any violation reverts with `ParameterOutOfRange` (per-slot
+  bounds) or `GraceBucketsInvalid` (shape errors —
+  `wrong-count` / `catchall-not-zero` / `not-monotonic`).
+
+`clearGraceBuckets` reverts the storage to empty; the contract
+falls back to the compile-time defaults above. Useful as an
+emergency rollback if a bad schedule was pushed by mistake.
+
 ### Per-asset risk parameters
 
 (`updateRiskParams`):

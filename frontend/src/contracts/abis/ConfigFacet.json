@@ -1,6 +1,32 @@
 [
   {
     "type": "function",
+    "name": "clearGraceBuckets",
+    "inputs": [],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "getEffectiveGraceSeconds",
+    "inputs": [
+      {
+        "name": "durationDays",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "graceSeconds",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "getFallbackSplit",
     "inputs": [],
     "outputs": [
@@ -34,6 +60,59 @@
       }
     ],
     "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getGraceBuckets",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "buckets",
+        "type": "tuple[]",
+        "internalType": "struct LibVaipakam.GraceBucket[]",
+        "components": [
+          {
+            "name": "maxDurationDays",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "graceSeconds",
+            "type": "uint256",
+            "internalType": "uint256"
+          }
+        ]
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getGraceSlotBounds",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "minDays",
+        "type": "uint256[]",
+        "internalType": "uint256[]"
+      },
+      {
+        "name": "maxDays",
+        "type": "uint256[]",
+        "internalType": "uint256[]"
+      },
+      {
+        "name": "minGrace",
+        "type": "uint256[]",
+        "internalType": "uint256[]"
+      },
+      {
+        "name": "maxGrace",
+        "type": "uint256[]",
+        "internalType": "uint256[]"
+      }
+    ],
+    "stateMutability": "pure"
   },
   {
     "type": "function",
@@ -358,6 +437,31 @@
   },
   {
     "type": "function",
+    "name": "setGraceBuckets",
+    "inputs": [
+      {
+        "name": "buckets",
+        "type": "tuple[]",
+        "internalType": "struct LibVaipakam.GraceBucket[]",
+        "components": [
+          {
+            "name": "maxDurationDays",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "graceSeconds",
+            "type": "uint256",
+            "internalType": "uint256"
+          }
+        ]
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "setLifMatcherFeeBps",
     "inputs": [
       {
@@ -604,6 +708,19 @@
         "type": "uint16",
         "indexed": false,
         "internalType": "uint16"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "GraceBucketsUpdated",
+    "inputs": [
+      {
+        "name": "bucketCount",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
       }
     ],
     "anonymous": false
@@ -884,6 +1001,17 @@
         "name": "maxPerPartyBps",
         "type": "uint256",
         "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "GraceBucketsInvalid",
+    "inputs": [
+      {
+        "name": "reason",
+        "type": "string",
+        "internalType": "string"
       }
     ]
   },

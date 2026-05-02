@@ -662,3 +662,77 @@ Friend.tech / Pump.fun use Privy for email/social-to-wallet —
 the conclusion is that Vaipakam's stack is the modern DeFi
 default and worth keeping. The Aave-CTA was the one rough edge,
 and it's now gone.
+
+## T-044 — admin-configurable loan-default grace schedule
+
+The grace window between a loan's `endTime` and the moment
+`DefaultedFacet.markDefaulted` can fire used to be a hardcoded
+`pure` function in `LibVaipakam` — five tiers from "1 hour for
+< 7 day loans" up to "2 weeks for ≥ 180 days." T-044 makes the
+schedule admin-configurable AND adds a sixth bucket for
+year-plus loans defaulting to a 30-day grace.
+
+**Schedule shape — fixed 6-slot positional table.** Admin can edit
+the value inside each slot (both `maxDurationDays` and
+`graceSeconds`), but cannot add or remove rows. Each slot carries
+its own per-slot bounds for both fields, so a < 7 day bucket can
+never be set to a 90-day grace and a < 365 day bucket can never
+be flipped down to a 1-hour grace. Defence-in-depth global floor
+(1 hour) and ceiling (90 days) sit on top.
+
+Per-slot bounds — slot 0 < 7d → maxDays [1,14] grace [1h, 5d];
+slot 1 < 30d → [7,60] [1h, 15d]; slot 2 < 90d → [30,180]
+[1d, 30d]; slot 3 < 180d → [90,270] [3d, 45d]; slot 4 < 365d →
+[180,540] [7d, 60d]; slot 5 catch-all → maxDays must be 0,
+grace [14d, 90d].
+
+**Default schedule** (also the compile-time fallback when
+storage is empty): 1h / 1d / 3d / 1w / 2w / 30d for the six
+slots, in order. The first 5 preserve the prior on-chain
+behaviour exactly; the 6th bucket is new per the task.
+
+**Setter validation.** `setGraceBuckets(GraceBucket[])` is
+`ADMIN_ROLE`-gated and rejects:
+- Wrong array length (`wrong-count`).
+- Slot 5 with a non-zero `maxDurationDays` (`catchall-not-zero`).
+- Out-of-bound `maxDurationDays` per slot
+  (`ParameterOutOfRange("graceBucketMaxDurationDays", ...)`).
+- Out-of-bound `graceSeconds` per slot
+  (`ParameterOutOfRange("graceBucketSeconds", ...)`).
+- Slot whose `maxDurationDays` is not strictly greater than the
+  previous slot's (`not-monotonic`).
+- Grace outside the global `[1h, 90d]` floor / ceiling.
+
+`clearGraceBuckets` reverts to the compile-time defaults — useful
+as an emergency rollback if a bad schedule lands.
+
+**Admin console.** The dashboard at `/admin` grows a new "Loan-
+default grace schedule" card at the bottom of the Risk category.
+Renders as a 6-row table with per-slot bound hints inline next to
+each input (e.g. `[1h, 5d]` rendered next to slot 0's grace
+field). Public-view shows read-only data; admin-wallet visitors
+get an "Edit schedule" button that reveals inline number inputs,
+client-side validation against the per-slot bounds, and a
+"Propose to Safe" button that composes the `setGraceBuckets`
+calldata via viem and opens the chain's Safe app with the tx
+pre-filled. Vaipakam never signs — Safe owns the multisig flow.
+
+A "Compile-time defaults in force" badge surfaces when the
+contract returns an empty array, so operators can tell at a
+glance whether the on-chain schedule is governance-customised or
+running on the original defaults.
+
+**Tests.** New `contracts/test/GraceBucketsTest.t.sol` with 14
+cases covering defaults / canonical-equals-defaults / stretched
+custom schedule / slot-bounds view / wrong-count / catch-all
+marker / per-slot duration bounds / per-slot grace bounds /
+monotonicity / role-gating / event emission / clearGraceBuckets
+reversion. HelperTest selectors expanded from 22 to 27 entries
+to cut the 5 new ConfigFacet methods.
+
+**Files.** Contracts: `LibVaipakam.sol`, `ConfigFacet.sol`,
+`HelperTest.sol`, `GraceBucketsTest.t.sol`. Frontend:
+`hooks/useGraceBuckets.ts`, `components/admin/GraceBucketsCard.tsx`,
+`pages/AdminDashboard.tsx`. Docs:
+`docs/ops/AdminConfigurableKnobsAndSwitches.md` (with sync to
+`frontend/src/content/admin/AdminConfigurableKnobsAndSwitches.en.md`).

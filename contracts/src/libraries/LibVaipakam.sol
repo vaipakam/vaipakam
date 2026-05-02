@@ -158,6 +158,39 @@ library LibVaipakam {
     uint256 constant MAX_FEE_EVENTS_ITER = 10_000; // Max feeEventsLog entries scanned per window query in MetricsFacet
     uint256 constant SEQUENCER_GRACE_PERIOD = 3600; // 1h post-recovery grace on L2s before prices are trusted again
 
+    // ─── T-044 — duration-tiered loan-default grace bounds ───────────────
+    // The grace period applied between a loan's `endTime` and the moment
+    // {DefaultedFacet.markDefaulted} can fire is a function of the loan's
+    // original `durationDays`. Short loans get a short grace; long loans
+    // get a longer one. Both the bucket threshold (`maxDurationDays`)
+    // AND the per-bucket grace (`graceSeconds`) are admin-configurable
+    // via {ConfigFacet.setGraceBuckets}, with `gracePeriod()` falling back
+    // to the compile-time default schedule when storage is empty.
+    //
+    // **Schedule shape — fixed 6-slot positional table**:
+    // The schedule is exactly 6 slots; admin can edit the values inside
+    // each slot but cannot add or remove rows. Each slot carries its own
+    // hard bounds for BOTH the duration threshold and the grace period
+    // (see {graceSlotBounds}). This gives operators the flexibility to
+    // tune values within sensible per-slot windows — a < 7 day bucket
+    // can never be set to a 90-day grace, a < 365 day bucket can never
+    // be flipped down to a 1-hour grace.
+    //
+    // Slot 5 is the catch-all (`maxDurationDays == 0`); it covers any
+    // loan duration above slot 4's threshold and is governed only by its
+    // own grace bounds (no duration ceiling).
+    //
+    // Defended against compromised-admin attacks the same way every other
+    // governance setter is (see T-033) — every value is range-checked at
+    // the setter and the bounds themselves are compile-time constants.
+    uint256 constant GRACE_BUCKETS_FIXED_COUNT = 6;
+    // Absolute floor / ceiling — every per-slot bound below stays inside
+    // these. Belt-and-braces guard against a future per-slot-bound bump
+    // that accidentally breaks the global invariants (TZ tolerance + max
+    // lender lock-up).
+    uint256 constant GRACE_SECONDS_MIN = 1 hours;
+    uint256 constant GRACE_SECONDS_MAX = 90 days;
+
     // ─── Chainlink staleness thresholds (stable-peg-aware hybrid) ───────
     // Volatile feeds (ETH/BTC/etc.-USD) publish on a 1h heartbeat + 0.5%
     // deviation trigger. Stable / fiat / commodity feeds (USDC, EUR/USD,
@@ -719,6 +752,24 @@ library LibVaipakam {
         uint256 liqBonusBps; // Liquidation Bonus in basis points
         uint256 reserveFactorBps; // Reserve Factor in basis points
         uint256 minPartialBps; // Min partial repay % (e.g., 100 for 1%)
+    }
+
+    /// @notice One row of the duration-tiered grace-period table.
+    /// @dev Buckets are stored as a sorted array in
+    ///      `Storage.graceBuckets`, with `maxDurationDays` strictly
+    ///      ascending across the array. `gracePeriod(durationDays)`
+    ///      returns the `graceSeconds` of the first bucket whose
+    ///      `maxDurationDays > durationDays`. The LAST bucket is the
+    ///      catch-all and is identified by `maxDurationDays == 0` —
+    ///      its `graceSeconds` applies to every duration above the
+    ///      penultimate bucket's threshold. This shape matches the
+    ///      compile-time default schedule in `gracePeriod()` exactly,
+    ///      so a fresh deploy with empty storage and a storage-driven
+    ///      deploy produce identical lookups for the original 5
+    ///      buckets, plus the new `≥ 365 days → 30 days` row.
+    struct GraceBucket {
+        uint256 maxDurationDays;
+        uint256 graceSeconds;
     }
 
     /// @notice Per-feed oracle override. Governance-installed tighter
@@ -1693,6 +1744,16 @@ library LibVaipakam {
         // (auto-collapse keeps that semantically correct because in
         // single-value mode amountMax == amount).
         MatchOverride matchOverride;
+        // ── T-044 — admin-configurable loan-default grace schedule ─────
+        // Empty array (length == 0) means "use the compile-time default
+        // schedule embedded in `gracePeriod()`" — zero-config-friendly.
+        // Populated array overrides the defaults; entries must be sorted
+        // ascending on `maxDurationDays`, with the final entry's
+        // `maxDurationDays == 0` marking the catch-all bucket. Validated
+        // by {ConfigFacet.setGraceBuckets} against
+        // GRACE_BUCKETS_MAX_LEN / GRACE_BUCKET_DAYS_MIN/MAX /
+        // GRACE_SECONDS_MIN/MAX before any write.
+        GraceBucket[] graceBuckets;
     }
 
     /// @dev Range Orders Phase 1 — set by matchOffers, read by
@@ -2102,23 +2163,116 @@ library LibVaipakam {
         return v == 0 ? VPFI_FIXED_WALLET_CAP : v;
     }
 
-    /// @dev Duration-tiered grace period used by DefaultedFacet. The tiers
-    ///      are inclusive of the lower bound and exclusive of the upper:
+    /// @dev Duration-tiered grace period used by DefaultedFacet, RepayFacet,
+    ///      RiskFacet. T-044 made the schedule admin-configurable; when
+    ///      `Storage.graceBuckets` is empty (the post-deploy default) this
+    ///      function falls back to the original compile-time schedule
+    ///      below, extended with a new ≥ 365 days bucket per T-044's spec.
+    ///
+    ///      Default schedule (used when `graceBuckets.length == 0`):
     ///        durationDays < 7    → 1 hour
     ///        durationDays < 30   → 1 day
     ///        durationDays < 90   → 3 days
     ///        durationDays < 180  → 1 week
-    ///        durationDays >= 180 → 2 weeks
+    ///        durationDays < 365  → 2 weeks
+    ///        durationDays >= 365 → 30 days   (T-044 — new bucket)
+    ///
+    ///      Configured-array semantics: walk buckets in storage order; the
+    ///      first bucket whose `maxDurationDays > durationDays` wins. The
+    ///      final bucket carries `maxDurationDays == 0` as the catch-all
+    ///      marker. Setter validation (see ConfigFacet.setGraceBuckets)
+    ///      guarantees the array is sorted, monotonic, and fully bounded.
+    ///
+    ///      Note: this used to be `pure`. T-044 changed it to `view`
+    ///      because it now reads `s.graceBuckets`. Every existing caller
+    ///      is `view` or `nonpayable` — no signature impact downstream.
     /// @param durationDays Loan duration in days.
     /// @return grace Grace period in seconds.
     function gracePeriod(
         uint256 durationDays
-    ) internal pure returns (uint256 grace) {
-        if (durationDays < 7) return 1 hours;
-        if (durationDays < 30) return 1 days;
-        if (durationDays < 90) return 3 days;
-        if (durationDays < 180) return 1 weeks;
-        return 2 weeks;
+    ) internal view returns (uint256 grace) {
+        GraceBucket[] storage buckets = storageSlot().graceBuckets;
+        uint256 len = buckets.length;
+        if (len == 0) {
+            // Compile-time default schedule (T-044 extended).
+            if (durationDays < 7) return 1 hours;
+            if (durationDays < 30) return 1 days;
+            if (durationDays < 90) return 3 days;
+            if (durationDays < 180) return 1 weeks;
+            if (durationDays < 365) return 2 weeks;
+            return 30 days;
+        }
+        // Storage-driven path. Last entry's maxDurationDays == 0 marks
+        // the catch-all; any bucket whose threshold strictly exceeds
+        // durationDays wins, walked in array order.
+        for (uint256 i = 0; i < len; i++) {
+            uint256 maxD = buckets[i].maxDurationDays;
+            if (maxD == 0) return buckets[i].graceSeconds;
+            if (durationDays < maxD) return buckets[i].graceSeconds;
+        }
+        // Defensive fallback — setter validation prevents reaching here
+        // (every valid array ends in a maxDurationDays == 0 catch-all),
+        // but if storage is somehow malformed return the last entry's
+        // grace rather than reverting.
+        return buckets[len - 1].graceSeconds;
+    }
+
+    /// @notice External view exposing the current grace-bucket schedule.
+    ///         Returns an empty array when storage is unconfigured (the
+    ///         compile-time defaults in `gracePeriod()` are in force).
+    /// @dev Read by the admin console's GraceBucketsCard via
+    ///      ConfigFacet.getGraceBuckets — kept here as a library helper
+    ///      so callers don't have to know storage layout.
+    function getGraceBucketsConfigured()
+        internal
+        view
+        returns (GraceBucket[] memory)
+    {
+        return storageSlot().graceBuckets;
+    }
+
+    /// @notice Per-slot policy bounds for the fixed 6-slot grace schedule
+    ///         (T-044). Returns the inclusive bounds the setter validates
+    ///         each slot against; the admin console reads the same view
+    ///         to render per-row min/max hints.
+    ///
+    ///         Slot semantics:
+    ///         | Slot | Default tier | maxDays bounds | grace bounds |
+    ///         |------|--------------|----------------|--------------|
+    ///         | 0    | < 7 days     | [1, 14]        | [1h,  5d]    |
+    ///         | 1    | < 30 days    | [7, 60]        | [1h, 15d]    |
+    ///         | 2    | < 90 days    | [30, 180]      | [1d, 30d]    |
+    ///         | 3    | < 180 days   | [90, 270]      | [3d, 45d]    |
+    ///         | 4    | < 365 days   | [180, 540]     | [7d, 60d]    |
+    ///         | 5    | catch-all    | (must == 0)    | [14d, 90d]   |
+    ///
+    /// @param slot 0-indexed slot id (must be < GRACE_BUCKETS_FIXED_COUNT).
+    /// @return minDays Lower bound on `maxDurationDays` for this slot.
+    ///         For slot 5 (catch-all) returns 0 to indicate the only
+    ///         legal value is 0.
+    /// @return maxDays Upper bound on `maxDurationDays`. For slot 5
+    ///         returns 0 to enforce the catch-all marker.
+    /// @return minGrace Lower bound on `graceSeconds` for this slot.
+    /// @return maxGrace Upper bound on `graceSeconds` for this slot.
+    function graceSlotBounds(
+        uint256 slot
+    )
+        internal
+        pure
+        returns (
+            uint256 minDays,
+            uint256 maxDays,
+            uint256 minGrace,
+            uint256 maxGrace
+        )
+    {
+        if (slot == 0) return (1, 14, 1 hours, 5 days);
+        if (slot == 1) return (7, 60, 1 hours, 15 days);
+        if (slot == 2) return (30, 180, 1 days, 30 days);
+        if (slot == 3) return (90, 270, 3 days, 45 days);
+        if (slot == 4) return (180, 540, 7 days, 60 days);
+        if (slot == 5) return (0, 0, 14 days, 90 days);
+        revert("graceSlotBounds: slot out of range");
     }
 
     /// @dev Late fee schedule: 1% on the first day past due, +0.5% each

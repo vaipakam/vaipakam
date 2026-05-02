@@ -58,6 +58,15 @@ contract ConfigFacet is DiamondAccessControl {
     event RangeRateEnabledSet(bool enabled);
     event PartialFillEnabledSet(bool enabled);
 
+    // ── T-044 — admin-configurable loan-default grace schedule ──────────
+    event GraceBucketsUpdated(uint256 bucketCount);
+
+    /// @notice Reverts when {setGraceBuckets} is called with an invalid
+    ///         shape (empty / over-cap / non-monotonic / missing
+    ///         catch-all marker / out-of-range values).
+    /// @param reason Human-readable hint about which validation failed.
+    error GraceBucketsInvalid(string reason);
+
     // Upper bounds (sanity caps). Deliberately loose — production values
     // will sit far below these, but admin has headroom for emergency knobs.
     //
@@ -754,5 +763,186 @@ contract ConfigFacet is DiamondAccessControl {
             LibVaipakam.VPFI_INTERACTION_POOL_CAP,
             LibVaipakam.MAX_INTERACTION_CLAIM_DAYS
         );
+    }
+
+    /**
+     * @notice Replace the duration-tiered grace-period schedule used by
+     *         DefaultedFacet / RepayFacet / RiskFacet. T-044 — fixed
+     *         6-slot positional table. Caller MUST supply exactly
+     *         `GRACE_BUCKETS_FIXED_COUNT` entries; each slot's values
+     *         must lie inside the per-slot bounds returned by
+     *         `LibVaipakam.graceSlotBounds(slot)`.
+     * @dev ADMIN_ROLE-only. Validation surface:
+     *      - `buckets.length == GRACE_BUCKETS_FIXED_COUNT` (no add /
+     *        remove rows; admin can only edit values inside fixed slots).
+     *      - For each slot 0..4 (non-catch-all):
+     *          - `maxDurationDays` ∈ slot's `[minDays, maxDays]` window.
+     *          - Strictly ascending vs. previous slot's `maxDurationDays`.
+     *      - For slot 5 (catch-all): `maxDurationDays == 0` enforced.
+     *      - For every slot: `graceSeconds` ∈ slot's `[minGrace, maxGrace]`
+     *        window AND inside the global `[GRACE_SECONDS_MIN,
+     *        GRACE_SECONDS_MAX]` floor / ceiling (defense in depth).
+     *      Per-slot bounds defend against a compromised admin pushing
+     *      a single slot to either extreme — same policy as
+     *      setStakingApr, setSecondaryOracleMaxStaleness, etc. (T-033).
+     * @param buckets New schedule. Order matters; rejected if invalid.
+     */
+    function setGraceBuckets(
+        LibVaipakam.GraceBucket[] calldata buckets
+    ) external onlyRole(LibAccessControl.ADMIN_ROLE) {
+        uint256 n = buckets.length;
+        if (n != LibVaipakam.GRACE_BUCKETS_FIXED_COUNT) {
+            revert GraceBucketsInvalid("wrong-count");
+        }
+        // Per-slot positional validation. Each slot has its own
+        // [minDays, maxDays] for the threshold AND its own
+        // [minGrace, maxGrace] for the grace period. The bounds come
+        // from the policy table in LibVaipakam.graceSlotBounds.
+        uint256 prevDays = 0;
+        for (uint256 i = 0; i < n; i++) {
+            (
+                uint256 minDays,
+                uint256 maxDays,
+                uint256 minGrace,
+                uint256 maxGrace
+            ) = LibVaipakam.graceSlotBounds(i);
+            uint256 d = buckets[i].maxDurationDays;
+            uint256 g = buckets[i].graceSeconds;
+
+            // Slot 5 — catch-all. Enforce `maxDurationDays == 0`. Any
+            // non-zero would push it into the lookup-by-duration path
+            // below, breaking the "covers any loan length" semantic.
+            // graceSlotBounds returns (0, 0, ...) for slot 5 so the
+            // generic check below would also reject it, but the
+            // dedicated message here surfaces the cause clearly.
+            if (i == LibVaipakam.GRACE_BUCKETS_FIXED_COUNT - 1) {
+                if (d != 0) revert GraceBucketsInvalid("catchall-not-zero");
+            } else {
+                // Non-catch-all slots: validate the day threshold.
+                if (d < minDays || d > maxDays) {
+                    revert IVaipakamErrors.ParameterOutOfRange(
+                        "graceBucketMaxDurationDays",
+                        d,
+                        minDays,
+                        maxDays
+                    );
+                }
+                if (d <= prevDays) {
+                    revert GraceBucketsInvalid("not-monotonic");
+                }
+                prevDays = d;
+            }
+            // Grace bound — both layers (per-slot + global) must hold.
+            if (g < minGrace || g > maxGrace) {
+                revert IVaipakamErrors.ParameterOutOfRange(
+                    "graceBucketSeconds",
+                    g,
+                    minGrace,
+                    maxGrace
+                );
+            }
+            if (
+                g < LibVaipakam.GRACE_SECONDS_MIN ||
+                g > LibVaipakam.GRACE_SECONDS_MAX
+            ) {
+                revert IVaipakamErrors.ParameterOutOfRange(
+                    "graceSecondsGlobalBound",
+                    g,
+                    LibVaipakam.GRACE_SECONDS_MIN,
+                    LibVaipakam.GRACE_SECONDS_MAX
+                );
+            }
+        }
+        // Atomic replace. Solidity-0.8 storage-array writes from
+        // calldata-iter pop+push are the safe primitive.
+        LibVaipakam.GraceBucket[] storage dst = LibVaipakam
+            .storageSlot()
+            .graceBuckets;
+        while (dst.length > 0) dst.pop();
+        for (uint256 i = 0; i < n; i++) {
+            dst.push(buckets[i]);
+        }
+        emit GraceBucketsUpdated(n);
+    }
+
+    /**
+     * @notice Drop the configured schedule, reverting to the compile-
+     *         time defaults baked into `LibVaipakam.gracePeriod()`.
+     * @dev ADMIN_ROLE-only. Useful as an emergency rollback if a bad
+     *      schedule was pushed by mistake — the defaults are always
+     *      safe and well-tested.
+     */
+    function clearGraceBuckets() external onlyRole(LibAccessControl.ADMIN_ROLE) {
+        LibVaipakam.GraceBucket[] storage dst = LibVaipakam
+            .storageSlot()
+            .graceBuckets;
+        while (dst.length > 0) dst.pop();
+        emit GraceBucketsUpdated(0);
+    }
+
+    /**
+     * @notice Read the current grace-bucket schedule.
+     * @return buckets The configured array. Empty when the protocol is
+     *         using the compile-time defaults — caller can detect this
+     *         via `buckets.length == 0`.
+     */
+    function getGraceBuckets()
+        external
+        view
+        returns (LibVaipakam.GraceBucket[] memory buckets)
+    {
+        return LibVaipakam.getGraceBucketsConfigured();
+    }
+
+    /**
+     * @notice Convenience view exposing the current effective grace
+     *         period for a given duration. Reads through the same
+     *         path DefaultedFacet uses, so the admin console can
+     *         display "what would happen for a 90-day loan" without
+     *         re-implementing the lookup logic.
+     * @param durationDays Loan duration in days.
+     * @return graceSeconds Effective grace, in seconds.
+     */
+    function getEffectiveGraceSeconds(
+        uint256 durationDays
+    ) external view returns (uint256 graceSeconds) {
+        return LibVaipakam.gracePeriod(durationDays);
+    }
+
+    /**
+     * @notice Per-slot policy bounds the admin console renders next to
+     *         each editable row. Mirrors the table in
+     *         {LibVaipakam.graceSlotBounds}. Returned in slot order
+     *         (0..GRACE_BUCKETS_FIXED_COUNT-1). For the catch-all slot
+     *         (last index), `minDays[i] == maxDays[i] == 0` (the only
+     *         legal value is 0).
+     * @return minDays  Per-slot lower bound on `maxDurationDays`.
+     * @return maxDays  Per-slot upper bound on `maxDurationDays`.
+     * @return minGrace Per-slot lower bound on `graceSeconds`.
+     * @return maxGrace Per-slot upper bound on `graceSeconds`.
+     */
+    function getGraceSlotBounds()
+        external
+        pure
+        returns (
+            uint256[] memory minDays,
+            uint256[] memory maxDays,
+            uint256[] memory minGrace,
+            uint256[] memory maxGrace
+        )
+    {
+        uint256 n = LibVaipakam.GRACE_BUCKETS_FIXED_COUNT;
+        minDays = new uint256[](n);
+        maxDays = new uint256[](n);
+        minGrace = new uint256[](n);
+        maxGrace = new uint256[](n);
+        for (uint256 i = 0; i < n; i++) {
+            (
+                minDays[i],
+                maxDays[i],
+                minGrace[i],
+                maxGrace[i]
+            ) = LibVaipakam.graceSlotBounds(i);
+        }
     }
 }

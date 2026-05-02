@@ -587,7 +587,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](22);
+        selectors = new bytes4[](27);
         selectors[0] = ConfigFacet.setFeesConfig.selector;
         selectors[1] = ConfigFacet.setLiquidationConfig.selector;
         selectors[2] = ConfigFacet.setRiskConfig.selector;
@@ -615,6 +615,12 @@ contract HelperTest {
         selectors[19] = ConfigFacet.setNotificationFeeUsd.selector;
         selectors[20] = ConfigFacet.setNotificationFeeUsdOracle.selector;
         selectors[21] = ConfigFacet.getNotificationFeeConfig.selector;
+        // T-044 — admin-configurable loan-default grace schedule.
+        selectors[22] = ConfigFacet.setGraceBuckets.selector;
+        selectors[23] = ConfigFacet.clearGraceBuckets.selector;
+        selectors[24] = ConfigFacet.getGraceBuckets.selector;
+        selectors[25] = ConfigFacet.getEffectiveGraceSeconds.selector;
+        selectors[26] = ConfigFacet.getGraceSlotBounds.selector;
         return selectors;
     }
 

@@ -42,6 +42,7 @@ import { useReadChain } from '../contracts/useDiamond';
 import { useAdminKnobValues } from '../hooks/useAdminKnobValues';
 import { useTimelockPendingChanges } from '../hooks/useTimelockPendingChanges';
 import { KnobCard } from '../components/admin/KnobCard';
+import { GraceBucketsCard } from '../components/admin/GraceBucketsCard';
 import { AdminThemeToggle } from '../components/admin/AdminThemeToggle';
 import '../components/admin/admin-theme.css';
 
@@ -202,6 +203,21 @@ export default function AdminDashboard() {
                     pending={pendingChanges.byKnob[knob.id]}
                   />
                 ))}
+                {/* T-044 — array-shaped knob (loan-default grace
+                    schedule) lives at the bottom of the Risk
+                    section. Rendered as a bespoke card because the
+                    fixed 6-slot table doesn't fit the scalar KnobMeta
+                    shape every other knob shares. */}
+                {cat === 'risk' && (
+                  <div style={{ gridColumn: '1 / -1' }}>
+                    <GraceBucketsCard
+                      docsBase={docsPath}
+                      canPropose={isAdminWallet}
+                      diamondAddress={readChain.diamondAddress ?? undefined}
+                      chainId={readChain.chainId}
+                    />
+                  </div>
+                )}
               </div>
             </section>
           );
