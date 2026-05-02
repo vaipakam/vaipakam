@@ -21,22 +21,32 @@
  */
 
 import { useTranslation } from 'react-i18next';
-import { Link } from 'react-router-dom';
-import { Info } from 'lucide-react';
+import { Link, Navigate } from 'react-router-dom';
 import Navbar from '../components/Navbar';
 import Footer from '../components/Footer';
 import {
   KNOB_CATEGORY_LABELS,
   KNOB_CATEGORY_ORDER,
   knobsByCategory,
-  type KnobMeta,
 } from '../lib/adminKnobsZones';
+import { isAdminDashboardPublic } from '../lib/adminVisibility';
+import { useAdminKnobValues } from '../hooks/useAdminKnobValues';
+import { KnobCard } from '../components/admin/KnobCard';
 
 export default function AdminDashboard() {
   const { t, i18n } = useTranslation();
+  // T-042 Phase 1d — public-visibility gate. Phase 1 hard-redirects
+  // when the env flag is off (no wallet-aware admin detection yet).
+  // Phase 4 will refine this to "redirect unless admin wallet
+  // connected" so signers can still reach the cockpit when the
+  // public surface is hidden.
+  if (!isAdminDashboardPublic()) {
+    return <Navigate to="/" replace />;
+  }
   const grouped = knobsByCategory();
   const lang = i18n.resolvedLanguage ?? 'en';
   const docsPath = lang === 'en' ? '/admin/docs' : `/${lang}/admin/docs`;
+  const values = useAdminKnobValues();
 
   return (
     <div className="public-page">
@@ -76,7 +86,17 @@ export default function AdminDashboard() {
                 }}
               >
                 {knobs.map((knob) => (
-                  <KnobCardStub key={knob.id} knob={knob} docsBase={docsPath} />
+                  <KnobCard
+                    key={knob.id}
+                    knob={knob}
+                    read={
+                      values[knob.id] ?? {
+                        value: null,
+                        loading: true,
+                      }
+                    }
+                    docsBase={docsPath}
+                  />
                 ))}
               </div>
             </section>
@@ -88,45 +108,3 @@ export default function AdminDashboard() {
   );
 }
 
-/**
- * Placeholder knob card. Phase 2 replaces this with the live-data
- * variant + the segmented colored bar showing safe / mid / caution
- * zones. The Phase 1 stub renders the static metadata so the
- * dashboard route is testable and the per-category layout is real.
- */
-function KnobCardStub({ knob, docsBase }: { knob: KnobMeta; docsBase: string }) {
-  const infoHref = `${docsBase}#${knob.infoAnchor}`;
-  return (
-    <div
-      className="card"
-      style={{
-        padding: 16,
-        display: 'flex',
-        flexDirection: 'column',
-        gap: 8,
-        minHeight: 140,
-      }}
-    >
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8 }}>
-        <h3 style={{ fontSize: '1rem', margin: 0 }}>{knob.label}</h3>
-        <a
-          href={infoHref}
-          target="_blank"
-          rel="noopener noreferrer"
-          aria-label={`More info about ${knob.label}`}
-          style={{ color: 'var(--brand)', flexShrink: 0 }}
-        >
-          <Info size={16} />
-        </a>
-      </div>
-      <p style={{ margin: 0, fontSize: '0.85rem', opacity: 0.85 }}>{knob.short}</p>
-      <p style={{ margin: 0, fontSize: '0.78rem', opacity: 0.6 }}>
-        Hard range: {knob.hardMin} – {knob.hardMax} ({knob.unit}) ·{' '}
-        Safe zone: {knob.safeMin} – {knob.safeMax}
-      </p>
-      <p style={{ margin: 0, fontSize: '0.75rem', opacity: 0.5 }}>
-        {knob.setter.facet}.{knob.setter.fn}
-      </p>
-    </div>
-  );
-}
