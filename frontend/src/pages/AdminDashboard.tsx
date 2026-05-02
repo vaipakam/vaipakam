@@ -99,7 +99,12 @@ export default function AdminDashboard() {
       <main
         className="admin-dashboard-wrap"
         data-admin-theme={themeMode}
-        style={{ maxWidth: 1200, margin: '0 auto', padding: '24px 16px' }}
+        // 104px top padding clears the public site's `position: fixed`
+        // `.navbar` (matches the offset used by other public pages —
+        // LegalPage / PublicDashboard / etc.). Without it the dashboard
+        // header — including the theme-toggle pill — sits hidden under
+        // the navbar.
+        style={{ maxWidth: 1200, margin: '0 auto', padding: '104px 16px 24px' }}
       >
         <header
           style={{
