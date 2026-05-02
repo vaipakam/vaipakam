@@ -49,7 +49,8 @@
     "documentation": "Documentación",
     "smartContracts": "Contratos inteligentes",
     "discord": "Discord",
-    "disclaimer": "Vaipakam es un protocolo descentralizado y sin custodia. No se requiere KYC. Los usuarios son responsables de su propio cumplimiento normativo."
+    "disclaimer": "Vaipakam es un protocolo descentralizado y sin custodia. No se requiere KYC. Los usuarios son responsables de su propio cumplimiento normativo.",
+    "protocolParameters": "Parámetros del Protocolo"
   },
   "languagePicker": {
     "ariaLabel": "Idioma de la interfaz"
@@ -96,7 +97,9 @@
     "allowances": "Aprobaciones",
     "dataRights": "Derechos sobre datos",
     "keepers": "Keepers",
-    "backToHome": "Volver al inicio"
+    "backToHome": "Volver al inicio",
+    "governanceGroupLabel": "Gobernanza",
+    "governanceConsole": "Consola de Gobernanza"
   },
   "dataRights": {
     "title": "Tus derechos sobre datos (GDPR / UK GDPR / CCPA)",
@@ -1126,7 +1129,8 @@
     "overview": "Visión general",
     "userGuide": "Guía de usuario",
     "technical": "Técnico",
-    "searchPlaceholder": "Buscar documentos"
+    "searchPlaceholder": "Buscar documentos",
+    "parameters": "Parámetros"
   },
   "pageNotice": {
     "englishOnlyTitle": "Disponible solo en inglés",

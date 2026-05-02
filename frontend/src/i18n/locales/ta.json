@@ -49,7 +49,8 @@
     "documentation": "ஆவணங்கள்",
     "smartContracts": "ஸ்மார்ட் ஒப்பந்தங்கள்",
     "discord": "Discord",
-    "disclaimer": "Vaipakam ஒரு பரவலாக்கப்பட்ட, non-custodial புரோட்டோகால். KYC தேவையில்லை. தங்களுக்குப் பொருந்தும் சட்ட/ஒழுங்குமுறை இணக்கத்திற்கு பயனர்களே பொறுப்பு."
+    "disclaimer": "Vaipakam ஒரு பரவலாக்கப்பட்ட, non-custodial புரோட்டோகால். KYC தேவையில்லை. தங்களுக்குப் பொருந்தும் சட்ட/ஒழுங்குமுறை இணக்கத்திற்கு பயனர்களே பொறுப்பு.",
+    "protocolParameters": "நெறிமுறை அளவுருக்கள்"
   },
   "languagePicker": {
     "ariaLabel": "காட்சி மொழி"
@@ -96,7 +97,9 @@
     "allowances": "அனுமதிகள்",
     "dataRights": "தரவு உரிமைகள்",
     "keepers": "கீப்பர்கள்",
-    "backToHome": "முகப்புக்குத் திரும்பு"
+    "backToHome": "முகப்புக்குத் திரும்பு",
+    "governanceGroupLabel": "நிர்வாகம்",
+    "governanceConsole": "நிர்வாக கன்சோல்"
   },
   "dataRights": {
     "title": "உங்கள் தரவு உரிமைகள் (GDPR / UK GDPR / CCPA)",
@@ -1126,7 +1129,8 @@
     "overview": "கண்ணோட்டம்",
     "userGuide": "பயனர் வழிகாட்டி",
     "technical": "தொழில்நுட்பம்",
-    "searchPlaceholder": "ஆவணம் தேடு"
+    "searchPlaceholder": "ஆவணம் தேடு",
+    "parameters": "அளவுருக்கள்"
   },
   "pageNotice": {
     "englishOnlyTitle": "ஆங்கிலத்தில் மட்டுமே கிடைக்கிறது",

@@ -91,6 +91,13 @@ export interface Deployment {
   lzEndpoint?: HexAddress;
   lzEid?: number;
 
+  /** OpenZeppelin TimelockController address. Sits between the
+   *  governance multisig and the Diamond on every mainnet deploy.
+   *  Optional because pre-handover deploys don't have one — when
+   *  unset, the admin dashboard's pending-change indicator soft-
+   *  skips. Written by `DeployTimelock.s.sol`. */
+  timelock?: HexAddress;
+
   // ── Discriminators ──────────────────────────────────────────────
   /** True on the chain that hosts the canonical VPFIToken + OFT Adapter
    *  (lock/release). Mirror chains burn/mint via `vpfiMirror`. */

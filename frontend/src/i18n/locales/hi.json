@@ -49,7 +49,8 @@
     "documentation": "दस्तावेज़",
     "smartContracts": "स्मार्ट कॉन्ट्रैक्ट",
     "discord": "Discord",
-    "disclaimer": "Vaipakam एक विकेन्द्रीकृत, non-custodial प्रोटोकॉल है। KYC आवश्यक नहीं है। अपने ऊपर लागू नियामकीय अनुपालन की जिम्मेदारी हर उपयोगकर्ता की अपनी है।"
+    "disclaimer": "Vaipakam एक विकेन्द्रीकृत, non-custodial प्रोटोकॉल है। KYC आवश्यक नहीं है। अपने ऊपर लागू नियामकीय अनुपालन की जिम्मेदारी हर उपयोगकर्ता की अपनी है।",
+    "protocolParameters": "प्रोटोकॉल पैरामीटर"
   },
   "languagePicker": {
     "ariaLabel": "प्रदर्शन भाषा"
@@ -96,7 +97,9 @@
     "allowances": "अनुमतियां",
     "dataRights": "डेटा अधिकार",
     "keepers": "कीपर्स",
-    "backToHome": "होम पर वापस जाएं"
+    "backToHome": "होम पर वापस जाएं",
+    "governanceGroupLabel": "प्रशासन",
+    "governanceConsole": "प्रशासन कंसोल"
   },
   "dataRights": {
     "title": "आपके डेटा अधिकार (GDPR / UK GDPR / CCPA)",
@@ -1126,7 +1129,8 @@
     "overview": "अवलोकन",
     "userGuide": "उपयोगकर्ता मार्गदर्शिका",
     "technical": "तकनीकी",
-    "searchPlaceholder": "दस्तावेज़ खोजें"
+    "searchPlaceholder": "दस्तावेज़ खोजें",
+    "parameters": "पैरामीटर"
   },
   "pageNotice": {
     "englishOnlyTitle": "केवल अंग्रेज़ी में उपलब्ध",

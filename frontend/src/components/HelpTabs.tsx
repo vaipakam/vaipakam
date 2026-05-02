@@ -57,6 +57,8 @@ export function HelpTabs() {
     locale,
   );
   const technicalHref = withLocalePrefix('/help/technical', locale);
+  const parametersHref = withLocalePrefix('/admin/docs', locale);
+  const isParameters = stripped.startsWith('/admin');
   const searchHref = withLocalePrefix('/help/search', locale);
   const isSearch = stripped.startsWith('/help/search');
 
@@ -97,6 +99,14 @@ export function HelpTabs() {
         className={`help-tab ${isTechnical ? 'is-active' : ''}`}
       >
         {t('helpTabs.technical')}
+      </Link>
+      <Link
+        to={parametersHref}
+        role="tab"
+        aria-selected={isParameters}
+        className={`help-tab ${isParameters ? 'is-active' : ''}`}
+      >
+        {t('helpTabs.parameters', 'Parameters')}
       </Link>
       <form
         onSubmit={onSearchSubmit}

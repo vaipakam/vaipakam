@@ -49,7 +49,8 @@
     "documentation": "문서",
     "smartContracts": "스마트 컨트랙트",
     "discord": "Discord",
-    "disclaimer": "Vaipakam은 탈중앙화 비수탁 프로토콜입니다. KYC는 필요하지 않습니다. 적용되는 규제 준수 책임은 사용자 본인에게 있습니다."
+    "disclaimer": "Vaipakam은 탈중앙화 비수탁 프로토콜입니다. KYC는 필요하지 않습니다. 적용되는 규제 준수 책임은 사용자 본인에게 있습니다.",
+    "protocolParameters": "프로토콜 매개변수"
   },
   "languagePicker": {
     "ariaLabel": "표시 언어"
@@ -96,7 +97,9 @@
     "allowances": "승인",
     "dataRights": "데이터 권리",
     "keepers": "키퍼",
-    "backToHome": "홈으로 돌아가기"
+    "backToHome": "홈으로 돌아가기",
+    "governanceGroupLabel": "거버넌스",
+    "governanceConsole": "거버넌스 콘솔"
   },
   "dataRights": {
     "title": "데이터 권리 (GDPR / UK GDPR / CCPA)",
@@ -1126,7 +1129,8 @@
     "overview": "개요",
     "userGuide": "사용 가이드",
     "technical": "기술",
-    "searchPlaceholder": "문서 검색"
+    "searchPlaceholder": "문서 검색",
+    "parameters": "매개변수"
   },
   "pageNotice": {
     "englishOnlyTitle": "영어로만 제공",

@@ -49,7 +49,8 @@
     "documentation": "التوثيق",
     "smartContracts": "العقود الذكية",
     "discord": "Discord",
-    "disclaimer": "Vaipakam بروتوكول لامركزي وغير حافظ. لا يلزم KYC. المستخدمون مسؤولون عن امتثالهم التنظيمي."
+    "disclaimer": "Vaipakam بروتوكول لامركزي وغير حافظ. لا يلزم KYC. المستخدمون مسؤولون عن امتثالهم التنظيمي.",
+    "protocolParameters": "معايير البروتوكول"
   },
   "languagePicker": {
     "ariaLabel": "لغة العرض"
@@ -96,7 +97,9 @@
     "allowances": "الأذونات",
     "dataRights": "حقوق البيانات",
     "keepers": "Keepers",
-    "backToHome": "العودة إلى الصفحة الرئيسية"
+    "backToHome": "العودة إلى الصفحة الرئيسية",
+    "governanceGroupLabel": "الحوكمة",
+    "governanceConsole": "وحدة تحكم الحوكمة"
   },
   "dataRights": {
     "title": "حقوق بياناتك (GDPR / UK GDPR / CCPA)",
@@ -1126,7 +1129,8 @@
     "overview": "نظرة عامة",
     "userGuide": "دليل المستخدم",
     "technical": "تقني",
-    "searchPlaceholder": "بحث في المستندات"
+    "searchPlaceholder": "بحث في المستندات",
+    "parameters": "المعايير"
   },
   "pageNotice": {
     "englishOnlyTitle": "متاح بالإنجليزية فقط",

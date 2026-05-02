@@ -49,7 +49,8 @@
     "documentation": "文档",
     "smartContracts": "智能合约",
     "discord": "Discord",
-    "disclaimer": "Vaipakam 是去中心化、非托管协议。无需 KYC。用户需自行负责适用的监管合规。"
+    "disclaimer": "Vaipakam 是去中心化、非托管协议。无需 KYC。用户需自行负责适用的监管合规。",
+    "protocolParameters": "协议参数"
   },
   "languagePicker": {
     "ariaLabel": "显示语言"
@@ -96,7 +97,9 @@
     "allowances": "授权",
     "dataRights": "数据权利",
     "keepers": "Keeper",
-    "backToHome": "返回首页"
+    "backToHome": "返回首页",
+    "governanceGroupLabel": "治理",
+    "governanceConsole": "治理控制台"
   },
   "dataRights": {
     "title": "您的数据权利 (GDPR / UK GDPR / CCPA)",
@@ -1126,7 +1129,8 @@
     "overview": "概览",
     "userGuide": "用户指南",
     "technical": "技术",
-    "searchPlaceholder": "搜索文档"
+    "searchPlaceholder": "搜索文档",
+    "parameters": "参数"
   },
   "pageNotice": {
     "englishOnlyTitle": "仅提供英文版",

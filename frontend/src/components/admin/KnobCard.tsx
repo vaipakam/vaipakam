@@ -23,7 +23,7 @@
  */
 
 import { useState } from 'react';
-import { Info, Settings2 } from 'lucide-react';
+import { Clock, Info, Settings2 } from 'lucide-react';
 import {
   classifyValue,
   type KnobMeta,
@@ -34,6 +34,7 @@ import {
   type RawValue,
 } from '../../lib/adminKnobFormat';
 import type { KnobReadResult } from '../../hooks/useAdminKnobValues';
+import type { PendingChange } from '../../hooks/useTimelockPendingChanges';
 import { KnobZoneBar } from './KnobZoneBar';
 import { ProposeChangeModal } from './ProposeChangeModal';
 
@@ -49,9 +50,11 @@ interface Props {
    *  modal can encode the calldata and build the Safe deep-link. */
   diamondAddress?: string;
   chainId?: number;
+  /** Pending governance changes targeting this knob (Phase 4b). */
+  pending?: PendingChange[];
 }
 
-export function KnobCard({ knob, read, docsBase, canPropose, diamondAddress, chainId }: Props) {
+export function KnobCard({ knob, read, docsBase, canPropose, diamondAddress, chainId, pending }: Props) {
   const infoHref = `${docsBase}#${knob.infoAnchor}`;
   const valueText = read.loading ? '…' : formatKnobValue(read.value, knob);
   const [proposeOpen, setProposeOpen] = useState(false);
@@ -115,6 +118,10 @@ export function KnobCard({ knob, read, docsBase, canPropose, diamondAddress, cha
       </div>
 
       {knob.hasNumericRange && <KnobZoneBar knob={knob} value={read.value} />}
+
+      {pending && pending.length > 0 && (
+        <PendingChangeBanner pending={pending} />
+      )}
 
       {read.error && (
         <p style={{ margin: 0, fontSize: '0.72rem', opacity: 0.55, color: 'var(--knob-zone-caution, #ef4444)' }}>
@@ -224,3 +231,60 @@ function StatusPill({ status }: { status: Status }) {
 // Keep `KnobZone` re-export-friendly for any caller that wants it
 // alongside the card.
 export type { KnobZone };
+
+/**
+ * Inline badge surfacing a queued timelock proposal targeting this
+ * knob. Renders amber when the proposal is still in the delay
+ * window ("executes in 47h"); green when the delay has elapsed and
+ * the proposal is ready to execute ("ready to execute").
+ *
+ * When multiple proposals queue against the same knob, shows the
+ * count with the soonest-executing window. Operators can drill in
+ * via the underlying timelock contract's events explorer for full
+ * detail.
+ */
+function PendingChangeBanner({ pending }: { pending: PendingChange[] }) {
+  // Pick the soonest-executing pending change to drive the time
+  // hint. Already-ready proposals sort first.
+  const sorted = [...pending].sort((a, b) => {
+    if (a.ready !== b.ready) return a.ready ? -1 : 1;
+    return a.executesAt - b.executesAt;
+  });
+  const lead = sorted[0];
+  const count = pending.length;
+  const ready = lead.ready;
+  const now = Math.floor(Date.now() / 1000);
+  const seconds = Math.max(0, lead.executesAt - now);
+  const timeText = ready
+    ? 'ready to execute'
+    : `executes in ${formatDelay(seconds)}`;
+  const color = ready ? 'var(--knob-zone-safe, #10b981)' : 'var(--knob-zone-mid, #f59e0b)';
+  return (
+    <div
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: 6,
+        fontSize: '0.72rem',
+        color,
+        border: `1px solid ${color}`,
+        background: 'rgba(245,158,11,0.06)',
+        padding: '4px 8px',
+        borderRadius: 4,
+        letterSpacing: '0.04em',
+      }}
+    >
+      <Clock size={11} aria-hidden="true" />
+      <span>
+        <strong>{count} PENDING</strong> · {lead.functionName} · {timeText}
+      </span>
+    </div>
+  );
+}
+
+function formatDelay(seconds: number): string {
+  if (seconds < 60) return `${seconds}s`;
+  if (seconds < 3600) return `${Math.floor(seconds / 60)}m`;
+  if (seconds < 86400) return `${Math.floor(seconds / 3600)}h`;
+  return `${Math.floor(seconds / 86400)}d`;
+}

@@ -24,6 +24,7 @@ import Navbar from '../components/Navbar';
 import Footer from '../components/Footer';
 import { EnglishOnlyNotice } from '../components/app/EnglishOnlyNotice';
 import { HelpToc } from '../components/HelpToc';
+import { HelpTabs } from '../components/HelpTabs';
 import { extractMarkdownToc, headingComponents } from '../lib/markdownToc';
 import './UserGuide.css';
 
@@ -77,6 +78,7 @@ export default function AdminKnobsDocs() {
           </aside>
 
           <article className="user-guide-content">
+            <HelpTabs />
             {isNonEnglish && <EnglishOnlyNotice variant="legal" />}
             <ReactMarkdown
               remarkPlugins={[remarkGfm]}

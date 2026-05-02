@@ -30,7 +30,9 @@ import {
   Settings,
   ExternalLink,
   Lock,
+  Sliders,
 } from "lucide-react";
+import { useIsAdminWallet } from "../lib/useIsAdminWallet";
 import { useEffect, useRef, useState } from "react";
 
 const SIDEBAR_COLLAPSED_KEY = "vaipakam:sidebar-collapsed";
@@ -139,6 +141,13 @@ export default function AppLayout() {
   const { mode, setMode } = useMode();
   const { address, isCorrectChain, switchToDefaultChain, error, warning } =
     useWallet();
+  // T-042 — when the connected wallet holds ADMIN_ROLE on the
+  // diamond, surface a "Governance Console" entry near the bottom
+  // of the sidebar. Auth-by-on-chain-role rather than mode-gated:
+  // a signer doing on-call work shouldn't have to flip Advanced
+  // mode to find the cockpit, and a power-user without role
+  // shouldn't see the link at all.
+  const isAdminWallet = useIsAdminWallet();
   const navigate = useNavigate();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] =
@@ -326,6 +335,24 @@ export default function AppLayout() {
                   <span>{t(item.labelKey)}</span>
                 </NavLink>
               ))}
+            </>
+          )}
+
+          {isAdminWallet && (
+            <>
+              <div className="sidebar-group-label">
+                {t("appNav.governanceGroupLabel", "Governance")}
+              </div>
+              <NavLink
+                to={withLocalePrefix("/admin", activeLocale)}
+                className={({ isActive }) =>
+                  `sidebar-link sidebar-link-nested ${isActive ? "active" : ""}`
+                }
+                onClick={() => setSidebarOpen(false)}
+              >
+                <Sliders size={20} />
+                <span>{t("appNav.governanceConsole", "Governance Console")}</span>
+              </NavLink>
             </>
           )}
         </nav>

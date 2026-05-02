@@ -49,7 +49,8 @@
     "documentation": "Dokumentation",
     "smartContracts": "Smart Contracts",
     "discord": "Discord",
-    "disclaimer": "Vaipakam ist ein dezentrales, nicht-verwahrendes Protokoll. KYC ist nicht erforderlich. Benutzer sind selbst für die Einhaltung gesetzlicher Vorschriften verantwortlich."
+    "disclaimer": "Vaipakam ist ein dezentrales, nicht-verwahrendes Protokoll. KYC ist nicht erforderlich. Benutzer sind selbst für die Einhaltung gesetzlicher Vorschriften verantwortlich.",
+    "protocolParameters": "Protokoll-Parameter"
   },
   "languagePicker": {
     "ariaLabel": "Anzeigesprache"
@@ -96,7 +97,9 @@
     "allowances": "Genehmigungen",
     "dataRights": "Datenrechte",
     "keepers": "Keeper",
-    "backToHome": "Zurück zur Startseite"
+    "backToHome": "Zurück zur Startseite",
+    "governanceGroupLabel": "Governance",
+    "governanceConsole": "Governance-Konsole"
   },
   "dataRights": {
     "title": "Ihre Datenrechte (GDPR / UK GDPR / CCPA)",
@@ -1126,7 +1129,8 @@
     "overview": "Übersicht",
     "userGuide": "Benutzerhandbuch",
     "technical": "Technisch",
-    "searchPlaceholder": "Dokumente suchen"
+    "searchPlaceholder": "Dokumente suchen",
+    "parameters": "Parameter"
   },
   "pageNotice": {
     "englishOnlyTitle": "Nur auf Englisch verfügbar",

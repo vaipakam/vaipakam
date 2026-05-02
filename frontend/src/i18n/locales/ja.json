@@ -49,7 +49,8 @@
     "documentation": "ドキュメント",
     "smartContracts": "スマートコントラクト",
     "discord": "Discord",
-    "disclaimer": "Vaipakam は分散型・ノンカストディアル型プロトコルです。KYC は不要です。適用される規制への対応は利用者自身の責任です。"
+    "disclaimer": "Vaipakam は分散型・ノンカストディアル型プロトコルです。KYC は不要です。適用される規制への対応は利用者自身の責任です。",
+    "protocolParameters": "プロトコル・パラメータ"
   },
   "languagePicker": {
     "ariaLabel": "表示言語"
@@ -96,7 +97,9 @@
     "allowances": "許可額",
     "dataRights": "データ権利",
     "keepers": "キーパー",
-    "backToHome": "ホームに戻る"
+    "backToHome": "ホームに戻る",
+    "governanceGroupLabel": "ガバナンス",
+    "governanceConsole": "ガバナンス・コンソール"
   },
   "dataRights": {
     "title": "あなたのデータ権利 (GDPR / UK GDPR / CCPA)",
@@ -1126,7 +1129,8 @@
     "overview": "概要",
     "userGuide": "ユーザーガイド",
     "technical": "技術仕様",
-    "searchPlaceholder": "ドキュメント検索"
+    "searchPlaceholder": "ドキュメント検索",
+    "parameters": "パラメータ"
   },
   "pageNotice": {
     "englishOnlyTitle": "英語のみ提供",

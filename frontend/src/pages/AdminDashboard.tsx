@@ -40,6 +40,7 @@ import {
 import { useIsAdminWallet } from '../lib/useIsAdminWallet';
 import { useReadChain } from '../contracts/useDiamond';
 import { useAdminKnobValues } from '../hooks/useAdminKnobValues';
+import { useTimelockPendingChanges } from '../hooks/useTimelockPendingChanges';
 import { KnobCard } from '../components/admin/KnobCard';
 import { AdminThemeToggle } from '../components/admin/AdminThemeToggle';
 import '../components/admin/admin-theme.css';
@@ -61,6 +62,7 @@ export default function AdminDashboard() {
   const isAdminWallet = useIsAdminWallet();
   const location = useLocation();
   const readChain = useReadChain();
+  const pendingChanges = useTimelockPendingChanges();
 
   // Theme resolution: URL > localStorage > admin-wallet-auto > default.
   const [themeMode, setThemeMode] = useState<AdminThemeMode>(() => {
@@ -127,6 +129,26 @@ export default function AdminDashboard() {
           <AdminThemeToggle mode={themeMode} onToggle={onToggle} />
         </header>
 
+        {pendingChanges.all.length > 0 && (
+          <div
+            style={{
+              border: '1px solid rgba(245,158,11,0.45)',
+              background: 'rgba(245,158,11,0.08)',
+              padding: '10px 14px',
+              borderRadius: 4,
+              fontSize: '0.85rem',
+              marginBottom: 12,
+              lineHeight: 1.5,
+            }}
+          >
+            <strong>{pendingChanges.all.length} governance change{pendingChanges.all.length === 1 ? '' : 's'} queued in the timelock.</strong>{' '}
+            {pendingChanges.all.filter((p) => p.ready).length > 0
+              ? `${pendingChanges.all.filter((p) => p.ready).length} ready to execute now.`
+              : 'All still in delay window.'}
+            {' '}Affected parameters carry a "PENDING" badge below.
+          </div>
+        )}
+
         {isAdminWallet && (
           <div
             style={{
@@ -177,6 +199,7 @@ export default function AdminDashboard() {
                     canPropose={isAdminWallet}
                     diamondAddress={readChain.diamondAddress ?? undefined}
                     chainId={readChain.chainId}
+                    pending={pendingChanges.byKnob[knob.id]}
                   />
                 ))}
               </div>
