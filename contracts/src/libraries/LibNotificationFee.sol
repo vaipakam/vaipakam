@@ -4,7 +4,6 @@ pragma solidity ^0.8.29;
 import {LibVaipakam} from "./LibVaipakam.sol";
 import {OracleFacet} from "../facets/OracleFacet.sol";
 import {EscrowFactoryFacet} from "../facets/EscrowFactoryFacet.sol";
-import {INumeraireOracle} from "../interfaces/INumeraireOracle.sol";
 
 /**
  * @title LibNotificationFee
@@ -57,61 +56,50 @@ library LibNotificationFee {
 
     /// @notice Computes the VPFI amount (18-dec, raw) equivalent to
     ///         `cfgNotificationFee()` at the current price feeds.
-    /// @dev    USD-Sweep Phase 1 — fee is now stored in NUMERAIRE units
-    ///         (`cfgNotificationFee()` returns 1e18-scaled numeraire).
-    ///         Two-step conversion:
-    ///           - numeraire → USD via the global `numeraireOracle`
-    ///             (T-034 abstraction). `address(0)` means USD-as-
-    ///             numeraire — the fee is interpreted directly as USD.
-    ///           - USD → VPFI via ETH/USD × fixed VPFI/ETH rate
-    ///             (`VPFI_PER_ETH_FIXED_PHASE1 = 1e15`, i.e. 1 VPFI =
-    ///             0.001 ETH). Phase 1 fixed; same as today.
+    /// @dev    Single-step after USD-Sweep / B1: `getAssetPrice(WETH)`
+    ///         returns numeraire-quoted ETH price natively (governance
+    ///         rotates the underlying Chainlink feed when the numeraire
+    ///         changes), so the fee → VPFI math is unit-cancelled:
+    ///           feeNumeraire × 1e36
+    ///             / (ethPriceNumeraire × VPFI_PER_ETH_FIXED_PHASE1)
+    ///         The previous explicit numeraire→USD conversion via
+    ///         `INumeraireOracle` is removed — the numeraire abstraction
+    ///         lives at the oracle layer now, not the consumer layer.
+    ///
+    ///         The ratio is unit-agnostic: as long as both `feeNumeraire`
+    ///         and `ethPriceNumeraire` are in the same currency, the
+    ///         resulting VPFI amount is correct. Today (USD-as-default)
+    ///         the math is bit-identical to the pre-sweep version.
+    ///
     ///         Reverts on stale / zero / unconfigured oracle so a
     ///         broken price source fails the bill rather than charging
-    ///         a wildly wrong amount. The retired
-    ///         `notificationFeeUsdOracle` per-knob path is gone — the
-    ///         protocol's reference currency is the single
-    ///         `numeraireOracle` slot.
+    ///         a wildly wrong amount.
     function vpfiAmountForFee() internal view returns (uint256) {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         uint256 feeNumeraire1e18 = LibVaipakam.cfgNotificationFee();
 
-        // Step 1 — convert numeraire → USD via global numeraireOracle.
-        // Zero address means USD-as-numeraire (no conversion).
-        uint256 feeUsd1e18 = feeNumeraire1e18;
-        address numerOracle = s.protocolCfg.numeraireOracle;
-        if (numerOracle != address(0)) {
-            // numeraireToUsdRate1e18() returns "how many USD per 1
-            // unit of numeraire" (1e18-scaled). Conversion:
-            //   feeUsd = feeNumeraire × rate / 1e18
-            uint256 rate = INumeraireOracle(numerOracle).numeraireToUsdRate1e18();
-            if (rate == 0) revert NotifFeeOraclePriceZero();
-            feeUsd1e18 = (feeNumeraire1e18 * rate) / 1e18;
-        }
-
-        // Step 2 — USD → VPFI via ETH/USD × fixed VPFI/ETH rate.
         address weth = s.wethContract;
         if (weth == address(0)) revert NotifFeeWethNotSet();
         (uint256 ethPrice, uint8 ethDec) =
             OracleFacet(address(this)).getAssetPrice(weth);
         if (ethPrice == 0) revert NotifFeeOraclePriceZero();
 
-        // Normalise ETH price to 1e18 USD scale.
-        uint256 ethPriceUsd1e18 = (ethPrice * 1e18) / (10 ** uint256(ethDec));
-        if (ethPriceUsd1e18 == 0) revert NotifFeeOraclePriceZero();
+        // Normalise ETH price to 1e18 numeraire scale.
+        uint256 ethPriceNumer1e18 = (ethPrice * 1e18) / (10 ** uint256(ethDec));
+        if (ethPriceNumer1e18 == 0) revert NotifFeeOraclePriceZero();
 
-        // vpfiPriceUsd1e18 = ethPriceUsd1e18 × VPFI_PER_ETH_FIXED_PHASE1 / 1e18
-        // vpfiAmount       = feeUsd1e18 × 1e18 / vpfiPriceUsd1e18
-        //                  = feeUsd1e18 × 1e36 / (ethPriceUsd1e18 × VPFI_PER_ETH_FIXED_PHASE1)
+        // vpfiPriceNumer1e18 = ethPriceNumer1e18 × VPFI_PER_ETH_FIXED_PHASE1 / 1e18
+        // vpfiAmount         = feeNumer1e18 × 1e18 / vpfiPriceNumer1e18
+        //                    = feeNumer1e18 × 1e36 / (ethPriceNumer1e18 × VPFI_PER_ETH_FIXED_PHASE1)
         //
-        // Numerical sanity at typical values:
-        //   feeUsd1e18 = 2e18, ETH price = $4000 ⇒ ethPriceUsd1e18 = 4000e18
+        // Numerical sanity at typical values (USD-as-numeraire):
+        //   feeNumer = 2e18, ETH price = $4000 ⇒ ethPriceNumer = 4000e18
         //   vpfiAmount = 2e18 × 1e36 / (4000e18 × 1e15)
         //              = 2e54 / 4e36 = 5e17  (i.e. 0.5 VPFI). ✓
         //
         // Overflow check: 2e18 × 1e36 = 2e54, well below uint256 max (≈1.16e77).
-        return (feeUsd1e18 * 1e36) /
-            (ethPriceUsd1e18 * LibVaipakam.VPFI_PER_ETH_FIXED_PHASE1);
+        return (feeNumeraire1e18 * 1e36) /
+            (ethPriceNumer1e18 * LibVaipakam.VPFI_PER_ETH_FIXED_PHASE1);
     }
 
     /// @notice Bills a loan-side once. Idempotent — repeated calls on

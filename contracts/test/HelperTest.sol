@@ -591,7 +591,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](37);
+        selectors = new bytes4[](38);
         selectors[0] = ConfigFacet.setFeesConfig.selector;
         selectors[1] = ConfigFacet.setLiquidationConfig.selector;
         selectors[2] = ConfigFacet.setRiskConfig.selector;
@@ -635,12 +635,17 @@ contract HelperTest {
         selectors[30] = ConfigFacet.setNumeraireSwapEnabled.selector;
         selectors[31] = ConfigFacet.getPeriodicInterestConfig.selector;
         // Individual getters used by the protocol-console knob card
-        // reader (which expects one function per knob).
-        selectors[32] = ConfigFacet.getNumeraireOracle.selector;
-        selectors[33] = ConfigFacet.getMinPrincipalForFinerCadence.selector;
-        selectors[34] = ConfigFacet.getPreNotifyDays.selector;
-        selectors[35] = ConfigFacet.getPeriodicInterestEnabled.selector;
-        selectors[36] = ConfigFacet.getNumeraireSwapEnabled.selector;
+        // reader (which expects one function per knob). USD-Sweep / B1 —
+        // the per-knob `getNumeraireOracle` was retired (no
+        // INumeraireOracle anymore); replaced with feed-side getters
+        // (`getNumeraireSymbol`, `getEthNumeraireFeed`) that surface
+        // the new numeraire-rotation surface.
+        selectors[32] = ConfigFacet.getNumeraireSymbol.selector;
+        selectors[33] = ConfigFacet.getEthNumeraireFeed.selector;
+        selectors[34] = ConfigFacet.getMinPrincipalForFinerCadence.selector;
+        selectors[35] = ConfigFacet.getPreNotifyDays.selector;
+        selectors[36] = ConfigFacet.getPeriodicInterestEnabled.selector;
+        selectors[37] = ConfigFacet.getNumeraireSwapEnabled.selector;
         return selectors;
     }
 

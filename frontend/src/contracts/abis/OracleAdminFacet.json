@@ -256,20 +256,7 @@
   },
   {
     "type": "function",
-    "name": "setPythMaxStalenessSeconds",
-    "inputs": [
-      {
-        "name": "secondsBudget",
-        "type": "uint64",
-        "internalType": "uint64"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "setPythNumeraireFeedId",
+    "name": "setPythCrossCheckFeedId",
     "inputs": [
       {
         "name": "feedId",
@@ -282,12 +269,25 @@
   },
   {
     "type": "function",
-    "name": "setPythNumeraireMaxDeviationBps",
+    "name": "setPythCrossCheckMaxDeviationBps",
     "inputs": [
       {
         "name": "bps",
         "type": "uint16",
         "internalType": "uint16"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "setPythMaxStalenessSeconds",
+    "inputs": [
+      {
+        "name": "secondsBudget",
+        "type": "uint64",
+        "internalType": "uint64"
       }
     ],
     "outputs": [],

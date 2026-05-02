@@ -7,32 +7,13 @@ import {OfferFacet} from "../src/facets/OfferFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
-import {INumeraireOracle} from "../src/interfaces/INumeraireOracle.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 
-/// @dev Mock numeraire oracle that returns a fixed rate. Used to test the
-///      `setNumeraire` validation path AND the principal-to-numeraire
-///      conversion (where rate ≠ 1e18 means USD ≠ numeraire).
-contract MockNumeraireOracle is INumeraireOracle {
-    uint256 public rate;
-    constructor(uint256 r) {
-        rate = r;
-    }
-    function setRate(uint256 r) external {
-        rate = r;
-    }
-    function numeraireToUsdRate1e18() external view returns (uint256) {
-        return rate;
-    }
-}
-
-/// @dev Mock that always reverts to test the catch-side of `setNumeraire`'s
-///      sanity check.
-contract RevertingNumeraireOracle is INumeraireOracle {
-    function numeraireToUsdRate1e18() external pure returns (uint256) {
-        revert("nope");
-    }
-}
+// USD-Sweep / B1 — INumeraireOracle interface and its mocks were
+// retired in favour of the symbol-derived feed slots
+// (ethNumeraireFeed + numeraireSymbol + numeraireChainlinkDenominator
+// + pythCrossCheckFeedId). The atomic `setNumeraire` setter now takes
+// these slot values directly; no oracle contract to mock.
 
 /// @title PeriodicInterestCadenceTest
 /// @notice Targeted PR1 coverage for T-034 — Periodic Interest Payment.
@@ -373,65 +354,70 @@ contract PeriodicInterestCadenceTest is SetupTest {
     }
 
     function testSetNumeraire_DisabledFlagReverts() public {
-        // Default: numeraireSwapEnabled = false. setNumeraire must revert.
+        // Default: numeraireSwapEnabled = false. setNumeraire reverts.
+        // Args don't matter past the gate check.
+        address fakeFeed = makeAddr("fakeFeed");
+        address fakeDenom = makeAddr("fakeDenom");
         vm.expectRevert(IVaipakamErrors.NumeraireSwapDisabled.selector);
         vm.prank(owner);
-        ConfigFacet(address(diamond)).setNumeraire(address(0), 50_000 * 1e18, 0, 0, 0);
+        ConfigFacet(address(diamond)).setNumeraire(
+            fakeFeed, fakeDenom, bytes32("eur"), bytes32(0), 50_000 * 1e18, 0, 0, 0
+        );
     }
 
-    function testSetNumeraire_EnabledThenZeroOracleAccepted() public {
+    function testSetNumeraire_RejectsZeroEthFeed() public {
         vm.prank(owner);
         ConfigFacet(address(diamond)).setNumeraireSwapEnabled(true);
-        // address(0) is "USD-as-numeraire" — always accepted.
+        vm.expectRevert(IVaipakamErrors.InvalidAddress.selector);
         vm.prank(owner);
-        ConfigFacet(address(diamond)).setNumeraire(address(0), 50_000 * 1e18, 0, 0, 0);
-        (address numerOracle, uint256 threshold, , ,) =
+        ConfigFacet(address(diamond)).setNumeraire(
+            address(0), makeAddr("denom"), bytes32("eur"), bytes32(0), 0, 0, 0, 0
+        );
+    }
+
+    function testSetNumeraire_RejectsZeroDenominator() public {
+        vm.prank(owner);
+        ConfigFacet(address(diamond)).setNumeraireSwapEnabled(true);
+        vm.expectRevert(IVaipakamErrors.InvalidAddress.selector);
+        vm.prank(owner);
+        ConfigFacet(address(diamond)).setNumeraire(
+            makeAddr("ethFeed"), address(0), bytes32("eur"), bytes32(0), 0, 0, 0, 0
+        );
+    }
+
+    function testSetNumeraire_RejectsZeroSymbol() public {
+        vm.prank(owner);
+        ConfigFacet(address(diamond)).setNumeraireSwapEnabled(true);
+        vm.expectPartialRevert(IVaipakamErrors.ParameterOutOfRange.selector);
+        vm.prank(owner);
+        ConfigFacet(address(diamond)).setNumeraire(
+            makeAddr("ethFeed"), makeAddr("denom"), bytes32(0), bytes32(0), 0, 0, 0, 0
+        );
+    }
+
+    function testSetNumeraire_AcceptsValidEurRotation() public {
+        vm.prank(owner);
+        ConfigFacet(address(diamond)).setNumeraireSwapEnabled(true);
+        // Hypothetical EUR rotation: ETH/EUR Chainlink feed +
+        // Chainlink Feed Registry's Denominations.EUR constant +
+        // bytes32("eur") for symbol-derived secondary queries +
+        // Pyth ETH/EUR feed id. None of these need to actually exist
+        // on the test chain — the setter only validates structure.
+        address ethEurFeed = makeAddr("ethEurFeed");
+        address eurDenom = makeAddr("eurDenom");
+        bytes32 eurSymbol = bytes32("eur");
+        bytes32 pythEurFeedId = bytes32(uint256(0xCAFEBABE));
+        uint256 thresholdInEur = 5_000 * 1e18;
+        vm.prank(owner);
+        ConfigFacet(address(diamond)).setNumeraire(
+            ethEurFeed, eurDenom, eurSymbol, pythEurFeedId,
+            thresholdInEur, 0, 0, 0
+        );
+        (bytes32 sym, uint256 threshold, , ,) =
             ConfigFacet(address(diamond)).getPeriodicInterestConfig();
-        assertEq(numerOracle, address(0));
-        assertEq(threshold, 50_000 * 1e18);
-    }
-
-    function testSetNumeraire_RejectsEOA() public {
-        vm.prank(owner);
-        ConfigFacet(address(diamond)).setNumeraireSwapEnabled(true);
-        vm.expectPartialRevert(IVaipakamErrors.NumeraireOracleInvalid.selector);
-        vm.prank(owner);
-        ConfigFacet(address(diamond)).setNumeraire(makeAddr("eoa"), 50_000 * 1e18, 0, 0, 0);
-    }
-
-    function testSetNumeraire_RejectsZeroRate() public {
-        vm.prank(owner);
-        ConfigFacet(address(diamond)).setNumeraireSwapEnabled(true);
-        MockNumeraireOracle bad = new MockNumeraireOracle(0);
-        vm.expectPartialRevert(IVaipakamErrors.NumeraireOracleInvalid.selector);
-        vm.prank(owner);
-        ConfigFacet(address(diamond)).setNumeraire(address(bad), 50_000 * 1e18, 0, 0, 0);
-    }
-
-    function testSetNumeraire_RejectsRevertingOracle() public {
-        vm.prank(owner);
-        ConfigFacet(address(diamond)).setNumeraireSwapEnabled(true);
-        RevertingNumeraireOracle bad = new RevertingNumeraireOracle();
-        vm.expectPartialRevert(IVaipakamErrors.NumeraireOracleInvalid.selector);
-        vm.prank(owner);
-        ConfigFacet(address(diamond)).setNumeraire(address(bad), 50_000 * 1e18, 0, 0, 0);
-    }
-
-    function testSetNumeraire_AcceptsValidOracle() public {
-        vm.prank(owner);
-        ConfigFacet(address(diamond)).setNumeraireSwapEnabled(true);
-        // 1 XAU = $2400 → rate = 2400e18.
-        MockNumeraireOracle xau = new MockNumeraireOracle(2400 * 1e18);
-        // Threshold value within the bounded range
-        // [FLOOR=1000e18, CEIL=10M*1e18]. Pick 5_000e18 — interpreted in
-        // XAU-units that's 5000 XAU; the bound check is unit-agnostic.
-        uint256 thresholdInXau = 5_000 * 1e18;
-        vm.prank(owner);
-        ConfigFacet(address(diamond)).setNumeraire(address(xau), thresholdInXau, 0, 0, 0);
-        (address numerOracle, uint256 threshold, , ,) =
-            ConfigFacet(address(diamond)).getPeriodicInterestConfig();
-        assertEq(numerOracle, address(xau));
-        assertEq(threshold, thresholdInXau);
+        assertEq(sym, eurSymbol);
+        assertEq(threshold, thresholdInEur);
+        assertEq(ConfigFacet(address(diamond)).getEthNumeraireFeed(), ethEurFeed);
     }
 
     function testNonAdmin_SetterReverts() public {

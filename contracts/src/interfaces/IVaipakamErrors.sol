@@ -285,14 +285,6 @@ interface IVaipakamErrors {
     ///         NOT gated by this error. See design doc §10.2.
     error NumeraireSwapDisabled();
 
-    /// @notice `setNumeraire` rejected the new oracle address — it has
-    ///         no bytecode, OR `numeraireToUsdRate1e18()` returned
-    ///         zero, OR the call reverted. Sanity check at setter time
-    ///         so a misconfig can't lock the protocol with a broken
-    ///         numeraire that reverts on every read.
-    /// @param oracle The proposed oracle address.
-    error NumeraireOracleInvalid(address oracle);
-
     /// @notice `settlePeriodicInterest` was called before the period's
     ///         grace window expired. Settler must wait until
     ///         `lastPeriodicInterestSettledAt + intervalDays(cadence) +

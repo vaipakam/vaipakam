@@ -5,7 +5,6 @@ import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibAccessControl, DiamondAccessControl} from "../libraries/LibAccessControl.sol";
 import {LibStakingRewards} from "../libraries/LibStakingRewards.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
-import {INumeraireOracle} from "../interfaces/INumeraireOracle.sol";
 
 /**
  * @title ConfigFacet
@@ -926,14 +925,22 @@ contract ConfigFacet is DiamondAccessControl {
 
     /// @notice Emitted when the numeraire address AND its companion
     ///         threshold value flip atomically via {setNumeraire}.
-    /// @param oldOracle Previous numeraire oracle (0 = USD-as-numeraire).
-    /// @param newOracle New numeraire oracle.
-    /// @param newThreshold New `minPrincipalForFinerCadence` value, in
-    ///        the new numeraire's units.
+    /// @notice Emitted on every atomic numeraire rotation. After
+    ///         USD-Sweep / B1, the numeraire is identified by its
+    ///         feed-side config (ETH/<numeraire> Chainlink feed +
+    ///         lowercase ASCII symbol that drives Tellor/API3/DIA
+    ///         queries) — there is no longer a single numeraireOracle
+    ///         contract. Off-chain monitors index `numeraireSymbol` to
+    ///         identify which currency the rotation targets ("usd",
+    ///         "eur", "xau", etc.).
+    /// @param oldEthFeed Previous ETH/<numeraire> Chainlink feed.
+    /// @param newEthFeed New ETH/<numeraire> Chainlink feed.
+    /// @param numeraireSymbol Lowercase ASCII symbol of the new
+    ///        numeraire (e.g. `bytes32("eur")`).
     event NumeraireUpdated(
-        address indexed oldOracle,
-        address indexed newOracle,
-        uint256 newThreshold
+        address indexed oldEthFeed,
+        address indexed newEthFeed,
+        bytes32 numeraireSymbol
     );
 
     /// @notice Emitted when the principal threshold for finer cadences
@@ -952,28 +959,29 @@ contract ConfigFacet is DiamondAccessControl {
     ///         toggled.
     event NumeraireSwapEnabledSet(bool enabled);
 
-    /// @notice Atomic batched setter — the ONLY path to change the
-    ///         numeraire oracle. Simultaneously rewrites EVERY
-    ///         numeraire-denominated value in storage so no inconsistent
-    ///         intermediate state is reachable. USD-Sweep Phase 3 —
-    ///         extended from threshold-only to cover the full
-    ///         numeraire-denominated surface (notification fee + KYC
-    ///         tier 0 + KYC tier 1 + finer-cadence threshold).
-    /// @dev Gated by `numeraireSwapEnabled` (independent kill-switch).
-    ///      Validates the new oracle by calling
-    ///      `numeraireToUsdRate1e18()` and rejecting zero / revert /
-    ///      no-bytecode results via `NumeraireOracleInvalid`. Validates
-    ///      every value against its compiled-in range (zero is accepted
-    ///      as "reset to library default" on each).
+    /// @notice T-034 USD-Sweep / B1 — atomic numeraire rotation.
+    ///         The struct carries ALL state that defines the protocol's
+    ///         reference currency at once. By construction, governance
+    ///         cannot rotate the numeraire without simultaneously
+    ///         re-anchoring every value denominated in it AND every
+    ///         oracle-side input that produces numeraire-quoted prices.
     ///
-    ///      Each numeraire-denominated knob also has a per-knob
-    ///      "within-the-same-numeraire" setter (`setMinPrincipalForFinerCadence`,
-    ///      `setNotificationFee`, `updateKYCThresholds`) for routine
-    ///      tuning; those are NOT gated by `numeraireSwapEnabled`. This
-    ///      atomic setter is the only path for governance to ROTATE
-    ///      the numeraire itself.
-    /// @param newOracle Address of the new INumeraireOracle impl.
-    ///        `address(0)` resets to USD-as-numeraire.
+    ///         Inconsistent intermediate state ("numeraire = EUR but
+    ///         notification fee still in USD-units" or "Tellor still
+    ///         queries `<symbol>/usd`") is unreachable.
+    /// @param ethNumeraireFeed Chainlink ETH/<numeraire> AggregatorV3.
+    ///        ETH/USD by default; rotates to ETH/EUR / ETH/XAU / etc.
+    ///        as the numeraire changes. Zero address rejected.
+    /// @param numeraireChainlinkDenominator Chainlink Feed Registry
+    ///        constant for the active numeraire (e.g. `Denominations.USD`,
+    ///        `Denominations.EUR`). Drives Path 2 of `_primaryPrice`
+    ///        (direct asset/<numeraire> registry lookup). Zero rejected.
+    /// @param numeraireSymbol Lowercase ASCII bytes32 of the numeraire's
+    ///        symbol (e.g. `bytes32("usd")`, `bytes32("eur")`). Drives
+    ///        Tellor / API3 / DIA query construction. Zero rejected.
+    /// @param pythCrossCheckFeedId Pyth ETH/<numeraire> feed id for the
+    ///        T-033 cross-check gate. Zero is acceptable (disables the
+    ///        Pyth gate — soft-skip behaviour).
     /// @param newThresholdInNewNumeraire Finer-cadence principal
     ///        threshold in numeraire-units (1e18-scaled). 0 ⇒ default.
     /// @param newNotificationFeeInNewNumeraire Per-loan-side
@@ -981,11 +989,14 @@ contract ConfigFacet is DiamondAccessControl {
     ///        default.
     /// @param newKycTier0InNewNumeraire KYC Tier-0 threshold in
     ///        numeraire-units (1e18-scaled). 0 ⇒ default. MUST be <
-    ///        `newKycTier1InNewNumeraire`.
+    ///        `newKycTier1InNewNumeraire` when both non-zero.
     /// @param newKycTier1InNewNumeraire KYC Tier-1 threshold in
     ///        numeraire-units (1e18-scaled). 0 ⇒ default.
     function setNumeraire(
-        address newOracle,
+        address ethNumeraireFeed,
+        address numeraireChainlinkDenominator,
+        bytes32 numeraireSymbol,
+        bytes32 pythCrossCheckFeedId,
         uint256 newThresholdInNewNumeraire,
         uint256 newNotificationFeeInNewNumeraire,
         uint256 newKycTier0InNewNumeraire,
@@ -995,24 +1006,18 @@ contract ConfigFacet is DiamondAccessControl {
             LibVaipakam.storageSlot().protocolCfg;
         if (!c.numeraireSwapEnabled) revert IVaipakamErrors.NumeraireSwapDisabled();
 
-        // Sanity-check the new oracle if non-zero. address(0) means
-        // "USD-as-numeraire" and skips the call entirely.
-        if (newOracle != address(0)) {
-            if (newOracle.code.length == 0) {
-                revert IVaipakamErrors.NumeraireOracleInvalid(newOracle);
-            }
-            try INumeraireOracle(newOracle).numeraireToUsdRate1e18() returns (
-                uint256 rate
-            ) {
-                if (rate == 0) {
-                    revert IVaipakamErrors.NumeraireOracleInvalid(newOracle);
-                }
-            } catch {
-                revert IVaipakamErrors.NumeraireOracleInvalid(newOracle);
-            }
-        }
+        // The three feed-side inputs are load-bearing — without them,
+        // `_primaryPrice` and the secondary-quorum query construction
+        // would break.
+        if (ethNumeraireFeed == address(0)) revert IVaipakamErrors.InvalidAddress();
+        if (numeraireChainlinkDenominator == address(0))
+            revert IVaipakamErrors.InvalidAddress();
+        if (numeraireSymbol == bytes32(0))
+            revert IVaipakamErrors.ParameterOutOfRange(
+                bytes32("numeraireSymbol"), 0, 1, type(uint256).max
+            );
 
-        // Range checks per knob — zero accepted as "reset to default".
+        // Range checks per value knob — zero accepted as "reset to default".
         if (
             newThresholdInNewNumeraire != 0 &&
             (
@@ -1087,14 +1092,19 @@ contract ConfigFacet is DiamondAccessControl {
             );
         }
 
-        address oldOracle = c.numeraireOracle;
-        c.numeraireOracle = newOracle;
+        // Atomic write: feed-side first (so any subsequent oracle read
+        // in the same tx sees the new state), then value-side.
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        address oldEthFeed = s.ethNumeraireFeed;
+        s.ethNumeraireFeed = ethNumeraireFeed;
+        s.numeraireChainlinkDenominator = numeraireChainlinkDenominator;
+        s.numeraireSymbol = numeraireSymbol;
+        s.pythCrossCheckFeedId = pythCrossCheckFeedId;
         c.minPrincipalForFinerCadence = newThresholdInNewNumeraire;
         c.notificationFee = newNotificationFeeInNewNumeraire;
-        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         s.kycTier0ThresholdNumeraire = newKycTier0InNewNumeraire;
         s.kycTier1ThresholdNumeraire = newKycTier1InNewNumeraire;
-        emit NumeraireUpdated(oldOracle, newOracle, newThresholdInNewNumeraire);
+        emit NumeraireUpdated(oldEthFeed, ethNumeraireFeed, numeraireSymbol);
     }
 
     /// @notice Update only the principal threshold for finer cadences,
@@ -1178,11 +1188,19 @@ contract ConfigFacet is DiamondAccessControl {
         emit NumeraireSwapEnabledSet(enabled);
     }
 
-    /// @notice Individual getter for `numeraireOracle` — protocol-console
-    ///         knob card uses this since the dashboard reader expects a
-    ///         single-value function per knob.
-    function getNumeraireOracle() external view returns (address) {
-        return LibVaipakam.storageSlot().protocolCfg.numeraireOracle;
+    /// @notice Individual getter for `numeraireSymbol` — the lowercase
+    ///         ASCII bytes32 symbol of the active numeraire (e.g.
+    ///         `bytes32("usd")`, `bytes32("eur")`). Empty bytes32
+    ///         indicates the post-deploy default ("usd"). Frontend
+    ///         knob card reads this for currency labels.
+    function getNumeraireSymbol() external view returns (bytes32) {
+        return LibVaipakam.storageSlot().numeraireSymbol;
+    }
+
+    /// @notice Individual getter for `ethNumeraireFeed` — the
+    ///         Chainlink ETH/<numeraire> AggregatorV3 address.
+    function getEthNumeraireFeed() external view returns (address) {
+        return LibVaipakam.storageSlot().ethNumeraireFeed;
     }
 
     /// @notice Individual getter for `minPrincipalForFinerCadence`.
@@ -1215,9 +1233,12 @@ contract ConfigFacet is DiamondAccessControl {
     }
 
     /// @notice Bundled getter for the entire T-034 config surface,
-    ///         intended for the frontend `useProtocolConfig` hook.
-    /// @return numeraireOracle_ The pluggable numeraire oracle
-    ///         (zero = USD-as-numeraire).
+    ///         intended for the frontend `usePeriodicInterestConfig`
+    ///         hook. USD-Sweep / B1 — the per-knob `numeraireOracle`
+    ///         field is gone; the numeraire identity is captured by
+    ///         the symbol (`getNumeraireSymbol()`) + ETH feed
+    ///         (`getEthNumeraireFeed()`) — both readable individually.
+    /// @return symbol Lowercase ASCII bytes32 of the active numeraire.
     /// @return threshold The effective `minPrincipalForFinerCadence`
     ///         (override or library default), in numeraire-units.
     /// @return preNotify The effective `preNotifyDays` (override or
@@ -1228,16 +1249,16 @@ contract ConfigFacet is DiamondAccessControl {
         external
         view
         returns (
-            address numeraireOracle_,
+            bytes32 symbol,
             uint256 threshold,
             uint8 preNotify,
             bool periodicEnabled,
             bool numeraireSwapEnabled_
         )
     {
-        LibVaipakam.ProtocolConfig storage c =
-            LibVaipakam.storageSlot().protocolCfg;
-        numeraireOracle_ = c.numeraireOracle;
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        LibVaipakam.ProtocolConfig storage c = s.protocolCfg;
+        symbol = s.numeraireSymbol;
         threshold = c.minPrincipalForFinerCadence == 0
             ? LibVaipakam.PERIODIC_MIN_PRINCIPAL_FOR_FINER_CADENCE_DEFAULT
             : c.minPrincipalForFinerCadence;

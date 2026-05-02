@@ -12,8 +12,10 @@ const STALE_MS = 60_000;
  * surface still load correctly.
  */
 export interface PeriodicInterestConfig {
-  /** Pluggable numeraire oracle. `address(0)` = USD-as-numeraire. */
-  numeraireOracle: string;
+  /** USD-Sweep / B1 — bytes32 lowercase ASCII symbol of the active
+   *  numeraire (e.g. `0x0000…0000usd`, `0x0000…0000eur`). Empty
+   *  bytes32 = post-deploy default ("usd"). */
+  numeraireSymbol: `0x${string}`;
   /** Effective principal threshold for finer cadences, in numeraire-
    *  units (1e18-scaled). */
   minPrincipalForFinerCadence1e18: bigint;
@@ -33,7 +35,7 @@ interface CacheEntry {
 }
 let cached: CacheEntry | null = null;
 
-type ConfigTuple = [string, bigint, number, boolean, boolean];
+type ConfigTuple = [`0x${string}`, bigint, number, boolean, boolean];
 
 export function usePeriodicInterestConfig() {
   const diamond = useDiamondRead();
@@ -59,7 +61,7 @@ export function usePeriodicInterestConfig() {
           getPeriodicInterestConfig: () => Promise<ConfigTuple>;
         };
         const [
-          numeraireOracle,
+          numeraireSymbol,
           threshold,
           preNotifyDays,
           periodicEnabled,
@@ -67,7 +69,7 @@ export function usePeriodicInterestConfig() {
         ] = await d.getPeriodicInterestConfig();
         if (cancelled) return;
         const data: PeriodicInterestConfig = {
-          numeraireOracle: String(numeraireOracle).toLowerCase(),
+          numeraireSymbol,
           minPrincipalForFinerCadence1e18: BigInt(threshold),
           preNotifyDays: Number(preNotifyDays),
           periodicInterestEnabled: Boolean(periodicEnabled),

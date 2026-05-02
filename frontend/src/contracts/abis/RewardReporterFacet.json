@@ -650,17 +650,6 @@
   },
   {
     "type": "error",
-    "name": "NumeraireOracleInvalid",
-    "inputs": [
-      {
-        "name": "oracle",
-        "type": "address",
-        "internalType": "address"
-      }
-    ]
-  },
-  {
-    "type": "error",
     "name": "NumeraireSwapDisabled",
     "inputs": []
   },

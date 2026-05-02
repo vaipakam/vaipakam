@@ -27,6 +27,19 @@
   },
   {
     "type": "function",
+    "name": "getEthNumeraireFeed",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "getFallbackSplit",
     "inputs": [],
     "outputs": [
@@ -193,19 +206,6 @@
   },
   {
     "type": "function",
-    "name": "getNumeraireOracle",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
     "name": "getNumeraireSwapEnabled",
     "inputs": [],
     "outputs": [
@@ -219,13 +219,26 @@
   },
   {
     "type": "function",
+    "name": "getNumeraireSymbol",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "getPeriodicInterestConfig",
     "inputs": [],
     "outputs": [
       {
-        "name": "numeraireOracle_",
-        "type": "address",
-        "internalType": "address"
+        "name": "symbol",
+        "type": "bytes32",
+        "internalType": "bytes32"
       },
       {
         "name": "threshold",
@@ -633,9 +646,24 @@
     "name": "setNumeraire",
     "inputs": [
       {
-        "name": "newOracle",
+        "name": "ethNumeraireFeed",
         "type": "address",
         "internalType": "address"
+      },
+      {
+        "name": "numeraireChainlinkDenominator",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "numeraireSymbol",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "pythCrossCheckFeedId",
+        "type": "bytes32",
+        "internalType": "bytes32"
       },
       {
         "name": "newThresholdInNewNumeraire",
@@ -985,22 +1013,22 @@
     "name": "NumeraireUpdated",
     "inputs": [
       {
-        "name": "oldOracle",
+        "name": "oldEthFeed",
         "type": "address",
         "indexed": true,
         "internalType": "address"
       },
       {
-        "name": "newOracle",
+        "name": "newEthFeed",
         "type": "address",
         "indexed": true,
         "internalType": "address"
       },
       {
-        "name": "newThreshold",
-        "type": "uint256",
+        "name": "numeraireSymbol",
+        "type": "bytes32",
         "indexed": false,
-        "internalType": "uint256"
+        "internalType": "bytes32"
       }
     ],
     "anonymous": false
@@ -1246,6 +1274,11 @@
   },
   {
     "type": "error",
+    "name": "InvalidAddress",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "InvalidAutoPauseDuration",
     "inputs": [
       {
@@ -1437,17 +1470,6 @@
         "name": "t4",
         "type": "uint256",
         "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "NumeraireOracleInvalid",
-    "inputs": [
-      {
-        "name": "oracle",
-        "type": "address",
-        "internalType": "address"
       }
     ]
   },

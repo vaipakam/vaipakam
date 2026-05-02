@@ -20,7 +20,6 @@ import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
 import {Strings} from "@openzeppelin/contracts/utils/Strings.sol";
 import {DiamondPausable} from "../libraries/LibPausable.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
-import {INumeraireOracle} from "../interfaces/INumeraireOracle.sol";
 import {OracleFacet} from "./OracleFacet.sol";
 import {VaipakamNFTFacet} from "./VaipakamNFTFacet.sol";
 import {EscrowFactoryFacet} from "./EscrowFactoryFacet.sol";
@@ -537,8 +536,7 @@ contract OfferFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
         // threshold.
         uint256 principalNumeraire = _principalToNumeraire1e18(
             params.lendingAsset,
-            params.amount,
-            cfgT034.numeraireOracle
+            params.amount
         );
 
         // Filter 2 first: row 3 (multi-year, below threshold) requires
@@ -600,10 +598,12 @@ contract OfferFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
     }
 
     /// @dev Convert a raw token amount to numeraire-units (1e18-scaled).
-    ///      Two-step: token amount → USD-1e18 (existing oracle path,
-    ///      same shape as `RiskFacet.sol:464`), then USD → numeraire via
-    ///      the configured `INumeraireOracle`. When `numeraireOracle == 0`
-    ///      the second step is a no-op (USD is the numeraire).
+    ///      Single step now after the USD-Sweep / B1 architectural
+    ///      change: `OracleFacet.getAssetPrice` returns numeraire-quoted
+    ///      prices natively (governance rotates the underlying Chainlink
+    ///      feed addresses + denominator constant when the numeraire
+    ///      changes), so this helper just multiplies + scales — no
+    ///      second-step boundary conversion via `INumeraireOracle`.
     ///
     ///      Returns 0 if the asset has no oracle coverage — Filter 2
     ///      then treats every offer as "below threshold" for that asset,
@@ -612,32 +612,17 @@ contract OfferFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
     ///      what's enforceable on-chain via the existing terminal path).
     function _principalToNumeraire1e18(
         address asset,
-        uint256 amount,
-        address numeraireOracle
+        uint256 amount
     ) private view returns (uint256) {
         if (asset == address(0) || amount == 0) return 0;
-        // Step 1 — asset amount → USD-1e18 via the existing primary
-        // oracle. Try-catch so a missing feed degrades to "0 numeraire"
-        // instead of reverting offer creation outright.
-        uint256 usdValue1e18;
         try OracleFacet(address(this)).getAssetPrice(asset) returns (
             uint256 price,
             uint8 feedDecimals
         ) {
             uint8 tokenDecimals = IERC20Metadata(asset).decimals();
-            usdValue1e18 = (amount * price * 1e18) /
+            return (amount * price * 1e18) /
                 (10 ** feedDecimals) /
                 (10 ** tokenDecimals);
-        } catch {
-            return 0;
-        }
-        // Step 2 — USD → numeraire. Skip when address(0) (USD-as-numeraire).
-        if (numeraireOracle == address(0)) return usdValue1e18;
-        try INumeraireOracle(numeraireOracle).numeraireToUsdRate1e18()
-            returns (uint256 rate)
-        {
-            if (rate == 0) return 0;
-            return (usdValue1e18 * 1e18) / rate;
         } catch {
             return 0;
         }

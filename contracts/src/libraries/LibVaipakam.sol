@@ -193,8 +193,9 @@ library LibVaipakam {
     // Principal threshold above which the lender can opt the loan into a
     // finer-than-mandatory cadence (Monthly / Quarterly / SemiAnnual on
     // any duration; finer-than-Annual on multi-year). Denominated in
-    // `numeraireOracle` units (1e18-scaled). Default $100k under USD-as-
-    // numeraire (numeraireOracle == address(0)). Floor $1k stops a
+    // numeraire-units (1e18-scaled). Default $100k under USD-as-
+    // numeraire (post-deploy default; B1 — read from Chainlink ETH/USD
+    // via `ethNumeraireFeed`). Floor $1k stops a
     // misconfigured "everyone qualifies" setting; ceiling $10M caps the
     // worst-case "nobody qualifies" misfire.
     uint256 constant PERIODIC_MIN_PRINCIPAL_FOR_FINER_CADENCE_DEFAULT = 100_000 * 1e18;
@@ -524,27 +525,23 @@ library LibVaipakam {
         // USD-as-numeraire); set via `ConfigFacet.setNotificationFee`.
         // Bounded `[MIN_NOTIFICATION_FEE_FLOOR, MAX_NOTIFICATION_FEE_CEIL]`
         // at the setter so a misfire can't lock users out OR drain
-        // their escrows. Numeraire-to-USD conversion happens in
-        // `LibNotificationFee` via the global `numeraireOracle` (the
-        // T-034 numeraire abstraction is the single reference-currency
-        // surface across the protocol — the per-knob
-        // `notificationFeeUsdOracle` was retired in the USD-Sweep).
+        // their escrows. After USD-Sweep / B1 the fee → VPFI math is
+        // unit-cancelled — `getAssetPrice(WETH)` already returns the
+        // numeraire-quoted ETH price, so no per-knob oracle conversion
+        // is needed (the per-knob `notificationFeeUsdOracle` was
+        // retired in Phase 1; the `INumeraireOracle` abstraction was
+        // retired in B1).
         uint256 notificationFee; // 0 ⇒ NOTIFICATION_FEE_DEFAULT (2e18)
-        // ── T-034 — Periodic Interest Payment config ──────────────────
+        // ── T-034 / B1 — Periodic Interest Payment config ─────────────
         // See docs/DesignsAndPlans/PeriodicInterestPaymentDesign.md §6.
         //
-        // Numeraire oracle. Decouples the principal threshold below
-        // from any specific currency. `address(0)` (the post-deploy
-        // default) means USD-as-numeraire — the threshold value is
-        // interpreted directly in 1e18-scaled USD units. A non-zero
-        // address must implement `INumeraireOracle.numeraireToUsdRate1e18()`
-        // returning how many USD (1e18-scaled) one unit of the numeraire
-        // is worth. The ONLY path to change this address is the atomic
-        // batched setter `ConfigFacet.setNumeraire(address, uint256)`,
-        // which simultaneously rewrites the threshold value in the new
-        // numeraire's units — guarantees by construction that the
-        // numeraire and threshold are never inconsistent.
-        address numeraireOracle; // 0 ⇒ USD-as-numeraire
+        // The numeraire identity is captured by the feed-side slots at
+        // the top-level Storage struct (`ethNumeraireFeed`,
+        // `numeraireChainlinkDenominator`, `numeraireSymbol`) — there
+        // is no longer a dedicated "numeraire oracle" contract. The
+        // post-USD-Sweep design has `OracleFacet.getAssetPrice` return
+        // numeraire-quoted prices natively; comparison sites compare
+        // numeraire-vs-numeraire without any boundary conversion.
         // Principal threshold for opting into a finer-than-mandatory
         // cadence. Stored in numeraire-units (1e18-scaled). 0 ⇒
         // PERIODIC_MIN_PRINCIPAL_FOR_FINER_CADENCE_DEFAULT. Range
@@ -573,14 +570,15 @@ library LibVaipakam {
         // is ready to activate the feature mesh-wide. See §10.1 of the
         // design doc for the full behavior matrix.
         bool periodicInterestEnabled;
-        // Independently gates the cross-numeraire batched setter
-        // `setNumeraire(address, uint256)`. Default `false` — a fresh
-        // deploy ships with USD-as-numeraire (`numeraireOracle == 0`)
-        // and governance cannot rotate to a different numeraire until
-        // this flag flips. Threshold-only updates via
-        // `setMinPrincipalForFinerCadence(uint256)` are NOT gated by
-        // this flag — governance can tune the threshold within the
-        // same numeraire freely. See §10.2 of the design doc.
+        // Independently gates the atomic batched `setNumeraire` setter.
+        // Default `false` — a fresh deploy ships USD-as-numeraire (the
+        // ETH/USD Chainlink feed pointed at by `s.ethNumeraireFeed`,
+        // empty `s.numeraireSymbol` interpreted as "usd") and
+        // governance cannot rotate to a different numeraire until this
+        // flag flips. Threshold-only updates via
+        // `setMinPrincipalForFinerCadence(uint256)` and the per-knob
+        // setters are NOT gated by this flag — governance can tune
+        // individual values within the same numeraire freely.
         bool numeraireSwapEnabled;
     }
 
