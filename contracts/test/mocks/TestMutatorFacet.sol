@@ -171,7 +171,7 @@ contract TestMutatorFacet {
     ///         reward-cap coverage tests exercise the §4 per-user cap
     ///         without cutting OracleAdminFacet into the harness.
     function setEthUsdFeedRaw(address feed) external {
-        LibVaipakam.storageSlot().ethUsdFeed = feed;
+        LibVaipakam.storageSlot().ethNumeraireFeed = feed;
     }
 
     /// @notice Test-only: stamp `s.wethContract` directly without going

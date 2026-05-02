@@ -142,7 +142,7 @@ contract OracleAdminFacetTest is SetupTest {
         assertEq(
             uint8(status),
             uint8(LibVaipakam.LiquidityStatus.Illiquid),
-            "ethUsdFeed=0 fail-closes to Illiquid"
+            "ethNumeraireFeed=0 fail-closes to Illiquid"
         );
     }
 

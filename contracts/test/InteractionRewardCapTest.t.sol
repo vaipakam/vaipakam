@@ -22,14 +22,14 @@ import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 ///
 ///         These tests DIRECTLY seed the ETH/USD Chainlink feed slot
 ///         via the test mutator so the cap branch engages — the broader
-///         {InteractionRewardsCoverageTest} suite leaves `ethUsdFeed`
+///         {InteractionRewardsCoverageTest} suite leaves `ethNumeraireFeed`
 ///         unset so it exercises the proportional (uncapped) path. The
 ///         cap helper fails open when the feed is unset, which keeps
 ///         the uncapped coverage valid without changes.
 contract InteractionRewardCapTest is SetupTest, IVaipakamErrors {
     VPFIToken internal vpfi;
     InteractionRewardsFacet internal interactionFacet;
-    MockChainlinkAggregator internal ethUsdFeed;
+    MockChainlinkAggregator internal ethNumeraireFeed;
 
     uint256 internal constant DIAMOND_SEED = 100_000_000 ether;
     // ETH/USD = $4,000 with 8-decimal feed.
@@ -65,12 +65,12 @@ contract InteractionRewardCapTest is SetupTest, IVaipakamErrors {
         });
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");
 
-        ethUsdFeed = new MockChainlinkAggregator(
+        ethNumeraireFeed = new MockChainlinkAggregator(
             ETH_USD_RAW,
             block.timestamp,
             ETH_USD_DEC
         );
-        _mut().setEthUsdFeedRaw(address(ethUsdFeed));
+        _mut().setEthUsdFeedRaw(address(ethNumeraireFeed));
 
         alice = makeAddr("alice");
         _facet().setInteractionLaunchTimestamp(block.timestamp);
@@ -298,7 +298,7 @@ contract InteractionRewardCapTest is SetupTest, IVaipakamErrors {
 
         // Force the mock to report a zero answer so the helper falls
         // through the `answer <= 0` guard.
-        ethUsdFeed.setAnswer(0);
+        ethNumeraireFeed.setAnswer(0);
 
         vm.warp(block.timestamp + 2 days + 1);
 

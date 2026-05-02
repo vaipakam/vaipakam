@@ -43,7 +43,7 @@ contract LiquidationMainnetForkTest is Test {
     address internal constant WETH = 0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2;
 
     // Chainlink ETH/USD aggregator on mainnet — used as the direct
-    // `ethUsdFeed` so `getAssetPrice(WETH)` resolves without needing an
+    // `ethNumeraireFeed` so `getAssetPrice(WETH)` resolves without needing an
     // asset/USD registry hop (the Feed Registry does not register WETH
     // as a USD-quoted asset; it is only reachable via the ETH alias).
     address internal constant ETH_USD_FEED =

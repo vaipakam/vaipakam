@@ -5,7 +5,14 @@ pragma solidity ^0.8.29;
 import {LibDiamond} from "@diamond-3/libraries/LibDiamond.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {ISanctionsList} from "../interfaces/ISanctionsList.sol";
-import {INumeraireOracle} from "../interfaces/INumeraireOracle.sol";
+// USD-Sweep / B1 (T-047 prep): the INumeraireOracle interface that
+// Phase 1+2 introduced for numeraire→USD boundary conversion is no
+// longer needed — `OracleFacet.getAssetPrice` now returns numeraire-
+// quoted prices directly via the renamed Chainlink slots
+// (ethNumeraireFeed, numeraireChainlinkDenominator, numeraireSymbol).
+// All comparison sites now compare numeraire-vs-numeraire, so the
+// boundary conversion that lived in `_convertNumeraireToUsd` /
+// `getKycTier{0,1}Threshold` is removed.
 
 /**
  * @title LibVaipakam
@@ -1133,7 +1140,16 @@ library LibVaipakam {
         address treasury; // Configurable treasury address
         address zeroExProxy; // 0x proxy for liquidations
         address allowanceTarget; // allowance target for 0x proxy protocol
-        address usdChainlinkDenominator; // Chainlink Feed Registry USD denominator (mainnet only)
+        address numeraireChainlinkDenominator; // Chainlink Feed Registry denominator constant for the active numeraire (Denominations.USD by default; rotates with the numeraire)
+        // T-034 USD-Sweep / B1 — symbol of the active numeraire used by
+        // the symbol-derived secondary oracles (Tellor / API3 / DIA). Stored
+        // as bytes32 (max 32 ASCII chars) for cheap on-chain comparison;
+        // governance writes lowercase ASCII (e.g. "usd", "eur", "xau").
+        // Empty bytes32 (post-deploy default before governance writes)
+        // is interpreted as "usd" in `_checkTellor` / `_checkApi3` /
+        // `_checkDIA` so the protocol behaves identically to the pre-
+        // sweep deploy out of the box.
+        bytes32 numeraireSymbol;
         address chainlnkRegistry; // Chainlink Feed Registry (mainnet only; address(0) on L2s)
         address wethContract; // Canonical WETH on the active network — v3-style AMM liquidity quote asset
         address uniswapV3Factory; // UNISWAP_V3_FACTORY
@@ -1597,14 +1613,14 @@ library LibVaipakam {
         // direct USD feed exists. On L2s where the Chainlink Feed
         // Registry is not deployed, `chainlnkRegistry` is address(0)
         // and both the USD and ETH Feed Registry lookups are skipped —
-        // pricing flows through the direct `ethUsdFeed` address for
+        // pricing flows through the direct `ethNumeraireFeed` address for
         // WETH and reverts with {NoPriceFeed} for other assets unless
         // the admin wires a per-asset direct feed (not yet exposed;
         // tracked in the follow-up).
         /// @dev AggregatorV3 address for ETH/USD (8 decimals). REQUIRED
         ///      for liquidity depth conversion and for pricing WETH
         ///      itself. Zero disables every ETH-quoted code path.
-        address ethUsdFeed;
+        address ethNumeraireFeed;
         /// @dev Chainlink Feed Registry ETH pseudo-address denominator
         ///      (mainnet: 0x0000...0000000EeeeE...). Used by
         ///      getAssetPrice to look up asset/ETH feeds as the USD
@@ -1849,7 +1865,7 @@ library LibVaipakam {
         ///      unit of account, e.g. BNB / Polygon mainnet). Single
         ///      governance write per chain — adding new collateral
         ///      assets never touches this slot.
-        bytes32 pythNumeraireFeedId;
+        bytes32 pythCrossCheckFeedId;
         /// @dev Maximum acceptable staleness (in seconds) for the
         ///      Pyth numeraire snapshot. Beyond this, the gate soft-
         ///      skips (treats Pyth as unavailable for this read);
@@ -1860,12 +1876,12 @@ library LibVaipakam {
         /// @dev Maximum tolerated divergence between Chainlink ETH/USD
         ///      and Pyth ETH/USD, in basis points (1 bp = 0.01%).
         ///      Beyond this, the price view fails-closed
-        ///      (`OracleNumeraireDivergence`). Bounded to
+        ///      (`OracleCrossCheckDivergence`). Bounded to
         ///      `[PYTH_NUMERAIRE_MAX_DEVIATION_BPS_MIN,
         ///      PYTH_NUMERAIRE_MAX_DEVIATION_BPS_MAX]` by the setter
         ///      so a misconfig can't accidentally halt the protocol
         ///      (zero) or effectively disable the gate (≥ 100%).
-        uint16 pythNumeraireMaxDeviationBps;
+        uint16 pythCrossCheckMaxDeviationBps;
         /// @dev Maximum tolerated Pyth confidence fraction
         ///      (`conf / price`) in basis points. When the published
         ///      uncertainty exceeds this, the gate soft-skips Pyth
@@ -1964,7 +1980,7 @@ library LibVaipakam {
     // max)` error so failed governance proposals surface clearly.
 
     /// @dev Default deviation between Chainlink and Pyth ETH/USD
-    ///      that's tolerated before {OracleNumeraireDivergence}
+    ///      that's tolerated before {OracleCrossCheckDivergence}
     ///      fires: 5%. Pyth and Chainlink can naturally drift this
     ///      far in fast markets without either being compromised.
     uint16 internal constant PYTH_NUMERAIRE_MAX_DEVIATION_BPS_DEFAULT = 500;
@@ -2134,45 +2150,24 @@ library LibVaipakam {
         s.userCountry[user] = country;
     }
 
-    /// @dev Returns the KYC Tier-0 threshold IN USD-1e18 — converted at
-    ///      the boundary from the numeraire-denominated storage value
-    ///      via the global `numeraireOracle`. Comparison sites
-    ///      (`OfferFacet`, `RiskFacet`, `DefaultedFacet`) compute
-    ///      `valueUSD` from Chainlink (which quotes in USD) and compare
-    ///      against this return value as USD; performing the conversion
-    ///      here keeps every consumer USD-typed without burdening them
-    ///      with the numeraire abstraction. USD-Sweep Phase 2.
-    /// @return threshold USD threshold scaled to 1e18.
+    /// @dev Returns the KYC Tier-0 threshold in NUMERAIRE-units (1e18-
+    ///      scaled). After USD-Sweep / B1, `OracleFacet.getAssetPrice`
+    ///      returns numeraire-quoted prices directly, so comparison
+    ///      sites (`OfferFacet`, `RiskFacet`, `DefaultedFacet`) compute
+    ///      `valueNumeraire` and compare against this return value
+    ///      numeraire-vs-numeraire. The boundary conversion that lived
+    ///      here under Phase 2 is removed — the numeraire abstraction
+    ///      moved up to the oracle layer.
     function getKycTier0Threshold() internal view returns (uint256 threshold) {
         uint256 v = storageSlot().kycTier0ThresholdNumeraire;
-        uint256 numeraireValue = v == 0 ? KYC_TIER0_THRESHOLD_NUMERAIRE : v;
-        return _convertNumeraireToUsd(numeraireValue);
+        return v == 0 ? KYC_TIER0_THRESHOLD_NUMERAIRE : v;
     }
 
-    /// @dev Returns the KYC Tier-1 threshold IN USD-1e18 — same
-    ///      numeraire-to-USD conversion shape as Tier-0 above.
-    ///      USD-Sweep Phase 2.
-    /// @return threshold USD threshold scaled to 1e18.
+    /// @dev Returns the KYC Tier-1 threshold in NUMERAIRE-units (1e18-
+    ///      scaled). Same shape as Tier-0 above. USD-Sweep / B1.
     function getKycTier1Threshold() internal view returns (uint256 threshold) {
         uint256 v = storageSlot().kycTier1ThresholdNumeraire;
-        uint256 numeraireValue = v == 0 ? KYC_TIER1_THRESHOLD_NUMERAIRE : v;
-        return _convertNumeraireToUsd(numeraireValue);
-    }
-
-    /// @dev Converts a numeraire-denominated 1e18-scaled value to USD-
-    ///      1e18 via the global `numeraireOracle`. Returns the input
-    ///      unchanged when the oracle is unset (USD-as-numeraire — the
-    ///      post-deploy default). USD-Sweep Phase 2.
-    function _convertNumeraireToUsd(uint256 numeraireValue1e18)
-        private
-        view
-        returns (uint256)
-    {
-        address oracle = storageSlot().protocolCfg.numeraireOracle;
-        if (oracle == address(0)) return numeraireValue1e18;
-        uint256 rate = INumeraireOracle(oracle).numeraireToUsdRate1e18();
-        if (rate == 0) return 0;
-        return (numeraireValue1e18 * rate) / 1e18;
+        return v == 0 ? KYC_TIER1_THRESHOLD_NUMERAIRE : v;
     }
 
     /// @dev Returns the effective per-user daily interaction-reward cap
@@ -2601,7 +2596,7 @@ library LibVaipakam {
     ) internal {
         LibDiamond.enforceIsContractOwner();
         Storage storage s = storageSlot();
-        s.usdChainlinkDenominator = newUsdChainlinkDenominator;
+        s.numeraireChainlinkDenominator = newUsdChainlinkDenominator;
     }
 
     /// @dev Set the Chainlink Feed Registry contract used by OracleFacet.
@@ -2633,7 +2628,7 @@ library LibVaipakam {
     function setEthUsdFeed(address newEthUsdFeed) internal {
         LibDiamond.enforceIsContractOwner();
         Storage storage s = storageSlot();
-        s.ethUsdFeed = newEthUsdFeed;
+        s.ethNumeraireFeed = newEthUsdFeed;
     }
 
     /// @dev Set the Chainlink Feed Registry ETH-denominator pseudo-address
@@ -2939,11 +2934,11 @@ library LibVaipakam {
     ///         soft-skip semantics as a zero `pythOracle`); non-zero
     ///         values are accepted as-is. The price-read path
     ///         catches a mis-identified feed via the deviation gate.
-    function setPythNumeraireFeedId(bytes32 feedId) internal {
+    function setPythCrossCheckFeedId(bytes32 feedId) internal {
         LibDiamond.enforceIsContractOwner();
         Storage storage s = storageSlot();
-        bytes32 prev = s.pythNumeraireFeedId;
-        s.pythNumeraireFeedId = feedId;
+        bytes32 prev = s.pythCrossCheckFeedId;
+        s.pythCrossCheckFeedId = feedId;
         emit PythNumeraireFeedIdSet(prev, feedId);
     }
 
@@ -2978,22 +2973,22 @@ library LibVaipakam {
     ///         basis points. Bounded to
     ///         `[PYTH_NUMERAIRE_MAX_DEVIATION_BPS_MIN,
     ///         PYTH_NUMERAIRE_MAX_DEVIATION_BPS_MAX]`.
-    function setPythNumeraireMaxDeviationBps(uint16 bps) internal {
+    function setPythCrossCheckMaxDeviationBps(uint16 bps) internal {
         LibDiamond.enforceIsContractOwner();
         if (
             bps < PYTH_NUMERAIRE_MAX_DEVIATION_BPS_MIN ||
             bps > PYTH_NUMERAIRE_MAX_DEVIATION_BPS_MAX
         ) {
             revert IVaipakamErrors.ParameterOutOfRange(
-                "pythNumeraireMaxDeviationBps",
+                "pythCrossCheckMaxDeviationBps",
                 uint256(bps),
                 uint256(PYTH_NUMERAIRE_MAX_DEVIATION_BPS_MIN),
                 uint256(PYTH_NUMERAIRE_MAX_DEVIATION_BPS_MAX)
             );
         }
         Storage storage s = storageSlot();
-        uint16 prev = s.pythNumeraireMaxDeviationBps;
-        s.pythNumeraireMaxDeviationBps = bps;
+        uint16 prev = s.pythCrossCheckMaxDeviationBps;
+        s.pythCrossCheckMaxDeviationBps = bps;
         emit PythNumeraireMaxDeviationBpsSet(prev, bps);
     }
 
@@ -3029,12 +3024,12 @@ library LibVaipakam {
     /// @notice Read the effective Pyth deviation tolerance — falls
     ///         back to the package default when no value is
     ///         configured.
-    function effectivePythNumeraireMaxDeviationBps()
+    function effectivePythCrossCheckMaxDeviationBps()
         internal
         view
         returns (uint16)
     {
-        uint16 v = storageSlot().pythNumeraireMaxDeviationBps;
+        uint16 v = storageSlot().pythCrossCheckMaxDeviationBps;
         return v == 0 ? PYTH_NUMERAIRE_MAX_DEVIATION_BPS_DEFAULT : v;
     }
 

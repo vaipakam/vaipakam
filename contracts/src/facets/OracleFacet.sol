@@ -33,10 +33,10 @@ import {IPyth} from "../interfaces/IPyth.sol";
  *      ── Price retrieval (hybrid) ──
  *      {getAssetPrice} prefers a direct asset/USD feed and falls back to
  *      asset/ETH × ETH/USD only when no direct USD feed is available:
- *        - WETH itself: priced from `ethUsdFeed` directly; no pool check.
+ *        - WETH itself: priced from `ethNumeraireFeed` directly; no pool check.
  *        - Other assets (primary): Chainlink Feed Registry getFeed(asset, USD).
  *        - Other assets (fallback): Chainlink Feed Registry
- *          getFeed(asset, ETH) × latestRoundData(ethUsdFeed).
+ *          getFeed(asset, ETH) × latestRoundData(ethNumeraireFeed).
  *
  *      ── Stablecoin peg-aware staleness ──
  *      Feeds older than {ORACLE_VOLATILE_STALENESS} (2h) but inside
@@ -61,13 +61,13 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
     error InsufficientLiquidity();
     /// @notice T-033 — Chainlink ETH/USD and Pyth ETH/USD diverged
     ///         beyond the governance-tunable
-    ///         `pythNumeraireMaxDeviationBps`. Fail-closed: a
+    ///         `pythCrossCheckMaxDeviationBps`. Fail-closed: a
     ///         numeraire reading the protocol can't agree on between
     ///         two independent oracles is a strong signal that one
     ///         of them has been compromised; we'd rather block
     ///         protocol ops than accept a price the system itself
     ///         can't trust.
-    error OracleNumeraireDivergence(
+    error OracleCrossCheckDivergence(
         uint256 chainlinkPrice,
         uint256 pythPrice,
         uint256 deviationBps,
@@ -141,7 +141,7 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
 
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         address weth = s.wethContract;
-        address ethFeed = s.ethUsdFeed;
+        address ethFeed = s.ethNumeraireFeed;
         if (weth == address(0) || ethFeed == address(0)) {
             return LibVaipakam.LiquidityStatus.Illiquid;
         }
@@ -260,7 +260,7 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
     /**
      * @notice Gets the USD price of an asset (scaled by feed decimals).
      * @dev Hybrid resolution:
-     *        1. WETH → direct {ethUsdFeed}.
+     *        1. WETH → direct {ethNumeraireFeed}.
      *        2. Other: try asset/USD via Feed Registry (preferred).
      *        3. Fallback: asset/ETH via Feed Registry × ETH/USD.
      *      All paths honour the 2h volatile / 25h stable-peg staleness
@@ -300,7 +300,7 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
 
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         address weth = s.wethContract;
-        address ethFeed = s.ethUsdFeed;
+        address ethFeed = s.ethNumeraireFeed;
 
         // WETH → read ETH/USD directly.
         if (asset != address(0) && asset == weth) {
@@ -310,13 +310,13 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
             // Chainlink ETH/USD reading against Pyth's snapshot.
             // Soft-skips if Pyth is unset / stale / low-confidence;
             // reverts on divergence beyond tolerance.
-            _validatePythNumeraire(p, d);
+            _validatePythCrossCheck(p, d);
             return (p, d);
         }
 
         // Primary: asset/USD via Feed Registry.
         address registry = s.chainlnkRegistry;
-        address usdDenom = s.usdChainlinkDenominator;
+        address usdDenom = s.numeraireChainlinkDenominator;
         if (registry != address(0) && usdDenom != address(0)) {
             AggregatorV3Interface feed = _registryFeed(registry, asset, usdDenom);
             if (address(feed) != address(0)) {
@@ -343,7 +343,7 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
                 // direct WETH branch: the load-bearing leg of this
                 // fallback is `ethPerUsd`, so cross-validate it
                 // against Pyth before composing.
-                _validatePythNumeraire(ethPerUsd, ethDec);
+                _validatePythCrossCheck(ethPerUsd, ethDec);
                 uint256 combined = (assetPerEth * ethPerUsd) / (10 ** assetPerEthDec);
                 return (combined, ethDec);
             }
@@ -361,7 +361,7 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
     ///
     ///      Soft-skip cases (gate degrades to Chainlink-only):
     ///        - `pythOracle` unset (governance-disabled).
-    ///        - `pythNumeraireFeedId` unset (governance-disabled at
+    ///        - `pythCrossCheckFeedId` unset (governance-disabled at
     ///          the feed-id layer).
     ///        - `getPriceUnsafe` reverts (Pyth contract misbehaves /
     ///          missing on this chain).
@@ -374,15 +374,15 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
     ///      Hard-fail case:
     ///        - `|chainlinkPx - pythPx| / chainlinkPx >
     ///          maxDeviationBps`. Reverts with
-    ///          {OracleNumeraireDivergence} so the caller surfaces a
+    ///          {OracleCrossCheckDivergence} so the caller surfaces a
     ///          structured error instead of a generic price-failure.
-    function _validatePythNumeraire(
+    function _validatePythCrossCheck(
         uint256 chainlinkPrice,
         uint8 chainlinkDecimals
     ) private view {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         address pyth = s.pythOracle;
-        bytes32 feedId = s.pythNumeraireFeedId;
+        bytes32 feedId = s.pythCrossCheckFeedId;
         if (pyth == address(0) || feedId == bytes32(0)) return;
 
         IPyth.Price memory snap;
@@ -425,9 +425,9 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
             ? chainlinkPrice - pythScaled
             : pythScaled - chainlinkPrice;
         uint256 deviationBps = (absDelta * LibVaipakam.BASIS_POINTS) / chainlinkPrice;
-        uint256 maxDev = uint256(LibVaipakam.effectivePythNumeraireMaxDeviationBps());
+        uint256 maxDev = uint256(LibVaipakam.effectivePythCrossCheckMaxDeviationBps());
         if (deviationBps > maxDev) {
-            revert OracleNumeraireDivergence(
+            revert OracleCrossCheckDivergence(
                 chainlinkPrice,
                 pythScaled,
                 deviationBps,
@@ -540,8 +540,13 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
         if (!symOk) return SecondaryStatus.Unavailable;
         string memory lower = _toLower(symbol);
 
+        // T-034 USD-Sweep / B1: lower-case numeraire symbol from
+        // storage (e.g. "usd", "eur", "xau"). Empty bytes32 default
+        // is interpreted as "usd" so the post-deploy behaviour is
+        // unchanged out of the box.
+        string memory numerLower = _numeraireLowerSymbol();
         bytes32 queryId = keccak256(
-            abi.encode("SpotPrice", abi.encode(lower, "usd"))
+            abi.encode("SpotPrice", abi.encode(lower, numerLower))
         );
         bytes memory raw;
         uint256 reportedAt;
@@ -580,7 +585,9 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
         if (!symOk) return SecondaryStatus.Unavailable;
         string memory upper = _toUpper(symbol);
 
-        bytes memory packed = abi.encodePacked(upper, "/USD");
+        // T-034 USD-Sweep / B1: dAPI name uses the active numeraire's
+        // upper-case symbol from storage (default "USD").
+        bytes memory packed = abi.encodePacked(upper, "/", _numeraireUpperSymbol());
         if (packed.length > 32) return SecondaryStatus.Unavailable;
         bytes32 dapiName;
         for (uint256 i = 0; i < packed.length; ++i) {
@@ -621,7 +628,9 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
 
         (string memory symbol, bool symOk) = _safeSymbol(asset);
         if (!symOk) return SecondaryStatus.Unavailable;
-        string memory key = string(abi.encodePacked(_toUpper(symbol), "/USD"));
+        // T-034 USD-Sweep / B1: DIA key uses the active numeraire's
+        // upper-case symbol from storage (default "USD").
+        string memory key = string(abi.encodePacked(_toUpper(symbol), "/", _numeraireUpperSymbol()));
 
         uint128 value;
         uint128 reportedAt;
@@ -641,6 +650,37 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
         uint256 secondary = _rescale(uint256(value), 8, primaryDec);
         if (secondary == 0) return SecondaryStatus.Unavailable;
         return _classifyDeviation(primaryPrice, secondary);
+    }
+
+    /// @dev T-034 USD-Sweep / B1 — read the numeraire symbol from
+    ///      storage and convert to a lowercase Solidity string for
+    ///      the symbol-derived secondary oracle query construction.
+    ///      Empty bytes32 (governance never wrote the slot) defaults
+    ///      to "usd" so the post-deploy behaviour matches the
+    ///      pre-sweep deploy out of the box. The bytes32 is assumed
+    ///      to already be lowercase ASCII (governance writes it that
+    ///      way); we walk to the first null byte and emit a string of
+    ///      that length. No reverse-case-fold needed.
+    function _numeraireLowerSymbol() private view returns (string memory) {
+        bytes32 raw = LibVaipakam.storageSlot().numeraireSymbol;
+        if (raw == bytes32(0)) return "usd";
+        // Walk to the first null byte (max length 32).
+        uint256 len;
+        for (len = 0; len < 32; ++len) {
+            if (raw[len] == 0) break;
+        }
+        bytes memory out = new bytes(len);
+        for (uint256 i = 0; i < len; ++i) {
+            out[i] = raw[i];
+        }
+        return string(out);
+    }
+
+    /// @dev T-034 USD-Sweep / B1 — uppercase variant for API3 / DIA
+    ///      query construction. Reuses `_numeraireLowerSymbol` then
+    ///      upper-cases via the existing `_toUpper` helper.
+    function _numeraireUpperSymbol() private view returns (string memory) {
+        return _toUpper(_numeraireLowerSymbol());
     }
 
     /// @dev Classify a (primary, secondary) pair as Agree or Disagree

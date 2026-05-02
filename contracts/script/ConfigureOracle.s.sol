@@ -85,7 +85,7 @@ contract ConfigureOracle is Script {
         address diamond = Deployments.readDiamond();
         address weth = _resolveAddressStrict("WETH_ADDRESS");
         address uniV3Factory = _resolveAddressStrict("UNISWAP_V3_FACTORY");
-        address ethUsdFeed = _resolveAddressStrict("ETH_USD_FEED");
+        address ethNumeraireFeed = _resolveAddressStrict("ETH_USD_FEED");
         // Chainlink Denominations library sentinels — chain-agnostic, but
         // we let each env decide to allow forks to stub them out.
         address usdDenom = _resolveAddressStrict("USD_DENOMINATOR");
@@ -102,7 +102,7 @@ contract ConfigureOracle is Script {
         console.log("Diamond:               ", diamond);
         console.log("WETH:                  ", weth);
         console.log("UniV3 Factory:         ", uniV3Factory);
-        console.log("ETH/USD feed:          ", ethUsdFeed);
+        console.log("ETH/USD feed:          ", ethNumeraireFeed);
         console.log("USD denom:             ", usdDenom);
         console.log("ETH denom:             ", ethDenom);
         console.log("Sequencer uptime feed: ", sequencerFeed);
@@ -166,7 +166,7 @@ contract ConfigureOracle is Script {
         oa.setUsdChainlinkDenominator(usdDenom);
         oa.setEthChainlinkDenominator(ethDenom);
         oa.setWethContract(weth);
-        oa.setEthUsdFeed(ethUsdFeed);
+        oa.setEthUsdFeed(ethNumeraireFeed);
         oa.setUniswapV3Factory(uniV3Factory);
         oa.setSequencerUptimeFeed(sequencerFeed);
         if (feedRegistry != address(0)) {

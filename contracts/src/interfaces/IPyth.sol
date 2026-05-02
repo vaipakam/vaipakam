@@ -13,7 +13,7 @@ pragma solidity ^0.8.29;
  *        - That single feed is consulted as a sanity gate alongside
  *          the existing Chainlink WETH/USD reading. A divergence
  *          beyond the governance-tunable
- *          `pythNumeraireMaxDeviationBps` reverts the price view
+ *          `pythCrossCheckMaxDeviationBps` reverts the price view
  *          (fail-closed); staleness or low-confidence Pyth data is
  *          treated as "Pyth unavailable" — the gate soft-skips.
  *

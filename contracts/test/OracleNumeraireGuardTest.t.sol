@@ -50,7 +50,7 @@ contract MockPyth is IPyth {
 /**
  * @title OracleNumeraireGuardTest
  * @notice T-033 — exercises the Pyth-as-numeraire-redundancy gate
- *         on `OracleFacet._validatePythNumeraire` AND the bounded-
+ *         on `OracleFacet._validatePythCrossCheck` AND the bounded-
  *         range setters on `OracleAdminFacet`.
  *
  *         Ten scenarios:
@@ -89,11 +89,11 @@ contract OracleNumeraireGuardTest is SetupTest {
         bytes4[] memory selectors = new bytes4[](10);
         selectors[0] = OracleAdminFacet.setPythOracle.selector;
         selectors[1] = OracleAdminFacet.getPythOracle.selector;
-        selectors[2] = OracleAdminFacet.setPythNumeraireFeedId.selector;
+        selectors[2] = OracleAdminFacet.setPythCrossCheckFeedId.selector;
         selectors[3] = OracleAdminFacet.getPythNumeraireFeedId.selector;
         selectors[4] = OracleAdminFacet.setPythMaxStalenessSeconds.selector;
         selectors[5] = OracleAdminFacet.getPythMaxStalenessSeconds.selector;
-        selectors[6] = OracleAdminFacet.setPythNumeraireMaxDeviationBps.selector;
+        selectors[6] = OracleAdminFacet.setPythCrossCheckMaxDeviationBps.selector;
         selectors[7] = OracleAdminFacet.getPythNumeraireMaxDeviationBps.selector;
         selectors[8] = OracleAdminFacet.setPythConfidenceMaxBps.selector;
         selectors[9] = OracleAdminFacet.getPythConfidenceMaxBps.selector;
@@ -111,32 +111,32 @@ contract OracleNumeraireGuardTest is SetupTest {
 
     // ─── 1-2. Deviation-BPS bounds ──────────────────────────────────────────
 
-    function test_setPythNumeraireMaxDeviationBps_RevertsBelowFloor() public {
+    function test_setPythCrossCheckMaxDeviationBps_RevertsBelowFloor() public {
         uint16 belowFloor = LibVaipakam.PYTH_NUMERAIRE_MAX_DEVIATION_BPS_MIN - 1;
         vm.expectRevert(
             abi.encodeWithSelector(
                 IVaipakamErrors.ParameterOutOfRange.selector,
-                bytes32("pythNumeraireMaxDeviationBps"),
+                bytes32("pythCrossCheckMaxDeviationBps"),
                 uint256(belowFloor),
                 uint256(LibVaipakam.PYTH_NUMERAIRE_MAX_DEVIATION_BPS_MIN),
                 uint256(LibVaipakam.PYTH_NUMERAIRE_MAX_DEVIATION_BPS_MAX)
             )
         );
-        OracleAdminFacet(address(diamond)).setPythNumeraireMaxDeviationBps(belowFloor);
+        OracleAdminFacet(address(diamond)).setPythCrossCheckMaxDeviationBps(belowFloor);
     }
 
-    function test_setPythNumeraireMaxDeviationBps_RevertsAboveCeiling() public {
+    function test_setPythCrossCheckMaxDeviationBps_RevertsAboveCeiling() public {
         uint16 aboveCeil = LibVaipakam.PYTH_NUMERAIRE_MAX_DEVIATION_BPS_MAX + 1;
         vm.expectRevert(
             abi.encodeWithSelector(
                 IVaipakamErrors.ParameterOutOfRange.selector,
-                bytes32("pythNumeraireMaxDeviationBps"),
+                bytes32("pythCrossCheckMaxDeviationBps"),
                 uint256(aboveCeil),
                 uint256(LibVaipakam.PYTH_NUMERAIRE_MAX_DEVIATION_BPS_MIN),
                 uint256(LibVaipakam.PYTH_NUMERAIRE_MAX_DEVIATION_BPS_MAX)
             )
         );
-        OracleAdminFacet(address(diamond)).setPythNumeraireMaxDeviationBps(aboveCeil);
+        OracleAdminFacet(address(diamond)).setPythCrossCheckMaxDeviationBps(aboveCeil);
     }
 
     // ─── 3-4. Staleness bounds ──────────────────────────────────────────────
@@ -207,11 +207,11 @@ contract OracleNumeraireGuardTest is SetupTest {
         a.setPythOracle(address(pyth));
         assertEq(a.getPythOracle(), address(pyth));
 
-        a.setPythNumeraireFeedId(ETH_USD_FEED_ID);
+        a.setPythCrossCheckFeedId(ETH_USD_FEED_ID);
         assertEq(a.getPythNumeraireFeedId(), ETH_USD_FEED_ID);
 
         // Pick a value clearly inside each range.
-        a.setPythNumeraireMaxDeviationBps(500); // 5%
+        a.setPythCrossCheckMaxDeviationBps(500); // 5%
         assertEq(a.getPythNumeraireMaxDeviationBps(), 500);
 
         a.setPythMaxStalenessSeconds(300); // 5 min
@@ -225,8 +225,8 @@ contract OracleNumeraireGuardTest is SetupTest {
         OracleAdminFacet a = OracleAdminFacet(address(diamond));
 
         // Each setter accepts exactly the floor + the ceiling.
-        a.setPythNumeraireMaxDeviationBps(LibVaipakam.PYTH_NUMERAIRE_MAX_DEVIATION_BPS_MIN);
-        a.setPythNumeraireMaxDeviationBps(LibVaipakam.PYTH_NUMERAIRE_MAX_DEVIATION_BPS_MAX);
+        a.setPythCrossCheckMaxDeviationBps(LibVaipakam.PYTH_NUMERAIRE_MAX_DEVIATION_BPS_MIN);
+        a.setPythCrossCheckMaxDeviationBps(LibVaipakam.PYTH_NUMERAIRE_MAX_DEVIATION_BPS_MAX);
 
         a.setPythMaxStalenessSeconds(LibVaipakam.PYTH_MAX_STALENESS_MIN_SECONDS);
         a.setPythMaxStalenessSeconds(LibVaipakam.PYTH_MAX_STALENESS_MAX_SECONDS);
@@ -265,11 +265,11 @@ contract OracleNumeraireGuardTest is SetupTest {
         vm.expectRevert();
         OracleAdminFacet(address(diamond)).setPythOracle(address(pyth));
         vm.expectRevert();
-        OracleAdminFacet(address(diamond)).setPythNumeraireFeedId(ETH_USD_FEED_ID);
+        OracleAdminFacet(address(diamond)).setPythCrossCheckFeedId(ETH_USD_FEED_ID);
         vm.expectRevert();
         OracleAdminFacet(address(diamond)).setPythMaxStalenessSeconds(300);
         vm.expectRevert();
-        OracleAdminFacet(address(diamond)).setPythNumeraireMaxDeviationBps(500);
+        OracleAdminFacet(address(diamond)).setPythCrossCheckMaxDeviationBps(500);
         vm.expectRevert();
         OracleAdminFacet(address(diamond)).setPythConfidenceMaxBps(100);
         vm.stopPrank();

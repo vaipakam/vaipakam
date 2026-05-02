@@ -983,7 +983,7 @@ library LibInteractionRewards {
         view
         returns (uint256 price, uint8 feedDec)
     {
-        address feed = LibVaipakam.storageSlot().ethUsdFeed;
+        address feed = LibVaipakam.storageSlot().ethNumeraireFeed;
         if (feed == address(0)) return (0, 0);
 
         int256 answer;

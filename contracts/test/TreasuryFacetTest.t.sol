@@ -87,7 +87,7 @@ contract TreasuryFacetTest is Test {
         // Storage layout (from LibVaipakam.sol):
         // slot+0: nextOfferId, +1: nextLoanId, +2: nextTokenId
         // +3: vaipakamEscrowTemplate, +4: treasury, +5: zeroExProxy
-        // +6: allowanceTarget, +7: usdChainlinkDenominator, +8: chainlnkRegistry
+        // +6: allowanceTarget, +7: numeraireChainlinkDenominator, +8: chainlnkRegistry
         // +9: usdtContract, +10: uniswapV3Factory, +11: diamondAddress
         // +12: loanToSaleOfferId mapping, +13: offers mapping, +14: loans mapping
         // +15: userEscrows mapping, +16: liquidAssets mapping, +17: assetRiskParams mapping

@@ -49,7 +49,7 @@ interface IVaipakamErrors {
     ///         write because the new value sits outside its
     ///         compiled-in min/max range. The `name` is a short
     ///         bytes32 tag for the parameter (e.g.
-    ///         `bytes32("pythNumeraireMaxDeviationBps")`) so callers
+    ///         `bytes32("pythCrossCheckMaxDeviationBps")`) so callers
     ///         can disambiguate without parsing reverts. Used as the
     ///         shared "every governance knob is bounded" error —
     ///         even a compromised admin / governance multisig can't

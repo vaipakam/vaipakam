@@ -73,7 +73,7 @@ contract SecondaryQuorumTest is Test {
         mockRegistry = makeAddr("registry");
         mockFeed = makeAddr("feed");
         mockWeth = makeAddr("weth");
-        mockEthUsdFeed = makeAddr("ethUsdFeed");
+        mockEthUsdFeed = makeAddr("ethNumeraireFeed");
         mockDenom = makeAddr("denom");
 
         mockTellor = makeAddr("tellor");
