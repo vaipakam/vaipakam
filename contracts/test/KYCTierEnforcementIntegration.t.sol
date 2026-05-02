@@ -35,7 +35,7 @@ import {ERC20Mock} from "./mocks/ERC20Mock.sol";
  *
  *         Each rung is exercised via the full offer → accept path so the
  *         test doubles as a regression guard for `OfferFacet.acceptOffer`
- *         and `_calculateTransactionValueUSD`, not just the
+ *         and `_calculateTransactionValueNumeraire`, not just the
  *         `ProfileFacet.meetsKYCRequirement` view (which has unit-level
  *         coverage).
  *
@@ -56,13 +56,14 @@ contract KYCTierEnforcementIntegration is Test {
     uint256 constant RATE_BPS = 500;
 
     // Priced at $1 / 1 USDC and $2000 / 1 WETH below. The transaction-value
-    // calculation sums BOTH legs (principal + collateral) in USD, so the
-    // collateral leg is kept deliberately tiny so that the principal
-    // dominates the threshold math. With COLLATERAL_ERC20 = 0.05 ether the
-    // collateral contributes a flat ~$100 to valueUSD regardless of band:
-    //   400   USDC principal → valueUSD ≈ $500   (under $1k → Tier-0 ok)
-    //   2,500 USDC principal → valueUSD ≈ $2,600 (requires Tier-1)
-    //   15,000 USDC principal → valueUSD ≈ $15,100 (requires Tier-2)
+    // calculation sums BOTH legs (principal + collateral) in the active
+    // numeraire (USD by post-deploy default), so the collateral leg is kept
+    // deliberately tiny so that the principal dominates the threshold math.
+    // With COLLATERAL_ERC20 = 0.05 ether the collateral contributes a flat
+    // ~$100 to valueNumeraire regardless of band:
+    //   400   USDC principal → valueNumeraire ≈ $500   (under $1k → Tier-0 ok)
+    //   2,500 USDC principal → valueNumeraire ≈ $2,600 (requires Tier-1)
+    //   15,000 USDC principal → valueNumeraire ≈ $15,100 (requires Tier-2)
     // HF is oracle-mocked to 2.0 so the small collateral doesn't fail the
     // Health-Factor gate at acceptOffer.
     uint256 constant PRINCIPAL_UNDER_TIER0 = 400 ether;

@@ -49,7 +49,7 @@ contract CheckSelectors is Script {
         selectors[4] = OfferFacet.getUserEscrow.selector;
         // selectors[5] = OfferFacet._simulateLTV.selector;
         // selectors[6] = OfferFacet._calculateCurrentBorrowBalance.selector;
-        // selectors[7] = OfferFacet._calculateTransactionValueUSD.selector;
+        // selectors[7] = OfferFacet._calculateTransactionValueNumeraire.selector;
         // Add more if needed, e.g., selectors[4] = OfferFacet.tokenURI.selector;
     }
 

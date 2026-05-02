@@ -324,7 +324,7 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
      *      literally does not execute in the fallback case because the DEX call
      *      reverts before any collateral leaves the diamond.
      *      Deducts liqBonusBps to liquidator, remainder to lender on success.
-     *      Requires KYC for liquidator if bonusUSD > threshold.
+     *      Requires KYC for liquidator if bonusNumeraire > threshold.
      *      Updates loan to Defaulted, marks NFTs Claimable.
      *      Emits HFLiquidationTriggered on success, LiquidationFallback on fallback.
      * @param loanId The loan ID to liquidate.
@@ -461,8 +461,8 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
         (uint256 price, uint8 feedDecimals) = OracleFacet(address(this))
             .getAssetPrice(loan.principalAsset);
         uint8 tokenDecimals = IERC20Metadata(loan.principalAsset).decimals();
-        uint256 bonusUSD = (bonus * price * 1e18) / (10 ** feedDecimals) / (10 ** tokenDecimals);
-        if (!ProfileFacet(address(this)).meetsKYCRequirement(msg.sender, bonusUSD))
+        uint256 bonusNumeraire = (bonus * price * 1e18) / (10 ** feedDecimals) / (10 ** tokenDecimals);
+        if (!ProfileFacet(address(this)).meetsKYCRequirement(msg.sender, bonusNumeraire))
             revert KYCRequired();
 
         // Liquidation bonus transferred to liquidator immediately
@@ -667,9 +667,9 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
     //     // KYC check for liquidator if high value
     //     (uint256 price, uint8 decimals) = OracleFacet(address(this))
     //         .getAssetPrice(loan.principalAsset);
-    //     uint256 bonusUSD = (bonus * price) / (10 ** decimals);
+    //     uint256 bonusNumeraire = (bonus * price) / (10 ** decimals);
     //     if (
-    //         bonusUSD > LibVaipakam.KYC_TIER1_THRESHOLD_NUMERAIRE &&
+    //         bonusNumeraire > LibVaipakam.KYC_TIER1_THRESHOLD_NUMERAIRE &&
     //         !ProfileFacet(address(this)).isKYCVerified(msg.sender)
     //     ) revert KYCRequired();
 

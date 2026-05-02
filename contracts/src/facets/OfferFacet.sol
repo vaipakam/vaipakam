@@ -881,7 +881,8 @@ contract OfferFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
      * @dev Compliance gates (in order): country pair via
      *      {LibVaipakam.canTradeBetween}; liquidity re-check with mutual
      *      illiquid consent; tiered KYC via
-     *      {ProfileFacet.meetsKYCRequirement} on the transaction USD value.
+     *      {ProfileFacet.meetsKYCRequirement} on the transaction
+     *      numeraire-quoted value.
      *
      *      Asset flow:
      *        - ERC-20 loan: lender escrow → borrower principal transfer;
@@ -1157,10 +1158,10 @@ contract OfferFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
         }
 
         // Tiered KYC check based on transaction value (per README Section 16)
-        uint256 valueUSD = _calculateTransactionValueUSD(offer);
+        uint256 valueNumeraire = _calculateTransactionValueNumeraire(offer);
         if (
-            !ProfileFacet(address(this)).meetsKYCRequirement(offer.creator, valueUSD) ||
-            !ProfileFacet(address(this)).meetsKYCRequirement(acceptor, valueUSD)
+            !ProfileFacet(address(this)).meetsKYCRequirement(offer.creator, valueNumeraire) ||
+            !ProfileFacet(address(this)).meetsKYCRequirement(acceptor, valueNumeraire)
         ) {
             revert KYCRequired();
         }
@@ -1775,12 +1776,15 @@ contract OfferFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
         return (proxy);
     }
 
-    // New Internal: Calculate transaction value in USD for KYC (liquid parts only)
-    /// @dev Value = (lent amount if liquid * price) + (collateral amount if liquid * price). For NFTs, rental value = amount * durationDays if liquid (but NFTs illiquid, $0).
-    ///      Scaled to 1e18 for threshold comparison.
-    function _calculateTransactionValueUSD(
+    // Internal: Calculate transaction value in the active numeraire for KYC (liquid parts only)
+    /// @dev Value = (lent amount if liquid * price) + (collateral amount if liquid * price). For NFTs, rental value = amount * durationDays if liquid (but NFTs illiquid, ≡ 0).
+    ///      Scaled to 1e18 for threshold comparison. Prices come from
+    ///      `OracleFacet.getAssetPrice` which returns numeraire-quoted truth
+    ///      (USD by post-deploy default; whatever governance has rotated to
+    ///      otherwise) — see USD-Sweep / B1 release notes.
+    function _calculateTransactionValueNumeraire(
         LibVaipakam.Offer storage offer
-    ) internal view returns (uint256 valueUSD) {
+    ) internal view returns (uint256 valueNumeraire) {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
 
         // Lent asset value if liquid
@@ -1790,10 +1794,10 @@ contract OfferFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
             (uint256 price, uint8 feedDecimals) = OracleFacet(address(this))
                 .getAssetPrice(offer.lendingAsset);
             uint8 tokenDecimals = IERC20Metadata(offer.lendingAsset).decimals();
-            valueUSD += (offer.amount * price * 1e18) / (10 ** feedDecimals) / (10 ** tokenDecimals);
+            valueNumeraire += (offer.amount * price * 1e18) / (10 ** feedDecimals) / (10 ** tokenDecimals);
         } else if (offer.assetType != LibVaipakam.AssetType.ERC20) {
-            // For NFT rentals: Rental value = amount (fee) * durationDays, but since illiquid, $0
-            valueUSD += 0;
+            // For NFT rentals: Rental value = amount (fee) * durationDays, but since illiquid, ≡ 0
+            valueNumeraire += 0;
         }
 
         // Collateral value if liquid.
@@ -1811,7 +1815,7 @@ contract OfferFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
             (uint256 price, uint8 feedDecimals) = OracleFacet(address(this))
                 .getAssetPrice(offer.collateralAsset);
             uint8 tokenDecimals = IERC20Metadata(offer.collateralAsset).decimals();
-            valueUSD += (effectiveCollateral * price * 1e18) / (10 ** feedDecimals) / (10 ** tokenDecimals);
+            valueNumeraire += (effectiveCollateral * price * 1e18) / (10 ** feedDecimals) / (10 ** tokenDecimals);
         }
     }
 

@@ -127,7 +127,7 @@ contract DefaultedFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
         // (ERC20 loan / NFT rental) price the same way — we only differ in
         // which asset + amount to value. Collapsed to one getAssetPrice +
         // decimals() fetch instead of two duplicated bodies.
-        // Illiquid assets have no oracle feed, so valued at $0 per README — KYC always passes.
+        // Illiquid assets have no oracle feed, so valued at 0 per README — KYC always passes.
         {
             address valueAsset;
             uint256 valueAmount;
@@ -146,13 +146,13 @@ contract DefaultedFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
                 (uint256 price, uint8 feedDecimals) = OracleFacet(address(this))
                     .getAssetPrice(valueAsset);
                 uint8 tokenDecimals = IERC20Metadata(valueAsset).decimals();
-                uint256 valueUSD = (valueAmount * price * 1e18)
+                uint256 valueNumeraire = (valueAmount * price * 1e18)
                     / (10 ** feedDecimals) / (10 ** tokenDecimals);
-                if (!ProfileFacet(address(this)).meetsKYCRequirement(loan.lender, valueUSD)) {
+                if (!ProfileFacet(address(this)).meetsKYCRequirement(loan.lender, valueNumeraire)) {
                     revert KYCRequired();
                 }
             }
-            // Illiquid asset: valued at $0, KYC always passes.
+            // Illiquid asset: valued at 0, KYC always passes.
         }
 
         uint256 endTime = loan.startTime + loan.durationDays * 1 days;

@@ -625,12 +625,12 @@ contract OfferFacetTest is Test {
             EscrowFactoryFacet(address(diamond)).getOrCreateUserEscrow(user1)
         );
 
-        // Set KYC tier for users; use low price so valueUSD stays < $1k (Tier0 sufficient)
+        // Set KYC tier for users; use low price so valueNumeraire stays < $1k (Tier0 sufficient)
         vm.prank(owner);
         ProfileFacet(address(diamond)).updateKYCTier(user1, LibVaipakam.KYCTier.Tier2);
         vm.prank(owner);
         ProfileFacet(address(diamond)).updateKYCTier(user2, LibVaipakam.KYCTier.Tier2);
-        mockOraclePrice(mockERC20, 1e6, 6); // Low price to keep valueUSD < $1k
+        mockOraclePrice(mockERC20, 1e6, 6); // Low price to keep valueNumeraire < $1k
 
         uint256 expectedPrepay = 10 * 30;
         uint256 buffer = (expectedPrepay * 500) / 10000; // 5%
@@ -1825,8 +1825,8 @@ contract OfferFacetTest is Test {
         vm.clearMockedCalls();
     }
 
-    /// @dev Covers _calculateTransactionValueUSD with illiquid NFT lending asset (else branch)
-    ///      and liquid collateral. valueUSD = 0 (NFT) + collateral value (liquid).
+    /// @dev Covers _calculateTransactionValueNumeraire with illiquid NFT lending asset (else branch)
+    ///      and liquid collateral. valueNumeraire = 0 (NFT) + collateral value (liquid).
     function testAcceptOfferNFTLendingAssetIlliquidCalculatesValueFromCollateral() public {
         // user1 created NFT offer (illiquid lending asset, liquid collateral)
         // already done in setUp. Create a new one for clarity.
@@ -2349,9 +2349,9 @@ contract OfferFacetTest is Test {
         vm.clearMockedCalls();
     }
 
-    /// @dev Covers _calculateTransactionValueUSD `else if (assetType != ERC20)` FALSE branch:
+    /// @dev Covers _calculateTransactionValueNumeraire `else if (assetType != ERC20)` FALSE branch:
     ///      lendingAsset is illiquid ERC20 (so lentLiquidity=Illiquid, assetType=ERC20).
-    ///      The `else if` condition is false → valueUSD stays 0 from lend side.
+    ///      The `else if` condition is false → valueNumeraire stays 0 from lend side.
     function testAcceptOfferIlliquidERC20LendingAssetCoversBranch() public {
         // Deploy a second ERC20 and mock it as illiquid
         ERC20Mock illiquidERC20 = new ERC20Mock("Illiquid", "ILQ", 18);
@@ -2416,7 +2416,7 @@ contract OfferFacetTest is Test {
         vm.clearMockedCalls();
     }
 
-    /// @dev Covers _calculateTransactionValueUSD `if (collLiquidity == Liquid)` FALSE branch:
+    /// @dev Covers _calculateTransactionValueNumeraire `if (collLiquidity == Liquid)` FALSE branch:
     ///      collateralAsset is illiquid, so collateral value is skipped.
     function testAcceptOfferIlliquidCollateralCoversBranch() public {
         ERC20Mock illiquidCollateral = new ERC20Mock("IlliqColl", "ICL", 18);
@@ -3035,7 +3035,7 @@ contract OfferFacetTest is Test {
         vm.clearMockedCalls();
     }
 
-    /// @dev Covers _calculateTransactionValueUSD with linkedLoanId != 0 (sale-offer KYC path).
+    /// @dev Covers _calculateTransactionValueNumeraire with linkedLoanId != 0 (sale-offer KYC path).
     ///      When saleOfferToLoanId[offerId] != 0 and collateralAmount == 0,
     ///      the function uses the linked loan's collateral amount for KYC value calculation.
     function testAcceptOfferSaleOfferKYCUsesLinkedLoanCollateral() public {

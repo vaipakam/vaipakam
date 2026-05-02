@@ -180,20 +180,22 @@ contract ProfileFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors 
     }
 
     /**
-     * @notice Checks whether a user meets the KYC requirement for a given USD transaction value.
-     * @dev Implements the three-tier KYC model:
-     *        < $1,000 USD  → Tier0 required (always passes)
-     *        $1k–$9,999    → Tier1 required
-     *        $10,000+      → Tier2 required
-     *      USD values are scaled to 1e18 (matching Chainlink price feed precision used elsewhere).
+     * @notice Checks whether a user meets the KYC requirement for a given numeraire-quoted transaction value.
+     * @dev Implements the three-tier KYC model (thresholds in the active numeraire,
+     *      scaled to 1e18 — USD by post-deploy default):
+     *        < tier0Threshold  → Tier0 required (always passes)
+     *        tier0–tier1       → Tier1 required
+     *        ≥ tier1Threshold  → Tier2 required
+     *      Values are scaled to 1e18 matching the unit returned by
+     *      `OracleFacet.getAssetPrice` (numeraire-quoted post USD-Sweep / B1).
      *      Used by OfferFacet, DefaultedFacet, and RiskFacet for transaction-level compliance.
      * @param user The user's address.
-     * @param valueUSD The transaction value in USD scaled to 1e18 (e.g., $2,000 = 2000 * 1e18).
+     * @param valueNumeraire The transaction value in the active numeraire scaled to 1e18.
      * @return meetsRequirement True if the user's KYC tier is sufficient for the given value.
      */
     function meetsKYCRequirement(
         address user,
-        uint256 valueUSD
+        uint256 valueNumeraire
     ) external view returns (bool meetsRequirement) {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         // README §16 Phase 1 pass-through: when enforcement is disabled the
@@ -206,10 +208,10 @@ contract ProfileFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors 
         uint256 tier0Threshold = LibVaipakam.getKycTier0Threshold();
         uint256 tier1Threshold = LibVaipakam.getKycTier1Threshold();
 
-        if (valueUSD < tier0Threshold) {
+        if (valueNumeraire < tier0Threshold) {
             // Below Tier0 threshold: no KYC required
             return true;
-        } else if (valueUSD < tier1Threshold) {
+        } else if (valueNumeraire < tier1Threshold) {
             // Between Tier0 and Tier1 threshold: Tier1 minimum required
             return tier >= LibVaipakam.KYCTier.Tier1;
         } else {
