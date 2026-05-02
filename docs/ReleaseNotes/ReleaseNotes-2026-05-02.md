@@ -585,13 +585,44 @@ Role on each loan comes from which endpoint produced it
 already live-filtered via `ownerOf`, so the role reflects current
 on-chain ownership.
 
-**Out of scope for this drop:**
+**Two surfaces intentionally stay direct-from-chain (by design, not as TODOs):**
 
-- ClaimCenter / VPFIPanel — same shape as the Dashboard
-  migration. Existing hooks are correct via fallback; full swap
-  to indexer-fed paths is a follow-up commit. The worker-side
-  endpoints (`/claimables/:addr`, `/activity?actor&kind=VPFI*`)
-  are now correct and ready.
+The chain indexer accelerates list-style reads (offer book,
+loan list, activity feed, dashboard) where first-paint speed
+matters and per-row truth is recoverable via the manual rescan +
+verify-on-chain footer link. The two surfaces below are
+deliberately exempt:
+
+- **ClaimCenter** — money-relevant state. The page renders
+  `ClaimableEntry[]` with full per-claim payload (asset, amount,
+  tokenId, quantity, heldForLender, hasRentalNFTReturn,
+  lifRebate). Reading these from a 5-min-stale cache could
+  surface "Claim 100 USDC" while the chain only owes 50 USDC —
+  the kind of mis-render that erodes trust on the surface where
+  trust matters most. ClaimCenter stays on `useClaimables` —
+  every page load, every browser, fresh `getClaimable(loanId,
+  isLender)` reads against the chain. The indexer's
+  `/claimables/:addr` endpoint exists and is correct (it tells
+  CALLERS which loans have open claims, ownership-filtered via
+  live `ownerOf`); ClaimCenter just doesn't consume it because
+  the per-loan claim PAYLOAD comes from the chain regardless.
+- **VPFIPanel** — low-volume per-user history. The panel renders
+  ERC-20 `Transfer` events on the VPFI token contract, scoped
+  to the current wallet via topic filters. A typical user has
+  10-50 transfers in their lifetime — not thousands — so a
+  single filtered `eth_getLogs` is cheap and burns no
+  meaningful RPC quota. Adding the VPFI token contract as a
+  second indexer scan target would add complexity for a
+  negligible speedup, and the protocol-side VPFI events that
+  ARE in `activity_events` (`VPFIDepositedToEscrow`,
+  `VPFIWithdrawnFromEscrow`, `VPFIPurchasedWithETH`) cover the
+  protocol-relevant slice already.
+
+**The emergent architectural principle**: high-stakes state
+reads truth from the chain on every render; high-volume
+list-style data reads from the cache with manual-rescan and
+verify-on-chain escape hatches; low-volume per-user history
+stays as direct filtered scans.
 
 **Why no Durable Objects / WebSocket push.** The cron-tick
 staleness window only matters for *cold-load* freshness. Once a

@@ -524,6 +524,15 @@ Payment-token mode requirements:
 - the frontend should display the actual buy asset for the active chain and adapter mode rather than hardcoding `ETH`; native-gas chains should show the chain's native gas asset, while WETH-pull chains should show the configured bridged WETH token and provide a verification link to the relevant market-data page
 - in WETH-pull mode, approval and balance checks should target the configured ERC-20 payment token; LayerZero execution fees remain paid in the chain's native gas token and should be labelled with that native symbol
 
+Cross-chain buy settlement hardening:
+
+- the canonical receiver must not OFT-send fixed-rate buy VPFI directly to the buyer wallet on the source chain; it should target the source-chain buy adapter through LayerZero OFT compose
+- the compose payload must include the buy request id, and the source-chain adapter must release VPFI only when `pendingBuys[requestId]` exists and names the buyer recorded by the source-chain `buy()` call
+- forged or replayed compose arrivals must not pay an arbitrary wallet; unmatched or already-settled request ids should be recorded as stuck VPFI and recoverable only by owner / governance to a configured recipient
+- the compose handler must authenticate both the LayerZero endpoint caller and the configured local VPFI mirror source; deployments must configure receiver `buyAdapterByEid` plus source-adapter `vpfiToken` and `vpfiMirror`
+- a separate `BUY_SUCCESS` reply path should not be required for successful buys; the OFT compose arrival is the success signal and should release source-chain escrowed payment to treasury where applicable
+- operator-configured OFT send options for the back leg must include gas for both LzReceive minting and LzCompose adapter execution; deploy-time defaults should exist, and a post-deploy script should allow controlled gas-budget adjustment
+
 Permit2 requirements for VPFI utility flows:
 
 - Permit2 support is an optional convenience path for VPFI deposits and other eligible ERC-20 actions; it must not remove or weaken the classic ERC-20 allowance flow.
@@ -590,6 +599,8 @@ LayerZero hardening requirements:
 
 - each reward OApp packet type must validate the exact expected encoded payload size before decoding; for the current report / broadcast tuple this is `128` bytes
 - malformed, undersized, or oversized reward packets must revert with a typed payload-size error carrying the observed and expected sizes
+- fixed-rate buy reconciliation should be monitored off-chain: canonical-chain processed buy events should be cross-checked against source-chain `BuyRequested` events by request id, buyer, and amount
+- the buy-reconciliation watchdog should expose an on-chain kill switch for planned ceremonies; auto-pausing on mismatch is an operations decision for a later phase, not a Phase 1 requirement
 - off-chain monitoring should watch DVN-set drift for each configured `(chain, OApp, peer eid, send / receive)` pair
 - off-chain monitoring should check OFT supply invariants by comparing Base canonical-adapter locked VPFI against the sum of mirror-chain `totalSupply()` values
 - off-chain monitoring should alert on oversized single-transaction VPFI flows above an operator-configured threshold

@@ -156,6 +156,24 @@ Run it after every contract redeploy *before*:
 - `cd ops/hf-watcher && wrangler deploy` (so the watcher reads
   the new addresses on its next cron tick).
 
+**T-041 — chain-indexer D1 migrations.** Whenever a new migration
+file lands under `ops/hf-watcher/migrations/` (e.g. `0006_*.sql`),
+apply it to the live D1 database before redeploying the Worker:
+
+```bash
+cd ops/hf-watcher
+npm run db:migrate     # idempotent — wrangler tracks the high-water mark
+npm run deploy
+```
+
+The migration step is independent of contract redeploys; you only
+need it when the watcher's schema changes. Skipping it leaves the
+Worker referencing columns that don't exist and cron ticks fail
+with cryptic "no such column" errors in the logs. See
+[`ops/hf-watcher/README.md`](../../ops/hf-watcher/README.md)
+"Redeploy / migration upgrade path" for the full sequence and
+T-041-specific notes on the bootstrap-time backfill behavior.
+
 What stays operator-side after this consolidation:
 
 - Frontend `.env.local`: per-chain RPC URLs (with API key),

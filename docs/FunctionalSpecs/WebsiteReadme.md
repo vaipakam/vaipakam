@@ -133,6 +133,7 @@ Current connected-app surface expectations:
 - `Claim Center` is the home for loan claims and platform-interaction rewards; the former standalone in-app `Rewards` page should not be treated as a live route
 - public `/buy-vpfi` is the marketing / education surface for VPFI; connected `/app/buy-vpfi` is the wallet-gated home for buying, staking / depositing, unstaking / withdrawing, staking-rewards claims, and chain-level VPFI transparency
 - in the connected-app sidebar, `Claim Center` should sit with the core lending actions before `Buy VPFI`, while token-purchase and advanced utility destinations remain secondary to loan management
+- the in-app logo should route to `/app` so connected users return to the dashboard shell; the public navbar logo should continue to route to `/`
 - the app's issue drawer should be labelled as `Report Issue` / `Issue Details`, not `Diagnostics`, and should generate a redacted report suitable for GitHub issue filing
 
 Transaction-safety and single-signature flows:
@@ -290,6 +291,7 @@ Connected-app network model in Phase 1:
 - the app should make the active network clear and treat each network as its own local protocol instance with a dedicated Diamond deployment per network
 - the connected topbar / wallet menu should show both chain icon and chain name after connection, collapsing to icon-only only on very narrow viewports while preserving the accessible chain name
 - in-app pages should not mount a standalone pre-connect chain picker; read-only pre-connect chain exploration belongs on public Analytics, while wallet-gated app pages should take chain context from the connected wallet
+- cached-data page titles should show an indexer status badge when relevant: green for indexed data with last-updated age and a rescan affordance, amber when the page has fallen back to live chain scanning
 
 Wallet connection requirements:
 
@@ -661,8 +663,16 @@ Data-fetching strategy:
 - all lower sections should continue to read from one selected chain at a time so the detailed analytics remain attributable to a specific chain
 - when selected-chain dashboard sections need to fetch large sets of loans or offers, the implementation should prefer batching and multicall-style aggregation so the page remains responsive on chains with larger historical datasets
 - derive historical series from raw event logs when feasible
+- a shared Cloudflare Worker indexer may maintain D1-backed `offers`, `loans`, and append-only `activity_events` tables for fast first paint across offers, loans, activity, and claimability hints
+- the worker indexer should fan out across configured chains on each cron tick and silently skip chains missing an RPC secret or deployment artifact, rather than failing the whole sweep
+- frontend hooks such as active offers, active loans, wallet loans, activity, claimables, and offer stats should prefer the indexer when available and return an explicit `indexer` / `fallback` source state
+- `Offer Book` should consume indexed active offers first, while keeping the existing browser event watcher so newly created global offers appear within seconds according to the existing non-user-customizable sort
+- dashboard loan lists may consume indexed loan origination data, but current lender / borrower NFT-holder views should be live-filtered through `ownerOf(tokenId)` reads so transferred loan NFTs are reflected accurately
+- Claim Center money-relevant claim payloads should continue to read directly from chain; indexed claimability is only a discovery hint
+- VPFI token-panel scans may remain direct filtered log reads while volume stays low
+- the app footer should expose one active-chain `Verify on-chain` affordance that opens the current Diamond on the relevant explorer; repeated per-row verify links are not required
 - for aggregates that are too expensive to reconstruct repeatedly on the client, the protocol may expose lightweight read-only helper functions such as `getProtocolTVL`, `getUserCount`, `getActiveLoansCountAndValue`, and `getTotalInterestEarned`
-- if later scaling requires heavier indexing, that can be treated as a later phase; Phase 1 should remain direct-contract and event-log oriented
+- direct contract reads and browser log indexing remain the fallback path whenever the worker is unavailable, times out, or has no configured origin; the cache must never become an oracle for money-moving actions
 
 Coding and quality requirements:
 

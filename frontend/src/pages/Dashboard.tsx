@@ -72,7 +72,7 @@ export default function Dashboard() {
   // when the worker is unreachable. Both produce LoanSummary[]; the
   // adapter `indexedToLoanSummary` shape-bridges the indexer JSON.
   const { loans: clientLoans, loading: clientLoading } = useUserLoans(address);
-  const { loans: indexedLoans, source: indexedSource } = useIndexedLoansForWallet(address);
+  const { loans: indexedLoans, source: indexedSource } = useIndexedLoansForWallet(address ?? undefined);
   const loans: LoanSummary[] =
     indexedSource === 'indexer' && indexedLoans
       ? (indexedLoans.map((l) => indexedToLoanSummary(l, l.role)) as LoanSummary[])
