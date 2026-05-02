@@ -248,12 +248,27 @@ On `OracleAdminFacet`:
 7. `setSequencerUptimeFeed(<feed>)` — L2s only (Base / Arbitrum / Optimism / Polygon)
 8. `setUniswapV3Factory(<v3 factory>)`
 
+T-033 Pyth-as-numeraire-redundancy gate (optional but recommended for Phase 1; zero-config-friendly — gate soft-skips when unset, identical to pre-T-033 behavior). When enabling:
+
+9. `setPythOracle(<Pyth contract address on this chain>)` — published per-chain by Pyth at https://docs.pyth.network/price-feeds/contract-addresses/evm
+10. `setPythNumeraireFeedId(<bytes32 feed id>)` — ETH/USD on ETH-native chains; bridged-WETH/USD on BNB / Polygon mainnet. Pyth's price-feed catalog: https://www.pyth.network/developers/price-feed-ids
+11. `setPythMaxStalenessSeconds(<seconds>)` — optional; defaults to 300s (5min). Range [60, 3600].
+12. `setPythNumeraireMaxDeviationBps(<bps>)` — optional; defaults to 500 (5%). Range [100, 2000] = 1%-20%.
+13. `setPythConfidenceMaxBps(<bps>)` — optional; defaults to 100 (1%). Range [50, 500] = 0.5%-5%.
+
 On `AdminFacet`:
 
-9. `setZeroExProxy(<0x ExchangeProxy>)`
-10. `setallowanceTarget(<0x allowance-target>)`
+14. `setZeroExProxy(<0x ExchangeProxy>)`
+15. `setallowanceTarget(<0x allowance-target>)`
 
-**Do not skip 9/10** on any chain where liquidation is enabled — a missing 0x proxy makes HF-based liquidations fail.
+**Do not skip 14/15** on any chain where liquidation is enabled — a missing 0x proxy makes HF-based liquidations fail.
+
+> **Tunable knobs reference.** Every governance-tunable knob in
+> the protocol — including the bounded ranges that even a
+> compromised governance multisig cannot push beyond — is
+> documented in functional/no-code form at
+> [`docs/ops/AdminConfigurableKnobsAndSwitches.md`](AdminConfigurableKnobsAndSwitches.md).
+> Auditors should review that doc alongside the runbook.
 
 ---
 

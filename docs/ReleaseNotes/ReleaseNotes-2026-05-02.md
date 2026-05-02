@@ -233,6 +233,114 @@ reconciliation can be extended to monitor it as a follow-up.
    `RPC_BASE_SEPOLIA`. Without these, the watchdog skips
    reconciliation for that lane and logs.
 
+## T-033 Pyth-as-numeraire-redundancy + project-wide setter range audit
+
+The previous oracle phase (7b.2) deliberately removed Pyth because
+its `bytes32 priceId` requires a per-asset governance mapping, which
+conflicts with the project's no-per-asset-config policy that lets
+new collateral assets list without a governance write. T-033
+re-introduces Pyth in a **single-feed-per-chain** shape that keeps
+that policy intact: one Pyth feed (ETH/USD on ETH-native chains;
+bridged-WETH/USD on BNB / Polygon mainnet) is registered as a
+sanity gate against the most load-bearing oracle reading in the
+protocol — the Chainlink WETH/USD numeraire that every
+TWAP-derived asset price depends on. Per-asset redundancy keeps
+working through the existing symbol-derived Tellor + API3 + DIA
+secondary quorum, untouched.
+
+**On-chain shape.** `OracleFacet._validatePythNumeraire` runs after
+every Chainlink ETH/USD reading on the primary-price path. It reads
+Pyth's snapshot of the same peg, normalises the `(price, expo)`
+representation into Chainlink's decimal scale, and:
+
+- Soft-skips (returns silently — Chainlink-only proceeds) when Pyth
+  oracle is unset, the feed id is unset, the snapshot is older than
+  `pythMaxStalenessSeconds`, the `conf / price` ratio exceeds
+  `pythConfidenceMaxBps`, or the price is non-positive.
+- Reverts `OracleNumeraireDivergence(chainlinkPrice, pythPrice,
+  deviationBps, maxDeviationBps)` when the cross-oracle delta
+  exceeds `pythNumeraireMaxDeviationBps`. Fail-closed by design — a
+  numeraire reading the protocol can't agree on between two
+  independent oracles is a strong signal that one of them is
+  compromised; blocking is preferable to accepting a price the
+  system itself can't trust.
+
+**Five new governance knobs, all bounded.** Every Pyth tunable on
+the new `OracleAdminFacet` surface is range-bounded so a compromised
+admin or governance multisig cannot push it outside the policy
+window without a contract upgrade:
+
+| Knob | Range | Default |
+|---|---|---|
+| `pythOracle` (address) | non-zero contract / zero=disabled | unset |
+| `pythNumeraireFeedId` (bytes32) | any non-zero / zero=disabled | unset |
+| `pythMaxStalenessSeconds` | [60, 3600] | 300 |
+| `pythNumeraireMaxDeviationBps` | [100, 2000] (1% – 20%) | 500 |
+| `pythConfidenceMaxBps` | [50, 500] (0.5% – 5%) | 100 |
+
+Out-of-range writes revert with the new shared
+`ParameterOutOfRange(bytes32 name, uint256 value, uint256 min,
+uint256 max)` error in `IVaipakamErrors`. The error name is a
+short bytes32 tag identifying the parameter, so callers can
+disambiguate the reverted setter without parsing free-form text.
+
+**Project-wide setter range audit applied as a bonus.** While
+adding the Pyth knobs, every existing governance-tunable numeric
+parameter was audited and re-bounded where the prior guards were
+weak or missing. Same `ParameterOutOfRange` error used throughout.
+Specific changes:
+
+| Setter | Prior bound | New bound | Reason |
+|---|---|---|---|
+| `setSecondaryOracleMaxDeviationBps` | (0, 9999) | [100, 2000] | Prior window was so wide it allowed degenerate settings (1bps DoS-fail-closes; 9999 disables the gate). Tightened to the same 1%-20% policy as Pyth. |
+| `setSecondaryOracleMaxStaleness` | only `!= 0` | [60, 29h] | Prior had no upper — could be set arbitrarily high. 29h leaves 5h buffer above the 24h heartbeat that USDC / USDT Chainlink feeds publish on; tighter would soft-skip those legitimate feeds. |
+| `setRewardGraceSeconds` | unbounded | [5min, 30 days] | Prior had no bounds. Floor stops "instant grace" misconfig; ceiling stops "indefinite grace" defeating the purpose. |
+| `setInteractionCapVpfiPerEth` | unbounded | [1, 1M] | Prior had no bounds. Documented sentinels (`0` = reset to library default; `type(uint256).max` = emergency disable cap) preserved as escape paths. |
+| `setStakingApr` | ≤ 100% | ≤ 20% | Prior allowed nonsensically-high APRs. 20% is generous for VPFI staking; above is governance-error vector. |
+| `updateRiskParams.maxLtvBps` | (0, 10000] | [10%, 100%] | Prior `> 0` allowed `1`-bp setting that effectively disables borrowing for the asset. Floor of 10% is the credible minimum. |
+| `updateRiskParams.liqThresholdBps` | (maxLtv, 10000] | [15%, 100%] AND > maxLtv | Same logic — added absolute floor on top of the existing relative-to-maxLtv constraint. |
+| `updateRiskParams.reserveFactorBps` | ≤ 100% | ≤ 50% | Prior allowed `100% reserveFactor` = lender receives zero interest, defeats lending product. |
+| `updateKYCThresholds` (tier0, tier1) | tier0 < tier1 only | each in [$100, $1M] | Belt-and-suspenders on retail (KYC OFF there); load-bearing on industrial fork. |
+
+Most of these were tightenings of "loose-but-not-missing" bounds.
+The truly-unbounded ones (`setRewardGraceSeconds`,
+`setInteractionCapVpfiPerEth`) had been latent governance-attack
+vectors the audit closed.
+
+**New `/docs/ops/AdminConfigurableKnobs.md` runbook.** Functional /
+no-code reference covering every governance-tunable knob and flag
+in the Diamond. Auditor-facing — describes what each knob does,
+what the operational range allows, and what the consequence would
+be if a compromised admin pushed it to either extreme. Cross-
+references the constants alongside their declarations in
+`LibVaipakam.sol` so the source of truth is always one click away.
+
+**Verification:**
+- New `contracts/test/OracleNumeraireGuardTest.t.sol` — **10/10 green**.
+  Below-floor + above-ceiling rejections on each of the three
+  bounded Pyth setters; in-range happy writes; boundary-exact
+  writes; default-fallthrough on the effective getters; non-owner
+  reverts. The Pyth read-path divergence behavior is exercised
+  indirectly through the bounded-setter assertions plus the
+  existing OracleFacet read-path coverage in the regression suite
+  (which now exercises the gate's soft-skip branch on every
+  WETH-priced asset since Pyth defaults to unset post-init).
+- Forge build clean. Full no-invariants regression:
+  **1513 passing / 0 failed / 5 skipped** (up from 1503 pre-T-033 —
+  +10 from `OracleNumeraireGuardTest` + +9 retrofitted existing
+  tests now exercising the new bounded behavior with the
+  `ParameterOutOfRange` error).
+
+**Operational note for the redeploy.** Three new chain-level
+governance writes per chain to enable the Pyth gate
+(`setPythOracle`, `setPythNumeraireFeedId`, optionally tighten the
+three bounded knobs from their defaults). Without these, the gate
+is a no-op — protocol falls back to Chainlink-only on the WETH/USD
+leg, identical to today's Phase 7b.2 behavior. So the change is
+**zero-config-friendly**: the setter writes are additive; an
+operator can roll out the upgrade and configure Pyth on a separate
+day if they prefer.
+
 ## Notes for follow-up
 
 The feat branch is now ~59 commits ahead of main (53 pre-existing
