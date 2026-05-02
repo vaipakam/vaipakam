@@ -50,7 +50,7 @@
     "smartContracts": "智能合约",
     "discord": "Discord",
     "disclaimer": "Vaipakam 是去中心化、非托管协议。无需 KYC。用户需自行负责适用的监管合规。",
-    "protocolParameters": "协议参数"
+    "protocolConsole": "协议控制台"
   },
   "languagePicker": {
     "ariaLabel": "显示语言"
@@ -65,7 +65,7 @@
     "faq": "常见问题",
     "analytics": "数据分析",
     "nftVerifier": "NFT 验证器",
-    "protocolParameters": "协议参数",
+    "protocolConsole": "协议控制台",
     "security": "安全",
     "vpfi": "VPFI",
     "vpfiLearn": "了解 VPFI",

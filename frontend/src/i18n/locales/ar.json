@@ -50,7 +50,7 @@
     "smartContracts": "العقود الذكية",
     "discord": "Discord",
     "disclaimer": "Vaipakam بروتوكول لامركزي وغير حافظ. لا يلزم KYC. المستخدمون مسؤولون عن امتثالهم التنظيمي.",
-    "protocolParameters": "معايير البروتوكول"
+    "protocolConsole": "وحدة تحكم البروتوكول"
   },
   "languagePicker": {
     "ariaLabel": "لغة العرض"
@@ -65,7 +65,7 @@
     "faq": "الأسئلة الشائعة",
     "analytics": "التحليلات",
     "nftVerifier": "مدقق NFT",
-    "protocolParameters": "معايير البروتوكول",
+    "protocolConsole": "وحدة تحكم البروتوكول",
     "security": "الأمان",
     "vpfi": "VPFI",
     "vpfiLearn": "تعرّف على VPFI",

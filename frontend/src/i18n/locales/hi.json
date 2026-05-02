@@ -50,7 +50,7 @@
     "smartContracts": "स्मार्ट कॉन्ट्रैक्ट",
     "discord": "Discord",
     "disclaimer": "Vaipakam एक विकेन्द्रीकृत, non-custodial प्रोटोकॉल है। KYC आवश्यक नहीं है। अपने ऊपर लागू नियामकीय अनुपालन की जिम्मेदारी हर उपयोगकर्ता की अपनी है।",
-    "protocolParameters": "प्रोटोकॉल पैरामीटर"
+    "protocolConsole": "प्रोटोकॉल कंसोल"
   },
   "languagePicker": {
     "ariaLabel": "प्रदर्शन भाषा"
@@ -65,7 +65,7 @@
     "faq": "अक्सर पूछे जाने वाले सवाल",
     "analytics": "विश्लेषण",
     "nftVerifier": "NFT वेरिफायर",
-    "protocolParameters": "प्रोटोकॉल पैरामीटर",
+    "protocolConsole": "प्रोटोकॉल कंसोल",
     "security": "सुरक्षा",
     "vpfi": "VPFI",
     "vpfiLearn": "VPFI के बारे में जानें",

@@ -50,7 +50,7 @@
     "smartContracts": "スマートコントラクト",
     "discord": "Discord",
     "disclaimer": "Vaipakam は分散型・ノンカストディアル型プロトコルです。KYC は不要です。適用される規制への対応は利用者自身の責任です。",
-    "protocolParameters": "プロトコル・パラメータ"
+    "protocolConsole": "プロトコル・コンソール"
   },
   "languagePicker": {
     "ariaLabel": "表示言語"
@@ -65,7 +65,7 @@
     "faq": "よくある質問",
     "analytics": "アナリティクス",
     "nftVerifier": "NFT検証ツール",
-    "protocolParameters": "プロトコル・パラメータ",
+    "protocolConsole": "プロトコル・コンソール",
     "security": "セキュリティ",
     "vpfi": "VPFI",
     "vpfiLearn": "VPFIについて学ぶ",

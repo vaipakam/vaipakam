@@ -50,7 +50,7 @@
     "smartContracts": "스마트 컨트랙트",
     "discord": "Discord",
     "disclaimer": "Vaipakam은 탈중앙화 비수탁 프로토콜입니다. KYC는 필요하지 않습니다. 적용되는 규제 준수 책임은 사용자 본인에게 있습니다.",
-    "protocolParameters": "프로토콜 매개변수"
+    "protocolConsole": "프로토콜 콘솔"
   },
   "languagePicker": {
     "ariaLabel": "표시 언어"
@@ -65,7 +65,7 @@
     "faq": "자주 묻는 질문",
     "analytics": "분석",
     "nftVerifier": "NFT 검증기",
-    "protocolParameters": "프로토콜 매개변수",
+    "protocolConsole": "프로토콜 콘솔",
     "security": "보안",
     "vpfi": "VPFI",
     "vpfiLearn": "VPFI 알아보기",

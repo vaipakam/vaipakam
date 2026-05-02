@@ -50,7 +50,7 @@
     "smartContracts": "ஸ்மார்ட் ஒப்பந்தங்கள்",
     "discord": "Discord",
     "disclaimer": "Vaipakam ஒரு பரவலாக்கப்பட்ட, non-custodial புரோட்டோகால். KYC தேவையில்லை. தங்களுக்குப் பொருந்தும் சட்ட/ஒழுங்குமுறை இணக்கத்திற்கு பயனர்களே பொறுப்பு.",
-    "protocolParameters": "நெறிமுறை அளவுருக்கள்"
+    "protocolConsole": "நெறிமுறை கன்சோல்"
   },
   "languagePicker": {
     "ariaLabel": "காட்சி மொழி"
@@ -65,7 +65,7 @@
     "faq": "அடிக்கடி கேட்கப்படும் கேள்விகள்",
     "analytics": "பகுப்பாய்வு",
     "nftVerifier": "NFT சரிபார்ப்பாளர்",
-    "protocolParameters": "நெறிமுறை அளவுருக்கள்",
+    "protocolConsole": "நெறிமுறை கன்சோல்",
     "security": "பாதுகாப்பு",
     "vpfi": "VPFI",
     "vpfiLearn": "VPFI பற்றி அறிக",

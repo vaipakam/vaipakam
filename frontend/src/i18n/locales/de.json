@@ -50,7 +50,7 @@
     "smartContracts": "Smart Contracts",
     "discord": "Discord",
     "disclaimer": "Vaipakam ist ein dezentrales, nicht-verwahrendes Protokoll. KYC ist nicht erforderlich. Benutzer sind selbst für die Einhaltung gesetzlicher Vorschriften verantwortlich.",
-    "protocolParameters": "Protokoll-Parameter"
+    "protocolConsole": "Protokoll-Konsole"
   },
   "languagePicker": {
     "ariaLabel": "Anzeigesprache"
@@ -65,7 +65,7 @@
     "faq": "FAQ",
     "analytics": "Analyse",
     "nftVerifier": "NFT-Verifizierer",
-    "protocolParameters": "Protokoll-Parameter",
+    "protocolConsole": "Protokoll-Konsole",
     "security": "Sicherheit",
     "vpfi": "VPFI",
     "vpfiLearn": "Mehr über VPFI erfahren",
