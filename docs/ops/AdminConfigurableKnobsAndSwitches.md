@@ -339,6 +339,94 @@ the corresponding mechanic is ready to ship. No range bound (bool).
 Each flip emits a config event so off-chain monitoring can correlate
 behavior changes to the governance action.
 
+## Periodic Interest Payment (T-034)
+
+The Periodic Interest Payment mechanic lets a lender opt their loans
+into mandatory mid-loan interest checkpoints. The borrower must pay
+each period's accrued interest by the period close; if they miss the
+period beyond the grace window, anyone can call a permissionless
+settler that sells just enough collateral to cover the shortfall (or
+just-stamps the period when the borrower paid in time). Multi-year
+loans (`durationDays > 365`) carry a mandatory annual floor — even
+small-principal multi-year loans must settle interest yearly.
+
+The feature ships dormant on every fresh deploy. Five governance
+levers control its visibility and behavior; each is bounded the same
+way every other knob in this document is.
+
+### Periodic interest enabled flag (periodicInterestEnabled)
+
+Master kill-switch for the entire mechanic. Default `false`
+post-deploy. While off:
+  - `OfferFacet.createOffer` rejects any cadence other than `None`
+    with `PeriodicInterestDisabled`.
+  - `RepayFacet.settlePeriodicInterest` reverts wholesale.
+  - `RepayFacet.repayPartial` skips the interest-first checkpoint
+    accounting fold — today's allocation behavior is preserved.
+  - The frontend hides every cadence-related UI surface
+    (CreateOffer dropdown, AcceptOffer acknowledgement callout,
+    LoanDetails countdown card).
+
+Governance flips this on once the rest of the protocol is ready to
+honor cadence-bearing loans on-chain. Boolean — no range.
+
+### Numeraire swap enabled flag (numeraireSwapEnabled)
+
+Independent kill-switch gating the cross-numeraire batched setter
+(`setNumeraire(address, uint256)`). Default `false`. While off,
+governance cannot rotate the numeraire away from the USD-as-default
+behavior — the protocol ships USD-denominated until this flag flips
+AND a real numeraire oracle is on the table. Threshold-only updates
+within the same numeraire (`setMinPrincipalForFinerCadence`) are NOT
+gated by this flag — governance can re-tune the threshold freely.
+Boolean — no range.
+
+### Numeraire oracle address (numeraireOracle)
+
+Pluggable price source that decouples the principal threshold (next
+section) from any specific currency. `address(0)` (the post-deploy
+default) means USD-as-numeraire — the threshold value is interpreted
+directly as 1e18-scaled USD-units. A non-zero address must implement
+`INumeraireOracle.numeraireToUsdRate1e18()` returning how many USD
+(1e18-scaled) one unit of the numeraire is worth.
+
+The ONLY path to change this address is the atomic batched setter
+`setNumeraire(newOracle, newThresholdInNewNumeraire)` — by
+construction the numeraire and the threshold are never out of sync.
+The setter sanity-checks the new oracle by calling
+`numeraireToUsdRate1e18()` and rejects zero / revert / no-bytecode
+results via `NumeraireOracleInvalid`.
+
+### Min principal for finer cadence (minPrincipalForFinerCadence)
+
+Principal threshold above which the lender can opt into finer-than-
+mandatory cadences (Monthly / Quarterly / SemiAnnual on any duration;
+finer-than-Annual on multi-year). Stored in numeraire-units
+(1e18-scaled). Default $100,000 (USD-as-numeraire).
+
+> **Range bounds.** Values outside `[1_000e18,
+> 10_000_000e18]` revert `ParameterOutOfRange`. Floor stops a
+> "everyone qualifies" misconfig that would burden small borrowers
+> with monthly settlements; ceiling caps the worst-case "nobody
+> qualifies" misfire that would silently disable finer cadences for
+> the entire deploy.
+
+### Pre-notify lead time in days (preNotifyDays)
+
+Single shared knob: how many days before each periodic-interest
+checkpoint AND each loan-maturity deadline the off-chain hf-watcher
+fires push notifications to subscribers. Default 3 days.
+
+> **Range bounds.** Values outside `[1, 14]` revert
+> `ParameterOutOfRange`. Floor (1) ensures at least a day's notice;
+> ceiling (14) prevents desensitizing alert spam.
+
+When governance changes this value, the next watcher tick picks it
+up automatically (no Worker redeploy needed) — both the maturity
+pre-notify lane (HF watcher's existing surface) and the periodic-
+interest pre-notify lane (T-034) read from the same `getPreNotifyDays()`
+view.
+
 ## Cross-chain VPFI buy (T-031 Layer 4a)
 
 ### Reconciliation watchdog enabled flag (reconciliationWatchdogEnabled)

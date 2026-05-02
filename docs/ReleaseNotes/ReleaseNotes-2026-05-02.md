@@ -864,13 +864,238 @@ independently gates the cross-numeraire batched setter so USD-as-
 numeraire stays the only reachable behaviour until a real
 numeraire swap is on the table.
 
-**Status:** design-phase **locked**. The full design — storage
-shape, validation matrix, watcher event contract, three-PR
-implementation plan — sits in
+**Status:** **landed across 2026-05-02 → 2026-05-03.** Five
+sequential commits — PR1 (storage + numeraire abstraction +
+createOffer validation) → PR1-frontend (cadence dropdown + Protocol
+Console knobs + i18n) → PR2 (settle entry point + repay-fold +
+refinance settle-first) → PR2-frontend (loan-detail countdown card)
+→ PR2-watcher (D1 migration 0007 + indexer extension + pre-notify
+cron lane).
+
+**PR1 — storage + numeraire abstraction + createOffer validation.**
+`Loan` struct gained `periodicInterestCadence` (uint8 enum, packed
+into Slot 3's free bytes), `lastPeriodicInterestSettledAt` (uint64,
+also Slot 3), and `interestPaidSinceLastPeriod` (uint128, paired
+with the new uint64 `startTime` in Slot 9 — `startTime` was
+downsized from uint256 to uint64 in the same pre-launch reorder
+since timestamps fit through year 2554). `Offer` struct +
+`CreateOfferParams` gained `periodicInterestCadence`. `ProtocolConfig`
+gained `numeraireOracle`, `minPrincipalForFinerCadence`,
+`preNotifyDays`, and the two kill-switches `periodicInterestEnabled`
++ `numeraireSwapEnabled` — every value zero/false on a fresh deploy,
+so the feature ships dormant.
+
+`OfferFacet.createOffer` runs three filters in order at every offer
+creation:
+
+  - **Filter 0 — both legs must be liquid ERC-20.** Illiquid lending
+    or collateral assets force cadence to `None`; any non-`None`
+    submission reverts `CadenceNotAllowedForIlliquid`. Multi-year
+    illiquid loans do NOT get the mandatory annual floor — the lender
+    accepts that trade-off via the existing illiquid-asset consent
+    flow.
+  - **Filter 1 — interval must be strictly less than duration.**
+    Otherwise the first checkpoint would land at or after maturity,
+    where terminal repayment already covers everything.
+  - **Filter 2 — duration / threshold matrix.** Multi-year loans
+    (`durationDays > 365`) require at least Annual cadence; finer
+    cadences require principal ≥ threshold. ≤365d loans default to
+    `None` and unlock finer cadences above the threshold.
+
+The threshold compares principal-in-numeraire-units against
+`minPrincipalForFinerCadence`. A new `INumeraireOracle` interface
+(`numeraireToUsdRate1e18()`) decouples the threshold from any
+specific currency — `address(0)` means USD-as-numeraire (the
+post-deploy default; no oracle call needed). The atomic batched
+setter `ConfigFacet.setNumeraire(newOracle, newThresholdInNewNumeraire)`
+is the ONLY path to change the numeraire — by construction the
+numeraire and the threshold value never drift apart. A separate
+threshold-only setter exists for governance to re-tune within the
+same numeraire freely. Sanity check at `setNumeraire` time:
+contract has bytecode AND `numeraireToUsdRate1e18()` returns
+non-zero AND doesn't revert; otherwise the call reverts
+`NumeraireOracleInvalid`.
+
+5 new bounded setters (`setNumeraire`, `setMinPrincipalForFinerCadence`,
+`setPreNotifyDays`, `setPeriodicInterestEnabled`,
+`setNumeraireSwapEnabled`) + 5 individual getters per knob — the
+Protocol Console knob-card reader expects one getter per knob.
+Range bounds: `minPrincipalForFinerCadence` ∈ [$1k, $10M] (default
+$100k); `preNotifyDays` ∈ [1, 14] (default 3). Out-of-range writes
+revert `ParameterOutOfRange` per the project-wide setter discipline.
+
+Cadence-to-grace mapping reuses T-044's existing 6-slot duration-
+tiered grace schedule with `intervalDays - 1` as the lookup key:
+Monthly → slot 1 (default 1 day grace), Quarterly → slot 2 (3 days),
+SemiAnnual → slot 3 (1 week), Annual → slot 4 (2 weeks). No new
+grace knob; operators tuning the grace schedule for default-after-
+maturity automatically tune the periodic-checkpoint grace.
+
+**PR1-frontend.** `OfferFormState` + `CreateOfferPayload` + the
+form-to-payload mapper all carry `periodicInterestCadence: number`.
+A pure-function port of the validation matrix lives at
+`frontend/src/lib/periodicInterestCadence.ts`; it must be kept in
+lockstep with the contract's `_validatePeriodicCadence` so the
+dropdown filter rejects exactly what the contract would reject.
+The cadence dropdown component
+(`frontend/src/components/createOffer/PeriodicInterestCadenceField.tsx`)
+renders `null` when the master kill-switch is off OR either side
+is illiquid — the section disappears entirely; no greyed control,
+no tooltip explaining why. Defense-in-depth on both surfaces:
+contract reverts even if a directly-crafted tx bypasses the UI.
+
+`OfferBook.AcceptReviewModal` got an amber-bordered callout above
+the existing single consent checkbox when the offer carries a
+non-`None` cadence — surfaces the cadence label in the user's
+locale + the missed-payment consequence in plain language. Single
+consent gate retained per the project's "single mandatory risk
+consent" policy.
+
+Protocol Console gained a new "Periodic Interest Payment" category
+with five knob cards: the two kill-switches, the numeraire oracle
+address, the principal threshold (with $1k floor / $10M ceiling +
+$100k default), and the shared pre-notify lead time (with [1, 14]
+range + 3 default). Each card uses the existing
+`useAdminKnobValues` reader with one getter per knob. New
+`usePeriodicInterestConfig` hook reads the bundled tuple — kept
+out of the existing `useProtocolConfig` so older deploys without
+the surface load cleanly.
+
+i18n keys added across all 10 locales — cadence labels localized;
+explainer copy stays English fallback for the next translation
+pass (matches how the existing CreateOffer Advanced-mode copy
+shipped).
+
+**PR2 — settlement entry + repay-fold + refinance settle-first.**
+New library `LibPeriodicInterest` with shared period arithmetic
+helpers (interval, period boundary, settle-grace, expected /
+paid / shortfall, advance) — same math runs at both the preview
+view and the settle path so drift between "I previewed $0
+shortfall but the tx reverted with $X" is impossible.
+
+`RepayFacet` gained two views and one entry point:
+
+  - `previewPeriodicSettle(loanId)` returns
+    `(cadence, periodEndAt, graceEndsAt, expected, paidByBorrower,
+     shortfall, canSettleNow)` — drives the loan-detail countdown
+    card AND lets settler bots check viability before submitting.
+  - `nextPeriodCheckpoint(loanId)` returns the upcoming-checkpoint
+    timestamp; zero on `None`-cadence loans.
+  - `settlePeriodicInterest(loanId, adapterCalls[])` is
+    permissionless and runs one of two paths.
+
+The just-stamp branch fires when `shortfall == 0` — the borrower's
+voluntary repayments already covered the period's expected
+interest. Caller pays gas only; no settler bonus, no collateral
+sale. `lastPeriodicInterestSettledAt` advances by exactly one
+cadence interval; `interestPaidSinceLastPeriod` resets to zero;
+`PeriodicInterestSettled` event fires.
+
+The auto-liquidate branch fires when `shortfall > 0` — caller-
+supplied swap try-list sells just enough collateral to cover the
+shortfall plus the slippage-cap buffer. Mirrors the existing HF-
+liquidation split exactly: settler bonus = `max(0, slippageCap -
+realizedSlippage)` capped at 3% (`maxLiquidatorIncentiveBps`);
+treasury = flat 2% (`liquidationHandlingFeeBps`); lender gets the
+rest. No new BPS knobs in T-034 — the existing 6% slippage cap
+governs both the HF / time-based liquidation paths AND this one.
+Reverts `PeriodicSettleSwapPathRequired` when shortfall > 0 but
+the caller passes empty `adapterCalls`; reverts
+`PeriodicSettleSwapFailed` when every adapter in the try-list
+reverts. `PeriodicInterestAutoLiquidated` event records every
+amount; companion `PeriodicSlippageOverBuffer` fires informationally
+when the lender ended up with less than the shortfall after the
+3% bonus + 2% handling cuts (off-chain monitors aggregate).
+
+`RepayFacet.repayPartial` accumulates the interest portion of every
+partial-repay into `interestPaidSinceLastPeriod`. When that crosses
+the period boundary AND covers the period's expected total, an
+inline checkpoint advance fires within the same tx — borrower
+doesn't need a separate settler call on the just-stamp path. Emits
+`RepayPartialPeriodAdvanced` paired with the standard
+`PartialRepaid`. Behavior change for borrowers used to the old
+allocation rule — flagged in the front-end help copy.
+
+`RefinanceFacet.refinanceLoan` got a settle-first guard: refinance
+reverts `RefinanceRequiresPeriodSettle` when the old loan's current
+period is overdue past grace. Caller must run
+`settlePeriodicInterest` on the old loan first so the original
+lender is made whole BEFORE the refinance overwrites loan state.
+Old lender's terms (rate, cadence, principal) die with the old loan
+on refinance — the new lender's offer fully replaces them
+(consistent with how every other field works on refinance today).
+
+5 new errors added to the shared `IVaipakamErrors` interface
+(`PeriodicSettleNotDue`, `PeriodicSettleNotApplicable`,
+`PeriodicSettleSwapPathRequired`, `PeriodicSettleSwapFailed`,
+`RefinanceRequiresPeriodSettle`). 4 new events on RepayFacet.
+
+**Tests: 14 new in `PeriodicInterestSettleTest.t.sol` + 34 in
+`PeriodicInterestCadenceTest.t.sol` (PR1) — all passing.**
+Existing RepayFacet (63/63), RefinanceFacet (30/30), and
+GracePeriodTiers (14/14) suites pass unchanged.
+
+**PR2-frontend.** ABIs re-synced from `contracts@<HEAD>`. New
+component `PeriodicInterestCheckpointCard` reads
+`previewPeriodicSettle` and renders the cadence label + days-to-
+checkpoint countdown + expected / paid / shortfall breakdown. The
+card's border + background color shift between green (covered),
+amber (pending), and red (past grace — settler-callable) so the
+borrower's risk state is glanceable. Visible when the loan has a
+non-`None` cadence; hidden entirely otherwise. The "Pay now" button
+(borrower-only, shortfall > 0) scrolls to the existing partial-
+repay surface — `repayPartial` settles accrued interest as part of
+any principal-reduction call, so a single small partial-repay
+closes the period when timed past the boundary. Localized strings
+across all 10 locales.
+
+**PR2-watcher integration.** Migration `0007_periodic_interest.sql`
+adds `periodic_interest_cadence`, `last_period_settled_at`, and
+`period_pre_notified_at` columns to the `loans` table + a partial
+index for the cron-lane filter predicate. `chainIndexer.ts` loads
+the cadence + `lastPeriodicInterestSettledAt` at the existing
+`getLoanDetails` bootstrap (one round trip per loan, mirrors
+migration 0006's pattern). Event allowlist gains the four new
+T-034 events; the loan-event handler advances the mirrored
+`last_period_settled_at` on settle / auto-liquidate / repay-fold
+inline advance. The unified `activity_events` ledger picks up the
+new events automatically with the right actor (`settler` /
+`advancedBy`) so the per-wallet activity feed renders them in
+LoanTimeline-shaped rows.
+
+New `periodicPreNotify.ts` cron lane piggybacks on the existing
+scheduled tick. Each pass: reads `getPreNotifyDays()` from the
+diamond on each chain (default 3 on read failure); walks active
+periodic-cadence loans; for each loan whose next checkpoint falls
+within the pre-notify window AND hasn't been notified yet for this
+exact checkpoint, pushes to BOTH borrower (priority) and lender
+(courtesy) via the existing `sendPush` / Telegram surface;
+de-dups via `period_pre_notified_at`. English-only push copy for
+now (translation deferred — same posture as the borrower
+acknowledgement callout). Failure-isolated like every other lane —
+a transient D1 / RPC blip can't wedge the HF watcher pass.
+
+**Operator deploy notes.**
+
+  1. Apply migration 0007 BEFORE deploying the new worker code
+     — otherwise the indexer bootstrap UPDATE references columns
+     that don't exist yet and the tick fails.
+  2. Frontend ABI sync (`bash contracts/script/exportFrontendAbis.sh`)
+     is mandatory at every contract redeploy that touches the
+     `Loan` / `Offer` / `CreateOfferParams` shape. Skipping this
+     ships an opaque "exceeds max transaction gas limit" failure on
+     any RPC that wraps the revert (per the CLAUDE.md "Frontend ABI
+     sync" warning).
+  3. Master kill-switch flips to enable the feature on a chain:
+     `setPeriodicInterestEnabled(true)` via Safe (gated by
+     ADMIN_ROLE through the 48h timelock post-handover).
+  4. Numeraire stays USD-as-default until both
+     `setNumeraireSwapEnabled(true)` AND `setNumeraire(<oracle>, <threshold>)`
+     are called — single Safe batch atomically rotates both.
+
+Full design — storage shape, validation matrix, watcher event
+contract, locked decisions, phasing — sits at
 [`docs/DesignsAndPlans/PeriodicInterestPaymentDesign.md`](../DesignsAndPlans/PeriodicInterestPaymentDesign.md).
-PR sequencing follows after Range Orders Phase 1 ships. This
-release-notes entry will be extended after each implementation
-PR lands.
 
 ## T-047 — top-bar indexer status badge with plain-English info popover
 
