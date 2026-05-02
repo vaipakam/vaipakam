@@ -99,7 +99,7 @@
     "dataRights": "Datenrechte",
     "keepers": "Keeper",
     "governanceGroupLabel": "Governance",
-    "governanceConsole": "Governance-Konsole"
+    "protocolConsole": "Protokoll-Konsole"
   },
   "dataRights": {
     "title": "Ihre Datenrechte (GDPR / UK GDPR / CCPA)",

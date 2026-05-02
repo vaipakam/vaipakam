@@ -99,7 +99,7 @@
     "dataRights": "حقوق البيانات",
     "keepers": "Keepers",
     "governanceGroupLabel": "الحوكمة",
-    "governanceConsole": "وحدة تحكم الحوكمة"
+    "protocolConsole": "وحدة تحكم البروتوكول"
   },
   "dataRights": {
     "title": "حقوق بياناتك (GDPR / UK GDPR / CCPA)",

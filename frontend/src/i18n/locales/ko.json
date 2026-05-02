@@ -99,7 +99,7 @@
     "dataRights": "데이터 권리",
     "keepers": "키퍼",
     "governanceGroupLabel": "거버넌스",
-    "governanceConsole": "거버넌스 콘솔"
+    "protocolConsole": "프로토콜 콘솔"
   },
   "dataRights": {
     "title": "데이터 권리 (GDPR / UK GDPR / CCPA)",

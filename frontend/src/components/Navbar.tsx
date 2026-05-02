@@ -71,7 +71,7 @@ const NAV_GROUPS: NavGroup[] = [
       // admin-wallet visit unlocks the propose flow. Footer carries
       // the same link too; the dropdown entry meaningfully improves
       // discoverability for a transparency-first audience.
-      { labelKey: 'nav.protocolParameters', href: '/admin' },
+      { labelKey: 'nav.protocolParameters', href: '/protocol-console' },
       { labelKey: 'nav.security', href: '/#security' },
     ],
   },

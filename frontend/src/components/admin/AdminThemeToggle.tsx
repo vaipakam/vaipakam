@@ -6,7 +6,7 @@
  * The choice persists in localStorage so it sticks across reloads.
  *
  * Auto-engagement on admin-wallet connect happens upstream in
- * `AdminDashboard` via `useIsAdminWallet()`; this component only
+ * `AdminDashboard` via `useIsProtocolAdmin()`; this component only
  * surfaces the manual override. Showing the toggle even on the
  * public site is intentional — anyone can peek at the cockpit if
  * they're curious. The toggle is decorative only; no on-chain
@@ -14,15 +14,15 @@
  */
 
 import { Activity, Eye } from 'lucide-react';
-import type { AdminThemeMode } from '../../lib/adminTheme';
+import type { ProtocolConsoleThemeMode } from '../../lib/protocolConsoleTheme';
 
 interface Props {
-  mode: AdminThemeMode;
+  mode: ProtocolConsoleThemeMode;
   onToggle: () => void;
 }
 
 export function AdminThemeToggle({ mode, onToggle }: Props) {
-  const goingTo: AdminThemeMode = mode === 'public' ? 'terminal' : 'public';
+  const goingTo: ProtocolConsoleThemeMode = mode === 'public' ? 'terminal' : 'public';
   const Icon = goingTo === 'terminal' ? Activity : Eye;
   const label = goingTo === 'terminal' ? 'mission control view' : 'public view';
   return (

@@ -10,7 +10,7 @@
  * label (e.g. " (5 min)") via `formatUnitHint` for context.
  */
 
-import type { KnobMeta, KnobUnit } from './adminKnobsZones';
+import type { KnobMeta, KnobUnit } from './protocolConsoleKnobs';
 
 export type RawValue = bigint | boolean | string | null;
 

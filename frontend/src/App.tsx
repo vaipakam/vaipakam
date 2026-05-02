@@ -1,4 +1,4 @@
-import { BrowserRouter, Routes, Route } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import LandingPage from './pages/LandingPage';
 import PublicDashboard from './pages/PublicDashboard';
 import AppLayout from './pages/AppLayout';
@@ -106,8 +106,16 @@ function pageRoutes(): ReactElement {
       <Route path="help/advanced" element={<UserGuide variant="advanced" />} />
       <Route path="help/technical" element={<Whitepaper />} />
       <Route path="help/search" element={<HelpSearch />} />
-      <Route path="admin" element={<AdminDashboard />} />
-      <Route path="admin/docs" element={<AdminKnobsDocs />} />
+      {/* Protocol Console — canonical routes. Path renamed from
+       *  /admin → /protocol-console (2026-05-02) so the URL bar
+       *  matches the page label. The `/admin` and `/admin/docs`
+       *  paths below are kept as backward-compat redirects so
+       *  existing external links / bookmarks / footer references
+       *  on stale-cached deploys keep working. */}
+      <Route path="protocol-console" element={<AdminDashboard />} />
+      <Route path="protocol-console/docs" element={<AdminKnobsDocs />} />
+      <Route path="admin" element={<Navigate to="/protocol-console" replace />} />
+      <Route path="admin/docs" element={<Navigate to="/protocol-console/docs" replace />} />
       <Route path="app" element={<AppLayout />}>
         <Route index element={<Dashboard />} />
         <Route path="offers" element={<OfferBook />} />

@@ -1,12 +1,22 @@
 /**
- * T-042 Phase 4 — admin/governance wallet detection.
+ * T-042 Phase 4 — protocol-admin wallet detection (formerly
+ * `useIsAdminWallet`; renamed 2026-05-02 alongside the Admin
+ * Console → Protocol Console rebrand for consistency).
  *
  * Reads `AccessControlFacet.hasRole(ADMIN_ROLE, address)` on the
  * diamond and returns `true` when the connected wallet holds the
- * canonical `ADMIN_ROLE`. Drives:
- *   - Auto-engage of the terminal/mission-control theme when an
- *     admin wallet connects (`AdminDashboard.tsx`).
+ * canonical contract `ADMIN_ROLE`. Drives:
+ *   - Auto-engage of the terminal/mission-control theme when a
+ *     protocol-admin wallet connects (`AdminDashboard.tsx`).
  *   - Visibility of the "Propose change" buttons on each knob card.
+ *   - The in-app sidebar's "Protocol Console" entry visibility.
+ *
+ * Naming clarification: the on-chain role is `ADMIN_ROLE` (constant
+ * name on `LibAccessControl`). The hook exposes that role check
+ * under the "protocol admin" alias so that consumer code reads as
+ * "is this wallet a protocol admin?" rather than "is this wallet a
+ * generic admin?" — the hook is purely about the contract role,
+ * not about any frontend account-management notion.
  *
  * Trust model: this is a UI-affordance check, not a security gate.
  * The contract ALWAYS enforces role on every state-changing setter
@@ -47,7 +57,7 @@ const HAS_ROLE_ABI: Abi = [
   },
 ];
 
-export function useIsAdminWallet(): boolean {
+export function useIsProtocolAdmin(): boolean {
   const { address, isCorrectChain } = useWallet();
   const client = useDiamondPublicClient();
   const chain = useReadChain();

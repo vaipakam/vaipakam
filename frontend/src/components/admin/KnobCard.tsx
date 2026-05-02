@@ -28,11 +28,11 @@ import {
   classifyValue,
   type KnobMeta,
   type KnobZone,
-} from '../../lib/adminKnobsZones';
+} from '../../lib/protocolConsoleKnobs';
 import {
   formatKnobValue,
   type RawValue,
-} from '../../lib/adminKnobFormat';
+} from '../../lib/protocolConsoleKnobFormat';
 import type { KnobReadResult } from '../../hooks/useAdminKnobValues';
 import type { PendingChange } from '../../hooks/useTimelockPendingChanges';
 import { KnobZoneBar } from './KnobZoneBar';

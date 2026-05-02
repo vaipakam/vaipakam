@@ -24,7 +24,7 @@
  */
 
 import { encodeFunctionData, type Abi } from 'viem';
-import type { KnobMeta } from './adminKnobsZones';
+import type { KnobMeta } from './protocolConsoleKnobs';
 
 /** Per-network Safe app subdomain. Same Safe URL handles both
  *  mainnet and L2 chains via the `safe=<eip3770-prefix>` query. */

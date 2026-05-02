@@ -63,7 +63,9 @@
 
 ---
 
-- [ ] **T-034**: Borrower can pay interest at any time but it is mandatory to pay complete interest at the end of 1 (or each) year completion (For loans with more than 1 year of duration), the cumulative paid interest for that year should be equal or more than a full year accured interest, otherwise system will use collateral to pay interst to lender after grace period of 2 weeks (buy selling the required collateral asset to but lending asset), this may incur higher fees and may also drastically change the HF/LTV and may triger liquidation too.
+- [ ] **T-034**: Borrower can pay interest at any time but it is mandatory to pay complete interest at the end of 1 (or each) year completion (For loans with more than 1 year of duration), the cumulative paid interest for that year should be equal or more than a full year accured interest, otherwise system will use collateral to pay interst to lender after grace period of 2 weeks (take it from config for 1 year more loan) (buy selling the required collateral asset to but lending asset), this may incur higher fees and may also drastically change the HF/LTV and may triger liquidation too. Need to explicitly mention this while creating a loan for more than 1 year during offer creation and offer acceptance. if possible from contract too.
+
+Also we may need update wather which notifies on maturity nears 3 days to notify this also saying a aniversery is coming up and you may need to pay this year's interest amount (in polished words) to brrower and once borrower paid the interest / partial collateral is sold to cover the year full of interest Lender also need to be notified on the same.
 
 ---
 

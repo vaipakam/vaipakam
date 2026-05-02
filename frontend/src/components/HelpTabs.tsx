@@ -57,8 +57,9 @@ export function HelpTabs() {
     locale,
   );
   const technicalHref = withLocalePrefix('/help/technical', locale);
-  const parametersHref = withLocalePrefix('/admin/docs', locale);
-  const isParameters = stripped.startsWith('/admin');
+  const parametersHref = withLocalePrefix('/protocol-console/docs', locale);
+  const isParameters =
+    stripped.startsWith('/protocol-console') || stripped.startsWith('/admin');
   const searchHref = withLocalePrefix('/help/search', locale);
   const isSearch = stripped.startsWith('/help/search');
 

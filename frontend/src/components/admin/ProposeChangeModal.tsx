@@ -26,13 +26,13 @@
 
 import { useState, useMemo } from 'react';
 import { ExternalLink, Shield, X } from 'lucide-react';
-import type { KnobMeta } from '../../lib/adminKnobsZones';
+import type { KnobMeta } from '../../lib/protocolConsoleKnobs';
 import { encodeKnobSetCall, buildSafeDeepLink } from '../../lib/safeDeepLink';
 import { DIAMOND_ABI_VIEM } from '../../contracts/abis';
 import {
   formatBound,
   type RawValue,
-} from '../../lib/adminKnobFormat';
+} from '../../lib/protocolConsoleKnobFormat';
 
 const SAFE_ADDR_KEY = 'vaipakam:admin-safe-address';
 

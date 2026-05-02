@@ -99,7 +99,7 @@
     "dataRights": "தரவு உரிமைகள்",
     "keepers": "கீப்பர்கள்",
     "governanceGroupLabel": "நிர்வாகம்",
-    "governanceConsole": "நிர்வாக கன்சோல்"
+    "protocolConsole": "நெறிமுறை கன்சோல்"
   },
   "dataRights": {
     "title": "உங்கள் தரவு உரிமைகள் (GDPR / UK GDPR / CCPA)",

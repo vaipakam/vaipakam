@@ -99,7 +99,7 @@
     "dataRights": "数据权利",
     "keepers": "Keeper",
     "governanceGroupLabel": "治理",
-    "governanceConsole": "治理控制台"
+    "protocolConsole": "协议控制台"
   },
   "dataRights": {
     "title": "您的数据权利 (GDPR / UK GDPR / CCPA)",

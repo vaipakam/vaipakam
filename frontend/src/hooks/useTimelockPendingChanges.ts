@@ -41,7 +41,7 @@ import {
 } from 'viem';
 import { useDiamondPublicClient, useReadChain } from '../contracts/useDiamond';
 import { DIAMOND_ABI_VIEM } from '../contracts/abis';
-import { ADMIN_KNOBS } from '../lib/adminKnobsZones';
+import { ADMIN_KNOBS } from '../lib/protocolConsoleKnobs';
 import { getDeployment } from '../contracts/deployments';
 
 /** Minimal TimelockController surface — events + state read. Avoids

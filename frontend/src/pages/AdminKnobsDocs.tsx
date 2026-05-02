@@ -18,7 +18,7 @@ import { useMemo, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useLocation, Navigate } from 'react-router-dom';
 import ReactMarkdown from 'react-markdown';
-import { isAdminDashboardPublic } from '../lib/adminVisibility';
+import { isProtocolConsolePublic } from '../lib/protocolConsoleVisibility';
 import remarkGfm from 'remark-gfm';
 import Navbar from '../components/Navbar';
 import Footer from '../components/Footer';
@@ -45,7 +45,7 @@ export default function AdminKnobsDocs() {
   const location = useLocation();
   // Same visibility gate as the dashboard route. Hide the prose
   // reference when the parameter values themselves are hidden.
-  if (!isAdminDashboardPublic()) {
+  if (!isProtocolConsolePublic()) {
     return <Navigate to="/" replace />;
   }
   const text = useMemo(() => resolveAdminDoc(), []);

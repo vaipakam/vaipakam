@@ -21,12 +21,12 @@
  * to render a non-numeric knob (defensive guard).
  */
 
-import type { KnobMeta } from '../../lib/adminKnobsZones';
+import type { KnobMeta } from '../../lib/protocolConsoleKnobs';
 import {
   formatBound,
   knobValuePosition,
   type RawValue,
-} from '../../lib/adminKnobFormat';
+} from '../../lib/protocolConsoleKnobFormat';
 
 interface Props {
   knob: KnobMeta;

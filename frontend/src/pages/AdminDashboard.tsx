@@ -2,7 +2,7 @@
  * /admin — Admin Configurable Knobs & Switches dashboard.
  *
  * Phase 1 stub: reads the curated knob catalogue from
- * `lib/adminKnobsZones.ts` and renders per-category sections with
+ * `lib/protocolConsoleKnobs.ts` and renders per-category sections with
  * placeholder cards. Subsequent phases wire:
  *   - Phase 2: live on-chain values + clean-theme cards.
  *   - Phase 3: cockpit-theme variant for admin wallets.
@@ -29,15 +29,15 @@ import {
   KNOB_CATEGORY_LABELS,
   KNOB_CATEGORY_ORDER,
   knobsByCategory,
-} from '../lib/adminKnobsZones';
-import { isAdminDashboardPublic } from '../lib/adminVisibility';
+} from '../lib/protocolConsoleKnobs';
+import { isProtocolConsolePublic } from '../lib/protocolConsoleVisibility';
 import {
-  type AdminThemeMode,
-  persistAdminTheme,
-  readPersistedAdminTheme,
-  readUrlAdminTheme,
-} from '../lib/adminTheme';
-import { useIsAdminWallet } from '../lib/useIsAdminWallet';
+  type ProtocolConsoleThemeMode,
+  persistConsoleTheme,
+  readPersistedConsoleTheme,
+  readUrlConsoleTheme,
+} from '../lib/protocolConsoleTheme';
+import { useIsProtocolAdmin } from '../lib/useIsProtocolAdmin';
 import { useReadChain } from '../contracts/useDiamond';
 import { useAdminKnobValues } from '../hooks/useAdminKnobValues';
 import { useTimelockPendingChanges } from '../hooks/useTimelockPendingChanges';
@@ -53,42 +53,40 @@ export default function AdminDashboard() {
   // Phase 4 will refine this to "redirect unless admin wallet
   // connected" so signers can still reach the cockpit when the
   // public surface is hidden.
-  if (!isAdminDashboardPublic()) {
+  if (!isProtocolConsolePublic()) {
     return <Navigate to="/" replace />;
   }
   const grouped = knobsByCategory();
   const lang = i18n.resolvedLanguage ?? 'en';
-  const docsPath = lang === 'en' ? '/admin/docs' : `/${lang}/admin/docs`;
+  const docsPath = lang === 'en' ? '/protocol-console/docs' : `/${lang}/protocol-console/docs`;
   const values = useAdminKnobValues();
-  const isAdminWallet = useIsAdminWallet();
+  const isAdminWallet = useIsProtocolAdmin();
   const location = useLocation();
   const readChain = useReadChain();
   const pendingChanges = useTimelockPendingChanges();
 
   // Theme resolution: URL > localStorage > admin-wallet-auto > default.
-  const [themeMode, setThemeMode] = useState<AdminThemeMode>(() => {
-    const fromUrl = readUrlAdminTheme(location.search);
+  const [themeMode, setThemeMode] = useState<ProtocolConsoleThemeMode>(() => {
+    const fromUrl = readUrlConsoleTheme(location.search);
     if (fromUrl) return fromUrl;
-    const persisted = readPersistedAdminTheme();
+    const persisted = readPersistedConsoleTheme();
     if (persisted) return persisted;
     return isAdminWallet ? 'terminal' : 'public';
   });
 
-  // Auto-engage terminal mode when an admin wallet connects (only
-  // when the user hasn't already chosen a mode manually). Phase 3
-  // ships with `useIsAdminWallet()` stubbed to false; Phase 4 wires
-  // the real on-chain check + this auto-engage path becomes live.
+  // Auto-engage terminal mode when a protocol-admin wallet connects
+  // (only when the user hasn't already chosen a mode manually).
   useEffect(() => {
-    const persisted = readPersistedAdminTheme();
-    const fromUrl = readUrlAdminTheme(location.search);
+    const persisted = readPersistedConsoleTheme();
+    const fromUrl = readUrlConsoleTheme(location.search);
     if (persisted || fromUrl) return; // user override wins
     setThemeMode(isAdminWallet ? 'terminal' : 'public');
   }, [isAdminWallet, location.search]);
 
   const onToggle = () => {
     setThemeMode((prev) => {
-      const next: AdminThemeMode = prev === 'public' ? 'terminal' : 'public';
-      persistAdminTheme(next);
+      const next: ProtocolConsoleThemeMode = prev === 'public' ? 'terminal' : 'public';
+      persistConsoleTheme(next);
       return next;
     });
   };
@@ -118,17 +116,17 @@ export default function AdminDashboard() {
         >
           <div style={{ flex: '1 1 480px', minWidth: 280 }}>
             <h1 style={{ marginBottom: 8 }}>
-              {t('adminDashboard.title', 'Admin Configurable Knobs & Switches')}
+              {t('protocolConsole.title', 'Protocol Console')}
             </h1>
             <p style={{ opacity: 0.85, fontSize: '0.95rem', lineHeight: 1.5 }}>
               {t(
-                'adminDashboard.subtitle',
-                "Public read-only view of every governance-tunable protocol parameter. The current value, the contract's hard min/max, and the operational safe / mid / caution zones are surfaced here for transparency. Admin actions become available when an admin wallet connects.",
+                'protocolConsole.subtitle',
+                "Public read-only view of every governance-tunable protocol parameter. The current value, the contract's hard min/max, and the operational safe / mid / caution zones are surfaced here for transparency. Protocol-admin actions become available when an admin wallet connects.",
               )}
             </p>
             <p style={{ marginTop: 12, fontSize: '0.9rem', opacity: 0.75 }}>
               <Link to={docsPath} style={{ color: 'var(--brand)' }}>
-                {t('adminDashboard.docsLink', 'Read the Knobs & Switches reference →')}
+                {t('protocolConsole.docsLink', 'Read the Knobs & Switches reference →')}
               </Link>
             </p>
           </div>
@@ -167,11 +165,11 @@ export default function AdminDashboard() {
               lineHeight: 1.5,
             }}
           >
-            <strong>Admin role detected.</strong> Each card has a "Propose"
-            button that composes the setter calldata and opens Safe with
-            the transaction pre-filled. <em>You sign in Safe</em> — Vaipakam
-            never signs on your behalf. Proposals also pass through the
-            timelock delay before they take effect on-chain.
+            <strong>Protocol-admin role detected.</strong> Each card has a
+            "Propose" button that composes the setter calldata and opens
+            Safe with the transaction pre-filled. <em>You sign in Safe</em>
+            — Vaipakam never signs on your behalf. Proposals also pass
+            through the timelock delay before they take effect on-chain.
           </div>
         )}
 
