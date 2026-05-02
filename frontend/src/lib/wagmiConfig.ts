@@ -125,6 +125,12 @@ const defaultConnectKitConfig = getDefaultConfig({
   appDescription: APP_DESCRIPTION,
   appUrl: APP_URL,
   appIcon: APP_ICON,
+  // ConnectKit v1.9+ ships with `enableAaveAccount: true` as the default —
+  // adding the @aave/account smart-wallet connector and rendering a
+  // "Continue with Aave" CTA at the top of the picker. We do NOT want a
+  // competing-protocol-branded button at the top of Vaipakam's connect
+  // modal; opt out explicitly. Removes the connector AND the CTA.
+  enableAaveAccount: false,
   // Keep wagmi's auto-reconnect on page reload (default true) so a user
   // who just refreshed doesn't have to re-pair their wallet every time.
   ssr: false,

@@ -634,3 +634,31 @@ job is only to make first-paint fast; pushing real-time updates
 isn't necessary because the browser is already event-driven via
 RPC subscriptions. Dropping push reduces the architecture to one
 moving part (cron) instead of two (cron + WebSocket subscribers).
+
+## Wallet picker — opted out of ConnectKit's Aave-account default
+
+ConnectKit v1.9+ ships with `enableAaveAccount: true` as the
+default in `getDefaultConfig`. That silently bundles the
+`@aave/account` smart-wallet connector AND adds a "Continue with
+Aave" CTA at the top of every dapp's connect modal — a
+competing-protocol-branded promotion appearing on Vaipakam's
+modal without the operator's consent.
+
+Opted out explicitly in
+[`frontend/src/lib/wagmiConfig.ts`](frontend/src/lib/wagmiConfig.ts)
+by passing `enableAaveAccount: false`. One-line change; removes
+both the connector and the CTA. Connect modal now shows the
+expected wallet list cleanly: MetaMask / Brave / Rabby / Frame
+(injected, EIP-6963 auto-detection) + WalletConnect (covers
+Trust, Rainbow, MetaMask Mobile, etc.) + Coinbase Wallet
+(extension + passkey-based Smart Wallet) + Safe (auto-handshake
+when Vaipakam is embedded as a Safe App).
+
+After surveying the wallet-picker stacks at the major DeFi
+platforms — Aave and Compound use the same ConnectKit + wagmi
+stack as Vaipakam, Uniswap rolls a custom wagmi picker, dYdX v4
+is Cosmos-native, OP-stack apps tend toward RainbowKit, and
+Friend.tech / Pump.fun use Privy for email/social-to-wallet —
+the conclusion is that Vaipakam's stack is the modern DeFi
+default and worth keeping. The Aave-CTA was the one rough edge,
+and it's now gone.

@@ -15,7 +15,7 @@
 
 ---
 
-- [ ] **T-045**: check on other major DeFi and DEX for what they have for connecting wallet, can we change the exsisting one, Not sure why it always asks for Aave connect and I don't want that, first suggest me, or it alrady the beast one we have?
+- [x] **T-045**: check on other major DeFi and DEX for what they have for connecting wallet, can we change the exsisting one, Not sure why it always asks for Aave connect and I don't want that, first suggest me, or it alrady the beast one we have? — surveyed the major DeFi wallet-picker stacks (Uniswap custom wagmi, Aave / Compound on **ConnectKit + wagmi** same as us, dYdX v4 Cosmos-native + wagmi, Friend.tech / Pump.fun on Privy embedded wallet, OP-stack apps on RainbowKit, broader-coverage apps on Reown AppKit). Vaipakam's stack (wagmi v2 + ConnectKit v1.9.2 + viem v2) is the modern DeFi default — same library Aave and Compound use. **Decision: keep the stack.** The "Continue with Aave" CTA appearing at the top of the connect modal was traced to ConnectKit v1.9+ shipping with `enableAaveAccount: true` as the default in `getDefaultConfig` — it bundles `@aave/account` and renders a competing-protocol-branded passkey CTA in every dapp's picker without opt-in. **Fix**: `getDefaultConfig({ ..., enableAaveAccount: false })` in [`frontend/src/lib/wagmiConfig.ts`](frontend/src/lib/wagmiConfig.ts) — removes both the connector AND the CTA. Single-line change. Connector list now reads cleanly: injected wallets (MetaMask, Brave, Rabby, Frame via EIP-6963 auto-detection) + WalletConnect (mobile wallets via QR / deep link) + Coinbase Wallet (extension + passkey-based Smart Wallet) + Safe (auto-handshake when Vaipakam is embedded as a Safe App). Frontend tsc clean.
 
 ---
 
