@@ -53,12 +53,23 @@ export const DIAMOND_LOAN_DETAILS_ABI = [
           { name: 'fallbackTreasuryBpsAtInit', type: 'uint16' },
           { name: 'borrower', type: 'address' },
           { name: 'allowsPartialRepay', type: 'bool' },
+          // T-034 — Periodic Interest Payment fields. Cadence
+          // snapshotted at acceptance (immutable for the loan's
+          // lifetime); `lastPeriodicInterestSettledAt` advances one
+          // cadence interval per settle event.
+          { name: 'periodicInterestCadence', type: 'uint8' },
+          { name: 'lastPeriodicInterestSettledAt', type: 'uint64' },
           { name: 'lenderTokenId', type: 'uint256' },
           { name: 'borrowerTokenId', type: 'uint256' },
           { name: 'principal', type: 'uint256' },
           { name: 'principalAsset', type: 'address' },
           { name: 'interestRateBps', type: 'uint256' },
-          { name: 'startTime', type: 'uint256' },
+          // T-034 downsized startTime to uint64 + paired with
+          // interestPaidSinceLastPeriod (uint128) to free a slot.
+          // Field order MUST match LibVaipakam.Loan source order or
+          // the ABI tuple decode silently misaligns.
+          { name: 'startTime', type: 'uint64' },
+          { name: 'interestPaidSinceLastPeriod', type: 'uint128' },
           { name: 'durationDays', type: 'uint256' },
           { name: 'collateralAsset', type: 'address' },
           { name: 'collateralAmount', type: 'uint256' },

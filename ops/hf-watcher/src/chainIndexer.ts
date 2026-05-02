@@ -78,6 +78,19 @@ const EVENT_ABI = parseAbi([
   'event BorrowerFundsClaimed(uint256 indexed loanId, address indexed claimant, address asset, uint256 amount)',
   'event LoanSettled(uint256 indexed loanId)',
   'event BorrowerLifRebateClaimed(uint256 indexed loanId, address indexed claimant, uint256 amount)',
+  // T-034 PR2 — Periodic Interest Payment lifecycle. PeriodicInterestSettled
+  // (just-stamp + repay-fold inline advance) + AutoLiquidated (collateral
+  // sale) advance the on-chain `lastPeriodicInterestSettledAt`; the
+  // watcher mirrors that into the `loans` table so the pre-notify
+  // cron lane can compute the next checkpoint without re-reading the
+  // loan struct on every pass. SlippageOverBuffer is informational
+  // (off-chain monitors aggregate it). RepayPartialPeriodAdvanced
+  // pairs with PeriodicInterestSettled when the borrower's voluntary
+  // repayment crossed a period boundary inline.
+  'event PeriodicInterestSettled(uint256 indexed loanId, uint256 periodEndAt, uint256 expected, uint256 paidByBorrower, address indexed settler)',
+  'event PeriodicInterestAutoLiquidated(uint256 indexed loanId, uint256 periodEndAt, uint256 shortfall, uint256 collateralSold, uint256 lenderProceeds, uint256 settlerBonus, uint256 treasuryShare, address indexed settler)',
+  'event PeriodicSlippageOverBuffer(uint256 indexed loanId, uint256 expectedShortfall, uint256 actualLenderProceeds)',
+  'event RepayPartialPeriodAdvanced(uint256 indexed loanId, uint256 periodEndAt, uint256 expected, address indexed advancedBy)',
   // Position-NFT lifecycle. Standard ERC-721 Transfer covers mint
   // (from = 0x0), trade (between holders), and burn (to = 0x0).
   // Captured into activity_events for the public audit trail of
@@ -554,11 +567,20 @@ async function refreshStaleLoanTokenIds(
         interestRateBps: bigint;
         startTime: bigint;
         allowsPartialRepay: boolean;
+        periodicInterestCadence: number;
+        lastPeriodicInterestSettledAt: bigint;
       };
+      // T-034 — capture the Periodic Interest Payment fields at the
+      // same getLoanDetails bootstrap so the pre-notify cron lane
+      // can filter by cadence + compute the next checkpoint without
+      // re-fetching the loan struct on every pass.
       await env.DB.prepare(
         `UPDATE loans SET lender_token_id = ?, borrower_token_id = ?,
                           interest_rate_bps = ?, start_time = ?,
-                          allows_partial_repay = ?, updated_at = ?
+                          allows_partial_repay = ?,
+                          periodic_interest_cadence = ?,
+                          last_period_settled_at = ?,
+                          updated_at = ?
          WHERE chain_id = ? AND loan_id = ?`,
       )
         .bind(
@@ -567,6 +589,8 @@ async function refreshStaleLoanTokenIds(
           Number(detail.interestRateBps),
           Number(detail.startTime),
           detail.allowsPartialRepay ? 1 : 0,
+          Number(detail.periodicInterestCadence ?? 0),
+          Number(detail.lastPeriodicInterestSettledAt ?? 0n),
           Math.floor(Date.now() / 1000),
           chainId,
           row.loan_id,
@@ -683,12 +707,40 @@ async function processLoanLogs(
         )
         .run();
       if ((r.meta?.changes ?? 0) > 0) statusUpdates++;
+    } else if (
+      log.eventName === 'PeriodicInterestSettled' ||
+      log.eventName === 'PeriodicInterestAutoLiquidated' ||
+      log.eventName === 'RepayPartialPeriodAdvanced'
+    ) {
+      // T-034 PR2 — advance the mirrored `last_period_settled_at` to
+      // match the on-chain advance. The on-chain advance is exactly
+      // one cadence interval per event; we mirror that by walking
+      // `last_period_settled_at` forward by `intervalDays(cadence) ×
+      // 1 day`. Doing the increment in SQL keeps it cheap and avoids a
+      // round-trip read of the full loan struct.
+      const loanId = Number(a.loanId as bigint);
+      // periodEndAt is the BOUNDARY that just closed — the new
+      // `last_period_settled_at` lands exactly there. Both PR2
+      // settle events carry it as the second arg (`periodEndAt`),
+      // matching the inline-fold event's shape.
+      const periodEndAt = Number(a.periodEndAt as bigint);
+      await env.DB.prepare(
+        `UPDATE loans SET last_period_settled_at = ?, updated_at = ?
+         WHERE chain_id = ? AND loan_id = ?`,
+      )
+        .bind(periodEndAt, now, chainId, loanId)
+        .run();
+      // PeriodicInterestSettled / AutoLiquidated do NOT flip terminal
+      // status — the loan stays active across periodic checkpoints.
+      // No statusUpdates increment.
     }
     // PartialRepaid + LoanSettlementBreakdown don't flip terminal
     // status — they're surfaced through activity_events for the
     // LoanTimeline and not reflected in `loans.status`. Partial
     // repayments leave the loan 'active'; the breakdown event is
     // emitted alongside terminal events that DO flip status.
+    // PeriodicSlippageOverBuffer is informational-only (off-chain
+    // monitors aggregate it); no row update needed.
   }
   return { newLoans, statusUpdates };
 }
@@ -809,6 +861,26 @@ function pluckActivityRefs(
     case 'BorrowerLifRebateClaimed':
       return {
         actor: (args.claimant as string)?.toLowerCase() ?? null,
+        loanId: Number(args.loanId as bigint),
+        offerId: null,
+      };
+    // T-034 PR2 — settler / advancer is the meaningful actor.
+    case 'PeriodicInterestSettled':
+    case 'PeriodicInterestAutoLiquidated':
+      return {
+        actor: (args.settler as string)?.toLowerCase() ?? null,
+        loanId: Number(args.loanId as bigint),
+        offerId: null,
+      };
+    case 'RepayPartialPeriodAdvanced':
+      return {
+        actor: (args.advancedBy as string)?.toLowerCase() ?? null,
+        loanId: Number(args.loanId as bigint),
+        offerId: null,
+      };
+    case 'PeriodicSlippageOverBuffer':
+      return {
+        actor: null,
         loanId: Number(args.loanId as bigint),
         offerId: null,
       };

@@ -10,6 +10,7 @@ import type { Env } from './env';
 import { runWatcher } from './watcher';
 import { runBuyWatchdog } from './buyWatchdog';
 import { runChainIndexer } from './chainIndexer';
+import { runPeriodicPreNotify } from './periodicPreNotify';
 import {
   consumeTelegramLinkCode,
   issueTelegramLinkCode,
@@ -76,6 +77,17 @@ export default {
     ctx.waitUntil(
       runChainIndexer(env).catch((err) => {
         console.error('[chainIndexer] pass failed:', err);
+      }),
+    );
+    // T-034 PR2 — Periodic Interest Payment pre-notify lane. Walks
+    // the indexed `loans` table for active periodic-cadence loans
+    // whose next checkpoint is within `preNotifyDays` and pushes to
+    // both borrower (priority) and lender (courtesy). Same isolation
+    // policy as the chainIndexer above so a transient D1/RPC blip
+    // can't wedge the HF watcher pass.
+    ctx.waitUntil(
+      runPeriodicPreNotify(env).catch((err) => {
+        console.error('[periodicPreNotify] pass failed:', err);
       }),
     );
   },
