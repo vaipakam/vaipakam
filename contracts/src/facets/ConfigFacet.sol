@@ -1124,6 +1124,42 @@ contract ConfigFacet is DiamondAccessControl {
         emit NumeraireSwapEnabledSet(enabled);
     }
 
+    /// @notice Individual getter for `numeraireOracle` — protocol-console
+    ///         knob card uses this since the dashboard reader expects a
+    ///         single-value function per knob.
+    function getNumeraireOracle() external view returns (address) {
+        return LibVaipakam.storageSlot().protocolCfg.numeraireOracle;
+    }
+
+    /// @notice Individual getter for `minPrincipalForFinerCadence`.
+    ///         Returns the effective value (override or library default).
+    function getMinPrincipalForFinerCadence() external view returns (uint256) {
+        uint256 v = LibVaipakam.storageSlot().protocolCfg.minPrincipalForFinerCadence;
+        return v == 0
+            ? LibVaipakam.PERIODIC_MIN_PRINCIPAL_FOR_FINER_CADENCE_DEFAULT
+            : v;
+    }
+
+    /// @notice Individual getter for `preNotifyDays`. Returns the
+    ///         effective value (override or library default).
+    function getPreNotifyDays() external view returns (uint8) {
+        uint8 v = LibVaipakam.storageSlot().protocolCfg.preNotifyDays;
+        return v == 0 ? LibVaipakam.PERIODIC_PRE_NOTIFY_DAYS_DEFAULT : v;
+    }
+
+    /// @notice Individual getter for `periodicInterestEnabled` master
+    ///         kill-switch. Cards / hooks that gate UI on the flag use
+    ///         this rather than fan out the bundle.
+    function getPeriodicInterestEnabled() external view returns (bool) {
+        return LibVaipakam.storageSlot().protocolCfg.periodicInterestEnabled;
+    }
+
+    /// @notice Individual getter for `numeraireSwapEnabled` independent
+    ///         kill-switch.
+    function getNumeraireSwapEnabled() external view returns (bool) {
+        return LibVaipakam.storageSlot().protocolCfg.numeraireSwapEnabled;
+    }
+
     /// @notice Bundled getter for the entire T-034 config surface,
     ///         intended for the frontend `useProtocolConfig` hook.
     /// @return numeraireOracle_ The pluggable numeraire oracle

@@ -243,7 +243,13 @@
     "keeperAccessHintSuffix": "在高级资料（Keepers 页面）中启用 Keeper 访问，并将该 Keeper 加入许可名单。Keeper 权限按角色限定：创建者自己的资料 opt-in + 许可名单只管理创建者一侧有权执行的操作。",
     "allowsPartialRepayLabel": "允许借款人发起部分还款",
     "allowsPartialRepayHintLender": "启用后,借款人可在到期前对所产生的贷款调用 repayPartial,分批偿还本金。默认关闭 — 关闭时链上仅接受全额还款。",
-    "allowsPartialRepayHintBorrower": "请求分批偿还此贷款的权利。出借人通过接受您的报价默示同意;如果不希望部分还款则会跳过。默认关闭。"
+    "allowsPartialRepayHintBorrower": "请求分批偿还此贷款的权利。出借人通过接受您的报价默示同意;如果不希望部分还款则会跳过。默认关闭。",
+    "periodicInterest": {
+      "label": "付款节奏",
+      "disabledShort": "interval ≥ duration",
+      "hintShort": "Pick a cadence to require interest settlement at fixed intervals during the loan. Larger principals (above the configured threshold) unlock finer cadences. If a borrower misses a period after the grace window, anyone can call a settler that sells just enough collateral to cover the shortfall.",
+      "hintMultiYear": "Multi-year loans require at least Annual settlement. The borrower must pay each year's accrued interest by the year-end checkpoint, or after the grace window anyone can sell collateral to cover the shortfall — possibly triggering broader liquidation."
+    }
   },
   "loanDetails": {
     "connectTitle": "连接您的钱包",
@@ -1603,6 +1609,21 @@
       "userguideBasic": "用户指南 — 基础",
       "userguideAdvanced": "用户指南 — 高级",
       "whitepaper": "白皮书"
+    }
+  },
+  "periodicInterest": {
+    "cadence": {
+      "none": "无定期结算",
+      "monthly": "月度",
+      "quarterly": "季度",
+      "semiAnnual": "半年度",
+      "annual": "年度"
+    }
+  },
+  "acceptOffer": {
+    "periodicInterest": {
+      "calloutPrefix": "interest settlement required",
+      "calloutBody": "By accepting you agree that the borrower must pay each period's accrued interest by the period close. If the borrower misses the period beyond the configured grace window, anyone can trigger a settler that sells just enough collateral to cover the shortfall — possibly affecting the loan's health factor and triggering further liquidation."
     }
   }
 }

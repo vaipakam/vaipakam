@@ -105,6 +105,16 @@
             "internalType": "bool"
           },
           {
+            "name": "periodicInterestCadence",
+            "type": "uint8",
+            "internalType": "enum LibVaipakam.PeriodicInterestCadence"
+          },
+          {
+            "name": "lastPeriodicInterestSettledAt",
+            "type": "uint64",
+            "internalType": "uint64"
+          },
+          {
             "name": "lenderTokenId",
             "type": "uint256",
             "internalType": "uint256"
@@ -131,8 +141,13 @@
           },
           {
             "name": "startTime",
-            "type": "uint256",
-            "internalType": "uint256"
+            "type": "uint64",
+            "internalType": "uint64"
+          },
+          {
+            "name": "interestPaidSinceLastPeriod",
+            "type": "uint128",
+            "internalType": "uint128"
           },
           {
             "name": "durationDays",
@@ -382,6 +397,53 @@
     "type": "error",
     "name": "BridgedBuyReceiverNotSet",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "CadenceNotAllowed",
+    "inputs": [
+      {
+        "name": "cadence",
+        "type": "uint8",
+        "internalType": "uint8"
+      },
+      {
+        "name": "duration",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "principalNumeraire",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "threshold",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "CadenceNotAllowedForIlliquid",
+    "inputs": [
+      {
+        "name": "principalLiquidity",
+        "type": "uint8",
+        "internalType": "uint8"
+      },
+      {
+        "name": "collateralLiquidity",
+        "type": "uint8",
+        "internalType": "uint8"
+      },
+      {
+        "name": "cadence",
+        "type": "uint8",
+        "internalType": "uint8"
+      }
+    ]
   },
   {
     "type": "error",
@@ -692,6 +754,22 @@
   },
   {
     "type": "error",
+    "name": "NumeraireOracleInvalid",
+    "inputs": [
+      {
+        "name": "oracle",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "NumeraireSwapDisabled",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "OfferAcceptFailed",
     "inputs": []
   },
@@ -725,6 +803,11 @@
         "internalType": "uint256"
       }
     ]
+  },
+  {
+    "type": "error",
+    "name": "PeriodicInterestDisabled",
+    "inputs": []
   },
   {
     "type": "error",

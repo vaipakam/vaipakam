@@ -75,6 +75,11 @@ export interface OfferData {
    *  there's no acceptor-side override. Snapshotted to
    *  `Loan.allowsPartialRepay` at init and gates `RepayFacet.repayPartial`. */
   allowsPartialRepay: boolean;
+  /** T-034 — lender-set Periodic Interest Payment cadence
+   *  (0 = None ... 4 = Annual). Snapshotted onto the loan at acceptance.
+   *  Acceptors must explicitly acknowledge non-`None` cadences before
+   *  the accept button enables. */
+  periodicInterestCadence: number;
   // Phase 6: per-keeper per-offer enable flags live in
   // `s.offerKeeperEnabled[offerId][keeper]`. No single flag on the offer
   // struct. Per-offer keeper selection is surfaced on the offer card
@@ -147,6 +152,7 @@ export type RawOffer = {
   assetType: bigint | number;
   tokenId: bigint;
   allowsPartialRepay?: boolean;
+  periodicInterestCadence?: bigint | number;
 };
 
 export function toOfferData(r: RawOffer): OfferData {
@@ -166,6 +172,7 @@ export function toOfferData(r: RawOffer): OfferData {
     assetType: Number(r.assetType),
     tokenId: r.tokenId,
     allowsPartialRepay: r.allowsPartialRepay ?? false,
+    periodicInterestCadence: Number(r.periodicInterestCadence ?? 0),
   };
 }
 
@@ -1419,6 +1426,42 @@ function AcceptReviewModal({ offer, illiquid, consent, onConsentChange, submitti
           offer={offer}
           permit2Eligible={permit2Eligible}
         />
+
+        {/* T-034 — when the offer carries a Periodic Interest Payment
+            cadence other than None, surface a callout above the consent
+            checkbox so the acceptor reads the cadence + missed-payment
+            consequence before signing. The single consent below covers
+            BOTH the abnormal-market fallback AND this cadence — kept as
+            one checkbox per the project's "single mandatory risk
+            consent" policy. */}
+        {offer.periodicInterestCadence !== 0 && (
+          <div
+            style={{
+              border: '1px solid rgba(245,158,11,0.45)',
+              background: 'rgba(245,158,11,0.08)',
+              padding: '10px 14px',
+              borderRadius: 4,
+              fontSize: '0.9rem',
+              marginTop: 12,
+              lineHeight: 1.5,
+            }}
+            role="note"
+          >
+            <strong>
+              {t(
+                `periodicInterest.cadence.${
+                  ['none', 'monthly', 'quarterly', 'semiAnnual', 'annual'][
+                    offer.periodicInterestCadence
+                  ]
+                }`,
+              )}{' '}
+              {t('acceptOffer.periodicInterest.calloutPrefix')}
+            </strong>
+            <div style={{ marginTop: 4 }}>
+              {t('acceptOffer.periodicInterest.calloutBody')}
+            </div>
+          </div>
+        )}
 
         <label className="checkbox-row" style={{ marginTop: 8 }}>
           <input

@@ -504,6 +504,16 @@
             "internalType": "bool"
           },
           {
+            "name": "periodicInterestCadence",
+            "type": "uint8",
+            "internalType": "enum LibVaipakam.PeriodicInterestCadence"
+          },
+          {
+            "name": "lastPeriodicInterestSettledAt",
+            "type": "uint64",
+            "internalType": "uint64"
+          },
+          {
             "name": "lenderTokenId",
             "type": "uint256",
             "internalType": "uint256"
@@ -530,8 +540,13 @@
           },
           {
             "name": "startTime",
-            "type": "uint256",
-            "internalType": "uint256"
+            "type": "uint64",
+            "internalType": "uint64"
+          },
+          {
+            "name": "interestPaidSinceLastPeriod",
+            "type": "uint128",
+            "internalType": "uint128"
           },
           {
             "name": "durationDays",

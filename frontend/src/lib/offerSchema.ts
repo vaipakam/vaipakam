@@ -83,6 +83,12 @@ export interface OfferFormState {
    *  "5.5"). Empty ⇒ single-value mode. Gated on `rangeRateEnabled`
    *  + Advanced mode in the UI. */
   interestRateMax: string;
+  /** T-034 — lender's chosen Periodic Interest Payment cadence.
+   *  Numeric value matches the on-chain enum (0 = None ... 4 = Annual).
+   *  Default `0` (None) preserves backward compat. Visible only when
+   *  Advanced mode AND both legs are liquid AND
+   *  `periodicInterestEnabled` is true on the protocol config. */
+  periodicInterestCadence: number;
 }
 
 export const initialOfferForm: OfferFormState = {
@@ -105,6 +111,7 @@ export const initialOfferForm: OfferFormState = {
   allowsPartialRepay: false,
   amountMax: '',
   interestRateMax: '',
+  periodicInterestCadence: 0, // None
 };
 
 /** Payload shape expected by `Diamond.createOffer`. */
@@ -133,6 +140,8 @@ export interface CreateOfferPayload {
   /** Range Orders Phase 1 — upper bound of the interest-rate range
    *  (BPS). `0` ⇒ auto-collapse. Otherwise must be ≥ `interestRateBps`. */
   interestRateBpsMax: number;
+  /** T-034 — Periodic Interest Payment cadence (0 = None ... 4 = Annual). */
+  periodicInterestCadence: number;
 }
 
 /**
@@ -269,6 +278,7 @@ export function toCreateOfferPayload(
     allowsPartialRepay: s.allowsPartialRepay,
     amountMax,
     interestRateBpsMax,
+    periodicInterestCadence: s.periodicInterestCadence,
   };
 }
 

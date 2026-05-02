@@ -43,6 +43,7 @@ export type KnobCategory =
   | 'rewards'
   | 'crossChain'
   | 'rangeOrders'
+  | 'periodicInterest'
   | 'kyc'
   | 'matching';
 
@@ -538,6 +539,128 @@ export const ADMIN_KNOBS: KnobMeta[] = [
     infoAnchor: 'range-orders-kill-switch-flags-rangeamountenabled-rangerateenabled-partialfillenabled',
     hasNumericRange: false,
   },
+
+  // ─── T-034 — Periodic Interest Payment ───────────────────────────
+
+  {
+    id: 'periodicInterestEnabled',
+    label: 'Periodic Interest — master switch',
+    short:
+      'Master flag. When false, OfferFacet rejects any non-None cadence and the entire feature is dormant.',
+    category: 'periodicInterest',
+    unit: 'bool',
+    hardMin: '0',
+    hardMax: '1',
+    safeMin: '0',
+    safeMax: '1',
+    midMin: '0',
+    midMax: '1',
+    getter: { facet: 'ConfigFacet', fn: 'getPeriodicInterestEnabled', returns: 'bool' },
+    setter: {
+      facet: 'ConfigFacet',
+      fn: 'setPeriodicInterestEnabled',
+      args: [{ name: 'enabled', type: 'bool' }],
+    },
+    infoAnchor: 'periodic-interest-payment-kill-switches',
+    hasNumericRange: false,
+  },
+  {
+    id: 'numeraireSwapEnabled',
+    label: 'Numeraire — cross-numeraire swap',
+    short:
+      'Independent flag gating setNumeraire. When false, governance cannot rotate the numeraire away from USD-as-default.',
+    category: 'periodicInterest',
+    unit: 'bool',
+    hardMin: '0',
+    hardMax: '1',
+    safeMin: '0',
+    safeMax: '1',
+    midMin: '0',
+    midMax: '1',
+    getter: { facet: 'ConfigFacet', fn: 'getNumeraireSwapEnabled', returns: 'bool' },
+    setter: {
+      facet: 'ConfigFacet',
+      fn: 'setNumeraireSwapEnabled',
+      args: [{ name: 'enabled', type: 'bool' }],
+    },
+    infoAnchor: 'periodic-interest-payment-kill-switches',
+    hasNumericRange: false,
+  },
+  {
+    id: 'numeraireOracle',
+    label: 'Numeraire — pluggable oracle',
+    short:
+      'Pluggable INumeraireOracle that decouples the principal threshold from any specific currency. address(0) = USD-as-numeraire.',
+    category: 'periodicInterest',
+    unit: 'address',
+    hardMin: '0',
+    hardMax: '0',
+    safeMin: '0',
+    safeMax: '0',
+    midMin: '0',
+    midMax: '0',
+    getter: { facet: 'ConfigFacet', fn: 'getNumeraireOracle', returns: 'address' },
+    setter: {
+      facet: 'ConfigFacet',
+      fn: 'setNumeraire',
+      args: [
+        { name: 'newOracle', type: 'address' },
+        { name: 'newThresholdInNewNumeraire', type: 'uint256' },
+      ],
+    },
+    infoAnchor: 'periodic-interest-payment-numeraire-abstraction',
+    hasNumericRange: false,
+  },
+  {
+    id: 'minPrincipalForFinerCadence',
+    label: 'Periodic Interest — finer-cadence threshold',
+    short:
+      'Principal threshold for opting into finer-than-mandatory cadence. In numeraire-units (1e18-scaled). Default $100k.',
+    category: 'periodicInterest',
+    unit: 'usd1e18',
+    hardMin: '1000000000000000000000', // 1_000 * 1e18
+    hardMax: '10000000000000000000000000', // 10_000_000 * 1e18
+    safeMin: '50000000000000000000000', // 50_000 * 1e18
+    safeMax: '500000000000000000000000', // 500_000 * 1e18
+    midMin: '10000000000000000000000', // 10_000 * 1e18
+    midMax: '2000000000000000000000000', // 2_000_000 * 1e18
+    getter: {
+      facet: 'ConfigFacet',
+      fn: 'getMinPrincipalForFinerCadence',
+      returns: 'uint256',
+    },
+    setter: {
+      facet: 'ConfigFacet',
+      fn: 'setMinPrincipalForFinerCadence',
+      args: [{ name: 'newThreshold', type: 'uint256' }],
+    },
+    defaultFallback: '100000000000000000000000', // 100_000 * 1e18
+    infoAnchor: 'periodic-interest-payment-threshold',
+    hasNumericRange: true,
+  },
+  {
+    id: 'preNotifyDays',
+    label: 'Pre-notify lead time (days)',
+    short:
+      'Days the off-chain watcher fires push notifications before maturity AND each periodic-interest checkpoint.',
+    category: 'periodicInterest',
+    unit: 'wholeNumber',
+    hardMin: '1',
+    hardMax: '14',
+    safeMin: '2',
+    safeMax: '5',
+    midMin: '1',
+    midMax: '7',
+    getter: { facet: 'ConfigFacet', fn: 'getPreNotifyDays', returns: 'uint8' },
+    setter: {
+      facet: 'ConfigFacet',
+      fn: 'setPreNotifyDays',
+      args: [{ name: 'newDays', type: 'uint8' }],
+    },
+    defaultFallback: '3',
+    infoAnchor: 'periodic-interest-payment-pre-notify',
+    hasNumericRange: true,
+  },
 ];
 
 /** Order in which categories appear on the dashboard. */
@@ -548,6 +671,7 @@ export const KNOB_CATEGORY_ORDER: KnobCategory[] = [
   'crossChain',
   'rewards',
   'rangeOrders',
+  'periodicInterest',
   'matching',
   'kyc',
 ];
@@ -561,6 +685,7 @@ export const KNOB_CATEGORY_LABELS: Record<KnobCategory, string> = {
   crossChain: 'Cross-Chain',
   rewards: 'Rewards & Staking',
   rangeOrders: 'Range Orders Flags',
+  periodicInterest: 'Periodic Interest Payment',
   matching: 'Order Matching',
   kyc: 'KYC / Sanctions',
 };

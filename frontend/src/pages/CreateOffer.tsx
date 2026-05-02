@@ -9,6 +9,8 @@ import { useDiamondContract } from "../contracts/useDiamond";
 import { useERC20 } from "../contracts/useERC20";
 import { useOfferForm } from "../hooks/useOfferForm";
 import { useProtocolConfig } from "../hooks/useProtocolConfig";
+import { usePeriodicInterestConfig } from "../hooks/usePeriodicInterestConfig";
+import { PeriodicInterestCadenceField } from "../components/createOffer/PeriodicInterestCadenceField";
 import {
   isNFTRental,
   gracePeriodLabel,
@@ -82,6 +84,9 @@ export default function CreateOffer() {
   // `getProtocolConfigBundle` and any governance change should flow
   // straight through to the prepay calculation below.
   const { config: protocolConfig } = useProtocolConfig();
+  // T-034 — Periodic Interest Payment config; null while loading or on
+  // older deploys without the surface (treated as feature disabled).
+  const { config: periodicConfig } = usePeriodicInterestConfig();
   const rentalBufferBps = protocolConfig
     ? BigInt(protocolConfig.rentalBufferBps)
     : 500n; // fall back to compile-time default during the first render
@@ -1375,6 +1380,42 @@ export default function CreateOffer() {
                 </small>
               </span>
             </label>
+
+            {/* T-034 — Periodic Interest Payment cadence dropdown.
+                Hidden entirely when the master kill-switch is off OR
+                either side is illiquid. The component handles the
+                null-render rules itself; we just pass the inputs.
+
+                `principalLiquidity` / `collateralLiquidity` are derived
+                from the form's asset-type fields here as a proxy
+                (ERC20-on-both-legs ⇒ Liquid, anything else ⇒ Illiquid).
+                A finer truth — Chainlink-priced + AMM-swappable — is
+                what the contract actually checks; the proxy here just
+                drives the UI's visibility, and the contract is the
+                authoritative gate. */}
+            <PeriodicInterestCadenceField
+              value={form.periodicInterestCadence}
+              onChange={(v) => setField("periodicInterestCadence", v)}
+              durationDays={parseInt(form.durationDays || "0", 10)}
+              principalLiquidity={form.assetType === 'erc20' ? 0 : 1}
+              collateralLiquidity={form.collateralAssetType === 'erc20' ? 0 : 1}
+              principalAssetType={
+                form.assetType === 'erc20' ? 0 : form.assetType === 'erc721' ? 1 : 2
+              }
+              collateralAssetType={
+                form.collateralAssetType === 'erc20'
+                  ? 0
+                  : form.collateralAssetType === 'erc721'
+                  ? 1
+                  : 2
+              }
+              periodicInterestEnabled={
+                periodicConfig?.periodicInterestEnabled ?? false
+              }
+              threshold1e18={
+                periodicConfig?.minPrincipalForFinerCadence1e18 ?? 0n
+              }
+            />
           </div>
         )}
 

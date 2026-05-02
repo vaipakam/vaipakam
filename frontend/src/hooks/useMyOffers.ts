@@ -160,6 +160,7 @@ export function useMyOffers(
             // repay flag (no resulting loan exists, so the field has no
             // surface meaning); default to false for the stub render.
             allowsPartialRepay: false,
+            periodicInterestCadence: 0,
           };
           cancelledDetailsByOffer.set(offerId, offer);
         } catch {
@@ -199,6 +200,7 @@ export function useMyOffers(
             assetType: 0,
             tokenId: 0n,
             allowsPartialRepay: false,
+            periodicInterestCadence: 0,
           };
         result.cancelledStubs.push({ status: 'cancelled', offer });
       } else if (filledLoanByOffer.has(offerId)) {

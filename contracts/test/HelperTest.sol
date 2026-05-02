@@ -587,7 +587,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](33);
+        selectors = new bytes4[](38);
         selectors[0] = ConfigFacet.setFeesConfig.selector;
         selectors[1] = ConfigFacet.setLiquidationConfig.selector;
         selectors[2] = ConfigFacet.setRiskConfig.selector;
@@ -628,6 +628,13 @@ contract HelperTest {
         selectors[30] = ConfigFacet.setPeriodicInterestEnabled.selector;
         selectors[31] = ConfigFacet.setNumeraireSwapEnabled.selector;
         selectors[32] = ConfigFacet.getPeriodicInterestConfig.selector;
+        // Individual getters used by the protocol-console knob card
+        // reader (which expects one function per knob).
+        selectors[33] = ConfigFacet.getNumeraireOracle.selector;
+        selectors[34] = ConfigFacet.getMinPrincipalForFinerCadence.selector;
+        selectors[35] = ConfigFacet.getPreNotifyDays.selector;
+        selectors[36] = ConfigFacet.getPeriodicInterestEnabled.selector;
+        selectors[37] = ConfigFacet.getNumeraireSwapEnabled.selector;
         return selectors;
     }
 
