@@ -19,7 +19,6 @@ import type { ActivityEvent, ActivityEventKind } from '../lib/logIndex';
 import { shortenAddr, formatUnitsPretty, formatRelativeTime, formatDateTime } from '../lib/format';
 import { Pager } from '../components/app/Pager';
 import { CardInfo } from '../components/CardInfo';
-import { IndexerStatusBadge } from '../components/app/IndexerStatusBadge';
 import './Activity.css';
 
 const PAGE_SIZE = 15;
@@ -370,9 +369,6 @@ export default function Activity() {
           />
           {t('appNav.activity')}
           <CardInfo id="activity.feed" />
-          <span style={{ marginLeft: 12 }}>
-            <IndexerStatusBadge onRescan={reload} />
-          </span>
         </h1>
         <p className="page-subtitle">
           {t('activity.pageSubtitle', { chain: chain.name ?? '' })}

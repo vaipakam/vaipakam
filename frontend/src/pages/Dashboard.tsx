@@ -29,7 +29,6 @@ import { PrincipalCell } from '../components/app/PrincipalCell';
 import { bpsToPercent } from '../lib/format';
 import { HealthFactorGauge, LTVBar } from '../components/app/RiskGauge';
 import VPFIDiscountConsentCard from '../components/app/VPFIDiscountConsentCard';
-import { IndexerStatusBadge } from '../components/app/IndexerStatusBadge';
 import { RewardsSummaryCard } from '../components/app/RewardsSummaryCard';
 import { SanctionsBanner } from '../components/app/SanctionsBanner';
 import { Pager } from '../components/app/Pager';
@@ -226,10 +225,7 @@ export default function Dashboard() {
   return (
     <div className="dashboard">
       <div className="page-header">
-        <h1 className="page-title" style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
-          {t('appNav.dashboard')}
-          <IndexerStatusBadge />
-        </h1>
+        <h1 className="page-title">{t('appNav.dashboard')}</h1>
         <p className="page-subtitle">{t('dashboard.subtitle')}</p>
       </div>
 

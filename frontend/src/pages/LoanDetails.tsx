@@ -31,7 +31,6 @@ import {
 } from "lucide-react";
 import { parseUnits, encodeFunctionData, type Address, type Hex } from "viem";
 import { SimulationPreview } from "../components/app/SimulationPreview";
-import { IndexerStatusBadge } from "../components/app/IndexerStatusBadge";
 import { DIAMOND_ABI_VIEM as DIAMOND_ABI } from "../contracts/abis";
 import { AssetLink } from "../components/app/AssetLink";
 import { TokenAmount } from "../components/app/TokenAmount";
@@ -422,10 +421,9 @@ export default function LoanDetails() {
 
       <div className="loan-header">
         <div>
-          <h1 className="page-title" style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+          <h1 className="page-title" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
             Loan #{loan.id.toString()}
             <CardInfo id="loan-details.overview" />
-            <IndexerStatusBadge onRescan={loadLoan} />
           </h1>
           <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
             <span

@@ -33,6 +33,7 @@ import {
   Sliders,
 } from "lucide-react";
 import { useIsAdminWallet } from "../lib/useIsAdminWallet";
+import { IndexerStatusBadge } from "../components/app/IndexerStatusBadge";
 import { useEffect, useRef, useState } from "react";
 
 const SIDEBAR_COLLAPSED_KEY = "vaipakam:sidebar-collapsed";
@@ -392,6 +393,15 @@ export default function AppLayout() {
           </button>
 
           <div className="topbar-right">
+            {/* T-047 — indexer status badge always visible in the
+             *  top bar. Three states: green (cache fresh) / amber
+             *  (live chain scan, browser reading directly) / blue
+             *  (local dev chain — Anvil / Hardhat). The info icon
+             *  next to the badge opens a popover with plain-English
+             *  copy explaining each state and (for amber) asking
+             *  the user to wait for the page to finish loading
+             *  before submitting transactions. */}
+            <IndexerStatusBadge compact />
             {/* The standalone chain switcher only renders when the
              *  wallet is connected but on an unsupported chain — the
              *  one actionable state where the user needs the picker

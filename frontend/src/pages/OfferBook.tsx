@@ -22,7 +22,6 @@ import { decodeContractError, extractRevertSelector } from '../lib/decodeContrac
 import { useLogIndex } from '../hooks/useLogIndex';
 import { useIndexedActiveOffers } from '../hooks/useIndexedActiveOffers';
 import { indexedToRawOffer } from '../lib/indexerClient';
-import { IndexerStatusBadge } from '../components/app/IndexerStatusBadge';
 import { useProtocolConfig, type ProtocolConfig } from '../hooks/useProtocolConfig';
 import { AssetSymbol } from '../components/app/AssetSymbol';
 import { AssetPicker } from '../components/app/AssetPicker';
@@ -831,10 +830,7 @@ export default function OfferBook() {
     <div>
       <div className="page-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: 12 }}>
         <div>
-          <h1 className="page-title" style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
-            {t('appNav.offerBook')}
-            <IndexerStatusBadge onRescan={reloadIndex} />
-          </h1>
+          <h1 className="page-title">{t('appNav.offerBook')}</h1>
           <p className="page-subtitle">
             {statusView === 'open' ? (
               <>

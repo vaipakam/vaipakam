@@ -736,3 +736,46 @@ to cut the 5 new ConfigFacet methods.
 `pages/AdminDashboard.tsx`. Docs:
 `docs/ops/AdminConfigurableKnobsAndSwitches.md` (with sync to
 `frontend/src/content/admin/AdminConfigurableKnobsAndSwitches.en.md`).
+
+## T-047 — top-bar indexer status badge with plain-English info popover
+
+The cache-age `IndexerStatusBadge` is now part of the in-app top
+bar instead of duplicated on each page header. Two motivating
+asks: **(a)** make it visible on every page (Allowances /
+KeeperSettings / CreateOffer / etc. didn't have it before), and
+**(b)** add an ⓘ info popover with plain-English copy explaining
+each state — including a clear ask not to submit transactions
+while the page is still loading directly from chain.
+
+**Three states, each with its own popover copy**:
+
+- **Green (cached)** — "Reading from the indexer cache. The page
+  reflects on-chain state as of N minutes ago. Transactions while
+  green are safe." Rescan button forces a fresh on-chain scan.
+- **Amber (live chain scan)** — "The indexer cache is unreachable,
+  so your browser is fetching every offer / loan / activity row
+  directly from the chain. Data is always authoritative, but pages
+  take longer to load. Please wait for the page to finish loading
+  before submitting any transaction — a tx that depends on data
+  still being fetched might act on a partial view."
+- **Blue (local dev chain)** — newly added third state for
+  chainId 31337 / 1337 (Anvil / Hardhat). "Your wallet is
+  connected to a local dev node. The cloud indexer can't reach
+  local nodes, so the page reads directly from your local RPC.
+  Normal during development — no action needed."
+
+**Why the third state**: previously the badge always rendered as
+amber "Live chain scan" while developers worked on Anvil, looking
+like a permanent broken-cache warning. The new blue "Local dev
+chain" pill makes the dev-mode state visually distinct from a
+real cache outage. Detected by chain id; no operator config.
+
+**Top-bar placement** drops the per-page badges that lived on
+OfferBook / Activity / Dashboard / ClaimCenter / LoanDetails /
+BuyVPFI. Single source of truth, every page covered including the
+ones that didn't have a badge before. Rescan from the top bar
+does a full page reload (which all hooks pick up cleanly).
+
+Files: `components/app/IndexerStatusBadge.tsx`,
+`IndexerStatusBadge.css`, `pages/AppLayout.tsx` (topbar wiring),
+plus the six per-page de-wirings.

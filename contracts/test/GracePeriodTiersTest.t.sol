@@ -10,13 +10,14 @@ import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 
 /// @title GracePeriodTiersTest
 /// @notice Pinpoint coverage for the duration-tiered grace period defined
-///         in LibVaipakam.gracePeriod():
+///         in LibVaipakam.gracePeriod() (T-044 schedule):
 ///
 ///           durationDays < 7    → 1 hour
 ///           durationDays < 30   → 1 day
 ///           durationDays < 90   → 3 days
 ///           durationDays < 180  → 1 week
-///           durationDays >= 180 → 2 weeks
+///           durationDays < 365  → 2 weeks
+///           durationDays >= 365 → 30 days       (T-044 — new bucket)
 ///
 ///         The grace window is critical because `DefaultedFacet.triggerDefault`
 ///         and `isLoanDefaultable` both use it to decide whether a late loan
@@ -139,14 +140,27 @@ contract GracePeriodTiersTest is SetupTest {
         _assertGrace(179, 1 weeks, "dur=179 -> 1w grace");
     }
 
-    // ─── Tier: [180, ∞) → 2 weeks ────────────────────────────────────────────
+    // ─── Tier: [180, 365) → 2 weeks ──────────────────────────────────────────
 
     function testTier2WeeksAtLowerBoundary() public {
         _assertGrace(180, 2 weeks, "dur=180 -> 2w grace");
     }
 
-    function testTier2WeeksFarAbove() public {
-        _assertGrace(730, 2 weeks, "dur=730 -> 2w grace");
+    /// @notice T-044 narrowed the previous "≥ 180 days → 2 weeks" tier to
+    ///         "[180, 365) → 2 weeks" with a new "≥ 365 days → 30 days"
+    ///         catch-all. 364 sits at the upper edge of the 2-week tier.
+    function testTier2WeeksAtUpperBoundary() public {
+        _assertGrace(364, 2 weeks, "dur=364 -> 2w grace");
+    }
+
+    // ─── Tier: [365, ∞) → 30 days  (T-044 new bucket) ────────────────────────
+
+    function testTier30DaysAtLowerBoundary() public {
+        _assertGrace(365, 30 days, "dur=365 -> 30d grace");
+    }
+
+    function testTier30DaysFarAbove() public {
+        _assertGrace(730, 30 days, "dur=730 -> 30d grace");
     }
 
     // ─── Pre-endTime behavior ────────────────────────────────────────────────

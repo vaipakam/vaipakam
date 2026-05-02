@@ -3,7 +3,6 @@ import { useTranslation } from 'react-i18next';
 import { useWallet } from '../context/WalletContext';
 import { useDiamondContract } from '../contracts/useDiamond';
 import { useClaimables } from '../hooks/useClaimables';
-import { IndexerStatusBadge } from '../components/app/IndexerStatusBadge';
 import { AssetType, LOAN_STATUS_LABELS, type ClaimableEntry, type LoanRole } from '../types/loan';
 import { decodeContractError } from '../lib/decodeContractError';
 import { beginStep } from '../lib/journeyLog';
@@ -75,10 +74,9 @@ export default function ClaimCenter() {
   return (
     <div className="claim-center">
       <div className="page-header">
-        <h1 className="page-title" style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+        <h1 className="page-title">
           {t('appNav.claimCenter')}
           <CardInfo id="claim-center.claims" />
-          <IndexerStatusBadge onRescan={reload} />
         </h1>
         <p className="page-subtitle">{t('claimCenter.pageSubtitle')}</p>
       </div>
