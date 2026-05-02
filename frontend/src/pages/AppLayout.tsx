@@ -346,7 +346,7 @@ export default function AppLayout() {
                 {t("appNav.governanceGroupLabel", "Governance")}
               </div>
               <NavLink
-                to={withLocalePrefix("/protocol-console", activeLocale)}
+                to={withLocalePrefix("/app/protocol-console", activeLocale)}
                 className={({ isActive }) =>
                   `sidebar-link sidebar-link-nested ${isActive ? "active" : ""}`
                 }

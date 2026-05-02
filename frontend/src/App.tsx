@@ -131,6 +131,14 @@ function pageRoutes(): ReactElement {
         <Route path="allowances" element={<Allowances />} />
         <Route path="data-rights" element={<DataRights />} />
         <Route path="buy-vpfi" element={<BuyVPFI />} />
+        {/* Admin-only Protocol Console mounted INSIDE the app shell.
+         *  Same component as the public /protocol-console route, but
+         *  rendered without its own Navbar / Footer since AppLayout
+         *  provides the chrome. The visibility check on the sidebar
+         *  link (`useIsProtocolAdmin`) gates entry; non-admins
+         *  navigating directly hit the same env-flag gate inside
+         *  the page and get redirected when public view is off. */}
+        <Route path="protocol-console" element={<AdminDashboard inApp />} />
       </Route>
     </>
   );

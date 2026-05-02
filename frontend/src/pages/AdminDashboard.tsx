@@ -46,7 +46,17 @@ import { GraceBucketsCard } from '../components/admin/GraceBucketsCard';
 import { AdminThemeToggle } from '../components/admin/AdminThemeToggle';
 import '../components/admin/admin-theme.css';
 
-export default function AdminDashboard() {
+interface Props {
+  /** When true, render WITHOUT the public Navbar/Footer chrome — the
+   *  page is being mounted inside `<AppLayout>`'s Outlet for an
+   *  admin-only in-app variant. The route at `/app/protocol-console`
+   *  passes `inApp` so admins can review / propose without losing the
+   *  in-app sidebar context. The public route at `/protocol-console`
+   *  passes nothing and gets the full Navbar + Footer wrapper. */
+  inApp?: boolean;
+}
+
+export default function AdminDashboard({ inApp = false }: Props = {}) {
   const { t, i18n } = useTranslation();
   // T-042 Phase 1d — public-visibility gate. Phase 1 hard-redirects
   // when the env flag is off (no wallet-aware admin detection yet).
@@ -91,18 +101,23 @@ export default function AdminDashboard() {
     });
   };
 
+  // Chrome differs between the public route and the in-app variant:
+  //   - Public (`inApp=false`): wrap in `.public-page` + `<Navbar />` +
+  //     `<Footer />`, with 104px top padding to clear the fixed navbar.
+  //   - In-app (`inApp=true`): no Navbar/Footer (AppLayout owns the
+  //     topbar + sidebar already), no top padding (AppLayout's content
+  //     wrapper handles spacing).
+  const wrapStyle: React.CSSProperties = inApp
+    ? { maxWidth: 1200, margin: '0 auto', padding: '0' }
+    : { maxWidth: 1200, margin: '0 auto', padding: '104px 16px 24px' };
+
   return (
-    <div className="public-page">
-      <Navbar />
+    <div className={inApp ? '' : 'public-page'}>
+      {!inApp && <Navbar />}
       <main
         className="admin-dashboard-wrap"
         data-admin-theme={themeMode}
-        // 104px top padding clears the public site's `position: fixed`
-        // `.navbar` (matches the offset used by other public pages —
-        // LegalPage / PublicDashboard / etc.). Without it the dashboard
-        // header — including the theme-toggle pill — sits hidden under
-        // the navbar.
-        style={{ maxWidth: 1200, margin: '0 auto', padding: '104px 16px 24px' }}
+        style={wrapStyle}
       >
         <header
           style={{
@@ -125,9 +140,24 @@ export default function AdminDashboard() {
               )}
             </p>
             <p style={{ marginTop: 12, fontSize: '0.9rem', opacity: 0.75 }}>
-              <Link to={docsPath} style={{ color: 'var(--brand)' }}>
-                {t('protocolConsole.docsLink', 'Read the Knobs & Switches reference →')}
-              </Link>
+              {inApp ? (
+                /* From inside the app shell, open the docs in a new
+                 *  tab so the admin doesn't lose the in-app sidebar
+                 *  context. The docs route mounts the public Navbar
+                 *  + Footer wrapper. */
+                <a
+                  href={docsPath}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  style={{ color: 'var(--brand)' }}
+                >
+                  {t('protocolConsole.docsLink', 'Read the Knobs & Switches reference →')}
+                </a>
+              ) : (
+                <Link to={docsPath} style={{ color: 'var(--brand)' }}>
+                  {t('protocolConsole.docsLink', 'Read the Knobs & Switches reference →')}
+                </Link>
+              )}
             </p>
           </div>
           <AdminThemeToggle mode={themeMode} onToggle={onToggle} />
@@ -226,7 +256,7 @@ export default function AdminDashboard() {
           );
         })}
       </main>
-      <Footer />
+      {!inApp && <Footer />}
     </div>
   );
 }
