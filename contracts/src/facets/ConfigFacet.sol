@@ -5,6 +5,7 @@ import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibAccessControl, DiamondAccessControl} from "../libraries/LibAccessControl.sol";
 import {LibStakingRewards} from "../libraries/LibStakingRewards.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
+import {INumeraireOracle} from "../interfaces/INumeraireOracle.sol";
 
 /**
  * @title ConfigFacet
@@ -944,5 +945,216 @@ contract ConfigFacet is DiamondAccessControl {
                 maxGrace[i]
             ) = LibVaipakam.graceSlotBounds(i);
         }
+    }
+
+    // ── T-034 — Periodic Interest Payment setters + getters ──────────────
+    // See docs/DesignsAndPlans/PeriodicInterestPaymentDesign.md
+    // §6 (numeraire abstraction), §10 (kill-switches).
+
+    /// @notice Emitted when the numeraire address AND its companion
+    ///         threshold value flip atomically via {setNumeraire}.
+    /// @param oldOracle Previous numeraire oracle (0 = USD-as-numeraire).
+    /// @param newOracle New numeraire oracle.
+    /// @param newThreshold New `minPrincipalForFinerCadence` value, in
+    ///        the new numeraire's units.
+    event NumeraireUpdated(
+        address indexed oldOracle,
+        address indexed newOracle,
+        uint256 newThreshold
+    );
+
+    /// @notice Emitted when the principal threshold for finer cadences
+    ///         is updated within the same numeraire.
+    event MinPrincipalForFinerCadenceSet(uint256 newThreshold);
+
+    /// @notice Emitted when the shared maturity / periodic-checkpoint
+    ///         pre-notify lead time is updated.
+    event PreNotifyDaysSet(uint8 newDays);
+
+    /// @notice Emitted when the master kill-switch for the entire
+    ///         Periodic Interest Payment mechanic is toggled.
+    event PeriodicInterestEnabledSet(bool enabled);
+
+    /// @notice Emitted when the cross-numeraire swap kill-switch is
+    ///         toggled.
+    event NumeraireSwapEnabledSet(bool enabled);
+
+    /// @notice Atomic batched setter — the ONLY path to change the
+    ///         numeraire oracle. Simultaneously rewrites the threshold
+    ///         value in the new numeraire's units so no inconsistent
+    ///         intermediate state is reachable.
+    /// @dev Gated by `numeraireSwapEnabled` (independent kill-switch).
+    ///      Validates the new oracle by calling
+    ///      `numeraireToUsdRate1e18()` and rejecting zero / revert /
+    ///      no-bytecode results via `NumeraireOracleInvalid`. Validates
+    ///      `newThresholdInNewNumeraire` against the bounded range
+    ///      `[FLOOR, CEIL]` (zero is also accepted as "reset to library
+    ///      default").
+    /// @param newOracle Address of the new INumeraireOracle impl.
+    ///        `address(0)` resets to USD-as-numeraire.
+    /// @param newThresholdInNewNumeraire Threshold in numeraire-units
+    ///        (1e18-scaled). Pass `0` to reset to the library default.
+    function setNumeraire(
+        address newOracle,
+        uint256 newThresholdInNewNumeraire
+    ) external onlyRole(LibAccessControl.ADMIN_ROLE) {
+        LibVaipakam.ProtocolConfig storage c =
+            LibVaipakam.storageSlot().protocolCfg;
+        if (!c.numeraireSwapEnabled) revert IVaipakamErrors.NumeraireSwapDisabled();
+
+        // Sanity-check the new oracle if non-zero. address(0) means
+        // "USD-as-numeraire" and skips the call entirely.
+        if (newOracle != address(0)) {
+            if (newOracle.code.length == 0) {
+                revert IVaipakamErrors.NumeraireOracleInvalid(newOracle);
+            }
+            try INumeraireOracle(newOracle).numeraireToUsdRate1e18() returns (
+                uint256 rate
+            ) {
+                if (rate == 0) {
+                    revert IVaipakamErrors.NumeraireOracleInvalid(newOracle);
+                }
+            } catch {
+                revert IVaipakamErrors.NumeraireOracleInvalid(newOracle);
+            }
+        }
+
+        // Threshold range check (zero accepted as "reset").
+        if (
+            newThresholdInNewNumeraire != 0 &&
+            (
+                newThresholdInNewNumeraire <
+                    LibVaipakam.PERIODIC_MIN_PRINCIPAL_FOR_FINER_CADENCE_FLOOR ||
+                newThresholdInNewNumeraire >
+                    LibVaipakam.PERIODIC_MIN_PRINCIPAL_FOR_FINER_CADENCE_CEIL
+            )
+        ) {
+            revert IVaipakamErrors.ParameterOutOfRange(
+                bytes32("minPrincipalForFinerCadence"),
+                newThresholdInNewNumeraire,
+                LibVaipakam.PERIODIC_MIN_PRINCIPAL_FOR_FINER_CADENCE_FLOOR,
+                LibVaipakam.PERIODIC_MIN_PRINCIPAL_FOR_FINER_CADENCE_CEIL
+            );
+        }
+
+        address oldOracle = c.numeraireOracle;
+        c.numeraireOracle = newOracle;
+        c.minPrincipalForFinerCadence = newThresholdInNewNumeraire;
+        emit NumeraireUpdated(oldOracle, newOracle, newThresholdInNewNumeraire);
+    }
+
+    /// @notice Update only the principal threshold for finer cadences,
+    ///         within the same numeraire. NOT gated by
+    ///         `numeraireSwapEnabled` — governance can tune the
+    ///         threshold without unlocking numeraire swap.
+    /// @dev Range `[FLOOR, CEIL]`; zero accepted as "reset to default".
+    /// @param newThreshold Threshold in numeraire-units (1e18-scaled).
+    function setMinPrincipalForFinerCadence(uint256 newThreshold)
+        external
+        onlyRole(LibAccessControl.ADMIN_ROLE)
+    {
+        if (
+            newThreshold != 0 &&
+            (
+                newThreshold <
+                    LibVaipakam.PERIODIC_MIN_PRINCIPAL_FOR_FINER_CADENCE_FLOOR ||
+                newThreshold >
+                    LibVaipakam.PERIODIC_MIN_PRINCIPAL_FOR_FINER_CADENCE_CEIL
+            )
+        ) {
+            revert IVaipakamErrors.ParameterOutOfRange(
+                bytes32("minPrincipalForFinerCadence"),
+                newThreshold,
+                LibVaipakam.PERIODIC_MIN_PRINCIPAL_FOR_FINER_CADENCE_FLOOR,
+                LibVaipakam.PERIODIC_MIN_PRINCIPAL_FOR_FINER_CADENCE_CEIL
+            );
+        }
+        LibVaipakam.storageSlot().protocolCfg.minPrincipalForFinerCadence = newThreshold;
+        emit MinPrincipalForFinerCadenceSet(newThreshold);
+    }
+
+    /// @notice Update the shared pre-notify lead time (days) consumed
+    ///         by the off-chain hf-watcher for both maturity and
+    ///         periodic-checkpoint pre-notify lanes.
+    /// @dev Range `[FLOOR, CEIL]`; zero accepted as "reset to default".
+    /// @param newDays Lead time in days; pass `0` to reset.
+    function setPreNotifyDays(uint8 newDays)
+        external
+        onlyRole(LibAccessControl.ADMIN_ROLE)
+    {
+        if (
+            newDays != 0 &&
+            (
+                newDays < LibVaipakam.PERIODIC_PRE_NOTIFY_DAYS_FLOOR ||
+                newDays > LibVaipakam.PERIODIC_PRE_NOTIFY_DAYS_CEIL
+            )
+        ) {
+            revert IVaipakamErrors.ParameterOutOfRange(
+                bytes32("preNotifyDays"),
+                uint256(newDays),
+                uint256(LibVaipakam.PERIODIC_PRE_NOTIFY_DAYS_FLOOR),
+                uint256(LibVaipakam.PERIODIC_PRE_NOTIFY_DAYS_CEIL)
+            );
+        }
+        LibVaipakam.storageSlot().protocolCfg.preNotifyDays = newDays;
+        emit PreNotifyDaysSet(newDays);
+    }
+
+    /// @notice Master kill-switch for the entire Periodic Interest
+    ///         Payment mechanic. Default `false` — feature ships
+    ///         dormant; flipped on by governance when ready.
+    function setPeriodicInterestEnabled(bool enabled)
+        external
+        onlyRole(LibAccessControl.ADMIN_ROLE)
+    {
+        LibVaipakam.storageSlot().protocolCfg.periodicInterestEnabled = enabled;
+        emit PeriodicInterestEnabledSet(enabled);
+    }
+
+    /// @notice Independent kill-switch gating the cross-numeraire
+    ///         batched setter `setNumeraire`. Default `false` — a
+    ///         fresh deploy ships USD-as-numeraire and governance
+    ///         cannot rotate to a different numeraire until this
+    ///         flag flips.
+    function setNumeraireSwapEnabled(bool enabled)
+        external
+        onlyRole(LibAccessControl.ADMIN_ROLE)
+    {
+        LibVaipakam.storageSlot().protocolCfg.numeraireSwapEnabled = enabled;
+        emit NumeraireSwapEnabledSet(enabled);
+    }
+
+    /// @notice Bundled getter for the entire T-034 config surface,
+    ///         intended for the frontend `useProtocolConfig` hook.
+    /// @return numeraireOracle_ The pluggable numeraire oracle
+    ///         (zero = USD-as-numeraire).
+    /// @return threshold The effective `minPrincipalForFinerCadence`
+    ///         (override or library default), in numeraire-units.
+    /// @return preNotify The effective `preNotifyDays` (override or
+    ///         library default).
+    /// @return periodicEnabled Master kill-switch state.
+    /// @return numeraireSwapEnabled_ Numeraire-swap kill-switch state.
+    function getPeriodicInterestConfig()
+        external
+        view
+        returns (
+            address numeraireOracle_,
+            uint256 threshold,
+            uint8 preNotify,
+            bool periodicEnabled,
+            bool numeraireSwapEnabled_
+        )
+    {
+        LibVaipakam.ProtocolConfig storage c =
+            LibVaipakam.storageSlot().protocolCfg;
+        numeraireOracle_ = c.numeraireOracle;
+        threshold = c.minPrincipalForFinerCadence == 0
+            ? LibVaipakam.PERIODIC_MIN_PRINCIPAL_FOR_FINER_CADENCE_DEFAULT
+            : c.minPrincipalForFinerCadence;
+        preNotify = c.preNotifyDays == 0
+            ? LibVaipakam.PERIODIC_PRE_NOTIFY_DAYS_DEFAULT
+            : c.preNotifyDays;
+        periodicEnabled = c.periodicInterestEnabled;
+        numeraireSwapEnabled_ = c.numeraireSwapEnabled;
     }
 }

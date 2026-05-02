@@ -47,7 +47,7 @@ contract MetricsFacetTest is SetupTest {
         l.status = LibVaipakam.LoanStatus.Active;
         l.assetType = LibVaipakam.AssetType.ERC20;
         l.collateralAssetType = LibVaipakam.AssetType.ERC20;
-        l.startTime = block.timestamp;
+        l.startTime = uint64(block.timestamp);
         TestMutatorFacet(address(diamond)).scaffoldActiveLoan(loanId, l);
     }
 

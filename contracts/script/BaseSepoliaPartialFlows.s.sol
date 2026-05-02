@@ -239,7 +239,8 @@ contract BaseSepoliaPartialFlows is Script {
                 collateralQuantity: 0,
                 allowsPartialRepay: false,
                 amountMax: 0,
-                interestRateBpsMax: 0
+                interestRateBpsMax: 0,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
             })
         );
         vm.stopBroadcast();
@@ -282,7 +283,8 @@ contract BaseSepoliaPartialFlows is Script {
                 collateralQuantity: 0,
                 allowsPartialRepay: false,
                 amountMax: 0,
-                interestRateBpsMax: 0
+                interestRateBpsMax: 0,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
             })
         );
         vm.stopBroadcast();
@@ -342,7 +344,8 @@ contract BaseSepoliaPartialFlows is Script {
             collateralQuantity: 0,
             allowsPartialRepay: false,
             amountMax: 0,
-            interestRateBpsMax: 0
+            interestRateBpsMax: 0,
+            periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
         });
     }
 
@@ -365,7 +368,8 @@ contract BaseSepoliaPartialFlows is Script {
             collateralQuantity: 0,
             allowsPartialRepay: false,
             amountMax: 0,
-            interestRateBpsMax: 0
+            interestRateBpsMax: 0,
+            periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
         });
     }
 }

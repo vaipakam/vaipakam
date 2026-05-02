@@ -510,7 +510,8 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
             unchecked {
                 loan.principal -= partialAmount;
             }
-            loan.startTime = block.timestamp; // Reset accrual start
+            // T-034 — startTime downsized to uint64; explicit cast.
+            loan.startTime = uint64(block.timestamp); // Reset accrual start
 
             emit PartialRepaid(loanId, partialAmount, loan.principal);
         } else {

@@ -7,7 +7,7 @@
 - Once completed the task, tick the checkbox
 - new tasks will be added on top with running ID
 - Starting ID is from `T-001`
-- archived ToDo lists will be in the same folder with ToDODDMMYYYY.md format
+- archived ToDo lists will be in the same folder with ToDoDDMMYYYY.md format
 
 ---
 

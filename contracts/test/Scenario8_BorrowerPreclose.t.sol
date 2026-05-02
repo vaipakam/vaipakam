@@ -205,7 +205,8 @@ contract Scenario8_BorrowerPreclose is Test {
                 collateralQuantity: 0,
                 allowsPartialRepay: false,
                 amountMax: 0,
-                interestRateBpsMax: 0
+                interestRateBpsMax: 0,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
             })
         );
         vm.prank(borrower);
@@ -242,7 +243,8 @@ contract Scenario8_BorrowerPreclose is Test {
                 collateralQuantity: 0,
                 allowsPartialRepay: false,
                 amountMax: 0,
-                interestRateBpsMax: 0
+                interestRateBpsMax: 0,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
             })
         );
 

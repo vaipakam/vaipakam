@@ -20,6 +20,7 @@ import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
 import {Strings} from "@openzeppelin/contracts/utils/Strings.sol";
 import {DiamondPausable} from "../libraries/LibPausable.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
+import {INumeraireOracle} from "../interfaces/INumeraireOracle.sol";
 import {OracleFacet} from "./OracleFacet.sol";
 import {VaipakamNFTFacet} from "./VaipakamNFTFacet.sol";
 import {EscrowFactoryFacet} from "./EscrowFactoryFacet.sol";
@@ -446,7 +447,200 @@ contract OfferFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
             }
         }
 
+        // ── T-034 — Periodic Interest Payment cadence validation ──────────
+        // See docs/DesignsAndPlans/PeriodicInterestPaymentDesign.md §3.
+        // Three filters in order:
+        //   - Master kill-switch: feature disabled → cadence must be None.
+        //   - Filter 0: both sides liquid → otherwise cadence forced to None.
+        //   - Filter 1: cadence interval strictly less than duration.
+        //   - Filter 2: duration / threshold matrix (mandatory Annual on
+        //     >365d loans; finer cadences require principal ≥ threshold).
+        _validatePeriodicCadence(params, offer, principalLiq, collateralLiq);
+
         escrow = getUserEscrow(msg.sender);
+    }
+
+    /// @dev T-034 — extracted to keep `_createOfferSetup` readable. Reverts
+    ///      on any of the four filter violations per §3 of the design doc.
+    ///      Snapshots the lender's chosen cadence onto the Offer struct on
+    ///      success.
+    function _validatePeriodicCadence(
+        LibVaipakam.CreateOfferParams calldata params,
+        LibVaipakam.Offer storage offer,
+        LibVaipakam.LiquidityStatus principalLiq,
+        LibVaipakam.LiquidityStatus collateralLiq
+    ) private {
+        LibVaipakam.PeriodicInterestCadence cadence =
+            params.periodicInterestCadence;
+        LibVaipakam.ProtocolConfig storage cfgT034 =
+            LibVaipakam.storageSlot().protocolCfg;
+
+        // Master kill-switch: feature off → only None reachable. Reverts
+        // before any other validation so the disabled state is the loudest
+        // signal.
+        if (
+            cadence != LibVaipakam.PeriodicInterestCadence.None &&
+            !cfgT034.periodicInterestEnabled
+        ) {
+            revert IVaipakamErrors.PeriodicInterestDisabled();
+        }
+
+        // Filter 0 — Periodic Interest Payment requires BOTH legs to be
+        // liquid AND ERC-20. NFT lending / NFT collateral / Illiquid
+        // classifications all force cadence = None because the auto-
+        // liquidate path (PR2) needs DEX-swappable assets. Multi-year
+        // illiquid loans do NOT get the mandatory Annual floor — lender
+        // accepts that trade-off implicitly via the existing illiquid-
+        // asset consent flow.
+        bool bothLiquid =
+            principalLiq == LibVaipakam.LiquidityStatus.Liquid &&
+            collateralLiq == LibVaipakam.LiquidityStatus.Liquid &&
+            params.assetType == LibVaipakam.AssetType.ERC20 &&
+            params.collateralAssetType == LibVaipakam.AssetType.ERC20;
+        if (
+            cadence != LibVaipakam.PeriodicInterestCadence.None &&
+            !bothLiquid
+        ) {
+            revert IVaipakamErrors.CadenceNotAllowedForIlliquid(
+                uint8(principalLiq),
+                uint8(collateralLiq),
+                uint8(cadence)
+            );
+        }
+
+        // Skip Filter 1 + Filter 2 entirely on illiquid-anywhere offers
+        // (cadence is None per Filter 0 above; nothing more to enforce)
+        // OR on short-duration None-cadence offers (today's behaviour
+        // unchanged).
+        bool isMultiYear = params.durationDays > 365;
+        if (
+            cadence == LibVaipakam.PeriodicInterestCadence.None &&
+            !isMultiYear
+        ) {
+            offer.periodicInterestCadence = cadence;
+            return;
+        }
+
+        // From here on we know either:
+        //   (a) cadence != None AND bothLiquid (Filter 0 passed), OR
+        //   (b) durationDays > 365 AND bothLiquid (mandatory floor).
+        // Resolve the threshold + principal comparison in numeraire-units.
+        uint256 threshold = cfgT034.minPrincipalForFinerCadence == 0
+            ? LibVaipakam.PERIODIC_MIN_PRINCIPAL_FOR_FINER_CADENCE_DEFAULT
+            : cfgT034.minPrincipalForFinerCadence;
+
+        // Principal value compared to the threshold uses `params.amount`
+        // (= amountMin under range orders) because it is the strict lower
+        // bound on what the lender will fund — using `amountMax` here
+        // would let a lender qualify for finer cadence with a deceptively
+        // large upper bound while never actually filling above the
+        // threshold.
+        uint256 principalNumeraire = _principalToNumeraire1e18(
+            params.lendingAsset,
+            params.amount,
+            cfgT034.numeraireOracle
+        );
+
+        // Filter 2 first: row 3 (multi-year, below threshold) requires
+        // exactly `Annual`; row 1 (≤1y, below threshold) requires `None`.
+        bool aboveThreshold = principalNumeraire >= threshold;
+        if (isMultiYear) {
+            if (cadence == LibVaipakam.PeriodicInterestCadence.None) {
+                // Row 3 / Row 4 both require at least Annual cadence.
+                revert IVaipakamErrors.CadenceNotAllowed(
+                    uint8(cadence),
+                    params.durationDays,
+                    principalNumeraire,
+                    threshold
+                );
+            }
+            if (
+                !aboveThreshold &&
+                cadence != LibVaipakam.PeriodicInterestCadence.Annual
+            ) {
+                // Row 3 — only Annual allowed below threshold on multi-year.
+                revert IVaipakamErrors.CadenceNotAllowed(
+                    uint8(cadence),
+                    params.durationDays,
+                    principalNumeraire,
+                    threshold
+                );
+            }
+        } else {
+            // ≤365d. Row 1 — None only below threshold; Row 2 — opt-in.
+            if (
+                cadence != LibVaipakam.PeriodicInterestCadence.None &&
+                !aboveThreshold
+            ) {
+                revert IVaipakamErrors.CadenceNotAllowed(
+                    uint8(cadence),
+                    params.durationDays,
+                    principalNumeraire,
+                    threshold
+                );
+            }
+        }
+
+        // Filter 1 — interval must be strictly less than duration. Skipped
+        // for None (interval=0) since 0 < anything-positive trivially holds
+        // and None doesn't have a meaningful interval anyway.
+        if (cadence != LibVaipakam.PeriodicInterestCadence.None) {
+            uint256 cadenceInterval = LibVaipakam.intervalDays(cadence);
+            if (cadenceInterval >= params.durationDays) {
+                revert IVaipakamErrors.CadenceNotAllowed(
+                    uint8(cadence),
+                    params.durationDays,
+                    principalNumeraire,
+                    threshold
+                );
+            }
+        }
+
+        offer.periodicInterestCadence = cadence;
+    }
+
+    /// @dev Convert a raw token amount to numeraire-units (1e18-scaled).
+    ///      Two-step: token amount → USD-1e18 (existing oracle path,
+    ///      same shape as `RiskFacet.sol:464`), then USD → numeraire via
+    ///      the configured `INumeraireOracle`. When `numeraireOracle == 0`
+    ///      the second step is a no-op (USD is the numeraire).
+    ///
+    ///      Returns 0 if the asset has no oracle coverage — Filter 2
+    ///      then treats every offer as "below threshold" for that asset,
+    ///      forcing None on ≤365d loans and Annual on multi-year. That
+    ///      degrades safely (cadence cannot opt into anything finer than
+    ///      what's enforceable on-chain via the existing terminal path).
+    function _principalToNumeraire1e18(
+        address asset,
+        uint256 amount,
+        address numeraireOracle
+    ) private view returns (uint256) {
+        if (asset == address(0) || amount == 0) return 0;
+        // Step 1 — asset amount → USD-1e18 via the existing primary
+        // oracle. Try-catch so a missing feed degrades to "0 numeraire"
+        // instead of reverting offer creation outright.
+        uint256 usdValue1e18;
+        try OracleFacet(address(this)).getAssetPrice(asset) returns (
+            uint256 price,
+            uint8 feedDecimals
+        ) {
+            uint8 tokenDecimals = IERC20Metadata(asset).decimals();
+            usdValue1e18 = (amount * price * 1e18) /
+                (10 ** feedDecimals) /
+                (10 ** tokenDecimals);
+        } catch {
+            return 0;
+        }
+        // Step 2 — USD → numeraire. Skip when address(0) (USD-as-numeraire).
+        if (numeraireOracle == address(0)) return usdValue1e18;
+        try INumeraireOracle(numeraireOracle).numeraireToUsdRate1e18()
+            returns (uint256 rate)
+        {
+            if (rate == 0) return 0;
+            return (usdValue1e18 * 1e18) / rate;
+        } catch {
+            return 0;
+        }
     }
 
     /// @dev Classic-path asset pull: the big if/else that lives in

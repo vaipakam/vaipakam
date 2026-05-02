@@ -182,7 +182,8 @@ contract SeedAnvilOffers is Script {
             collateralQuantity: 0,
             allowsPartialRepay: false,
             amountMax: LENDER_AMOUNT_MAX,
-            interestRateBpsMax: LENDER_RATE_MAX
+            interestRateBpsMax: LENDER_RATE_MAX,
+            periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
         });
     }
 
@@ -211,7 +212,8 @@ contract SeedAnvilOffers is Script {
             collateralQuantity: 0,
             allowsPartialRepay: false,
             amountMax: BORROWER_AMOUNT,
-            interestRateBpsMax: BORROWER_RATE_MAX
+            interestRateBpsMax: BORROWER_RATE_MAX,
+            periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
         });
     }
 }

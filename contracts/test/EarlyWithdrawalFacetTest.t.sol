@@ -264,7 +264,8 @@ contract EarlyWithdrawalFacetTest is Test {
                 collateralQuantity: 0,
                 allowsPartialRepay: false,
                 amountMax: 0,
-                interestRateBpsMax: 0
+                interestRateBpsMax: 0,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
             })
         );
         vm.prank(borrower);
@@ -291,7 +292,8 @@ contract EarlyWithdrawalFacetTest is Test {
                 collateralQuantity: 0,
                 allowsPartialRepay: false,
                 amountMax: 0,
-                interestRateBpsMax: 0
+                interestRateBpsMax: 0,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
             })
         );
 
@@ -413,7 +415,8 @@ contract EarlyWithdrawalFacetTest is Test {
                 collateralQuantity: 0,
                 allowsPartialRepay: false,
                 amountMax: 0,
-                interestRateBpsMax: 0
+                interestRateBpsMax: 0,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
             })
         );
 
@@ -474,7 +477,8 @@ contract EarlyWithdrawalFacetTest is Test {
                 collateralQuantity: 0,
                 allowsPartialRepay: false,
                 amountMax: 0,
-                interestRateBpsMax: 0
+                interestRateBpsMax: 0,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
             })
         );
 
@@ -519,7 +523,8 @@ contract EarlyWithdrawalFacetTest is Test {
                 collateralQuantity: 0,
                 allowsPartialRepay: false,
                 amountMax: 0,
-                interestRateBpsMax: 0
+                interestRateBpsMax: 0,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
             })
         );
 
@@ -560,7 +565,8 @@ contract EarlyWithdrawalFacetTest is Test {
                 collateralQuantity: 0,
                 allowsPartialRepay: false,
                 amountMax: 0,
-                interestRateBpsMax: 0
+                interestRateBpsMax: 0,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
             })
         );
 
@@ -612,7 +618,8 @@ contract EarlyWithdrawalFacetTest is Test {
                 collateralQuantity: 0,
                 allowsPartialRepay: false,
                 amountMax: 0,
-                interestRateBpsMax: 0
+                interestRateBpsMax: 0,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
             })
         );
 
@@ -650,7 +657,8 @@ contract EarlyWithdrawalFacetTest is Test {
                 collateralQuantity: 0,
                 allowsPartialRepay: false,
                 amountMax: 0,
-                interestRateBpsMax: 0
+                interestRateBpsMax: 0,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
             })
         );
 
@@ -685,7 +693,8 @@ contract EarlyWithdrawalFacetTest is Test {
                 collateralQuantity: 0,
                 allowsPartialRepay: false,
                 amountMax: 0,
-                interestRateBpsMax: 0
+                interestRateBpsMax: 0,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
             })
         );
 
@@ -733,7 +742,8 @@ contract EarlyWithdrawalFacetTest is Test {
                 collateralQuantity: 0,
                 allowsPartialRepay: false,
                 amountMax: 0,
-                interestRateBpsMax: 0
+                interestRateBpsMax: 0,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
             })
         );
         vm.prank(lender);
@@ -763,7 +773,8 @@ contract EarlyWithdrawalFacetTest is Test {
                 collateralQuantity: 0,
                 allowsPartialRepay: false,
                 amountMax: 0,
-                interestRateBpsMax: 0
+                interestRateBpsMax: 0,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
             })
         );
         vm.mockCall(address(diamond), abi.encodeWithSelector(EscrowFactoryFacet.escrowWithdrawERC20.selector), abi.encode(true));
@@ -801,7 +812,8 @@ contract EarlyWithdrawalFacetTest is Test {
                 collateralQuantity: 0,
                 allowsPartialRepay: false,
                 amountMax: 0,
-                interestRateBpsMax: 0
+                interestRateBpsMax: 0,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
             })
         );
 
@@ -832,7 +844,8 @@ contract EarlyWithdrawalFacetTest is Test {
                 collateralQuantity: 0,
                 allowsPartialRepay: false,
                 amountMax: 0,
-                interestRateBpsMax: 0
+                interestRateBpsMax: 0,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
             })
         );
 
@@ -929,7 +942,8 @@ contract EarlyWithdrawalFacetTest is Test {
                 collateralQuantity: 0,
                 allowsPartialRepay: false,
                 amountMax: 0,
-                interestRateBpsMax: 0
+                interestRateBpsMax: 0,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
             })
         );
 
@@ -967,7 +981,8 @@ contract EarlyWithdrawalFacetTest is Test {
                 collateralQuantity: 0,
                 allowsPartialRepay: false,
                 amountMax: 0,
-                interestRateBpsMax: 0
+                interestRateBpsMax: 0,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
             })
         );
 
@@ -1024,7 +1039,8 @@ contract EarlyWithdrawalFacetTest is Test {
                 collateralQuantity: 0,
                 allowsPartialRepay: false,
                 amountMax: 0,
-                interestRateBpsMax: 0
+                interestRateBpsMax: 0,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
             })
         );
 
@@ -1064,7 +1080,8 @@ contract EarlyWithdrawalFacetTest is Test {
                 collateralQuantity: 0,
                 allowsPartialRepay: false,
                 amountMax: 0,
-                interestRateBpsMax: 0
+                interestRateBpsMax: 0,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
             })
         );
 
@@ -1096,7 +1113,8 @@ contract EarlyWithdrawalFacetTest is Test {
                 collateralQuantity: 0,
                 allowsPartialRepay: false,
                 amountMax: 0,
-                interestRateBpsMax: 0
+                interestRateBpsMax: 0,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
             })
         );
 
@@ -1134,7 +1152,8 @@ contract EarlyWithdrawalFacetTest is Test {
                 collateralQuantity: 0,
                 allowsPartialRepay: false,
                 amountMax: 0,
-                interestRateBpsMax: 0
+                interestRateBpsMax: 0,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
             })
         );
 
@@ -1933,7 +1952,8 @@ contract EarlyWithdrawalFacetTest is Test {
                 collateralQuantity: 0,
                 allowsPartialRepay: false,
                 amountMax: 0,
-                interestRateBpsMax: 0
+                interestRateBpsMax: 0,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
             })
         );
 
@@ -1981,7 +2001,8 @@ contract EarlyWithdrawalFacetTest is Test {
                 collateralQuantity: 0,
                 allowsPartialRepay: false,
                 amountMax: 0,
-                interestRateBpsMax: 0
+                interestRateBpsMax: 0,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
             })
         );
 

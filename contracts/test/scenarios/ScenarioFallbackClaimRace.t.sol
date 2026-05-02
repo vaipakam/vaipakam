@@ -73,7 +73,8 @@ contract ScenarioFallbackClaimRaceTest is Test {
             collateralQuantity: 0,
             allowsPartialRepay: true,
             amountMax: 0,
-            interestRateBpsMax: 0
+            interestRateBpsMax: 0,
+            periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
         });
         vm.prank(lender);
         offerId = OfferFacet(diamond).createOffer(p);

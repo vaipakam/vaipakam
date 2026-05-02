@@ -236,4 +236,60 @@ interface IVaipakamErrors {
     /// @param expected The asset the protocol entry point expected.
     /// @param signed   The asset the user signed over in the Permit2 digest.
     error Permit2TokenMismatch(address expected, address signed);
+
+    // ─── T-034 — Periodic Interest Payment ──────────────────────────────────
+    /// @notice Master kill-switch is off — cadence != None blocked at
+    ///         `createOffer`, and `settlePeriodicInterest` (PR2) is
+    ///         entirely closed. See LibVaipakam.ProtocolConfig
+    ///         `periodicInterestEnabled`.
+    error PeriodicInterestDisabled();
+
+    /// @notice Filter 1 / Filter 2 violation at `createOffer`. The
+    ///         lender picked a cadence whose interval is ≥ duration
+    ///         (Filter 1 — interval not strictly less than duration),
+    ///         OR whose duration / threshold combination is outside
+    ///         the matrix in
+    ///         docs/DesignsAndPlans/PeriodicInterestPaymentDesign.md §3.
+    /// @param cadence The cadence value the lender chose.
+    /// @param duration The loan duration in days.
+    /// @param principalNumeraire The principal value in numeraire-units
+    ///        (1e18-scaled), as resolved at create time via the
+    ///        configured `numeraireOracle` (or USD direct when unset).
+    /// @param threshold The current
+    ///        `minPrincipalForFinerCadence` value in numeraire-units.
+    error CadenceNotAllowed(
+        uint8 cadence,
+        uint256 duration,
+        uint256 principalNumeraire,
+        uint256 threshold
+    );
+
+    /// @notice Filter 0 violation at `createOffer`. Either the lending
+    ///         asset OR the collateral asset is illiquid AND the
+    ///         lender tried to set a cadence other than `None`.
+    ///         Periodic settlement is only meaningful when both sides
+    ///         can be auto-liquidated; illiquid loans must run on the
+    ///         terminal-only path. See design doc §3.0.
+    /// @param principalLiquidity 0 = Liquid, 1 = Illiquid.
+    /// @param collateralLiquidity 0 = Liquid, 1 = Illiquid.
+    /// @param cadence The cadence value the lender chose.
+    error CadenceNotAllowedForIlliquid(
+        uint8 principalLiquidity,
+        uint8 collateralLiquidity,
+        uint8 cadence
+    );
+
+    /// @notice Cross-numeraire batched setter `setNumeraire` is
+    ///         gated by the `numeraireSwapEnabled` flag. Threshold-
+    ///         only updates via `setMinPrincipalForFinerCadence` are
+    ///         NOT gated by this error. See design doc §10.2.
+    error NumeraireSwapDisabled();
+
+    /// @notice `setNumeraire` rejected the new oracle address — it has
+    ///         no bytecode, OR `numeraireToUsdRate1e18()` returned
+    ///         zero, OR the call reverted. Sanity check at setter time
+    ///         so a misconfig can't lock the protocol with a broken
+    ///         numeraire that reverts on every read.
+    /// @param oracle The proposed oracle address.
+    error NumeraireOracleInvalid(address oracle);
 }

@@ -153,6 +153,37 @@ library LibVaipakam {
     // legitimate distressed-borrower offers; higher would let pranks
     // / typo-grade offers spam the book.
     uint256 constant MAX_INTEREST_BPS = 10_000;
+
+    // ─── T-034 — Periodic Interest Payment defaults + bounds ─────────────
+    // See docs/DesignsAndPlans/PeriodicInterestPaymentDesign.md.
+    //
+    // Cadence interval lookup table (in days). The `intervalDays` library
+    // helper returns these for the four non-`None` cadences. None → 0.
+    uint256 constant PERIODIC_INTERVAL_MONTHLY_DAYS = 30;
+    uint256 constant PERIODIC_INTERVAL_QUARTERLY_DAYS = 90;
+    uint256 constant PERIODIC_INTERVAL_SEMI_ANNUAL_DAYS = 180;
+    uint256 constant PERIODIC_INTERVAL_ANNUAL_DAYS = 365;
+
+    // Pre-notify lead time. Single knob shared between the maturity
+    // pre-notify lane and the new periodic-checkpoint pre-notify lane in
+    // the off-chain hf-watcher. Range narrow on purpose: <1 day misses
+    // weekend-buffer; >14 days creates noise that trains users to ignore
+    // the alert. Default 3 mirrors the existing maturity-warning cadence.
+    uint8 constant PERIODIC_PRE_NOTIFY_DAYS_DEFAULT = 3;
+    uint8 constant PERIODIC_PRE_NOTIFY_DAYS_FLOOR = 1;
+    uint8 constant PERIODIC_PRE_NOTIFY_DAYS_CEIL = 14;
+
+    // Principal threshold above which the lender can opt the loan into a
+    // finer-than-mandatory cadence (Monthly / Quarterly / SemiAnnual on
+    // any duration; finer-than-Annual on multi-year). Denominated in
+    // `numeraireOracle` units (1e18-scaled). Default $100k under USD-as-
+    // numeraire (numeraireOracle == address(0)). Floor $1k stops a
+    // misconfigured "everyone qualifies" setting; ceiling $10M caps the
+    // worst-case "nobody qualifies" misfire.
+    uint256 constant PERIODIC_MIN_PRINCIPAL_FOR_FINER_CADENCE_DEFAULT = 100_000 * 1e18;
+    uint256 constant PERIODIC_MIN_PRINCIPAL_FOR_FINER_CADENCE_FLOOR = 1_000 * 1e18;
+    uint256 constant PERIODIC_MIN_PRINCIPAL_FOR_FINER_CADENCE_CEIL = 10_000_000 * 1e18;
+
     uint256 constant KYC_TIER0_THRESHOLD_USD = 1_000 * 1e18; // Tier0 max
     uint256 constant KYC_TIER1_THRESHOLD_USD = 10_000 * 1e18; // Tier1 max
     uint256 constant MAX_FEE_EVENTS_ITER = 10_000; // Max feeEventsLog entries scanned per window query in MetricsFacet
@@ -305,6 +336,30 @@ library LibVaipakam {
     enum OfferType {
         Lender,
         Borrower
+    }
+
+    /**
+     * @notice T-034 — cadence at which the borrower must settle accrued
+     *         interest during the loan's lifetime.
+     * @dev `None` is today's behavior — terminal-only repayment. The four
+     *      finer values correspond to fixed intervals (30 / 90 / 180 /
+     *      365 days). For loans with `durationDays > 365` the contract
+     *      enforces a minimum cadence of `Annual`. For all loans, the
+     *      cadence interval must be strictly less than `durationDays`
+     *      (a cadence whose first checkpoint lands at or after maturity
+     *      is meaningless). For loans where either side is illiquid,
+     *      cadence MUST be `None` (the auto-liquidate path requires
+     *      both assets to be DEX-swappable). See
+     *      docs/DesignsAndPlans/PeriodicInterestPaymentDesign.md §3.
+     *      Lookup helper: `intervalDays(cadence)` returns the matching
+     *      day count or 0 for `None`.
+     */
+    enum PeriodicInterestCadence {
+        None,
+        Monthly,
+        Quarterly,
+        SemiAnnual,
+        Annual
     }
 
     /**
@@ -464,6 +519,58 @@ library LibVaipakam {
         // consults it ahead of the fixed-rate fallback. Setter:
         // `ConfigFacet.setNotificationFeeUsdOracle`.
         address notificationFeeUsdOracle; // 0 ⇒ Phase 1 fixed-rate fallback
+        // ── T-034 — Periodic Interest Payment config ──────────────────
+        // See docs/DesignsAndPlans/PeriodicInterestPaymentDesign.md §6.
+        //
+        // Numeraire oracle. Decouples the principal threshold below
+        // from any specific currency. `address(0)` (the post-deploy
+        // default) means USD-as-numeraire — the threshold value is
+        // interpreted directly in 1e18-scaled USD units. A non-zero
+        // address must implement `INumeraireOracle.numeraireToUsdRate1e18()`
+        // returning how many USD (1e18-scaled) one unit of the numeraire
+        // is worth. The ONLY path to change this address is the atomic
+        // batched setter `ConfigFacet.setNumeraire(address, uint256)`,
+        // which simultaneously rewrites the threshold value in the new
+        // numeraire's units — guarantees by construction that the
+        // numeraire and threshold are never inconsistent.
+        address numeraireOracle; // 0 ⇒ USD-as-numeraire
+        // Principal threshold for opting into a finer-than-mandatory
+        // cadence. Stored in numeraire-units (1e18-scaled). 0 ⇒
+        // PERIODIC_MIN_PRINCIPAL_FOR_FINER_CADENCE_DEFAULT. Range
+        // `[PERIODIC_MIN_PRINCIPAL_FOR_FINER_CADENCE_FLOOR,
+        //   PERIODIC_MIN_PRINCIPAL_FOR_FINER_CADENCE_CEIL]` enforced
+        // by both setters. Read at `createOffer` to gate Filter 2.
+        uint256 minPrincipalForFinerCadence; // 0 ⇒ default
+        // Pre-notify lead time, in days. Single knob shared between
+        // the maturity pre-notify lane and the new periodic-checkpoint
+        // pre-notify lane in the off-chain hf-watcher. 0 ⇒
+        // PERIODIC_PRE_NOTIFY_DAYS_DEFAULT (3). Range
+        // `[PERIODIC_PRE_NOTIFY_DAYS_FLOOR, PERIODIC_PRE_NOTIFY_DAYS_CEIL]`
+        // enforced by `ConfigFacet.setPreNotifyDays`.
+        uint8 preNotifyDays; // 0 ⇒ default 3
+        // Master kill-switch for the entire Periodic Interest Payment
+        // mechanic. Default `false` — the feature ships dormant. While
+        // `false`:
+        //   - `OfferFacet.createOffer` reverts `PeriodicInterestDisabled`
+        //     for any non-`None` cadence.
+        //   - `RepayFacet.settlePeriodicInterest` reverts wholesale (PR2).
+        //   - `RepayFacet.repayPartial` interest-first fold + inline
+        //     checkpoint advance is bypassed (PR2).
+        //   - Every cadence-aware UI surface in the frontend is hidden.
+        // Flipped on by `ADMIN_ROLE` via
+        // `ConfigFacet.setPeriodicInterestEnabled(bool)` once governance
+        // is ready to activate the feature mesh-wide. See §10.1 of the
+        // design doc for the full behavior matrix.
+        bool periodicInterestEnabled;
+        // Independently gates the cross-numeraire batched setter
+        // `setNumeraire(address, uint256)`. Default `false` — a fresh
+        // deploy ships with USD-as-numeraire (`numeraireOracle == 0`)
+        // and governance cannot rotate to a different numeraire until
+        // this flag flips. Threshold-only updates via
+        // `setMinPrincipalForFinerCadence(uint256)` are NOT gated by
+        // this flag — governance can tune the threshold within the
+        // same numeraire freely. See §10.2 of the design doc.
+        bool numeraireSwapEnabled;
     }
 
     /// @dev Struct to store parameters of createOffer function, avoiding stack-too-deep.
@@ -513,6 +620,15 @@ library LibVaipakam {
         //    the protocol config; see §15 of the design doc.
         uint256 amountMax;
         uint256 interestRateBpsMax;
+        // ── T-034 — Periodic Interest Payment cadence ─────────────────
+        // Lender's chosen settlement cadence. Default `None` (zero in
+        // the enum) preserves backward compat with every existing
+        // CreateOfferParams construction site that doesn't set this
+        // field. While `periodicInterestEnabled == false`, any non-`None`
+        // value is rejected at `createOffer` with
+        // `PeriodicInterestDisabled`. See
+        // docs/DesignsAndPlans/PeriodicInterestPaymentDesign.md §3.
+        PeriodicInterestCadence periodicInterestCadence;
     }
 
     /**
@@ -524,7 +640,8 @@ library LibVaipakam {
     struct Offer {
         // Slot 0
         uint256 id;
-        // Slot 1: creator(20) + 10 small fields (10) = 30 bytes packed
+        // Slot 1: creator(20) + 10 small fields (10) + 1 enum (1)
+        //         = 31 bytes packed; 1 free
         address creator;
         OfferType offerType;
         LiquidityStatus principalLiquidity;
@@ -537,6 +654,14 @@ library LibVaipakam {
         // Carried into `Loan.allowsPartialRepay` at offer acceptance.
         // See {CreateOfferParams.allowsPartialRepay} for full semantics.
         bool allowsPartialRepay;
+        // ── T-034 — Periodic Interest Payment cadence ─────────────────
+        // Lender's chosen settlement cadence (None for terminal-only).
+        // Validated at `createOffer` per the matrix in
+        // docs/DesignsAndPlans/PeriodicInterestPaymentDesign.md §3 — three
+        // filters: liquid-both precondition, interval < duration, and
+        // duration-vs-threshold gating. Snapshotted onto `Loan` at
+        // acceptance and immutable for the loan's lifetime.
+        PeriodicInterestCadence periodicInterestCadence;
         // Slot 2
         address lendingAsset; // ERC20 or NFT contract
         // Slot 3
@@ -617,7 +742,8 @@ library LibVaipakam {
         // in `LibFallback` (backfill-safe).
         uint16 fallbackLenderBonusBpsAtInit;
         uint16 fallbackTreasuryBpsAtInit;
-        // Slot 3: borrower(20) + 1 small field (1) = 21 bytes packed
+        // Slot 3: borrower(20) + 1 small field (1) + 1 enum (1)
+        //         + uint64 (8) = 30 bytes packed; 2 free
         address borrower;
         // Snapshotted from `Offer.allowsPartialRepay` at loan init.
         // Read by `RepayFacet.repayPartial` to gate borrower-initiated
@@ -627,6 +753,21 @@ library LibVaipakam {
         // immutable for the loan's lifetime regardless of any later
         // governance / offer-level change.
         bool allowsPartialRepay;
+        // ── T-034 — Periodic Interest Payment fields ──────────────────
+        // Snapshotted from `Offer.periodicInterestCadence` at loan init.
+        // Immutable for the loan's lifetime — same snapshot discipline as
+        // `allowsPartialRepay` and the fallback split bps. None on every
+        // loan created while `periodicInterestEnabled` is false. See
+        // docs/DesignsAndPlans/PeriodicInterestPaymentDesign.md §2.1.
+        PeriodicInterestCadence periodicInterestCadence;
+        // Unix-seconds timestamp of the most recent fully-settled period
+        // checkpoint. Initialised to `startTime` at `initiateLoan`.
+        // Advanced by exactly `intervalDays(cadence) * 1 days` per
+        // settlement (just-stamp or auto-liquidate). Zero on loans whose
+        // cadence is None (the field is read but the next-checkpoint
+        // computation in `RepayFacet` short-circuits when cadence is
+        // None, so this never matters there).
+        uint64 lastPeriodicInterestSettledAt;
         // Slot 4
         uint256 lenderTokenId;
         // Slot 5
@@ -637,8 +778,25 @@ library LibVaipakam {
         address principalAsset;
         // Slot 8
         uint256 interestRateBps;
-        // Slot 9
-        uint256 startTime; // Timestamp of initiation
+        // Slot 9: startTime(8) + interestPaidSinceLastPeriod(16)
+        //        = 24 bytes packed; 8 free
+        // T-034 downsized startTime from uint256 to uint64 to free 24
+        // bytes for `interestPaidSinceLastPeriod` and future expansion.
+        // uint64 holds Unix-seconds through year 2554 — well past any
+        // plausible loan horizon. Every reader implicitly widens to
+        // uint256 via Solidity arithmetic; only the three write sites
+        // (`LoanFacet.initiateLoan`, `RepayFacet`, `PrecloseFacet`) need
+        // explicit `uint64(block.timestamp)` casts.
+        uint64 startTime; // Timestamp of initiation
+        // T-034 — interest paid by the borrower since the most recent
+        // periodic checkpoint (or since `startTime` for the first
+        // period). Reset to zero on each settlement. Only the interest
+        // portion of `repayPartial` payments accumulates here — under
+        // T-034's interest-first allocation, that's the same value as
+        // `min(payment, accruedThisPeriod)`. uint128 is plenty: it
+        // overflows at ~3.4 × 10^38 wei, far above any conceivable
+        // single-period interest amount in any asset.
+        uint128 interestPaidSinceLastPeriod;
         // Slot 10
         uint256 durationDays;
         // Slot 11
@@ -2215,6 +2373,26 @@ library LibVaipakam {
         // but if storage is somehow malformed return the last entry's
         // grace rather than reverting.
         return buckets[len - 1].graceSeconds;
+    }
+
+    /// @notice T-034 — interval-in-days lookup for a cadence enum value.
+    /// @dev Pure helper (no storage reads) so callers can fold it inline
+    ///      cheaply. Returns 0 for `None` (the no-cadence sentinel) so
+    ///      arithmetic that adds the result to a timestamp short-circuits
+    ///      to "no checkpoint" automatically. See
+    ///      docs/DesignsAndPlans/PeriodicInterestPaymentDesign.md §2.4.
+    function intervalDays(
+        PeriodicInterestCadence cadence
+    ) internal pure returns (uint256) {
+        if (cadence == PeriodicInterestCadence.Monthly)
+            return PERIODIC_INTERVAL_MONTHLY_DAYS;
+        if (cadence == PeriodicInterestCadence.Quarterly)
+            return PERIODIC_INTERVAL_QUARTERLY_DAYS;
+        if (cadence == PeriodicInterestCadence.SemiAnnual)
+            return PERIODIC_INTERVAL_SEMI_ANNUAL_DAYS;
+        if (cadence == PeriodicInterestCadence.Annual)
+            return PERIODIC_INTERVAL_ANNUAL_DAYS;
+        return 0; // None
     }
 
     /// @notice External view exposing the current grace-bucket schedule.

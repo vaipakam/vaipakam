@@ -79,7 +79,7 @@ contract EnumerationTest is SetupTest {
         l.status = status;
         l.assetType = LibVaipakam.AssetType.ERC20;
         l.collateralAssetType = LibVaipakam.AssetType.ERC20;
-        l.startTime = block.timestamp;
+        l.startTime = uint64(block.timestamp);
         l.durationDays = 30;
         TestMutatorFacet(address(diamond)).setLoan(loanId, l);
         TestMutatorFacet(address(diamond)).pushUserLoanId(lender_, loanId);

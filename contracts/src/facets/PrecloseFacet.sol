@@ -489,7 +489,8 @@ contract PrecloseFacet is
         loan.borrower = newBorrower;
         loan.collateralAmount = offer.collateralAmount;
         loan.durationDays = offer.durationDays;
-        loan.startTime = block.timestamp;
+        // T-034 — startTime downsized to uint64; explicit cast.
+        loan.startTime = uint64(block.timestamp);
         loan.interestRateBps = offer.interestRateBps;
 
         // ── 5b. NFT rental: reset prepay accounting and reassign user rights ─

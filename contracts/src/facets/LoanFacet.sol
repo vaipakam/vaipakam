@@ -468,7 +468,9 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
     ) private {
         loan.id = loanId;
         loan.offerId = offerId;
-        loan.startTime = block.timestamp;
+        // T-034 — startTime downsized from uint256 to uint64; explicit cast.
+        // Safe through year 2554; every reader implicitly widens.
+        loan.startTime = uint64(block.timestamp);
         loan.durationDays = offer.durationDays;
         // Range Orders Phase 1 — when matchOffers (PR3-B) is in flight,
         // the per-tx `matchOverride` slot carries the midpoint match
@@ -538,6 +540,20 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
         // authorisation; default false reverts the call with
         // {PartialRepayNotAllowed}.
         loan.allowsPartialRepay = offer.allowsPartialRepay;
+        // T-034 — snapshot the lender's chosen Periodic Interest Payment
+        // cadence onto the loan. Offer-level validation in
+        // `OfferFacet._validatePeriodicCadence` already gated illegal
+        // values (Filters 0/1/2 + master kill-switch); we inherit
+        // verbatim so the loan's terms are immutable for its lifetime.
+        // `lastPeriodicInterestSettledAt` initialised to the loan's
+        // start time so the first checkpoint lands exactly
+        // `intervalDays(cadence)` later.
+        loan.periodicInterestCadence = offer.periodicInterestCadence;
+        loan.lastPeriodicInterestSettledAt = uint64(block.timestamp);
+        // `interestPaidSinceLastPeriod` defaults to zero — Solidity
+        // zero-initialises the field at struct-write time. Spelled out
+        // here as a readable invariant.
+        loan.interestPaidSinceLastPeriod = 0;
         // Snapshot the effective fallback-path split right now so any future
         // governance change via `ConfigFacet.setFallbackSplit` applies
         // prospectively — dual-consent at offer creation guarantees both

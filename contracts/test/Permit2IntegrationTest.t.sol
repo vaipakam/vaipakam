@@ -325,7 +325,8 @@ contract Permit2IntegrationTest is SetupTest {
                 collateralQuantity: 0,
                 allowsPartialRepay: false,
                 amountMax: 0,
-                interestRateBpsMax: 0
+                interestRateBpsMax: 0,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
             });
     }
 }

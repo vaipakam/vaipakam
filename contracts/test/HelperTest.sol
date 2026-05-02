@@ -587,7 +587,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](27);
+        selectors = new bytes4[](33);
         selectors[0] = ConfigFacet.setFeesConfig.selector;
         selectors[1] = ConfigFacet.setLiquidationConfig.selector;
         selectors[2] = ConfigFacet.setRiskConfig.selector;
@@ -621,6 +621,13 @@ contract HelperTest {
         selectors[24] = ConfigFacet.getGraceBuckets.selector;
         selectors[25] = ConfigFacet.getEffectiveGraceSeconds.selector;
         selectors[26] = ConfigFacet.getGraceSlotBounds.selector;
+        // T-034 — Periodic Interest Payment knobs + master kill-switches.
+        selectors[27] = ConfigFacet.setNumeraire.selector;
+        selectors[28] = ConfigFacet.setMinPrincipalForFinerCadence.selector;
+        selectors[29] = ConfigFacet.setPreNotifyDays.selector;
+        selectors[30] = ConfigFacet.setPeriodicInterestEnabled.selector;
+        selectors[31] = ConfigFacet.setNumeraireSwapEnabled.selector;
+        selectors[32] = ConfigFacet.getPeriodicInterestConfig.selector;
         return selectors;
     }
 
