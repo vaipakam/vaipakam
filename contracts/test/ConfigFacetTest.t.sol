@@ -10,6 +10,7 @@ import {AccessControlFacet} from "../src/facets/AccessControlFacet.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {LibAccessControl} from "../src/libraries/LibAccessControl.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
+import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {HelperTest} from "./HelperTest.sol";
 
 /// @title ConfigFacetTest
@@ -224,9 +225,19 @@ contract ConfigFacetTest is Test {
         assertEq(ConfigFacet(address(diamond)).getStakingAprBps(), 750);
     }
 
-    function testSetStakingAprRevertsAbove100Percent() public {
+    function testSetStakingAprRevertsAboveCap() public {
+        // T-033 setter range audit: tightened from `≤ BASIS_POINTS`
+        // (100% APR) to `≤ STAKING_APR_BPS_MAX` (20% APR). Setter now
+        // surfaces `ParameterOutOfRange` instead of the legacy
+        // `InvalidStakingAprBps`.
         vm.expectRevert(
-            abi.encodeWithSelector(ConfigFacet.InvalidStakingAprBps.selector, 10_001)
+            abi.encodeWithSelector(
+                IVaipakamErrors.ParameterOutOfRange.selector,
+                bytes32("stakingAprBps"),
+                uint256(10_001),
+                uint256(0),
+                uint256(LibVaipakam.STAKING_APR_BPS_MAX)
+            )
         );
         ConfigFacet(address(diamond)).setStakingApr(10_001);
     }

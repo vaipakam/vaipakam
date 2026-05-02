@@ -283,15 +283,17 @@ contract PartialWithdrawalFacetTest is Test {
     /// @dev Covers LTVExceeded branch in partialWithdrawCollateral.
     ///      Set a low maxLtvBps via updateRiskParams so post-withdrawal LTV exceeds it.
     function testPartialWithdrawRevertsLTVExceeded() public {
-        // Set risk params: maxLtvBps=100 (1%), liqThresholdBps=9000, so HF passes but LTV fails
-        // With collateral=1800, principal=10 (store low principal):
-        //   HF = 1800*0.9/10 = 162 > 1.5 (passes)
-        //   LTV_after_withdraw = borrowVal/collVal_after; even small withdrawal → LTV>1%
+        // Set risk params: maxLtvBps=1000 (10% — the new T-033 floor;
+        // previously used 100 (1%) but the audit floor rejects that
+        // as a degenerate setting). liqThresholdBps must be > maxLtv
+        // and ≥ the 1500-floor; liqBonus + reserveFactor unchanged.
+        // With principal=1000, collateral_after=1770:
+        //   LTV ≈ 56.5% > maxLtvBps=10% → LTVExceeded still triggers.
         vm.prank(owner);
-        RiskFacet(address(diamond)).updateRiskParams(mockCollateralERC20, 100, 9000, 300, 1000);
+        RiskFacet(address(diamond)).updateRiskParams(mockCollateralERC20, 1000, 9000, 300, 1000);
 
         // Set principal = 1000 ether; collateral = 1800 ether via mutator.
-        // After withdrawal of 30: LTV = 1000/1770 * 10000 ≈ 5650 > maxLtvBps=100 → LTVExceeded
+        // After withdrawal of 30: LTV = 1000/1770 * 10000 ≈ 5650 > maxLtvBps=1000 → LTVExceeded
         LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
         loan.principal = 1000 ether;
         loan.collateralAmount = 1800 ether;

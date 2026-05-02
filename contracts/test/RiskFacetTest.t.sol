@@ -710,8 +710,21 @@ contract RiskFacetTest is Test {
     }
 
     function testUpdateAssetRiskParamsRevertsInvalidParams() public {
+        // maxLtv=9000 is in-range; liqThreshold=8000 fails the
+        // composite check (`liqThreshold > maxLtv` is required).
+        // Under the T-033 audit the composite path emits
+        // `ParameterOutOfRange("liqThresholdBps", ...)` rather than
+        // the legacy `UpdateNotAllowed()` so callers can disambiguate.
         vm.prank(owner);
-        vm.expectRevert(IVaipakamErrors.UpdateNotAllowed.selector);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IVaipakamErrors.ParameterOutOfRange.selector,
+                bytes32("liqThresholdBps"),
+                uint256(8000),
+                uint256(LibVaipakam.RISK_PARAMS_LIQ_THRESHOLD_BPS_MIN),
+                LibVaipakam.BASIS_POINTS
+            )
+        );
         RiskFacet(address(diamond)).updateRiskParams(
             mockERC20,
             9000,
@@ -1298,17 +1311,37 @@ contract RiskFacetTest is Test {
 
     // ─── Tests L–Q: updateRiskParams validation and liquidation edge cases ─
 
-    /// @dev Test L: updateRiskParams reverts when maxLtvBps is 0.
+    /// @dev Test L: updateRiskParams reverts when maxLtvBps is below the
+    ///      hard floor (T-033 setter range audit: floor is
+    ///      `RISK_PARAMS_MAX_LTV_BPS_MIN = 1000`; previously only `> 0`
+    ///      which let a degenerate `1`-bp setting effectively disable
+    ///      borrowing for the asset).
     function testUpdateRiskParamsRevertsMaxLtvZero() public {
         vm.prank(owner);
-        vm.expectRevert(IVaipakamErrors.UpdateNotAllowed.selector);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IVaipakamErrors.ParameterOutOfRange.selector,
+                bytes32("maxLtvBps"),
+                uint256(0),
+                uint256(LibVaipakam.RISK_PARAMS_MAX_LTV_BPS_MIN),
+                LibVaipakam.BASIS_POINTS
+            )
+        );
         RiskFacet(address(diamond)).updateRiskParams(mockERC20, 0, 8500, 300, 1000);
     }
 
     /// @dev Test M: updateRiskParams reverts when maxLtvBps > 10000.
     function testUpdateRiskParamsRevertsMaxLtvExceedsBasis() public {
         vm.prank(owner);
-        vm.expectRevert(IVaipakamErrors.UpdateNotAllowed.selector);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IVaipakamErrors.ParameterOutOfRange.selector,
+                bytes32("maxLtvBps"),
+                uint256(10001),
+                uint256(LibVaipakam.RISK_PARAMS_MAX_LTV_BPS_MIN),
+                LibVaipakam.BASIS_POINTS
+            )
+        );
         RiskFacet(address(diamond)).updateRiskParams(mockERC20, 10001, 10002, 300, 1000);
     }
 
@@ -1321,10 +1354,22 @@ contract RiskFacetTest is Test {
         RiskFacet(address(diamond)).updateRiskParams(mockERC20, 8000, 8500, 301, 1000);
     }
 
-    /// @dev Test O: updateRiskParams reverts when reserveFactorBps > 10000.
+    /// @dev Test O: updateRiskParams reverts when reserveFactorBps is
+    ///      above the hard ceiling (T-033 setter range audit: ceiling is
+    ///      `RISK_PARAMS_RESERVE_FACTOR_BPS_MAX = 5000`; previously
+    ///      only `≤ BASIS_POINTS` which allowed `100% reserveFactor` =
+    ///      lender receives 0% interest, defeats the lending product).
     function testUpdateRiskParamsRevertsReserveFactorExceedsBasis() public {
         vm.prank(owner);
-        vm.expectRevert(IVaipakamErrors.UpdateNotAllowed.selector);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IVaipakamErrors.ParameterOutOfRange.selector,
+                bytes32("reserveFactorBps"),
+                uint256(10001),
+                uint256(0),
+                uint256(LibVaipakam.RISK_PARAMS_RESERVE_FACTOR_BPS_MAX)
+            )
+        );
         RiskFacet(address(diamond)).updateRiskParams(mockERC20, 8000, 8500, 300, 10001);
     }
 
