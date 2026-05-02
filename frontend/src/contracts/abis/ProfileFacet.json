@@ -444,12 +444,12 @@
     "name": "updateKYCThresholds",
     "inputs": [
       {
-        "name": "tier0ThresholdUSD",
+        "name": "tier0ThresholdNumeraire",
         "type": "uint256",
         "internalType": "uint256"
       },
       {
-        "name": "tier1ThresholdUSD",
+        "name": "tier1ThresholdNumeraire",
         "type": "uint256",
         "internalType": "uint256"
       }

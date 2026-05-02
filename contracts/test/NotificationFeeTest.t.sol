@@ -25,8 +25,8 @@ import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
  * @title NotificationFeeTest
  * @notice T-032 — coverage for `LoanFacet.markNotifBilled` + the
  *         `LibNotificationFee` library + the two new ConfigFacet
- *         setters (`setNotificationFeeUsd` /
- *         `setNotificationFeeUsdOracle`).
+ *         setters (`setNotificationFee` /
+ *         `setNotificationFeeOracle`).
  *
  * Coverage:
  *   - Bill happy-path: lender side AND borrower side.
@@ -331,69 +331,56 @@ contract NotificationFeeTest is SetupTest {
         assertTrue(loan.borrowerNotifBilled, "borrower billed");
     }
 
-    // ─── Governance bounds on setNotificationFeeUsd ──────────────────────
+    // ─── Governance bounds on setNotificationFee ──────────────────────
 
-    function test_setNotificationFeeUsd_AcceptsValidValue() public {
-        ConfigFacet(address(diamond)).setNotificationFeeUsd(5e18); // $5
+    function test_setNotificationFee_AcceptsValidValue() public {
+        ConfigFacet(address(diamond)).setNotificationFee(5e18); // $5
         // Read via the production getter (which delegatecalls through
         // the Diamond into the library, where the storage slot
-        // resolves correctly). Calling `LibVaipakam.cfgNotificationFeeUsd()`
+        // resolves correctly). Calling `LibVaipakam.cfgNotificationFee()`
         // directly from the test contract reads the test's own
         // (empty) storage slot, not the Diamond's.
-        (uint256 feeUsd, , ) = ConfigFacet(address(diamond))
+        (uint256 feeUsd, ) = ConfigFacet(address(diamond))
             .getNotificationFeeConfig();
         assertEq(feeUsd, 5e18, "fee updated");
     }
 
-    function test_setNotificationFeeUsd_ZeroResetsToDefault() public {
-        ConfigFacet(address(diamond)).setNotificationFeeUsd(5e18);
-        ConfigFacet(address(diamond)).setNotificationFeeUsd(0);
-        (uint256 feeUsd, , ) = ConfigFacet(address(diamond))
+    function test_setNotificationFee_ZeroResetsToDefault() public {
+        ConfigFacet(address(diamond)).setNotificationFee(5e18);
+        ConfigFacet(address(diamond)).setNotificationFee(0);
+        (uint256 feeUsd, ) = ConfigFacet(address(diamond))
             .getNotificationFeeConfig();
         assertEq(
             feeUsd,
-            LibVaipakam.NOTIFICATION_FEE_USD_DEFAULT,
+            LibVaipakam.NOTIFICATION_FEE_DEFAULT,
             "fee reset to default"
         );
     }
 
-    function test_setNotificationFeeUsd_RevertsBelowFloor() public {
+    function test_setNotificationFee_RevertsBelowFloor() public {
         // Floor = 1e17 ($0.10); 5e16 ($0.05) is below floor.
         vm.expectRevert(
             abi.encodeWithSelector(
-                ConfigFacet.InvalidNotificationFeeUsd.selector,
+                ConfigFacet.InvalidNotificationFee.selector,
                 uint256(5e16),
-                LibVaipakam.MIN_NOTIFICATION_FEE_USD_FLOOR,
-                LibVaipakam.MAX_NOTIFICATION_FEE_USD_CEIL
+                LibVaipakam.MIN_NOTIFICATION_FEE_FLOOR,
+                LibVaipakam.MAX_NOTIFICATION_FEE_CEIL
             )
         );
-        ConfigFacet(address(diamond)).setNotificationFeeUsd(5e16);
+        ConfigFacet(address(diamond)).setNotificationFee(5e16);
     }
 
-    function test_setNotificationFeeUsd_RevertsAboveCeiling() public {
+    function test_setNotificationFee_RevertsAboveCeiling() public {
         // Ceiling = 50e18 ($50); 60e18 ($60) is above ceiling.
         vm.expectRevert(
             abi.encodeWithSelector(
-                ConfigFacet.InvalidNotificationFeeUsd.selector,
+                ConfigFacet.InvalidNotificationFee.selector,
                 uint256(60e18),
-                LibVaipakam.MIN_NOTIFICATION_FEE_USD_FLOOR,
-                LibVaipakam.MAX_NOTIFICATION_FEE_USD_CEIL
+                LibVaipakam.MIN_NOTIFICATION_FEE_FLOOR,
+                LibVaipakam.MAX_NOTIFICATION_FEE_CEIL
             )
         );
-        ConfigFacet(address(diamond)).setNotificationFeeUsd(60e18);
-    }
-
-    // ─── Governance bounds on setNotificationFeeUsdOracle ────────────────
-
-    function test_setNotificationFeeUsdOracle_AcceptsAnyAddress() public {
-        // No bounds on oracle address — set to a non-zero value, then
-        // back to address(0) (the Phase 1 fixed-rate fallback).
-        address dummyOracle = makeAddr("dummy.oracle");
-        ConfigFacet(address(diamond)).setNotificationFeeUsdOracle(dummyOracle);
-        ConfigFacet(address(diamond)).setNotificationFeeUsdOracle(address(0));
-        // No revert at any step — bounds enforcement is the library's
-        // responsibility at read time (oracle returns malformed data ⇒
-        // bill reverts; that's tested separately if needed).
+        ConfigFacet(address(diamond)).setNotificationFee(60e18);
     }
 
     // ─── Treasury accrual counter ────────────────────────────────────────

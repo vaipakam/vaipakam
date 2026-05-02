@@ -353,7 +353,7 @@
         "internalType": "uint256"
       },
       {
-        "name": "feeUsd1e18",
+        "name": "feeNumeraire1e18",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
@@ -730,11 +730,6 @@
   {
     "type": "error",
     "name": "NotifFeeOraclePriceZero",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "NotifFeeOracleStale",
     "inputs": []
   },
   {

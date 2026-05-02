@@ -179,14 +179,9 @@
     "inputs": [],
     "outputs": [
       {
-        "name": "feeUsd1e18",
+        "name": "feeNumeraire1e18",
         "type": "uint256",
         "internalType": "uint256"
-      },
-      {
-        "name": "feeOracle",
-        "type": "address",
-        "internalType": "address"
       },
       {
         "name": "feesAccrued",
@@ -622,25 +617,12 @@
   },
   {
     "type": "function",
-    "name": "setNotificationFeeUsd",
+    "name": "setNotificationFee",
     "inputs": [
       {
-        "name": "newFeeUsd1e18",
+        "name": "newFeeNumeraire1e18",
         "type": "uint256",
         "internalType": "uint256"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "setNotificationFeeUsdOracle",
-    "inputs": [
-      {
-        "name": "newOracle",
-        "type": "address",
-        "internalType": "address"
       }
     ],
     "outputs": [],
@@ -657,6 +639,21 @@
       },
       {
         "name": "newThresholdInNewNumeraire",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "newNotificationFeeInNewNumeraire",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "newKycTier0InNewNumeraire",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "newKycTier1InNewNumeraire",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -959,23 +956,10 @@
   },
   {
     "type": "event",
-    "name": "NotificationFeeUsdOracleSet",
+    "name": "NotificationFeeSet",
     "inputs": [
       {
-        "name": "newOracle",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "NotificationFeeUsdSet",
-    "inputs": [
-      {
-        "name": "newFeeUsd1e18",
+        "name": "newFeeNumeraire1e18",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
@@ -1336,7 +1320,7 @@
   },
   {
     "type": "error",
-    "name": "InvalidNotificationFeeUsd",
+    "name": "InvalidNotificationFee",
     "inputs": [
       {
         "name": "provided",
@@ -1344,12 +1328,12 @@
         "internalType": "uint256"
       },
       {
-        "name": "floorUsd",
+        "name": "floor",
         "type": "uint256",
         "internalType": "uint256"
       },
       {
-        "name": "ceilUsd",
+        "name": "ceil",
         "type": "uint256",
         "internalType": "uint256"
       }

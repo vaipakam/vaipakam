@@ -591,7 +591,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](38);
+        selectors = new bytes4[](37);
         selectors[0] = ConfigFacet.setFeesConfig.selector;
         selectors[1] = ConfigFacet.setLiquidationConfig.selector;
         selectors[2] = ConfigFacet.setRiskConfig.selector;
@@ -614,31 +614,33 @@ contract HelperTest {
         selectors[17] = ConfigFacet.setAutoPauseDurationSeconds.selector;
         // Findings 00025 — governance-tunable max loan duration.
         selectors[18] = ConfigFacet.setMaxOfferDurationDays.selector;
-        // T-032 — notification fee USD knob + pluggable oracle + bundled
-        // frontend-facing getter.
-        selectors[19] = ConfigFacet.setNotificationFeeUsd.selector;
-        selectors[20] = ConfigFacet.setNotificationFeeUsdOracle.selector;
-        selectors[21] = ConfigFacet.getNotificationFeeConfig.selector;
+        // T-032 / USD-Sweep Phase 1 — notification fee knob (now in
+        // numeraire-units) + bundled frontend-facing getter. The
+        // per-knob `setNotificationFeeUsdOracle` was retired; the
+        // protocol's reference currency is the global numeraireOracle
+        // (set via setNumeraire below).
+        selectors[19] = ConfigFacet.setNotificationFee.selector;
+        selectors[20] = ConfigFacet.getNotificationFeeConfig.selector;
         // T-044 — admin-configurable loan-default grace schedule.
-        selectors[22] = ConfigFacet.setGraceBuckets.selector;
-        selectors[23] = ConfigFacet.clearGraceBuckets.selector;
-        selectors[24] = ConfigFacet.getGraceBuckets.selector;
-        selectors[25] = ConfigFacet.getEffectiveGraceSeconds.selector;
-        selectors[26] = ConfigFacet.getGraceSlotBounds.selector;
+        selectors[21] = ConfigFacet.setGraceBuckets.selector;
+        selectors[22] = ConfigFacet.clearGraceBuckets.selector;
+        selectors[23] = ConfigFacet.getGraceBuckets.selector;
+        selectors[24] = ConfigFacet.getEffectiveGraceSeconds.selector;
+        selectors[25] = ConfigFacet.getGraceSlotBounds.selector;
         // T-034 — Periodic Interest Payment knobs + master kill-switches.
-        selectors[27] = ConfigFacet.setNumeraire.selector;
-        selectors[28] = ConfigFacet.setMinPrincipalForFinerCadence.selector;
-        selectors[29] = ConfigFacet.setPreNotifyDays.selector;
-        selectors[30] = ConfigFacet.setPeriodicInterestEnabled.selector;
-        selectors[31] = ConfigFacet.setNumeraireSwapEnabled.selector;
-        selectors[32] = ConfigFacet.getPeriodicInterestConfig.selector;
+        selectors[26] = ConfigFacet.setNumeraire.selector;
+        selectors[27] = ConfigFacet.setMinPrincipalForFinerCadence.selector;
+        selectors[28] = ConfigFacet.setPreNotifyDays.selector;
+        selectors[29] = ConfigFacet.setPeriodicInterestEnabled.selector;
+        selectors[30] = ConfigFacet.setNumeraireSwapEnabled.selector;
+        selectors[31] = ConfigFacet.getPeriodicInterestConfig.selector;
         // Individual getters used by the protocol-console knob card
         // reader (which expects one function per knob).
-        selectors[33] = ConfigFacet.getNumeraireOracle.selector;
-        selectors[34] = ConfigFacet.getMinPrincipalForFinerCadence.selector;
-        selectors[35] = ConfigFacet.getPreNotifyDays.selector;
-        selectors[36] = ConfigFacet.getPeriodicInterestEnabled.selector;
-        selectors[37] = ConfigFacet.getNumeraireSwapEnabled.selector;
+        selectors[32] = ConfigFacet.getNumeraireOracle.selector;
+        selectors[33] = ConfigFacet.getMinPrincipalForFinerCadence.selector;
+        selectors[34] = ConfigFacet.getPreNotifyDays.selector;
+        selectors[35] = ConfigFacet.getPeriodicInterestEnabled.selector;
+        selectors[36] = ConfigFacet.getNumeraireSwapEnabled.selector;
         return selectors;
     }
 

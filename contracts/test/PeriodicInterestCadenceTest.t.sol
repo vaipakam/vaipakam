@@ -376,7 +376,7 @@ contract PeriodicInterestCadenceTest is SetupTest {
         // Default: numeraireSwapEnabled = false. setNumeraire must revert.
         vm.expectRevert(IVaipakamErrors.NumeraireSwapDisabled.selector);
         vm.prank(owner);
-        ConfigFacet(address(diamond)).setNumeraire(address(0), 50_000 * 1e18);
+        ConfigFacet(address(diamond)).setNumeraire(address(0), 50_000 * 1e18, 0, 0, 0);
     }
 
     function testSetNumeraire_EnabledThenZeroOracleAccepted() public {
@@ -384,7 +384,7 @@ contract PeriodicInterestCadenceTest is SetupTest {
         ConfigFacet(address(diamond)).setNumeraireSwapEnabled(true);
         // address(0) is "USD-as-numeraire" — always accepted.
         vm.prank(owner);
-        ConfigFacet(address(diamond)).setNumeraire(address(0), 50_000 * 1e18);
+        ConfigFacet(address(diamond)).setNumeraire(address(0), 50_000 * 1e18, 0, 0, 0);
         (address numerOracle, uint256 threshold, , ,) =
             ConfigFacet(address(diamond)).getPeriodicInterestConfig();
         assertEq(numerOracle, address(0));
@@ -396,7 +396,7 @@ contract PeriodicInterestCadenceTest is SetupTest {
         ConfigFacet(address(diamond)).setNumeraireSwapEnabled(true);
         vm.expectPartialRevert(IVaipakamErrors.NumeraireOracleInvalid.selector);
         vm.prank(owner);
-        ConfigFacet(address(diamond)).setNumeraire(makeAddr("eoa"), 50_000 * 1e18);
+        ConfigFacet(address(diamond)).setNumeraire(makeAddr("eoa"), 50_000 * 1e18, 0, 0, 0);
     }
 
     function testSetNumeraire_RejectsZeroRate() public {
@@ -405,7 +405,7 @@ contract PeriodicInterestCadenceTest is SetupTest {
         MockNumeraireOracle bad = new MockNumeraireOracle(0);
         vm.expectPartialRevert(IVaipakamErrors.NumeraireOracleInvalid.selector);
         vm.prank(owner);
-        ConfigFacet(address(diamond)).setNumeraire(address(bad), 50_000 * 1e18);
+        ConfigFacet(address(diamond)).setNumeraire(address(bad), 50_000 * 1e18, 0, 0, 0);
     }
 
     function testSetNumeraire_RejectsRevertingOracle() public {
@@ -414,7 +414,7 @@ contract PeriodicInterestCadenceTest is SetupTest {
         RevertingNumeraireOracle bad = new RevertingNumeraireOracle();
         vm.expectPartialRevert(IVaipakamErrors.NumeraireOracleInvalid.selector);
         vm.prank(owner);
-        ConfigFacet(address(diamond)).setNumeraire(address(bad), 50_000 * 1e18);
+        ConfigFacet(address(diamond)).setNumeraire(address(bad), 50_000 * 1e18, 0, 0, 0);
     }
 
     function testSetNumeraire_AcceptsValidOracle() public {
@@ -427,7 +427,7 @@ contract PeriodicInterestCadenceTest is SetupTest {
         // XAU-units that's 5000 XAU; the bound check is unit-agnostic.
         uint256 thresholdInXau = 5_000 * 1e18;
         vm.prank(owner);
-        ConfigFacet(address(diamond)).setNumeraire(address(xau), thresholdInXau);
+        ConfigFacet(address(diamond)).setNumeraire(address(xau), thresholdInXau, 0, 0, 0);
         (address numerOracle, uint256 threshold, , ,) =
             ConfigFacet(address(diamond)).getPeriodicInterestConfig();
         assertEq(numerOracle, address(xau));

@@ -648,7 +648,7 @@ export default function Alerts() {
               the user's VPFI escrow on the FIRST paid event per loan-
               side. Telegram is free; this fee is exclusive to Push.
               The displayed fee is governance-tunable
-              (`cfgNotificationFeeUsd`) — we currently render the
+              (`cfgNotificationFee`, in numeraire-units) — we currently render the
               committed default since the live read is a follow-up
               after the contract ABI re-export. The on-chain authority
               `LoanFacet.markNotifBilled` is what actually charges. */}

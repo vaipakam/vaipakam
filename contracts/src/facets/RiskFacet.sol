@@ -669,7 +669,7 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
     //         .getAssetPrice(loan.principalAsset);
     //     uint256 bonusUSD = (bonus * price) / (10 ** decimals);
     //     if (
-    //         bonusUSD > LibVaipakam.KYC_TIER1_THRESHOLD_USD &&
+    //         bonusUSD > LibVaipakam.KYC_TIER1_THRESHOLD_NUMERAIRE &&
     //         !ProfileFacet(address(this)).isKYCVerified(msg.sender)
     //     ) revert KYCRequired();
 

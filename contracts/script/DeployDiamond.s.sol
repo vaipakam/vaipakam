@@ -800,7 +800,7 @@ contract DeployDiamond is Script {
     }
 
     function _getConfigSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](26);
+        s = new bytes4[](25);
         // Setters
         s[0] = ConfigFacet.setFeesConfig.selector;
         s[1] = ConfigFacet.setLiquidationConfig.selector;
@@ -837,11 +837,13 @@ contract DeployDiamond is Script {
         s[21] = ConfigFacet.setAutoPauseDurationSeconds.selector;
         // Findings 00025 — governance-tunable max loan duration.
         s[22] = ConfigFacet.setMaxOfferDurationDays.selector;
-        // T-032 — notification fee USD knob + pluggable reference oracle
-        // + bundled getter (frontend cost-disclosure single-RPC read).
-        s[23] = ConfigFacet.setNotificationFeeUsd.selector;
-        s[24] = ConfigFacet.setNotificationFeeUsdOracle.selector;
-        s[25] = ConfigFacet.getNotificationFeeConfig.selector;
+        // T-032 / USD-Sweep Phase 1 — notification fee knob (now in
+        // numeraire-units) + bundled getter. The per-knob
+        // `setNotificationFeeUsdOracle` was retired; the protocol's
+        // reference currency is the global numeraireOracle (set via
+        // setNumeraire on the T-034 surface).
+        s[23] = ConfigFacet.setNotificationFee.selector;
+        s[24] = ConfigFacet.getNotificationFeeConfig.selector;
     }
 
     function _getRewardAggregatorSelectors() internal pure returns (bytes4[] memory s) {

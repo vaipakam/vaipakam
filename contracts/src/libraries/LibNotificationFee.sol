@@ -4,7 +4,7 @@ pragma solidity ^0.8.29;
 import {LibVaipakam} from "./LibVaipakam.sol";
 import {OracleFacet} from "../facets/OracleFacet.sol";
 import {EscrowFactoryFacet} from "../facets/EscrowFactoryFacet.sol";
-import {AggregatorV3Interface} from "@chainlink/contracts/src/v0.8/shared/interfaces/AggregatorV3Interface.sol";
+import {INumeraireOracle} from "../interfaces/INumeraireOracle.sol";
 
 /**
  * @title LibNotificationFee
@@ -37,13 +37,16 @@ library LibNotificationFee {
     /// @notice Emitted when a loan-side's first notification triggers
     ///         a successful bill. Indexes the loan + side + payer for
     ///         off-chain reconciliation against the watcher's
-    ///         per-notification audit log.
+    ///         per-notification audit log. The fee is in NUMERAIRE
+    ///         units (USD-Sweep Phase 1) — convert via the global
+    ///         `numeraireOracle` to express in any other reference
+    ///         currency.
     event NotificationFeeBilled(
         uint256 indexed loanId,
         bool indexed isLenderSide,
         address indexed payer,
         uint256 vpfiAmount,
-        uint256 feeUsd1e18
+        uint256 feeNumeraire1e18
     );
 
     error NotifFeeWethNotSet();
@@ -53,40 +56,40 @@ library LibNotificationFee {
     error NotifFeeTreasuryNotSet();
 
     /// @notice Computes the VPFI amount (18-dec, raw) equivalent to
-    ///         `cfgNotificationFeeUsd()` at the current price feeds.
-    /// @dev    Two pricing paths:
-    ///           - Plugged oracle (`s.notificationFeeUsdOracle != 0`):
-    ///             interpreted as a direct VPFI/<denomination> feed.
-    ///             Used in Phase 2 / when governance swaps the
-    ///             reference asset (USD → EUR / JPY etc.).
-    ///           - Phase 1 fallback: ETH/USD via OracleFacet
-    ///             (which delegates to Chainlink) × the fixed rate
-    ///             `VPFI_PER_ETH_FIXED_PHASE1 = 1e15`.
+    ///         `cfgNotificationFee()` at the current price feeds.
+    /// @dev    USD-Sweep Phase 1 — fee is now stored in NUMERAIRE units
+    ///         (`cfgNotificationFee()` returns 1e18-scaled numeraire).
+    ///         Two-step conversion:
+    ///           - numeraire → USD via the global `numeraireOracle`
+    ///             (T-034 abstraction). `address(0)` means USD-as-
+    ///             numeraire — the fee is interpreted directly as USD.
+    ///           - USD → VPFI via ETH/USD × fixed VPFI/ETH rate
+    ///             (`VPFI_PER_ETH_FIXED_PHASE1 = 1e15`, i.e. 1 VPFI =
+    ///             0.001 ETH). Phase 1 fixed; same as today.
     ///         Reverts on stale / zero / unconfigured oracle so a
     ///         broken price source fails the bill rather than charging
-    ///         a wildly wrong amount.
-    function vpfiAmountForUsdFee() internal view returns (uint256) {
+    ///         a wildly wrong amount. The retired
+    ///         `notificationFeeUsdOracle` per-knob path is gone — the
+    ///         protocol's reference currency is the single
+    ///         `numeraireOracle` slot.
+    function vpfiAmountForFee() internal view returns (uint256) {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        uint256 feeUsd1e18 = LibVaipakam.cfgNotificationFeeUsd();
+        uint256 feeNumeraire1e18 = LibVaipakam.cfgNotificationFee();
 
-        // Phase 2 / governance path — direct VPFI/<denomination> feed.
-        address pluggedOracle = s.protocolCfg.notificationFeeUsdOracle;
-        if (pluggedOracle != address(0)) {
-            AggregatorV3Interface feed = AggregatorV3Interface(pluggedOracle);
-            (, int256 answer, , uint256 updatedAt, ) = feed.latestRoundData();
-            if (updatedAt == 0) revert NotifFeeOracleStale();
-            if (answer <= 0) revert NotifFeeOraclePriceZero();
-            uint8 dec = feed.decimals();
-            uint256 vpfiPriceUsd = uint256(answer);
-            // vpfiAmount (1e18, since VPFI is 18-dec) =
-            //   feeUsd1e18 × 10^dec / vpfiPriceUsd
-            // Both `feeUsd1e18` and the implicit-1e18 result share
-            // the same scaling; `10^dec` cancels the feed's native
-            // decimals on `vpfiPriceUsd`.
-            return (feeUsd1e18 * (10 ** uint256(dec))) / vpfiPriceUsd;
+        // Step 1 — convert numeraire → USD via global numeraireOracle.
+        // Zero address means USD-as-numeraire (no conversion).
+        uint256 feeUsd1e18 = feeNumeraire1e18;
+        address numerOracle = s.protocolCfg.numeraireOracle;
+        if (numerOracle != address(0)) {
+            // numeraireToUsdRate1e18() returns "how many USD per 1
+            // unit of numeraire" (1e18-scaled). Conversion:
+            //   feeUsd = feeNumeraire × rate / 1e18
+            uint256 rate = INumeraireOracle(numerOracle).numeraireToUsdRate1e18();
+            if (rate == 0) revert NotifFeeOraclePriceZero();
+            feeUsd1e18 = (feeNumeraire1e18 * rate) / 1e18;
         }
 
-        // Phase 1 fallback — ETH/USD × fixed VPFI/ETH rate.
+        // Step 2 — USD → VPFI via ETH/USD × fixed VPFI/ETH rate.
         address weth = s.wethContract;
         if (weth == address(0)) revert NotifFeeWethNotSet();
         (uint256 ethPrice, uint8 ethDec) =
@@ -136,7 +139,7 @@ library LibNotificationFee {
             if (loan.borrowerNotifBilled) return;
         }
 
-        uint256 vpfiAmount = vpfiAmountForUsdFee();
+        uint256 vpfiAmount = vpfiAmountForFee();
 
         address vpfi = s.vpfiToken;
         if (vpfi == address(0)) revert NotifFeeVpfiTokenNotSet();
@@ -169,7 +172,7 @@ library LibNotificationFee {
             isLenderSide,
             payer,
             vpfiAmount,
-            LibVaipakam.cfgNotificationFeeUsd()
+            LibVaipakam.cfgNotificationFee()
         );
     }
 }

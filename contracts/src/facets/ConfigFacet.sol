@@ -241,94 +241,68 @@ contract ConfigFacet is DiamondAccessControl {
         emit MaxOfferDurationDaysSet(newDays);
     }
 
-    /// @notice T-032 — emitted on every change to the per-loan-side
-    ///         notification fee USD amount.
-    event NotificationFeeUsdSet(uint256 newFeeUsd1e18);
-    /// @notice T-032 — emitted on every change to the pluggable
-    ///         VPFI/<denomination> oracle. `address(0)` resets to the
-    ///         Phase 1 fixed-rate fallback (ETH/USD × 1 VPFI = 0.001 ETH).
-    event NotificationFeeUsdOracleSet(address indexed newOracle);
+    /// @notice T-032 / USD-Sweep Phase 1 — emitted on every change to
+    ///         the per-loan-side notification fee. Value in numeraire-
+    ///         units (1e18-scaled).
+    event NotificationFeeSet(uint256 newFeeNumeraire1e18);
     /// @notice T-032 — passed fee outside the [floor, ceil] bounds.
-    error InvalidNotificationFeeUsd(
+    error InvalidNotificationFee(
         uint256 provided,
-        uint256 floorUsd,
-        uint256 ceilUsd
+        uint256 floor,
+        uint256 ceil
     );
 
     /**
-     * @notice Update the per-loan-side notification fee, USD-denominated
-     *         (1e18 scaled). Charged in VPFI from the user's escrow on
-     *         the FIRST PaidPush-tier notification fired by the
-     *         off-chain hf-watcher.
+     * @notice Update the per-loan-side notification fee, denominated
+     *         in NUMERAIRE-units (1e18 scaled). Charged in VPFI from
+     *         the user's escrow on the FIRST PaidPush-tier notification
+     *         fired by the off-chain hf-watcher.
      * @dev ADMIN_ROLE-only. Bounded inside
-     *      `[MIN_NOTIFICATION_FEE_USD_FLOOR, MAX_NOTIFICATION_FEE_USD_CEIL]`
-     *      ($0.10 – $50). Floor prevents a misfire that sets the fee to
-     *      ~zero and starves the Push channel; ceiling caps the
-     *      worst-case user bill at $50/loan-side if governance misfires
-     *      upward. Pass exactly 0 to reset to the library default
-     *      `NOTIFICATION_FEE_USD_DEFAULT` ($2 ≡ 2e18).
-     * @param newFeeUsd1e18 New per-loan-side fee in USD-1e18 scaling;
-     *                     pass 0 to reset to the library default.
+     *      `[MIN_NOTIFICATION_FEE_FLOOR, MAX_NOTIFICATION_FEE_CEIL]`
+     *      (0.1 – 50.0 numeraire-units, = $0.10 – $50 under
+     *      USD-as-numeraire). Floor prevents a misfire that sets the
+     *      fee to ~zero and starves the Push channel; ceiling caps the
+     *      worst-case user bill if governance misfires upward. Pass
+     *      exactly 0 to reset to the library default
+     *      `NOTIFICATION_FEE_DEFAULT` (2.0 numeraire-units = `2e18`).
+     *
+     *      USD-Sweep Phase 1 — the per-knob `notificationFeeUsdOracle`
+     *      was retired; the protocol's reference currency is the
+     *      single global `numeraireOracle` (`setNumeraire` rotates it
+     *      atomically alongside the threshold + KYC tiers + this fee).
+     * @param newFeeNumeraire1e18 New per-loan-side fee in numeraire-
+     *                  unit 1e18 scaling; pass 0 to reset.
      */
-    function setNotificationFeeUsd(uint256 newFeeUsd1e18)
+    function setNotificationFee(uint256 newFeeNumeraire1e18)
         external
         onlyRole(LibAccessControl.ADMIN_ROLE)
     {
         if (
-            newFeeUsd1e18 != 0 &&
+            newFeeNumeraire1e18 != 0 &&
             (
-                newFeeUsd1e18 < LibVaipakam.MIN_NOTIFICATION_FEE_USD_FLOOR ||
-                newFeeUsd1e18 > LibVaipakam.MAX_NOTIFICATION_FEE_USD_CEIL
+                newFeeNumeraire1e18 < LibVaipakam.MIN_NOTIFICATION_FEE_FLOOR ||
+                newFeeNumeraire1e18 > LibVaipakam.MAX_NOTIFICATION_FEE_CEIL
             )
         ) {
-            revert InvalidNotificationFeeUsd(
-                newFeeUsd1e18,
-                LibVaipakam.MIN_NOTIFICATION_FEE_USD_FLOOR,
-                LibVaipakam.MAX_NOTIFICATION_FEE_USD_CEIL
+            revert InvalidNotificationFee(
+                newFeeNumeraire1e18,
+                LibVaipakam.MIN_NOTIFICATION_FEE_FLOOR,
+                LibVaipakam.MAX_NOTIFICATION_FEE_CEIL
             );
         }
-        LibVaipakam.storageSlot().protocolCfg.notificationFeeUsd = newFeeUsd1e18;
-        emit NotificationFeeUsdSet(newFeeUsd1e18);
+        LibVaipakam.storageSlot().protocolCfg.notificationFee = newFeeNumeraire1e18;
+        emit NotificationFeeSet(newFeeNumeraire1e18);
     }
 
     /**
-     * @notice Set the pluggable price oracle for the notification fee
-     *         (Phase 2 / governance — switching denomination).
-     * @dev ADMIN_ROLE-only. Phase 1 default is `address(0)`, in which
-     *      case `LibNotificationFee.vpfiAmountForUsdFee` falls back to
-     *      ETH/USD × the fixed VPFI/ETH rate. Setting a non-zero
-     *      address here makes the library consult that
-     *      `AggregatorV3Interface` directly as a VPFI/<denomination>
-     *      feed — used when VPFI lists with a real market price OR when
-     *      governance wants to denominate the fee in something other
-     *      than USD (EUR / JPY / XAU / etc.) by pointing at a feed
-     *      whose denominator is the desired reference asset.
-     *
-     *      No on-chain validation that the address actually implements
-     *      AggregatorV3Interface — the library's `try`-shaped read
-     *      will revert if the oracle returns malformed data, which is
-     *      the right failure mode (operator catches it in dry-run
-     *      before broadcasting).
-     * @param newOracle  New oracle address; pass `address(0)` to reset
-     *                  to the Phase 1 fixed-rate fallback.
-     */
-    function setNotificationFeeUsdOracle(address newOracle)
-        external
-        onlyRole(LibAccessControl.ADMIN_ROLE)
-    {
-        LibVaipakam.storageSlot().protocolCfg.notificationFeeUsdOracle = newOracle;
-        emit NotificationFeeUsdOracleSet(newOracle);
-    }
-
-    /**
-     * @notice T-032 — read the live notification-fee config in one
-     *         RPC. Frontend reads this to render the cost disclosure
-     *         on the subscription opt-in UI ("Notification fee: $X").
-     * @return feeUsd1e18  Resolved fee — either the storage override
-     *                     or the library default.
-     * @return feeOracle   Pluggable VPFI/<denomination> oracle, or
-     *                     `address(0)` for the Phase 1 fixed-rate
-     *                     fallback.
+     * @notice T-032 / USD-Sweep Phase 1 — read the live notification-
+     *         fee config in one RPC. Frontend reads this to render the
+     *         cost disclosure on the subscription opt-in UI.
+     * @return feeNumeraire1e18 Resolved fee in numeraire-units —
+     *                     either the storage override or the library
+     *                     default. Convert to USD via the global
+     *                     `numeraireOracle` (read separately via
+     *                     `getNumeraireOracle()`).
      * @return feesAccrued Cumulative VPFI debited via
      *                     `markNotifBilled` since deploy. Operator
      *                     monitors for anomalies.
@@ -336,10 +310,9 @@ contract ConfigFacet is DiamondAccessControl {
     function getNotificationFeeConfig()
         external
         view
-        returns (uint256 feeUsd1e18, address feeOracle, uint256 feesAccrued)
+        returns (uint256 feeNumeraire1e18, uint256 feesAccrued)
     {
-        feeUsd1e18 = LibVaipakam.cfgNotificationFeeUsd();
-        feeOracle = LibVaipakam.storageSlot().protocolCfg.notificationFeeUsdOracle;
+        feeNumeraire1e18 = LibVaipakam.cfgNotificationFee();
         feesAccrued = LibVaipakam.storageSlot().notificationFeesAccrued;
     }
 
@@ -980,23 +953,43 @@ contract ConfigFacet is DiamondAccessControl {
     event NumeraireSwapEnabledSet(bool enabled);
 
     /// @notice Atomic batched setter — the ONLY path to change the
-    ///         numeraire oracle. Simultaneously rewrites the threshold
-    ///         value in the new numeraire's units so no inconsistent
-    ///         intermediate state is reachable.
+    ///         numeraire oracle. Simultaneously rewrites EVERY
+    ///         numeraire-denominated value in storage so no inconsistent
+    ///         intermediate state is reachable. USD-Sweep Phase 3 —
+    ///         extended from threshold-only to cover the full
+    ///         numeraire-denominated surface (notification fee + KYC
+    ///         tier 0 + KYC tier 1 + finer-cadence threshold).
     /// @dev Gated by `numeraireSwapEnabled` (independent kill-switch).
     ///      Validates the new oracle by calling
     ///      `numeraireToUsdRate1e18()` and rejecting zero / revert /
     ///      no-bytecode results via `NumeraireOracleInvalid`. Validates
-    ///      `newThresholdInNewNumeraire` against the bounded range
-    ///      `[FLOOR, CEIL]` (zero is also accepted as "reset to library
-    ///      default").
+    ///      every value against its compiled-in range (zero is accepted
+    ///      as "reset to library default" on each).
+    ///
+    ///      Each numeraire-denominated knob also has a per-knob
+    ///      "within-the-same-numeraire" setter (`setMinPrincipalForFinerCadence`,
+    ///      `setNotificationFee`, `updateKYCThresholds`) for routine
+    ///      tuning; those are NOT gated by `numeraireSwapEnabled`. This
+    ///      atomic setter is the only path for governance to ROTATE
+    ///      the numeraire itself.
     /// @param newOracle Address of the new INumeraireOracle impl.
     ///        `address(0)` resets to USD-as-numeraire.
-    /// @param newThresholdInNewNumeraire Threshold in numeraire-units
-    ///        (1e18-scaled). Pass `0` to reset to the library default.
+    /// @param newThresholdInNewNumeraire Finer-cadence principal
+    ///        threshold in numeraire-units (1e18-scaled). 0 ⇒ default.
+    /// @param newNotificationFeeInNewNumeraire Per-loan-side
+    ///        notification fee in numeraire-units (1e18-scaled). 0 ⇒
+    ///        default.
+    /// @param newKycTier0InNewNumeraire KYC Tier-0 threshold in
+    ///        numeraire-units (1e18-scaled). 0 ⇒ default. MUST be <
+    ///        `newKycTier1InNewNumeraire`.
+    /// @param newKycTier1InNewNumeraire KYC Tier-1 threshold in
+    ///        numeraire-units (1e18-scaled). 0 ⇒ default.
     function setNumeraire(
         address newOracle,
-        uint256 newThresholdInNewNumeraire
+        uint256 newThresholdInNewNumeraire,
+        uint256 newNotificationFeeInNewNumeraire,
+        uint256 newKycTier0InNewNumeraire,
+        uint256 newKycTier1InNewNumeraire
     ) external onlyRole(LibAccessControl.ADMIN_ROLE) {
         LibVaipakam.ProtocolConfig storage c =
             LibVaipakam.storageSlot().protocolCfg;
@@ -1019,7 +1012,7 @@ contract ConfigFacet is DiamondAccessControl {
             }
         }
 
-        // Threshold range check (zero accepted as "reset").
+        // Range checks per knob — zero accepted as "reset to default".
         if (
             newThresholdInNewNumeraire != 0 &&
             (
@@ -1036,10 +1029,71 @@ contract ConfigFacet is DiamondAccessControl {
                 LibVaipakam.PERIODIC_MIN_PRINCIPAL_FOR_FINER_CADENCE_CEIL
             );
         }
+        if (
+            newNotificationFeeInNewNumeraire != 0 &&
+            (
+                newNotificationFeeInNewNumeraire < LibVaipakam.MIN_NOTIFICATION_FEE_FLOOR ||
+                newNotificationFeeInNewNumeraire > LibVaipakam.MAX_NOTIFICATION_FEE_CEIL
+            )
+        ) {
+            revert IVaipakamErrors.ParameterOutOfRange(
+                bytes32("notificationFee"),
+                newNotificationFeeInNewNumeraire,
+                LibVaipakam.MIN_NOTIFICATION_FEE_FLOOR,
+                LibVaipakam.MAX_NOTIFICATION_FEE_CEIL
+            );
+        }
+        // KYC tier monotonicity — only enforce when both are non-zero
+        // (zero pair = "reset both to defaults", which the lib defaults
+        // satisfy by construction).
+        if (
+            newKycTier0InNewNumeraire != 0 &&
+            newKycTier1InNewNumeraire != 0 &&
+            newKycTier0InNewNumeraire >= newKycTier1InNewNumeraire
+        ) {
+            revert IVaipakamErrors.ParameterOutOfRange(
+                bytes32("kycTier0VsTier1"),
+                newKycTier0InNewNumeraire,
+                0,
+                newKycTier1InNewNumeraire
+            );
+        }
+        if (
+            newKycTier0InNewNumeraire != 0 &&
+            (
+                newKycTier0InNewNumeraire < LibVaipakam.KYC_THRESHOLD_NUMERAIRE_MIN_FLOOR ||
+                newKycTier0InNewNumeraire > LibVaipakam.KYC_THRESHOLD_NUMERAIRE_MAX_CEIL
+            )
+        ) {
+            revert IVaipakamErrors.ParameterOutOfRange(
+                bytes32("kycTier0ThresholdNumeraire"),
+                newKycTier0InNewNumeraire,
+                LibVaipakam.KYC_THRESHOLD_NUMERAIRE_MIN_FLOOR,
+                LibVaipakam.KYC_THRESHOLD_NUMERAIRE_MAX_CEIL
+            );
+        }
+        if (
+            newKycTier1InNewNumeraire != 0 &&
+            (
+                newKycTier1InNewNumeraire < LibVaipakam.KYC_THRESHOLD_NUMERAIRE_MIN_FLOOR ||
+                newKycTier1InNewNumeraire > LibVaipakam.KYC_THRESHOLD_NUMERAIRE_MAX_CEIL
+            )
+        ) {
+            revert IVaipakamErrors.ParameterOutOfRange(
+                bytes32("kycTier1ThresholdNumeraire"),
+                newKycTier1InNewNumeraire,
+                LibVaipakam.KYC_THRESHOLD_NUMERAIRE_MIN_FLOOR,
+                LibVaipakam.KYC_THRESHOLD_NUMERAIRE_MAX_CEIL
+            );
+        }
 
         address oldOracle = c.numeraireOracle;
         c.numeraireOracle = newOracle;
         c.minPrincipalForFinerCadence = newThresholdInNewNumeraire;
+        c.notificationFee = newNotificationFeeInNewNumeraire;
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        s.kycTier0ThresholdNumeraire = newKycTier0InNewNumeraire;
+        s.kycTier1ThresholdNumeraire = newKycTier1InNewNumeraire;
         emit NumeraireUpdated(oldOracle, newOracle, newThresholdInNewNumeraire);
     }
 

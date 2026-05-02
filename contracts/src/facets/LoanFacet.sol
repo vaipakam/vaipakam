@@ -607,7 +607,7 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
     /**
      * @notice T-032 — record the FIRST PaidPush-tier notification for a
      *         loan-side and immediately bill the corresponding party
-     *         `cfgNotificationFeeUsd()`-equivalent in VPFI from their
+     *         `cfgNotificationFee()`-equivalent in VPFI from their
      *         escrow → treasury (one transfer, no Diamond custody).
      * @dev    Idempotent: subsequent calls on an already-billed side
      *         no-op. Reverts on:

@@ -5,6 +5,7 @@ pragma solidity ^0.8.29;
 import {LibDiamond} from "@diamond-3/libraries/LibDiamond.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {ISanctionsList} from "../interfaces/ISanctionsList.sol";
+import {INumeraireOracle} from "../interfaces/INumeraireOracle.sol";
 
 /**
  * @title LibVaipakam
@@ -127,18 +128,27 @@ library LibVaipakam {
     uint256 constant MIN_AUTO_PAUSE_SECONDS = 300; // 5 min
     uint256 constant MAX_AUTO_PAUSE_SECONDS = 7200; // 2 hours
 
-    /// @dev T-032 — Notification fee (per loan-side) defaults + bounds.
-    ///      Charged in VPFI, USD-denominated, deducted on first paid-tier
-    ///      notification fired by the off-chain hf-watcher. Default $2
-    ///      covers Push Protocol channel-side delivery costs at the
-    ///      operator's expected notification volumes (~5-10 notifications
-    ///      per loan lifetime ⇒ ~$0.10-0.50 actual gas). Floor $0.10
-    ///      prevents governance accidentally setting it to ~0 and
-    ///      starving the channel; ceiling $50 caps the worst-case
-    ///      bill on a per-loan basis if governance misfires upward.
-    uint256 constant NOTIFICATION_FEE_USD_DEFAULT = 2 * 1e18;
-    uint256 constant MIN_NOTIFICATION_FEE_USD_FLOOR = 1e17; // $0.10
-    uint256 constant MAX_NOTIFICATION_FEE_USD_CEIL = 50 * 1e18; // $50
+    /// @dev T-032 / USD-Sweep Phase 1 — Notification fee (per loan-side)
+    ///      defaults + bounds. Charged in VPFI, denominated in
+    ///      NUMERAIRE-units (1e18-scaled), deducted on first paid-tier
+    ///      notification fired by the off-chain hf-watcher. Default 2.0
+    ///      numeraire-units (= $2 under USD-as-numeraire) covers Push
+    ///      Protocol channel-side delivery costs at the operator's
+    ///      expected notification volumes (~5-10 notifications per loan
+    ///      lifetime ⇒ ~$0.10-0.50 actual gas). Floor 0.1 prevents
+    ///      governance accidentally setting it to ~0 and starving the
+    ///      channel; ceiling 50.0 caps the worst-case bill on a
+    ///      per-loan basis if governance misfires upward.
+    ///
+    ///      The numeraire-to-USD conversion happens at the
+    ///      `LibNotificationFee.vpfiAmountForFee` boundary so the
+    ///      stored value can be re-anchored when governance rotates
+    ///      the numeraire (atomic multi-arg `setNumeraire` in
+    ///      `ConfigFacet` keeps this in lockstep with the threshold
+    ///      and KYC tiers).
+    uint256 constant NOTIFICATION_FEE_DEFAULT = 2 * 1e18;
+    uint256 constant MIN_NOTIFICATION_FEE_FLOOR = 1e17; // 0.1 numeraire-units
+    uint256 constant MAX_NOTIFICATION_FEE_CEIL = 50 * 1e18; // 50 numeraire-units
 
     /// @dev T-032 — Phase 1 fixed VPFI/ETH rate. While VPFI doesn't have
     ///      a real market price, the fee math uses
@@ -184,8 +194,8 @@ library LibVaipakam {
     uint256 constant PERIODIC_MIN_PRINCIPAL_FOR_FINER_CADENCE_FLOOR = 1_000 * 1e18;
     uint256 constant PERIODIC_MIN_PRINCIPAL_FOR_FINER_CADENCE_CEIL = 10_000_000 * 1e18;
 
-    uint256 constant KYC_TIER0_THRESHOLD_USD = 1_000 * 1e18; // Tier0 max
-    uint256 constant KYC_TIER1_THRESHOLD_USD = 10_000 * 1e18; // Tier1 max
+    uint256 constant KYC_TIER0_THRESHOLD_NUMERAIRE = 1_000 * 1e18; // Tier0 max
+    uint256 constant KYC_TIER1_THRESHOLD_NUMERAIRE = 10_000 * 1e18; // Tier1 max
     uint256 constant MAX_FEE_EVENTS_ITER = 10_000; // Max feeEventsLog entries scanned per window query in MetricsFacet
     uint256 constant SEQUENCER_GRACE_PERIOD = 3600; // 1h post-recovery grace on L2s before prices are trusted again
 
@@ -497,28 +507,22 @@ library LibVaipakam {
         uint256 vpfiTier2Min; // 0 ⇒ VPFI_TIER2_MIN (1_000e18)
         uint256 vpfiTier3Min; // 0 ⇒ VPFI_TIER3_MIN (5_000e18)
         uint256 vpfiTier4Threshold; // 0 ⇒ VPFI_TIER4_THRESHOLD (20_000e18)
-        // ── T-032 — Notification fee config ───────────────────────────
-        // Flat per-loan-side notification fee, USD-denominated (1e18
-        // scaled). Charged in VPFI from the user's escrow at the moment
-        // the off-chain hf-watcher fires the FIRST notification on a
-        // PaidPush-tier subscription for that loan-side. Zero (default)
-        // means use the library constant `NOTIFICATION_FEE_USD_DEFAULT`
-        // ($2 in 1e18 = `2e18`); set via
-        // `ConfigFacet.setNotificationFeeUsd`. Bounded
-        // `[MIN_NOTIFICATION_FEE_USD_FLOOR, MAX_NOTIFICATION_FEE_USD_CEIL]`
+        // ── T-032 / USD-Sweep Phase 1 — Notification fee config ──────
+        // Flat per-loan-side notification fee, denominated in NUMERAIRE
+        // units (1e18 scaled). Charged in VPFI from the user's escrow
+        // at the moment the off-chain hf-watcher fires the FIRST
+        // notification on a PaidPush-tier subscription for that
+        // loan-side. Zero (default) means use the library constant
+        // `NOTIFICATION_FEE_DEFAULT` (2.0 numeraire-units = $2 under
+        // USD-as-numeraire); set via `ConfigFacet.setNotificationFee`.
+        // Bounded `[MIN_NOTIFICATION_FEE_FLOOR, MAX_NOTIFICATION_FEE_CEIL]`
         // at the setter so a misfire can't lock users out OR drain
-        // their escrows.
-        uint256 notificationFeeUsd; // 0 ⇒ NOTIFICATION_FEE_USD_DEFAULT (2e18)
-        // Pluggable USD-pegged price source for the notification fee.
-        // Phase 1: leave as `address(0)` — the bill uses the existing
-        // `s.ethUsdFeed` Chainlink feed plus the
-        // `VPFI_PER_ETH_FIXED_PHASE1` constant (1 VPFI = 0.001 ETH).
-        // Phase 2 / governance can swap to a direct VPFI/USD oracle
-        // (or a different denomination — EUR / JPY etc.) by setting
-        // this to the new oracle address; `LibNotificationFee`
-        // consults it ahead of the fixed-rate fallback. Setter:
-        // `ConfigFacet.setNotificationFeeUsdOracle`.
-        address notificationFeeUsdOracle; // 0 ⇒ Phase 1 fixed-rate fallback
+        // their escrows. Numeraire-to-USD conversion happens in
+        // `LibNotificationFee` via the global `numeraireOracle` (the
+        // T-034 numeraire abstraction is the single reference-currency
+        // surface across the protocol — the per-knob
+        // `notificationFeeUsdOracle` was retired in the USD-Sweep).
+        uint256 notificationFee; // 0 ⇒ NOTIFICATION_FEE_DEFAULT (2e18)
         // ── T-034 — Periodic Interest Payment config ──────────────────
         // See docs/DesignsAndPlans/PeriodicInterestPaymentDesign.md §6.
         //
@@ -858,7 +862,7 @@ library LibVaipakam {
         // first time a paid-tier (Push-Protocol) notification fires
         // for the corresponding side of this loan. Once set, the user's
         // VPFI escrow has already been debited the
-        // `cfgNotificationFeeUsd()`-equivalent amount in VPFI,
+        // `cfgNotificationFee()`-equivalent amount in VPFI,
         // routed directly to treasury (no Diamond custody — see
         // `LibNotificationFee.bill` for the routing). Idempotent: the
         // facet method no-ops if the flag is already true. Free-tier
@@ -1154,8 +1158,8 @@ library LibVaipakam {
         uint256 currentEscrowVersion; // incremented on each implementation upgrade
         uint256 mandatoryEscrowVersion; // minimum version required; 0 = no mandatory upgrade
         mapping(address => uint256) escrowVersion; // user => version when their proxy was last upgraded
-        uint256 kycTier0ThresholdUSD; // Tier0 max (default 1_000 * 1e18)
-        uint256 kycTier1ThresholdUSD; // Tier1 max (default 10_000 * 1e18)
+        uint256 kycTier0ThresholdNumeraire; // Tier0 max (default 1_000 * 1e18)
+        uint256 kycTier1ThresholdNumeraire; // Tier1 max (default 10_000 * 1e18)
         mapping(address => bool) keeperAccessEnabled; // User-level master switch — quick "pause all keepers for me" (default: false)
         // Snapshot of liquid-collateral liquidations that fell back to the
         // claim-time settlement path (README §7). Written by RiskFacet /
@@ -2088,8 +2092,8 @@ library LibVaipakam {
     ///      these bounds are belt-and-suspenders rather than
     ///      load-bearing on retail; on the industrial fork they
     ///      cap the tunable to a credible per-tier USD window.
-    uint256 internal constant KYC_THRESHOLD_USD_MIN_FLOOR = 100e18; // $100
-    uint256 internal constant KYC_THRESHOLD_USD_MAX_CEIL = 1_000_000e18; // $1M
+    uint256 internal constant KYC_THRESHOLD_NUMERAIRE_MIN_FLOOR = 100e18; // $100
+    uint256 internal constant KYC_THRESHOLD_NUMERAIRE_MAX_CEIL = 1_000_000e18; // $1M
 
     uint256 internal constant MAX_APPROVED_KEEPERS = 5;
 
@@ -2130,20 +2134,45 @@ library LibVaipakam {
         s.userCountry[user] = country;
     }
 
-    /// @dev Returns the KYC Tier-0 USD threshold, falling back to
-    ///      {KYC_TIER0_THRESHOLD_USD} when the governance override is unset.
+    /// @dev Returns the KYC Tier-0 threshold IN USD-1e18 — converted at
+    ///      the boundary from the numeraire-denominated storage value
+    ///      via the global `numeraireOracle`. Comparison sites
+    ///      (`OfferFacet`, `RiskFacet`, `DefaultedFacet`) compute
+    ///      `valueUSD` from Chainlink (which quotes in USD) and compare
+    ///      against this return value as USD; performing the conversion
+    ///      here keeps every consumer USD-typed without burdening them
+    ///      with the numeraire abstraction. USD-Sweep Phase 2.
     /// @return threshold USD threshold scaled to 1e18.
     function getKycTier0Threshold() internal view returns (uint256 threshold) {
-        uint256 v = storageSlot().kycTier0ThresholdUSD;
-        return v == 0 ? KYC_TIER0_THRESHOLD_USD : v;
+        uint256 v = storageSlot().kycTier0ThresholdNumeraire;
+        uint256 numeraireValue = v == 0 ? KYC_TIER0_THRESHOLD_NUMERAIRE : v;
+        return _convertNumeraireToUsd(numeraireValue);
     }
 
-    /// @dev Returns the KYC Tier-1 USD threshold, falling back to
-    ///      {KYC_TIER1_THRESHOLD_USD} when the governance override is unset.
+    /// @dev Returns the KYC Tier-1 threshold IN USD-1e18 — same
+    ///      numeraire-to-USD conversion shape as Tier-0 above.
+    ///      USD-Sweep Phase 2.
     /// @return threshold USD threshold scaled to 1e18.
     function getKycTier1Threshold() internal view returns (uint256 threshold) {
-        uint256 v = storageSlot().kycTier1ThresholdUSD;
-        return v == 0 ? KYC_TIER1_THRESHOLD_USD : v;
+        uint256 v = storageSlot().kycTier1ThresholdNumeraire;
+        uint256 numeraireValue = v == 0 ? KYC_TIER1_THRESHOLD_NUMERAIRE : v;
+        return _convertNumeraireToUsd(numeraireValue);
+    }
+
+    /// @dev Converts a numeraire-denominated 1e18-scaled value to USD-
+    ///      1e18 via the global `numeraireOracle`. Returns the input
+    ///      unchanged when the oracle is unset (USD-as-numeraire — the
+    ///      post-deploy default). USD-Sweep Phase 2.
+    function _convertNumeraireToUsd(uint256 numeraireValue1e18)
+        private
+        view
+        returns (uint256)
+    {
+        address oracle = storageSlot().protocolCfg.numeraireOracle;
+        if (oracle == address(0)) return numeraireValue1e18;
+        uint256 rate = INumeraireOracle(oracle).numeraireToUsdRate1e18();
+        if (rate == 0) return 0;
+        return (numeraireValue1e18 * rate) / 1e18;
     }
 
     /// @dev Returns the effective per-user daily interaction-reward cap
@@ -2248,14 +2277,18 @@ library LibVaipakam {
         return v == 0 ? MAX_OFFER_DURATION_DAYS_DEFAULT : uint256(v);
     }
 
-    /// @dev T-032 — Notification fee in USD (1e18 scaled).
-    ///      Governance-tunable via `ConfigFacet.setNotificationFeeUsd`
-    ///      within [MIN_NOTIFICATION_FEE_USD_FLOOR,
-    ///      MAX_NOTIFICATION_FEE_USD_CEIL]. Falls back to
-    ///      NOTIFICATION_FEE_USD_DEFAULT ($2) when unset.
-    function cfgNotificationFeeUsd() internal view returns (uint256) {
-        uint256 v = storageSlot().protocolCfg.notificationFeeUsd;
-        return v == 0 ? NOTIFICATION_FEE_USD_DEFAULT : v;
+    /// @dev T-032 / USD-Sweep Phase 1 — Notification fee in NUMERAIRE
+    ///      units (1e18 scaled). Governance-tunable via
+    ///      `ConfigFacet.setNotificationFee` within
+    ///      [MIN_NOTIFICATION_FEE_FLOOR, MAX_NOTIFICATION_FEE_CEIL].
+    ///      Falls back to `NOTIFICATION_FEE_DEFAULT` (2.0 numeraire-units
+    ///      = $2 under USD-as-numeraire) when unset. The numeraire-to-USD
+    ///      conversion happens at the `LibNotificationFee.vpfiAmountForFee`
+    ///      boundary so the stored value can be re-anchored when
+    ///      governance rotates the numeraire.
+    function cfgNotificationFee() internal view returns (uint256) {
+        uint256 v = storageSlot().protocolCfg.notificationFee;
+        return v == 0 ? NOTIFICATION_FEE_DEFAULT : v;
     }
 
     /// @dev Returns the four tier thresholds (T1 min, T2 min, T3 min, T4 min-exclusive).
