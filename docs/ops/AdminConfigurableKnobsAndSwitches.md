@@ -173,7 +173,7 @@ staked principal accounting).
 
 Per-loan-side notification fee charged in VPFI at the first paid-tier
 notification. Stored in **numeraire-units** (1e18-scaled — interpreted
-as USD when `numeraireOracle == address(0)`, the post-deploy default).
+as USD when `numeraireSymbol == bytes32(0)`, the post-deploy default).
 Range: `[MIN_NOTIFICATION_FEE_FLOOR, MAX_NOTIFICATION_FEE_CEIL]` —
 0.1 to 50.0 numeraire-units (= $0.10 to $50 under USD-as-numeraire).
 Zero means "use library default" (2.0 numeraire-units = $2). Setter:
@@ -183,7 +183,8 @@ in Push Protocol fees can be passed through without redeploy.
 > **USD-Sweep (2026-05-03).** The retired per-knob
 > `notificationFeeUsdOracle` slot was removed from
 > `ProtocolConfig`. The notification fee's denomination now flows
-> through the global `numeraireOracle` (T-034 abstraction) — single
+> through `OracleFacet.getAssetPrice(WETH)` which returns the
+> numeraire-quoted ETH price natively after USD-Sweep / B1 — single
 > source of truth across the protocol. To change the notification
 > fee's reference currency, governance rotates the numeraire via
 > the atomic `setNumeraire` setter (under "Periodic Interest Payment"
@@ -227,17 +228,27 @@ Default is 1 hour.
 
 ### Pyth oracle address
 
-(T-033 numeraire-redundancy oracle, single
-feed per chain — ETH/USD on ETH-native chains; bridged-WETH/USD on
-non-ETH-native chains like BNB / Polygon mainnet). Address-only; no
-numeric range. Zero disables the numeraire-redundancy gate globally
-— the protocol falls back to Chainlink-only on the WETH/USD leg.
+(T-033 cross-check oracle, single feed per
+chain — ETH/<numeraire> on the active deploy; rotates with the
+numeraire when governance switches). Address-only; no numeric range.
+Zero disables the cross-check gate globally — the protocol falls
+back to Chainlink-only on the WETH/numeraire leg.
 
-### Pyth numeraire feed id
+> **Naming note (USD-Sweep / B1)**: This Pyth oracle implements the
+> cross-oracle DIVERGENCE check between Chainlink and Pyth on the
+> protocol's ETH-base reference. Distinct from T-034's "numeraire"
+> concept (the protocol's reference currency). The slot was renamed
+> from `pythNumeraireFeedId` → `pythCrossCheckFeedId` to remove the
+> overload.
 
-Single 32-byte Pyth price feed
-identifier. Zero disables at the feed-id layer (same soft-skip
-semantics as a zero `pythOracle`).
+### Pyth cross-check feed id (pythCrossCheckFeedId)
+
+Single 32-byte Pyth price feed identifier — Pyth's ETH/<numeraire>
+peg ID for cross-validating the Chainlink ETH/<numeraire> reading.
+Zero disables at the feed-id layer (same soft-skip semantics as a
+zero `pythOracle`). Governance updates this together with
+`ethNumeraireFeed` whenever the numeraire rotates (atomic
+`setNumeraire` setter takes both as args).
 
 ### Pyth max staleness seconds
 
@@ -246,12 +257,12 @@ transient mempool jam soft-skips Pyth too often; looser and a
 stale-but-manipulated reading could drive the divergence outcome.
 Default is 5 minutes.
 
-### Pyth numeraire max deviation BPS
+### Pyth cross-check max deviation BPS (pythCrossCheckMaxDeviationBps)
 
-Range **[1%, 20%]**. Tolerated
-divergence between Chainlink ETH/USD and Pyth ETH/USD before the
-price view fails-closed with `OracleNumeraireDivergence`. Same
-1%-20% window as the secondary-oracle deviation. Default is 5%.
+Range **[1%, 20%]**. Tolerated divergence between Chainlink
+ETH/<numeraire> and Pyth ETH/<numeraire> before the price view
+fails-closed with `OracleCrossCheckDivergence`. Same 1%-20% window as
+the secondary-oracle deviation. Default is 5%.
 
 ### Pyth confidence max BPS
 
@@ -329,8 +340,9 @@ an emergency lever.
 ### KYC tier 0 / tier 1 thresholds (numeraire)
 
 Range each: **[100, 1,000,000]** in 1e18-scaled numeraire-units —
-which, under the post-deploy default `numeraireOracle == address(0)`,
-is read as USD ($100 to $1M). Tier 0 must be < tier 1.
+which, under the post-deploy default (`numeraireSymbol` empty,
+`ethNumeraireFeed` pointing at Chainlink ETH/USD), is read as USD
+($100 to $1M). Tier 0 must be < tier 1.
 
 > KYC is **OFF on the retail deploy** per CLAUDE.md — the
 > `kycEnforcementEnabled` flag stays `false` post-deploy; the
@@ -338,16 +350,16 @@ is read as USD ($100 to $1M). Tier 0 must be < tier 1.
 > belt-and-suspenders for the retail deploy and load-bearing for
 > the industrial fork.
 
-> **USD-Sweep (2026-05-03).** The thresholds are stored in
+> **USD-Sweep / B1 (2026-05-03).** The thresholds are stored in
 > numeraire-units (storage fields `kycTier0ThresholdNumeraire` /
-> `kycTier1ThresholdNumeraire`). The library getters
-> `getKycTier0Threshold()` / `getKycTier1Threshold()` convert
-> numeraire → USD via the global `numeraireOracle` at the boundary,
-> so every comparison site (`OfferFacet`, `RiskFacet`,
-> `DefaultedFacet`) continues to compare against USD-1e18 from
-> Chainlink without changing. To rotate the reference currency,
-> governance uses the atomic multi-arg `setNumeraire` (under
-> "Periodic Interest Payment" below) which re-anchors every
+> `kycTier1ThresholdNumeraire`). After B1, both the threshold AND
+> the asset value are in numeraire-units (`getAssetPrice` returns
+> numeraire-quoted natively from the rotated Chainlink feeds), so
+> the comparison sites (`OfferFacet`, `RiskFacet`,
+> `DefaultedFacet`) compare numeraire-vs-numeraire — no boundary
+> conversion. To rotate the reference currency, governance uses the
+> atomic multi-arg `setNumeraire` (under "Periodic Interest Payment"
+> below) which re-anchors every feed-side slot AND every
 > numeraire-denominated value in the same tx; the per-knob
 > `updateKYCThresholds` setter only re-tunes within the same
 > numeraire.
@@ -395,47 +407,84 @@ honor cadence-bearing loans on-chain. Boolean — no range.
 
 ### Numeraire swap enabled flag (numeraireSwapEnabled)
 
-Independent kill-switch gating the cross-numeraire batched setter
-(`setNumeraire(address, uint256)`). Default `false`. While off,
-governance cannot rotate the numeraire away from the USD-as-default
-behavior — the protocol ships USD-denominated until this flag flips
-AND a real numeraire oracle is on the table. Threshold-only updates
-within the same numeraire (`setMinPrincipalForFinerCadence`) are NOT
-gated by this flag — governance can re-tune the threshold freely.
-Boolean — no range.
+Independent kill-switch gating the atomic `setNumeraire` rotation
+setter. Default `false`. While off, governance cannot rotate the
+numeraire away from the USD-as-default behavior — the protocol ships
+USD-denominated until this flag flips AND governance has all the
+numeraire-side feed addresses on hand. Threshold-only updates within
+the same numeraire (`setMinPrincipalForFinerCadence`,
+`setNotificationFee`, `updateKYCThresholds`) are NOT gated by this
+flag — governance can re-tune individual values freely. Boolean — no
+range.
 
-### Numeraire oracle address (numeraireOracle)
+### Numeraire-rotation surface (USD-Sweep / B1)
 
-Pluggable price source that decouples EVERY numeraire-denominated
-governance knob — the periodic-interest principal threshold below,
-the notification fee (T-032), and the KYC tier thresholds (industrial
-fork) — from any specific currency. `address(0)` (the post-deploy
-default) means USD-as-numeraire: every numeraire-stored value is
-interpreted directly as 1e18-scaled USD. A non-zero address must
-implement `INumeraireOracle.numeraireToUsdRate1e18()` returning how
-many USD (1e18-scaled) one unit of the numeraire is worth.
+After USD-Sweep / B1 (2026-05-03), the protocol's reference currency
+is captured by **four feed-side slots** + **four numeraire-denominated
+value knobs**. The per-knob `INumeraireOracle` boundary-conversion
+oracle was retired — `OracleFacet.getAssetPrice` now returns
+numeraire-quoted prices natively, sourced from the renamed feed
+slots. Comparison sites compare numeraire-vs-numeraire with no
+intermediate USD detour.
 
-The ONLY path to change this address is the atomic batched setter
-**`setNumeraire(newOracle, newThreshold, newNotificationFee,
-newKycTier0, newKycTier1)`** — five values, all in the new
-numeraire's units, all rewritten atomically. By construction the
-numeraire never drifts apart from any of the values denominated in
-it. Pass `0` on any field to reset that knob to its library default.
-The setter sanity-checks the new oracle by calling
-`numeraireToUsdRate1e18()` and rejects zero / revert / no-bytecode
-results via `NumeraireOracleInvalid`. Each value carries its
-per-knob bounded validator (same constants as the per-knob "within-
-the-same-numeraire" setters); KYC tier monotonicity is enforced
-when both tier values come in non-zero.
+**Feed-side slots** (drive `OracleFacet.getAssetPrice` paths 1/2/3
++ Tellor / API3 / DIA query construction + Pyth cross-check):
 
-> **USD-Sweep (2026-05-03).** The setter was extended from 2 args
-> to 5. Every numeraire-denominated value in the protocol now flips
-> in lockstep when governance rotates the numeraire — the previous
-> drift hazard ("numeraire = XAU but notification fee still in
-> USD-units") is unreachable. Per-knob within-the-same-numeraire
-> setters (`setMinPrincipalForFinerCadence`, `setNotificationFee`,
-> `updateKYCThresholds`) are NOT gated by `numeraireSwapEnabled` —
-> governance can re-tune individual values freely.
+  - `s.ethNumeraireFeed` — Chainlink AggregatorV3 returning ETH/<numeraire>
+    price. ETH/USD on USD-as-numeraire deploys; rotates to ETH/EUR /
+    ETH/XAU / etc. when the numeraire changes.
+  - `s.numeraireChainlinkDenominator` — Chainlink Feed Registry
+    constant for the active numeraire. `Denominations.USD` by default;
+    `Denominations.EUR` / etc. on rotation. Drives Path 2 of
+    `_primaryPrice` (direct asset/<numeraire> registry lookup).
+  - `s.numeraireSymbol` — `bytes32` lowercase ASCII symbol of the
+    active numeraire (e.g. `bytes32("eur")`). Empty default is
+    interpreted as `"usd"` so the post-deploy behaviour is unchanged
+    out of the box. Drives Tellor / API3 / DIA query construction
+    (`<symbol>/<numeraireSymbol>`).
+  - `s.pythCrossCheckFeedId` — Pyth ETH/<numeraire> feed id for the
+    T-033 cross-check gate (see "Pyth cross-check feed id" above).
+
+**Value-side knobs** (each per-knob bounded; settable individually
+within the same numeraire OR atomically as part of `setNumeraire`):
+
+  - `minPrincipalForFinerCadence` (numeraire-units, 1e18-scaled)
+  - `notificationFee` (numeraire-units)
+  - `kycTier0ThresholdNumeraire` + `kycTier1ThresholdNumeraire`
+
+**Atomic rotation setter** —
+`setNumeraire(ethNumeraireFeed, numeraireChainlinkDenominator,
+numeraireSymbol, pythCrossCheckFeedId, threshold, notificationFee,
+kycTier0, kycTier1)`. Eight args, single Safe transaction. By
+construction governance cannot rotate the numeraire without
+simultaneously re-anchoring every value denominated in it AND every
+oracle-side input that produces numeraire-quoted prices.
+
+Inconsistent intermediate state ("numeraire = EUR but notification
+fee still in USD-units" or "Tellor still queries `<symbol>/usd`") is
+unreachable.
+
+Each numeraire-denominated value carries its per-knob bounded
+validator. KYC tier monotonicity is enforced when both tier values
+come in non-zero. The three feed-side inputs (`ethNumeraireFeed`,
+`numeraireChainlinkDenominator`, `numeraireSymbol`) reject zero —
+they're load-bearing and missing them would brick `_primaryPrice` /
+secondary queries. `pythCrossCheckFeedId` accepts zero (disables the
+Pyth gate).
+
+Per-knob within-the-same-numeraire updates remain available:
+`setMinPrincipalForFinerCadence(uint256)`, `setNotificationFee(uint256)`,
+`updateKYCThresholds(uint256, uint256)`. Use these when governance
+just wants to tune a value within the active currency, not rotate.
+
+> **PredominantlyAvailableDenominator (T-047, planned)**: secondary
+> oracle coverage in non-USD numeraires (Tellor / API3 / DIA) is
+> sparse — the cross-validation property weakens after a non-USD
+> rotation. The planned T-047 follow-up adds a configurable
+> `predominantlyAvailableDenominator` (USDT-equivalent today) that
+> the secondary quorum falls back to so the divergence-detection
+> security stays intact regardless of which numeraire governance
+> picks.
 
 ### Min principal for finer cadence (minPrincipalForFinerCadence)
 
