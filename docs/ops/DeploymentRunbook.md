@@ -174,6 +174,45 @@ with cryptic "no such column" errors in the logs. See
 "Redeploy / migration upgrade path" for the full sequence and
 T-041-specific notes on the bootstrap-time backfill behavior.
 
+**T-046 — chain redeploy / mainnet cutover purge.** When you
+redeploy the diamond on a chain (testnet iteration) or graduate
+from testnet to mainnet, the Worker's cached offer / loan /
+activity rows reference the OLD diamond's offer IDs / loan IDs.
+Cache and chain disagree until you clear the cache.
+
+Per-chain redeploy (testnet diamond bumped on chain X):
+
+```bash
+cd ops/hf-watcher
+npm run db:purge-chain -- <chainId>     # interactive y/N preview
+# … then redeploy contracts on that chain, then:
+npm run deploy
+```
+
+Pre-mainnet full nuke (after extensive testnet iteration —
+optional but recommended for a clean slate):
+
+```bash
+cd ops/hf-watcher
+npm run db:purge-all                    # double-confirmation prompt
+# … then deploy mainnet contracts, run db:migrate if needed,
+#     finally redeploy the Worker:
+npm run deploy
+```
+
+Both scripts preserve `user_locales` (wallet-scoped language
+preference, not chain-scoped). They DELETE rows; they do NOT
+DROP TABLE — schema survives intact, no need to re-run
+migrations after a purge. See
+[`ops/hf-watcher/README.md`](../../ops/hf-watcher/README.md)
+"Purge / reset" for the full table list and `FORCE=1` / `LOCAL=1`
+env-knob behaviour.
+
+**When NOT to purge:** routine Worker code-only redeploys (no
+diamond / contract changes) should NOT trigger a purge — the
+cache is still correct against the existing on-chain state.
+Purge only when the on-chain state model itself has changed.
+
 What stays operator-side after this consolidation:
 
 - Frontend `.env.local`: per-chain RPC URLs (with API key),

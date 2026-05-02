@@ -184,6 +184,64 @@ npm run deploy
   `/offers/stats` — ops can spot-check the cache age in any browser
   while monitoring rollout progress.
 
+## Purge / reset (T-046)
+
+Two scripts under `scripts/` clear cached data when contract
+redeployments invalidate the watcher's view of the chain.
+
+**`npm run db:purge-chain -- <chainId>` — per-chain purge.**
+
+Use case: a testnet redeploy of the diamond on chain X.
+`nextOfferId` resets, old loan IDs reference burned NFTs, user-
+threshold rows reference loans that no longer exist. Run BEFORE
+the redeploy so the next cron tick re-indexes from the new
+diamond's `deployBlock`. Surfaces a row-count preview and asks
+y/N before deleting:
+
+```bash
+cd ops/hf-watcher
+
+# Preview-then-confirm. Common chain IDs:
+#   8453 (Base) / 84532 (Base Sepolia) / 11155111 (Sepolia) /
+#   421614 (Arb Sepolia) / 11155420 (OP Sepolia) / 80002 (Polygon Amoy)
+npm run db:purge-chain -- 84532
+```
+
+Wipes from these tables WHERE `chain_id = X`: `offers`, `loans`,
+`activity_events`, `indexer_cursor`, `user_thresholds`,
+`notify_state`, `telegram_links`, `diag_errors`. Preserves
+`user_locales` (wallet-scoped, not chain-scoped — survives the
+transition cleanly).
+
+Env knobs:
+- `FORCE=1` — skip the y/N prompt (CI use only).
+- `LOCAL=1` — target the local miniflare DB instead of `--remote`,
+  for dry-run sanity checks before hitting prod.
+
+**`npm run db:purge-all` — full nuke.**
+
+Use case: pre-mainnet cutover. After months of testnet iteration
+the watcher's D1 carries data from many redeployed testnet
+diamonds + diagnostic noise from the testnet phase. Wipes every
+chain's rows across every table EXCEPT `user_locales`. Schema is
+preserved (DELETE rows, never DROP TABLE) — the next deploy
+starts cleanly without re-running migrations.
+
+```bash
+cd ops/hf-watcher
+npm run db:purge-all
+```
+
+DOUBLE-CONFIRMATION required: y/N prompt, then a literal
+`PURGE-ALL` string typed back to acknowledge intent. `FORCE=1`
+skips both prompts (only for one-shot CI scripts that have done
+their own confirmation step).
+
+**When NOT to purge.** Routine code-only redeploys of the Worker
+(no diamond / contract changes) should NOT purge — the cache is
+correct against the existing chains. Purge is only needed when
+the on-chain state model itself has changed under the cache.
+
 ### Why `TG_BOT_TOKEN` is a secret but `TG_BOT_USERNAME` is a var
 
 Two different threat surfaces:

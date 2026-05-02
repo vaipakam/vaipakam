@@ -8,6 +8,8 @@
     "deploy": "wrangler deploy",
     "db:migrate": "wrangler d1 migrations apply vaipakam-alerts-db --remote",
     "db:migrate:local": "wrangler d1 migrations apply vaipakam-alerts-db --local",
+    "db:purge-chain": "bash scripts/purge-chain.sh",
+    "db:purge-all": "bash scripts/purge-all.sh",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

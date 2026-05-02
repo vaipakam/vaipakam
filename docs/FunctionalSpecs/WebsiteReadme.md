@@ -135,6 +135,7 @@ Current connected-app surface expectations:
 - in the connected-app sidebar, `Claim Center` should sit with the core lending actions before `Buy VPFI`, while token-purchase and advanced utility destinations remain secondary to loan management
 - the in-app logo should route to `/app` so connected users return to the dashboard shell; the public navbar logo should continue to route to `/`
 - the app's issue drawer should be labelled as `Report Issue` / `Issue Details`, not `Diagnostics`, and should generate a redacted report suitable for GitHub issue filing
+- bridged `Buy VPFI` quote failures should be written into the in-memory journey log with enough chain, adapter, and decoded-error context for the issue drawer to produce an actionable support report, rather than leaving the failure only as inline page state
 
 Transaction-safety and single-signature flows:
 

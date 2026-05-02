@@ -523,6 +523,7 @@ Payment-token mode requirements:
 - deployment scripts should pre-flight strict-WETH chains and refuse native-gas mode there, while logging payment-token metadata for operator confirmation against the published canonical WETH address
 - the frontend should display the actual buy asset for the active chain and adapter mode rather than hardcoding `ETH`; native-gas chains should show the chain's native gas asset, while WETH-pull chains should show the configured bridged WETH token and provide a verification link to the relevant market-data page
 - in WETH-pull mode, approval and balance checks should target the configured ERC-20 payment token; LayerZero execution fees remain paid in the chain's native gas token and should be labelled with that native symbol
+- buy-adapter deployments should encode a default LayerZero Type-3 buy-options payload so `quoteBuy` works immediately after deploy without requiring a separate post-deploy `setBuyOptions` transaction first; the default LzReceive gas budget should be conservative and chain-tunable, with a companion script able to update live adapters using the same `OptionsBuilder` recipe
 
 Cross-chain buy settlement hardening:
 
