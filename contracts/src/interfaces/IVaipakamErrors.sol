@@ -292,4 +292,40 @@ interface IVaipakamErrors {
     ///         numeraire that reverts on every read.
     /// @param oracle The proposed oracle address.
     error NumeraireOracleInvalid(address oracle);
+
+    /// @notice `settlePeriodicInterest` was called before the period's
+    ///         grace window expired. Settler must wait until
+    ///         `lastPeriodicInterestSettledAt + intervalDays(cadence) +
+    ///         gracePeriod(intervalDays)` before retrying.
+    /// @param loanId Loan identifier.
+    /// @param dueAt Period boundary (inclusive of grace).
+    /// @param graceEndsAt Earliest timestamp at which settle is allowed.
+    error PeriodicSettleNotDue(uint256 loanId, uint256 dueAt, uint256 graceEndsAt);
+
+    /// @notice `settlePeriodicInterest` cannot operate on this loan —
+    ///         either the cadence is None (terminal-only repayment) or
+    ///         the loan isn't in `Active` status.
+    error PeriodicSettleNotApplicable(uint256 loanId);
+
+    /// @notice Auto-liquidate path required a swap, but the settler
+    ///         provided an empty `adapterCalls` list. Settle reverts
+    ///         rather than emitting a soft-fail event because the
+    ///         shortfall cannot be covered without selling collateral.
+    error PeriodicSettleSwapPathRequired(uint256 loanId, uint256 shortfall);
+
+    /// @notice Auto-liquidate path attempted but every adapter in the
+    ///         supplied try-list reverted. Period is still due —
+    ///         settler must retry with a fresh quote / different venues.
+    error PeriodicSettleSwapFailed(uint256 loanId);
+
+    /// @notice `refinanceLoan` called while the old loan's current
+    ///         periodic-interest period is overdue past its grace
+    ///         window. Caller must first run `settlePeriodicInterest`
+    ///         on the old loan so the original lender is made whole
+    ///         BEFORE the refinance overwrites the loan's state.
+    /// @param oldLoanId The loan being refinanced.
+    /// @param graceEndsAt Timestamp from which a settler call would be
+    ///        accepted on the old loan (i.e. the moment the refinance
+    ///        gate first failed).
+    error RefinanceRequiresPeriodSettle(uint256 oldLoanId, uint256 graceEndsAt);
 }

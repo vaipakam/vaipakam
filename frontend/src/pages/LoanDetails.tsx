@@ -45,6 +45,7 @@ import { ClaimActionBar } from "../components/app/ClaimActionBar";
 import { LoanTimeline } from "../components/app/LoanTimeline";
 import { SanctionsBanner } from "../components/app/SanctionsBanner";
 import { CardInfo } from "../components/CardInfo";
+import { PeriodicInterestCheckpointCard } from "../components/loanDetails/PeriodicInterestCheckpointCard";
 import "./LoanDetails.css";
 
 export default function LoanDetails() {
@@ -525,6 +526,26 @@ export default function LoanDetails() {
         </div>
       )}
 
+      {/* T-034 PR2 — Periodic Interest Payment checkpoint card. Hidden
+          when the loan's cadence is None (today's terminal-only flow);
+          visible above the main loan grid otherwise so the upcoming
+          period and its expected interest are the FIRST thing the user
+          sees on the loan detail page. The "Pay now" button (visible
+          to the borrower when shortfall > 0) scrolls to the existing
+          partial-repay surface lower on the page — `repayPartial`
+          settles the accrued interest as part of any principal-
+          reduction call, so a single small partial repay closes the
+          period when timed past the boundary. */}
+      <PeriodicInterestCheckpointCard
+        loanId={BigInt(loanId!)}
+        principalAsset={loan.principalAsset}
+        isBorrower={role === 'borrower'}
+        onPayNowClick={() => {
+          const el = document.getElementById('loan-actions-card');
+          if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }}
+      />
+
       {/* Loan details grid */}
       <div className="loan-grid">
         <div className="card">
@@ -786,7 +807,7 @@ export default function LoanDetails() {
 
       {/* Actions */}
       {availability.repay && (
-        <div className="card loan-actions-card">
+        <div id="loan-actions-card" className="card loan-actions-card">
           <div className="card-title" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
             {t('loanDetails.actions')}
             <CardInfo id="loan-details.actions" role={role} />

@@ -9,6 +9,7 @@ import {LibEntitlement} from "../libraries/LibEntitlement.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
 import {LibVPFIDiscount} from "../libraries/LibVPFIDiscount.sol";
 import {LibOfferMatch} from "../libraries/LibOfferMatch.sol";
+import {LibPeriodicInterest} from "../libraries/LibPeriodicInterest.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
@@ -100,6 +101,30 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
         // NFT rental refinance not supported in Phase 1 (requires NFT custody transfer)
         if (oldLoan.assetType != LibVaipakam.AssetType.ERC20)
             revert InvalidRefinanceOffer();
+
+        // T-034 §4.6 — settle-first guard. If the old loan has a
+        // Periodic Interest Payment cadence AND the current period is
+        // overdue past its grace window, the original lender is owed
+        // interest right now. Refinance must NOT overwrite the loan's
+        // state until that obligation is settled — otherwise the new
+        // lender's terms (different rate / cadence / start time)
+        // would silently extinguish the original lender's claim.
+        // Caller resolves by running `settlePeriodicInterest` on the
+        // old loan first; that path either just-stamps (no shortfall)
+        // or auto-liquidates (covers the shortfall to the lender),
+        // and refinance can then proceed cleanly.
+        if (
+            oldLoan.periodicInterestCadence !=
+            LibVaipakam.PeriodicInterestCadence.None
+        ) {
+            uint256 graceEndsAt = LibPeriodicInterest.settleAllowedFromAt(oldLoan);
+            if (block.timestamp >= graceEndsAt) {
+                revert IVaipakamErrors.RefinanceRequiresPeriodSettle(
+                    oldLoanId,
+                    graceEndsAt
+                );
+            }
+        }
 
         // Validate: must be a Borrower offer created by Alice, already accepted
         LibVaipakam.Offer storage offer = s.offers[borrowerOfferId];

@@ -326,7 +326,19 @@
     "keeperHintGlobalWhitelist": "liste blanche globale",
     "keeperHintSuffix": "et (b) de l'interrupteur maître d'accès des Keepers ACTIVÉ avant de pouvoir piloter quoi que ce soit sur ce prêt.",
     "riskMetricsUnavailable": "Métriques de risque indisponibles (position illiquide)",
-    "illiquidRiskExplainer": "Le LTV / HF n'est pas calculé pour les prêts impliquant un actif illiquide (pas de prix on-chain). En cas de défaut du Borrower, l'intégralité du collatéral est transférée en nature au Lender."
+    "illiquidRiskExplainer": "Le LTV / HF n'est pas calculé pour les prêts impliquant un actif illiquide (pas de prix on-chain). En cas de défaut du Borrower, l'intégralité du collatéral est transférée en nature au Lender.",
+    "periodicInterest": {
+      "title": "Next interest checkpoint — {{cadence}}",
+      "nextCheckpoint": "Period closes",
+      "inDays_one": "in {{count}} day",
+      "inDays_other": "in {{count}} days",
+      "pastGrace": "past grace — settler-callable",
+      "expected": "Expected this period",
+      "paid": "Paid this period",
+      "shortfall": "Shortfall",
+      "payNow": "Pay now",
+      "pastGraceHint": "Anyone can now sell collateral on your behalf to cover this period's interest. Pay before that happens to avoid the swap fee + treasury handling cut."
+    }
   },
   "tokenInfoTag": {
     "rank": "rang #{{rank}}",

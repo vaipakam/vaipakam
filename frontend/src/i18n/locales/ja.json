@@ -326,7 +326,19 @@
     "keeperHintGlobalWhitelist": "グローバルホワイトリスト",
     "keeperHintSuffix": "上で設定されていること、および (b) マスターKeeperアクセススイッチがONであることが必要です。",
     "riskMetricsUnavailable": "リスクメトリクスは利用できません (非流動性ポジション)",
-    "illiquidRiskExplainer": "非流動資産を含むローンではLTV / HFは計算されません(オンチェーン価格がないため)。Borrowerがデフォルトした場合、担保全額がLenderに現物で移転されます。"
+    "illiquidRiskExplainer": "非流動資産を含むローンではLTV / HFは計算されません(オンチェーン価格がないため)。Borrowerがデフォルトした場合、担保全額がLenderに現物で移転されます。",
+    "periodicInterest": {
+      "title": "Next interest checkpoint — {{cadence}}",
+      "nextCheckpoint": "Period closes",
+      "inDays_one": "in {{count}} day",
+      "inDays_other": "in {{count}} days",
+      "pastGrace": "past grace — settler-callable",
+      "expected": "Expected this period",
+      "paid": "Paid this period",
+      "shortfall": "Shortfall",
+      "payNow": "Pay now",
+      "pastGraceHint": "Anyone can now sell collateral on your behalf to cover this period's interest. Pay before that happens to avoid the swap fee + treasury handling cut."
+    }
   },
   "tokenInfoTag": {
     "rank": "ランク #{{rank}}",

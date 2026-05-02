@@ -326,7 +326,19 @@
     "keeperHintGlobalWhitelist": "القائمة البيضاء العالمية",
     "keeperHintSuffix": "و (ب) مفتاح الوصول الرئيسي لـ Keeper في وضع التشغيل قبل أن يتمكن من تشغيل أي شيء على هذا القرض.",
     "riskMetricsUnavailable": "مقاييس المخاطر غير متاحة (مركز غير سائل)",
-    "illiquidRiskExplainer": "لا يتم حساب LTV / HF للقروض التي تتضمن أصلاً غير سائل (لا يوجد سعر on-chain). عند تخلف Borrower عن السداد، يتم تحويل الضمان الكامل عينياً إلى Lender."
+    "illiquidRiskExplainer": "لا يتم حساب LTV / HF للقروض التي تتضمن أصلاً غير سائل (لا يوجد سعر on-chain). عند تخلف Borrower عن السداد، يتم تحويل الضمان الكامل عينياً إلى Lender.",
+    "periodicInterest": {
+      "title": "Next interest checkpoint — {{cadence}}",
+      "nextCheckpoint": "Period closes",
+      "inDays_one": "in {{count}} day",
+      "inDays_other": "in {{count}} days",
+      "pastGrace": "past grace — settler-callable",
+      "expected": "Expected this period",
+      "paid": "Paid this period",
+      "shortfall": "Shortfall",
+      "payNow": "Pay now",
+      "pastGraceHint": "Anyone can now sell collateral on your behalf to cover this period's interest. Pay before that happens to avoid the swap fee + treasury handling cut."
+    }
   },
   "tokenInfoTag": {
     "rank": "التصنيف #{{rank}}",

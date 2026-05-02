@@ -326,7 +326,19 @@
     "keeperHintGlobalWhitelist": "वैश्विक व्हाइटलिस्ट",
     "keeperHintSuffix": "पर सेट होना चाहिए और (b) मास्टर Keeper-एक्सेस स्विच चालू होना चाहिए, इससे पहले कि वे इस लोन पर कुछ भी निष्पादित कर सकें।",
     "riskMetricsUnavailable": "जोखिम मेट्रिक्स अनुपलब्ध (अतरल पोजिशन)",
-    "illiquidRiskExplainer": "ऐसे loans के लिए LTV / HF की गणना नहीं होती जिनमें illiquid asset शामिल हो (कोई on-chain price नहीं है)। Borrower default होने पर पूरा collateral in-kind lender को स्थानांतरित कर दिया जाता है।"
+    "illiquidRiskExplainer": "ऐसे loans के लिए LTV / HF की गणना नहीं होती जिनमें illiquid asset शामिल हो (कोई on-chain price नहीं है)। Borrower default होने पर पूरा collateral in-kind lender को स्थानांतरित कर दिया जाता है।",
+    "periodicInterest": {
+      "title": "Next interest checkpoint — {{cadence}}",
+      "nextCheckpoint": "Period closes",
+      "inDays_one": "in {{count}} day",
+      "inDays_other": "in {{count}} days",
+      "pastGrace": "past grace — settler-callable",
+      "expected": "Expected this period",
+      "paid": "Paid this period",
+      "shortfall": "Shortfall",
+      "payNow": "Pay now",
+      "pastGraceHint": "Anyone can now sell collateral on your behalf to cover this period's interest. Pay before that happens to avoid the swap fee + treasury handling cut."
+    }
   },
   "tokenInfoTag": {
     "rank": "रैंक #{{rank}}",

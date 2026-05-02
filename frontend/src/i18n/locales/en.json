@@ -745,6 +745,18 @@
     }
   },
   "loanDetails": {
+    "periodicInterest": {
+      "title": "Next interest checkpoint — {{cadence}}",
+      "nextCheckpoint": "Period closes",
+      "inDays_one": "in {{count}} day",
+      "inDays_other": "in {{count}} days",
+      "pastGrace": "past grace — settler-callable",
+      "expected": "Expected this period",
+      "paid": "Paid this period",
+      "shortfall": "Shortfall",
+      "payNow": "Pay now",
+      "pastGraceHint": "Anyone can now sell collateral on your behalf to cover this period's interest. Pay before that happens to avoid the swap fee + treasury handling cut."
+    },
     "connectTitle": "Connect Your Wallet",
     "connectBody": "Connect your wallet to view loan details, repay, claim, or manage your position.",
     "loadingLoan": "Loading loan #{{id}}…",

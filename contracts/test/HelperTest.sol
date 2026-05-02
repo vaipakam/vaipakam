@@ -303,11 +303,15 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](4); // Adjust count
+        selectors = new bytes4[](7); // Adjust count
         selectors[0] = RepayFacet.repayLoan.selector;
         selectors[1] = RepayFacet.repayPartial.selector;
         selectors[2] = RepayFacet.autoDeductDaily.selector;
         selectors[3] = RepayFacet.calculateRepaymentAmount.selector;
+        // T-034 PR2 — Periodic Interest Payment views + entry point.
+        selectors[4] = RepayFacet.previewPeriodicSettle.selector;
+        selectors[5] = RepayFacet.nextPeriodCheckpoint.selector;
+        selectors[6] = RepayFacet.settlePeriodicInterest.selector;
     }
 
     function getDefaultedFacetSelectors()
