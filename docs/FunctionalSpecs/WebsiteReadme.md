@@ -128,7 +128,10 @@ Current connected-app surface expectations:
 - in Advanced mode, `Create Offer` should show an ERC-20 / ERC-20 risk-preview card that computes projected Health Factor, LTV, and liquidation-price cushion from live oracle and risk parameters; for Range Orders it should show both best-case and worst-case values and warn clearly when the worst-case Health Factor falls below the initiation floor
 - the primary Create Offer duration control should be a bucketed picker using the standard buckets `7 / 14 / 30 / 60 / 90 / 180 / 365 days`, defaulting to `30 days`; defensive validation should still reject out-of-range or non-bucket values if the form is hydrated from an external source
 - Range Orders controls should appear only when the corresponding live protocol flags are enabled. Basic mode should keep the existing single amount / single rate flow; Advanced mode may expose min / max amount and min / max rate inputs, approve or Permit2-sign the upper amount bound, and show live balance warnings before submission.
+- Periodic-interest cadence controls should appear only when `periodicInterestEnabled` is true, the user is in Advanced mode, both lending and collateral legs are liquid ERC-20s, and the principal value satisfies the configured finer-cadence threshold where required. When those requirements are not met, the cadence section should be absent rather than shown as a disabled dropdown.
+- The cadence dropdown should support `None`, `Monthly`, `Quarterly`, `Semi-annual`, and `Annual`; loans longer than one year should surface the mandatory annual-minimum rule when applicable. Offer acceptance should show a prominent cadence callout explaining the missed-checkpoint consequence before the user submits.
 - `Loan Details` should be wallet-gated inside `/app`; after connection it should show the live loan state, role-gated actions, a chronological on-chain timeline, claimable-state action bar, and precise event breakdowns for settlement splits, fallback collateral allocations, partial repayments, swap retries, and VPFI rebates
+- `Loan Details` should show a periodic-interest checkpoint card for cadence-bearing loans, including cadence label, next checkpoint countdown, expected interest, interest paid this period, shortfall, and whether the period is covered, pending, or past grace. Borrowers with a shortfall should get a `Pay now` action that routes to the partial-repay surface.
 - `Activity` rows that reference a loan should use a clickable `Loan #X` pill linking to that loan's full details page
 - `Claim Center` is the home for loan claims and platform-interaction rewards; the former standalone in-app `Rewards` page should not be treated as a live route
 - public `/buy-vpfi` is the marketing / education surface for VPFI; connected `/app/buy-vpfi` is the wallet-gated home for buying, staking / depositing, unstaking / withdrawing, staking-rewards claims, and chain-level VPFI transparency
@@ -213,7 +216,8 @@ Alerts and notification preferences:
 - `/app/alerts` should let borrowers configure per-loan HF threshold alerts and delivery rails
 - HF threshold notifications stay compulsory once any delivery rail is enabled
 - paid Push notification event types should be individually toggleable, defaulting on for new subscribers: claim available, loan settled / defaulted, cross-chain VPFI buy received, offer matched, maturity approaching, and partial repayment received
-- the Push rail should disclose the current flat notification fee, explain that Telegram remains free, and make clear that the VPFI fee is deducted from escrow only on the first paid Push notification per loan side
+- periodic-interest checkpoint reminders should reuse the loan-alert rail. Borrower reminders are priority notifications, lender reminders are courtesy notifications, and the lead time should come from the live `preNotifyDays` governance setting shared with maturity reminders.
+- the Push rail should disclose the current flat notification fee in the active protocol numeraire, explain that Telegram remains free, and make clear that the VPFI fee is deducted from escrow only on the first paid Push notification per loan side
 - the UI should warn when the user's escrowed VPFI balance appears insufficient for the notification fee, while the on-chain billing path remains authoritative
 
 Reward-claiming UX:
@@ -327,6 +331,8 @@ Governance-configuration visibility:
 - loan-screen surfaces should reflect live on-chain governance parameters where those parameters affect the user-facing position
 - `/admin` should include a loan-default grace schedule control in the Risk category. Public / non-admin viewers may see the read-only schedule, while admin-wallet viewers can edit the six rows inline and propose the resulting `setGraceBuckets` transaction to Safe.
 - the grace-schedule admin UI should display per-slot duration and grace bounds next to inputs, validate before proposal, and show a clear badge when compile-time defaults are in force because no custom schedule is stored
+- `/admin` should include a `Periodic Interest Payment` configuration category with cards for `periodicInterestEnabled`, `numeraireSwapEnabled`, `numeraireOracle`, `minPrincipalForFinerCadence`, `notificationFee`, KYC thresholds where that surface is active, and `preNotifyDays`. Admin actions should compose Safe transactions; non-admin viewers may inspect the current values.
+- the principal-threshold, notification-fee, and KYC-threshold cards should display the active numeraire and safe range. A numeraire rotation should be presented as one atomic `setNumeraire(newOracle, minPrincipalForFinerCadence, notificationFee, kycTier0Threshold, kycTier1Threshold)` proposal rather than as independent oracle / threshold / fee edits.
 - each loan-detail page should include a `Lender Discount` card for the current lender when lender discount data is relevant
 - the `Lender Discount` card should show the effective time-weighted VPFI discount computed from the current open-loan window and the on-chain discount curve
 - this effective discount may be computed client-side by extrapolating the open-loan window against on-chain discount-curve data
@@ -681,6 +687,7 @@ Data-fetching strategy:
 - dashboard loan lists may consume indexed loan origination data, but current lender / borrower NFT-holder views should be live-filtered through `ownerOf(tokenId)` reads so transferred loan NFTs are reflected accurately
 - the dashboard `Your Loans` card may render directly from indexed wallet-loan endpoints after the worker has live-filtered current NFT ownership; if the worker is unavailable, it should fall back to the existing direct chain / browser-index path
 - Claim Center money-relevant claim payloads should continue to read directly from chain; indexed claimability is only a discovery hint
+- periodic-interest checkpoint state may be mirrored by the indexer for fast display and reminders, but `previewPeriodicSettle` and transaction review amounts should read the current Diamond state before signing
 - VPFI token-panel scans may remain direct filtered log reads while volume stays low
 - ERC-721 `Transfer` events for Vaipakam position NFTs should enter the shared `activity_events` ledger so ownership history is queryable without maintaining a separate mutable `nft_positions` table
 - the app footer should expose one active-chain `Verify on-chain` affordance that opens the current Diamond on the relevant explorer; repeated per-row verify links are not required

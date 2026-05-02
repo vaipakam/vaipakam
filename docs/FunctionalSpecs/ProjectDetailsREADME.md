@@ -192,6 +192,9 @@ The platform distinguishes between liquid and illiquid assets, which affects how
   - **ETH as Reference Asset:** ETH is the protocol's quote and reference asset for liquidity classification. In practice the DEX sees WETH, so the protocol checks `asset/WETH` pools while using the Chainlink `ETH/USD` feed to convert that depth into USD.
   - **WETH Special Case:** WETH itself is priced directly from `ETH/USD` and is treated as the quote asset for liquidity purposes; the protocol does not perform a circular `WETH/WETH` liquidity check.
   - **Pyth Numeraire Redundancy:** A single Pyth feed per chain may sanity-check the Chainlink numeraire used for WETH-priced assets: `ETH/USD` on ETH-native chains and bridged-`WETH/USD` on chains such as BNB or Polygon mainnet where the configured payment / quote asset is bridged WETH. This is not a per-asset oracle mapping. If the Pyth feed is unset, stale, low-confidence, or non-positive it soft-skips; if it is configured and diverges beyond the governance-bounded threshold, pricing must revert fail-closed with a typed numeraire-divergence error.
+  - **Global Governance Numeraire:** Governance-denominated knobs share one global `numeraireOracle`. `address(0)` means USD-as-numeraire and skips conversion. A non-zero oracle must expose `numeraireToUsdRate1e18()` so stored numeraire-denominated values can be converted to USD at the boundary where the protocol compares against Chainlink-priced asset values.
+  - **Internal USD Comparison Policy:** Chainlink asset pricing remains USD-based external truth. Internal variables and view functions that represent Chainlink-derived asset values may continue to use `USD` naming, because they are carrying the value returned by the oracle path. The numeraire abstraction applies at governance-input and storage boundaries, not by mechanically renaming every Chainlink-derived comparison variable.
+  - **Centralized Numeraire Conversion:** Conversion should happen in shared helpers at boundary reads, for example KYC threshold getters and notification-fee VPFI billing. Comparison sites such as offer KYC checks, risk bonus checks, and default checks should consume already-normalized USD values instead of each performing bespoke numeraire conversion.
   - **Bounded Oracle Knobs:** Pyth oracle address, Pyth numeraire feed id, Pyth staleness, Pyth deviation, Pyth confidence, secondary-oracle staleness, and secondary-oracle deviation setters must be range-bounded. Invalid values should revert through the shared `ParameterOutOfRange(bytes32 name, uint256 value, uint256 min, uint256 max)` error so admin misconfiguration is visible and easy to audit.
     - `pythOracle`: non-zero contract address, or zero to disable.
     - `pythNumeraireFeedId`: non-zero feed id, or zero to disable.
@@ -501,6 +504,7 @@ Range Orders extend the single-value offer model without changing the default Ph
 
 - A loan repayment transaction may be submitted by the borrower or by any third party willing to pay on the borrower's behalf.
 - For ERC-20 loans, the repayment amount remains: `Principal + Interest`.
+- Partial repayments must allocate interest-first before reducing principal when periodic-interest mode is enabled for the loan. The preview path should show the same split the settlement path will apply, so borrowers can see how much of a proposed payment covers the current period's accrued interest and how much reduces principal.
 - If a third party repays on behalf of the borrower, that third party does **not** gain any right to the collateral by making the payment alone.
 - After repayment, the collateral remains claimable only by the holder of the Vaipakam borrower NFT for that loan. Repayers must be clearly warned in the frontend and product flow that repayment does not transfer collateral ownership or collateral-claim rights.
 - Interest Formula: `Interest = (Principal * AnnualInterestRate * LoanDurationInDays) / (100 * DAYS_PER_YEAR)`. (Note: use standardized protocol constants such as `DAYS_PER_YEAR` and `SECONDS_PER_YEAR` rather than hard-coded literals like `365`, and ensure consistent precision, e.g., rate stored as basis points).
@@ -529,6 +533,56 @@ Range Orders extend the single-value offer model without changing the default Ph
 - The Vaipakam platform treasury collects a fee of 1% of any interest earned by lenders or rental fees earned by NFT owners.
 - The treasury also collects late fees paid.
 - These fees are automatically deducted by the smart contract at the relevant stage of the lifecycle: the `Loan Initiation Fee` at ERC-20 loan start, and the treasury share on interest, rental fees, and late fees when those amounts are settled or claimed.
+
+### Periodic Interest Payments
+
+Periodic interest payment is a dormant Phase 1 feature controlled by `periodicInterestEnabled`. When disabled, offer creation must reject non-`None` cadences, settlement entry points must not execute, and the frontend should hide cadence-related controls.
+
+Purpose:
+
+- reduce lender exposure on long-duration and large-principal ERC-20 loans by requiring interest to be settled during the loan instead of only at maturity
+- make missed interest obligations visible before final default
+- reuse the existing liquidation and default-grace infrastructure rather than creating a parallel enforcement model
+
+Eligibility:
+
+- applies only to ERC-20 loans where both the lending asset and collateral asset are liquid under the active-chain oracle / liquidity checks
+- if either side is illiquid, cadence must be `None`; multi-year illiquid loans do not receive a mandatory annual checkpoint because the protocol cannot safely auto-sell collateral
+- cadence intervals must be shorter than the loan duration; a checkpoint at or after maturity adds no value because terminal repayment already covers all owed interest
+
+Cadence rules:
+
+- supported cadence enum: `None`, `Monthly`, `Quarterly`, `SemiAnnual`, `Annual`
+- loans longer than 365 days must use at least `Annual` cadence when the feature is enabled and both legs are liquid
+- lenders may choose finer cadence for large-principal loans when principal value meets the configured threshold
+- the principal threshold is denominated in a configurable numeraire, USD by default
+- `setNumeraire(newOracle, minPrincipalForFinerCadence, notificationFee, kycTier0Threshold, kycTier1Threshold)` must update the numeraire oracle and all numeraire-denominated stored values atomically; within-numeraire tuning uses the per-knob setters
+- cross-numeraire changes are additionally gated by `numeraireSwapEnabled`, default `false`
+
+Cadence-to-grace mapping:
+
+- the existing six-slot default-grace schedule is reused; no separate grace schedule is introduced for periodic interest
+- Monthly maps to the short-loan bucket, Quarterly to the 90-day bucket, SemiAnnual to the 180-day bucket, and Annual to the 365-day bucket
+- if the borrower has not paid the expected interest by the checkpoint plus the mapped grace window, any address may settle the period
+
+Settlement:
+
+- `previewPeriodicSettle(loanId)` should expose cadence, period end, grace end, expected interest, amount paid by borrower, shortfall, and whether settlement is currently callable
+- if shortfall is zero, settlement only stamps the checkpoint forward and resets period accounting
+- if shortfall is positive after grace, a permissionless settler may submit the normal liquidation adapter try-list to sell only enough collateral to cover the shortfall plus configured buffers
+- settler bonus, treasury handling charge, slippage ceiling, and fallback behavior reuse the existing liquidation policy: dynamic liquidator / settler incentive from the remaining slippage budget capped at 3%, 2% treasury handling charge, and the configured max liquidation slippage threshold as the single shared lever
+- failed or over-slippage swap attempts should follow the same collateral-equivalent fallback principles used by ordinary liquidation
+
+Repayment and refinance interaction:
+
+- `repayPartial` accrues the interest portion into `interestPaidSinceLastPeriod`; if a payment covers the expected period interest after the period has ended, the checkpoint may advance in the same transaction
+- refinance must settle the old loan's overdue periodic-interest period first. If the old period is past grace, `refinanceLoan` should revert until `settlePeriodicInterest` makes the original lender whole.
+
+Watcher and notification support:
+
+- the operations Worker should extend its scheduled loan-monitoring lane to pre-notify both borrower and lender before the next periodic-interest checkpoint
+- `preNotifyDays` is a shared bounded knob for maturity reminders and periodic-interest checkpoint reminders; default 3 days, allowed range 1 to 14 days
+- checkpoint notification de-duplication should be keyed to the exact checkpoint timestamp so retries do not spam users
 
 ### Claiming Funds/Assets
 
@@ -1218,7 +1272,7 @@ Effective communication is key for user experience and risk management. Vaipakam
 - **Health-Factor Alert Subscriptions:** Borrowers can subscribe to per-loan HF threshold alerts, such as `HF below 1.20`, for liquid loans they own. The watcher reprices subscribed loans on a timed sweep and sends an alert only when the configured threshold is newly crossed.
 - **HF Alert Channels:** Telegram alerts are delivered through the official Vaipakam bot linked to the wallet. Push Protocol is supported as a decentralized opt-in channel; the send path may remain staged until the production Push channel is registered.
 - **Paid Push Event Notifications:** Beyond compulsory HF-threshold alerts, users may opt into paid Push notifications for loan lifecycle events. Supported event categories should include claim available, loan settled / defaulted, cross-chain VPFI buy received, offer matched into a loan, loan maturity approaching, and partial repayment received. New subscribers should default these event toggles on while allowing individual opt-out.
-- **Notification Fee Model:** Telegram alerts remain free. Push delivery may charge a flat USD-equivalent fee, governance-tunable through protocol config, deducted in VPFI from the relevant user's escrow on the first paid Push notification per loan side. Billing must be idempotent per `(loanId, side)`, should transfer directly from user escrow to treasury, and should not introduce a Diamond custody window because notification fees have no rebate or terminal split.
+- **Notification Fee Model:** Telegram alerts remain free. Push delivery may charge a flat numeraire-denominated fee, governance-tunable through protocol config, deducted in VPFI from the relevant user's escrow on the first paid Push notification per loan side. Billing must be idempotent per `(loanId, side)`, should transfer directly from user escrow to treasury, and should not introduce a Diamond custody window because notification fees have no rebate or terminal split. The notification-fee conversion uses the global `numeraireOracle`; it must not carry a separate per-fee oracle slot.
 - **Notification Billing Role:** The off-chain notification worker should call a narrowly scoped on-chain billing entry point using a dedicated notification-biller role rather than reusing watcher / pause authority. This keeps false-billing risk separate from auto-pause risk and allows either role to be rotated independently.
 - **Autonomous Liquidation Watcher:** Operators may enable a keeper mode on the same watcher so it submits permissionless `triggerLiquidation` transactions when subscribed loans cross HF `1.0`. This mode is disabled by default and requires explicit worker secrets plus a funded keeper EOA per target chain.
 - **Public Keeper-Bot Reference:** Vaipakam should maintain a standalone keeper-bot reference implementation for third-party operators. The bot should be able to page through active loans, read Health Factor, quote 0x / 1inch / UniV3 / Balancer routes, rank them, and submit permissionless liquidations from the operator's own EOA.
@@ -1307,14 +1361,20 @@ A comprehensive user dashboard is essential for managing activities on Vaipakam.
   - **Reentrancy Guards:** Applied to all functions involving external calls or asset transfers.
   - **Access Control:** Granular roles (e.g., `LOAN_MANAGER_ROLE`, `OFFER_MANAGER_ROLE`, `TREASURY_ADMIN_ROLE`) managed via OpenZeppelin's AccessControl. Roles will be assigned initially by the contract deployer/owner, with plans to transition control to governance in Phase 2 where appropriate.
   - **Three-Role Governance Handover:** Privileged production surfaces should be split between a Governance Safe, a Guardian Safe, and KYC Ops. The Governance Safe controls slow admin surfaces through a 48-hour timelock. The Guardian Safe can pause quickly during incidents but cannot unpause. KYC Ops holds only the user-tier operational role where that role is active.
-  - **Bounded Governance Knobs:** Mutable numeric configuration surfaces must have explicit min / max ranges and use a shared typed range error. This includes reward grace windows, interaction caps, staking APR, liquidation and LTV risk parameters, reserve factor, KYC tier thresholds, oracle staleness, and oracle deviation bounds. Admin runbooks should list each knob, owner role, default, and permitted range.
+  - **Bounded Governance Knobs:** Mutable numeric configuration surfaces must have explicit min / max ranges and use a shared typed range error. This includes reward grace windows, interaction caps, staking APR, liquidation and LTV risk parameters, reserve factor, KYC tier thresholds, oracle staleness, oracle deviation bounds, periodic-interest principal threshold, and periodic / maturity pre-notify lead time. Admin runbooks should list each knob, owner role, default, and permitted range.
     - `setRewardGraceSeconds`: 5 minutes to 30 days.
     - `setInteractionCapVpfiPerEth`: 1 to 1,000,000, while preserving documented sentinel values for reset / emergency-disable behavior.
     - `setStakingApr`: no more than 20% APR.
     - `updateRiskParams.maxLtvBps`: 10% to 100%.
     - `updateRiskParams.liqThresholdBps`: 15% to 100%, and still strictly greater than `maxLtvBps`.
     - `updateRiskParams.reserveFactorBps`: no more than 50%.
-    - `updateKYCThresholds`: each threshold 100 USD to 1,000,000 USD, with tier ordering still enforced.
+    - `updateKYCThresholds`: each threshold 100 to 1,000,000 in the active numeraire, with tier ordering still enforced.
+    - `setMinPrincipalForFinerCadence`: active-numeraire principal threshold from 1,000 to 10,000,000, default 100,000.
+    - `setPreNotifyDays`: 1 to 14 days, default 3 days.
+    - `setNotificationFee`: active-numeraire fee floor / ceiling from the notification-fee policy constants.
+  - **Periodic Interest Configuration:** `ConfigFacet` should expose `periodicInterestEnabled`, `numeraireSwapEnabled`, `numeraireOracle`, `minPrincipalForFinerCadence`, `notificationFee`, KYC tier thresholds, and `preNotifyDays` through individual getters and admin-gated setters where applicable. `periodicInterestEnabled` and `numeraireSwapEnabled` default to `false`, so the feature and cross-numeraire rotation ship dormant until governance intentionally enables them.
+  - **Atomic Numeraire Setter:** `setNumeraire(newOracle, minPrincipalForFinerCadence, notificationFee, kycTier0Threshold, kycTier1Threshold)` is the only path to rotate the active numeraire. It must validate that a non-zero oracle has bytecode and returns a non-zero `numeraireToUsdRate1e18()` value, then update every numeraire-denominated stored value together so no intermediate state can compare a threshold or fee denominated in one numeraire against an oracle for another. Zero values should follow the protocol's reset-to-default convention, while each non-zero value remains subject to its own bounded validator.
+  - **Within-Numeraire Tuning:** `setMinPrincipalForFinerCadence`, `setNotificationFee`, and `updateKYCThresholds` remain available for ordinary tuning within the current numeraire and should not require `numeraireSwapEnabled`. Cross-numeraire rotation through `setNumeraire` does require the kill switch to be enabled.
   - **Admin-Configurable Default Grace Schedule:** `ConfigFacet` should expose the six-slot grace-bucket table, per-slot bounds, `setGraceBuckets`, and `clearGraceBuckets`. `setGraceBuckets` must reject wrong row counts, non-zero catch-all duration, non-monotonic duration rows, and values outside the per-slot or global bounds through typed range errors where applicable. Frontend admin tooling should show whether compile-time defaults are currently in force and compose Safe transactions rather than signing directly from the app.
   - **OApp Guardian Pause:** LayerZero OApps and VPFI bridge-related contracts should allow Guardian or Owner pause, but unpause must remain Owner / Timelock controlled.
   - **LayerZero Payload Sanity:** Reward OApp packets should enforce the exact expected payload size before `abi.decode`; malformed, undersized, or oversized packets must revert with a typed error carrying observed and expected sizes so off-chain monitoring can correlate the incident with LayerZero traces.
@@ -1335,7 +1395,7 @@ A comprehensive user dashboard is essential for managing activities on Vaipakam.
 - **ABI Sync:** After any contract release that changes selectors, structs, events, or frontend-consumed ABIs, run the frontend ABI export script (`contracts/script/exportFrontendAbis.sh` after `forge build`) so `frontend/src/contracts/abis/` and `_source.json` match the deployed contract build and carry the source commit hash. When keeper-bot-consumed facets change, run the keeper-bot ABI export as well so bot JSONs and provenance stay aligned with the monorepo build.
 - **Live Protocol Config:** Frontend copy that displays protocol fees, liquidation thresholds, rental buffer, staking APR, VPFI tier thresholds, pool caps, and minimum Health Factor should read from `getProtocolConfigBundle()` and `getProtocolConstants()` rather than hardcoded locale strings. Token-unit formatting for VPFI should use the token contract's live `decimals()` value where available.
 - **Transaction Receipt Truth:** Shared write helpers should treat a mined transaction with receipt status `0` as a failure and surface the revert path to the user. Inclusion in a block is not by itself a success signal.
-- **Shared Chain Indexer:** The public worker may maintain a D1-backed chain index for offers, loans, activity, and claimability hints. It should scan the full allow-listed Diamond event set once per cron tick per configured chain, persist one cursor per chain / Diamond source, and expose read APIs for active offers, active loans, wallet-filtered loans, activity, claimables, and offer stats. Browser hooks should report whether data came from the indexer or fallback path. History belongs in D1, while current ownership-sensitive state should still be read from the chain where appropriate; for example, lender / borrower loan lists and claimability discovery may live-filter with `ownerOf(tokenId)` so transferred Vaipakam position NFTs are reflected immediately.
+- **Shared Chain Indexer:** The public worker may maintain a D1-backed chain index for offers, loans, activity, and claimability hints. It should scan the full allow-listed Diamond event set once per cron tick per configured chain, persist one cursor per chain / Diamond source, and expose read APIs for active offers, active loans, wallet-filtered loans, activity, claimables, and offer stats. Browser hooks should report whether data came from the indexer or fallback path. History belongs in D1, while current ownership-sensitive state should still be read from the chain where appropriate; for example, lender / borrower loan lists and claimability discovery may live-filter with `ownerOf(tokenId)` so transferred Vaipakam position NFTs are reflected immediately. The event scan should be shared across domains on each tick so adding a new indexed domain does not multiply RPC scans, and one cursor per chain / Diamond source should advance atomically with the persisted rows.
 - **Log-Index Fallback:** The frontend log index remains the browser fallback and local history source when the worker origin is unset, unavailable, or stale. Event-topic allow-list additions that need historical browser data should bump the cache key; hydrate-only migrations are appropriate only when the relevant event data was already captured in older caches.
 
 ### Public View Functions for Analytics, Transparency, and Integrations
@@ -1354,7 +1414,8 @@ General design requirements:
 - the worker-backed indexer API may complement, but not replace, on-chain view verification. Expected REST surfaces include active offer lists and stats, offer lookup by id / creator, active loan lists, loan lookup by id / lender / borrower, filtered activity, and wallet claimability hints. These endpoints are cache / discovery surfaces; money-moving actions must still read directly from contracts or verify against the latest on-chain state.
 - the worker-backed activity ledger should be append-only and shared across offers, loans, VPFI protocol events, claim events, and Vaipakam NFT `Transfer` events. This lets Activity, Loan Details timelines, dashboard history, and ownership-history views filter the same event source instead of each building a private log scan.
 - `offers`, `loans`, and `activity_events` should be keyed by chain as well as domain identifiers so one Worker can fan out across configured chains without schema changes. Future horizontal scaling to one Worker per chain should not require table-shape changes.
-- loan rows should store immutable origination data from `LoanInitiated` and one-time bootstrapped loan details such as lender token id, borrower token id, interest rate, start time, and partial-repay flag. Current lender / borrower ownership should be resolved from live `ownerOf` reads at query time or direct chain reads on money-relevant screens, not from stale origination columns.
+- loan rows should store immutable origination data from `LoanInitiated` and one-time bootstrapped loan details such as lender token id, borrower token id, interest rate, start time, partial-repay flag, periodic-interest cadence, and last settled periodic checkpoint. Current lender / borrower ownership should be resolved from live `ownerOf` reads at query time or direct chain reads on money-relevant screens, not from stale origination columns.
+- periodic-interest events should land in the same append-only `activity_events` ledger as ordinary loan lifecycle events so Loan Details timelines, Activity, and watcher reconciliation all read one event source.
 
 #### 1. Protocol-Wide Metrics
 
@@ -1633,6 +1694,8 @@ flow list in the Phase-1 gap audit (see CHANGELOG `[Unreleased]`).
 - [contracts/test/Permit2IntegrationTest.t.sol](contracts/test/Permit2IntegrationTest.t.sol) / [contracts/test/fork/Permit2RealForkTest.t.sol](contracts/test/fork/Permit2RealForkTest.t.sol) — Permit2 integration against the local mock and real canonical Permit2 on a fork, including expired deadline, wrong amount, nonce reuse, and spender mismatch cases.
 - [contracts/test/CrossChainRewardPlumbingTest.t.sol](contracts/test/CrossChainRewardPlumbingTest.t.sol) / [RewardOAppDeliveryTest.t.sol](contracts/test/RewardOAppDeliveryTest.t.sol) — canonical broadcast + mirror aggregate reporting.
 - [contracts/test/GracePeriodTiersTest.t.sol](contracts/test/GracePeriodTiersTest.t.sol) — default grace-period tier transitions.
+- [contracts/test/GraceBucketsTest.t.sol](contracts/test/GraceBucketsTest.t.sol) — admin-configurable six-slot grace schedule, bounds, defaults, event emission, and rollback to compile-time defaults.
+- [contracts/test/PeriodicInterestCadenceTest.t.sol](contracts/test/PeriodicInterestCadenceTest.t.sol) / [contracts/test/PeriodicInterestSettleTest.t.sol](contracts/test/PeriodicInterestSettleTest.t.sol) — cadence eligibility, numeraire threshold validation, periodic settlement, interest-first partial repayments, auto-liquidation, and refinance settle-first protection.
 - [contracts/test/VolatilityLTVTest.t.sol](contracts/test/VolatilityLTVTest.t.sol) — collapse-trigger (LTV > 110%) fallback path.
 - [contracts/test/FallbackCureTest.t.sol](contracts/test/FallbackCureTest.t.sol) — borrower cures before fallback settlement.
 - [contracts/test/StalenessHybridTest.t.sol](contracts/test/StalenessHybridTest.t.sol) — Chainlink hybrid staleness (peg tolerance).
@@ -1710,13 +1773,13 @@ Vaipakam is committed to operating in a compliant manner within the evolving reg
 - **KYC/AML Integration:**
   - The platform may later integrate with decentralized KYC/AML solutions (e.g., Civic, Verite, ComplyCube, KYC-Chain, or Trust Node by ComplyAdvantage).
   - **Tiered Approach:**
-    - **Tier 0 (No KYC/AML):** For transactions where the principal loan amount (for ERC-20 loans using liquid assets valued in USDC) or total rental value (for NFT renting, valued in USDC) is less than $1,000 USD.
-    - **Tier 1 (Limited KYC):** For transaction values between $1,000 and $9,999 USD. This might involve basic identity verification.
-    - **Tier 2 (Full KYC/AML):** For transaction values of $10,000 USD or more. This will require more comprehensive identity verification and AML checks.
+    - **Tier 0 (No KYC/AML):** For transactions where the principal loan amount (for ERC-20 loans using liquid assets valued through the Chainlink-led USD path) or total rental value (for NFT renting) is below the configured tier-0 threshold.
+    - **Tier 1 (Limited KYC):** For transaction values between the configured tier-0 and tier-1 thresholds. This might involve basic identity verification.
+    - **Tier 2 (Full KYC/AML):** For transaction values at or above the configured tier-1 threshold. This will require more comprehensive identity verification and AML checks.
   - **Valuation for KYC Thresholds:**
-    - **ERC-20 Loans:** The USDC equivalent value of the _principal amount being lent_ (if liquid) determines the transaction value. If the principal asset is illiquid, or if collateral is illiquid/NFT, these are considered $0 for this specific calculation, relying on the value of the liquid component.
-    - **NFT Renting:** The _total rental value_ (daily rate \* duration, converted to USDC equivalent) determines the transaction value.
-    - The platform will use Chainlink oracles for converting liquid asset values to USDC for these threshold checks.
+    - **ERC-20 Loans:** The USD value of the _principal amount being lent_ (if liquid) determines the transaction value. If the principal asset is illiquid, or if collateral is illiquid/NFT, these are considered $0 for this specific calculation, relying on the value of the liquid component.
+    - **NFT Renting:** The _total rental value_ (daily rate \* duration, converted through the same Chainlink-led USD path) determines the transaction value.
+    - The platform stores KYC tier thresholds in active-numeraire units, converts them to USD through the global `numeraireOracle` in the shared threshold getters, and then compares the resulting USD threshold against Chainlink-derived USD asset values at the existing comparison sites.
 - **Implementation Timing:** Real KYC/AML enforcement is not part of the effective Phase 1 launch behavior. Phase 1 keeps KYC checks in pass-through mode under the Phase 1 flag, while later governance or admin decisions may choose to activate the retained KYC framework.
 - **Address-Level Sanctions Screening:** Where a supported on-chain sanctions oracle is configured for the active chain, the protocol should screen retail entry points as well as any future industrial deployment. Tier-1 actions that create fresh state for the caller, accept deposits, route new value, or pay protocol incentives to the caller must revert for a flagged wallet. This includes escrow creation, offer creation / acceptance, VPFI buy / deposit / withdraw flows, liquidation initiation, loan-sale / obligation-transfer / refinance entry points, and claims by the flagged recipient.
 - **Sanctions Wind-Down Carve-Out:** Debt-closing and safety paths required to protect an unflagged counterparty should remain available even when the target borrower is flagged. Repayment, time-based default, and HF-based liquidation against a flagged borrower are wind-down / recovery paths; they must not let the flagged actor receive fresh protocol value, but they should allow existing lender security interests to be made whole. If the lender or other recipient is flagged, their own claim path may still be blocked because the protocol would otherwise transfer value to a sanctioned wallet.

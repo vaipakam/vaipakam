@@ -169,18 +169,26 @@ are unrealistic and a higher cap is a governance-error vector rather
 than a feature. Zero permitted (disables rewards while preserving
 staked principal accounting).
 
-### Notification fee in USD
+### Notification fee (per loan-side)
 
-(paid in VPFI at first PaidPush
-notification). Range: floor and ceiling stored in the library
-(currently $0.50 to $50). Zero means "use library default"; non-zero
-must fall within the bounded window. Governance-tunable so a market
-shift in Push Protocol fees can be passed through without redeploy.
+Per-loan-side notification fee charged in VPFI at the first paid-tier
+notification. Stored in **numeraire-units** (1e18-scaled — interpreted
+as USD when `numeraireOracle == address(0)`, the post-deploy default).
+Range: `[MIN_NOTIFICATION_FEE_FLOOR, MAX_NOTIFICATION_FEE_CEIL]` —
+0.1 to 50.0 numeraire-units (= $0.10 to $50 under USD-as-numeraire).
+Zero means "use library default" (2.0 numeraire-units = $2). Setter:
+`setNotificationFee(uint256)`. Governance-tunable so a market shift
+in Push Protocol fees can be passed through without redeploy.
 
-### Notification-fee USD oracle
-
-Address-only; no range. Zero
-disables the oracle and forces the library default at read time.
+> **USD-Sweep (2026-05-03).** The retired per-knob
+> `notificationFeeUsdOracle` slot was removed from
+> `ProtocolConfig`. The notification fee's denomination now flows
+> through the global `numeraireOracle` (T-034 abstraction) — single
+> source of truth across the protocol. To change the notification
+> fee's reference currency, governance rotates the numeraire via
+> the atomic `setNumeraire` setter (under "Periodic Interest Payment"
+> below); the per-knob setter only re-tunes within the same
+> numeraire.
 
 ## Order matching and durations
 
@@ -318,16 +326,31 @@ an emergency lever.
 
 ## KYC (industrial-fork only — OFF on retail)
 
-### KYC tier 0 / tier 1 thresholds (USD)
+### KYC tier 0 / tier 1 thresholds (numeraire)
 
-Range each: **[$100,
-$1,000,000]** in 1e18-denominated USD. Tier 0 must be < tier 1.
+Range each: **[100, 1,000,000]** in 1e18-scaled numeraire-units —
+which, under the post-deploy default `numeraireOracle == address(0)`,
+is read as USD ($100 to $1M). Tier 0 must be < tier 1.
 
 > KYC is **OFF on the retail deploy** per CLAUDE.md — the
 > `kycEnforcementEnabled` flag stays `false` post-deploy; the
 > threshold values aren't read. These bounds are
 > belt-and-suspenders for the retail deploy and load-bearing for
 > the industrial fork.
+
+> **USD-Sweep (2026-05-03).** The thresholds are stored in
+> numeraire-units (storage fields `kycTier0ThresholdNumeraire` /
+> `kycTier1ThresholdNumeraire`). The library getters
+> `getKycTier0Threshold()` / `getKycTier1Threshold()` convert
+> numeraire → USD via the global `numeraireOracle` at the boundary,
+> so every comparison site (`OfferFacet`, `RiskFacet`,
+> `DefaultedFacet`) continues to compare against USD-1e18 from
+> Chainlink without changing. To rotate the reference currency,
+> governance uses the atomic multi-arg `setNumeraire` (under
+> "Periodic Interest Payment" below) which re-anchors every
+> numeraire-denominated value in the same tx; the per-knob
+> `updateKYCThresholds` setter only re-tunes within the same
+> numeraire.
 
 ## Range Orders Phase 1 (master kill switches — bool flags)
 
@@ -383,19 +406,36 @@ Boolean — no range.
 
 ### Numeraire oracle address (numeraireOracle)
 
-Pluggable price source that decouples the principal threshold (next
-section) from any specific currency. `address(0)` (the post-deploy
-default) means USD-as-numeraire — the threshold value is interpreted
-directly as 1e18-scaled USD-units. A non-zero address must implement
-`INumeraireOracle.numeraireToUsdRate1e18()` returning how many USD
-(1e18-scaled) one unit of the numeraire is worth.
+Pluggable price source that decouples EVERY numeraire-denominated
+governance knob — the periodic-interest principal threshold below,
+the notification fee (T-032), and the KYC tier thresholds (industrial
+fork) — from any specific currency. `address(0)` (the post-deploy
+default) means USD-as-numeraire: every numeraire-stored value is
+interpreted directly as 1e18-scaled USD. A non-zero address must
+implement `INumeraireOracle.numeraireToUsdRate1e18()` returning how
+many USD (1e18-scaled) one unit of the numeraire is worth.
 
 The ONLY path to change this address is the atomic batched setter
-`setNumeraire(newOracle, newThresholdInNewNumeraire)` — by
-construction the numeraire and the threshold are never out of sync.
+**`setNumeraire(newOracle, newThreshold, newNotificationFee,
+newKycTier0, newKycTier1)`** — five values, all in the new
+numeraire's units, all rewritten atomically. By construction the
+numeraire never drifts apart from any of the values denominated in
+it. Pass `0` on any field to reset that knob to its library default.
 The setter sanity-checks the new oracle by calling
 `numeraireToUsdRate1e18()` and rejects zero / revert / no-bytecode
-results via `NumeraireOracleInvalid`.
+results via `NumeraireOracleInvalid`. Each value carries its
+per-knob bounded validator (same constants as the per-knob "within-
+the-same-numeraire" setters); KYC tier monotonicity is enforced
+when both tier values come in non-zero.
+
+> **USD-Sweep (2026-05-03).** The setter was extended from 2 args
+> to 5. Every numeraire-denominated value in the protocol now flips
+> in lockstep when governance rotates the numeraire — the previous
+> drift hazard ("numeraire = XAU but notification fee still in
+> USD-units") is unreachable. Per-knob within-the-same-numeraire
+> setters (`setMinPrincipalForFinerCadence`, `setNotificationFee`,
+> `updateKYCThresholds`) are NOT gated by `numeraireSwapEnabled` —
+> governance can re-tune individual values freely.
 
 ### Min principal for finer cadence (minPrincipalForFinerCadence)
 
