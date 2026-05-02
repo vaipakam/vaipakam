@@ -22,7 +22,8 @@
  * — Phase 4 layers the "propose change" button on top.
  */
 
-import { Info } from 'lucide-react';
+import { useState } from 'react';
+import { Info, Settings2 } from 'lucide-react';
 import {
   classifyValue,
   type KnobMeta,
@@ -34,16 +35,26 @@ import {
 } from '../../lib/adminKnobFormat';
 import type { KnobReadResult } from '../../hooks/useAdminKnobValues';
 import { KnobZoneBar } from './KnobZoneBar';
+import { ProposeChangeModal } from './ProposeChangeModal';
 
 interface Props {
   knob: KnobMeta;
   read: KnobReadResult;
   docsBase: string;
+  /** When true, the card renders the "Propose change" button. Only
+   *  set by `AdminDashboard` when the connected wallet has an
+   *  admin/governance role. */
+  canPropose?: boolean;
+  /** Diamond address — required when `canPropose` is true so the
+   *  modal can encode the calldata and build the Safe deep-link. */
+  diamondAddress?: string;
+  chainId?: number;
 }
 
-export function KnobCard({ knob, read, docsBase }: Props) {
+export function KnobCard({ knob, read, docsBase, canPropose, diamondAddress, chainId }: Props) {
   const infoHref = `${docsBase}#${knob.infoAnchor}`;
   const valueText = read.loading ? '…' : formatKnobValue(read.value, knob);
+  const [proposeOpen, setProposeOpen] = useState(false);
 
   const status = readStatus(knob, read);
 
@@ -111,9 +122,47 @@ export function KnobCard({ knob, read, docsBase }: Props) {
         </p>
       )}
 
-      <p style={{ margin: 0, fontSize: '0.72rem', opacity: 0.5 }}>
-        {knob.setter.facet}.{knob.setter.fn}
-      </p>
+      <div
+        style={{
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          gap: 8,
+          marginTop: 'auto',
+          paddingTop: 4,
+        }}
+      >
+        <p style={{ margin: 0, fontSize: '0.72rem', opacity: 0.5 }}>
+          {knob.setter.facet}.{knob.setter.fn}
+        </p>
+        {canPropose && diamondAddress && chainId !== undefined && (
+          <button
+            type="button"
+            className="btn btn-secondary"
+            onClick={() => setProposeOpen(true)}
+            style={{
+              fontSize: '0.72rem',
+              padding: '4px 10px',
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 4,
+            }}
+          >
+            <Settings2 size={12} />
+            Propose
+          </button>
+        )}
+      </div>
+
+      {proposeOpen && diamondAddress && chainId !== undefined && (
+        <ProposeChangeModal
+          knob={knob}
+          currentValue={read.value}
+          diamondAddress={diamondAddress}
+          chainId={chainId}
+          onClose={() => setProposeOpen(false)}
+        />
+      )}
     </div>
   );
 }

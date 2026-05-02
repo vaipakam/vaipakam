@@ -20,8 +20,9 @@
  * the current value.
  */
 
+import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Link, Navigate } from 'react-router-dom';
+import { Link, Navigate, useLocation } from 'react-router-dom';
 import Navbar from '../components/Navbar';
 import Footer from '../components/Footer';
 import {
@@ -30,8 +31,18 @@ import {
   knobsByCategory,
 } from '../lib/adminKnobsZones';
 import { isAdminDashboardPublic } from '../lib/adminVisibility';
+import {
+  type AdminThemeMode,
+  persistAdminTheme,
+  readPersistedAdminTheme,
+  readUrlAdminTheme,
+} from '../lib/adminTheme';
+import { useIsAdminWallet } from '../lib/useIsAdminWallet';
+import { useReadChain } from '../contracts/useDiamond';
 import { useAdminKnobValues } from '../hooks/useAdminKnobValues';
 import { KnobCard } from '../components/admin/KnobCard';
+import { AdminThemeToggle } from '../components/admin/AdminThemeToggle';
+import '../components/admin/admin-theme.css';
 
 export default function AdminDashboard() {
   const { t, i18n } = useTranslation();
@@ -47,27 +58,94 @@ export default function AdminDashboard() {
   const lang = i18n.resolvedLanguage ?? 'en';
   const docsPath = lang === 'en' ? '/admin/docs' : `/${lang}/admin/docs`;
   const values = useAdminKnobValues();
+  const isAdminWallet = useIsAdminWallet();
+  const location = useLocation();
+  const readChain = useReadChain();
+
+  // Theme resolution: URL > localStorage > admin-wallet-auto > default.
+  const [themeMode, setThemeMode] = useState<AdminThemeMode>(() => {
+    const fromUrl = readUrlAdminTheme(location.search);
+    if (fromUrl) return fromUrl;
+    const persisted = readPersistedAdminTheme();
+    if (persisted) return persisted;
+    return isAdminWallet ? 'terminal' : 'public';
+  });
+
+  // Auto-engage terminal mode when an admin wallet connects (only
+  // when the user hasn't already chosen a mode manually). Phase 3
+  // ships with `useIsAdminWallet()` stubbed to false; Phase 4 wires
+  // the real on-chain check + this auto-engage path becomes live.
+  useEffect(() => {
+    const persisted = readPersistedAdminTheme();
+    const fromUrl = readUrlAdminTheme(location.search);
+    if (persisted || fromUrl) return; // user override wins
+    setThemeMode(isAdminWallet ? 'terminal' : 'public');
+  }, [isAdminWallet, location.search]);
+
+  const onToggle = () => {
+    setThemeMode((prev) => {
+      const next: AdminThemeMode = prev === 'public' ? 'terminal' : 'public';
+      persistAdminTheme(next);
+      return next;
+    });
+  };
 
   return (
     <div className="public-page">
       <Navbar />
-      <main style={{ maxWidth: 1200, margin: '0 auto', padding: '24px 16px' }}>
-        <header style={{ marginBottom: 24 }}>
-          <h1 style={{ marginBottom: 8 }}>
-            {t('adminDashboard.title', 'Admin Configurable Knobs & Switches')}
-          </h1>
-          <p style={{ opacity: 0.85, fontSize: '0.95rem', lineHeight: 1.5 }}>
-            {t(
-              'adminDashboard.subtitle',
-              "Public read-only view of every governance-tunable protocol parameter. The current value, the contract's hard min/max, and the operational safe / mid / caution zones are surfaced here for transparency. Admin actions become available when an admin wallet connects.",
-            )}
-          </p>
-          <p style={{ marginTop: 12, fontSize: '0.9rem', opacity: 0.75 }}>
-            <Link to={docsPath} style={{ color: 'var(--brand)' }}>
-              {t('adminDashboard.docsLink', 'Read the Knobs & Switches reference →')}
-            </Link>
-          </p>
+      <main
+        className="admin-dashboard-wrap"
+        data-admin-theme={themeMode}
+        style={{ maxWidth: 1200, margin: '0 auto', padding: '24px 16px' }}
+      >
+        <header
+          style={{
+            marginBottom: 24,
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'flex-start',
+            gap: 12,
+            flexWrap: 'wrap',
+          }}
+        >
+          <div style={{ flex: '1 1 480px', minWidth: 280 }}>
+            <h1 style={{ marginBottom: 8 }}>
+              {t('adminDashboard.title', 'Admin Configurable Knobs & Switches')}
+            </h1>
+            <p style={{ opacity: 0.85, fontSize: '0.95rem', lineHeight: 1.5 }}>
+              {t(
+                'adminDashboard.subtitle',
+                "Public read-only view of every governance-tunable protocol parameter. The current value, the contract's hard min/max, and the operational safe / mid / caution zones are surfaced here for transparency. Admin actions become available when an admin wallet connects.",
+              )}
+            </p>
+            <p style={{ marginTop: 12, fontSize: '0.9rem', opacity: 0.75 }}>
+              <Link to={docsPath} style={{ color: 'var(--brand)' }}>
+                {t('adminDashboard.docsLink', 'Read the Knobs & Switches reference →')}
+              </Link>
+            </p>
+          </div>
+          <AdminThemeToggle mode={themeMode} onToggle={onToggle} />
         </header>
+
+        {isAdminWallet && (
+          <div
+            style={{
+              border: '1px solid rgba(0,255,136,0.4)',
+              background: 'rgba(0,255,136,0.08)',
+              padding: '10px 14px',
+              borderRadius: 4,
+              fontSize: '0.85rem',
+              marginBottom: 16,
+              lineHeight: 1.5,
+            }}
+          >
+            <strong>Admin role detected.</strong> Each card has a "Propose"
+            button that composes the setter calldata and opens Safe with
+            the transaction pre-filled. <em>You sign in Safe</em> — Vaipakam
+            never signs on your behalf. Proposals also pass through the
+            timelock delay before they take effect on-chain.
+          </div>
+        )}
 
         {KNOB_CATEGORY_ORDER.map((cat) => {
           const knobs = grouped[cat] ?? [];
@@ -96,6 +174,9 @@ export default function AdminDashboard() {
                       }
                     }
                     docsBase={docsPath}
+                    canPropose={isAdminWallet}
+                    diamondAddress={readChain.diamondAddress ?? undefined}
+                    chainId={readChain.chainId}
                   />
                 ))}
               </div>
