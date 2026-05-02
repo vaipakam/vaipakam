@@ -20,7 +20,7 @@
  * the current value.
  */
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Link, Navigate, useLocation } from 'react-router-dom';
 import Navbar from '../components/Navbar';
@@ -38,6 +38,7 @@ import {
   readUrlConsoleTheme,
 } from '../lib/protocolConsoleTheme';
 import { useIsProtocolAdmin } from '../lib/useIsProtocolAdmin';
+import { useTheme } from '../context/ThemeContext';
 import { useReadChain } from '../contracts/useDiamond';
 import { useAdminKnobValues } from '../hooks/useAdminKnobValues';
 import { useTimelockPendingChanges } from '../hooks/useTimelockPendingChanges';
@@ -93,6 +94,43 @@ export default function AdminDashboard({ inApp = false }: Props = {}) {
     setThemeMode(isAdminWallet ? 'terminal' : 'public');
   }, [isAdminWallet, location.search]);
 
+  // Site-wide dark theme while mission-control view is engaged.
+  // Forces every page (Navbar, Footer, sidebar, in-app shell — every
+  // surface outside this component too) to render against dark CSS-
+  // variable tokens so the cockpit aesthetic flows seamlessly with
+  // its surroundings instead of looking like a dark island on a
+  // light page. Cleared on:
+  //   - mode toggle back to public view (effect re-runs with
+  //     themeMode === 'public', applies `null`)
+  //   - navigation away from the dashboard (effect cleanup runs and
+  //     applies `null`, restoring the user's pre-cockpit theme)
+  // The override is held in ThemeContext as a non-persistent state,
+  // so closing the browser tab mid-mission-control doesn't lock the
+  // user into dark on next visit.
+  const { setThemeOverride, themeOverridden } = useTheme();
+  useEffect(() => {
+    if (themeMode === 'terminal') {
+      setThemeOverride('dark');
+      return () => setThemeOverride(null);
+    }
+    setThemeOverride(null);
+  }, [themeMode, setThemeOverride]);
+
+  // If the site-theme button clears the override while we still
+  // think we're in terminal mode, follow it: flip the toggle pill
+  // (and the persisted preference) back to public so the in-page
+  // UI doesn't lie about which view is engaged. We track the prior
+  // override state in a ref so the initial mount — when the effect
+  // above hasn't engaged the override yet — doesn't trip this.
+  const wasOverridden = useRef(false);
+  useEffect(() => {
+    if (wasOverridden.current && !themeOverridden && themeMode === 'terminal') {
+      setThemeMode('public');
+      persistConsoleTheme('public');
+    }
+    wasOverridden.current = themeOverridden;
+  }, [themeOverridden, themeMode]);
+
   const onToggle = () => {
     setThemeMode((prev) => {
       const next: ProtocolConsoleThemeMode = prev === 'public' ? 'terminal' : 'public';
@@ -117,6 +155,14 @@ export default function AdminDashboard({ inApp = false }: Props = {}) {
       <main
         className="admin-dashboard-wrap"
         data-admin-theme={themeMode}
+        // First-paint robustness: stamp `data-theme="dark"` on the
+        // wrapper immediately while in terminal mode, in case the
+        // site-wide ThemeContext override (effect-based, runs after
+        // render) hasn't applied yet on the very first frame. Once
+        // the override engages it cascades to `<html>`, making this
+        // attribute redundant (but harmless — same value). Public
+        // view leaves it unset so the wrapper inherits site theme.
+        data-theme={themeMode === 'terminal' ? 'dark' : undefined}
         style={wrapStyle}
       >
         <header
