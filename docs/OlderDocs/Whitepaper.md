@@ -239,7 +239,7 @@ VPFI is the protocol-token layer. It does not replace the bilateral lending mode
 
 ### 9.1 Core Parameters
 
-- token name: `Vaipakam Finance Token`
+- token name: `Vaipakam DeFi Token`
 - symbol: `VPFI`
 - hard cap: `230,000,000`
 - initial mint: `23,000,000`

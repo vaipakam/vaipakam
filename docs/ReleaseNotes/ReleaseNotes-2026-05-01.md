@@ -23,14 +23,14 @@ to treasury, which is paid out to the third-party bot/relayer
 that submitted the match — was a hard-coded `100` BPS (1%) at
 the contract level. The original Phase 1 plan called the fee
 "economics revisit" a Phase 2 item with the explicit note:
-*"dial up to 5-10% of LIF if needed to attract community bot
-operators."* The constant made that revisit a contract upgrade.
+_"dial up to 5-10% of LIF if needed to attract community bot
+operators."_ The constant made that revisit a contract upgrade.
 
 Today's change moves it into governance config:
 
 - New `ProtocolConfig.lifMatcherFeeBps` (`uint16`) field. Default
   zero means "use the library default" (`LIF_MATCHER_FEE_BPS =
-  100`); any non-zero value overrides.
+100`); any non-zero value overrides.
 - New accessor `LibVaipakam.cfgLifMatcherFeeBps()` follows the
   same fallback shape as the dozen other governance-tuned BPS
   configs in the codebase (`cfgTreasuryFeeBps`,
@@ -106,7 +106,7 @@ PR ships with a fresh ABI re-export), both consumers were
 synced after the lifMatcherFeeBps change:
 
 - Keeper-bot: `bash contracts/script/exportAbis.sh
-  KEEPER_BOT_DIR=…` regenerated the four facet JSONs
+KEEPER_BOT_DIR=…` regenerated the four facet JSONs
   (`MetricsFacet`, `RiskFacet`, `LoanFacet`, `OfferFacet`) plus
   the `_source.json` provenance stamp pointing at
   `vaipakam@9e9683d`. Bot's `npm run typecheck` clean.
@@ -130,8 +130,8 @@ choice would land on the Health Factor or LTV curve until they
 hit submit, watched the on-chain `LoanFacet.initiateLoan`
 reject, and tried again. The dashboard's existing
 **Liquidation-price projection** card already does the exact
-right shape of work for an *active* loan; this change brings
-the same idea into the *creation* flow.
+right shape of work for an _active_ loan; this change brings
+the same idea into the _creation_ flow.
 
 What landed (Advanced mode only, ERC-20 / ERC-20 pairs only —
 NFT-rental loans don't have a meaningful HF):
@@ -144,7 +144,7 @@ NFT-rental loans don't have a meaningful HF):
   Factor and LTV for the user's typed amounts.
 - For a **Range Orders** offer (where the user has set a
   separate maximum amount above the minimum), the card renders
-  HF and LTV at *both* ends of the range — labelled "best" and
+  HF and LTV at _both_ ends of the range — labelled "best" and
   "worst" — so the user can see the worst-case position before
   publishing.
 - A clear amber warning fires when the worst-case HF dips
@@ -167,7 +167,7 @@ NFT-rental loans don't have a meaningful HF):
 - The card bails to a placeholder message while inputs are
   empty, and to a single-line "oracle unavailable" notice if a
   feed reverts — never to a broken `—` row. The on-chain HF
-  check is still authoritative; the preview is a *guide*, not
+  check is still authoritative; the preview is a _guide_, not
   a guarantee.
 
 The on-chain side of this is already correct (the HF gate at
@@ -272,10 +272,10 @@ reviewing them as one diff is cleaner than five micro-PRs:
    horizontally on small viewports. The CSS-only
    `[data-tooltip]` pseudo-element pattern can't escape that
    ancestor's clipping rectangle (CSS Level 2: `overflow-x:
-   auto` with `overflow-y: visible` resolves both axes to
+auto` with `overflow-y: visible` resolves both axes to
    `auto`), so a tooltip popping up off a table row was
    getting cropped or hidden entirely. A new `<HoverTip
-   text="…">` wrapper component (mirrors `<InfoTip>`'s portal
+text="…">` wrapper component (mirrors `<InfoTip>`'s portal
    trick — bubble rendered into `document.body` via
    `createPortal`, positioned with JS-computed coordinates
    relative to the viewport) is now used for the in-row
@@ -318,7 +318,7 @@ reviewing them as one diff is cleaner than five micro-PRs:
    detail page. The new Collateral column re-uses the same
    `<PrincipalCell>` renderer the Principal column uses, so
    ERC-20 amount + symbol, ERC-721 `NFT #N`, and ERC-1155 `Q
-   × NFT #N` all render consistently. The underlying
+× NFT #N` all render consistently. The underlying
    `LoanSummary` type and the `useUserLoans` hook were
    extended to surface `collateralAssetType` and
    `collateralTokenId` from the existing `getLoanDetails`
@@ -449,7 +449,7 @@ shipped a four-part fix:
    state.** Pre-connect, the page used to show a one-line
    "Connect your wallet to buy VPFI" empty state — wasted
    real estate. Now shows three short cards explaining the
-   *user-facing* pitch: tiered fee discount on lending and
+   _user-facing_ pitch: tiered fee discount on lending and
    borrowing (lender treasury cut reduced + borrower
    loan-initiation rebate), staking yield on whatever VPFI
    sits in your escrow, and a how-it-works summary. Crucially
@@ -497,7 +497,7 @@ or the sidebar:
   borders.
 - One **exception**: the Analytics page's `.pd-section`
   cards keep a subtle 165° `linear-gradient(--bg-card →
-  --bg-card-hover)` at user request. Analytics is sparser
+--bg-card-hover)` at user request. Analytics is sparser
   than the in-app dashboard so the directional shading
   there reads as depth rather than noise. In-app cards
   remain flat.
@@ -645,9 +645,9 @@ rounds of trim:
   journey log" / "Clear journey log" to "Download" /
   "Delete".
 - **Hint copy shortened** from a 4-sentence paragraph to one
-  line: *"A redacted log of recent steps to report. Wallet
+  line: _"A redacted log of recent steps to report. Wallet
   addresses are shortened to 0x…abcd; free-form error text
-  is not published."* Copy still asserts the redaction
+  is not published."_ Copy still asserts the redaction
   guarantee; just no narration of the support workflow.
 - **Mobile-compact CSS overrides** at viewports < 640 px
   reduce the drawer's padding, hint font size, action-button
@@ -688,7 +688,7 @@ genuine redundancies bloating the first-view tier:
 - **`Chain id`** and **`Tx hash`** lines removed from the
   first-level error-details block — both were already
   surfaced in the report header (`**Chain:** Base Sepolia
-  (chainId 84532)` is strictly more informative than the
+(chainId 84532)` is strictly more informative than the
   bare chainId).
 - **`Document language`** removed from the browser-env
   section — already in the header (`**Language:**`),
@@ -775,16 +775,16 @@ first-time visitor clicking "Learn about VPFI" actually
 gets a learn surface, not just three benefit cards. Three
 short paragraphs in plain language, no jargon:
 
-1. *VPFI is Vaipakam's protocol token — you can buy with
+1. _VPFI is Vaipakam's protocol token — you can buy with
    ETH, hold in your personal escrow, and use across the
-   platform. No lockup period, freely transferable.*
-2. *Holding VPFI ties you to the protocol's success in two
+   platform. No lockup period, freely transferable._
+2. _Holding VPFI ties you to the protocol's success in two
    practical ways: it earns you discounts on the fees
    Vaipakam charges (so you keep more of what you lend,
    and pay less when you borrow), and it earns staking
-   yield while it sits in your escrow.*
-3. *Anyone with ETH can buy and stake. The two benefit
-   cards below show exactly what holding VPFI gets you.*
+   yield while it sits in your escrow._
+3. _Anyone with ETH can buy and stake. The two benefit
+   cards below show exactly what holding VPFI gets you._
 
 ## Token classification standardized to "protocol token"
 
@@ -842,7 +842,7 @@ Single issue surfaced and fixed:
   (the Public Dashboard / Analytics page). Linguistically
   opaque — a user clicking "Smart Contracts" expects a
   contracts surface, not a dashboard. The Analytics page
-  does have a *Transparency & Source* section that lists
+  does have a _Transparency & Source_ section that lists
   every deployed contract address with explorer links, so
   the link target was right in spirit; just the user had
   to scroll to find it. Fix: added an `id="transparency"`
@@ -990,7 +990,7 @@ healthy in production.
 
 1. Apply the new D1 migration to the production worker:
    `cd ops/hf-watcher && npx wrangler d1 migrations apply
-   vaipakam-alerts-db --remote`
+vaipakam-alerts-db --remote`
 2. Deploy the worker: `npx wrangler deploy`
 3. Confirm `/diag/record` accepts a test POST from the
    frontend origin.
@@ -1005,6 +1005,7 @@ healthy in production.
 End-of-day audit batch (operator was resting). Three slices:
 
 **Test-suite baseline**:
+
 - Forge: **1388 passed / 0 failed / 5 skipped** across 66 suites
   (excluded `test/invariants/*` and `test/fork/*` per CLAUDE.md
   guidance). Clean.
@@ -1022,6 +1023,7 @@ from `SeedAnvilOffers`, paused = false). The 32 `contracts/script/*.s.sol`
 files were then audited statically against the current contract
 shape. 13 new findings logged as 00010–00022. Top 3 to
 prioritise:
+
 - 00010 (HIGH) — `WATCHER_ROLE` is never granted on a fresh
   `DeployDiamond` run; the auto-pause primitive is unreachable
   post-deploy until governance grants the role explicitly.
@@ -1046,6 +1048,7 @@ asymmetry on the receive-library config.
 The three canonical spec docs in `docs/FunctionalSpecs/` were
 cross-checked against the codebase. 8 new findings logged as
 00023–00030. Highlights:
+
 - 00024 (MEDIUM) — `getAssetRiskProfile` return-tuple shape
   diverges from what the spec advertises to external integrators
   (DefiLlama / portfolio apps) — different field order, missing
@@ -1058,7 +1061,7 @@ cross-checked against the codebase. 8 new findings logged as
   wBTC / retain) prescribed in TokenomicsTechSpec §9 has no
   on-chain implementation in TreasuryFacet.
 - 00023 (LOW) — VPFI on-chain `name()` is "Vaipakam DeFi Token"
-  but TokenomicsTechSpec mandates "Vaipakam Finance Token". The
+  but TokenomicsTechSpec mandates "Vaipakam DeFi Token". The
   two FunctionalSpecs disagree internally; deployed bytecode
   follows ProjectDetailsREADME. Decide which name is canonical.
 
@@ -1068,6 +1071,7 @@ on governance events, and a self-contradiction in the spec
 about borrower-LIF forfeiture splits.
 
 **Side-effect fixes shipped during the audit**:
+
 - Server-side error capture (yesterday's batch) flipped OFF by
   default via new `VITE_DIAG_RECORD_ENABLED` env var. The
   worker endpoint, D1 schema, and frontend POST hook all stay
@@ -1081,6 +1085,7 @@ about borrower-LIF forfeiture splits.
   ticked off — both already-fixed by today's earlier work.
 
 **What NOT done** (intentional — operator scoping required):
+
 - Test-coverage enhancement skipped. Each of the 22 new
   findings represents a potential test gap, but every one needs
   a scoping decision (which side is canonical when spec ↔ code
@@ -1278,7 +1283,7 @@ remain ungated even when the caller is sanctioned:
   borrower's collateral still gets routed to an unflagged lender.
 - HF-based liquidation initiated against a flagged borrower —
   the keeper / liquidator runs the path; the borrower's address
-  is the *target*, not the *caller*, so they can't block their
+  is the _target_, not the _caller_, so they can't block their
   own liquidation by being flagged.
 
 The asymmetric design rests on a clear legal foundation:
@@ -1304,8 +1309,8 @@ seized") and OFAC's standard "wind-down" provisions.
    `triggerLiquidation`. Collateral routes through the liquid
    swap path and lender recovers.
 5. Lender claims. **Caveat**: `claimAsLender` is currently a
-   Tier-1 gate. If the *lender* gets sanctioned, they can't claim;
-   if only the *borrower* is sanctioned, the lender claims
+   Tier-1 gate. If the _lender_ gets sanctioned, they can't claim;
+   if only the _borrower_ is sanctioned, the lender claims
    normally. This matches the underlying policy: a sanctioned
    actor cannot receive funds from the protocol, regardless of
    which side of the loan they were on.
@@ -1333,9 +1338,9 @@ seized") and OFAC's standard "wind-down" provisions.
   if a separate industrial deployment ever needs it" — sanctions
   intentionally absent because it's live.
 - ToS keeps ONE defensive bullet under "Prohibited use":
-  *"if your wallet address is listed under any sanctions
+  _"if your wallet address is listed under any sanctions
   programme in force in the United States, European Union, or
-  United Kingdom"*. Detailed wording stays out of marketing
+  United Kingdom"_. Detailed wording stays out of marketing
   surfaces.
 
 **Country-pair gated helper (industrial-fork preview):**
@@ -1603,6 +1608,7 @@ flow that's not worth the operational complexity for a
 one-shot bootstrap.
 
 What changed in the script:
+
 - Doc-comment block above the pre-flight check expanded to
   document the scope explicitly.
 - Pre-flight revert message now educates the operator
@@ -1751,7 +1757,7 @@ equivalents are intentionally NOT in the strict list because their
 gas tokens have no real value and the testnet rate is symbolic).
 
 **What's NOT validated on-chain — and why.** There's no on-chain
-registry that says "this is the *canonical* bridged WETH9 on chain
+registry that says "this is the _canonical_ bridged WETH9 on chain
 X." A determined operator (or an attacker at deploy time) could
 deploy a fake contract that returns the right decimals and bytecode
 shape. The defence against that is **operational**: the deploy
@@ -1916,7 +1922,7 @@ oracle setter. All pass.
 - Live fee read via `getNotificationFeeConfig()` instead of
   the hardcoded `$2` figure in the disclosure copy. Quick
   follow-up after the next ABI re-export — the contract surface
-  + ABI are ready, just need the `useReadContract` hook wiring.
+  - ABI are ready, just need the `useReadContract` hook wiring.
 
 **Verification**: forge build clean, full no-invariants regression
 green (15 new tests + no regressions), frontend tsc clean across
@@ -2021,7 +2027,7 @@ reasons evaporate on inspection:
 2. The "lender escrow may not exist yet" was the only legitimate
    reason for the two-step. Re-ordering — call
    `getOrCreateEscrow` FIRST, then `safeTransferFrom(borrower,
-   lenderEscrow, amount)` — addresses that with a single transfer.
+lenderEscrow, amount)` — addresses that with a single transfer.
 
 Sites refactored:
 
@@ -2032,7 +2038,7 @@ Sites refactored:
   offset (line ~756). All three now route the borrower's settle
   payment directly to the old lender's escrow.
 - `PrecloseFacet.sol` — rental-prepay split (line ~263). This was
-  an *escrow → Diamond → escrow* shape: borrower's prepay-asset
+  an _escrow → Diamond → escrow_ shape: borrower's prepay-asset
   withdrawn from their escrow, then forwarded to lender's escrow.
   Now uses `escrowWithdrawERC20`'s arbitrary-recipient parameter
   to route directly between the two escrows.
@@ -2070,9 +2076,9 @@ principal asset is now provably zero outside of the genuinely
 in-flight cases (LIF custody, liquidation-swap staging). Any
 future audit asking "where does the Diamond hold user funds" has
 a strictly shorter answer. The custody model becomes:
-*"Diamond holds VPFI for borrower-LIF custody (until terminal
+_"Diamond holds VPFI for borrower-LIF custody (until terminal
 split) and SWAP output during liquidation routing — and nothing
-else."* Cleaner principal-of-least-surprise.
+else."_ Cleaner principal-of-least-surprise.
 
 Already-direct sites verified during the audit and left as-is:
 

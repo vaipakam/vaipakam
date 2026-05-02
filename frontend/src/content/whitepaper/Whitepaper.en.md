@@ -248,25 +248,25 @@ loan initiation. Position NFTs are first-class economic objects:
 
 Key constants in `LibVaipakam.sol`:
 
-| Constant | Value | Meaning |
-|---|---:|---|
-| `MIN_HEALTH_FACTOR` | `1.5e18` | HF floor at loan initiation |
-| `HF_LIQUIDATION_THRESHOLD` | `1e18` | HF-based liquidation trigger |
-| `TREASURY_FEE_BPS` | `100` | `1%` Yield Fee on lender interest |
-| `LOAN_INITIATION_FEE_BPS` | `10` | `0.1%` Loan Initiation Fee |
-| `MAX_LIQUIDATION_SLIPPAGE_BPS` | `600` | `6%` slippage ceiling |
-| `MAX_LIQUIDATOR_INCENTIVE_BPS` | `300` | `3%` cap on liquidator bonus |
-| `LIQUIDATION_HANDLING_BPS` | `200` | `2%` treasury surcharge on liquidation |
-| `FALLBACK_LENDER_BONUS_BPS` | `300` | `3%` lender share in fallback |
-| `FALLBACK_TREASURY_BPS` | `200` | `2%` treasury share in fallback |
-| `RENTAL_BUFFER_BPS` | `500` | `5%` NFT rental prepayment buffer |
-| `VOLATILITY_LTV_THRESHOLD_BPS` | `11000` | `110%` LTV collapse trigger |
-| `VPFI_HARD_CAP` | `230_000_000e18` | Global VPFI supply cap |
-| `VPFI_INITIAL_MINT` | `23_000_000e18` | Genesis mint on Base |
-| `VPFI_INTERACTION_POOL_CAP` | `69_000_000e18` | Interaction-reward category cap |
-| `VPFI_STAKING_POOL_CAP` | `55_200_000e18` | Staking-reward category cap |
-| `VPFI_STAKING_APR_BPS` | `500` | `5%` escrow staking APR |
-| `INTERACTION_CAP_VPFI_PER_ETH` | `500` | `0.5 VPFI` per `0.001 ETH` of interest |
+| Constant                       |            Value | Meaning                                |
+| ------------------------------ | ---------------: | -------------------------------------- |
+| `MIN_HEALTH_FACTOR`            |         `1.5e18` | HF floor at loan initiation            |
+| `HF_LIQUIDATION_THRESHOLD`     |           `1e18` | HF-based liquidation trigger           |
+| `TREASURY_FEE_BPS`             |            `100` | `1%` Yield Fee on lender interest      |
+| `LOAN_INITIATION_FEE_BPS`      |             `10` | `0.1%` Loan Initiation Fee             |
+| `MAX_LIQUIDATION_SLIPPAGE_BPS` |            `600` | `6%` slippage ceiling                  |
+| `MAX_LIQUIDATOR_INCENTIVE_BPS` |            `300` | `3%` cap on liquidator bonus           |
+| `LIQUIDATION_HANDLING_BPS`     |            `200` | `2%` treasury surcharge on liquidation |
+| `FALLBACK_LENDER_BONUS_BPS`    |            `300` | `3%` lender share in fallback          |
+| `FALLBACK_TREASURY_BPS`        |            `200` | `2%` treasury share in fallback        |
+| `RENTAL_BUFFER_BPS`            |            `500` | `5%` NFT rental prepayment buffer      |
+| `VOLATILITY_LTV_THRESHOLD_BPS` |          `11000` | `110%` LTV collapse trigger            |
+| `VPFI_HARD_CAP`                | `230_000_000e18` | Global VPFI supply cap                 |
+| `VPFI_INITIAL_MINT`            |  `23_000_000e18` | Genesis mint on Base                   |
+| `VPFI_INTERACTION_POOL_CAP`    |  `69_000_000e18` | Interaction-reward category cap        |
+| `VPFI_STAKING_POOL_CAP`        |  `55_200_000e18` | Staking-reward category cap            |
+| `VPFI_STAKING_APR_BPS`         |            `500` | `5%` escrow staking APR                |
+| `INTERACTION_CAP_VPFI_PER_ETH` |            `500` | `0.5 VPFI` per `0.001 ETH` of interest |
 
 ### 3.6 Rounding Doctrine
 
@@ -348,13 +348,13 @@ Either side may create an offer:
 Loan durations: configurable from 1 day to 365 days. Grace periods auto-
 assigned by tier:
 
-| Duration | Grace |
-|---|---|
-| `< 1 week` | 1 hour |
-| `< 1 month` | 1 day |
-| `< 3 months` | 3 days |
-| `< 6 months` | 1 week |
-| `≤ 1 year` | 2 weeks |
+| Duration     | Grace   |
+| ------------ | ------- |
+| `< 1 week`   | 1 hour  |
+| `< 1 month`  | 1 day   |
+| `< 3 months` | 3 days  |
+| `< 6 months` | 1 week  |
+| `≤ 1 year`   | 2 weeks |
 
 A position NFT is minted to the creator at creation with status
 `OfferCreated`.
@@ -632,7 +632,7 @@ To support the swap-failover flow end-to-end:
 - The hf-watcher Worker can run an autonomous keeper mode that polls
   subscribed-user loans and submits permissionless `triggerLiquidation`
   when HF crosses 1.0. This mode is opt-in and requires worker secrets
-  + a funded keeper EOA per chain.
+  - a funded keeper EOA per chain.
 - A standalone public reference keeper bot lives in the sibling repo
   `vaipakam-keeper-bot`. MIT-licensed, Node.js / TypeScript,
   ABI-synced from the monorepo via `forge inspect <Facet> abi --json`.
@@ -775,7 +775,7 @@ withdrawal — those flows apply only to ERC-20 loans.
 Three options for borrower-initiated early closure:
 
 - **Option 1: Standard Early Repayment** — borrower pays `Principal +
-  full contractual interest for the original term`. Lender becomes
+full contractual interest for the original term`. Lender becomes
   entitled to principal + interest − Yield Fee; borrower reclaims
   collateral.
 - **Option 2: Loan Transfer to Another Borrower** — original borrower
@@ -851,16 +851,16 @@ profile remains unchanged.
 
 ### 11.1 Token Parameters
 
-| Parameter | Value |
-|---|---|
-| Name | `Vaipakam Finance Token` |
-| Symbol | `VPFI` |
-| Decimals | `18` |
-| Hard Cap | `230_000_000` |
-| Initial Mint | `23_000_000` (10% of cap) |
-| Canonical Chain | `Base` |
-| Standard | `LayerZero OFT V2` |
-| Mint Access | TreasuryFacet via timelock-controlled multi-sig |
+| Parameter       | Value                                           |
+| --------------- | ----------------------------------------------- |
+| Name            | `Vaipakam DeFi Token`                           |
+| Symbol          | `VPFI`                                          |
+| Decimals        | `18`                                            |
+| Hard Cap        | `230_000_000`                                   |
+| Initial Mint    | `23_000_000` (10% of cap)                       |
+| Canonical Chain | `Base`                                          |
+| Standard        | `LayerZero OFT V2`                              |
+| Mint Access     | TreasuryFacet via timelock-controlled multi-sig |
 
 The token is `ERC20CappedUpgradeable` (UUPS-upgradeable). The cap is
 enforced natively by the contract; mints flow only through an authorized
@@ -869,32 +869,32 @@ emergency brake.
 
 ### 11.2 Allocation
 
-| Category | % | Amount | Vesting |
-|---|---:|---:|---|
-| Founders | 6% | 13,800,000 | 12-mo cliff + 36-mo linear |
-| Developers & Team | 12% | 27,600,000 | Same as founders |
-| Testers & Early Contributors | 6% | 13,800,000 | 6–12 mo cliff |
-| Platform Admins | 3% | 6,900,000 | Timelock controlled |
-| Security Auditors | 2% | 4,600,000 | One-time on delivery |
-| Reserve | 1% | 2,300,000 | One-time |
-| Bug Bounty | 2% | 4,600,000 | Multi-sig locked |
-| Exchange / Market Making | 14% | 32,200,000 | 50% liquidity / 50% locked |
-| **Early Fixed-Rate Purchase** | 1% | 2,300,000 | Public sale at `1 VPFI = 0.001 ETH` |
-| **Platform Interaction Rewards** | 30% | 69,000,000 | Daily emission via 8-band schedule |
-| **Staking Rewards** | 24% | 55,200,000 | `5% APR` on escrow balances |
-| **Total** | **100%** | **230,000,000** | |
+| Category                         |        % |          Amount | Vesting                             |
+| -------------------------------- | -------: | --------------: | ----------------------------------- |
+| Founders                         |       6% |      13,800,000 | 12-mo cliff + 36-mo linear          |
+| Developers & Team                |      12% |      27,600,000 | Same as founders                    |
+| Testers & Early Contributors     |       6% |      13,800,000 | 6–12 mo cliff                       |
+| Platform Admins                  |       3% |       6,900,000 | Timelock controlled                 |
+| Security Auditors                |       2% |       4,600,000 | One-time on delivery                |
+| Reserve                          |       1% |       2,300,000 | One-time                            |
+| Bug Bounty                       |       2% |       4,600,000 | Multi-sig locked                    |
+| Exchange / Market Making         |      14% |      32,200,000 | 50% liquidity / 50% locked          |
+| **Early Fixed-Rate Purchase**    |       1% |       2,300,000 | Public sale at `1 VPFI = 0.001 ETH` |
+| **Platform Interaction Rewards** |      30% |      69,000,000 | Daily emission via 8-band schedule  |
+| **Staking Rewards**              |      24% |      55,200,000 | `5% APR` on escrow balances         |
+| **Total**                        | **100%** | **230,000,000** |                                     |
 
 ### 11.3 Fee Discount Tiers
 
 Both lender and borrower discounts use the same chain-local tier table,
 keyed on **escrowed VPFI balance on the relevant lending chain**:
 
-| Tier | Escrowed VPFI | Discount | Lender Effective Yield Fee | Borrower Effective LIF |
-|---|---|---:|---:|---:|
-| 1 | `≥ 100` and `< 1,000` | `10%` | `0.9%` | `0.09%` |
-| 2 | `≥ 1,000` and `< 5,000` | `15%` | `0.85%` | `0.085%` |
-| 3 | `≥ 5,000` and `≤ 20,000` | `20%` | `0.8%` | `0.08%` |
-| 4 | `> 20,000` | `24%` | `0.76%` | `0.076%` |
+| Tier | Escrowed VPFI            | Discount | Lender Effective Yield Fee | Borrower Effective LIF |
+| ---- | ------------------------ | -------: | -------------------------: | ---------------------: |
+| 1    | `≥ 100` and `< 1,000`    |    `10%` |                     `0.9%` |                `0.09%` |
+| 2    | `≥ 1,000` and `< 5,000`  |    `15%` |                    `0.85%` |               `0.085%` |
+| 3    | `≥ 5,000` and `≤ 20,000` |    `20%` |                     `0.8%` |                `0.08%` |
+| 4    | `> 20,000`               |    `24%` |                    `0.76%` |               `0.076%` |
 
 Tier resolution is **chain-local**: VPFI in escrow on `Base` does not
 discount loans initiated on `Optimism`. Users opt in via a single
@@ -1024,16 +1024,16 @@ moving VPFI from escrow back to wallet on the same chain. No lock-up.
 A `30%` allocation (`69,000,000 VPFI`) funds usage-based rewards. The
 emission schedule is front-loaded in 8 bands:
 
-| Period | Annual Rate | Daily Pool (approx.) |
-|---|---:|---:|
-| Months 0–6 | 32% | ~20,164 VPFI |
-| Months 7–18 | 29% | ~18,274 VPFI |
-| Months 19–30 | 24% | ~15,123 VPFI |
-| Months 31–42 | 20% | ~12,603 VPFI |
-| Months 43–54 | 15% | ~9,452 VPFI |
-| Months 55–66 | 10% | ~6,301 VPFI |
-| Months 67–78 | 5% | ~3,151 VPFI |
-| Month 79+ | 5% | ~3,151 VPFI (until cap) |
+| Period       | Annual Rate |    Daily Pool (approx.) |
+| ------------ | ----------: | ----------------------: |
+| Months 0–6   |         32% |            ~20,164 VPFI |
+| Months 7–18  |         29% |            ~18,274 VPFI |
+| Months 19–30 |         24% |            ~15,123 VPFI |
+| Months 31–42 |         20% |            ~12,603 VPFI |
+| Months 43–54 |         15% |             ~9,452 VPFI |
+| Months 55–66 |         10% |             ~6,301 VPFI |
+| Months 67–78 |          5% |             ~3,151 VPFI |
+| Month 79+    |          5% | ~3,151 VPFI (until cap) |
 
 Daily pool split:
 

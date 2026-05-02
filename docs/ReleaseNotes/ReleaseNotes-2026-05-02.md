@@ -31,7 +31,7 @@ eventual merge, today's batch pulls those six commits in.
   `setBuyOptions` call. The fix encodes a default Type-3 LayerZero
   payload inline at deploy via
   `OptionsBuilder.addExecutorLzReceiveOption(LZ_RECEIVE_GAS,
-  LZ_RECEIVE_VALUE)` so the adapter is buyable end-to-end without
+LZ_RECEIVE_VALUE)` so the adapter is buyable end-to-end without
   the follow-up step. Default gas budget 200,000; tunable per chain
   via env. Frontend gained a `journeyLog` hook around the
   bridged-buy `quoteFee` call so a `quoteBuy` revert now lands in
@@ -54,17 +54,17 @@ eventual merge, today's batch pulls those six commits in.
   same content shipped under `frontend/src/content/whitepaper/`
   is the repo's top-level README so anyone landing on the public
   GitHub gets the protocol overview directly without hunting.
-- `9eb4784` — `docs/ProjectDetailsREADME.md` added — the
+- `9eb4784` — `docs/FunctionalSpecs/ProjectDetailsREADME.md` added — the
   internal/operator-facing companion to the public whitepaper.
 
 **Conflicts hand-resolved during the merge:**
 
-| File | Resolution |
-|---|---|
-| `.claude/scheduled_tasks.lock` | Accepted main's deletion (lock file, no value) |
-| `.claude/settings.json` | Accepted main's deletion |
-| `.gitignore` | Both branches' additions kept — `.claude/` block (from main) sits alongside the `docs/internal/RoughNotes.md` operator-scratchpad rule (from feat) |
-| `README.md` | Replaced with the verbatim contents of `frontend/src/content/whitepaper/Whitepaper.en.md` per operator direction — the whitepaper IS the README, single source of truth |
+| File                                          | Resolution                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| --------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `.claude/scheduled_tasks.lock`                | Accepted main's deletion (lock file, no value)                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| `.claude/settings.json`                       | Accepted main's deletion                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| `.gitignore`                                  | Both branches' additions kept — `.claude/` block (from main) sits alongside the `docs/internal/RoughNotes.md` operator-scratchpad rule (from feat)                                                                                                                                                                                                                                                                                                                 |
+| `README.md`                                   | Replaced with the verbatim contents of `frontend/src/content/whitepaper/Whitepaper.en.md` per operator direction — the whitepaper IS the README, single source of truth                                                                                                                                                                                                                                                                                            |
 | `contracts/script/DeployVPFIBuyAdapter.s.sol` | **Both branches' additions combined.** Main contributed the `OptionsBuilder` import + `_defaultBuyOptions()` helper + the inline buy-options encoding at deploy time. Feat contributed the `_chainRequiresWethPaymentToken()` pre-flight gate (T-036, mainnet WETH-pull mode enforcement on BNB / Polygon). Both functions coexist; the deploy flow now does the WETH-pull pre-flight first, then encodes default buyOptions if the env is unset, then broadcasts. |
 
 **Auto-merged with no conflict markers** but worth noting:
@@ -105,7 +105,7 @@ chain" did not exist.
 **Layer 2 — buy-flow VPFI now routes through the source-chain
 adapter via OFT compose.** The receiver no longer OFT-sends VPFI
 directly to the buyer's wallet — it sends to the source-chain
-*adapter contract* with the LayerZero V2 OFT-compose feature, where
+_adapter contract_ with the LayerZero V2 OFT-compose feature, where
 the compose payload carries `(uint64 requestId)`. The adapter's new
 `lzCompose` handler then cross-checks `pendingBuys[requestId].buyer`
 — set by the actual ETH-paying `buy()` call's `msg.sender`, the only
@@ -204,6 +204,7 @@ class as every OFT-class token (USDC's CCTP, etc.) and watchdog
 reconciliation can be extended to monitor it as a follow-up.
 
 **Verification:**
+
 - 9 new targeted tests in
   [`contracts/test/token/VPFIBuyAdapterComposeTest.t.sol`](../../contracts/test/token/VPFIBuyAdapterComposeTest.t.sol)
   cover happy path, forged-stuck, replay, three auth gates
@@ -216,6 +217,7 @@ reconciliation can be extended to monitor it as a follow-up.
   `ops/hf-watcher/`.
 
 **Operational notes for the redeploy:**
+
 1. Add `setBuyAdapter(eid, adapterAddress)` calls to the receiver's
    post-deploy script for every source chain in the mesh — without
    this, BUY_REQUESTs from that chain refund instead of settling.
@@ -258,7 +260,7 @@ representation into Chainlink's decimal scale, and:
   `pythMaxStalenessSeconds`, the `conf / price` ratio exceeds
   `pythConfidenceMaxBps`, or the price is non-positive.
 - Reverts `OracleNumeraireDivergence(chainlinkPrice, pythPrice,
-  deviationBps, maxDeviationBps)` when the cross-oracle delta
+deviationBps, maxDeviationBps)` when the cross-oracle delta
   exceeds `pythNumeraireMaxDeviationBps`. Fail-closed by design — a
   numeraire reading the protocol can't agree on between two
   independent oracles is a strong signal that one of them is
@@ -270,13 +272,13 @@ the new `OracleAdminFacet` surface is range-bounded so a compromised
 admin or governance multisig cannot push it outside the policy
 window without a contract upgrade:
 
-| Knob | Range | Default |
-|---|---|---|
-| `pythOracle` (address) | non-zero contract / zero=disabled | unset |
-| `pythNumeraireFeedId` (bytes32) | any non-zero / zero=disabled | unset |
-| `pythMaxStalenessSeconds` | [60, 3600] | 300 |
-| `pythNumeraireMaxDeviationBps` | [100, 2000] (1% – 20%) | 500 |
-| `pythConfidenceMaxBps` | [50, 500] (0.5% – 5%) | 100 |
+| Knob                            | Range                             | Default |
+| ------------------------------- | --------------------------------- | ------- |
+| `pythOracle` (address)          | non-zero contract / zero=disabled | unset   |
+| `pythNumeraireFeedId` (bytes32) | any non-zero / zero=disabled      | unset   |
+| `pythMaxStalenessSeconds`       | [60, 3600]                        | 300     |
+| `pythNumeraireMaxDeviationBps`  | [100, 2000] (1% – 20%)            | 500     |
+| `pythConfidenceMaxBps`          | [50, 500] (0.5% – 5%)             | 100     |
 
 Out-of-range writes revert with the new shared
 `ParameterOutOfRange(bytes32 name, uint256 value, uint256 min,
@@ -290,17 +292,17 @@ parameter was audited and re-bounded where the prior guards were
 weak or missing. Same `ParameterOutOfRange` error used throughout.
 Specific changes:
 
-| Setter | Prior bound | New bound | Reason |
-|---|---|---|---|
-| `setSecondaryOracleMaxDeviationBps` | (0, 9999) | [100, 2000] | Prior window was so wide it allowed degenerate settings (1bps DoS-fail-closes; 9999 disables the gate). Tightened to the same 1%-20% policy as Pyth. |
-| `setSecondaryOracleMaxStaleness` | only `!= 0` | [60, 29h] | Prior had no upper — could be set arbitrarily high. 29h leaves 5h buffer above the 24h heartbeat that USDC / USDT Chainlink feeds publish on; tighter would soft-skip those legitimate feeds. |
-| `setRewardGraceSeconds` | unbounded | [5min, 30 days] | Prior had no bounds. Floor stops "instant grace" misconfig; ceiling stops "indefinite grace" defeating the purpose. |
-| `setInteractionCapVpfiPerEth` | unbounded | [1, 1M] | Prior had no bounds. Documented sentinels (`0` = reset to library default; `type(uint256).max` = emergency disable cap) preserved as escape paths. |
-| `setStakingApr` | ≤ 100% | ≤ 20% | Prior allowed nonsensically-high APRs. 20% is generous for VPFI staking; above is governance-error vector. |
-| `updateRiskParams.maxLtvBps` | (0, 10000] | [10%, 100%] | Prior `> 0` allowed `1`-bp setting that effectively disables borrowing for the asset. Floor of 10% is the credible minimum. |
-| `updateRiskParams.liqThresholdBps` | (maxLtv, 10000] | [15%, 100%] AND > maxLtv | Same logic — added absolute floor on top of the existing relative-to-maxLtv constraint. |
-| `updateRiskParams.reserveFactorBps` | ≤ 100% | ≤ 50% | Prior allowed `100% reserveFactor` = lender receives zero interest, defeats lending product. |
-| `updateKYCThresholds` (tier0, tier1) | tier0 < tier1 only | each in [$100, $1M] | Belt-and-suspenders on retail (KYC OFF there); load-bearing on industrial fork. |
+| Setter                               | Prior bound        | New bound                | Reason                                                                                                                                                                                        |
+| ------------------------------------ | ------------------ | ------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `setSecondaryOracleMaxDeviationBps`  | (0, 9999)          | [100, 2000]              | Prior window was so wide it allowed degenerate settings (1bps DoS-fail-closes; 9999 disables the gate). Tightened to the same 1%-20% policy as Pyth.                                          |
+| `setSecondaryOracleMaxStaleness`     | only `!= 0`        | [60, 29h]                | Prior had no upper — could be set arbitrarily high. 29h leaves 5h buffer above the 24h heartbeat that USDC / USDT Chainlink feeds publish on; tighter would soft-skip those legitimate feeds. |
+| `setRewardGraceSeconds`              | unbounded          | [5min, 30 days]          | Prior had no bounds. Floor stops "instant grace" misconfig; ceiling stops "indefinite grace" defeating the purpose.                                                                           |
+| `setInteractionCapVpfiPerEth`        | unbounded          | [1, 1M]                  | Prior had no bounds. Documented sentinels (`0` = reset to library default; `type(uint256).max` = emergency disable cap) preserved as escape paths.                                            |
+| `setStakingApr`                      | ≤ 100%             | ≤ 20%                    | Prior allowed nonsensically-high APRs. 20% is generous for VPFI staking; above is governance-error vector.                                                                                    |
+| `updateRiskParams.maxLtvBps`         | (0, 10000]         | [10%, 100%]              | Prior `> 0` allowed `1`-bp setting that effectively disables borrowing for the asset. Floor of 10% is the credible minimum.                                                                   |
+| `updateRiskParams.liqThresholdBps`   | (maxLtv, 10000]    | [15%, 100%] AND > maxLtv | Same logic — added absolute floor on top of the existing relative-to-maxLtv constraint.                                                                                                       |
+| `updateRiskParams.reserveFactorBps`  | ≤ 100%             | ≤ 50%                    | Prior allowed `100% reserveFactor` = lender receives zero interest, defeats lending product.                                                                                                  |
+| `updateKYCThresholds` (tier0, tier1) | tier0 < tier1 only | each in [$100, $1M]      | Belt-and-suspenders on retail (KYC OFF there); load-bearing on industrial fork.                                                                                                               |
 
 Most of these were tightenings of "loose-but-not-missing" bounds.
 The truly-unbounded ones (`setRewardGraceSeconds`,
@@ -316,6 +318,7 @@ references the constants alongside their declarations in
 `LibVaipakam.sol` so the source of truth is always one click away.
 
 **Verification:**
+
 - New `contracts/test/OracleNumeraireGuardTest.t.sol` — **10/10 green**.
   Below-floor + above-ceiling rejections on each of the three
   bounded Pyth setters; in-range happy writes; boundary-exact
@@ -344,13 +347,15 @@ day if they prefer.
 ## Notes for follow-up
 
 The feat branch is now ~59 commits ahead of main (53 pre-existing
-+ 1 T-037 + 1 merge commit + the 6 inherited from main, minus
-overlaps). The eventual feat → main merge at the end of Range
-Orders Phase 1 should be straightforward — most of the
-recent-trunk-vs-feat conflict surface was DeployVPFIBuyAdapter,
-which today's merge already reconciled.
+
+- 1 T-037 + 1 merge commit + the 6 inherited from main, minus
+  overlaps). The eventual feat → main merge at the end of Range
+  Orders Phase 1 should be straightforward — most of the
+  recent-trunk-vs-feat conflict surface was DeployVPFIBuyAdapter,
+  which today's merge already reconciled.
 
 **T-031 follow-ups deferred** (when volume justifies):
+
 - **Layer 4a auto-pause** — wire a constrained pauser-multisig key
   into the watchdog so mismatch detection can preemptively call
   `receiver.pause()` instead of relying on the operator to act on
@@ -458,6 +463,7 @@ so a freshly created offer surfaces within seconds of the
 matching tx confirming.
 
 Out of scope for this drop, deferred to follow-ups:
+
 - Phase C — NFT lifecycle table (current-owner-by-tokenId for the
   position NFT). Smaller surface, separate state cache; today's
   NftVerifier hits the chain directly with `ownerOf`, which is
@@ -489,6 +495,7 @@ needed — `chain_id` PK already keys every table).
 `components/app/IndexerStatusBadge.tsx` renders inline next to
 every page title that reads cached data — OfferBook, Activity,
 Dashboard, ClaimCenter, LoanDetails, BuyVPFI. Two states:
+
 - **Cached** (worker reachable): green pill showing
   "Indexed 2 min ago" with a Rescan button. Ticks once per minute
   in-place. Click Rescan to force a per-browser on-chain scan
@@ -601,7 +608,7 @@ deliberately exempt:
   the kind of mis-render that erodes trust on the surface where
   trust matters most. ClaimCenter stays on `useClaimables` —
   every page load, every browser, fresh `getClaimable(loanId,
-  isLender)` reads against the chain. The indexer's
+isLender)` reads against the chain. The indexer's
   `/claimables/:addr` endpoint exists and is correct (it tells
   CALLERS which loans have open claims, ownership-filtered via
   live `ownerOf`); ClaimCenter just doesn't consume it because
@@ -625,7 +632,7 @@ verify-on-chain escape hatches; low-volume per-user history
 stays as direct filtered scans.
 
 **Why no Durable Objects / WebSocket push.** The cron-tick
-staleness window only matters for *cold-load* freshness. Once a
+staleness window only matters for _cold-load_ freshness. Once a
 user is on a page, `useLogIndex.watchContractEvent` already
 debounces 750 ms after relevant events fire and triggers an
 incremental rescan from `lastBlock+1` — sub-second user-perceived
@@ -693,6 +700,7 @@ behaviour exactly; the 6th bucket is new per the task.
 
 **Setter validation.** `setGraceBuckets(GraceBucket[])` is
 `ADMIN_ROLE`-gated and rejects:
+
 - Wrong array length (`wrong-count`).
 - Slot 5 with a non-zero `maxDurationDays` (`catchall-not-zero`).
 - Out-of-bound `maxDurationDays` per slot
@@ -736,6 +744,133 @@ to cut the 5 new ConfigFacet methods.
 `pages/AdminDashboard.tsx`. Docs:
 `docs/ops/AdminConfigurableKnobsAndSwitches.md` (with sync to
 `frontend/src/content/admin/AdminConfigurableKnobsAndSwitches.en.md`).
+
+## T-034 — periodic interest payment (planning + design phase)
+
+Background: today, every loan accrues interest continuously and the
+borrower can either pay early at any time or pay everything at
+maturity / preclose / refinance. For long-duration loans (multi-
+year) and large-principal loans, that creates two problems: (a) the
+lender carries unsettled interest exposure for the entire loan, and
+(b) a borrower can quietly let interest pile up and silently default
+at the end. T-034 adds a periodic interest payment mechanic.
+
+Two pieces in one feature:
+
+1. **Mandatory annual minimum for loans longer than one year.** The
+   borrower must have paid at least the full year's accrued interest
+   by each yearly checkpoint. If the cumulative interest paid for the
+   year falls short, the existing duration-tiered grace window kicks
+   in (reusing the schedule landed under T-044 — no new schedule);
+   once grace expires, anyone can call a permissionless settler that
+   sells just enough collateral to cover the shortfall. The settler
+   earns a small bonus paid from the collateral swap so gas economics
+   are positive.
+
+2. **Lender-chosen finer cadence at offer creation, advanced mode.**
+   The lender can additionally opt the loan into a tighter cadence —
+   monthly, quarterly, or semi-annual — during offer creation, gated
+   behind a "principal must exceed an admin-configurable threshold"
+   check (so small borrowers don't get burdened with monthly
+   settlements they don't economically need). The chosen cadence is
+   shown prominently to the borrower at offer acceptance with the
+   consequences of missing a period spelled out. Cadence is captured
+   as an enum (None / Monthly / Quarterly / SemiAnnual / Annual) at
+   offer creation, snapshotted onto the loan at acceptance, and
+   immutable for the loan's lifetime. Each cadence interval reuses
+   the matching tier of the existing grace schedule — monthly maps
+   to slot 1, quarterly to slot 2, semi-annual to slot 3, annual to
+   slot 4. No new grace knob.
+
+**Watcher integration.** The hf-watcher cron lane that already
+pre-notifies borrowers + lenders before loan maturity gets extended
+to also fire before each periodic-interest checkpoint. The
+pre-notify lead becomes a single configurable knob — "pre-notify
+days," range-bounded, surfaced in the protocol console — shared
+between the maturity lane and the new periodic lane. After a
+checkpoint resolves (either the borrower paid the shortfall in time,
+or the auto-settler sold collateral to cover it), the lender gets a
+follow-up push so they know the period's interest has landed or
+that a partial liquidation has happened on their loan.
+
+**Front-end.** Offer creation gains a "Payment cadence" dropdown
+under the existing Advanced toggle (None / Monthly / Quarterly /
+Semi-annual / Annual). Visible only when the principal value
+exceeds the configured threshold, with an explainer card linking to
+the runbook. Offer acceptance surfaces the cadence prominently with
+the missed-payment consequence callout. Loan detail page shows a
+"Next interest checkpoint in N days" countdown with the expected
+interest amount and a one-tap "Pay now" button. Multi-year loans
+without any explicit cadence still see the mandatory-annual note.
+
+**Liquid-both precondition.** The mechanic applies ONLY when both
+the lending asset AND the collateral asset are liquid (Chainlink-
+priced, AMM-swappable). If either side is illiquid the cadence
+section is removed from the offer-creation form entirely (no
+disabled control, no greyed dropdown — the UI element is absent),
+and the contract reverts on any non-`None` cadence. Multi-year
+illiquid loans do NOT get the mandatory annual floor — the
+protocol cannot enforce it without an auto-liquidate path, and
+the lender accepts that trade-off via the existing illiquid-asset
+consent flow. Defense-in-depth on both surfaces.
+
+**Numeraire abstraction.** The principal threshold for finer
+cadences is denominated in a configurable numeraire (USD by
+default; future swap to EUR / JPY / XAU possible without a contract
+upgrade). Single batched setter `setNumeraire(newOracle,
+newThresholdInNewNumeraire)` is the only path to change the
+numeraire — guarantees by construction that the numeraire and the
+threshold value flip atomically, so no inconsistent intermediate
+state is reachable. Threshold-only updates within the same
+numeraire use a separate `setMinPrincipalForFinerCadence` setter.
+Future ticket sweeps other USD-denominated knobs (KYC tiers,
+fallback splits, etc.) onto the same atomic-setter pattern when
+there is a real swap on the table.
+
+**Settler / treasury split.** Reuses the existing liquidation
+policy from `docs/FunctionalSpecs/ProjectDetailsREADME.md`
+§"Equivalent Collateral Transfer for Liquid Asset during Abnormal
+Periods" — settler bonus is `max(0, slippageCap -
+realizedSlippage)`, capped at 3% of proceeds; treasury share is a
+flat 2%; lender gets the rest (≥95% of proceeds in normal swaps).
+No new BPS knobs in T-034; the existing 6% slippage cap is the
+single lever governing both this AND the existing HF / time-based
+liquidation paths.
+
+**Interest-first repay allocation.** `repayPartial(loanId, amount)`
+allocates the borrower's payment interest-first: accrued interest
+for the current period gets covered before any of the payment
+reduces principal. Period checkpoint advances inline if the
+interest portion closed the period's expected total AND the
+period's end timestamp has passed. Borrower sees the breakdown in
+THREE layers: a `previewRepayPartial` view re-runs at every
+keystroke (confirmation screen shows "Of your $100, $40 covers
+this quarter's accrued interest, $60 reduces principal" before
+signing), a detailed `RepayPartialApplied` event records the split
+post-tx, and post-tx state reads carry the canonical truth. Behavior
+change for borrowers used to today's allocation rule — flagged in
+the front-end help copy.
+
+**Master kill-switch.** New `periodicInterestEnabled` flag in
+storage, default `false`, `ADMIN_ROLE` setter (later governance).
+Gates the entire feature: blocks `createOffer` from accepting non-
+`None` cadence, blocks `settlePeriodicInterest`, blocks the
+`repayPartial` interest-first fold + inline checkpoint advance,
+and the frontend hides every cadence-related UI surface. Feature
+ships dormant; activated by a single governance flip when ready.
+Surfaces in the Protocol Console under a new "Feature flags"
+category. Companion flag `numeraireSwapEnabled` (default `false`)
+independently gates the cross-numeraire batched setter so USD-as-
+numeraire stays the only reachable behaviour until a real
+numeraire swap is on the table.
+
+**Status:** design-phase **locked**. The full design — storage
+shape, validation matrix, watcher event contract, three-PR
+implementation plan — sits in
+[`docs/DesignsAndPlans/PeriodicInterestPaymentDesign.md`](../DesignsAndPlans/PeriodicInterestPaymentDesign.md).
+PR sequencing follows after Range Orders Phase 1 ships. This
+release-notes entry will be extended after each implementation
+PR lands.
 
 ## T-047 — top-bar indexer status badge with plain-English info popover
 
