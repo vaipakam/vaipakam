@@ -132,11 +132,13 @@ export default function AppLayout() {
   const activeLocale: SupportedLocale = isSupportedLocale(i18n.resolvedLanguage)
     ? i18n.resolvedLanguage
     : "en";
-  // Locale-aware home URL — `/` for English, `/<locale>` otherwise.
-  // Used by the sidebar brand link so clicking the logo from inside
-  // the app on /es/app/dashboard goes to /es (Spanish landing page)
-  // not / (English landing page).
-  const homePath = withLocalePrefix("/", activeLocale);
+  // Locale-aware in-app dashboard URL. Clicking the logo from anywhere
+  // inside the app routes to the dashboard root (locale-prefixed when
+  // not English) — staying inside the app shell rather than dropping
+  // back out to the marketing landing page, which surprised users
+  // returning to the dashboard from a deep route like
+  // /app/loans/:id.
+  const homePath = withLocalePrefix("/app", activeLocale);
   const { theme, toggleTheme } = useTheme();
   const { mode, setMode } = useMode();
   const { address, isCorrectChain, switchToDefaultChain, error, warning } =
