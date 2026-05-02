@@ -20,6 +20,9 @@ import { DEFAULT_CHAIN } from '../contracts/config';
 import { beginStep, emit } from '../lib/journeyLog';
 import { decodeContractError, extractRevertSelector } from '../lib/decodeContractError';
 import { useLogIndex } from '../hooks/useLogIndex';
+import { useIndexedActiveOffers } from '../hooks/useIndexedActiveOffers';
+import { indexedToRawOffer } from '../lib/indexerClient';
+import { IndexerStatusBadge } from '../components/app/IndexerStatusBadge';
 import { useProtocolConfig, type ProtocolConfig } from '../hooks/useProtocolConfig';
 import { AssetSymbol } from '../components/app/AssetSymbol';
 import { AssetPicker } from '../components/app/AssetPicker';
@@ -178,6 +181,14 @@ export default function OfferBook() {
   // user's reads are actually hitting, instead of hard-coding DEFAULT_CHAIN.
   const activeReadChain = useReadChain();
   const { openOfferIds, closedOfferIds, recentAcceptedOfferIds, events: indexEvents, loading: indexLoading, reload: reloadIndex } = useLogIndex();
+  // T-041 Phase 1+2 — try the worker-cached active-offers list first.
+  // When `source === 'indexer'`, the OPEN view consumes the indexer's
+  // pre-fetched rows directly via the effect below, skipping the per-
+  // id `getOfferDetails` pagination. When `source === 'fallback'`
+  // (worker down / 5xx / VITE_HF_WATCHER_ORIGIN unset) the existing
+  // log-scan path runs unchanged. The Closed view always takes the
+  // on-chain path — closed-offer rendering isn't a Phase 1 priority.
+  const { offers: indexedOffers, source: indexedSource } = useIndexedActiveOffers();
   // Map<offerId, loanId> derived from `OfferAccepted` events in the
   // log-index. Each accepted offer's event carries its resulting loanId,
   // so we can render an inline `Loan #N →` link next to the Filled pill
@@ -351,15 +362,37 @@ export default function OfferBook() {
     }
   }, [sortedIds, fetchBatch]);
 
-  // Initial bounded fetch + refetch when the open set changes.
+  // T-041 Phase 1+2 — indexer-served path for the OPEN view. When the
+  // worker returned a fresh page, populate `offers` directly from the
+  // pre-fetched rows and skip the on-chain pagination effect below.
+  // Each indexer row is mapped through the same `toOfferData` mapper
+  // used for direct on-chain reads so downstream rendering is shape-
+  // identical regardless of source. Filters that drop a row from the
+  // RPC path (zero-creator from canceled offers; accepted-status
+  // mismatch) don't apply here because the indexer already filtered
+  // by `status = 'active'` server-side.
+  const indexerServingOpen =
+    statusView === 'open' && indexedSource === 'indexer' && indexedOffers !== null;
   useEffect(() => {
+    if (!indexerServingOpen) return;
+    const mapped = (indexedOffers ?? []).map((o) => toOfferData(indexedToRawOffer(o)));
+    setOffers(mapped);
+    setCursor(mapped.length);
+    for (const o of mapped) loadedIdsRef.current.add(o.id.toString());
+  }, [indexerServingOpen, indexedOffers]);
+
+  // Initial bounded fetch + refetch when the open set changes. Skipped
+  // when the indexer path above is serving — but still runs for the
+  // CLOSED view and for the OPEN view in fallback mode.
+  useEffect(() => {
+    if (indexerServingOpen) return;
     if (indexLoading) return;
     if (sortedIds.length === 0) {
       setOffers([]);
       return;
     }
     loadWindow(0, WINDOW_SIZE);
-  }, [indexLoading, sortedIds, loadWindow]);
+  }, [indexerServingOpen, indexLoading, sortedIds, loadWindow]);
 
   // Count-only validator: multicall `getOffer` across the given ID set and
   // apply the same filters as `fetchBatch` (skip zero-creator / accepted-
@@ -798,7 +831,10 @@ export default function OfferBook() {
     <div>
       <div className="page-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: 12 }}>
         <div>
-          <h1 className="page-title">{t('appNav.offerBook')}</h1>
+          <h1 className="page-title" style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+            {t('appNav.offerBook')}
+            <IndexerStatusBadge onRescan={reloadIndex} />
+          </h1>
           <p className="page-subtitle">
             {statusView === 'open' ? (
               <>

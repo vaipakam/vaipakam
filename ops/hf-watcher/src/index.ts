@@ -9,6 +9,7 @@
 import type { Env } from './env';
 import { runWatcher } from './watcher';
 import { runBuyWatchdog } from './buyWatchdog';
+import { runChainIndexer } from './chainIndexer';
 import {
   consumeTelegramLinkCode,
   issueTelegramLinkCode,
@@ -25,6 +26,21 @@ import {
   handleActiveLoansFramePost,
   handleActiveLoansFrameImage,
 } from './frames';
+import {
+  handleOffersStats,
+  handleOffersActive,
+  handleOfferById,
+  handleOffersByCreator,
+  handleOffersPreflight,
+} from './offerRoutes';
+import {
+  handleLoansActive,
+  handleLoanById,
+  handleLoansByParticipant,
+  handleActivity,
+  handleClaimables,
+  handleLoansPreflight,
+} from './loanRoutes';
 
 export default {
   async scheduled(
@@ -52,10 +68,89 @@ export default {
         console.error('[buyWatchdog] pass failed:', err);
       }),
     );
+    // T-041 — unified chain indexer. ONE event scan per tick,
+    // dispatched to per-domain handlers (offers in Phase A; loans /
+    // activity / VPFI / NFT lifecycle in subsequent phases). Same
+    // isolation policy as the other passes: a failure here must not
+    // wedge the HF watcher.
+    ctx.waitUntil(
+      runChainIndexer(env).catch((err) => {
+        console.error('[chainIndexer] pass failed:', err);
+      }),
+    );
   },
 
   async fetch(req: Request, env: Env): Promise<Response> {
     const url = new URL(req.url);
+
+    // T-041 — public chain-indexer reads. Open CORS, no origin gate.
+    // Handled BEFORE the generic preflight + origin gate so a non-
+    // allow-list origin (e.g. third-party explorer) can read public
+    // data cleanly.
+    if (url.pathname.startsWith('/offers')) {
+      if (req.method === 'OPTIONS') {
+        return handleOffersPreflight();
+      }
+      if (req.method === 'GET') {
+        if (url.pathname === '/offers/stats') {
+          return handleOffersStats(req, env);
+        }
+        if (url.pathname === '/offers/active') {
+          return handleOffersActive(req, env);
+        }
+        const byCreator = url.pathname.match(/^\/offers\/by-creator\/(0x[0-9a-fA-F]{40})$/);
+        if (byCreator) {
+          return handleOffersByCreator(req, env, byCreator[1]);
+        }
+        const byId = url.pathname.match(/^\/offers\/(\d+)$/);
+        if (byId) {
+          return handleOfferById(req, env, byId[1]);
+        }
+      }
+      return new Response('Not found', { status: 404 });
+    }
+    if (url.pathname.startsWith('/loans')) {
+      if (req.method === 'OPTIONS') {
+        return handleLoansPreflight();
+      }
+      if (req.method === 'GET') {
+        if (url.pathname === '/loans/active') {
+          return handleLoansActive(req, env);
+        }
+        const byLender = url.pathname.match(/^\/loans\/by-lender\/(0x[0-9a-fA-F]{40})$/);
+        if (byLender) {
+          return handleLoansByParticipant(req, env, byLender[1], 'lender');
+        }
+        const byBorrower = url.pathname.match(/^\/loans\/by-borrower\/(0x[0-9a-fA-F]{40})$/);
+        if (byBorrower) {
+          return handleLoansByParticipant(req, env, byBorrower[1], 'borrower');
+        }
+        const byId = url.pathname.match(/^\/loans\/(\d+)$/);
+        if (byId) {
+          return handleLoanById(req, env, byId[1]);
+        }
+      }
+      return new Response('Not found', { status: 404 });
+    }
+    if (url.pathname === '/activity') {
+      if (req.method === 'OPTIONS') {
+        return handleLoansPreflight();
+      }
+      if (req.method === 'GET') {
+        return handleActivity(req, env);
+      }
+      return new Response('Not found', { status: 404 });
+    }
+    if (url.pathname.startsWith('/claimables/')) {
+      if (req.method === 'OPTIONS') {
+        return handleLoansPreflight();
+      }
+      if (req.method === 'GET') {
+        const m = url.pathname.match(/^\/claimables\/(0x[0-9a-fA-F]{40})$/);
+        if (m) return handleClaimables(req, env, m[1]);
+      }
+      return new Response('Not found', { status: 404 });
+    }
 
     // Preflight: allow the frontend origin with credentials.
     if (req.method === 'OPTIONS') {

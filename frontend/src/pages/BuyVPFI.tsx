@@ -15,6 +15,7 @@ import {
   VPFIBuyAdapterABI,
 } from "../contracts/abis";
 import { SimulationPreview } from "../components/app/SimulationPreview";
+import { IndexerStatusBadge } from "../components/app/IndexerStatusBadge";
 import {
   Coins,
   Wallet,
@@ -934,6 +935,9 @@ export default function BuyVPFI() {
           />
           {t('appNav.buyVpfi')}
           <CardInfo id="buy-vpfi.overview" />
+          <span style={{ marginLeft: 12 }}>
+            <IndexerStatusBadge />
+          </span>
         </h1>
         <p className="page-subtitle">{t('buyVpfi.pageSubtitle')}</p>
       </div>

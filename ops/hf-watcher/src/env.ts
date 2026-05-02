@@ -128,12 +128,23 @@ export function getChainConfigs(env: Env): ChainConfig[] {
   // the deployments JSON. Adding a chain = one entry here, no JSON
   // schema change.
   const meta: { id: number; name: string; rpc: string | undefined }[] = [
+    // Mainnets — included once deployments + RPC envs are configured.
     { id: 8453, name: 'Base', rpc: env.RPC_BASE },
     { id: 1, name: 'Ethereum', rpc: env.RPC_ETH },
     { id: 42161, name: 'Arbitrum', rpc: env.RPC_ARB },
     { id: 10, name: 'Optimism', rpc: env.RPC_OP },
     { id: 1101, name: 'Polygon zkEVM', rpc: env.RPC_ZKEVM },
     { id: 56, name: 'BNB Chain', rpc: env.RPC_BNB },
+    // Testnets — pre-mainnet phase indexes these too. `getDeployment`
+    // filters out any chain without a deployments.json entry, so adding
+    // a testnet here is free until both the deployment artifact and the
+    // matching RPC secret land.
+    { id: 84532, name: 'Base Sepolia', rpc: env.RPC_BASE_SEPOLIA },
+    { id: 11155111, name: 'Sepolia', rpc: env.RPC_SEPOLIA },
+    { id: 421614, name: 'Arbitrum Sepolia', rpc: env.RPC_ARB_SEPOLIA },
+    { id: 11155420, name: 'Optimism Sepolia', rpc: env.RPC_OP_SEPOLIA },
+    { id: 80002, name: 'Polygon Amoy', rpc: env.RPC_POLYGON_AMOY },
+    { id: 97, name: 'BNB Testnet', rpc: env.RPC_BNB_TESTNET },
   ];
   const out: ChainConfig[] = [];
   for (const m of meta) {

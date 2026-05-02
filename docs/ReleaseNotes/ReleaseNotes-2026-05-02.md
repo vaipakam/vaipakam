@@ -366,3 +366,240 @@ which today's merge already reconciled.
   of source-chain ETH inflow before minting. Highest assurance,
   highest cost (~100K-500K gas + proof latency); reserved for
   Phase 2+.
+
+## In-app logo routes to dashboard, not landing page
+
+Previously: clicking the Vaipakam logo while the user was inside
+the app (any `/app/...` route) sent them back to the public
+marketing landing page. Returning users who had drilled into
+`/app/loans/<id>` and tapped the logo expecting to "go up one
+level to the dashboard" instead found themselves looking at
+"Welcome to Vaipakam — sign up." Surprising and easy to misread as
+a sign-out.
+
+Now: the in-app logo routes to `/app` (the locale-aware dashboard
+root). The public marketing navbar's logo behaviour is unchanged
+— it still routes to `/`. The two navbars live in different
+components (`Navbar.tsx` for marketing, the sidebar in
+`AppLayout.tsx` for the in-app shell), so the change scoped
+cleanly.
+
+Side effect: the in-app sidebar no longer doubles as an "exit to
+website" affordance. A separate "Exit to website" link can be
+added near the bottom of the sidebar if user research shows
+people miss it; for now the only feedback was the surprise of
+landing back on marketing.
+
+## T-041 — shared chain-indexer worker (offers, loans, activity, claimables)
+
+The frontend's homepage and offer book both used to do a per-
+browser scan of the Diamond's `eth_getLogs` history at page load
+to build a list of active offers. On a busy chain (or a slow
+public RPC like Sepolia's) the cold-load took 10-30 seconds; the
+"how many offers are open right now?" hero card had to wait the
+full scan. The fix is a shared, server-side cache.
+
+A Cloudflare Worker (`hf-watcher`) now runs a chain indexer on
+every cron tick:
+
+- ONE `getContractEvents` scan per tick across the full event
+  allow-list — offers, loans, VPFI history, claim events. A new
+  domain added in a future phase costs zero extra RPC round trips
+  per tick because every handler shares the same scan output.
+- A single `kind='diamond'` cursor in D1 advances atomically per
+  tick. No per-domain cursor → no chance of two domains drifting
+  out of sync.
+- Per-domain handlers persist to D1 tables: `offers`, `loans`,
+  `activity_events`. Cross-domain reuse: when LoanInitiated fires,
+  the loan row pulls asset metadata via JOIN from the matching
+  offer row instead of re-fetching the offer struct from the
+  chain.
+- The `activity_events` ledger is the unified append-only feed
+  consumed by the Activity page, the LoanTimeline component, and
+  per-wallet history surfaces — every event from every domain
+  lands in one table, so per-page filters are simple SQL queries
+  (`?actor=X`, `?loanId=N`, `?kind=...`) instead of fan-out joins.
+- Frontend hooks (`useIndexedActiveOffers`, `useIndexedActiveLoans`,
+  `useIndexedLoansForWallet`, `useIndexedActivity`,
+  `useIndexedClaimables`, `useOfferStats`) all return a `source`
+  field that flips between `'indexer'` and `'fallback'`. On any
+  worker error / timeout / `VITE_HF_WATCHER_ORIGIN` unset, the
+  consumer falls through to the existing per-browser
+  `lib/logIndex.ts` scan. The worker is a CACHE, not an oracle —
+  decentralization is preserved end to end. Every offer card will
+  carry a "verify on-chain" affordance that triggers a direct
+  Diamond read regardless of indexer state.
+
+REST surfaces (open CORS — public reads, no auth-relevant data):
+
+- `/offers/stats` — aggregate counts (active / accepted /
+  cancelled / total). Sub-100ms response. Powers homepage hero +
+  offer-book preloader.
+- `/offers/active`, `/offers/:id`, `/offers/by-creator/:addr` —
+  paginated newest-first cursor pages of cached offer rows.
+- `/loans/active`, `/loans/:id`, `/loans/by-lender/:addr`,
+  `/loans/by-borrower/:addr` — same shape for the loan-side
+  surface (Dashboard "Your Loans," Risk Watch, Analytics).
+- `/activity?actor=X&loanId=N&offerId=N&kind=K&before=block:logIndex`
+  — the unified ledger, paginated by `(block, logIndex)` so a
+  cron-deferred boundary block can never drop rows.
+- `/claimables/:addr` — Phase E view that joins loans +
+  activity_events to return open lender-side and borrower-side
+  claim opportunities (terminal status, no matching
+  `*FundsClaimed` event yet). Replaces the per-browser scan that
+  the Claim Center used to run on cold-load.
+
+The OfferBook page is the first consumer migrated. When the
+worker returns active offers, the page renders them directly and
+skips its existing per-id `getOfferDetails` pagination; on
+fallback the existing flow runs unchanged. The browser's
+`watchContractEvent` listener stays running regardless of source
+so a freshly created offer surfaces within seconds of the
+matching tx confirming.
+
+Out of scope for this drop, deferred to follow-ups:
+- Phase C — NFT lifecycle table (current-owner-by-tokenId for the
+  position NFT). Smaller surface, separate state cache; today's
+  NftVerifier hits the chain directly with `ownerOf`, which is
+  fine at current volumes.
+- Deep dual-source migration of Dashboard / ClaimCenter /
+  VPFIPanel — these consumers track current NFT ownership via
+  `useLogIndex` Transfer-event scanning. The indexer's
+  lender/borrower columns reflect LoanInitiated state, not who
+  currently holds the position NFT, so a full swap to the
+  indexer-fed path waits for Phase C.
+
+## T-041 follow-up — multi-chain fan-out, lag badge, single verify affordance
+
+Three follow-up decisions landed in the same commit window:
+
+**Multi-chain fan-out.** The chain indexer now loops over every
+chain in `getChainConfigs(env)` per cron tick — Base + Ethereum +
+Arbitrum + Optimism + Polygon zkEVM + BNB on the mainnet meta
+list, plus Base Sepolia + Sepolia + Arb Sepolia + OP Sepolia +
+Polygon Amoy + BNB Testnet on the testnet meta list. A chain is
+silently skipped when either the `RPC_*` secret or the
+`deployments.json` entry is missing, so adding a chain is purely
+operator-side: set the secret, deploy the diamond, the next cron
+picks it up. Single Worker for now per the user's call; future
+horizontal scaling = one Worker per chain (no schema changes
+needed — `chain_id` PK already keys every table).
+
+**Visible "indexer lag" badge.** New
+`components/app/IndexerStatusBadge.tsx` renders inline next to
+every page title that reads cached data — OfferBook, Activity,
+Dashboard, ClaimCenter, LoanDetails, BuyVPFI. Two states:
+- **Cached** (worker reachable): green pill showing
+  "Indexed 2 min ago" with a Rescan button. Ticks once per minute
+  in-place. Click Rescan to force a per-browser on-chain scan
+  (calls the page's existing `reloadIndex` / `loadLoan` /
+  `reload` callback, which goes back to the chain bypassing the
+  cache).
+- **Live** (worker unreachable / no cache yet): amber pill
+  showing "Live chain scan" with a tooltip explaining "pages may
+  load slower but all data is live."
+
+The badge surfaces the cache-age contract that was previously
+invisible — without it, users couldn't tell whether they were
+looking at fresh state or a 5-minute-old snapshot. Modeled on
+Etherscan's "Last block: 3s ago" pill.
+
+**Single verify-on-chain affordance.** The original spec called
+for a per-row "verify on-chain" button on every offer / loan
+card. After surveying what major DEXes do (Uniswap, Aave,
+OpenSea, Blur, dYdX v4, Aster), none of them ship per-row verify
+affordances — it's overkill. Replaced with a single
+"Verify on-chain" link in the in-app footer
+(`AppLegalFooter.tsx`) that opens the active chain's Diamond
+contract on the block explorer in a new tab. Users who want to
+audit a specific record paste its ID into the explorer's
+read-contract UI — same workflow Etherscan / Basescan already
+expose, no custom UI needed. The public marketing footer's
+existing `ChainPicker → "View Diamond on explorer"` carries the
+same affordance for unconnected visitors.
+
+## T-041 Phase C-alt — live `ownerOf` for current NFT holders
+
+The original Phase C plan called for a `nft_positions` table that
+tracked the position NFT's current owner by indexing every
+`Transfer` event. Replaced with a cleaner pattern at the user's
+suggestion:
+
+> **State goes to RPC, history goes to D1.**
+
+The `loans` table keeps **immutable origination data** (lender at
+init, borrower at init, token IDs, interest rate, start time —
+all stamped at LoanInitiated, never updated). For "who currently
+owns this NFT?" the worker calls `ownerOf(tokenId)` directly
+against the chain at query time. No `nft_positions` table, no
+Transfer-event-driven row updates, no re-org window, no
+maintenance — `ownerOf` is a single SLOAD against the current
+state root, flat cost regardless of chain history depth.
+
+**Schema additions (migration 0006):**
+
+`loans.lender_token_id`, `loans.borrower_token_id`,
+`loans.interest_rate_bps`, `loans.start_time`,
+`loans.allows_partial_repay` — all populated once per loan via a
+`getLoanDetails(loanId)` bootstrap call after LoanInitiated.
+After the bootstrap fires, all values are immutable; the next
+indexer tick filters bootstrapped rows out of the work queue
+via `WHERE lender_token_id = '0'`. Per-loan one-time RPC cost.
+
+**Live-ownership rewire on three endpoints:**
+
+- `/loans/by-lender/:addr` — pulls every loan with bootstrapped
+  token IDs, fans out a multicall(`ownerOf`, lender_token_id) per
+  row, filters to wallet matches.
+- `/loans/by-borrower/:addr` — same for the borrower side.
+- `/claimables/:addr` — multicalls BOTH lenderTokenId and
+  borrowerTokenId per terminal-status loan, joined against
+  `activity_events` to exclude already-claimed positions.
+
+A wallet that **bought a position NFT secondary** now correctly
+surfaces in the buyer's by-lender / by-borrower / claimables
+views — and a wallet that **sold its position NFT** stops seeing
+the loan in their list. No staleness window. No re-org risk on
+ownership state.
+
+**Audit trail via `activity_events`:**
+
+ERC-721 `Transfer` events are now in the chain indexer's event
+allow-list. They land in the unified `activity_events` ledger
+automatically — same row shape as every other event — so the
+public ownership history of any tokenId is queryable via
+`/activity?kind=Transfer&...`. No separate `nft_positions` table
+needed; the events ledger IS the audit trail.
+
+**Dashboard migration:**
+
+Dashboard's "Your Loans" card is the first consumer migrated. New
+adapter `indexedToLoanSummary(IndexedLoan, role)` shape-bridges the
+indexer JSON to the existing `LoanSummary` rendering type. When
+indexer source is live, the page renders directly from the
+worker's response — no per-loan `getLoanDetails` multicall, no
+per-loan `ownerOf` probe in the browser. When the worker is
+unreachable, the existing `useUserLoans` flow runs unchanged.
+Role on each loan comes from which endpoint produced it
+(by-lender → 'lender', by-borrower → 'borrower') — the worker
+already live-filtered via `ownerOf`, so the role reflects current
+on-chain ownership.
+
+**Out of scope for this drop:**
+
+- ClaimCenter / VPFIPanel — same shape as the Dashboard
+  migration. Existing hooks are correct via fallback; full swap
+  to indexer-fed paths is a follow-up commit. The worker-side
+  endpoints (`/claimables/:addr`, `/activity?actor&kind=VPFI*`)
+  are now correct and ready.
+
+**Why no Durable Objects / WebSocket push.** The cron-tick
+staleness window only matters for *cold-load* freshness. Once a
+user is on a page, `useLogIndex.watchContractEvent` already
+debounces 750 ms after relevant events fire and triggers an
+incremental rescan from `lastBlock+1` — sub-second user-perceived
+latency on every offer / loan / activity update. The worker's
+job is only to make first-paint fast; pushing real-time updates
+isn't necessary because the browser is already event-driven via
+RPC subscriptions. Dropping push reduces the architecture to one
+moving part (cron) instead of two (cron + WebSocket subscribers).

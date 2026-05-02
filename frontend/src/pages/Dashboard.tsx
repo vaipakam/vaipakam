@@ -6,6 +6,9 @@ import { useDiamondContract, useDiamondRead } from '../contracts/useDiamond';
 import { useUserLoans } from '../hooks/useUserLoans';
 import { useMyOffers, type MyOfferStatus } from '../hooks/useMyOffers';
 import { useClaimables } from '../hooks/useClaimables';
+import { useIndexedLoansForWallet } from '../hooks/useIndexedLoans';
+import { indexedToLoanSummary } from '../lib/indexerClient';
+import type { LoanSummary } from '../types/loan';
 import { MyOffersTable } from '../components/app/MyOffersTable';
 import { useLoanRisks, type LoanRisk } from '../hooks/useLoanRisks';
 import { LoanStatus, LOAN_STATUS_LABELS } from '../types/loan';
@@ -26,6 +29,7 @@ import { PrincipalCell } from '../components/app/PrincipalCell';
 import { bpsToPercent } from '../lib/format';
 import { HealthFactorGauge, LTVBar } from '../components/app/RiskGauge';
 import VPFIDiscountConsentCard from '../components/app/VPFIDiscountConsentCard';
+import { IndexerStatusBadge } from '../components/app/IndexerStatusBadge';
 import { RewardsSummaryCard } from '../components/app/RewardsSummaryCard';
 import { SanctionsBanner } from '../components/app/SanctionsBanner';
 import { Pager } from '../components/app/Pager';
@@ -60,7 +64,20 @@ export default function Dashboard() {
   const { address, activeChain } = useWallet();
   const diamond = useDiamondRead();
   const diamondWrite = useDiamondContract();
-  const { loans, loading } = useUserLoans(address);
+  // T-041 — prefer the worker-cached "loans for this wallet" list. The
+  // /loans/by-{lender,borrower} endpoints already live-filter via
+  // multicall(ownerOf), so the indexer's view of "which loans this
+  // wallet holds NFTs for" is equivalent to the on-chain truth at
+  // query time. Fall through to the per-browser useUserLoans flow
+  // when the worker is unreachable. Both produce LoanSummary[]; the
+  // adapter `indexedToLoanSummary` shape-bridges the indexer JSON.
+  const { loans: clientLoans, loading: clientLoading } = useUserLoans(address);
+  const { loans: indexedLoans, source: indexedSource } = useIndexedLoansForWallet(address);
+  const loans: LoanSummary[] =
+    indexedSource === 'indexer' && indexedLoans
+      ? (indexedLoans.map((l) => indexedToLoanSummary(l, l.role)) as LoanSummary[])
+      : clientLoans;
+  const loading = indexedSource === 'indexer' ? false : clientLoading;
   const [myOfferStatus, setMyOfferStatus] = useState<MyOfferStatus>('active');
   const { rows: myOfferRows } = useMyOffers(address, myOfferStatus);
   const { claims: unclaimed } = useClaimables(address);
@@ -209,7 +226,10 @@ export default function Dashboard() {
   return (
     <div className="dashboard">
       <div className="page-header">
-        <h1 className="page-title">{t('appNav.dashboard')}</h1>
+        <h1 className="page-title" style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+          {t('appNav.dashboard')}
+          <IndexerStatusBadge />
+        </h1>
         <p className="page-subtitle">{t('dashboard.subtitle')}</p>
       </div>
 
