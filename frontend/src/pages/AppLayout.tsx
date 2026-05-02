@@ -372,14 +372,22 @@ export default function AppLayout() {
       <div className="app-main">
         {/* Top bar */}
         <header className="app-topbar">
-          <button
-            className="topbar-menu-btn"
-            onClick={() => setSidebarOpen(true)}
-          >
-            <Menu size={22} />
-          </button>
+          {/* Inner wrapper centers the topbar's controls inside the
+           *  same 1200px column the content area uses, so on wide
+           *  screens the Connect Wallet button anchors to the right
+           *  edge of the visible content (where the user's eye lands)
+           *  instead of the far right edge of the viewport. The outer
+           *  `.app-topbar` stays full-width so its border-bottom spans
+           *  the whole screen. */}
+          <div className="app-topbar-inner">
+            <button
+              className="topbar-menu-btn"
+              onClick={() => setSidebarOpen(true)}
+            >
+              <Menu size={22} />
+            </button>
 
-          <div className="topbar-right">
+            <div className="topbar-right">
             {/* T-047 — indexer status badge always visible in the
              *  top bar. Three states: green (cache fresh) / amber
              *  (live chain scan, browser reading directly) / blue
@@ -509,6 +517,7 @@ export default function AppLayout() {
                 </div>
               )}
             </div>
+          </div>
           </div>
         </header>
 
