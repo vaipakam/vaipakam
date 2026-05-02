@@ -65,6 +65,7 @@
     "faq": "FAQ",
     "analytics": "Analytiques",
     "nftVerifier": "Vérificateur de NFT",
+    "protocolParameters": "Paramètres du Protocole",
     "security": "Sécurité",
     "vpfi": "VPFI",
     "vpfiLearn": "Découvrir VPFI",
@@ -97,7 +98,6 @@
     "allowances": "Autorisations",
     "dataRights": "Droits relatifs aux données",
     "keepers": "Keepers",
-    "backToHome": "Retour à l'accueil",
     "governanceGroupLabel": "Gouvernance",
     "governanceConsole": "Console de Gouvernance"
   },

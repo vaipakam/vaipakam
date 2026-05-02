@@ -55,10 +55,24 @@ export function AppLegalFooter() {
             <ExternalLink size={11} style={{ verticalAlign: 'middle' }} />
           </a>
         )}
-        <Link to="/terms" className="app-legal-footer-link">
+        {/* Terms / Privacy live on the public marketing site. Opening
+         *  them in a new tab keeps the in-app shell intact — closing
+         *  the tab returns the user to the page they were on. Same
+         *  rationale as the "Verify on-chain" link above. */}
+        <Link
+          to="/terms"
+          className="app-legal-footer-link"
+          target="_blank"
+          rel="noopener noreferrer"
+        >
           {t('footer.terms')}
         </Link>
-        <Link to="/privacy" className="app-legal-footer-link">
+        <Link
+          to="/privacy"
+          className="app-legal-footer-link"
+          target="_blank"
+          rel="noopener noreferrer"
+        >
           {t('footer.privacy')}
         </Link>
         <button

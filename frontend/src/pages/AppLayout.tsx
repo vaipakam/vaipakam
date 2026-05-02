@@ -22,7 +22,6 @@ import {
   AlertTriangle,
   Menu,
   X,
-  ArrowLeft,
   ChevronsLeft,
   ChevronsRight,
   Bell,
@@ -359,18 +358,6 @@ export default function AppLayout() {
             </>
           )}
         </nav>
-
-        <div className="sidebar-footer">
-          <button
-            className="sidebar-link"
-            onClick={() => {
-              navigate("/");
-            }}
-          >
-            <ArrowLeft size={20} />
-            <span>{t("appNav.backToHome")}</span>
-          </button>
-        </div>
       </aside>
 
       {/* Overlay for mobile */}

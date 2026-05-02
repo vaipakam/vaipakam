@@ -65,6 +65,7 @@
     "faq": "अक्सर पूछे जाने वाले सवाल",
     "analytics": "विश्लेषण",
     "nftVerifier": "NFT वेरिफायर",
+    "protocolParameters": "प्रोटोकॉल पैरामीटर",
     "security": "सुरक्षा",
     "vpfi": "VPFI",
     "vpfiLearn": "VPFI के बारे में जानें",
@@ -97,7 +98,6 @@
     "allowances": "अनुमतियां",
     "dataRights": "डेटा अधिकार",
     "keepers": "कीपर्स",
-    "backToHome": "होम पर वापस जाएं",
     "governanceGroupLabel": "प्रशासन",
     "governanceConsole": "प्रशासन कंसोल"
   },

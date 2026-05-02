@@ -65,6 +65,7 @@
     "faq": "よくある質問",
     "analytics": "アナリティクス",
     "nftVerifier": "NFT検証ツール",
+    "protocolParameters": "プロトコル・パラメータ",
     "security": "セキュリティ",
     "vpfi": "VPFI",
     "vpfiLearn": "VPFIについて学ぶ",
@@ -97,7 +98,6 @@
     "allowances": "許可額",
     "dataRights": "データ権利",
     "keepers": "キーパー",
-    "backToHome": "ホームに戻る",
     "governanceGroupLabel": "ガバナンス",
     "governanceConsole": "ガバナンス・コンソール"
   },

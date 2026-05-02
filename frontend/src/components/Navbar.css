@@ -59,7 +59,11 @@
 
 .navbar-links {
   display: none;
-  gap: 8px;
+  /* Bumped from 8px → 16px for more breathing room between the
+   * Learn / Verify / Launch App slots. Equal gap between every
+   * pair (it's a single flexbox row), no per-slot adjustment
+   * needed. */
+  gap: 16px;
 }
 
 .navbar-link {
@@ -402,6 +406,14 @@
  * the shared .btn.navbar-cta rule. */
 .navbar-launch {
   letter-spacing: 0.01em;
+  /* The parent `.navbar-inner` uses `justify-content: space-between`,
+   * so the visible gap between the right edge of `.navbar-links`
+   * (last entry: "Verify" dropdown) and the Launch App button is
+   * leftover-space-driven and shrinks below the 16 px we use INSIDE
+   * `.navbar-links` between Learn ↔ Verify. A fixed left margin
+   * here pegs the minimum gap so Verify ↔ Launch App matches the
+   * Learn ↔ Verify rhythm. */
+  margin-left: 16px;
 }
 
 .navbar-cta-mobile {

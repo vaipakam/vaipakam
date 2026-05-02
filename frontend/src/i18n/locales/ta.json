@@ -65,6 +65,7 @@
     "faq": "அடிக்கடி கேட்கப்படும் கேள்விகள்",
     "analytics": "பகுப்பாய்வு",
     "nftVerifier": "NFT சரிபார்ப்பாளர்",
+    "protocolParameters": "நெறிமுறை அளவுருக்கள்",
     "security": "பாதுகாப்பு",
     "vpfi": "VPFI",
     "vpfiLearn": "VPFI பற்றி அறிக",
@@ -97,7 +98,6 @@
     "allowances": "அனுமதிகள்",
     "dataRights": "தரவு உரிமைகள்",
     "keepers": "கீப்பர்கள்",
-    "backToHome": "முகப்புக்குத் திரும்பு",
     "governanceGroupLabel": "நிர்வாகம்",
     "governanceConsole": "நிர்வாக கன்சோல்"
   },

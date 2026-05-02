@@ -324,11 +324,6 @@
   padding-left: 28px;
 }
 
-.sidebar-footer {
-  padding: 12px;
-  border-top: 1px solid var(--border);
-}
-
 /* Collapsed rail — group label becomes a simple divider (text is noise at
  * 72px); footer button centers its icon and hides the label like nav links.
  * Hover-expand restores the full appearance. */

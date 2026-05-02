@@ -65,6 +65,7 @@
     "faq": "常见问题",
     "analytics": "数据分析",
     "nftVerifier": "NFT 验证器",
+    "protocolParameters": "协议参数",
     "security": "安全",
     "vpfi": "VPFI",
     "vpfiLearn": "了解 VPFI",
@@ -97,7 +98,6 @@
     "allowances": "授权",
     "dataRights": "数据权利",
     "keepers": "Keeper",
-    "backToHome": "返回首页",
     "governanceGroupLabel": "治理",
     "governanceConsole": "治理控制台"
   },

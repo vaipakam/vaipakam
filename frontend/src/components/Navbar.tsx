@@ -65,6 +65,13 @@ const NAV_GROUPS: NavGroup[] = [
     links: [
       { labelKey: 'nav.analytics', href: '/analytics' },
       { labelKey: 'nav.nftVerifier', href: '/nft-verifier' },
+      // Public read-only governance dashboard. Same surface as
+      // Aave's "Governance" / Compound's "Governance" — public visit
+      // shows current values + ranges + pending timelock changes;
+      // admin-wallet visit unlocks the propose flow. Footer carries
+      // the same link too; the dropdown entry meaningfully improves
+      // discoverability for a transparency-first audience.
+      { labelKey: 'nav.protocolParameters', href: '/admin' },
       { labelKey: 'nav.security', href: '/#security' },
     ],
   },

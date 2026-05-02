@@ -65,6 +65,7 @@
     "faq": "الأسئلة الشائعة",
     "analytics": "التحليلات",
     "nftVerifier": "مدقق NFT",
+    "protocolParameters": "معايير البروتوكول",
     "security": "الأمان",
     "vpfi": "VPFI",
     "vpfiLearn": "تعرّف على VPFI",
@@ -97,7 +98,6 @@
     "allowances": "الأذونات",
     "dataRights": "حقوق البيانات",
     "keepers": "Keepers",
-    "backToHome": "العودة إلى الصفحة الرئيسية",
     "governanceGroupLabel": "الحوكمة",
     "governanceConsole": "وحدة تحكم الحوكمة"
   },
