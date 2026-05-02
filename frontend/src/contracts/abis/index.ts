@@ -22,6 +22,8 @@ import VPFIDiscountFacetABI from './VPFIDiscountFacet.json';
 import StakingRewardsFacetABI from './StakingRewardsFacet.json';
 import InteractionRewardsFacetABI from './InteractionRewardsFacet.json';
 import VPFIBuyAdapterABI from './VPFIBuyAdapter.json';
+import VPFIBuyReceiverABI from './VPFIBuyReceiver.json';
+import RewardReporterFacetABI from './RewardReporterFacet.json';
 import ConfigFacetABI from './ConfigFacet.json';
 import LegalFacetABI from './LegalFacet.json';
 
@@ -50,6 +52,8 @@ export {
   StakingRewardsFacetABI,
   InteractionRewardsFacetABI,
   VPFIBuyAdapterABI,
+  VPFIBuyReceiverABI,
+  RewardReporterFacetABI,
   ConfigFacetABI,
   LegalFacetABI,
 };
@@ -87,6 +91,7 @@ export const DIAMOND_ABI = [
   ...VPFIDiscountFacetABI,
   ...StakingRewardsFacetABI,
   ...InteractionRewardsFacetABI,
+  ...RewardReporterFacetABI,
   ...ConfigFacetABI,
   ...LegalFacetABI,
 ];

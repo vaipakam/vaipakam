@@ -91,11 +91,13 @@ FACETS=(
   "ProfileFacet"
   "RefinanceFacet"
   "RepayFacet"
+  "RewardReporterFacet"
   "RiskFacet"
   "StakingRewardsFacet"
   "TreasuryFacet"
   "VaipakamNFTFacet"
   "VPFIBuyAdapter"
+  "VPFIBuyReceiver"
   "VPFIDiscountFacet"
   "VPFITokenFacet"
 )

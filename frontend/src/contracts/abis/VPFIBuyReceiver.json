@@ -72,81 +72,32 @@
   },
   {
     "type": "function",
-    "name": "buy",
+    "name": "buyAdapterByEid",
     "inputs": [
       {
-        "name": "amountIn",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "minVpfiOut",
-        "type": "uint256",
-        "internalType": "uint256"
+        "name": "",
+        "type": "uint32",
+        "internalType": "uint32"
       }
     ],
-    "outputs": [
-      {
-        "name": "requestId",
-        "type": "uint64",
-        "internalType": "uint64"
-      },
-      {
-        "name": "lzGuid",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      }
-    ],
-    "stateMutability": "payable"
-  },
-  {
-    "type": "function",
-    "name": "buyOptions",
-    "inputs": [],
     "outputs": [
       {
         "name": "",
-        "type": "bytes",
-        "internalType": "bytes"
+        "type": "address",
+        "internalType": "address"
       }
     ],
     "stateMutability": "view"
   },
   {
     "type": "function",
-    "name": "dailyCap",
+    "name": "diamond",
     "inputs": [],
     "outputs": [
       {
         "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "dailyUsed",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "dailyWindowStart",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
+        "type": "address",
+        "internalType": "address"
       }
     ],
     "stateMutability": "view"
@@ -163,6 +114,13 @@
       }
     ],
     "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "fundETH",
+    "inputs": [],
+    "outputs": [],
+    "stateMutability": "payable"
   },
   {
     "type": "function",
@@ -187,29 +145,29 @@
         "internalType": "address"
       },
       {
-        "name": "receiverEid_",
-        "type": "uint32",
-        "internalType": "uint32"
-      },
-      {
-        "name": "treasury_",
+        "name": "diamond_",
         "type": "address",
         "internalType": "address"
       },
       {
-        "name": "paymentToken_",
+        "name": "vpfiToken_",
         "type": "address",
         "internalType": "address"
       },
       {
-        "name": "buyOptions_",
+        "name": "vpfiOftAdapter_",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "responseOptions_",
         "type": "bytes",
         "internalType": "bytes"
       },
       {
-        "name": "refundTimeoutSeconds_",
-        "type": "uint64",
-        "internalType": "uint64"
+        "name": "oftSendOptions_",
+        "type": "bytes",
+        "internalType": "bytes"
       }
     ],
     "outputs": [],
@@ -260,39 +218,6 @@
       }
     ],
     "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "lzCompose",
-    "inputs": [
-      {
-        "name": "_from",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      },
-      {
-        "name": "_message",
-        "type": "bytes",
-        "internalType": "bytes"
-      },
-      {
-        "name": "",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "",
-        "type": "bytes",
-        "internalType": "bytes"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "payable"
   },
   {
     "type": "function",
@@ -370,19 +295,6 @@
   },
   {
     "type": "function",
-    "name": "nextRequestId",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint64",
-        "internalType": "uint64"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
     "name": "oAppVersion",
     "inputs": [],
     "outputs": [
@@ -398,6 +310,19 @@
       }
     ],
     "stateMutability": "pure"
+  },
+  {
+    "type": "function",
+    "name": "oftSendOptions",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bytes",
+        "internalType": "bytes"
+      }
+    ],
+    "stateMutability": "view"
   },
   {
     "type": "function",
@@ -434,19 +359,6 @@
   },
   {
     "type": "function",
-    "name": "paymentToken",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
     "name": "peers",
     "inputs": [
       {
@@ -466,40 +378,6 @@
   },
   {
     "type": "function",
-    "name": "pendingBuys",
-    "inputs": [
-      {
-        "name": "",
-        "type": "uint64",
-        "internalType": "uint64"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "buyer",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "amountIn",
-        "type": "uint96",
-        "internalType": "uint96"
-      },
-      {
-        "name": "initiatedAt",
-        "type": "uint64",
-        "internalType": "uint64"
-      },
-      {
-        "name": "status",
-        "type": "uint8",
-        "internalType": "enum VPFIBuyAdapter.BuyStatus"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
     "name": "pendingOwner",
     "inputs": [],
     "outputs": [
@@ -507,19 +385,6 @@
         "name": "",
         "type": "address",
         "internalType": "address"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "perRequestCap",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
       }
     ],
     "stateMutability": "view"
@@ -539,93 +404,13 @@
   },
   {
     "type": "function",
-    "name": "quoteBuy",
-    "inputs": [
-      {
-        "name": "amountIn",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "minVpfiOut",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "fee",
-        "type": "tuple",
-        "internalType": "struct MessagingFee",
-        "components": [
-          {
-            "name": "nativeFee",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "lzTokenFee",
-            "type": "uint256",
-            "internalType": "uint256"
-          }
-        ]
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "receiverEid",
+    "name": "reconciliationWatchdogEnabled",
     "inputs": [],
     "outputs": [
       {
         "name": "",
-        "type": "uint32",
-        "internalType": "uint32"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "reclaimTimedOutBuy",
-    "inputs": [
-      {
-        "name": "requestId",
-        "type": "uint64",
-        "internalType": "uint64"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "recoverStuckVPFI",
-    "inputs": [
-      {
-        "name": "requestId",
-        "type": "uint64",
-        "internalType": "uint64"
-      },
-      {
-        "name": "recipient",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "refundTimeoutSeconds",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint64",
-        "internalType": "uint64"
+        "type": "bool",
+        "internalType": "bool"
       }
     ],
     "stateMutability": "view"
@@ -634,6 +419,39 @@
     "type": "function",
     "name": "renounceOwnership",
     "inputs": [],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "rescueBridgeVPFI",
+    "inputs": [
+      {
+        "name": "requestId",
+        "type": "uint64",
+        "internalType": "uint64"
+      },
+      {
+        "name": "dstEid",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "buyer",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "vpfiOut",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "nativeFee",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
     "outputs": [],
     "stateMutability": "nonpayable"
   },
@@ -680,12 +498,30 @@
   },
   {
     "type": "function",
-    "name": "setBuyOptions",
-    "inputs": [
+    "name": "responseOptions",
+    "inputs": [],
+    "outputs": [
       {
-        "name": "newOptions",
+        "name": "",
         "type": "bytes",
         "internalType": "bytes"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "setBuyAdapter",
+    "inputs": [
+      {
+        "name": "eid",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "adapter",
+        "type": "address",
+        "internalType": "address"
       }
     ],
     "outputs": [],
@@ -697,6 +533,19 @@
     "inputs": [
       {
         "name": "_delegate",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "setDiamond",
+    "inputs": [
+      {
+        "name": "diamond_",
         "type": "address",
         "internalType": "address"
       }
@@ -719,12 +568,25 @@
   },
   {
     "type": "function",
-    "name": "setPaymentToken",
+    "name": "setOFTAdapter",
     "inputs": [
       {
-        "name": "newToken",
+        "name": "oft",
         "type": "address",
         "internalType": "address"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "setOFTSendOptions",
+    "inputs": [
+      {
+        "name": "options",
+        "type": "bytes",
+        "internalType": "bytes"
       }
     ],
     "outputs": [],
@@ -750,17 +612,12 @@
   },
   {
     "type": "function",
-    "name": "setRateLimits",
+    "name": "setReconciliationWatchdogEnabled",
     "inputs": [
       {
-        "name": "perRequestCap_",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "dailyCap_",
-        "type": "uint256",
-        "internalType": "uint256"
+        "name": "enabled",
+        "type": "bool",
+        "internalType": "bool"
       }
     ],
     "outputs": [],
@@ -768,51 +625,12 @@
   },
   {
     "type": "function",
-    "name": "setReceiverEid",
+    "name": "setResponseOptions",
     "inputs": [
       {
-        "name": "newEid",
-        "type": "uint32",
-        "internalType": "uint32"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "setRefundTimeout",
-    "inputs": [
-      {
-        "name": "newSeconds",
-        "type": "uint64",
-        "internalType": "uint64"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "setTreasury",
-    "inputs": [
-      {
-        "name": "newTreasury",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "setVPFIMirror",
-    "inputs": [
-      {
-        "name": "newMirror",
-        "type": "address",
-        "internalType": "address"
+        "name": "options",
+        "type": "bytes",
+        "internalType": "bytes"
       }
     ],
     "outputs": [],
@@ -823,7 +641,7 @@
     "name": "setVPFIToken",
     "inputs": [
       {
-        "name": "newToken",
+        "name": "token",
         "type": "address",
         "internalType": "address"
       }
@@ -841,19 +659,6 @@
         "internalType": "uint64"
       }
     ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "totalPendingAmountIn",
-    "inputs": [],
     "outputs": [
       {
         "name": "",
@@ -891,19 +696,6 @@
   },
   {
     "type": "function",
-    "name": "treasury",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
     "name": "unpause",
     "inputs": [],
     "outputs": [],
@@ -929,7 +721,7 @@
   },
   {
     "type": "function",
-    "name": "vpfiMirror",
+    "name": "vpfiOftAdapter",
     "inputs": [],
     "outputs": [
       {
@@ -955,20 +747,7 @@
   },
   {
     "type": "event",
-    "name": "BuyOptionsSet",
-    "inputs": [
-      {
-        "name": "options",
-        "type": "bytes",
-        "indexed": false,
-        "internalType": "bytes"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "BuyRefunded",
+    "name": "BridgedBuyFailed",
     "inputs": [
       {
         "name": "requestId",
@@ -977,16 +756,16 @@
         "internalType": "uint64"
       },
       {
+        "name": "originEid",
+        "type": "uint32",
+        "indexed": true,
+        "internalType": "uint32"
+      },
+      {
         "name": "buyer",
         "type": "address",
         "indexed": true,
         "internalType": "address"
-      },
-      {
-        "name": "amountIn",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
       },
       {
         "name": "reason",
@@ -999,7 +778,7 @@
   },
   {
     "type": "event",
-    "name": "BuyRequested",
+    "name": "BridgedBuyProcessed",
     "inputs": [
       {
         "name": "requestId",
@@ -1008,56 +787,19 @@
         "internalType": "uint64"
       },
       {
-        "name": "buyer",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "dstEid",
+        "name": "originEid",
         "type": "uint32",
         "indexed": true,
         "internalType": "uint32"
       },
       {
-        "name": "amountIn",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "minVpfiOut",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "lzGuid",
-        "type": "bytes32",
-        "indexed": false,
-        "internalType": "bytes32"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "BuyResolvedSuccess",
-    "inputs": [
-      {
-        "name": "requestId",
-        "type": "uint64",
-        "indexed": true,
-        "internalType": "uint64"
-      },
-      {
         "name": "buyer",
         "type": "address",
         "indexed": true,
         "internalType": "address"
       },
       {
-        "name": "amountIn",
+        "name": "ethAmountPaid",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
@@ -1067,13 +809,19 @@
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
+      },
+      {
+        "name": "oftGuid",
+        "type": "bytes32",
+        "indexed": false,
+        "internalType": "bytes32"
       }
     ],
     "anonymous": false
   },
   {
     "type": "event",
-    "name": "BuyTimedOutRefunded",
+    "name": "BridgedBuyRescued",
     "inputs": [
       {
         "name": "requestId",
@@ -1082,21 +830,52 @@
         "internalType": "uint64"
       },
       {
+        "name": "originEid",
+        "type": "uint32",
+        "indexed": true,
+        "internalType": "uint32"
+      },
+      {
         "name": "buyer",
         "type": "address",
         "indexed": true,
         "internalType": "address"
       },
       {
-        "name": "amountIn",
+        "name": "vpfiOut",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
       },
       {
-        "name": "caller",
-        "type": "address",
+        "name": "oftGuid",
+        "type": "bytes32",
         "indexed": false,
+        "internalType": "bytes32"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "BuyAdapterSet",
+    "inputs": [
+      {
+        "name": "eid",
+        "type": "uint32",
+        "indexed": true,
+        "internalType": "uint32"
+      },
+      {
+        "name": "oldAdapter",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "newAdapter",
+        "type": "address",
+        "indexed": true,
         "internalType": "address"
       }
     ],
@@ -1104,13 +883,19 @@
   },
   {
     "type": "event",
-    "name": "DailyWindowReset",
+    "name": "DiamondSet",
     "inputs": [
       {
-        "name": "newWindowStart",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
+        "name": "oldDiamond",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "newDiamond",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
       }
     ],
     "anonymous": false
@@ -1149,25 +934,38 @@
   },
   {
     "type": "event",
-    "name": "LateResponseDropped",
+    "name": "OFTAdapterSet",
     "inputs": [
       {
-        "name": "requestId",
-        "type": "uint64",
+        "name": "oldAdapter",
+        "type": "address",
         "indexed": true,
-        "internalType": "uint64"
+        "internalType": "address"
       },
       {
-        "name": "msgType",
+        "name": "newAdapter",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "OptionsSet",
+    "inputs": [
+      {
+        "name": "kind",
         "type": "uint8",
-        "indexed": false,
+        "indexed": true,
         "internalType": "uint8"
       },
       {
-        "name": "currentStatus",
-        "type": "uint8",
+        "name": "options",
+        "type": "bytes",
         "indexed": false,
-        "internalType": "enum VPFIBuyAdapter.BuyStatus"
+        "internalType": "bytes"
       }
     ],
     "anonymous": false
@@ -1225,25 +1023,6 @@
   },
   {
     "type": "event",
-    "name": "PaymentTokenSet",
-    "inputs": [
-      {
-        "name": "oldToken",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "newToken",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
     "name": "PeerSet",
     "inputs": [
       {
@@ -1263,101 +1042,45 @@
   },
   {
     "type": "event",
-    "name": "RateLimitsSet",
+    "name": "ReconciliationWatchdogToggled",
     "inputs": [
       {
-        "name": "perRequestCap",
-        "type": "uint256",
+        "name": "enabled",
+        "type": "bool",
         "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "dailyCap",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
+        "internalType": "bool"
       }
     ],
     "anonymous": false
   },
   {
     "type": "event",
-    "name": "ReceiverEidSet",
-    "inputs": [
-      {
-        "name": "oldEid",
-        "type": "uint32",
-        "indexed": true,
-        "internalType": "uint32"
-      },
-      {
-        "name": "newEid",
-        "type": "uint32",
-        "indexed": true,
-        "internalType": "uint32"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "RefundTimeoutSet",
-    "inputs": [
-      {
-        "name": "oldSeconds",
-        "type": "uint64",
-        "indexed": false,
-        "internalType": "uint64"
-      },
-      {
-        "name": "newSeconds",
-        "type": "uint64",
-        "indexed": false,
-        "internalType": "uint64"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "StuckVPFIRecovered",
+    "name": "RescueNotedForUnknownStuck",
     "inputs": [
       {
         "name": "requestId",
         "type": "uint64",
         "indexed": true,
         "internalType": "uint64"
-      },
-      {
-        "name": "recipient",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "amount",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
       }
     ],
     "anonymous": false
   },
   {
     "type": "event",
-    "name": "TreasurySet",
+    "name": "UnknownInboundMessage",
     "inputs": [
       {
-        "name": "oldTreasury",
-        "type": "address",
+        "name": "srcEid",
+        "type": "uint32",
         "indexed": true,
-        "internalType": "address"
+        "internalType": "uint32"
       },
       {
-        "name": "newTreasury",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
+        "name": "msgType",
+        "type": "uint8",
+        "indexed": false,
+        "internalType": "uint8"
       }
     ],
     "anonymous": false
@@ -1377,31 +1100,6 @@
   },
   {
     "type": "event",
-    "name": "UnsolicitedComposeArrival",
-    "inputs": [
-      {
-        "name": "requestId",
-        "type": "uint64",
-        "indexed": true,
-        "internalType": "uint64"
-      },
-      {
-        "name": "vpfiAmount",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "pendingStatus",
-        "type": "uint8",
-        "indexed": false,
-        "internalType": "enum VPFIBuyAdapter.BuyStatus"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
     "name": "Upgraded",
     "inputs": [
       {
@@ -1415,19 +1113,37 @@
   },
   {
     "type": "event",
-    "name": "VPFIMirrorSet",
+    "name": "VPFIStuckForManualBridge",
     "inputs": [
       {
-        "name": "oldMirror",
+        "name": "requestId",
+        "type": "uint64",
+        "indexed": true,
+        "internalType": "uint64"
+      },
+      {
+        "name": "originEid",
+        "type": "uint32",
+        "indexed": true,
+        "internalType": "uint32"
+      },
+      {
+        "name": "buyer",
         "type": "address",
         "indexed": true,
         "internalType": "address"
       },
       {
-        "name": "newMirror",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
+        "name": "vpfiOut",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "reason",
+        "type": "bytes",
+        "indexed": false,
+        "internalType": "bytes"
       }
     ],
     "anonymous": false
@@ -1485,38 +1201,12 @@
   },
   {
     "type": "error",
-    "name": "BuyAlreadyResolved",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "BuyExceedsDailyCap",
+    "name": "BuyAdapterNotSet",
     "inputs": [
       {
-        "name": "attemptedTotal",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "cap",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "BuyExceedsPerRequestCap",
-    "inputs": [
-      {
-        "name": "amountIn",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "cap",
-        "type": "uint256",
-        "internalType": "uint256"
+        "name": "eid",
+        "type": "uint32",
+        "internalType": "uint32"
       }
     ]
   },
@@ -1549,6 +1239,11 @@
   {
     "type": "error",
     "name": "DayNotReadyToFinalize",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "DiamondNotSet",
     "inputs": []
   },
   {
@@ -1790,11 +1485,6 @@
   },
   {
     "type": "error",
-    "name": "NativeValueMismatch",
-    "inputs": []
-  },
-  {
-    "type": "error",
     "name": "NoInteractionRewardsToClaim",
     "inputs": []
   },
@@ -1813,17 +1503,6 @@
     "type": "error",
     "name": "NoStakingRewardsToClaim",
     "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "NoStuckVPFI",
-    "inputs": [
-      {
-        "name": "requestId",
-        "type": "uint64",
-        "internalType": "uint64"
-      }
-    ]
   },
   {
     "type": "error",
@@ -1854,17 +1533,6 @@
     "type": "error",
     "name": "NotCanonicalVPFIChain",
     "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "NotEndpoint",
-    "inputs": [
-      {
-        "name": "caller",
-        "type": "address",
-        "internalType": "address"
-      }
-    ]
   },
   {
     "type": "error",
@@ -1906,6 +1574,11 @@
   {
     "type": "error",
     "name": "NotOfferCreator",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "OFTAdapterNotSet",
     "inputs": []
   },
   {
@@ -1995,49 +1668,6 @@
   },
   {
     "type": "error",
-    "name": "PaymentTokenDecimalsCallFailed",
-    "inputs": [
-      {
-        "name": "token",
-        "type": "address",
-        "internalType": "address"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "PaymentTokenDecimalsNot18",
-    "inputs": [
-      {
-        "name": "token",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "decimals",
-        "type": "uint8",
-        "internalType": "uint8"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "PaymentTokenNotContract",
-    "inputs": [
-      {
-        "name": "token",
-        "type": "address",
-        "internalType": "address"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "PendingBuyNotFound",
-    "inputs": []
-  },
-  {
-    "type": "error",
     "name": "Permit2TokenMismatch",
     "inputs": [
       {
@@ -2054,22 +1684,12 @@
   },
   {
     "type": "error",
-    "name": "ReceiverEidNotSet",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "RefundTimeoutNotElapsed",
-    "inputs": []
-  },
-  {
-    "type": "error",
     "name": "ReportAfterFinalization",
     "inputs": []
   },
   {
     "type": "error",
-    "name": "RescueWouldTouchPendingLock",
+    "name": "RescueWouldTouchStuckVPFI",
     "inputs": []
   },
   {
@@ -2110,11 +1730,6 @@
   },
   {
     "type": "error",
-    "name": "TreasuryNotSet",
-    "inputs": []
-  },
-  {
-    "type": "error",
     "name": "TreasuryTransferFailed",
     "inputs": []
   },
@@ -2136,35 +1751,8 @@
   },
   {
     "type": "error",
-    "name": "UnauthorizedComposeSource",
-    "inputs": [
-      {
-        "name": "from",
-        "type": "address",
-        "internalType": "address"
-      }
-    ]
-  },
-  {
-    "type": "error",
     "name": "UnauthorizedCrossFacetCall",
     "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "UnexpectedNativeValue",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "UnknownMessageType",
-    "inputs": [
-      {
-        "name": "msgType",
-        "type": "uint8",
-        "internalType": "uint8"
-      }
-    ]
   },
   {
     "type": "error",
@@ -2214,16 +1802,6 @@
   {
     "type": "error",
     "name": "VPFITokenNotSet",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "VpfiMirrorNotSet",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "VpfiTokenNotSet",
     "inputs": []
   }
 ]
