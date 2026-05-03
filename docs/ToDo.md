@@ -11,6 +11,10 @@
 
 ---
 
+- [ ] **T-055**: Vaipakam Treasury should also Implement tracked and untracked token mechanism, so that unsolicitated deposits will not be touched at all. and not just an EOA type of account. Need to see how major DeFi and DEX are handeling it.
+
+---
+
 - [ ] **T-054**: Implement Escrow Stuck-Token Recovery (PR-1 through PR-5 per [`DesignsAndPlans/EscrowStuckRecoveryDesign.md`](DesignsAndPlans/EscrowStuckRecoveryDesign.md)). Locked design: counter-bounded recovery cap (`protocolTrackedEscrowBalance[user][token]`); single-sig with EIP-712 acknowledgment + "type CONFIRM" modal; recipient locked to escrow owner's EOA; three terminal outcomes (Recover-clean / Recover-sanctioned-→-banned / Disown-or-ignore-→-locked-but-active); `disown(token)` event-only function for compliance audit trail; recovery page hidden from main UI, only accessible via Advanced User Guide deep-link with `noindex,nofollow`; Asset Viewer shows only protocol-managed tokens with one-line direct-send warning; `depositVPFIToEscrow` rerouted through `escrowDepositERC20`; staking checkpoint reads `min(balanceOf, tracked)` to exclude unsolicited dust from yield. PR sequence: PR-1 storage + counter increments (regression-only), PR-2 VPFI routing + min-clamp checkpoint, PR-3 `recoverStuckERC20` + `disown` + EIP-712 verifier, PR-4 frontend `/recover` page + Advanced User Guide section + escrow-address redaction, PR-5 post-deploy analytics labeling per T-053.
 
 ---

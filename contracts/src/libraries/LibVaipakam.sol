@@ -2001,6 +2001,41 @@ library LibVaipakam {
         // GRACE_BUCKETS_MAX_LEN / GRACE_BUCKET_DAYS_MIN/MAX /
         // GRACE_SECONDS_MIN/MAX before any write.
         GraceBucket[] graceBuckets;
+        // ── Escrow protocol-tracked balance counter (T-051 / T-054) ──
+        // Per-(user, token) running counter of ERC-20 amount the
+        // protocol has deposited into / withdrawn from the user's
+        // escrow proxy. Incremented by `EscrowFactoryFacet.escrowDepositERC20`
+        // (and the counter-only sibling `recordEscrowDepositERC20`,
+        // used after Permit2 pulls); decremented by
+        // `escrowWithdrawERC20`. Every protocol-side ERC-20 deposit
+        // is required to flow through one of those entry points so
+        // the counter stays correct.
+        //
+        // Two consumers depend on this being accurate:
+        //
+        //   1. The Asset Viewer / external integrations that want to
+        //      display only protocol-managed balances. They render
+        //      `min(balanceOf(escrow, token), protocolTrackedEscrowBalance[user][token])`
+        //      so unsolicited dust someone pushed in directly via
+        //      `IERC20.transfer` is structurally hidden from the UI.
+        //
+        //   2. The future stuck-token recovery flow (T-054). Recovery
+        //      is capped at `max(0, balanceOf - tracked)` — the
+        //      arithmetic itself prevents the recovery path from
+        //      ever pulling protocol-managed collateral / claims /
+        //      staked VPFI no matter what other checks were
+        //      bypassed. Load-bearing safety property.
+        //
+        // The staking checkpoint (`LibStakingRewards.updateUser`) and
+        // VPFI discount accumulator (`LibVPFIDiscount.rollupUserDiscount`)
+        // also clamp to `min(balanceOf, tracked)` so unsolicited VPFI
+        // dust does NOT earn yield and does NOT inflate the tier.
+        //
+        // Underflow on withdraw means a withdrawal fired without a
+        // matching deposit — that's an accounting bug somewhere upstream
+        // and we want it to revert loudly rather than silently rolling
+        // negative.
+        mapping(address => mapping(address => uint256)) protocolTrackedEscrowBalance;
     }
 
     /// @dev Range Orders Phase 1 — set by matchOffers, read by
@@ -3257,5 +3292,37 @@ library LibVaipakam {
         if (isSanctionedAddress(who)) {
             revert SanctionedAddress(who);
         }
+    }
+
+    /// @notice Internal accountant for protocol-deposited ERC-20
+    ///         tokens in a user's escrow. Increments the per-(user,
+    ///         token) counter that the Asset Viewer and the future
+    ///         stuck-token recovery flow read.
+    /// @dev    Library-internal helper called from
+    ///         `EscrowFactoryFacet.escrowDepositERC20` and
+    ///         `recordEscrowDepositERC20` (the counter-only sibling
+    ///         used after Permit2 pulls). Solidity 0.8+ checked
+    ///         arithmetic protects against overflow.
+    function recordEscrowDeposit(
+        address user,
+        address token,
+        uint256 amount
+    ) internal {
+        storageSlot().protocolTrackedEscrowBalance[user][token] += amount;
+    }
+
+    /// @notice Internal accountant for protocol-withdrawn ERC-20
+    ///         tokens from a user's escrow.
+    /// @dev    Called from `EscrowFactoryFacet.escrowWithdrawERC20`.
+    ///         Underflow reverts — a decrement greater than the
+    ///         tracked balance means a withdraw fired without a
+    ///         matching deposit somewhere, which is an accounting
+    ///         bug upstream that we want to surface loudly.
+    function recordEscrowWithdraw(
+        address user,
+        address token,
+        uint256 amount
+    ) internal {
+        storageSlot().protocolTrackedEscrowBalance[user][token] -= amount;
     }
 }

@@ -167,14 +167,19 @@ contract PrecloseFacet is
             }
 
             // T-037 — Lender's due: direct borrower → lender's escrow.
-            // See RepayFacet's matching site for the rationale; same
-            // pattern saves one transfer + removes a transient Diamond
-            // balance of the principal asset.
-            address lenderEscrow = LibFacet.getOrCreateEscrow(loan.lender);
-            IERC20(loan.principalAsset).safeTransferFrom(
-                msg.sender,
-                lenderEscrow,
-                plan.lenderDue
+            // Routed through the cross-payer chokepoint variant so the
+            // protocolTrackedEscrowBalance counter ticks under the
+            // LENDER (the escrow owner) while pulling from the
+            // borrower's allowance.
+            LibFacet.crossFacetCall(
+                abi.encodeWithSelector(
+                    EscrowFactoryFacet.escrowDepositERC20From.selector,
+                    msg.sender,        // payer — borrower
+                    loan.lender,       // user — lender's escrow
+                    loan.principalAsset,
+                    plan.lenderDue
+                ),
+                EscrowDepositFailed.selector
             );
 
             // Record lender's claimable (principal + interest)
@@ -435,13 +440,18 @@ contract PrecloseFacet is
             LibFacet.recordTreasuryAccrual(payAsset, treasuryFee);
         }
         if (lenderShare > 0) {
-            // T-037 — direct borrower → lender's escrow; no Diamond
-            // intermediation. See RepayFacet for the pattern rationale.
-            address lenderEscrow = LibFacet.getOrCreateEscrow(loan.lender);
-            IERC20(payAsset).safeTransferFrom(
-                msg.sender,
-                lenderEscrow,
-                lenderShare
+            // T-037 — direct borrower → lender's escrow via the
+            // cross-payer chokepoint. Counter ticks up under the
+            // lender even though the borrower is paying.
+            LibFacet.crossFacetCall(
+                abi.encodeWithSelector(
+                    EscrowFactoryFacet.escrowDepositERC20From.selector,
+                    msg.sender,        // payer
+                    loan.lender,       // user (escrow owner)
+                    payAsset,
+                    lenderShare
+                ),
+                EscrowDepositFailed.selector
             );
             s.heldForLender[loanId] += lenderShare;
         }
@@ -758,16 +768,22 @@ contract PrecloseFacet is
         }
 
         // T-037 — Repay original principal + interest/shortfall direct
-        // to old lender's escrow. Alice must return Liam's principal;
-        // the new offer deposit is separate capital Alice puts up to
-        // become the new lender. Direct `safeTransferFrom` avoids the
-        // Diamond holding the lender's funds even momentarily.
+        // to old lender's escrow via the cross-payer chokepoint. Alice
+        // must return Liam's principal; the new offer deposit is
+        // separate capital Alice puts up to become the new lender.
+        // Routing through `escrowDepositERC20From` keeps the Diamond
+        // out of the funds path AND ticks the
+        // protocolTrackedEscrowBalance counter under the old lender.
         uint256 lenderTotal = loan.principal + interestToLender;
-        address lenderEscrow = LibFacet.getOrCreateEscrow(loan.lender);
-        IERC20(payAssetOffset).safeTransferFrom(
-            msg.sender,
-            lenderEscrow,
-            lenderTotal
+        LibFacet.crossFacetCall(
+            abi.encodeWithSelector(
+                EscrowFactoryFacet.escrowDepositERC20From.selector,
+                msg.sender,        // payer — Alice
+                loan.lender,       // user — old lender (Liam)
+                payAssetOffset,
+                lenderTotal
+            ),
+            EscrowDepositFailed.selector
         );
         s.heldForLender[loanId] += lenderTotal;
     }

@@ -75,6 +75,34 @@
   },
   {
     "type": "function",
+    "name": "escrowDepositERC20From",
+    "inputs": [
+      {
+        "name": "payer",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "user",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "token",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "escrowDepositERC721",
     "inputs": [
       {
@@ -430,6 +458,30 @@
   },
   {
     "type": "function",
+    "name": "getProtocolTrackedEscrowBalance",
+    "inputs": [
+      {
+        "name": "user",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "token",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "getUserEscrowAddress",
     "inputs": [
       {
@@ -464,6 +516,29 @@
     "type": "function",
     "name": "initializeEscrowImplementation",
     "inputs": [],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "recordEscrowDepositERC20",
+    "inputs": [
+      {
+        "name": "user",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "token",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
     "outputs": [],
     "stateMutability": "nonpayable"
   },
@@ -588,6 +663,37 @@
   },
   {
     "type": "event",
+    "name": "StuckERC20Recovered",
+    "inputs": [
+      {
+        "name": "user",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "token",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "admin",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "UserEscrowCreated",
     "inputs": [
       {
@@ -628,6 +734,16 @@
   },
   {
     "type": "error",
+    "name": "AmountZero",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "CannotRecoverVPFI",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "EscrowUpgradeRequired",
     "inputs": []
   },
@@ -654,6 +770,17 @@
   },
   {
     "type": "error",
+    "name": "SafeERC20FailedOperation",
+    "inputs": [
+      {
+        "name": "token",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "SanctionedAddress",
     "inputs": [
       {
@@ -665,7 +792,17 @@
   },
   {
     "type": "error",
+    "name": "TokenIsProtocolConfigured",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "UpgradeFailed",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "UserHasNoEscrow",
     "inputs": []
   }
 ]

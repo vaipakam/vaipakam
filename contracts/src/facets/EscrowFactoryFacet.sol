@@ -238,12 +238,37 @@ contract EscrowFactoryFacet is DiamondAccessControl {
     }
 
     /**
-     * @notice Deposits ERC-20 tokens into the specified user's escrow.
-     * @dev onlyDiamondInternal — cross-facet only (msg.sender == diamond).
-     *      Auto-creates the user's proxy if missing, then forwards to
-     *      {VaipakamEscrowImplementation.depositERC20}. Reverts
-     *      ProxyCallFailed("Deposit ERC20 failed") on proxy revert.
-     * @param user The user whose escrow to deposit into.
+     * @notice The single chokepoint for protocol-side ERC-20 deposits
+     *         into a user's escrow. Pulls `amount` directly from the
+     *         user's wallet (using the Diamond's existing allowance)
+     *         to the escrow proxy, AND increments
+     *         `protocolTrackedEscrowBalance[user][token]` so the
+     *         counter stays correct.
+     *
+     * @dev    onlyDiamondInternal — every protocol facet that previously
+     *         did `IERC20(t).safeTransferFrom(user, escrow, amount)`
+     *         directly is migrated to call this instead. That keeps
+     *         the counter the load-bearing safety boundary for the
+     *         stuck-token recovery flow (T-054) and makes the Asset
+     *         Viewer's `min(balanceOf, tracked)` display correct.
+     *
+     *         Auto-creates the user's escrow proxy if missing. Pulls
+     *         from `user` (NOT msg.sender — msg.sender is the
+     *         Diamond on the cross-facet call) so the user's
+     *         wallet-side approval to the Diamond is what authorises
+     *         the transfer. This preserves the existing approval
+     *         pattern for callers — a user that approved the
+     *         Diamond once can be the funding source for any number
+     *         of escrow-deposit operations.
+     *
+     *         For Permit2-mediated transfers (where the funds movement
+     *         happens via the signed permit, not via this allowance
+     *         path), use {recordEscrowDepositERC20} instead — it does
+     *         the counter increment without re-issuing the transfer.
+     *
+     * @param user The user whose escrow to credit (also the source
+     *             of funds — the Diamond's allowance from this user
+     *             is consumed).
      * @param token The ERC-20 token address.
      * @param amount The amount to deposit.
      */
@@ -253,14 +278,72 @@ contract EscrowFactoryFacet is DiamondAccessControl {
         uint256 amount
     ) external onlyDiamondInternal {
         address proxy = getOrCreateUserEscrow(user);
-        (bool success, ) = proxy.call(
-            abi.encodeWithSelector(
-                VaipakamEscrowImplementation.depositERC20.selector,
-                token,
-                amount
-            )
-        );
-        if (!success) revert ProxyCallFailed("Deposit ERC20 failed");
+        // Direct user → escrow transfer using the Diamond's existing
+        // allowance from `user`. Token contract sees msg.sender =
+        // Diamond (this facet runs in Diamond's context), checks
+        // allowance[user][Diamond] >= amount, and moves amount from
+        // user to proxy.
+        IERC20(token).safeTransferFrom(user, proxy, amount);
+        LibVaipakam.recordEscrowDeposit(user, token, amount);
+    }
+
+    /**
+     * @notice Cross-payer variant of {escrowDepositERC20}. Pulls
+     *         `amount` of `token` from `payer`'s wallet (using the
+     *         Diamond's allowance from `payer`) and credits it to
+     *         `user`'s escrow — so the source of funds and the
+     *         owner of the escrow can differ. The
+     *         protocolTrackedEscrowBalance counter ticks up under
+     *         `user`, matching where the funds land.
+     *
+     * @dev    Used by repay / preclose / refinance flows where the
+     *         borrower pays the lender — borrower is the payer,
+     *         lender owns the escrow that receives. For the more
+     *         common offer-creation / staking flows where the same
+     *         party is both, prefer the simpler {escrowDepositERC20}.
+     *
+     *         onlyDiamondInternal.
+     *
+     * @param payer  Address whose allowance to the Diamond is consumed.
+     * @param user   User whose escrow is credited (counter increments
+     *               under this address).
+     * @param token  ERC-20 token address.
+     * @param amount Amount to deposit.
+     */
+    function escrowDepositERC20From(
+        address payer,
+        address user,
+        address token,
+        uint256 amount
+    ) external onlyDiamondInternal {
+        address proxy = getOrCreateUserEscrow(user);
+        IERC20(token).safeTransferFrom(payer, proxy, amount);
+        LibVaipakam.recordEscrowDeposit(user, token, amount);
+    }
+
+    /**
+     * @notice Counter-only sibling of {escrowDepositERC20} — records
+     *         that `amount` of `token` has just been credited to
+     *         `user`'s escrow, without re-issuing the transfer.
+     *
+     * @dev    Use immediately after a Permit2-mediated pull (or any
+     *         other transfer mechanism that already routes funds to
+     *         the user's escrow). The caller is responsible for
+     *         having actually moved the tokens; this function
+     *         updates the counter only. Never invoke without a
+     *         matching, just-completed transfer to the user's escrow
+     *         — doing so silently inflates the counter and corrupts
+     *         the recovery cap.
+     *
+     *         onlyDiamondInternal — gated to cross-facet callers so
+     *         no external party can write to the counter directly.
+     */
+    function recordEscrowDepositERC20(
+        address user,
+        address token,
+        uint256 amount
+    ) external onlyDiamondInternal {
+        LibVaipakam.recordEscrowDeposit(user, token, amount);
     }
 
     /**
@@ -268,6 +351,11 @@ contract EscrowFactoryFacet is DiamondAccessControl {
      * @dev onlyDiamondInternal — cross-facet only. Forwards to
      *      {VaipakamEscrowImplementation.withdrawERC20}. Reverts
      *      ProxyCallFailed("Withdraw ERC20 failed") on proxy revert.
+     *      Decrements `protocolTrackedEscrowBalance[user][token]` so
+     *      the counter remains the symmetric mirror of all
+     *      protocol-side movements. Underflow reverts loudly if a
+     *      withdraw fires for more than was tracked — that's an
+     *      accounting bug somewhere upstream.
      * @param user The user whose escrow to withdraw from.
      * @param token The ERC-20 token address.
      * @param recipient The recipient address.
@@ -289,6 +377,27 @@ contract EscrowFactoryFacet is DiamondAccessControl {
             )
         );
         if (!success) revert ProxyCallFailed("Withdraw ERC20 failed");
+        LibVaipakam.recordEscrowWithdraw(user, token, amount);
+    }
+
+    /**
+     * @notice Returns the per-(user, token) protocol-tracked escrow
+     *         balance — i.e. the running sum of every
+     *         `escrowDepositERC20` / `recordEscrowDepositERC20`
+     *         minus every `escrowWithdrawERC20` for that pair.
+     *
+     * @dev    Pure view; safe to call externally. Asset Viewer
+     *         displays `min(balanceOf(escrow, token), this)` so
+     *         unsolicited dust pushed in directly via
+     *         `IERC20.transfer` is hidden from the UI. The future
+     *         stuck-token recovery flow (T-054) caps recovery at
+     *         `max(0, balanceOf - this)`.
+     */
+    function getProtocolTrackedEscrowBalance(
+        address user,
+        address token
+    ) external view returns (uint256) {
+        return LibVaipakam.storageSlot().protocolTrackedEscrowBalance[user][token];
     }
 
     /**

@@ -356,7 +356,9 @@ contract VPFIDiscountFacetTest is SetupTest {
         // to tier 1 (>= 100 VPFI) so the tier gate does not short-circuit.
         uint256 offerId = _createLenderERC20Offer(10_000 ether);
         address borrowerEscrow = _buyerEscrow(borrower);
-        vpfiToken.transfer(borrowerEscrow, 500 ether); // tier 1
+        vpfiToken.transfer(borrowerEscrow, 500 ether);
+        vm.prank(address(diamond));
+        EscrowFactoryFacet(address(diamond)).recordEscrowDepositERC20(borrower, address(vpfiToken), 500 ether); // tier 1
 
         (bool eligible, uint256 vpfi, uint256 bal, uint8 tier) = _facet()
             .quoteVPFIDiscountFor(offerId, borrower);
@@ -378,7 +380,9 @@ contract VPFIDiscountFacetTest is SetupTest {
         _facet().setVPFIBuyRate(0);
         uint256 offerId = _createLenderERC20Offer(10_000 ether);
         address borrowerEscrow = _buyerEscrow(borrower);
-        vpfiToken.transfer(borrowerEscrow, 500 ether); // tier 1
+        vpfiToken.transfer(borrowerEscrow, 500 ether);
+        vm.prank(address(diamond));
+        EscrowFactoryFacet(address(diamond)).recordEscrowDepositERC20(borrower, address(vpfiToken), 500 ether); // tier 1
 
         (bool eligible, , , ) = _facet().quoteVPFIDiscountFor(offerId, borrower);
         assertFalse(eligible);
@@ -455,7 +459,9 @@ contract VPFIDiscountFacetTest is SetupTest {
         address borrowerEscrow = _buyerEscrow(borrower);
         address lenderEscrow = EscrowFactoryFacet(address(diamond))
             .getOrCreateUserEscrow(lender);
-        vpfiToken.transfer(borrowerEscrow, 500 ether); // tier 1
+        vpfiToken.transfer(borrowerEscrow, 500 ether);
+        vm.prank(address(diamond));
+        EscrowFactoryFacet(address(diamond)).recordEscrowDepositERC20(borrower, address(vpfiToken), 500 ether); // tier 1
 
         (bool eligible, uint256 vpfiRequired, , uint8 tier) = _facet()
             .quoteVPFIDiscountFor(offerId, borrower);
@@ -466,6 +472,8 @@ contract VPFIDiscountFacetTest is SetupTest {
         // Top up so the escrow has the tier-1 seed + enough to cover the
         // FULL VPFI-denominated LIF (not a discounted slice).
         vpfiToken.transfer(borrowerEscrow, vpfiRequired * 2);
+        vm.prank(address(diamond));
+        EscrowFactoryFacet(address(diamond)).recordEscrowDepositERC20(borrower, address(vpfiToken), vpfiRequired * 2);
 
         uint256 treasuryVpfiBefore = vpfiToken.balanceOf(treasuryRecipient);
         uint256 treasuryErc20Before = IERC20(mockERC20).balanceOf(
@@ -583,7 +591,9 @@ contract VPFIDiscountFacetTest is SetupTest {
         uint256 offerId = _createLenderERC20Offer(principal);
 
         address borrowerEscrow = _buyerEscrow(borrower);
-        vpfiToken.transfer(borrowerEscrow, 5_000 ether); // plenty
+        vpfiToken.transfer(borrowerEscrow, 5_000 ether);
+        vm.prank(address(diamond));
+        EscrowFactoryFacet(address(diamond)).recordEscrowDepositERC20(borrower, address(vpfiToken), 5_000 ether); // plenty
 
         // Borrower opts in; discount still skipped because asset is illiquid.
         vm.prank(borrower);
@@ -781,6 +791,8 @@ contract VPFIDiscountFacetTest is SetupTest {
             borrower
         );
         vpfiToken.transfer(_buyerEscrow(borrower), vpfiRequired * 2);
+        vm.prank(address(diamond));
+        EscrowFactoryFacet(address(diamond)).recordEscrowDepositERC20(borrower, address(vpfiToken), vpfiRequired * 2);
 
         // Also fund borrower collateral for acceptOffer.
         ERC20Mock(mockCollateralERC20).mint(borrower, principal);
@@ -868,6 +880,8 @@ contract VPFIDiscountFacetTest is SetupTest {
         );
         // Top up so the escrow can cover the LIF itself.
         vpfiToken.transfer(_buyerEscrow(borrower), vpfiRequired * 2);
+        vm.prank(address(diamond));
+        EscrowFactoryFacet(address(diamond)).recordEscrowDepositERC20(borrower, address(vpfiToken), vpfiRequired * 2);
 
         ERC20Mock(mockCollateralERC20).mint(borrower, principal);
         vm.prank(borrower);
@@ -930,6 +944,8 @@ contract VPFIDiscountFacetTest is SetupTest {
             borrower
         );
         vpfiToken.transfer(_buyerEscrow(borrower), vpfiRequired * 2);
+        vm.prank(address(diamond));
+        EscrowFactoryFacet(address(diamond)).recordEscrowDepositERC20(borrower, address(vpfiToken), vpfiRequired * 2);
 
         ERC20Mock(mockCollateralERC20).mint(borrower, principal);
         vm.prank(borrower);

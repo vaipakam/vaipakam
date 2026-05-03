@@ -1621,6 +1621,11 @@
   },
   {
     "type": "error",
+    "name": "EscrowDepositFailed",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "EscrowResolutionFailed",
     "inputs": []
   },

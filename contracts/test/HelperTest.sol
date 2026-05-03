@@ -296,7 +296,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](19);
+        selectors = new bytes4[](22);
         selectors[0] = EscrowFactoryFacet
             .initializeEscrowImplementation
             .selector;
@@ -320,6 +320,10 @@ contract HelperTest {
         selectors[16] = EscrowFactoryFacet.upgradeUserEscrow.selector;
         selectors[17] = EscrowFactoryFacet.escrowGetNFTQuantity.selector;
         selectors[18] = EscrowFactoryFacet.getUserEscrowAddress.selector;
+        // T-051 / T-054 — counter chokepoint companions.
+        selectors[19] = EscrowFactoryFacet.escrowDepositERC20From.selector;
+        selectors[20] = EscrowFactoryFacet.recordEscrowDepositERC20.selector;
+        selectors[21] = EscrowFactoryFacet.getProtocolTrackedEscrowBalance.selector;
         return selectors;
     }
 
@@ -769,7 +773,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](21);
+        selectors = new bytes4[](24);
         selectors[0] = EscrowFactoryFacet.initializeEscrowImplementation.selector;
         selectors[1] = EscrowFactoryFacet.getOrCreateUserEscrow.selector;
         selectors[2] = EscrowFactoryFacet.upgradeEscrowImplementation.selector;
@@ -791,6 +795,10 @@ contract HelperTest {
         selectors[18] = EscrowFactoryFacet.escrowGetNFTQuantity.selector;
         selectors[19] = EscrowFactoryFacet.escrowSetNFTUser1155.selector;
         selectors[20] = EscrowFactoryFacet.getUserEscrowAddress.selector;
+        // T-051 / T-054 — counter chokepoint companions.
+        selectors[21] = EscrowFactoryFacet.escrowDepositERC20From.selector;
+        selectors[22] = EscrowFactoryFacet.recordEscrowDepositERC20.selector;
+        selectors[23] = EscrowFactoryFacet.getProtocolTrackedEscrowBalance.selector;
         return selectors;
     }
 }

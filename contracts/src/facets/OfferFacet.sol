@@ -338,6 +338,22 @@ contract OfferFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
             expectedAsset = params.prepayAsset;
         }
         LibPermit2.pull(msg.sender, escrow, expectedAsset, amount, permit, signature);
+        // Permit2 already moved funds to the user's escrow. Record
+        // the deposit in the protocolTrackedEscrowBalance counter so
+        // it stays the symmetric mirror of the classic-path
+        // `escrowDepositERC20` flow above. Every Permit2-funded leg
+        // here is ERC-20 (the asset-type guards at the top of the
+        // function reject any other shape), so the counter is the
+        // right home for it.
+        LibFacet.crossFacetCall(
+            abi.encodeWithSelector(
+                EscrowFactoryFacet.recordEscrowDepositERC20.selector,
+                msg.sender,
+                expectedAsset,
+                amount
+            ),
+            EscrowDepositFailed.selector
+        );
         _createOfferFinish(offerId, params);
     }
 
@@ -632,6 +648,16 @@ contract OfferFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
     ///      {createOffer}. Handles every combination of offer side +
     ///      asset type. Permit2 callers skip this and invoke
     ///      `LibPermit2.pull` with the signed permit instead.
+    ///
+    ///      ERC-20 deposits route through
+    ///      `EscrowFactoryFacet.escrowDepositERC20` (the protocol-wide
+    ///      chokepoint) so the `protocolTrackedEscrowBalance` counter
+    ///      ticks at every legitimate inflow. NFTs (ERC-721 / ERC-1155)
+    ///      bypass the counter — they're tracked per-loan via
+    ///      `loan.collateralAsset / tokenId / quantity` references
+    ///      rather than fungible balance, so the counter doesn't
+    ///      apply to them. The `escrow` argument stays in the
+    ///      signature because NFT receivers still target it directly.
     function _pullCreatorAssetsClassic(
         LibVaipakam.CreateOfferParams calldata params,
         address escrow
@@ -646,10 +672,14 @@ contract OfferFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
                 uint256 lenderPull = params.amountMax == 0
                     ? params.amount
                     : params.amountMax;
-                IERC20(params.lendingAsset).safeTransferFrom(
-                    msg.sender,
-                    escrow,
-                    lenderPull
+                LibFacet.crossFacetCall(
+                    abi.encodeWithSelector(
+                        EscrowFactoryFacet.escrowDepositERC20.selector,
+                        msg.sender,
+                        params.lendingAsset,
+                        lenderPull
+                    ),
+                    EscrowDepositFailed.selector
                 );
             } else if (params.assetType == LibVaipakam.AssetType.ERC721) {
                 IERC721(params.lendingAsset).safeTransferFrom(
@@ -672,10 +702,14 @@ contract OfferFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
             // Borrower: lock collateral (or prepay for NFT rental).
             if (params.assetType == LibVaipakam.AssetType.ERC20) {
                 if (params.collateralAssetType == LibVaipakam.AssetType.ERC20) {
-                    IERC20(params.collateralAsset).safeTransferFrom(
-                        msg.sender,
-                        escrow,
-                        params.collateralAmount
+                    LibFacet.crossFacetCall(
+                        abi.encodeWithSelector(
+                            EscrowFactoryFacet.escrowDepositERC20.selector,
+                            msg.sender,
+                            params.collateralAsset,
+                            params.collateralAmount
+                        ),
+                        EscrowDepositFailed.selector
                     );
                 } else if (params.collateralAssetType == LibVaipakam.AssetType.ERC721) {
                     IERC721(params.collateralAsset).safeTransferFrom(
@@ -699,10 +733,14 @@ contract OfferFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
                 params.assetType == LibVaipakam.AssetType.ERC1155
             ) {
                 uint256 totalPrepay = _nftRentalPrepayTotal(params.amount, params.durationDays);
-                IERC20(params.prepayAsset).safeTransferFrom(
-                    msg.sender,
-                    escrow,
-                    totalPrepay
+                LibFacet.crossFacetCall(
+                    abi.encodeWithSelector(
+                        EscrowFactoryFacet.escrowDepositERC20.selector,
+                        msg.sender,
+                        params.prepayAsset,
+                        totalPrepay
+                    ),
+                    EscrowDepositFailed.selector
                 );
             } else {
                 revert InvalidAssetType();
@@ -1071,11 +1109,27 @@ contract OfferFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
                 permit,
                 signature
             );
+            // Permit2 handled the funds movement directly; counter-only
+            // sibling records the deposit so the protocolTracked-
+            // EscrowBalance counter stays in sync.
+            LibFacet.crossFacetCall(
+                abi.encodeWithSelector(
+                    EscrowFactoryFacet.recordEscrowDepositERC20.selector,
+                    borrower,
+                    offer.prepayAsset,
+                    totalPrepay
+                ),
+                EscrowDepositFailed.selector
+            );
         } else {
-            IERC20(offer.prepayAsset).safeTransferFrom(
-                borrower,
-                borrowerEscrow,
-                totalPrepay
+            LibFacet.crossFacetCall(
+                abi.encodeWithSelector(
+                    EscrowFactoryFacet.escrowDepositERC20.selector,
+                    borrower,
+                    offer.prepayAsset,
+                    totalPrepay
+                ),
+                EscrowDepositFailed.selector
             );
         }
     }
@@ -1348,11 +1402,27 @@ contract OfferFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
                             permit,
                             signature
                         );
+                        // Permit2 already moved funds; counter-only
+                        // record so the protocolTrackedEscrowBalance
+                        // tally stays in sync.
+                        LibFacet.crossFacetCall(
+                            abi.encodeWithSelector(
+                                EscrowFactoryFacet.recordEscrowDepositERC20.selector,
+                                borrower,
+                                offer.collateralAsset,
+                                offer.collateralAmount
+                            ),
+                            EscrowDepositFailed.selector
+                        );
                     } else {
-                        IERC20(offer.collateralAsset).safeTransferFrom(
-                            borrower,
-                            borrowerEscrow,
-                            offer.collateralAmount
+                        LibFacet.crossFacetCall(
+                            abi.encodeWithSelector(
+                                EscrowFactoryFacet.escrowDepositERC20.selector,
+                                borrower,
+                                offer.collateralAsset,
+                                offer.collateralAmount
+                            ),
+                            EscrowDepositFailed.selector
                         );
                     }
                 } else if (offer.collateralAssetType == LibVaipakam.AssetType.ERC721) {

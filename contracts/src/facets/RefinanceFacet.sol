@@ -219,12 +219,19 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
             LibFacet.recordTreasuryAccrual(oldLoan.principalAsset, treasuryFee);
         }
 
-        // Route lender's share to old lender's escrow.
-        address lenderEscrow = LibFacet.getOrCreateEscrow(oldLoan.lender);
-        IERC20(oldLoan.principalAsset).safeTransferFrom(
-            msg.sender,
-            lenderEscrow,
-            lenderDue
+        // Route lender's share to old lender's escrow via the cross-
+        // payer chokepoint so the protocolTrackedEscrowBalance
+        // counter ticks under the old lender (the escrow owner)
+        // while the borrower remains the payer.
+        LibFacet.crossFacetCall(
+            abi.encodeWithSelector(
+                EscrowFactoryFacet.escrowDepositERC20From.selector,
+                msg.sender,         // payer — borrower
+                oldLoan.lender,     // user — old lender's escrow
+                oldLoan.principalAsset,
+                lenderDue
+            ),
+            EscrowDepositFailed.selector
         );
 
         // Record lender's claimable. heldForLender handled by ClaimFacet.

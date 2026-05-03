@@ -299,6 +299,9 @@ contract DefaultedFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
                 address lenderEscrow = LibFacet.getOrCreateEscrow(loan.lender);
                 if (lenderProceeds > 0) {
                     IERC20(loan.principalAsset).safeTransfer(lenderEscrow, lenderProceeds);
+                    // T-051 — Diamond-side transfer to escrow ticks
+                    // the protocolTrackedEscrowBalance counter.
+                    LibVaipakam.recordEscrowDeposit(loan.lender, loan.principalAsset, lenderProceeds);
                 }
 
                 s.lenderClaims[loanId] = LibVaipakam.ClaimInfo({
@@ -314,6 +317,7 @@ contract DefaultedFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
                 if (borrowerSurplus > 0) {
                     address borrowerEscrow = LibFacet.getOrCreateEscrow(loan.borrower);
                     IERC20(loan.principalAsset).safeTransfer(borrowerEscrow, borrowerSurplus);
+                    LibVaipakam.recordEscrowDeposit(loan.borrower, loan.principalAsset, borrowerSurplus);
                 }
                 s.borrowerClaims[loanId] = LibVaipakam.ClaimInfo({
                     asset: loan.principalAsset,
@@ -345,6 +349,9 @@ contract DefaultedFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
                         EscrowWithdrawFailed.selector
                     );
                     IERC20(loan.collateralAsset).safeTransfer(lenderEscrow, loan.collateralAmount);
+                    // T-051 — Diamond-side transfer to lender's escrow
+                    // ticks the protocolTrackedEscrowBalance counter.
+                    LibVaipakam.recordEscrowDeposit(loan.lender, loan.collateralAsset, loan.collateralAmount);
                 } else if (loan.collateralAssetType == LibVaipakam.AssetType.ERC721) {
                     LibFacet.crossFacetCall(
                         abi.encodeWithSelector(
@@ -443,6 +450,9 @@ contract DefaultedFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
             // Lender gets remainder
             address lenderEscrow = LibFacet.getOrCreateEscrow(loan.lender);
             IERC20(loan.prepayAsset).safeTransfer(lenderEscrow, prepayToLender);
+            // T-051 — Diamond-side transfer to lender's escrow ticks
+            // the protocolTrackedEscrowBalance counter.
+            LibVaipakam.recordEscrowDeposit(loan.lender, loan.prepayAsset, prepayToLender);
 
             // Record lender's claimable prepay fees. heldForLender handled by ClaimFacet.
             s.lenderClaims[loanId] = LibVaipakam.ClaimInfo({

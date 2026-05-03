@@ -399,8 +399,23 @@ contract VPFIDiscountFacet is
         // Tier-1 sanctions gate. Don't let a sanctioned wallet
         // accumulate VPFI in their own escrow.
         LibVaipakam._assertNotSanctioned(msg.sender);
-        (address vpfi, address escrow) = _prepareDeposit(amount);
-        IERC20(vpfi).safeTransferFrom(msg.sender, escrow, amount);
+        (address vpfi, ) = _prepareDeposit(amount);
+        // Route through the protocol's chokepoint so the
+        // protocolTrackedEscrowBalance counter ticks for the staked
+        // VPFI. The chokepoint resolves the user's escrow
+        // internally — `_prepareDeposit` still creates it (via
+        // `getOrCreateUserEscrow`) so the staking-checkpoint /
+        // discount-accumulator can rollup against the post-mutation
+        // balance, but we no longer need the address back here.
+        LibFacet.crossFacetCall(
+            abi.encodeWithSelector(
+                EscrowFactoryFacet.escrowDepositERC20.selector,
+                msg.sender,
+                vpfi,
+                amount
+            ),
+            EscrowDepositFailed.selector
+        );
         emit VPFIDepositedToEscrow(msg.sender, amount);
     }
 
@@ -442,6 +457,20 @@ contract VPFIDiscountFacet is
         // checkpoint at the post-mutation balance — the on-chain VPFI
         // balance would not actually move and accounting would drift.
         LibPermit2.pull(msg.sender, escrow, vpfi, amount, permit, signature);
+        // Permit2 already moved VPFI to the user's escrow; record the
+        // deposit in the protocolTrackedEscrowBalance counter so the
+        // staking checkpoint's `min(balanceOf, tracked)` reads the
+        // staked balance correctly and the future stuck-recovery
+        // path's cap math stays consistent.
+        LibFacet.crossFacetCall(
+            abi.encodeWithSelector(
+                EscrowFactoryFacet.recordEscrowDepositERC20.selector,
+                msg.sender,
+                vpfi,
+                amount
+            ),
+            EscrowDepositFailed.selector
+        );
         emit VPFIDepositedToEscrow(msg.sender, amount);
     }
 

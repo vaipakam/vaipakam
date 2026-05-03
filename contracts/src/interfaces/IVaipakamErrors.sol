@@ -28,6 +28,7 @@ interface IVaipakamErrors {
     error NFTTransferFailed();
     error EscrowResolutionFailed();
     error EscrowWithdrawFailed();
+    error EscrowDepositFailed();
     error EscrowTransferFailed();
     error TreasuryTransferFailed();
     error LoanInitiationFailed();

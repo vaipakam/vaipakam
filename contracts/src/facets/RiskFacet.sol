@@ -522,6 +522,9 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
         address lenderEscrow = LibFacet.getOrCreateEscrow(loan.lender);
         if (lenderProceeds > 0) {
             IERC20(loan.principalAsset).safeTransfer(lenderEscrow, lenderProceeds);
+            // T-051 — Diamond-side transfer to escrow ticks the
+            // protocolTrackedEscrowBalance counter.
+            LibVaipakam.recordEscrowDeposit(loan.lender, loan.principalAsset, lenderProceeds);
         }
 
         // Record lender's claimable proceeds. heldForLender handled by ClaimFacet.
@@ -538,6 +541,7 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
         if (borrowerSurplus > 0) {
             address borrowerEscrow = LibFacet.getOrCreateEscrow(loan.borrower);
             IERC20(loan.principalAsset).safeTransfer(borrowerEscrow, borrowerSurplus);
+            LibVaipakam.recordEscrowDeposit(loan.borrower, loan.principalAsset, borrowerSurplus);
         }
         s.borrowerClaims[loanId] = LibVaipakam.ClaimInfo({
             asset: loan.principalAsset,

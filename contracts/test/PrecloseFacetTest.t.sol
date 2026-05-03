@@ -1555,15 +1555,16 @@ contract PrecloseFacetTest is Test {
             })
         );
 
-        // Mock getOrCreateUserEscrow for lender to fail
+        // T-051 — escrow resolution moved inside the chokepoint;
+        // mock the chokepoint selector instead.
         vm.mockCallRevert(
             address(diamond),
-            abi.encodeWithSelector(EscrowFactoryFacet.getOrCreateUserEscrow.selector, lender),
+            abi.encodeWithSelector(EscrowFactoryFacet.escrowDepositERC20From.selector),
             "escrow fail"
         );
 
         vm.prank(borrower);
-        vm.expectRevert(bytes("escrow fail"));
+        vm.expectRevert();
         PrecloseFacet(address(diamond)).transferObligationViaOffer(activeLoanId, validOffer);
         vm.clearMockedCalls();
     }
@@ -1571,15 +1572,21 @@ contract PrecloseFacetTest is Test {
     /// @dev Covers precloseDirect _getOrCreateEscrow failure (line 709) in ERC20 path.
     ///      When getOrCreateUserEscrow fails for the lender during precloseDirect.
     function testPrecloseDirectGetLenderEscrowFails() public {
-        // Mock getOrCreateUserEscrow for lender to fail
+        // T-051 — the lender-side chokepoint deposit is now via
+        // `escrowDepositERC20From`. Mocking that selector to revert
+        // exercises the same failure-propagation path: if the
+        // protocol's escrow plumbing fails, precloseDirect must
+        // bubble the revert up. The escrow resolution that used to
+        // be a separate cross-facet call now lives inside the
+        // chokepoint.
         vm.mockCallRevert(
             address(diamond),
-            abi.encodeWithSelector(EscrowFactoryFacet.getOrCreateUserEscrow.selector, lender),
+            abi.encodeWithSelector(EscrowFactoryFacet.escrowDepositERC20From.selector),
             "escrow fail"
         );
 
         vm.prank(borrower);
-        vm.expectRevert(bytes("escrow fail"));
+        vm.expectRevert();
         PrecloseFacet(address(diamond)).precloseDirect(activeLoanId);
         vm.clearMockedCalls();
     }

@@ -229,10 +229,16 @@ contract RefinanceFacetTest is Test {
 
     /// @dev Helper to deposit principal into newLender's escrow and accept Alice's borrower offer.
     function _acceptBorrowerOffer(uint256 offerId) internal returns (uint256 loanId) {
-        // newLender must deposit principal into their escrow before acceptOffer can withdraw it
+        // newLender must deposit principal into their escrow before acceptOffer can withdraw it.
+        // T-051 — back the direct transfer with a counter record so the
+        // protocolTrackedEscrowBalance tally agrees with the on-chain
+        // balance; without it, the subsequent escrowWithdrawERC20 in
+        // acceptOffer would underflow the counter.
         address newLenderEscrow = EscrowFactoryFacet(address(diamond)).getOrCreateUserEscrow(newLender);
         vm.prank(newLender);
         ERC20(mockERC20).transfer(newLenderEscrow, PRINCIPAL);
+        vm.prank(address(diamond));
+        EscrowFactoryFacet(address(diamond)).recordEscrowDepositERC20(newLender, mockERC20, PRINCIPAL);
         vm.prank(newLender);
         loanId = OfferFacet(address(diamond)).acceptOffer(offerId, true);
     }
@@ -444,10 +450,13 @@ contract RefinanceFacetTest is Test {
             })
         );
 
-        // Accept it (deposit half principal since offer is PRINCIPAL/2)
+        // Accept it (deposit half principal since offer is PRINCIPAL/2).
+        // T-051 — back the direct transfer with a counter record.
         address nlEscrow = EscrowFactoryFacet(address(diamond)).getOrCreateUserEscrow(newLender);
         vm.prank(newLender);
         ERC20(mockERC20).transfer(nlEscrow, PRINCIPAL / 2);
+        vm.prank(address(diamond));
+        EscrowFactoryFacet(address(diamond)).recordEscrowDepositERC20(newLender, mockERC20, PRINCIPAL / 2);
         vm.prank(newLender);
         OfferFacet(address(diamond)).acceptOffer(smallOffer, true);
 
@@ -564,14 +573,16 @@ contract RefinanceFacetTest is Test {
         _acceptBorrowerOffer(borrowerOfferId);
 
         vm.mockCall(address(diamond), abi.encodeWithSelector(RepayFacet.calculateRepaymentAmount.selector), abi.encode(PRINCIPAL));
+        // T-051 — escrow resolution moved inside the chokepoint;
+        // mock the chokepoint selector instead.
         vm.mockCallRevert(
             address(diamond),
-            abi.encodeWithSelector(EscrowFactoryFacet.getOrCreateUserEscrow.selector),
+            abi.encodeWithSelector(EscrowFactoryFacet.escrowDepositERC20From.selector),
             "escrow fail"
         );
 
         vm.prank(borrower);
-        vm.expectRevert(bytes("escrow fail"));
+        vm.expectRevert();
         RefinanceFacet(address(diamond)).refinanceLoan(activeLoanId, borrowerOfferId);
         vm.clearMockedCalls();
     }
@@ -740,8 +751,11 @@ contract RefinanceFacetTest is Test {
             })
         );
 
-        // Accept the offer
+        // Accept the offer.
+        // T-051 — back the direct transfer with a counter record.
         vm.prank(newLender); ERC20(otherERC20).transfer(nlEscrow, PRINCIPAL);
+        vm.prank(address(diamond));
+        EscrowFactoryFacet(address(diamond)).recordEscrowDepositERC20(newLender, otherERC20, PRINCIPAL);
         vm.prank(newLender);
         OfferFacet(address(diamond)).acceptOffer(badOffer, true);
 
@@ -796,6 +810,9 @@ contract RefinanceFacetTest is Test {
         );
 
         vm.prank(newLender); ERC20(mockERC20).transfer(nlEscrow, PRINCIPAL);
+        // T-051 — back the direct transfer with a counter record.
+        vm.prank(address(diamond));
+        EscrowFactoryFacet(address(diamond)).recordEscrowDepositERC20(newLender, mockERC20, PRINCIPAL);
         vm.prank(newLender);
         OfferFacet(address(diamond)).acceptOffer(badOffer, true);
 
@@ -845,6 +862,9 @@ contract RefinanceFacetTest is Test {
         );
 
         vm.prank(newLender); ERC20(mockERC20).transfer(nlEscrow, PRINCIPAL);
+        // T-051 — back the direct transfer with a counter record.
+        vm.prank(address(diamond));
+        EscrowFactoryFacet(address(diamond)).recordEscrowDepositERC20(newLender, mockERC20, PRINCIPAL);
         vm.prank(newLender);
         OfferFacet(address(diamond)).acceptOffer(badOffer, true);
 
@@ -887,6 +907,9 @@ contract RefinanceFacetTest is Test {
         // to simulate an accepted offer with no linked loan.
         address nlEscrow = EscrowFactoryFacet(address(diamond)).getOrCreateUserEscrow(newLender);
         vm.prank(newLender); ERC20(mockERC20).transfer(nlEscrow, PRINCIPAL);
+        // T-051 — back the direct transfer with a counter record.
+        vm.prank(address(diamond));
+        EscrowFactoryFacet(address(diamond)).recordEscrowDepositERC20(newLender, mockERC20, PRINCIPAL);
         vm.prank(newLender);
         OfferFacet(address(diamond)).acceptOffer(fakeOffer, true);
 

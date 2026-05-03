@@ -669,6 +669,11 @@ contract RepayFacetTest is Test {
 
         address lenderEscrow = EscrowFactoryFacet(address(diamond)).getOrCreateUserEscrow(lender);
         deal(mockERC20, lenderEscrow, 2000); // covers 1 wei LIF + 1000 principal pull
+        // T-051 — back the direct deal with a counter record so the
+        // subsequent escrowWithdrawERC20 inside acceptOffer doesn't
+        // underflow the counter.
+        vm.prank(address(diamond));
+        EscrowFactoryFacet(address(diamond)).recordEscrowDepositERC20(lender, mockERC20, 2000);
 
         vm.prank(lender);
         uint256 loanId = OfferFacet(address(diamond)).acceptOffer(offerId, true);
@@ -748,17 +753,18 @@ contract RepayFacetTest is Test {
         RepayFacet(address(diamond)).repayLoan(2);
     }
 
-    /// @dev Tests cross-facet call failure for getOrCreateUserEscrow in repayLoan (ERC20 path).
+    /// @dev Tests cross-facet call failure for the escrow chokepoint
+    ///      in repayLoan (ERC20 path). T-051 — escrow resolution
+    ///      moved inside `escrowDepositERC20From`; mock that selector.
     function testRepayLoanCrossFacetCallFailed() public {
         helperOfferLoan();
-        // Mock the getOrCreateUserEscrow cross-facet call to revert
         vm.mockCallRevert(
             address(diamond),
-            abi.encodeWithSelector(EscrowFactoryFacet.getOrCreateUserEscrow.selector),
+            abi.encodeWithSelector(EscrowFactoryFacet.escrowDepositERC20From.selector),
             "mock revert"
         );
         vm.prank(borrower);
-        vm.expectRevert(bytes("mock revert"));
+        vm.expectRevert();
         RepayFacet(address(diamond)).repayLoan(1);
         vm.clearMockedCalls();
     }

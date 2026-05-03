@@ -622,10 +622,15 @@ contract ClaimFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
         if (lenderGets > 0) {
             address lenderEscrow = LibFacet.getOrCreateEscrow(loan.lender);
             IERC20(loan.principalAsset).safeTransfer(lenderEscrow, lenderGets);
+            // T-051 — Diamond-side transfer to escrow ticks the
+            // protocolTrackedEscrowBalance counter so the eventual
+            // claimAsLender's escrowWithdrawERC20 doesn't underflow.
+            LibVaipakam.recordEscrowDeposit(loan.lender, loan.principalAsset, lenderGets);
         }
         if (borrowerGets > 0) {
             address borrowerEscrow = LibFacet.getOrCreateEscrow(loan.borrower);
             IERC20(loan.principalAsset).safeTransfer(borrowerEscrow, borrowerGets);
+            LibVaipakam.recordEscrowDeposit(loan.borrower, loan.principalAsset, borrowerGets);
         }
 
         s.lenderClaims[loanId] = LibVaipakam.ClaimInfo({
@@ -667,10 +672,12 @@ contract ClaimFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
         if (snap.lenderCollateral > 0) {
             address lenderEscrow = LibFacet.getOrCreateEscrow(loan.lender);
             IERC20(loan.collateralAsset).safeTransfer(lenderEscrow, snap.lenderCollateral);
+            LibVaipakam.recordEscrowDeposit(loan.lender, loan.collateralAsset, snap.lenderCollateral);
         }
         if (snap.borrowerCollateral > 0) {
             address borrowerEscrow = LibFacet.getOrCreateEscrow(loan.borrower);
             IERC20(loan.collateralAsset).safeTransfer(borrowerEscrow, snap.borrowerCollateral);
+            LibVaipakam.recordEscrowDeposit(loan.borrower, loan.collateralAsset, snap.borrowerCollateral);
         }
         // Claim records were already written in the collateral asset at
         // fallback time; nothing to rewrite here. loanId retained for

@@ -759,8 +759,13 @@ contract LoanFacetTest is Test {
 
     /// @dev Borrower creates offer, lender accepts → roles are correct
     function testInitiateLoanBorrowerOfferType() public {
+        // T-051 — pair the direct deal with a counter record so the
+        // subsequent escrowWithdrawERC20 inside acceptOffer doesn't
+        // underflow protocolTrackedEscrowBalance.
         address lenderEscrow = EscrowFactoryFacet(address(diamond)).getOrCreateUserEscrow(lender);
         deal(mockERC20, lenderEscrow, 1000 ether);
+        vm.prank(address(diamond));
+        EscrowFactoryFacet(address(diamond)).recordEscrowDepositERC20(lender, mockERC20, 1000 ether);
 
         vm.prank(borrower);
         uint256 offerId = OfferFacet(address(diamond)).createOffer(

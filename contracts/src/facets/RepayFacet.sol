@@ -305,19 +305,22 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
 
             // T-037 — Lender's due: borrower → lender's escrow in ONE
             // transfer. The Diamond carries the borrower's allowance
-            // (granted by the prior `approve()`) so a direct
-            // `safeTransferFrom` pushes the asset from the borrower's
-            // wallet into the lender's escrow without ever residing on
-            // the Diamond. Order matters: deploy the escrow first via
-            // `getOrCreateEscrow` so the destination contract exists
-            // when the ERC20 transferFrom lands. Saves one storage-
-            // touching transfer and removes a transient
-            // Diamond-balance-of(principalAsset) state.
-            address lenderEscrow = LibFacet.getOrCreateEscrow(loan.lender);
-            IERC20(loan.principalAsset).safeTransferFrom(
-                msg.sender,
-                lenderEscrow,
-                plan.lenderDue
+            // (granted by the prior `approve()`) so the chokepoint's
+            // cross-payer variant pushes the asset from the borrower's
+            // wallet into the lender's escrow without ever residing
+            // on the Diamond. Routing through `escrowDepositERC20From`
+            // ensures the protocolTrackedEscrowBalance counter ticks
+            // up under the LENDER (the owner of the receiving escrow,
+            // not the borrower who's the payer).
+            LibFacet.crossFacetCall(
+                abi.encodeWithSelector(
+                    EscrowFactoryFacet.escrowDepositERC20From.selector,
+                    msg.sender,        // payer — borrower
+                    loan.lender,       // user — lender, owns the receiving escrow
+                    loan.principalAsset,
+                    plan.lenderDue
+                ),
+                EscrowDepositFailed.selector
             );
 
             // Record lender's claimable (principal + interest). heldForLender handled by ClaimFacet.
@@ -431,6 +434,10 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
             );
             address lenderEscrow = LibFacet.getOrCreateEscrow(loan.lender);
             IERC20(loan.prepayAsset).safeTransfer(lenderEscrow, lenderShare);
+            // T-051 — Diamond-side transfer to lender's escrow ticks
+            // the protocolTrackedEscrowBalance counter so the
+            // subsequent claim's escrowWithdrawERC20 doesn't underflow.
+            LibVaipakam.recordEscrowDeposit(loan.lender, loan.prepayAsset, lenderShare);
 
             // Record lender's claimable rental fees. heldForLender handled by ClaimFacet.
             s.lenderClaims[loanId] = LibVaipakam.ClaimInfo({
@@ -522,6 +529,9 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
             if (held > 0) {
                 address borrowerEscrow = LibFacet.getOrCreateEscrow(loan.borrower);
                 IERC20(loan.collateralAsset).safeTransfer(borrowerEscrow, held);
+                // T-051 — Diamond-side transfer to escrow ticks the
+                // protocolTrackedEscrowBalance counter.
+                LibVaipakam.recordEscrowDeposit(loan.borrower, loan.collateralAsset, held);
             }
             delete s.fallbackSnapshot[loanId];
         }

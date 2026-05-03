@@ -14,6 +14,7 @@ import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {OracleFacet} from "./OracleFacet.sol";
 import {RiskFacet} from "./RiskFacet.sol";
 import {VaipakamNFTFacet} from "./VaipakamNFTFacet.sol";
+import {EscrowFactoryFacet} from "./EscrowFactoryFacet.sol";
 
 /**
  * @title AddCollateralFacet
@@ -108,14 +109,24 @@ contract AddCollateralFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
         if (collateralLiquidity != LibVaipakam.LiquidityStatus.Liquid)
             revert IlliquidAsset();
 
-        // Get (or create) the borrower's escrow proxy
+        // Resolve the borrower's escrow proxy — needed below by
+        // `_cureFallback` for the FallbackPending → Active branch.
+        // The chokepoint deposit also auto-creates if missing, but we
+        // need the address here regardless so resolve it explicitly.
         address borrowerEscrow = LibFacet.getOrCreateEscrow(msg.sender);
 
-        // Transfer collateral from borrower directly into their escrow proxy
-        IERC20(loan.collateralAsset).safeTransferFrom(
-            msg.sender,
-            borrowerEscrow,
-            amount
+        // Transfer collateral from borrower into their escrow proxy
+        // via the protocol's chokepoint so the
+        // protocolTrackedEscrowBalance counter ticks up. Replaces
+        // the prior direct safeTransferFrom.
+        LibFacet.crossFacetCall(
+            abi.encodeWithSelector(
+                EscrowFactoryFacet.escrowDepositERC20.selector,
+                msg.sender,
+                loan.collateralAsset,
+                amount
+            ),
+            EscrowDepositFailed.selector
         );
 
         // Update loan collateral amount

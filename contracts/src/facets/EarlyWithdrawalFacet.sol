@@ -252,6 +252,9 @@ contract EarlyWithdrawalFacet is
             );
             address newEscrow = LibFacet.getOrCreateEscrow(buyOffer.creator);
             IERC20(payAsset).safeTransfer(newEscrow, priorHeld);
+            // T-051 — Diamond-side transfer to new lender's escrow
+            // ticks the protocolTrackedEscrowBalance counter.
+            LibVaipakam.recordEscrowDeposit(buyOffer.creator, payAsset, priorHeld);
         }
 
         // Migrate lender position: burn old NFT + mint new LoanInitiated NFT
@@ -551,6 +554,9 @@ contract EarlyWithdrawalFacet is
                 );
                 address newEscrow = LibFacet.getOrCreateEscrow(newLender);
                 IERC20(payAsset).safeTransfer(newEscrow, priorHeldSale);
+                // T-051 — Diamond-side transfer to new lender's
+                // escrow ticks the counter.
+                LibVaipakam.recordEscrowDeposit(newLender, payAsset, priorHeldSale);
             }
         }
 

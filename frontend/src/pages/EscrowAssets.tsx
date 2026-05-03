@@ -16,6 +16,13 @@ const ERC20_BALANCE_ABI = parseAbi([
   'function balanceOf(address) view returns (uint256)',
 ]);
 
+// EscrowFactoryFacet view that returns the per-(user, token) protocol-
+// tracked counter. Used together with the ERC-20 balanceOf to compute
+// `min(balanceOf, tracked)` — see T-051 / T-054 design notes.
+const ESCROW_FACTORY_TRACKED_ABI = parseAbi([
+  'function getProtocolTrackedEscrowBalance(address user, address token) view returns (uint256)',
+]);
+
 interface TokenRow {
   /** Token contract address. */
   address: string;
@@ -95,6 +102,7 @@ export default function EscrowAssets() {
   const blockExplorer =
     (activeChain && isCorrectChain ? activeChain.blockExplorer : null) ??
     DEFAULT_CHAIN.blockExplorer;
+  const diamondAddress = (chain.diamondAddress ?? DEFAULT_CHAIN.diamondAddress) as Address;
 
   // Per-chain token list resolved from the deployments record. Memoised
   // to avoid recomputing the array reference on every render — the
@@ -117,25 +125,50 @@ export default function EscrowAssets() {
     );
   }, [tokens]);
 
-  // Fetch each token's balance against the escrow proxy. Done in a
-  // single Promise.all so the "still loading" window is bounded by the
-  // slowest read; per-token failures fall back to `0n` rather than
-  // killing the whole page.
+  // Fetch each token's protocol-tracked balance against the user's
+  // escrow proxy. Done in a single Promise.all so the "still loading"
+  // window is bounded by the slowest read; per-token failures fall
+  // back to `0n` rather than killing the whole page.
+  //
+  // Display rule: `min(balanceOf, protocolTrackedEscrowBalance)`. The
+  // counter (introduced under T-051) tracks every protocol-mediated
+  // deposit / withdrawal — anything sitting in the proxy that's not
+  // counted is unsolicited dust (taint, accidental direct sends).
+  // `min` hides those from the UI so users see only what the protocol
+  // actually manages on their behalf.
+  //
+  // Pre-counter testnet caveat: legacy stakes that were deposited
+  // before the counter shipped will read tracked = 0, hence min = 0,
+  // and look "empty" until the user re-deposits via the new
+  // chokepoint. This is documented as a one-time testnet display
+  // cutover; on a fresh mainnet deploy the counter starts ticking
+  // from day 1 so this case doesn't occur.
   useEffect(() => {
-    if (!escrow || !publicClient || tokens.length === 0) return;
+    if (!escrow || !publicClient || !diamondAddress || tokens.length === 0) return;
     let cancelled = false;
     setLoading(true);
     setErr(null);
+    const userAddr = address as Address;
     Promise.all(
       tokens.map(async (tk) => {
         try {
-          const bal = (await publicClient.readContract({
-            address: tk.address as Address,
-            abi: ERC20_BALANCE_ABI,
-            functionName: 'balanceOf',
-            args: [escrow as Address],
-          })) as bigint;
-          return { address: tk.address, hint: tk.hint, balance: bal };
+          const [bal, tracked] = await Promise.all([
+            publicClient.readContract({
+              address: tk.address as Address,
+              abi: ERC20_BALANCE_ABI,
+              functionName: 'balanceOf',
+              args: [escrow as Address],
+            }) as Promise<bigint>,
+            publicClient.readContract({
+              address: diamondAddress,
+              abi: ESCROW_FACTORY_TRACKED_ABI,
+              functionName: 'getProtocolTrackedEscrowBalance',
+              args: [userAddr, tk.address as Address],
+            }) as Promise<bigint>,
+          ]);
+          // min(balanceOf, tracked) — see comment block above.
+          const display = bal < tracked ? bal : tracked;
+          return { address: tk.address, hint: tk.hint, balance: display };
         } catch {
           // Per-token read failure (token contract reverted, RPC
           // hiccup, ABI mismatch on a non-standard ERC-20). Surface as

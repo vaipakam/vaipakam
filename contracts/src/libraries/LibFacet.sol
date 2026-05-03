@@ -190,6 +190,11 @@ library LibFacet {
     ///      into the new lender's escrow, skipping the Diamond. Same
     ///      `heldForLender` accounting as the Diamond-resident variant.
     ///      No-op on zero.
+    ///
+    ///      Routed through the cross-payer chokepoint so the
+    ///      protocolTrackedEscrowBalance counter ticks under
+    ///      `newLender` (the escrow owner). Replaces the prior direct
+    ///      `safeTransferFrom`.
     function depositFromPayerForLender(
         address asset,
         address payer,
@@ -198,8 +203,16 @@ library LibFacet {
         uint256 loanId
     ) internal {
         if (amount == 0) return;
-        address escrow = getOrCreateEscrow(newLender);
-        IERC20(asset).safeTransferFrom(payer, escrow, amount);
+        crossFacetCall(
+            abi.encodeWithSelector(
+                EscrowFactoryFacet.escrowDepositERC20From.selector,
+                payer,
+                newLender,
+                asset,
+                amount
+            ),
+            IVaipakamErrors.EscrowDepositFailed.selector
+        );
         LibVaipakam.storageSlot().heldForLender[loanId] += amount;
     }
 

@@ -1880,9 +1880,12 @@ contract EarlyWithdrawalFacetTest is Test {
         // Set heldForLender[activeLoanId] > 0 via vm.store
         TestMutatorFacet(address(diamond)).setHeldForLenderRaw(activeLoanId, 50 ether);
 
-        // Deposit the held amount into lender's escrow so withdrawal works
+        // Deposit the held amount into lender's escrow so withdrawal works.
+        // T-051 — back the direct deal with a counter record.
         address lenderEscrow = EscrowFactoryFacet(address(diamond)).getOrCreateUserEscrow(lender);
         deal(mockERC20, lenderEscrow, 100 ether);
+        vm.prank(address(diamond));
+        EscrowFactoryFacet(address(diamond)).recordEscrowDepositERC20(lender, mockERC20, 100 ether);
 
         vm.prank(newLender);
         uint256 buyOffer = OfferFacet(address(diamond)).createOffer(

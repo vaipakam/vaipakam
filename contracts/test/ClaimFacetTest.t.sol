@@ -609,9 +609,14 @@ contract ClaimFacetTest is Test {
         // Set heldForLender[loanId] > 0 via vm.store
         TestMutatorFacet(address(diamond)).setHeldForLenderRaw(loanId, 50 ether);
 
-        // Mint enough to lender's escrow for the held amount
+        // Mint enough to lender's escrow for the held amount.
+        // T-051 — back the direct mint with a counter record so the
+        // subsequent claim's escrowWithdrawERC20 doesn't underflow
+        // protocolTrackedEscrowBalance.
         address lenderEscrow = EscrowFactoryFacet(address(diamond)).getOrCreateUserEscrow(lender);
         ERC20Mock(mockERC20).mint(lenderEscrow, 50 ether);
+        vm.prank(address(diamond));
+        EscrowFactoryFacet(address(diamond)).recordEscrowDepositERC20(lender, mockERC20, 50 ether);
 
         vm.prank(lender);
         ClaimFacet(address(diamond)).claimAsLender(loanId);
@@ -656,8 +661,11 @@ contract ClaimFacetTest is Test {
 
         TestMutatorFacet(address(diamond)).setHeldForLenderRaw(loanId, 50 ether);
 
+        // T-051 — pair the direct mint with a counter record.
         address lenderEscrow = EscrowFactoryFacet(address(diamond)).getOrCreateUserEscrow(lender);
         ERC20Mock(mockERC20).mint(lenderEscrow, 50 ether);
+        vm.prank(address(diamond));
+        EscrowFactoryFacet(address(diamond)).recordEscrowDepositERC20(lender, mockERC20, 50 ether);
 
         vm.prank(lender);
         ClaimFacet(address(diamond)).claimAsLender(loanId);

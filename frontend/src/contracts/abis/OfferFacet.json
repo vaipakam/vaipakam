@@ -1059,6 +1059,11 @@
   },
   {
     "type": "error",
+    "name": "EscrowDepositFailed",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "EscrowResolutionFailed",
     "inputs": []
   },
@@ -1585,17 +1590,6 @@
     "type": "error",
     "name": "RewardOAppNotSet",
     "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "SafeERC20FailedOperation",
-    "inputs": [
-      {
-        "name": "token",
-        "type": "address",
-        "internalType": "address"
-      }
-    ]
   },
   {
     "type": "error",

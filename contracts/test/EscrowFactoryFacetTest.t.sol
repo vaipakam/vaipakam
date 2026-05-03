@@ -199,25 +199,39 @@ contract EscrowFactoryFacetTest is Test {
     // ─── escrowDepositERC20 / escrowWithdrawERC20 ─────────────────────────────
 
     function testEscrowWithdrawERC20() public {
-        // Deal tokens directly into the escrow (simulates state after a loan deposit)
+        // T-051 — pre-fund the escrow via the chokepoint so the
+        // protocolTrackedEscrowBalance counter is set before the
+        // withdraw decrements it. `deal` would skip the counter
+        // increment and the subsequent withdraw would underflow.
         address escrow = EscrowFactoryFacet(address(diamond)).getOrCreateUserEscrow(user1);
-        deal(mockERC20, escrow, 500 ether);
+        vm.prank(address(diamond));
+        EscrowFactoryFacet(address(diamond)).escrowDepositERC20(user1, mockERC20, 500 ether);
 
         uint256 user1Before = ERC20(mockERC20).balanceOf(user1);
         vm.prank(address(diamond));
         EscrowFactoryFacet(address(diamond)).escrowWithdrawERC20(user1, mockERC20, user1, 200 ether);
         assertEq(ERC20(mockERC20).balanceOf(user1) - user1Before, 200 ether);
         assertEq(ERC20(mockERC20).balanceOf(escrow), 300 ether);
+        // Counter was 500 after the deposit, ticks down to 300 after
+        // the 200 ether withdraw.
+        assertEq(
+            EscrowFactoryFacet(address(diamond))
+                .getProtocolTrackedEscrowBalance(user1, mockERC20),
+            300 ether
+        );
     }
 
     function testEscrowWithdrawERC20ToThirdParty() public {
+        // Pre-fund via the chokepoint (see testEscrowWithdrawERC20).
         address escrow = EscrowFactoryFacet(address(diamond)).getOrCreateUserEscrow(user1);
-        deal(mockERC20, escrow, 100 ether);
+        vm.prank(address(diamond));
+        EscrowFactoryFacet(address(diamond)).escrowDepositERC20(user1, mockERC20, 100 ether);
 
         uint256 user2Before = ERC20(mockERC20).balanceOf(user2);
         vm.prank(address(diamond));
         EscrowFactoryFacet(address(diamond)).escrowWithdrawERC20(user1, mockERC20, user2, 100 ether);
         assertEq(ERC20(mockERC20).balanceOf(user2) - user2Before, 100 ether);
+        assertEq(ERC20(mockERC20).balanceOf(escrow), 0);
     }
 
     // ─── escrowDepositERC721 / escrowWithdrawERC721 ───────────────────────────
@@ -323,18 +337,73 @@ contract EscrowFactoryFacetTest is Test {
     // ─── escrowDepositERC20 ───────────────────────────────────────────────────
 
     function testEscrowDepositERC20() public {
+        // T-051 — `escrowDepositERC20` is now the protocol-wide
+        // chokepoint: it pulls from `user`'s wallet (using the
+        // Diamond's allowance from `user`) into the user's escrow,
+        // and ticks the protocolTrackedEscrowBalance counter. The
+        // setUp helper has already approved Diamond for user1, so
+        // user1 just needs to hold a non-zero balance.
         address escrow = EscrowFactoryFacet(address(diamond)).getOrCreateUserEscrow(user1);
-
-        // Diamond must hold tokens and approve the escrow proxy to spend them
-        // (depositERC20 calls safeTransferFrom(diamond, proxy, amount))
-        deal(mockERC20, address(diamond), 100 ether);
-        vm.prank(address(diamond));
-        ERC20(mockERC20).approve(escrow, 100 ether);
-
         uint256 escrowBefore = ERC20(mockERC20).balanceOf(escrow);
+        uint256 trackedBefore = EscrowFactoryFacet(address(diamond))
+            .getProtocolTrackedEscrowBalance(user1, mockERC20);
         vm.prank(address(diamond));
         EscrowFactoryFacet(address(diamond)).escrowDepositERC20(user1, mockERC20, 50 ether);
         assertEq(ERC20(mockERC20).balanceOf(escrow) - escrowBefore, 50 ether);
+        // Counter ticks up under user1.
+        uint256 trackedAfter = EscrowFactoryFacet(address(diamond))
+            .getProtocolTrackedEscrowBalance(user1, mockERC20);
+        assertEq(trackedAfter - trackedBefore, 50 ether);
+    }
+
+    /// @dev Cross-payer chokepoint variant — borrower pays the lender.
+    ///      Counter ticks up under the *user* (the escrow owner =
+    ///      lender), even though the *payer* is the borrower.
+    function testEscrowDepositERC20From() public {
+        // user2 pays into user1's escrow.
+        address escrow = EscrowFactoryFacet(address(diamond)).getOrCreateUserEscrow(user1);
+        uint256 escrowBefore = ERC20(mockERC20).balanceOf(escrow);
+        uint256 user1TrackedBefore = EscrowFactoryFacet(address(diamond))
+            .getProtocolTrackedEscrowBalance(user1, mockERC20);
+        uint256 user2TrackedBefore = EscrowFactoryFacet(address(diamond))
+            .getProtocolTrackedEscrowBalance(user2, mockERC20);
+        vm.prank(address(diamond));
+        EscrowFactoryFacet(address(diamond)).escrowDepositERC20From(
+            user2, // payer
+            user1, // user (escrow owner)
+            mockERC20,
+            40 ether
+        );
+        assertEq(ERC20(mockERC20).balanceOf(escrow) - escrowBefore, 40 ether);
+        // Counter ticks under user1 ONLY — user2 is the payer, not
+        // the escrow owner.
+        uint256 user1TrackedAfter = EscrowFactoryFacet(address(diamond))
+            .getProtocolTrackedEscrowBalance(user1, mockERC20);
+        uint256 user2TrackedAfter = EscrowFactoryFacet(address(diamond))
+            .getProtocolTrackedEscrowBalance(user2, mockERC20);
+        assertEq(user1TrackedAfter - user1TrackedBefore, 40 ether);
+        assertEq(user2TrackedAfter, user2TrackedBefore);
+    }
+
+    /// @dev Counter-only sibling — used after Permit2 has already
+    ///      moved funds. Verifies the counter ticks without re-issuing
+    ///      a transfer.
+    function testRecordEscrowDepositERC20() public {
+        // Pre-condition: user1's escrow balance and tracked are
+        // independently observed; the record-only call must update
+        // tracked but NOT balanceOf.
+        address escrow = EscrowFactoryFacet(address(diamond)).getOrCreateUserEscrow(user1);
+        uint256 escrowBefore = ERC20(mockERC20).balanceOf(escrow);
+        uint256 trackedBefore = EscrowFactoryFacet(address(diamond))
+            .getProtocolTrackedEscrowBalance(user1, mockERC20);
+        vm.prank(address(diamond));
+        EscrowFactoryFacet(address(diamond)).recordEscrowDepositERC20(user1, mockERC20, 25 ether);
+        // No token movement.
+        assertEq(ERC20(mockERC20).balanceOf(escrow), escrowBefore);
+        // Counter incremented.
+        uint256 trackedAfter = EscrowFactoryFacet(address(diamond))
+            .getProtocolTrackedEscrowBalance(user1, mockERC20);
+        assertEq(trackedAfter - trackedBefore, 25 ether);
     }
 
     // ─── escrowDepositERC721 ─────────────────────────────────────────────────
@@ -425,12 +494,23 @@ contract EscrowFactoryFacetTest is Test {
         EscrowFactoryFacet(address(diamond)).escrowWithdrawERC1155(user1, address(mock1155), 1, 100, user2);
     }
 
-    /// @dev Tests escrowDepositERC20 failure branch (ProxyCallFailed).
-    function testEscrowDepositERC20RevertsWhenProxyFails() public {
-        // Don't pre-fund diamond or approve, so deposit will fail
+    /// @dev T-051 — escrowDepositERC20 reverts at the safeTransferFrom
+    ///      layer when the funding user lacks balance / allowance.
+    ///      Replaces the old "ProxyCallFailed" expectation since the
+    ///      chokepoint now does the transfer inline (instead of
+    ///      forwarding to the proxy's `depositERC20`).
+    function testEscrowDepositERC20RevertsWhenUserHasNoBalance() public {
+        // Pick a fresh address with zero balance + zero allowance to
+        // the diamond. user1 / user2 already have minted balances and
+        // setUp granted maxUint256 allowance, so they're unsuitable
+        // for this revert path.
+        address pauper = makeAddr("pauper");
         vm.prank(address(diamond));
-        vm.expectRevert(abi.encodeWithSelector(EscrowFactoryFacet.ProxyCallFailed.selector, "Deposit ERC20 failed"));
-        EscrowFactoryFacet(address(diamond)).escrowDepositERC20(user1, mockERC20, 999 ether);
+        // SafeERC20 wraps the underlying ERC20InsufficientAllowance /
+        // ERC20InsufficientBalance into a generic SafeERC20FailedOperation
+        // — we just assert *some* revert happens.
+        vm.expectRevert();
+        EscrowFactoryFacet(address(diamond)).escrowDepositERC20(pauper, mockERC20, 999 ether);
     }
 
     /// @dev setUser MUST succeed for non-IERC4907 NFTs and record escrow-side
