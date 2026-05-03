@@ -240,7 +240,7 @@ contract ConfigFacet is DiamondAccessControl {
         emit MaxOfferDurationDaysSet(newDays);
     }
 
-    /// @notice T-032 / USD-Sweep Phase 1 — emitted on every change to
+    /// @notice T-032 / Numeraire generalization (Phase 1) — emitted on every change to
     ///         the per-loan-side notification fee. Value in numeraire-
     ///         units (1e18-scaled).
     event NotificationFeeSet(uint256 newFeeNumeraire1e18);
@@ -265,10 +265,18 @@ contract ConfigFacet is DiamondAccessControl {
      *      exactly 0 to reset to the library default
      *      `NOTIFICATION_FEE_DEFAULT` (2.0 numeraire-units = `2e18`).
      *
-     *      USD-Sweep Phase 1 — the per-knob `notificationFeeUsdOracle`
-     *      was retired; the protocol's reference currency is the
-     *      single global `numeraireOracle` (`setNumeraire` rotates it
-     *      atomically alongside the threshold + KYC tiers + this fee).
+     *      Numeraire generalization (B1) — the per-knob `notificationFeeUsdOracle`
+     *      was retired in Phase 1, and the `INumeraireOracle`
+     *      abstraction was retired in B1. The protocol's reference
+     *      currency now lives at the oracle layer
+     *      (`s.ethNumeraireFeed` / `s.numeraireSymbol` /
+     *      `s.numeraireChainlinkDenominator`); the fee → VPFI math is
+     *      anchored to `getAssetPrice(WETH)` (which returns
+     *      ETH/numeraire natively) times `VPFI_PER_ETH_FIXED_PHASE1`
+     *      with no USD-intermediate. `setNumeraire` rotates everything
+     *      atomically — the four feed-side slots plus the four
+     *      numeraire-denominated value knobs (threshold + this fee +
+     *      KYC tier 0 + KYC tier 1).
      * @param newFeeNumeraire1e18 New per-loan-side fee in numeraire-
      *                  unit 1e18 scaling; pass 0 to reset.
      */
@@ -294,7 +302,7 @@ contract ConfigFacet is DiamondAccessControl {
     }
 
     /**
-     * @notice T-032 / USD-Sweep Phase 1 — read the live notification-
+     * @notice T-032 / Numeraire generalization (Phase 1) — read the live notification-
      *         fee config in one RPC. Frontend reads this to render the
      *         cost disclosure on the subscription opt-in UI.
      * @return feeNumeraire1e18 Resolved fee in numeraire-units —
@@ -926,7 +934,7 @@ contract ConfigFacet is DiamondAccessControl {
     /// @notice Emitted when the numeraire address AND its companion
     ///         threshold value flip atomically via {setNumeraire}.
     /// @notice Emitted on every atomic numeraire rotation. After
-    ///         USD-Sweep / B1, the numeraire is identified by its
+    ///         Numeraire generalization (B1), the numeraire is identified by its
     ///         feed-side config (ETH/<numeraire> Chainlink feed +
     ///         lowercase ASCII symbol that drives Tellor/API3/DIA
     ///         queries) — there is no longer a single numeraireOracle
@@ -959,7 +967,7 @@ contract ConfigFacet is DiamondAccessControl {
     ///         toggled.
     event NumeraireSwapEnabledSet(bool enabled);
 
-    /// @notice T-034 USD-Sweep / B1 — atomic numeraire rotation.
+    /// @notice T-034 Numeraire generalization (B1) — atomic numeraire rotation.
     ///         The struct carries ALL state that defines the protocol's
     ///         reference currency at once. By construction, governance
     ///         cannot rotate the numeraire without simultaneously
@@ -1234,7 +1242,7 @@ contract ConfigFacet is DiamondAccessControl {
 
     /// @notice Bundled getter for the entire T-034 config surface,
     ///         intended for the frontend `usePeriodicInterestConfig`
-    ///         hook. USD-Sweep / B1 — the per-knob `numeraireOracle`
+    ///         hook. Numeraire generalization (B1) — the per-knob `numeraireOracle`
     ///         field is gone; the numeraire identity is captured by
     ///         the symbol (`getNumeraireSymbol()`) + ETH feed
     ///         (`getEthNumeraireFeed()`) — both readable individually.

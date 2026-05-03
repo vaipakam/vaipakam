@@ -5,18 +5,18 @@ plain-English user-facing / operator-facing descriptions — no code.
 Continues from
 [`ReleaseNotes-2026-05-02.md`](./ReleaseNotes-2026-05-02.md).
 
-Coverage at a glance: **USD-Sweep** — every numeraire-denominated
-governance knob in the protocol now reads from the SINGLE global
-`numeraireOracle` introduced under T-034, instead of carrying its own
-per-knob USD-oracle slot. The notification fee's pluggable USD oracle
-is retired; KYC tier thresholds are renamed away from "USD"; the
-atomic batched setter `setNumeraire` is extended to take EVERY
-numeraire-denominated value at once so a numeraire rotation never
-leaves the storage in an inconsistent intermediate state. Follow-up
-to the T-034 Periodic Interest Payment work that landed across
-2026-05-02 → 2026-05-03.
+Coverage at a glance: **Introducing Numeraire** — every
+numeraire-denominated governance knob in the protocol now reads from
+the SINGLE global `numeraireOracle` introduced under T-034, instead of
+carrying its own per-knob USD-oracle slot. The notification fee's
+pluggable USD oracle is retired; KYC tier thresholds are renamed away
+from "USD"; the atomic batched setter `setNumeraire` is extended to
+take EVERY numeraire-denominated value at once so a numeraire rotation
+never leaves the storage in an inconsistent intermediate state.
+Follow-up to the T-034 Periodic Interest Payment work that landed
+across 2026-05-02 → 2026-05-03.
 
-## USD-Sweep — single-source-of-truth numeraire
+## Introducing Numeraire — single-source-of-truth reference currency
 
 **The shape of the problem.** T-034 introduced a `numeraireOracle`
 config slot so the periodic-interest principal threshold could be
@@ -28,9 +28,9 @@ their own per-knob oracle infrastructure. That created a drift hazard:
 governance flipping the global numeraire from USD to XAU would leave
 notification fee + KYC tiers stranded in USD-units against a
 new-numeraire threshold, OR governance would have to remember to
-rotate three independent oracle slots in lockstep. The USD-Sweep
-collapses every numeraire-denominated knob onto the SAME global
-`numeraireOracle` and makes the rotation atomic.
+rotate three independent oracle slots in lockstep. Generalizing the
+numeraire collapses every numeraire-denominated knob onto the SAME
+global `numeraireOracle` and makes the rotation atomic.
 
 **Three phases, one commit.**
 
@@ -88,8 +88,9 @@ getters; ready to be reused if any other USD-typed boundary surfaces.
 
 **Phase 3 — Atomic multi-arg `setNumeraire`.** The atomic batched
 setter introduced under T-034 PR1 took two args:
-`setNumeraire(newOracle, newThresholdInNewNumeraire)`. The USD-Sweep
-extends it to take ALL numeraire-denominated values together:
+`setNumeraire(newOracle, newThresholdInNewNumeraire)`. The numeraire
+generalization extends it to take ALL numeraire-denominated values
+together:
 `setNumeraire(newOracle, threshold, notificationFee, kycTier0,
 kycTier1)`. By construction, governance cannot rotate the numeraire
 without also re-anchoring every value that's denominated in it. The
@@ -185,27 +186,27 @@ clarifying.
 
 ## Notes for follow-up
 
-The USD-Sweep is **complete** — Phase 1+2+3 covered every
-numeraire-denominated knob with a storage backing. Group B (internal
-USD-computation variables) is intentionally left alone per the
-rationale above; revisit only if a future audit finds the variable
+The numeraire generalization is **complete** — Phase 1+2+3 covered
+every numeraire-denominated knob with a storage backing. Group B
+(internal USD-computation variables) is intentionally left alone per
+the rationale above; revisit only if a future audit finds the variable
 naming confusing. The governance-tunable boundary is now uniform
 across the protocol: every numeraire-denominated knob speaks
 numeraire-units in storage, every comparison site speaks USD via
 Chainlink, and the boundary-conversion happens in exactly two places
 (the KYC threshold getters + the notification-fee VPFI conversion).
 
-## USD-Sweep B1 + T-033 Pyth cross-check rename — numeraire moves up to the oracle layer
+## Generalizing Numeraire to the oracle layer (B1) + T-033 Pyth cross-check rename
 
 A second pass on the same day pushed the numeraire abstraction up
 ONE level — from "convert at the consumer/governance-knob boundary"
-(USD-Sweep Phase 1+2 earlier today) to "convert at the oracle
-layer." `OracleFacet.getAssetPrice` now returns numeraire-quoted
-prices natively, so every comparison site speaks the same currency
-as the threshold/fee storage with no intermediate USD detour. The
-two-place boundary conversion noted above (KYC threshold getters +
-notification-fee VPFI) is **gone** — collapsed into the existing
-oracle layer.
+(numeraire generalization Phase 1+2 earlier today) to "convert at the
+oracle layer." `OracleFacet.getAssetPrice` now returns
+numeraire-quoted prices natively, so every comparison site speaks the
+same currency as the threshold/fee storage with no intermediate USD
+detour. The two-place boundary conversion noted above (KYC threshold
+getters + notification-fee VPFI) is **gone** — collapsed into the
+existing oracle layer.
 
 **Why a second pass on the same day:** the architectural rationale
 came up in design discussion right after the first sweep landed —
@@ -223,7 +224,8 @@ sense than T-034's. T-033's `pythNumeraireFeedId` referred to "the
 reference asset for cross-oracle DIVERGENCE detection" (specifically
 ETH/USD). T-034's `numeraireOracle` referred to "the protocol's
 reference currency for governance knobs." Both used "numeraire"; in
-the post-USD-Sweep world the overload became actively confusing.
+the post-numeraire-generalization world the overload became actively
+confusing.
 
 Renames:
 - `s.pythNumeraireFeedId` → `s.pythCrossCheckFeedId`
@@ -288,8 +290,8 @@ removals:
   - `ConfigFacet.getNumeraireOracle` getter — dropped.
 
 **`setNumeraire` restructured to 8-arg atomic rotation.** The
-previous USD-Sweep-Phase-3 5-arg shape was extended to cover the
-feed-side slots:
+previous Phase-3 5-arg shape (from the prior numeraire generalization
+on the same day) was extended to cover the feed-side slots:
 
 ```
 setNumeraire(
@@ -523,11 +525,43 @@ The interaction-reward system tracked per-user / per-day interest in
 - `vaipakam-keeper-bot/src/abis/` re-exported via `exportAbis.sh` (MetricsFacet, RiskFacet, LoanFacet, OfferFacet — keeper bot consumes the renamed `getTotalInterestEarnedNumeraire` selector via JSON; bot's TS code doesn't call it directly so no TS edits needed there).
 - Frontend `tsc -b --noEmit` clean.
 
+### What now anchors to ETH/Numeraire (post-this-sweep follow-up)
+
+- **Notification-fee VPFI conversion** is anchored to **ETH/numeraire** end to end. After B1, `getAssetPrice(WETH)` returns ETH quoted in the active numeraire natively; the Phase-1 fixed peg `VPFI_PER_ETH_FIXED_PHASE1 = 1e15` (1 VPFI = 0.001 ETH) is unit-agnostic — it describes the VPFI-to-ETH ratio. So the math `vpfiAmount = feeNumeraire × 1e36 / (ethPriceNumeraire × peg)` is correct under any numeraire choice (USD, EUR, JPY, XAU). No USD-intermediate at any step. Stale NatSpec on `LibVaipakam.NOTIFICATION_FEE_DEFAULT` + `VPFI_PER_ETH_FIXED_PHASE1` + `Storage.notificationFee` + `LibNotificationFee` (header + event + helper) + `ConfigFacet.setNotificationFee` rewritten to describe the actual ETH/Numeraire anchor; test constants `ETH_USD_PRICE_8DEC` → `ETH_NUMERAIRE_PRICE_8DEC` and `DEFAULT_FEE_USD` → `DEFAULT_FEE_NUMERAIRE` for consistency. NotificationFeeTest 14/14 still green — no behavioural change.
+
 ### What still says "USD" — and why
 
-- **Notification-fee VPFI conversion** still computes `feeNumeraire → USD-equivalent → VPFI` because the Phase-1 fixed VPFI rate is anchored to ETH/USD × `0.001 ETH/VPFI`. Storage holds the fee in numeraire-units; the conversion divides by ETH/USD inside `LibNotificationFee.vpfiAmountForFee`.
-- **KYC threshold storage values** — operator-supplied in USD-units for the retail deploy; industrial fork can set EUR / XAU values at rotation. The numeraire abstraction affects WHAT GOVERNANCE PROVIDES, not what the comparison computes against. The threshold getters `getKycTier0Threshold` / `getKycTier1Threshold` return the raw numeraire-units value; comparison sites are now numeraire-vs-numeraire (post-B1) so the cast to USD that briefly existed during USD-Sweep Phase 1+2+3 was removed.
-- **Doc comments mentioning "USD by post-deploy default"** are intentional — they tell the reader that the default deploy ships with a USD numeraire even though the math is unit-agnostic.
+The protocol is now currency-agnostic end to end. There is **no**
+storage field, setter parameter, or comparison-site math that reads
+or writes USD-units. The KYC tier thresholds — which were the last
+remaining "intentional USD" claim in earlier drafts of this section —
+are explicitly numeraire-typed at every layer:
+
+- Storage: `s.kycTier0ThresholdNumeraire` /
+  `s.kycTier1ThresholdNumeraire` (numeraire-units, 1e18-scaled).
+- Defaults: `KYC_TIER0_THRESHOLD_NUMERAIRE = 1_000 * 1e18` /
+  `KYC_TIER1_THRESHOLD_NUMERAIRE = 10_000 * 1e18` (numeraire-unit
+  literals — they read as $1k / $10k only because the post-deploy
+  default numeraire is USD).
+- Setter: `ProfileFacet.updateKYCThresholds(uint256 tier0ThresholdNumeraire,
+  uint256 tier1ThresholdNumeraire)` — params are numeraire-units.
+- Retail deploy: `kycEnforcementEnabled = false` per CLAUDE.md and
+  the deploy never calls the setter, so storage stays at zero and
+  the getters fall through to the compile-time numeraire defaults.
+- Comparison sites: numeraire-vs-numeraire end to end after B1
+  (`getAssetPrice` returns numeraire-quoted; the getters return raw
+  numeraire-units). No USD cast anywhere along the path.
+
+The only USD-flavored thing remaining is **the post-deploy default
+numeraire identity itself** (`numeraireSymbol = "usd"`,
+`numeraireChainlinkDenominator = Denominations.USD`,
+`ethNumeraireFeed` pointed at Chainlink ETH/USD). That's a deploy-time
+governance choice, not a hard-coded type — `setNumeraire` rotates the
+whole identity atomically to EUR / JPY / XAU at any time.
+
+- **Doc comments mentioning "USD by post-deploy default"** are
+  intentional — they label the default deploy's numeraire identity
+  for the reader without implying the math is USD-anchored.
 
 ### Operator notes — none new
 

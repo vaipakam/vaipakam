@@ -55,12 +55,15 @@ contract NotificationFeeTest is SetupTest {
     address internal treasuryRecipient;
     address internal billerBot;
 
-    // ETH price for the oracle mock — gives a clean math result.
-    // At ETH=$2000, $2 fee ⇒ 1 VPFI charged (since 1 VPFI = 0.001 ETH = $2).
-    uint256 internal constant ETH_USD_PRICE_8DEC = 2000e8;
-    // Default $2 fee in 1e18 USD scaling.
-    uint256 internal constant DEFAULT_FEE_USD = 2e18;
-    // Expected VPFI charged at ETH=$2000, $2 fee.
+    // ETH/numeraire price for the oracle mock — gives a clean math
+    // result. Concrete example uses USD-as-numeraire (the default):
+    // at ETH=$2000, $2 fee ⇒ 1 VPFI charged (since 1 VPFI = 0.001 ETH
+    // = $2). Same math under any other numeraire — the unit cancels.
+    uint256 internal constant ETH_NUMERAIRE_PRICE_8DEC = 2000e8;
+    // Default 2.0 fee in 1e18 numeraire-unit scaling (= $2 under
+    // USD-as-numeraire).
+    uint256 internal constant DEFAULT_FEE_NUMERAIRE = 2e18;
+    // Expected VPFI charged at the example: ETH=$2000, fee=$2.
     uint256 internal constant EXPECTED_VPFI_AMOUNT = 1e18; // 1 VPFI
 
     function setUp() public {
@@ -101,12 +104,14 @@ contract NotificationFeeTest is SetupTest {
         // the existing test mock setup: register a dummy WETH address
         // and mock OracleFacet.getAssetPrice for it.
         weth = makeAddr("weth");
-        // Mock the OracleFacet ETH-USD read at $2000/8dec — directly on
-        // the diamond (the path LibNotificationFee uses).
+        // Mock the OracleFacet ETH/numeraire read at 2000/8dec —
+        // directly on the diamond (the path LibNotificationFee uses).
+        // Post-B1 `getAssetPrice(WETH)` returns numeraire-quoted; with
+        // USD-as-numeraire (the default) this is the ETH/USD price.
         vm.mockCall(
             address(diamond),
             abi.encodeWithSelector(OracleFacet.getAssetPrice.selector, weth),
-            abi.encode(ETH_USD_PRICE_8DEC, uint8(8))
+            abi.encode(ETH_NUMERAIRE_PRICE_8DEC, uint8(8))
         );
         // OracleAdminFacet isn't cut into the minimal test diamond, so
         // the production owner-gated `setWethContract` setter isn't

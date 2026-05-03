@@ -540,7 +540,7 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
         if (!symOk) return SecondaryStatus.Unavailable;
         string memory lower = _toLower(symbol);
 
-        // T-034 USD-Sweep / B1: lower-case numeraire symbol from
+        // T-034 Numeraire generalization (B1): lower-case numeraire symbol from
         // storage (e.g. "usd", "eur", "xau"). Empty bytes32 default
         // is interpreted as "usd" so the post-deploy behaviour is
         // unchanged out of the box.
@@ -585,7 +585,7 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
         if (!symOk) return SecondaryStatus.Unavailable;
         string memory upper = _toUpper(symbol);
 
-        // T-034 USD-Sweep / B1: dAPI name uses the active numeraire's
+        // T-034 Numeraire generalization (B1): dAPI name uses the active numeraire's
         // upper-case symbol from storage (default "USD").
         bytes memory packed = abi.encodePacked(upper, "/", _numeraireUpperSymbol());
         if (packed.length > 32) return SecondaryStatus.Unavailable;
@@ -628,7 +628,7 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
 
         (string memory symbol, bool symOk) = _safeSymbol(asset);
         if (!symOk) return SecondaryStatus.Unavailable;
-        // T-034 USD-Sweep / B1: DIA key uses the active numeraire's
+        // T-034 Numeraire generalization (B1): DIA key uses the active numeraire's
         // upper-case symbol from storage (default "USD").
         string memory key = string(abi.encodePacked(_toUpper(symbol), "/", _numeraireUpperSymbol()));
 
@@ -652,7 +652,7 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
         return _classifyDeviation(primaryPrice, secondary);
     }
 
-    /// @dev T-034 USD-Sweep / B1 — read the numeraire symbol from
+    /// @dev T-034 Numeraire generalization (B1) — read the numeraire symbol from
     ///      storage and convert to a lowercase Solidity string for
     ///      the symbol-derived secondary oracle query construction.
     ///      Empty bytes32 (governance never wrote the slot) defaults
@@ -676,7 +676,7 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
         return string(out);
     }
 
-    /// @dev T-034 USD-Sweep / B1 — uppercase variant for API3 / DIA
+    /// @dev T-034 Numeraire generalization (B1) — uppercase variant for API3 / DIA
     ///      query construction. Reuses `_numeraireLowerSymbol` then
     ///      upper-cases via the existing `_toUpper` helper.
     function _numeraireUpperSymbol() private view returns (string memory) {

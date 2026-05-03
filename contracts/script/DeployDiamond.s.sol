@@ -837,7 +837,7 @@ contract DeployDiamond is Script {
         s[21] = ConfigFacet.setAutoPauseDurationSeconds.selector;
         // Findings 00025 — governance-tunable max loan duration.
         s[22] = ConfigFacet.setMaxOfferDurationDays.selector;
-        // T-032 / USD-Sweep Phase 1 — notification fee knob (now in
+        // T-032 / Numeraire generalization (Phase 1) — notification fee knob (now in
         // numeraire-units) + bundled getter. The per-knob
         // `setNotificationFeeUsdOracle` was retired; the protocol's
         // reference currency is the global numeraireOracle (set via

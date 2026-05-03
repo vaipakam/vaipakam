@@ -180,11 +180,12 @@ Zero means "use library default" (2.0 numeraire-units = $2). Setter:
 `setNotificationFee(uint256)`. Governance-tunable so a market shift
 in Push Protocol fees can be passed through without redeploy.
 
-> **USD-Sweep (2026-05-03).** The retired per-knob
+> **Numeraire generalization (2026-05-03).** The retired per-knob
 > `notificationFeeUsdOracle` slot was removed from
 > `ProtocolConfig`. The notification fee's denomination now flows
 > through `OracleFacet.getAssetPrice(WETH)` which returns the
-> numeraire-quoted ETH price natively after USD-Sweep / B1 — single
+> numeraire-quoted ETH price natively after generalizing the
+> numeraire to the oracle layer (B1) — single
 > source of truth across the protocol. To change the notification
 > fee's reference currency, governance rotates the numeraire via
 > the atomic `setNumeraire` setter (under "Periodic Interest Payment"
@@ -234,7 +235,7 @@ numeraire when governance switches). Address-only; no numeric range.
 Zero disables the cross-check gate globally — the protocol falls
 back to Chainlink-only on the WETH/numeraire leg.
 
-> **Naming note (USD-Sweep / B1)**: This Pyth oracle implements the
+> **Naming note (Generalizing Numeraire — B1)**: This Pyth oracle implements the
 > cross-oracle DIVERGENCE check between Chainlink and Pyth on the
 > protocol's ETH-base reference. Distinct from T-034's "numeraire"
 > concept (the protocol's reference currency). The slot was renamed
@@ -350,7 +351,7 @@ which, under the post-deploy default (`numeraireSymbol` empty,
 > belt-and-suspenders for the retail deploy and load-bearing for
 > the industrial fork.
 
-> **USD-Sweep / B1 (2026-05-03).** The thresholds are stored in
+> **Generalizing Numeraire — B1 (2026-05-03).** The thresholds are stored in
 > numeraire-units (storage fields `kycTier0ThresholdNumeraire` /
 > `kycTier1ThresholdNumeraire`). After B1, both the threshold AND
 > the asset value are in numeraire-units (`getAssetPrice` returns
@@ -417,9 +418,10 @@ the same numeraire (`setMinPrincipalForFinerCadence`,
 flag — governance can re-tune individual values freely. Boolean — no
 range.
 
-### Numeraire-rotation surface (USD-Sweep / B1)
+### Numeraire-rotation surface — Generalizing Numeraire (B1)
 
-After USD-Sweep / B1 (2026-05-03), the protocol's reference currency
+After Generalizing Numeraire to the oracle layer (B1, 2026-05-03), the
+protocol's reference currency
 is captured by **four feed-side slots** + **four numeraire-denominated
 value knobs**. The per-knob `INumeraireOracle` boundary-conversion
 oracle was retired — `OracleFacet.getAssetPrice` now returns

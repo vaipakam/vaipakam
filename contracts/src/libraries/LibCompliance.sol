@@ -16,7 +16,7 @@ import {OracleFacet} from "../facets/OracleFacet.sol";
 ///      routing goes through the EIP-2535 fallback just like direct facet code.
 ///      Prices come from `OracleFacet.getAssetPrice` which returns
 ///      numeraire-quoted truth (USD by post-deploy default; whatever
-///      governance has rotated to otherwise) — see USD-Sweep / B1.
+///      governance has rotated to otherwise) — see Numeraire generalization (B1).
 library LibCompliance {
     function enforceCountryAndKYC(
         address diamond,

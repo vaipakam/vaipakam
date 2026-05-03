@@ -12,7 +12,7 @@ const STALE_MS = 60_000;
  * surface still load correctly.
  */
 export interface PeriodicInterestConfig {
-  /** USD-Sweep / B1 — bytes32 lowercase ASCII symbol of the active
+  /** Numeraire generalization (B1) — bytes32 lowercase ASCII symbol of the active
    *  numeraire (e.g. `0x0000…0000usd`, `0x0000…0000eur`). Empty
    *  bytes32 = post-deploy default ("usd"). */
   numeraireSymbol: `0x${string}`;

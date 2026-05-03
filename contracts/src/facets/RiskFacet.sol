@@ -824,7 +824,7 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
     ///      calculateHealthFactor, and isCollateralValueCollapsed — the latter
     ///      previously re-ran the full fetch twice (once per view) for ~6-9k
     ///      of duplicated oracle/staticcall overhead. Numeraire-quoted prices
-    ///      come from `OracleFacet.getAssetPrice` (USD-Sweep / B1).
+    ///      come from `OracleFacet.getAssetPrice` (Numeraire generalization (B1)).
     function _computeNumeraireValues(
         LibVaipakam.Loan storage loan
     ) internal view returns (uint256 borrowValueNumeraire, uint256 collateralValueNumeraire) {

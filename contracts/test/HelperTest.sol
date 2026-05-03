@@ -614,7 +614,7 @@ contract HelperTest {
         selectors[17] = ConfigFacet.setAutoPauseDurationSeconds.selector;
         // Findings 00025 — governance-tunable max loan duration.
         selectors[18] = ConfigFacet.setMaxOfferDurationDays.selector;
-        // T-032 / USD-Sweep Phase 1 — notification fee knob (now in
+        // T-032 / Numeraire generalization (Phase 1) — notification fee knob (now in
         // numeraire-units) + bundled frontend-facing getter. The
         // per-knob `setNotificationFeeUsdOracle` was retired; the
         // protocol's reference currency is the global numeraireOracle
@@ -635,7 +635,7 @@ contract HelperTest {
         selectors[30] = ConfigFacet.setNumeraireSwapEnabled.selector;
         selectors[31] = ConfigFacet.getPeriodicInterestConfig.selector;
         // Individual getters used by the protocol-console knob card
-        // reader (which expects one function per knob). USD-Sweep / B1 —
+        // reader (which expects one function per knob). Numeraire generalization (B1) —
         // the per-knob `getNumeraireOracle` was retired (no
         // INumeraireOracle anymore); replaced with feed-side getters
         // (`getNumeraireSymbol`, `getEthNumeraireFeed`) that surface

@@ -18,14 +18,20 @@ import {EscrowFactoryFacet} from "../facets/EscrowFactoryFacet.sol";
  *      `NOTIF_BILLER_ROLE`-gated external entry). `address(this)`
  *      resolves to the Diamond inside any function below.
  *
- *      Pricing model:
- *        Phase 1 (default): ETH/USD oracle × fixed VPFI/ETH rate
- *          (`VPFI_PER_ETH_FIXED_PHASE1 = 1e15`, i.e. 1 VPFI = 0.001 ETH).
- *          Both VPFI and ETH are 18-decimal so the rate is unitless.
- *        Phase 2 / governance: when `s.notificationFeeUsdOracle` is
- *          set non-zero, that AggregatorV3Interface is consulted as
- *          a direct VPFI/USD (or VPFI/<denomination>) feed and the
- *          fixed-rate fallback is skipped.
+ *      Pricing model — currency-agnostic, anchored to ETH/numeraire:
+ *        Phase 1 (default): the stored `notificationFee` is in the
+ *          active numeraire (USD by post-deploy default; whatever
+ *          governance rotated to). `OracleFacet.getAssetPrice(WETH)`
+ *          returns ETH/numeraire post-B1. Multiplied by the fixed
+ *          peg `VPFI_PER_ETH_FIXED_PHASE1 = 1e15` (1 VPFI = 0.001
+ *          ETH, both 18-dec — peg is unit-agnostic, describes the
+ *          VPFI-to-ETH ratio), this yields a synthetic VPFI/numeraire
+ *          rate. The stored fee divides directly to give the VPFI
+ *          amount. No USD-intermediate is involved end to end.
+ *        Phase 2 (governance / VPFI lists): when VPFI lists on an
+ *          exchange, governance can replace the fixed peg with a
+ *          live VPFI/numeraire feed and the fee → VPFI math becomes
+ *          a single `feeNumeraire / vpfiPriceNumeraire` divide.
  *
  *      No Diamond custody window — the VPFI moves user-escrow →
  *      treasury in one privileged escrow call. The Diamond never
@@ -36,10 +42,11 @@ library LibNotificationFee {
     /// @notice Emitted when a loan-side's first notification triggers
     ///         a successful bill. Indexes the loan + side + payer for
     ///         off-chain reconciliation against the watcher's
-    ///         per-notification audit log. The fee is in NUMERAIRE
-    ///         units (USD-Sweep Phase 1) — convert via the global
-    ///         `numeraireOracle` to express in any other reference
-    ///         currency.
+    ///         per-notification audit log. `feeNumeraire1e18` is the
+    ///         configured fee in the ACTIVE NUMERAIRE (USD by
+    ///         post-deploy default); off-chain consumers can read the
+    ///         current numeraire identity via
+    ///         `ConfigFacet.getNumeraireSymbol()` to label the figure.
     event NotificationFeeBilled(
         uint256 indexed loanId,
         bool indexed isLenderSide,
@@ -55,21 +62,27 @@ library LibNotificationFee {
     error NotifFeeTreasuryNotSet();
 
     /// @notice Computes the VPFI amount (18-dec, raw) equivalent to
-    ///         `cfgNotificationFee()` at the current price feeds.
-    /// @dev    Single-step after USD-Sweep / B1: `getAssetPrice(WETH)`
-    ///         returns numeraire-quoted ETH price natively (governance
-    ///         rotates the underlying Chainlink feed when the numeraire
-    ///         changes), so the fee → VPFI math is unit-cancelled:
-    ///           feeNumeraire × 1e36
-    ///             / (ethPriceNumeraire × VPFI_PER_ETH_FIXED_PHASE1)
-    ///         The previous explicit numeraire→USD conversion via
-    ///         `INumeraireOracle` is removed — the numeraire abstraction
-    ///         lives at the oracle layer now, not the consumer layer.
+    ///         `cfgNotificationFee()` at the current price feeds,
+    ///         anchored to ETH/numeraire.
+    /// @dev    Anchor: the active numeraire (USD by post-deploy
+    ///         default, governance-rotatable). After B1,
+    ///         `OracleFacet.getAssetPrice(WETH)` returns the
+    ///         numeraire-quoted ETH price natively — governance
+    ///         repoints `s.ethNumeraireFeed` at a Chainlink
+    ///         ETH/<numeraire> feed when it rotates. Combined with
+    ///         the fixed peg `VPFI_PER_ETH_FIXED_PHASE1 = 1e15`
+    ///         (1 VPFI = 0.001 ETH; peg is unit-agnostic, describes
+    ///         the VPFI-to-ETH ratio), the math is:
+    ///           vpfiPriceNumeraire = ethPriceNumeraire × peg / 1e18
+    ///           vpfiAmount         = feeNumeraire × 1e18 / vpfiPriceNumeraire
+    ///                              = feeNumeraire × 1e36
+    ///                                  / (ethPriceNumeraire × peg)
     ///
-    ///         The ratio is unit-agnostic: as long as both `feeNumeraire`
-    ///         and `ethPriceNumeraire` are in the same currency, the
-    ///         resulting VPFI amount is correct. Today (USD-as-default)
-    ///         the math is bit-identical to the pre-sweep version.
+    ///         End-to-end in the active numeraire: stored fee is in
+    ///         numeraire-units, oracle return is in numeraire-units,
+    ///         resulting VPFI amount is correctly priced regardless
+    ///         of whether the numeraire is USD, EUR, JPY, or XAU. No
+    ///         USD-intermediate at any step.
     ///
     ///         Reverts on stale / zero / unconfigured oracle so a
     ///         broken price source fails the bill rather than charging

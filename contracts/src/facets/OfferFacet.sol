@@ -598,7 +598,7 @@ contract OfferFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
     }
 
     /// @dev Convert a raw token amount to numeraire-units (1e18-scaled).
-    ///      Single step now after the USD-Sweep / B1 architectural
+    ///      Single step now after the Numeraire generalization (B1) architectural
     ///      change: `OracleFacet.getAssetPrice` returns numeraire-quoted
     ///      prices natively (governance rotates the underlying Chainlink
     ///      feed addresses + denominator constant when the numeraire
@@ -1781,7 +1781,7 @@ contract OfferFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
     ///      Scaled to 1e18 for threshold comparison. Prices come from
     ///      `OracleFacet.getAssetPrice` which returns numeraire-quoted truth
     ///      (USD by post-deploy default; whatever governance has rotated to
-    ///      otherwise) — see USD-Sweep / B1 release notes.
+    ///      otherwise) — see Numeraire generalization (B1) release notes.
     function _calculateTransactionValueNumeraire(
         LibVaipakam.Offer storage offer
     ) internal view returns (uint256 valueNumeraire) {

@@ -187,7 +187,7 @@ contract ProfileFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors 
      *        tier0–tier1       → Tier1 required
      *        ≥ tier1Threshold  → Tier2 required
      *      Values are scaled to 1e18 matching the unit returned by
-     *      `OracleFacet.getAssetPrice` (numeraire-quoted post USD-Sweep / B1).
+     *      `OracleFacet.getAssetPrice` (numeraire-quoted post Numeraire generalization (B1)).
      *      Used by OfferFacet, DefaultedFacet, and RiskFacet for transaction-level compliance.
      * @param user The user's address.
      * @param valueNumeraire The transaction value in the active numeraire scaled to 1e18.
@@ -221,15 +221,19 @@ contract ProfileFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors 
     }
 
     /**
-     * @notice Updates the KYC tier thresholds (NUMERAIRE values scaled to 1e18).
+     * @notice Updates the KYC tier thresholds (numeraire values scaled to 1e18).
      * @dev Admin-only. Tier0 must be < Tier1. Values of 0 revert to
-     *      compile-time defaults. USD-Sweep Phase 2 — values are now
-     *      stored in numeraire-units; the comparison-site getters
-     *      (`getKycTier0Threshold` / `getKycTier1Threshold`) convert
-     *      numeraire→USD via the global `numeraireOracle` so callers
-     *      stay USD-typed.
-     * @param tier0ThresholdNumeraire Max numeraire value for no-KYC tier (default 1000 * 1e18).
-     * @param tier1ThresholdNumeraire Max numeraire value for limited-KYC tier (default 10000 * 1e18).
+     *      compile-time defaults (Tier0 = 1_000 numeraire-units,
+     *      Tier1 = 10_000 numeraire-units; reads as $1k / $10k under
+     *      USD-as-numeraire — the post-deploy default). After
+     *      Generalizing Numeraire (B1) the comparison sites are
+     *      numeraire-vs-numeraire end to end: the getters
+     *      `getKycTier0Threshold` / `getKycTier1Threshold` return raw
+     *      numeraire-units, and `OracleFacet.getAssetPrice` returns
+     *      numeraire-quoted asset prices, so no boundary cast happens
+     *      anywhere along the path.
+     * @param tier0ThresholdNumeraire Max numeraire value for no-KYC tier (default 1_000 * 1e18).
+     * @param tier1ThresholdNumeraire Max numeraire value for limited-KYC tier (default 10_000 * 1e18).
      */
     function updateKYCThresholds(
         uint256 tier0ThresholdNumeraire,

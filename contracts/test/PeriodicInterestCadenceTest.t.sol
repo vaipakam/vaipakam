@@ -9,7 +9,7 @@ import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 
-// USD-Sweep / B1 — INumeraireOracle interface and its mocks were
+// Numeraire generalization (B1) — INumeraireOracle interface and its mocks were
 // retired in favour of the symbol-derived feed slots
 // (ethNumeraireFeed + numeraireSymbol + numeraireChainlinkDenominator
 // + pythCrossCheckFeedId). The atomic `setNumeraire` setter now takes
