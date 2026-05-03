@@ -135,6 +135,9 @@ Current connected-app surface expectations:
 - `Activity` rows that reference a loan should use a clickable `Loan #X` pill linking to that loan's full details page
 - `Claim Center` is the home for loan claims and platform-interaction rewards; the former standalone in-app `Rewards` page should not be treated as a live route
 - public `/buy-vpfi` is the marketing / education surface for VPFI; connected `/app/buy-vpfi` is the wallet-gated home for buying, staking / depositing, unstaking / withdrawing, staking-rewards claims, and chain-level VPFI transparency
+- user-facing connected-app copy should call the personal escrow experience `Vaipakam Vaults` generally and `Your Vaipakam Vault` for the connected user's own balance surfaces. Solidity / TypeScript identifiers, code-fenced names, diagnostics, and existing route paths may continue to use `escrow`.
+- the existing `/app/escrow` route may remain stable, but its visible sidebar / page label should be `Your Vaipakam Vault`
+- Asset Viewer and vault balance surfaces should display the protocol-managed balance clamp `min(raw token balance, protocol-tracked balance)` so unsolicited direct transfers are hidden from ordinary balance, staking, and discount views
 - in the connected-app sidebar, `Claim Center` should sit with the core lending actions before `Buy VPFI`, while token-purchase and advanced utility destinations remain secondary to loan management
 - the in-app logo should route to `/app` so connected users return to the dashboard shell; the public navbar logo should continue to route to `/`
 - the app's issue drawer should be labelled as `Report Issue` / `Issue Details`, not `Diagnostics`, and should generate a redacted report suitable for GitHub issue filing
@@ -186,21 +189,21 @@ Borrower VPFI discount UX:
 - the fixed-rate `Buy VPFI` flow should follow the active tokenomics spec and must not rely on a silent pre-minted sale reserve unless a later approved design explicitly reintroduces one
 - if the purchase route settles through a Base-chain receiver, VPFI must be minted or released only after the receiver actually receives ETH, and the delivered VPFI amount must be calculated from the received ETH amount
 - after purchase, the VPFI should be delivered to the user's wallet on the chain where the user chose to buy
-- the UI should then guide and facilitate a separate explicit user-intent action to move or deposit that wallet-held VPFI into the user's personal escrow for staking / discount eligibility
-- staking should be messaged as open to any VPFI holder, not only borrowers or users with an existing loan; first deposit should make clear that the user escrow can be created automatically
-- the public marketing page should explain that VPFI can be bought, deposited / staked, and withdrawn / unstaked; the actual app controls should label the escrow action as `Deposit / Stake VPFI` and the reverse action as `Withdraw / Unstake VPFI`
+- the UI should then guide and facilitate a separate explicit user-intent action to move or deposit that wallet-held VPFI into the user's Vaipakam Vault for staking / discount eligibility
+- staking should be messaged as open to any VPFI holder, not only borrowers or users with an existing loan; first deposit should make clear that the user's Vaipakam Vault can be created automatically
+- the public marketing page should explain that VPFI can be bought, deposited / staked, and withdrawn / unstaked; the actual app controls should label the vault action as `Deposit / Stake VPFI` and the reverse action as `Withdraw / Unstake VPFI`
 - the `Deposit / Stake` card should contain the canonical open-staking explanation in one user-friendly Info callout; duplicate page-level or step-subtitle copies should be avoided
 - the VPFI discount-status table belongs on `/app/buy-vpfi` near the purchase / deposit decision, while the shared fee-discount consent toggle remains on `Dashboard`
 - the discount-status table should render only for connected wallets and should link users back to `Dashboard` when consent is disabled
 - the Phase 1 `30,000 VPFI` user cap is a per-chain cap, not a protocol-wide global cap across all chains
-- VPFI deposited / staked in escrow on one chain should count only toward fee-discount tiers for loans initiated on that same chain
-- the UI should expose a single common platform-level user setting for consenting to the use of escrowed VPFI for fee discounts
+- VPFI deposited / staked in the user's Vaipakam Vault on one chain should count only toward fee-discount tiers for loans initiated on that same chain
+- the UI should expose a single common platform-level user setting for consenting to the use of Vault-held VPFI for fee discounts
 - that shared fee-discount consent control should live inside the connected app and be shown on `Dashboard`
 - the consent control should not be treated as a `Buy VPFI`-page-only setting
 - offer-level or loan-level consent toggles are not required for VPFI fee discounts once that common platform-level setting is enabled
-- the connected app should show the user's escrowed VPFI balance, the implied discount tier, and the fact that escrow-held VPFI also counts as staked for the `5% APR` staking model
+- the connected app should show the user's Vault-held VPFI balance, the implied discount tier, and the fact that Vault-held VPFI also counts as staked for the `5% APR` staking model
 - on `/app/buy-vpfi`, the `Your VPFI discount status` area should provide a chain selector rather than only showing the currently inferred chain name in the title / balance label
-- that chain selector should let the user inspect chain-specific escrowed VPFI, discount-tier status, and discount eligibility because those values are local to the selected lending chain
+- that chain selector should let the user inspect chain-specific Vault-held VPFI, discount-tier status, and discount eligibility because those values are local to the selected lending chain
 - VPFI tier thresholds should display in token units rather than raw 1e18-scaled base units across discount-status cards, tier tables, tooltip placeholders, and consent copy
 - borrower and lender fee-discount messaging should follow the tiered model from `docs/TokenomicsTechSpec.md`, not a single flat `25%` discount
 - app pages such as `Create Offer` and `Loan Details` may still link users into this `Buy VPFI` flow as secondary shortcuts when the borrower discount is relevant
@@ -217,18 +220,18 @@ Alerts and notification preferences:
 - HF threshold notifications stay compulsory once any delivery rail is enabled
 - paid Push notification event types should be individually toggleable, defaulting on for new subscribers: claim available, loan settled / defaulted, cross-chain VPFI buy received, offer matched, maturity approaching, and partial repayment received
 - periodic-interest checkpoint reminders should reuse the loan-alert rail. Borrower reminders are priority notifications, lender reminders are courtesy notifications, and the lead time should come from the live `preNotifyDays` governance setting shared with maturity reminders.
-- the Push rail should disclose the current flat notification fee in the active protocol numeraire, explain that Telegram remains free, and make clear that the VPFI fee is deducted from escrow only on the first paid Push notification per loan side
-- the UI should warn when the user's escrowed VPFI balance appears insufficient for the notification fee, while the on-chain billing path remains authoritative
+- the Push rail should disclose the current flat notification fee in the active protocol numeraire, explain that Telegram remains free, and make clear that the VPFI fee is deducted from the user's Vaipakam Vault only on the first paid Push notification per loan side
+- the UI should warn when the user's Vault-held VPFI balance appears insufficient for the notification fee, while the on-chain billing path remains authoritative
 
 Reward-claiming UX:
 
 - Vaipakam should provide a simple and consistent reward-claiming experience across all supported chains
 - users should be able to claim two reward types directly on the chain where they are actively lending, borrowing, or renting NFTs:
-  - `Staking Rewards` earned automatically when VPFI is held in the user's escrow
+  - `Staking Rewards` earned automatically when VPFI is held in the user's Vaipakam Vault
   - `Platform Interaction Rewards` earned from lending and borrowing activity using the tiered and time-weighted logic defined in `docs/TokenomicsTechSpec.md`
 - rewards should be calculated and minted locally on the user's currently connected chain
 - no cross-chain messaging or mandatory network switching should be required during the claim flow itself
-- the user's escrowed VPFI balance on that chain should be treated as the staked balance for reward purposes
+- the user's protocol-tracked Vault-held VPFI balance on that chain should be treated as the staked balance for reward purposes
 - if the user wants to move claimed VPFI elsewhere afterward, bridging should remain optional
 - reward surfaces should be split by user intent rather than combined into one `Rewards` page:
   - `Staking Rewards` should be claimed from `/app/buy-vpfi`'s `Deposit / Stake` card, with a compact mirror on Dashboard discount status
@@ -242,10 +245,10 @@ Reward-claiming UX:
 - when a global interaction-reward denominator has not yet been broadcast to the local chain, the Claim Center should show a waiting state for that day rather than offering a transaction that would revert
 - after a successful claim, the UI should:
   - show a success state with the exact amount claimed
-  - refresh wallet balance and escrow balance in real time
+  - refresh wallet balance and Vaipakam Vault balance in real time
   - offer an optional one-click `Bridge to another chain` action through the official LayerZero bridge flow if the user wants to move claimed VPFI, including a direct link to `https://layerzero.superbridge.app/` when appropriate
 - if the user has no pending rewards on the current chain, the `Claim Rewards` action should be disabled or hidden with a helpful message such as `No rewards available to claim on this chain`
-- if the user recently changed escrow balance through deposit, withdrawal, or fee deduction, reward displays must still calculate correctly up to the current block
+- if the user recently changed Vaipakam Vault balance through deposit, withdrawal, or fee deduction, reward displays must still calculate correctly up to the current block
 - if the user switches chains, the active reward surfaces should refresh and show rewards specific to the newly connected chain
 - if the network is unsupported or the wallet is not connected, the UI should clearly explain that rewards can only be claimed on supported lending chains
 - reward data should be fetched from the Diamond on the currently connected chain using the existing hooks and helpers where appropriate
@@ -258,6 +261,20 @@ Sanctions-screening UX:
 - the banner should appear on action-heavy app surfaces where the user can be affected, including Dashboard, Create Offer, Offer Book, Buy VPFI, Loan Details, and Claim Center
 - clean wallets should not see persistent sanctions education banners; the public Terms prohibited-use clause remains the general policy surface
 
+Stuck-token recovery UX:
+
+- `/app/recover` is an advanced, wallet-gated utility route for unsolicited ERC-20 tokens sent directly to a user's Vaipakam Vault
+- the route should not appear in the main nav, footer, Dashboard shortcuts, Asset Viewer actions, or basic user guide; the Advanced User Guide may deep-link to it for users who already understand the risk
+- the page should emit `noindex,nofollow` metadata and should not be promoted as a normal portfolio-management surface
+- the form should ask for token address, declared source address, and amount; the recoverable maximum is `max(0, raw vault balance - protocol-tracked balance)` for the selected token
+- the UI should clearly state that the declared source must be the wallet or contract the user believes sent the unsolicited tokens and that recovery is sent only to the connected user's own EOA
+- before signing, the user must pass a deliberate confirmation modal that includes the standing warning and requires typing `CONFIRM`
+- the wallet signature should use the on-chain recovery domain / nonce / acknowledgement reads (`recoveryDomainSeparator`, `recoveryNonce(user)`, and `recoveryAckTextHash`) so the app signs the same EIP-712 statement the contract verifies
+- receipt parsing should distinguish `StuckERC20Recovered` from `EscrowBannedFromRecoveryAttempt`; a ban outcome is a completed transaction with a blocked recovery, not a generic failed receipt
+- if sanctions-oracle checks are unavailable or revert, the app should surface a fail-safe blocked state and avoid retry loops that imply the user can bypass the check
+- `disown(token)` may be offered only as an advanced declaration that emits an event; the UI must not imply that it moves tokens or changes accounting
+- Asset Viewer may show that unsolicited balance exists through a restrained hint, but it should not expose a direct recovery button inline
+
 Activity and local log-index requirements:
 
 - the frontend log index should be the common source for Activity, Loan Details timelines, reward lifetime totals, filled-offer links, cancelled-offer reconstruction, staking / interaction claim history, and Range Orders match / close events
@@ -267,25 +284,25 @@ Activity and local log-index requirements:
 
 Unstaking VPFI:
 
-- because VPFI held in user escrow is automatically treated as staked, users should be able to unstake by moving VPFI from escrow back to their wallet on the same chain
+- because VPFI held in the user's Vaipakam Vault is automatically treated as staked, users should be able to unstake by moving VPFI from the Vault back to their wallet on the same chain
 - the UI should provide a clear and prominent `Withdraw / Unstake VPFI` action on `/app/buy-vpfi`
-- the unstake action should show the user's current escrowed VPFI balance and the maximum amount available to unstake
+- the unstake action should show the user's current Vault-held VPFI balance and the maximum amount available to unstake
 - when the user selects `Unstake VPFI`, the UI should:
   - show a simple amount-entry form
-  - include a `Max` shortcut prefilled with the full escrow balance
+  - include a `Max` shortcut prefilled with the full Vaipakam Vault balance
   - show a confirmation step with:
     - amount being unstaked
     - impact on the current discount tier
     - impact on future `5% APR` staking rewards
-- after confirmation, the VPFI should move from escrow to the user's wallet on the same chain
-- after a successful unstake, the UI should refresh escrow balance, wallet balance, reward estimates, and discount tier in real time
+- after confirmation, the VPFI should move from the user's Vaipakam Vault to their wallet on the same chain
+- after a successful unstake, the UI should refresh Vaipakam Vault balance, wallet balance, reward estimates, and discount tier in real time
 - unstaking should be treated as instant with no lock-up period
 - users should still be allowed to unstake while they have active loans, but the UI must clearly warn them about the immediate reduction in discount tier and staking rewards
 - if the user has enabled the shared `Use VPFI for fee discount` consent flag, the UI should warn that unstaking may reduce or disable future fee discounts
 - after unstaking, the UI may offer the standard LayerZero bridge flow if the user wants to move that VPFI to another chain, including a direct link to `https://layerzero.superbridge.app/`
 - if the user has zero VPFI in escrow, the unstake action should be hidden or disabled with a helpful message
-- if active loans currently rely on escrowed VPFI for fee-discount eligibility, the unstake flow should show a clear warning before confirmation
-- if the user switches chains, `/app/buy-vpfi` should refresh and show the escrow balance, staking rewards, and unstake availability for the newly connected chain
+- if active loans currently rely on Vault-held VPFI for fee-discount eligibility, the unstake flow should show a clear warning before confirmation
+- if the user switches chains, `/app/buy-vpfi` should refresh and show the Vaipakam Vault balance, staking rewards, and unstake availability for the newly connected chain
 - unstaking should be implemented as a local chain action only; no cross-chain messaging should be required for the unstake itself
 
 Connected-app network model in Phase 1:

@@ -11,8 +11,8 @@
 
 Primary uses:
 
-- paying and receiving discounted protocol fees through escrow-held VPFI
-- earning `5% APR` staking rewards through escrow-based staking
+- paying and receiving discounted protocol fees through Vault-held VPFI
+- earning `5% APR` staking rewards through Vaipakam Vault-based staking
 - future governance in `Phase 2`
 
 Key principles:
@@ -26,7 +26,7 @@ Key principles:
 
 Scope note:
 
-- token deployment, minting, utility, fixed-rate purchase, discounts, and escrow-based staking are in active scope for `Phase 1`
+- token deployment, minting, utility, fixed-rate purchase, discounts, and Vaipakam Vault-based staking are in active scope for `Phase 1`
 - governance activation remains `Phase 2`
 - Phase 1 lending, escrow, oracle, and risk mechanics remain unchanged unless an approved tokenomics integration explicitly extends them
 - this document is the canonical home for the borrower VPFI `Loan Initiation Fee` path; the former standalone borrower-discount specification has been merged here so future references should point to this tokenomics spec
@@ -67,7 +67,7 @@ Implementation target:
 | Exchange Listings & Market Making     |      `14%` |    `32,200,000` | Liquidity + CEX incentives                       |
 | **Early Fixed-Rate Purchase Program** |       `1%` |     `2,300,000` | Sold at `1 VPFI = 0.001 ETH`, caps admin-managed |
 | Platform Interaction Rewards          |      `30%` |    `69,000,000` | Usage-based rewards                              |
-| Staking Rewards                       |      `24%` |    `55,200,000` | `5% APR`, escrow-based                           |
+| Staking Rewards                       |      `24%` |    `55,200,000` | `5% APR`, Vault-based                            |
 | **Total**                             |   **100%** | **230,000,000** | Hard cap enforced on Base                        |
 
 ---
@@ -256,7 +256,7 @@ Phase note:
 
 - this section is `Phase 1` scope
 
-Both lender and borrower discounts are based purely on the VPFI balance held in the user’s escrow on the respective lending chain. Moving VPFI into escrow automatically counts as staking.
+Both lender and borrower discounts are based purely on the VPFI balance held in the user's Vaipakam Vault on the respective lending chain. Moving VPFI into the Vault automatically counts as staking. Code-level contracts, storage fields, function names, and diagnostics may continue to use `escrow`.
 
 **Tiered Discount Table**  
 applies to both lenders and borrowers
@@ -270,8 +270,9 @@ applies to both lenders and borrowers
 
 Shared rules:
 
-- discount tiers are derived from the user's escrowed VPFI balance on the relevant lending chain, with both lender and borrower discount value measured through the time-weighted rules below once Phase 5 is active
-- moving VPFI into escrow automatically counts as staking
+- discount tiers are derived from the user's Vaipakam Vault VPFI balance on the relevant lending chain, with both lender and borrower discount value measured through the time-weighted rules below once Phase 5 is active
+- effective VPFI utility balance must be clamped to `min(actualVaultBalance, protocolTrackedEscrowBalance[user][VPFI])` so unsolicited direct transfers cannot earn staking rewards or inflate fee-discount tiers
+- moving VPFI into the Vault automatically counts as staking
 - the user must explicitly consent through a single platform-level on-chain flag to allow escrowed VPFI to be used for fee discounts
 - in the frontend, this shared consent should be managed from `Dashboard`, not as an offer-level, loan-level, or `Buy VPFI`-page-only toggle
 - once this common consent is enabled, no separate offer-level or loan-level consent is required
@@ -340,7 +341,7 @@ Borrower initiation-fee discount mechanics (Phase 5):
 
 Objective:
 
-- borrowers can acquire VPFI through the fixed-rate purchase flow, explicitly deposit it into their personal escrow on the lending chain, and use that escrowed VPFI to satisfy the full `0.1%` `Loan Initiation Fee` up front
+- borrowers can acquire VPFI through the fixed-rate purchase flow, explicitly deposit it into their personal Vaipakam Vault on the lending chain, and use that Vault-held VPFI to satisfy the full `0.1%` `Loan Initiation Fee` up front
 - the borrower then earns the documented discount as a time-weighted VPFI rebate only if the loan closes properly
 - this removes the old point-in-time gaming vector where a borrower could briefly top up VPFI only at acceptance time to capture a full discount
 
@@ -348,9 +349,9 @@ Eligibility and fallback:
 
 - the lending asset must be liquid on the active lending chain according to the existing `RiskFacet` / `OracleFacet` path
 - the borrower must have enabled the shared platform-level VPFI fee-discount consent
-- the borrower's escrow on that same lending chain must contain enough VPFI to cover the full, non-discounted `0.1%` `Loan Initiation Fee` equivalent
-- escrow-held VPFI is a special non-collateral asset: it does not count toward collateral value, Health Factor, liquidation value, or LTV support
-- escrow-held VPFI continues to count as staked under the unified escrow-staking model while also serving as the fee-utility balance for borrower discounts
+- the borrower's Vaipakam Vault on that same lending chain must contain enough protocol-tracked VPFI to cover the full, non-discounted `0.1%` `Loan Initiation Fee` equivalent
+- Vault-held VPFI is a special non-collateral asset: it does not count toward collateral value, Health Factor, liquidation value, or LTV support
+- Vault-held VPFI continues to count as staked under the unified Vault-staking model while also serving as the fee-utility balance for borrower discounts
 - if the asset is illiquid, the borrower has insufficient VPFI, or consent is disabled, the system falls back to the normal lending-asset fee path: the borrower pays `0.1%` in the loan asset and receives the net amount after that treasury deduction
 
 Acceptance-time flow:
@@ -407,10 +408,11 @@ Pool size:
 
 Design rules:
 
-- staking is unified with escrow: any VPFI held in a user escrow on a lending chain is considered staked
+- staking is unified with the user's Vaipakam Vault: any protocol-tracked VPFI held in a user vault on a lending chain is considered staked
 - staking is open to any VPFI holder; the user does not need an existing loan, offer, or borrower position to participate
-- the first VPFI deposit may create the user's escrow automatically, then treat the deposited balance as staked immediately
-- escrow-held VPFI earns a single flat APR paid from the Staking Rewards allocation
+- the first VPFI deposit may create the user's vault automatically, then treat the deposited balance as staked immediately
+- Vault-held VPFI earns a single flat APR paid from the Staking Rewards allocation
+- the effective staking balance must be `min(actualVaultBalance, protocolTrackedEscrowBalance[user][VPFI])` so direct dust sent to the vault cannot earn rewards
 - the default launch APR is `5%`, but governance may raise or lower this APR over time through the protocol admin path
 - no separate staking contract is required
 - rewards are calculated locally on each chain
@@ -430,7 +432,7 @@ userReward = userBalance * (rewardPerToken - userRewardPerTokenPaid)
 
 Definitions:
 
-- `userBalance` = current VPFI balance in the user escrow
+- `userBalance` = current protocol-tracked VPFI balance in the user's Vaipakam Vault, clamped to raw token balance
 - balances update on every deposit, fee deduction, or withdrawal
 
 Primary reward claim path:

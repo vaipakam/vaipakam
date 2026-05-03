@@ -349,3 +349,194 @@ Before mainnet:
   = `address(0)`) means anyone can execute after delay; useful if the
   Safe is unavailable, but removes a cancellation checkpoint. Current
   default is Safe-only; flip per chain if availability concerns dominate.
+
+---
+
+## Treasury and founder distribution policy
+
+This section captures the protocol's chosen approach to treasury
+management and how founders / the operating company capture
+protocol value. Decisions here have outsized securities / tax /
+operational implications, so the reasoning is recorded rather than
+the design just being a code reference.
+
+### TL;DR
+
+| Question | Answer |
+|---|---|
+| Where do operating fees accumulate? | Diamond as treasury (`s.treasury == address(this)`); per-token in `treasuryBalances[asset]`. |
+| When are accumulated fees converted? | Aggregated, threshold-or-time-triggered. NOT per-tx. |
+| What do they convert to? | ETH / WBTC / VPFI per admin-configurable mix. |
+| Does any cut auto-route to a "founder address"? | **No.** This is the load-bearing design choice. |
+| How do founders capture value? | (1) Genesis VPFI grant, vested over 4 years via a vester contract. (2) Discretionary governance-approved operating budget post-launch for the founding team's ongoing work. |
+
+### The pattern we're NOT adopting (and why)
+
+The original T-056 sketch was: convert treasury tokens to a target
+mix, and on every conversion send a hardcoded founder's-cut
+percentage to a `.env`-configured address. Reviewing this against
+the major-protocol pattern surfaced four converging reasons to drop
+it:
+
+1. **Securities exposure.** Auto-routing protocol-fee revenue to a
+   hardcoded insider address strengthens the SEC's "efforts of
+   others" prong of the Howey test. Discretionary, governance-
+   approved distributions are dramatically safer. Multiple 2023-2024
+   SEC actions (Coinbase staking, Kraken staking, BlockFi) cited
+   automated revenue-distribution-from-user-activity as a key
+   factor.
+
+2. **Tax fragility.** Every fee accrual = a separate realization
+   event for the founder. Hundreds-to-thousands of taxable receipts
+   per year in many tokens creates a reporting nightmare. Aggregated
+   periodic distributions = one event per cycle, clean treatment.
+
+3. **Operational fragility.** SushiSwap's 2020 "Chef Nomi" episode
+   is the textbook cautionary tale: the protocol had a hardcoded
+   `developerFund` that auto-collected 10% of SUSHI emissions. The
+   pseudonymous founder withdrew ~$14M to a personal address three
+   weeks after launch. Community uproar; founder eventually
+   returned it; Sushi restructured to multisig / DAO control. The
+   pattern itself is fragile even with good actors.
+
+4. **Sanctions surface.** A hardcoded founder address creates a
+   permanent target. Erroneous flagging (which happens — see the
+   2022 Tornado Cash dust attack on hundreds of unrelated wallets)
+   would freeze protocol revenue or worse. Multisig + governance =
+   recoverable.
+
+### Industry survey (2026)
+
+A scan of protocol allocations and fee-routing across major DeFi
+venues found unanimity on two points: founders get **upfront
+genesis allocations vested over 3-5 years**, and operating fees
+**never auto-route to a founder address**.
+
+| Protocol | Genesis founder/team allocation | Vesting | Per-tx auto-route to founders? |
+|---|---|---|---|
+| Uniswap | 21.5% team + 17.8% investors | 4 years | No |
+| Aave | Team allocation upfront | 4 years | No (fees → Ecosystem Collector → governance) |
+| MakerDAO | Founders received MKR at genesis | Multi-year | No (Foundation dissolved 2021) |
+| Curve | 30% shareholders + 3% employees + 2% early users | 2-5 years | No |
+| Compound | 24% founders + 22.25% investors | 4 years | No |
+| Synthetix | Team / advisors at genesis | Vested | No (SCCP-approved budget) |
+| Yearn | 0% founder originally; later 6,666 YFI for treasury+team via gov vote | n/a / multi-year | No |
+| dYdX | Employees + investors + community | Multi-year | No (v4 fees → validators / stakers) |
+| 1inch | 18% team + 21% investors | 4 years | No |
+| Lido | Team + investors at genesis | Multi-year | No (10% fee → operators+DAO, never founders) |
+| Balancer | Founders + devs + investors + advisors | Multi-year | No |
+| Convex | 3.3% team + 9.7% investors | 1-3 years | No |
+| GMX | 30% founders & team | Vested | No (fees → GMX stakers + GLP LPs) |
+| Pendle | 16% team + 7% advisors | Vested | No |
+| Frax | Founders at genesis | Vested | No |
+
+What protocols **do** auto-route per-tx — but only to **token
+holders** (which includes founders proportional to their
+holdings, not as a special insider class):
+
+- **Curve**: 50% of swap fees auto-distributed to veCRV stakers.
+- **GMX**: 30% of trading fees to GMX stakers, 70% to GLP LPs.
+- **SushiSwap xSUSHI**: 0.05% of every swap to xSUSHI stakers.
+- **Lido**: 10% of staking yield, half to node operators, half
+  to DAO treasury.
+- **Maker**: surplus → MKR burn (deflationary; benefits all
+  holders).
+
+The legal distinction is meaningful: distributing to **token
+holders** = "protocol mechanics benefiting all participants
+proportional to their stake." Distributing to a **hardcoded
+founder address** = "ongoing payment from user activity to an
+insider." The first is treated like a coupon-paying instrument;
+the second looks like an ongoing unregistered securities offering.
+
+### Vaipakam's chosen approach
+
+**Founder value capture (genesis):**
+
+- VPFI allocation determined at TGE per the tokenomics document.
+- Vested via a Sablier / Hedgey / custom linear-vester contract;
+  recommended shape: 4-year linear unlock with a 1-year cliff.
+- Funded ONCE at TGE from the protocol token reserve.
+  Decoupled from operating revenue mechanics.
+- Founders capture protocol success identically to any other
+  VPFI holder — their tokens benefit from buyback-and-burn /
+  staking-pool distributions / treasury-funded growth.
+
+**Operating budget (post-launch):**
+
+- Founding team's ongoing work funded via per-quarter or
+  per-milestone discretionary governance grants from the
+  converted treasury.
+- Modeled on Aave Companies / Yearn yTeam / BGD Labs. Each grant
+  proposal lists scope, deliverables, and budget; governance
+  votes; payout flows from treasury.
+- This is the only ongoing revenue-coupled compensation route.
+  It is discretionary, transparent, and controllable.
+
+**Treasury accumulation + conversion (T-056):**
+
+- Diamond is the treasury. Fees accrue per-token in
+  `treasuryBalances[asset]` as today.
+- Conversion to ETH / WBTC / VPFI per admin-configured mix
+  fires when EITHER the accumulated USD-value crosses
+  `treasuryConvertUsdThreshold` for any input token, OR
+  `treasuryConvertMaxIntervalDays` has passed since the last
+  conversion (whichever first). Aggregated, NOT per-tx.
+- Routing through 1inch / 0x aggregators (reuse the liquidation
+  swap router). Slippage-bounded via per-token `minOut` arg.
+- Phase 1: admin role triggers manually.
+  Phase 2: timelock-gated.
+  Phase 3: governance-proposal-triggered.
+
+**Token-holder distribution from converted treasury:**
+
+- Per-cycle, governance proposes how the converted ETH / WBTC /
+  VPFI is split between:
+  - Operating budget for the team
+  - VPFI buyback-and-burn (deflationary; benefits all holders)
+  - Staker rewards (boost the existing 5% APR pool)
+  - Treasury runway / strategic reserves
+- This split is the lever governance uses to balance ongoing
+  team compensation against VPFI-holder returns.
+
+### Pre-TGE prerequisites
+
+Before any of this goes live, the following need a securities
+lawyer's sign-off:
+
+1. **Genesis allocation distribution** (founder %, employee %,
+   investor %, community %).
+2. **Vesting schedule contract** — SAFE-T, Sablier, Hedgey, or
+   custom — chosen, audited, deployed.
+3. **The treasury convert function's eligibility for
+   non-securities treatment** — the function operates on
+   protocol-collected fees only, with no path to a hardcoded
+   insider address; this should be straightforward but document
+   the design rationale formally.
+4. **The discretionary-governance-budget mechanism** for ongoing
+   founder team compensation — documented in a charter that makes
+   clear governance retains discretion (no automatic payouts).
+
+### Why this isn't future-flexible-only
+
+Some protocols try to keep options open by deferring this design.
+Vaipakam should NOT do that. The "we'll figure out founder
+distribution post-launch" path tends to result in either (a) bolted-
+on hardcoded routes that look like insider-deals, or (b) governance
+inertia where the team can't easily get paid, leading to attrition.
+Specifying upfront — genesis vest + governance budget — is the
+clean path.
+
+### Cross-references
+
+- T-056 in [`../ToDo.md`](../ToDo.md) for the implementation
+  shape.
+- [`../internal/Tokenomics.md`](../internal/Tokenomics.md) for
+  the genesis VPFI allocation breakdown (when it lands).
+- The protocol's existing `s.treasury` field, configurable via
+  `AdminFacet.setTreasury`, defaults to the Diamond itself for
+  this design.
+- T-051's `protocolTrackedEscrowBalance` counter (per-user) +
+  `treasuryBalances` (per-token treasury accrual) are the two
+  ledgers that keep operating-fee accounting separate from
+  unsolicited dust at the Diamond level.

@@ -1363,6 +1363,10 @@ A comprehensive user dashboard is essential for managing activities on Vaipakam.
   - **Audits:** Smart contracts will undergo thorough security audits by reputable third-party firms before mainnet deployment on each network.
   - **Upgradeable Proxies:** Utilize UUPS (Universal Upgradeable Proxy Standard) proxies for core contracts to allow for future upgrades and bug fixes without disrupting ongoing operations or requiring data migration. Governance-controlled upgrades are planned for Phase 2, while Phase 1 upgrades remain available through the initial admin/multi-sig model described in the security policy.
   - **Escrow Upgrade Policy:** User escrows must not continue to be usable on outdated mandatory versions. If an escrow implementation upgrade is classified as required, user interactions through an older escrow version must be blocked by the protocol until that escrow is upgraded. Escrow upgrades are not intended to be pushed automatically to every existing user escrow because that would create significant network-fee overhead. Instead, the frontend must detect outdated escrows and require the user to submit their own escrow-upgrade transaction before any further protected interaction is allowed. For non-critical upgrades, the frontend may still prompt users to upgrade, but blocking behavior should only be enforced when the upgrade is marked mandatory.
+  - **Protocol-Tracked Vault Balances:** For every user/token pair, `protocolTrackedEscrowBalance[user][token]` is the protocol-managed balance mirror. All production ERC-20 deposit paths must flow through `EscrowFactoryFacet.escrowDepositERC20`, `escrowDepositERC20From`, or `recordEscrowDepositERC20`, and normal withdrawals / protocol fee deductions must decrement that tracked balance alongside the token movement. Direct unsolicited transfers into a user vault can increase raw token `balanceOf` but must not increase the protocol-tracked counter.
+  - **Tracked-Balance Display and Utility Rule:** User-facing Asset Viewer and balance surfaces should display `min(IERC20.balanceOf(userEscrow, token), protocolTrackedEscrowBalance[user][token])` for protocol-managed ERC-20 assets so unsolicited dust is hidden. Staking rewards, VPFI discount tiers, and other protocol utility decisions must also use the tracked clamp rather than trusting raw vault balance alone.
+  - **Stuck ERC-20 Recovery:** `recoverStuckERC20(token, declaredSource, amount, deadline, signature)` may recover only `max(0, balanceOf(userEscrow, token) - protocolTrackedEscrowBalance[user][token])` and sends recovered tokens only to the user's own EOA. The flow requires an EIP-712 acknowledgement, nonce, deadline, and canonical warning hash. `disown(token)` is an event-only declaration and must not mutate balances or protocol accounting.
+  - **Sanctions-Aware Stuck-Token Recovery:** Stuck-token recovery checks the user-declared source address through the configured sanctions oracle. Clean source checks allow recovery, flagged source checks leave tokens in the vault, record the banned source marker, and emit the ban event while returning successfully; oracle unset / unavailable / reverting states fail safe by reverting. A recorded banned source should unlock automatically when the source is no longer flagged by the current oracle.
   - **Direct Transfer Custody Policy:** Principal, repayment, refinance, preclose, and lender-sale settlement flows should avoid transient `wallet -> Diamond -> escrow` or `escrow -> Diamond -> escrow` hops when the same result can be achieved with a direct `transferFrom` or escrow withdrawal to the final recipient. The Diamond should hold user assets only for intentionally staged protocol custody such as borrower VPFI LIF custody and liquidation swap output routing; ordinary repayment / settlement assets should move directly to the counterparty escrow or treasury with accounting updated alongside the direct transfer.
   - **Reentrancy Guards:** Applied to all functions involving external calls or asset transfers.
   - **Access Control:** Granular roles (e.g., `LOAN_MANAGER_ROLE`, `OFFER_MANAGER_ROLE`, `TREASURY_ADMIN_ROLE`) managed via OpenZeppelin's AccessControl. Roles will be assigned initially by the contract deployer/owner, with plans to transition control to governance in Phase 2 where appropriate.
@@ -1522,9 +1526,17 @@ function getEscrowStats() external view returns (
 function getNFTRentalDetails(uint256 tokenId) external view returns (/* rental struct */);
 
 function getTotalNFTsInEscrowByCollection(address collection) external view returns (uint256);
+
+function getProtocolTrackedEscrowBalance(address user, address token) external view returns (uint256);
+
+function recoveryNonce(address user) external view returns (uint256);
+
+function recoveryAckTextHash() external view returns (bytes32);
+
+function recoveryDomainSeparator() external view returns (bytes32);
 ```
 
-These functions support rental analytics, escrow transparency, and collection-level monitoring.
+These functions support rental analytics, vault transparency, collection-level monitoring, tracked-balance display, and stuck-token recovery UX.
 
 #### 5. Oracle and Risk Metrics
 
@@ -1696,6 +1708,7 @@ flow list in the Phase-1 gap audit (see CHANGELOG `[Unreleased]`).
 - [contracts/test/TreasuryFacetTest.t.sol](contracts/test/TreasuryFacetTest.t.sol) — claimTreasuryFees.
 - [contracts/test/TreasuryMintVPFITest.t.sol](contracts/test/TreasuryMintVPFITest.t.sol) — VPFI mint for treasury-funded flows.
 - [contracts/test/EscrowFactoryFacetTest.t.sol](contracts/test/EscrowFactoryFacetTest.t.sol) — per-user escrow proxy creation, mandatory upgrade gating, versioned upgrade event.
+- [contracts/test/EscrowRecoveryTest.t.sol](contracts/test/EscrowRecoveryTest.t.sol) — protocol-tracked ERC-20 balances, unsolicited dust clamp, EIP-712 stuck-token recovery, disown event, and sanctions-source outcomes.
 - [contracts/test/VaipakamNFTFacetTest.t.sol](contracts/test/VaipakamNFTFacetTest.t.sol) — position NFT mint / update / burn lifecycle.
 - [contracts/test/MetricsFacetTest.t.sol](contracts/test/MetricsFacetTest.t.sol) — read-only analytics getters.
 - [contracts/test/AccessControlFacetTest.t.sol](contracts/test/AccessControlFacetTest.t.sol) — role grants / revocations / emergency revoke.

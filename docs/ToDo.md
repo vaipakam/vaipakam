@@ -11,8 +11,21 @@
 
 ---
 
-- [ ] **T-056**: First treasury have to convert its tokens to ETH, WBTC and VPFI in the ratio (need to be admin configurable, later by governance) mentioned in Tokenomics document and when it does, it needs to send the founder's cut to the Address set in .env variable. what do you say, is there a better approach.
-      Make the Diamond as treasury and have founder's address and send the founder's cut in each and every transaction (token conversion to ETH, WBTC and VPFI), is it fine to do like that? will there be any legality involved? can it be aggregated and then converted only above certain threshold?. is frequent conversion better or aggregated conversion, suggest me. is there a better appraoch?
+- [ ] **T-056**: Treasury asset-mix conversion + founder distribution. **Original sketch** (per-tx auto-route of a founder's cut to a `.env`-configured address, on every fee accrual or every conversion) was reviewed against the industry pattern and rejected — see the Treasury / Founder Distribution section of [`docs/ops/GovernanceRunbook.md`](ops/GovernanceRunbook.md) for the full rationale. **Revised shape**:
+   1. **Treasury accumulation**: Diamond stays the treasury (`s.treasury == address(this)`). Fees accrue per-token in `treasuryBalances[asset]` via the existing `LibFacet.recordTreasuryAccrual` path. T-051's chokepoint counter separates protocol-tracked accruals from unsolicited dust at the Diamond level (so the conversion math reads `treasuryBalances`, not raw `balanceOf`).
+   2. **Aggregated conversion** (NOT per-tx): admin-callable `convertTreasuryToTargetMix(tokensIn[], minOutEth[], minOutWbtc[], minOutVpfi[])` routes through 1inch / 0x aggregators (reuse the liquidation router). Conversion fires under EITHER condition (whichever first):
+      - Accumulated USD-equivalent for any single input token > `s.treasuryConvertUsdThreshold` (admin knob), OR
+      - Time since last conversion > `s.treasuryConvertMaxIntervalDays` (admin knob).
+      Slippage-bounded via `minOut`. Single-tx swap(s) for the entire accumulated balance. Output split into ETH / WBTC / VPFI per `s.treasuryTargetMixBps[]` (admin knob, three values summing to 10000). Phase 1 admin = `ADMIN_ROLE`, Phase 2 = timelock, Phase 3 = governance vote.
+   3. **NO per-tx auto-route to a founder address**. The original sketch is dropped. Industry survey across Uniswap / Aave / Maker / Curve / Compound / Synthetix / Yearn / dYdX / 1inch / Lido / Balancer / Convex / GMX / Pendle / Frax shows ZERO of them auto-route operating fees to a hardcoded founder address. The SushiSwap "Chef Nomi" 2020 incident (anonymous founder withdrew $14M from a hardcoded `developerFund` auto-route) is the textbook cautionary tale; Sushi later restructured to multisig/DAO control. Securities / tax / sanctions / operational risks all favour discretionary distribution.
+   4. **Founder value capture happens via genesis VPFI vesting**, not via per-tx routing. Vest a founders' VPFI grant at TGE through a Sablier / Hedgey / custom linear-vester contract; founders capture protocol success the same way every other VPFI holder does — via their token holdings appreciating as protocol revenue funds buybacks / staker rewards / treasury runway.
+   5. **Operating-budget for the founding team post-launch**: discretionary governance grants (per-quarter or per-milestone), modeled on Aave Companies / Yearn yTeam / BGD Labs. Funded from the converted treasury per governance vote. Decoupled from operating revenue mechanics.
+   6. **Admin knobs to add (Phase 1)**:
+      - `s.treasuryTargetMixBps[ETH, WBTC, VPFI]` — percentages summing to 10000.
+      - `s.treasuryConvertUsdThreshold` — threshold for triggering conversion.
+      - `s.treasuryConvertMaxIntervalDays` — cap on interval since last conversion.
+      - All three with `setX` admin functions, getters in `getProtocolConfigBundle`.
+   7. **DO get a securities lawyer to review** the final design + the founders' VPFI vesting schedule before TGE. The auto-route-to-founder pattern has been litigated against in DeFi before.
 
 ---
 
