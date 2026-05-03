@@ -25,7 +25,7 @@ import Footer from '../components/Footer';
 import { EnglishOnlyNotice } from '../components/app/EnglishOnlyNotice';
 import { HelpToc } from '../components/HelpToc';
 import { HelpTabs } from '../components/HelpTabs';
-import { extractMarkdownToc, headingComponents } from '../lib/markdownToc';
+import { extractMarkdownToc, markdownComponents } from '../lib/markdownToc';
 import './UserGuide.css';
 
 const ADMIN_DOC_FILES = import.meta.glob('../content/admin/*.md', {
@@ -52,7 +52,7 @@ export default function AdminKnobsDocs() {
   const toc = useMemo(() => extractMarkdownToc(text), [text]);
   const basePath = location.pathname.replace(/\/$/, '');
   const isNonEnglish = (i18n.resolvedLanguage ?? 'en') !== 'en';
-  const headingComps = useMemo(() => headingComponents(), []);
+  const headingComps = useMemo(() => markdownComponents(), []);
 
   const collapseEnclosingDetails = (e: React.MouseEvent<HTMLAnchorElement>) => {
     const details = e.currentTarget.closest('details');

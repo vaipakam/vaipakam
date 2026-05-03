@@ -194,14 +194,15 @@ tick the consent box.
 
 Two fees, both tiny:
 
-- **Yield Fee — 1%** of the **interest** you earn as a lender (not
-  1% of principal). On a 30-day 8% APR loan of 1,000 USDC, the lender
-  earns ~6.58 USDC of interest, of which ~0.066 USDC is the Yield
-  Fee.
-- **Loan Initiation Fee — 0.1%** of the lending amount, paid by the
-  borrower at origination. On a 1,000 USDC loan, that's 1 USDC.
+- **Yield Fee — `{liveValue:treasuryFeeBps}`%** of the **interest**
+  you earn as a lender (not of the principal). On a 30-day 8% APR
+  loan of 1,000 USDC, the lender earns ~6.58 USDC of interest, of
+  which ~0.066 USDC is the Yield Fee at the default rate.
+- **Loan Initiation Fee — `{liveValue:loanInitiationFeeBps}`%** of
+  the lending amount, paid by the borrower at origination. On a
+  1,000 USDC loan, that's 1 USDC at the default rate.
 
-Both fees can be **discounted up to 24%** by holding VPFI in escrow
+Both fees can be **discounted up to `{liveValue:tier4DiscountBps}`%** by holding VPFI in escrow
 (see below). On default or liquidation, no Yield Fee is collected on
 the recovered interest — the protocol doesn't profit from a failed
 loan.
@@ -209,6 +210,17 @@ loan.
 There are no withdrawal fees, no idle fees, no streaming fees, no
 "performance" fees on principal. The only money the protocol takes
 is the two numbers above.
+
+> **Note on blockchain network gas.** When you create an offer,
+> accept a loan, repay, claim, or do any other on-chain action, you
+> also pay a small **network gas fee** to the blockchain validators
+> who include your transaction in a block. That gas fee goes to the
+> network, **not to Vaipakam** — it's the same fee you'd pay sending
+> any token on the same chain. The amount depends on the chain and
+> on network congestion at the moment, not on the size of your loan.
+> The platform fees above (Yield Fee 1%, Loan Initiation Fee 0.1%)
+> are entirely separate from network gas and are the only charges
+> the protocol itself collects.
 
 ---
 
@@ -223,10 +235,10 @@ protocol fees on loans you participate in on that chain:
 
 | VPFI in escrow | Fee discount |
 |---|---|
-| 100 – 999 | 10% |
-| 1,000 – 4,999 | 15% |
-| 5,000 – 20,000 | 20% |
-| Above 20,000 | 24% |
+| `{liveValue:tier1Min}` – `{liveValue:tier2Min}` (exclusive) | `{liveValue:tier1DiscountBps}`% |
+| `{liveValue:tier2Min}` – `{liveValue:tier3Min}` (exclusive) | `{liveValue:tier2DiscountBps}`% |
+| `{liveValue:tier3Min}` – `{liveValue:tier4Min}` | `{liveValue:tier3DiscountBps}`% |
+| Above `{liveValue:tier4Min}` | `{liveValue:tier4DiscountBps}`% |
 
 Discounts apply to both lender and borrower fees. The discount is
 **time-weighted across the loan's life**, so topping up just before

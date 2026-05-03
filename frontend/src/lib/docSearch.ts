@@ -156,6 +156,48 @@ function sliceSections(raw: string): RawSection[] {
   return sections.filter((s) => s.body.trim().length > s.title.length);
 }
 
+/**
+ * Compile-time defaults for the `{liveValue:knobName}` doc tokens.
+ * Substituted into search-index bodies so snippets surface
+ * human-readable text ("Yield Fee — 1%") rather than raw token text
+ * ("Yield Fee — `{liveValue:treasuryFeeBps}`%"), AND so a user
+ * searching for "100 VPFI" still matches the tier-1 minimum even
+ * though the source markdown writes that as a token.
+ *
+ * Drift note: these defaults mirror the on-chain library defaults in
+ * `LibVaipakam.sol`. If governance retunes a knob, the search-index
+ * snippet will lag the live page render — a worthwhile tradeoff
+ * (snippets stay readable; the page itself reads live). When a knob
+ * default actually changes in the contract, update this map too.
+ */
+const LIVE_VALUE_DEFAULTS_FOR_INDEX: Record<string, string> = {
+  treasuryFeeBps: '1',
+  loanInitiationFeeBps: '0.1',
+  tier1Min: '100',
+  tier2Min: '1,000',
+  tier3Min: '5,000',
+  tier4Min: '20,000',
+  tier1DiscountBps: '10',
+  tier2DiscountBps: '15',
+  tier3DiscountBps: '20',
+  tier4DiscountBps: '24',
+};
+
+/**
+ * Replace `{liveValue:knobName}` tokens (with or without surrounding
+ * backticks) with their compile-time default rendering, so the search
+ * index sees the same human-readable text the rendered page would
+ * show on a fresh deploy.
+ */
+function substituteLiveValueDefaults(text: string): string {
+  // Optional backticks on each side so both the inline-code form
+  // (`{liveValue:foo}`) and any bare-token form get rewritten.
+  return text.replace(
+    /`?\{liveValue:([a-zA-Z0-9]+)\}`?/g,
+    (raw, knob: string) => LIVE_VALUE_DEFAULTS_FOR_INDEX[knob] ?? raw,
+  );
+}
+
 // ─── Build-time index ────────────────────────────────────────────────
 
 interface IndexedSection {
@@ -190,13 +232,14 @@ function buildIndex(locale: string): IndexedSection[] {
   ): void => {
     if (!raw) return;
     for (const sec of sliceSections(raw)) {
+      const body = substituteLiveValueDefaults(sec.body);
       out.push({
         docKind,
         locale: fileLocale,
         title: sec.title,
         anchor: sec.anchor,
-        body: sec.body,
-        lc: sec.body.toLowerCase(),
+        body,
+        lc: body.toLowerCase(),
       });
     }
   };

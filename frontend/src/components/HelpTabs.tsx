@@ -109,34 +109,39 @@ export function HelpTabs() {
       >
         {t('helpTabs.parameters', 'Parameters')}
       </Link>
-      <form
-        onSubmit={onSearchSubmit}
-        role="search"
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: 4,
-          marginLeft: 'auto',
-          flex: '0 1 auto',
-        }}
-      >
-        <Search size={14} aria-hidden="true" style={{ opacity: 0.65 }} />
-        <input
-          type="search"
-          value={searchQuery}
-          onChange={(e) => setSearchQuery(e.target.value)}
-          placeholder={t('helpTabs.searchPlaceholder')}
-          aria-label={t('helpTabs.searchPlaceholder')}
-          className="form-input"
-          aria-current={isSearch ? 'page' : undefined}
+      {/* Hide the inline search box on the search-results page itself
+       * — that page already has its own larger in-page search input,
+       * and showing two side-by-side confuses users about which one
+       * to use. */}
+      {!isSearch && (
+        <form
+          onSubmit={onSearchSubmit}
+          role="search"
           style={{
-            padding: '4px 8px',
-            fontSize: '0.85rem',
-            minWidth: 160,
-            width: '20ch',
+            display: 'flex',
+            alignItems: 'center',
+            gap: 4,
+            marginLeft: 'auto',
+            flex: '0 1 auto',
           }}
-        />
-      </form>
+        >
+          <Search size={14} aria-hidden="true" style={{ opacity: 0.65 }} />
+          <input
+            type="search"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder={t('helpTabs.searchPlaceholder')}
+            aria-label={t('helpTabs.searchPlaceholder')}
+            className="form-input"
+            style={{
+              padding: '4px 8px',
+              fontSize: '0.85rem',
+              minWidth: 160,
+              width: '20ch',
+            }}
+          />
+        </form>
+      )}
     </div>
   );
 }

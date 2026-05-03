@@ -11,6 +11,10 @@
 
 ---
 
+- [ ] **T-049**: translate the new "blockchain network gas vs platform fees" disclosure note across the 9 non-EN doc locales. EN has been added (2026-05-03) on Overview ("What does it cost?"), Basic User Guide ("Fee-discount consent"), Advanced User Guide ("Fee-discount consent"), and Whitepaper §5.4 (Loan Initiation Fee). The note clarifies that gas paid to validators is separate from Vaipakam's protocol fees and is not collected by the protocol. Mirror the wording into ar / de / es / fr / hi / ja / ko / ta / zh Overview + Basic + Advanced (Whitepaper is English-only by policy). 27 file edits — held back from the 2026-05-03 PR to avoid machine-translation risk on a fee disclosure.
+
+---
+
 - [ ] **T-048**: have another admin configurable (later by governance) PredominantlyAvailabledenominator (it would be USDT for now) to mitigate the availability of Chainlink price feeds. and use this to help improve the security in case of non-USD numeraire
 
 ---

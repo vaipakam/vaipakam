@@ -74,13 +74,21 @@ do that" toggle. You only flip it once.
 
 How big the discount is depends on how much VPFI you keep in escrow:
 
-- **Tier 1** — 100 VPFI or more → 10% off
-- **Tier 2** — 1,000 VPFI or more → 15% off
-- **Tier 3** — 5,000 VPFI or more → 20% off
-- **Tier 4** — more than 20,000 VPFI → 24% off
+- **Tier 1** — `{liveValue:tier1Min}` VPFI or more → `{liveValue:tier1DiscountBps}`% off
+- **Tier 2** — `{liveValue:tier2Min}` VPFI or more → `{liveValue:tier2DiscountBps}`% off
+- **Tier 3** — `{liveValue:tier3Min}` VPFI or more → `{liveValue:tier3DiscountBps}`% off
+- **Tier 4** — more than `{liveValue:tier4Min}` VPFI → `{liveValue:tier4DiscountBps}`% off
 
 You can turn the switch off at any time. If you withdraw VPFI from
 escrow your tier drops in real time.
+
+> **Note on blockchain network gas.** The discount above applies to
+> Vaipakam's **protocol fees** (the Yield Fee and Loan Initiation
+> Fee). The small **network gas fee** every on-chain action also
+> requires — paid to the blockchain validators when you create an
+> offer, accept, repay, claim, etc. — is a separate charge that goes
+> to the network, not to Vaipakam. The protocol can't discount it
+> because the protocol never receives it.
 
 <a id="dashboard.rewards-summary"></a>
 

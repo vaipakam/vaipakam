@@ -67,6 +67,7 @@ import { useLocation } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import { markdownComponents } from '../lib/markdownToc';
 import Navbar from '../components/Navbar';
 import Footer from '../components/Footer';
 import { EnglishOnlyNotice } from '../components/app/EnglishOnlyNotice';
@@ -382,6 +383,7 @@ function RoleTabs({ block }: RoleTabsProps) {
       <div className="role-tabs-body">
         <ReactMarkdown
           remarkPlugins={[remarkGfm, remarkInlineAnchorToId]}
+          components={markdownComponents() as never}
         >
           {body}
         </ReactMarkdown>
@@ -637,5 +639,12 @@ function MarkdownChunk({ text }: { text: string }) {
   // expects is a callable PluggableList; our plugin returns the right
   // tree-mutator function so behaviour is correct at runtime.
   const plugins = [remarkGfm, remarkInlineAnchorToId] as never;
-  return <ReactMarkdown remarkPlugins={plugins}>{text as ReactNode as string}</ReactMarkdown>;
+  return (
+    <ReactMarkdown
+      remarkPlugins={plugins}
+      components={markdownComponents() as never}
+    >
+      {text as ReactNode as string}
+    </ReactMarkdown>
+  );
 }

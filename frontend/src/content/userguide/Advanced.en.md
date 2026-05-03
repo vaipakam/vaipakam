@@ -77,12 +77,12 @@ applies.
 
 Tier ladder:
 
-| Tier | Min escrow VPFI | Discount |
-| ---- | --------------- | -------- |
-| 1    | ≥ 100           | 10%      |
-| 2    | ≥ 1,000         | 15%      |
-| 3    | ≥ 5,000         | 20%      |
-| 4    | > 20,000        | 24%      |
+| Tier | Min escrow VPFI                  | Discount                          |
+| ---- | -------------------------------- | --------------------------------- |
+| 1    | ≥ `{liveValue:tier1Min}`         | `{liveValue:tier1DiscountBps}`%   |
+| 2    | ≥ `{liveValue:tier2Min}`         | `{liveValue:tier2DiscountBps}`%   |
+| 3    | ≥ `{liveValue:tier3Min}`         | `{liveValue:tier3DiscountBps}`%   |
+| 4    | > `{liveValue:tier4Min}`         | `{liveValue:tier4DiscountBps}`%   |
 
 Tier is computed against your **post-change** escrow balance the
 moment you deposit or withdraw VPFI, then time-weighted across
@@ -96,6 +96,15 @@ withdraw seconds later.
 The discount applies to the lender yield fee at settlement, and
 to the borrower Loan Initiation Fee (paid out as a VPFI rebate
 when the borrower claims).
+
+> **Network gas is separate.** The discount above is on Vaipakam's
+> **protocol fees** (yield fee + Loan Initiation Fee). The
+> blockchain **network gas fee** every on-chain action requires —
+> paid to validators on Base / Sepolia / Arbitrum / etc. when you
+> create an offer, accept, repay, claim, withdraw, etc. — is not a
+> protocol charge. Vaipakam never receives it; the network does. It
+> can't be tiered or rebated, and it varies with chain congestion
+> at submission time, not with loan size or your VPFI tier.
 
 <a id="dashboard.rewards-summary"></a>
 

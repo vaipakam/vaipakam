@@ -20,6 +20,7 @@
  */
 
 import type { ReactNode } from 'react';
+import { LiveValue, type KnobName } from '../components/docs/LiveValue';
 
 /**
  * GitHub-style heading slug. Lowercase, non-alphanumeric becomes
@@ -130,4 +131,69 @@ export function headingComponents() {
       return <h3 id={id}>{children}</h3>;
     },
   };
+}
+
+/**
+ * Match an inline-code token of the form `{liveValue:knobName}`. Used
+ * by the markdown `code` interceptor so doc authors can write a
+ * single-token snippet in plain markdown that renders as a live
+ * on-chain value instead of literal text.
+ */
+const LIVE_VALUE_TOKEN_RE = /^\{liveValue:([a-zA-Z0-9]+)\}$/;
+
+/**
+ * Like {@link headingComponents} plus a `code` interceptor that
+ * recognises `{liveValue:knobName}` inline-code spans and renders the
+ * `<LiveValue>` component in their place.
+ *
+ * Doc pages (Overview / UserGuide / Whitepaper / AdminKnobsDocs) use
+ * this in place of `headingComponents()` so values like the yield fee
+ * BPS or VPFI tier thresholds stay synced with on-chain config without
+ * a doc PR every time governance retunes a knob. Tokens that don't
+ * match a registered knob fall through to the standard `<code>`
+ * renderer so a typo is visibly debuggable rather than silently wrong.
+ *
+ * Escape hatch: if a doc author genuinely wants the literal text
+ * `{liveValue:foo}` to render as inline code (e.g. when documenting
+ * this very system), they can use a fenced code block — fenced blocks
+ * pass `inline === false` and skip this match.
+ *
+ * The returned object is module-scoped + memoized so consumers calling
+ * this on every render (UserGuide renders many small `<MarkdownChunk>`
+ * fragments) all share one components-map reference. ReactMarkdown
+ * shallow-compares the `components` prop, so a fresh allocation per
+ * chunk would force every chunk to re-render its tree on every parent
+ * update.
+ */
+let _cachedMarkdownComponents: ReturnType<typeof buildMarkdownComponents> | null = null;
+function buildMarkdownComponents() {
+  return {
+    ...headingComponents(),
+    code: ({
+      inline,
+      children,
+      ...rest
+    }: {
+      inline?: boolean;
+      children?: ReactNode;
+      [key: string]: unknown;
+    }) => {
+      if (inline) {
+        const text = nodeToText(children);
+        const match = LIVE_VALUE_TOKEN_RE.exec(text);
+        if (match) {
+          return <LiveValue knob={match[1] as KnobName} />;
+        }
+      }
+      // Default — preserve native ReactMarkdown behaviour for every
+      // other inline-code span and every fenced code block.
+      return <code {...rest}>{children}</code>;
+    },
+  };
+}
+export function markdownComponents() {
+  if (!_cachedMarkdownComponents) {
+    _cachedMarkdownComponents = buildMarkdownComponents();
+  }
+  return _cachedMarkdownComponents;
 }

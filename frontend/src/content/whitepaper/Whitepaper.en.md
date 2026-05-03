@@ -396,15 +396,26 @@ positions.
 
 ### 5.4 Loan Initiation Fee
 
-For ERC-20 loans, a `0.1%` Loan Initiation Fee is charged on the lending-
-asset amount **before** net proceeds reach the borrower. On a 1,000 USDC
-match, the borrower receives 999 USDC and 1 USDC routes to treasury.
+For ERC-20 loans, a `{liveValue:loanInitiationFeeBps}`% Loan Initiation
+Fee is charged on the lending-asset amount **before** net proceeds reach
+the borrower. On a 1,000 USDC match at the default rate, the borrower
+receives 999 USDC and 1 USDC routes to treasury.
 
 The borrower VPFI path inverts the fee source: when consent is
 active, the lending asset is liquid, and sufficient VPFI is in escrow,
 the borrower receives `100%` of the requested principal and pays the
-**full** non-discounted `0.1%` LIF equivalent in VPFI up front. That VPFI
-is held in Diamond custody (not Treasury) for the life of the loan.
+**full** non-discounted `{liveValue:loanInitiationFeeBps}`% LIF equivalent
+in VPFI up front. That VPFI is held in Diamond custody (not Treasury) for
+the life of the loan.
+
+> **Note on blockchain network gas.** Every on-chain action (offer
+> creation, acceptance, repayment, claim, liquidation trigger, etc.)
+> additionally requires a **network gas fee** paid to the underlying
+> blockchain's validators / sequencer. That gas fee is **not** a
+> protocol charge — Vaipakam never receives it; it goes to the
+> network and varies with chain congestion at submission time. The
+> only fees the protocol itself collects are the Loan Initiation Fee
+> documented above and the lender Yield Fee in §5.5.
 
 ### 5.5 Repayment
 
@@ -889,12 +900,19 @@ emergency brake.
 Both lender and borrower discounts use the same chain-local tier table,
 keyed on **escrowed VPFI balance on the relevant lending chain**:
 
-| Tier | Escrowed VPFI            | Discount | Lender Effective Yield Fee | Borrower Effective LIF |
-| ---- | ------------------------ | -------: | -------------------------: | ---------------------: |
-| 1    | `≥ 100` and `< 1,000`    |    `10%` |                     `0.9%` |                `0.09%` |
-| 2    | `≥ 1,000` and `< 5,000`  |    `15%` |                    `0.85%` |               `0.085%` |
-| 3    | `≥ 5,000` and `≤ 20,000` |    `20%` |                     `0.8%` |                `0.08%` |
-| 4    | `> 20,000`               |    `24%` |                    `0.76%` |               `0.076%` |
+| Tier | Escrowed VPFI                                                            | Discount                          |
+| ---- | ------------------------------------------------------------------------ | --------------------------------- |
+| 1    | ≥ `{liveValue:tier1Min}` and < `{liveValue:tier2Min}`                    | `{liveValue:tier1DiscountBps}`%   |
+| 2    | ≥ `{liveValue:tier2Min}` and < `{liveValue:tier3Min}`                    | `{liveValue:tier2DiscountBps}`%   |
+| 3    | ≥ `{liveValue:tier3Min}` and ≤ `{liveValue:tier4Min}`                    | `{liveValue:tier3DiscountBps}`%   |
+| 4    | > `{liveValue:tier4Min}`                                                 | `{liveValue:tier4DiscountBps}`%   |
+
+Effective fees per tier are the base rate (lender Yield Fee
+`{liveValue:treasuryFeeBps}`%, borrower LIF
+`{liveValue:loanInitiationFeeBps}`%) multiplied by
+`(1 − tierDiscount)`. At the default base rates and tier 4 discount
+of `{liveValue:tier4DiscountBps}`%, the lender effective yield fee
+is `0.76%` and the borrower effective LIF is `0.076%`.
 
 Tier resolution is **chain-local**: VPFI in escrow on `Base` does not
 discount loans initiated on `Optimism`. Users opt in via a single

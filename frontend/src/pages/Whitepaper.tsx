@@ -27,7 +27,7 @@ import { HelpTabs } from '../components/HelpTabs';
 import { HelpToc } from '../components/HelpToc';
 import {
   extractMarkdownToc,
-  headingComponents,
+  markdownComponents,
 } from '../lib/markdownToc';
 import './UserGuide.css';
 
@@ -54,7 +54,7 @@ export default function Whitepaper() {
     if (details) details.removeAttribute('open');
   };
 
-  const headingComps = useMemo(() => headingComponents(), []);
+  const headingComps = useMemo(() => markdownComponents(), []);
 
   return (
     <div className="user-guide-page">
