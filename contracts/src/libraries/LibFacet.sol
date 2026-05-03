@@ -73,31 +73,31 @@ library LibFacet {
         accrueTreasuryFee(asset, amount);
     }
 
-    /// @dev Records a timestamped, USD-priced fee accrual against the
+    /// @dev Records a timestamped, numeraire-priced fee accrual against the
     ///      analytics log only. Internal to {recordTreasuryAccrual} and
     ///      {transferToTreasury}; callers that need the full "move + record"
     ///      behaviour should use one of those instead. Pricing is
     ///      best-effort: when OracleFacet has no feed for the asset (e.g.
-    ///      illiquid / stale), the event is logged with `usdValue == 0`,
-    ///      but the asset-denominated fee is still captured in
-    ///      `treasuryBalances[asset]` when treasury is the Diamond.
-    ///      No-op on zero amount.
+    ///      illiquid / stale), the event is logged with
+    ///      `numeraireValue == 0`, but the asset-denominated fee is still
+    ///      captured in `treasuryBalances[asset]` when treasury is the
+    ///      Diamond. No-op on zero amount.
     function accrueTreasuryFee(address asset, uint256 amount) private {
         if (amount == 0) return;
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        uint256 usdValue = _priceForAccrual(asset, amount);
+        uint256 numeraireValue = _priceForAccrual(asset, amount);
         s.feeEventsLog.push(
             LibVaipakam.FeeEvent({
                 timestamp: uint64(block.timestamp),
-                usdValue: uint192(usdValue)
+                numeraireValue: uint192(numeraireValue)
             })
         );
-        s.cumulativeFeesUSD += usdValue;
+        s.cumulativeFeesNumeraire += numeraireValue;
     }
 
-    /// @dev Best-effort USD pricing for fee-accrual events. Returns 0 if the
-    ///      oracle lookup reverts (e.g. asset lacks a Chainlink feed), so a
-    ///      fee accrual never blocks a settlement path.
+    /// @dev Best-effort numeraire-quoted pricing for fee-accrual events.
+    ///      Returns 0 if the oracle lookup reverts (e.g. asset lacks a
+    ///      Chainlink feed), so a fee accrual never blocks a settlement path.
     function _priceForAccrual(
         address asset,
         uint256 amount

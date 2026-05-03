@@ -141,22 +141,22 @@
     ],
     "outputs": [
       {
-        "name": "userLenderUSD18",
+        "name": "userLenderNumeraire18",
         "type": "uint256",
         "internalType": "uint256"
       },
       {
-        "name": "userBorrowerUSD18",
+        "name": "userBorrowerNumeraire18",
         "type": "uint256",
         "internalType": "uint256"
       },
       {
-        "name": "totalLenderUSD18",
+        "name": "totalLenderNumeraire18",
         "type": "uint256",
         "internalType": "uint256"
       },
       {
-        "name": "totalBorrowerUSD18",
+        "name": "totalBorrowerNumeraire18",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -330,7 +330,7 @@
             "internalType": "bool"
           },
           {
-            "name": "perDayUSD18",
+            "name": "perDayNumeraire18",
             "type": "uint256",
             "internalType": "uint256"
           }

@@ -14,7 +14,7 @@ import {IRewardOApp} from "../interfaces/IRewardOApp.sol";
  * @notice Base-only half of the cross-chain reward accounting mesh
  *         described in docs/TokenomicsTechSpec.md §4a. Owns the trusted
  *         ingress for mirror chain reports, the per-day finalization
- *         step that builds `dailyGlobal*InterestUSD18`, and the
+ *         step that builds `dailyGlobal*InterestNumeraire18`, and the
  *         broadcast trigger that ships the finalized pair back to every
  *         mirror.
  *
@@ -25,7 +25,7 @@ import {IRewardOApp} from "../interfaces/IRewardOApp.sol";
  *
  *      Message lifecycle for day `D`:
  *        1. Mirror Diamonds call {RewardReporterFacet.closeDay} on day
- *           `D+1` onward, forwarding `(lenderUSD18, borrowerUSD18)` via
+ *           `D+1` onward, forwarding `(lenderNumeraire18, borrowerNumeraire18)` via
  *           LayerZero.
  *        2. On arrival, the Base OApp calls {onChainReportReceived}
  *           which records the pair under the source eid, increments
@@ -33,8 +33,8 @@ import {IRewardOApp} from "../interfaces/IRewardOApp.sol";
  *        3. Once every expected eid has reported OR
  *           `rewardGraceSeconds` has elapsed since `dailyFirstReportAt[D]`,
  *           anyone may call {finalizeDay}. The finalizer sums reported
- *           eids, writes the `dailyGlobal*InterestUSD18[D]` pair,
- *           mirrors the pair into `knownGlobal*InterestUSD18[D]` for
+ *           eids, writes the `dailyGlobal*InterestNumeraire18[D]` pair,
+ *           mirrors the pair into `knownGlobal*InterestNumeraire18[D]` for
  *           Base's own claim consumers, flips `dailyGlobalFinalized[D]`,
  *           and emits {DailyGlobalInterestFinalized}.
  *        4. {broadcastGlobal} is a separate permissionless payable
@@ -64,15 +64,15 @@ contract RewardAggregatorFacet is
     ///         and for replaying missed broadcasts after a LZ outage.
     /// @param dayId                 Day being reported.
     /// @param sourceEid             LayerZero eid of the mirror that reported.
-    /// @param lenderUSD18           Reported lender USD-18 for that chain.
-    /// @param borrowerUSD18         Reported borrower USD-18 for that chain.
+    /// @param lenderNumeraire18           Reported lender USD-18 for that chain.
+    /// @param borrowerNumeraire18         Reported borrower USD-18 for that chain.
     /// @param reportCount           Running count of expected eids
     ///                              reported for `dayId` (incl. this one).
     event ChainReportAggregated(
         uint256 indexed dayId,
         uint32 indexed sourceEid,
-        uint256 lenderUSD18,
-        uint256 borrowerUSD18,
+        uint256 lenderNumeraire18,
+        uint256 borrowerNumeraire18,
         uint32 reportCount
     );
 
@@ -80,13 +80,13 @@ contract RewardAggregatorFacet is
     ///         downstream mirror must be able to trust that the pair is
     ///         immutable after this event fires.
     /// @param dayId                 Day being finalized.
-    /// @param globalLenderUSD18     Sum-across-eids lender USD-18.
-    /// @param globalBorrowerUSD18   Sum-across-eids borrower USD-18.
+    /// @param globalLenderNumeraire18     Sum-across-eids lender USD-18.
+    /// @param globalBorrowerNumeraire18   Sum-across-eids borrower USD-18.
     /// @param participatingEidCount Number of eids that contributed.
     event DailyGlobalInterestFinalized(
         uint256 indexed dayId,
-        uint256 globalLenderUSD18,
-        uint256 globalBorrowerUSD18,
+        uint256 globalLenderNumeraire18,
+        uint256 globalBorrowerNumeraire18,
         uint32 participatingEidCount
     );
 
@@ -110,14 +110,14 @@ contract RewardAggregatorFacet is
     ///         distinct event so ops dashboards can flag admin overrides
     ///         separately from the grace-window path.
     /// @param dayId                 Day that was force-finalized.
-    /// @param globalLenderUSD18     Lender denominator at force-finalize time.
-    /// @param globalBorrowerUSD18   Borrower denominator at force-finalize time.
+    /// @param globalLenderNumeraire18     Lender denominator at force-finalize time.
+    /// @param globalBorrowerNumeraire18   Borrower denominator at force-finalize time.
     /// @param participatingEidCount Number of eids that contributed.
     /// @param missingEidCount       Number of eids zeroed by the override.
     event DayForceFinalized(
         uint256 indexed dayId,
-        uint256 globalLenderUSD18,
-        uint256 globalBorrowerUSD18,
+        uint256 globalLenderNumeraire18,
+        uint256 globalBorrowerNumeraire18,
         uint32 participatingEidCount,
         uint32 missingEidCount
     );
@@ -160,14 +160,14 @@ contract RewardAggregatorFacet is
      *      shared storage, so it does NOT go through this method.
      * @param sourceEid      LayerZero eid of the reporting mirror.
      * @param dayId          Day being reported.
-     * @param lenderUSD18    Mirror's local lender USD-18 for `dayId`.
-     * @param borrowerUSD18  Mirror's local borrower USD-18 for `dayId`.
+     * @param lenderNumeraire18    Mirror's local lender USD-18 for `dayId`.
+     * @param borrowerNumeraire18  Mirror's local borrower USD-18 for `dayId`.
      */
     function onChainReportReceived(
         uint32 sourceEid,
         uint256 dayId,
-        uint256 lenderUSD18,
-        uint256 borrowerUSD18
+        uint256 lenderNumeraire18,
+        uint256 borrowerNumeraire18
     ) external onlyRewardOApp onlyCanonical {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
 
@@ -177,8 +177,8 @@ contract RewardAggregatorFacet is
             revert ChainDayAlreadyReported();
         }
 
-        s.chainDailyLenderInterestUSD18[dayId][sourceEid] = lenderUSD18;
-        s.chainDailyBorrowerInterestUSD18[dayId][sourceEid] = borrowerUSD18;
+        s.chainDailyLenderInterestNumeraire18[dayId][sourceEid] = lenderNumeraire18;
+        s.chainDailyBorrowerInterestNumeraire18[dayId][sourceEid] = borrowerNumeraire18;
         s.chainDailyReported[dayId][sourceEid] = true;
         uint32 count;
         unchecked {
@@ -192,8 +192,8 @@ contract RewardAggregatorFacet is
         emit ChainReportAggregated(
             dayId,
             sourceEid,
-            lenderUSD18,
-            borrowerUSD18,
+            lenderNumeraire18,
+            borrowerNumeraire18,
             count
         );
     }
@@ -208,11 +208,11 @@ contract RewardAggregatorFacet is
      *        - `block.timestamp >= dailyFirstReportAt[D] + graceSeconds`
      *          (with at least one report on file).
      *
-     *      Sums reported `chainDaily*InterestUSD18` across all expected
+     *      Sums reported `chainDaily*InterestNumeraire18` across all expected
      *      eids (missing eids contribute zero and emit
      *      {ChainContributionZeroed}), writes the
-     *      `dailyGlobal*InterestUSD18` pair, mirrors the pair into
-     *      `knownGlobal*InterestUSD18` so Base-side claim flows see the
+     *      `dailyGlobal*InterestNumeraire18` pair, mirrors the pair into
+     *      `knownGlobal*InterestNumeraire18` so Base-side claim flows see the
      *      same number as every broadcast mirror, and flips
      *      `dailyGlobalFinalized[D]`.
      *
@@ -301,8 +301,8 @@ contract RewardAggregatorFacet is
         for (uint256 i; i < nExpected; ) {
             uint32 eid = expected[i];
             if (s.chainDailyReported[dayId][eid]) {
-                globalLender += s.chainDailyLenderInterestUSD18[dayId][eid];
-                globalBorrower += s.chainDailyBorrowerInterestUSD18[dayId][eid];
+                globalLender += s.chainDailyLenderInterestNumeraire18[dayId][eid];
+                globalBorrower += s.chainDailyBorrowerInterestNumeraire18[dayId][eid];
                 unchecked {
                     ++participating;
                 }
@@ -317,15 +317,15 @@ contract RewardAggregatorFacet is
             }
         }
 
-        s.dailyGlobalLenderInterestUSD18[dayId] = globalLender;
-        s.dailyGlobalBorrowerInterestUSD18[dayId] = globalBorrower;
+        s.dailyGlobalLenderInterestNumeraire18[dayId] = globalLender;
+        s.dailyGlobalBorrowerInterestNumeraire18[dayId] = globalBorrower;
         s.dailyGlobalFinalized[dayId] = true;
 
         // Base is also a consumer — mirror the finalized pair into the
         // local `knownGlobal*` slots so InteractionRewardsFacet claims on
         // Base use the same denominator as every broadcast mirror.
-        s.knownGlobalLenderInterestUSD18[dayId] = globalLender;
-        s.knownGlobalBorrowerInterestUSD18[dayId] = globalBorrower;
+        s.knownGlobalLenderInterestNumeraire18[dayId] = globalLender;
+        s.knownGlobalBorrowerInterestNumeraire18[dayId] = globalBorrower;
         s.knownGlobalSet[dayId] = true;
 
         emit DailyGlobalInterestFinalized(
@@ -370,8 +370,8 @@ contract RewardAggregatorFacet is
 
         IRewardOApp(oApp).broadcastGlobal{value: msg.value}(
             dayId,
-            s.dailyGlobalLenderInterestUSD18[dayId],
-            s.dailyGlobalBorrowerInterestUSD18[dayId],
+            s.dailyGlobalLenderInterestNumeraire18[dayId],
+            s.dailyGlobalBorrowerInterestNumeraire18[dayId],
             payable(msg.sender)
         );
     }
@@ -424,11 +424,11 @@ contract RewardAggregatorFacet is
     function getChainReport(
         uint256 dayId,
         uint32 sourceEid
-    ) external view returns (uint256 lenderUSD18, uint256 borrowerUSD18) {
+    ) external view returns (uint256 lenderNumeraire18, uint256 borrowerNumeraire18) {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         return (
-            s.chainDailyLenderInterestUSD18[dayId][sourceEid],
-            s.chainDailyBorrowerInterestUSD18[dayId][sourceEid]
+            s.chainDailyLenderInterestNumeraire18[dayId][sourceEid],
+            s.chainDailyBorrowerInterestNumeraire18[dayId][sourceEid]
         );
     }
 
@@ -448,8 +448,8 @@ contract RewardAggregatorFacet is
 
     /// @notice Finalization status + pair for `dayId`.
     /// @return finalized            True iff {finalizeDay} has run for `dayId`.
-    /// @return globalLenderUSD18    Sum-across-eids lender USD-18.
-    /// @return globalBorrowerUSD18  Sum-across-eids borrower USD-18.
+    /// @return globalLenderNumeraire18    Sum-across-eids lender USD-18.
+    /// @return globalBorrowerNumeraire18  Sum-across-eids borrower USD-18.
     function getDailyGlobalInterest(
         uint256 dayId
     )
@@ -457,15 +457,15 @@ contract RewardAggregatorFacet is
         view
         returns (
             bool finalized,
-            uint256 globalLenderUSD18,
-            uint256 globalBorrowerUSD18
+            uint256 globalLenderNumeraire18,
+            uint256 globalBorrowerNumeraire18
         )
     {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         return (
             s.dailyGlobalFinalized[dayId],
-            s.dailyGlobalLenderInterestUSD18[dayId],
-            s.dailyGlobalBorrowerInterestUSD18[dayId]
+            s.dailyGlobalLenderInterestNumeraire18[dayId],
+            s.dailyGlobalBorrowerInterestNumeraire18[dayId]
         );
     }
 

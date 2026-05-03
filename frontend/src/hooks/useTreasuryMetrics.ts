@@ -2,18 +2,21 @@ import { useCallback, useEffect, useState } from 'react';
 import { useDiamondRead } from '../contracts/useDiamond';
 import { beginStep } from '../lib/journeyLog';
 
-const USD_SCALE = 1e18;
+const NUMERAIRE_SCALE = 1e18;
 const STALE_MS = 30_000;
 
 export interface TreasuryMetrics {
-  /** Live USD-priced balance of unclaimed fees still held at the Diamond. */
-  treasuryBalanceUsd: number;
-  /** Lifetime cumulative fees accrued, frozen in USD at the moment of accrual. */
-  totalFeesCollectedUsd: number;
-  /** Fees accrued in the last 24 hours, USD at accrual time. */
-  feesLast24hUsd: number;
-  /** Fees accrued in the last 7 days, USD at accrual time. */
-  feesLast7dUsd: number;
+  /** Live numeraire-quoted balance of unclaimed fees still held at the
+   *  Diamond. The numeraire is whatever governance has configured (USD by
+   *  post-deploy default; rotatable to EUR/JPY/XAU). */
+  treasuryBalanceNumeraire: number;
+  /** Lifetime cumulative fees accrued, frozen in the active numeraire at
+   *  the moment of accrual. */
+  totalFeesCollectedNumeraire: number;
+  /** Fees accrued in the last 24 hours, in the active numeraire at accrual time. */
+  feesLast24hNumeraire: number;
+  /** Fees accrued in the last 7 days, in the active numeraire at accrual time. */
+  feesLast7dNumeraire: number;
   fetchedAt: number;
 }
 
@@ -21,9 +24,10 @@ let cached: { data: TreasuryMetrics; at: number } | null = null;
 
 /**
  * Reads the protocol-wide treasury/revenue snapshot from MetricsFacet.
- * The USD figures are denominated in 1e18 on-chain; we normalize to native
- * JS numbers for chart/display. Rolling-window values are frozen at accrual
- * time, so they are NOT revalued against today's oracle prices.
+ * The numeraire-quoted figures are denominated in 1e18 on-chain; we
+ * normalize to native JS numbers for chart/display. Rolling-window
+ * values are frozen at accrual time, so they are NOT revalued against
+ * today's oracle prices.
  */
 export function useTreasuryMetrics() {
   const diamond = useDiamondRead();
@@ -47,15 +51,15 @@ export function useTreasuryMetrics() {
         }
       ).getTreasuryMetrics();
       const next: TreasuryMetrics = {
-        treasuryBalanceUsd: Number(balance) / USD_SCALE,
-        totalFeesCollectedUsd: Number(total) / USD_SCALE,
-        feesLast24hUsd: Number(last24h) / USD_SCALE,
-        feesLast7dUsd: Number(last7d) / USD_SCALE,
+        treasuryBalanceNumeraire: Number(balance) / NUMERAIRE_SCALE,
+        totalFeesCollectedNumeraire: Number(total) / NUMERAIRE_SCALE,
+        feesLast24hNumeraire: Number(last24h) / NUMERAIRE_SCALE,
+        feesLast7dNumeraire: Number(last7d) / NUMERAIRE_SCALE,
         fetchedAt: Date.now(),
       };
       cached = { data: next, at: Date.now() };
       setMetrics(next);
-      step.success({ note: `treasury $${next.treasuryBalanceUsd.toFixed(2)} / lifetime $${next.totalFeesCollectedUsd.toFixed(2)}` });
+      step.success({ note: `treasury ${next.treasuryBalanceNumeraire.toFixed(2)} / lifetime ${next.totalFeesCollectedNumeraire.toFixed(2)}` });
     } catch (err) {
       setError(err as Error);
       step.failure(err);

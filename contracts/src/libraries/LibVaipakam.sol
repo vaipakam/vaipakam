@@ -980,19 +980,21 @@ library LibVaipakam {
      *      site so MetricsFacet can report rolling 24h/7d windows and a true
      *      lifetime cumulative total. Packed into a single slot:
      *      `timestamp` fits any reasonable future block time in uint64, and
-     *      `usdValue` in uint192 accommodates USD amounts scaled to 1e18 up
-     *      to ~6.28e39 — vastly beyond any single fee.
-     *      `usdValue` is 0 when the priced asset lacks a Chainlink feed at
-     *      the time of accrual. The underlying asset-denominated accrual is
-     *      reflected in `treasuryBalances[asset]` only when the configured
+     *      `numeraireValue` in uint192 accommodates active-numeraire amounts
+     *      scaled to 1e18 up to ~6.28e39 — vastly beyond any single fee. The
+     *      protocol is currency-agnostic: amounts are quoted in whatever
+     *      numeraire governance has configured (USD by post-deploy default).
+     *      `numeraireValue` is 0 when the priced asset lacks a Chainlink feed
+     *      at the time of accrual. The underlying asset-denominated accrual
+     *      is reflected in `treasuryBalances[asset]` only when the configured
      *      treasury is the Diamond itself; external-treasury deployments
      *      push the tokens straight to the multisig, so `treasuryBalances`
      *      stays at zero for those fee paths (the fee still lives on-chain
-     *      in the event log and `cumulativeFeesUSD`).
+     *      in the event log and `cumulativeFeesNumeraire`).
      */
     struct FeeEvent {
         uint64 timestamp;
-        uint192 usdValue;
+        uint192 numeraireValue;
     }
 
     /// @notice Which side of a loan a {RewardEntry} represents.
@@ -1021,7 +1023,7 @@ library LibVaipakam {
         RewardSide side;
         bool processed; // claim/sweep already routed this entry
         bool forfeited; // true ⇒ route to treasury on processing
-        uint256 perDayUSD18; // USD18 interest-per-day snapshotted at register
+        uint256 perDayNumeraire18; // Numeraire18 interest-per-day snapshotted at register
     }
 
     /**
@@ -1106,7 +1108,7 @@ library LibVaipakam {
      *          {LibFacet.recordTreasuryAccrual} only when `treasury ==
      *          address(this)`; external-treasury deployments leave this
      *          ledger at zero because the fees are pushed out synchronously
-     *          (see `feeEventsLog` / `cumulativeFeesUSD` for the analytics
+     *          (see `feeEventsLog` / `cumulativeFeesNumeraire` for the analytics
      *          of record). Monotone non-decreasing between accruals;
      *          reset to zero by `TreasuryFacet.claimTreasuryFees`. Any
      *          interest/late-fee split that debits lender/borrower MUST
@@ -1200,15 +1202,16 @@ library LibVaipakam {
         mapping(uint256 => mapping(address => bool)) loanKeeperEnabled;
         mapping(uint256 => mapping(address => bool)) offerKeeperEnabled;
         // README §13 analytics surface: timestamped log of every treasury-fee
-        // accrual, priced in USD at accrual time. Appended by
-        // LibFacet.recordTreasuryAccrual. Consumed by MetricsFacet for the
+        // accrual, priced in the active numeraire at accrual time. Appended
+        // by LibFacet.recordTreasuryAccrual. Consumed by MetricsFacet for the
         // 24h/7d revenue windows and getRevenueStats(days_). Capped per query
         // by MAX_FEE_EVENTS_ITER on read.
         FeeEvent[] feeEventsLog;
-        // Monotone cumulative sum of usdValue across feeEventsLog entries —
-        // tracked separately so MetricsFacet.getTreasuryMetrics.totalFeesCollectedUSD
-        // is an O(1) read. Never decreases.
-        uint256 cumulativeFeesUSD;
+        // Monotone cumulative sum of numeraireValue across feeEventsLog
+        // entries — tracked separately so
+        // MetricsFacet.getTreasuryMetrics.totalFeesCollectedNumeraire is an
+        // O(1) read. Never decreases.
+        uint256 cumulativeFeesNumeraire;
         // README §16 Phase 1 KYC pass-through flag. When FALSE (the default
         // at Phase 1 launch), every `meetsKYCRequirement` / `isKYCVerified`
         // check returns true so KYC logic does not block any user flow. The
@@ -1345,17 +1348,17 @@ library LibVaipakam {
         // Settlement hooks (RepayFacet on clean full repay, and any
         // future preclose path on a strict clean-repay outcome) record
         // the USD-valued (Chainlink spot) interest booked on day `d`:
-        //   totalLenderInterestUSD18[d] += interestUSD
-        //   userLenderInterestUSD18[d][lender] += interestUSD
+        //   totalLenderInterestNumeraire18[d] += interestUSD
+        //   userLenderInterestNumeraire18[d][lender] += interestUSD
         //   (and borrower mirror iff clean)
         // Claims walk finalized days < today, cap at MAX_INTERACTION_CLAIM_DAYS
         // per tx, and advance interactionLastClaimedDay.
         uint256 interactionLaunchTimestamp;
         uint256 interactionPoolPaidOut;
-        mapping(uint256 => uint256) totalLenderInterestUSD18;
-        mapping(uint256 => uint256) totalBorrowerInterestUSD18;
-        mapping(uint256 => mapping(address => uint256)) userLenderInterestUSD18;
-        mapping(uint256 => mapping(address => uint256)) userBorrowerInterestUSD18;
+        mapping(uint256 => uint256) totalLenderInterestNumeraire18;
+        mapping(uint256 => uint256) totalBorrowerInterestNumeraire18;
+        mapping(uint256 => mapping(address => uint256)) userLenderInterestNumeraire18;
+        mapping(uint256 => mapping(address => uint256)) userBorrowerInterestNumeraire18;
         mapping(address => uint256) interactionLastClaimedDay;
         /// @dev Admin-configurable "whole VPFI per 1 ETH of eligible
         ///      interest" per-user daily cap used in
@@ -1372,12 +1375,12 @@ library LibVaipakam {
         //   - every Diamond (Base + mirrors) runs a reporter that ships
         //     its day-`D` local (lender, borrower) USD totals to Base
         //   - Base runs an aggregator that sums per-chain reports into
-        //     `dailyGlobalLenderInterestUSD18[D]` and
-        //     `dailyGlobalBorrowerInterestUSD18[D]` once all expected
+        //     `dailyGlobalLenderInterestNumeraire18[D]` and
+        //     `dailyGlobalBorrowerInterestNumeraire18[D]` once all expected
         //     mirrors have reported OR `rewardGraceSeconds` has elapsed
         //   - Base then broadcasts the finalized global pair back to
         //     every mirror, where {LibInteractionRewards.claimForUserWindow}
-        //     prefers `knownGlobal*InterestUSD18[D]` over the local total
+        //     prefers `knownGlobal*InterestNumeraire18[D]` over the local total
         //     as the formula denominator
         //
         // Trust model: LayerZero packets flow through the dedicated
@@ -1419,12 +1422,12 @@ library LibVaipakam {
         ///      queues the OApp send).
         mapping(uint256 => uint64) chainReportSentAt;
         // ── Aggregator side (Base only) ────────────────────────────────
-        /// @dev Base-only: lender-side local USD18 interest reported by
+        /// @dev Base-only: lender-side local Numeraire18 interest reported by
         ///      chain `eid` for day `D`.
-        mapping(uint256 => mapping(uint32 => uint256)) chainDailyLenderInterestUSD18;
-        /// @dev Base-only: borrower-side local USD18 interest reported by
+        mapping(uint256 => mapping(uint32 => uint256)) chainDailyLenderInterestNumeraire18;
+        /// @dev Base-only: borrower-side local Numeraire18 interest reported by
         ///      chain `eid` for day `D`.
-        mapping(uint256 => mapping(uint32 => uint256)) chainDailyBorrowerInterestUSD18;
+        mapping(uint256 => mapping(uint32 => uint256)) chainDailyBorrowerInterestNumeraire18;
         /// @dev Base-only: `(dayId, eid)` idempotency guard — rejects
         ///      duplicate reports for the same `(day, chain)` pair.
         mapping(uint256 => mapping(uint32 => bool)) chainDailyReported;
@@ -1441,12 +1444,12 @@ library LibVaipakam {
         ///      finalization are rejected (idempotency preserves claim
         ///      determinism).
         mapping(uint256 => bool) dailyGlobalFinalized;
-        /// @dev Base-only: finalized global lender USD18 interest for
+        /// @dev Base-only: finalized global lender Numeraire18 interest for
         ///      day `D` (sum across reported eids).
-        mapping(uint256 => uint256) dailyGlobalLenderInterestUSD18;
-        /// @dev Base-only: finalized global borrower USD18 interest for
+        mapping(uint256 => uint256) dailyGlobalLenderInterestNumeraire18;
+        /// @dev Base-only: finalized global borrower Numeraire18 interest for
         ///      day `D` (sum across reported eids).
-        mapping(uint256 => uint256) dailyGlobalBorrowerInterestUSD18;
+        mapping(uint256 => uint256) dailyGlobalBorrowerInterestNumeraire18;
         // ── Consumer side (every chain) ────────────────────────────────
         /// @dev Finalized global lender denominator known on this chain
         ///      for day `D`. On Base it is set directly by
@@ -1454,10 +1457,10 @@ library LibVaipakam {
         ///      set by {RewardReporterFacet.onRewardBroadcastReceived}.
         ///      Zero means "not yet known locally" — claims for `D`
         ///      revert until the broadcast lands.
-        mapping(uint256 => uint256) knownGlobalLenderInterestUSD18;
-        /// @dev Mirror of {knownGlobalLenderInterestUSD18} for the
+        mapping(uint256 => uint256) knownGlobalLenderInterestNumeraire18;
+        /// @dev Mirror of {knownGlobalLenderInterestNumeraire18} for the
         ///      borrower side.
-        mapping(uint256 => uint256) knownGlobalBorrowerInterestUSD18;
+        mapping(uint256 => uint256) knownGlobalBorrowerInterestNumeraire18;
         /// @dev Per-day `knownGlobal*` set-flag. Cheaper than comparing
         ///      both sides to zero; distinguishes "day `D` finalized
         ///      with zero global interest" from "day `D` not yet
@@ -1691,17 +1694,17 @@ library LibVaipakam {
         // ─── Phase 2 Interaction Reward Accrual (spec §4 daily) ─────────
         // Replaces the Phase-1 "lump-sum-at-settlement" accounting with
         // per-day accrual. Each loan, on {LoanFacet.initiateLoan},
-        // contributes `perDayUSD18` to the running open-per-day counter
+        // contributes `perDayNumeraire18` to the running open-per-day counter
         // via a START-day delta. At close, a matching NEGATIVE delta is
         // stamped on the close day (exclusive endDay). The delta cursor
         // is advanced lazily by the reporter path when shipping day `d`
         // AND by the claim path when walking reward entries.
         //
         // Claim math: per-entry reward =
-        //   perDayUSD18 × (cumRPU18[endDay-1] − cumRPU18[startDay-1]) / 1e18
-        // where cumRPU18[d] = Σ_{d' ≤ d} halfPool[d'] × 1e18 / globalTotal[d'].
+        //   perDayNumeraire18 × (cumRPN18[endDay-1] − cumRPN18[startDay-1]) / 1e18
+        // where cumRPN18[d] = Σ_{d' ≤ d} halfPool[d'] × 1e18 / globalTotal[d'].
         // Global denominator comes from the finalized cross-chain
-        // broadcast (`knownGlobal*InterestUSD18[d]`); cumRPU cannot advance
+        // broadcast (`knownGlobal*InterestNumeraire18[d]`); cumRPN cannot advance
         // past days whose broadcast hasn't landed.
         //
         // Forfeit routing (user directive):
@@ -1727,36 +1730,36 @@ library LibVaipakam {
         ///      new lender's freshly forged entry; the prior entry is
         ///      closed with forfeit=true.
         mapping(uint256 => uint256) loanActiveLenderEntryId;
-        /// @dev Net change applied to {lenderOpenPerDayUSD18} at the START
+        /// @dev Net change applied to {lenderOpenPerDayNumeraire18} at the START
         ///      of day `d`. registerLoan bumps [startDay] up, closeLoan
         ///      bumps [endDay] down. Stored as int256 for the net-zero
         ///      symmetry on same-day register + close.
-        mapping(uint256 => int256) lenderPerDayDeltaUSD18;
-        /// @dev Mirror of {lenderPerDayDeltaUSD18} for the borrower side.
+        mapping(uint256 => int256) lenderPerDayDeltaNumeraire18;
+        /// @dev Mirror of {lenderPerDayDeltaNumeraire18} for the borrower side.
         ///      Clean / forfeit status is recorded on the RewardEntry, NOT
         ///      by reversing deltas — defaulted borrowers remain in the
         ///      denominator to keep the daily pool budget stable.
-        mapping(uint256 => int256) borrowerPerDayDeltaUSD18;
-        /// @dev Running sum of `perDayUSD18` across lender-side loans open
+        mapping(uint256 => int256) borrowerPerDayDeltaNumeraire18;
+        /// @dev Running sum of `perDayNumeraire18` across lender-side loans open
         ///      at {lenderFrontierDay}. Advanced by {advanceLenderThrough}.
-        uint256 lenderOpenPerDayUSD18;
-        /// @dev Running sum of `perDayUSD18` across borrower-side loans
+        uint256 lenderOpenPerDayNumeraire18;
+        /// @dev Running sum of `perDayNumeraire18` across borrower-side loans
         ///      open at {borrowerFrontierDay}.
-        uint256 borrowerOpenPerDayUSD18;
-        /// @dev Last day for which {totalLenderInterestUSD18}[d] has been
+        uint256 borrowerOpenPerDayNumeraire18;
+        /// @dev Last day for which {totalLenderInterestNumeraire18}[d] has been
         ///      snapshotted from the delta walk. Advance must be called
         ///      before the reporter ships day `d`.
         uint256 lenderFrontierDay;
         /// @dev Mirror of {lenderFrontierDay} for the borrower side.
         uint256 borrowerFrontierDay;
-        /// @dev cumRPU18[d] = cumulative VPFI-wei reward per 1e18 USD18
+        /// @dev cumRPN18[d] = cumulative VPFI-wei reward per 1e18 Numeraire18
         ///      through END of day `d`, using the GLOBAL (cross-chain)
         ///      denominator. Populated lazily by {advanceCumLenderThrough};
         ///      halts at the first day without `knownGlobalSet[d]`.
-        mapping(uint256 => uint256) cumLenderRPU18;
-        /// @dev Mirror of {cumLenderRPU18} for the borrower side.
-        mapping(uint256 => uint256) cumBorrowerRPU18;
-        /// @dev Last day through which {cumLenderRPU18} is populated
+        mapping(uint256 => uint256) cumLenderRPN18;
+        /// @dev Mirror of {cumLenderRPN18} for the borrower side.
+        mapping(uint256 => uint256) cumBorrowerRPN18;
+        /// @dev Last day through which {cumLenderRPN18} is populated
         ///      (contiguous from day 0). Day 0 cum = 0 (spec §4 exclusion).
         uint256 cumLenderCursor;
         /// @dev Mirror of {cumLenderCursor} for the borrower side.

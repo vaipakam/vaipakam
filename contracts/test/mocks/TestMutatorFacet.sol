@@ -111,7 +111,7 @@ contract TestMutatorFacet {
     ///         interaction side. Avoids driving the full OfferFacet +
     ///         RepayFacet E2E path when only the reward-split math is
     ///         under test.
-    /// @dev Also mirrors `totalUSD18` into the cross-chain `knownGlobalLender`
+    /// @dev Also mirrors `totalNumeraire18` into the cross-chain `knownGlobalLender`
     ///      slot and flips `knownGlobalSet[day]` so the §4a gate enforced
     ///      by {InteractionRewardsFacet} passes on the single-chain test
     ///      harness. Tests that need the gate to FAIL (e.g. finalize-is-
@@ -120,13 +120,13 @@ contract TestMutatorFacet {
     function setDailyLenderInterest(
         uint256 day,
         address user,
-        uint256 userUSD18,
-        uint256 totalUSD18
+        uint256 userNumeraire18,
+        uint256 totalNumeraire18
     ) external {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        s.userLenderInterestUSD18[day][user] = userUSD18;
-        s.totalLenderInterestUSD18[day] = totalUSD18;
-        s.knownGlobalLenderInterestUSD18[day] = totalUSD18;
+        s.userLenderInterestNumeraire18[day][user] = userNumeraire18;
+        s.totalLenderInterestNumeraire18[day] = totalNumeraire18;
+        s.knownGlobalLenderInterestNumeraire18[day] = totalNumeraire18;
         s.knownGlobalSet[day] = true;
     }
 
@@ -135,13 +135,13 @@ contract TestMutatorFacet {
     function setDailyBorrowerInterest(
         uint256 day,
         address user,
-        uint256 userUSD18,
-        uint256 totalUSD18
+        uint256 userNumeraire18,
+        uint256 totalNumeraire18
     ) external {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        s.userBorrowerInterestUSD18[day][user] = userUSD18;
-        s.totalBorrowerInterestUSD18[day] = totalUSD18;
-        s.knownGlobalBorrowerInterestUSD18[day] = totalUSD18;
+        s.userBorrowerInterestNumeraire18[day][user] = userNumeraire18;
+        s.totalBorrowerInterestNumeraire18[day] = totalNumeraire18;
+        s.knownGlobalBorrowerInterestNumeraire18[day] = totalNumeraire18;
         s.knownGlobalSet[day] = true;
     }
 
@@ -151,13 +151,13 @@ contract TestMutatorFacet {
     ///         before the broadcast has landed).
     function setKnownGlobalDailyInterest(
         uint256 day,
-        uint256 lenderTotalUSD18,
-        uint256 borrowerTotalUSD18,
+        uint256 lenderTotalNumeraire18,
+        uint256 borrowerTotalNumeraire18,
         bool isSet
     ) external {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        s.knownGlobalLenderInterestUSD18[day] = lenderTotalUSD18;
-        s.knownGlobalBorrowerInterestUSD18[day] = borrowerTotalUSD18;
+        s.knownGlobalLenderInterestNumeraire18[day] = lenderTotalNumeraire18;
+        s.knownGlobalBorrowerInterestNumeraire18[day] = borrowerTotalNumeraire18;
         s.knownGlobalSet[day] = isSet;
     }
 
@@ -325,7 +325,7 @@ contract TestMutatorFacet {
         address user,
         uint64 loanId,
         LibVaipakam.RewardSide side,
-        uint256 perDayUSD18,
+        uint256 perDayNumeraire18,
         uint32 startDay
     ) external returns (uint256 id) {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
@@ -339,7 +339,7 @@ contract TestMutatorFacet {
             side: side,
             processed: false,
             forfeited: false,
-            perDayUSD18: perDayUSD18
+            perDayNumeraire18: perDayNumeraire18
         });
         s.userRewardEntryIds[user].push(id);
     }

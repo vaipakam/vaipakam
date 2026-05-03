@@ -793,10 +793,10 @@ contract DeployDiamond is Script {
         s[4] = RewardReporterFacet.setBaseEid.selector;
         s[5] = RewardReporterFacet.setIsCanonicalRewardChain.selector;
         s[6] = RewardReporterFacet.setRewardGraceSeconds.selector;
-        s[7] = RewardReporterFacet.getLocalChainInterestUSD18.selector;
+        s[7] = RewardReporterFacet.getLocalChainInterestNumeraire18.selector;
         s[8] = RewardReporterFacet.getChainReportSentAt.selector;
         s[9] = RewardReporterFacet.getRewardReporterConfig.selector;
-        s[10] = RewardReporterFacet.getKnownGlobalInterestUSD18.selector;
+        s[10] = RewardReporterFacet.getKnownGlobalInterestNumeraire18.selector;
     }
 
     function _getConfigSelectors() internal pure returns (bytes4[] memory s) {
@@ -869,7 +869,7 @@ contract DeployDiamond is Script {
         s[2] = MetricsFacet.getUserCount.selector;
         s[3] = MetricsFacet.getActiveLoansCount.selector;
         s[4] = MetricsFacet.getActiveOffersCount.selector;
-        s[5] = MetricsFacet.getTotalInterestEarnedUSD.selector;
+        s[5] = MetricsFacet.getTotalInterestEarnedNumeraire.selector;
         s[6] = MetricsFacet.getTreasuryMetrics.selector;
         s[7] = MetricsFacet.getRevenueStats.selector;
         s[8] = MetricsFacet.getActiveLoansPaginated.selector;

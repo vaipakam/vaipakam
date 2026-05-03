@@ -236,10 +236,10 @@ interface RewardEntryRowProps {
 /**
  * One row in the "Contributing loans" expandable list. Renders the loan
  * id (clickable → /app/loans/X), the side (lender / borrower), and the
- * cumulative USD interest contribution computed as
- * `perDayUSD18 * (endDay || open) - startDay`. Forfeited entries (e.g.
- * defaulted-borrower side) are visually de-emphasised since they no
- * longer feed the user's daily share.
+ * cumulative numeraire-quoted interest contribution computed as
+ * `perDayNumeraire18 * (endDay || open) - startDay`. Forfeited entries
+ * (e.g. defaulted-borrower side) are visually de-emphasised since they
+ * no longer feed the user's daily share.
  */
 function RewardEntryRow({ entry }: RewardEntryRowProps) {
   const { t } = useTranslation();
@@ -247,10 +247,10 @@ function RewardEntryRow({ entry }: RewardEntryRowProps) {
   // as "ongoing" rather than computing a moving total — `today` would
   // need an on-chain read and the user can navigate to Loan Details
   // for the full picture anyway. Closed entries get the snapshot
-  // contribution in 18-decimal USD.
+  // contribution in 18-decimal numeraire-units.
   const isOpen = entry.endDay === 0;
   const days = isOpen ? 0 : Math.max(0, entry.endDay - entry.startDay);
-  const totalContribUsd18 = isOpen ? 0n : entry.perDayUSD18 * BigInt(days);
+  const totalContribNumeraire18 = isOpen ? 0n : entry.perDayNumeraire18 * BigInt(days);
   return (
     <li
       style={{
@@ -278,10 +278,10 @@ function RewardEntryRow({ entry }: RewardEntryRowProps) {
           ? t('interactionRewards.entryForfeited')
           : isOpen
             ? t('interactionRewards.entryOngoing', {
-                rate: (Number(entry.perDayUSD18) / 1e18).toFixed(2),
+                rate: (Number(entry.perDayNumeraire18) / 1e18).toFixed(2),
               })
             : t('interactionRewards.entryClosed', {
-                total: (Number(totalContribUsd18) / 1e18).toFixed(2),
+                total: (Number(totalContribNumeraire18) / 1e18).toFixed(2),
                 days,
               })}
       </span>

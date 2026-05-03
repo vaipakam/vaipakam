@@ -518,7 +518,7 @@ contract InteractionRewardsCoverageTest is SetupTest, IVaipakamErrors {
         assertEq(aliceEntries.length, 1, "alice has one entry (lender side of loan 42)");
         assertEq(aliceEntries[0].loanId, 42);
         assertEq(uint8(aliceEntries[0].side), uint8(LibVaipakam.RewardSide.Lender));
-        assertEq(aliceEntries[0].perDayUSD18, 5e18);
+        assertEq(aliceEntries[0].perDayNumeraire18, 5e18);
         assertEq(aliceEntries[0].startDay, 1);
         assertEq(aliceEntries[0].endDay, 0, "still open");
 

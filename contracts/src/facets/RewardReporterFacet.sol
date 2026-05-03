@@ -20,7 +20,7 @@ import {LibInteractionRewards} from "../libraries/LibInteractionRewards.sol";
  * @dev Runs on BOTH canonical (Base) and mirror Diamonds. Behaviour forks
  *      by `isCanonicalRewardChain`:
  *        - Base:   {closeDay} writes the local chain's `(lender, borrower)`
- *                  USD18 pair directly into the aggregator sub-storage
+ *                  Numeraire18 pair directly into the aggregator sub-storage
  *                  keyed by `localEid`; no LayerZero packet is needed
  *                  because Base is its own aggregator.
  *        - Mirror: {closeDay} forwards the pair via `IRewardOApp.sendChainReport`
@@ -31,7 +31,7 @@ import {LibInteractionRewards} from "../libraries/LibInteractionRewards.sol";
  *      {onRewardBroadcastReceived} is the mirror-side trusted ingress
  *      handler: when Base finalizes day `D`, its OApp broadcasts the
  *      pair back and the mirror's OApp invokes this method, which
- *      populates `knownGlobal*InterestUSD18[D]` used by the §4 formula.
+ *      populates `knownGlobal*InterestNumeraire18[D]` used by the §4 formula.
  *      Gated to `rewardOApp` — no other address may write these values.
  *
  *      Admin surface configures the cross-chain wiring (OApp address,
@@ -54,14 +54,14 @@ contract RewardReporterFacet is
     ///         the OApp on a mirror.
     /// @param dayId                 Interaction day being reported.
     /// @param sourceEid             LayerZero eid of the source (local) chain.
-    /// @param lenderUSD18           Local lender USD-18 interest on `dayId`.
-    /// @param borrowerUSD18         Local borrower USD-18 interest on `dayId`.
+    /// @param lenderNumeraire18           Local lender USD-18 interest on `dayId`.
+    /// @param borrowerNumeraire18         Local borrower USD-18 interest on `dayId`.
     /// @param viaOApp               False iff recorded directly (Base path).
     event ChainInterestReported(
         uint256 indexed dayId,
         uint32 indexed sourceEid,
-        uint256 lenderUSD18,
-        uint256 borrowerUSD18,
+        uint256 lenderNumeraire18,
+        uint256 borrowerNumeraire18,
         bool viaOApp
     );
 
@@ -70,12 +70,12 @@ contract RewardReporterFacet is
     ///         fires during {RewardAggregatorFacet.finalizeDay} via the
     ///         shared write path.
     /// @param dayId                 Day whose denominator landed.
-    /// @param globalLenderUSD18     Finalized global lender denominator.
-    /// @param globalBorrowerUSD18   Finalized global borrower denominator.
+    /// @param globalLenderNumeraire18     Finalized global lender denominator.
+    /// @param globalBorrowerNumeraire18   Finalized global borrower denominator.
     event KnownGlobalInterestSet(
         uint256 indexed dayId,
-        uint256 globalLenderUSD18,
-        uint256 globalBorrowerUSD18
+        uint256 globalLenderNumeraire18,
+        uint256 globalBorrowerNumeraire18
     );
 
     /// @notice Emitted on any admin setter touching the cross-chain wiring.
@@ -88,7 +88,7 @@ contract RewardReporterFacet is
     // ─── Day-close emission (public, permissionless) ────────────────────────
 
     /**
-     * @notice Snapshot this chain's local `(lender, borrower)` USD18
+     * @notice Snapshot this chain's local `(lender, borrower)` Numeraire18
      *         interest totals for `dayId` and publish them to the
      *         canonical aggregator.
      * @dev Permissionless — any address may close a day once it is fully
@@ -96,7 +96,7 @@ contract RewardReporterFacet is
      *
      *      Behaviour by chain kind:
      *        - Canonical (Base): writes the pair directly into
-     *          `chainDaily{Lender,Borrower}InterestUSD18[dayId][localEid]`
+     *          `chainDaily{Lender,Borrower}InterestNumeraire18[dayId][localEid]`
      *          and increments `chainDailyReportCount[dayId]`. No
      *          LayerZero fee required; any `msg.value` is refunded.
      *        - Mirror: forwards the pair via
@@ -125,27 +125,27 @@ contract RewardReporterFacet is
         if (!active || dayId >= today) revert RewardDayNotElapsed();
         if (s.chainReportSentAt[dayId] != 0) revert ChainDayAlreadyReported();
 
-        // Fold entry-driven deltas into `totalLenderInterestUSD18[dayId]` /
-        // `totalBorrowerInterestUSD18[dayId]` before snapshotting so the
+        // Fold entry-driven deltas into `totalLenderInterestNumeraire18[dayId]` /
+        // `totalBorrowerInterestNumeraire18[dayId]` before snapshotting so the
         // cross-chain numerator reflects every accrued loan-day, not just
         // the legacy per-day counters.
         LibInteractionRewards.advanceLenderThrough(dayId);
         LibInteractionRewards.advanceBorrowerThrough(dayId);
 
-        uint256 lenderUSD18 = s.totalLenderInterestUSD18[dayId];
-        uint256 borrowerUSD18 = s.totalBorrowerInterestUSD18[dayId];
+        uint256 lenderNumeraire18 = s.totalLenderInterestNumeraire18[dayId];
+        uint256 borrowerNumeraire18 = s.totalBorrowerInterestNumeraire18[dayId];
 
         s.chainReportSentAt[dayId] = uint64(block.timestamp);
 
         if (s.isCanonicalRewardChain) {
             // Base writes directly — bypass LayerZero for its own numbers.
             uint32 eid = s.localEid;
-            _recordChainReportLocal(s, dayId, eid, lenderUSD18, borrowerUSD18);
+            _recordChainReportLocal(s, dayId, eid, lenderNumeraire18, borrowerNumeraire18);
             emit ChainInterestReported(
                 dayId,
                 eid,
-                lenderUSD18,
-                borrowerUSD18,
+                lenderNumeraire18,
+                borrowerNumeraire18,
                 /* viaOApp */ false
             );
 
@@ -162,16 +162,16 @@ contract RewardReporterFacet is
             emit ChainInterestReported(
                 dayId,
                 s.localEid,
-                lenderUSD18,
-                borrowerUSD18,
+                lenderNumeraire18,
+                borrowerNumeraire18,
                 /* viaOApp */ true
             );
 
             // Forward full msg.value; OApp refunds the caller directly.
             IRewardOApp(oApp).sendChainReport{value: msg.value}(
                 dayId,
-                lenderUSD18,
-                borrowerUSD18,
+                lenderNumeraire18,
+                borrowerNumeraire18,
                 payable(msg.sender)
             );
         }
@@ -187,11 +187,11 @@ contract RewardReporterFacet is
         LibVaipakam.Storage storage s,
         uint256 dayId,
         uint32 sourceEid,
-        uint256 lenderUSD18,
-        uint256 borrowerUSD18
+        uint256 lenderNumeraire18,
+        uint256 borrowerNumeraire18
     ) internal {
-        s.chainDailyLenderInterestUSD18[dayId][sourceEid] = lenderUSD18;
-        s.chainDailyBorrowerInterestUSD18[dayId][sourceEid] = borrowerUSD18;
+        s.chainDailyLenderInterestNumeraire18[dayId][sourceEid] = lenderNumeraire18;
+        s.chainDailyBorrowerInterestNumeraire18[dayId][sourceEid] = borrowerNumeraire18;
         if (!s.chainDailyReported[dayId][sourceEid]) {
             s.chainDailyReported[dayId][sourceEid] = true;
             unchecked {
@@ -208,7 +208,7 @@ contract RewardReporterFacet is
     /**
      * @notice Trusted ingress: the OApp delivers Base's finalized global
      *         denominator for `dayId` and this function stamps it into
-     *         `knownGlobal{Lender,Borrower}InterestUSD18` so local
+     *         `knownGlobal{Lender,Borrower}InterestNumeraire18` so local
      *         {LibInteractionRewards.claimForUserWindow} can use it.
      * @dev Gated to the Diamond's registered `rewardOApp`. First call for
      *      `dayId` writes the pair; repeat calls must carry the SAME
@@ -220,13 +220,13 @@ contract RewardReporterFacet is
      *      direct write, not this function), so Base-side claims read
      *      the identical denominator without needing a LayerZero packet.
      * @param dayId                 Day being broadcast.
-     * @param globalLenderUSD18     Finalized global lender denominator.
-     * @param globalBorrowerUSD18   Finalized global borrower denominator.
+     * @param globalLenderNumeraire18     Finalized global lender denominator.
+     * @param globalBorrowerNumeraire18   Finalized global borrower denominator.
      */
     function onRewardBroadcastReceived(
         uint256 dayId,
-        uint256 globalLenderUSD18,
-        uint256 globalBorrowerUSD18
+        uint256 globalLenderNumeraire18,
+        uint256 globalBorrowerNumeraire18
     ) external {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         if (msg.sender != s.rewardOApp || s.rewardOApp == address(0)) {
@@ -237,22 +237,22 @@ contract RewardReporterFacet is
             // Idempotent re-delivery is fine — LayerZero retries can
             // duplicate a packet. Divergent values must never overwrite.
             if (
-                s.knownGlobalLenderInterestUSD18[dayId] != globalLenderUSD18 ||
-                s.knownGlobalBorrowerInterestUSD18[dayId] != globalBorrowerUSD18
+                s.knownGlobalLenderInterestNumeraire18[dayId] != globalLenderNumeraire18 ||
+                s.knownGlobalBorrowerInterestNumeraire18[dayId] != globalBorrowerNumeraire18
             ) {
                 revert KnownGlobalAlreadySet();
             }
             return;
         }
 
-        s.knownGlobalLenderInterestUSD18[dayId] = globalLenderUSD18;
-        s.knownGlobalBorrowerInterestUSD18[dayId] = globalBorrowerUSD18;
+        s.knownGlobalLenderInterestNumeraire18[dayId] = globalLenderNumeraire18;
+        s.knownGlobalBorrowerInterestNumeraire18[dayId] = globalBorrowerNumeraire18;
         s.knownGlobalSet[dayId] = true;
 
         emit KnownGlobalInterestSet(
             dayId,
-            globalLenderUSD18,
-            globalBorrowerUSD18
+            globalLenderNumeraire18,
+            globalBorrowerNumeraire18
         );
     }
 
@@ -363,15 +363,15 @@ contract RewardReporterFacet is
 
     /// @notice Returns the local (this chain's) unreported totals on `dayId`.
     /// @param dayId Day being queried.
-    /// @return lenderUSD18   Local lender USD-18 on `dayId`.
-    /// @return borrowerUSD18 Local borrower USD-18 on `dayId`.
-    function getLocalChainInterestUSD18(
+    /// @return lenderNumeraire18   Local lender USD-18 on `dayId`.
+    /// @return borrowerNumeraire18 Local borrower USD-18 on `dayId`.
+    function getLocalChainInterestNumeraire18(
         uint256 dayId
-    ) external view returns (uint256 lenderUSD18, uint256 borrowerUSD18) {
+    ) external view returns (uint256 lenderNumeraire18, uint256 borrowerNumeraire18) {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         return (
-            s.totalLenderInterestUSD18[dayId],
-            s.totalBorrowerInterestUSD18[dayId]
+            s.totalLenderInterestNumeraire18[dayId],
+            s.totalBorrowerInterestNumeraire18[dayId]
         );
     }
 
@@ -385,24 +385,24 @@ contract RewardReporterFacet is
 
     /// @notice Finalized global denominator pair known on this chain for
     ///         `dayId` (zero pair ⇒ not yet broadcast here).
-    /// @return globalLenderUSD18   Finalized lender denominator on `dayId`.
-    /// @return globalBorrowerUSD18 Finalized borrower denominator on `dayId`.
+    /// @return globalLenderNumeraire18   Finalized lender denominator on `dayId`.
+    /// @return globalBorrowerNumeraire18 Finalized borrower denominator on `dayId`.
     /// @return isSet               True iff the pair was populated for `dayId`.
-    function getKnownGlobalInterestUSD18(
+    function getKnownGlobalInterestNumeraire18(
         uint256 dayId
     )
         external
         view
         returns (
-            uint256 globalLenderUSD18,
-            uint256 globalBorrowerUSD18,
+            uint256 globalLenderNumeraire18,
+            uint256 globalBorrowerNumeraire18,
             bool isSet
         )
     {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         return (
-            s.knownGlobalLenderInterestUSD18[dayId],
-            s.knownGlobalBorrowerInterestUSD18[dayId],
+            s.knownGlobalLenderInterestNumeraire18[dayId],
+            s.knownGlobalBorrowerInterestNumeraire18[dayId],
             s.knownGlobalSet[dayId]
         );
     }

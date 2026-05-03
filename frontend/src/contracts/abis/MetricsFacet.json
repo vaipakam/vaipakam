@@ -189,7 +189,7 @@
         "internalType": "uint256"
       },
       {
-        "name": "totalRentalVolumeUSD",
+        "name": "totalRentalVolumeNumeraire",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -220,7 +220,7 @@
     "inputs": [],
     "outputs": [
       {
-        "name": "totalActiveLoanValueUSD",
+        "name": "totalActiveLoanValueNumeraire",
         "type": "uint256",
         "internalType": "uint256"
       },
@@ -678,12 +678,12 @@
         "internalType": "uint256"
       },
       {
-        "name": "totalCollateralUSD",
+        "name": "totalCollateralNumeraire",
         "type": "uint256",
         "internalType": "uint256"
       },
       {
-        "name": "totalDebtUSD",
+        "name": "totalDebtNumeraire",
         "type": "uint256",
         "internalType": "uint256"
       },
@@ -721,12 +721,12 @@
         "internalType": "uint256"
       },
       {
-        "name": "totalVolumeLentUSD",
+        "name": "totalVolumeLentNumeraire",
         "type": "uint256",
         "internalType": "uint256"
       },
       {
-        "name": "totalInterestEarnedUSD",
+        "name": "totalInterestEarnedNumeraire",
         "type": "uint256",
         "internalType": "uint256"
       },
@@ -749,7 +749,7 @@
     "inputs": [],
     "outputs": [
       {
-        "name": "tvlInUSD",
+        "name": "tvlInNumeraire",
         "type": "uint256",
         "internalType": "uint256"
       },
@@ -778,7 +778,7 @@
     ],
     "outputs": [
       {
-        "name": "totalRevenueUSD",
+        "name": "totalRevenueNumeraire",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -787,7 +787,7 @@
   },
   {
     "type": "function",
-    "name": "getTotalInterestEarnedUSD",
+    "name": "getTotalInterestEarnedNumeraire",
     "inputs": [],
     "outputs": [
       {
@@ -823,22 +823,22 @@
     "inputs": [],
     "outputs": [
       {
-        "name": "treasuryBalanceUSD",
+        "name": "treasuryBalanceNumeraire",
         "type": "uint256",
         "internalType": "uint256"
       },
       {
-        "name": "totalFeesCollectedUSD",
+        "name": "totalFeesCollectedNumeraire",
         "type": "uint256",
         "internalType": "uint256"
       },
       {
-        "name": "feesLast24hUSD",
+        "name": "feesLast24hNumeraire",
         "type": "uint256",
         "internalType": "uint256"
       },
       {
-        "name": "feesLast7dUSD",
+        "name": "feesLast7dNumeraire",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -1111,17 +1111,17 @@
     ],
     "outputs": [
       {
-        "name": "totalCollateralUSD",
+        "name": "totalCollateralNumeraire",
         "type": "uint256",
         "internalType": "uint256"
       },
       {
-        "name": "totalBorrowedUSD",
+        "name": "totalBorrowedNumeraire",
         "type": "uint256",
         "internalType": "uint256"
       },
       {
-        "name": "availableToClaimUSD",
+        "name": "availableToClaimNumeraire",
         "type": "uint256",
         "internalType": "uint256"
       },

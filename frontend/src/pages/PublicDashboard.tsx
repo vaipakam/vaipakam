@@ -225,10 +225,10 @@ export default function PublicDashboard() {
         totalVolumeLentUsd: stats.totalVolumeLentUsd,
         totalInterestEarnedUsd: stats.totalInterestEarnedUsd,
         activeLoansValueUsd: stats.activeLoansValueUsd,
-        treasuryBalanceUsd: treasuryMetrics?.treasuryBalanceUsd ?? 0,
-        treasuryFeesLifetimeUsd: treasuryMetrics?.totalFeesCollectedUsd ?? 0,
-        treasuryFees24hUsd: treasuryMetrics?.feesLast24hUsd ?? 0,
-        treasuryFees7dUsd: treasuryMetrics?.feesLast7dUsd ?? 0,
+        treasuryBalanceUsd: treasuryMetrics?.treasuryBalanceNumeraire ?? 0,
+        treasuryFeesLifetimeUsd: treasuryMetrics?.totalFeesCollectedNumeraire ?? 0,
+        treasuryFees24hUsd: treasuryMetrics?.feesLast24hNumeraire ?? 0,
+        treasuryFees7dUsd: treasuryMetrics?.feesLast7dNumeraire ?? 0,
       },
       assetBreakdown: stats.assetBreakdown,
       collateralBreakdown: stats.collateralBreakdown,
@@ -459,15 +459,15 @@ export default function PublicDashboard() {
                   label="Interest Earned by Lenders"
                   value={formatUsd(stats.totalInterestEarnedUsd)}
                   hint="Lifetime, completed loans only"
-                  onchainFn="getTotalInterestEarnedUSD"
+                  onchainFn="getTotalInterestEarnedNumeraire"
                 />
                 <MetricCard
                   icon={<Landmark size={18} />}
                   label="Treasury Balance"
-                  value={formatUsd(treasuryMetrics?.treasuryBalanceUsd ?? 0)}
+                  value={formatUsd(treasuryMetrics?.treasuryBalanceNumeraire ?? 0)}
                   hint={
                     treasuryMetrics
-                      ? `${formatUsd(treasuryMetrics.totalFeesCollectedUsd)} lifetime · ${formatUsd(treasuryMetrics.feesLast24hUsd)} 24h`
+                      ? `${formatUsd(treasuryMetrics.totalFeesCollectedNumeraire)} lifetime · ${formatUsd(treasuryMetrics.feesLast24hNumeraire)} 24h`
                       : 'Unclaimed protocol fees'
                   }
                   onchainFn="getTreasuryMetrics"

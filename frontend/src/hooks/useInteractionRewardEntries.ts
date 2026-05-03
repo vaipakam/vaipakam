@@ -14,10 +14,12 @@ export type RewardSide = 'lender' | 'borrower';
 export interface InteractionRewardEntry {
   loanId: bigint;
   side: RewardSide;
-  /** Snapshot of the loan's interest accrual rate in 18-decimal USD per
-   *  day. Frontends multiply by `(endDay || today) - startDay` to show
-   *  the lifetime contribution per loan. */
-  perDayUSD18: bigint;
+  /** Snapshot of the loan's interest accrual rate in 18-decimal
+   *  numeraire-units per day (USD by post-deploy default; whatever
+   *  governance has rotated to otherwise). Frontends multiply by
+   *  `(endDay || today) - startDay` to show the lifetime contribution
+   *  per loan. */
+  perDayNumeraire18: bigint;
   startDay: number;
   /** 0 = still open. */
   endDay: number;
@@ -59,13 +61,13 @@ export function useInteractionRewardEntries(address: string | null | undefined) 
         side: number;
         processed: boolean;
         forfeited: boolean;
-        perDayUSD18: bigint;
+        perDayNumeraire18: bigint;
       }>;
       setEntries(
         raw.map((e) => ({
           loanId: e.loanId,
           side: Number(e.side) === 0 ? 'lender' : 'borrower',
-          perDayUSD18: e.perDayUSD18,
+          perDayNumeraire18: e.perDayNumeraire18,
           startDay: Number(e.startDay),
           endDay: Number(e.endDay),
           processed: e.processed,

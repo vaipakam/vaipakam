@@ -479,7 +479,7 @@ contract HelperTest {
         selectors[2] = MetricsFacet.getUserCount.selector;
         selectors[3] = MetricsFacet.getActiveLoansCount.selector;
         selectors[4] = MetricsFacet.getActiveOffersCount.selector;
-        selectors[5] = MetricsFacet.getTotalInterestEarnedUSD.selector;
+        selectors[5] = MetricsFacet.getTotalInterestEarnedNumeraire.selector;
         selectors[6] = MetricsFacet.getTreasuryMetrics.selector;
         selectors[7] = MetricsFacet.getRevenueStats.selector;
         selectors[8] = MetricsFacet.getActiveLoansPaginated.selector;
@@ -689,10 +689,10 @@ contract HelperTest {
         selectors[4] = RewardReporterFacet.setBaseEid.selector;
         selectors[5] = RewardReporterFacet.setIsCanonicalRewardChain.selector;
         selectors[6] = RewardReporterFacet.setRewardGraceSeconds.selector;
-        selectors[7] = RewardReporterFacet.getLocalChainInterestUSD18.selector;
+        selectors[7] = RewardReporterFacet.getLocalChainInterestNumeraire18.selector;
         selectors[8] = RewardReporterFacet.getChainReportSentAt.selector;
         selectors[9] = RewardReporterFacet.getRewardReporterConfig.selector;
-        selectors[10] = RewardReporterFacet.getKnownGlobalInterestUSD18.selector;
+        selectors[10] = RewardReporterFacet.getKnownGlobalInterestNumeraire18.selector;
         return selectors;
     }
 

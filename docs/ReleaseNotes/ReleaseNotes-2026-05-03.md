@@ -424,3 +424,119 @@ the numeraire rotation is actually on the table.
 4. **Watcher** — no changes required (the Pyth cross-check is
    contract-internal; no watcher state references the renamed
    slots).
+
+---
+
+## Platform-currency-agnostic sweep — code, ABI, and frontend follow the numeraire abstraction (full sweep)
+
+The B1 + Pyth rename pushed the numeraire abstraction up to the
+oracle layer. After it landed there were still ~150 identifiers
+across the codebase named `*USD` / `*Usd` / `*USD18` that no
+longer described what the value actually was. Internally those
+amounts came from `OracleFacet.getAssetPrice`, which now returns
+numeraire-quoted truth — so a variable called `valueUSD` holding an
+EUR-quoted figure on a XAU-rotated deploy was misleading code, not
+broken code. This sweep aligns names with reality so the
+codebase reads clearly under any numeraire choice.
+
+### Pattern 1 — KYC absolute-valuation variables (already landed earlier in the day)
+
+- `OfferFacet._calculateTransactionValueUSD` → `_calculateTransactionValueNumeraire`; locals `valueUSD` → `valueNumeraire`.
+- `DefaultedFacet` `valueUSD` local → `valueNumeraire`.
+- `RiskFacet.triggerLiquidation` `bonusUSD` → `bonusNumeraire`.
+- `LibCompliance.calculateValueUSD` → `calculateValueNumeraire`; locals.
+- `ProfileFacet.meetsKYCRequirement(address, valueUSD)` param → `valueNumeraire` (selector unchanged — types-only).
+
+### Pattern 2 — RiskFacet HF/LTV ratio variables
+
+- `_computeUsdValues` → `_computeNumeraireValues`; both return values renamed (`borrowValueUSD` / `collateralValueUSD` / `borrowedValueUSD` → `*Numeraire`).
+- All call sites at `calculateLTV` / `calculateHealthFactor` / `isCollateralValueCollapsed` updated.
+- NatSpec on each function clarifies the unit cancels in the ratio so HF and LTV are unit-agnostic.
+
+### Fee-ledger (storage + Metrics return-tuple)
+
+- `LibVaipakam.FeeEvent.usdValue` storage field → `numeraireValue`.
+- `LibVaipakam.Storage.cumulativeFeesUSD` → `cumulativeFeesNumeraire`.
+- `LibFacet.accrueTreasuryFee` local + comment updated.
+- `MetricsFacet.getTreasuryMetrics` 4-tuple returns `treasuryBalanceUSD / totalFeesCollectedUSD / feesLast24hUSD / feesLast7dUSD` → `*Numeraire`. Selector unchanged (returns are positional in ABI).
+- `MetricsFacet.getRevenueStats` return `totalRevenueUSD` → `totalRevenueNumeraire`.
+
+### MetricsFacet protocol-wide aggregators
+
+- `getProtocolTVL` returns `tvlInUSD` → `tvlInNumeraire` (other return fields already neutral).
+- `getProtocolStats` returns `totalVolumeLentUSD` / `totalInterestEarnedUSD` → `*Numeraire`.
+- **Selector rename**: `getTotalInterestEarnedUSD()` → `getTotalInterestEarnedNumeraire()` — single function-name change in this PR; selector hash differs. Frontend's `OnchainBadge` label updated to match.
+- `getLoanSummary.totalActiveLoanValueUSD` → `*Numeraire`.
+- `getEscrowStats.totalRentalVolumeUSD` → `*Numeraire`.
+- `getUserSummary` returns `totalCollateralUSD / totalBorrowedUSD / availableToClaimUSD` → `*Numeraire`.
+- `getProtocolHealth` returns `totalCollateralUSD / totalDebtUSD` → `*Numeraire`.
+- Locals `principalUsd` / `pUsd` → `principalNumeraire` / `pNumeraire`.
+- Private constant `USD_SCALE = 1e18` → `NUMERAIRE_SCALE`.
+
+### Reward accrual — USD18 → Numeraire18
+
+The interaction-reward system tracked per-user / per-day interest in
+"USD scaled to 1e18" units. Renamed the entire ledger to
+`Numeraire18`:
+
+- `RewardEntry.perDayUSD18` → `perDayNumeraire18`.
+- `Storage.lenderPerDayDeltaUSD18` / `borrowerPerDayDeltaUSD18` → `*Numeraire18`.
+- `Storage.lenderOpenPerDayUSD18` / `borrowerOpenPerDayUSD18` → `*Numeraire18`.
+- `Storage.userLenderInterestUSD18` / `userBorrowerInterestUSD18` → `*Numeraire18`.
+- `Storage.totalLenderInterestUSD18` / `totalBorrowerInterestUSD18` → `*Numeraire18`.
+- `Storage.cumLenderRPU18` / `cumBorrowerRPU18` → `cumLenderRPN18` / `cumBorrowerRPN18` (RPU = "Rewards Per USD" → RPN = "Rewards Per Numeraire").
+- `Storage.chainDailyLenderInterestUSD18` / `chainDailyBorrowerInterestUSD18` → `*Numeraire18`.
+- `Storage.knownGlobalLenderInterestUSD18` / `knownGlobalBorrowerInterestUSD18` → `*Numeraire18`.
+- `LibInteractionRewards._interestToUSD18` → `_interestToNumeraire18`.
+- `LibInteractionRewards._perDayInterestUSD18` → `_perDayInterestNumeraire18`.
+- `capVPFIForPerDayUSD` helper → `capVPFIForPerDayNumeraire`.
+- Cross-chain reward plumbing: `RewardReporterFacet.recordChainReportLocal` / `recordChainReportRemote` USD18 args → Numeraire18.
+- **Selector renames**: `RewardReporterFacet.getLocalChainInterestUSD18()` → `getLocalChainInterestNumeraire18()`; `getKnownGlobalInterestUSD18()` → `getKnownGlobalInterestNumeraire18()`. Selector hashes differ.
+- Event payloads (`ChainReportRecorded` / `ChainReportFinalized` / `KnownGlobalInterestUpdated`) renamed param fields USD18 → Numeraire18.
+
+### Interface + error types
+
+- `IRewardOApp` interface USD18 args renamed.
+- `IVaipakamErrors` USD18 references in error names / NatSpec renamed.
+
+### Tests + mocks
+
+- `TestMutatorFacet` mock USD18 setters renamed to match storage.
+- `HelperTest` selector list refreshed for the renamed reward-reporter views.
+- `InteractionRewardsCoverageTest`, `InteractionRewardCapTest`, `RewardOAppDeliveryTest`, `CrossChainRewardPlumbingTest`, `MetricsFacetTest` all consume the renamed identifiers.
+- `MockRewardOApp` aligns with the new IRewardOApp surface.
+
+### Frontend consumers
+
+- `useTreasuryMetrics` interface fields `treasuryBalanceUsd / totalFeesCollectedUsd / feesLast24hUsd / feesLast7dUsd` → `*Numeraire`. Public-Dashboard adapters updated.
+- `useInteractionRewardEntries` field `perDayUSD18` → `perDayNumeraire18`.
+- `InteractionRewardsClaim` row renderer reads `perDayNumeraire18`; local `totalContribUsd18` → `totalContribNumeraire18`.
+- `PublicDashboard` `MetricCard.onchainFn` label "getTotalInterestEarnedUSD" updated to "getTotalInterestEarnedNumeraire".
+- `useCombinedChainsStats` comment block describing `getProtocolStats` shape refreshed.
+
+### Verification
+
+- `forge build` clean (src + tests).
+- Targeted suites green: ProfileFacet 50/50, KYCTierEnforcement 6/6, MetricsFacet 22/22, InteractionRewardsCoverage 21/21, RewardOAppDelivery 6/6, CrossChainRewardPlumbing 58/58, InteractionRewardCap 9/9, StakingAndInteractionRewards 10/10, StakingRewardsCoverage 7/7.
+- Full no-invariants regression: 1534 passing / 45 pre-existing branch failures (all reproducible on the unrenamed tree — `LenderResolutionFailed`, `FunctionDoesNotExist`, `EscrowUpgradeRequired`, scenario-log mismatches, and a `liqThresholdBps == 0` HF expectation; none are rename-induced and none surface as `Member not found` / `Undeclared identifier`).
+- `frontend/src/contracts/abis/` re-exported via `exportFrontendAbis.sh` (full Diamond surface).
+- `vaipakam-keeper-bot/src/abis/` re-exported via `exportAbis.sh` (MetricsFacet, RiskFacet, LoanFacet, OfferFacet — keeper bot consumes the renamed `getTotalInterestEarnedNumeraire` selector via JSON; bot's TS code doesn't call it directly so no TS edits needed there).
+- Frontend `tsc -b --noEmit` clean.
+
+### What still says "USD" — and why
+
+- **Notification-fee VPFI conversion** still computes `feeNumeraire → USD-equivalent → VPFI` because the Phase-1 fixed VPFI rate is anchored to ETH/USD × `0.001 ETH/VPFI`. Storage holds the fee in numeraire-units; the conversion divides by ETH/USD inside `LibNotificationFee.vpfiAmountForFee`.
+- **KYC threshold storage values** — operator-supplied in USD-units for the retail deploy; industrial fork can set EUR / XAU values at rotation. The numeraire abstraction affects WHAT GOVERNANCE PROVIDES, not what the comparison computes against. The threshold getters `getKycTier0Threshold` / `getKycTier1Threshold` return the raw numeraire-units value; comparison sites are now numeraire-vs-numeraire (post-B1) so the cast to USD that briefly existed during USD-Sweep Phase 1+2+3 was removed.
+- **Doc comments mentioning "USD by post-deploy default"** are intentional — they tell the reader that the default deploy ships with a USD numeraire even though the math is unit-agnostic.
+
+### Operator notes — none new
+
+This sweep is identifier-renames only. No setter / getter selector breaks beyond the four already documented:
+
+- `getTotalInterestEarnedUSD()` → `getTotalInterestEarnedNumeraire()`
+- `getLocalChainInterestUSD18()` → `getLocalChainInterestNumeraire18()`
+- `getKnownGlobalInterestUSD18()` → `getKnownGlobalInterestNumeraire18()`
+- (B1 already renamed `getNumeraireOracle()` → `getNumeraireSymbol()` + `getEthNumeraireFeed()`.)
+
+Frontend ABI sync covers all four. Pre-mainnet operators who script
+selector calldata against these views need to refresh their scripts.

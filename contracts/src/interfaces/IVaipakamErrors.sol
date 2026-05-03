@@ -150,7 +150,7 @@ interface IVaipakamErrors {
     error InteractionPoolExhausted();
     /// @notice The caller's next claimable day does not yet have the
     ///         finalized global denominator broadcast into this chain's
-    ///         `knownGlobal*InterestUSD18` slots. Per docs/TokenomicsTechSpec.md
+    ///         `knownGlobal*InterestNumeraire18` slots. Per docs/TokenomicsTechSpec.md
     ///         §4a the local fallback path is gone — claimers wait for the
     ///         Base aggregator to finalize and broadcast the day.
     /// @param dayId First day on the claim cursor that is missing a global.

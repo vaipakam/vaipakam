@@ -33,7 +33,7 @@
   },
   {
     "type": "function",
-    "name": "getKnownGlobalInterestUSD18",
+    "name": "getKnownGlobalInterestNumeraire18",
     "inputs": [
       {
         "name": "dayId",
@@ -43,12 +43,12 @@
     ],
     "outputs": [
       {
-        "name": "globalLenderUSD18",
+        "name": "globalLenderNumeraire18",
         "type": "uint256",
         "internalType": "uint256"
       },
       {
-        "name": "globalBorrowerUSD18",
+        "name": "globalBorrowerNumeraire18",
         "type": "uint256",
         "internalType": "uint256"
       },
@@ -62,7 +62,7 @@
   },
   {
     "type": "function",
-    "name": "getLocalChainInterestUSD18",
+    "name": "getLocalChainInterestNumeraire18",
     "inputs": [
       {
         "name": "dayId",
@@ -72,12 +72,12 @@
     ],
     "outputs": [
       {
-        "name": "lenderUSD18",
+        "name": "lenderNumeraire18",
         "type": "uint256",
         "internalType": "uint256"
       },
       {
-        "name": "borrowerUSD18",
+        "name": "borrowerNumeraire18",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -127,12 +127,12 @@
         "internalType": "uint256"
       },
       {
-        "name": "globalLenderUSD18",
+        "name": "globalLenderNumeraire18",
         "type": "uint256",
         "internalType": "uint256"
       },
       {
-        "name": "globalBorrowerUSD18",
+        "name": "globalBorrowerNumeraire18",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -222,13 +222,13 @@
         "internalType": "uint32"
       },
       {
-        "name": "lenderUSD18",
+        "name": "lenderNumeraire18",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
       },
       {
-        "name": "borrowerUSD18",
+        "name": "borrowerNumeraire18",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
@@ -253,13 +253,13 @@
         "internalType": "uint256"
       },
       {
-        "name": "globalLenderUSD18",
+        "name": "globalLenderNumeraire18",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
       },
       {
-        "name": "globalBorrowerUSD18",
+        "name": "globalBorrowerNumeraire18",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"

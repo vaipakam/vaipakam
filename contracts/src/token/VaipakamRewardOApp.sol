@@ -17,14 +17,14 @@ import {LZGuardianPausable} from "./LZGuardianPausable.sol";
  *         accounting messages between Vaipakam Diamonds (spec §4a).
  *
  * @dev Two complementary message flows travel through this contract:
- *        - REPORT   (mirror → Base): `(dayId, lenderUSD18, borrowerUSD18)`
+ *        - REPORT   (mirror → Base): `(dayId, lenderNumeraire18, borrowerNumeraire18)`
  *          emitted when `RewardReporterFacet.closeDay` fires on a
  *          non-canonical Diamond. On arrival at the Base-side OApp we
  *          forward into `RewardAggregatorFacet.onChainReportReceived`
  *          tagged with `_origin.srcEid` so the aggregator knows which
  *          chain reported.
- *        - BROADCAST (Base → mirrors): `(dayId, globalLenderUSD18,
- *          globalBorrowerUSD18)` emitted once Base finalizes the day.
+ *        - BROADCAST (Base → mirrors): `(dayId, globalLenderNumeraire18,
+ *          globalBorrowerNumeraire18)` emitted once Base finalizes the day.
  *          Each mirror OApp delivers the pair into
  *          `RewardReporterFacet.onRewardBroadcastReceived`.
  *
@@ -142,8 +142,8 @@ contract VaipakamRewardOApp is
     event ReportSent(
         bytes32 indexed guid,
         uint256 indexed dayId,
-        uint256 lenderUSD18,
-        uint256 borrowerUSD18
+        uint256 lenderNumeraire18,
+        uint256 borrowerNumeraire18
     );
 
     /// @notice Emitted once per broadcast destination.
@@ -151,8 +151,8 @@ contract VaipakamRewardOApp is
         bytes32 indexed guid,
         uint32 indexed dstEid,
         uint256 indexed dayId,
-        uint256 globalLenderUSD18,
-        uint256 globalBorrowerUSD18
+        uint256 globalLenderNumeraire18,
+        uint256 globalBorrowerNumeraire18
     );
 
     /// @notice Emitted when an inbound REPORT is forwarded to the Base
@@ -160,8 +160,8 @@ contract VaipakamRewardOApp is
     event ReportReceived(
         uint32 indexed srcEid,
         uint256 indexed dayId,
-        uint256 lenderUSD18,
-        uint256 borrowerUSD18
+        uint256 lenderNumeraire18,
+        uint256 borrowerNumeraire18
     );
 
     /// @notice Emitted when an inbound BROADCAST is forwarded to a
@@ -169,8 +169,8 @@ contract VaipakamRewardOApp is
     event BroadcastReceived(
         uint32 indexed srcEid,
         uint256 indexed dayId,
-        uint256 globalLenderUSD18,
-        uint256 globalBorrowerUSD18
+        uint256 globalLenderNumeraire18,
+        uint256 globalBorrowerNumeraire18
     );
 
     // ─── Errors ─────────────────────────────────────────────────────────────
@@ -288,8 +288,8 @@ contract VaipakamRewardOApp is
     /// @inheritdoc IRewardOApp
     function sendChainReport(
         uint256 dayId,
-        uint256 lenderUSD18,
-        uint256 borrowerUSD18,
+        uint256 lenderNumeraire18,
+        uint256 borrowerNumeraire18,
         address payable refundAddress
     ) external payable override onlyDiamond whenNotPaused {
         if (baseEid == 0) revert BaseEidNotConfigured();
@@ -297,8 +297,8 @@ contract VaipakamRewardOApp is
         bytes memory payload = abi.encode(
             MSG_TYPE_REPORT,
             dayId,
-            lenderUSD18,
-            borrowerUSD18
+            lenderNumeraire18,
+            borrowerNumeraire18
         );
 
         MessagingReceipt memory receipt = _lzSend(
@@ -309,14 +309,14 @@ contract VaipakamRewardOApp is
             refundAddress
         );
 
-        emit ReportSent(receipt.guid, dayId, lenderUSD18, borrowerUSD18);
+        emit ReportSent(receipt.guid, dayId, lenderNumeraire18, borrowerNumeraire18);
     }
 
     /// @inheritdoc IRewardOApp
     function broadcastGlobal(
         uint256 dayId,
-        uint256 globalLenderUSD18,
-        uint256 globalBorrowerUSD18,
+        uint256 globalLenderNumeraire18,
+        uint256 globalBorrowerNumeraire18,
         address payable refundAddress
     ) external payable override onlyDiamond whenNotPaused {
         uint256 n = broadcastDestinationEids.length;
@@ -325,8 +325,8 @@ contract VaipakamRewardOApp is
         bytes memory payload = abi.encode(
             MSG_TYPE_BROADCAST,
             dayId,
-            globalLenderUSD18,
-            globalBorrowerUSD18
+            globalLenderNumeraire18,
+            globalBorrowerNumeraire18
         );
 
         uint256 spent;
@@ -354,8 +354,8 @@ contract VaipakamRewardOApp is
                 receipt.guid,
                 dstEid,
                 dayId,
-                globalLenderUSD18,
-                globalBorrowerUSD18
+                globalLenderNumeraire18,
+                globalBorrowerNumeraire18
             );
 
             unchecked {
@@ -377,15 +377,15 @@ contract VaipakamRewardOApp is
     /// @inheritdoc IRewardOApp
     function quoteSendChainReport(
         uint256 dayId,
-        uint256 lenderUSD18,
-        uint256 borrowerUSD18
+        uint256 lenderNumeraire18,
+        uint256 borrowerNumeraire18
     ) external view override returns (uint256 nativeFee) {
         if (baseEid == 0) revert BaseEidNotConfigured();
         bytes memory payload = abi.encode(
             MSG_TYPE_REPORT,
             dayId,
-            lenderUSD18,
-            borrowerUSD18
+            lenderNumeraire18,
+            borrowerNumeraire18
         );
         MessagingFee memory fee = _quote(
             baseEid,
@@ -399,8 +399,8 @@ contract VaipakamRewardOApp is
     /// @inheritdoc IRewardOApp
     function quoteBroadcastGlobal(
         uint256 dayId,
-        uint256 globalLenderUSD18,
-        uint256 globalBorrowerUSD18
+        uint256 globalLenderNumeraire18,
+        uint256 globalBorrowerNumeraire18
     ) external view override returns (uint256 nativeFee) {
         uint256 n = broadcastDestinationEids.length;
         if (n == 0) return 0;
@@ -408,8 +408,8 @@ contract VaipakamRewardOApp is
         bytes memory payload = abi.encode(
             MSG_TYPE_BROADCAST,
             dayId,
-            globalLenderUSD18,
-            globalBorrowerUSD18
+            globalLenderNumeraire18,
+            globalBorrowerNumeraire18
         );
 
         uint256 sum;
@@ -632,8 +632,8 @@ interface IRewardAggregatorIngress {
     function onChainReportReceived(
         uint32 sourceEid,
         uint256 dayId,
-        uint256 lenderUSD18,
-        uint256 borrowerUSD18
+        uint256 lenderNumeraire18,
+        uint256 borrowerNumeraire18
     ) external;
 }
 
@@ -642,7 +642,7 @@ interface IRewardAggregatorIngress {
 interface IRewardReporterIngress {
     function onRewardBroadcastReceived(
         uint256 dayId,
-        uint256 globalLenderUSD18,
-        uint256 globalBorrowerUSD18
+        uint256 globalLenderNumeraire18,
+        uint256 globalBorrowerNumeraire18
     ) external;
 }

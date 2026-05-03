@@ -167,8 +167,8 @@ async function fetchChain(chain: DeployedChain): Promise<ChainStatsRow> {
       })) as T;
     };
     // `getProtocolStats` returns 8 fields (totalUniqueUsers, activeLoansCount,
-    // activeOffersCount, totalLoansEverCreated, totalVolumeLentUSD,
-    // totalInterestEarnedUSD, defaultRateBps, averageAPR) in one call — no
+    // activeOffersCount, totalLoansEverCreated, totalVolumeLentNumeraire,
+    // totalInterestEarnedNumeraire, defaultRateBps, averageAPR) in one call — no
     // multicall needed. `getProtocolTVL` and `getLoanSummary` are both O(1)
     // counter-backed reads, so three parallel requests per chain is fine.
     const [tvlResult, statsResult, loanSummary] = await Promise.all([
