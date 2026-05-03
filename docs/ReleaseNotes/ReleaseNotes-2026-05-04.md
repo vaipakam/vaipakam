@@ -434,7 +434,117 @@ section in the Advanced User Guide.
 ```
 ✓ PR-1 — Storage + chokepoint refactor + counter + min-display
 ✓ PR-2 — Staking-checkpoint min-clamp
-✓ PR-3 — recoverStuckERC20 + disown + EIP-712 verifier (this entry)
-  PR-4 — frontend /recover page + Advanced User Guide section
+✓ PR-3 — recoverStuckERC20 + disown + EIP-712 verifier (earlier today)
+✓ PR-4 — frontend /recover page + Advanced User Guide section (this entry)
   PR-5 — post-deploy analytics labeling
 ```
+
+---
+
+## T-054 PR-4 — Frontend recovery page
+
+The user-facing surface for the recovery flow is in. A new page at
+`/app/recover` collects a token + declared source + amount, gates
+the wallet popup behind a "type CONFIRM" modal, signs the EIP-712
+acknowledgment, submits the transaction, and surfaces one of three
+outcomes: success / banned / error.
+
+### Discoverability gating (per design)
+
+The page is **NOT** linked from anywhere in the main app navigation
+— not the sidebar, not the Asset Viewer, not the Dashboard, not the
+Basic User Guide, not the FAQ, not the Footer. The only entry path
+is a deep link from a new "Stuck-Token Recovery" section in the
+**Advanced** User Guide, after the user has read explanations of:
+
+- What "stuck token" means (and the two ways tokens get stuck —
+  user mistake vs third-party dust attack)
+- Taint poisoning and why it's not Vaipakam's concern internally
+- When NOT to recover (key insight: don't recover dust you didn't
+  send — declaring a sanctioned source locks your escrow)
+- When TO recover (you sent it yourself, you control the source)
+- The recovery flow steps
+- The `disown` event-only function for compliance audit trail
+
+The page itself injects `<meta name="robots" content="noindex,nofollow">`
+on mount and removes it on unmount, so the URL doesn't get indexed
+by search engines. The Asset Viewer still does NOT show the
+recovery option even when unsolicited dust is present — by design,
+to avoid tempting naive users.
+
+### Page UX
+
+| Section | Behaviour |
+|---|---|
+| Token contract input | Live-resolves symbol + decimals + computes `unsolicited = max(0, balanceOf(escrow) - tracked)` and shows max-recoverable hint |
+| Source address input | Plain hex; small caption explains it must be a wallet the user controls |
+| Amount input | Typed with token decimals; Review button disabled until amount ≤ unsolicited |
+| Standing warning panel | Three-bullet warning visible always: sanctions consequence, hardcoded recipient, don't recover what you didn't send |
+| Review modal | Shows declared values, full warning text, "type CONFIRM" gate to enable Sign button |
+| Sign step | Reads live `recoveryNonce(user)` + `recoveryAckTextHash()` from the contract; constructs EIP-712 typed-data via wagmi's `signTypedData`; matches the on-chain `RECOVERY_TYPEHASH` exactly |
+| Submit + receipt | Submits the recovery tx; awaits receipt; decodes events from logs to determine outcome |
+| Success surface | Green panel with amount + symbol + tx-explorer link |
+| Banned surface | Red panel with the declared source + auto-unlock explanation + tx-explorer link |
+| Error surface | Generic panel with the wallet/RPC error message; "Try again" button to retry |
+
+### Outcome detection from event logs
+
+The contract's recovery function does NOT revert on the sanctioned-
+source path — it returns successfully so the ban-state writes
+persist. The frontend distinguishes outcomes by inspecting which
+event was emitted in the receipt:
+
+- `StuckERC20Recovered` → success path
+- `EscrowBannedFromRecoveryAttempt` → ban-as-outcome path
+
+Both events carry the same `(user, token, declaredSource)` indexed
+topics, so the decoder differentiates by `eventName` only. Logs
+emitted by addresses other than the diamond are skipped.
+
+### Routing
+
+Route added inside `<AppLayout>` at `app/recover` so the user keeps
+the standard app shell (sidebar, top bar, wallet menu). Despite the
+shell, the page is intentionally not surfaced in the sidebar nav.
+
+### i18n
+
+`escrowRecover.*` group propagated across all 10 locales
+(en/ar/de/es/fr/hi/ja/ko/ta/zh). Translations are best-effort
+native phrasings — the EN keys carry the load-bearing meaning
+(particularly the warning copy that gates the user's understanding
+of the sanctions consequence). Pre-launch the protocol can refine
+these with native reviewers without changing any code.
+
+### Verification
+
+- New page: [`frontend/src/pages/EscrowRecover.tsx`](frontend/src/pages/EscrowRecover.tsx).
+- Wired into routing: [`frontend/src/App.tsx`](frontend/src/App.tsx) at `/app/recover`.
+- Advanced User Guide section appended:
+  [`frontend/src/content/userguide/Advanced.en.md`](frontend/src/content/userguide/Advanced.en.md).
+- i18n: `escrowRecover.*` group in 10 locale files.
+- Frontend `tsc -b --noEmit` clean.
+
+### What's still EN-only
+
+The Advanced User Guide markdown was extended in English only. The 9
+non-EN locale variants (`Advanced.{ar,de,es,fr,hi,ja,ko,ta,zh}.md`)
+fall back to English for the new "Stuck-Token Recovery" section
+until translated. Pre-launch can absorb this; post-launch the
+section can be translated alongside any other UG content updates.
+
+### Where this leaves T-054
+
+```
+✓ PR-1 — Storage + chokepoint refactor + counter + min-display
+✓ PR-2 — Staking-checkpoint min-clamp
+✓ PR-3 — recoverStuckERC20 + disown + EIP-712 verifier
+✓ PR-4 — frontend /recover page + Advanced User Guide section (this entry)
+  PR-5 — post-deploy analytics labeling
+```
+
+T-054 is functionally complete. PR-5 is operational (label-
+submission to Chainalysis / TRM Labs / Elliptic / Etherscan /
+Arkham + verification on the deploy chains) — captured in the
+existing `docs/ops/AnalyticsLabelRegistration.md` runbook, not a
+code PR.

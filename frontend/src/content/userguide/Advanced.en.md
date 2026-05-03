@@ -1050,3 +1050,119 @@ asking price. A buyer completes the sale; you can cancel
 before the sale fills. Optionally delegatable to a keeper
 holding the "complete loan sale" permission; the initiate
 step itself stays user-only.
+
+---
+
+## Stuck-Token Recovery
+
+This section covers an EDGE CASE most users will never need.
+Read all of it before clicking the recovery link at the
+bottom — declaring an incorrect source can lock your escrow
+under the protocol's sanctions policy.
+
+<a id="stuck-recovery.what"></a>
+
+### What "stuck token" means
+
+Your per-user escrow proxy is internal protocol storage. It
+is NOT a deposit address. Every protocol-supported deposit
+flows through Vaipakam's facet entry points, which pull
+funds from your wallet to your escrow as part of an offer
+creation, loan acceptance, or stake operation. Tokens that
+arrive at the escrow OUTSIDE that flow — a direct
+`IERC20.transfer` from a wallet or a CEX withdrawal that
+copy-pasted your escrow address — sit there without
+protocol bookkeeping. The Asset Viewer hides them by
+showing only the protocol-tracked balance.
+
+Two ways tokens get stuck:
+
+1. **You sent them yourself.** You copied your escrow address
+   (from the Dashboard or a block explorer) into a CEX
+   withdrawal field or a wallet's send-tokens form, and
+   submitted. The tokens landed in your escrow without going
+   through the protocol's deposit path.
+
+2. **A third party sent them ("dust attack").** Someone
+   transferred a small amount to your escrow from a flagged
+   wallet, hoping to associate your address with their
+   reputation. This is a real attack vector against
+   high-profile addresses on permissionless chains.
+
+<a id="stuck-recovery.taint-poisoning"></a>
+
+### About "taint poisoning"
+
+If the third-party sender is on a sanctions list, generic
+on-chain analytics tools may flag your escrow as
+"sanctions-adjacent" even though you never touched the
+incoming tokens. There is no on-chain way to undo this — the
+transfer event is permanent. Vaipakam's INTERNAL
+bookkeeping is unaffected (we track only protocol-mediated
+deposits, dust never enters our counter), so your loans /
+stake / claims continue to work normally. But external tools
+that don't understand our accounting may surface warnings.
+
+<a id="stuck-recovery.dont-recover"></a>
+
+### When NOT to recover
+
+If you did NOT send the tokens yourself, **do not recover
+them**. Recovering requires you to declare the sender's
+address. If that address is on the sanctions list, your
+escrow gets locked under the protocol's sanctions policy
+until the source is de-listed from the oracle.
+
+Tokens you didn't send are not yours. Recovering them by
+declaring a "clean" address you don't actually own is also
+a bad idea — the protocol can't verify the declaration
+on-chain, but external oracle tooling may disagree later.
+
+The safe move is to ignore unsolicited dust. It does not
+affect your protocol balance or any active loan / offer.
+
+<a id="stuck-recovery.when-recover"></a>
+
+### When TO recover
+
+You sent the tokens yourself by mistake, you control the
+source wallet, and you know the source is not on any
+sanctions list (your own EOA, a CEX hot wallet you withdrew
+from, etc.).
+
+<a id="stuck-recovery.flow"></a>
+
+### Recovery flow
+
+1. Visit the [recovery page](/app/recover).
+2. Enter the token contract address, the source you sent
+   from, and the amount.
+3. Review the on-screen acknowledgment carefully.
+4. Type "CONFIRM" to enable signing.
+5. Sign the EIP-712 acknowledgment in your wallet.
+6. Submit the transaction.
+
+Two outcomes:
+
+- **Source clean** → tokens return to your EOA.
+- **Source flagged** → tokens stay in escrow, your escrow
+  gets locked under the protocol's sanctions policy. The
+  lock auto-lifts if the address is later removed from the
+  sanctions oracle.
+
+<a id="stuck-recovery.disown"></a>
+
+### Disowning unsolicited tokens (compliance audit trail)
+
+If you want a public on-chain record asserting that some
+token balance in your escrow is NOT yours, the protocol
+provides a `disown(token)` function. It emits an event
+(`TokenDisowned`) and changes nothing else — tokens stay in
+escrow as before. Useful in compliance disputes if a CEX or
+regulator asks "did you receive these funds?": you can point
+to the on-chain event.
+
+The disown function is exposed only via direct contract call
+for now; the Vaipakam frontend does not surface it as a
+button. Use a block-explorer "Write Contract" UI or a
+contract-interaction tool to call it.

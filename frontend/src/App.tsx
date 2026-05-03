@@ -15,6 +15,7 @@ import KeeperSettings from './pages/KeeperSettings';
 import Alerts from './pages/Alerts';
 import Allowances from './pages/Allowances';
 import EscrowAssets from './pages/EscrowAssets';
+import EscrowRecover from './pages/EscrowRecover';
 import DataRights from './pages/DataRights';
 import BuyVPFI from './pages/BuyVPFI';
 import BuyVPFIMarketing from './pages/BuyVPFIMarketing';
@@ -131,6 +132,12 @@ function pageRoutes(): ReactElement {
         <Route path="alerts" element={<Alerts />} />
         <Route path="allowances" element={<Allowances />} />
         <Route path="escrow" element={<EscrowAssets />} />
+        {/* T-054 PR-4 — stuck-token recovery. INTENTIONALLY HIDDEN
+            from main nav. Reachable only via the deep link in the
+            Advanced User Guide. The page itself injects
+            `<meta name="robots" content="noindex,nofollow">` so the
+            URL doesn't get indexed by search engines. */}
+        <Route path="recover" element={<EscrowRecover />} />
         <Route path="data-rights" element={<DataRights />} />
         <Route path="buy-vpfi" element={<BuyVPFI />} />
         {/* Admin-only Protocol Console mounted INSIDE the app shell.
