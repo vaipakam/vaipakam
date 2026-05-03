@@ -238,7 +238,7 @@ Reward-claiming UX:
 - the old `/app/rewards` route and sidebar entry should remain retired unless a later approved design reintroduces a combined rewards hub
 - staking-rewards cards should show pending VPFI, lifetime claimed VPFI reconstructed from `StakingRewardsClaimed` events, and neutral chrome when pending is zero
 - interaction-rewards cards should show pending VPFI, lifetime claimed VPFI reconstructed from `InteractionRewardsClaimed` events, and an expandable `Contributing loans` list
-- contributing-loan rows should link to Loan Details and describe the user's USD-denominated participation contribution, not pretend that a precise per-loan VPFI amount exists
+- contributing-loan rows should link to Loan Details and describe the user's numeraire-denominated participation contribution, not pretend that a precise per-loan VPFI amount exists
 - when a global interaction-reward denominator has not yet been broadcast to the local chain, the Claim Center should show a waiting state for that day rather than offering a transaction that would revert
 - after a successful claim, the UI should:
   - show a success state with the exact amount claimed
@@ -331,7 +331,7 @@ Governance-configuration visibility:
 - loan-screen surfaces should reflect live on-chain governance parameters where those parameters affect the user-facing position
 - `/admin` should include a loan-default grace schedule control in the Risk category. Public / non-admin viewers may see the read-only schedule, while admin-wallet viewers can edit the six rows inline and propose the resulting `setGraceBuckets` transaction to Safe.
 - the grace-schedule admin UI should display per-slot duration and grace bounds next to inputs, validate before proposal, and show a clear badge when compile-time defaults are in force because no custom schedule is stored
-- `/admin` should include a `Periodic Interest Payment` / numeraire configuration category with cards for `periodicInterestEnabled`, `numeraireSwapEnabled`, `numeraireSymbol`, `ethNumeraireFeed`, `minPrincipalForFinerCadence`, `notificationFee`, KYC thresholds where that surface is active, and `preNotifyDays`. Admin actions should compose Safe transactions; non-admin viewers may inspect the current values.
+- `/admin` should include a `Periodic Interest Payment` / numeraire configuration category with cards for `periodicInterestEnabled`, `numeraireSwapEnabled`, `numeraireSymbol`, `ethNumeraireFeed`, PAD settings (`predominantDenominator`, `predominantDenominatorSymbol`, `ethPadFeed`, `padNumeraireRateFeed`), `minPrincipalForFinerCadence`, `notificationFee`, KYC thresholds where that surface is active, and `preNotifyDays`. Admin actions should compose Safe transactions; non-admin viewers may inspect the current values.
 - the principal-threshold, notification-fee, KYC-threshold, and feed-side cards should display the active numeraire and safe range. A numeraire rotation should be presented as one atomic `setNumeraire(ethNumeraireFeed, numeraireChainlinkDenominator, numeraireSymbol, pythCrossCheckFeedId, minPrincipalForFinerCadence, notificationFee, kycTier0Threshold, kycTier1Threshold)` proposal rather than as independent feed / symbol / threshold / fee edits.
 - each loan-detail page should include a `Lender Discount` card for the current lender when lender discount data is relevant
 - the `Lender Discount` card should show the effective time-weighted VPFI discount computed from the current open-loan window and the on-chain discount curve
@@ -619,12 +619,12 @@ Required top-level metrics:
 
 - the very top summary row should show protocol-wide combined metrics aggregated from all supported chains at a high level
 - this combined top section is intended only for headline totals and should not replace the per-chain drill-down below
-- `Total Value Locked (TVL)` in USD, including visible `24h` and `7d` change percentages
+- `Total Value Locked (TVL)` in the active numeraire, including visible `24h` and `7d` change percentages
 - TVL breakdown covering ERC-20 collateral, NFT collateral, and escrow balances where meaningful
 - active loans, shown as both count and total value
 - currently active offers and lifetime offer totals at the combined all-chains level in the global header
-- total volume lent in USD, lifetime
-- total interest earned by lenders in USD, lifetime
+- total volume lent in the active numeraire, lifetime
+- total interest earned by lenders in the active numeraire, lifetime
 - `Total NFTs rented`, shown in the combined all-chains summary
 
 Per-chain analytics section:

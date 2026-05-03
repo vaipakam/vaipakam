@@ -99,7 +99,7 @@ Emission schedule based on the `23,000,000` initial mint:
 Exact daily reward formula:
 
 ```solidity
-rawReward = (1/2) * (userDailyInterestUSD / totalDailyInterestUSD)
+rawReward = (1/2) * (userDailyInterestNumeraire / totalDailyInterestNumeraire)
             * currentAnnualRate
             * (1/365)
             * 23_000_000
@@ -133,13 +133,13 @@ Distribution rules:
   - pending claimable VPFI from `previewInteractionRewards(user)`
   - lifetime claimed VPFI reconstructed from `InteractionRewardsClaimed` events
   - an expandable list of contributing loans, with lender-side and borrower-side participation shown separately when both exist on the same loan
-- the contributing-loans list should report USD-denominated participation (`perDayUSD18`, total contribution, day window, processed / forfeited state) and link each row to Loan Details; it should not imply a precise per-loan VPFI amount because rewards are normalized by the protocol-wide daily denominator
+- the contributing-loans list should report numeraire-denominated participation (`perDayNumeraire18`, total contribution, day window, processed / forfeited state) and link each row to Loan Details; it should not imply a precise per-loan VPFI amount because rewards are normalized by the protocol-wide daily denominator
 - if a day is waiting for the global denominator to be finalized or broadcast to the local chain, the frontend should show a waiting state instead of submitting a claim that would revert
 
 Public read surface:
 
 - `previewInteractionRewards(user)` returns the current pending VPFI headline for the active chain
-- `getUserRewardEntries(user)` returns the full `RewardEntry[]` array from storage, including loan ID, side, start / end day, per-day USD contribution, processed state, and forfeited state
+- `getUserRewardEntries(user)` returns the full `RewardEntry[]` array from storage, including loan ID, side, start / end day, per-day numeraire contribution, processed state, and forfeited state
 - `InteractionRewardsClaimed(user, fromDay, toDay, amount)` events are the source for lifetime-claimed totals in the UI and log-index cache
 - the Dashboard may summarize interaction pending + lifetime claimed alongside staking rewards, but Claim Center remains the canonical interaction-reward claim surface
 
@@ -153,7 +153,7 @@ Phase note:
 
 Problem:
 
-- the reward formula's denominator `totalDailyInterestUSD` is **protocol-wide**, not per-chain
+- the reward formula's denominator `totalDailyInterestNumeraire` is **protocol-wide**, not per-chain
 - because the Vaipakam core protocol is deployed as **independent Diamond instances** on `Base`, `Ethereum`, `Polygon`, `Arbitrum`, and `Optimism` (see §7), each chain only sees its own local interest flow
 - computing rewards against a local-only denominator would give a lender on a quiet chain an outsized share and dilute a lender on a busy chain — this breaks the "one protocol, one reward curve" property that justifies the 30% allocation
 
@@ -161,7 +161,7 @@ Topology:
 
 - `Base` is the **canonical reward chain** — consistent with the VPFI OFT canonical rule and the §7 canonical-address rule
 - every non-canonical Diamond (mirror chains) acts as a **reporter**: at day-close it publishes its daily interest total to `Base` over LayerZero
-- `Base` acts as the **aggregator**: it accumulates chain totals into `dailyGlobalInterestUSD` and then **broadcasts that single number back** to every mirror
+- `Base` acts as the **aggregator**: it accumulates chain totals into `dailyGlobalInterestNumeraire` and then **broadcasts that single number back** to every mirror
 - `claimInteractionRewards()` runs **locally on each chain** using the mirror's own user-level interest data and the broadcast global denominator — users never have to leave their lending chain to claim once the relevant loan has closed
 
 Day-close emission contract (mirror → Base):
@@ -169,33 +169,33 @@ Day-close emission contract (mirror → Base):
 - trigger: the first interaction on day `D+1 UTC` (lazy rollover) or a permissionless poke function `closeDay(D)` if no traffic rolls the day naturally
 - payload:
   - `dayId` (uint64, UTC day number)
-  - `chainInterestUSD` (uint256, 1e18-scaled, sum of `lenderInterestEarned + borrowerInterestPaid` on that chain for day `D`)
+  - `chainInterestNumeraire18` (uint256, 1e18-scaled, sum of `lenderInterestEarned + borrowerInterestPaid` on that chain for day `D`, quoted in the active numeraire)
 - transport: LayerZero `OApp.send(...)` from the mirror Diamond to the `Base` Diamond, peered via `setPeer`
 - each `(dayId, sourceEid)` pair must be idempotent on the `Base` side — duplicate messages for the same day are rejected
 
 Finalization on Base:
 
 - storage key: `dailyChainInterest[dayId][sourceEid] -> uint256`
-- finalization rule: `dailyGlobalInterestUSD[dayId]` is finalized once all expected mirror eids have reported for `dayId`, OR after a **4-hour grace window** past `dayId + 1` UTC, whichever comes first
+- finalization rule: `dailyGlobalInterestNumeraire[dayId]` is finalized once all expected mirror eids have reported for `dayId`, OR after a **4-hour grace window** past `dayId + 1` UTC, whichever comes first
 - any late-arriving report is recorded for audit but does **not** retroactively change a finalized global — this preserves claim determinism
-- finalization event: `DailyGlobalInterestFinalized(dayId, dailyGlobalInterestUSD, participatingEids)`
+- finalization event: `DailyGlobalInterestFinalized(dayId, dailyGlobalInterestNumeraire, participatingEids)`
 
 Broadcast back to mirrors (Base → mirror):
 
-- once finalized, `Base` sends the finalized `dailyGlobalInterestUSD[dayId]` to every mirror via `OApp.send(...)`
+- once finalized, `Base` sends the finalized `dailyGlobalInterestNumeraire[dayId]` to every mirror via `OApp.send(...)`
 - mirrors store it as `knownGlobalInterest[dayId]` — this is the denominator used by their local `claimInteractionRewards()` once the relevant loan-close gate is satisfied
 - a claim for `dayId` reverts locally if `knownGlobalInterest[dayId] == 0` (not yet broadcast)
 
 lzRead alternative (pull model):
 
-- instead of a push-broadcast, `Base` can issue an `lzRead` query to each mirror at day-close to pull `chainInterestUSD` directly — a single quorum read returns all chain totals in one message
+- instead of a push-broadcast, `Base` can issue an `lzRead` query to each mirror at day-close to pull `chainInterestNumeraire18` directly — a single quorum read returns all chain totals in one message
 - once `lzRead` is GA on all Phase 1 chains, this replaces the mirror-side push path with a single aggregator-driven pull
-- the mirror-side broadcast of `dailyGlobalInterestUSD` still happens either way — `lzRead` only covers the inbound leg
+- the mirror-side broadcast of `dailyGlobalInterestNumeraire` still happens either way — `lzRead` only covers the inbound leg
 
 Reward pool funding on mirrors:
 
 - the interaction-reward VPFI pool (`69,000,000` cap) is held on `Base` (canonical mint chain)
-- per-day per-chain VPFI payout budget = `(dailyChainInterest[D][eid] / dailyGlobalInterestUSD[D]) × dailyPool[D]`
+- per-day per-chain VPFI payout budget = `(dailyChainInterest[D][eid] / dailyGlobalInterestNumeraire[D]) × dailyPool[D]`
 - the `Base` treasury bridges that budget to each mirror via the existing VPFI OFT path as part of finalization
 - mirror-side `claimInteractionRewards()` draws from the local VPFI reward vault after the relevant loan has closed; no synthetic IOUs, no cross-chain claim hops
 
@@ -215,8 +215,8 @@ Failure modes and safety:
 
 Diamond surface (Pahse 1 to add):
 
-- `RewardReporterFacet` (on every mirror): `closeDay(dayId)`, `_sendChainInterest(...)` (private OApp send), view `chainInterestUSD(dayId)`
-- `RewardAggregatorFacet` (on Base only): `lzReceive` handler for inbound mirror reports, `finalizeDay(dayId)` (permissionless once the grace window elapses), view `dailyGlobalInterestUSD(dayId)`
+- `RewardReporterFacet` (on every mirror): `closeDay(dayId)`, `_sendChainInterest(...)` (private OApp send), view `getLocalChainInterestNumeraire18(dayId)`
+- `RewardAggregatorFacet` (on Base only): `lzReceive` handler for inbound mirror reports, `finalizeDay(dayId)` (permissionless once the grace window elapses), view `getKnownGlobalInterestNumeraire18(dayId)`
 - `ClaimFacet` (on every chain): `claimInteractionRewards(dayId[])` using `knownGlobalInterest[dayId]` as denominator
 
 Testing requirements beyond §9:

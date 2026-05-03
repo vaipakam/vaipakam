@@ -656,14 +656,50 @@ To support the swap-failover flow end-to-end:
 
 ETH (in practice WETH) is the protocol's quote asset for liquidity
 classification because it is the deepest cross-chain venue. Pool depth
-is converted to USD via the active chain's Chainlink `ETH/USD` feed.
+is converted to PAD-units via the active chain's Chainlink `ETH/PAD`
+feed.
 
-For ERC-20 pricing:
+For ERC-20 pricing, `OracleFacet._primaryPrice` returns numeraire-quoted
+prices through a 3-step flow:
 
-- preferred path: direct Chainlink `asset/USD` feed
-- fallback: `asset/ETH × ETH/USD` (only when no direct USD feed exists)
-- WETH special case: priced directly from `ETH/USD`; no circular
-  WETH/WETH liquidity check
+1. **Retail short-circuit (PAD == numeraire == USD)** — read
+   `asset/PAD` directly via Chainlink Feed Registry. Single read, no
+   FX conversion. WETH special case reads `ETH/PAD` directly with
+   no circular WETH/WETH liquidity check.
+2. **Per-asset operator override (industrial-fork only)** — when
+   `assetNumeraireDirectFeedOverride[asset]` is set non-zero, read
+   that Chainlink AggregatorV3 directly as the numeraire-quoted
+   price and skip the PAD pivot entirely. Operator vouches the
+   override is verified-rated; the protocol does not Pyth-cross-check
+   overrides.
+3. **PAD pivot (industrial-fork, no override)** — read `asset/PAD`
+   (Chainlink Feed Registry, falls back to `asset/ETH × ETH/PAD` for
+   assets without a direct feed) then multiply by the
+   `PAD/<numeraire>` FX rate (direct `padNumeraireRateFeed` if set,
+   else derived from `ETH/<numeraire> ÷ ETH/PAD`).
+
+**Why PAD-first instead of asset/<numeraire>-first**: Chainlink's
+feed-rating metadata (🟢 verified / 🟡 monitored / 🔴 specialized)
+is **off-chain** — `AggregatorV3Interface` doesn't expose a `rating()`
+view. Direct asset/<numeraire> Chainlink feeds for non-USD pairs are
+rare AND frequently 🟡-rated when they exist. Routing all pricing
+through PAD (`Denominations.USD` by post-deploy default) biases toward
+verified-rated feeds **structurally**, without requiring operators
+to manually curate per-asset feed quality. The FX-multiply cost is
+bounded; the trust gain is real.
+
+**Predominantly Available Denominator (PAD)** is governance-tunable
+via the atomic four-arg `setPredominantDenominator(denom, symbol,
+ethPadFeed, padNumeraireRateFeed)` setter. Per-asset overrides are
+governance-set via `setAssetNumeraireDirectFeedOverride(asset, feed)`.
+Both setters are admin-gated and emit indexed events for off-chain
+monitoring.
+
+**Pre-T-048 deploy compatibility**: when `predominantDenominator ==
+address(0)`, `_primaryPrice` falls back to the legacy
+numeraire-direct path (`asset/<numeraireChainlinkDenominator>` via
+Feed Registry, then `asset/ETH × ETH/<numeraire>` fallback).
+Existing deploys keep working unchanged until the operator opts in.
 
 ### 8.2 Hybrid Peg-Aware Staleness
 

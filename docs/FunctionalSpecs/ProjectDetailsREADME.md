@@ -173,9 +173,9 @@ The chain-indexer and public analytics support layer may also fan out across the
 The platform distinguishes between liquid and illiquid assets, which affects how defaults and LTV calculations are handled.
 
 - **Liquid Asset Criteria:** For Phase 1, an ERC-20 token is considered "Liquid" on a given network only if:
-  1.  It has a usable on-chain price path on the active network: preferably a direct Chainlink `asset/USD` feed, and only if that is unavailable a fallback `asset/ETH × ETH/USD` path.
+  1.  It has a usable on-chain price path on the active network: preferably through the configured PAD / numeraire oracle path, with direct vetted `asset/<numeraire>` overrides allowed where governance has explicitly configured them.
   2.  It has sufficient on-chain DEX liquidity on the active network through at least one configured v3-style concentrated-liquidity AMM factory for `asset/WETH`. The deploy-time factory set may include Uniswap V3, PancakeSwap V3, and SushiSwap V3, and the check treats those venues with OR logic: one sufficiently deep venue is enough.
-  3.  The protocol converts the pool's raw liquidity to USD using the active network's Chainlink `ETH/USD` feed and requires at least the configured minimum depth threshold before the asset is treated as liquid.
+  3.  The protocol converts the pool's raw liquidity to the active numeraire using the configured ETH/PAD and ETH/<numeraire> oracle path and requires at least the configured minimum depth threshold before the asset is treated as liquid.
   4.  Liquidity must be judged only from the current active network's own oracle and pool availability. Ethereum mainnet must not be consulted as a reference or fallback network for this decision. If the active network fails the liquidity check, the asset is treated as illiquid on that network and the protocol must not perform any additional mainnet verification to override that result.
 - **Illiquid Assets:**
   - All ERC-721 and ERC-1155 NFTs are considered "Illiquid" by the platform for valuation and LTV purposes. Their platform-assessed value is $0.
@@ -193,8 +193,11 @@ The platform distinguishes between liquid and illiquid assets, which affects how
   - **WETH Special Case:** WETH itself is priced directly from `ETH/<numeraire>` and is treated as the quote asset for liquidity purposes; the protocol does not perform a circular `WETH/WETH` liquidity check.
   - **Pyth Cross-Check Redundancy:** A single Pyth feed per chain may sanity-check the Chainlink ETH / quote-asset feed used by the primary path. This feed is a cross-oracle divergence check, not the protocol's governance numeraire selector. If the Pyth feed is unset, stale, low-confidence, or non-positive it soft-skips; if it is configured and diverges beyond the governance-bounded threshold, pricing must revert fail-closed with a typed cross-check-divergence error.
   - **Oracle-Layer Governance Numeraire:** The active protocol numeraire is defined by oracle-layer inputs: `ethNumeraireFeed` for Chainlink ETH/<numeraire>, `numeraireChainlinkDenominator` for Feed Registry direct lookups, `numeraireSymbol` for symbol-derived Tellor / API3 / DIA queries, and `pythCrossCheckFeedId` for the optional Pyth ETH/<numeraire> cross-check. Empty `numeraireSymbol` falls back to `usd` so existing USD deployments behave unchanged.
+  - **Predominantly Available Denominator (PAD):** To avoid silently relying on sparsely covered or lower-rated non-USD Chainlink feeds after a non-USD numeraire rotation, the primary oracle path may pivot through a governance-configured PAD. The post-deploy default PAD is USD. When PAD equals the active numeraire, pricing collapses to the ordinary direct `asset/<numeraire>` read. When PAD differs, the protocol should read `asset/PAD` using Chainlink's dense feed set, then convert PAD to the active numeraire through either a direct `PAD/<numeraire>` feed or a derived `ETH/<numeraire> ÷ ETH/PAD` rate.
+  - **PAD Configuration:** PAD is configured atomically through `setPredominantDenominator(newDenominator, newSymbol, newEthPadFeed, newPadNumeraireRateFeed)`. `predominantDenominator`, `predominantDenominatorSymbol`, and `ethPadFeed` are load-bearing; `padNumeraireRateFeed` is optional because the protocol can derive the FX rate when the direct feed is unavailable. Deploy scripts should configure PAD before opening offers.
+  - **Direct Numeraire Feed Overrides:** Operators may opt a specific asset into a vetted direct `asset/<numeraire>` Chainlink feed through `setAssetNumeraireDirectFeedOverride(asset, feed)`. This is an explicit governance-curated override; the protocol does not infer feed quality from off-chain Chainlink rating metadata.
   - **Comparison Unit Policy:** `OracleFacet.getAssetPrice` should return prices in the active numeraire. LTV / HF math is ratio-based, so the chosen unit cancels out. Absolute-value comparison sites such as KYC threshold checks compare numeraire-priced asset values against numeraire-denominated stored thresholds directly. A separate `INumeraireOracle` / `numeraireToUsdRate1e18()` boundary-conversion interface is not part of the active design.
-  - **Secondary Oracle Query Numeraire:** Tellor, API3, and DIA secondary checks should query `asset/<numeraire>` using `numeraireSymbol` rather than hardcoding `asset/USD`. If secondary coverage is sparse for a future non-USD numeraire, the protocol may add a separate predominantly-available denominator fallback in a later ticket; until then, unavailable secondaries soft-skip according to the existing quorum rule.
+  - **Secondary Oracle Query Numeraire:** Tellor, API3, and DIA secondary checks should query consistently with the configured price path and symbol helpers rather than hardcoding `asset/USD`. PAD-side secondary-query enrichment may be extended in a follow-up; unavailable secondaries continue to soft-skip according to the existing quorum rule.
   - **USD-Specific Stable Peg Check:** Stablecoin peg validation may remain USD-bound for assets explicitly registered as USD stables because the safety question is whether the asset still tracks `$1`. This is separate from the protocol-wide numeraire used for ordinary asset pricing.
   - **Bounded Oracle Knobs:** Pyth oracle address, Pyth cross-check feed id, Pyth staleness, Pyth cross-check deviation, Pyth confidence, secondary-oracle staleness, and secondary-oracle deviation setters must be range-bounded. Invalid values should revert through the shared `ParameterOutOfRange(bytes32 name, uint256 value, uint256 min, uint256 max)` error so admin misconfiguration is visible and easy to audit.
     - `pythOracle`: non-zero contract address, or zero to disable.
@@ -204,6 +207,8 @@ The platform distinguishes between liquid and illiquid assets, which affects how
     - `pythConfidenceMaxBps`: 50 to 500 bps, default 100.
     - `secondaryOracleMaxDeviationBps`: 100 to 2000 bps.
     - `secondaryOracleMaxStaleness`: 60 seconds to 29 hours.
+    - `predominantDenominator`: non-zero Chainlink Feed Registry denomination.
+    - `ethPadFeed`: non-zero Chainlink ETH/<PAD> feed.
   - **Peg-Aware Stable Staleness:** Stable and reference feeds may remain valid out to the protocol's longer stable staleness ceiling only when the reported price remains within tolerance of either the implicit USD `$1` peg or a governance-registered fiat / commodity reference such as `EUR/USD`, `JPY/USD`, or `XAU/USD`.
 - **Liquidity Determination Process & On-Chain Record:**
   1.  **Frontend Assessment:** The frontend interface should attempt to assess asset liquidity by checking the active network only: a valid price path and the presence of a sufficiently deep configured v3-style concentrated-liquidity AMM `asset/WETH` pool. If the active network fails the liquidity test, the frontend must treat the asset as illiquid on that network and stop there; it must not perform any Ethereum-mainnet fallback verification and must not redirect the user to another network.
@@ -1098,7 +1103,7 @@ For clarity and implementation consistency, every preclose or early-withdrawal o
 - NFT state transitions
 - revert conditions
 - behavior if the linked offer is cancelled, expires, or is front-run by another state change
-- whether duplicated sanctions / country / KYC / USD-valuation logic is sourced from a shared internal library rather than copied across facets
+- whether duplicated sanctions / country / KYC / numeraire-valuation logic is sourced from a shared internal library rather than copied across facets
 - whether temporary or transitional loan cleanup is sourced from a shared internal helper / library rather than manual repeated cleanup logic
 - which standardized protocol constants are used for time and financial math instead of magic literals
 - which custom errors are emitted for distinct failure cases so off-chain clients can diagnose failures cleanly
@@ -1226,7 +1231,7 @@ The VPFI governance token will be distributed to align incentives and encourage 
     - borrower-side interaction rewards are earned only on clean full repayment
     - the daily denominator is **protocol-wide global daily interest**, not local-chain-only interest
     - non-canonical chain deployments report their finalized daily interest totals to canonical `Base` via LayerZero messaging
-    - canonical `Base` aggregates those reports into one `dailyGlobalInterestUSD` value and broadcasts the finalized denominator back to every supported chain
+    - canonical `Base` aggregates those reports into one `dailyGlobalInterestNumeraire` value and broadcasts the finalized denominator back to every supported chain
     - users still claim locally on their active lending chain; cross-chain messaging is used only to synchronize the global denominator and related reward funding, not to make the loan lifecycle cross-chain
     - once the `69,000,000` VPFI interaction-reward pool is exhausted, this category stops emitting
   - **Staking Rewards:** `24%` (`55,200,000`)
@@ -1376,6 +1381,7 @@ A comprehensive user dashboard is essential for managing activities on Vaipakam.
   - **Periodic Interest Configuration:** `ConfigFacet` should expose `periodicInterestEnabled`, `numeraireSwapEnabled`, `numeraireSymbol`, `ethNumeraireFeed`, `minPrincipalForFinerCadence`, `notificationFee`, KYC tier thresholds, and `preNotifyDays` through individual getters and admin-gated setters where applicable. `periodicInterestEnabled` and `numeraireSwapEnabled` default to `false`, so the feature and cross-numeraire rotation ship dormant until governance intentionally enables them.
   - **Atomic Numeraire Setter:** `setNumeraire(ethNumeraireFeed, numeraireChainlinkDenominator, numeraireSymbol, pythCrossCheckFeedId, minPrincipalForFinerCadence, notificationFee, kycTier0Threshold, kycTier1Threshold)` is the only path to rotate the active numeraire. It must update every oracle-side input that produces numeraire-quoted prices and every numeraire-denominated stored value together so no intermediate state can compare a threshold or fee denominated in one numeraire against prices quoted in another. The load-bearing Chainlink feed, Feed Registry denominator, and symbol inputs must be non-zero / non-empty; `pythCrossCheckFeedId` may be zero to disable the Pyth cross-check. Zero values for value knobs should follow the protocol's reset-to-default convention, while each non-zero value remains subject to its own bounded validator.
   - **Within-Numeraire Tuning:** `setMinPrincipalForFinerCadence`, `setNotificationFee`, and `updateKYCThresholds` remain available for ordinary tuning within the current numeraire and should not require `numeraireSwapEnabled`. Cross-numeraire rotation through `setNumeraire` does require the kill switch to be enabled.
+  - **PAD Configuration:** `OracleAdminFacet` or the relevant admin facet should expose `setPredominantDenominator`, `getPredominantDenominator`, `getPredominantDenominatorSymbol`, `getEthPadFeed`, `getPadNumeraireRateFeed`, and per-asset direct-feed override read/write helpers. PAD settings should be set atomically per chain and should be part of deployment pre-flight before the market opens.
   - **Admin-Configurable Default Grace Schedule:** `ConfigFacet` should expose the six-slot grace-bucket table, per-slot bounds, `setGraceBuckets`, and `clearGraceBuckets`. `setGraceBuckets` must reject wrong row counts, non-zero catch-all duration, non-monotonic duration rows, and values outside the per-slot or global bounds through typed range errors where applicable. Frontend admin tooling should show whether compile-time defaults are currently in force and compose Safe transactions rather than signing directly from the app.
   - **OApp Guardian Pause:** LayerZero OApps and VPFI bridge-related contracts should allow Guardian or Owner pause, but unpause must remain Owner / Timelock controlled.
   - **LayerZero Payload Sanity:** Reward OApp packets should enforce the exact expected payload size before `abi.decode`; malformed, undersized, or oversized packets must revert with a typed error carrying observed and expected sizes so off-chain monitoring can correlate the incident with LayerZero traces.
@@ -1424,7 +1430,7 @@ Highest priority public metrics should include:
 
 ```solidity
 function getProtocolTVL() external view returns (
-    uint256 tvlInUSD,
+    uint256 tvlInNumeraire,
     uint256 erc20CollateralTVL,
     uint256 nftCollateralTVL
 );
@@ -1434,8 +1440,8 @@ function getProtocolStats() external view returns (
     uint256 activeLoansCount,
     uint256 activeOffersCount,
     uint256 totalLoansEverCreated,
-    uint256 totalVolumeLentUSD,
-    uint256 totalInterestEarnedUSD,
+    uint256 totalVolumeLentNumeraire,
+    uint256 totalInterestEarnedNumeraire,
     uint256 defaultRateBps,           // e.g. 250 = 2.5%
     uint256 averageAPR
 );
@@ -1443,7 +1449,7 @@ function getProtocolStats() external view returns (
 function getUserCount() external view returns (uint256);
 function getActiveLoansCount() external view returns (uint256);
 function getActiveOffersCount() external view returns (uint256);
-function getTotalInterestEarnedUSD() external view returns (uint256);
+function getTotalInterestEarnedNumeraire() external view returns (uint256);
 ```
 
 These functions are intended to support the Vaipakam public analytics dashboard and external TVL / protocol-tracker integrations.
@@ -1470,13 +1476,13 @@ Treasury, fee, and revenue views should include:
 
 ```solidity
 function getTreasuryMetrics() external view returns (
-    uint256 treasuryBalanceUSD,
-    uint256 totalFeesCollectedUSD,    // 1% interest + 1% late fees
-    uint256 feesLast24hUSD,
-    uint256 feesLast7dUSD
+    uint256 treasuryBalanceNumeraire,
+    uint256 totalFeesCollectedNumeraire,    // 1% interest + 1% late fees
+    uint256 feesLast24hNumeraire,
+    uint256 feesLast7dNumeraire
 );
 
-function getRevenueStats(uint256 days) external view returns (uint256 totalRevenueUSD);
+function getRevenueStats(uint256 days) external view returns (uint256 totalRevenueNumeraire);
 ```
 
 These functions are especially useful for treasury transparency, tokenomics reporting, listings, and public revenue dashboards.
@@ -1494,7 +1500,7 @@ function getActiveOffersPaginated(uint256 offset, uint256 limit) external view r
 function getActiveOffersByAsset(address asset, uint256 offset, uint256 limit) external view returns (uint256[] memory offerIds);
 
 function getLoanSummary() external view returns (
-    uint256 totalActiveLoanValueUSD,
+    uint256 totalActiveLoanValueNumeraire,
     uint256 averageLoanDuration,
     uint256 averageLTV
 );
@@ -1510,7 +1516,7 @@ For ERC-4907-style rentals and escrow analytics, the protocol should expose:
 function getEscrowStats() external view returns (
     uint256 totalNFTsInEscrow,
     uint256 activeRentalsCount,
-    uint256 totalRentalVolumeUSD
+    uint256 totalRentalVolumeNumeraire
 );
 
 function getNFTRentalDetails(uint256 tokenId) external view returns (/* rental struct */);
@@ -1537,7 +1543,7 @@ function getIlliquidAssets() external view returns (address[] memory);
 function isAssetSupported(address token) external view returns (bool);
 ```
 
-These functions help external dashboards and integrations understand current support, liquidity classification, and collateral risk configuration on the active network. The risk profile helper does not return a live USD price; consumers that need pricing should use the dedicated oracle / price read surface instead of inferring it from this tuple.
+These functions help external dashboards and integrations understand current support, liquidity classification, and collateral risk configuration on the active network. The risk profile helper does not return a live numeraire price; consumers that need pricing should use the dedicated oracle / price read surface instead of inferring it from this tuple.
 
 Additional oracle-hardening views should expose active per-feed overrides and configured secondary-oracle settings where practical, including:
 
@@ -1554,6 +1560,12 @@ function getSecondaryOracleConfig() external view returns (
     uint16 maxDeviationBps,
     uint40 maxStaleness
 );
+
+function getPredominantDenominator() external view returns (address);
+function getPredominantDenominatorSymbol() external view returns (bytes32);
+function getEthPadFeed() external view returns (address);
+function getPadNumeraireRateFeed() external view returns (address);
+function getAssetNumeraireDirectFeedOverride(address asset) external view returns (address);
 ```
 
 These readbacks let operators, auditors, and frontend safety surfaces verify that high-value assets are using the intended freshness floors and secondary-oracle deviation bounds.
@@ -1564,9 +1576,9 @@ For portfolio tracking and wallet integrations, the protocol should expose:
 
 ```solidity
 function getUserSummary(address user) external view returns (
-    uint256 totalCollateralUSD,
-    uint256 totalBorrowedUSD,
-    uint256 availableToClaimUSD,
+    uint256 totalCollateralNumeraire,
+    uint256 totalBorrowedNumeraire,
+    uint256 availableToClaimNumeraire,
     uint256 healthFactor,             // >1 = safe
     uint256 activeLoanCount
 );
@@ -1585,8 +1597,8 @@ For auditors, regulators, researchers, and public transparency tooling, the prot
 ```solidity
 function getProtocolHealth() external view returns (
     uint256 utilizationRateBps,
-    uint256 totalCollateralUSD,
-    uint256 totalDebtUSD,
+    uint256 totalCollateralNumeraire,
+    uint256 totalDebtNumeraire,
     bool isPaused
 );
 
@@ -1807,7 +1819,7 @@ The following features are planned for Phase 1:
 
 - **Purpose:** If a borrower's liquid collateral has significantly appreciated in value, or if they have over-collateralized initially, they may be able to withdraw some collateral.
 - **Condition:** The withdrawal must not cause the loan's "Health Factor" to drop below a safe threshold (e.g., 150%).
-  - Health Factor defined as: `(Value of Liquid Collateral in USDC) / (Value of Borrowed Amount in USDC)`
+  - Health Factor defined as: `(Value of Liquid Collateral in active numeraire) / (Value of Borrowed Amount in active numeraire)`
   - The minimum Health Factor (e.g., 150%) must be maintained post-withdrawal.
 - **Process:** Borrower requests withdrawal of a specific amount of collateral. The system checks if the Health Factor remains above the threshold. If so, the excess collateral is released.
 
