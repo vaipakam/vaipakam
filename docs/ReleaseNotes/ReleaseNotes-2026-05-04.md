@@ -290,3 +290,151 @@ PR-3 is now unblocked — the counter is comprehensive (every
 deposit / withdrawal site routes through the chokepoint) and the
 yield-bearing balance is clamped, so the recovery cap formula
 `max(0, balanceOf - tracked)` is structurally correct.
+
+---
+
+## T-054 PR-3 — Stuck-ERC20 recovery flow
+
+The recovery contract surface is in. ERC-20 tokens that landed in a
+user's escrow proxy via direct `IERC20.transfer` (outside the
+protocol's deposit flow — copy-paste accidents from a CEX
+withdrawal, dust attacks, etc.) now have a clean exit path that
+structurally cannot reach into protocol-managed collateral / claims
+/ stake.
+
+### `EscrowFactoryFacet.recoverStuckERC20(token, declaredSource, amount, deadline, signature)`
+
+User-facing entry point. Pulls `amount` of `token` from the user's
+escrow proxy back to the user's EOA. Recipient is hardcoded — no
+caller-supplied recipient parameter. Properties:
+
+- **Cap = `max(0, balanceOf(escrow, token) - protocolTrackedEscrowBalance[user][token])`.**
+  The arithmetic is the load-bearing safety property — recovery
+  cannot drain protocol-managed balance no matter what other check
+  is bypassed.
+- **EIP-712 acknowledgment** with replay protection. The user signs
+  a typed-data payload bound to the diamond + chainId; the contract
+  consumes a per-user nonce on success so the same signature can't
+  be re-submitted.
+- **Sanctions oracle check on `declaredSource`.** Three outcomes:
+  - **Source clean** → recovery succeeds, tokens return to EOA,
+    nonce bumps.
+  - **Source flagged** → escrow gets BANNED (state writes commit;
+    the function returns rather than reverts so the ban persists).
+    Tokens stay in escrow. The ban is source-tracked, not
+    persistent: it auto-unlocks if the source is later de-listed
+    from the oracle. Same Tier-1 / Tier-2 sanctioned-address
+    semantics the protocol already enforces — Tier-1 entry points
+    revert, Tier-2 close-outs (repay, mark default, etc.) stay
+    open so unflagged counterparties can be made whole.
+  - **Oracle unset / oracle reverts** → fail-safe revert
+    (`SanctionsOracleUnavailable`). Recovery refuses to proceed
+    until the oracle is reachable.
+- **EIP-712 ack-text hash.** The signed payload includes a
+  `keccak256` of the canonical warning text the user sees on the
+  recovery page. A future change to the wording bumps the constant
+  and invalidates old signatures — historical signatures can't be
+  used against new warning text.
+
+### `EscrowFactoryFacet.disown(token)`
+
+Event-only. Emits `TokenDisowned(user, token, observedAmount,
+blockNumber)` with no state change. Used as a public on-chain
+assertion in compliance disputes ("the dust isn't mine and I never
+touched it"). Not sanctions-gated — even a banned escrow can call
+disown because the action is purely informational.
+
+### Sanctions semantics extension
+
+`LibVaipakam.isSanctionedAddress(who)` now checks `escrowBannedSource[who]`
+in addition to the direct oracle lookup. When the field is non-zero,
+the function delegates the question to the source's CURRENT oracle
+status — so banning a user via recovery doesn't write a permanent
+flag, it just records "treat this user as sanctioned for as long as
+the source they declared IS sanctioned." Auto-unlock is implicit in
+the oracle-delegation pattern; no separate clear-ban admin path is
+needed.
+
+### Discoverability gating (deferred to PR-4)
+
+The recovery flow is intentionally narrow: a user who got dust-
+poisoned by a third party should NOT trip the sanctions ban by
+accidentally clicking "recover" on dust they didn't send. PR-4 will
+hide the recovery page from the main UI entirely — only reachable
+via a deep link from the Advanced User Guide section, with
+`<meta name="robots" content="noindex,nofollow">` and a "type
+CONFIRM" modal in front of the wallet popup. The contract itself
+doesn't enforce discovery — the policy is at the frontend layer.
+
+### Storage additions
+
+- `mapping(address => uint256) recoveryNonce` — per-user EIP-712
+  replay-protection nonce.
+- `mapping(address => address) escrowBannedSource` — per-user
+  source-tracked recovery ban marker. Zero means no ban.
+
+### New errors
+
+`RecoveryAmountExceedsUnsolicited`, `RecoveryAmountZero`,
+`RecoveryDeadlineExpired`, `RecoverySignatureInvalid`,
+`RecoveryUserHasNoEscrow`, `EscrowBannedDueToSanctionedSource`
+(unused in current design — kept for explicit-revert variants),
+`SanctionsOracleUnavailable`, `EscrowAlreadyBanned`.
+
+### New events
+
+- `StuckERC20Recovered(user, token, declaredSource, amount, nonce)`
+  — happy-path recovery completed.
+- `EscrowBannedFromRecoveryAttempt(user, token, declaredSource, amount)`
+  — recovery flow concluded with the ban-as-outcome (source
+  flagged, tokens stayed).
+- `TokenDisowned(user, token, observedAmount, blockNumber)` —
+  user formally disowns unsolicited token balance without
+  recovering it.
+
+### Verification
+
+- 17 new tests in `EscrowRecoveryTest.t.sol` covering: happy path
+  (clean source); partial-amount recovery; cap enforcement
+  (amount exceeds unsolicited; cannot touch protocol-tracked);
+  sanctioned-source ban-as-outcome (no revert, ban persists,
+  nonce bumps); auto-unlock when source de-listed; banned escrow
+  cannot recover further; replay protection (nonce mismatch);
+  expired deadline; bad signature; zero amount; user has no
+  escrow; oracle unset; oracle reverts; disown happy path; disown
+  with no escrow; disown with no unsolicited dust.
+- Full no-invariants regression: **1613 passing / 0 failed / 5 skipped**
+  (up from 1596; net +17 from new tests).
+- `forge build` clean.
+- ABIs re-exported (frontend + keeper-bot).
+
+### What's next (T-054 PR-4)
+
+Frontend `/recover` page + Advanced User Guide section. The
+contract surface is complete; PR-4 wires the user-facing UX:
+
+- New page at `/recover` (`noindex, nofollow`).
+- Form: token contract + declared source + amount.
+- "Type CONFIRM" modal pre-empting the wallet popup.
+- EIP-712 payload construction matching the on-chain digest
+  (frontend reads `recoveryDomainSeparator()` + `recoveryAckTextHash()`
+  + `recoveryNonce(user)` to populate fields).
+- Wallet shows the structured message; user signs.
+- Tx submission with the signature embedded in calldata.
+- Success surface: "X tokens returned to your wallet."
+- Banned surface: "Your escrow has been locked under our sanctions
+  policy because the declared source is on the sanctions list.
+  The lock auto-lifts if the source is removed from the oracle."
+
+Reachable only via a deep link from a new "Stuck-token recovery"
+section in the Advanced User Guide.
+
+### Where this leaves T-054
+
+```
+✓ PR-1 — Storage + chokepoint refactor + counter + min-display
+✓ PR-2 — Staking-checkpoint min-clamp
+✓ PR-3 — recoverStuckERC20 + disown + EIP-712 verifier (this entry)
+  PR-4 — frontend /recover page + Advanced User Guide section
+  PR-5 — post-deploy analytics labeling
+```

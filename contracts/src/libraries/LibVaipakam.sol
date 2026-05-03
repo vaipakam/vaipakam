@@ -2001,6 +2001,20 @@ library LibVaipakam {
         // GRACE_BUCKETS_MAX_LEN / GRACE_BUCKET_DAYS_MIN/MAX /
         // GRACE_SECONDS_MIN/MAX before any write.
         GraceBucket[] graceBuckets;
+        // ── Stuck-token recovery (T-054 PR-3) ──────────────────────
+        // Per-user replay-protection nonce for the EIP-712 recovery
+        // acknowledgment. Incremented on every successful
+        // `recoverStuckERC20` call so a previously-signed payload
+        // can't be re-submitted. See
+        // `docs/DesignsAndPlans/EscrowStuckRecoveryDesign.md` §5.
+        mapping(address => uint256) recoveryNonce;
+        // Per-user "this escrow declared a sanctioned source via the
+        // recovery flow" mapping. When set to a non-zero address, the
+        // sanctions check delegates to that source's CURRENT oracle
+        // status — so the ban auto-unlocks if the address is later
+        // de-listed without any on-chain action by us. Zero ⇒ no
+        // recovery-induced ban.
+        mapping(address => address) escrowBannedSource;
         // ── Escrow protocol-tracked balance counter (T-051 / T-054) ──
         // Per-(user, token) running counter of ERC-20 amount the
         // protocol has deposited into / withdrawn from the user's
@@ -3265,6 +3279,25 @@ library LibVaipakam {
     function isSanctionedAddress(address who) internal view returns (bool) {
         address oracle = storageSlot().sanctionsOracle;
         if (oracle == address(0)) return false;
+
+        // Recovery-induced ban (T-054 PR-3): if `who` previously
+        // declared a sanctioned source via the recovery flow, treat
+        // them as sanctioned for as long as that source IS still
+        // sanctioned. Source-tracked rather than persistent so the
+        // ban auto-unlocks if the underlying address is de-listed.
+        address bannedSource = storageSlot().escrowBannedSource[who];
+        if (bannedSource != address(0)) {
+            try ISanctionsList(oracle).isSanctioned(bannedSource) returns (bool sourceFlagged) {
+                if (sourceFlagged) return true;
+                // Else fall through: source de-listed → ban lifted →
+                // direct check on `who` decides.
+            } catch {
+                // Oracle call failed — fall through. Direct check on
+                // `who` retains the existing fail-open behaviour
+                // documented at the top of this block.
+            }
+        }
+
         try ISanctionsList(oracle).isSanctioned(who) returns (bool flagged) {
             return flagged;
         } catch {

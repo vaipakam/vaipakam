@@ -835,6 +835,16 @@
   },
   {
     "type": "error",
+    "name": "EscrowAlreadyBanned",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "EscrowBannedDueToSanctionedSource",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "EscrowDepositFailed",
     "inputs": []
   },
@@ -1243,6 +1253,31 @@
   },
   {
     "type": "error",
+    "name": "RecoveryAmountExceedsUnsolicited",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "RecoveryAmountZero",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "RecoveryDeadlineExpired",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "RecoverySignatureInvalid",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "RecoveryUserHasNoEscrow",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "RefinanceRequiresPeriodSettle",
     "inputs": [
       {
@@ -1282,6 +1317,11 @@
         "internalType": "address"
       }
     ]
+  },
+  {
+    "type": "error",
+    "name": "SanctionsOracleUnavailable",
+    "inputs": []
   },
   {
     "type": "error",

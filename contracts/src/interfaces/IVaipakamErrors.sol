@@ -30,6 +30,36 @@ interface IVaipakamErrors {
     error EscrowWithdrawFailed();
     error EscrowDepositFailed();
     error EscrowTransferFailed();
+    /// @dev Stuck-token recovery: caller passed an `amount` greater
+    ///      than `max(0, balanceOf(escrow, token) - tracked)`. The
+    ///      cap is the load-bearing safety property — recovery can
+    ///      never reach into protocol-tracked collateral / claims.
+    error RecoveryAmountExceedsUnsolicited();
+    /// @dev Stuck-token recovery: zero-amount call.
+    error RecoveryAmountZero();
+    /// @dev Stuck-token recovery: caller-supplied deadline already
+    ///      passed.
+    error RecoveryDeadlineExpired();
+    /// @dev Stuck-token recovery: signature does not recover to
+    ///      `msg.sender` for the supplied payload.
+    error RecoverySignatureInvalid();
+    /// @dev Stuck-token recovery: caller has no escrow proxy
+    ///      deployed — nothing to recover from.
+    error RecoveryUserHasNoEscrow();
+    /// @dev Stuck-token recovery: user declared a source address that
+    ///      the sanctions oracle flags. Their escrow has been LOCKED
+    ///      under the existing sanctioned-address Tier-1 / Tier-2
+    ///      semantics; the ban auto-unlocks when the address is
+    ///      de-listed from the oracle.
+    error EscrowBannedDueToSanctionedSource();
+    /// @dev Stuck-token recovery: sanctions oracle is currently
+    ///      unset OR returned an error. Fail-safe: refuse to execute
+    ///      until the oracle is reachable.
+    error SanctionsOracleUnavailable();
+    /// @dev Stuck-token recovery: caller's escrow is already locked
+    ///      under a previously-recorded sanctioned-source ban; the
+    ///      ban hasn't lifted (oracle still flags the source).
+    error EscrowAlreadyBanned();
     error TreasuryTransferFailed();
     error LoanInitiationFailed();
     error OfferCreationFailed();

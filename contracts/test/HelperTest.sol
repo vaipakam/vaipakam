@@ -296,7 +296,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](22);
+        selectors = new bytes4[](28);
         selectors[0] = EscrowFactoryFacet
             .initializeEscrowImplementation
             .selector;
@@ -324,6 +324,13 @@ contract HelperTest {
         selectors[19] = EscrowFactoryFacet.escrowDepositERC20From.selector;
         selectors[20] = EscrowFactoryFacet.recordEscrowDepositERC20.selector;
         selectors[21] = EscrowFactoryFacet.getProtocolTrackedEscrowBalance.selector;
+        // T-054 PR-3 — stuck-token recovery.
+        selectors[22] = EscrowFactoryFacet.recoverStuckERC20.selector;
+        selectors[23] = EscrowFactoryFacet.disown.selector;
+        selectors[24] = EscrowFactoryFacet.recoveryDomainSeparator.selector;
+        selectors[25] = EscrowFactoryFacet.recoveryAckTextHash.selector;
+        selectors[26] = EscrowFactoryFacet.recoveryNonce.selector;
+        selectors[27] = EscrowFactoryFacet.escrowBannedSource.selector;
         return selectors;
     }
 
@@ -773,7 +780,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](24);
+        selectors = new bytes4[](30);
         selectors[0] = EscrowFactoryFacet.initializeEscrowImplementation.selector;
         selectors[1] = EscrowFactoryFacet.getOrCreateUserEscrow.selector;
         selectors[2] = EscrowFactoryFacet.upgradeEscrowImplementation.selector;
@@ -799,6 +806,13 @@ contract HelperTest {
         selectors[21] = EscrowFactoryFacet.escrowDepositERC20From.selector;
         selectors[22] = EscrowFactoryFacet.recordEscrowDepositERC20.selector;
         selectors[23] = EscrowFactoryFacet.getProtocolTrackedEscrowBalance.selector;
+        // T-054 PR-3 — stuck-token recovery.
+        selectors[24] = EscrowFactoryFacet.recoverStuckERC20.selector;
+        selectors[25] = EscrowFactoryFacet.disown.selector;
+        selectors[26] = EscrowFactoryFacet.recoveryDomainSeparator.selector;
+        selectors[27] = EscrowFactoryFacet.recoveryAckTextHash.selector;
+        selectors[28] = EscrowFactoryFacet.recoveryNonce.selector;
+        selectors[29] = EscrowFactoryFacet.escrowBannedSource.selector;
         return selectors;
     }
 }

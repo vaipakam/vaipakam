@@ -9,6 +9,9 @@ import {UUPSUpgradeable} from "@openzeppelin/contracts/proxy/utils/UUPSUpgradeab
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {LibAccessControl, DiamondAccessControl} from "../libraries/LibAccessControl.sol";
+import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
+import {ISanctionsList} from "../interfaces/ISanctionsList.sol";
+import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 
 /**
  * @title EscrowFactoryFacet
@@ -25,7 +28,7 @@ import {LibAccessControl, DiamondAccessControl} from "../libraries/LibAccessCont
  *      For ERC721 rentals: Assumes operator approval for setUser (NFT may not be held in escrow).
  *      For ERC1155: Assumes tokens are held in escrow for operations.
  */
-contract EscrowFactoryFacet is DiamondAccessControl {
+contract EscrowFactoryFacet is DiamondAccessControl, IVaipakamErrors {
     /// @dev Restricts to cross-facet calls only (msg.sender == diamond address).
     /// External users calling through the diamond's fallback have msg.sender = their EOA/contract,
     /// while cross-facet calls via address(this).call(...) have msg.sender = address(this).
@@ -398,6 +401,368 @@ contract EscrowFactoryFacet is DiamondAccessControl {
         address token
     ) external view returns (uint256) {
         return LibVaipakam.storageSlot().protocolTrackedEscrowBalance[user][token];
+    }
+
+    // ─── Stuck-token recovery (T-054 PR-3) ───────────────────────────────────
+    //
+    // The receiver-hook hardening shipped 2026-05-03 blocks direct
+    // user-initiated NFT transfers into a per-user escrow. ERC-20 has
+    // no equivalent receiver-side hook (the EVM gives the recipient
+    // zero opportunity to reject), so unsolicited ERC-20 transfers
+    // CAN land in an escrow proxy. This recovery flow gives the
+    // legitimate self-deposit case ("I sent USDC to my escrow address
+    // by accident from my own wallet / a CEX") a clean exit, while
+    // structurally preventing the recovery path from touching
+    // protocol-managed collateral / claims.
+    //
+    // The cap is the load-bearing safety property:
+    //
+    //     unsolicited = max(0, balanceOf(escrow, token)
+    //                       - protocolTrackedEscrowBalance[user][token])
+    //     require(amount <= unsolicited)
+    //
+    // Counter math forbids draining beyond the truly-unsolicited
+    // delta no matter what other check is bypassed. The recipient is
+    // hardcoded to `msg.sender` (the escrow owner) so admin / malware
+    // / coordination attacks cannot redirect funds.
+    //
+    // Sanctioned-source declarations trigger an escrow ban under the
+    // protocol's existing sanctions semantics: every Tier-1 entry
+    // point starts reverting `SanctionedAddress` for the user's EOA.
+    // The ban tracks the SOURCE wallet's current oracle status — if
+    // the address is later de-listed, the ban auto-unlocks. See
+    // `LibVaipakam.isSanctionedAddress` for the source-tracked
+    // delegation logic.
+    //
+    // EIP-712 acknowledgment + nonce + deadline are replay-protected
+    // and provide a portable cryptographic record of explicit
+    // consent. Combined with a frontend `type CONFIRM` modal (PR-4),
+    // this is defense-in-depth for an action that could lock the
+    // user's escrow on a wrong declaration.
+    //
+    // Full design: docs/DesignsAndPlans/EscrowStuckRecoveryDesign.md.
+
+    /// @dev EIP-712 domain typehash. Domain name = "Vaipakam Recovery"
+    ///      (separate from any other domain the diamond uses, e.g. Permit2,
+    ///      so signatures can't be cross-domain replayed).
+    bytes32 private constant EIP712_DOMAIN_TYPEHASH =
+        keccak256(
+            "EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"
+        );
+    bytes32 private constant EIP712_DOMAIN_NAME_HASH = keccak256("Vaipakam Recovery");
+    bytes32 private constant EIP712_DOMAIN_VERSION_HASH = keccak256("1");
+
+    /// @dev Typehash for the recovery acknowledgment payload. The
+    ///      `ackTextHash` field anchors the signed payload to the
+    ///      exact warning text the user agreed to — a future change
+    ///      to the wording bumps the constant and breaks the old
+    ///      hash so historical signatures can't be used against new
+    ///      warning text.
+    bytes32 private constant RECOVERY_TYPEHASH =
+        keccak256(
+            "RecoveryAcknowledgment(address user,address token,address declaredSource,uint256 amount,uint256 nonce,uint256 deadline,bytes32 ackTextHash)"
+        );
+
+    /// @dev keccak256 of the canonical recovery warning text shown to
+    ///      the user in the wallet popup + confirmation modal. Constant
+    ///      so the contract can verify the user signed against the
+    ///      EXACT text we display, not a manipulated variant.
+    bytes32 internal constant RECOVERY_ACK_TEXT_HASH =
+        keccak256(
+            bytes(
+                "I am declaring that the source address belongs to a wallet I"
+                " control or authorized. If the source is later determined to"
+                " be on the sanctions list, my escrow will be locked under the"
+                " protocol's sanctions policy until the address is de-listed."
+                " I have read and understood the Advanced User Guide section"
+                " on stuck-token recovery."
+            )
+        );
+
+    /// @notice Emitted when stuck ERC-20 tokens are recovered to the
+    ///         user's EOA. Indexed for full audit trail post-deploy.
+    /// @param  user            Escrow owner whose escrow was tapped.
+    /// @param  token           ERC-20 contract being recovered.
+    /// @param  declaredSource  Address the user attested as the
+    ///                         transfer's origin.
+    /// @param  amount          Amount returned to `user` (recipient
+    ///                         is locked to the user themselves —
+    ///                         no parameter accepted).
+    /// @param  nonce           Recovery nonce consumed by this call.
+    event StuckERC20Recovered(
+        address indexed user,
+        address indexed token,
+        address indexed declaredSource,
+        uint256 amount,
+        uint256 nonce
+    );
+
+    /// @notice Emitted when a recovery declaration named a sanctions-
+    ///         flagged source — the user's escrow is now locked under
+    ///         the existing sanctions policy until the source address
+    ///         is de-listed from the oracle. The corresponding
+    ///         `recoverStuckERC20` call reverts immediately after
+    ///         emitting; tokens stay in the escrow.
+    event EscrowBannedFromRecoveryAttempt(
+        address indexed user,
+        address indexed token,
+        address indexed declaredSource,
+        uint256 amount
+    );
+
+    /// @notice Emitted by {disown} when the user formally asserts
+    ///         that some unsolicited token balance is not theirs.
+    ///         Event-only — changes no on-chain state. Provides a
+    ///         compliance audit trail useful for individual user
+    ///         disputes with CEXs / regulators ("here's the on-chain
+    ///         record of my disowning the suspicious deposit").
+    event TokenDisowned(
+        address indexed user,
+        address indexed token,
+        uint256 observedAmount,
+        uint256 blockNumber
+    );
+
+    /**
+     * @notice Recover ERC-20 tokens that landed in your escrow via a
+     *         direct `IERC20.transfer` (outside the protocol's
+     *         deposit flow). Funds are returned to YOU (the escrow
+     *         owner) — recipient is hardcoded, no parameter accepted.
+     *
+     * @dev Cap math is the load-bearing safety property:
+     *
+     *          unsolicited = max(0, balanceOf - tracked)
+     *          require(amount <= unsolicited)
+     *
+     *      No matter what other check is bypassed, the arithmetic
+     *      forbids draining beyond the truly-unsolicited delta.
+     *
+     *      DECLARING A SANCTIONED SOURCE LOCKS YOUR ESCROW. The user
+     *      attests via signature that the declared source is theirs.
+     *      If the sanctions oracle flags it, the protocol applies the
+     *      same Tier-1 / Tier-2 semantics as any other sanctioned
+     *      address — Tier-1 entry points (createOffer, acceptOffer,
+     *      VPFI deposit, this function, etc.) revert; Tier-2
+     *      close-outs (repay, mark default) stay open so the
+     *      unflagged counterparty can be made whole. Auto-unlocks
+     *      when the source is de-listed.
+     *
+     *      EIP-712 acknowledgment binds the call to the user's
+     *      explicit consent. Nonce + deadline are replay-protected.
+     *
+     *      Discoverability gating is enforced at the frontend — this
+     *      page is reachable ONLY via a deep link from the Advanced
+     *      User Guide (`noindex,nofollow`), so naive users dust-
+     *      poisoned by a third party can't accidentally trip the
+     *      sanctions-source ban.
+     */
+    function recoverStuckERC20(
+        address token,
+        address declaredSource,
+        uint256 amount,
+        uint256 deadline,
+        bytes calldata signature
+    ) external {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+
+        // 1. Sanctions check on caller. If the user is already
+        //    flagged (oracle or recovery-induced ban), Tier-1
+        //    semantics block recovery entirely.
+        LibVaipakam._assertNotSanctioned(msg.sender);
+
+        // 2. Validate basic args.
+        if (amount == 0) revert RecoveryAmountZero();
+        if (block.timestamp > deadline) revert RecoveryDeadlineExpired();
+
+        // 3. Validate the EIP-712 signature recovers to msg.sender.
+        //    `nonce` is captured pre-mutation; the increment AFTER
+        //    successful verification is the replay-protection gate.
+        uint256 nonce = s.recoveryNonce[msg.sender];
+        bytes32 digest = _recoveryDigest(
+            msg.sender,
+            token,
+            declaredSource,
+            amount,
+            nonce,
+            deadline
+        );
+        address signer = ECDSA.recover(digest, signature);
+        if (signer != msg.sender) revert RecoverySignatureInvalid();
+
+        // 4. Resolve user's escrow proxy.
+        address proxy = s.userVaipakamEscrows[msg.sender];
+        if (proxy == address(0)) revert RecoveryUserHasNoEscrow();
+
+        // 5. Cap = max(0, balanceOf - tracked). Recovery cannot drain
+        //    protocol-managed balance under any circumstance.
+        uint256 actualBal = IERC20(token).balanceOf(proxy);
+        uint256 trackedBal = s.protocolTrackedEscrowBalance[msg.sender][token];
+        uint256 unsolicited = actualBal > trackedBal
+            ? actualBal - trackedBal
+            : 0;
+        if (amount > unsolicited) revert RecoveryAmountExceedsUnsolicited();
+
+        // 6. Sanctions oracle check on declaredSource. Failure modes:
+        //      - Oracle unset: refuse (fail-safe).
+        //      - Oracle reverts: refuse (fail-safe).
+        //      - Source flagged: ban escrow + revert.
+        //      - Source clean: proceed.
+        address oracle = s.sanctionsOracle;
+        if (oracle == address(0)) revert SanctionsOracleUnavailable();
+        bool sourceFlagged;
+        try ISanctionsList(oracle).isSanctioned(declaredSource) returns (bool flagged) {
+            sourceFlagged = flagged;
+        } catch {
+            revert SanctionsOracleUnavailable();
+        }
+        if (sourceFlagged) {
+            // Record source-tracked ban; auto-unlocks if oracle later
+            // de-lists. Bump nonce so the same signature can't be
+            // replayed once the ban lifts. Tokens DO NOT MOVE — they
+            // stay in escrow under the sanctions-policy lock.
+            //
+            // Crucially, this branch RETURNS rather than reverting.
+            // A revert would roll back the ban-state writes, so the
+            // ban would never persist. The transaction succeeds at
+            // the EVM level — frontend reads the
+            // `EscrowBannedFromRecoveryAttempt` event to surface the
+            // banned-as-outcome to the user.
+            s.escrowBannedSource[msg.sender] = declaredSource;
+            unchecked {
+                s.recoveryNonce[msg.sender] = nonce + 1;
+            }
+            emit EscrowBannedFromRecoveryAttempt(
+                msg.sender,
+                token,
+                declaredSource,
+                amount
+            );
+            return;
+        }
+
+        // 7. Bump nonce BEFORE the external transfer. Standard
+        //    checks-effects-interactions ordering — even though the
+        //    proxy's `withdrawERC20` is trusted, we don't want the
+        //    nonce-bump to be reorderable across re-entry.
+        unchecked {
+            s.recoveryNonce[msg.sender] = nonce + 1;
+        }
+
+        // 8. Transfer to user's EOA via the proxy. Recipient is
+        //    hardcoded to msg.sender — no caller-supplied recipient.
+        (bool success, ) = proxy.call(
+            abi.encodeWithSelector(
+                VaipakamEscrowImplementation.withdrawERC20.selector,
+                token,
+                msg.sender,
+                amount
+            )
+        );
+        if (!success) revert ProxyCallFailed("Recovery withdraw failed");
+
+        emit StuckERC20Recovered(msg.sender, token, declaredSource, amount, nonce);
+    }
+
+    /**
+     * @notice Formally disown unsolicited tokens sitting in your
+     *         escrow without recovering them. Event-only — no state
+     *         change. Useful as a public on-chain assertion in
+     *         compliance disputes ("the dust isn't mine and I never
+     *         touched it").
+     *
+     * @dev    No funds move; the dust stays locked in the escrow as
+     *         before. Any future recovery for this token is
+     *         unaffected.
+     *
+     *         Sanctions-gated: a banned escrow can still call
+     *         `disown` because it's purely informational. Tier-2 in
+     *         the parlance of LibVaipakam's sanctions policy.
+     *
+     * @param token The ERC-20 token being disowned.
+     */
+    function disown(address token) external {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        address proxy = s.userVaipakamEscrows[msg.sender];
+        if (proxy == address(0)) revert RecoveryUserHasNoEscrow();
+        uint256 actualBal = IERC20(token).balanceOf(proxy);
+        uint256 trackedBal = s.protocolTrackedEscrowBalance[msg.sender][token];
+        uint256 observed = actualBal > trackedBal ? actualBal - trackedBal : 0;
+        emit TokenDisowned(msg.sender, token, observed, block.number);
+    }
+
+    /// @notice View — returns the EIP-712 domain separator for the
+    ///         recovery flow. Frontend reads this to construct the
+    ///         exact digest the wallet will sign over.
+    function recoveryDomainSeparator() external view returns (bytes32) {
+        return _domainSeparator();
+    }
+
+    /// @notice View — returns the keccak256 of the canonical warning
+    ///         text. Frontend MUST use the same text (verified by hash)
+    ///         when constructing the EIP-712 payload, or the
+    ///         signature won't recover correctly.
+    function recoveryAckTextHash() external pure returns (bytes32) {
+        return RECOVERY_ACK_TEXT_HASH;
+    }
+
+    /// @notice View — current recovery nonce for `user`. Frontend
+    ///         reads this to fill in the EIP-712 payload's `nonce`
+    ///         field.
+    function recoveryNonce(address user) external view returns (uint256) {
+        return LibVaipakam.storageSlot().recoveryNonce[user];
+    }
+
+    /// @notice View — the sanctioned source address that locked
+    ///         `user`'s escrow under recovery (zero ⇒ no recovery-
+    ///         induced ban). The ban auto-unlocks when this source
+    ///         is de-listed from the oracle, even though the storage
+    ///         field stays populated.
+    function escrowBannedSource(address user) external view returns (address) {
+        return LibVaipakam.storageSlot().escrowBannedSource[user];
+    }
+
+    /// @dev Compute the EIP-712 domain separator. View (depends on
+    ///      block.chainid which can change in a hard fork; we
+    ///      recompute on every call rather than caching).
+    function _domainSeparator() internal view returns (bytes32) {
+        return
+            keccak256(
+                abi.encode(
+                    EIP712_DOMAIN_TYPEHASH,
+                    EIP712_DOMAIN_NAME_HASH,
+                    EIP712_DOMAIN_VERSION_HASH,
+                    block.chainid,
+                    address(this)
+                )
+            );
+    }
+
+    /// @dev Compute the digest the user signs over for a recovery
+    ///      acknowledgment. Layout matches EIP-712 §7.
+    function _recoveryDigest(
+        address user,
+        address token,
+        address declaredSource,
+        uint256 amount,
+        uint256 nonce,
+        uint256 deadline
+    ) internal view returns (bytes32) {
+        bytes32 structHash = keccak256(
+            abi.encode(
+                RECOVERY_TYPEHASH,
+                user,
+                token,
+                declaredSource,
+                amount,
+                nonce,
+                deadline,
+                RECOVERY_ACK_TEXT_HASH
+            )
+        );
+        return
+            keccak256(
+                abi.encodePacked("\x19\x01", _domainSeparator(), structHash)
+            );
     }
 
     /**
