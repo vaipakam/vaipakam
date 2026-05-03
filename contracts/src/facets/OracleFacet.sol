@@ -291,65 +291,205 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
         return (price, decimals);
     }
 
-    /// @dev Chainlink-only primary read. Unchanged from Phase 3.1; the
-    ///      Phase 3.2 deviation check runs AFTER this returns.
+    /// @dev Chainlink-only primary read returning a numeraire-quoted
+    ///      price. Architecture (T-048 — Predominantly Available
+    ///      Denominator):
+    ///
+    ///        Step A — Retail short-circuit:
+    ///          if `PAD == numeraire` (the post-deploy default —
+    ///          both are `Denominations.USD`), read `asset/PAD`
+    ///          directly via Chainlink Feed Registry and return.
+    ///          Single read, no FX multiply, math identical to the
+    ///          pre-T-048 deploy. ETH-pivot fallback (asset/ETH ×
+    ///          ETH/PAD) handles assets that lack a direct
+    ///          asset/PAD feed.
+    ///
+    ///        Step B — Industrial-fork (PAD ≠ numeraire):
+    ///          B.1: per-asset operator-curated override —
+    ///               if `assetNumeraireDirectFeedOverride[asset]`
+    ///               is set, read that Chainlink feed directly as
+    ///               the numeraire-quoted asset price and return.
+    ///               Operator vouches that the override is a
+    ///               🟢-rated direct asset/<numeraire> feed; the
+    ///               protocol does not cross-check it against Pyth.
+    ///          B.2: PAD pivot —
+    ///               read asset price in PAD-units (asset/PAD direct
+    ///               feed; falls back to asset/ETH × ETH/PAD when
+    ///               direct feed is absent), then multiply by the
+    ///               PAD/<numeraire> FX rate (direct feed if set,
+    ///               else derived from ETH/<numeraire> ÷ ETH/PAD).
+    ///               This routes all asset pricing through Chainlink's
+    ///               top-rated USD feed set, structurally biasing
+    ///               toward verified-quality data without needing
+    ///               on-chain rating metadata.
+    ///
+    ///        Step C — All paths failed: revert {NoPriceFeed}.
+    ///
+    ///      The Phase 3.2 deviation check runs AFTER this returns.
     function _primaryPrice(
         address asset
     ) private view returns (uint256 price, uint8 decimals) {
         _requireSequencerHealthy();
 
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        address weth = s.wethContract;
-        address ethFeed = s.ethNumeraireFeed;
 
-        // WETH → read ETH/USD directly.
+        // Retail short-circuit: PAD == numeraire. Both are USD by the
+        // post-deploy default; the asset/PAD read IS the numeraire-
+        // quoted price. Behaviour identical to the pre-T-048 deploy.
+        // Also covers pre-T-048 deploys (PAD == address(0)) where the
+        // legacy numeraire-direct path stays active via
+        // `_padPriceWithFallback` reading asset/numeraireDenominator.
+        if (LibVaipakam.isPadEqualToNumeraire() || s.predominantDenominator == address(0)) {
+            return _padPriceWithFallback(s, asset);
+        }
+
+        // Industrial-fork: PAD ≠ numeraire.
+
+        // Step B.1: per-asset operator-curated override. When set, use
+        // the direct asset/<numeraire> feed and skip the PAD pivot.
+        // Operator vouches that the feed is verified-rated; no Pyth
+        // cross-check (Pyth gate is configured for ETH/<numeraire>,
+        // not asset/<numeraire>).
+        address overrideFeed = s.assetNumeraireDirectFeedOverride[asset];
+        if (overrideFeed != address(0)) {
+            (uint256 op, uint8 od) = _readAggregatorStrict(
+                overrideFeed,
+                /*allowStablePeg=*/ true
+            );
+            return (op, od);
+        }
+
+        // Step B.2: PAD pivot.
+        // Read asset price in PAD-units, then convert to numeraire.
+        (uint256 padPrice, uint8 padDec) = _padPriceWithFallback(s, asset);
+
+        // PAD/numeraire FX rate — direct feed if set, else derived
+        // from ETH/<numeraire> ÷ ETH/PAD.
+        (uint256 fxRate, uint8 fxDec) = _padNumeraireRate(s);
+
+        // Compose: numeraire price = padPrice × fxRate / 10^fxDec.
+        // Resulting decimals match `padDec` (Chainlink USD-quoted
+        // feeds are 8-decimal; Feed Registry asset/USD feeds are
+        // typically 8-decimal too). The fxDec cancellation keeps the
+        // composed value in the same scale as the pad-quoted leg.
+        uint256 numerPrice = (padPrice * fxRate) / (10 ** fxDec);
+        return (numerPrice, padDec);
+    }
+
+    /// @dev Read asset price in PAD-units. Tries Chainlink Feed
+    ///      Registry `asset/<padDenominator>` first; falls back to
+    ///      `asset/ETH × ETH/PAD` for assets that lack a direct
+    ///      USD-quoted feed (rare on the major asset set, but
+    ///      possible). Special-cases WETH itself to read `ethPadFeed`
+    ///      directly without the registry detour.
+    ///
+    ///      Pre-T-048 deploy compatibility: when
+    ///      `predominantDenominator == address(0)`, the legacy
+    ///      numeraire-direct path stays active. `usdDenom` falls back
+    ///      to `numeraireChainlinkDenominator`; `ethPadAnchor` falls
+    ///      back to `ethNumeraireFeed`. Behaviour identical to the
+    ///      pre-T-048 deploy.
+    function _padPriceWithFallback(
+        LibVaipakam.Storage storage s,
+        address asset
+    ) private view returns (uint256 price, uint8 decimals) {
+        address weth = s.wethContract;
+        address padDenom = s.predominantDenominator;
+        if (padDenom == address(0)) padDenom = s.numeraireChainlinkDenominator;
+        address ethPadAnchor = s.ethPadFeed;
+        if (ethPadAnchor == address(0)) ethPadAnchor = s.ethNumeraireFeed;
+
+        // WETH → read ETH/PAD directly.
         if (asset != address(0) && asset == weth) {
-            if (ethFeed == address(0)) revert NoPriceFeed();
-            (uint256 p, uint8 d) = _readAggregatorStrict(ethFeed, /*allowStablePeg=*/ false);
+            if (ethPadAnchor == address(0)) revert NoPriceFeed();
+            (uint256 p, uint8 d) = _readAggregatorStrict(ethPadAnchor, /*allowStablePeg=*/ false);
             // T-033 numeraire-redundancy gate: cross-validate the
-            // Chainlink ETH/USD reading against Pyth's snapshot.
+            // Chainlink ETH-anchor reading against Pyth's snapshot.
             // Soft-skips if Pyth is unset / stale / low-confidence;
             // reverts on divergence beyond tolerance.
             _validatePythCrossCheck(p, d);
             return (p, d);
         }
 
-        // Primary: asset/USD via Feed Registry.
+        // Primary: asset/PAD via Feed Registry.
         address registry = s.chainlnkRegistry;
-        address usdDenom = s.numeraireChainlinkDenominator;
-        if (registry != address(0) && usdDenom != address(0)) {
-            AggregatorV3Interface feed = _registryFeed(registry, asset, usdDenom);
+        if (registry != address(0) && padDenom != address(0)) {
+            AggregatorV3Interface feed = _registryFeed(registry, asset, padDenom);
             if (address(feed) != address(0)) {
                 (uint256 p, uint8 d) = _readAggregatorStrict(address(feed), /*allowStablePeg=*/ true);
                 return (p, d);
             }
         }
 
-        // Fallback: asset/ETH via Feed Registry × ETH/USD.
+        // Fallback: asset/ETH × ETH/PAD via Feed Registry.
         address ethDenom = s.ethChainlinkDenominator;
-        if (registry != address(0) && ethDenom != address(0) && ethFeed != address(0)) {
+        if (registry != address(0) && ethDenom != address(0) && ethPadAnchor != address(0)) {
             AggregatorV3Interface ethQuotedFeed = _registryFeed(registry, asset, ethDenom);
             if (address(ethQuotedFeed) != address(0)) {
                 (uint256 assetPerEth, uint8 assetPerEthDec) = _readAggregatorStrict(
                     address(ethQuotedFeed),
                     /*allowStablePeg=*/ false
                 );
-                (uint256 ethPerUsd, uint8 ethDec) = _readAggregatorStrict(ethFeed, false);
-                // assetPerEth is in `assetPerEthDec` (typically 1e18 for
-                // asset/ETH feeds); ethPerUsd in `ethDec` (1e8).
-                // Combined USD price scales to `ethDec` decimals by
-                // dividing out the ETH feed's native scale.
-                // T-033 — same numeraire-redundancy gate as the
-                // direct WETH branch: the load-bearing leg of this
-                // fallback is `ethPerUsd`, so cross-validate it
-                // against Pyth before composing.
-                _validatePythCrossCheck(ethPerUsd, ethDec);
-                uint256 combined = (assetPerEth * ethPerUsd) / (10 ** assetPerEthDec);
+                (uint256 ethPerPad, uint8 ethDec) = _readAggregatorStrict(ethPadAnchor, false);
+                _validatePythCrossCheck(ethPerPad, ethDec);
+                uint256 combined = (assetPerEth * ethPerPad) / (10 ** assetPerEthDec);
                 return (combined, ethDec);
             }
         }
 
         revert NoPriceFeed();
+    }
+
+    /// @dev Resolve the PAD/<numeraire> FX rate. Tries the direct
+    ///      Chainlink feed (`padNumeraireRateFeed`) when set; else
+    ///      derives the rate from `ETH/<numeraire> ÷ ETH/PAD`.
+    ///      Reverts {PadNumeraireRateUnavailable} if neither path is
+    ///      reachable — a configuration error caught at first read,
+    ///      not a runtime failure.
+    ///
+    ///      Returned `(rate, decimals)`: rate is in `decimals`-scale
+    ///      (e.g. 8-dec when the feed is Chainlink USD/EUR which is
+    ///      8-decimal). The caller composes `assetPriceInPad ×
+    ///      rate / 10^decimals` to get a numeraire-quoted price in
+    ///      the same scale as the asset/PAD leg.
+    function _padNumeraireRate(LibVaipakam.Storage storage s)
+        private
+        view
+        returns (uint256 rate, uint8 decimals)
+    {
+        address direct = s.padNumeraireRateFeed;
+        if (direct != address(0)) {
+            (uint256 r, uint8 d) = _readAggregatorStrict(direct, /*allowStablePeg=*/ true);
+            return (r, d);
+        }
+
+        // Derive: PAD/<numeraire> = ETH/<numeraire> ÷ ETH/PAD.
+        address ethNumerFeed = s.ethNumeraireFeed;
+        address ethPadFeed = s.ethPadFeed;
+        if (ethNumerFeed == address(0) || ethPadFeed == address(0)) {
+            revert IVaipakamErrors.PadNumeraireRateUnavailable();
+        }
+
+        (uint256 ethNumer, uint8 ethNumerDec) = _readAggregatorStrict(ethNumerFeed, false);
+        (uint256 ethPad, uint8 ethPadDec) = _readAggregatorStrict(ethPadFeed, false);
+
+        // Both ETH-anchored feeds get the Pyth cross-check (the same
+        // gate that PAD-pivot WETH and ETH-pivot fallback already use).
+        _validatePythCrossCheck(ethPad, ethPadDec);
+
+        // Normalize both to a common scale before division. We pick
+        // the larger of (ethNumerDec, ethPadDec) as the working
+        // decimals so neither leg loses precision via truncation.
+        uint8 outDec = ethNumerDec > ethPadDec ? ethNumerDec : ethPadDec;
+        uint256 ethNumerScaled = _rescale(ethNumer, ethNumerDec, outDec);
+        uint256 ethPadScaled = _rescale(ethPad, ethPadDec, outDec);
+        if (ethPadScaled == 0) revert IVaipakamErrors.PadNumeraireRateUnavailable();
+
+        // rate = ethNumer / ethPad, then re-scaled into `outDec` so
+        // the caller's composition `padPrice × rate / 10^outDec`
+        // lands at `padPrice`'s native decimals.
+        rate = (ethNumerScaled * (10 ** outDec)) / ethPadScaled;
+        decimals = outDec;
     }
 
     // ─── T-033 — Pyth numeraire-redundancy gate ────────────────────────────

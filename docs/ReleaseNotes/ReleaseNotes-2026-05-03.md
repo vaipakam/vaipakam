@@ -574,3 +574,148 @@ This sweep is identifier-renames only. No setter / getter selector breaks beyond
 
 Frontend ABI sync covers all four. Pre-mainnet operators who script
 selector calldata against these views need to refresh their scripts.
+
+---
+
+## T-048 — Predominantly Available Denominator (PAD): structural bias toward Chainlink's verified-rated feed set
+
+**The shape of the problem.** After the numeraire generalization
+(B1) landed, an industrial-fork deploy with `numeraire ≠ USD` faced
+a coverage gap: Chainlink's Feed Registry has near-universal
+`asset/USD` coverage, but `asset/EUR` (or JPY, XAU, etc.) is sparse.
+Worse, where non-USD direct feeds DO exist on Chainlink, they
+frequently land in the 🟡 (monitored) or 🔴 (specialized)
+verification tier rather than 🟢 (verified), with looser deviation
+thresholds, slower heartbeats, and smaller publisher sets than the
+🟢-rated USD equivalents. Routing pricing through those feeds
+silently is a real risk class.
+
+**Constraint:** Chainlink's feed-rating metadata is **off-chain**.
+We can't query `feed.rating()` and auto-prefer 🟢 feeds. So the
+choice is either operator-curation (per-asset whitelist of
+known-good feeds — error-prone; one missed verification produces a
+silent 🟡 read) or **structural avoidance** — route every priced
+asset through the universally-🟢 USD feed set and accept the small
+FX-multiply cost when the active numeraire isn't USD.
+
+T-048 picks structural avoidance.
+
+### Architecture — PAD-pivot
+
+**PAD = Predominantly Available Denominator.** A
+governance-tunable Chainlink Feed Registry denomination constant
+(`Denominations.USD` by post-deploy default). The protocol stores
+PAD-quoted prices internally and converts to the active numeraire
+only when the two differ.
+
+**`OracleFacet._primaryPrice` flow**:
+
+```
+if PAD == numeraire:                       # retail (USD-as-numeraire)
+    return registry.read(asset, padDenom)  # single read, no FX
+                                           # math identical to pre-T-048
+
+# Industrial-fork (PAD ≠ numeraire):
+
+if assetNumeraireDirectFeedOverride[asset] != address(0):
+    return read(override)                  # operator-vouched 🟢 direct feed
+
+padPrice = _padPriceWithFallback(asset)    # asset/PAD via Feed Registry
+                                           # falls back to asset/ETH × ETH/PAD
+fxRate = _padNumeraireRate()               # direct PAD/<numeraire> feed if set
+                                           # else derived: ETH/<numeraire> ÷ ETH/PAD
+return padPrice × fxRate
+```
+
+The numeraire-direct tier (asset/<numeraire> via Feed Registry) was
+DROPPED entirely. Why: without on-chain rating metadata we can't
+auto-prefer top-rated feeds, and silently falling through to
+whatever direct feed Chainlink lists invites the 🟡 / 🔴 risk class.
+Routing through PAD biases toward verified feeds by construction.
+
+**Per-asset override** lives as the explicit opt-in: if an operator
+finds a specific 🟢-rated direct asset/<numeraire> feed and wants to
+use it, they call `setAssetNumeraireDirectFeedOverride(asset, feed)`
+and that asset routes through the override on every read. The
+operator vouches for the feed quality; the protocol does not
+cross-check it against Pyth (the Pyth gate is configured for
+ETH/<numeraire>, not asset/<numeraire>).
+
+### Storage extension
+
+Five new slots (4 scalar + 1 mapping), all governance-tunable:
+
+- **`s.predominantDenominator`** — Chainlink Feed Registry
+  denomination constant for PAD queries. `Denominations.USD`
+  (`0x0000…0000348`) by post-deploy default.
+- **`s.predominantDenominatorSymbol`** — bytes32 lowercase ASCII
+  symbol for symbol-derived secondary oracles when querying
+  asset/PAD pairs. Empty bytes32 reads as `"usd"` per
+  `LibVaipakam.effectivePadSymbol()`.
+- **`s.ethPadFeed`** — Chainlink ETH/<PAD> AggregatorV3.
+  REQUIRED on every chain post-T-048 — load-bearing for (a) WETH
+  pricing and (b) the derived PAD/<numeraire> rate when no direct
+  feed is set.
+- **`s.padNumeraireRateFeed`** — optional Chainlink PAD/<numeraire>
+  direct FX feed (e.g. USD/EUR on Ethereum mainnet). Zero is valid;
+  the protocol derives the rate from existing infrastructure when
+  unset.
+- **`s.assetNumeraireDirectFeedOverride[asset]`** — per-asset
+  Chainlink AggregatorV3 override. Zero (default) → use PAD pivot.
+
+### Setters + events
+
+- **`setPredominantDenominator(newDenominator, newSymbol, newEthPadFeed, newPadNumeraireRateFeed)`** — atomic 4-arg rotation; the four slots can never be in a half-rotated state. Reverts `ParameterOutOfRange` on zero `newDenominator` or zero `newEthPadFeed` (both load-bearing). Emits `PredominantDenominatorUpdated`.
+- **`setAssetNumeraireDirectFeedOverride(asset, feed)`** — set / clear per-asset override. `asset == address(0)` reverts `InvalidAsset`. Emits `AssetNumeraireDirectFeedOverrideSet`.
+
+### Pre-T-048 deploy compatibility
+
+When `s.predominantDenominator == address(0)` (a deploy that hasn't
+yet run `setPredominantDenominator`), `_primaryPrice` falls back to
+the legacy numeraire-direct path. Existing deploys keep working
+unchanged until the operator opts in. The `LibVaipakam.isPadEqualToNumeraire()`
+helper returns `false` on zero PAD, so the retail short-circuit
+correctly skips and the legacy path activates.
+
+### What this does NOT change
+
+- Retail USD-as-numeraire deploys: behavior identical to today. PAD
+  reads collapse to the single Feed Registry asset/USD query that
+  was the existing tier-1 path. Zero added gas, zero new failure
+  modes.
+- HF / LTV / collateral-coverage ratio math: unit-cancelled, so
+  numeraire identity doesn't enter the comparison. Already
+  established post-B1.
+- Pyth cross-check: continues to validate the ETH-anchor read used
+  in the PAD-pivot path. The override path skips the Pyth gate
+  (operator vouches).
+
+### New error types
+
+- `PadNumeraireRateUnavailable` — neither direct nor derived FX rate
+  is reachable on a `numeraire ≠ PAD` deploy. Configuration error
+  caught at first priced read.
+- `PadPivotFeedUnavailable(asset)` — no PAD-side feed (asset/PAD
+  direct OR asset/ETH-pivot) resolves on the active chain. Specific
+  to the PAD-pivot path so monitoring can distinguish "asset never
+  had a feed" from "feed setup mid-rotation."
+- `PadNumeraireRateFeedStale` — `padNumeraireRateFeed` is set but
+  returns a non-positive answer or is stale beyond the
+  secondary-oracle staleness budget.
+
+### Verification
+
+- New test suite [`OraclePadFallbackTest.t.sol`](contracts/test/OraclePadFallbackTest.t.sol) — 9/9 passing covering: retail short-circuit (PAD==numeraire==USD), pre-T-048 legacy fallback, industrial-fork with direct PAD/<numeraire> feed, industrial-fork with derived FX rate, per-asset override path (set + clear), WETH PAD-pivot, all-paths-fail revert, two setter validation reverts (zero denominator, zero ethPadFeed).
+- `forge build` clean.
+- Baseline regression on the pre-T-048 path — all green: OracleFacet 36/36, OracleNumeraireGuard 10/10, SecondaryQuorum 27/27, NotificationFee 14/14, PeriodicInterestCadence 33/33, PeriodicInterestSettle 14/14, ProfileFacet 50/50, ConfigFacet 26/26.
+- Frontend `tsc -b --noEmit` clean. ABIs re-exported (frontend + keeper-bot).
+- Protocol-console knob catalogue extended with 4 new entries: `predominantDenominator`, `predominantDenominatorSymbol`, `ethPadFeed`, `padNumeraireRateFeed`. Per-asset override is governance-curated per asset and not surfaced as a single scalar knob (would need a custom card similar to `GraceBucketsCard`; deferred as a follow-up).
+
+### Operator deploy checklist (post-T-048)
+
+Every chain's deploy script MUST call `setPredominantDenominator` with `Denominations.USD` + `bytes32("usd")` + `<chain's Chainlink ETH/USD feed>` + `address(0)` (no direct FX feed needed on retail) before opening offers. Pre-mainnet pre-flight should assert `getEthPadFeed() != address(0)` after deploy. For non-USD industrial-fork deploys: also configure `padNumeraireRateFeed` if the chain has a direct USD/<numeraire> Chainlink feed; otherwise the derived path activates automatically using `ethNumeraireFeed ÷ ethPadFeed`.
+
+### What's next (deferred)
+
+- Per-asset override admin UI card (similar to `GraceBucketsCard` shape — array-of-tuples). Operators currently set overrides via direct Safe call-data composition.
+- Symbol-derived secondary-oracle queries on the asset/PAD path: today the Tellor / API3 / DIA queries still derive from `numeraireSymbol`. A follow-up could route asset/PAD secondary queries through `padSymbol` for richer cross-validation on the PAD leg. Deferred — the current Pyth ETH/<numeraire> cross-check already validates the load-bearing FX leg.

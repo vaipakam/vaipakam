@@ -482,11 +482,83 @@ just wants to tune a value within the active currency, not rotate.
 > **PredominantlyAvailableDenominator (T-047, planned)**: secondary
 > oracle coverage in non-USD numeraires (Tellor / API3 / DIA) is
 > sparse — the cross-validation property weakens after a non-USD
-> rotation. The planned T-047 follow-up adds a configurable
-> `predominantlyAvailableDenominator` (USDT-equivalent today) that
-> the secondary quorum falls back to so the divergence-detection
-> security stays intact regardless of which numeraire governance
-> picks.
+> rotation. The T-048 follow-up below ships the
+> `predominantDenominator` (PAD = USD by default) so primary
+> pricing routes through Chainlink's universally-🟢-rated USD feed
+> set when the active numeraire is non-USD; the secondary-oracle
+> quorum follow-up still tracks separately under T-047 for the
+> divergence-detection layer.
+
+### Predominantly Available Denominator (PAD)
+
+Anchor for **primary pricing** when the active numeraire is non-USD.
+PAD is a Chainlink Feed Registry denomination constant
+(`Denominations.USD` by post-deploy default — the universally-
+covered, near-100%-🟢-verified-rated denomination across every
+chain Vaipakam supports). `OracleFacet._primaryPrice` queries
+`asset/PAD` first and converts to the active numeraire only when
+PAD ≠ numeraire.
+
+**Why PAD-first instead of asset/<numeraire>-first**: Chainlink's
+feed-rating metadata (🟢 verified / 🟡 monitored / 🔴 specialized)
+is **off-chain**. A direct asset/<numeraire> Chainlink feed for
+non-USD pairs is rare AND frequently 🟡-rated when it exists,
+with looser deviation thresholds and slower heartbeats than the
+🟢 USD equivalents. Routing all pricing through PAD biases toward
+verified-rated feeds **structurally**, without requiring operators
+to manually curate per-asset feed quality. The FX-multiply cost
+(one extra Chainlink read for PAD/<numeraire>) is bounded; the
+trust gain from never accidentally pricing through a 🟡 feed is
+real.
+
+**Per-asset opt-in override**: when an operator explicitly verifies
+a specific asset/<numeraire> feed is 🟢-rated on their chain, they
+can call `setAssetNumeraireDirectFeedOverride(asset, feed)` and
+that asset's pricing skips the PAD pivot entirely. Operator vouches
+for the feed quality; the protocol does not cross-check overrides
+against Pyth.
+
+**Four feed-side slots, atomic rotation via `setPredominantDenominator(denom, symbol, ethPadFeed, padNumeraireRateFeed)`**:
+
+- **`predominantDenominator`** (address) — Chainlink Feed Registry
+  denomination constant. `Denominations.USD` (`0x0000…0000348`)
+  post-deploy default. Reverts `ParameterOutOfRange` on zero.
+- **`predominantDenominatorSymbol`** (bytes32) — lowercase ASCII
+  symbol used by Tellor / API3 / DIA when querying asset/PAD pairs.
+  Empty bytes32 reads as `"usd"` per the existing fallback
+  convention.
+- **`ethPadFeed`** (address) — Chainlink ETH/<PAD> AggregatorV3.
+  REQUIRED on every chain post-T-048 — load-bearing for (a) WETH
+  pricing and (b) the derived PAD/<numeraire> rate when no direct
+  feed is set. Reverts `ParameterOutOfRange` on zero.
+- **`padNumeraireRateFeed`** (address, optional) — Chainlink direct
+  PAD/<numeraire> AggregatorV3 (e.g. USD/EUR on Ethereum mainnet).
+  Zero is valid; the protocol derives the rate from
+  `ETH/<numeraire> ÷ ETH/PAD` using existing infrastructure.
+
+**Activation gate**:
+
+- **Retail (PAD == numeraire == USD)** — PAD reads collapse to the
+  single Feed Registry asset/USD query. Zero added gas, zero new
+  failure modes, math identical to pre-T-048.
+- **Pre-T-048 deploy (predominantDenominator == 0)** — legacy
+  numeraire-direct path stays active. Existing deploys keep working
+  unchanged until the operator opts in.
+- **Industrial-fork (PAD ≠ numeraire, e.g. PAD=USD numeraire=EUR)**
+  — PAD pivot activates. Per-asset override takes priority when set;
+  otherwise asset/USD × USD/EUR multiplication composes the
+  numeraire-quoted price.
+
+**New error types**: `PadNumeraireRateUnavailable` (no FX rate path
+reachable), `PadPivotFeedUnavailable(asset)` (asset has no
+PAD-quoted feed AND no asset/ETH-pivot feed), `PadNumeraireRateFeedStale`
+(direct rate feed is stale beyond budget).
+
+**Operator deploy checklist (post-T-048)**: every chain's deploy
+script MUST call `setPredominantDenominator(Denominations.USD,
+bytes32("usd"), <chain's Chainlink ETH/USD feed>, address(0))`
+before opening offers. Pre-mainnet pre-flight should assert
+`getEthPadFeed() != address(0)` after deploy.
 
 ### Min principal for finer cadence (minPrincipalForFinerCadence)
 

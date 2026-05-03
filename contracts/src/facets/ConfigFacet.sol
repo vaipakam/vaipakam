@@ -1211,6 +1211,152 @@ contract ConfigFacet is DiamondAccessControl {
         return LibVaipakam.storageSlot().ethNumeraireFeed;
     }
 
+    // ─── T-048 — Predominantly Available Denominator (PAD) ─────────────
+
+    /// @notice Emitted when governance rotates the PAD config. Indexes
+    ///         the old → new denominator transition for off-chain
+    ///         monitoring; the symbol + feeds are non-indexed because
+    ///         most chains will never rotate (PAD stays at USD).
+    event PredominantDenominatorUpdated(
+        address indexed oldDenominator,
+        address indexed newDenominator,
+        bytes32 newSymbol,
+        address newEthPadFeed,
+        address newPadNumeraireRateFeed
+    );
+
+    /// @notice Emitted when governance sets / clears a per-asset
+    ///         numeraire-direct feed override.
+    event AssetNumeraireDirectFeedOverrideSet(
+        address indexed asset,
+        address indexed previous,
+        address indexed next
+    );
+
+    /// @notice Atomic rotation of the Predominantly Available
+    ///         Denominator config — all four slots in one tx so the
+    ///         PAD identity is never half-rotated. PAD is the
+    ///         universally-covered Chainlink denomination
+    ///         (`Denominations.USD` by post-deploy default) the
+    ///         protocol pivots through when the active numeraire is
+    ///         non-USD. See README §16 / docs/AdminConfigurableKnobsAndSwitches.md.
+    /// @dev    Admin-only. The setter accepts:
+    ///          - `newDenominator`: the Chainlink Feed Registry
+    ///            denomination constant (e.g.
+    ///            `0x0000…0000348` for USD). Must be non-zero;
+    ///            zeroing the slot would disable the PAD pivot
+    ///            entirely and is reachable only via a governance
+    ///            decision to revert to a pre-T-048 deploy shape
+    ///            (use `clearPredominantDenominator` for that).
+    ///          - `newSymbol`: lowercase ASCII bytes32 (e.g.
+    ///            `bytes32("usd")`) for symbol-derived secondary
+    ///            oracles. Empty bytes32 is interpreted as `"usd"`.
+    ///          - `newEthPadFeed`: Chainlink ETH/<PAD> AggregatorV3.
+    ///            REQUIRED on every chain because it's the load-
+    ///            bearing leg of (a) WETH pricing and (b) the
+    ///            derived PAD/<numeraire> rate. Must be non-zero.
+    ///          - `newPadNumeraireRateFeed`: optional Chainlink
+    ///            PAD/<numeraire> AggregatorV3 (e.g. USD/EUR on
+    ///            mainnet). Zero is valid — the protocol derives the
+    ///            rate from `ethNumeraireFeed ÷ ethPadFeed`.
+    function setPredominantDenominator(
+        address newDenominator,
+        bytes32 newSymbol,
+        address newEthPadFeed,
+        address newPadNumeraireRateFeed
+    ) external onlyRole(LibAccessControl.ADMIN_ROLE) {
+        if (newDenominator == address(0)) {
+            revert IVaipakamErrors.ParameterOutOfRange(
+                "predominantDenominator",
+                0,
+                1,
+                type(uint256).max
+            );
+        }
+        if (newEthPadFeed == address(0)) {
+            revert IVaipakamErrors.ParameterOutOfRange(
+                "ethPadFeed",
+                0,
+                1,
+                type(uint256).max
+            );
+        }
+
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        address oldDenominator = s.predominantDenominator;
+        s.predominantDenominator = newDenominator;
+        s.predominantDenominatorSymbol = newSymbol;
+        s.ethPadFeed = newEthPadFeed;
+        s.padNumeraireRateFeed = newPadNumeraireRateFeed;
+
+        emit PredominantDenominatorUpdated(
+            oldDenominator,
+            newDenominator,
+            newSymbol,
+            newEthPadFeed,
+            newPadNumeraireRateFeed
+        );
+    }
+
+    /// @notice Set / clear a per-asset numeraire-direct feed override.
+    ///         When set non-zero, `OracleFacet._primaryPrice` reads
+    ///         this Chainlink feed directly as the asset's
+    ///         numeraire-quoted price and skips the PAD pivot.
+    ///         Operator vouches the feed is verified-rated; the
+    ///         protocol does NOT cross-check it against Pyth.
+    /// @dev    Pass `address(0)` to clear and revert to PAD-pivot
+    ///         behaviour for that asset. Admin-only.
+    function setAssetNumeraireDirectFeedOverride(address asset, address feed)
+        external
+        onlyRole(LibAccessControl.ADMIN_ROLE)
+    {
+        if (asset == address(0)) revert IVaipakamErrors.InvalidAsset();
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        address previous = s.assetNumeraireDirectFeedOverride[asset];
+        s.assetNumeraireDirectFeedOverride[asset] = feed;
+        emit AssetNumeraireDirectFeedOverrideSet(asset, previous, feed);
+    }
+
+    /// @notice Read the active PAD denomination — the Chainlink
+    ///         Feed Registry denominator that `_primaryPrice` queries
+    ///         first. Zero on a pre-T-048 deploy where PAD wasn't set
+    ///         (legacy numeraire-direct path active).
+    function getPredominantDenominator() external view returns (address) {
+        return LibVaipakam.storageSlot().predominantDenominator;
+    }
+
+    /// @notice Read the active PAD symbol — bytes32 lowercase ASCII
+    ///         used by symbol-derived secondary oracles when querying
+    ///         asset/PAD pairs. Empty bytes32 (post-deploy default)
+    ///         reads as `"usd"` per `LibVaipakam.effectivePadSymbol()`.
+    function getPredominantDenominatorSymbol() external view returns (bytes32) {
+        return LibVaipakam.storageSlot().predominantDenominatorSymbol;
+    }
+
+    /// @notice Read the Chainlink ETH/<PAD> AggregatorV3 address.
+    ///         REQUIRED post-T-048; load-bearing for WETH pricing
+    ///         and for the derived PAD/<numeraire> rate.
+    function getEthPadFeed() external view returns (address) {
+        return LibVaipakam.storageSlot().ethPadFeed;
+    }
+
+    /// @notice Read the optional Chainlink PAD/<numeraire>
+    ///         AggregatorV3 address. Zero means the protocol derives
+    ///         the FX rate from existing ETH-pivot feeds.
+    function getPadNumeraireRateFeed() external view returns (address) {
+        return LibVaipakam.storageSlot().padNumeraireRateFeed;
+    }
+
+    /// @notice Read the per-asset numeraire-direct feed override.
+    ///         Zero means the asset routes through the PAD pivot.
+    function getAssetNumeraireDirectFeedOverride(address asset)
+        external
+        view
+        returns (address)
+    {
+        return LibVaipakam.storageSlot().assetNumeraireDirectFeedOverride[asset];
+    }
+
     /// @notice Individual getter for `minPrincipalForFinerCadence`.
     ///         Returns the effective value (override or library default).
     function getMinPrincipalForFinerCadence() external view returns (uint256) {

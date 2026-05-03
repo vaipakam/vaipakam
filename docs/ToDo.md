@@ -11,6 +11,14 @@
 
 ---
 
+- [ ] **T-052**: include VPFI token in coinmarketcap, coingeckco, https://github.com/trustwallet/assets, https://github.com/ethereum-lists/tokens, etc.,
+
+---
+
+- [ ] **T-051**: Provide a assets page to display User Assets that are there in their escrow
+
+---
+
 - [ ] **T-050**: How about having a 3 required + 2 optional indexer so that if a tampering happens at one worker, that may not compromise the data displayed on our webpage. like having a hash string for all data upto that block (running / rolled up hash string from contract / diamond deployed block until that block) and keeping that hash string for last 100 blocks in each worker and when it arrives in our webpage from each worker, if atleast top 10 blocks hash string matches then the consensus can be arrived if atleat 3 out of 5 workers hash string matches for those last 10 blocks (blocks are with numbers) , hash string must match block by block for the same block number for atleast latest 10 blocks. then we use indexed data, else we use data directly from blockchain through RPC. 1 worker in Google cloud, another in azure, another in AWS, another in cloudflare and another in Oracle (OCI) what do you say? or is it a over kill?
 
 ---
@@ -19,7 +27,7 @@
 
 ---
 
-- [ ] **T-048**: have another admin configurable (later by governance) PredominantlyAvailabledenominator (it would be USDT for now) to mitigate the availability of Chainlink price feeds. and use this to help improve the security in case of non-USD numeraire
+- [x] **T-048**: have another admin configurable (later by governance) PredominantlyAvailabledenominator (PAD) (it would be USD for now) to mitigate the availability of Chainlink price feeds. and use this to help improve the security in case of non-USD numeraire — landed 2026-05-03. **PAD-pivot architecture, structurally biased toward Chainlink's 🟢 verified-rated USD feed set without needing on-chain rating metadata.** `OracleFacet._primaryPrice` rewritten to a 3-step flow: (1) **retail short-circuit** when `PAD == numeraire` (post-deploy default since both are `Denominations.USD`) reads `asset/PAD` directly with no FX multiply, math identical to pre-T-048; (2) **industrial-fork branch** when `PAD ≠ numeraire`: per-asset operator-curated override (`s.assetNumeraireDirectFeedOverride[asset]`) takes priority — operator vouches the override is verified-rated, no Pyth cross-check; (3) **PAD-pivot** when no override: read `asset/PAD` (Chainlink Feed Registry, falls back to `asset/ETH × ETH/PAD` for assets without a direct USD feed) then multiply by the `PAD/<numeraire>` FX rate (direct `padNumeraireRateFeed` if set, else derived `ETH/<numeraire> ÷ ETH/PAD`). The numeraire-direct tier was DROPPED entirely — Chainlink rating metadata isn't on-chain so we can't auto-prefer top-rated direct feeds; routing through PAD biases toward verified feeds without operator-curation drift. Per-asset override exists as the explicit opt-in for operators who want to use a specific verified-rated direct feed. **Storage** (4 new slots + 1 mapping): `s.predominantDenominator` (Chainlink denom constant, default `Denominations.USD`); `s.predominantDenominatorSymbol` (bytes32 "usd" default for symbol-derived secondary oracles); `s.ethPadFeed` (Chainlink ETH/<PAD> AggregatorV3 — REQUIRED, load-bearing for WETH pricing AND derived FX rate); `s.padNumeraireRateFeed` (optional direct FX feed); `s.assetNumeraireDirectFeedOverride[asset]` (per-asset override mapping). Setters: atomic `ConfigFacet.setPredominantDenominator(denom, symbol, ethPadFeed, padNumeraireRateFeed)` rotates 4 slots in one tx; `setAssetNumeraireDirectFeedOverride(asset, feed)` sets/clears per-asset override. 5 individual getters consumed by the protocol-console knob registry. New errors: `PadNumeraireRateUnavailable`, `PadPivotFeedUnavailable`, `PadNumeraireRateFeedStale`. **Verification**: new `OraclePadFallbackTest.t.sol` 9/9 passing covering retail short-circuit / pre-T-048 legacy / direct FX / derived FX / per-asset override / WETH PAD-pivot / all-fail revert / 2 setter validation cases; `forge build` clean; existing OracleFacet 36/36 + OracleNumeraireGuard 10/10 + SecondaryQuorum 27/27 + NotificationFee 14/14 + Cadence 33/33 + Settle 14/14 + ProfileFacet 50/50 + ConfigFacet 26/26 = 220/220 baseline suites green (no regression on the pre-T-048 code path); ABIs re-exported (frontend + keeper-bot); frontend `tsc -b --noEmit` clean; protocol-console knob catalogue extended with 4 new entries (`predominantDenominator`, `predominantDenominatorSymbol`, `ethPadFeed`, `padNumeraireRateFeed`).
 
 ---
 

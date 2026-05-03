@@ -320,4 +320,34 @@ interface IVaipakamErrors {
     ///        accepted on the old loan (i.e. the moment the refinance
     ///        gate first failed).
     error RefinanceRequiresPeriodSettle(uint256 oldLoanId, uint256 graceEndsAt);
+
+    // ─── T-048 — Predominantly Available Denominator (PAD) ─────────────
+
+    /// @notice Reverted when an industrial-fork deploy's
+    ///         `numeraire ≠ PAD` AND the protocol can't compute the
+    ///         PAD/<numeraire> FX rate — neither the direct
+    ///         `padNumeraireRateFeed` is set, nor are both
+    ///         `ethPadFeed` + `ethNumeraireFeed` populated for the
+    ///         derived path. Configuration error caught at the first
+    ///         priced read; nothing on-chain can recover except a
+    ///         governance call to `setPredominantDenominator` with a
+    ///         reachable rate path.
+    error PadNumeraireRateUnavailable();
+
+    /// @notice Reverted when `_primaryPrice` is asked to price an
+    ///         asset on a `numeraire ≠ PAD` deploy but no PAD-side
+    ///         feed (asset/PAD direct OR asset/ETH-pivot via PAD)
+    ///         resolves on the active chain. Same shape as
+    ///         {NoPriceFeed} but specific to the PAD-pivot path so
+    ///         operator monitoring can distinguish "asset never had a
+    ///         feed" from "feed setup mid-rotation."
+    error PadPivotFeedUnavailable(address asset);
+
+    /// @notice Reverted when the operator sets
+    ///         `padNumeraireRateFeed` but the feed read returns a
+    ///         non-positive answer or is stale beyond the
+    ///         secondary-oracle staleness budget. Operator must point
+    ///         at a fresh feed or clear the slot to fall back to the
+    ///         derived rate.
+    error PadNumeraireRateFeedStale();
 }

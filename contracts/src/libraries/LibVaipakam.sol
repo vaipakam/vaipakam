@@ -1164,6 +1164,60 @@ library LibVaipakam {
         // `_checkDIA` so the protocol behaves identically to the pre-
         // sweep deploy out of the box.
         bytes32 numeraireSymbol;
+        // T-048 — Predominantly Available Denominator (PAD).
+        // PAD is the Chainlink-denomination side that the protocol expects
+        // to have UNIVERSAL coverage on every supported chain — USD by the
+        // post-deploy default. `_primaryPrice` queries `asset/PAD` first
+        // (Chainlink Feed Registry, deepest coverage); if PAD ≠ active
+        // numeraire, the PAD-quoted price is then converted via the
+        // PAD/<numeraire> rate (direct feed if `padNumeraireRateFeed` is
+        // set, else derived from `ethNumeraireFeed ÷ ethPadFeed`). When
+        // PAD == numeraire (retail default — both are
+        // `Denominations.USD`), the conversion is short-circuited and the
+        // PAD price IS the numeraire price — zero overhead, behavior
+        // identical to the pre-T-048 deploy.
+        //
+        // Tunable via `ConfigFacet.setPredominantDenominator`; zero on a
+        // fresh deploy, in which case `_primaryPrice` falls through to the
+        // legacy numeraire-direct path. An industrial-fork deploy on a
+        // non-USD numeraire MUST set PAD before opening loans (a deploy-
+        // script pre-flight enforces it).
+        address predominantDenominator;
+        // bytes32 lowercase ASCII symbol for the symbol-derived secondary
+        // oracles (Tellor / API3 / DIA) when querying asset/PAD pairs.
+        // Empty bytes32 is interpreted as "usd" — matches the existing
+        // numeraireSymbol fallback convention.
+        bytes32 predominantDenominatorSymbol;
+        // Chainlink ETH/<PAD> AggregatorV3 — always populated when PAD is
+        // set. Used (a) directly when the asset is WETH and PAD == numeraire,
+        // and (b) as the denominator of the derived PAD/<numeraire> rate
+        // when the direct feed is absent: rate = ETH/<numeraire> ÷ ETH/PAD.
+        // On retail (PAD == numeraire == USD), this typically points at
+        // the same Chainlink ETH/USD address as `ethNumeraireFeed` — the
+        // two slots are allowed to alias.
+        address ethPadFeed;
+        // Optional Chainlink PAD/<numeraire> AggregatorV3 (e.g. USD/EUR
+        // on Ethereum mainnet). When set, the FX rate is read from this
+        // feed directly. When unset (the more common case on L2s), the
+        // protocol derives the rate from ETH/<numeraire> ÷ ETH/PAD using
+        // existing infrastructure. Address(0) on retail (PAD == numeraire)
+        // is correct — no FX conversion is needed.
+        address padNumeraireRateFeed;
+        // Per-asset opt-in override for the PAD-pivot path. When non-zero,
+        // `_primaryPrice` reads this Chainlink AggregatorV3 directly as the
+        // asset's numeraire-quoted price and skips the PAD pivot entirely
+        // (no FX multiply, no asset/PAD lookup). Use case: on a non-USD
+        // numeraire deploy, an operator finds a 🟢-rated direct
+        // `asset/<numeraire>` Chainlink feed (rare but possible) and wants
+        // to use it instead of pivoting via USD. Default zero = pivot via
+        // PAD (the structurally-safe path that biases toward the top-rated
+        // asset/USD feed set). Cleared by writing zero.
+        //
+        // Operator vouches for the feed's quality when setting this — the
+        // protocol does NOT cross-check the override against Pyth or the
+        // secondary quorum, since both are configured for ETH/<numeraire>
+        // not asset/<numeraire>. Use only for verified-rated feeds.
+        mapping(address => address) assetNumeraireDirectFeedOverride;
         address chainlnkRegistry; // Chainlink Feed Registry (mainnet only; address(0) on L2s)
         address wethContract; // Canonical WETH on the active network — v3-style AMM liquidity quote asset
         address uniswapV3Factory; // UNISWAP_V3_FACTORY
@@ -3054,6 +3108,35 @@ library LibVaipakam {
     function effectivePythConfidenceMaxBps() internal view returns (uint16) {
         uint16 v = storageSlot().pythConfidenceMaxBps;
         return v == 0 ? PYTH_CONFIDENCE_MAX_BPS_DEFAULT : v;
+    }
+
+    /// @notice T-048 — read the effective PAD symbol used by the
+    ///         symbol-derived secondary oracles. Empty bytes32
+    ///         (post-deploy default before governance writes) is
+    ///         interpreted as `"usd"`, matching the
+    ///         `numeraireSymbol` fallback convention.
+    function effectivePadSymbol() internal view returns (bytes32) {
+        bytes32 v = storageSlot().predominantDenominatorSymbol;
+        return v == bytes32(0) ? bytes32("usd") : v;
+    }
+
+    /// @notice T-048 — `true` when the active numeraire's Chainlink
+    ///         denomination matches the PAD denomination. On retail
+    ///         (both default to `Denominations.USD`), this returns
+    ///         `true` and the oracle path short-circuits the FX
+    ///         conversion. Industrial-fork deploys with
+    ///         `numeraire == EUR / JPY / XAU` return `false` and
+    ///         require the FX conversion path (direct or derived).
+    ///
+    ///         Treats unset `predominantDenominator` (zero) as a
+    ///         pre-T-048 deploy where PAD wasn't configured: returns
+    ///         `false` so the legacy numeraire-direct path keeps
+    ///         working without a forced PAD configuration.
+    function isPadEqualToNumeraire() internal view returns (bool) {
+        Storage storage s = storageSlot();
+        address pad = s.predominantDenominator;
+        if (pad == address(0)) return false;
+        return pad == s.numeraireChainlinkDenominator;
     }
 
     /// @notice Emitted when the chain's sanctions oracle address changes.

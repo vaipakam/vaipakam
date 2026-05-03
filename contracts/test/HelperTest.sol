@@ -591,7 +591,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](38);
+        selectors = new bytes4[](45);
         selectors[0] = ConfigFacet.setFeesConfig.selector;
         selectors[1] = ConfigFacet.setLiquidationConfig.selector;
         selectors[2] = ConfigFacet.setRiskConfig.selector;
@@ -646,6 +646,17 @@ contract HelperTest {
         selectors[35] = ConfigFacet.getPreNotifyDays.selector;
         selectors[36] = ConfigFacet.getPeriodicInterestEnabled.selector;
         selectors[37] = ConfigFacet.getNumeraireSwapEnabled.selector;
+        // T-048 — Predominantly Available Denominator (PAD).
+        // Atomic rotation setter + per-asset numeraire-direct override
+        // setter, plus 5 individual getters consumed by the protocol-
+        // console knob registry.
+        selectors[38] = ConfigFacet.setPredominantDenominator.selector;
+        selectors[39] = ConfigFacet.setAssetNumeraireDirectFeedOverride.selector;
+        selectors[40] = ConfigFacet.getPredominantDenominator.selector;
+        selectors[41] = ConfigFacet.getPredominantDenominatorSymbol.selector;
+        selectors[42] = ConfigFacet.getEthPadFeed.selector;
+        selectors[43] = ConfigFacet.getPadNumeraireRateFeed.selector;
+        selectors[44] = ConfigFacet.getAssetNumeraireDirectFeedOverride.selector;
         return selectors;
     }
 

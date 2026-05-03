@@ -8,6 +8,25 @@
   },
   {
     "type": "function",
+    "name": "getAssetNumeraireDirectFeedOverride",
+    "inputs": [
+      {
+        "name": "asset",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "getEffectiveGraceSeconds",
     "inputs": [
       {
@@ -28,6 +47,19 @@
   {
     "type": "function",
     "name": "getEthNumeraireFeed",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getEthPadFeed",
     "inputs": [],
     "outputs": [
       {
@@ -232,6 +264,19 @@
   },
   {
     "type": "function",
+    "name": "getPadNumeraireRateFeed",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "getPeriodicInterestConfig",
     "inputs": [],
     "outputs": [
@@ -285,6 +330,32 @@
         "name": "",
         "type": "uint8",
         "internalType": "uint8"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getPredominantDenominator",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getPredominantDenominatorSymbol",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bytes32",
+        "internalType": "bytes32"
       }
     ],
     "stateMutability": "view"
@@ -491,6 +562,24 @@
       }
     ],
     "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "setAssetNumeraireDirectFeedOverride",
+    "inputs": [
+      {
+        "name": "asset",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "feed",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
   },
   {
     "type": "function",
@@ -743,6 +832,34 @@
   },
   {
     "type": "function",
+    "name": "setPredominantDenominator",
+    "inputs": [
+      {
+        "name": "newDenominator",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "newSymbol",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "newEthPadFeed",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "newPadNumeraireRateFeed",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "setRangeAmountEnabled",
     "inputs": [
       {
@@ -853,6 +970,31 @@
     ],
     "outputs": [],
     "stateMutability": "nonpayable"
+  },
+  {
+    "type": "event",
+    "name": "AssetNumeraireDirectFeedOverrideSet",
+    "inputs": [
+      {
+        "name": "asset",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "previous",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "next",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      }
+    ],
+    "anonymous": false
   },
   {
     "type": "event",
@@ -1074,6 +1216,43 @@
   },
   {
     "type": "event",
+    "name": "PredominantDenominatorUpdated",
+    "inputs": [
+      {
+        "name": "oldDenominator",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "newDenominator",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "newSymbol",
+        "type": "bytes32",
+        "indexed": false,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "newEthPadFeed",
+        "type": "address",
+        "indexed": false,
+        "internalType": "address"
+      },
+      {
+        "name": "newPadNumeraireRateFeed",
+        "type": "address",
+        "indexed": false,
+        "internalType": "address"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "RangeAmountEnabledSet",
     "inputs": [
       {
@@ -1275,6 +1454,11 @@
   {
     "type": "error",
     "name": "InvalidAddress",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InvalidAsset",
     "inputs": []
   },
   {
