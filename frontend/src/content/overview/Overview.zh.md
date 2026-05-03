@@ -1,6 +1,6 @@
 # 欢迎来到 Vaipakam
 
-Vaipakam 是一个 peer-to-peer lending 平台。你可以 lend assets 并赚取 interest，也可以 borrow assets 并提供 collateral。你还可以 rent NFTs，让 owner 获得 daily fees。所有操作都直接发生在两个 wallets 之间；在 loan 或 rental 结束前，smart contracts 会把 assets 保管在 escrow 中。
+Vaipakam 是一个 peer-to-peer lending 平台。你可以 lend assets 并赚取 interest，也可以 borrow assets 并提供 collateral。你还可以 rent NFTs，让 owner 获得 daily fees。所有操作都直接发生在两个 wallets 之间；在 loan 或 rental 结束前，smart contracts 会把 assets 保管在 vault 中。
 
 这一页是一份**友好的导览**。如果你想深入了解技术细节，可以打开 **User Guide** 标签查看每个 screen 的帮助，或打开 **Technical** 标签阅读完整 whitepaper。如果你只是想知道“这是什么、该怎么用”，继续往下看就好。
 
@@ -32,7 +32,7 @@ Vaipakam 面向四类用户：
 - 可接受的 collateral：**WETH**，且 **maximum 70% LTV**
 - Loan duration：**30 days**
 
-你签署一笔 transaction。你的 1,000 USDC 会从 wallet 移入你的 **personal escrow**，也就是只由你控制的 private vault。Funds 会一直停留在那里，直到有 borrower accept 你的 offer。
+你签署一笔 transaction。你的 1,000 USDC 会从 wallet 移入你的 **Vaipakam Vault**，也就是只由你控制的 private vault。Funds 会一直停留在那里，直到有 borrower accept 你的 offer。
 
 ### Step 2 — Borrower 接受
 
@@ -40,8 +40,8 @@ Vaipakam 面向四类用户：
 
 他们接受的瞬间：
 
-- 你的 1,000 USDC 从你的 escrow 移到他们的 escrow
-- 他们的 WETH 作为 collateral 锁定在他们的 escrow 中
+- 你的 1,000 USDC 从你的 vault 移到他们的 vault
+- 他们的 WETH 作为 collateral 锁定在他们的 vault 中
 - 你们双方都会收到一个 position NFT - 你的表示“我应收到 1,000 USDC + interest”；他们的表示“我 repay 后应取回我的 WETH”
 - Loan clock 开始计时
 
@@ -83,10 +83,10 @@ Interest = 1,000 USDC × 8% × (30 / 365) = ~6.58 USDC
 
 流程与 loan 类似，但有两个不同点：
 
-- **NFT 保持在 escrow 中**；renter 不会直接持有它。Protocol 会使用 **ERC-4907** 在 rental window 内授予 renter 该 NFT 的 “user rights”。兼容的 games 和 apps 会读取 user rights，因此 renter 可以在不拥有 NFT 的情况下 play、log in，或使用该 NFT 的 utility。
+- **NFT 保持在 vault 中**；renter 不会直接持有它。Protocol 会使用 **ERC-4907** 在 rental window 内授予 renter 该 NFT 的 “user rights”。兼容的 games 和 apps 会读取 user rights，因此 renter 可以在不拥有 NFT 的情况下 play、log in，或使用该 NFT 的 utility。
 - **Daily fees 会从 prepaid pool 自动扣除。** Renter 预先支付整个 rental 的费用，并额外支付 5% buffer。每天 protocol 都会把当天的 fee release 给 owner。如果 renter 想提前结束，未使用天数会 refund。
 
-Rental 结束后（无论是 expiry 还是 default），NFT 会回到 owner 的 escrow。Owner 随后可以重新 list，或 claim 回自己的 wallet。
+Rental 结束后（无论是 expiry 还是 default），NFT 会回到 owner 的 vault。Owner 随后可以重新 list，或 claim 回自己的 wallet。
 
 ---
 
@@ -94,7 +94,7 @@ Rental 结束后（无论是 expiry 还是 default），NFT 会回到 owner 的 
 
 在 Vaipakam 上 lending 和 borrowing 并非 risk-free。但 protocol 内置了多层保护：
 
-- **Per-user escrow.** 你的 assets 存放在你自己的 vault 中。Protocol 从不把它们与其他 users 的 funds 混在一个池子里。这意味着即使出现影响其他 user 的 bug，也无法 drain 你的资产。
+- **Per-user vault.** 你的 assets 存放在你自己的 vault 中。Protocol 从不把它们与其他 users 的 funds 混在一个池子里。这意味着即使出现影响其他 user 的 bug，也无法 drain 你的资产。
 - **Health Factor enforcement.** 只有当 collateral 在 origination 时至少为 loan value 的 1.5×，loan 才能开始。如果 loan 期间 price 朝 borrower 不利方向移动，任何人都可以在 collateral 价值低于 debt 之前 liquidate，从而保护 lender。
 - **Multi-source price oracle.** Prices 首先来自 Chainlink，然后会与 Tellor、API3 和 DIA 交叉核验。如果差异超过 configured threshold，loan 不能 open，ongoing position 也不能被 unfairly liquidated。Attacker 必须在同一个 block 中攻破**多个 independent oracles**，才可能伪造 price。
 - **Slippage cap.** Liquidations 会拒绝以超过 6% slippage 的糟糕价格抛售 collateral。如果 market 太薄，protocol 会 fallback，直接把 collateral 给你。
@@ -113,7 +113,7 @@ Rental 结束后（无论是 expiry 还是 default），NFT 会回到 owner 的 
 - **Yield Fee — `{liveValue:treasuryFeeBps}`%**，按你作为 lender 赚到的 **interest** 比例收取（不是 principal 的比例）。在一笔 1,000 USDC、30-day、8% APR 的 loan 中，lender 赚取约 6.58 USDC interest，其中按默认费率约 0.066 USDC 是 Yield Fee。
 - **Loan Initiation Fee — `{liveValue:loanInitiationFeeBps}`%**，按 lending amount 收取，由 borrower 在 origination 时支付。1,000 USDC loan 在默认费率下的费用是 1 USDC。
 
-这两项 fees 都可以通过在 escrow 中持有 VPFI 获得**最高 `{liveValue:tier4DiscountBps}`% discount**（见下文）。在 default 或 liquidation 时，recovered interest 不会收取 Yield Fee - protocol 不会从 failed loan 中获利。
+这两项 fees 都可以通过在 vault 中持有 VPFI 获得**最高 `{liveValue:tier4DiscountBps}`% discount**（见下文）。在 default 或 liquidation 时，recovered interest 不会收取 Yield Fee - protocol 不会从 failed loan 中获利。
 
 没有 withdrawal fees，没有 idle fees，没有 streaming fees，也没有针对 principal 的 “performance” fees。Protocol 收取的只有上面两个数字。
 
@@ -127,9 +127,9 @@ Rental 结束后（无论是 expiry 还是 default），NFT 会回到 owner 的 
 
 ### 1. Fee discounts
 
-如果你在某条 chain 的 escrow 中持有 VPFI，它会为你在该 chain 参与的 loans 折抵 protocol fees：
+如果你在某条 chain 的 vault 中持有 VPFI，它会为你在该 chain 参与的 loans 折抵 protocol fees：
 
-| Escrow 中的 VPFI | Fee discount |
+| Vault 中的 VPFI | Fee discount |
 |---|---|
 | `{liveValue:tier1Min}` – `{liveValue:tier2Min}`（不含） | `{liveValue:tier1DiscountBps}`% |
 | `{liveValue:tier2Min}` – `{liveValue:tier3Min}`（不含） | `{liveValue:tier2DiscountBps}`% |
@@ -140,7 +140,7 @@ Discounts 适用于 lender 和 borrower fees。Discount 会在 **loan's life 中
 
 ### 2. Staking — 5% APR
 
-任何停留在你 escrow 中的 VPFI 都会自动获得 5% annual yield 的 staking rewards。不需要单独 staking action，没有 lock-up，也没有 “unstake” wait。把 VPFI 移入 escrow，它从那一刻开始 earn；移出后 accrual 停止。
+任何停留在你 vault 中的 VPFI 都会自动获得 5% annual yield 的 staking rewards。不需要单独 staking action，没有 lock-up，也没有 “unstake” wait。把 VPFI 移入 vault，它从那一刻开始 earn；移出后 accrual 停止。
 
 ### 3. Platform interaction rewards
 
@@ -187,7 +187,7 @@ Vaipakam 在每条 supported chain 上都是 independent deployment：**Ethereum
 
 流程相同，但在 **Create Offer** page 中选择 “NFT rental”，而不是 ERC-20 lending。Form 会一步步引导你完成。
 
-如果你只是想用自己的 VPFI **earn passive yield**，在 **Dashboard** page 将它 deposit 到你的 escrow。就这么简单 - staking 从那一刻起自动开始。
+如果你只是想用自己的 VPFI **earn passive yield**，在 **Dashboard** page 将它 deposit 到你的 vault。就这么简单 - staking 从那一刻起自动开始。
 
 ---
 
@@ -196,9 +196,9 @@ Vaipakam 在每条 supported chain 上都是 independent deployment：**Ethereum
 其他 DeFi platforms 会做的一些事，我们有意**不做**：
 
 - **No pooled lending.** 每笔 loan 都发生在两个 specific wallets 之间，且条款由双方签署。没有 shared liquidity pool，没有 utilization curve，也没有 surprise rate spikes。
-- **No proxy custody.** 你的 assets 在你自己的 escrow 中，而不是 shared vault 中。Protocol 只会在你签署的 actions 中移动它们。
+- **No proxy custody.** 你的 assets 在你自己的 vault 中，而不是 shared vault 中。Protocol 只会在你签署的 actions 中移动它们。
 - **No leveraged loops by default.** 如果你愿意，可以把 borrowed funds 重新发布成新的 lender offer，但 protocol 不会把 automatic looping 做进 UX。我们认为那是 footgun。
-- **No surprise upgrades.** Escrow upgrades 受到 gating；mandatory upgrades 会在 app 中出现，由你明确 apply。没有任何东西会在你背后 rewrite 你的 vault。
+- **No surprise upgrades.** Vault upgrades 受到 gating；mandatory upgrades 会在 app 中出现，由你明确 apply。没有任何东西会在你背后 rewrite 你的 vault。
 
 ---
 

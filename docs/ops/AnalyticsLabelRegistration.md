@@ -15,7 +15,7 @@ Companion docs:
 
 ## 1. Why labeling matters
 
-Vaipakam uses a **per-user escrow proxy** pattern. Every user that
+Vaipakam uses a **Vaipakam Vault proxy** pattern. Every user that
 interacts with the protocol gets their own ERC1967 proxy deployed by
 `EscrowFactoryFacet.getOrCreateUserEscrow`. The proxy delegates to a
 shared `VaipakamEscrowImplementation`.
@@ -34,14 +34,14 @@ counter math (`protocolTrackedEscrowBalance`) guarantees that
 unsolicited dust never participates in protocol-side outflows. But
 this property is invisible to a generic taint-tracking tool — it has
 no idea the address belongs to Vaipakam. Without labels, an honest
-user whose escrow received tainted dust may have their CEX deposits
+user whose vault received tainted dust may have their CEX deposits
 flagged, their addresses scored down, and their protocol position
 mistakenly labeled "exposed to sanctioned origin."
 
-**Labels solve this.** Once an analytics firm labels the escrow
-proxy pattern as "Vaipakam Per-User Escrow", their tooling can apply
+**Labels solve this.** Once an analytics firm labels the vault
+proxy pattern as "Vaipakam Vaults", their tooling can apply
 protocol-aware accounting rules — most importantly, recognize that
-unsolicited dust sitting in escrow without an outflow is "stuck" not
+unsolicited dust sitting in the vault without an outflow is "stuck" not
 "laundered."
 
 This runbook walks through registration with each major firm.
@@ -64,9 +64,9 @@ to detect proxy contracts. If the slot is set, Etherscan shows on the
 proxy page:
 
 > **This contract is a Proxy.** Implementation: `0xImpl...address`
-> [Vaipakam Escrow Implementation]
+> [Vaipakam Vault Implementation]
 
-If the **implementation contract** is tagged, every per-user escrow
+If the **implementation contract** is tagged, every Vaipakam Vault
 proxy automatically displays the relationship. Same mechanism Aave /
 Compound / Uniswap rely on for their proxy-based deployments.
 
@@ -97,7 +97,7 @@ Complete these BEFORE reaching out to any firm:
 - [ ] Public docs page live at e.g. `vaipakam.com/protocol/escrow.md`
       explaining: per-user proxy pattern; counter-based accounting;
       proof-of-non-spend property; recovery flow semantics.
-- [ ] Sample of 5–10 already-deployed escrow proxy addresses (the
+- [ ] Sample of 5–10 already-deployed vault proxy addresses (the
       analytics firms ask for examples to confirm the pattern).
 - [ ] Factory function signature documented:
       `EscrowFactoryFacet.getOrCreateUserEscrow(address user) external returns (address proxy)`
@@ -124,19 +124,26 @@ Description:    The main entry point for the Vaipakam P2P lending
                 https://vaipakam.com/protocol/
 ```
 
-### 4b. Escrow implementation submission
+### 4b. Vault implementation submission
 
 ```
 Address:        0xImpl...
-Suggested Name: Vaipakam: Escrow Implementation
+Suggested Name: Vaipakam Vaults
 Description:    Shared UUPS implementation that every Vaipakam
-                per-user escrow proxy delegates to. Each user gets
+                per-user vault proxy delegates to. Each user gets
                 their own ERC1967 proxy pointing at this address.
-                Per-user proxies handle ERC-20/721/1155 custody for
-                that user's loans, offers, and VPFI staking.
-                Public protocol docs:
-                https://vaipakam.com/protocol/escrow.md
+                Per-user proxies handle ERC-20 / ERC-721 / ERC-1155
+                custody for that user's loans, offers, and VPFI
+                staking. Public protocol docs:
+                https://vaipakam.com/protocol/vaults.md
 ```
+
+This name is intentional. When a curious user lands on a per-user
+vault proxy on Etherscan, they see "**This contract is a Proxy.**
+Implementation: `0xImpl…` [Vaipakam Vaults]" — the brand surface
+without a redundant "Implementation Implementation" suffix. The
+implementation page itself shows just "Vaipakam Vaults" as the
+contract title.
 
 ### 4c. Optional — Vaipakam token contracts
 
@@ -231,11 +238,11 @@ ask for additional examples or a technical call.
 ### 5c. What it gets us
 
 Once registered:
-- Reactor (their forensic tool) shows "Vaipakam: Per-User Escrow"
+- Reactor (their forensic tool) shows "Vaipakam: Vaipakam Vaults"
   on every address they identify as matching the pattern.
 - KYT (their compliance tool used by exchanges and on/off-ramps)
   applies protocol-aware risk scoring — tainted dust sitting in our
-  escrow doesn't propagate taint to the user's other addresses.
+  vault doesn't propagate taint to the user's other addresses.
 - Their public sanctions oracle is unaffected (it's only sanctions
   classifications); but the broader risk-scoring API used by CEXs is.
 
@@ -276,7 +283,7 @@ to the contract address, click "Suggest Label", provide name and
 description. Arkham reviews quickly (often hours).
 
 For factory-style deployment, request a "label all addresses created
-by 0x[factory_address] with name 'Vaipakam: Per-User Escrow'" — this
+by 0x[factory_address] with name 'Vaipakam: Vaipakam Vaults'" — this
 is a common Arkham operation.
 
 ---
@@ -318,9 +325,9 @@ firms), update:
 - The Asset Viewer warning copy may be slightly softened (still warn,
   but reference the labeled-protocol status in case of disputes):
   > Tokens managed by the Vaipakam protocol are shown here.
-  > Vaipakam escrow addresses are registered with major
+  > Vaipakam vault addresses are registered with major
   > blockchain analytics providers; if you encounter compliance
-  > friction at an external service, contact us with your escrow
+  > friction at an external service, contact us with your vault
   > address.
 
 - The Advanced User Guide stuck-recovery section should mention the

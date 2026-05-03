@@ -151,7 +151,7 @@ function BridgeLandedBanner({
               : `VPFI delivered to your wallet on ${originChain.name}`}
           </div>
           <p className="stat-label" style={{ margin: 0 }}>
-            Deposit it to your escrow below to unlock the borrower fee discount.
+            Deposit it to your Vaipakam Vault below to unlock the borrower fee discount.
             You can also import the token into MetaMask so your wallet UI tracks
             the balance.
           </p>

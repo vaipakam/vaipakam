@@ -3,7 +3,7 @@
 Vaipakam is a peer-to-peer lending platform. You lend assets and earn
 interest. You borrow assets and post collateral. You rent NFTs and the
 owner gets daily fees. Everything happens directly between two
-wallets, with the smart contracts holding the assets in escrow until
+wallets, with the smart contracts holding the assets in the vault until
 the loan or rental ends.
 
 This page is the **friendly tour**. If you want technical depth, use
@@ -53,7 +53,7 @@ Offer**. You're a lender, so you fill in:
 - Loan duration: **30 days**
 
 You sign one transaction. Your 1,000 USDC moves from your wallet into
-your **personal escrow** (a private vault that only you control). It
+your **Vaipakam Vault** (a private vault that only you control). It
 stays there until a borrower accepts your offer.
 
 ### Step 2 — A borrower accepts
@@ -65,8 +65,8 @@ month. They click **Accept** and post WETH worth, say, $1,500
 
 The instant they accept:
 
-- Your 1,000 USDC moves from your escrow to theirs
-- Their WETH is locked in their escrow as collateral
+- Your 1,000 USDC moves from your vault to theirs
+- Their WETH is locked in their vault as collateral
 - Both of you receive a position NFT — yours says "I'm owed 1,000 USDC
   - interest"; theirs says "I'm owed my WETH back when I repay"
 - The loan clock starts ticking
@@ -134,7 +134,7 @@ else's loan doesn't get you their collateral.
 
 Same flow as a loan, with two differences:
 
-- **The NFT stays in escrow**; the renter never holds it directly.
+- **The NFT stays in the vault**; the renter never holds it directly.
   Instead, the protocol uses **ERC-4907** to give the renter "user
   rights" on the NFT for the rental window. Compatible games and apps
   read user rights, so the renter can play, log in, or use the NFT's
@@ -145,7 +145,7 @@ Same flow as a loan, with two differences:
   early, the unused days refund.
 
 When the rental ends (by expiry or by default), the NFT returns to
-the owner's escrow. The owner can then re-list it or claim it back to
+the owner's vault. The owner can then re-list it or claim it back to
 their wallet.
 
 ---
@@ -155,7 +155,7 @@ their wallet.
 Lending and borrowing on Vaipakam isn't risk-free. But the protocol
 has several layers built in:
 
-- **Per-user escrow.** Your assets sit in your own vault. The
+- **Per-user vault.** Your assets sit in your own vault. The
   protocol never pools them with other users' funds. This means a bug
   affecting another user can't drain you.
 - **Health Factor enforcement.** A loan can only start if collateral
@@ -202,7 +202,7 @@ Two fees, both tiny:
   the lending amount, paid by the borrower at origination. On a
   1,000 USDC loan, that's 1 USDC at the default rate.
 
-Both fees can be **discounted up to `{liveValue:tier4DiscountBps}`%** by holding VPFI in escrow
+Both fees can be **discounted up to `{liveValue:tier4DiscountBps}`%** by holding VPFI in the vault
 (see below). On default or liquidation, no Yield Fee is collected on
 the recovered interest — the protocol doesn't profit from a failed
 loan.
@@ -231,10 +231,10 @@ is the two numbers above.
 
 ### 1. Fee discounts
 
-If you hold VPFI in your escrow on a chain, it discounts your
+If you hold VPFI in your vault on a chain, it discounts your
 protocol fees on loans you participate in on that chain:
 
-| VPFI in escrow                                              | Fee discount                    |
+| VPFI in the vault                                              | Fee discount                    |
 | ----------------------------------------------------------- | ------------------------------- |
 | `{liveValue:tier1Min}` – `{liveValue:tier2Min}` (exclusive) | `{liveValue:tier1DiscountBps}`% |
 | `{liveValue:tier2Min}` – `{liveValue:tier3Min}` (exclusive) | `{liveValue:tier2DiscountBps}`% |
@@ -248,9 +248,9 @@ proportion to how long you actually held the tier.
 
 ### 2. Staking — 5% APR
 
-Any VPFI sitting in your escrow automatically earns staking rewards
+Any VPFI sitting in your vault automatically earns staking rewards
 at 5% annual yield. There's no separate staking action, no lock-up,
-no "unstake" wait. Move VPFI into your escrow and it earns from that
+no "unstake" wait. Move VPFI into your vault and it earns from that
 moment. Move it out and accrual stops.
 
 ### 3. Platform interaction rewards
@@ -318,7 +318,7 @@ Same flow, but on the **Create Offer** page you pick "NFT rental"
 instead of ERC-20 lending. The form will guide you.
 
 If you just want to **earn passive yield on your VPFI**, deposit it
-into your escrow on the **Dashboard** page. That's it — staking is
+into your vault on the **Dashboard** page. That's it — staking is
 automatic from that moment.
 
 ---
@@ -331,12 +331,12 @@ A few things that other DeFi platforms do that we deliberately
 - **No pooled lending.** Every loan is between two specific wallets
   with terms they both signed up for. No shared liquidity pool, no
   utilization curve, no surprise rate spikes.
-- **No proxy custody.** Your assets sit in your own escrow, not in a
+- **No proxy custody.** Your assets sit in your own vault, not in a
   shared vault. The protocol moves them only on actions you sign.
 - **No leveraged loops by default.** You can rebroadcast borrowed
   funds as a new lender offer if you want, but the protocol doesn't
   build automatic looping into the UX. We think that's a footgun.
-- **No surprise upgrades.** Escrow upgrades are gated; mandatory
+- **No surprise upgrades.** Vault upgrades are gated; mandatory
   upgrades show up in the app for you to apply explicitly. Nothing
   rewrites your vault behind your back.
 

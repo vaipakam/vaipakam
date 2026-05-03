@@ -11,7 +11,13 @@
 
 ---
 
-- [ ] **T-055**: Vaipakam Treasury should also Implement tracked and untracked token mechanism, so that unsolicitated deposits will not be touched at all. and not just an EOA type of account. Need to see how major DeFi and DEX are handeling it.
+- [ ] **T-056**: First treasury have to convert its tokens to ETH, WBTC and VPFI in the ratio (need to be admin configurable, later by governance) mentioned in Tokenomics document and when it does, it needs to send the founder's cut to the Address set in .env variable. what do you say, is there a better approach.
+      Make the Diamond as treasury and have founder's address and send the founder's cut in each and every transaction (token conversion to ETH, WBTC and VPFI), is it fine to do like that? will there be any legality involved? can it be aggregated and then converted only above certain threshold?. is frequent conversion better or aggregated conversion, suggest me. is there a better appraoch?
+
+---
+
+- [x] **T-055**: Deferred: Vaipakam Treasury should also Implement tracked and untracked token mechanism, so that unsolicitated deposits will not be touched at all. and not just an EOA type of account. Need to see how major DeFi and DEX are handeling it.
+- Deferred as decided to keep diamond as treasury and it has `treasuryBalances` which is the accrual ledger; `balanceOf - treasuryBalances` would be unsolicited
 
 ---
 

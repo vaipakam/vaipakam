@@ -62,7 +62,7 @@ Sie öffnen die Vaipakam-App, verbinden Ihr Wallet und klicken auf
 - Kreditlaufzeit: **30 Tage**
 
 Sie unterschreiben eine Transaktion. Ihre 1.000 USDC wandern aus
-Ihrem Wallet in Ihren **persönlichen Escrow** (einen
+Ihrem Wallet in Ihren **persönlichen Vault** (einen
 privaten Tresor, den nur Sie kontrollieren). Sie bleiben dort, bis
 ein Kreditnehmer Ihr Angebot annimmt.
 
@@ -76,9 +76,9 @@ Ihrer 70%-Grenze, also wird das Angebot angenommen).
 
 In dem Moment, in dem die Annahme erfolgt:
 
-- Ihre 1.000 USDC wandern aus Ihrem Escrow in den der
+- Ihre 1.000 USDC wandern aus Ihrem Vault in den der
   anderen Person
-- Deren WETH wird in deren Escrow als Sicherheit gesperrt
+- Deren WETH wird in deren Vault als Sicherheit gesperrt
 - Beide erhalten ein Positions-NFT — Ihres sagt „Mir werden 1.000
   USDC + Zinsen geschuldet"; das andere sagt „Mir wird mein WETH bei
   Rückzahlung geschuldet"
@@ -154,7 +154,7 @@ zu zahlen, gibt Ihnen nicht dessen Sicherheit.
 
 Gleicher Ablauf wie ein Kredit, mit zwei Unterschieden:
 
-- **Das NFT bleibt im Escrow**; der Mieter hält es nie
+- **Das NFT bleibt im Vault**; der Mieter hält es nie
   direkt. Stattdessen verwendet das Protokoll **ERC-4907**, um dem
   Mieter „Nutzungsrechte" am NFT für das Mietfenster zu geben.
   Kompatible Spiele und Apps lesen Nutzungsrechte, also kann der
@@ -167,7 +167,7 @@ Gleicher Ablauf wie ein Kredit, mit zwei Unterschieden:
   werden die ungenutzten Tage erstattet.
 
 Wenn die Miete endet (durch Ablauf oder Default), kehrt das NFT in
-den Escrow des Eigentümers zurück. Der Eigentümer kann
+den Vault des Eigentümers zurück. Der Eigentümer kann
 es dann erneut listen oder zurück in sein Wallet beanspruchen.
 
 ---
@@ -177,7 +177,7 @@ es dann erneut listen oder zurück in sein Wallet beanspruchen.
 Verleihen und Leihen auf Vaipakam ist nicht risikofrei. Aber das
 Protokoll hat mehrere eingebaute Schichten:
 
-- **Escrow pro Nutzer.** Ihre Vermögenswerte liegen in
+- **Vault pro Nutzer.** Ihre Vermögenswerte liegen in
   Ihrem eigenen Tresor. Das Protokoll bündelt sie nie mit Mitteln
   anderer Nutzer. Das bedeutet, ein Bug, der einen anderen Nutzer
   betrifft, kann Sie nicht leerräumen.
@@ -230,7 +230,7 @@ Zwei Gebühren, beide klein:
   Bei einem 1.000-USDC-Kredit sind das 1 USDC beim Standard-Satz.
 
 Beide Gebühren können um **bis zu `{liveValue:tier4DiscountBps}` %
-rabattiert** werden, indem Sie VPFI im Escrow halten (siehe unten).
+rabattiert** werden, indem Sie VPFI im Vault halten (siehe unten).
 Bei Default oder Liquidation wird keine Renditegebühr auf
 zurückgewonnene Zinsen erhoben — das Protokoll profitiert nicht von
 einem gescheiterten Kredit.
@@ -263,11 +263,11 @@ zwei Zahlen oben.
 
 ### 1. Gebührenrabatte
 
-Wenn Sie VPFI in Ihrem Escrow auf einer Chain halten,
+Wenn Sie VPFI in Ihrem Vault auf einer Chain halten,
 rabattiert das Ihre Protokollgebühren auf Krediten, an denen Sie
 auf dieser Chain teilnehmen:
 
-| VPFI im Escrow | Gebührenrabatt |
+| VPFI im Vault | Gebührenrabatt |
 |---|---|
 | `{liveValue:tier1Min}` – `{liveValue:tier2Min}` (excl.) | `{liveValue:tier1DiscountBps}` % |
 | `{liveValue:tier2Min}` – `{liveValue:tier3Min}` (excl.) | `{liveValue:tier2DiscountBps}` % |
@@ -282,10 +282,10 @@ der Sie tatsächlich die Stufe gehalten haben.
 
 ### 2. Staking — 5 % APR
 
-Jedes VPFI im Escrow verdient automatisch Staking-
+Jedes VPFI im Vault verdient automatisch Staking-
 Belohnungen mit 5 % Jahresrendite. Es gibt keine separate Staking-
 Aktion, keine Sperrfrist, keine Wartezeit zum „Unstake". Verschieben
-Sie VPFI in Ihren Escrow und es verdient ab diesem
+Sie VPFI in Ihren Vault und es verdient ab diesem
 Moment. Verschieben Sie es heraus und die Akkumulation hört auf.
 
 ### 3. Plattform-Interaktionsbelohnungen
@@ -359,7 +359,7 @@ Sie „NFT-Miete" statt ERC-20-Verleihen. Das Formular wird Sie
 führen.
 
 Wenn Sie nur **passive Rendite auf Ihre VPFI** verdienen wollen,
-hinterlegen Sie sie in Ihrem Escrow auf der **Dashboard**-
+hinterlegen Sie sie in Ihrem Vault auf der **Dashboard**-
 Seite. Das ist alles — Staking ist ab diesem Moment automatisch.
 
 ---
@@ -374,13 +374,13 @@ Ein paar Dinge, die andere DeFi-Plattformen tun, die wir bewusst
   haben. Kein gemeinsamer Liquiditätspool, keine Auslastungskurve,
   keine überraschenden Zinsspitzen.
 - **Keine Proxy-Verwahrung.** Ihre Vermögenswerte liegen in Ihrem
-  eigenen Escrow, nicht in einem gemeinsamen Tresor. Das
+  eigenen Vault, nicht in einem gemeinsamen Tresor. Das
   Protokoll bewegt sie nur bei Aktionen, die Sie unterschreiben.
 - **Keine Hebelschleifen standardmäßig.** Sie können geliehene
   Mittel als neues Kreditgeber-Angebot erneut ausschreiben, wenn Sie
   möchten, aber das Protokoll integriert kein automatisches Looping
   in die UX. Wir halten das für eine leicht auslösbare Falle.
-- **Keine Überraschungs-Upgrades.** Escrow-Upgrades sind
+- **Keine Überraschungs-Upgrades.** Vault-Upgrades sind
   kontrolliert; verpflichtende Upgrades erscheinen in der App,
   damit Sie sie explizit anwenden. Nichts schreibt Ihren Tresor
   hinter Ihrem Rücken um.

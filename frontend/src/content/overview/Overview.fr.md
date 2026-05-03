@@ -4,7 +4,7 @@ Vaipakam est une plateforme de prêt entre pairs. Vous prêtez des
 actifs et touchez des intérêts. Vous empruntez des actifs et apportez
 une garantie. Vous louez des NFT et le propriétaire perçoit des
 loyers journaliers. Tout se passe directement entre deux portefeuilles,
-les contrats intelligents conservant les actifs en séquestre jusqu'à
+les contrats intelligents conservant les actifs en vault jusqu'à
 la fin du prêt ou de la location.
 
 Cette page est la **visite guidée accessible**. Si vous cherchez plus
@@ -62,7 +62,7 @@ remplissez :
 - Durée du prêt : **30 jours**
 
 Vous signez une transaction. Vos 1 000 USDC passent de votre
-portefeuille à votre **séquestre personnel** (un coffre privé que
+portefeuille à votre **vault personnel** (un coffre privé que
 vous seul contrôlez). Ils y restent jusqu'à ce qu'un emprunteur
 accepte votre offre.
 
@@ -76,8 +76,8 @@ apporte du WETH d'une valeur, disons, de 1 500 $ (un LTV d'environ
 
 Au moment où l'acceptation se déclenche :
 
-- Vos 1 000 USDC passent de votre séquestre au sien
-- Son WETH est verrouillé dans son séquestre comme garantie
+- Vos 1 000 USDC passent de votre Vaipakam Vault au sien
+- Son WETH est verrouillé dans son vault comme garantie
 - Vous recevez chacun un NFT de position — le vôtre dit « on me doit
   1 000 USDC + intérêts » ; le sien dit « on me doit mon WETH au
   remboursement »
@@ -151,7 +151,7 @@ prêt de quelqu'un d'autre ne vous donne pas sa garantie.
 
 Même flux qu'un prêt, avec deux différences :
 
-- **Le NFT reste en séquestre** ; le locataire ne le détient jamais
+- **Le NFT reste en vault** ; le locataire ne le détient jamais
   directement. À la place, le protocole utilise **ERC-4907** pour
   donner au locataire des « droits d'utilisation » sur le NFT
   pendant la fenêtre de location. Les jeux et apps compatibles
@@ -164,7 +164,7 @@ Même flux qu'un prêt, avec deux différences :
   tôt, les jours non utilisés sont remboursés.
 
 Quand la location se termine (par expiration ou par défaut), le
-NFT retourne dans le séquestre du propriétaire. Le propriétaire peut
+NFT retourne dans le vault du propriétaire. Le propriétaire peut
 alors le re-lister ou le rappeler dans son portefeuille.
 
 ---
@@ -174,7 +174,7 @@ alors le re-lister ou le rappeler dans son portefeuille.
 Prêter et emprunter sur Vaipakam n'est pas sans risque. Mais le
 protocole intègre plusieurs couches :
 
-- **Séquestre par utilisateur.** Vos actifs restent dans votre
+- **Vault par utilisateur.** Vos actifs restent dans votre
   propre coffre. Le protocole ne les met jamais en commun avec les
   fonds d'autres utilisateurs. Cela signifie qu'un bug affectant un
   autre utilisateur ne peut pas vider votre position.
@@ -229,7 +229,7 @@ Deux frais, tous les deux modestes :
   prêt de 1 000 USDC, c'est 1 USDC au taux par défaut.
 
 Les deux frais peuvent bénéficier d'une **remise allant jusqu'à
-`{liveValue:tier4DiscountBps}` %** en détenant du VPFI en séquestre
+`{liveValue:tier4DiscountBps}` %** en détenant du VPFI en vault
 (voir ci-dessous). En cas de défaut ou de liquidation, aucune
 Commission de Rendement n'est prélevée sur les intérêts récupérés —
 le protocole ne tire pas profit d'un prêt qui échoue.
@@ -261,11 +261,11 @@ ci-dessus.
 
 ### 1. Remises sur les frais
 
-Si vous détenez du VPFI dans votre séquestre sur une chaîne, cela
+Si vous détenez du VPFI dans votre Vaipakam Vault sur une chaîne, cela
 réduit vos frais de protocole sur les prêts auxquels vous participez
 sur cette chaîne :
 
-| VPFI en séquestre | Remise sur les frais |
+| VPFI en vault | Remise sur les frais |
 |---|---|
 | `{liveValue:tier1Min}` – `{liveValue:tier2Min}` (excl.) | `{liveValue:tier1DiscountBps}` % |
 | `{liveValue:tier2Min}` – `{liveValue:tier3Min}` (excl.) | `{liveValue:tier2DiscountBps}` % |
@@ -280,10 +280,10 @@ lequel vous avez réellement détenu le palier.
 
 ### 2. Staking — 5 % APR
 
-Tout VPFI posé dans votre séquestre génère automatiquement des
+Tout VPFI posé dans votre Vaipakam Vault génère automatiquement des
 récompenses de staking au rendement annuel de 5 %. Pas d'action de
 staking séparée, pas de blocage, pas d'attente pour « unstake ».
-Déplacez du VPFI dans votre séquestre et il rapporte à partir de
+Déplacez du VPFI dans votre Vaipakam Vault et il rapporte à partir de
 ce moment. Sortez-le et l'accumulation s'arrête.
 
 ### 3. Récompenses d'interaction sur la plateforme
@@ -358,7 +358,7 @@ Même flux, mais sur la page **Créer une offre** vous choisissez
 guidera.
 
 Si vous voulez juste **gagner du rendement passif sur votre VPFI**,
-déposez-le dans votre séquestre depuis la page **Tableau de bord**.
+déposez-le dans votre Vaipakam Vault depuis la page **Tableau de bord**.
 C'est tout — le staking est automatique à partir de ce moment.
 
 ---
@@ -373,13 +373,13 @@ Quelques choses que d'autres plateformes DeFi font et que nous
   consenti. Pas de pool de liquidité partagé, pas de courbe
   d'utilisation, pas de pic de taux surprise.
 - **Pas de garde par proxy.** Vos actifs reposent dans votre propre
-  séquestre, pas dans un coffre partagé. Le protocole ne les déplace
+  vault, pas dans un coffre partagé. Le protocole ne les déplace
   qu'au gré des actions que vous signez.
 - **Pas de boucles de levier par défaut.** Vous pouvez republier
   des fonds empruntés comme nouvelle offre de prêteur si vous le
   souhaitez, mais le protocole n'intègre pas le bouclage automatique
   dans l'UX. Nous considérons que c'est un piège facile à déclencher.
-- **Pas de mises à jour surprise.** Les mises à jour du séquestre
+- **Pas de mises à jour surprise.** Les mises à jour du vault
   sont contrôlées ; les mises à jour obligatoires apparaissent dans
   l'app pour que vous les appliquiez explicitement. Rien ne
   réécrit votre coffre dans votre dos.

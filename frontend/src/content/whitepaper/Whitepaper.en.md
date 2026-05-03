@@ -9,16 +9,16 @@
 ## Abstract
 
 Vaipakam is a non-custodial peer-to-peer credit protocol for over-collateralized
-ERC-20 lending and escrow-mediated ERC-721 / ERC-1155 rentals across
+ERC-20 lending and vault-mediated ERC-721 / ERC-1155 rentals across
 Ethereum-compatible networks. Each supported network — `Ethereum mainnet`,
 `Base`, `Polygon zkEVM`, `Arbitrum`, `Optimism`, and `BNB Chain` — runs an
 independent Diamond (`EIP-2535`) deployment, with all loan, offer, collateral,
 repayment, claim, refinance, and liquidation state remaining local to a single
 chain. The protocol couples bilateral offer negotiation with per-user isolated
-escrows, tokenized lender / borrower position rights, an oracle stack hardened
+vaults, tokenized lender / borrower position rights, an oracle stack hardened
 by a Soft 2-of-N secondary quorum, a four-DEX swap-failover liquidation
 pipeline, and a `LayerZero OFT V2` protocol token (`VPFI`) wired for fee
-discounts, escrow-based staking, and locally-claimable interaction rewards
+discounts, vault-based staking, and locally-claimable interaction rewards
 that share a protocol-wide daily denominator.
 
 This document specifies the architecture, the loan and rental lifecycle,
@@ -68,7 +68,7 @@ The protocol's defining commitments are:
 - **Bilateral terms.** Lenders and borrowers post their own offers; there
   is no shared interest-rate curve, no global utilization ratio, and no
   imposed risk parameters beyond the safety floor.
-- **Per-user escrow isolation.** Every user owns a dedicated `ERC1967` escrow
+- **Per-user vault isolation.** Every user owns a dedicated `ERC1967` vault
   proxy. There is no commingled treasury vault.
 - **Tokenized rights.** Lender-side and borrower-side position NFTs follow
   ownership; claim authority moves with the NFT, not with the originating
@@ -121,8 +121,8 @@ Vaipakam supports:
 - loan refinance (active ERC-20 loans only)
 - partial collateral withdrawal when health permits
 - additional collateral top-up
-- VPFI fixed-rate purchase, escrow deposit, fee discounts
-- escrow-based VPFI staking
+- VPFI fixed-rate purchase, vault deposit, fee discounts
+- vault-based VPFI staking
 - daily platform interaction rewards
 - public read-only NFT verifier and analytics dashboard
 
@@ -179,10 +179,10 @@ Risk and oracle:
 
 Token economics:
 
-- **VPFITokenFacet** — escrow VPFI views and helpers
+- **VPFITokenFacet** — vault VPFI views and helpers
 - **VPFIDiscountFacet** — fixed-rate buy program, time-weighted tier resolution
 - **InteractionRewardsFacet** — daily lender / borrower accrual under the 8-band emission schedule
-- **StakingRewardsFacet** — `5% APR` reward-per-token accrual on escrow VPFI
+- **StakingRewardsFacet** — `5% APR` reward-per-token accrual on vault VPFI
 - **RewardReporterFacet** — every-chain reporter; sends mirror daily totals to canonical Base
 - **RewardAggregatorFacet** — Base-only aggregator; finalizes and broadcasts the daily global denominator
 
@@ -194,10 +194,10 @@ Admin and config:
 - **TreasuryFacet** — VPFI mint surface, treasury fee accumulation
 - **DiamondCutFacet / DiamondLoupeFacet / OwnershipFacet** — `EIP-2535` plumbing
 
-NFT and escrow:
+NFT and vault:
 
 - **VaipakamNFTFacet** — position NFT mint / update / burn (ERC-721, on-chain metadata)
-- **EscrowFactoryFacet** — per-user UUPS escrow proxy deployment, mandatory upgrade gating
+- **EscrowFactoryFacet** — per-user UUPS vault proxy deployment, mandatory upgrade gating
 - **ProfileFacet** — keeper opt-in surface
 
 Strategic flows:
@@ -212,19 +212,19 @@ Auxiliary:
 
 - **MetricsFacet** — read-only public analytics surface (TVL, counts, fee totals)
 
-### 3.3 Per-User Escrow
+### 3.3 Vaipakam Vaults
 
 `VaipakamEscrowImplementation.sol` is a UUPS-upgradeable contract.
 `EscrowFactoryFacet` deploys one `ERC1967Proxy` per user. Each user's
 ERC-20, ERC-721, and ERC-1155 assets are held in their own isolated
-escrow — no commingling. Cross-facet calls into escrow use the canonical
+vault — no commingling. Cross-facet calls into vault use the canonical
 `address(this).call(abi.encodeWithSelector(...))` pattern, which routes
 through the Diamond fallback.
 
-Mandatory escrow upgrades are not silently mass-pushed. When the protocol
-marks an upgrade as mandatory, interactions through outdated escrows are
+Mandatory vault upgrades are not silently mass-pushed. When the protocol
+marks an upgrade as mandatory, interactions through outdated vaults are
 blocked at the facet boundary, and the frontend prompts the user to
-submit their own escrow-upgrade transaction.
+submit their own vault-upgrade transaction.
 
 ### 3.4 Position NFTs
 
@@ -265,7 +265,7 @@ Key constants in `LibVaipakam.sol`:
 | `VPFI_INITIAL_MINT`            |  `23_000_000e18` | Genesis mint on Base                   |
 | `VPFI_INTERACTION_POOL_CAP`    |  `69_000_000e18` | Interaction-reward category cap        |
 | `VPFI_STAKING_POOL_CAP`        |  `55_200_000e18` | Staking-reward category cap            |
-| `VPFI_STAKING_APR_BPS`         |            `500` | `5%` escrow staking APR                |
+| `VPFI_STAKING_APR_BPS`         |            `500` | `5%` vault staking APR                |
 | `INTERACTION_CAP_VPFI_PER_ETH` |            `500` | `0.5 VPFI` per `0.001 ETH` of interest |
 
 ### 3.6 Rounding Doctrine
@@ -338,7 +338,7 @@ Either side may create an offer:
 
 - **Lender offer** — specifies lending asset, principal, APR, required
   collateral type and (amount or maximum LTV / minimum HF), duration. The
-  lender's principal is locked into escrow at creation.
+  lender's principal is locked into vault at creation.
 - **Borrower offer** — specifies desired asset and amount, maximum
   acceptable APR, offered collateral, duration. The borrower's collateral
   is locked at creation.
@@ -402,7 +402,7 @@ the borrower. On a 1,000 USDC match at the default rate, the borrower
 receives 999 USDC and 1 USDC routes to treasury.
 
 The borrower VPFI path inverts the fee source: when consent is
-active, the lending asset is liquid, and sufficient VPFI is in escrow,
+active, the lending asset is liquid, and sufficient VPFI is in the vault,
 the borrower receives `100%` of the requested principal and pays the
 **full** non-discounted `{liveValue:loanInitiationFeeBps}`% LIF equivalent
 in VPFI up front. That VPFI is held in Diamond custody (not Treasury) for
@@ -452,7 +452,7 @@ to full collateral return. Both sides claim independently against their
 position NFTs:
 
 - `ClaimFacet.claimAsLender(loanId)` — pays principal + interest from
-  escrow; routes the borrower VPFI rebate share if applicable
+  vault; routes the borrower VPFI rebate share if applicable
 - `ClaimFacet.claimAsBorrower(loanId)` — pays collateral + VPFI
   rebate atomically
 
@@ -532,7 +532,7 @@ Two distinct liquidation paths exist:
 
 For NFT rental defaults, `triggerDefault` revokes the borrower's user
 rights; the prepayment + buffer route to the lender (minus treasury
-fee), and the NFT returns to the lender's escrow.
+fee), and the NFT returns to the lender's vault.
 
 ### 7.2 Swap-Failover (LibSwap)
 
@@ -781,7 +781,7 @@ structural hazard.
 ### 9.1 Custody Model
 
 For rentable ERC-721 / ERC-1155 NFTs (ERC-4907 compliant), the protocol
-escrows the asset in `VaipakamEscrow` and assigns `ERC-4907`-style
+vaults the asset in `VaipakamEscrow` and assigns `ERC-4907`-style
 **user rights** to the borrower for the agreed duration. The borrower
 never receives custody or ownership of the underlying NFT.
 
@@ -796,11 +796,11 @@ The `5%` buffer (`RENTAL_BUFFER_BPS`) covers settlement edge cases:
 
 ### 9.3 ERC-1155 Read Surface
 
-For ERC-1155 rentals, the escrow is the canonical read surface for
+For ERC-1155 rentals, the vault is the canonical read surface for
 external integrations. Third-party apps querying for the active rented
 quantity for a given `(collection, tokenId)` pair receive:
 
-- the aggregate rented quantity within that escrow
+- the aggregate rented quantity within that vault
 - the **minimum** active expiry across all rented units
 
 This conservative model prevents external integrations from overstating
@@ -928,7 +928,7 @@ emergency brake.
 | Exchange / Market Making         |      14% |      32,200,000 | 50% liquidity / 50% locked          |
 | **Early Fixed-Rate Purchase**    |       1% |       2,300,000 | Public sale at `1 VPFI = 0.001 ETH` |
 | **Platform Interaction Rewards** |      30% |      69,000,000 | Daily emission via 8-band schedule  |
-| **Staking Rewards**              |      24% |      55,200,000 | `5% APR` on escrow balances         |
+| **Staking Rewards**              |      24% |      55,200,000 | `5% APR` on vault balances         |
 | **Total**                        | **100%** | **230,000,000** |                                     |
 
 ### 11.3 Fee Discount Tiers
@@ -950,7 +950,7 @@ Effective fees per tier are the base rate (lender Yield Fee
 of `{liveValue:tier4DiscountBps}`%, the lender effective yield fee
 is `0.76%` and the borrower effective LIF is `0.076%`.
 
-Tier resolution is **chain-local**: VPFI in escrow on `Base` does not
+Tier resolution is **chain-local**: VPFI in the vault on `Base` does not
 discount loans initiated on `Optimism`. Users opt in via a single
 platform-level consent surfaced on `Dashboard` — there is no per-offer
 or per-loan toggle.
@@ -959,14 +959,14 @@ or per-loan toggle.
 
 The protocol enforces **time-weighted** discount calculation across the loan
 lifetime, not point-in-time tier lookup. `LibVPFIDiscount.rollupUserDiscount`
-re-stamps the BPS at the **post-mutation** escrow VPFI balance on every
+re-stamps the BPS at the **post-mutation** vault VPFI balance on every
 balance change. This rollup closes the gaming vector where a user could
 keep a high-tier stamp after dropping to tier 0 until the next balance
 change.
 
 The lender discount is applied at settlement: the time-weighted average
 BPS reduces the Yield Fee taken from lender interest, deducting the
-required VPFI amount from the lender's escrow into Treasury via the
+required VPFI amount from the lender's vault into Treasury via the
 ETH+asset USD conversion path.
 
 ### 11.5 Borrower LIF — Up-Front + Time-Weighted Rebate
@@ -975,7 +975,7 @@ The borrower path inverts the fee source. At `OfferFacet.acceptOffer`
 on the VPFI path:
 
 1. Borrower pays the **full** non-discounted `0.1%` LIF equivalent in
-   VPFI (not tier-discounted) from escrow into Diamond custody (not
+   VPFI (not tier-discounted) from vault into Diamond custody (not
    Treasury). Stored in `s.borrowerLifRebate[loanId].vpfiHeld`.
 2. Borrower receives `100%` of the requested lending asset.
 
@@ -1014,11 +1014,11 @@ User flow (the `Buy VPFI` page):
 1. The user, connected to their preferred supported chain, pays ETH at
    the fixed rate. The page must not require a manual chain switch.
 2. Purchased VPFI is delivered to the user's **wallet** on that same
-   chain — never auto-routed into escrow. If the flow settles through
+   chain — never auto-routed into vault. If the flow settles through
    a Base canonical receiver, mint/release is gated on actual ETH
    receipt (not quoted amounts).
 3. A separate explicit user action moves VPFI from wallet into the
-   user's personal escrow on the same chain. Permit2 single-signature
+   user's Vaipakam Vault on the same chain. Permit2 single-signature
    path is supported as a convenience; classic approve-plus-deposit
    remains the fallback.
 
@@ -1044,7 +1044,7 @@ treasury-strengthening conversion, not a token burn.
 
 ### 12.1 Staking Rewards (`5% APR`)
 
-Any VPFI held in user escrow on a lending chain is automatically treated
+Any VPFI held in user vault on a lending chain is automatically treated
 as staked. Reward accrual uses the standard reward-per-token model:
 
 ```
@@ -1071,7 +1071,7 @@ Implementation notes:
   every era when they eventually claim
 
 Claim path: `claimStakingRewards()`. Unstaking is modeled simply as
-moving VPFI from escrow back to wallet on the same chain. No lock-up.
+moving VPFI from vault back to wallet on the same chain. No lock-up.
 
 ### 12.2 Platform Interaction Rewards
 
@@ -1297,7 +1297,7 @@ never grants claim rights.
 
 `AdminFacet.pause()` sets a single boolean consulted by every
 `whenNotPaused` modifier. Blocked: 47 call sites across 19 facets —
-every user lifecycle entry point, every reward facet, every escrow
+every user lifecycle entry point, every reward facet, every vault
 mutation.
 
 **Not** blocked by pause (by design):
@@ -1411,7 +1411,7 @@ Built on React + wagmi v2 + viem + ConnectKit. Pages:
 - **Permit2 single-signature path.** Uses Uniswap's canonical deployment
   at `0x000000000022D473030F116dDEE9F6B43aC78BA3`. EIP-712 signatures,
   30-minute expiry, high-entropy nonces, exact asset / amount / spender
-  scope. Available for create offer, accept offer, VPFI escrow deposit.
+  scope. Available for create offer, accept offer, VPFI vault deposit.
   Wallets that don't support Permit2 fall back to classic approve-plus-
   action.
 - **Blockaid simulation preview.** Shown on review modals before final

@@ -14,18 +14,18 @@ section corresponds to an `(i)` info icon next to a card title.
 
 ## Dashboard
 
-<a id="dashboard.your-escrow"></a>
+<a id="dashboard.your-vault"></a>
 
-### Your Escrow
+### Your Vaipakam Vault
 
-Think of your **escrow** as your private vault inside Vaipakam. It is
+Think of your **vault** as your private vault inside Vaipakam. It is
 a small contract that only you control. Whenever you take part in a
 loan — either by putting up collateral or by lending out an asset —
 the assets move from your wallet into this vault. They never get
 mixed with anyone else's money. When the loan ends, you claim them
 straight back out.
 
-You don't have to "create" an escrow yourself; the app makes one the
+You don't have to "create" a vault yourself; the app makes one the
 first time you need it. Once it exists it stays as your dedicated
 home on this chain.
 
@@ -47,13 +47,13 @@ both show up — same place, different rows.
 
 ### VPFI on this chain
 
-**VPFI** is the protocol's own token. Holding some in your escrow
+**VPFI** is the protocol's own token. Holding some in your vault
 gets you a discount on protocol fees and earns you a small passive
 yield (5% APR). This card tells you, on the chain you're connected
 to:
 
 - How much VPFI sits in your wallet right now.
-- How much sits in your escrow (which counts as "staked").
+- How much sits in your vault (which counts as "staked").
 - What share of the total VPFI supply you hold.
 - How much VPFI is left to be minted overall (the protocol has a
   hard cap).
@@ -69,10 +69,10 @@ balance you see is real on whichever chain you're on.
 ### Fee-discount consent
 
 Vaipakam can pay you a discount on protocol fees by using some of
-the VPFI you've parked in escrow. This switch is the "yes, please
+the VPFI you've parked in the vault. This switch is the "yes, please
 do that" toggle. You only flip it once.
 
-How big the discount is depends on how much VPFI you keep in escrow:
+How big the discount is depends on how much VPFI you keep in the vault:
 
 - **Tier 1** — `{liveValue:tier1Min}` VPFI or more → `{liveValue:tier1DiscountBps}`% off
 - **Tier 2** — `{liveValue:tier2Min}` VPFI or more → `{liveValue:tier2DiscountBps}`% off
@@ -80,7 +80,7 @@ How big the discount is depends on how much VPFI you keep in escrow:
 - **Tier 4** — more than `{liveValue:tier4Min}` VPFI → `{liveValue:tier4DiscountBps}`% off
 
 You can turn the switch off at any time. If you withdraw VPFI from
-escrow your tier drops in real time.
+vault your tier drops in real time.
 
 > **Note on blockchain network gas.** The discount above applies to
 > Vaipakam's **protocol fees** (the Yield Fee and Loan Initiation
@@ -103,7 +103,7 @@ There are two reward streams and the card breaks the total
 down by each one:
 
 - **Staking yield** — earned automatically on any VPFI you keep
-  in your escrow. Rate is the protocol APR shown on the Buy
+  in your vault. Rate is the protocol APR shown on the Buy
   VPFI page.
 - **Platform-interaction rewards** — earned a little bit every
   day for each loan you're part of, on either side. Paid out
@@ -150,7 +150,7 @@ units of asset Y at Z% interest for D days, in return for this much
 collateral".
 
 A borrower accepting one of these becomes the borrower-of-record
-for the loan: the borrower's collateral is locked in escrow, the
+for the loan: the borrower's collateral is locked in the vault, the
 principal asset arrives in the borrower's wallet, and interest
 accrues until the borrower repays.
 
@@ -226,7 +226,7 @@ can default.
 For a rental offer, this card sets the daily rental fee. The renter
 pays the full rental cost up front when accepting, plus a small 5%
 buffer in case the deal runs slightly long. The NFT itself stays in
-escrow throughout — the renter has rights to use it but cannot
+vault throughout — the renter has rights to use it but cannot
 move it.
 
 <a id="create-offer.collateral"></a>
@@ -389,12 +389,12 @@ switch networks.
 ### Your VPFI Discount Status
 
 Quick read on which discount tier you currently sit in. Tier comes
-from how much VPFI is in your **escrow** (not your wallet). The
-card also tells you (a) how much more VPFI you'd need in escrow to
+from how much VPFI is in your **vault** (not your wallet). The
+card also tells you (a) how much more VPFI you'd need in the vault to
 bump up to the next tier, and (b) whether the consent switch on
 the Dashboard is on — the discount only applies while it is.
 
-The same VPFI in your escrow is also "staked" automatically and
+The same VPFI in your vault is also "staked" automatically and
 earns you 5% APR.
 
 <a id="buy-vpfi.buy"></a>
@@ -408,19 +408,19 @@ the form so you know how much you have left.
 
 <a id="buy-vpfi.deposit"></a>
 
-### Step 2 — Deposit VPFI into your escrow
+### Step 2 — Deposit VPFI into your vault
 
-Buying VPFI puts it in your wallet, not your escrow. To get the
+Buying VPFI puts it in your wallet, not your vault. To get the
 fee discount and the 5% staking yield, you need to move it into
-the escrow yourself. This is always an explicit click — the app
+the vault yourself. This is always an explicit click — the app
 never moves your VPFI without you asking. One transaction (or a
 single signature, on chains that support it) and you're set.
 
 <a id="buy-vpfi.unstake"></a>
 
-### Step 3 — Unstake VPFI from your escrow
+### Step 3 — Unstake VPFI from your vault
 
-Want some VPFI back in your wallet? This card sends it from escrow
+Want some VPFI back in your wallet? This card sends it from vault
 back to you. Be aware: pulling VPFI out drops your discount tier
 **immediately**. If you have open loans, the discount math
 switches to the lower tier from this moment forward.
@@ -435,7 +435,7 @@ switches to the lower tier from this moment forward.
 
 Vaipakam pays you for two things:
 
-1. **Staking** — VPFI you keep in escrow earns 5% APR,
+1. **Staking** — VPFI you keep in the vault earns 5% APR,
    automatically.
 2. **Interaction** — every dollar of interest a loan you're part of
    actually settles earns you a daily share of a community-wide
@@ -458,7 +458,7 @@ only goes live shortly after the next daily window closes.
 
 ### Withdraw Staked VPFI
 
-Move VPFI out of your escrow back to your wallet. Once it's in the
+Move VPFI out of your vault back to your wallet. Once it's in the
 wallet it stops earning the 5% APR and stops counting toward your
 discount tier. Same as the "unstake" step on the Buy VPFI page —
 same action, just lives here too for convenience.
@@ -530,7 +530,7 @@ collateral to the lender with no leftover claim back to you.
 ### Parties
 
 The two wallet addresses on this loan — lender and borrower — and
-the escrow vaults that hold their assets. Each side also got a
+the vault vaults that hold their assets. Each side also got a
 "position NFT" when the loan opened. That NFT _is_ the right to
 that side's share of the outcome — keep it safe. If a holder
 transfers it to someone else, the new holder gets to claim
@@ -571,7 +571,7 @@ will be greyed out, with a small tooltip explaining why.
   left back.
 - **Refinance** — roll into a new loan with new terms; the
   protocol pays off the old loan from the new principal in one
-  transaction. Collateral never leaves escrow.
+  transaction. Collateral never leaves vault.
 - **Claim** — once the loan settles, returns your collateral on
   full repayment, or any leftover VPFI rebate from the loan-
   initiation fee on default.

@@ -14,17 +14,17 @@ Each section corresponds to an `(i)` info icon next to a card title.
 
 ## Dashboard
 
-<a id="dashboard.your-escrow"></a>
+<a id="dashboard.your-vault"></a>
 
-### Your Escrow
+### Your Vaipakam Vault
 
 An upgradeable per-user contract — your private vault on this chain
 — created for you the first time you take part in a loan. One
-escrow per address per chain. Holds the ERC-20, ERC-721, and ERC-1155
+vault per address per chain. Holds the ERC-20, ERC-721, and ERC-1155
 balances tied to your loan positions. There is no commingling: other
 users' assets are never in this contract.
 
-The escrow is the only place collateral, lent assets, and your
+The vault is the only place collateral, lent assets, and your
 locked VPFI sit. The protocol authenticates against it on every
 deposit and withdrawal. The implementation can be upgraded by the
 protocol owner, but only through a timelock — never instantly.
@@ -48,7 +48,7 @@ into a block explorer.
 Live VPFI accounting for the connected wallet on the active chain:
 
 - Wallet balance.
-- Escrow balance.
+- Vault balance.
 - Your share of circulating supply (after subtracting protocol-held
   balances).
 - Remaining mintable cap.
@@ -70,21 +70,21 @@ deploy gate.
 ### Fee-discount consent
 
 A wallet-level opt-in flag that lets the protocol settle the
-discounted portion of a fee in VPFI debited from your escrow at
+discounted portion of a fee in VPFI debited from your vault at
 terminal events. Default: off. Off means you pay 100% of every
 fee in the principal asset; on means the time-weighted discount
 applies.
 
 Tier ladder:
 
-| Tier | Min escrow VPFI                  | Discount                          |
+| Tier | Min vault VPFI                  | Discount                          |
 | ---- | -------------------------------- | --------------------------------- |
 | 1    | ≥ `{liveValue:tier1Min}`         | `{liveValue:tier1DiscountBps}`%   |
 | 2    | ≥ `{liveValue:tier2Min}`         | `{liveValue:tier2DiscountBps}`%   |
 | 3    | ≥ `{liveValue:tier3Min}`         | `{liveValue:tier3DiscountBps}`%   |
 | 4    | > `{liveValue:tier4Min}`         | `{liveValue:tier4DiscountBps}`%   |
 
-Tier is computed against your **post-change** escrow balance the
+Tier is computed against your **post-change** vault balance the
 moment you deposit or withdraw VPFI, then time-weighted across
 each loan's lifetime. An unstake re-stamps the rate at the new
 lower balance immediately for every open loan you're on — there
@@ -122,7 +122,7 @@ Per-stream breakdown rows show pending + claimed and a
 chevron deep-link to the full claim card on its native page:
 
 - **Staking yield** — pending VPFI accrued at the protocol
-  APR on your escrow balance, plus every staking reward
+  APR on your vault balance, plus every staking reward
   you've previously claimed from this wallet. Deep-links to
   the staking claim card on the Buy VPFI page.
 - **Platform-interaction rewards** — pending VPFI accrued
@@ -184,7 +184,7 @@ cut on interest is debited at terminal settlement, not up front.
 ### Borrower Offers
 
 Active offers from borrowers who have already locked their
-collateral in escrow. Acceptance is performed by a lender; this
+collateral in the vault. Acceptance is performed by a lender; this
 funds the loan with the principal asset and mints the position
 NFTs. Same HF ≥ 1.5 gate at initiation. The fixed APR is set on
 the offer at creation and is immutable through the loan's
@@ -237,7 +237,7 @@ The principal asset and amount that you are willing to offer,
 plus the interest rate (APR in %) and duration in days. Rate is
 fixed at offer time; duration sets the grace window before the
 loan can default. On acceptance, the principal moves from your
-escrow into the borrower's escrow as part of loan initiation.
+vault into the borrower's vault as part of loan initiation.
 
 <a id="create-offer.lending-asset:borrower"></a>
 
@@ -246,7 +246,7 @@ escrow into the borrower's escrow as part of loan initiation.
 The principal asset and amount that you want from the lender,
 plus the interest rate (APR in %) and duration in days. Rate is
 fixed at offer time; duration sets the grace window before the
-loan can default. Your collateral is locked in your escrow at
+loan can default. Your collateral is locked in your vault at
 offer-creation time and remains locked until a lender accepts
 and the loan opens (or you cancel).
 
@@ -257,7 +257,7 @@ and the loan opens (or you cancel).
 Rental-sub-type fields. Specifies the NFT contract and token id
 (and quantity for ERC-1155), plus the daily rental fee in the
 principal asset. On acceptance, the protocol debits the prepaid
-rental from the renter's escrow into custody — that's
+rental from the renter's vault into custody — that's
 duration × daily fee, plus a 5% buffer. The NFT itself moves
 into a delegated state (via ERC-4907 user rights, or the
 equivalent ERC-1155 rental hook) so the renter has rights but
@@ -306,7 +306,7 @@ How much you are willing to lock to secure the loan. Liquid
 ERC-20s (Chainlink feed plus ≥ $1M v3 pool depth) get LTV / HF
 math; illiquid ERC-20s and NFTs have no on-chain valuation and
 require both parties to consent to a full-collateral-on-default
-outcome. Your collateral is locked in your escrow at
+outcome. Your collateral is locked in your vault at
 offer-creation time on a borrower offer; for a lender offer,
 your collateral is locked at offer-acceptance time. Either way,
 the HF ≥ 1.5 gate at loan initiation must clear with the basket
@@ -472,13 +472,13 @@ through a timelock.
 Live status:
 
 - Current tier (0 to 4).
-- Escrow VPFI balance plus the gap to the next tier.
+- Vault VPFI balance plus the gap to the next tier.
 - Discount percentage at the current tier.
 - Wallet-level consent flag.
 
-Note that escrow VPFI also accrues 5% APR via the staking
+Note that vault VPFI also accrues 5% APR via the staking
 pool — there is no separate "stake" action. Depositing VPFI
-into your escrow IS staking.
+into your vault IS staking.
 
 <a id="buy-vpfi.buy"></a>
 
@@ -489,16 +489,16 @@ directly. On mirror chains, the buy adapter takes payment,
 sends a cross-chain message, and the receiver executes the buy
 on Base and bridges VPFI back. The bridge fee plus
 verifier-network cost is quoted live and shown in the form.
-VPFI does not auto-deposit into your escrow — Step 2 is an
+VPFI does not auto-deposit into your vault — Step 2 is an
 explicit user action by design.
 
 <a id="buy-vpfi.deposit"></a>
 
-### Step 2 — Deposit VPFI into your escrow
+### Step 2 — Deposit VPFI into your vault
 
 A separate explicit deposit step from your wallet to your
-escrow on the same chain. Required on every chain — even the
-canonical one — because escrow deposit is always an explicit
+vault on the same chain. Required on every chain — even the
+canonical one — because vault deposit is always an explicit
 user action per spec. On chains where Permit2 is configured,
 the app prefers the single-signature path over the classic
 approve + deposit pattern; it falls back gracefully if Permit2
@@ -506,10 +506,10 @@ isn't configured on that chain.
 
 <a id="buy-vpfi.unstake"></a>
 
-### Step 3 — Unstake VPFI from your escrow
+### Step 3 — Unstake VPFI from your vault
 
-Withdraw VPFI from your escrow back to your wallet. There is
-no separate approval leg — the protocol owns the escrow and
+Withdraw VPFI from your vault back to your wallet. There is
+no separate approval leg — the protocol owns the vault and
 debits itself. The withdraw triggers an immediate fee-discount
 rate re-stamp at the new (lower) balance, applied to every
 open loan you're on. There is no grace window where the old
@@ -525,7 +525,7 @@ tier still applies.
 
 Two streams:
 
-- **Staking pool** — escrow-held VPFI accrues at 5% APR
+- **Staking pool** — vault-held VPFI accrues at 5% APR
   continuously, with per-second compounding.
 - **Interaction pool** — per-day pro-rata share of a fixed
   daily emission, weighted by your settled-interest
@@ -553,7 +553,7 @@ finalising so users don't under-claim.
 ### Withdraw Staked VPFI
 
 Identical surface to "Step 3 — Unstake" on the Buy VPFI page —
-withdraw VPFI from escrow back to your wallet. Withdrawn VPFI
+withdraw VPFI from vault back to your wallet. Withdrawn VPFI
 exits the staking pool immediately (rewards stop accruing for
 that amount that block) and exits the discount accumulator
 immediately (post-balance re-stamp on every open loan).
@@ -644,10 +644,10 @@ VPFI Loan Initiation Fee rebate is left for you to claim.
 
 ### Parties
 
-Lender, borrower, lender escrow, borrower escrow, and the two
+Lender, borrower, lender's vault, borrower's vault, and the two
 position NFTs (one for each side). Each NFT is an ERC-721
 with on-chain metadata; transferring it transfers the right to
-claim. The escrow contracts are deterministic per address —
+claim. The vault contracts are deterministic per address —
 same address across deploys.
 
 <a id="loan-details.actions"></a>
@@ -694,7 +694,7 @@ Permissionless actions available to anyone regardless of role:
   Two-step: initiate, then complete.
 - **Refinance** — post a borrower offer for new terms; once a
   lender accepts, complete refinance swaps the loans
-  atomically with the collateral never leaving your escrow.
+  atomically with the collateral never leaving your vault.
 - **Claim as borrower** — terminal-only. Returns collateral on
   full repayment, or the unused VPFI Loan Initiation Fee
   rebate on default / liquidation. Burns the borrower position
@@ -910,7 +910,7 @@ borrower on the borrower's loan.
 
 Refinance atomically pays off your existing loan from new
 principal and opens a fresh loan with the new terms, all in
-one transaction. Collateral stays in your escrow throughout —
+one transaction. Collateral stays in your vault throughout —
 there is no unsecured window. The new loan must clear the
 HF ≥ 1.5 gate at initiation, just like any other loan.
 
@@ -925,7 +925,7 @@ Snapshot of the loan being refinanced — current principal,
 accrued interest so far, HF / LTV, and the collateral basket.
 The new offer should size at least the outstanding amount
 (principal + accrued interest); any excess on the new offer
-is delivered to your escrow as free principal.
+is delivered to your vault as free principal.
 
 <a id="refinance.step-1-post-offer"></a>
 
@@ -1057,34 +1057,34 @@ step itself stays user-only.
 
 This section covers an EDGE CASE most users will never need.
 Read all of it before clicking the recovery link at the
-bottom — declaring an incorrect source can lock your escrow
+bottom — declaring an incorrect source can lock your vault
 under the protocol's sanctions policy.
 
 <a id="stuck-recovery.what"></a>
 
 ### What "stuck token" means
 
-Your per-user escrow proxy is internal protocol storage. It
+Your Vaipakam Vault proxy is internal protocol storage. It
 is NOT a deposit address. Every protocol-supported deposit
 flows through Vaipakam's facet entry points, which pull
-funds from your wallet to your escrow as part of an offer
+funds from your wallet to your vault as part of an offer
 creation, loan acceptance, or stake operation. Tokens that
-arrive at the escrow OUTSIDE that flow — a direct
+arrive at the vault OUTSIDE that flow — a direct
 `IERC20.transfer` from a wallet or a CEX withdrawal that
-copy-pasted your escrow address — sit there without
+copy-pasted your vault address — sit there without
 protocol bookkeeping. The Asset Viewer hides them by
 showing only the protocol-tracked balance.
 
 Two ways tokens get stuck:
 
-1. **You sent them yourself.** You copied your escrow address
+1. **You sent them yourself.** You copied your vault address
    (from the Dashboard or a block explorer) into a CEX
    withdrawal field or a wallet's send-tokens form, and
-   submitted. The tokens landed in your escrow without going
+   submitted. The tokens landed in your vault without going
    through the protocol's deposit path.
 
 2. **A third party sent them ("dust attack").** Someone
-   transferred a small amount to your escrow from a flagged
+   transferred a small amount to your vault from a flagged
    wallet, hoping to associate your address with their
    reputation. This is a real attack vector against
    high-profile addresses on permissionless chains.
@@ -1094,7 +1094,7 @@ Two ways tokens get stuck:
 ### About "taint poisoning"
 
 If the third-party sender is on a sanctions list, generic
-on-chain analytics tools may flag your escrow as
+on-chain analytics tools may flag your vault as
 "sanctions-adjacent" even though you never touched the
 incoming tokens. There is no on-chain way to undo this — the
 transfer event is permanent. Vaipakam's INTERNAL
@@ -1110,7 +1110,7 @@ that don't understand our accounting may surface warnings.
 If you did NOT send the tokens yourself, **do not recover
 them**. Recovering requires you to declare the sender's
 address. If that address is on the sanctions list, your
-escrow gets locked under the protocol's sanctions policy
+vault gets locked under the protocol's sanctions policy
 until the source is de-listed from the oracle.
 
 Tokens you didn't send are not yours. Recovering them by
@@ -1145,7 +1145,7 @@ from, etc.).
 Two outcomes:
 
 - **Source clean** → tokens return to your EOA.
-- **Source flagged** → tokens stay in escrow, your escrow
+- **Source flagged** → tokens stay in the vault, your vault
   gets locked under the protocol's sanctions policy. The
   lock auto-lifts if the address is later removed from the
   sanctions oracle.
@@ -1155,10 +1155,10 @@ Two outcomes:
 ### Disowning unsolicited tokens (compliance audit trail)
 
 If you want a public on-chain record asserting that some
-token balance in your escrow is NOT yours, the protocol
+token balance in your vault is NOT yours, the protocol
 provides a `disown(token)` function. It emits an event
 (`TokenDisowned`) and changes nothing else — tokens stay in
-escrow as before. Useful in compliance disputes if a CEX or
+vault as before. Useful in compliance disputes if a CEX or
 regulator asks "did you receive these funds?": you can point
 to the on-chain event.
 

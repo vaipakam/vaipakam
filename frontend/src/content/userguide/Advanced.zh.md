@@ -13,17 +13,17 @@
 
 ## Dashboard
 
-<a id="dashboard.your-escrow"></a>
+<a id="dashboard.your-vault"></a>
 
-### 您的 Escrow
+### 您的 Vault
 
 一个 upgradeable per-user contract — 您在这条 chain 上的私人 vault
 — 会在您第一次参与 loan 时为您创建。每个 address、每条 chain 只有
-一个 escrow。它持有与您 loan positions 相关的 ERC-20、ERC-721 和
+一个 vault。它持有与您 loan positions 相关的 ERC-20、ERC-721 和
 ERC-1155 balances。没有混合保管：其他用户的 assets 永远不会进入
 这个 contract。
 
-escrow 是 collateral、出借 assets 和您锁定的 VPFI 所在的唯一位置。
+vault 是 collateral、出借 assets 和您锁定的 VPFI 所在的唯一位置。
 protocol 在每次 deposit 和 withdrawal 时都会检查它。implementation
 可以由 protocol owner upgrade，但只能通过 timelock — 绝不会立即生效。
 
@@ -45,7 +45,7 @@ block explorer 的 on-chain loan id。
 active chain 上当前连接 wallet 的 live VPFI accounting：
 
 - Wallet balance。
-- Escrow balance。
+- Vault balance。
 - 您在 circulating supply 中的份额 (扣除 protocol-held balances
   之后)。
 - 剩余可 mint cap。
@@ -66,13 +66,13 @@ gate 被拒绝。
 ### Fee-discount consent
 
 这是 wallet-level opt-in flag。它允许 protocol 在 terminal events
-时，用从您 escrow debit 的 VPFI 来 settle fee 的 discounted 部分。
+时，用从您 vault debit 的 VPFI 来 settle fee 的 discounted 部分。
 Default：off。off 表示每笔 fee 的 100% 都用 principal asset 支付；
 on 则会应用 time-weighted discount。
 
 Tier ladder：
 
-| Tier | 最低 escrow VPFI                          | 折扣                                |
+| Tier | 最低 vault VPFI                          | 折扣                                |
 | ---- | ----------------------------------------- | ----------------------------------- |
 | 1    | ≥ `{liveValue:tier1Min}`                  | `{liveValue:tier1DiscountBps}`%     |
 | 2    | ≥ `{liveValue:tier2Min}`                  | `{liveValue:tier2DiscountBps}`%     |
@@ -80,7 +80,7 @@ Tier ladder：
 | 4    | > `{liveValue:tier4Min}`                  | `{liveValue:tier4DiscountBps}`%     |
 
 您 deposit 或 withdraw VPFI 的瞬间，tier 会按您的 **post-change**
-escrow balance 计算；随后在每笔 loan 的生命周期内按 time-weighted
+vault balance 计算；随后在每笔 loan 的生命周期内按 time-weighted
 方式生效。unstake 会立即对您参与的每笔 open loan，用新的较低
 balance re-stamp rate — 没有让旧的 (更高) tier 继续适用的 grace
 window。这会关闭一种 exploit pattern：在 loan 即将结束时临时 top up
@@ -103,7 +103,7 @@ rewards、lifetime-claimed staking rewards、pending interaction rewards
 每个 stream 的 breakdown row 会显示 pending + claimed，并提供一个
 chevron deep-link，跳转到对应 native page 上的 full claim card：
 
-- **Staking yield** — 基于您的 escrow balance、按 protocol APR accrue
+- **Staking yield** — 基于您的 vault balance、按 protocol APR accrue
   的 pending VPFI，加上此 wallet 先前 claim 过的所有 staking rewards。
   deep-link 到 Buy VPFI page 上的 staking claim card。
 - **Platform-interaction rewards** — 您参与过的每笔 loan (lender side
@@ -156,7 +156,7 @@ treasury cut 会在 terminal settlement 时 debit，而不是预先收取。
 
 ### Borrower Offers
 
-来自已经在 escrow 中锁定 collateral 的 borrowers 的 Active offers。
+来自已经在 vault 中锁定 collateral 的 borrowers 的 Active offers。
 Acceptance 由 lender 执行；它用 principal asset fund loan，并 mint
 position NFTs。initiation 时同样有 HF ≥ 1.5 gate。固定 APR 在 offer
 creation 时设定，并在 loan 的整个生命周期内 immutable — refinance
@@ -203,7 +203,7 @@ Accrued interest 从 loan 的 start time 到 terminal settlement 按
 您愿意提供的 principal asset 和 amount，加上 interest rate (APR，%)
 和 duration (天数)。Rate 在 offer 时固定；duration 设置 loan 能
 default 之前的 grace window。在 acceptance 时，作为 loan initiation
-的一部分，principal 会从您的 escrow 移到 borrower 的 escrow。
+的一部分，principal 会从您的 vault 移到 borrower 的 vault。
 
 <a id="create-offer.lending-asset:borrower"></a>
 
@@ -212,7 +212,7 @@ default 之前的 grace window。在 acceptance 时，作为 loan initiation
 您希望从 lender 获得的 principal asset 和 amount，加上 interest
 rate (APR，%) 和 duration (天数)。Rate 在 offer 时固定；duration
 设置 loan 能 default 之前的 grace window。在 borrower offer 上，您
-的 collateral 会在 offer-creation 时锁定在 escrow 中，并保持锁定，
+的 collateral 会在 offer-creation 时锁定在 vault 中，并保持锁定，
 直到 lender accept 后 loan 开启 (或您 cancel)。
 
 <a id="create-offer.nft-details"></a>
@@ -221,7 +221,7 @@ rate (APR，%) 和 duration (天数)。Rate 在 offer 时固定；duration
 
 Rental-sub-type fields。指定 NFT contract、token id (以及 ERC-1155
 的 quantity)，再加上用 principal asset 表示的 daily rental fee。
-acceptance 时，protocol 会把 prepaid rental 从 renter 的 escrow
+acceptance 时，protocol 会把 prepaid rental 从 renter 的 vault
 debit 到 custody — 即 duration × daily fee，加上 5% buffer。NFT
 本身会进入 delegated state (通过 ERC-4907 user rights，或等效的
 ERC-1155 rental hook)，因此 renter 拥有使用权，但不能 transfer NFT
@@ -266,7 +266,7 @@ ERC-20s 和 NFTs 没有 on-chain valuation，需要双方同意 default 时
 feed + ≥ $1M v3 pool depth) 适用 LTV / HF 计算；illiquid ERC-20s
 和 NFTs 没有 on-chain valuation，需要双方同意 default 时全额
 collateral 转移的结果。在 borrower offer 上，您的 collateral 会在
-offer-creation 时锁定在 escrow 中；在 lender offer 上，collateral
+offer-creation 时锁定在 vault 中；在 lender offer 上，collateral
 会在 offer-acceptance 时锁定。无论哪种方式，loan initiation 时的
 HF ≥ 1.5 gate 都必须用您提交的 basket 通过。
 
@@ -418,12 +418,12 @@ rolling 24 小时内 500,000 VPFI。可由 governance 通过 timelock
 实时状态：
 
 - 当前 tier (0 至 4)。
-- Escrow VPFI balance，以及到下一 tier 的 gap。
+- Vault VPFI balance，以及到下一 tier 的 gap。
 - 当前 tier 的 Discount percentage。
 - Wallet 级 consent flag。
 
-请注意 escrow VPFI 还通过 staking pool 累积 5% APR — 没有单独的
-"stake" 操作。把 VPFI deposit 到您的 escrow **就是** staking。
+请注意 vault VPFI 还通过 staking pool 累积 5% APR — 没有单独的
+"stake" 操作。把 VPFI deposit 到您的 vault **就是** staking。
 
 <a id="buy-vpfi.buy"></a>
 
@@ -433,25 +433,25 @@ rolling 24 小时内 500,000 VPFI。可由 governance 通过 timelock
 chains 上，buy adapter 收款并发送 cross-chain message；receiver
 在 Base 上执行 buy，并把 VPFI bridge 回来。bridge fee 和 verifier
 network cost 会 live quote 并显示在表单中。VPFI 不会自动 deposit
-进您的 escrow — Step 2 按设计是明确的 user action。
+进您的 vault — Step 2 按设计是明确的 user action。
 
 <a id="buy-vpfi.deposit"></a>
 
-### Step 2 — 把 VPFI deposit 到您的 escrow
+### Step 2 — 把 VPFI deposit 到您的 vault
 
-这是从您的 wallet 到同一 chain 上 escrow 的单独 explicit deposit
+这是从您的 wallet 到同一 chain 上 vault 的单独 explicit deposit
 step。每条 chain 都需要 — 包括 canonical chain — 因为按 spec，
-escrow deposit 始终必须是 explicit user action。在配置了 Permit2
+vault deposit 始终必须是 explicit user action。在配置了 Permit2
 的 chains 上，App 会优先使用 single-signature path，而不是传统的
 approve + deposit pattern；如果该 chain 未配置 Permit2，则会
 cleanly fall back。
 
 <a id="buy-vpfi.unstake"></a>
 
-### Step 3 — 从您的 escrow unstake VPFI
+### Step 3 — 从您的 vault unstake VPFI
 
-把 VPFI 从您的 escrow withdraw 回 wallet。没有单独的 approval leg
-— protocol 持有 escrow，并 debit 自身。withdraw 会基于新的 (较低)
+把 VPFI 从您的 vault withdraw 回 wallet。没有单独的 approval leg
+— protocol 持有 vault，并 debit 自身。withdraw 会基于新的 (较低)
 balance 立即触发 fee-discount rate re-stamp，并应用到您参与的每笔
 open loan。没有让旧 tier 继续适用的 grace window。
 
@@ -465,7 +465,7 @@ open loan。没有让旧 tier 继续适用的 grace window。
 
 两个 streams：
 
-- **Staking pool** — Escrow 持有的 VPFI 以 5% APR 持续累积，按秒
+- **Staking pool** — Vault 持有的 VPFI 以 5% APR 持续累积，按秒
   复利。
 - **Interaction pool** — 固定 daily emission 的 per-day pro-rata
   份额，按您对当天 loan volume 的 settled-interest 贡献加权。
@@ -491,7 +491,7 @@ under-claim。
 ### 提取 Staked VPFI
 
 与 Buy VPFI 页面上的 "Step 3 — Unstake" 相同的 interface — 把 VPFI
-从 escrow withdraw 回 wallet。Withdrawn VPFI 会立即退出 staking
+从 vault withdraw 回 wallet。Withdrawn VPFI 会立即退出 staking
 pool (该 amount 的 rewards 在该 block 停止 accrue)，也会立即退出
 discount accumulator (在每笔 open loan 上 post-balance re-stamp)。
 
@@ -573,9 +573,9 @@ illiquid collateral 上，default 会把您的全部 collateral 转给 lender
 
 ### Parties
 
-Lender、borrower、lender escrow、borrower escrow，以及两个 position
+Lender、borrower、lender vault、borrower vault，以及两个 position
 NFTs (双方各一)。每个 NFT 都是带 on-chain metadata 的 ERC-721；
-transfer 它，也会 transfer claim 权利。Escrow contracts 对 address
+transfer 它，也会 transfer claim 权利。Vault contracts 对 address
 是 deterministic 的 — 跨 deploy 仍是同一 address。
 
 <a id="loan-details.actions"></a>
@@ -620,7 +620,7 @@ locked" 等)。
   complete。
 - **Refinance** — 为新 terms 发布 borrower offer；一旦 lender accept，
   complete refinance 会 atomically swap loans，collateral 始终不离开
-  您的 escrow。
+  您的 vault。
 - **Claim as borrower** — 仅在 terminal state 可用。full repayment 时返还
   collateral；default / liquidation 时返还 unused VPFI Loan Initiation
   Fee rebate。会 burn borrower position NFT。
@@ -815,7 +815,7 @@ Cross-chain invariant：所有 mirror chains 上的 mirror supplies 之和
 
 Refinance 会用新的 principal atomically pay off 您现有的 loan，并
 以新 terms open 一笔新 loan，全部在一笔 transaction 中完成。
-Collateral 始终留在您的 escrow 中 — 没有 unsecured window。与任何
+Collateral 始终留在您的 vault 中 — 没有 unsecured window。与任何
 其他 loan 一样，新 loan 必须在 initiation 时通过 HF ≥ 1.5 gate。
 
 旧 loan 未使用的 Loan Initiation Fee rebate 会作为 swap 的一部分
@@ -828,7 +828,7 @@ Collateral 始终留在您的 escrow 中 — 没有 unsecured window。与任何
 正在 refinance 的 loan 的 snapshot — 当前 principal、到目前为止
 accrued interest、HF / LTV 和 collateral basket。新 offer 至少需要
 size 到 outstanding amount (principal + accrued interest)；新 offer
-中的任何 excess 都会作为 free principal 交付到您的 escrow。
+中的任何 excess 都会作为 free principal 交付到您的 vault。
 
 <a id="refinance.step-1-post-offer"></a>
 

@@ -53,8 +53,8 @@ const KIND_LABELS: Record<ActivityEventKind, string> = {
   StakingRewardsClaimed: 'VPFI staking rewards claimed',
   InteractionRewardsClaimed: 'Platform-interaction rewards claimed',
   VPFIPurchasedWithETH: 'VPFI bought with ETH',
-  VPFIDepositedToEscrow: 'VPFI staked to escrow',
-  VPFIWithdrawnFromEscrow: 'VPFI unstaked from escrow',
+  VPFIDepositedToEscrow: 'VPFI staked to vault',
+  VPFIWithdrawnFromEscrow: 'VPFI unstaked from vault',
 };
 
 // Kind-kind → primary row accent colour class. Mirrors status accents from the

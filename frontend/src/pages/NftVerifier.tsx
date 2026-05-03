@@ -866,7 +866,7 @@ function LiveCard({
                 )}
                 {showLocked && (
                   <div className="data-row">
-                    <span className="data-label">Locked in Escrow</span>
+                    <span className="data-label">Locked in Vault</span>
                     <span className="data-value">{lockedCollateral}</span>
                   </div>
                 )}

@@ -548,3 +548,81 @@ submission to Chainalysis / TRM Labs / Elliptic / Etherscan /
 Arkham + verification on the deploy chains) — captured in the
 existing `docs/ops/AnalyticsLabelRegistration.md` runbook, not a
 code PR.
+
+---
+
+## "Vaipakam Vaults" — user-facing rename
+
+Per user direction, every user-facing reference to "escrow" rebrands to
+**"Vaipakam Vaults"** (plural, general audience) or **"Your Vaipakam Vault"**
+(singular, addressed to the connected user). Code-level identifiers stay
+"escrow" — the rename is a pure-string change, no Solidity / TypeScript /
+ABI reshape.
+
+### Rules applied
+
+| Surface | Naming |
+|---|---|
+| Individual user pages (Dashboard, Asset Viewer, Recovery, etc.) | "Your Vaipakam Vault" |
+| General audience (User Guide, Whitepaper, Overview, Hero, Features, FAQ) | "Vaipakam Vaults" / "vault" in body prose |
+| Etherscan public tag (implementation contract) | `Vaipakam Vaults` (yields `Implementation: Vaipakam Vaults` on every per-user proxy) |
+| Solidity contracts / events / errors | **stays "escrow"** (`EscrowFactoryFacet`, `escrowDepositERC20`, `s.userVaipakamEscrows`, etc.) |
+| TypeScript hooks / file names | **stays "escrow"** (`useUserEscrowAddress`, `EscrowAssets.tsx`, `EscrowRecover.tsx`) |
+| CSS classes / DOM ids / route URLs | **stays "escrow"** (`/app/escrow`, `/app/recover` URLs unchanged) |
+| Code-fenced identifiers in docs (`<c>EscrowFactoryFacet</c>`, `` `EscrowFactoryFacet` ``) | **preserved** — these reference the Solidity contract |
+
+### What changed
+
+| Surface | Files touched |
+|---|---|
+| **i18n** | All 10 locale files (`en/ar/de/es/fr/hi/ja/ko/ta/zh.json`) — three-pass rename: word-boundary EN rules, locale-specific term replacements (e.g. `حساب محتجز` → `مخزن`, `Ihr Escrow` → `Ihr Vaipakam Vault`, `あなたのエスクロー` → `あなたの Vaipakam Vault`), then a no-boundary safe-replace pass with code-identifier protection for CJK / Indic / Arabic locales where `\b` doesn't anchor between Latin "Escrow" and the local script. |
+| **User Guide markdown** | `Basic.{en,ar,de,es,fr,hi,ja,ko,ta,zh}.md` + `Advanced.{en,ar,de,es,fr,hi,ja,ko,ta,zh}.md` — all 20 files. The new "Stuck-Token Recovery" section that landed earlier today now reads in the renamed terminology. |
+| **Whitepaper** | `Whitepaper.en.md` (whitepaper is EN-only). |
+| **Overview** | All 10 `Overview.*.md` files. |
+| **Frontend components** | `Activity.tsx` (event labels), `LoanDetails.tsx` (inline copy), `OfferBook.tsx` (4 inline strings), `BuyVPFI.tsx` (1 inline string), `NftVerifier.tsx` (1 inline label). |
+| **Operational runbook** | `docs/ops/AnalyticsLabelRegistration.md` — Etherscan tag suggestion now reads `Vaipakam Vaults`, plus a paragraph explaining the chosen naming yields the cleanest possible display on per-user proxy pages: "Implementation: Vaipakam Vaults" rather than the redundant "Implementation: Vaipakam Vaults Implementation" alternative. |
+
+### Etherscan display
+
+The implementation contract gets the public tag **`Vaipakam Vaults`**. Etherscan's
+proxy-detection feature renders `Implementation: <addr> [Vaipakam Vaults]` on every
+per-user proxy that points at it — matching the user's preferred display shape.
+The same tag also surfaces as just `Vaipakam Vaults` when someone lands directly on
+the implementation contract page.
+
+We can't strip Etherscan's hardcoded "Implementation:" prefix on proxy pages — it's
+not a per-tag attribute. Per-instance proxy tagging would need manual one-off
+submissions and Etherscan has no API for it. The auto-relationship display via the
+implementation slot is the practical maximum.
+
+### Verification
+
+- All `[Ee]scrow` references in non-EN locale JSONs are now either:
+  (a) code identifiers like `EscrowFactoryFacet` (preserved by the safe-replace's
+  CamelCase-protector regex), or (b) eliminated.
+- Spot-check on `dashboard.yourEscrow`, `appNav.escrow`, `escrowAssets.pageTitle`,
+  `dashboard.escrowAddress` confirms the rename across all 10 locales:
+  `Your Vaipakam Vault` (with locale-appropriate possessive — "Tu", "Ihr",
+  "Votre", "あなたの", "您的", etc.).
+- Frontend `tsc -b --noEmit` clean.
+- The route `/app/escrow` stays unchanged; the displayed sidebar label now reads
+  "Your Vaipakam Vault" (resolved from `appNav.escrow` i18n key).
+- The recovery page route `/app/recover` is unaffected.
+- No Solidity changes; `forge build` not re-run for this PR (no contract surface
+  edits).
+
+### What stays "escrow" deliberately
+
+- `s.userVaipakamEscrows` storage mapping (already named with `Vaipakam`
+  prefix; the rename inside Solidity is not part of this PR).
+- `EscrowFactoryFacet` contract name (single point — renaming forces every
+  cross-facet selector lookup to update; out of scope for a string-rename PR).
+- `useUserEscrowAddress` / `useEscrowUpgrade` / `useEscrowRental` hooks (TS
+  identifiers; renaming has no UX effect since the value flowing through
+  is what's displayed).
+- Page file names (`EscrowAssets.tsx`, `EscrowRecover.tsx`) — internal-only.
+- Comments in code that reference internal architecture.
+- CSS classes and `data-*` attributes.
+
+These can be cleaned up in a future technical-debt PR if desired, but they
+have no user-visible effect.

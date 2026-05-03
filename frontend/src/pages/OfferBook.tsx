@@ -1351,7 +1351,7 @@ function AcceptReviewModal({ offer, illiquid, consent, onConsentChange, submitti
               {discountPreview.willFire ? (
                 <>
                   <strong>Tier-{discountPreview.tier} VPFI path will apply (up to {tierDiscountPct(discountPreview.tier, protocolConfig)} rebate at proper close).</strong>{' '}
-                  Platform consent is enabled and your escrow holds the required{' '}
+                  Platform consent is enabled and your vault holds the required{' '}
                   <span className="mono">{Number(discountPreview.vpfiRequired) / 1e18}</span> VPFI.
                   You pay the full {formatBpsPct(protocolConfig?.loanInitiationFeeBps ?? 10)} LIF up front in VPFI; the discount is earned time-weighted
                   over the loan's lifetime and paid back as a VPFI rebate when you repay, preclose, or refinance properly. Default or
@@ -1364,19 +1364,19 @@ function AcceptReviewModal({ offer, illiquid, consent, onConsentChange, submitti
                   <Link to="/app" style={{ textDecoration: 'underline' }}>
                     Dashboard
                   </Link>{' '}
-                  to pay the {formatBpsPct(protocolConfig?.loanInitiationFeeBps ?? 10)} LIF up front in VPFI and earn a tier-based rebate (up to {protocolConfig ? protocolConfig.tierDiscountBps.map((b) => formatBpsPct(b)).join(' / ') : '10% / 15% / 20% / 24%'} by escrow balance held across the loan). Without consent this acceptance uses
+                  to pay the {formatBpsPct(protocolConfig?.loanInitiationFeeBps ?? 10)} LIF up front in VPFI and earn a tier-based rebate (up to {protocolConfig ? protocolConfig.tierDiscountBps.map((b) => formatBpsPct(b)).join(' / ') : '10% / 15% / 20% / 24%'} by vault balance held across the loan). Without consent this acceptance uses
                   the normal {formatBpsPct(protocolConfig?.loanInitiationFeeBps ?? 10)} lending-asset fee path (no rebate).
                 </>
               ) : !discountPreview.eligible ? (
                 <>
                   <strong>Borrower VPFI rebate unavailable.</strong>{' '}
-                  No oracle route, rate unset, or escrow balance below the tier-1 threshold — this acceptance uses the
+                  No oracle route, rate unset, or vault balance below the tier-1 threshold — this acceptance uses the
                   normal {formatBpsPct(protocolConfig?.loanInitiationFeeBps ?? 10)} lending-asset fee path (no rebate).
                 </>
               ) : (
                 <>
-                  <strong>Tier-{discountPreview.tier} VPFI path pending escrow balance.</strong>{' '}
-                  Consent is enabled but your escrow holds{' '}
+                  <strong>Tier-{discountPreview.tier} VPFI path pending vault balance.</strong>{' '}
+                  Consent is enabled but your vault holds{' '}
                   <span className="mono">{Number(discountPreview.escrowVpfi) / 1e18}</span> VPFI —
                   paying the {formatBpsPct(protocolConfig?.loanInitiationFeeBps ?? 10)} LIF up front in VPFI (up to {tierDiscountPct(discountPreview.tier, protocolConfig)} rebate at proper close) needs{' '}
                   <span className="mono">{Number(discountPreview.vpfiRequired) / 1e18}</span> VPFI.

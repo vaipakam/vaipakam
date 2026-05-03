@@ -54,7 +54,7 @@ Vaipakam appを開き、walletをconnectして、**Create Offer**をclick
 - Loan duration: **30 days**
 
 1つのtransactionにsignします。あなたの1,000 USDCはwalletから
-**personal escrow**へ移動します。これは、あなたのみがcontrolする
+**Vaipakam Vault**へ移動します。これは、あなたのみがcontrolする
 private vaultです。borrowerがofferをacceptするまで、fundsはそこに
 保管されます。
 
@@ -158,7 +158,7 @@ Rentalが終了すると（expiryまたはdefaultにより）、NFTはownerのes
 Vaipakamでのlendingやborrowingはrisk-freeではありません。ただし、
 protocolには複数の保護layerがあります。
 
-- **Per-user escrow.** あなたのassetsは自分専用のvaultに置かれま
+- **Per-user vault.** あなたのassetsは自分専用のvaultに置かれま
   す。Protocolが他のusersのfundsとpoolすることはありません。その
   ため、別のuserに影響するbugがあなたの資産をdrainすることはでき
   ません。
@@ -340,7 +340,7 @@ automaticです。
 - **No leveraged loops by default.** 望むならborrowed fundsを新しい
   lender offerとしてrepostできますが、protocolはautomatic loopingを
   UXに組み込みません。これはfootgunだと考えています。
-- **No surprise upgrades.** Escrow upgradesはgatedです。mandatory
+- **No surprise upgrades.** Vault upgradesはgatedです。mandatory
   upgradesはappに表示され、あなたが明示的にapplyします。あなたの
   vaultが背後で勝手に書き換えられることはありません。
 

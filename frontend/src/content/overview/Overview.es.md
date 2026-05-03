@@ -4,7 +4,7 @@ Vaipakam es una plataforma de préstamos entre pares. Prestas activos
 y ganas intereses. Tomas activos prestados y aportas garantía.
 Alquilas NFTs y el propietario cobra renta diaria. Todo ocurre
 directamente entre dos billeteras, con los contratos inteligentes
-manteniendo los activos en escrow hasta que termina el préstamo o el
+manteniendo los activos en vault hasta que termina el préstamo o el
 alquiler.
 
 Esta página es el **recorrido amigable**. Si buscas más profundidad
@@ -57,7 +57,7 @@ Abres la app de Vaipakam, conectas tu billetera y haces clic en
 - Duración del préstamo: **30 días**
 
 Firmas una transacción. Tus 1.000 USDC se mueven de tu billetera a
-tu **escrow personal** (una bóveda privada que solo tú controlas).
+tu **vault personal** (una bóveda privada que solo tú controlas).
 Permanecen ahí hasta que un prestatario acepte tu oferta.
 
 ### Paso 2 — Un prestatario acepta
@@ -70,8 +70,8 @@ tu límite del 70%, así que la oferta se acepta).
 
 En el momento que acepta:
 
-- Tus 1.000 USDC se mueven de tu escrow al suyo
-- Su WETH queda bloqueado en su escrow como garantía
+- Tus 1.000 USDC se mueven de tu vault al suyo
+- Su WETH queda bloqueado en su vault como garantía
 - Ambos recibís un NFT de posición — el tuyo dice "Se me deben 1.000
   USDC + intereses"; el suyo dice "Se me debe mi WETH cuando pague"
 - El cronómetro del préstamo empieza a correr
@@ -143,7 +143,7 @@ sentido: pagar el préstamo de otra persona no te da su garantía.
 
 Mismo flujo que un préstamo, con dos diferencias:
 
-- **El NFT permanece en escrow**; el inquilino nunca lo tiene
+- **El NFT permanece en vault**; el inquilino nunca lo tiene
   directamente. En su lugar, el protocolo usa **ERC-4907** para dar
   al inquilino "derechos de uso" sobre el NFT durante la ventana
   de alquiler. Los juegos y apps compatibles leen los derechos de
@@ -156,7 +156,7 @@ Mismo flujo que un préstamo, con dos diferencias:
   los días no usados se reembolsan.
 
 Cuando el alquiler termina (por vencimiento o por incumplimiento),
-el NFT vuelve al escrow del propietario. El propietario puede
+el NFT vuelve al vault del propietario. El propietario puede
 entonces volver a listarlo o reclamarlo de vuelta a su billetera.
 
 ---
@@ -166,7 +166,7 @@ entonces volver a listarlo o reclamarlo de vuelta a su billetera.
 Prestar y pedir prestado en Vaipakam no está libre de riesgo. Pero
 el protocolo tiene varias capas integradas:
 
-- **Escrow por usuario.** Tus activos están en tu propia bóveda.
+- **Vault por usuario.** Tus activos están en tu propia bóveda.
   El protocolo nunca los junta con los fondos de otros usuarios.
   Esto significa que un fallo que afecte a otro usuario no puede
   drenarte.
@@ -220,7 +220,7 @@ Dos comisiones, ambas pequeñas:
   un préstamo de 1.000 USDC, eso es 1 USDC al tipo por defecto.
 
 Ambas comisiones pueden tener un **descuento de hasta el
-`{liveValue:tier4DiscountBps}`%** manteniendo VPFI en escrow (ver más
+`{liveValue:tier4DiscountBps}`%** manteniendo VPFI en vault (ver más
 abajo). En caso de incumplimiento o liquidación, no se cobra Comisión
 sobre Rendimiento sobre los intereses recuperados — el protocolo no
 se beneficia de un préstamo fallido.
@@ -252,11 +252,11 @@ comisiones anteriores.
 
 ### 1. Descuentos en comisiones
 
-Si mantienes VPFI en tu escrow en una cadena, eso descuenta tus
+Si mantienes VPFI en tu vault en una cadena, eso descuenta tus
 comisiones de protocolo en los préstamos en los que participes en
 esa cadena:
 
-| VPFI en escrow | Descuento de comisión |
+| VPFI en vault | Descuento de comisión |
 |---|---|
 | `{liveValue:tier1Min}` – `{liveValue:tier2Min}` (excl.) | `{liveValue:tier1DiscountBps}`% |
 | `{liveValue:tier2Min}` – `{liveValue:tier3Min}` (excl.) | `{liveValue:tier2DiscountBps}`% |
@@ -271,9 +271,9 @@ proporción al tiempo que efectivamente mantuviste el nivel.
 
 ### 2. Staking — 5% APR
 
-Cualquier VPFI en tu escrow gana automáticamente recompensas de
+Cualquier VPFI en tu vault gana automáticamente recompensas de
 staking al 5% anual. No hay una acción de staking aparte, ni
-bloqueo, ni espera para retirar. Mueve VPFI a tu escrow y gana desde
+bloqueo, ni espera para retirar. Mueve VPFI a tu vault y gana desde
 ese momento. Sácalo y la acumulación se detiene.
 
 ### 3. Recompensas por interacción en la plataforma
@@ -344,7 +344,7 @@ Mismo flujo, pero en la página **Crear oferta** eliges "Alquiler de
 NFT" en lugar de préstamo ERC-20. El formulario te guía.
 
 Si solo quieres **ganar rendimiento pasivo sobre tu VPFI**, deposítalo
-en tu escrow en la página de **Panel**. Eso es todo — el staking es
+en tu vault en la página de **Panel**. Eso es todo — el staking es
 automático desde ese momento.
 
 ---
@@ -358,14 +358,14 @@ deliberadamente **no**:
   específicas con condiciones que ambas firmaron. Sin pool de
   liquidez compartido, sin curva de utilización, sin picos
   sorpresivos de tasa.
-- **Sin custodia por proxy.** Tus activos están en tu propio escrow,
+- **Sin custodia por proxy.** Tus activos están en tu propio vault,
   no en una bóveda compartida. El protocolo solo los mueve con las
   acciones que firmas.
 - **Sin bucles de apalancamiento por defecto.** Puedes volver a publicar
   los fondos prestados como nueva oferta de prestamista si quieres,
   pero el protocolo no integra el bucle automático en la UX.
   Creemos que es una trampa demasiado fácil de activar.
-- **Sin actualizaciones sorpresa.** Las actualizaciones del escrow
+- **Sin actualizaciones sorpresa.** Las actualizaciones del vault
   están limitadas; las actualizaciones obligatorias aparecen en la
   app para que las apliques explícitamente. Nada reescribe tu
   bóveda a tus espaldas.
