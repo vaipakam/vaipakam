@@ -99,7 +99,8 @@
     "dataRights": "Droits relatifs aux données",
     "keepers": "Keepers",
     "governanceGroupLabel": "Gouvernance",
-    "protocolConsole": "Console du Protocole"
+    "protocolConsole": "Console du Protocole",
+    "escrow": "Votre séquestre"
   },
   "dataRights": {
     "title": "Vos droits relatifs aux données (RGPD / UK GDPR / CCPA)",
@@ -1637,5 +1638,21 @@
       "calloutPrefix": "interest settlement required",
       "calloutBody": "By accepting you agree that the borrower must pay each period's accrued interest by the period close. If the borrower misses the period beyond the configured grace window, anyone can trigger a settler that sells just enough collateral to cover the shortfall — possibly affecting the loan's health factor and triggering further liquidation."
     }
+  },
+  "escrowAssets": {
+    "pageTitle": "Votre séquestre",
+    "pageSubtitle": "Jetons détenus par le protocole en votre nom. Chaque utilisateur dispose de son propre proxy de séquestre isolé — les dépôts et retraits passent toujours par le Vaipakam Diamond.",
+    "addressCardTitle": "Adresse du séquestre",
+    "addressCaption": "Stockage interne du protocole — les fonds entrent et sortent uniquement via le protocole.",
+    "viewOnExplorer": "Voir le séquestre dans l'explorateur de blocs",
+    "noEscrowYet": "Vous n'avez pas encore de séquestre. Il sera créé automatiquement la première fois que vous créerez ou accepterez une offre.",
+    "holdingsTitle": "Avoirs",
+    "noProtocolTokensOnChain": "Aucun jeton géré par le protocole n'est configuré sur cette chaîne pour le moment.",
+    "colToken": "Jeton",
+    "colBalance": "Solde",
+    "refresh": "Actualiser",
+    "doNotSendWarning": "Seuls les jetons gérés par le protocole Vaipakam sont affichés ici. N'envoyez aucun jeton directement à l'adresse de votre séquestre — ils pourraient ne pas être récupérables.",
+    "connectBody": "Connectez votre portefeuille pour voir les avoirs de votre séquestre.",
+    "switchChainBody": "Basculez votre portefeuille vers une chaîne prise en charge par Vaipakam pour voir les avoirs de votre séquestre."
   }
 }

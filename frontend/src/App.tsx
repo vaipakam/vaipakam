@@ -14,6 +14,7 @@ import NftVerifier from './pages/NftVerifier';
 import KeeperSettings from './pages/KeeperSettings';
 import Alerts from './pages/Alerts';
 import Allowances from './pages/Allowances';
+import EscrowAssets from './pages/EscrowAssets';
 import DataRights from './pages/DataRights';
 import BuyVPFI from './pages/BuyVPFI';
 import BuyVPFIMarketing from './pages/BuyVPFIMarketing';
@@ -129,6 +130,7 @@ function pageRoutes(): ReactElement {
         <Route path="keepers" element={<KeeperSettings />} />
         <Route path="alerts" element={<Alerts />} />
         <Route path="allowances" element={<Allowances />} />
+        <Route path="escrow" element={<EscrowAssets />} />
         <Route path="data-rights" element={<DataRights />} />
         <Route path="buy-vpfi" element={<BuyVPFI />} />
         {/* Admin-only Protocol Console mounted INSIDE the app shell.

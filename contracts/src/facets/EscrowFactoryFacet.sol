@@ -80,6 +80,36 @@ contract EscrowFactoryFacet is DiamondAccessControl {
     error ProxyCallFailed(string reason);
     error NoEscrow();
     error EscrowUpgradeRequired();
+    /// @dev Stuck-recovery rejected: caller-supplied amount is zero.
+    error AmountZero();
+    /// @dev Stuck-recovery rejected: token has protocol-configured risk
+    ///      params (collateral / principal / etc.). Recovery of these
+    ///      tokens via the off-flow path could pull live collateral or
+    ///      claim entitlement; require a governed code change instead.
+    error TokenIsProtocolConfigured();
+    /// @dev Stuck-recovery rejected: VPFI must exit via the proper
+    ///      `withdrawVPFIFromEscrow` unstake flow that closes the
+    ///      time-weighted discount period and the staking checkpoint.
+    error CannotRecoverVPFI();
+    /// @dev Stuck-recovery rejected: target user has never had an
+    ///      escrow created (no proxy address recorded).
+    error UserHasNoEscrow();
+
+    /// @notice Emitted when an admin recovers tokens that landed in a
+    ///         user's escrow outside the protocol deposit flow (e.g. a
+    ///         direct ERC-20 `transfer` from the user's wallet, which
+    ///         the EVM gives no opportunity to reject).
+    /// @param  user    Escrow owner whose proxy held the tokens.
+    /// @param  token   ERC-20 contract being recovered.
+    /// @param  amount  Amount returned to `user` (recipient is locked
+    ///                 to the user themselves — admin cannot redirect).
+    /// @param  admin   `msg.sender` of the recovery call.
+    event StuckERC20Recovered(
+        address indexed user,
+        address indexed token,
+        uint256 amount,
+        address indexed admin
+    );
 
     /**
      * @notice Initializes the shared escrow implementation by deploying a new VaipakamEscrowImplementation.

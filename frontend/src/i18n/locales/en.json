@@ -592,7 +592,8 @@
     "dataRights": "Data Rights",
     "keepers": "Keepers",
     "governanceGroupLabel": "Governance",
-    "protocolConsole": "Protocol Console"
+    "protocolConsole": "Protocol Console",
+    "escrow": "Your Escrow"
   },
   "dataRights": {
     "title": "Your data rights (GDPR / UK GDPR / CCPA)",
@@ -1640,5 +1641,21 @@
       "userguideAdvanced": "User Guide — Advanced",
       "whitepaper": "Whitepaper"
     }
+  },
+  "escrowAssets": {
+    "pageTitle": "Your Escrow",
+    "pageSubtitle": "Tokens held by the protocol on your behalf. Each user has their own isolated escrow proxy — deposits and withdrawals always flow through the Vaipakam Diamond.",
+    "addressCardTitle": "Escrow Address",
+    "addressCaption": "Internal protocol storage — funds enter and exit via the protocol only.",
+    "viewOnExplorer": "View escrow on block explorer",
+    "noEscrowYet": "You don't have an escrow yet. One will be created automatically the first time you create or accept an offer.",
+    "holdingsTitle": "Holdings",
+    "noProtocolTokensOnChain": "No protocol-managed tokens are configured on this chain yet.",
+    "colToken": "Token",
+    "colBalance": "Balance",
+    "refresh": "Refresh",
+    "doNotSendWarning": "Only tokens managed by the Vaipakam protocol are shown here. Do not send any tokens directly to your escrow address — they may not be recoverable.",
+    "connectBody": "Connect your wallet to view your escrow holdings.",
+    "switchChainBody": "Switch your wallet to a Vaipakam-supported chain to view your escrow holdings."
   }
 }

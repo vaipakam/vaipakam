@@ -99,7 +99,8 @@
     "dataRights": "데이터 권리",
     "keepers": "키퍼",
     "governanceGroupLabel": "거버넌스",
-    "protocolConsole": "프로토콜 콘솔"
+    "protocolConsole": "프로토콜 콘솔",
+    "escrow": "내 에스크로"
   },
   "dataRights": {
     "title": "데이터 권리 (GDPR / UK GDPR / CCPA)",
@@ -1637,5 +1638,21 @@
       "calloutPrefix": "interest settlement required",
       "calloutBody": "By accepting you agree that the borrower must pay each period's accrued interest by the period close. If the borrower misses the period beyond the configured grace window, anyone can trigger a settler that sells just enough collateral to cover the shortfall — possibly affecting the loan's health factor and triggering further liquidation."
     }
+  },
+  "escrowAssets": {
+    "pageTitle": "내 에스크로",
+    "pageSubtitle": "프로토콜이 사용자를 대신해 보관하는 토큰입니다. 각 사용자는 별도의 격리된 에스크로 프록시를 보유하며, 예치와 인출은 항상 Vaipakam Diamond을 통해 이뤄집니다.",
+    "addressCardTitle": "에스크로 주소",
+    "addressCaption": "프로토콜 내부 보관소 — 자금은 프로토콜을 통해서만 들어오고 나갑니다.",
+    "viewOnExplorer": "블록 익스플로러에서 에스크로 보기",
+    "noEscrowYet": "아직 에스크로가 없습니다. 처음으로 오퍼를 생성하거나 수락할 때 자동으로 생성됩니다.",
+    "holdingsTitle": "보유 자산",
+    "noProtocolTokensOnChain": "이 체인에는 아직 프로토콜이 관리하는 토큰이 설정되지 않았습니다.",
+    "colToken": "토큰",
+    "colBalance": "잔액",
+    "refresh": "새로 고침",
+    "doNotSendWarning": "여기에는 Vaipakam 프로토콜이 관리하는 토큰만 표시됩니다. 에스크로 주소로 토큰을 직접 보내지 마세요 — 복구가 불가능할 수 있습니다.",
+    "connectBody": "에스크로 보유 자산을 확인하려면 지갑을 연결하세요.",
+    "switchChainBody": "에스크로 보유 자산을 확인하려면 지갑을 Vaipakam 지원 체인으로 전환하세요."
   }
 }

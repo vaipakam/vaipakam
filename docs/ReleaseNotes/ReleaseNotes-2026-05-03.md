@@ -766,3 +766,182 @@ to warn users not to send ERC-20 directly to their escrow address.
   own escrow — reverts with `UnauthorizedNFTSender`.
 - Full no-invariants regression: 1594 passing / 0 failed / 5 skipped.
 - `forge build` clean.
+
+---
+
+## Escrow Assets page (T-051)
+
+A dedicated "Your Escrow" page now lives in the in-app sidebar under
+the basic-mode nav, between Allowances and Data Rights, on every
+locale. Users can see at a glance every token the protocol custodies
+on their behalf for the active chain — and a clear, single-line
+warning that the escrow address is internal protocol plumbing, not a
+deposit destination.
+
+### Layout
+
+The page has three blocks:
+
+1. **Escrow Address** — shows a redacted form of the per-user escrow
+   proxy address (`0xabcd…1234`), styled non-selectable, links out
+   to the chain's block explorer in a new tab so users can verify
+   on-chain holdings independently. A small grey caption underneath
+   reads "Internal protocol storage — funds enter and exit via the
+   protocol only."
+2. **Holdings** — one row per protocol-managed token, with the
+   token's symbol (resolved live via the existing `AssetSymbol`
+   component) and the current escrow balance. The table seeds in a
+   loading state so it doesn't reflow when balances arrive. A
+   refresh button at the top of the card re-fetches all balances.
+3. **Direct-send warning** — a single line at the foot of the page:
+   "Only tokens managed by the Vaipakam protocol are shown here. Do
+   not send any tokens directly to your escrow address — they may
+   not be recoverable."
+
+There is intentionally **no** "stuck tokens" section, **no**
+"unsolicited deposit" tally, and **no** recovery button anywhere on
+the page. That UX is part of the recovery-design contract: the
+recovery flow is reachable only via a deep-link from the Advanced
+User Guide so naive users — who got dust-poisoned and don't know what
+that means — can't accidentally trigger an action that risks locking
+their escrow.
+
+### Per-chain token discovery
+
+The list of "protocol-managed tokens" is sourced from the chain's
+entry in the consolidated `deployments.json`:
+
+- VPFI token (the user's staked balance lives in their escrow).
+- Canonical WETH (used as collateral / principal across most chains).
+- Testnet mock ERC-20s (`mockERC20A`, `mockERC20B`) when present —
+  surfaced so the page renders meaningfully on Sepolia / Anvil / dev
+  chains. Mainnet deployments don't carry these fields, so the rows
+  are inert there.
+
+When new asset categories land in the deployment shape (e.g. an
+on-chain enumerable list of `assetRiskParams`-configured assets, or
+a chain-specific governance-curated whitelist), the list builder
+extends naturally. For Phase 1 this hardcoded set is sufficient — it
+covers ~99 % of real escrow holdings.
+
+### Phase-1 limitation (resolved when T-054 PR-1 lands)
+
+Until the per-(user, token) `protocolTrackedEscrowBalance` counter
+ships in T-054, the table displays raw `IERC20.balanceOf(escrow)`
+for each token. With the current usage patterns — every legitimate
+deposit goes through the Diamond, every legitimate withdrawal goes
+through the protocol — raw balance ≈ tracked balance, so the
+displayed numbers are correct in practice. Once the counter ships,
+the page swaps to `min(balanceOf, tracked)` so any unsolicited dust
+is correctly hidden.
+
+### Dashboard escrow-address redaction
+
+The existing Dashboard's "Your Escrow" card was also updated to
+match the new redaction policy: shows `0xabcd…1234` (six-and-four
+characters) instead of the previous ten-and-eight, applies the same
+non-selectable styling, blocks the basic-clipboard `onCopy` event,
+opens the explorer link in a new tab, and carries the same caption.
+The same redacted shape now appears on both surfaces so the
+"escrow is internal storage" message is consistent.
+
+### What this page is NOT
+
+- **Not** a portfolio aggregator across chains. One chain at a time,
+  matching the wallet's currently-selected chain.
+- **Not** an indexer-driven view. Reads are direct on-chain
+  `balanceOf` calls via the wallet's RPC. This means the page works
+  without the cloud indexer being live, but it doesn't paginate or
+  show historical inflow/outflow.
+- **Not** a recovery surface. Users who genuinely sent tokens
+  directly to their escrow (Phase-1 limitation: this is rare but
+  possible) find the recovery flow only via the Advanced User Guide
+  per the design lock-in. The Asset Viewer page does not link to
+  recovery.
+
+### Verification
+
+- New page: [`frontend/src/pages/EscrowAssets.tsx`](frontend/src/pages/EscrowAssets.tsx).
+- Wired into routing: [`frontend/src/App.tsx`](frontend/src/App.tsx) at `/app/escrow`.
+- Sidebar entry: [`frontend/src/pages/AppLayout.tsx`](frontend/src/pages/AppLayout.tsx)
+  under `BASIC_NAV` between Allowances and Data Rights, with the
+  Vault icon.
+- i18n: `appNav.escrow` + the `escrowAssets.*` group propagated
+  across all 10 locales (en/ar/de/es/fr/hi/ja/ko/ta/zh).
+- Dashboard escrow-address redaction: [`Dashboard.tsx`](frontend/src/pages/Dashboard.tsx)
+  L317-358 reshaped.
+- Frontend `tsc -b --force --noEmit` clean.
+
+---
+
+## Recovery design lock-in (T-054 spec)
+
+The discussion that drove this release also produced a fully-locked
+specification for the future stuck-token recovery flow, captured in
+[`docs/DesignsAndPlans/EscrowStuckRecoveryDesign.md`](docs/DesignsAndPlans/EscrowStuckRecoveryDesign.md)
++ the post-deploy labeling runbook in
+[`docs/ops/AnalyticsLabelRegistration.md`](docs/ops/AnalyticsLabelRegistration.md).
+
+Headline decisions captured for implementation in **T-054** (PR-1
+through PR-5 sequenced separately):
+
+- **Counter-bounded recovery cap**: every protocol deposit /
+  withdrawal increments / decrements a per-(user, token) running
+  counter; recovery is capped at `max(0, balanceOf - tracked)`. This
+  is the load-bearing safety property — even if every other check
+  is bypassed, arithmetic forbids draining beyond the truly-
+  unsolicited delta.
+- **Single-sig recovery** (no source-side signature): the contract
+  has no on-chain way to verify a declared source actually
+  originated the transfer; requiring a second signature would be
+  security theatre. Asymmetry-of-consequences does the work — an
+  honest user's CEX-stuck deposit recovers cleanly; a sanctioned-
+  fund launderer either self-incriminates (escrow gets banned) or
+  has zero benefit (would have moved funds wallet-to-wallet without
+  Vaipakam anyway).
+- **Three terminal states**: Recover-clean (tokens to user EOA);
+  Recover-sanctioned (tokens stay in escrow, escrow goes
+  Locked-and-banned per existing sanctions semantics); Disown /
+  ignore (tokens stay in escrow, escrow operates normally).
+- **`disown(token)`** event-only function for compliance audit
+  trail — emits a public on-chain assertion that the user has
+  formally disowned the dust, useful for external audit and
+  individual user disputes.
+- **EIP-712 + "type CONFIRM"** combo for the recovery action — both
+  layers, defence-in-depth: cryptographic record of explicit
+  acknowledgment plus an in-the-moment human attestation.
+- **Discoverability gating**: the recovery page is reachable ONLY
+  via a deep-link from the Advanced User Guide; `noindex,nofollow`;
+  no nav links, no buttons, no banners anywhere else. Naive users
+  who got dust-poisoned never see the recovery page → can't
+  accidentally self-incriminate.
+- **VPFI integration**: `depositVPFIToEscrow` will be re-routed
+  through `escrowDepositERC20` so the counter ticks for stakes; the
+  staking checkpoint reads `min(balanceOf, tracked)` so unsolicited
+  VPFI dust does NOT earn yield. Staking-rewards distribution is
+  unchanged (already lands in user's EOA, never escrow).
+- **No CEX hot-wallet whitelist**: single-sig + sanctions oracle on
+  declared source handles the legitimate stuck-CEX-deposit case for
+  free.
+- **Forfeit semantics**: tokens that stay in escrow under any of the
+  banned / disowned outcomes never move to treasury. They sit
+  locked. If a sanctions list is later updated to remove the flagged
+  address, the locked-and-banned escrow auto-unlocks.
+- **EIP-712 NOT for offer creation / acceptance / matching**: the
+  transaction signature already authenticates and a clear pre-tx
+  review screen carries the consent UX. Reserved for cases where
+  it's load-bearing (Permit2; possibly the recovery action).
+- **Analytics-firm labeling**: per-user escrow proxies are already
+  ERC1967, so the EIP-1967 implementation slot makes Etherscan's
+  proxy → impl link automatic on every spawned proxy. A single
+  public-name-tag submission for the implementation contract
+  cascades to every per-user proxy. For per-instance auto-labeling,
+  pattern registration with Chainalysis / TRM / Elliptic does the
+  job. Full per-firm submission templates + chain-by-chain
+  checklist live in the Analytics-Label runbook.
+
+The PR sequence (PR-1 storage + counter, PR-2 VPFI routing + min-
+clamp, PR-3 `recoverStuckERC20` + `disown` + EIP-712 verifier, PR-4
+frontend `/recover` page + Advanced User Guide section, PR-5 post-
+deploy labeling) is captured in [`docs/ToDo.md`](docs/ToDo.md) under
+T-054. Implementation lands in subsequent releases.

@@ -99,7 +99,8 @@
     "dataRights": "தரவு உரிமைகள்",
     "keepers": "கீப்பர்கள்",
     "governanceGroupLabel": "நிர்வாகம்",
-    "protocolConsole": "நெறிமுறை கன்சோல்"
+    "protocolConsole": "நெறிமுறை கன்சோல்",
+    "escrow": "உங்கள் எஸ்க்ரோ"
   },
   "dataRights": {
     "title": "உங்கள் தரவு உரிமைகள் (GDPR / UK GDPR / CCPA)",
@@ -1637,5 +1638,21 @@
       "calloutPrefix": "interest settlement required",
       "calloutBody": "By accepting you agree that the borrower must pay each period's accrued interest by the period close. If the borrower misses the period beyond the configured grace window, anyone can trigger a settler that sells just enough collateral to cover the shortfall — possibly affecting the loan's health factor and triggering further liquidation."
     }
+  },
+  "escrowAssets": {
+    "pageTitle": "உங்கள் எஸ்க்ரோ",
+    "pageSubtitle": "உங்கள் சார்பில் நெறிமுறை வைத்திருக்கும் டோக்கன்கள். ஒவ்வொரு பயனருக்கும் தனிப்பட்ட எஸ்க்ரோ ப்ராக்ஸி உள்ளது — டெபாசிட்களும் வாபஸ் பெறுவதும் எப்போதும் Vaipakam Diamond வழியாகவே நடக்கிறது.",
+    "addressCardTitle": "எஸ்க்ரோ முகவரி",
+    "addressCaption": "உள் நெறிமுறை சேமிப்பகம் — நிதி நெறிமுறை வழியாக மட்டுமே உள் வந்து வெளியேறுகிறது.",
+    "viewOnExplorer": "பிளாக் எக்ஸ்ப்ளோரரில் எஸ்க்ரோவைப் பார்க்கவும்",
+    "noEscrowYet": "உங்களுக்கு இன்னும் எஸ்க்ரோ இல்லை. நீங்கள் முதலில் ஒரு ஆஃபர் உருவாக்கும் அல்லது ஏற்கும்போது தானாகவே உருவாக்கப்படும்.",
+    "holdingsTitle": "வைப்புகள்",
+    "noProtocolTokensOnChain": "இந்த செயினில் இன்னும் நெறிமுறை மேலாண்மையிலான டோக்கன்கள் கட்டமைக்கப்படவில்லை.",
+    "colToken": "டோக்கன்",
+    "colBalance": "இருப்பு",
+    "refresh": "புதுப்பிக்க",
+    "doNotSendWarning": "Vaipakam நெறிமுறையால் மேலாண்மை செய்யப்படும் டோக்கன்கள் மட்டுமே இங்கு காட்டப்படுகின்றன. உங்கள் எஸ்க்ரோ முகவரிக்கு நேரடியாக எந்த டோக்கனையும் அனுப்ப வேண்டாம் — அவற்றை மீட்டெடுக்க இயலாமல் போகலாம்.",
+    "connectBody": "உங்கள் எஸ்க்ரோ வைப்புகளைப் பார்க்க உங்கள் வாலெட்டை இணைக்கவும்.",
+    "switchChainBody": "உங்கள் எஸ்க்ரோ வைப்புகளைப் பார்க்க உங்கள் வாலெட்டை Vaipakam-ஆதரவு செயினுக்கு மாற்றவும்."
   }
 }

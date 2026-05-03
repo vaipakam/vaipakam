@@ -314,7 +314,15 @@ export default function Dashboard() {
           here, the new card supersedes it with broader coverage. */}
       <RewardsSummaryCard address={address ?? null} />
 
-      {/* Escrow info */}
+      {/* Escrow info — redacted address (no copy / no full-reveal),
+          links to block explorer in a new tab so users can verify
+          on-chain holdings independently. The escrow is INTERNAL
+          protocol storage, not a deposit destination — anyone who
+          accidentally sends tokens directly to it may be unable to
+          recover them. Caption + the dedicated `/app/escrow` page
+          carry the full warning. The redacted display + non-
+          selectable styling combat the trivial copy paths; DOM
+          inspection bypass is intentionally out of scope. */}
       {currentEscrow && (
         <div className="card" style={{ marginBottom: 20 }}>
           <div className="card-title">
@@ -326,14 +334,33 @@ export default function Dashboard() {
             <a
               href={`${activeChain?.blockExplorer ?? DEFAULT_CHAIN.blockExplorer}/address/${currentEscrow}`}
               target="_blank"
-              rel="noreferrer"
+              rel="noreferrer noopener"
+              onCopy={(e) => e.preventDefault()}
               className="data-value"
-              style={{ color: 'var(--brand)', display: 'inline-flex', alignItems: 'center', gap: 6 }}
+              style={{
+                color: 'var(--brand)',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 6,
+                userSelect: 'none',
+                fontFamily: 'monospace',
+              }}
+              aria-label={t('escrowAssets.viewOnExplorer')}
             >
-              {currentEscrow.slice(0, 10)}...{currentEscrow.slice(-8)}
+              {currentEscrow.slice(0, 6)}…{currentEscrow.slice(-4)}
               <ExternalLink size={14} />
             </a>
           </div>
+          <p
+            style={{
+              marginTop: 8,
+              marginBottom: 0,
+              fontSize: '0.85rem',
+              color: 'var(--text-secondary)',
+            }}
+          >
+            {t('escrowAssets.addressCaption')}
+          </p>
         </div>
       )}
 

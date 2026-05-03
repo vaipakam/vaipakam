@@ -99,7 +99,8 @@
     "dataRights": "Datenrechte",
     "keepers": "Keeper",
     "governanceGroupLabel": "Governance",
-    "protocolConsole": "Protokoll-Konsole"
+    "protocolConsole": "Protokoll-Konsole",
+    "escrow": "Ihr Escrow"
   },
   "dataRights": {
     "title": "Ihre Datenrechte (GDPR / UK GDPR / CCPA)",
@@ -1637,5 +1638,21 @@
       "calloutPrefix": "interest settlement required",
       "calloutBody": "By accepting you agree that the borrower must pay each period's accrued interest by the period close. If the borrower misses the period beyond the configured grace window, anyone can trigger a settler that sells just enough collateral to cover the shortfall — possibly affecting the loan's health factor and triggering further liquidation."
     }
+  },
+  "escrowAssets": {
+    "pageTitle": "Ihr Escrow",
+    "pageSubtitle": "Token, die das Protokoll in Ihrem Namen hält. Jeder Benutzer hat seinen eigenen isolierten Escrow-Proxy — Ein- und Auszahlungen laufen immer durch das Vaipakam Diamond.",
+    "addressCardTitle": "Escrow-Adresse",
+    "addressCaption": "Interne Protokoll-Verwahrung — Mittel fließen ausschließlich über das Protokoll ein und aus.",
+    "viewOnExplorer": "Escrow im Block-Explorer ansehen",
+    "noEscrowYet": "Sie haben noch keinen Escrow. Einer wird automatisch erstellt, sobald Sie zum ersten Mal ein Angebot erstellen oder annehmen.",
+    "holdingsTitle": "Bestände",
+    "noProtocolTokensOnChain": "Auf dieser Chain sind noch keine vom Protokoll verwalteten Token konfiguriert.",
+    "colToken": "Token",
+    "colBalance": "Saldo",
+    "refresh": "Aktualisieren",
+    "doNotSendWarning": "Hier werden ausschließlich vom Vaipakam-Protokoll verwaltete Token angezeigt. Senden Sie keine Token direkt an Ihre Escrow-Adresse — eine Wiederherstellung ist möglicherweise nicht möglich.",
+    "connectBody": "Verbinden Sie Ihr Wallet, um Ihre Escrow-Bestände anzusehen.",
+    "switchChainBody": "Wechseln Sie Ihr Wallet zu einer von Vaipakam unterstützten Chain, um Ihre Escrow-Bestände anzusehen."
   }
 }

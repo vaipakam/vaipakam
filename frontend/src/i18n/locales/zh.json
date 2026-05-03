@@ -99,7 +99,8 @@
     "dataRights": "数据权利",
     "keepers": "Keeper",
     "governanceGroupLabel": "治理",
-    "protocolConsole": "协议控制台"
+    "protocolConsole": "协议控制台",
+    "escrow": "您的托管账户"
   },
   "dataRights": {
     "title": "您的数据权利 (GDPR / UK GDPR / CCPA)",
@@ -1637,5 +1638,21 @@
       "calloutPrefix": "interest settlement required",
       "calloutBody": "By accepting you agree that the borrower must pay each period's accrued interest by the period close. If the borrower misses the period beyond the configured grace window, anyone can trigger a settler that sells just enough collateral to cover the shortfall — possibly affecting the loan's health factor and triggering further liquidation."
     }
+  },
+  "escrowAssets": {
+    "pageTitle": "您的托管账户",
+    "pageSubtitle": "协议代您持有的代币。每位用户都拥有自己独立的托管代理 — 存款和取款始终通过 Vaipakam Diamond 进行。",
+    "addressCardTitle": "托管账户地址",
+    "addressCaption": "协议内部存储 — 资金仅通过协议进出。",
+    "viewOnExplorer": "在区块浏览器中查看托管账户",
+    "noEscrowYet": "您还没有托管账户。在您第一次创建或接受报价时会自动创建。",
+    "holdingsTitle": "持仓",
+    "noProtocolTokensOnChain": "此链上尚未配置任何由协议管理的代币。",
+    "colToken": "代币",
+    "colBalance": "余额",
+    "refresh": "刷新",
+    "doNotSendWarning": "此处仅显示由 Vaipakam 协议管理的代币。请勿直接将任何代币发送到您的托管账户地址 — 这些代币可能无法找回。",
+    "connectBody": "连接钱包以查看您的托管账户持仓。",
+    "switchChainBody": "请将钱包切换到 Vaipakam 支持的链上以查看您的托管账户持仓。"
   }
 }

@@ -30,6 +30,7 @@ import {
   ExternalLink,
   Lock,
   Sliders,
+  Vault,
 } from "lucide-react";
 import { useIsProtocolAdmin } from "../lib/useIsProtocolAdmin";
 import { IndexerStatusBadge } from "../components/app/IndexerStatusBadge";
@@ -108,6 +109,12 @@ const BASIC_NAV = [
     to: "/app/allowances",
     icon: <ShieldOff size={20} />,
     labelKey: "appNav.allowances",
+    end: false,
+  },
+  {
+    to: "/app/escrow",
+    icon: <Vault size={20} />,
+    labelKey: "appNav.escrow",
     end: false,
   },
   {

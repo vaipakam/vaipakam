@@ -99,7 +99,8 @@
     "dataRights": "डेटा अधिकार",
     "keepers": "कीपर्स",
     "governanceGroupLabel": "प्रशासन",
-    "protocolConsole": "प्रोटोकॉल कंसोल"
+    "protocolConsole": "प्रोटोकॉल कंसोल",
+    "escrow": "आपका एस्क्रो"
   },
   "dataRights": {
     "title": "आपके डेटा अधिकार (GDPR / UK GDPR / CCPA)",
@@ -1637,5 +1638,21 @@
       "calloutPrefix": "interest settlement required",
       "calloutBody": "By accepting you agree that the borrower must pay each period's accrued interest by the period close. If the borrower misses the period beyond the configured grace window, anyone can trigger a settler that sells just enough collateral to cover the shortfall — possibly affecting the loan's health factor and triggering further liquidation."
     }
+  },
+  "escrowAssets": {
+    "pageTitle": "आपका एस्क्रो",
+    "pageSubtitle": "प्रोटोकॉल आपकी ओर से जो टोकन रखता है। हर उपयोगकर्ता का अपना अलग एस्क्रो प्रॉक्सी होता है — जमा और निकासी हमेशा Vaipakam Diamond के माध्यम से होती है।",
+    "addressCardTitle": "एस्क्रो पता",
+    "addressCaption": "आंतरिक प्रोटोकॉल भंडारण — फंड केवल प्रोटोकॉल के माध्यम से आते-जाते हैं।",
+    "viewOnExplorer": "ब्लॉक एक्सप्लोरर पर एस्क्रो देखें",
+    "noEscrowYet": "आपके पास अभी एस्क्रो नहीं है। पहली बार ऑफर बनाते या स्वीकार करते समय यह स्वतः बन जाएगा।",
+    "holdingsTitle": "धारिताएँ",
+    "noProtocolTokensOnChain": "इस चेन पर अभी प्रोटोकॉल द्वारा प्रबंधित कोई टोकन कॉन्फ़िगर नहीं किया गया है।",
+    "colToken": "टोकन",
+    "colBalance": "बैलेंस",
+    "refresh": "रिफ्रेश",
+    "doNotSendWarning": "यहाँ केवल Vaipakam प्रोटोकॉल द्वारा प्रबंधित टोकन दिखाए जाते हैं। अपने एस्क्रो पते पर सीधे कोई टोकन न भेजें — वे पुनःप्राप्त नहीं हो सकते।",
+    "connectBody": "अपनी एस्क्रो धारिताएँ देखने के लिए वॉलेट कनेक्ट करें।",
+    "switchChainBody": "अपनी एस्क्रो धारिताएँ देखने के लिए वॉलेट को Vaipakam-समर्थित चेन पर बदलें।"
   }
 }

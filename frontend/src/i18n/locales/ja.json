@@ -99,7 +99,8 @@
     "dataRights": "データ権利",
     "keepers": "キーパー",
     "governanceGroupLabel": "ガバナンス",
-    "protocolConsole": "プロトコル・コンソール"
+    "protocolConsole": "プロトコル・コンソール",
+    "escrow": "あなたのエスクロー"
   },
   "dataRights": {
     "title": "あなたのデータ権利 (GDPR / UK GDPR / CCPA)",
@@ -1637,5 +1638,21 @@
       "calloutPrefix": "interest settlement required",
       "calloutBody": "By accepting you agree that the borrower must pay each period's accrued interest by the period close. If the borrower misses the period beyond the configured grace window, anyone can trigger a settler that sells just enough collateral to cover the shortfall — possibly affecting the loan's health factor and triggering further liquidation."
     }
+  },
+  "escrowAssets": {
+    "pageTitle": "あなたのエスクロー",
+    "pageSubtitle": "プロトコルがあなたに代わって保管するトークン。各ユーザーは独自の隔離されたエスクロープロキシを持ち、入出金は常に Vaipakam Diamond を経由します。",
+    "addressCardTitle": "エスクローアドレス",
+    "addressCaption": "プロトコル内部の保管場所 — 資金はプロトコル経由でのみ 出入りします。",
+    "viewOnExplorer": "ブロックエクスプローラーでエスクローを表示",
+    "noEscrowYet": "まだエスクローはありません。初めてオファーを作成または 受け入れるときに自動的に作成されます。",
+    "holdingsTitle": "保有資産",
+    "noProtocolTokensOnChain": "このチェーンにはまだプロトコル管理トークンが設定されて いません。",
+    "colToken": "トークン",
+    "colBalance": "残高",
+    "refresh": "更新",
+    "doNotSendWarning": "ここに表示されるのは Vaipakam プロトコルが管理する トークンのみです。エスクローアドレスにトークンを直接 送らないでください — 復元できない可能性があります。",
+    "connectBody": "ウォレットを接続してエスクロー保有資産を表示してください。",
+    "switchChainBody": "Vaipakam 対応チェーンにウォレットを切り替えてエスクロー 保有資産を表示してください。"
   }
 }
