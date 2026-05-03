@@ -15,6 +15,7 @@ import {AccessControlFacet} from "../src/facets/AccessControlFacet.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {HelperTest} from "./HelperTest.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
+import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 
 /**
  * @title TreasuryFacetTest
@@ -43,9 +44,10 @@ contract TreasuryFacetTest is Test {
         treasuryFacet = new TreasuryFacet();
         adminFacet = new AdminFacet();
         accessControlFacet = new AccessControlFacet();
+        TestMutatorFacet testMutatorFacet = new TestMutatorFacet();
         helperTest = new HelperTest();
 
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](3);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](4);
         cuts[0] = IDiamondCut.FacetCut({
             facetAddress: address(treasuryFacet),
             action: IDiamondCut.FacetCutAction.Add,
@@ -60,6 +62,11 @@ contract TreasuryFacetTest is Test {
             facetAddress: address(accessControlFacet),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getAccessControlFacetSelectors()
+        });
+        cuts[3] = IDiamondCut.FacetCut({
+            facetAddress: address(testMutatorFacet),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getTestMutatorFacetSelectors()
         });
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");
         AccessControlFacet(address(diamond)).initializeAccessControl();
@@ -81,20 +88,7 @@ contract TreasuryFacetTest is Test {
         ERC20Mock(mockERC20).mint(address(diamond), 1000 ether);
 
         // Manually seed treasuryBalances by writing to storage
-        bytes32 baseSlot = LibVaipakam.VANGKI_STORAGE_POSITION;
-        // treasuryBalances is the mapping at offset within Storage
-        // Find the slot for treasuryBalances mapping: iterate struct fields
-        // Storage layout (from LibVaipakam.sol):
-        // slot+0: nextOfferId, +1: nextLoanId, +2: nextTokenId
-        // +3: vaipakamEscrowTemplate, +4: treasury, +5: zeroExProxy
-        // +6: allowanceTarget, +7: numeraireChainlinkDenominator, +8: chainlnkRegistry
-        // +9: usdtContract, +10: uniswapV3Factory, +11: diamondAddress
-        // +12: loanToSaleOfferId mapping, +13: offers mapping, +14: loans mapping
-        // +15: userEscrows mapping, +16: liquidAssets mapping, +17: assetRiskParams mapping
-        // +18: treasuryBalances mapping
-        uint256 treasuryBalancesSlot = uint256(baseSlot) + 17;
-        bytes32 balanceSlot = keccak256(abi.encode(mockERC20, treasuryBalancesSlot));
-        vm.store(address(diamond), balanceSlot, bytes32(uint256(500 ether)));
+        TestMutatorFacet(address(diamond)).setTreasuryBalanceRaw(mockERC20, 500 ether);
 
         assertEq(TreasuryFacet(address(diamond)).getTreasuryBalance(mockERC20), 500 ether);
     }
@@ -104,10 +98,7 @@ contract TreasuryFacetTest is Test {
     function testClaimTreasuryFeesSuccess() public {
         // Set up: mint tokens to diamond and seed treasuryBalances
         ERC20Mock(mockERC20).mint(address(diamond), 1000 ether);
-        bytes32 baseSlot = LibVaipakam.VANGKI_STORAGE_POSITION;
-        uint256 treasuryBalancesSlot = uint256(baseSlot) + 17;
-        bytes32 balanceSlot = keccak256(abi.encode(mockERC20, treasuryBalancesSlot));
-        vm.store(address(diamond), balanceSlot, bytes32(uint256(1000 ether)));
+        TestMutatorFacet(address(diamond)).setTreasuryBalanceRaw(mockERC20, 1000 ether);
 
         address claimant = makeAddr("claimant");
         uint256 claimantBefore = ERC20(mockERC20).balanceOf(claimant);
@@ -128,10 +119,7 @@ contract TreasuryFacetTest is Test {
     function testClaimTreasuryFeesRevertsZeroClaimant() public {
         // Seed some balance first
         ERC20Mock(mockERC20).mint(address(diamond), 100 ether);
-        bytes32 baseSlot = LibVaipakam.VANGKI_STORAGE_POSITION;
-        uint256 treasuryBalancesSlot = uint256(baseSlot) + 17;
-        bytes32 balanceSlot = keccak256(abi.encode(mockERC20, treasuryBalancesSlot));
-        vm.store(address(diamond), balanceSlot, bytes32(uint256(100 ether)));
+        TestMutatorFacet(address(diamond)).setTreasuryBalanceRaw(mockERC20, 100 ether);
 
         vm.expectRevert(IVaipakamErrors.InvalidAddress.selector);
         TreasuryFacet(address(diamond)).claimTreasuryFees(mockERC20, address(0));
@@ -139,10 +127,7 @@ contract TreasuryFacetTest is Test {
 
     function testClaimTreasuryFeesRevertsNonOwner() public {
         ERC20Mock(mockERC20).mint(address(diamond), 100 ether);
-        bytes32 baseSlot = LibVaipakam.VANGKI_STORAGE_POSITION;
-        uint256 treasuryBalancesSlot = uint256(baseSlot) + 17;
-        bytes32 balanceSlot = keccak256(abi.encode(mockERC20, treasuryBalancesSlot));
-        vm.store(address(diamond), balanceSlot, bytes32(uint256(100 ether)));
+        TestMutatorFacet(address(diamond)).setTreasuryBalanceRaw(mockERC20, 100 ether);
 
         vm.prank(user);
         vm.expectRevert(abi.encodeWithSelector(LibAccessControl.AccessControlUnauthorizedAccount.selector, user, LibAccessControl.ADMIN_ROLE));
@@ -151,10 +136,7 @@ contract TreasuryFacetTest is Test {
 
     function testClaimTreasuryFeesResetsBalance() public {
         ERC20Mock(mockERC20).mint(address(diamond), 200 ether);
-        bytes32 baseSlot = LibVaipakam.VANGKI_STORAGE_POSITION;
-        uint256 treasuryBalancesSlot = uint256(baseSlot) + 17;
-        bytes32 balanceSlot = keccak256(abi.encode(mockERC20, treasuryBalancesSlot));
-        vm.store(address(diamond), balanceSlot, bytes32(uint256(200 ether)));
+        TestMutatorFacet(address(diamond)).setTreasuryBalanceRaw(mockERC20, 200 ether);
 
         TreasuryFacet(address(diamond)).claimTreasuryFees(mockERC20, owner);
         assertEq(TreasuryFacet(address(diamond)).getTreasuryBalance(mockERC20), 0);

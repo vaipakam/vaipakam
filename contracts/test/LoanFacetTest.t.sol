@@ -923,11 +923,7 @@ contract LoanFacetTest is Test {
             0
         );
 
-        // Set saleOfferToLoanId[saleOfferId] = existingLoanId via vm.store
-        bytes32 baseSlot = LibVaipakam.VANGKI_STORAGE_POSITION;
-        uint256 saleOfferToLoanSlot = uint256(baseSlot) + 26;
-        bytes32 mappingKey = keccak256(abi.encode(saleOfferId, saleOfferToLoanSlot));
-        vm.store(address(diamond), mappingKey, bytes32(existingLoanId));
+        TestMutatorFacet(address(diamond)).setSaleOfferToLoanIdRaw(saleOfferId, existingLoanId);
 
         // Now initiate loan directly via prank as diamond (since this goes through cross-facet)
         vm.prank(address(diamond));
@@ -967,11 +963,7 @@ contract LoanFacetTest is Test {
             0
         );
 
-        // Set saleOfferToLoanId[saleOfferId] = existingLoanId
-        bytes32 baseSlot = LibVaipakam.VANGKI_STORAGE_POSITION;
-        uint256 saleOfferToLoanSlot = uint256(baseSlot) + 26;
-        bytes32 mappingKey = keccak256(abi.encode(saleOfferId, saleOfferToLoanSlot));
-        vm.store(address(diamond), mappingKey, bytes32(existingLoanId));
+        TestMutatorFacet(address(diamond)).setSaleOfferToLoanIdRaw(saleOfferId, existingLoanId);
 
         // Set the linked loan's status to Repaid (not Active)
         LibVaipakam.Loan memory linkedLoan = LoanFacet(address(diamond)).getLoanDetails(existingLoanId);

@@ -332,13 +332,12 @@ contract Scenario7_LenderEarlyWithdrawal is Test {
         saleOffer.creator = lender;
         TestMutatorFacet(address(diamond)).setOffer(expectedSaleOfferId, saleOffer);
 
-        // offerIdToLoanId is a plain uint=>uint mapping (offset 27) — independent of
-        // Loan/Offer layout, so vm.store is fine here.
-        bytes32 baseSlot = LibVaipakam.VANGKI_STORAGE_POSITION;
-        uint256 offerIdToLoanSlot = uint256(baseSlot) + 27;
-        bytes32 tempLoanSlotKey = keccak256(abi.encode(expectedSaleOfferId, offerIdToLoanSlot));
+        // offerIdToLoanId is a plain uint=>uint mapping. Use the
+        // layout-resilient TestMutatorFacet setter so this stays
+        // correct as the Storage struct shifts (e.g. T-048 added 5
+        // slots above this mapping).
         uint256 tempLoanId = 999;
-        vm.store(address(diamond), tempLoanSlotKey, bytes32(tempLoanId));
+        TestMutatorFacet(address(diamond)).setOfferIdToLoanIdRaw(expectedSaleOfferId, tempLoanId);
 
         // Set temp loan's lender to newLender via mutator (empty Loan with lender populated).
         LibVaipakam.Loan memory tempLoanInit;

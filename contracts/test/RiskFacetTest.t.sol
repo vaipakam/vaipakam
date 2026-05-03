@@ -1740,32 +1740,22 @@ contract RiskFacetTest is Test {
     }
 
     /// @dev Tests calculateHealthFactor when liqThresholdBps is 0 → riskAdjustedCollateral=0, healthFactor=0.
+    ///      Uses TestMutatorFacet.setLiqThresholdBpsRaw to bypass the
+    ///      bounded-range guard on the production setter (which floors
+    ///      liqThresholdBps at RISK_PARAMS_LIQ_THRESHOLD_BPS_MIN).
+    ///      Layout-resilient: the mutator references the field by
+    ///      named storage path so it stays correct when the Storage
+    ///      struct shifts (e.g. T-048 PAD additions).
     function testCalculateHealthFactorZeroLiqThreshold() public {
         uint256 loanId = createAndAcceptOffer();
 
-        // Use vm.store to set liqThresholdBps = 0 for the collateral asset in assetRiskParams
-        bytes32 baseSlot = LibVaipakam.VANGKI_STORAGE_POSITION;
-        // assetRiskParams mapping is at slot offset 17 in Storage struct
-        uint256 riskParamsSlot = uint256(baseSlot) + 16;
-        bytes32 paramsBase = keccak256(
-            abi.encode(mockCollateralERC20, riskParamsSlot)
-        );
-        // RiskParams struct: maxLtvBps(slot+0), liqThresholdBps(slot+1)
-        vm.store(
-            address(diamond),
-            bytes32(uint256(paramsBase) + 1),
-            bytes32(uint256(0))
-        ); // liqThresholdBps = 0
+        TestMutatorFacet(address(diamond)).setLiqThresholdBpsRaw(mockCollateralERC20, 0);
 
         uint256 hf = RiskFacet(address(diamond)).calculateHealthFactor(loanId);
         assertEq(hf, 0, "HF should be 0 when liqThresholdBps is 0");
 
-        // Restore risk params
-        vm.store(
-            address(diamond),
-            bytes32(uint256(paramsBase) + 1),
-            bytes32(uint256(8500))
-        );
+        // Restore risk params for any subsequent assertions in this test contract.
+        TestMutatorFacet(address(diamond)).setLiqThresholdBpsRaw(mockCollateralERC20, 8500);
     }
 
     /// @dev Tests calculateLTV when collateral price = 0 → collateralValueUSD = 0 → ZeroCollateral revert.

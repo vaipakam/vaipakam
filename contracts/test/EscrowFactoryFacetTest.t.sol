@@ -22,6 +22,7 @@ import {AccessControlFacet} from "../src/facets/AccessControlFacet.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 import {ERC1155Mock} from "./mocks/ERC1155Mock.sol";
 import {MockRentableNFT721} from "./mocks/MockRentableNFT721.sol";
+import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 
 /**
  * @title EscrowFactoryFacetTest
@@ -63,9 +64,10 @@ contract EscrowFactoryFacetTest is Test {
         adminFacet = new AdminFacet();
         offerFacet = new OfferFacet();
         accessControlFacet = new AccessControlFacet();
+        TestMutatorFacet testMutatorFacet = new TestMutatorFacet();
         helperTest = new HelperTest();
 
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](4);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](5);
         cuts[0] = IDiamondCut.FacetCut({
             facetAddress: address(escrowFacet),
             action: IDiamondCut.FacetCutAction.Add,
@@ -85,6 +87,11 @@ contract EscrowFactoryFacetTest is Test {
             facetAddress: address(accessControlFacet),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getAccessControlFacetSelectors()
+        });
+        cuts[4] = IDiamondCut.FacetCut({
+            facetAddress: address(testMutatorFacet),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getTestMutatorFacetSelectors()
         });
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");
 
@@ -577,16 +584,9 @@ contract EscrowFactoryFacetTest is Test {
         VaipakamEscrowImplementation newImpl = new VaipakamEscrowImplementation();
         EscrowFactoryFacet(address(diamond)).upgradeEscrowImplementation(address(newImpl));
 
-        // Step 3: Use vm.store to set user1's escrow version to 2 (above mandatory)
-        bytes32 baseSlot = LibVaipakam.VANGKI_STORAGE_POSITION;
-        // escrowVersion mapping is at baseSlot + 32 (counting: 30 mappings before it,
-        // then currentEscrowVersion at 30, mandatoryEscrowVersion at 31, escrowVersion at 32)
-        // Actually let's count properly from Storage struct:
-        // slots 0-11: simple vars, slot 12-29: mappings (each takes 1 slot),
-        // slot 30: currentEscrowVersion, slot 31: mandatoryEscrowVersion, slot 32: escrowVersion mapping
-        uint256 escrowVersionSlot = uint256(baseSlot) + 31;
-        bytes32 userVersionKey = keccak256(abi.encode(user1, escrowVersionSlot));
-        vm.store(address(diamond), userVersionKey, bytes32(uint256(2)));
+        // Step 3: Set user1's escrow version to 2 (above mandatory) via
+        // the layout-resilient TestMutatorFacet setter.
+        TestMutatorFacet(address(diamond)).setEscrowVersionRaw(user1, 2);
 
         // Step 4: Set mandatory to 1 (user version 2 >= mandatory 1)
         EscrowFactoryFacet(address(diamond)).setMandatoryEscrowUpgrade(1);

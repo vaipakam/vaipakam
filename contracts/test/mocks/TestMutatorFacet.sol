@@ -192,6 +192,135 @@ contract TestMutatorFacet {
         LibVaipakam.storageSlot().interactionCapVpfiPerEth = value;
     }
 
+    /// @notice Write `assetRiskParams[asset].liqThresholdBps` directly,
+    ///         bypassing the bounded-range guard on
+    ///         `RiskFacet.updateRiskParams`. Lets tests stress the
+    ///         liqThresholdBps == 0 edge case in
+    ///         `RiskFacet.calculateHealthFactor` (which the production
+    ///         setter rejects below `RISK_PARAMS_LIQ_THRESHOLD_BPS_MIN`).
+    /// @dev    Compiler resolves the storage slot via the named field
+    ///         path — no hardcoded magic numbers, so this stays correct
+    ///         when the `Storage` struct layout shifts under it.
+    function setLiqThresholdBpsRaw(address asset, uint16 bps) external {
+        LibVaipakam.storageSlot().assetRiskParams[asset].liqThresholdBps = bps;
+    }
+
+    /// @notice Write `s.offerIdToLoanId[offerId] = loanId` directly.
+    ///         Used by `EarlyWithdrawalFacetTest` to scaffold the
+    ///         loan-sale state without going through the full
+    ///         create-offer + accept lifecycle. Layout-resilient via
+    ///         the named-field storage path — no hardcoded slot math.
+    function setOfferIdToLoanIdRaw(uint256 offerId, uint256 loanId) external {
+        LibVaipakam.storageSlot().offerIdToLoanId[offerId] = loanId;
+    }
+
+    /// @notice Write `s.heldForLender[loanId] = amount` directly.
+    ///         Used by tests that need to scaffold preclose-residual
+    ///         state without running a full preclose flow.
+    function setHeldForLenderRaw(uint256 loanId, uint256 amount) external {
+        LibVaipakam.storageSlot().heldForLender[loanId] = amount;
+    }
+
+    /// @notice Overwrite `s.lenderClaims[loanId].amount` directly.
+    ///         Layout-resilient — used by `ClaimFacetTest` to exercise
+    ///         the `NothingToClaim` revert without slot math.
+    function setLenderClaimAmountRaw(uint256 loanId, uint256 amount) external {
+        LibVaipakam.storageSlot().lenderClaims[loanId].amount = amount;
+    }
+
+    /// @notice Overwrite `s.borrowerClaims[loanId].amount` directly.
+    ///         Mirror of `setLenderClaimAmountRaw` for the borrower side.
+    function setBorrowerClaimAmountRaw(uint256 loanId, uint256 amount) external {
+        LibVaipakam.storageSlot().borrowerClaims[loanId].amount = amount;
+    }
+
+    /// @notice Overwrite `s.lenderClaims[loanId].asset` directly. Used
+    ///         by tests that need to scaffold a claim against a
+    ///         not-deployed asset address.
+    function setLenderClaimAssetRaw(uint256 loanId, address asset) external {
+        LibVaipakam.storageSlot().lenderClaims[loanId].asset = asset;
+    }
+
+    /// @notice Overwrite `s.borrowerClaims[loanId].asset` directly.
+    function setBorrowerClaimAssetRaw(uint256 loanId, address asset) external {
+        LibVaipakam.storageSlot().borrowerClaims[loanId].asset = asset;
+    }
+
+    /// @notice Overwrite the NFT-claim fields on `s.lenderClaims[loanId]`
+    ///         (assetType + tokenId + quantity) without disturbing the
+    ///         asset / amount / claimed fields. Used by ClaimFacetTest's
+    ///         ERC721 / ERC1155 claim-asset coverage tests.
+    function setLenderClaimNFTFieldsRaw(
+        uint256 loanId,
+        LibVaipakam.AssetType assetType,
+        uint256 tokenId,
+        uint256 quantity
+    ) external {
+        LibVaipakam.ClaimInfo storage c = LibVaipakam.storageSlot().lenderClaims[loanId];
+        c.assetType = assetType;
+        c.tokenId = tokenId;
+        c.quantity = quantity;
+    }
+
+    /// @notice Mirror of `setLenderClaimNFTFieldsRaw` for the borrower
+    ///         side.
+    function setBorrowerClaimNFTFieldsRaw(
+        uint256 loanId,
+        LibVaipakam.AssetType assetType,
+        uint256 tokenId,
+        uint256 quantity
+    ) external {
+        LibVaipakam.ClaimInfo storage c = LibVaipakam.storageSlot().borrowerClaims[loanId];
+        c.assetType = assetType;
+        c.tokenId = tokenId;
+        c.quantity = quantity;
+    }
+
+    /// @notice Write `s.treasuryBalances[asset] = amount` directly.
+    ///         Used by `TreasuryFacetTest` to scaffold a treasury IOU
+    ///         without running a full fee-accrual flow.
+    function setTreasuryBalanceRaw(address asset, uint256 amount) external {
+        LibVaipakam.storageSlot().treasuryBalances[asset] = amount;
+    }
+
+    /// @notice Write `s.saleOfferToLoanId[offerId] = loanId` directly.
+    ///         Used by tests scaffolding lender-sale completion without
+    ///         running the full sale flow.
+    function setSaleOfferToLoanIdRaw(uint256 offerId, uint256 loanId) external {
+        LibVaipakam.storageSlot().saleOfferToLoanId[offerId] = loanId;
+    }
+
+    /// @notice Write `s.offsetOfferToLoanId[offerId] = loanId` directly.
+    ///         Used by OfferFacet auto-complete coverage tests.
+    function setOffsetOfferToLoanIdRaw(uint256 offerId, uint256 loanId) external {
+        LibVaipakam.storageSlot().offsetOfferToLoanId[offerId] = loanId;
+    }
+
+    /// @notice Write `s.escrowVersion[user] = version` directly.
+    ///         Used by `EscrowFactoryFacetTest` to simulate a user
+    ///         whose proxy is already at a specific version.
+    function setEscrowVersionRaw(address user, uint256 version) external {
+        LibVaipakam.storageSlot().escrowVersion[user] = version;
+    }
+
+    /// @notice Write `s.assetRiskParams[asset].minPartialBps = bps`
+    ///         directly. Used by `RepayFacetTest.testRepayPartialRevertsMinPartialAmount`
+    ///         to set the min-partial floor without going through the
+    ///         bounded-range setter on `RiskFacet.updateRiskParams`.
+    function setMinPartialBpsRaw(address asset, uint256 bps) external {
+        LibVaipakam.storageSlot().assetRiskParams[asset].minPartialBps = bps;
+    }
+
+    /// @notice Read `s.userVaipakamEscrows[user]` directly. Used by
+    ///         `WorkflowComplianceAndRejection` test to look up a
+    ///         user's escrow proxy address bypassing the
+    ///         `getOrCreateUserEscrow` path's mandatory-version
+    ///         check (which would revert in the upgrade-required
+    ///         scenario the test exercises).
+    function getUserVaipakamEscrowRaw(address user) external view returns (address) {
+        return LibVaipakam.storageSlot().userVaipakamEscrows[user];
+    }
+
     /// @notice Test-only: expose raw staking accrual storage fields so tests
     ///         can assert against the internal reward-per-token counters
     ///         without grepping storage slots.

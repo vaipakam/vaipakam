@@ -2825,11 +2825,7 @@ contract OfferFacetTest is Test {
             })
         );
 
-        // Set saleOfferToLoanId[offerId] = 42 via vm.store
-        bytes32 baseSlot = LibVaipakam.VANGKI_STORAGE_POSITION;
-        uint256 saleOfferToLoanIdSlot = uint256(baseSlot) + 26;
-        bytes32 mappingSlot = keccak256(abi.encode(offerId, saleOfferToLoanIdSlot));
-        vm.store(address(diamond), mappingSlot, bytes32(uint256(42)));
+        TestMutatorFacet(address(diamond)).setSaleOfferToLoanIdRaw(offerId, 42);
 
         // Mock completeLoanSale to succeed
         vm.mockCall(
@@ -2885,11 +2881,7 @@ contract OfferFacetTest is Test {
             })
         );
 
-        // Set saleOfferToLoanId[offerId] = 42 via vm.store
-        bytes32 baseSlot = LibVaipakam.VANGKI_STORAGE_POSITION;
-        uint256 saleOfferToLoanIdSlot = uint256(baseSlot) + 26;
-        bytes32 mappingSlot = keccak256(abi.encode(offerId, saleOfferToLoanIdSlot));
-        vm.store(address(diamond), mappingSlot, bytes32(uint256(42)));
+        TestMutatorFacet(address(diamond)).setSaleOfferToLoanIdRaw(offerId, 42);
 
         // Mock completeLoanSale to revert
         vm.mockCallRevert(
@@ -2945,11 +2937,7 @@ contract OfferFacetTest is Test {
             })
         );
 
-        // Set offsetOfferToLoanId[offerId] = 99 via vm.store
-        bytes32 baseSlot = LibVaipakam.VANGKI_STORAGE_POSITION;
-        uint256 offsetOfferToLoanIdSlot = uint256(baseSlot) + 25;
-        bytes32 mappingSlot = keccak256(abi.encode(offerId, offsetOfferToLoanIdSlot));
-        vm.store(address(diamond), mappingSlot, bytes32(uint256(99)));
+        TestMutatorFacet(address(diamond)).setOffsetOfferToLoanIdRaw(offerId, 99);
 
         // Mock completeOffset to succeed
         vm.mockCall(
@@ -3005,11 +2993,7 @@ contract OfferFacetTest is Test {
             })
         );
 
-        // Set offsetOfferToLoanId[offerId] = 99 via vm.store
-        bytes32 baseSlot = LibVaipakam.VANGKI_STORAGE_POSITION;
-        uint256 offsetOfferToLoanIdSlot = uint256(baseSlot) + 25;
-        bytes32 mappingSlot = keccak256(abi.encode(offerId, offsetOfferToLoanIdSlot));
-        vm.store(address(diamond), mappingSlot, bytes32(uint256(99)));
+        TestMutatorFacet(address(diamond)).setOffsetOfferToLoanIdRaw(offerId, 99);
 
         // Mock completeOffset to revert
         vm.mockCallRevert(
@@ -3068,10 +3052,7 @@ contract OfferFacetTest is Test {
         );
 
         // Set saleOfferToLoanId[offerId] = 77 and create a loan with collateral at that ID
-        bytes32 baseSlot = LibVaipakam.VANGKI_STORAGE_POSITION;
-        uint256 saleOfferToLoanIdSlot = uint256(baseSlot) + 26;
-        bytes32 saleMapping = keccak256(abi.encode(offerId, saleOfferToLoanIdSlot));
-        vm.store(address(diamond), saleMapping, bytes32(uint256(77)));
+        TestMutatorFacet(address(diamond)).setSaleOfferToLoanIdRaw(offerId, 77);
 
         // Set loan 77's collateralAmount to 5000 via TestMutatorFacet.
         LibVaipakam.Loan memory spoofed;

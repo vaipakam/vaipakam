@@ -1218,9 +1218,7 @@ contract EarlyWithdrawalFacetTest is Test {
         _setOfferAcceptedAndRate(50, 1000);
 
         // Set offerIdToLoanId[50] → 2 (tempLoanId). Mapping vm.store is layout-independent.
-        bytes32 baseSlot = LibVaipakam.VANGKI_STORAGE_POSITION;
-        uint256 offerIdToLoanSlot = uint256(baseSlot) + 27; // offerIdToLoanId mapping
-        vm.store(address(diamond), keccak256(abi.encode(uint256(50), offerIdToLoanSlot)), bytes32(uint256(2)));
+        TestMutatorFacet(address(diamond)).setOfferIdToLoanIdRaw(50, 2);
 
         // Set up temp loan (loanId=2) with newLender as lender, burn NFT ids
         _setupTempLoan(2);
@@ -1250,9 +1248,7 @@ contract EarlyWithdrawalFacetTest is Test {
 
         _setOfferAcceptedAndRate(50, 300);
 
-        bytes32 baseSlot = LibVaipakam.VANGKI_STORAGE_POSITION;
-        uint256 offerIdToLoanSlot = uint256(baseSlot) + 27;
-        vm.store(address(diamond), keccak256(abi.encode(uint256(50), offerIdToLoanSlot)), bytes32(uint256(2)));
+        TestMutatorFacet(address(diamond)).setOfferIdToLoanIdRaw(50, 2);
 
         _setupTempLoan(2);
 
@@ -1292,9 +1288,7 @@ contract EarlyWithdrawalFacetTest is Test {
 
         _setOfferAccepted(50);
 
-        bytes32 baseSlot = LibVaipakam.VANGKI_STORAGE_POSITION;
-        uint256 offerIdToLoanSlot = uint256(baseSlot) + 27;
-        vm.store(address(diamond), keccak256(abi.encode(uint256(50), offerIdToLoanSlot)), bytes32(uint256(2)));
+        TestMutatorFacet(address(diamond)).setOfferIdToLoanIdRaw(50, 2);
 
         _setupTempLoan(2);
 
@@ -1321,9 +1315,7 @@ contract EarlyWithdrawalFacetTest is Test {
 
         _setOfferAcceptedAndRate(50, 2000);
 
-        bytes32 baseSlot = LibVaipakam.VANGKI_STORAGE_POSITION;
-        uint256 offerIdToLoanSlot = uint256(baseSlot) + 27;
-        vm.store(address(diamond), keccak256(abi.encode(uint256(50), offerIdToLoanSlot)), bytes32(uint256(2)));
+        TestMutatorFacet(address(diamond)).setOfferIdToLoanIdRaw(50, 2);
 
         _setupTempLoan(2);
 
@@ -1346,9 +1338,7 @@ contract EarlyWithdrawalFacetTest is Test {
 
         _setOfferAcceptedAndRate(50, 300);
 
-        bytes32 baseSlot = LibVaipakam.VANGKI_STORAGE_POSITION;
-        uint256 offerIdToLoanSlot = uint256(baseSlot) + 27;
-        vm.store(address(diamond), keccak256(abi.encode(uint256(50), offerIdToLoanSlot)), bytes32(uint256(2)));
+        TestMutatorFacet(address(diamond)).setOfferIdToLoanIdRaw(50, 2);
 
         _setupTempLoan(2);
 
@@ -1407,9 +1397,7 @@ contract EarlyWithdrawalFacetTest is Test {
         _setOfferAccepted(50);
 
         // Set offerIdToLoanId[50] = 2 (tempLoanId exists)
-        bytes32 baseSlot = LibVaipakam.VANGKI_STORAGE_POSITION;
-        uint256 offerIdToLoanSlot = uint256(baseSlot) + 27;
-        vm.store(address(diamond), keccak256(abi.encode(uint256(50), offerIdToLoanSlot)), bytes32(uint256(2)));
+        TestMutatorFacet(address(diamond)).setOfferIdToLoanIdRaw(50, 2);
 
         // BUT don't set lender on tempLoan (so newLender = address(0))
         // tempLoan.lender is already 0 by default
@@ -1431,9 +1419,7 @@ contract EarlyWithdrawalFacetTest is Test {
 
         _setOfferAcceptedAndRate(50, 500);
 
-        bytes32 baseSlot = LibVaipakam.VANGKI_STORAGE_POSITION;
-        uint256 offerIdToLoanSlot = uint256(baseSlot) + 27;
-        vm.store(address(diamond), keccak256(abi.encode(uint256(50), offerIdToLoanSlot)), bytes32(uint256(2)));
+        TestMutatorFacet(address(diamond)).setOfferIdToLoanIdRaw(50, 2);
 
         _setupTempLoan(2);
 
@@ -1471,9 +1457,7 @@ contract EarlyWithdrawalFacetTest is Test {
 
         _setOfferAccepted(50);
 
-        bytes32 baseSlot = LibVaipakam.VANGKI_STORAGE_POSITION;
-        uint256 offerIdToLoanSlot = uint256(baseSlot) + 27;
-        vm.store(address(diamond), keccak256(abi.encode(uint256(50), offerIdToLoanSlot)), bytes32(uint256(2)));
+        TestMutatorFacet(address(diamond)).setOfferIdToLoanIdRaw(50, 2);
 
         _setupTempLoan(2);
 
@@ -1497,9 +1481,7 @@ contract EarlyWithdrawalFacetTest is Test {
 
         _setOfferAcceptedAndRate(50, 600);
 
-        bytes32 baseSlot = LibVaipakam.VANGKI_STORAGE_POSITION;
-        uint256 offerIdToLoanSlot = uint256(baseSlot) + 27;
-        vm.store(address(diamond), keccak256(abi.encode(uint256(50), offerIdToLoanSlot)), bytes32(uint256(2)));
+        TestMutatorFacet(address(diamond)).setOfferIdToLoanIdRaw(50, 2);
 
         _setupTempLoan(2);
 
@@ -1518,9 +1500,7 @@ contract EarlyWithdrawalFacetTest is Test {
     /// @dev Covers sellLoanViaBuyOffer priorHeld > 0 migration path (line 210)
     function testSellLoanWithPriorHeldMigration() public {
         // Set heldForLender[activeLoanId] > 0 via vm.store
-        bytes32 baseSlot = LibVaipakam.VANGKI_STORAGE_POSITION;
-        uint256 heldSlot = uint256(baseSlot) + 24;
-        vm.store(address(diamond), keccak256(abi.encode(uint256(activeLoanId), heldSlot)), bytes32(uint256(50 ether)));
+        TestMutatorFacet(address(diamond)).setHeldForLenderRaw(activeLoanId, 50 ether);
 
         // Mock getOrCreateUserEscrow for new lender
         address newLenderEscrow = EscrowFactoryFacet(address(diamond)).getOrCreateUserEscrow(newLender);
@@ -1535,9 +1515,7 @@ contract EarlyWithdrawalFacetTest is Test {
 
     /// @dev Covers sellLoanViaBuyOffer priorHeld migration failure
     function testSellLoanPriorHeldMigrationFails() public {
-        bytes32 baseSlot = LibVaipakam.VANGKI_STORAGE_POSITION;
-        uint256 heldSlot = uint256(baseSlot) + 24;
-        vm.store(address(diamond), keccak256(abi.encode(uint256(activeLoanId), heldSlot)), bytes32(uint256(50 ether)));
+        TestMutatorFacet(address(diamond)).setHeldForLenderRaw(activeLoanId, 50 ether);
 
         // Mock principal transfer success, but escrow withdraw for migration fails
         // First call (principal) succeeds, then migration call fails
@@ -1561,9 +1539,7 @@ contract EarlyWithdrawalFacetTest is Test {
 
         _setOfferAccepted(50);
 
-        bytes32 baseSlot = LibVaipakam.VANGKI_STORAGE_POSITION;
-        uint256 offerIdToLoanSlot = uint256(baseSlot) + 27;
-        vm.store(address(diamond), keccak256(abi.encode(uint256(50), offerIdToLoanSlot)), bytes32(uint256(2)));
+        TestMutatorFacet(address(diamond)).setOfferIdToLoanIdRaw(50, 2);
 
         _setupTempLoan(2);
 
@@ -1598,9 +1574,7 @@ contract EarlyWithdrawalFacetTest is Test {
 
         _setOfferAccepted(50);
 
-        bytes32 baseSlot = LibVaipakam.VANGKI_STORAGE_POSITION;
-        uint256 offerIdToLoanSlot = uint256(baseSlot) + 27;
-        vm.store(address(diamond), keccak256(abi.encode(uint256(50), offerIdToLoanSlot)), bytes32(uint256(2)));
+        TestMutatorFacet(address(diamond)).setOfferIdToLoanIdRaw(50, 2);
 
         _setupTempLoan(2);
 
@@ -1623,9 +1597,7 @@ contract EarlyWithdrawalFacetTest is Test {
 
         _setOfferAccepted(50);
 
-        bytes32 baseSlot = LibVaipakam.VANGKI_STORAGE_POSITION;
-        uint256 offerIdToLoanSlot = uint256(baseSlot) + 27;
-        vm.store(address(diamond), keccak256(abi.encode(uint256(50), offerIdToLoanSlot)), bytes32(uint256(2)));
+        TestMutatorFacet(address(diamond)).setOfferIdToLoanIdRaw(50, 2);
 
         _setupTempLoanWithCollateral(2, mockERC20, 500 ether);
 
@@ -1647,9 +1619,7 @@ contract EarlyWithdrawalFacetTest is Test {
 
         _setOfferAccepted(50);
 
-        bytes32 baseSlot = LibVaipakam.VANGKI_STORAGE_POSITION;
-        uint256 offerIdToLoanSlot = uint256(baseSlot) + 27;
-        vm.store(address(diamond), keccak256(abi.encode(uint256(50), offerIdToLoanSlot)), bytes32(uint256(2)));
+        TestMutatorFacet(address(diamond)).setOfferIdToLoanIdRaw(50, 2);
 
         _setupTempLoanWithCollateral(2, mockERC20, 500 ether);
 
@@ -1680,15 +1650,12 @@ contract EarlyWithdrawalFacetTest is Test {
         EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(activeLoanId, 500, true);
         vm.clearMockedCalls();
 
-        bytes32 baseSlot = LibVaipakam.VANGKI_STORAGE_POSITION;
         // Set heldForLender[activeLoanId] > 0 (mapping write is layout-independent)
-        uint256 heldSlot = uint256(baseSlot) + 24;
-        vm.store(address(diamond), keccak256(abi.encode(uint256(activeLoanId), heldSlot)), bytes32(uint256(50 ether)));
+        TestMutatorFacet(address(diamond)).setHeldForLenderRaw(activeLoanId, 50 ether);
 
         _setOfferAccepted(50);
 
-        uint256 offerIdToLoanSlot = uint256(baseSlot) + 27;
-        vm.store(address(diamond), keccak256(abi.encode(uint256(50), offerIdToLoanSlot)), bytes32(uint256(2)));
+        TestMutatorFacet(address(diamond)).setOfferIdToLoanIdRaw(50, 2);
 
         _setupTempLoan(2);
 
@@ -1709,14 +1676,11 @@ contract EarlyWithdrawalFacetTest is Test {
         EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(activeLoanId, 500, true);
         vm.clearMockedCalls();
 
-        bytes32 baseSlot = LibVaipakam.VANGKI_STORAGE_POSITION;
-        uint256 heldSlot = uint256(baseSlot) + 24;
-        vm.store(address(diamond), keccak256(abi.encode(uint256(activeLoanId), heldSlot)), bytes32(uint256(50 ether)));
+        TestMutatorFacet(address(diamond)).setHeldForLenderRaw(activeLoanId, 50 ether);
 
         _setOfferAccepted(50);
 
-        uint256 offerIdToLoanSlot = uint256(baseSlot) + 27;
-        vm.store(address(diamond), keccak256(abi.encode(uint256(50), offerIdToLoanSlot)), bytes32(uint256(2)));
+        TestMutatorFacet(address(diamond)).setOfferIdToLoanIdRaw(50, 2);
 
         _setupTempLoan(2);
 
@@ -1760,9 +1724,7 @@ contract EarlyWithdrawalFacetTest is Test {
         _setOfferAccepted(50);
 
         // Set up temp loan
-        bytes32 baseSlot = LibVaipakam.VANGKI_STORAGE_POSITION;
-        uint256 offerIdToLoanSlot = uint256(baseSlot) + 27;
-        vm.store(address(diamond), keccak256(abi.encode(uint256(50), offerIdToLoanSlot)), bytes32(uint256(2)));
+        TestMutatorFacet(address(diamond)).setOfferIdToLoanIdRaw(50, 2);
         _setupTempLoan(2);
 
         vm.mockCall(address(diamond), abi.encodeWithSelector(EscrowFactoryFacet.escrowWithdrawERC20.selector), abi.encode(true));
@@ -1831,9 +1793,7 @@ contract EarlyWithdrawalFacetTest is Test {
 
         _setOfferAccepted(50);
 
-        bytes32 baseSlot = LibVaipakam.VANGKI_STORAGE_POSITION;
-        uint256 offerIdToLoanSlot = uint256(baseSlot) + 27;
-        vm.store(address(diamond), keccak256(abi.encode(uint256(50), offerIdToLoanSlot)), bytes32(uint256(2)));
+        TestMutatorFacet(address(diamond)).setOfferIdToLoanIdRaw(50, 2);
 
         _setupTempLoan(2);
 
@@ -1865,9 +1825,7 @@ contract EarlyWithdrawalFacetTest is Test {
 
         _setOfferAccepted(50);
 
-        bytes32 baseSlot = LibVaipakam.VANGKI_STORAGE_POSITION;
-        uint256 offerIdToLoanSlot = uint256(baseSlot) + 27;
-        vm.store(address(diamond), keccak256(abi.encode(uint256(50), offerIdToLoanSlot)), bytes32(uint256(2)));
+        TestMutatorFacet(address(diamond)).setOfferIdToLoanIdRaw(50, 2);
 
         _setupTempLoan(2);
 
@@ -1896,9 +1854,7 @@ contract EarlyWithdrawalFacetTest is Test {
 
         _setOfferAcceptedAndRate(50, 600);
 
-        bytes32 baseSlot = LibVaipakam.VANGKI_STORAGE_POSITION;
-        uint256 offerIdToLoanSlot = uint256(baseSlot) + 27;
-        vm.store(address(diamond), keccak256(abi.encode(uint256(50), offerIdToLoanSlot)), bytes32(uint256(2)));
+        TestMutatorFacet(address(diamond)).setOfferIdToLoanIdRaw(50, 2);
 
         _setupTempLoan(2);
 
@@ -1922,11 +1878,7 @@ contract EarlyWithdrawalFacetTest is Test {
     /// @dev Covers sellLoanViaBuyOffer with priorHeld > 0 — the heldForLender migration path.
     function testSellLoanWithPriorHeldForLender() public {
         // Set heldForLender[activeLoanId] > 0 via vm.store
-        bytes32 baseSlot = LibVaipakam.VANGKI_STORAGE_POSITION;
-        // heldForLender is mapping(uint256 => uint256) at storage slot baseSlot + 24
-        uint256 heldForLenderSlot = uint256(baseSlot) + 24;
-        bytes32 heldSlotKey = keccak256(abi.encode(activeLoanId, heldForLenderSlot));
-        vm.store(address(diamond), heldSlotKey, bytes32(uint256(50 ether)));
+        TestMutatorFacet(address(diamond)).setHeldForLenderRaw(activeLoanId, 50 ether);
 
         // Deposit the held amount into lender's escrow so withdrawal works
         address lenderEscrow = EscrowFactoryFacet(address(diamond)).getOrCreateUserEscrow(lender);
@@ -2021,10 +1973,7 @@ contract EarlyWithdrawalFacetTest is Test {
     /// @dev Covers completeLoanSale with priorHeldSale > 0 — the held migration path.
     function testCompleteLoanSaleWithPriorHeldSale() public {
         // Set heldForLender[activeLoanId] > 0 via vm.store
-        bytes32 baseSlot = LibVaipakam.VANGKI_STORAGE_POSITION;
-        uint256 heldForLenderSlot = uint256(baseSlot) + 24;
-        bytes32 heldSlotKey = keccak256(abi.encode(activeLoanId, heldForLenderSlot));
-        vm.store(address(diamond), heldSlotKey, bytes32(uint256(30 ether)));
+        TestMutatorFacet(address(diamond)).setHeldForLenderRaw(activeLoanId, 30 ether);
 
         vm.mockCall(address(diamond), abi.encodeWithSelector(OfferFacet.createOffer.selector), abi.encode(uint256(50)));
         vm.prank(lender);
@@ -2033,8 +1982,7 @@ contract EarlyWithdrawalFacetTest is Test {
 
         _setOfferAccepted(50);
 
-        uint256 offerIdToLoanSlot = uint256(baseSlot) + 27;
-        vm.store(address(diamond), keccak256(abi.encode(uint256(50), offerIdToLoanSlot)), bytes32(uint256(2)));
+        TestMutatorFacet(address(diamond)).setOfferIdToLoanIdRaw(50, 2);
 
         _setupTempLoan(2);
 
@@ -2062,15 +2010,12 @@ contract EarlyWithdrawalFacetTest is Test {
 
         _setOfferAccepted(50);
 
-        bytes32 baseSlot = LibVaipakam.VANGKI_STORAGE_POSITION;
-        uint256 offerIdToLoanSlot = uint256(baseSlot) + 27;
-        vm.store(address(diamond), keccak256(abi.encode(uint256(50), offerIdToLoanSlot)), bytes32(uint256(2)));
+        TestMutatorFacet(address(diamond)).setOfferIdToLoanIdRaw(50, 2);
 
         _setupTempLoan(2);
 
         // Set heldForLender > 0 so _transferToNewLenderEscrow is called (mapping — layout-independent)
-        uint256 heldSlot = uint256(baseSlot) + 24;
-        vm.store(address(diamond), keccak256(abi.encode(uint256(activeLoanId), heldSlot)), bytes32(uint256(50 ether)));
+        TestMutatorFacet(address(diamond)).setHeldForLenderRaw(activeLoanId, 50 ether);
 
         vm.mockCall(address(diamond), abi.encodeWithSelector(EscrowFactoryFacet.escrowWithdrawERC20.selector), abi.encode(true));
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.burnNFT.selector), "");
@@ -2098,9 +2043,7 @@ contract EarlyWithdrawalFacetTest is Test {
 
         _setOfferAccepted(50);
 
-        bytes32 baseSlot = LibVaipakam.VANGKI_STORAGE_POSITION;
-        uint256 offerIdToLoanSlot = uint256(baseSlot) + 27;
-        vm.store(address(diamond), keccak256(abi.encode(uint256(50), offerIdToLoanSlot)), bytes32(uint256(2)));
+        TestMutatorFacet(address(diamond)).setOfferIdToLoanIdRaw(50, 2);
 
         // Build temp loan with ERC721 collateral set via struct setter
         {
@@ -2135,9 +2078,7 @@ contract EarlyWithdrawalFacetTest is Test {
 
         _setOfferAccepted(50);
 
-        bytes32 baseSlot = LibVaipakam.VANGKI_STORAGE_POSITION;
-        uint256 offerIdToLoanSlot = uint256(baseSlot) + 27;
-        vm.store(address(diamond), keccak256(abi.encode(uint256(50), offerIdToLoanSlot)), bytes32(uint256(2)));
+        TestMutatorFacet(address(diamond)).setOfferIdToLoanIdRaw(50, 2);
 
         // Build temp loan with ERC1155 collateral set via struct setter
         {
@@ -2173,9 +2114,7 @@ contract EarlyWithdrawalFacetTest is Test {
 
         _setOfferAcceptedAndRate(50, 5000);
 
-        bytes32 baseSlot = LibVaipakam.VANGKI_STORAGE_POSITION;
-        uint256 offerIdToLoanSlot = uint256(baseSlot) + 27;
-        vm.store(address(diamond), keccak256(abi.encode(uint256(50), offerIdToLoanSlot)), bytes32(uint256(2)));
+        TestMutatorFacet(address(diamond)).setOfferIdToLoanIdRaw(50, 2);
 
         _setupTempLoan(2);
 

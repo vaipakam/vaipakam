@@ -1128,17 +1128,13 @@ contract RepayFacetTest is Test {
     }
 
     /// @dev Tests repayPartial fails when minPartialBps > 0 and partialAmount < minPartial.
-    ///      Sets minPartialBps for the principal asset via vm.store (field +4 in RiskParams).
+    ///      Sets minPartialBps for the principal asset via the layout-
+    ///      resilient TestMutatorFacet setter so this stays correct
+    ///      when the Storage struct shifts (e.g. T-048 PAD additions).
     function testRepayPartialRevertsMinPartialAmount() public {
         helperOfferLoan();
-        // Set minPartialBps = 1000 (10%) for mockERC20 via vm.store
-        // assetRiskParams is at BASE+17; RiskParams[mockERC20] base = keccak256(abi.encode(mockERC20, BASE+17))
-        // minPartialBps is at offset +4 in RiskParams
-        bytes32 baseSlot = LibVaipakam.VANGKI_STORAGE_POSITION;
-        uint256 assetRiskParamsSlot = uint256(baseSlot) + 16;
-        bytes32 riskParamsBase = keccak256(abi.encode(mockERC20, assetRiskParamsSlot));
-        bytes32 minPartialSlot = bytes32(uint256(riskParamsBase) + 4);
-        vm.store(address(diamond), minPartialSlot, bytes32(uint256(1000)));
+        // Set minPartialBps = 1000 (10%) for mockERC20.
+        TestMutatorFacet(address(diamond)).setMinPartialBpsRaw(mockERC20, 1000);
 
         // loanId 1: principal = 1000; minPartial = 1000 * 1000 / 10000 = 100
         // repay 50 < 100 → InsufficientPartialAmount

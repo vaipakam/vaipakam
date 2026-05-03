@@ -884,18 +884,15 @@ contract RefinanceFacetTest is Test {
         );
 
         // Accept the offer properly, then clear the offerIdToLoanId mapping
-        // to simulate an accepted offer with no linked loan
-        bytes32 baseSlot = LibVaipakam.VANGKI_STORAGE_POSITION;
+        // to simulate an accepted offer with no linked loan.
         address nlEscrow = EscrowFactoryFacet(address(diamond)).getOrCreateUserEscrow(newLender);
         vm.prank(newLender); ERC20(mockERC20).transfer(nlEscrow, PRINCIPAL);
         vm.prank(newLender);
         OfferFacet(address(diamond)).acceptOffer(fakeOffer, true);
 
-        // Now clear the offerIdToLoanId mapping so newLoanId lookup returns 0
-        // offerIdToLoanId is at storage slot baseSlot + 27 in the Storage struct
-        uint256 offerToLoanSlot = uint256(baseSlot) + 27;
-        bytes32 mappingKey = keccak256(abi.encode(fakeOffer, offerToLoanSlot));
-        vm.store(address(diamond), mappingKey, bytes32(uint256(0)));
+        // Clear the offerIdToLoanId mapping via the layout-resilient
+        // mutator so newLoanId lookup returns 0.
+        TestMutatorFacet(address(diamond)).setOfferIdToLoanIdRaw(fakeOffer, 0);
 
         vm.prank(borrower);
         vm.expectRevert(RefinanceFacet.InvalidRefinanceOffer.selector);

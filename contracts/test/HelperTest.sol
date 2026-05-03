@@ -39,7 +39,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](42);
+        selectors = new bytes4[](57);
         selectors[0] = TestMutatorFacet.setLoan.selector;
         selectors[1] = TestMutatorFacet.setOffer.selector;
         selectors[2] = TestMutatorFacet.setNextLoanId.selector;
@@ -93,6 +93,42 @@ contract HelperTest {
         // into the minimal test diamond, so the production
         // owner-gated setter isn't reachable from test setUp).
         selectors[41] = TestMutatorFacet.setWethContractRaw.selector;
+        // Layout-resilient `liqThresholdBps` writer that bypasses the
+        // bounded-range guard on the production setter. Used by
+        // `RiskFacetTest.testCalculateHealthFactorZeroLiqThreshold` to
+        // exercise the HF == 0 branch without depending on hardcoded
+        // storage slot offsets.
+        selectors[42] = TestMutatorFacet.setLiqThresholdBpsRaw.selector;
+        // Layout-resilient mapping writers used by EarlyWithdrawal
+        // tests to scaffold loan-sale state without slot math.
+        selectors[43] = TestMutatorFacet.setOfferIdToLoanIdRaw.selector;
+        selectors[44] = TestMutatorFacet.setHeldForLenderRaw.selector;
+        // Layout-resilient claim writers used by ClaimFacetTest to
+        // exercise the NothingToClaim revert + held-only paths
+        // without slot math.
+        selectors[45] = TestMutatorFacet.setLenderClaimAmountRaw.selector;
+        selectors[46] = TestMutatorFacet.setBorrowerClaimAmountRaw.selector;
+        selectors[47] = TestMutatorFacet.setLenderClaimAssetRaw.selector;
+        selectors[48] = TestMutatorFacet.setBorrowerClaimAssetRaw.selector;
+        // NFT-claim field setters (assetType + tokenId + quantity) for
+        // ERC721 / ERC1155 claim-asset coverage tests.
+        selectors[49] = TestMutatorFacet.setLenderClaimNFTFieldsRaw.selector;
+        selectors[50] = TestMutatorFacet.setBorrowerClaimNFTFieldsRaw.selector;
+        // T-048 — layout-resilient treasury IOU writer used by
+        // TreasuryFacetTest.
+        selectors[51] = TestMutatorFacet.setTreasuryBalanceRaw.selector;
+        // Layout-resilient sale/offset/escrow-version/min-partial
+        // mutators used by the LoanFacet, RefinanceFacet, OfferFacet,
+        // EscrowFactoryFacet and RepayFacet test suites — replaces
+        // the previous `vm.store` + hardcoded slot offset pattern.
+        selectors[52] = TestMutatorFacet.setSaleOfferToLoanIdRaw.selector;
+        selectors[53] = TestMutatorFacet.setOffsetOfferToLoanIdRaw.selector;
+        selectors[54] = TestMutatorFacet.setEscrowVersionRaw.selector;
+        selectors[55] = TestMutatorFacet.setMinPartialBpsRaw.selector;
+        // Layout-resilient read of `s.userVaipakamEscrows[user]` for
+        // tests that need a user's escrow address bypassing the
+        // mandatory-version check on the production getter.
+        selectors[56] = TestMutatorFacet.getUserVaipakamEscrowRaw.selector;
         return selectors;
     }
 
