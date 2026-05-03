@@ -209,3 +209,84 @@ together complete the "user-facing escrow surface is locked down,
 and protocol-managed balance is structurally tracked" milestone.
 The recovery flow itself is the only remaining piece of the security-
 audit thread.
+
+---
+
+## T-054 PR-2 — Staking-checkpoint min-clamp (pre-live build)
+
+Because the protocol is still pre-live, no legacy escrow state
+needs to be preserved across the T-051 chokepoint refactor. PR-2
+collapses to its core security improvement — clamp the
+yield-bearing VPFI balance against the protocol-tracked counter so
+unsolicited dust doesn't earn staking rewards or inflate the
+fee-discount tier.
+
+### What changed
+
+`LibVPFIDiscount.clampToTracked(actualBal, trackedAfter)` is the
+new pure helper — returns the smaller of the two. Plumbed through
+every staking-checkpoint and discount-accumulator call site:
+
+- **`VPFIDiscountFacet._prepareDeposit`** (deposit path) — clamp
+  on `prevBal + amount` vs `prevTracked + amount`.
+- **`VPFIDiscountFacet.withdrawVPFIFromEscrow`** (unstake path) —
+  clamp on `prevBal - amount` vs `prevTracked - amount`.
+- **`LibVPFIDiscount.tryApplyBorrowerLif`** — borrower-side LIF
+  custody pull. Both the `updateUser` and the post-withdraw
+  `rollupUserDiscount` consume the clamped value.
+- **`LibVPFIDiscount.tryApplyYieldFee`** — lender-side yield-fee
+  pull. Pre-rollup, post-checkpoint, post-rollup all use the
+  clamped value computed from current storage.
+- **`LibVPFIDiscount.settleBorrowerLifProper`** — settlement-time
+  rollup at the snapshot read.
+
+For every legitimate flow post-T-051 the clamp is a no-op (actual
+balance and tracked counter track each other). Where direct
+`IERC20.transfer` dust inflates the actual balance, the tracked
+side is unchanged and the clamp excludes the dust.
+
+Two new internal helpers in `LibVPFIDiscount`:
+- `trackedVPFIBalance(user)` — symmetric mirror of
+  `escrowVPFIBalance(user)`.
+- `clampToTracked(actualBalance, trackedAfter)` — pure min.
+
+### What was deliberately NOT shipped
+
+A bootstrap-style admin function that installed counter values for
+legacy obligations would ONLY be needed for upgrades over a
+pre-counter contract that already had real positions in escrow.
+The protocol is pre-live, so there's no legacy state to migrate —
+every existing testnet position can be drained and re-deposited on
+the upgrade if it's not already counter-tracked. The earlier
+"backfill mechanism" sketch (bootstrap function + Foundry
+migration script + 5 dedicated tests) was reverted before landing
+because it added 100+ lines of contract surface and a separate
+script for a use case the pre-live build doesn't have.
+
+If a future mainnet-to-mainnet upgrade ever needs this kind of
+backfill, the pattern is straightforward to add at that point —
+the storage shape is already there, the chokepoint already
+enforces the invariant, and the helper just needs an
+admin-gated setter that respects the idempotency rule (only
+write when current value is zero).
+
+### Verification
+
+- Full no-invariants regression: **1596 passing / 0 failed / 5 skipped**.
+- `forge build` clean.
+- ABIs re-exported (frontend + keeper-bot).
+
+### Where this leaves T-054
+
+```
+✓ PR-1 (2026-05-03 + 2026-05-04 morning) — Storage + chokepoint refactor + counter + min-display
+✓ PR-2 (this entry)                       — Staking-checkpoint min-clamp
+  PR-3                                    — recoverStuckERC20 + disown + EIP-712 verifier
+  PR-4                                    — frontend /recover page + Advanced User Guide section
+  PR-5                                    — post-deploy analytics labeling
+```
+
+PR-3 is now unblocked — the counter is comprehensive (every
+deposit / withdrawal site routes through the chokepoint) and the
+yield-bearing balance is clamped, so the recovery cap formula
+`max(0, balanceOf - tracked)` is structurally correct.

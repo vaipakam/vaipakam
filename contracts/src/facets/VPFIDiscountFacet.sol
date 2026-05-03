@@ -492,14 +492,25 @@ contract VPFIDiscountFacet is
             msg.sender
         );
         uint256 prevBal = IERC20(vpfi).balanceOf(escrow);
+        // T-054 PR-2 — clamp the rollup / checkpoint balance against
+        // the protocol-tracked counter so unsolicited dust pushed in
+        // via direct `IERC20.transfer` does NOT inflate the user's
+        // staking yield or VPFI discount tier. Post-mutation values
+        // computed from current storage + the amount about to be
+        // deposited via the chokepoint.
+        uint256 prevTracked = s.protocolTrackedEscrowBalance[msg.sender][vpfi];
+        uint256 newStakedBal = LibVPFIDiscount.clampToTracked(
+            prevBal + amount,
+            prevTracked + amount
+        );
         // Roll up the VPFI discount accumulator, re-stamping at the
         // post-mutation balance so the next period accrues at the tier
         // the user will actually hold after this deposit lands.
-        LibVPFIDiscount.rollupUserDiscount(msg.sender, prevBal + amount);
+        LibVPFIDiscount.rollupUserDiscount(msg.sender, newStakedBal);
         // Checkpoint the staker BEFORE the deposit lands so the accrual
         // captures the pre-deposit staked amount for the period it was
         // active, then adopts the new balance as the next accrual baseline.
-        LibStakingRewards.updateUser(msg.sender, prevBal + amount);
+        LibStakingRewards.updateUser(msg.sender, newStakedBal);
     }
 
     /**
@@ -542,14 +553,23 @@ contract VPFIDiscountFacet is
         uint256 prevBal = IERC20(vpfi).balanceOf(escrow);
         if (prevBal < amount) revert VPFIEscrowBalanceInsufficient();
 
+        // T-054 PR-2 — clamp the post-withdraw balance against the
+        // protocol-tracked counter (less the same withdraw amount).
+        // Excludes any unsolicited dust still sitting in the escrow
+        // from the post-mutation yield-bearing balance.
+        uint256 prevTracked = s.protocolTrackedEscrowBalance[msg.sender][vpfi];
+        uint256 newStakedBal = LibVPFIDiscount.clampToTracked(
+            prevBal - amount,
+            prevTracked - amount
+        );
         // Close the VPFI-discount period and re-stamp at the post-
         // mutation balance. The closing period carries the stamp left
         // by the prior rollup (whatever tier was in effect up to now);
         // the next period starts at the tier the user will hold after
         // this withdraw.
-        LibVPFIDiscount.rollupUserDiscount(msg.sender, prevBal - amount);
+        LibVPFIDiscount.rollupUserDiscount(msg.sender, newStakedBal);
         // Staking checkpoint on the OLD balance before the pull.
-        LibStakingRewards.updateUser(msg.sender, prevBal - amount);
+        LibStakingRewards.updateUser(msg.sender, newStakedBal);
 
         EscrowFactoryFacet(address(this)).escrowWithdrawERC20(
             msg.sender,
