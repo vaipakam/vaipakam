@@ -375,8 +375,10 @@ contract EscrowFactoryFacetTest is Test {
         address escrow = EscrowFactoryFacet(address(diamond)).getOrCreateUserEscrow(user1);
         ERC1155Mock mock1155 = new ERC1155Mock();
 
-        // Mint tokens directly to escrow proxy so it can withdraw
-        mock1155.mint(escrow, 1, 100);
+        // Force-mint tokens directly to escrow proxy so it can withdraw —
+        // `mint` would call safeTransferFrom whose receiver hook now
+        // rejects non-Diamond operators (operator = mock1155 here).
+        mock1155.forceMint(escrow, 1, 100);
 
         uint256 user2Before = mock1155.balanceOf(user2, 1);
         vm.prank(address(diamond));
@@ -690,6 +692,8 @@ contract EscrowFactoryFacetTest is Test {
     }
 
     /// @dev onERC1155BatchReceived returns correct selector (covers the batch receive hook).
+    ///      Receiver hooks now reject operators that aren't the Diamond / self;
+    ///      pass `operator = diamond` to exercise the success branch.
     function testEscrowImplOnERC1155BatchReceived() public {
         address escrow = EscrowFactoryFacet(address(diamond)).getOrCreateUserEscrow(user1);
         uint256[] memory ids = new uint256[](2);
@@ -700,9 +704,68 @@ contract EscrowFactoryFacetTest is Test {
         amounts[1] = 20;
 
         bytes4 result = VaipakamEscrowImplementation(escrow).onERC1155BatchReceived(
-            address(0), address(0), ids, amounts, ""
+            address(diamond), address(0), ids, amounts, ""
         );
         assertEq(result, IERC1155Receiver.onERC1155BatchReceived.selector);
+    }
+
+    // ─── Receiver hook authorization ─────────────────────────────────────────
+    //
+    // Direct user-initiated `safeTransferFrom` to the escrow proxy must
+    // revert. Legitimate Diamond-mediated deposits set `operator == DIAMOND`
+    // (the facet code runs in the Diamond's context, so the NFT contract
+    // sees the Diamond as msg.sender of the transfer call). Anything else
+    // arrives without protocol accounting and would be unrecoverable, so
+    // we revert at the receiver hook itself.
+
+    function testOnERC721ReceivedRevertsForNonDiamondOperator() public {
+        address escrow = EscrowFactoryFacet(address(diamond)).getOrCreateUserEscrow(user1);
+        vm.expectRevert(VaipakamEscrowImplementation.UnauthorizedNFTSender.selector);
+        VaipakamEscrowImplementation(escrow).onERC721Received(user2, user1, 1, "");
+    }
+
+    function testOnERC721ReceivedAcceptsDiamondOperator() public {
+        address escrow = EscrowFactoryFacet(address(diamond)).getOrCreateUserEscrow(user1);
+        bytes4 result = VaipakamEscrowImplementation(escrow).onERC721Received(
+            address(diamond), user1, 1, ""
+        );
+        assertEq(result, IERC721Receiver.onERC721Received.selector);
+    }
+
+    function testOnERC721ReceivedAcceptsSelfOperator() public {
+        address escrow = EscrowFactoryFacet(address(diamond)).getOrCreateUserEscrow(user1);
+        bytes4 result = VaipakamEscrowImplementation(escrow).onERC721Received(
+            escrow, user1, 1, ""
+        );
+        assertEq(result, IERC721Receiver.onERC721Received.selector);
+    }
+
+    function testOnERC1155ReceivedRevertsForNonDiamondOperator() public {
+        address escrow = EscrowFactoryFacet(address(diamond)).getOrCreateUserEscrow(user1);
+        vm.expectRevert(VaipakamEscrowImplementation.UnauthorizedNFTSender.selector);
+        VaipakamEscrowImplementation(escrow).onERC1155Received(user2, user1, 1, 5, "");
+    }
+
+    function testOnERC1155BatchReceivedRevertsForNonDiamondOperator() public {
+        address escrow = EscrowFactoryFacet(address(diamond)).getOrCreateUserEscrow(user1);
+        uint256[] memory ids = new uint256[](1);
+        ids[0] = 1;
+        uint256[] memory amounts = new uint256[](1);
+        amounts[0] = 5;
+        vm.expectRevert(VaipakamEscrowImplementation.UnauthorizedNFTSender.selector);
+        VaipakamEscrowImplementation(escrow).onERC1155BatchReceived(user2, user1, ids, amounts, "");
+    }
+
+    /// @dev End-to-end: a third party calls `safeTransferFrom` directly on
+    ///      the NFT contract, targeting the user's escrow proxy. The transfer
+    ///      should atomically revert because the receiver hook fires with
+    ///      `operator = third-party != DIAMOND`.
+    function testDirectUserSafeTransferToEscrowReverts() public {
+        address escrow = EscrowFactoryFacet(address(diamond)).getOrCreateUserEscrow(user1);
+        // user1 owns tokenId 1 from setUp (mint(user1, 1)).
+        vm.prank(user1);
+        vm.expectRevert(VaipakamEscrowImplementation.UnauthorizedNFTSender.selector);
+        IERC721(mockNFT721).safeTransferFrom(user1, escrow, 1);
     }
 
     /// @dev supportsInterface returns true for IERC721Receiver and IERC1155Receiver.

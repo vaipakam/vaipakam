@@ -719,3 +719,50 @@ Every chain's deploy script MUST call `setPredominantDenominator` with `Denomina
 
 - Per-asset override admin UI card (similar to `GraceBucketsCard` shape — array-of-tuples). Operators currently set overrides via direct Safe call-data composition.
 - Symbol-derived secondary-oracle queries on the asset/PAD path: today the Tellor / API3 / DIA queries still derive from `numeraireSymbol`. A follow-up could route asset/PAD secondary queries through `padSymbol` for richer cross-validation on the PAD leg. Deferred — the current Pyth ETH/<numeraire> cross-check already validates the load-bearing FX leg.
+
+---
+
+## Escrow hardening — reject direct user NFT transfers
+
+Every per-user escrow proxy is now strict about how NFTs may arrive.
+Previously the escrow's safe-transfer receiver hooks (`onERC721Received`,
+`onERC1155Received`, `onERC1155BatchReceived`) accepted any caller — so
+a user could `safeTransferFrom` an unrelated NFT into their own escrow
+proxy from their wallet, an OpenSea purchase could target the escrow as
+the destination, or a third party could push tokens with no record on
+the protocol ledger. Anything that landed that way had no matching loan
+/ offer / claim entry, and the only way out would have been an admin
+sweep added after the fact.
+
+The receiver hooks now reject any transfer whose `operator` (the
+contract that initiated the safe-transfer call on the NFT) isn't the
+Diamond or the escrow itself. Legitimate Diamond-mediated deposits
+still pass through cleanly because facet code runs in the Diamond's
+context, so the NFT contract sees `msg.sender == DIAMOND` as the
+operator. Direct user calls, third-party push transfers, and accidental
+marketplace sends now revert atomically — the NFT never moves, the
+escrow stays consistent, no recovery flow needed.
+
+ERC-20 has no equivalent on-chain hook (the standard's `transfer` /
+`transferFrom` give the recipient zero opportunity to reject), so this
+hardening covers ERC-721 and ERC-1155 only. The frontend will continue
+to warn users not to send ERC-20 directly to their escrow address.
+
+### Frontend / operator impact
+
+- None for normal protocol use — every existing deposit flow goes
+  through the Diamond and is unaffected.
+- One existing test that seeded an escrow's ERC-1155 balance via the
+  mock's `mint(...)` (which calls the receiver hook) was switched to
+  `forceMint(...)` to bypass the now-strict hook. Production deploys
+  do not exercise this path.
+
+### Verification
+
+- Five new tests in [`EscrowFactoryFacetTest.t.sol`](contracts/test/EscrowFactoryFacetTest.t.sol):
+  the three hook variants reject non-Diamond operators, accept Diamond
+  and self operators, and an end-to-end check that a user calling
+  `safeTransferFrom` directly on an NFT contract — pointing at their
+  own escrow — reverts with `UnauthorizedNFTSender`.
+- Full no-invariants regression: 1594 passing / 0 failed / 5 skipped.
+- `forge build` clean.

@@ -68,6 +68,13 @@ contract VaipakamEscrowImplementation is
     ///      when packed into a {RentalEntry}. Replaces
     ///      `"quantity overflow"`.
     error QuantityOverflow();
+    /// @dev An NFT (ERC-721 / ERC-1155) was pushed into this escrow via a
+    ///      `safeTransferFrom` whose operator was neither the Diamond nor
+    ///      this escrow itself. Direct user-initiated transfers are
+    ///      rejected because every protocol-tracked deposit is mediated by
+    ///      the Diamond — anything else would arrive without a matching
+    ///      ledger entry and could only be recovered by an admin sweep.
+    error UnauthorizedNFTSender();
 
     /// @dev Shared check for every function that must be callable only by
     ///      the owning Diamond (or via a controlled self-call). Consolidates
@@ -427,33 +434,47 @@ contract VaipakamEscrowImplementation is
         return total;
     }
 
-    // Receiver hooks for safe transfers
+    // Receiver hooks for safe transfers — accept ONLY when the operator
+    // is the Diamond or a self-call. Any other operator means the NFT was
+    // pushed in directly by a user / third-party; we revert so the
+    // transfer fails atomically (no orphan asset, no off-ledger balance).
+    // ERC-20 cannot be gated this way (no callback) — frontend warning +
+    // operational sweep are the controls there.
     function onERC721Received(
-        address,
+        address operator,
         address,
         uint256,
         bytes calldata
-    ) external pure returns (bytes4) {
+    ) external view returns (bytes4) {
+        if (operator != DIAMOND && operator != address(this)) {
+            revert UnauthorizedNFTSender();
+        }
         return IERC721Receiver.onERC721Received.selector;
     }
 
     function onERC1155Received(
-        address,
+        address operator,
         address,
         uint256,
         uint256,
         bytes calldata
-    ) external pure returns (bytes4) {
+    ) external view returns (bytes4) {
+        if (operator != DIAMOND && operator != address(this)) {
+            revert UnauthorizedNFTSender();
+        }
         return IERC1155Receiver.onERC1155Received.selector;
     }
 
     function onERC1155BatchReceived(
-        address,
+        address operator,
         address,
         uint256[] calldata,
         uint256[] calldata,
         bytes calldata
-    ) external pure returns (bytes4) {
+    ) external view returns (bytes4) {
+        if (operator != DIAMOND && operator != address(this)) {
+            revert UnauthorizedNFTSender();
+        }
         return IERC1155Receiver.onERC1155BatchReceived.selector;
     }
 

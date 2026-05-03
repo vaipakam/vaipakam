@@ -16,6 +16,8 @@
 ---
 
 - [ ] **T-051**: Provide a assets page to display User Assets that are there in their escrow
+      Need to mention that user should not themselves send any assets into their escrow by their own.
+      is it possible to revert the incoming transaction if its not initiated by Diamond?
 
 ---
 
