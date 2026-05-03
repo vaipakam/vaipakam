@@ -83,13 +83,22 @@ um.
 Wie groß der Rabatt ist, hängt davon ab, wie viel VPFI du im
 Escrow hältst:
 
-- **Tier 1** — 100 VPFI oder mehr → 10% Rabatt
-- **Tier 2** — 1.000 VPFI oder mehr → 15% Rabatt
-- **Tier 3** — 5.000 VPFI oder mehr → 20% Rabatt
-- **Tier 4** — mehr als 20.000 VPFI → 24% Rabatt
+- **Tier 1** — `{liveValue:tier1Min}` VPFI oder mehr → `{liveValue:tier1DiscountBps}`% Rabatt
+- **Tier 2** — `{liveValue:tier2Min}` VPFI oder mehr → `{liveValue:tier2DiscountBps}`% Rabatt
+- **Tier 3** — `{liveValue:tier3Min}` VPFI oder mehr → `{liveValue:tier3DiscountBps}`% Rabatt
+- **Tier 4** — mehr als `{liveValue:tier4Min}` VPFI → `{liveValue:tier4DiscountBps}`% Rabatt
 
 Du kannst den Schalter jederzeit ausschalten. Wenn du VPFI aus dem
 Escrow abhebst, fällt dein Tier in Echtzeit.
+
+> **Hinweis zur Blockchain-Netzwerkgebühr (Gas).** Der obige Rabatt
+> gilt für die **Protokollgebühren** von Vaipakam (Renditegebühr,
+> Kreditinitiierungsgebühr). Die kleine **Gas-Gebühr**, die jede
+> On-Chain-Aktion zusätzlich erfordert — gezahlt an die
+> Blockchain-Validatoren beim Erstellen eines Angebots, Annehmen,
+> Zurückzahlen, Beanspruchen usw. — ist eine separate Gebühr, die
+> ans Netzwerk geht, nicht an Vaipakam. Das Protokoll kann darauf
+> keinen Rabatt geben, weil es sie nie erhält.
 
 <a id="dashboard.rewards-summary"></a>
 

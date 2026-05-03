@@ -78,13 +78,22 @@ interrupteur est le "oui, fais-le". Tu ne le bascules qu'une fois.
 L'ampleur de la remise dépend de la quantité de VPFI que tu gardes en
 escrow :
 
-- **Tier 1** — 100 VPFI ou plus → 10% de remise
-- **Tier 2** — 1 000 VPFI ou plus → 15% de remise
-- **Tier 3** — 5 000 VPFI ou plus → 20% de remise
-- **Tier 4** — plus de 20 000 VPFI → 24% de remise
+- **Tier 1** — `{liveValue:tier1Min}` VPFI ou plus → `{liveValue:tier1DiscountBps}`% de remise
+- **Tier 2** — `{liveValue:tier2Min}` VPFI ou plus → `{liveValue:tier2DiscountBps}`% de remise
+- **Tier 3** — `{liveValue:tier3Min}` VPFI ou plus → `{liveValue:tier3DiscountBps}`% de remise
+- **Tier 4** — plus de `{liveValue:tier4Min}` VPFI → `{liveValue:tier4DiscountBps}`% de remise
 
 Tu peux désactiver l'interrupteur à tout moment. Si tu retires des
 VPFI de ton escrow, ton tier baisse en temps réel.
+
+> **Remarque sur le gas du réseau blockchain.** La remise ci-dessus
+> s'applique aux **frais de protocole** de Vaipakam (Commission de
+> Rendement, Frais d'Initiation du Prêt). Les petits **frais de
+> gas** que requiert chaque action on-chain — payés aux validateurs
+> de la blockchain lors de la création d'une offre, l'acceptation,
+> le remboursement, la réclamation, etc. — sont des frais séparés
+> qui vont au réseau, pas à Vaipakam. Le protocole ne peut pas y
+> appliquer de remise puisqu'il ne les reçoit jamais.
 
 <a id="dashboard.rewards-summary"></a>
 

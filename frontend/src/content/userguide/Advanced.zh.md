@@ -72,12 +72,12 @@ on 则会应用 time-weighted discount。
 
 Tier ladder：
 
-| Tier | 最低 escrow VPFI | 折扣  |
-| ---- | ---------------- | ----- |
-| 1    | ≥ 100            | 10%   |
-| 2    | ≥ 1,000          | 15%   |
-| 3    | ≥ 5,000          | 20%   |
-| 4    | > 20,000         | 24%   |
+| Tier | 最低 escrow VPFI                          | 折扣                                |
+| ---- | ----------------------------------------- | ----------------------------------- |
+| 1    | ≥ `{liveValue:tier1Min}`                  | `{liveValue:tier1DiscountBps}`%     |
+| 2    | ≥ `{liveValue:tier2Min}`                  | `{liveValue:tier2DiscountBps}`%     |
+| 3    | ≥ `{liveValue:tier3Min}`                  | `{liveValue:tier3DiscountBps}`%     |
+| 4    | > `{liveValue:tier4Min}`                  | `{liveValue:tier4DiscountBps}`%     |
 
 您 deposit 或 withdraw VPFI 的瞬间，tier 会按您的 **post-change**
 escrow balance 计算；随后在每笔 loan 的生命周期内按 time-weighted
@@ -88,6 +88,8 @@ VPFI 以拿到 full-tier discount，然后几秒钟后 withdraw。
 
 discount 在 settlement 时适用于 lender yield fee，也适用于 borrower
 Loan Initiation Fee (borrower claim 时以 VPFI rebate 形式支付)。
+
+> **Network gas 与协议费用是分开的。** 上面的 discount 适用于 Vaipakam 的 **protocol fees**（yield fee `{liveValue:treasuryFeeBps}`%、Loan Initiation Fee `{liveValue:loanInitiationFeeBps}`%）。每次 on-chain action 都需要的 **blockchain 网络 gas 费**（在 Base / Sepolia / Arbitrum 等链上 create offer / accept / repay / claim / withdraw 等操作时支付给 validators）不是协议费用。Vaipakam 从不收取，由网络收取。它无法按 tier 处理或 rebate，并且取决于 submission 时该链的拥堵情况，与 loan 大小或您的 VPFI tier 无关。
 
 <a id="dashboard.rewards-summary"></a>
 

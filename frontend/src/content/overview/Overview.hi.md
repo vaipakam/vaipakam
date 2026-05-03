@@ -206,21 +206,35 @@ accept नहीं करने देगा।
 
 सिर्फ दो fees हैं, और दोनों छोटी हैं:
 
-- **Yield Fee — 1%** उस **interest** का जो आप lender के रूप में
-  कमाते हैं (principal का 1% नहीं)। 1,000 USDC के 30-day 8% APR loan
-  पर lender ~6.58 USDC interest कमाता है, जिसमें से ~0.066 USDC
-  Yield Fee है।
-- **Loan Initiation Fee — 0.1%** lending amount का, origination पर
-  borrower द्वारा paid। 1,000 USDC loan पर यह 1 USDC है।
+- **Yield Fee — `{liveValue:treasuryFeeBps}`%** उस **interest** का
+  जो आप lender के रूप में कमाते हैं (principal का नहीं)। 1,000 USDC
+  के 30-day 8% APR loan पर lender ~6.58 USDC interest कमाता है,
+  जिसमें से ~0.066 USDC default rate पर Yield Fee है।
+- **Loan Initiation Fee — `{liveValue:loanInitiationFeeBps}`%**
+  lending amount का, origination पर borrower द्वारा paid। 1,000 USDC
+  loan पर यह default rate पर 1 USDC है।
 
-दोनों fees को escrow में VPFI hold करके **24% तक discount** किया जा
-सकता है (नीचे देखें)। Default या liquidation पर recovered interest
-पर कोई Yield Fee collect नहीं होती — protocol failed loan से profit
-नहीं करता।
+दोनों fees को escrow में VPFI hold करके **`{liveValue:tier4DiscountBps}`%
+तक discount** किया जा सकता है (नीचे देखें)। Default या liquidation पर
+recovered interest पर कोई Yield Fee collect नहीं होती — protocol
+failed loan से profit नहीं करता।
 
 कोई withdrawal fees नहीं, कोई idle fees नहीं, कोई streaming fees
 नहीं, principal पर कोई "performance" fees नहीं। Protocol सिर्फ ऊपर
 बताई गई दो fees लेता है।
+
+> **Blockchain network gas fee पर note।** जब आप offer create
+> करते हैं, loan accept करते हैं, repay करते हैं, claim करते हैं,
+> या कोई और on-chain action करते हैं, तब आप blockchain validators
+> को एक छोटी **network gas fee** भी pay करते हैं जो आपकी
+> transaction को block में include करते हैं। वह gas fee network
+> को जाती है, **Vaipakam को नहीं** — यह वही fee है जो आप उसी chain
+> पर कोई भी token भेजने पर pay करते। यह amount chain और उस वक्त
+> की network congestion पर depend करती है, आपके loan के size पर
+> नहीं। ऊपर बताई गई protocol fees (Yield Fee
+> `{liveValue:treasuryFeeBps}`%, Loan Initiation Fee
+> `{liveValue:loanInitiationFeeBps}`%) पूरी तरह network gas से अलग
+> हैं और सिर्फ यही दो charges protocol खुद collect करता है।
 
 ---
 
@@ -236,10 +250,10 @@ discount मिलता है:
 
 | Escrow में VPFI | Fee discount |
 |---|---|
-| 100 – 999 | 10% |
-| 1,000 – 4,999 | 15% |
-| 5,000 – 20,000 | 20% |
-| 20,000 से ऊपर | 24% |
+| `{liveValue:tier1Min}` – `{liveValue:tier2Min}` (excl.) | `{liveValue:tier1DiscountBps}`% |
+| `{liveValue:tier2Min}` – `{liveValue:tier3Min}` (excl.) | `{liveValue:tier2DiscountBps}`% |
+| `{liveValue:tier3Min}` – `{liveValue:tier4Min}` | `{liveValue:tier3DiscountBps}`% |
+| `{liveValue:tier4Min}` से ऊपर | `{liveValue:tier4DiscountBps}`% |
 
 Discounts lender और borrower दोनों fees पर लागू होते हैं। Discount
 **loan की पूरी life में time-weighted** होता है, इसलिए loan end होने

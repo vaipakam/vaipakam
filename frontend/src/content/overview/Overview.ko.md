@@ -194,19 +194,33 @@ collateral의 in-kind settlement path를 설명합니다. consent box를 tick하
 
 fees는 두 가지이며, 둘 다 작습니다.
 
-- **Yield Fee — 1%** lender로서 얻는 **interest**의 1%입니다
-  (principal의 1%가 아닙니다). 1,000 USDC를 30-day 8% APR로 lending하는
-  loan에서는 lender가 약 6.58 USDC interest를 얻고, 그중 약 0.066 USDC가
-  Yield Fee입니다.
-- **Loan Initiation Fee — 0.1%** lending amount의 0.1%이며, origination
-  시 borrower가 pay합니다. 1,000 USDC loan에서는 1 USDC입니다.
+- **Yield Fee — `{liveValue:treasuryFeeBps}`%** lender로서 얻는
+  **interest**의 비율입니다 (principal의 비율이 아닙니다). 1,000 USDC를
+  30-day 8% APR로 lending하는 loan에서는 lender가 약 6.58 USDC interest를
+  얻고, 그중 default rate에서 약 0.066 USDC가 Yield Fee입니다.
+- **Loan Initiation Fee — `{liveValue:loanInitiationFeeBps}`%** lending
+  amount의 비율이며, origination 시 borrower가 pay합니다. 1,000 USDC
+  loan에서는 default rate에서 1 USDC입니다.
 
-두 fee 모두 escrow에 VPFI를 hold하면 **최대 24% discount**를 받을 수
-있습니다(아래 참고). default나 liquidation에서는 recovered interest에 Yield
-Fee가 collect되지 않습니다 — protocol은 failed loan에서 profit하지 않습니다.
+두 fee 모두 escrow에 VPFI를 hold하면 **최대 `{liveValue:tier4DiscountBps}`%
+discount**를 받을 수 있습니다(아래 참고). default나 liquidation에서는
+recovered interest에 Yield Fee가 collect되지 않습니다 — protocol은
+failed loan에서 profit하지 않습니다.
 
 withdrawal fees, idle fees, streaming fees, principal에 대한 "performance"
 fees는 없습니다. protocol이 가져가는 것은 위의 두 fee뿐입니다.
+
+> **Blockchain network gas fee 관련 안내.** offer를 create할 때,
+> loan을 accept할 때, repay할 때, claim할 때, 또는 다른 on-chain
+> action을 할 때, 당신의 transaction을 block에 포함시키는 blockchain
+> validators에게도 작은 **network gas fee**를 pay합니다. 그 gas fee는
+> network로 갑니다 — **Vaipakam으로 가지 않습니다**. 같은 chain에서
+> 다른 token을 보낼 때 pay하는 fee와 동일합니다. 금액은 chain과
+> 그 시점의 network 혼잡도에 따라 달라지며, loan의 size에는 의존하지
+> 않습니다. 위의 protocol fees(Yield Fee `{liveValue:treasuryFeeBps}`%,
+> Loan Initiation Fee `{liveValue:loanInitiationFeeBps}`%)는
+> network gas와 완전히 별개이며, protocol 자체가 collect하는 것은
+> 이 두 가지뿐입니다.
 
 ---
 
@@ -221,10 +235,10 @@ fees가 discount됩니다.
 
 | Escrow의 VPFI | Fee discount |
 |---|---|
-| 100 – 999 | 10% |
-| 1,000 – 4,999 | 15% |
-| 5,000 – 20,000 | 20% |
-| 20,000 초과 | 24% |
+| `{liveValue:tier1Min}` – `{liveValue:tier2Min}` (excl.) | `{liveValue:tier1DiscountBps}`% |
+| `{liveValue:tier2Min}` – `{liveValue:tier3Min}` (excl.) | `{liveValue:tier2DiscountBps}`% |
+| `{liveValue:tier3Min}` – `{liveValue:tier4Min}` | `{liveValue:tier3DiscountBps}`% |
+| `{liveValue:tier4Min}` 초과 | `{liveValue:tier4DiscountBps}`% |
 
 discount는 lender fees와 borrower fees 모두에 적용됩니다. discount는 **loan의
 life 전체에 걸쳐 time-weighted**되므로, loan이 끝나기 직전에 top up해서

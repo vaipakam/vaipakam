@@ -210,25 +210,39 @@ dejará aceptar hasta marcar la casilla de consentimiento.
 
 Dos comisiones, ambas pequeñas:
 
-- **Comisión sobre Rendimiento — 1%** de los **intereses** que ganas
-  como prestamista (no 1% del principal). En un préstamo a 30 días
-  al 8% APR de 1.000 USDC, el prestamista gana ~6,58 USDC de
-  intereses, de los cuales ~0,066 USDC son la Comisión sobre
-  Rendimiento.
-- **Comisión de Iniciación del Préstamo — 0,1%** del importe
-  prestado, pagada por el prestatario en el origen. En un préstamo
-  de 1.000 USDC, eso es 1 USDC.
+- **Comisión sobre Rendimiento — `{liveValue:treasuryFeeBps}`%** de
+  los **intereses** que ganas como prestamista (no de tu principal).
+  En un préstamo a 30 días al 8% APR de 1.000 USDC, el prestamista
+  gana ~6,58 USDC de intereses, de los cuales ~0,066 USDC son la
+  Comisión sobre Rendimiento al tipo por defecto.
+- **Comisión de Iniciación del Préstamo — `{liveValue:loanInitiationFeeBps}`%**
+  del importe prestado, pagada por el prestatario en el origen. En
+  un préstamo de 1.000 USDC, eso es 1 USDC al tipo por defecto.
 
-Ambas comisiones pueden tener un **descuento de hasta el 24%**
-manteniendo VPFI en escrow (ver más abajo). En caso de
-incumplimiento o liquidación, no se cobra Comisión sobre Rendimiento
-sobre los intereses recuperados — el protocolo no se beneficia de un
-préstamo fallido.
+Ambas comisiones pueden tener un **descuento de hasta el
+`{liveValue:tier4DiscountBps}`%** manteniendo VPFI en escrow (ver más
+abajo). En caso de incumplimiento o liquidación, no se cobra Comisión
+sobre Rendimiento sobre los intereses recuperados — el protocolo no
+se beneficia de un préstamo fallido.
 
 No hay comisiones de retirada, ni comisiones por inactividad, ni
 comisiones de streaming, ni comisiones de "rendimiento" sobre el
 principal. Los únicos importes que toma el protocolo son las dos
 comisiones anteriores.
+
+> **Nota sobre la comisión de gas de la red blockchain.** Cuando
+> creas una oferta, aceptas un préstamo, repagas, reclamas o haces
+> cualquier otra acción on-chain, también pagas una pequeña
+> **comisión de gas de red** a los validadores de la blockchain que
+> incluyen tu transacción en un bloque. Esa comisión de gas va a la
+> red, **no a Vaipakam** — es la misma comisión que pagarías al
+> enviar cualquier token en la misma cadena. El importe depende de
+> la cadena y de la congestión de la red en ese momento, no del
+> tamaño de tu préstamo. Las comisiones del protocolo anteriores
+> (Comisión sobre Rendimiento `{liveValue:treasuryFeeBps}`%,
+> Comisión de Iniciación del Préstamo `{liveValue:loanInitiationFeeBps}`%)
+> son completamente independientes del gas de red y son las únicas
+> que cobra el propio protocolo.
 
 ---
 
@@ -244,10 +258,10 @@ esa cadena:
 
 | VPFI en escrow | Descuento de comisión |
 |---|---|
-| 100 – 999 | 10% |
-| 1.000 – 4.999 | 15% |
-| 5.000 – 20.000 | 20% |
-| Por encima de 20.000 | 24% |
+| `{liveValue:tier1Min}` – `{liveValue:tier2Min}` (excl.) | `{liveValue:tier1DiscountBps}`% |
+| `{liveValue:tier2Min}` – `{liveValue:tier3Min}` (excl.) | `{liveValue:tier2DiscountBps}`% |
+| `{liveValue:tier3Min}` – `{liveValue:tier4Min}` | `{liveValue:tier3DiscountBps}`% |
+| Por encima de `{liveValue:tier4Min}` | `{liveValue:tier4DiscountBps}`% |
 
 Los descuentos se aplican tanto a las comisiones del prestamista
 como del prestatario. El descuento es **ponderado en el tiempo a lo

@@ -85,12 +85,12 @@ s'applique.
 
 Échelle de tiers :
 
-| Tier | VPFI minimum en escrow | Remise |
-| ---- | ---------------------- | ------ |
-| 1    | ≥ 100                  | 10%    |
-| 2    | ≥ 1 000                | 15%    |
-| 3    | ≥ 5 000                | 20%    |
-| 4    | > 20 000               | 24%    |
+| Tier | VPFI minimum en escrow                 | Remise                            |
+| ---- | -------------------------------------- | --------------------------------- |
+| 1    | ≥ `{liveValue:tier1Min}`               | `{liveValue:tier1DiscountBps}`%   |
+| 2    | ≥ `{liveValue:tier2Min}`               | `{liveValue:tier2DiscountBps}`%   |
+| 3    | ≥ `{liveValue:tier3Min}`               | `{liveValue:tier3DiscountBps}`%   |
+| 4    | > `{liveValue:tier4Min}`               | `{liveValue:tier4DiscountBps}`%   |
 
 Le tier est calculé contre ton solde d'escrow **après changement**
 au moment où tu déposes ou retires du VPFI, puis pondéré dans le
@@ -105,6 +105,19 @@ retirer quelques secondes plus tard.
 La remise s'applique au yield-fee du prêteur au moment du
 règlement et au Loan Initiation Fee de l'emprunteur (versé comme
 rabais VPFI lorsque l'emprunteur réclame).
+
+> **Le gas du réseau est séparé.** La remise ci-dessus s'applique
+> aux **frais de protocole** de Vaipakam (yield-fee
+> `{liveValue:treasuryFeeBps}` %, Loan Initiation Fee
+> `{liveValue:loanInitiationFeeBps}` %). Les **frais de gas du
+> réseau blockchain** que requiert chaque action on-chain — payés
+> aux validateurs sur Base / Sepolia / Arbitrum / etc. lors de la
+> création d'une offre, l'acceptation, le remboursement, la
+> réclamation, le retrait, etc. — ne sont pas un frais de protocole.
+> Vaipakam ne les reçoit jamais ; le réseau, oui. Ils ne peuvent
+> pas être catégorisés en tiers ni remboursés, et ils varient avec
+> la congestion de la chaîne au moment de la soumission, pas avec
+> la taille du prêt ni avec ton tier VPFI.
 
 <a id="dashboard.rewards-summary"></a>
 

@@ -98,13 +98,14 @@ to the borrower Loan Initiation Fee (paid out as a VPFI rebate
 when the borrower claims).
 
 > **Network gas is separate.** The discount above is on Vaipakam's
-> **protocol fees** (yield fee + Loan Initiation Fee). The
-> blockchain **network gas fee** every on-chain action requires —
-> paid to validators on Base / Sepolia / Arbitrum / etc. when you
-> create an offer, accept, repay, claim, withdraw, etc. — is not a
-> protocol charge. Vaipakam never receives it; the network does. It
-> can't be tiered or rebated, and it varies with chain congestion
-> at submission time, not with loan size or your VPFI tier.
+> **protocol fees** (yield fee `{liveValue:treasuryFeeBps}`%, Loan
+> Initiation Fee `{liveValue:loanInitiationFeeBps}`%). The blockchain
+> **network gas fee** every on-chain action requires — paid to
+> validators on Base / Sepolia / Arbitrum / etc. when you create an
+> offer, accept, repay, claim, withdraw, etc. — is not a protocol
+> charge. Vaipakam never receives it; the network does. It can't be
+> tiered or rebated, and it varies with chain congestion at submission
+> time, not with loan size or your VPFI tier.
 
 <a id="dashboard.rewards-summary"></a>
 

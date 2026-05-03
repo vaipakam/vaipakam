@@ -81,12 +81,12 @@ fee के discounted हिस्से को आपके escrow से debit
 
 Tier ladder:
 
-| Tier | Min escrow VPFI | Discount |
-| ---- | --------------- | -------- |
-| 1    | ≥ 100           | 10%      |
-| 2    | ≥ 1,000         | 15%      |
-| 3    | ≥ 5,000         | 20%      |
-| 4    | > 20,000        | 24%      |
+| Tier | Min escrow VPFI                         | Discount                          |
+| ---- | --------------------------------------- | --------------------------------- |
+| 1    | ≥ `{liveValue:tier1Min}`                | `{liveValue:tier1DiscountBps}`%   |
+| 2    | ≥ `{liveValue:tier2Min}`                | `{liveValue:tier2DiscountBps}`%   |
+| 3    | ≥ `{liveValue:tier3Min}`                | `{liveValue:tier3DiscountBps}`%   |
+| 4    | > `{liveValue:tier4Min}`                | `{liveValue:tier4DiscountBps}`%   |
 
 Tier आपके VPFI deposit या withdraw करते ही **post-change**
 escrow balance के against calculate होता है, फिर हर loan की
@@ -100,6 +100,17 @@ discount ले और कुछ seconds बाद withdraw कर ले।
 discount lender के yield fee पर settlement के समय और borrower
 की Loan Initiation Fee पर लागू होता है (जो VPFI rebate के
 रूप में borrower के claim करते समय अदा होती है)।
+
+> **Network gas अलग है।** ऊपर बताया गया discount Vaipakam की
+> **protocol fees** (yield fee `{liveValue:treasuryFeeBps}`%,
+> Loan Initiation Fee `{liveValue:loanInitiationFeeBps}`%) पर
+> apply होता है। हर on-chain action के साथ लगने वाली **blockchain
+> network gas fee** (Base / Sepolia / Arbitrum आदि के validators
+> को offer create / accept / repay / claim / withdraw आदि के समय
+> pay की जाती है) protocol charge नहीं है। Vaipakam उसे कभी
+> receive नहीं करता; network करता है। उसको tier या rebate नहीं
+> लगाया जा सकता, और वह submission के समय की chain congestion पर
+> depend करती है, loan के size या आपके VPFI tier पर नहीं।
 
 <a id="dashboard.rewards-summary"></a>
 

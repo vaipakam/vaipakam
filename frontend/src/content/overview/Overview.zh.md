@@ -110,12 +110,14 @@ Rental 结束后（无论是 expiry 还是 default），NFT 会回到 owner 的 
 
 只有两项 fees，且都很小：
 
-- **Yield Fee — 1%**，按你作为 lender 赚到的 **interest** 收取 1%，不是 principal 的 1%。在一笔 1,000 USDC、30-day、8% APR 的 loan 中，lender 赚取约 6.58 USDC interest，其中约 0.066 USDC 是 Yield Fee。
-- **Loan Initiation Fee — 0.1%**，按 lending amount 收取，由 borrower 在 origination 时支付。1,000 USDC loan 的费用是 1 USDC。
+- **Yield Fee — `{liveValue:treasuryFeeBps}`%**，按你作为 lender 赚到的 **interest** 比例收取（不是 principal 的比例）。在一笔 1,000 USDC、30-day、8% APR 的 loan 中，lender 赚取约 6.58 USDC interest，其中按默认费率约 0.066 USDC 是 Yield Fee。
+- **Loan Initiation Fee — `{liveValue:loanInitiationFeeBps}`%**，按 lending amount 收取，由 borrower 在 origination 时支付。1,000 USDC loan 在默认费率下的费用是 1 USDC。
 
-这两项 fees 都可以通过在 escrow 中持有 VPFI 获得**最高 24% discount**（见下文）。在 default 或 liquidation 时，recovered interest 不会收取 Yield Fee - protocol 不会从 failed loan 中获利。
+这两项 fees 都可以通过在 escrow 中持有 VPFI 获得**最高 `{liveValue:tier4DiscountBps}`% discount**（见下文）。在 default 或 liquidation 时，recovered interest 不会收取 Yield Fee - protocol 不会从 failed loan 中获利。
 
 没有 withdrawal fees，没有 idle fees，没有 streaming fees，也没有针对 principal 的 “performance” fees。Protocol 收取的只有上面两个数字。
+
+> **关于 blockchain 网络 gas 费用的说明。** 当你 create offer、accept loan、repay、claim 或进行其他任何 on-chain action 时，你还会向把你的 transaction 写入 block 的 blockchain validators 支付一笔小额 **网络 gas 费**。这笔 gas 费支付给网络，**不归 Vaipakam**——这与你在同一条 chain 上转账任何 token 时支付的费用是同一笔费用。金额取决于 chain 和那一刻的网络拥堵程度，与 loan 大小无关。上面提到的 protocol fees（Yield Fee `{liveValue:treasuryFeeBps}`%、Loan Initiation Fee `{liveValue:loanInitiationFeeBps}`%）与网络 gas 完全独立，是协议本身收取的全部费用。
 
 ---
 
@@ -129,10 +131,10 @@ Rental 结束后（无论是 expiry 还是 default），NFT 会回到 owner 的 
 
 | Escrow 中的 VPFI | Fee discount |
 |---|---|
-| 100 – 999 | 10% |
-| 1,000 – 4,999 | 15% |
-| 5,000 – 20,000 | 20% |
-| 20,000 以上 | 24% |
+| `{liveValue:tier1Min}` – `{liveValue:tier2Min}`（不含） | `{liveValue:tier1DiscountBps}`% |
+| `{liveValue:tier2Min}` – `{liveValue:tier3Min}`（不含） | `{liveValue:tier2DiscountBps}`% |
+| `{liveValue:tier3Min}` – `{liveValue:tier4Min}` | `{liveValue:tier3DiscountBps}`% |
+| `{liveValue:tier4Min}` 以上 | `{liveValue:tier4DiscountBps}`% |
 
 Discounts 适用于 lender 和 borrower fees。Discount 会在 **loan's life 中按时间加权**计算，因此在 loan 结束前临时 top up 不能 game the calculation - 你实际持有该 tier 多久，就按相应比例获得 discount。
 

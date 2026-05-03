@@ -77,13 +77,21 @@ Vaipakam आपके escrow में रखे VPFI का उपयोग क
 discount कितना बड़ा होगा यह इस पर निर्भर करता है कि आप escrow
 में कितना VPFI रखते हैं:
 
-- **Tier 1** — 100 या उससे ज़्यादा VPFI → 10% off
-- **Tier 2** — 1,000 या उससे ज़्यादा VPFI → 15% off
-- **Tier 3** — 5,000 या उससे ज़्यादा VPFI → 20% off
-- **Tier 4** — 20,000 से ज़्यादा VPFI → 24% off
+- **Tier 1** — `{liveValue:tier1Min}` या उससे ज़्यादा VPFI → `{liveValue:tier1DiscountBps}`% off
+- **Tier 2** — `{liveValue:tier2Min}` या उससे ज़्यादा VPFI → `{liveValue:tier2DiscountBps}`% off
+- **Tier 3** — `{liveValue:tier3Min}` या उससे ज़्यादा VPFI → `{liveValue:tier3DiscountBps}`% off
+- **Tier 4** — `{liveValue:tier4Min}` से ज़्यादा VPFI → `{liveValue:tier4DiscountBps}`% off
 
 आप switch कभी भी बंद कर सकते हैं। यदि आप escrow से VPFI निकालते
 हैं, तो आपका tier real time में नीचे आ जाता है।
+
+> **Blockchain network gas पर note.** ऊपर बताया गया discount
+> Vaipakam की **protocol fees** (Yield Fee, Loan Initiation Fee)
+> पर apply होता है। हर on-chain action के साथ जो छोटी **gas fee**
+> लगती है (जब आप offer create, accept, repay, claim करते हैं तब
+> blockchain validators को pay की जाती है) - वह एक अलग charge है
+> जो network को जाती है, Vaipakam को नहीं। Protocol उस पर discount
+> नहीं दे सकता क्योंकि वह उसे कभी receive नहीं करता।
 
 <a id="dashboard.rewards-summary"></a>
 

@@ -68,13 +68,21 @@
 
 يعتمد حجم الخصم على كمية VPFI التي تحتفظ بها في الـ escrow:
 
-- **Tier 1** — 100 VPFI أو أكثر → خصم 10%
-- **Tier 2** — 1,000 VPFI أو أكثر → خصم 15%
-- **Tier 3** — 5,000 VPFI أو أكثر → خصم 20%
-- **Tier 4** — أكثر من 20,000 VPFI → خصم 24%
+- **Tier 1** — `{liveValue:tier1Min}` VPFI أو أكثر → خصم `{liveValue:tier1DiscountBps}`%
+- **Tier 2** — `{liveValue:tier2Min}` VPFI أو أكثر → خصم `{liveValue:tier2DiscountBps}`%
+- **Tier 3** — `{liveValue:tier3Min}` VPFI أو أكثر → خصم `{liveValue:tier3DiscountBps}`%
+- **Tier 4** — أكثر من `{liveValue:tier4Min}` VPFI → خصم `{liveValue:tier4DiscountBps}`%
 
 يمكنك إيقاف المفتاح في أي وقت. وإذا سحبت VPFI من الـ escrow
 ينخفض tier الخاص بك في الزمن الفعلي.
+
+> **ملاحظة حول رسوم الغاز (gas) لشبكة البلوكشين.** ينطبق الخصم
+> أعلاه على **رسوم البروتوكول** الخاصة بـ Vaipakam (رسوم العائد،
+> رسوم بدء القرض). أمّا **رسوم الغاز** الصغيرة التي يتطلّبها كل
+> إجراء على السلسلة — تُدفع لمدققي البلوكشين عند إنشاء عرض، أو
+> القبول، أو السداد، أو المطالبة، إلخ — فهي رسوم منفصلة تذهب إلى
+> الشبكة، لا إلى Vaipakam. لا يستطيع البروتوكول منح خصم عليها لأنه
+> لا يستلمها أبدًا.
 
 <a id="dashboard.rewards-summary"></a>
 

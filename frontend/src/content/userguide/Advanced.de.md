@@ -85,12 +85,12 @@ zahlst; an bedeutet, dass der zeitgewichtete Rabatt angewendet wird.
 
 Tier-Leiter:
 
-| Tier | Min. Escrow-VPFI | Rabatt |
-| ---- | ---------------- | ------ |
-| 1    | ≥ 100            | 10%    |
-| 2    | ≥ 1.000          | 15%    |
-| 3    | ≥ 5.000          | 20%    |
-| 4    | > 20.000         | 24%    |
+| Tier | Min. Escrow-VPFI                       | Rabatt                            |
+| ---- | -------------------------------------- | --------------------------------- |
+| 1    | ≥ `{liveValue:tier1Min}`               | `{liveValue:tier1DiscountBps}`%   |
+| 2    | ≥ `{liveValue:tier2Min}`               | `{liveValue:tier2DiscountBps}`%   |
+| 3    | ≥ `{liveValue:tier3Min}`               | `{liveValue:tier3DiscountBps}`%   |
+| 4    | > `{liveValue:tier4Min}`               | `{liveValue:tier4DiscountBps}`%   |
 
 Das Tier wird gegen deinen Escrow-Saldo **nach der Änderung** in
 dem Moment berechnet, in dem du VPFI einzahlst oder abhebst, und
@@ -105,6 +105,19 @@ wieder abheben könnte.
 Der Rabatt gilt für die Lender-Yield-Fee beim Settlement und für
 die Borrower-Loan-Initiation-Fee (ausgezahlt als VPFI-Rebate, wenn
 der Borrower claimt).
+
+> **Netzwerk-Gas ist separat.** Der obige Rabatt gilt für die
+> **Protokollgebühren** von Vaipakam (Yield-Fee
+> `{liveValue:treasuryFeeBps}` %, Loan Initiation Fee
+> `{liveValue:loanInitiationFeeBps}` %). Die **Blockchain-Netzwerkgebühr
+> (Gas)**, die jede On-Chain-Aktion zusätzlich erfordert — gezahlt
+> an die Validatoren auf Base / Sepolia / Arbitrum / etc. beim
+> Erstellen einer Offer, Annehmen, Zurückzahlen, Beanspruchen,
+> Abheben usw. — ist keine Protokollgebühr. Vaipakam erhält sie
+> nie; das Netzwerk schon. Sie kann nicht in Tiers eingeteilt oder
+> erstattet werden, und sie variiert mit der Chain-Auslastung zum
+> Zeitpunkt des Submits, nicht mit der Loan-Größe oder deinem
+> VPFI-Tier.
 
 <a id="dashboard.rewards-summary"></a>
 

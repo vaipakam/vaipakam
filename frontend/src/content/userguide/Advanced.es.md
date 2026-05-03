@@ -85,12 +85,12 @@ ponderado por tiempo.
 
 Escalera de niveles:
 
-| Nivel | VPFI mínimo en escrow | Descuento |
-| ----- | --------------------- | --------- |
-| 1     | ≥ 100                 | 10%       |
-| 2     | ≥ 1.000               | 15%       |
-| 3     | ≥ 5.000               | 20%       |
-| 4     | > 20.000              | 24%       |
+| Nivel | VPFI mínimo en escrow                  | Descuento                          |
+| ----- | -------------------------------------- | ---------------------------------- |
+| 1     | ≥ `{liveValue:tier1Min}`               | `{liveValue:tier1DiscountBps}`%    |
+| 2     | ≥ `{liveValue:tier2Min}`               | `{liveValue:tier2DiscountBps}`%    |
+| 3     | ≥ `{liveValue:tier3Min}`               | `{liveValue:tier3DiscountBps}`%    |
+| 4     | > `{liveValue:tier4Min}`               | `{liveValue:tier4DiscountBps}`%    |
 
 El nivel se calcula contra tu saldo de escrow **posterior al cambio** en el
 momento en que depositas o retiras VPFI, y luego se pondera por
@@ -105,6 +105,18 @@ completo y retirar segundos después.
 El descuento se aplica a la comisión por rendimiento del prestamista
 en la liquidación, y a la Loan Initiation Fee del prestatario
 (entregada como un reembolso de VPFI cuando el prestatario reclama).
+
+> **El gas de red es independiente.** El descuento anterior se
+> aplica a las **comisiones del protocolo** de Vaipakam (Comisión
+> sobre Rendimiento `{liveValue:treasuryFeeBps}`%, Loan Initiation
+> Fee `{liveValue:loanInitiationFeeBps}`%). La **comisión de gas de
+> la red blockchain** que requiere cada acción on-chain — pagada a
+> los validadores en Base / Sepolia / Arbitrum / etc. al crear una
+> oferta, aceptar, repagar, reclamar, retirar, etc. — no es un cargo
+> del protocolo. Vaipakam nunca la recibe; la red sí. No puede
+> aplicársele tier ni reembolso, y varía con la congestión de la
+> cadena en el momento del envío, no con el tamaño del préstamo ni
+> con tu nivel de VPFI.
 
 <a id="dashboard.rewards-summary"></a>
 

@@ -80,12 +80,12 @@ asset で支払うという意味です。on の場合は time-weighted discount
 
 Tier ladder:
 
-| Tier | Min escrow VPFI | Discount |
-| ---- | --------------- | -------- |
-| 1    | ≥ 100           | 10%      |
-| 2    | ≥ 1,000         | 15%      |
-| 3    | ≥ 5,000         | 20%      |
-| 4    | > 20,000        | 24%      |
+| Tier | Min escrow VPFI                         | Discount                          |
+| ---- | --------------------------------------- | --------------------------------- |
+| 1    | ≥ `{liveValue:tier1Min}`                | `{liveValue:tier1DiscountBps}`%   |
+| 2    | ≥ `{liveValue:tier2Min}`                | `{liveValue:tier2DiscountBps}`%   |
+| 3    | ≥ `{liveValue:tier3Min}`                | `{liveValue:tier3DiscountBps}`%   |
+| 4    | > `{liveValue:tier4Min}`                | `{liveValue:tier4DiscountBps}`%   |
 
 Tier は、VPFI を deposit または withdraw した瞬間の
 **post-change** escrow balance に対して calculate され、その後
@@ -99,6 +99,17 @@ exploit pattern を防ぎます。
 discount は settlement 時の lender yield fee と borrower の
 Loan Initiation Fee に適用されます (borrower が claim するときに
 VPFI rebate として支払われます)。
+
+> **Network gas は別物です。** 上記の discount は Vaipakam の
+> **protocol fees**（yield fee `{liveValue:treasuryFeeBps}`%、
+> Loan Initiation Fee `{liveValue:loanInitiationFeeBps}`%）に
+> 適用されます。すべての on-chain action に必要な **blockchain
+> network gas fee**（Base / Sepolia / Arbitrum などで offer
+> create / accept / repay / claim / withdraw 等を行うときに
+> validators へ支払うもの）は protocol の charge ではありません。
+> Vaipakam は決して受け取らず、network が受け取ります。tier や
+> rebate を適用することはできず、submission 時の chain 混雑度に
+> 依存し、loan size や VPFI tier には依存しません。
 
 <a id="dashboard.rewards-summary"></a>
 

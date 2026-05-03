@@ -219,24 +219,39 @@ vous laissera pas accepter sans cocher la case de consentement.
 
 Deux frais, tous les deux modestes :
 
-- **Commission de Rendement — 1 %** des **intérêts** que vous
-  gagnez en tant que prêteur (pas 1 % du principal). Sur un prêt à
-  30 jours à 8 % APR de 1 000 USDC, le prêteur gagne ~6,58 USDC
-  d'intérêts, dont ~0,066 USDC sont la Commission de Rendement.
-- **Frais d'Initiation du Prêt — 0,1 %** du montant prêté, payés par
-  l'emprunteur à l'origination. Sur un prêt de 1 000 USDC, c'est 1
-  USDC.
+- **Commission de Rendement — `{liveValue:treasuryFeeBps}` %** des
+  **intérêts** que vous gagnez en tant que prêteur (pas du
+  principal). Sur un prêt à 30 jours à 8 % APR de 1 000 USDC, le
+  prêteur gagne ~6,58 USDC d'intérêts, dont ~0,066 USDC sont la
+  Commission de Rendement au taux par défaut.
+- **Frais d'Initiation du Prêt — `{liveValue:loanInitiationFeeBps}` %**
+  du montant prêté, payés par l'emprunteur à l'origination. Sur un
+  prêt de 1 000 USDC, c'est 1 USDC au taux par défaut.
 
-Les deux frais peuvent bénéficier d'une **remise allant jusqu'à 24 %**
-en détenant du VPFI en séquestre (voir ci-dessous). En cas de défaut
-ou de liquidation, aucune Commission de Rendement n'est prélevée sur
-les intérêts récupérés — le protocole ne tire pas profit d'un prêt
-qui échoue.
+Les deux frais peuvent bénéficier d'une **remise allant jusqu'à
+`{liveValue:tier4DiscountBps}` %** en détenant du VPFI en séquestre
+(voir ci-dessous). En cas de défaut ou de liquidation, aucune
+Commission de Rendement n'est prélevée sur les intérêts récupérés —
+le protocole ne tire pas profit d'un prêt qui échoue.
 
 Pas de frais de retrait, pas de frais d'inactivité, pas de frais de
 streaming, pas de commissions « de performance » sur le principal.
 Les seuls montants prélevés par le protocole sont les deux frais
 ci-dessus.
+
+> **Remarque sur les frais de réseau (gas) de la blockchain.**
+> Quand vous créez une offre, acceptez un prêt, remboursez,
+> réclamez ou effectuez toute autre action on-chain, vous payez
+> aussi de petits **frais de gas** aux validateurs de la blockchain
+> qui incluent votre transaction dans un bloc. Ces frais de gas
+> vont au réseau, **pas à Vaipakam** — ce sont les mêmes frais que
+> vous paieriez pour envoyer n'importe quel token sur la même
+> chaîne. Le montant dépend de la chaîne et de la congestion du
+> réseau au moment de la transaction, pas de la taille de votre
+> prêt. Les frais de protocole ci-dessus (Commission de Rendement
+> `{liveValue:treasuryFeeBps}` %, Frais d'Initiation du Prêt
+> `{liveValue:loanInitiationFeeBps}` %) sont entièrement séparés du
+> gas et sont les seuls que le protocole lui-même prélève.
 
 ---
 
@@ -252,10 +267,10 @@ sur cette chaîne :
 
 | VPFI en séquestre | Remise sur les frais |
 |---|---|
-| 100 – 999 | 10 % |
-| 1 000 – 4 999 | 15 % |
-| 5 000 – 20 000 | 20 % |
-| Au-delà de 20 000 | 24 % |
+| `{liveValue:tier1Min}` – `{liveValue:tier2Min}` (excl.) | `{liveValue:tier1DiscountBps}` % |
+| `{liveValue:tier2Min}` – `{liveValue:tier3Min}` (excl.) | `{liveValue:tier2DiscountBps}` % |
+| `{liveValue:tier3Min}` – `{liveValue:tier4Min}` | `{liveValue:tier3DiscountBps}` % |
+| Au-delà de `{liveValue:tier4Min}` | `{liveValue:tier4DiscountBps}` % |
 
 Les remises s'appliquent à la fois aux frais du prêteur et de
 l'emprunteur. La remise est **pondérée dans le temps sur la durée

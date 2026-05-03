@@ -68,7 +68,7 @@ The instant they accept:
 - Your 1,000 USDC moves from your escrow to theirs
 - Their WETH is locked in their escrow as collateral
 - Both of you receive a position NFT — yours says "I'm owed 1,000 USDC
-  + interest"; theirs says "I'm owed my WETH back when I repay"
+  - interest"; theirs says "I'm owed my WETH back when I repay"
 - The loan clock starts ticking
 
 A small **Loan Initiation Fee (0.1%)** is taken from the loaned
@@ -115,7 +115,7 @@ borrower.
 ones), anyone can call **Default**. Same liquidation path runs.
 
 In rare cases — every aggregator returns a bad price, or the
-collateral has crashed badly — the protocol *refuses to dump* into a
+collateral has crashed badly — the protocol _refuses to dump_ into a
 bad market. Instead, you receive the collateral itself plus a small
 premium, and you can hold or sell it whenever you choose. This
 **fallback path** is documented up front and you accept it as part of
@@ -218,9 +218,10 @@ is the two numbers above.
 > network, **not to Vaipakam** — it's the same fee you'd pay sending
 > any token on the same chain. The amount depends on the chain and
 > on network congestion at the moment, not on the size of your loan.
-> The platform fees above (Yield Fee 1%, Loan Initiation Fee 0.1%)
-> are entirely separate from network gas and are the only charges
-> the protocol itself collects.
+> The platform fees above (Yield Fee `{liveValue:treasuryFeeBps}`%,
+> Loan Initiation Fee `{liveValue:loanInitiationFeeBps}`%) are
+> entirely separate from network gas and are the only charges the
+> protocol itself collects.
 
 ---
 
@@ -233,12 +234,12 @@ is the two numbers above.
 If you hold VPFI in your escrow on a chain, it discounts your
 protocol fees on loans you participate in on that chain:
 
-| VPFI in escrow | Fee discount |
-|---|---|
+| VPFI in escrow                                              | Fee discount                    |
+| ----------------------------------------------------------- | ------------------------------- |
 | `{liveValue:tier1Min}` – `{liveValue:tier2Min}` (exclusive) | `{liveValue:tier1DiscountBps}`% |
 | `{liveValue:tier2Min}` – `{liveValue:tier3Min}` (exclusive) | `{liveValue:tier2DiscountBps}`% |
-| `{liveValue:tier3Min}` – `{liveValue:tier4Min}` | `{liveValue:tier3DiscountBps}`% |
-| Above `{liveValue:tier4Min}` | `{liveValue:tier4DiscountBps}`% |
+| `{liveValue:tier3Min}` – `{liveValue:tier4Min}`             | `{liveValue:tier3DiscountBps}`% |
+| Above `{liveValue:tier4Min}`                                | `{liveValue:tier4DiscountBps}`% |
 
 Discounts apply to both lender and borrower fees. The discount is
 **time-weighted across the loan's life**, so topping up just before
@@ -322,7 +323,7 @@ automatic from that moment.
 
 ---
 
-## A note on what we *don't* do
+## A note on what we _don't_ do
 
 A few things that other DeFi platforms do that we deliberately
 **don't**:

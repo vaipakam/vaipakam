@@ -220,24 +220,40 @@ nicht annehmen, bis Sie das Zustimmungskästchen ankreuzen.
 
 Zwei Gebühren, beide klein:
 
-- **Renditegebühr — 1 %** der **Zinsen**, die Sie als Kreditgeber
-  verdienen (nicht 1 % des Hauptbetrags). Bei einem 30-Tage-Kredit
-  zu 8 % APR über 1.000 USDC verdient der Kreditgeber ~6,58 USDC
-  Zinsen, davon sind ~0,066 USDC die Renditegebühr.
-- **Kreditinitiierungsgebühr — 0,1 %** des Verleihbetrags, vom
-  Kreditnehmer bei der Erstellung gezahlt. Bei einem 1.000-USDC-
-  Kredit sind das 1 USDC.
+- **Renditegebühr — `{liveValue:treasuryFeeBps}` %** der **Zinsen**,
+  die Sie als Kreditgeber verdienen (nicht des Hauptbetrags). Bei
+  einem 30-Tage-Kredit zu 8 % APR über 1.000 USDC verdient der
+  Kreditgeber ~6,58 USDC Zinsen, davon sind ~0,066 USDC die
+  Renditegebühr beim Standard-Satz.
+- **Kreditinitiierungsgebühr — `{liveValue:loanInitiationFeeBps}` %**
+  des Verleihbetrags, vom Kreditnehmer bei der Erstellung gezahlt.
+  Bei einem 1.000-USDC-Kredit sind das 1 USDC beim Standard-Satz.
 
-Beide Gebühren können um **bis zu 24 % rabattiert** werden, indem
-Sie VPFI im Escrow halten (siehe unten). Bei Default oder
-Liquidation wird keine Renditegebühr auf zurückgewonnene Zinsen
-erhoben — das Protokoll profitiert nicht von einem gescheiterten
-Kredit.
+Beide Gebühren können um **bis zu `{liveValue:tier4DiscountBps}` %
+rabattiert** werden, indem Sie VPFI im Escrow halten (siehe unten).
+Bei Default oder Liquidation wird keine Renditegebühr auf
+zurückgewonnene Zinsen erhoben — das Protokoll profitiert nicht von
+einem gescheiterten Kredit.
 
 Es gibt keine Auszahlungsgebühren, keine Inaktivitätsgebühren,
 keine Streaming-Gebühren, keine „Performance"-Gebühren auf den
 Hauptbetrag. Das einzige Geld, das das Protokoll nimmt, sind die
 zwei Zahlen oben.
+
+> **Hinweis zur Blockchain-Netzwerkgebühr (Gas).** Wenn Sie ein
+> Angebot erstellen, einen Kredit annehmen, zurückzahlen, einen
+> Anspruch geltend machen oder eine andere On-Chain-Aktion
+> durchführen, zahlen Sie zusätzlich eine kleine **Netzwerkgebühr
+> (Gas)** an die Validatoren der Blockchain, die Ihre Transaktion in
+> einen Block aufnehmen. Diese Gas-Gebühr geht ans Netzwerk —
+> **nicht an Vaipakam**. Es ist dieselbe Gebühr, die Sie beim Senden
+> jedes anderen Tokens auf derselben Chain zahlen würden. Der Betrag
+> hängt von der Chain und der Netzwerk-Auslastung im Moment ab,
+> nicht von der Größe Ihres Kredits. Die obigen Protokollgebühren
+> (Renditegebühr `{liveValue:treasuryFeeBps}` %,
+> Kreditinitiierungsgebühr `{liveValue:loanInitiationFeeBps}` %)
+> sind vollständig getrennt vom Netzwerk-Gas und die einzigen, die
+> das Protokoll selbst erhebt.
 
 ---
 
@@ -253,10 +269,10 @@ auf dieser Chain teilnehmen:
 
 | VPFI im Escrow | Gebührenrabatt |
 |---|---|
-| 100 – 999 | 10 % |
-| 1.000 – 4.999 | 15 % |
-| 5.000 – 20.000 | 20 % |
-| Über 20.000 | 24 % |
+| `{liveValue:tier1Min}` – `{liveValue:tier2Min}` (excl.) | `{liveValue:tier1DiscountBps}` % |
+| `{liveValue:tier2Min}` – `{liveValue:tier3Min}` (excl.) | `{liveValue:tier2DiscountBps}` % |
+| `{liveValue:tier3Min}` – `{liveValue:tier4Min}` | `{liveValue:tier3DiscountBps}` % |
+| Über `{liveValue:tier4Min}` | `{liveValue:tier4DiscountBps}` % |
 
 Rabatte gelten sowohl für Kreditgeber- als auch für Kreditnehmer-
 Gebühren. Der Rabatt ist **zeitgewichtet über die Lebensdauer des
