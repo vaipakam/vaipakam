@@ -18,6 +18,7 @@ import {
 } from '../lib/indexerClient';
 import { useReadChain } from '../contracts/useDiamond';
 import { DEFAULT_CHAIN } from '../contracts/config';
+import { useLiveWatermark } from './useLiveWatermark';
 
 const PAGE_LIMIT = 100;
 
@@ -34,6 +35,7 @@ export function useIndexedActivity(
 ): UseIndexedActivityResult {
   const chain = useReadChain();
   const chainId = chain.chainId ?? DEFAULT_CHAIN.chainId;
+  const { version } = useLiveWatermark();
   const [events, setEvents] = useState<IndexedActivityEvent[] | null>(null);
   const [source, setSource] = useState<'indexer' | 'fallback' | null>(null);
   const [loading, setLoading] = useState(true);
@@ -64,7 +66,7 @@ export function useIndexedActivity(
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [chainId, filterKey]);
+  }, [chainId, filterKey, version]);
 
   const loadMore = useCallback(async () => {
     if (!nextBefore || source !== 'indexer') return;

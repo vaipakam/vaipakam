@@ -1,30 +1,36 @@
 /**
- * T-041 Phase 1+2 — homepage offer-book stats.
+ * Homepage offer-book stats fetcher, wired through the live-tail
+ * pattern.
  *
- * Pulls aggregate counts (active / accepted / cancelled / total) from
- * the worker. Returns `null` while loading and on any error so the
- * homepage's hero card can collapse to its current "no live counts"
- * fallback rendering — the page still loads, the live ticker just
- * stays absent. No browser fallback for this one specifically: the
- * stats are aggregate-only and the caller can degrade gracefully
- * without a per-browser log-scan replicating what the worker does.
+ * Refetches when:
+ *   - mount / chain change (initial snapshot)
+ *   - tab returns to focus (visibilitychange listener inside
+ *     `useLiveWatermark`)
+ *   - the watermark probe sees `nextOfferId` or `nextLoanId` advance
+ *     (i.e. someone created an offer or a loan landed anywhere on
+ *     the chain — a strong signal the aggregate counts are stale)
+ *
+ * Stats are aggregate-only (no per-row data), so there's no RPC
+ * catch-up step here — we just retrigger the indexer hit. The catch-up
+ * primitives are used by the heavier list hooks
+ * (`useIndexedActiveOffers`, etc.).
  */
 
 import { useEffect, useState } from 'react';
 import { fetchOfferStats, type OfferStats } from '../lib/indexerClient';
 import { useReadChain } from '../contracts/useDiamond';
 import { DEFAULT_CHAIN } from '../contracts/config';
+import { useLiveWatermark } from './useLiveWatermark';
 
 interface UseOfferStatsResult {
   stats: OfferStats | null;
   loading: boolean;
 }
 
-const REFRESH_MS = 30_000;
-
 export function useOfferStats(): UseOfferStatsResult {
   const chain = useReadChain();
   const chainId = chain.chainId ?? DEFAULT_CHAIN.chainId;
+  const { version } = useLiveWatermark();
   const [stats, setStats] = useState<OfferStats | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -38,12 +44,10 @@ export function useOfferStats(): UseOfferStatsResult {
       }
     }
     void tick();
-    const interval = setInterval(tick, REFRESH_MS);
     return () => {
       cancelled = true;
-      clearInterval(interval);
     };
-  }, [chainId]);
+  }, [chainId, version]);
 
   return { stats, loading };
 }

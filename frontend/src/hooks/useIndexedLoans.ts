@@ -16,6 +16,8 @@
  */
 
 import { useEffect, useState } from 'react';
+import { usePublicClient } from 'wagmi';
+import { type Address } from 'viem';
 import {
   fetchActiveLoans,
   fetchLoansByBorrower,
@@ -24,9 +26,14 @@ import {
 } from '../lib/indexerClient';
 import { useReadChain } from '../contracts/useDiamond';
 import { DEFAULT_CHAIN } from '../contracts/config';
+import { useLiveWatermark } from './useLiveWatermark';
+import {
+  chunkedGetLogs,
+  decodeLoanDelta,
+  TOPIC0,
+} from '../lib/rpcCatchUp';
 
 const PAGE_LIMIT = 200;
-const REFRESH_MS = 30_000;
 
 interface UseIndexedLoansResult {
   loans: IndexedLoan[] | null;
@@ -50,6 +57,9 @@ interface UseIndexedLoansForWalletResult {
 export function useIndexedActiveLoans(): UseIndexedLoansResult {
   const chain = useReadChain();
   const chainId = chain.chainId ?? DEFAULT_CHAIN.chainId;
+  const diamond = chain.diamondAddress;
+  const publicClient = usePublicClient();
+  const { version, snapshot } = useLiveWatermark();
   const [loans, setLoans] = useState<IndexedLoan[] | null>(null);
   const [source, setSource] = useState<'indexer' | 'fallback' | null>(null);
   const [loading, setLoading] = useState(true);
@@ -59,22 +69,43 @@ export function useIndexedActiveLoans(): UseIndexedLoansResult {
     async function tick() {
       const page = await fetchActiveLoans(chainId, { limit: PAGE_LIMIT });
       if (cancelled) return;
-      if (page) {
-        setLoans(page.loans);
-        setSource('indexer');
-      } else {
+      if (!page) {
         setLoans(null);
         setSource('fallback');
+        setLoading(false);
+        return;
       }
+      // RPC catch-up over the indexer-tail → safe-head gap. Drops
+      // loans that closed (repaid / defaulted) in the gap so Risk
+      // Watch + Analytics don't show a stale "active" row that's
+      // actually been settled in the last 60 seconds.
+      let terminalIds = new Set<string>();
+      const fromBlock =
+        page.loans.length > 0
+          ? BigInt(page.loans.reduce((m, l) => (l.startBlock > m ? l.startBlock : m), 0))
+          : 0n;
+      if (publicClient && diamond && snapshot && snapshot.safeBlock > fromBlock) {
+        const logs = await chunkedGetLogs(publicClient, {
+          fromBlock: fromBlock + 1n,
+          toBlock: snapshot.safeBlock,
+          address: diamond as Address,
+          topics: [
+            [TOPIC0.LOAN_REPAID, TOPIC0.LOAN_DEFAULTED],
+          ],
+        });
+        if (cancelled) return;
+        const delta = decodeLoanDelta(logs);
+        terminalIds = new Set(delta.terminal.map((id) => id.toString()));
+      }
+      setLoans(page.loans.filter((l) => !terminalIds.has(l.loanId.toString())));
+      setSource('indexer');
       setLoading(false);
     }
     void tick();
-    const interval = setInterval(tick, REFRESH_MS);
     return () => {
       cancelled = true;
-      clearInterval(interval);
     };
-  }, [chainId]);
+  }, [chainId, version, publicClient, diamond, snapshot]);
 
   return { loans, source, loading };
 }
@@ -84,6 +115,7 @@ export function useIndexedLoansForWallet(
 ): UseIndexedLoansForWalletResult {
   const chain = useReadChain();
   const chainId = chain.chainId ?? DEFAULT_CHAIN.chainId;
+  const { version } = useLiveWatermark();
   const [loans, setLoans] = useState<IndexedLoanWithRole[] | null>(null);
   const [source, setSource] = useState<'indexer' | 'fallback' | null>(null);
   const [loading, setLoading] = useState(Boolean(address));
@@ -138,12 +170,10 @@ export function useIndexedLoansForWallet(
       setLoading(false);
     }
     void tick();
-    const interval = setInterval(tick, REFRESH_MS);
     return () => {
       cancelled = true;
-      clearInterval(interval);
     };
-  }, [chainId, address]);
+  }, [chainId, address, version]);
 
   return { loans, source, loading };
 }
