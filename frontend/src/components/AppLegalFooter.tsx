@@ -24,10 +24,10 @@ import './AppLegalFooter.css';
 export function AppLegalFooter() {
   const { t } = useTranslation();
   // T-041 — single "verify on-chain" affordance for the in-app shell.
-  // The page headers carry the IndexerStatusBadge (cache age + rescan);
-  // this footer link is the escape hatch when a user wants to verify
-  // a specific record directly on the chain explorer. Common-place,
-  // not per-row.
+  // The page headers carry the IndexerStatusBadge (cache age + status
+  // popover); this footer link is the escape hatch when a user wants
+  // to verify a specific record directly on the chain explorer.
+  // Common-place, not per-row.
   const chain = useReadChain();
   const explorerUrl =
     chain.diamondAddress && chain.blockExplorer
