@@ -16,20 +16,20 @@
 
 ## Dashboard
 
-<a id="dashboard.your-escrow"></a>
+<a id="dashboard.your-vault"></a>
 
-### あなたの Escrow
+### あなたの Vault
 
 user ごとの upgradable contract — この chain 上にあるあなた専用の
 private vault — です。あなたが最初に loan に参加したタイミングで
-作成されます。address ごと、chain ごとに 1 つの escrow。
+作成されます。address ごと、chain ごとに 1 つの vault。
 あなたの loan positions に紐づく ERC-20、ERC-721、ERC-1155
 balances を保持します。pooling はありません: 他の user の assets
 がこの contract に入ることはありません。
 
-escrow は、collateral、貸し出された assets、locked VPFI が置かれる
+vault は、collateral、貸し出された assets、locked VPFI が置かれる
 唯一の場所です。protocol は deposit / withdrawal のたびに、この
-escrow を検証します。implementation は protocol owner が update
+vault を検証します。implementation は protocol owner が update
 できますが、timelock 経由のみです — 即時には変えられません。
 
 <a id="dashboard.your-loans"></a>
@@ -51,7 +51,7 @@ deep-link し、HF、LTV、accrued interest、role と loan status によって
 active chain 上の connected wallet 向け live VPFI accounting:
 
 - wallet balance。
-- escrow 残高。
+- vault 残高。
 - circulating supply に対するあなたの share (protocol-held balances を差し
   引いた後)。
 - 残りの mint 可能 cap。
@@ -73,22 +73,22 @@ policy は **3 required + 2 optional verifiers、threshold 1-of-2**
 ### 手数料割引の同意
 
 wallet-level の opt-in flag です。terminal events で、protocol が
-fee の discounted portion を escrow から debit した VPFI で settle
+fee の discounted portion を vault から debit した VPFI で settle
 できるようにします。default: off。off は fee の 100% を principal
 asset で支払うという意味です。on の場合は time-weighted discount
 が適用されます。
 
 Tier ladder:
 
-| Tier | Min escrow VPFI | Discount |
-| ---- | --------------- | -------- |
-| 1    | ≥ 100           | 10%      |
-| 2    | ≥ 1,000         | 15%      |
-| 3    | ≥ 5,000         | 20%      |
-| 4    | > 20,000        | 24%      |
+| Tier | Min vault VPFI                         | Discount                          |
+| ---- | --------------------------------------- | --------------------------------- |
+| 1    | ≥ `{liveValue:tier1Min}`                | `{liveValue:tier1DiscountBps}`%   |
+| 2    | ≥ `{liveValue:tier2Min}`                | `{liveValue:tier2DiscountBps}`%   |
+| 3    | ≥ `{liveValue:tier3Min}`                | `{liveValue:tier3DiscountBps}`%   |
+| 4    | > `{liveValue:tier4Min}`                | `{liveValue:tier4DiscountBps}`%   |
 
 Tier は、VPFI を deposit または withdraw した瞬間の
-**post-change** escrow balance に対して calculate され、その後
+**post-change** vault balance に対して calculate され、その後
 各 loan の全期間にわたって time-weighted されます。Unstake は、
 あなたの open loans すべてに対して、新しい (低い) balance を
 使って rate を即座に re-stamp します — 古い (高い) tier が残る
@@ -99,6 +99,17 @@ exploit pattern を防ぎます。
 discount は settlement 時の lender yield fee と borrower の
 Loan Initiation Fee に適用されます (borrower が claim するときに
 VPFI rebate として支払われます)。
+
+> **Network gas は別物です。** 上記の discount は Vaipakam の
+> **protocol fees**（yield fee `{liveValue:treasuryFeeBps}`%、
+> Loan Initiation Fee `{liveValue:loanInitiationFeeBps}`%）に
+> 適用されます。すべての on-chain action に必要な **blockchain
+> network gas fee**（Base / Sepolia / Arbitrum などで offer
+> create / accept / repay / claim / withdraw 等を行うときに
+> validators へ支払うもの）は protocol の charge ではありません。
+> Vaipakam は決して受け取らず、network が受け取ります。tier や
+> rebate を適用することはできず、submission 時の chain 混雑度に
+> 依存し、loan size や VPFI tier には依存しません。
 
 <a id="dashboard.rewards-summary"></a>
 
@@ -113,7 +124,7 @@ rewards の合計です。
 stream ごとの breakdown rows には pending + claimed が表示され、
 native page 上の full claim card へ chevron deep-link します:
 
-- **Staking yield** — escrow balance に対して protocol APR で accrue
+- **Staking yield** — vault balance に対して protocol APR で accrue
   した pending VPFI と、この wallet から過去に claim したすべての
   staking rewards。Buy VPFI page の staking claim card に deep-link
   します。
@@ -174,7 +185,7 @@ upfront ではありません。
 
 ### Borrower Offers
 
-すでに collateral を escrow に lock している borrowers の active
+すでに collateral を vault に lock している borrowers の active
 offers です。accept するのは lender です。acceptance により
 principal asset で loan が fund され、position NFTs が mint され
 ます。initiation 時には同じ HF ≥ 1.5 gate が適用されます。fixed
@@ -226,7 +237,7 @@ accrued interest は loan の start time から terminal settlement
 (APR %) と duration (日数) です。rate は offer 時に fixed され、
 duration は loan が default 可能になるまでの grace window を
 決めます。acceptance 時に、loan initiation の一部として principal
-はあなたの escrow から borrower の escrow へ move します。
+はあなたの vault から borrower の vault へ move します。
 
 <a id="create-offer.lending-asset:borrower"></a>
 
@@ -235,7 +246,7 @@ duration は loan が default 可能になるまでの grace window を
 lender から受け取りたい principal asset と amount、interest rate
 (APR %) と duration (日数) です。rate は offer 時に fixed され、
 duration は loan が default 可能になるまでの grace window を
-決めます。あなたの collateral は offer 作成時に escrow に lock
+決めます。あなたの collateral は offer 作成時に vault に lock
 され、lender が accept して loan が open するまで (またはあなたが
 cancel するまで) lock されたままです。
 
@@ -246,7 +257,7 @@ cancel するまで) lock されたままです。
 Rental sub-type fields です。NFT contract と token id (ERC-1155
 では quantity も)、そして principal asset 建ての daily rental fee
 を指定します。acceptance 時に、protocol は prepaid rental を
-renter の escrow から custody へ debit します — duration × daily
+renter の vault から custody へ debit します — duration × daily
 fee と 5% buffer/margin です。NFT 自体は delegated state に移ります
 (ERC-4907 user rights、または ERC-1155 rental hook 相当を通じて)。
 renter は利用権を持ちますが、NFT を transfer することはできません。
@@ -296,7 +307,7 @@ Liquid ERC-20s (Chainlink feed + ≥ $1M v3 pool depth) には LTV / HF
 math が適用されます。Illiquid ERC-20s と NFTs には on-chain
 valuation がなく、full-collateral-on-default outcome へ双方の同意
 が必要です。borrower offer では、あなたの collateral は offer
-creation 時に escrow に lock されます。lender offer では、
+creation 時に vault に lock されます。lender offer では、
 acceptance 時に lock されます。どちらの場合も、loan initiation
 時の HF ≥ 1.5 gate は、あなたが提示する basket で clear する必要
 があります。
@@ -462,12 +473,12 @@ tune できます。
 Live status:
 
 - 現在の tier (0 から 4)。
-- Escrow VPFI 残高と次の tier までの差分。
+- Vault VPFI 残高と次の tier までの差分。
 - 現在の tier における割引パーセンテージ。
 - wallet-level consent flag。
 
-escrow VPFI は staking pool 経由で自動的に 5% APR も accrue します
-— 別の "stake" action はありません。VPFI を escrow に deposit
+vault VPFI は staking pool 経由で自動的に 5% APR も accrue します
+— 別の "stake" action はありません。VPFI を vault に deposit
 すること自体が staking です。
 
 <a id="buy-vpfi.buy"></a>
@@ -478,17 +489,17 @@ purchase を submit します。canonical chain では protocol が直接
 mint します。Mirror chains では buy adapter が payment を受け取り、
 cross-chain message を送り、receiver が Base で purchase を execute
 して VPFI を bridge して戻します。Bridge fee + verifier-network
-cost は form 内で live quote され表示されます。VPFI は escrow に
+cost は form 内で live quote され表示されます。VPFI は vault に
 自動 deposit されません — design 上、Step 2 は explicit user action
 です。
 
 <a id="buy-vpfi.deposit"></a>
 
-### Step 2 — VPFI を escrow に入金する
+### Step 2 — VPFI を vault に入金する
 
-wallet から同じ chain 上のあなたの escrow へ移す、別の explicit
+wallet から同じ chain 上のあなたの vault へ移す、別の explicit
 deposit step です。すべての chains で必要です — canonical でも —
-escrow deposit spec では常に explicit user action だからです。
+vault deposit spec では常に explicit user action だからです。
 Permit2 が configured されている chains では、app は classic
 approve + deposit pattern より single-signature path を prefer
 します。その chain で Permit2 が configured されていない場合は、
@@ -496,10 +507,10 @@ cleanly fall back します。
 
 <a id="buy-vpfi.unstake"></a>
 
-### Step 3 — escrow から VPFI をアンステークする
+### Step 3 — vault から VPFI をアンステークする
 
-VPFI を escrow から wallet に戻します。approval leg はありません
-— protocol が escrow owner であり、自身を debit します。withdraw
+VPFI を vault から wallet に戻します。approval leg はありません
+— protocol が vault owner であり、自身を debit します。withdraw
 は新しい (低い) balance で fee-discount rate を即座に re-stamp
 し、あなたの open loans すべてに適用されます。古い tier がまだ
 apply される grace window はありません。
@@ -514,7 +525,7 @@ apply される grace window はありません。
 
 2 つの streams:
 
-- **Staking pool** — escrow にある VPFI は 5% APR で継続的に
+- **Staking pool** — vault にある VPFI は 5% APR で継続的に
   accrue し、per-second compounding されます。
 - **Interaction pool** — fixed daily emission の per-day pro-rata
   share です。その日の loan volume に対するあなたの settled-interest
@@ -541,7 +552,7 @@ window がまだ finalise 中のときは UI が button を guard し、users
 ### ステーキング済みの VPFI を引き出す
 
 Buy VPFI ページの "Step 3 — Unstake" と同じ interface です —
-escrow から wallet に VPFI を戻します。withdraw された VPFI は
+vault から wallet に VPFI を戻します。withdraw された VPFI は
 即座に staking pool から外れ (その amount の rewards は同じ block
 で accrue を停止)、discount accumulator からも即座に外れます
 (各 open loan で post-balance re-stamp)。
@@ -630,10 +641,10 @@ unused VPFI Loan Initiation Fee rebate のみです。
 
 ### Parties
 
-Lender、borrower、lender escrow、borrower escrow、そして 2 つの
+Lender、borrower、lender vault、borrower vault、そして 2 つの
 position NFTs (各 side に 1 つ)。各 NFT は on-chain metadata を
 持つ ERC-721 です。transfer すると、claim する権利も transfer
-されます。Escrow contracts は address ごとに deterministic です
+されます。Vault contracts は address ごとに deterministic です
 — deployments をまたいでも同じ address です。
 
 <a id="loan-details.actions"></a>
@@ -681,7 +692,7 @@ role に関係なく誰でも利用できる permissionless actions:
   initiate、その後 complete。
 - **Refinance** — 新しい terms で borrower offer を投稿します。
   lender が accept したら、complete refinance により loans が
-  atomically に swap されます。collateral は escrow から出ません。
+  atomically に swap されます。collateral は vault から出ません。
 - **Borrower として claim** — terminal state のみ。full repayment では
   collateral を返し、default / liquidation では unused VPFI Loan
   Initiation Fee rebate を返します。Borrower position NFT を burn
@@ -894,7 +905,7 @@ loan に対して開始します。
 
 Refinance は、あなたの既存 loan を新しい principal で atomically
 に返済し、新しい terms の fresh loan を open します。すべて 1 つ
-の transaction 内で行われます。collateral は常にあなたの escrow
+の transaction 内で行われます。collateral は常にあなたの vault
 に残ります — unsecured window はありません。新しい loan は、他の
 loan と同様に initiation 時に HF ≥ 1.5 gate を clear する必要が
 あります。
@@ -910,7 +921,7 @@ refinance する loan の snapshot です — 現在の principal、これまで
 の accrued interest、HF / LTV、collateral basket。新しい offer は
 少なくとも outstanding amount (principal + accrued interest) に
 合わせて size するべきです。新しい offer に surplus があれば、
-free principal としてあなたの escrow に deliver されます。
+free principal としてあなたの vault に deliver されます。
 
 <a id="refinance.step-1-post-offer"></a>
 

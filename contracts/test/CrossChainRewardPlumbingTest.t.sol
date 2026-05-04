@@ -301,8 +301,8 @@ contract CrossChainRewardPlumbingTest is SetupTest, IVaipakamErrors {
 
         assertEq(oApp.sendCount(), 1, "one LZ send");
         assertEq(oApp.lastSendDay(), 1);
-        assertEq(oApp.lastSendLenderUSD18(), 25e18);
-        assertEq(oApp.lastSendBorrowerUSD18(), 15e18);
+        assertEq(oApp.lastSendLenderNumeraire18(), 25e18);
+        assertEq(oApp.lastSendBorrowerNumeraire18(), 15e18);
         assertEq(oApp.lastSendRefund(), alice, "refund beneficiary = caller");
         assertEq(oApp.lastSendValue(), 0.3 ether, "full msg.value forwarded");
 
@@ -484,7 +484,7 @@ contract CrossChainRewardPlumbingTest is SetupTest, IVaipakamErrors {
         _agg().finalizeDay(1);
 
         (uint256 gl, uint256 gb, bool isSet) = _rep()
-            .getKnownGlobalInterestUSD18(1);
+            .getKnownGlobalInterestNumeraire18(1);
         assertTrue(isSet, "knownGlobal mirrored on base");
         assertEq(gl, 15e18);
         assertEq(gb, 6e18);
@@ -587,8 +587,8 @@ contract CrossChainRewardPlumbingTest is SetupTest, IVaipakamErrors {
 
         assertEq(oApp.broadcastCount(), 1, "one broadcast");
         assertEq(oApp.lastBroadcastDay(), 1);
-        assertEq(oApp.lastBroadcastLenderUSD18(), 15e18);
-        assertEq(oApp.lastBroadcastBorrowerUSD18(), 6e18);
+        assertEq(oApp.lastBroadcastLenderNumeraire18(), 15e18);
+        assertEq(oApp.lastBroadcastBorrowerNumeraire18(), 6e18);
         assertEq(oApp.lastBroadcastRefund(), alice);
         assertEq(oApp.lastBroadcastValue(), 0.2 ether);
     }
@@ -632,7 +632,7 @@ contract CrossChainRewardPlumbingTest is SetupTest, IVaipakamErrors {
         oApp.deliverBroadcast(1, 10e18, 5e18);
 
         (uint256 gl, uint256 gb, bool isSet) = _rep()
-            .getKnownGlobalInterestUSD18(1);
+            .getKnownGlobalInterestNumeraire18(1);
         assertTrue(isSet);
         assertEq(gl, 10e18);
         assertEq(gb, 5e18);
@@ -756,7 +756,7 @@ contract CrossChainRewardPlumbingTest is SetupTest, IVaipakamErrors {
         _configureMirror(EID_ARB);
         AdminFacet(address(diamond)).pause();
         oApp.deliverBroadcast(1, 10e18, 5e18); // succeeds
-        (, , bool isSet) = _rep().getKnownGlobalInterestUSD18(1);
+        (, , bool isSet) = _rep().getKnownGlobalInterestNumeraire18(1);
         assertTrue(isSet);
     }
 
@@ -821,7 +821,7 @@ contract CrossChainRewardPlumbingTest is SetupTest, IVaipakamErrors {
         //    InteractionRewardsFacet tests; this test proves the mesh
         //    delivered consistent state into the gate.
         (uint256 kgLender, uint256 kgBorrower, bool kgSet) = _rep()
-            .getKnownGlobalInterestUSD18(1);
+            .getKnownGlobalInterestNumeraire18(1);
         assertTrue(kgSet, "known global must be set for claim gate");
         assertEq(kgLender, 70e18, "lender denominator visible to claimants");
         assertEq(kgBorrower, 0);
@@ -829,6 +829,6 @@ contract CrossChainRewardPlumbingTest is SetupTest, IVaipakamErrors {
         // 5. Broadcast would ship the pair to every peer (here: counted only).
         _agg().broadcastGlobal(1);
         assertEq(oApp.broadcastCount(), 1);
-        assertEq(oApp.lastBroadcastLenderUSD18(), 70e18);
+        assertEq(oApp.lastBroadcastLenderNumeraire18(), 70e18);
     }
 }

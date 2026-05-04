@@ -41,6 +41,7 @@ import {ERC20Mock} from "../test/mocks/ERC20Mock.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {HelperTest} from "./HelperTest.sol";
 import {OfferFacet} from "../src/facets/OfferFacet.sol";
+import {OfferCancelFacet} from "../src/facets/OfferCancelFacet.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import {OracleFacet} from "../src/facets/OracleFacet.sol";
@@ -120,6 +121,7 @@ contract SetupTest is Test {
     // Facet addresses
     DiamondCutFacet cutFacet;
     OfferFacet offerFacet;
+    OfferCancelFacet offerCancelFacet;
     ProfileFacet profileFacet;
     OracleFacet oracleFacet;
     VaipakamNFTFacet nftFacet;
@@ -177,6 +179,7 @@ contract SetupTest is Test {
         diamond = new VaipakamDiamond(owner, address(cutFacet));
 
         offerFacet = new OfferFacet();
+        offerCancelFacet = new OfferCancelFacet();
         profileFacet = new ProfileFacet();
         oracleFacet = new OracleFacet();
         nftFacet = new VaipakamNFTFacet();
@@ -200,7 +203,7 @@ contract SetupTest is Test {
         escrowImpl = new VaipakamEscrowImplementation();
 
         // Cut facets into diamond
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](18);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](19);
         cuts[0] = IDiamondCut.FacetCut({
             facetAddress: address(offerFacet),
             action: IDiamondCut.FacetCutAction.Add,
@@ -290,6 +293,14 @@ contract SetupTest is Test {
             facetAddress: address(configFacet),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getConfigFacetSelectors()
+        });
+        // OfferCancelFacet — cancelOffer + read views, carved out of
+        // OfferFacet for the EIP-170 split. Same selectors land on
+        // the diamond.
+        cuts[18] = IDiamondCut.FacetCut({
+            facetAddress: address(offerCancelFacet),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getOfferCancelFacetSelectors()
         });
 
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");

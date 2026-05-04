@@ -9,6 +9,8 @@ import {LibERC721} from "../libraries/LibERC721.sol";
 import {LibVPFIDiscount} from "../libraries/LibVPFIDiscount.sol";
 import {LibMetricsHooks} from "../libraries/LibMetricsHooks.sol";
 import {LibPermit2, ISignatureTransfer} from "../libraries/LibPermit2.sol";
+import {LibRiskMath} from "../libraries/LibRiskMath.sol";
+import {LibOfferMatch} from "../libraries/LibOfferMatch.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
@@ -88,45 +90,53 @@ contract OfferFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
         uint256 loanId
     );
 
-    /// @notice Emitted when an offer is canceled.
-    /// @param offerId The ID of the canceled offer.
-    /// @param creator The address of the creator canceling the offer.
-    event OfferCanceled(uint256 indexed offerId, address indexed creator);
+    /// @dev `OfferCanceled` and `OfferCanceledDetails` moved to
+    ///      `OfferCancelFacet` along with `cancelOffer` (Range Orders
+    ///      Phase 1 OfferFacet split for EIP-170). Topic0 hashes are
+    ///      identical so indexers see the same event regardless of
+    ///      which facet emits.
 
-    /// @notice Emitted alongside `OfferCanceled` with the full offer terms
-    ///         that would otherwise be irrecoverable after `cancelOffer`
-    ///         executes the `delete s.offers[offerId]` storage wipe.
-    ///
-    ///         Frontends use this event to render cancelled offers in
-    ///         "Your Offers" surfaces (Dashboard) without having to keep
-    ///         a per-create localStorage snapshot. The legacy
-    ///         `OfferCanceled` event remains emitted so historical
-    ///         consumers that only care about identity (id + creator)
-    ///         keep working unchanged.
-    /// @param offerId        The ID of the canceled offer.
-    /// @param creator        The address of the creator canceling.
-    /// @param offerType      Lender (0) or Borrower (1).
-    /// @param assetType      Principal asset type (ERC20=0, ERC721=1, ERC1155=2).
-    /// @param lendingAsset   Principal asset address.
-    /// @param amount         Principal amount (wei for ERC20, quantity for ERC1155).
-    /// @param tokenId        Principal NFT id when `assetType` is ERC721/ERC1155, else 0.
-    /// @param collateralAsset   Collateral asset address.
-    /// @param collateralAmount  Collateral amount in its asset's units.
-    /// @param interestRateBps   Interest rate in basis points.
-    /// @param durationDays      Loan duration in days.
-    event OfferCanceledDetails(
-        uint256 indexed offerId,
-        address indexed creator,
-        LibVaipakam.OfferType offerType,
-        LibVaipakam.AssetType assetType,
-        address lendingAsset,
-        uint256 amount,
-        uint256 tokenId,
-        address collateralAsset,
-        uint256 collateralAmount,
-        uint256 interestRateBps,
-        uint256 durationDays
-    );
+    /// @dev Emitted by `OfferFacet.matchOffers` (and the
+    ///      `acceptOffer` / `PrecloseFacet.transferObligationViaOffer` /
+    ///      `RefinanceFacet.refinanceLoan` wrappers around the shared
+    ///      matching core, once Range Orders Phase 1 PR3 lands). Single
+    ///      source-of-truth event for the matched terms — both midpoints
+    ///      are emitted so downstream alt-rule analytics can reconstruct
+    ///      the chosen point in the overlap range. Range Orders only —
+    ///      not emitted on the legacy single-value `acceptOffer` path
+    ///      until that path is refactored to call the matching core.
+    /// @param lenderOfferId       Lender-side offer.
+    /// @param borrowerOfferId     Borrower-side offer (or 0 when the
+    ///                            acceptor synthesised a single-point
+    ///                            counterparty via legacy `acceptOffer`).
+    /// @param loanId              Loan minted by this match.
+    /// @param matcher             `msg.sender` of the matching call.
+    ///                            Recorded on `Loan.matcher` for the
+    ///                            1% LIF kickback at terminal.
+    /// @param matchAmount         Concrete principal chosen from the
+    ///                            overlap (midpoint per design §4.2).
+    /// @param matchRateBps        Concrete rate chosen from the overlap.
+    /// @param lenderRemainingPostMatch  Lender's `amountMax - amountFilled`
+    ///                            after this match. Indexers use this to
+    ///                            render the offer's fill-progress bar
+    ///                            without re-reading storage.
+    /// @param lifMatcherFee       Amount of LIF (in lending-asset units
+    ///                            on the standard path; in VPFI on the
+    ///                            Phase 5 discount path) that flowed to
+    ///                            `matcher` at this match. Zero on
+    ///                            VPFI-discount loans where the fee
+    ///                            settles at terminal instead.
+    /// @dev `OfferMatched` event moved to `OfferMatchFacet` along with
+    ///      the matchOffers entry point (Range Orders Phase 1
+    ///      OfferFacet split for EIP-170). Indexers filter by
+    ///      signature, so the topic0 hash is identical and downstream
+    ///      consumers don't notice the move.
+
+    /// @dev `OfferCloseReason` enum + `OfferClosed` event moved to
+    ///      `OfferMatchFacet` and `OfferCancelFacet` (re-declared on
+    ///      both with identical signature, so topic0 lands the same).
+    ///      OfferFacet itself no longer emits `OfferClosed` — every
+    ///      lifecycle terminal lives on the carved-out facets now.
 
     // Facet-specific errors (shared errors inherited from IVaipakamErrors)
     error InvalidOfferType();
@@ -137,6 +147,37 @@ contract OfferFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
     error InsufficientAllowance();
     error LiquidityMismatch();
     error GetUserEscrowFailed(string reason);
+    /// Findings 00025 — `params.durationDays > MAX_OFFER_DURATION_DAYS`.
+    /// Surfaces `(provided, cap)` so the UI / SDK can show the gap.
+    error OfferDurationExceedsCap(uint256 provided, uint256 cap);
+
+    // ── Range Orders Phase 1 errors (docs/RangeOffersDesign.md §5.5) ─
+    /// Range invariant: `amountMin > amountMax`.
+    error InvalidAmountRange();
+    /// Range invariant: `interestRateBpsMin > interestRateBpsMax`.
+    error InvalidRateRange();
+    /// Range invariant: `interestRateBpsMax > MAX_INTEREST_BPS`.
+    error InterestRateAboveCeiling();
+    /// Lender offer's `collateralAmount` is below the system-derived
+    /// minimum needed to keep HF >= 1.5e18 at `amountMax` (worst case).
+    /// Surfaces with `(provided, floor)` so the UI can show the gap.
+    error MinCollateralBelowFloor(uint256 provided, uint256 floor);
+    /// Borrower offer's `amountMax` exceeds the system-derived ceiling
+    /// implied by the posted collateral.
+    error MaxLendingAboveCeiling(uint256 provided, uint256 ceiling);
+    /// Master kill-switch flag rejected the call. `whichFlag` identifies
+    /// the gate (1=rangeAmount, 2=rangeRate, 3=partialFill) so frontend
+    /// validation can surface a precise "feature disabled" hint.
+    error FunctionDisabled(uint8 whichFlag);
+    // Range Orders matching errors (AssetMismatch, AmountNoOverlap,
+    // RateNoOverlap, CollateralBelowRequired, DurationMismatch,
+    // MatchHFTooLow) live on `OfferMatchFacet` post-split — the
+    // matchOffers + previewMatch entry points moved there to bring
+    // OfferFacet under the EIP-170 24576-byte ceiling.
+
+    // `CancelCooldownActive` moved to `OfferCancelFacet` along with
+    // `cancelOffer` (Range Orders Phase 1 OfferFacet split for
+    // EIP-170).
 
     /**
      * @notice Creates a new lender or borrower offer.
@@ -162,9 +203,41 @@ contract OfferFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
         LibVaipakam.CreateOfferParams calldata params
     ) external nonReentrant whenNotPaused returns (uint256 offerId) {
         address escrow;
-        (offerId, escrow) = _createOfferSetup(params);
-        _pullCreatorAssetsClassic(params, escrow);
-        _createOfferFinish(offerId, params);
+        (offerId, escrow) = _createOfferSetup(msg.sender, params);
+        _pullCreatorAssetsClassic(msg.sender, params, escrow);
+        _createOfferFinish(msg.sender, offerId, params);
+    }
+
+    /// @notice Cross-facet entry used exclusively by
+    ///         `PrecloseFacet.offsetWithNewOffer` (Option 3 offset
+    ///         flow) to mint a new lender offer mid-flight. Skips the
+    ///         outer `nonReentrant` modifier because the calling facet
+    ///         already holds the diamond's reentrancy guard — without
+    ///         the bypass, the second `_enter()` reverts and the
+    ///         entire offset path is unusable.
+    /// @dev    Gated on `msg.sender == address(this)` so EOAs cannot
+    ///         call it directly through the diamond fallback. Same
+    ///         pattern as `acceptOfferInternal`. Pausable still
+    ///         applies — `whenNotPaused` runs.
+    ///
+    ///         The `creator` parameter is the on-behalf-of address.
+    ///         Inside a diamond, `address(this).call(...)` makes
+    ///         `msg.sender == diamond` for the inner code, which
+    ///         would corrupt `offer.creator` and the asset-pull
+    ///         allowance check. The caller passes the real user
+    ///         (e.g. Alice for offsetWithNewOffer) so every helper
+    ///         operates on her behalf instead of the Diamond's.
+    function createOfferInternal(
+        address creator,
+        LibVaipakam.CreateOfferParams calldata params
+    ) external whenNotPaused returns (uint256 offerId) {
+        if (msg.sender != address(this)) {
+            revert UnauthorizedCrossFacetCall();
+        }
+        address escrow;
+        (offerId, escrow) = _createOfferSetup(creator, params);
+        _pullCreatorAssetsClassic(creator, params, escrow);
+        _createOfferFinish(creator, offerId, params);
     }
 
     /**
@@ -217,7 +290,7 @@ contract OfferFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
         }
 
         address escrow;
-        (offerId, escrow) = _createOfferSetup(params);
+        (offerId, escrow) = _createOfferSetup(msg.sender, params);
         uint256 amount = _creatorPullAmount(offerId, params);
         // Resolve the asset the protocol actually expects to pull for
         // this offer shape. Permit2's signature digest binds the user
@@ -239,7 +312,23 @@ contract OfferFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
             expectedAsset = params.prepayAsset;
         }
         LibPermit2.pull(msg.sender, escrow, expectedAsset, amount, permit, signature);
-        _createOfferFinish(offerId, params);
+        // Permit2 already moved funds to the user's escrow. Record
+        // the deposit in the protocolTrackedEscrowBalance counter so
+        // it stays the symmetric mirror of the classic-path
+        // `escrowDepositERC20` flow above. Every Permit2-funded leg
+        // here is ERC-20 (the asset-type guards at the top of the
+        // function reject any other shape), so the counter is the
+        // right home for it.
+        LibFacet.crossFacetCall(
+            abi.encodeWithSelector(
+                EscrowFactoryFacet.recordEscrowDepositERC20.selector,
+                msg.sender,
+                expectedAsset,
+                amount
+            ),
+            EscrowDepositFailed.selector
+        );
+        _createOfferFinish(msg.sender, offerId, params);
     }
 
     /// @dev Shared pre-pull setup. Runs every validation + allocates
@@ -248,16 +337,32 @@ contract OfferFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
     ///      so the caller can do the actual asset pull via whichever
     ///      path (safeTransferFrom vs Permit2) fits.
     function _createOfferSetup(
+        address creator,
         LibVaipakam.CreateOfferParams calldata params
     ) private returns (uint256 offerId, address escrow) {
         if (params.durationDays == 0) revert InvalidOfferType();
+        // Findings 00025 — ProjectDetailsREADME §2 mandates
+        // 1 ≤ durationDays ≤ 365 with on-chain enforcement so external
+        // callers can't bypass the frontend validation and create a
+        // 1000-day loan whose interest formula over-charges (interest
+        // = principal × rate × days / 365). The lower bound is the
+        // previous `== 0` check (caught by `InvalidOfferType`); this
+        // is the on-chain upper bound. Cap is governance-tunable via
+        // `ConfigFacet.setMaxOfferDurationDays` within bounded floor
+        // / ceiling — defaults to 365 on a fresh deploy.
+        uint256 maxDuration = LibVaipakam.cfgMaxOfferDurationDays();
+        if (params.durationDays > maxDuration) {
+            revert OfferDurationExceedsCap(params.durationDays, maxDuration);
+        }
         if (params.amount <= 0) revert InvalidAmount();
 
         // Phase 4.3 — address-level sanctions screening at the "entering
         // a new business relationship" boundary. No-op on chains where
-        // governance has not configured the oracle address.
-        if (LibVaipakam.isSanctionedAddress(msg.sender)) {
-            revert ProfileFacet.SanctionedAddress(msg.sender);
+        // governance has not configured the oracle address. Use the
+        // resolved `creator` (= msg.sender on classic paths, but the
+        // on-behalf-of address on `createOfferInternal`).
+        if (LibVaipakam.isSanctionedAddress(creator)) {
+            revert ProfileFacet.SanctionedAddress(creator);
         }
 
         // Self-lending guard: principal and collateral must reference
@@ -275,10 +380,10 @@ contract OfferFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
         unchecked {
             offerId = ++s.nextOfferId;
         }
-        s.userOfferIds[msg.sender].push(offerId);
+        s.userOfferIds[creator].push(offerId);
 
         LibVaipakam.Offer storage offer = s.offers[offerId];
-        _writeOfferFields(offer, offerId, params);
+        _writeOfferFields(offer, creator, offerId, params);
 
         LibVaipakam.LiquidityStatus principalLiq = OracleFacet(address(this))
             .checkLiquidity(params.lendingAsset);
@@ -289,33 +394,280 @@ contract OfferFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
 
         if (!params.creatorFallbackConsent) revert FallbackConsentRequired();
 
-        escrow = getUserEscrow(msg.sender);
+        // ── Range Orders Phase 1 — system-derived bound enforcement ────
+        // Active ONLY when the master `rangeAmountEnabled` flag is on
+        // (i.e., the offer's `amountMax > amount` is permissible). When
+        // Range Orders is dormant (default), every offer is effectively
+        // single-value and the runtime HF gate at LoanFacet.initiateLoan
+        // is sufficient — there's no worst-case-corner to defend against.
+        // Apply ONLY to ERC-20-on-both-legs offers where both legs are
+        // Liquid (matches the runtime HF gate's scope; NFT rentals +
+        // illiquid pairs go through different gates).
+        LibVaipakam.ProtocolConfig storage cfg2 =
+            LibVaipakam.storageSlot().protocolCfg;
+        if (
+            cfg2.rangeAmountEnabled
+            && params.assetType == LibVaipakam.AssetType.ERC20
+            && params.collateralAssetType == LibVaipakam.AssetType.ERC20
+            && principalLiq == LibVaipakam.LiquidityStatus.Liquid
+            && collateralLiq == LibVaipakam.LiquidityStatus.Liquid
+        ) {
+            if (params.offerType == LibVaipakam.OfferType.Lender) {
+                // Lender's required collateral must clear the floor at
+                // the worst-case lending size (`offer.amountMax` after
+                // auto-collapse).
+                uint256 floor = LibRiskMath.minCollateralForLending(
+                    offer.amountMax,
+                    params.lendingAsset,
+                    params.collateralAsset
+                );
+                if (floor > 0 && params.collateralAmount < floor) {
+                    revert MinCollateralBelowFloor(params.collateralAmount, floor);
+                }
+            } else {
+                // Borrower's accepted lending ceiling (their `amountMax`)
+                // can't exceed the system-derived ceiling implied by the
+                // collateral they're posting.
+                uint256 ceiling = LibRiskMath.maxLendingForCollateral(
+                    params.collateralAmount,
+                    params.lendingAsset,
+                    params.collateralAsset
+                );
+                if (ceiling != type(uint256).max && offer.amountMax > ceiling) {
+                    revert MaxLendingAboveCeiling(offer.amountMax, ceiling);
+                }
+            }
+        }
+
+        // ── T-034 — Periodic Interest Payment cadence validation ──────────
+        // See docs/DesignsAndPlans/PeriodicInterestPaymentDesign.md §3.
+        // Three filters in order:
+        //   - Master kill-switch: feature disabled → cadence must be None.
+        //   - Filter 0: both sides liquid → otherwise cadence forced to None.
+        //   - Filter 1: cadence interval strictly less than duration.
+        //   - Filter 2: duration / threshold matrix (mandatory Annual on
+        //     >365d loans; finer cadences require principal ≥ threshold).
+        _validatePeriodicCadence(params, offer, principalLiq, collateralLiq);
+
+        escrow = getUserEscrow(creator);
+    }
+
+    /// @dev T-034 — extracted to keep `_createOfferSetup` readable. Reverts
+    ///      on any of the four filter violations per §3 of the design doc.
+    ///      Snapshots the lender's chosen cadence onto the Offer struct on
+    ///      success.
+    function _validatePeriodicCadence(
+        LibVaipakam.CreateOfferParams calldata params,
+        LibVaipakam.Offer storage offer,
+        LibVaipakam.LiquidityStatus principalLiq,
+        LibVaipakam.LiquidityStatus collateralLiq
+    ) private {
+        LibVaipakam.PeriodicInterestCadence cadence =
+            params.periodicInterestCadence;
+        LibVaipakam.ProtocolConfig storage cfgT034 =
+            LibVaipakam.storageSlot().protocolCfg;
+
+        // Master kill-switch: feature off → only None reachable. Reverts
+        // before any other validation so the disabled state is the loudest
+        // signal.
+        if (
+            cadence != LibVaipakam.PeriodicInterestCadence.None &&
+            !cfgT034.periodicInterestEnabled
+        ) {
+            revert IVaipakamErrors.PeriodicInterestDisabled();
+        }
+
+        // Filter 0 — Periodic Interest Payment requires BOTH legs to be
+        // liquid AND ERC-20. NFT lending / NFT collateral / Illiquid
+        // classifications all force cadence = None because the auto-
+        // liquidate path (PR2) needs DEX-swappable assets. Multi-year
+        // illiquid loans do NOT get the mandatory Annual floor — lender
+        // accepts that trade-off implicitly via the existing illiquid-
+        // asset consent flow.
+        bool bothLiquid =
+            principalLiq == LibVaipakam.LiquidityStatus.Liquid &&
+            collateralLiq == LibVaipakam.LiquidityStatus.Liquid &&
+            params.assetType == LibVaipakam.AssetType.ERC20 &&
+            params.collateralAssetType == LibVaipakam.AssetType.ERC20;
+        if (
+            cadence != LibVaipakam.PeriodicInterestCadence.None &&
+            !bothLiquid
+        ) {
+            revert IVaipakamErrors.CadenceNotAllowedForIlliquid(
+                uint8(principalLiq),
+                uint8(collateralLiq),
+                uint8(cadence)
+            );
+        }
+
+        // Skip Filter 1 + Filter 2 entirely on illiquid-anywhere offers
+        // (cadence is None per Filter 0 above; nothing more to enforce)
+        // OR on short-duration None-cadence offers (today's behaviour
+        // unchanged).
+        bool isMultiYear = params.durationDays > 365;
+        if (
+            cadence == LibVaipakam.PeriodicInterestCadence.None &&
+            !isMultiYear
+        ) {
+            offer.periodicInterestCadence = cadence;
+            return;
+        }
+
+        // From here on we know either:
+        //   (a) cadence != None AND bothLiquid (Filter 0 passed), OR
+        //   (b) durationDays > 365 AND bothLiquid (mandatory floor).
+        // Resolve the threshold + principal comparison in numeraire-units.
+        uint256 threshold = cfgT034.minPrincipalForFinerCadence == 0
+            ? LibVaipakam.PERIODIC_MIN_PRINCIPAL_FOR_FINER_CADENCE_DEFAULT
+            : cfgT034.minPrincipalForFinerCadence;
+
+        // Principal value compared to the threshold uses `params.amount`
+        // (= amountMin under range orders) because it is the strict lower
+        // bound on what the lender will fund — using `amountMax` here
+        // would let a lender qualify for finer cadence with a deceptively
+        // large upper bound while never actually filling above the
+        // threshold.
+        uint256 principalNumeraire = _principalToNumeraire1e18(
+            params.lendingAsset,
+            params.amount
+        );
+
+        // Filter 2 first: row 3 (multi-year, below threshold) requires
+        // exactly `Annual`; row 1 (≤1y, below threshold) requires `None`.
+        bool aboveThreshold = principalNumeraire >= threshold;
+        if (isMultiYear) {
+            if (cadence == LibVaipakam.PeriodicInterestCadence.None) {
+                // Row 3 / Row 4 both require at least Annual cadence.
+                revert IVaipakamErrors.CadenceNotAllowed(
+                    uint8(cadence),
+                    params.durationDays,
+                    principalNumeraire,
+                    threshold
+                );
+            }
+            if (
+                !aboveThreshold &&
+                cadence != LibVaipakam.PeriodicInterestCadence.Annual
+            ) {
+                // Row 3 — only Annual allowed below threshold on multi-year.
+                revert IVaipakamErrors.CadenceNotAllowed(
+                    uint8(cadence),
+                    params.durationDays,
+                    principalNumeraire,
+                    threshold
+                );
+            }
+        } else {
+            // ≤365d. Row 1 — None only below threshold; Row 2 — opt-in.
+            if (
+                cadence != LibVaipakam.PeriodicInterestCadence.None &&
+                !aboveThreshold
+            ) {
+                revert IVaipakamErrors.CadenceNotAllowed(
+                    uint8(cadence),
+                    params.durationDays,
+                    principalNumeraire,
+                    threshold
+                );
+            }
+        }
+
+        // Filter 1 — interval must be strictly less than duration. Skipped
+        // for None (interval=0) since 0 < anything-positive trivially holds
+        // and None doesn't have a meaningful interval anyway.
+        if (cadence != LibVaipakam.PeriodicInterestCadence.None) {
+            uint256 cadenceInterval = LibVaipakam.intervalDays(cadence);
+            if (cadenceInterval >= params.durationDays) {
+                revert IVaipakamErrors.CadenceNotAllowed(
+                    uint8(cadence),
+                    params.durationDays,
+                    principalNumeraire,
+                    threshold
+                );
+            }
+        }
+
+        offer.periodicInterestCadence = cadence;
+    }
+
+    /// @dev Convert a raw token amount to numeraire-units (1e18-scaled).
+    ///      Single step now after the Numeraire generalization (B1) architectural
+    ///      change: `OracleFacet.getAssetPrice` returns numeraire-quoted
+    ///      prices natively (governance rotates the underlying Chainlink
+    ///      feed addresses + denominator constant when the numeraire
+    ///      changes), so this helper just multiplies + scales — no
+    ///      second-step boundary conversion via `INumeraireOracle`.
+    ///
+    ///      Returns 0 if the asset has no oracle coverage — Filter 2
+    ///      then treats every offer as "below threshold" for that asset,
+    ///      forcing None on ≤365d loans and Annual on multi-year. That
+    ///      degrades safely (cadence cannot opt into anything finer than
+    ///      what's enforceable on-chain via the existing terminal path).
+    function _principalToNumeraire1e18(
+        address asset,
+        uint256 amount
+    ) private view returns (uint256) {
+        if (asset == address(0) || amount == 0) return 0;
+        try OracleFacet(address(this)).getAssetPrice(asset) returns (
+            uint256 price,
+            uint8 feedDecimals
+        ) {
+            uint8 tokenDecimals = IERC20Metadata(asset).decimals();
+            return (amount * price * 1e18) /
+                (10 ** feedDecimals) /
+                (10 ** tokenDecimals);
+        } catch {
+            return 0;
+        }
     }
 
     /// @dev Classic-path asset pull: the big if/else that lives in
     ///      {createOffer}. Handles every combination of offer side +
     ///      asset type. Permit2 callers skip this and invoke
     ///      `LibPermit2.pull` with the signed permit instead.
+    ///
+    ///      ERC-20 deposits route through
+    ///      `EscrowFactoryFacet.escrowDepositERC20` (the protocol-wide
+    ///      chokepoint) so the `protocolTrackedEscrowBalance` counter
+    ///      ticks at every legitimate inflow. NFTs (ERC-721 / ERC-1155)
+    ///      bypass the counter — they're tracked per-loan via
+    ///      `loan.collateralAsset / tokenId / quantity` references
+    ///      rather than fungible balance, so the counter doesn't
+    ///      apply to them. The `escrow` argument stays in the
+    ///      signature because NFT receivers still target it directly.
     function _pullCreatorAssetsClassic(
+        address creator,
         LibVaipakam.CreateOfferParams calldata params,
         address escrow
     ) private {
         if (params.offerType == LibVaipakam.OfferType.Lender) {
             if (params.assetType == LibVaipakam.AssetType.ERC20) {
-                IERC20(params.lendingAsset).safeTransferFrom(
-                    msg.sender,
-                    escrow,
-                    params.amount
+                // Range Orders Phase 1: pre-escrow the upper bound
+                // (`amountMax`) so subsequent partial fills draw from
+                // the lender's already-locked custody. Auto-collapse
+                // (params.amountMax == 0 → params.amount) keeps legacy
+                // single-value callers byte-identical.
+                uint256 lenderPull = params.amountMax == 0
+                    ? params.amount
+                    : params.amountMax;
+                LibFacet.crossFacetCall(
+                    abi.encodeWithSelector(
+                        EscrowFactoryFacet.escrowDepositERC20.selector,
+                        creator,
+                        params.lendingAsset,
+                        lenderPull
+                    ),
+                    EscrowDepositFailed.selector
                 );
             } else if (params.assetType == LibVaipakam.AssetType.ERC721) {
                 IERC721(params.lendingAsset).safeTransferFrom(
-                    msg.sender,
+                    creator,
                     escrow,
                     params.tokenId
                 );
             } else if (params.assetType == LibVaipakam.AssetType.ERC1155) {
                 IERC1155(params.lendingAsset).safeTransferFrom(
-                    msg.sender,
+                    creator,
                     escrow,
                     params.tokenId,
                     params.quantity,
@@ -328,20 +680,24 @@ contract OfferFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
             // Borrower: lock collateral (or prepay for NFT rental).
             if (params.assetType == LibVaipakam.AssetType.ERC20) {
                 if (params.collateralAssetType == LibVaipakam.AssetType.ERC20) {
-                    IERC20(params.collateralAsset).safeTransferFrom(
-                        msg.sender,
-                        escrow,
-                        params.collateralAmount
+                    LibFacet.crossFacetCall(
+                        abi.encodeWithSelector(
+                            EscrowFactoryFacet.escrowDepositERC20.selector,
+                            creator,
+                            params.collateralAsset,
+                            params.collateralAmount
+                        ),
+                        EscrowDepositFailed.selector
                     );
                 } else if (params.collateralAssetType == LibVaipakam.AssetType.ERC721) {
                     IERC721(params.collateralAsset).safeTransferFrom(
-                        msg.sender,
+                        creator,
                         escrow,
                         params.collateralTokenId
                     );
                 } else if (params.collateralAssetType == LibVaipakam.AssetType.ERC1155) {
                     IERC1155(params.collateralAsset).safeTransferFrom(
-                        msg.sender,
+                        creator,
                         escrow,
                         params.collateralTokenId,
                         params.collateralQuantity,
@@ -355,10 +711,14 @@ contract OfferFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
                 params.assetType == LibVaipakam.AssetType.ERC1155
             ) {
                 uint256 totalPrepay = _nftRentalPrepayTotal(params.amount, params.durationDays);
-                IERC20(params.prepayAsset).safeTransferFrom(
-                    msg.sender,
-                    escrow,
-                    totalPrepay
+                LibFacet.crossFacetCall(
+                    abi.encodeWithSelector(
+                        EscrowFactoryFacet.escrowDepositERC20.selector,
+                        creator,
+                        params.prepayAsset,
+                        totalPrepay
+                    ),
+                    EscrowDepositFailed.selector
                 );
             } else {
                 revert InvalidAssetType();
@@ -376,7 +736,9 @@ contract OfferFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
         LibVaipakam.CreateOfferParams calldata params
     ) private view returns (uint256) {
         if (params.offerType == LibVaipakam.OfferType.Lender) {
-            return params.amount;
+            // Range Orders Phase 1: pre-escrow `amountMax` so partial
+            // fills draw from custody. Auto-collapse for legacy callers.
+            return params.amountMax == 0 ? params.amount : params.amountMax;
         }
         if (params.assetType == LibVaipakam.AssetType.ERC20) {
             return params.collateralAmount;
@@ -407,6 +769,7 @@ contract OfferFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
     /// @dev Shared post-pull finish. Mints the Vaipakam position NFT,
     ///      runs MetricsFacet analytics hook, emits OfferCreated.
     function _createOfferFinish(
+        address creator,
         uint256 offerId,
         LibVaipakam.CreateOfferParams calldata params
     ) private {
@@ -419,7 +782,7 @@ contract OfferFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
         (bool success, ) = address(VaipakamNFTFacet(address(this))).call(
             abi.encodeWithSelector(
                 VaipakamNFTFacet.mintNFT.selector,
-                msg.sender,
+                creator,
                 offer.positionTokenId,
                 offerId,
                 0,
@@ -431,7 +794,7 @@ contract OfferFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
 
         LibMetricsHooks.onOfferCreated(offer);
 
-        emit OfferCreated(offerId, msg.sender, params.offerType);
+        emit OfferCreated(offerId, creator, params.offerType);
     }
 
     /**
@@ -441,20 +804,22 @@ contract OfferFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
      */
     function _writeOfferFields(
         LibVaipakam.Offer storage offer,
+        address creator,
         uint256 offerId,
         LibVaipakam.CreateOfferParams calldata params
     ) private {
-        _writeOfferPrincipalFields(offer, offerId, params);
+        _writeOfferPrincipalFields(offer, creator, offerId, params);
         _writeOfferCollateralFields(offer, params);
     }
 
     function _writeOfferPrincipalFields(
         LibVaipakam.Offer storage offer,
+        address creator,
         uint256 offerId,
         LibVaipakam.CreateOfferParams calldata params
     ) private {
         offer.id = offerId;
-        offer.creator = msg.sender;
+        offer.creator = creator;
         offer.offerType = params.offerType;
         offer.lendingAsset = params.lendingAsset;
         offer.amount = params.amount;
@@ -464,6 +829,52 @@ contract OfferFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
         offer.tokenId = params.tokenId;
         offer.quantity = params.quantity;
         offer.prepayAsset = params.prepayAsset;
+        // ── Range Orders Phase 1 (docs/RangeOffersDesign.md §2.1, §15)
+        // Auto-collapse: when caller leaves `amountMax == 0`, copy the
+        // legacy single value into `amountMax` so the offer is treated
+        // as single-value (`amountMin == amountMax`). Same for the rate
+        // pair. This preserves backward compat for every existing test
+        // / script that builds CreateOfferParams without the new fields.
+        // Range mode (`amountMax > amount`) is gated on the master flag
+        // — when off, callers must collapse client-side.
+        LibVaipakam.ProtocolConfig storage cfg =
+            LibVaipakam.storageSlot().protocolCfg;
+        uint256 effAmountMax = params.amountMax == 0
+            ? params.amount
+            : params.amountMax;
+        uint256 effRateMax = params.interestRateBpsMax == 0
+            ? params.interestRateBps
+            : params.interestRateBpsMax;
+        // Range invariants: min ≤ max, max within sanity ceiling.
+        if (effAmountMax < params.amount) revert InvalidAmountRange();
+        if (effRateMax < params.interestRateBps) revert InvalidRateRange();
+        if (effRateMax > LibVaipakam.MAX_INTEREST_BPS) {
+            revert InterestRateAboveCeiling();
+        }
+        // Master kill-switch enforcement: if the flag is off, the only
+        // permitted shape is the collapsed single-value offer.
+        if (!cfg.rangeAmountEnabled && effAmountMax != params.amount) {
+            revert FunctionDisabled(1);
+        }
+        if (!cfg.rangeRateEnabled && effRateMax != params.interestRateBps) {
+            revert FunctionDisabled(2);
+        }
+        // `partialFillEnabled` only matters on lender offers — borrower
+        // offers stay single-fill in Phase 1 regardless. Even on lender
+        // side, a single-value (collapsed) amount range can never
+        // partial-fill (one match exhausts), so the flag check is
+        // restricted to ranged-amount lender offers.
+        if (
+            !cfg.partialFillEnabled
+            && params.offerType == LibVaipakam.OfferType.Lender
+            && effAmountMax != params.amount
+        ) {
+            revert FunctionDisabled(3);
+        }
+        offer.amountMax = effAmountMax;
+        offer.interestRateBpsMax = effRateMax;
+        offer.amountFilled = 0;
+        offer.createdAt = uint64(block.timestamp);
     }
 
     function _writeOfferCollateralFields(
@@ -489,7 +900,8 @@ contract OfferFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
      * @dev Compliance gates (in order): country pair via
      *      {LibVaipakam.canTradeBetween}; liquidity re-check with mutual
      *      illiquid consent; tiered KYC via
-     *      {ProfileFacet.meetsKYCRequirement} on the transaction USD value.
+     *      {ProfileFacet.meetsKYCRequirement} on the transaction
+     *      numeraire-quoted value.
      *
      *      Asset flow:
      *        - ERC-20 loan: lender escrow → borrower principal transfer;
@@ -522,6 +934,51 @@ contract OfferFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
         uint256 offerId,
         bool acceptorFallbackConsent
     ) external nonReentrant whenNotPaused returns (uint256 loanId) {
+        return
+            _acceptOffer(
+                offerId,
+                acceptorFallbackConsent,
+                /*usePermit=*/ false,
+                _emptyPermit(),
+                ""
+            );
+    }
+
+    /// @notice Cross-facet entry point used exclusively by
+    ///         `OfferMatchFacet.matchOffers` to invoke the same
+    ///         `_acceptOffer` plumbing without re-acquiring the
+    ///         shared `nonReentrant` lock that the outer
+    ///         `matchOffers` already holds.
+    /// @dev    Gated on `msg.sender == address(this)` so EOAs cannot
+    ///         call this directly through the diamond fallback —
+    ///         only same-tx cross-facet calls from another diamond
+    ///         facet pass. Reentrancy is the caller's
+    ///         responsibility (matchOffers' outer lock covers
+    ///         this whole tx). The `whenNotPaused` gate also lives
+    ///         on the outer entry, not here, to avoid double-checks
+    ///         on an internal hop.
+    ///
+    ///         Permit2 is intentionally not exposed here — the
+    ///         matching path doesn't pull acceptor-side ERC-20 (the
+    ///         borrower's collateral is already escrowed at offer-
+    ///         create time, and the lender principal flows escrow-
+    ///         internal). matchOffers always passes `usePermit=false`.
+    /// @param offerId                 The borrower offer the matching
+    ///                                core processes (see the docstring
+    ///                                on `OfferMatchFacet.matchOffers`
+    ///                                for why borrower-side, not lender).
+    /// @param acceptorFallbackConsent Always passed as `true` from
+    ///                                matchOffers — the lender (the
+    ///                                injected counterparty) consented
+    ///                                at lender-offer create time.
+    /// @return loanId                 Newly initiated loan id.
+    function acceptOfferInternal(
+        uint256 offerId,
+        bool acceptorFallbackConsent
+    ) external returns (uint256 loanId) {
+        if (msg.sender != address(this)) {
+            revert UnauthorizedCrossFacetCall();
+        }
         return
             _acceptOffer(
                 offerId,
@@ -605,6 +1062,59 @@ contract OfferFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
             });
     }
 
+    /// @dev NFT-rental prepay pull. Extracted from `_acceptOffer` to
+    ///      keep that function's local count under viaIR's
+    ///      stack-too-deep budget after the OfferFacet split.
+    ///      Called only when the lender offer's `assetType` is
+    ///      ERC721 / ERC1155 (NFT rental) — borrower prepays the
+    ///      full term's rental fee + buffer in `prepayAsset` (a
+    ///      stablecoin) into their own escrow.
+    function _pullRentalPrepay(
+        LibVaipakam.Offer storage offer,
+        address borrower,
+        address borrowerEscrow,
+        bool usePermit,
+        ISignatureTransfer.PermitTransferFrom memory permit,
+        bytes memory signature
+    ) private {
+        uint256 prepayAmount = offer.amount * offer.durationDays;
+        uint256 buffer = (prepayAmount * LibVaipakam.cfgRentalBufferBps())
+            / LibVaipakam.BASIS_POINTS;
+        uint256 totalPrepay = prepayAmount + buffer;
+        if (usePermit) {
+            LibPermit2.pull(
+                borrower,
+                borrowerEscrow,
+                offer.prepayAsset,
+                totalPrepay,
+                permit,
+                signature
+            );
+            // Permit2 handled the funds movement directly; counter-only
+            // sibling records the deposit so the protocolTracked-
+            // EscrowBalance counter stays in sync.
+            LibFacet.crossFacetCall(
+                abi.encodeWithSelector(
+                    EscrowFactoryFacet.recordEscrowDepositERC20.selector,
+                    borrower,
+                    offer.prepayAsset,
+                    totalPrepay
+                ),
+                EscrowDepositFailed.selector
+            );
+        } else {
+            LibFacet.crossFacetCall(
+                abi.encodeWithSelector(
+                    EscrowFactoryFacet.escrowDepositERC20.selector,
+                    borrower,
+                    offer.prepayAsset,
+                    totalPrepay
+                ),
+                EscrowDepositFailed.selector
+            );
+        }
+    }
+
     function _acceptOffer(
         uint256 offerId,
         bool acceptorFallbackConsent,
@@ -617,14 +1127,34 @@ contract OfferFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
         if (offer.creator == address(0)) revert InvalidOffer();
         if (offer.accepted) revert OfferAlreadyAccepted();
 
+        // ── Range Orders Phase 1 — address-resolution override ────────
+        // When matchOffers is in flight (matchOverride.active), msg.sender
+        // is the matcher (= bot, third party). The actual COUNTERPARTY
+        // to the offer being processed is matchOverride.counterparty (= the
+        // borrower-offer's creator when the lender offer is being
+        // processed via matchOffers). Sanctions/country/KYC checks +
+        // role resolution must use the real party, not the bot. The
+        // matcher (= LIF kickback recipient) is matchOverride.matcher.
+        // On the legacy acceptOffer path, override.active = false; both
+        // `acceptor` and `matcher` resolve to msg.sender (preserving
+        // pre-Phase-1 behaviour byte-identically).
+        // `acceptor` resolved here is consumed throughout the function;
+        // the matcher (LIF kickback recipient) is read inline at the
+        // two use sites (lender-asset LIF split + `loan.matcher`
+        // recording) so we don't pay a stack slot for it. viaIR's
+        // stack-too-deep budget is tight in this function.
+        address acceptor = s.matchOverride.active
+            ? s.matchOverride.counterparty
+            : msg.sender;
+
         // Phase 4.3 — address-level sanctions screening on both sides
         // of the match. The acceptor's check is obvious; the creator's
         // catches the edge case where a user was clean when they
         // posted the offer but was sanctioned before anyone matched.
         // No-op on chains where governance has not configured the
         // oracle address.
-        if (LibVaipakam.isSanctionedAddress(msg.sender)) {
-            revert ProfileFacet.SanctionedAddress(msg.sender);
+        if (LibVaipakam.isSanctionedAddress(acceptor)) {
+            revert ProfileFacet.SanctionedAddress(acceptor);
         }
         if (LibVaipakam.isSanctionedAddress(offer.creator)) {
             revert ProfileFacet.SanctionedAddress(offer.creator);
@@ -640,7 +1170,7 @@ contract OfferFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
         string memory creatorCountry = ProfileFacet(address(this))
             .getUserCountry(offer.creator);
         string memory acceptorCountry = ProfileFacet(address(this))
-            .getUserCountry(msg.sender);
+            .getUserCountry(acceptor);
         if (
             keccak256(abi.encodePacked(creatorCountry)) !=
             keccak256(abi.encodePacked(acceptorCountry))
@@ -663,10 +1193,10 @@ contract OfferFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
         }
 
         // Tiered KYC check based on transaction value (per README Section 16)
-        uint256 valueUSD = _calculateTransactionValueUSD(offer);
+        uint256 valueNumeraire = _calculateTransactionValueNumeraire(offer);
         if (
-            !ProfileFacet(address(this)).meetsKYCRequirement(offer.creator, valueUSD) ||
-            !ProfileFacet(address(this)).meetsKYCRequirement(msg.sender, valueUSD)
+            !ProfileFacet(address(this)).meetsKYCRequirement(offer.creator, valueNumeraire) ||
+            !ProfileFacet(address(this)).meetsKYCRequirement(acceptor, valueNumeraire)
         ) {
             revert KYCRequired();
         }
@@ -678,17 +1208,61 @@ contract OfferFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
 
         if (offer.offerType == LibVaipakam.OfferType.Lender) {
             lender = offer.creator;
-            borrower = msg.sender;
+            borrower = acceptor;
             lenderEscrow = getUserEscrow(lender);
             borrowerEscrow = getUserEscrow(borrower);
         } else {
-            lender = msg.sender;
+            lender = acceptor;
             borrower = offer.creator;
             lenderEscrow = getUserEscrow(lender);
             borrowerEscrow = getUserEscrow(borrower);
         }
         uint256 vpfiDiscountDeducted;
         if (offer.assetType == LibVaipakam.AssetType.ERC20) {
+            // Borrower-offer ERC-20 path: lender is the acceptor and has
+            // NOT pre-funded principal at any earlier step (only Lender
+            // offers do that, at `createOffer` time via
+            // `_pullCreatorAssetsClassic`). Pull `offer.amount` from the
+            // lender's wallet into the lender's escrow now, through the
+            // standard `escrowDepositERC20` chokepoint so the
+            // `protocolTrackedEscrowBalance` counter ticks. Without this,
+            // the subsequent `escrowWithdrawERC20(lender, …)` calls
+            // below underflow the counter (Solidity 0.8 `-=` panic).
+            //
+            // Skip the pull on the matching path
+            // (`matchOverride.active`): there the lender funded their
+            // SIDE via a Lender offer's `amountMax` pre-escrow at
+            // create time, and the matched principal is debited from
+            // that pool (with `amountFilled` accounting in
+            // `LibOfferMatch.executeMatch`). Pulling again from the
+            // lender's wallet would be a double-deposit they never
+            // approved.
+            //
+            // Why no public self-deposit chokepoint instead: a
+            // standalone `escrowDepositERC20Self(token, amount)` would
+            // let any address park funds in escrow with the counter
+            // ticking but with no protocol-flow context, opening a
+            // VPFI-staking-tier-snapshot griefing surface. Keeping the
+            // pull bound to `acceptOffer` ensures every counter
+            // increment maps 1:1 to a specific protocol action.
+            //
+            // Lender-offer path is unchanged: the creator pre-funded
+            // at create time and the counter is already correct here.
+            if (
+                offer.offerType == LibVaipakam.OfferType.Borrower
+                && !s.matchOverride.active
+            ) {
+                LibFacet.crossFacetCall(
+                    abi.encodeWithSelector(
+                        EscrowFactoryFacet.escrowDepositERC20.selector,
+                        lender,
+                        offer.lendingAsset,
+                        offer.amount
+                    ),
+                    EscrowDepositFailed.selector
+                );
+            }
+
             // Default path: deduct the 0.1% Loan Initiation Fee from the
             // lender's escrow BEFORE the net is delivered to the borrower
             // (README §6 lines 280, 332). Borrower still owes the full
@@ -733,20 +1307,48 @@ contract OfferFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
                 netToBorrower = offer.amount - initiationFee;
 
                 if (initiationFee > 0) {
+                    // Range Orders Phase 1 — 1% LIF matcher kickback.
+                    // `matcher` resolves to msg.sender on the legacy
+                    // acceptOffer path (same person who triggered the
+                    // match). Under matchOffers, matcher is the bot
+                    // recorded in the matchOverride slot. Either way:
+                    // 99% to treasury, 1% to matcher. Splits inline so
+                    // a single LIF flow never lands 100% in either
+                    // bucket. See design §"1% match fee mechanic".
+                    uint256 matcherCut =
+                        LibOfferMatch.matcherShareOf(initiationFee);
+                    uint256 treasuryCut = initiationFee - matcherCut;
                     LibFacet.crossFacetCall(
                         abi.encodeWithSelector(
                             EscrowFactoryFacet.escrowWithdrawERC20.selector,
                             lender,
                             offer.lendingAsset,
                             LibFacet.getTreasury(),
-                            initiationFee
+                            treasuryCut
                         ),
                         TreasuryTransferFailed.selector
                     );
                     LibFacet.recordTreasuryAccrual(
                         offer.lendingAsset,
-                        initiationFee
+                        treasuryCut
                     );
+                    if (matcherCut > 0) {
+                        LibFacet.crossFacetCall(
+                            abi.encodeWithSelector(
+                                EscrowFactoryFacet.escrowWithdrawERC20.selector,
+                                lender,
+                                offer.lendingAsset,
+                                // Read matcher inline from storage to
+                                // keep this function under viaIR's
+                                // stack-too-deep budget.
+                                s.matchOverride.active
+                                    ? s.matchOverride.matcher
+                                    : msg.sender,
+                                matcherCut
+                            ),
+                            EscrowWithdrawFailed.selector
+                        );
+                    }
                 }
             }
 
@@ -764,27 +1366,18 @@ contract OfferFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
             );
         } else {
             if (offer.offerType == LibVaipakam.OfferType.Lender) {
-                // NFT renting: Borrower prepays (per day fee * days + 5% buffer)
-                uint256 prepayAmount = offer.amount * offer.durationDays;
-                uint256 buffer = (prepayAmount * LibVaipakam.cfgRentalBufferBps()) /
-                    LibVaipakam.BASIS_POINTS;
-                uint256 totalPrepay = prepayAmount + buffer;
-                if (usePermit) {
-                    LibPermit2.pull(
-                        borrower,
-                        borrowerEscrow,
-                        offer.prepayAsset,
-                        totalPrepay,
-                        permit,
-                        signature
-                    );
-                } else {
-                    IERC20(offer.prepayAsset).safeTransferFrom(
-                        borrower,
-                        borrowerEscrow,
-                        totalPrepay
-                    );
-                }
+                // NFT renting: borrower prepays (rate × days + buffer).
+                // Extracted to a helper to keep `_acceptOffer`'s local
+                // count under viaIR's stack-too-deep budget after the
+                // OfferFacet split.
+                _pullRentalPrepay(
+                    offer,
+                    borrower,
+                    borrowerEscrow,
+                    usePermit,
+                    permit,
+                    signature
+                );
             } else {
                 // Borrower-type NFT offer accepted by lender: escrow the lender's NFT.
                 // The lender (msg.sender/acceptor) must custody the NFT in their escrow
@@ -834,11 +1427,27 @@ contract OfferFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
                             permit,
                             signature
                         );
+                        // Permit2 already moved funds; counter-only
+                        // record so the protocolTrackedEscrowBalance
+                        // tally stays in sync.
+                        LibFacet.crossFacetCall(
+                            abi.encodeWithSelector(
+                                EscrowFactoryFacet.recordEscrowDepositERC20.selector,
+                                borrower,
+                                offer.collateralAsset,
+                                offer.collateralAmount
+                            ),
+                            EscrowDepositFailed.selector
+                        );
                     } else {
-                        IERC20(offer.collateralAsset).safeTransferFrom(
-                            borrower,
-                            borrowerEscrow,
-                            offer.collateralAmount
+                        LibFacet.crossFacetCall(
+                            abi.encodeWithSelector(
+                                EscrowFactoryFacet.escrowDepositERC20.selector,
+                                borrower,
+                                offer.collateralAsset,
+                                offer.collateralAmount
+                            ),
+                            EscrowDepositFailed.selector
                         );
                     }
                 } else if (offer.collateralAssetType == LibVaipakam.AssetType.ERC721) {
@@ -860,17 +1469,41 @@ contract OfferFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
             // ERC721/ERC1155 lender offers: borrower prepay already transferred above
         }
 
-        // Initiate loan
+        // Initiate loan. Pass the override-aware `acceptor` (resolved
+        // at the top of this function) — under matchOffers msg.sender
+        // is the bot/relayer, not the actual counterparty. Without
+        // this, `LoanFacet._copyPartyFields` would record the bot as
+        // `loan.lender` (when the offer being processed is borrower-
+        // type), which is exactly the bug PR3-B's address-resolution
+        // refactor was meant to close. Legacy acceptOffer path:
+        // `acceptor == msg.sender`, byte-identical to pre-refactor.
         bytes memory result = LibFacet.crossFacetCallReturn(
             abi.encodeWithSelector(
                 LoanFacet.initiateLoan.selector,
                 offerId,
-                msg.sender,
+                acceptor,
                 acceptorFallbackConsent
             ),
             LoanInitiationFailed.selector
         );
         loanId = abi.decode(result, (uint256));
+
+        // Range Orders Phase 1 — record the matcher on the loan so the
+        // VPFI-path 1% LIF kickback (deferred to terminal in
+        // `LibVPFIDiscount.settleBorrowerLifProper` /
+        // `forfeitBorrowerLif`) knows where to route. On the legacy
+        // `acceptOffer` path, `matcher` resolves to `msg.sender` (the
+        // acceptor — same person who triggered the match). Under
+        // `matchOffers`, `matcher` resolves via the matchOverride slot
+        // to the bot/relayer that submitted the match (NOT the
+        // borrower-offer's creator, which would otherwise be
+        // `msg.sender` of the inner _acceptOffer call frame). Stored
+        // unconditionally — lender-asset paths already paid the matcher
+        // synchronously above, so this only matters for VPFI-path loans,
+        // but recording on every loan keeps the read cheap and uniform.
+        s.loans[loanId].matcher = s.matchOverride.active
+            ? s.matchOverride.matcher
+            : msg.sender;
 
         // Update offer
         offer.accepted = true;
@@ -918,12 +1551,19 @@ contract OfferFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
                     OfferAcceptFailed.selector
                 );
             }
-            // Borrower offset offer (created by offsetWithNewOffer)
+            // Borrower offset offer (created by offsetWithNewOffer).
+            // Use `completeOffsetInternal` not `completeOffset`: this
+            // facet's `acceptOffer` already holds the diamond's
+            // `nonReentrant` lock, so a cross-facet call into
+            // `completeOffset` (also `nonReentrant`) would revert
+            // ReentrancyGuardReentrantCall and break Option-3
+            // settlement entirely. Internal entry is gated on
+            // `msg.sender == address(this)`.
             uint256 offsetLoanId = sCheck.offsetOfferToLoanId[offerId];
             if (offsetLoanId != 0) {
                 LibFacet.crossFacetCall(
                     abi.encodeWithSelector(
-                        PrecloseFacet.completeOffset.selector,
+                        PrecloseFacet.completeOffsetInternal.selector,
                         offsetLoanId
                     ),
                     OfferAcceptFailed.selector
@@ -934,234 +1574,6 @@ contract OfferFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
         emit OfferAccepted(offerId, msg.sender, loanId);
     }
 
-    /**
-     * @notice Cancels an unaccepted offer and returns the locked assets.
-     * @dev Creator-only (enforced via {LibAuth.requireOfferCreator}).
-     *      Releases whatever was actually locked during {createOffer}:
-     *      principal (Lender side) or collateral / rental prepay+buffer
-     *      (Borrower side), matching the original asset type. Burns the
-     *      offer position NFT and deletes the Offer record.
-     *      Reverts NotOfferCreator or OfferAlreadyAccepted; emits
-     *      OfferCanceled.
-     * @param offerId The offer ID to cancel.
-     */
-    function cancelOffer(uint256 offerId) external nonReentrant whenNotPaused {
-        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        LibVaipakam.Offer storage offer = s.offers[offerId];
-        LibAuth.requireOfferCreator(offer);
-        if (offer.accepted) revert OfferAlreadyAccepted();
-
-        // ── Strategic-flow NFT unlock on cancel ─────────────────────────────
-        // requireOfferCreator above has bound msg.sender to offer.creator. For
-        // the native-lock design the position NFT never leaves its owner; we
-        // only need to clear the LibERC721 lock to restore ordinary transfer
-        // rights.
-        //
-        // (a) Preclose Option 3 offset: release the borrower position NFT.
-        uint256 lockedOffsetLoanId = s.offsetOfferToLoanId[offerId];
-        if (lockedOffsetLoanId != 0) {
-            LibERC721._unlock(s.loans[lockedOffsetLoanId].borrowerTokenId);
-            delete s.offsetOfferToLoanId[offerId];
-            delete s.loanToOffsetOfferId[lockedOffsetLoanId];
-        }
-
-        // (b) EarlyWithdrawal loan sale: release the lender position NFT.
-        uint256 lockedSaleLoanId = s.saleOfferToLoanId[offerId];
-        if (lockedSaleLoanId != 0) {
-            LibERC721._unlock(s.loans[lockedSaleLoanId].lenderTokenId);
-            delete s.saleOfferToLoanId[offerId];
-            delete s.loanToSaleOfferId[lockedSaleLoanId];
-        }
-
-        if (offer.offerType == LibVaipakam.OfferType.Lender) {
-            if (offer.assetType == LibVaipakam.AssetType.ERC20) {
-                LibFacet.crossFacetCall(
-                    abi.encodeWithSelector(
-                        EscrowFactoryFacet.escrowWithdrawERC20.selector,
-                        msg.sender,
-                        offer.lendingAsset,
-                        msg.sender,
-                        offer.amount
-                    ),
-                    EscrowWithdrawFailed.selector
-                );
-            } else if (offer.assetType == LibVaipakam.AssetType.ERC721) {
-                LibFacet.crossFacetCall(
-                    abi.encodeWithSelector(
-                        EscrowFactoryFacet.escrowWithdrawERC721.selector,
-                        msg.sender,
-                        offer.lendingAsset,
-                        offer.tokenId,
-                        msg.sender
-                    ),
-                    EscrowWithdrawFailed.selector
-                );
-            } else if (offer.assetType == LibVaipakam.AssetType.ERC1155) {
-                LibFacet.crossFacetCall(
-                    abi.encodeWithSelector(
-                        EscrowFactoryFacet.escrowWithdrawERC1155.selector,
-                        msg.sender,
-                        offer.lendingAsset,
-                        offer.tokenId,
-                        offer.quantity,
-                        msg.sender
-                    ),
-                    EscrowWithdrawFailed.selector
-                );
-            }
-        } else {
-            // Borrower: Unlock what was actually deposited during createOffer
-            if (offer.assetType == LibVaipakam.AssetType.ERC20) {
-                // ERC-20 loan: collateral was deposited based on collateralAssetType
-                if (offer.collateralAssetType == LibVaipakam.AssetType.ERC20) {
-                    LibFacet.crossFacetCall(
-                        abi.encodeWithSelector(
-                            EscrowFactoryFacet.escrowWithdrawERC20.selector,
-                            msg.sender,
-                            offer.collateralAsset,
-                            msg.sender,
-                            offer.collateralAmount
-                        ),
-                        EscrowWithdrawFailed.selector
-                    );
-                } else if (offer.collateralAssetType == LibVaipakam.AssetType.ERC721) {
-                    LibFacet.crossFacetCall(
-                        abi.encodeWithSelector(
-                            EscrowFactoryFacet.escrowWithdrawERC721.selector,
-                            msg.sender,
-                            offer.collateralAsset,
-                            offer.collateralTokenId,
-                            msg.sender
-                        ),
-                        EscrowWithdrawFailed.selector
-                    );
-                } else if (offer.collateralAssetType == LibVaipakam.AssetType.ERC1155) {
-                    LibFacet.crossFacetCall(
-                        abi.encodeWithSelector(
-                            EscrowFactoryFacet.escrowWithdrawERC1155.selector,
-                            msg.sender,
-                            offer.collateralAsset,
-                            offer.collateralTokenId,
-                            offer.collateralQuantity,
-                            msg.sender
-                        ),
-                        EscrowWithdrawFailed.selector
-                    );
-                }
-            } else if (
-                offer.assetType == LibVaipakam.AssetType.ERC721 ||
-                offer.assetType == LibVaipakam.AssetType.ERC1155
-            ) {
-                // NFT rental borrower offer: ERC-20 prepayment was deposited
-                uint256 prepayAmount = offer.amount * offer.durationDays;
-                uint256 buffer = (prepayAmount * LibVaipakam.cfgRentalBufferBps()) /
-                    LibVaipakam.BASIS_POINTS;
-                uint256 totalPrepay = prepayAmount + buffer;
-                LibFacet.crossFacetCall(
-                    abi.encodeWithSelector(
-                        EscrowFactoryFacet.escrowWithdrawERC20.selector,
-                        msg.sender,
-                        offer.prepayAsset,
-                        msg.sender,
-                        totalPrepay
-                    ),
-                    EscrowWithdrawFailed.selector
-                );
-            }
-        }
-
-        // Burn position NFT (not the underlying asset tokenId)
-        LibFacet.crossFacetCall(
-            abi.encodeWithSelector(
-                VaipakamNFTFacet.burnNFT.selector,
-                offer.positionTokenId
-            ),
-            NFTBurnFailed.selector
-        );
-
-        // Stamp the cancel marker BEFORE the delete so `offers[id]` going
-        // zero isn't mistaken for "never existed" by readers. The `userOfferIds`
-        // reverse index still contains the id — indexers that want to display
-        // "cancelled" as a terminal state read this map.
-        s.offerCancelled[offerId] = true;
-        LibMetricsHooks.onOfferCancelled(offerId);
-
-        // Emit the detail variant BEFORE the storage delete so the field
-        // values are still readable. Frontend "Your Offers / Cancelled"
-        // surfaces hydrate cancelled rows from this event — the
-        // companion `OfferCanceled` keeps emitting for historical
-        // consumers that only need identity (id + creator).
-        emit OfferCanceledDetails(
-            offerId,
-            msg.sender,
-            offer.offerType,
-            offer.assetType,
-            offer.lendingAsset,
-            offer.amount,
-            offer.tokenId,
-            offer.collateralAsset,
-            offer.collateralAmount,
-            offer.interestRateBps,
-            offer.durationDays
-        );
-
-        delete s.offers[offerId];
-
-        emit OfferCanceled(offerId, msg.sender);
-    }
-
-    /**
-     * @notice Returns open offer IDs whose creator country is trade-compatible
-     *         with `user`'s country. Paginated.
-     * @dev Consults {ProfileFacet.getUserCountry} for both sides and
-     *      {LibVaipakam.canTradeBetween} — the trade-pair allowance table is
-     *      governance-configured via {ProfileFacet.setTradeAllowance}. Walks
-     *      the `activeOfferIdsList` maintained by LibMetricsHooks (bounded by
-     *      `activeOffersCount`), not the lifetime sequence, so cancelled and
-     *      accepted offers are never inspected. Pagination lets callers bound
-     *      the per-call work even on very large order books.
-     * @param user The user whose country drives the filter.
-     * @param offset Number of compatible open offers to skip.
-     * @param limit  Maximum number of IDs to return.
-     * @return offerIds Array of compatible, unaccepted offer IDs (length ≤ limit).
-     * @return total   Number of currently open offers scanned (`activeOffersCount`).
-     */
-    function getCompatibleOffers(
-        address user,
-        uint256 offset,
-        uint256 limit
-    ) external view returns (uint256[] memory offerIds, uint256 total) {
-        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        uint256[] storage src = s.activeOfferIdsList;
-        total = src.length;
-        if (limit == 0) return (new uint256[](0), total);
-
-        string memory userCountry = ProfileFacet(address(this)).getUserCountry(user);
-        uint256[] memory buffer = new uint256[](limit);
-        uint256 skipped;
-        uint256 filled;
-        for (uint256 i = 0; i < total && filled < limit; ) {
-            uint256 id = src[i];
-            LibVaipakam.Offer storage offer = s.offers[id];
-            string memory creatorCountry = ProfileFacet(address(this))
-                .getUserCountry(offer.creator);
-            if (LibVaipakam.canTradeBetween(userCountry, creatorCountry)) {
-                if (skipped < offset) {
-                    unchecked { ++skipped; }
-                } else {
-                    buffer[filled] = id;
-                    unchecked { ++filled; }
-                }
-            }
-            unchecked { ++i; }
-        }
-
-        offerIds = new uint256[](filled);
-        for (uint256 j; j < filled; ) {
-            offerIds[j] = buffer[j];
-            unchecked { ++j; }
-        }
-    }
 
     // Internal helpers
 
@@ -1188,12 +1600,15 @@ contract OfferFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
         return (proxy);
     }
 
-    // New Internal: Calculate transaction value in USD for KYC (liquid parts only)
-    /// @dev Value = (lent amount if liquid * price) + (collateral amount if liquid * price). For NFTs, rental value = amount * durationDays if liquid (but NFTs illiquid, $0).
-    ///      Scaled to 1e18 for threshold comparison.
-    function _calculateTransactionValueUSD(
+    // Internal: Calculate transaction value in the active numeraire for KYC (liquid parts only)
+    /// @dev Value = (lent amount if liquid * price) + (collateral amount if liquid * price). For NFTs, rental value = amount * durationDays if liquid (but NFTs illiquid, ≡ 0).
+    ///      Scaled to 1e18 for threshold comparison. Prices come from
+    ///      `OracleFacet.getAssetPrice` which returns numeraire-quoted truth
+    ///      (USD by post-deploy default; whatever governance has rotated to
+    ///      otherwise) — see Numeraire generalization (B1) release notes.
+    function _calculateTransactionValueNumeraire(
         LibVaipakam.Offer storage offer
-    ) internal view returns (uint256 valueUSD) {
+    ) internal view returns (uint256 valueNumeraire) {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
 
         // Lent asset value if liquid
@@ -1203,10 +1618,10 @@ contract OfferFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
             (uint256 price, uint8 feedDecimals) = OracleFacet(address(this))
                 .getAssetPrice(offer.lendingAsset);
             uint8 tokenDecimals = IERC20Metadata(offer.lendingAsset).decimals();
-            valueUSD += (offer.amount * price * 1e18) / (10 ** feedDecimals) / (10 ** tokenDecimals);
+            valueNumeraire += (offer.amount * price * 1e18) / (10 ** feedDecimals) / (10 ** tokenDecimals);
         } else if (offer.assetType != LibVaipakam.AssetType.ERC20) {
-            // For NFT rentals: Rental value = amount (fee) * durationDays, but since illiquid, $0
-            valueUSD += 0;
+            // For NFT rentals: Rental value = amount (fee) * durationDays, but since illiquid, ≡ 0
+            valueNumeraire += 0;
         }
 
         // Collateral value if liquid.
@@ -1224,26 +1639,8 @@ contract OfferFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
             (uint256 price, uint8 feedDecimals) = OracleFacet(address(this))
                 .getAssetPrice(offer.collateralAsset);
             uint8 tokenDecimals = IERC20Metadata(offer.collateralAsset).decimals();
-            valueUSD += (effectiveCollateral * price * 1e18) / (10 ** feedDecimals) / (10 ** tokenDecimals);
+            valueNumeraire += (effectiveCollateral * price * 1e18) / (10 ** feedDecimals) / (10 ** tokenDecimals);
         }
     }
 
-    /**
-     * @notice Gets details of an offer.
-     * @dev View function for off-chain/test queries. Returns full Offer struct.
-     * @param offerId The offer ID.
-     * @return offer The Offer struct.
-     */
-    function getOffer(
-        uint256 offerId
-    ) external view returns (LibVaipakam.Offer memory offer) {
-        return LibVaipakam.storageSlot().offers[offerId];
-    }
-
-    /// @notice README §13.3 alias for {getOffer}. Returns the full Offer struct.
-    function getOfferDetails(
-        uint256 offerId
-    ) external view returns (LibVaipakam.Offer memory) {
-        return LibVaipakam.storageSlot().offers[offerId];
-    }
 }

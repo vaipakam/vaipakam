@@ -16,18 +16,18 @@ titre d'une carte.
 
 ## Tableau de bord
 
-<a id="dashboard.your-escrow"></a>
+<a id="dashboard.your-vault"></a>
 
-### Votre Escrow
+### Votre Vault
 
-Considère ton **escrow** comme ton coffre-fort privé à l'intérieur de
+Considère ton **vault** comme ton coffre-fort privé à l'intérieur de
 Vaipakam. C'est un petit contrat que toi seul contrôles. Chaque fois
 que tu participes à un prêt — soit en déposant un collatéral, soit en
 prêtant un actif — les actifs passent de ton wallet vers ce coffre.
 Ils ne sont jamais mélangés à l'argent de quelqu'un d'autre. Quand le
 prêt se termine, tu les récupères directement.
 
-Tu n'as pas besoin de "créer" un escrow toi-même ; l'application en
+Tu n'as pas besoin de "créer" un vault toi-même ; l'application en
 crée un la première fois que tu en as besoin. Une fois qu'il existe,
 il reste comme ton emplacement dédié sur cette chaîne.
 
@@ -49,13 +49,13 @@ un autre), les deux apparaissent — même endroit, lignes différentes.
 
 ### VPFI sur cette chaîne
 
-**VPFI** est le token natif du protocole. En détenir dans ton escrow
+**VPFI** est le token natif du protocole. En détenir dans ton vault
 te donne une remise sur les frais du protocole et te génère un petit
 rendement passif (5% APR). Cette carte t'indique, sur la chaîne à
 laquelle tu es connecté :
 
 - Combien de VPFI se trouvent dans ton wallet en ce moment.
-- Combien sont dans ton escrow (ce qui compte comme "staké").
+- Combien sont dans ton vault (ce qui compte comme "staké").
 - Quelle part de l'offre totale de VPFI tu détiens.
 - Combien de VPFI il reste à minter au total (le protocole a un
   plafond strict).
@@ -72,19 +72,28 @@ chaîne où tu te trouves.
 ### Consentement à la remise sur frais
 
 Vaipakam peut te verser une remise sur les frais du protocole en
-utilisant une partie des VPFI que tu as garés en escrow. Cet
+utilisant une partie des VPFI que tu as garés en vault. Cet
 interrupteur est le "oui, fais-le". Tu ne le bascules qu'une fois.
 
 L'ampleur de la remise dépend de la quantité de VPFI que tu gardes en
-escrow :
+vault :
 
-- **Tier 1** — 100 VPFI ou plus → 10% de remise
-- **Tier 2** — 1 000 VPFI ou plus → 15% de remise
-- **Tier 3** — 5 000 VPFI ou plus → 20% de remise
-- **Tier 4** — plus de 20 000 VPFI → 24% de remise
+- **Tier 1** — `{liveValue:tier1Min}` VPFI ou plus → `{liveValue:tier1DiscountBps}`% de remise
+- **Tier 2** — `{liveValue:tier2Min}` VPFI ou plus → `{liveValue:tier2DiscountBps}`% de remise
+- **Tier 3** — `{liveValue:tier3Min}` VPFI ou plus → `{liveValue:tier3DiscountBps}`% de remise
+- **Tier 4** — plus de `{liveValue:tier4Min}` VPFI → `{liveValue:tier4DiscountBps}`% de remise
 
 Tu peux désactiver l'interrupteur à tout moment. Si tu retires des
-VPFI de ton escrow, ton tier baisse en temps réel.
+VPFI de ton vault, ton tier baisse en temps réel.
+
+> **Remarque sur le gas du réseau blockchain.** La remise ci-dessus
+> s'applique aux **frais de protocole** de Vaipakam (Commission de
+> Rendement, Frais d'Initiation du Prêt). Les petits **frais de
+> gas** que requiert chaque action on-chain — payés aux validateurs
+> de la blockchain lors de la création d'une offre, l'acceptation,
+> le remboursement, la réclamation, etc. — sont des frais séparés
+> qui vont au réseau, pas à Vaipakam. Le protocole ne peut pas y
+> appliquer de remise puisqu'il ne les reçoit jamais.
 
 <a id="dashboard.rewards-summary"></a>
 
@@ -99,7 +108,7 @@ Il y a deux flux de récompenses et la carte ventile le total
 par chacun :
 
 - **Rendement du staking** — gagné automatiquement sur tout
-  VPFI que vous gardez dans votre escrow. Le taux est l'APR du
+  VPFI que vous gardez dans votre vault. Le taux est l'APR du
   protocole affiché sur la page Buy VPFI.
 - **Récompenses d'interaction avec la plateforme** — gagné un
   peu chaque jour pour chaque prêt auquel vous participez, des
@@ -150,7 +159,7 @@ prêterai X unités de l'actif Y au taux de Z% pendant D jours, en
 
 Un emprunteur acceptant l'une de ces offres devient l'emprunteur
 inscrit du prêt : le collatéral de l'emprunteur est verrouillé en
-escrow, l'actif principal arrive dans le wallet de l'emprunteur, et
+vault, l'actif principal arrive dans le wallet de l'emprunteur, et
 les intérêts s'accumulent jusqu'à ce que l'emprunteur rembourse.
 
 Le protocole impose une règle de sécurité du côté de l'emprunteur au
@@ -228,7 +237,7 @@ le prêt puisse passer en défaut.
 Pour une offre de location, cette carte fixe les frais journaliers
 de location. Le locataire paie le coût total de la location à
 l'avance lors de l'acceptation, plus un petit buffer de 5% au cas où
-l'opération s'étirerait légèrement. Le NFT lui-même reste en escrow
+l'opération s'étirerait légèrement. Le NFT lui-même reste en vault
 pendant toute la durée — le locataire a le droit de l'utiliser mais
 ne peut pas le déplacer.
 
@@ -406,13 +415,13 @@ chaîne à laquelle tu es connecté. Pas besoin de changer de réseau.
 
 Lecture rapide du tier de remise dans lequel tu te trouves
 actuellement. Le tier vient de la quantité de VPFI dans ton
-**escrow** (pas dans ton wallet). La carte t'indique aussi (a)
-combien de VPFI supplémentaires il faudrait dans l'escrow pour
+**vault** (pas dans ton wallet). La carte t'indique aussi (a)
+combien de VPFI supplémentaires il faudrait dans l'vault pour
 passer au tier suivant, et (b) si l'interrupteur de consentement du
 Tableau de bord est activé — la remise ne s'applique que tant
 qu'il l'est.
 
-Le même VPFI dans ton escrow est aussi automatiquement "staké" et
+Le même VPFI dans ton vault est aussi automatiquement "staké" et
 te génère 5% APR.
 
 <a id="buy-vpfi.buy"></a>
@@ -427,21 +436,21 @@ reste.
 
 <a id="buy-vpfi.deposit"></a>
 
-### Étape 2 — Dépose le VPFI dans ton escrow
+### Étape 2 — Dépose le VPFI dans ton vault
 
-Acheter du VPFI le met dans ton wallet, pas dans ton escrow. Pour
+Acheter du VPFI le met dans ton wallet, pas dans ton vault. Pour
 obtenir la remise sur les frais et le rendement de staking de 5%,
-tu dois le déplacer toi-même dans l'escrow. C'est toujours un clic
+tu dois le déplacer toi-même dans l'vault. C'est toujours un clic
 explicite — l'application ne déplace jamais ton VPFI sans que tu le
 demandes. Une transaction (ou une seule signature, sur les chaînes
 qui le supportent) et c'est réglé.
 
 <a id="buy-vpfi.unstake"></a>
 
-### Étape 3 — Désengage du VPFI de ton escrow
+### Étape 3 — Désengage du VPFI de ton vault
 
 Tu veux récupérer du VPFI dans ton wallet ? Cette carte le renvoie
-de l'escrow vers toi. Attention : retirer du VPFI fait baisser ton
+de l'vault vers toi. Attention : retirer du VPFI fait baisser ton
 tier de remise **immédiatement**. Si tu as des prêts ouverts, le
 calcul de la remise bascule au tier inférieur à partir de cet
 instant.
@@ -456,7 +465,7 @@ instant.
 
 Vaipakam te paie pour deux choses :
 
-1. **Staking** — le VPFI que tu gardes en escrow génère 5% APR,
+1. **Staking** — le VPFI que tu gardes en vault génère 5% APR,
    automatiquement.
 2. **Interaction** — chaque dollar d'intérêts qu'un prêt auquel tu
    participes parvient à régler te rapporte une part journalière
@@ -480,7 +489,7 @@ peu après la fermeture de la prochaine fenêtre journalière.
 
 ### Retirer le VPFI staké
 
-Déplace du VPFI de ton escrow vers ton wallet. Une fois dans le
+Déplace du VPFI de ton vault vers ton wallet. Une fois dans le
 wallet il cesse de générer le 5% APR et cesse de compter pour ton
 tier de remise. Identique à l'étape "désengage" sur la page Acheter
 VPFI — même action, mais aussi présente ici par commodité.
@@ -558,7 +567,7 @@ résiduelle pour toi.
 ### Parties
 
 Les deux adresses de wallet sur ce prêt — prêteur et emprunteur —
-et les coffres d'escrow qui détiennent leurs actifs. Chaque côté
+et les coffres d'vault qui détiennent leurs actifs. Chaque côté
 a aussi reçu un "NFT de position" à l'ouverture du prêt. Ce NFT
 _est_ le droit à la part de résultat de ce côté — garde-le en
 sécurité. Si un détenteur le transfère à quelqu'un d'autre, le
@@ -602,7 +611,7 @@ info-bulle expliquant pourquoi.
 - **Refinancer** — basculer vers un nouveau prêt avec de nouvelles
   conditions ; le protocole solde l'ancien prêt depuis le nouveau
   principal en une seule transaction. Le collatéral ne quitte
-  jamais l'escrow.
+  jamais l'vault.
 - **Réclamer** — une fois le prêt réglé, rend ton collatéral en
   cas de remboursement total, ou tout rabais VPFI inutilisé issu
   des frais d'initiation du prêt en cas de défaut.

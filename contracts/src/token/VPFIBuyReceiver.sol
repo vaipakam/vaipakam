@@ -58,6 +58,16 @@ contract VPFIBuyReceiver is
 {
     using SafeERC20 for IERC20;
 
+    // ─── Constants ──────────────────────────────────────────────────────────
+
+    /// @dev Kind tag for the {OptionsSet} event when {setOFTSendOptions}
+    ///      writes the executor options used on the OFT-compose back leg.
+    ///      Value `4` chosen to sit clear of the message-type enum
+    ///      (`1 = BUY_REQUEST`, `3 = BUY_FAILED`) — `2` is the retired
+    ///      `MSG_TYPE_BUY_SUCCESS` slot kept reserved for protocol
+    ///      compatibility.
+    uint8 internal constant OPT_KIND_OFT_BACK_LEG = 4;
+
     // ─── Storage ────────────────────────────────────────────────────────────
 
     /// @notice Paired Vaipakam Diamond on Base. Called via
@@ -93,12 +103,61 @@ contract VPFIBuyReceiver is
     ///         and prevents double-accounting if the same id is replayed.
     mapping(uint64 => uint256) public stuckVPFIByRequest;
 
+    /// @notice Per-eid registry of source-chain {VPFIBuyAdapter} contract
+    ///         addresses that are allowed to be the OFT-compose receiver
+    ///         on the success path. T-031 Layer 2: the receiver routes
+    ///         VPFI via OFT compose to the *adapter* contract on the
+    ///         source chain (not the buyer's wallet); the adapter then
+    ///         cross-checks its own `pendingBuys[requestId]` before
+    ///         forwarding to the actual buyer. A forged BUY_REQUEST
+    ///         message that lands here can therefore mint VPFI but
+    ///         cannot deliver it to an attacker-controlled wallet —
+    ///         the adapter rejects on the local-state cross-check and
+    ///         the VPFI is recorded as stuck for owner recovery.
+    /// @dev Owner-set via {setBuyAdapter}. Storage layout: appended at
+    ///      the end of the existing reservation so the UUPS upgrade
+    ///      path doesn't shift any prior slots.
+    mapping(uint32 => address) public buyAdapterByEid;
+
+    /// @notice Master switch for the off-chain reconciliation watchdog
+    ///         (T-031 Layer 4a). The watchdog Worker reads this flag
+    ///         before each pass — when `false`, it skips reconciliation
+    ///         and emits no alerts. Default `true` post-init so
+    ///         monitoring runs out of the box; governance can flip via
+    ///         {setReconciliationWatchdogEnabled} to silence the
+    ///         watchdog during a planned bridge ceremony or known
+    ///         reconciliation gap. The flag is informational from the
+    ///         contract's perspective — turning it off does NOT change
+    ///         on-chain behaviour, only the off-chain alert plane.
+    /// @dev    Owner-only setter. Stays as a single global toggle for
+    ///         now; per-chain granularity can be added as a later
+    ///         `mapping(uint32 => bool)` if a partial-pause ever
+    ///         becomes necessary.
+    bool public reconciliationWatchdogEnabled;
+
     // ─── Events ─────────────────────────────────────────────────────────────
 
     event DiamondSet(address indexed oldDiamond, address indexed newDiamond);
     event OFTAdapterSet(address indexed oldAdapter, address indexed newAdapter);
     event VPFITokenSet(address indexed oldToken, address indexed newToken);
     event OptionsSet(uint8 indexed kind, bytes options);
+
+    /// @notice Emitted when the per-eid registry of source-chain
+    ///         {VPFIBuyAdapter} addresses is updated. T-031 Layer 2:
+    ///         the OFT-compose target on the success path is read
+    ///         from `buyAdapterByEid[dstEid]`.
+    event BuyAdapterSet(
+        uint32 indexed eid,
+        address indexed oldAdapter,
+        address indexed newAdapter
+    );
+
+    /// @notice Emitted when governance flips the reconciliation
+    ///         watchdog enable/disable flag. Off-chain Workers in the
+    ///         T-031 Layer 4a watchdog lane subscribe to this event
+    ///         (or poll the `reconciliationWatchdogEnabled` view) to
+    ///         pause/resume their reconciliation pass.
+    event ReconciliationWatchdogToggled(bool enabled);
 
     /// @notice Emitted when a BUY_REQUEST was successfully processed
     ///         by the Diamond AND the return OFT send dispatched.
@@ -160,6 +219,11 @@ contract VPFIBuyReceiver is
     error DiamondNotSet();
     error EthSendFailed();
     error RescueWouldTouchStuckVPFI();
+    /// @dev Operator forgot to call {setBuyAdapter} for the source chain.
+    ///      Surfaced inside `_tryOftSend` as a soft-fail (BUY_FAILED reply
+    ///      + refund) so a missing config can never wedge the LZ retry queue
+    ///      or land VPFI at an attacker-controlled wallet.
+    error BuyAdapterNotSet(uint32 eid);
 
     // ─── Construction ───────────────────────────────────────────────────────
 
@@ -205,10 +269,16 @@ contract VPFIBuyReceiver is
         vpfiOftAdapter = vpfiOftAdapter_;
         responseOptions = responseOptions_;
         oftSendOptions = oftSendOptions_;
+        // T-031 Layer 4a: watchdog defaults to ON post-init so
+        // reconciliation runs out of the box. Governance can flip via
+        // {setReconciliationWatchdogEnabled} during planned bridge
+        // ceremonies / known reconciliation gaps.
+        reconciliationWatchdogEnabled = true;
 
         emit DiamondSet(address(0), diamond_);
         emit VPFITokenSet(address(0), vpfiToken_);
         emit OFTAdapterSet(address(0), vpfiOftAdapter_);
+        emit ReconciliationWatchdogToggled(true);
     }
 
     // ─── Emergency pause ─────────────────────────────────────────────────────
@@ -302,13 +372,19 @@ contract VPFIBuyReceiver is
             return;
         }
 
-        // VPFI is now sitting on this contract. Attempt to OFT-send it
-        // back to the buyer on their origin chain. If the OFT call
-        // reverts, caps are already debited on Base — we still tell the
-        // adapter SUCCESS so the user's origin-chain ETH goes to the
-        // local treasury (accounting invariant), and flag the stuck
-        // VPFI for owner recovery.
+        // T-031 Layer 2: VPFI is sitting on this contract. OFT-compose
+        // it back to the *source-chain adapter* (NOT the buyer's wallet
+        // — that's the Layer 2 hardening). The compose payload carries
+        // `requestId`; the adapter's lzCompose handler cross-checks its
+        // own `pendingBuys[requestId].buyer` (authoritative local
+        // truth) before delivering VPFI and releasing the user's ETH
+        // to treasury. If the OFT-compose call reverts, caps are
+        // already debited on Base — flag the VPFI as stuck for owner
+        // recovery via {rescueBridgeVPFI}; no separate BUY_SUCCESS
+        // reply is needed because the compose mint *is* the success
+        // signal under the new flow.
         (bytes32 oftGuid, bool oftOk, bytes memory oftErr) = _tryOftSend(
+            requestId,
             buyer,
             originEid,
             vpfiOut
@@ -334,7 +410,12 @@ contract VPFIBuyReceiver is
             vpfiOut,
             oftGuid
         );
-        _sendResponse(originEid, MSG_TYPE_BUY_SUCCESS, requestId, vpfiOut, 0);
+        // T-031 Layer 2: no separate BUY_SUCCESS reply — the OFT-compose
+        // mint to the source-chain adapter (dispatched inside _tryOftSend)
+        // is now the success signal. The adapter's lzCompose handler does
+        // the local cross-check, transfers VPFI to the buyer, and releases
+        // the user's ETH to the local treasury — all driven by the compose
+        // message landing, not a separate OApp send.
     }
 
     // ─── Internals ──────────────────────────────────────────────────────────
@@ -364,12 +445,33 @@ contract VPFIBuyReceiver is
         }
     }
 
-    /// @dev Quote → approve → OFT send. Returns (guid, ok, errData).
-    ///      Keeps the outer `_lzReceive` defensive against any OFT-side
-    ///      misconfig so the Diamond debit does not leave a stuck
-    ///      packet on the endpoint retry queue.
+    /// @dev Quote → approve → OFT-compose send. Returns (guid, ok, errData).
+    ///      T-031 Layer 2: routes VPFI to the *source-chain adapter*
+    ///      contract via OFT compose, with `requestId` in the compose
+    ///      payload. The adapter's lzCompose handler cross-checks its
+    ///      own `pendingBuys[requestId].buyer` (authoritative local
+    ///      truth — set by the actual ETH-paying tx) before forwarding
+    ///      VPFI to the buyer and releasing ETH to treasury. A forged
+    ///      BUY_REQUEST therefore mints VPFI on Base but cannot
+    ///      deliver it to an attacker-controlled wallet.
+    ///
+    ///      Soft-fails (returns `ok=false`) when:
+    ///        - OFT adapter not set (operator misconfig at deploy),
+    ///        - source-chain BuyAdapter not registered for `dstEid`
+    ///          (operator forgot to call {setBuyAdapter}),
+    ///        - quote or send revert (e.g. malformed options).
+    ///      Soft-fail keeps the outer `_lzReceive` defensive against
+    ///      any OFT-side misconfig so the Diamond debit does not leave
+    ///      a stuck packet on the endpoint retry queue. Caller stamps
+    ///      the resulting failure as a stuck-bridge event for owner
+    ///      recovery.
+    ///
+    ///      `buyer` parameter is retained for the stuck-bridge event
+    ///      payload only — it does NOT drive the OFT destination
+    ///      anymore. Destination is read from `buyAdapterByEid[dstEid]`.
     function _tryOftSend(
-        address buyer,
+        uint64 requestId,
+        address /* buyer */,
         uint32 dstEid,
         uint256 vpfiOut
     ) internal returns (bytes32 guid, bool ok, bytes memory errData) {
@@ -377,14 +479,18 @@ contract VPFIBuyReceiver is
         if (oft == address(0)) {
             return (bytes32(0), false, abi.encode("oft-unset"));
         }
+        address adapter = buyAdapterByEid[dstEid];
+        if (adapter == address(0)) {
+            return (bytes32(0), false, abi.encode("buy-adapter-unset"));
+        }
 
         SendParam memory sp = SendParam({
             dstEid: dstEid,
-            to: bytes32(uint256(uint160(buyer))),
+            to: bytes32(uint256(uint160(adapter))),
             amountLD: vpfiOut,
             minAmountLD: vpfiOut,
             extraOptions: oftSendOptions,
-            composeMsg: "",
+            composeMsg: abi.encode(requestId),
             oftCmd: ""
         });
 
@@ -614,7 +720,39 @@ contract VPFIBuyReceiver is
 
     function setOFTSendOptions(bytes calldata options) external onlyOwner {
         oftSendOptions = options;
-        emit OptionsSet(MSG_TYPE_BUY_SUCCESS, options);
+        emit OptionsSet(OPT_KIND_OFT_BACK_LEG, options);
+    }
+
+    /// @notice Register (or replace) the source-chain {VPFIBuyAdapter}
+    ///         for a given LayerZero endpoint id. T-031 Layer 2: the
+    ///         OFT-compose target on the success path is read from this
+    ///         registry, NOT from the buyer's address. A bridged buy on
+    ///         a chain whose adapter is unset soft-fails with
+    ///         BUY_FAILED + refund.
+    /// @dev    Owner-only. Address can be re-set or zeroed; passing
+    ///         `address(0)` effectively pauses bridged buys for that
+    ///         chain (subsequent BUY_REQUESTs from that eid will refund).
+    function setBuyAdapter(uint32 eid, address adapter) external onlyOwner {
+        address old = buyAdapterByEid[eid];
+        buyAdapterByEid[eid] = adapter;
+        emit BuyAdapterSet(eid, old, adapter);
+    }
+
+    /// @notice Enable or disable the off-chain reconciliation watchdog
+    ///         (T-031 Layer 4a). The watchdog Worker reads the
+    ///         `reconciliationWatchdogEnabled` view before each pass —
+    ///         when `false` it skips reconciliation and emits no
+    ///         alerts. Same auth path as every other governance lever
+    ///         on this contract (`onlyOwner`, ultimately routed
+    ///         through the Vaipakam multisig + timelock).
+    /// @dev    Idempotent toggle — emits regardless so observers can
+    ///         see the explicit set.
+    function setReconciliationWatchdogEnabled(bool enabled)
+        external
+        onlyOwner
+    {
+        reconciliationWatchdogEnabled = enabled;
+        emit ReconciliationWatchdogToggled(enabled);
     }
 
     // ─── UUPS / Ownable MRO ─────────────────────────────────────────────────

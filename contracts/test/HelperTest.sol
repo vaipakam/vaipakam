@@ -3,6 +3,8 @@
 pragma solidity ^0.8.29;
 
 import {OfferFacet} from "../src/facets/OfferFacet.sol";
+import {OfferMatchFacet} from "../src/facets/OfferMatchFacet.sol";
+import {OfferCancelFacet} from "../src/facets/OfferCancelFacet.sol";
 import {OracleFacet} from "../src/facets/OracleFacet.sol";
 import {VaipakamNFTFacet} from "../src/facets/VaipakamNFTFacet.sol";
 import {EscrowFactoryFacet} from "../src/facets/EscrowFactoryFacet.sol";
@@ -38,7 +40,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](40);
+        selectors = new bytes4[](57);
         selectors[0] = TestMutatorFacet.setLoan.selector;
         selectors[1] = TestMutatorFacet.setOffer.selector;
         selectors[2] = TestMutatorFacet.setNextLoanId.selector;
@@ -83,6 +85,51 @@ contract HelperTest {
         // stamp a non-zero value via this selector during setUp.
         selectors[38] = TestMutatorFacet.setLocalEidForTest.selector;
         selectors[39] = TestMutatorFacet.pushRewardEntry.selector;
+        // Gated default-DENY country-pair check — exposed for the
+        // industrial-fork coverage in `CountryPairGatedTest`. Retail
+        // never calls the gated branch.
+        selectors[40] = TestMutatorFacet.canTradeBetweenStorageGated.selector;
+        // T-032 — direct `s.wethContract` writer for the
+        // `NotificationFeeTest` fixture (OracleAdminFacet isn't cut
+        // into the minimal test diamond, so the production
+        // owner-gated setter isn't reachable from test setUp).
+        selectors[41] = TestMutatorFacet.setWethContractRaw.selector;
+        // Layout-resilient `liqThresholdBps` writer that bypasses the
+        // bounded-range guard on the production setter. Used by
+        // `RiskFacetTest.testCalculateHealthFactorZeroLiqThreshold` to
+        // exercise the HF == 0 branch without depending on hardcoded
+        // storage slot offsets.
+        selectors[42] = TestMutatorFacet.setLiqThresholdBpsRaw.selector;
+        // Layout-resilient mapping writers used by EarlyWithdrawal
+        // tests to scaffold loan-sale state without slot math.
+        selectors[43] = TestMutatorFacet.setOfferIdToLoanIdRaw.selector;
+        selectors[44] = TestMutatorFacet.setHeldForLenderRaw.selector;
+        // Layout-resilient claim writers used by ClaimFacetTest to
+        // exercise the NothingToClaim revert + held-only paths
+        // without slot math.
+        selectors[45] = TestMutatorFacet.setLenderClaimAmountRaw.selector;
+        selectors[46] = TestMutatorFacet.setBorrowerClaimAmountRaw.selector;
+        selectors[47] = TestMutatorFacet.setLenderClaimAssetRaw.selector;
+        selectors[48] = TestMutatorFacet.setBorrowerClaimAssetRaw.selector;
+        // NFT-claim field setters (assetType + tokenId + quantity) for
+        // ERC721 / ERC1155 claim-asset coverage tests.
+        selectors[49] = TestMutatorFacet.setLenderClaimNFTFieldsRaw.selector;
+        selectors[50] = TestMutatorFacet.setBorrowerClaimNFTFieldsRaw.selector;
+        // T-048 — layout-resilient treasury IOU writer used by
+        // TreasuryFacetTest.
+        selectors[51] = TestMutatorFacet.setTreasuryBalanceRaw.selector;
+        // Layout-resilient sale/offset/escrow-version/min-partial
+        // mutators used by the LoanFacet, RefinanceFacet, OfferFacet,
+        // EscrowFactoryFacet and RepayFacet test suites — replaces
+        // the previous `vm.store` + hardcoded slot offset pattern.
+        selectors[52] = TestMutatorFacet.setSaleOfferToLoanIdRaw.selector;
+        selectors[53] = TestMutatorFacet.setOffsetOfferToLoanIdRaw.selector;
+        selectors[54] = TestMutatorFacet.setEscrowVersionRaw.selector;
+        selectors[55] = TestMutatorFacet.setMinPartialBpsRaw.selector;
+        // Layout-resilient read of `s.userVaipakamEscrows[user]` for
+        // tests that need a user's escrow address bypassing the
+        // mandatory-version check on the production getter.
+        selectors[56] = TestMutatorFacet.getUserVaipakamEscrowRaw.selector;
         return selectors;
     }
 
@@ -92,21 +139,58 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](9);
+        selectors = new bytes4[](7);
         selectors[0] = OfferFacet.createOffer.selector;
         // Single `acceptOffer(uint256,bool)` signature — the VPFI discount
         // path is governed by the platform-level consent flag set via
         // VPFIDiscountFacet.setVPFIDiscountConsent, not a per-call boolean.
         selectors[1] = bytes4(keccak256("acceptOffer(uint256,bool)"));
-        selectors[2] = OfferFacet.cancelOffer.selector;
-        selectors[3] = OfferFacet.getCompatibleOffers.selector;
-        selectors[4] = OfferFacet.getUserEscrow.selector;
-        selectors[5] = OfferFacet.getOffer.selector;
-        selectors[6] = OfferFacet.getOfferDetails.selector;
+        selectors[2] = OfferFacet.getUserEscrow.selector;
         // Phase 8b.1 Permit2 additions — additive entries that coexist
         // with the classic `createOffer` / `acceptOffer` paths.
-        selectors[7] = OfferFacet.createOfferWithPermit.selector;
-        selectors[8] = OfferFacet.acceptOfferWithPermit.selector;
+        selectors[3] = OfferFacet.createOfferWithPermit.selector;
+        selectors[4] = OfferFacet.acceptOfferWithPermit.selector;
+        // Cross-facet entry consumed by OfferMatchFacet.matchOffers
+        // (Range Orders Phase 1 EIP-170 split).
+        selectors[5] = OfferFacet.acceptOfferInternal.selector;
+        // Cross-facet entry consumed by PrecloseFacet.offsetWithNewOffer
+        // (Option 3 offset flow) — same address(this)-only gating.
+        selectors[6] = OfferFacet.createOfferInternal.selector;
+        // `cancelOffer`, `getCompatibleOffers`, `getOffer`,
+        // `getOfferDetails` moved to OfferCancelFacet — see
+        // `getOfferCancelFacetSelectors` below.
+        return selectors;
+    }
+
+    /// @dev OfferCancelFacet — cancellation + read views carved out
+    ///      of OfferFacet for the second EIP-170 split. Selectors land
+    ///      on the diamond identically; this is just where the
+    ///      bytecode lives.
+    function getOfferCancelFacetSelectors()
+        public
+        pure
+        returns (bytes4[] memory selectors)
+    {
+        selectors = new bytes4[](4);
+        selectors[0] = OfferCancelFacet.cancelOffer.selector;
+        selectors[1] = OfferCancelFacet.getCompatibleOffers.selector;
+        selectors[2] = OfferCancelFacet.getOffer.selector;
+        selectors[3] = OfferCancelFacet.getOfferDetails.selector;
+        return selectors;
+    }
+
+    /// @dev OfferMatchFacet — Range Orders Phase 1 matching surface
+    ///      carved out of OfferFacet for EIP-170. Tests that exercise
+    ///      `matchOffers` / `previewMatch` need this facet cut into
+    ///      the test diamond.
+    function getOfferMatchFacetSelectors()
+        public
+        pure
+        returns (bytes4[] memory selectors)
+    {
+        selectors = new bytes4[](2);
+        selectors[0] = OfferMatchFacet.matchOffers.selector;
+        selectors[1] = OfferMatchFacet.previewMatch.selector;
         return selectors;
     }
 
@@ -116,7 +200,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](20);
+        selectors = new bytes4[](22);
         selectors[0] = AdminFacet.setTreasury.selector;
         selectors[1] = AdminFacet.getTreasury.selector;
         selectors[2] = AdminFacet.setZeroExProxy.selector;
@@ -137,6 +221,9 @@ contract HelperTest {
         selectors[17] = AdminFacet.getPancakeswapV3Factory.selector;
         selectors[18] = AdminFacet.setSushiswapV3Factory.selector;
         selectors[19] = AdminFacet.getSushiswapV3Factory.selector;
+        // Auto-pause primitive (Phase 1 follow-up).
+        selectors[20] = AdminFacet.autoPause.selector;
+        selectors[21] = AdminFacet.pausedUntil.selector;
         return selectors;
     }
 
@@ -198,7 +285,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](14);
+        selectors = new bytes4[](17);
         selectors[0] = VaipakamNFTFacet.mintNFT.selector;
         selectors[1] = VaipakamNFTFacet.updateNFTStatus.selector;
         selectors[2] = VaipakamNFTFacet.burnNFT.selector;
@@ -209,11 +296,18 @@ contract HelperTest {
         selectors[7] = VaipakamNFTFacet.setContractImageURI.selector;
         selectors[8] = VaipakamNFTFacet.royaltyInfo.selector;
         selectors[9] = VaipakamNFTFacet.setDefaultRoyalty.selector;
-        selectors[10] = VaipakamNFTFacet.setLoanImageURIs.selector;
+        // Status-keyed image URI scheme (replaces the prior 4-slot
+        // setLoanImageURIs).
+        selectors[10] = VaipakamNFTFacet.setImageURIForStatus.selector;
         // IERC721Enumerable views (totalSupply, tokenByIndex, tokenOfOwnerByIndex)
         selectors[11] = bytes4(keccak256("totalSupply()"));
         selectors[12] = bytes4(keccak256("tokenByIndex(uint256)"));
         selectors[13] = bytes4(keccak256("tokenOfOwnerByIndex(address,uint256)"));
+        // OpenSea external_url admin config (Tier 2 metadata polish).
+        selectors[14] = VaipakamNFTFacet.setExternalUrlBase.selector;
+        // Status-keyed image scheme companions.
+        selectors[15] = VaipakamNFTFacet.setDefaultImage.selector;
+        selectors[16] = VaipakamNFTFacet.getImageURIFor.selector;
         return selectors;
     }
 
@@ -222,7 +316,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](19);
+        selectors = new bytes4[](28);
         selectors[0] = EscrowFactoryFacet
             .initializeEscrowImplementation
             .selector;
@@ -246,14 +340,28 @@ contract HelperTest {
         selectors[16] = EscrowFactoryFacet.upgradeUserEscrow.selector;
         selectors[17] = EscrowFactoryFacet.escrowGetNFTQuantity.selector;
         selectors[18] = EscrowFactoryFacet.getUserEscrowAddress.selector;
+        // T-051 / T-054 — counter chokepoint companions.
+        selectors[19] = EscrowFactoryFacet.escrowDepositERC20From.selector;
+        selectors[20] = EscrowFactoryFacet.recordEscrowDepositERC20.selector;
+        selectors[21] = EscrowFactoryFacet.getProtocolTrackedEscrowBalance.selector;
+        // T-054 PR-3 — stuck-token recovery.
+        selectors[22] = EscrowFactoryFacet.recoverStuckERC20.selector;
+        selectors[23] = EscrowFactoryFacet.disown.selector;
+        selectors[24] = EscrowFactoryFacet.recoveryDomainSeparator.selector;
+        selectors[25] = EscrowFactoryFacet.recoveryAckTextHash.selector;
+        selectors[26] = EscrowFactoryFacet.recoveryNonce.selector;
+        selectors[27] = EscrowFactoryFacet.escrowBannedSource.selector;
         return selectors;
     }
 
     function getLoanFacetSelectors() public pure returns (bytes4[] memory) {
-        bytes4[] memory selectors = new bytes4[](3);
+        bytes4[] memory selectors = new bytes4[](4);
         selectors[0] = LoanFacet.initiateLoan.selector;
         selectors[1] = LoanFacet.getLoanDetails.selector;
         selectors[2] = LoanFacet.getLoanConsents.selector;
+        // T-032 — NOTIF_BILLER_ROLE-gated entry the watcher calls on
+        // first PaidPush-tier notification fired for a loan-side.
+        selectors[3] = LoanFacet.markNotifBilled.selector;
         return selectors;
     }
 
@@ -262,11 +370,15 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](4); // Adjust count
+        selectors = new bytes4[](7); // Adjust count
         selectors[0] = RepayFacet.repayLoan.selector;
         selectors[1] = RepayFacet.repayPartial.selector;
         selectors[2] = RepayFacet.autoDeductDaily.selector;
         selectors[3] = RepayFacet.calculateRepaymentAmount.selector;
+        // T-034 PR2 — Periodic Interest Payment views + entry point.
+        selectors[4] = RepayFacet.previewPeriodicSettle.selector;
+        selectors[5] = RepayFacet.nextPeriodCheckpoint.selector;
+        selectors[6] = RepayFacet.settlePeriodicInterest.selector;
     }
 
     function getDefaultedFacetSelectors()
@@ -383,11 +495,13 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](4);
+        selectors = new bytes4[](5);
         selectors[0] = PrecloseFacet.precloseDirect.selector;
         selectors[1] = PrecloseFacet.offsetWithNewOffer.selector;
         selectors[2] = PrecloseFacet.completeOffset.selector;
         selectors[3] = PrecloseFacet.transferObligationViaOffer.selector;
+        // Cross-facet entry consumed by OfferFacet._acceptOffer's auto-link.
+        selectors[4] = PrecloseFacet.completeOffsetInternal.selector;
         return selectors;
     }
 
@@ -428,13 +542,13 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](32);
+        selectors = new bytes4[](34);
         selectors[0] = MetricsFacet.getProtocolTVL.selector;
         selectors[1] = MetricsFacet.getProtocolStats.selector;
         selectors[2] = MetricsFacet.getUserCount.selector;
         selectors[3] = MetricsFacet.getActiveLoansCount.selector;
         selectors[4] = MetricsFacet.getActiveOffersCount.selector;
-        selectors[5] = MetricsFacet.getTotalInterestEarnedUSD.selector;
+        selectors[5] = MetricsFacet.getTotalInterestEarnedNumeraire.selector;
         selectors[6] = MetricsFacet.getTreasuryMetrics.selector;
         selectors[7] = MetricsFacet.getRevenueStats.selector;
         selectors[8] = MetricsFacet.getActiveLoansPaginated.selector;
@@ -462,6 +576,12 @@ contract HelperTest {
         selectors[29] = MetricsFacet.getAllOffersPaginated.selector;
         selectors[30] = MetricsFacet.getLoansByStatusPaginated.selector;
         selectors[31] = MetricsFacet.getOffersByStatePaginated.selector;
+        // Range Orders Phase 1 follow-ups: asset-agnostic active-offer
+        // pagination (consumed by the keeper-bot matching detector) +
+        // NFT position summary (consumed by tokenURI + frontend
+        // verifier UI).
+        selectors[32] = MetricsFacet.getActiveOffersPaginated.selector;
+        selectors[33] = MetricsFacet.getNFTPositionSummary.selector;
         return selectors;
     }
 
@@ -540,7 +660,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](16);
+        selectors = new bytes4[](45);
         selectors[0] = ConfigFacet.setFeesConfig.selector;
         selectors[1] = ConfigFacet.setLiquidationConfig.selector;
         selectors[2] = ConfigFacet.setRiskConfig.selector;
@@ -557,6 +677,55 @@ contract HelperTest {
         selectors[13] = ConfigFacet.setFallbackSplit.selector;
         selectors[14] = ConfigFacet.getFallbackSplit.selector;
         selectors[15] = ConfigFacet.getProtocolConstants.selector;
+        // Range Orders Phase 1 — governance-tunable matcher BPS.
+        selectors[16] = ConfigFacet.setLifMatcherFeeBps.selector;
+        // Phase 1 follow-up — auto-pause window duration setter.
+        selectors[17] = ConfigFacet.setAutoPauseDurationSeconds.selector;
+        // Findings 00025 — governance-tunable max loan duration.
+        selectors[18] = ConfigFacet.setMaxOfferDurationDays.selector;
+        // T-032 / Numeraire generalization (Phase 1) — notification fee knob (now in
+        // numeraire-units) + bundled frontend-facing getter. The
+        // per-knob `setNotificationFeeUsdOracle` was retired; the
+        // protocol's reference currency is the global numeraireOracle
+        // (set via setNumeraire below).
+        selectors[19] = ConfigFacet.setNotificationFee.selector;
+        selectors[20] = ConfigFacet.getNotificationFeeConfig.selector;
+        // T-044 — admin-configurable loan-default grace schedule.
+        selectors[21] = ConfigFacet.setGraceBuckets.selector;
+        selectors[22] = ConfigFacet.clearGraceBuckets.selector;
+        selectors[23] = ConfigFacet.getGraceBuckets.selector;
+        selectors[24] = ConfigFacet.getEffectiveGraceSeconds.selector;
+        selectors[25] = ConfigFacet.getGraceSlotBounds.selector;
+        // T-034 — Periodic Interest Payment knobs + master kill-switches.
+        selectors[26] = ConfigFacet.setNumeraire.selector;
+        selectors[27] = ConfigFacet.setMinPrincipalForFinerCadence.selector;
+        selectors[28] = ConfigFacet.setPreNotifyDays.selector;
+        selectors[29] = ConfigFacet.setPeriodicInterestEnabled.selector;
+        selectors[30] = ConfigFacet.setNumeraireSwapEnabled.selector;
+        selectors[31] = ConfigFacet.getPeriodicInterestConfig.selector;
+        // Individual getters used by the protocol-console knob card
+        // reader (which expects one function per knob). Numeraire generalization (B1) —
+        // the per-knob `getNumeraireOracle` was retired (no
+        // INumeraireOracle anymore); replaced with feed-side getters
+        // (`getNumeraireSymbol`, `getEthNumeraireFeed`) that surface
+        // the new numeraire-rotation surface.
+        selectors[32] = ConfigFacet.getNumeraireSymbol.selector;
+        selectors[33] = ConfigFacet.getEthNumeraireFeed.selector;
+        selectors[34] = ConfigFacet.getMinPrincipalForFinerCadence.selector;
+        selectors[35] = ConfigFacet.getPreNotifyDays.selector;
+        selectors[36] = ConfigFacet.getPeriodicInterestEnabled.selector;
+        selectors[37] = ConfigFacet.getNumeraireSwapEnabled.selector;
+        // T-048 — Predominantly Available Denominator (PAD).
+        // Atomic rotation setter + per-asset numeraire-direct override
+        // setter, plus 5 individual getters consumed by the protocol-
+        // console knob registry.
+        selectors[38] = ConfigFacet.setPredominantDenominator.selector;
+        selectors[39] = ConfigFacet.setAssetNumeraireDirectFeedOverride.selector;
+        selectors[40] = ConfigFacet.getPredominantDenominator.selector;
+        selectors[41] = ConfigFacet.getPredominantDenominatorSymbol.selector;
+        selectors[42] = ConfigFacet.getEthPadFeed.selector;
+        selectors[43] = ConfigFacet.getPadNumeraireRateFeed.selector;
+        selectors[44] = ConfigFacet.getAssetNumeraireDirectFeedOverride.selector;
         return selectors;
     }
 
@@ -600,10 +769,10 @@ contract HelperTest {
         selectors[4] = RewardReporterFacet.setBaseEid.selector;
         selectors[5] = RewardReporterFacet.setIsCanonicalRewardChain.selector;
         selectors[6] = RewardReporterFacet.setRewardGraceSeconds.selector;
-        selectors[7] = RewardReporterFacet.getLocalChainInterestUSD18.selector;
+        selectors[7] = RewardReporterFacet.getLocalChainInterestNumeraire18.selector;
         selectors[8] = RewardReporterFacet.getChainReportSentAt.selector;
         selectors[9] = RewardReporterFacet.getRewardReporterConfig.selector;
-        selectors[10] = RewardReporterFacet.getKnownGlobalInterestUSD18.selector;
+        selectors[10] = RewardReporterFacet.getKnownGlobalInterestNumeraire18.selector;
         return selectors;
     }
 
@@ -633,7 +802,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](21);
+        selectors = new bytes4[](30);
         selectors[0] = EscrowFactoryFacet.initializeEscrowImplementation.selector;
         selectors[1] = EscrowFactoryFacet.getOrCreateUserEscrow.selector;
         selectors[2] = EscrowFactoryFacet.upgradeEscrowImplementation.selector;
@@ -655,6 +824,17 @@ contract HelperTest {
         selectors[18] = EscrowFactoryFacet.escrowGetNFTQuantity.selector;
         selectors[19] = EscrowFactoryFacet.escrowSetNFTUser1155.selector;
         selectors[20] = EscrowFactoryFacet.getUserEscrowAddress.selector;
+        // T-051 / T-054 — counter chokepoint companions.
+        selectors[21] = EscrowFactoryFacet.escrowDepositERC20From.selector;
+        selectors[22] = EscrowFactoryFacet.recordEscrowDepositERC20.selector;
+        selectors[23] = EscrowFactoryFacet.getProtocolTrackedEscrowBalance.selector;
+        // T-054 PR-3 — stuck-token recovery.
+        selectors[24] = EscrowFactoryFacet.recoverStuckERC20.selector;
+        selectors[25] = EscrowFactoryFacet.disown.selector;
+        selectors[26] = EscrowFactoryFacet.recoveryDomainSeparator.selector;
+        selectors[27] = EscrowFactoryFacet.recoveryAckTextHash.selector;
+        selectors[28] = EscrowFactoryFacet.recoveryNonce.selector;
+        selectors[29] = EscrowFactoryFacet.escrowBannedSource.selector;
         return selectors;
     }
 }

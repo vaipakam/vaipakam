@@ -1,4 +1,5 @@
 import OfferFacetABI from './OfferFacet.json';
+import OfferCancelFacetABI from './OfferCancelFacet.json';
 import LoanFacetABI from './LoanFacet.json';
 import RepayFacetABI from './RepayFacet.json';
 import DefaultedFacetABI from './DefaultedFacet.json';
@@ -22,11 +23,14 @@ import VPFIDiscountFacetABI from './VPFIDiscountFacet.json';
 import StakingRewardsFacetABI from './StakingRewardsFacet.json';
 import InteractionRewardsFacetABI from './InteractionRewardsFacet.json';
 import VPFIBuyAdapterABI from './VPFIBuyAdapter.json';
+import VPFIBuyReceiverABI from './VPFIBuyReceiver.json';
+import RewardReporterFacetABI from './RewardReporterFacet.json';
 import ConfigFacetABI from './ConfigFacet.json';
 import LegalFacetABI from './LegalFacet.json';
 
 export {
   OfferFacetABI,
+  OfferCancelFacetABI,
   LoanFacetABI,
   RepayFacetABI,
   DefaultedFacetABI,
@@ -50,6 +54,8 @@ export {
   StakingRewardsFacetABI,
   InteractionRewardsFacetABI,
   VPFIBuyAdapterABI,
+  VPFIBuyReceiverABI,
+  RewardReporterFacetABI,
   ConfigFacetABI,
   LegalFacetABI,
 };
@@ -65,6 +71,7 @@ import type { Abi } from 'viem';
  *  is gone, collapse this back to a single `Abi`-typed export. */
 export const DIAMOND_ABI = [
   ...OfferFacetABI,
+  ...OfferCancelFacetABI,
   ...LoanFacetABI,
   ...RepayFacetABI,
   ...DefaultedFacetABI,
@@ -87,6 +94,7 @@ export const DIAMOND_ABI = [
   ...VPFIDiscountFacetABI,
   ...StakingRewardsFacetABI,
   ...InteractionRewardsFacetABI,
+  ...RewardReporterFacetABI,
   ...ConfigFacetABI,
   ...LegalFacetABI,
 ];

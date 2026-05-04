@@ -122,6 +122,33 @@ export default function TermsPage() {
         </section>
 
         <section>
+          <h2>Stuck-token recovery</h2>
+          <p>
+            Vaipakam offers a recovery flow for tokens accidentally transferred
+            into your isolated escrow that the protocol does not track. To use
+            it, you sign an EIP-712 attestation declaring the source of the
+            stuck tokens. That attestation is your representation that you
+            know where the funds came from. The protocol does not independently
+            verify the truthfulness of your declaration. You are responsible
+            for the contents of every recovery signature you produce.
+          </p>
+          <p>
+            If the source you declare is flagged on the on-chain sanctions
+            oracle, the recovery transaction will not move the funds and your
+            nonce will burn. Your wallet will be treated as sanctioned by the
+            protocol for as long as the source remains flagged on the oracle —
+            new positions, recovery, and claims are blocked, while you can
+            still repay your existing loans so the counterparty can be made
+            whole. The block lifts automatically when the source is de-listed,
+            and any claims that accrued in the meantime can then be processed
+            normally. This is distinct from <em>lost-wallet</em> recovery:
+            stuck-token recovery returns funds you can prove the source of to
+            your wallet; it cannot restore access to a wallet you no longer
+            control.
+          </p>
+        </section>
+
+        <section>
           <h2>Your wallet is your signature</h2>
           <p>
             The wallet address you connect IS your identity on the protocol.

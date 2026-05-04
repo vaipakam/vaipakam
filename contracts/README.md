@@ -463,9 +463,8 @@ VPFI tokenomics constants (in `VPFIToken.sol`):
 | `WireVPFIPeers.s.sol`              | Owner-side OApp `setPeer` for one (local, remote) pair          |
 | `RedeployFacets.s.sol`             | Redeploy specific facets and cut them in (surgical upgrade)     |
 | `ReplaceStaleFacets.s.sol`         | Replace facets whose selectors have drifted                     |
-| `UpgradeOracle.s.sol`              | Swap the OracleFacet implementation                             |
+| `UpgradeOracleFacet.s.sol`         | Swap the OracleFacet implementation                             |
 | `AddKeeperSelectors.s.sol`         | Grant keeper selector access                                    |
-| `AddOracleAdmin.s.sol`             | Grant oracle-admin role                                         |
 | `CheckSelectors.s.sol`             | Diff the diamond's live selector map vs. local facet bytecode   |
 | `SepoliaActiveLoan.s.sol`          | Testnet scenario: stand up an active loan                       |
 | `SepoliaPositiveFlows.s.sol`       | Testnet scenario: happy-path end-to-end flows                   |

@@ -13,6 +13,7 @@ import {DiamondAccessControl} from "../libraries/LibAccessControl.sol";
 import {ITellor} from "../interfaces/ITellor.sol";
 import {IApi3ServerV1} from "../interfaces/IApi3ServerV1.sol";
 import {IDIAOracleV2} from "../interfaces/IDIAOracleV2.sol";
+import {IPyth} from "../interfaces/IPyth.sol";
 
 /**
  * @title OracleFacet
@@ -32,10 +33,10 @@ import {IDIAOracleV2} from "../interfaces/IDIAOracleV2.sol";
  *      ── Price retrieval (hybrid) ──
  *      {getAssetPrice} prefers a direct asset/USD feed and falls back to
  *      asset/ETH × ETH/USD only when no direct USD feed is available:
- *        - WETH itself: priced from `ethUsdFeed` directly; no pool check.
+ *        - WETH itself: priced from `ethNumeraireFeed` directly; no pool check.
  *        - Other assets (primary): Chainlink Feed Registry getFeed(asset, USD).
  *        - Other assets (fallback): Chainlink Feed Registry
- *          getFeed(asset, ETH) × latestRoundData(ethUsdFeed).
+ *          getFeed(asset, ETH) × latestRoundData(ethNumeraireFeed).
  *
  *      ── Stablecoin peg-aware staleness ──
  *      Feeds older than {ORACLE_VOLATILE_STALENESS} (2h) but inside
@@ -58,6 +59,20 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
     error NoDexPool();
     error StalePriceData();
     error InsufficientLiquidity();
+    /// @notice T-033 — Chainlink ETH/USD and Pyth ETH/USD diverged
+    ///         beyond the governance-tunable
+    ///         `pythCrossCheckMaxDeviationBps`. Fail-closed: a
+    ///         numeraire reading the protocol can't agree on between
+    ///         two independent oracles is a strong signal that one
+    ///         of them has been compromised; we'd rather block
+    ///         protocol ops than accept a price the system itself
+    ///         can't trust.
+    error OracleCrossCheckDivergence(
+        uint256 chainlinkPrice,
+        uint256 pythPrice,
+        uint256 deviationBps,
+        uint256 maxDeviationBps
+    );
 
     /// @notice Chainlink and a configured secondary oracle (Tellor /
     ///         API3 / DIA) disagreed beyond the chain-level
@@ -126,7 +141,7 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
 
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         address weth = s.wethContract;
-        address ethFeed = s.ethUsdFeed;
+        address ethFeed = s.ethNumeraireFeed;
         if (weth == address(0) || ethFeed == address(0)) {
             return LibVaipakam.LiquidityStatus.Illiquid;
         }
@@ -245,7 +260,7 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
     /**
      * @notice Gets the USD price of an asset (scaled by feed decimals).
      * @dev Hybrid resolution:
-     *        1. WETH → direct {ethUsdFeed}.
+     *        1. WETH → direct {ethNumeraireFeed}.
      *        2. Other: try asset/USD via Feed Registry (preferred).
      *        3. Fallback: asset/ETH via Feed Registry × ETH/USD.
      *      All paths honour the 2h volatile / 25h stable-peg staleness
@@ -276,55 +291,315 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
         return (price, decimals);
     }
 
-    /// @dev Chainlink-only primary read. Unchanged from Phase 3.1; the
-    ///      Phase 3.2 deviation check runs AFTER this returns.
+    /// @dev Chainlink-only primary read returning a numeraire-quoted
+    ///      price. Architecture (T-048 — Predominantly Available
+    ///      Denominator):
+    ///
+    ///        Step A — Retail short-circuit:
+    ///          if `PAD == numeraire` (the post-deploy default —
+    ///          both are `Denominations.USD`), read `asset/PAD`
+    ///          directly via Chainlink Feed Registry and return.
+    ///          Single read, no FX multiply, math identical to the
+    ///          pre-T-048 deploy. ETH-pivot fallback (asset/ETH ×
+    ///          ETH/PAD) handles assets that lack a direct
+    ///          asset/PAD feed.
+    ///
+    ///        Step B — Industrial-fork (PAD ≠ numeraire):
+    ///          B.1: per-asset operator-curated override —
+    ///               if `assetNumeraireDirectFeedOverride[asset]`
+    ///               is set, read that Chainlink feed directly as
+    ///               the numeraire-quoted asset price and return.
+    ///               Operator vouches that the override is a
+    ///               🟢-rated direct asset/<numeraire> feed; the
+    ///               protocol does not cross-check it against Pyth.
+    ///          B.2: PAD pivot —
+    ///               read asset price in PAD-units (asset/PAD direct
+    ///               feed; falls back to asset/ETH × ETH/PAD when
+    ///               direct feed is absent), then multiply by the
+    ///               PAD/<numeraire> FX rate (direct feed if set,
+    ///               else derived from ETH/<numeraire> ÷ ETH/PAD).
+    ///               This routes all asset pricing through Chainlink's
+    ///               top-rated USD feed set, structurally biasing
+    ///               toward verified-quality data without needing
+    ///               on-chain rating metadata.
+    ///
+    ///        Step C — All paths failed: revert {NoPriceFeed}.
+    ///
+    ///      The Phase 3.2 deviation check runs AFTER this returns.
     function _primaryPrice(
         address asset
     ) private view returns (uint256 price, uint8 decimals) {
         _requireSequencerHealthy();
 
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        address weth = s.wethContract;
-        address ethFeed = s.ethUsdFeed;
 
-        // WETH → read ETH/USD directly.
+        // Retail short-circuit: PAD == numeraire. Both are USD by the
+        // post-deploy default; the asset/PAD read IS the numeraire-
+        // quoted price. Behaviour identical to the pre-T-048 deploy.
+        // Also covers pre-T-048 deploys (PAD == address(0)) where the
+        // legacy numeraire-direct path stays active via
+        // `_padPriceWithFallback` reading asset/numeraireDenominator.
+        if (LibVaipakam.isPadEqualToNumeraire() || s.predominantDenominator == address(0)) {
+            return _padPriceWithFallback(s, asset);
+        }
+
+        // Industrial-fork: PAD ≠ numeraire.
+
+        // Step B.1: per-asset operator-curated override. When set, use
+        // the direct asset/<numeraire> feed and skip the PAD pivot.
+        // Operator vouches that the feed is verified-rated; no Pyth
+        // cross-check (Pyth gate is configured for ETH/<numeraire>,
+        // not asset/<numeraire>).
+        address overrideFeed = s.assetNumeraireDirectFeedOverride[asset];
+        if (overrideFeed != address(0)) {
+            (uint256 op, uint8 od) = _readAggregatorStrict(
+                overrideFeed,
+                /*allowStablePeg=*/ true
+            );
+            return (op, od);
+        }
+
+        // Step B.2: PAD pivot.
+        // Read asset price in PAD-units, then convert to numeraire.
+        (uint256 padPrice, uint8 padDec) = _padPriceWithFallback(s, asset);
+
+        // PAD/numeraire FX rate — direct feed if set, else derived
+        // from ETH/<numeraire> ÷ ETH/PAD.
+        (uint256 fxRate, uint8 fxDec) = _padNumeraireRate(s);
+
+        // Compose: numeraire price = padPrice × fxRate / 10^fxDec.
+        // Resulting decimals match `padDec` (Chainlink USD-quoted
+        // feeds are 8-decimal; Feed Registry asset/USD feeds are
+        // typically 8-decimal too). The fxDec cancellation keeps the
+        // composed value in the same scale as the pad-quoted leg.
+        uint256 numerPrice = (padPrice * fxRate) / (10 ** fxDec);
+        return (numerPrice, padDec);
+    }
+
+    /// @dev Read asset price in PAD-units. Tries Chainlink Feed
+    ///      Registry `asset/<padDenominator>` first; falls back to
+    ///      `asset/ETH × ETH/PAD` for assets that lack a direct
+    ///      USD-quoted feed (rare on the major asset set, but
+    ///      possible). Special-cases WETH itself to read `ethPadFeed`
+    ///      directly without the registry detour.
+    ///
+    ///      Pre-T-048 deploy compatibility: when
+    ///      `predominantDenominator == address(0)`, the legacy
+    ///      numeraire-direct path stays active. `usdDenom` falls back
+    ///      to `numeraireChainlinkDenominator`; `ethPadAnchor` falls
+    ///      back to `ethNumeraireFeed`. Behaviour identical to the
+    ///      pre-T-048 deploy.
+    function _padPriceWithFallback(
+        LibVaipakam.Storage storage s,
+        address asset
+    ) private view returns (uint256 price, uint8 decimals) {
+        address weth = s.wethContract;
+        address padDenom = s.predominantDenominator;
+        if (padDenom == address(0)) padDenom = s.numeraireChainlinkDenominator;
+        address ethPadAnchor = s.ethPadFeed;
+        if (ethPadAnchor == address(0)) ethPadAnchor = s.ethNumeraireFeed;
+
+        // WETH → read ETH/PAD directly.
         if (asset != address(0) && asset == weth) {
-            if (ethFeed == address(0)) revert NoPriceFeed();
-            (uint256 p, uint8 d) = _readAggregatorStrict(ethFeed, /*allowStablePeg=*/ false);
+            if (ethPadAnchor == address(0)) revert NoPriceFeed();
+            (uint256 p, uint8 d) = _readAggregatorStrict(ethPadAnchor, /*allowStablePeg=*/ false);
+            // T-033 numeraire-redundancy gate: cross-validate the
+            // Chainlink ETH-anchor reading against Pyth's snapshot.
+            // Soft-skips if Pyth is unset / stale / low-confidence;
+            // reverts on divergence beyond tolerance.
+            _validatePythCrossCheck(p, d);
             return (p, d);
         }
 
-        // Primary: asset/USD via Feed Registry.
+        // Primary: asset/PAD via Feed Registry.
         address registry = s.chainlnkRegistry;
-        address usdDenom = s.usdChainlinkDenominator;
-        if (registry != address(0) && usdDenom != address(0)) {
-            AggregatorV3Interface feed = _registryFeed(registry, asset, usdDenom);
+        if (registry != address(0) && padDenom != address(0)) {
+            AggregatorV3Interface feed = _registryFeed(registry, asset, padDenom);
             if (address(feed) != address(0)) {
                 (uint256 p, uint8 d) = _readAggregatorStrict(address(feed), /*allowStablePeg=*/ true);
                 return (p, d);
             }
         }
 
-        // Fallback: asset/ETH via Feed Registry × ETH/USD.
+        // Fallback: asset/ETH × ETH/PAD via Feed Registry.
         address ethDenom = s.ethChainlinkDenominator;
-        if (registry != address(0) && ethDenom != address(0) && ethFeed != address(0)) {
+        if (registry != address(0) && ethDenom != address(0) && ethPadAnchor != address(0)) {
             AggregatorV3Interface ethQuotedFeed = _registryFeed(registry, asset, ethDenom);
             if (address(ethQuotedFeed) != address(0)) {
                 (uint256 assetPerEth, uint8 assetPerEthDec) = _readAggregatorStrict(
                     address(ethQuotedFeed),
                     /*allowStablePeg=*/ false
                 );
-                (uint256 ethPerUsd, uint8 ethDec) = _readAggregatorStrict(ethFeed, false);
-                // assetPerEth is in `assetPerEthDec` (typically 1e18 for
-                // asset/ETH feeds); ethPerUsd in `ethDec` (1e8).
-                // Combined USD price scales to `ethDec` decimals by
-                // dividing out the ETH feed's native scale.
-                uint256 combined = (assetPerEth * ethPerUsd) / (10 ** assetPerEthDec);
+                (uint256 ethPerPad, uint8 ethDec) = _readAggregatorStrict(ethPadAnchor, false);
+                _validatePythCrossCheck(ethPerPad, ethDec);
+                uint256 combined = (assetPerEth * ethPerPad) / (10 ** assetPerEthDec);
                 return (combined, ethDec);
             }
         }
 
         revert NoPriceFeed();
+    }
+
+    /// @dev Resolve the PAD/<numeraire> FX rate. Tries the direct
+    ///      Chainlink feed (`padNumeraireRateFeed`) when set; else
+    ///      derives the rate from `ETH/<numeraire> ÷ ETH/PAD`.
+    ///      Reverts {PadNumeraireRateUnavailable} if neither path is
+    ///      reachable — a configuration error caught at first read,
+    ///      not a runtime failure.
+    ///
+    ///      Returned `(rate, decimals)`: rate is in `decimals`-scale
+    ///      (e.g. 8-dec when the feed is Chainlink USD/EUR which is
+    ///      8-decimal). The caller composes `assetPriceInPad ×
+    ///      rate / 10^decimals` to get a numeraire-quoted price in
+    ///      the same scale as the asset/PAD leg.
+    function _padNumeraireRate(LibVaipakam.Storage storage s)
+        private
+        view
+        returns (uint256 rate, uint8 decimals)
+    {
+        address direct = s.padNumeraireRateFeed;
+        if (direct != address(0)) {
+            (uint256 r, uint8 d) = _readAggregatorStrict(direct, /*allowStablePeg=*/ true);
+            return (r, d);
+        }
+
+        // Derive: PAD/<numeraire> = ETH/<numeraire> ÷ ETH/PAD.
+        address ethNumerFeed = s.ethNumeraireFeed;
+        address ethPadFeed = s.ethPadFeed;
+        if (ethNumerFeed == address(0) || ethPadFeed == address(0)) {
+            revert IVaipakamErrors.PadNumeraireRateUnavailable();
+        }
+
+        (uint256 ethNumer, uint8 ethNumerDec) = _readAggregatorStrict(ethNumerFeed, false);
+        (uint256 ethPad, uint8 ethPadDec) = _readAggregatorStrict(ethPadFeed, false);
+
+        // Both ETH-anchored feeds get the Pyth cross-check (the same
+        // gate that PAD-pivot WETH and ETH-pivot fallback already use).
+        _validatePythCrossCheck(ethPad, ethPadDec);
+
+        // Normalize both to a common scale before division. We pick
+        // the larger of (ethNumerDec, ethPadDec) as the working
+        // decimals so neither leg loses precision via truncation.
+        uint8 outDec = ethNumerDec > ethPadDec ? ethNumerDec : ethPadDec;
+        uint256 ethNumerScaled = _rescale(ethNumer, ethNumerDec, outDec);
+        uint256 ethPadScaled = _rescale(ethPad, ethPadDec, outDec);
+        if (ethPadScaled == 0) revert IVaipakamErrors.PadNumeraireRateUnavailable();
+
+        // rate = ethNumer / ethPad, then re-scaled into `outDec` so
+        // the caller's composition `padPrice × rate / 10^outDec`
+        // lands at `padPrice`'s native decimals.
+        rate = (ethNumerScaled * (10 ** outDec)) / ethPadScaled;
+        decimals = outDec;
+    }
+
+    // ─── T-033 — Pyth numeraire-redundancy gate ────────────────────────────
+
+    /// @dev Cross-validate a Chainlink ETH/USD reading against Pyth's
+    ///      latest snapshot. Soft-skips (no-op) when the gate is
+    ///      effectively disabled or Pyth's data isn't trustworthy
+    ///      for this read; reverts on a real divergence.
+    ///
+    ///      Soft-skip cases (gate degrades to Chainlink-only):
+    ///        - `pythOracle` unset (governance-disabled).
+    ///        - `pythCrossCheckFeedId` unset (governance-disabled at
+    ///          the feed-id layer).
+    ///        - `getPriceUnsafe` reverts (Pyth contract misbehaves /
+    ///          missing on this chain).
+    ///        - Pyth `publishTime` older than the staleness budget.
+    ///        - Pyth `conf / |price|` exceeds the confidence ceiling
+    ///          (publisher window too thin to trust on this read).
+    ///        - Pyth `price <= 0` (negative or zero, never expected
+    ///          on a USD peg).
+    ///
+    ///      Hard-fail case:
+    ///        - `|chainlinkPx - pythPx| / chainlinkPx >
+    ///          maxDeviationBps`. Reverts with
+    ///          {OracleCrossCheckDivergence} so the caller surfaces a
+    ///          structured error instead of a generic price-failure.
+    function _validatePythCrossCheck(
+        uint256 chainlinkPrice,
+        uint8 chainlinkDecimals
+    ) private view {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        address pyth = s.pythOracle;
+        bytes32 feedId = s.pythCrossCheckFeedId;
+        if (pyth == address(0) || feedId == bytes32(0)) return;
+
+        IPyth.Price memory snap;
+        try IPyth(pyth).getPriceUnsafe(feedId) returns (
+            IPyth.Price memory p
+        ) {
+            snap = p;
+        } catch {
+            return; // Pyth contract misbehaved — soft-skip.
+        }
+
+        // Negative / zero price is non-credible on a USD peg.
+        if (snap.price <= 0) return;
+
+        // Staleness gate.
+        uint64 maxStale = LibVaipakam.effectivePythMaxStalenessSeconds();
+        if (block.timestamp > snap.publishTime + maxStale) return;
+
+        // Normalize Pyth's (price, expo) → uint256 in `chainlinkDecimals`-
+        // scale so the deviation comparison is unit-consistent.
+        uint256 pythScaled = _pythPriceToScale(
+            uint256(uint64(snap.price)),
+            snap.expo,
+            chainlinkDecimals
+        );
+        if (pythScaled == 0) return;
+
+        // Confidence-fraction gate: skip when conf/price exceeds
+        // `pythConfidenceMaxBps`. Computed in Pyth's native scale
+        // (no normalization needed for the ratio).
+        uint16 confMax = LibVaipakam.effectivePythConfidenceMaxBps();
+        uint256 confBps = (uint256(snap.conf) * LibVaipakam.BASIS_POINTS) /
+            uint256(uint64(snap.price));
+        if (confBps > confMax) return;
+
+        // Divergence gate (the load-bearing check). Computed against
+        // the Chainlink reading as the reference; either direction
+        // breaches the tolerance.
+        uint256 absDelta = chainlinkPrice > pythScaled
+            ? chainlinkPrice - pythScaled
+            : pythScaled - chainlinkPrice;
+        uint256 deviationBps = (absDelta * LibVaipakam.BASIS_POINTS) / chainlinkPrice;
+        uint256 maxDev = uint256(LibVaipakam.effectivePythCrossCheckMaxDeviationBps());
+        if (deviationBps > maxDev) {
+            revert OracleCrossCheckDivergence(
+                chainlinkPrice,
+                pythScaled,
+                deviationBps,
+                maxDev
+            );
+        }
+    }
+
+    /// @dev Convert Pyth's (price, expo) representation into a
+    ///      uint256 expressed in `targetDecimals`. Pyth feeds carry
+    ///      a signed `expo` (typically negative — e.g. ETH/USD =
+    ///      price * 10^-8). We compose:
+    ///        scaled = price * 10^(targetDecimals + expo)
+    ///      where `targetDecimals + expo` may be negative (Pyth
+    ///      precision finer than Chainlink) or positive (coarser).
+    function _pythPriceToScale(
+        uint256 priceMagnitude,
+        int32 expo,
+        uint8 targetDecimals
+    ) private pure returns (uint256) {
+        int256 net = int256(uint256(targetDecimals)) + int256(expo);
+        if (net >= 0) {
+            // Multiply up. Bound the exponent to avoid overflow in
+            // pathological feed configurations (Pyth's documented
+            // expo range is -18..0; we cap at 30 for hardening).
+            if (net > 30) return 0;
+            return priceMagnitude * (10 ** uint256(net));
+        } else {
+            uint256 down = uint256(-net);
+            if (down > 30) return 0;
+            return priceMagnitude / (10 ** down);
+        }
     }
 
     // ─── Phase 7b.2 — symbol-derived secondary oracles + Soft 2-of-N ─
@@ -405,8 +680,13 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
         if (!symOk) return SecondaryStatus.Unavailable;
         string memory lower = _toLower(symbol);
 
+        // T-034 Numeraire generalization (B1): lower-case numeraire symbol from
+        // storage (e.g. "usd", "eur", "xau"). Empty bytes32 default
+        // is interpreted as "usd" so the post-deploy behaviour is
+        // unchanged out of the box.
+        string memory numerLower = _numeraireLowerSymbol();
         bytes32 queryId = keccak256(
-            abi.encode("SpotPrice", abi.encode(lower, "usd"))
+            abi.encode("SpotPrice", abi.encode(lower, numerLower))
         );
         bytes memory raw;
         uint256 reportedAt;
@@ -445,7 +725,9 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
         if (!symOk) return SecondaryStatus.Unavailable;
         string memory upper = _toUpper(symbol);
 
-        bytes memory packed = abi.encodePacked(upper, "/USD");
+        // T-034 Numeraire generalization (B1): dAPI name uses the active numeraire's
+        // upper-case symbol from storage (default "USD").
+        bytes memory packed = abi.encodePacked(upper, "/", _numeraireUpperSymbol());
         if (packed.length > 32) return SecondaryStatus.Unavailable;
         bytes32 dapiName;
         for (uint256 i = 0; i < packed.length; ++i) {
@@ -486,7 +768,9 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
 
         (string memory symbol, bool symOk) = _safeSymbol(asset);
         if (!symOk) return SecondaryStatus.Unavailable;
-        string memory key = string(abi.encodePacked(_toUpper(symbol), "/USD"));
+        // T-034 Numeraire generalization (B1): DIA key uses the active numeraire's
+        // upper-case symbol from storage (default "USD").
+        string memory key = string(abi.encodePacked(_toUpper(symbol), "/", _numeraireUpperSymbol()));
 
         uint128 value;
         uint128 reportedAt;
@@ -506,6 +790,37 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
         uint256 secondary = _rescale(uint256(value), 8, primaryDec);
         if (secondary == 0) return SecondaryStatus.Unavailable;
         return _classifyDeviation(primaryPrice, secondary);
+    }
+
+    /// @dev T-034 Numeraire generalization (B1) — read the numeraire symbol from
+    ///      storage and convert to a lowercase Solidity string for
+    ///      the symbol-derived secondary oracle query construction.
+    ///      Empty bytes32 (governance never wrote the slot) defaults
+    ///      to "usd" so the post-deploy behaviour matches the
+    ///      pre-sweep deploy out of the box. The bytes32 is assumed
+    ///      to already be lowercase ASCII (governance writes it that
+    ///      way); we walk to the first null byte and emit a string of
+    ///      that length. No reverse-case-fold needed.
+    function _numeraireLowerSymbol() private view returns (string memory) {
+        bytes32 raw = LibVaipakam.storageSlot().numeraireSymbol;
+        if (raw == bytes32(0)) return "usd";
+        // Walk to the first null byte (max length 32).
+        uint256 len;
+        for (len = 0; len < 32; ++len) {
+            if (raw[len] == 0) break;
+        }
+        bytes memory out = new bytes(len);
+        for (uint256 i = 0; i < len; ++i) {
+            out[i] = raw[i];
+        }
+        return string(out);
+    }
+
+    /// @dev T-034 Numeraire generalization (B1) — uppercase variant for API3 / DIA
+    ///      query construction. Reuses `_numeraireLowerSymbol` then
+    ///      upper-cases via the existing `_toUpper` helper.
+    function _numeraireUpperSymbol() private view returns (string memory) {
+        return _toUpper(_numeraireLowerSymbol());
     }
 
     /// @dev Classify a (primary, secondary) pair as Agree or Disagree

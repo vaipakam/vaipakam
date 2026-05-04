@@ -16,18 +16,18 @@ l'application. Chaque section correspond à une icône d'information
 
 ## Tableau de bord
 
-<a id="dashboard.your-escrow"></a>
+<a id="dashboard.your-vault"></a>
 
-### Ton Escrow
+### Ton Vault
 
 Un contrat upgradable par utilisateur — ton coffre privé sur cette
 chaîne — créé pour toi la première fois que tu participes à un
-prêt. Un escrow par adresse par chaîne. Détient les soldes ERC-20,
+prêt. Un vault par adresse par chaîne. Détient les soldes ERC-20,
 ERC-721 et ERC-1155 liés à tes positions de prêt. Aucune mise en
 commun : les actifs des autres utilisateurs ne sont jamais dans ce
 contrat.
 
-L'escrow est le seul endroit où résident le collatéral, les actifs
+L'vault est le seul endroit où résident le collatéral, les actifs
 prêtés et ton VPFI verrouillé. Le protocole s'authentifie auprès
 de lui à chaque dépôt et retrait. L'implémentation peut être mise
 à jour par le propriétaire du protocole, mais uniquement à travers
@@ -54,7 +54,7 @@ Comptabilité VPFI en direct pour le wallet connecté sur la chaîne
 active :
 
 - Solde du wallet.
-- Solde de l'escrow.
+- Solde de l'vault.
 - Ta part de l'offre circulante (après soustraction des soldes
   détenus par le protocole).
 - Plafond de minting restant.
@@ -78,21 +78,21 @@ déploiement.
 
 Un drapeau d'opt-in au niveau wallet qui permet au protocole de
 régler la portion remisée d'un frais en VPFI prélevés sur ton
-escrow lors des événements terminaux. Par défaut : désactivé.
+vault lors des événements terminaux. Par défaut : désactivé.
 Désactivé signifie que tu paies 100% de chaque frais dans l'actif
 principal ; activé signifie que la remise pondérée dans le temps
 s'applique.
 
 Échelle de tiers :
 
-| Tier | VPFI minimum en escrow | Remise |
-| ---- | ---------------------- | ------ |
-| 1    | ≥ 100                  | 10%    |
-| 2    | ≥ 1 000                | 15%    |
-| 3    | ≥ 5 000                | 20%    |
-| 4    | > 20 000               | 24%    |
+| Tier | VPFI minimum en vault                 | Remise                            |
+| ---- | -------------------------------------- | --------------------------------- |
+| 1    | ≥ `{liveValue:tier1Min}`               | `{liveValue:tier1DiscountBps}`%   |
+| 2    | ≥ `{liveValue:tier2Min}`               | `{liveValue:tier2DiscountBps}`%   |
+| 3    | ≥ `{liveValue:tier3Min}`               | `{liveValue:tier3DiscountBps}`%   |
+| 4    | > `{liveValue:tier4Min}`               | `{liveValue:tier4DiscountBps}`%   |
 
-Le tier est calculé contre ton solde d'escrow **après changement**
+Le tier est calculé contre ton solde d'vault **après changement**
 au moment où tu déposes ou retires du VPFI, puis pondéré dans le
 temps sur la durée de vie de chaque prêt. Un retrait refixe
 le taux au nouveau solde plus bas immédiatement pour chaque prêt
@@ -105,6 +105,19 @@ retirer quelques secondes plus tard.
 La remise s'applique au yield-fee du prêteur au moment du
 règlement et au Loan Initiation Fee de l'emprunteur (versé comme
 rabais VPFI lorsque l'emprunteur réclame).
+
+> **Le gas du réseau est séparé.** La remise ci-dessus s'applique
+> aux **frais de protocole** de Vaipakam (yield-fee
+> `{liveValue:treasuryFeeBps}` %, Loan Initiation Fee
+> `{liveValue:loanInitiationFeeBps}` %). Les **frais de gas du
+> réseau blockchain** que requiert chaque action on-chain — payés
+> aux validateurs sur Base / Sepolia / Arbitrum / etc. lors de la
+> création d'une offre, l'acceptation, le remboursement, la
+> réclamation, le retrait, etc. — ne sont pas un frais de protocole.
+> Vaipakam ne les reçoit jamais ; le réseau, oui. Ils ne peuvent
+> pas être catégorisés en tiers ni remboursés, et ils varient avec
+> la congestion de la chaîne au moment de la soumission, pas avec
+> la taille du prêt ni avec ton tier VPFI.
 
 <a id="dashboard.rewards-summary"></a>
 
@@ -122,7 +135,7 @@ avec un lien profond en chevron vers la carte de réclamation
 complète sur sa page native :
 
 - **Rendement du staking** — VPFI en attente accumulé à l'APR du
-  protocole sur ton solde d'escrow, plus toutes les récompenses de
+  protocole sur ton solde d'vault, plus toutes les récompenses de
   staking que tu as déjà réclamées depuis ce wallet. Lien vers la
   carte de réclamation de staking sur la page Acheter VPFI.
 - **Récompenses d'interaction avec la plateforme** — VPFI en attente
@@ -187,7 +200,7 @@ prélevée au règlement terminal, pas en amont.
 ### Offres d'emprunteurs
 
 Offres actives d'emprunteurs ayant déjà verrouillé leur collatéral
-en escrow. L'acceptation est réalisée par un prêteur ; cela
+en vault. L'acceptation est réalisée par un prêteur ; cela
 finance le prêt avec l'actif principal et mint les NFT de
 position. Même verrou HF ≥ 1,5 à l'initialisation. L'APR fixe
 est défini sur l'offre à la création et immuable durant toute la
@@ -241,7 +254,7 @@ L'actif principal et le montant que tu es prêt à offrir, plus le
 taux d'intérêt (APR en %) et la durée en jours. Le taux est fixé
 au moment de l'offre ; la durée définit la fenêtre de grâce avant
 que le prêt puisse passer en défaut. À l'acceptation, le principal
-passe de ton escrow à l'escrow de l'emprunteur dans le cadre de
+passe de ton vault à l'vault de l'emprunteur dans le cadre de
 l'initialisation du prêt.
 
 <a id="create-offer.lending-asset:borrower"></a>
@@ -252,7 +265,7 @@ L'actif principal et le montant que tu veux du prêteur, plus le
 taux d'intérêt (APR en %) et la durée en jours. Le taux est fixé
 au moment de l'offre ; la durée définit la fenêtre de grâce avant
 que le prêt puisse passer en défaut. Ton collatéral est verrouillé
-dans ton escrow au moment de la création de l'offre et reste
+dans ton vault au moment de la création de l'offre et reste
 verrouillé jusqu'à ce qu'un prêteur accepte et que le prêt
 s'ouvre (ou jusqu'à ce que tu annules).
 
@@ -264,7 +277,7 @@ Champs du sous-type de location. Spécifie le contrat NFT et
 l'identifiant du token (et la quantité pour ERC-1155), plus le
 frais journalier de location dans l'actif principal. À
 l'acceptation, le protocole prélève la location pré-payée depuis
-l'escrow du locataire vers la garde — soit durée × frais
+l'vault du locataire vers la garde — soit durée × frais
 journalier, plus une marge de 5%. Le NFT lui-même passe en état
 délégué (via les droits d'utilisation ERC-4907, ou le hook
 équivalent de location ERC-1155), de sorte que le locataire a
@@ -320,7 +333,7 @@ v3) relèvent du calcul LTV / HF ; les ERC-20 illiquides et les
 NFT n'ont pas de valorisation on-chain et nécessitent que les
 deux parties consentent à un scénario de transfert intégral du
 collatéral en défaut. Ton collatéral est verrouillé dans ton
-escrow au moment de la création de l'offre sur une offre
+vault au moment de la création de l'offre sur une offre
 d'emprunteur ; pour une offre de prêteur, ton collatéral est
 verrouillé au moment de l'acceptation. Dans tous les cas, le
 verrou HF ≥ 1,5 à l'initialisation du prêt doit être franchi
@@ -500,13 +513,13 @@ par la gouvernance via un timelock.
 Statut en direct :
 
 - Tier courant (0 à 4).
-- Solde VPFI d'escrow plus l'écart jusqu'au tier suivant.
+- Solde VPFI d'vault plus l'écart jusqu'au tier suivant.
 - Pourcentage de remise au tier courant.
 - Drapeau de consentement au niveau wallet.
 
-À noter que le VPFI en escrow accumule aussi 5% APR via le pool
+À noter que le VPFI en vault accumule aussi 5% APR via le pool
 de staking — il n'y a pas d'action « stake » séparée. Déposer
-du VPFI dans ton escrow EST staker.
+du VPFI dans ton vault EST staker.
 
 <a id="buy-vpfi.buy"></a>
 
@@ -518,16 +531,16 @@ envoie un message cross-chain, et le récepteur exécute l'achat
 sur Base et renvoie le VPFI par bridge. Les frais de pont plus le
 coût du réseau de vérificateurs est coté en direct et affiché
 dans le formulaire. Le VPFI ne se dépose pas automatiquement en
-escrow — l'étape 2 est une action explicite de l'utilisateur par
+vault — l'étape 2 est une action explicite de l'utilisateur par
 conception.
 
 <a id="buy-vpfi.deposit"></a>
 
-### Étape 2 — Dépose le VPFI dans ton escrow
+### Étape 2 — Dépose le VPFI dans ton vault
 
 Une étape de dépôt explicite séparée, depuis ton wallet vers ton
-escrow sur la même chaîne. Requise sur chaque chaîne — même la
-canonique — car le dépôt en escrow est toujours une action
+vault sur la même chaîne. Requise sur chaque chaîne — même la
+canonique — car le dépôt en vault est toujours une action
 explicite de l'utilisateur par spécification. Sur les chaînes
 où Permit2 est configuré, l'app préfère la voie en signature
 unique au pattern classique approve + deposit ; elle bascule proprement
@@ -535,10 +548,10 @@ si Permit2 n'est pas configuré sur cette chaîne.
 
 <a id="buy-vpfi.unstake"></a>
 
-### Étape 3 — Désengage le VPFI de ton escrow
+### Étape 3 — Désengage le VPFI de ton vault
 
-Retire du VPFI de ton escrow vers ton wallet. Pas d'étape
-d'approbation — le protocole possède l'escrow et se prélève
+Retire du VPFI de ton vault vers ton wallet. Pas d'étape
+d'approbation — le protocole possède l'vault et se prélève
 lui-même. Le retrait déclenche une refixation immédiate du
 taux de remise au nouveau solde plus bas, appliqué à chaque
 prêt ouvert te concernant. Il n'y a pas de fenêtre de grâce où
@@ -554,7 +567,7 @@ l'ancien tier s'applique encore.
 
 Deux flux :
 
-- **Pool de staking** — le VPFI détenu en escrow accumule à 5%
+- **Pool de staking** — le VPFI détenu en vault accumule à 5%
   APR en continu, avec composition à la seconde.
 - **Pool d'interaction** — part journalière au prorata d'une
   émission journalière fixe, pondérée par ta contribution en
@@ -585,7 +598,7 @@ ne sous-réclament pas.
 ### Retirer le VPFI staké
 
 Interface identique à « Étape 3 — Désengage » sur la page Acheter
-VPFI — retire du VPFI de l'escrow vers ton wallet. Le VPFI
+VPFI — retire du VPFI de l'vault vers ton wallet. Le VPFI
 retiré sort du pool de staking immédiatement (les récompenses
 cessent de s'accumuler pour ce montant à ce bloc) et sort de
 l'accumulateur de remise immédiatement (refixation après solde sur
@@ -681,10 +694,10 @@ Loan Initiation Fee inutilisé.
 
 ### Parties
 
-Prêteur, emprunteur, escrow du prêteur, escrow de l'emprunteur
+Prêteur, emprunteur, vault du prêteur, vault de l'emprunteur
 et les deux NFT de position (un pour chaque côté). Chaque NFT
 est un ERC-721 avec métadonnées on-chain ; le transférer
-transfère le droit de réclamer. Les contrats d'escrow sont
+transfère le droit de réclamer. Les contrats d'vault sont
 déterministes par adresse — même adresse à travers les
 déploiements.
 
@@ -736,7 +749,7 @@ Actions permissionless disponibles à tous quel que soit le rôle :
 - **Refinancer** — publie une offre d'emprunteur pour de
   nouvelles conditions ; une fois qu'un prêteur accepte,
   finaliser le refinancement échange les prêts atomiquement
-  sans que le collatéral ne quitte ton escrow.
+  sans que le collatéral ne quitte ton vault.
 - **Réclamer en tant qu'emprunteur** — uniquement en état terminal. Rend
   le collatéral en cas de remboursement total, ou le rabais
   VPFI Loan Initiation Fee inutilisé en défaut / liquidation.
@@ -966,7 +979,7 @@ initié par l'emprunteur sur son prêt.
 Le refinancement solde atomiquement ton prêt existant depuis un
 nouveau principal et ouvre un prêt frais avec les nouvelles
 conditions, le tout en une transaction. Le collatéral reste
-dans ton escrow tout du long — pas de fenêtre non garantie. Le
+dans ton vault tout du long — pas de fenêtre non garantie. Le
 nouveau prêt doit franchir le verrou HF ≥ 1,5 à
 l'initialisation, comme tout autre prêt.
 
@@ -981,7 +994,7 @@ Snapshot du prêt en cours de refinancement — principal courant,
 intérêts accumulés à ce stade, HF / LTV et le panier de
 collatéral. La nouvelle offre devrait dimensionner au moins le
 solde restant (principal + intérêts accumulés) ; tout excédent
-sur la nouvelle offre est livré à ton escrow comme principal
+sur la nouvelle offre est livré à ton vault comme principal
 libre.
 
 <a id="refinance.step-1-post-offer"></a>

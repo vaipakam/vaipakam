@@ -22,6 +22,9 @@ import {
   AlertTriangle,
   CheckCircle,
   Info,
+  Gift,
+  TrendingUp,
+  ShieldCheck,
 } from "lucide-react";
 import { useWallet } from "../context/WalletContext";
 import {
@@ -46,7 +49,9 @@ import { decodeContractError } from "../lib/decodeContractError";
 import { formatNumber } from "../lib/format";
 import { beginStep } from "../lib/journeyLog";
 import { ReportIssueLink } from "../components/app/ReportIssueLink";
+import { SanctionsBanner } from "../components/app/SanctionsBanner";
 import { CardInfo } from "../components/CardInfo";
+import { getBuyAssetInfo } from "../lib/buyAssetInfo";
 import { VPFIPanel } from "../components/app/VPFIPanel";
 import { StakingRewardsClaim } from "../components/app/StakingRewardsClaim";
 import { useVPFIToken } from "../hooks/useVPFIToken";
@@ -146,7 +151,7 @@ function BridgeLandedBanner({
               : `VPFI delivered to your wallet on ${originChain.name}`}
           </div>
           <p className="stat-label" style={{ margin: 0 }}>
-            Deposit it to your escrow below to unlock the borrower fee discount.
+            Deposit it to your Vaipakam Vault below to unlock the borrower fee discount.
             You can also import the token into MetaMask so your wallet UI tracks
             the balance.
           </p>
@@ -821,13 +826,74 @@ export default function BuyVPFI() {
   };
 
   if (!address) {
+    // Pre-connect — render a marketing block (what VPFI buys you)
+    // instead of the empty "connect wallet" placeholder. Read-only
+    // protocol stats live on the public Analytics page; here the
+    // pitch is the user's *own* benefit (yield-fee discount on
+    // lending, initiation-fee rebate on borrowing, ETH→VPFI buy at
+    // a fixed protocol rate). Once the wallet connects, the buy
+    // surface below renders as before.
     return (
-      <div className="empty-state" style={{ minHeight: "60vh" }}>
-        <div className="empty-state-icon">
-          <Wallet size={28} />
+      <div className="buy-vpfi" style={{ maxWidth: 760, margin: '0 auto' }}>
+        <div className="page-header">
+          <h1 className="page-title">{t('buyVpfi.title')}</h1>
+          <p className="page-subtitle">{t('buyVpfi.preconnect.tagline')}</p>
         </div>
-        <h3>{t('buyVpfi.connectTitle')}</h3>
-        <p>{t('buyVpfi.connectBody')}</p>
+
+        <div className="card" style={{ marginTop: 16 }}>
+          <div
+            className="card-title"
+            style={{ display: 'flex', alignItems: 'center', gap: 8 }}
+          >
+            <Gift size={16} />
+            {t('buyVpfi.preconnect.discountTitle')}
+          </div>
+          <p>{t('buyVpfi.preconnect.discountBody')}</p>
+          <ul style={{ margin: '8px 0 0 0', paddingLeft: 20 }}>
+            <li>{t('buyVpfi.preconnect.discountBullet1')}</li>
+            <li>{t('buyVpfi.preconnect.discountBullet2')}</li>
+          </ul>
+        </div>
+
+        <div className="card" style={{ marginTop: 16 }}>
+          <div
+            className="card-title"
+            style={{ display: 'flex', alignItems: 'center', gap: 8 }}
+          >
+            <TrendingUp size={16} />
+            {t('buyVpfi.preconnect.stakingTitle')}
+          </div>
+          <p>{t('buyVpfi.preconnect.stakingBody')}</p>
+        </div>
+
+        <div className="card" style={{ marginTop: 16 }}>
+          <div
+            className="card-title"
+            style={{ display: 'flex', alignItems: 'center', gap: 8 }}
+          >
+            <ShieldCheck size={16} />
+            {t('buyVpfi.preconnect.howTitle')}
+          </div>
+          <p>{t('buyVpfi.preconnect.howBody')}</p>
+          <p style={{ marginTop: 12, opacity: 0.75, fontSize: '0.85rem' }}>
+            {t('buyVpfi.preconnect.analyticsHint')}{' '}
+            <Link to="/analytics" style={{ color: 'var(--brand)' }}>
+              {t('buyVpfi.preconnect.analyticsLink')}
+            </Link>
+            .
+          </p>
+        </div>
+
+        <div
+          className="empty-state"
+          style={{ marginTop: 24, minHeight: 'auto' }}
+        >
+          <div className="empty-state-icon">
+            <Wallet size={24} />
+          </div>
+          <h3>{t('buyVpfi.connectTitle')}</h3>
+          <p>{t('buyVpfi.connectBody')}</p>
+        </div>
       </div>
     );
   }
@@ -871,6 +937,13 @@ export default function BuyVPFI() {
         </h1>
         <p className="page-subtitle">{t('buyVpfi.pageSubtitle')}</p>
       </div>
+
+      {address && (
+        <SanctionsBanner
+          address={address as `0x${string}`}
+          label={t('banners.sanctionsLabelWallet')}
+        />
+      )}
 
       <FlowBanner
         step={step}
@@ -1257,8 +1330,10 @@ function StepHeader({ index, title, subtitle, cardHelpId, cardHelpParams }: Step
 interface StatProps {
   /** Caption shown below the value. */
   label: string;
-  /** Pre-formatted display value (caller controls units / precision). */
-  value: string;
+  /** Pre-formatted display value (caller controls units / precision).
+   *  Accepts ReactNode so callers can embed inline elements
+   *  (e.g. a CoinGecko deep-link on the asset symbol — see T-038). */
+  value: React.ReactNode;
 }
 
 /** Compact stat block used inside the buy / deposit cards. */
@@ -1574,7 +1649,31 @@ function BuyCard({
           marginBottom: 16,
         }}
       >
-        <Stat label={t('buyVpfiCards.fixedRateLabel')} value={`${rateEth} ETH / VPFI`} />
+        {/* T-038 — render the rate using the live asset symbol of
+            this chain (always "ETH" on the canonical Base chain, but
+            this keeps the path uniform with the bridged path below
+            and lets the symbol deep-link to its CoinGecko page so
+            users can confirm exactly which asset they need.) */}
+        <Stat
+          label={t('buyVpfiCards.fixedRateLabel')}
+          value={(() => {
+            const asset = getBuyAssetInfo(canonical);
+            const symbolNode = asset.coinGeckoUrl ? (
+              <a
+                href={asset.coinGeckoUrl}
+                target="_blank"
+                rel="noreferrer"
+                aria-label={t('buyVpfiCards.assetCoinGeckoAria', { symbol: asset.symbol })}
+                style={{ textDecoration: 'underline dotted', textUnderlineOffset: 2 }}
+              >
+                {asset.symbol}
+              </a>
+            ) : (
+              asset.symbol
+            );
+            return <>{rateEth} {symbolNode} / VPFI</>;
+          })()}
+        />
         <Stat
           label={t('buyVpfiCards.remainingGlobal')}
           value={formatAmount(formatVpfiUnits(buyConfig.globalHeadroom))}
@@ -1867,7 +1966,33 @@ function BridgedBuyCard({
           marginBottom: 16,
         }}
       >
-        <Stat label="Fixed rate" value={`${rateEth} ETH / VPFI`} />
+        {/* T-038 — render the rate using the live asset symbol of
+            the origin chain. Mode comes from the bridge's
+            `paymentToken()` quote read; falls back to chain-config
+            inference (`vpfiBuyPaymentToken` from deployments JSON)
+            until the quote lands. CoinGecko deep-link confirms
+            exactly which asset (WETH on BNB ≠ WETH on Polygon —
+            different bridged contracts). */}
+        <Stat
+          label="Fixed rate"
+          value={(() => {
+            const asset = getBuyAssetInfo(originChain, mode);
+            const symbolNode = asset.coinGeckoUrl ? (
+              <a
+                href={asset.coinGeckoUrl}
+                target="_blank"
+                rel="noreferrer"
+                aria-label={`Open CoinGecko page for ${asset.symbol}`}
+                style={{ textDecoration: 'underline dotted', textUnderlineOffset: 2 }}
+              >
+                {asset.symbol}
+              </a>
+            ) : (
+              asset.symbol
+            );
+            return <>{rateEth} {symbolNode} / VPFI</>;
+          })()}
+        />
         <Stat
           label="Remaining global supply"
           value={formatAmount(formatVpfiUnits(buyConfig.globalHeadroom))}
@@ -1887,7 +2012,7 @@ function BridgedBuyCard({
         }}
       >
         <label className="stat-label" style={{ margin: 0, fontWeight: 500 }}>
-          Pay ({mode === "token" ? "tokens" : "ETH"})
+          Pay ({getBuyAssetInfo(originChain, mode).symbol})
         </label>
         {maxSpendEth && maxSpendWei > 0n && (
           <button

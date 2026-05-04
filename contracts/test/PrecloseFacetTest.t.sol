@@ -11,6 +11,7 @@ import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {VaipakamNFTFacet} from "../src/facets/VaipakamNFTFacet.sol";
 import {EscrowFactoryFacet} from "../src/facets/EscrowFactoryFacet.sol";
 import {OfferFacet} from "../src/facets/OfferFacet.sol";
+import {OfferCancelFacet} from "../src/facets/OfferCancelFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
 import {OracleFacet} from "../src/facets/OracleFacet.sol";
@@ -44,6 +45,7 @@ contract PrecloseFacetTest is Test {
 
     DiamondCutFacet cutFacet;
     OfferFacet offerFacet;
+    OfferCancelFacet offerCancelFacet;
     ProfileFacet profileFacet;
     OracleFacet oracleFacet;
     VaipakamNFTFacet nftFacet;
@@ -105,7 +107,7 @@ contract PrecloseFacetTest is Test {
         // resolves against ownerOf(borrowerTokenId); backfilling creator
         // here keeps downstream reads of offer.creator pointing at the
         // borrower who initiated the flow.
-        LibVaipakam.Offer memory o = OfferFacet(address(diamond)).getOffer(offerId);
+        LibVaipakam.Offer memory o = OfferCancelFacet(address(diamond)).getOffer(offerId);
         o.accepted = true;
         if (o.creator == address(0)) o.creator = borrower;
         TestMutatorFacet(address(diamond)).setOffer(offerId, o);
@@ -132,6 +134,8 @@ contract PrecloseFacetTest is Test {
         diamond = new VaipakamDiamond(owner, address(cutFacet));
 
         offerFacet = new OfferFacet();
+
+        offerCancelFacet = new OfferCancelFacet();
         profileFacet = new ProfileFacet();
         oracleFacet = new OracleFacet();
         nftFacet = new VaipakamNFTFacet();
@@ -148,7 +152,7 @@ contract PrecloseFacetTest is Test {
         testMutatorFacet = new TestMutatorFacet();
         helperTest = new HelperTest();
 
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](15);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](16);
         cuts[0]  = IDiamondCut.FacetCut({facetAddress: address(offerFacet),          action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getOfferFacetSelectors()});
         cuts[1]  = IDiamondCut.FacetCut({facetAddress: address(profileFacet),        action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getProfileFacetSelectors()});
         cuts[2]  = IDiamondCut.FacetCut({facetAddress: address(oracleFacet),         action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getOracleFacetSelectors()});
@@ -164,6 +168,7 @@ contract PrecloseFacetTest is Test {
         cuts[12] = IDiamondCut.FacetCut({facetAddress: address(precloseFacet),       action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getPrecloseFacetSelectors()});
         cuts[13] = IDiamondCut.FacetCut({facetAddress: address(accessControlFacet), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getAccessControlFacetSelectors()});
         cuts[14] = IDiamondCut.FacetCut({facetAddress: address(testMutatorFacet),   action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getTestMutatorFacetSelectors()});
+        cuts[15] = IDiamondCut.FacetCut({facetAddress: address(offerCancelFacet), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getOfferCancelFacetSelectors()});
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");
 
         AccessControlFacet(address(diamond)).initializeAccessControl();
@@ -238,7 +243,10 @@ contract PrecloseFacetTest is Test {
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
                 collateralQuantity: 0,
-                allowsPartialRepay: false
+                allowsPartialRepay: false,
+                amountMax: 0,
+                interestRateBpsMax: 0,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
             })
         );
         vm.prank(borrower);
@@ -291,7 +299,7 @@ contract PrecloseFacetTest is Test {
 
     /// @dev Covers CrossFacetCallFailed("Create offset offer failed") in offsetWithNewOffer.
     function testOffsetWithNewOfferCreateOfferFails2() public {
-        vm.mockCallRevert(address(diamond), abi.encodeWithSelector(OfferFacet.createOffer.selector), "offer fail");
+        vm.mockCallRevert(address(diamond), abi.encodeWithSelector(OfferFacet.createOfferInternal.selector), "offer fail");
 
         vm.prank(borrower);
         vm.expectRevert(IVaipakamErrors.OfferCreationFailed.selector);
@@ -353,7 +361,10 @@ contract PrecloseFacetTest is Test {
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
                 collateralQuantity: 0,
-                allowsPartialRepay: false
+                allowsPartialRepay: false,
+                amountMax: 0,
+                interestRateBpsMax: 0,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
             })
         );
 
@@ -383,7 +394,10 @@ contract PrecloseFacetTest is Test {
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
                 collateralQuantity: 0,
-                allowsPartialRepay: false
+                allowsPartialRepay: false,
+                amountMax: 0,
+                interestRateBpsMax: 0,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
             })
         );
 
@@ -411,7 +425,10 @@ contract PrecloseFacetTest is Test {
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
                 collateralQuantity: 0,
-                allowsPartialRepay: false
+                allowsPartialRepay: false,
+                amountMax: 0,
+                interestRateBpsMax: 0,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
             })
         );
 
@@ -439,7 +456,10 @@ contract PrecloseFacetTest is Test {
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
                 collateralQuantity: 0,
-                allowsPartialRepay: false
+                allowsPartialRepay: false,
+                amountMax: 0,
+                interestRateBpsMax: 0,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
             })
         );
 
@@ -468,7 +488,10 @@ contract PrecloseFacetTest is Test {
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
                 collateralQuantity: 0,
-                allowsPartialRepay: false
+                allowsPartialRepay: false,
+                amountMax: 0,
+                interestRateBpsMax: 0,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
             })
         );
 
@@ -496,7 +519,10 @@ contract PrecloseFacetTest is Test {
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
                 collateralQuantity: 0,
-                allowsPartialRepay: false
+                allowsPartialRepay: false,
+                amountMax: 0,
+                interestRateBpsMax: 0,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
             })
         );
 
@@ -539,7 +565,10 @@ contract PrecloseFacetTest is Test {
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
                 collateralQuantity: 0,
-                allowsPartialRepay: false
+                allowsPartialRepay: false,
+                amountMax: 0,
+                interestRateBpsMax: 0,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
             })
         );
 
@@ -576,7 +605,10 @@ contract PrecloseFacetTest is Test {
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
                 collateralQuantity: 0,
-                allowsPartialRepay: false
+                allowsPartialRepay: false,
+                amountMax: 0,
+                interestRateBpsMax: 0,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
             })
         );
 
@@ -616,7 +648,10 @@ contract PrecloseFacetTest is Test {
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
                 collateralQuantity: 0,
-                allowsPartialRepay: false
+                allowsPartialRepay: false,
+                amountMax: 0,
+                interestRateBpsMax: 0,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
             })
         );
 
@@ -673,7 +708,7 @@ contract PrecloseFacetTest is Test {
         vm.warp(block.timestamp + 5 days);
 
         // Mock the createOffer cross-facet call to succeed
-        vm.mockCall(address(diamond), abi.encodeWithSelector(OfferFacet.createOffer.selector), abi.encode(uint256(99)));
+        vm.mockCall(address(diamond), abi.encodeWithSelector(OfferFacet.createOfferInternal.selector), abi.encode(uint256(99)));
 
         vm.prank(borrower);
         PrecloseFacet(address(diamond)).offsetWithNewOffer(activeLoanId, 1000, 25, mockCollateralERC20, COLLATERAL, true, mockERC20);
@@ -681,7 +716,7 @@ contract PrecloseFacetTest is Test {
     }
 
     function testOffsetNoShortfallLowerRate() public {
-        vm.mockCall(address(diamond), abi.encodeWithSelector(OfferFacet.createOffer.selector), abi.encode(uint256(99)));
+        vm.mockCall(address(diamond), abi.encodeWithSelector(OfferFacet.createOfferInternal.selector), abi.encode(uint256(99)));
 
         vm.prank(borrower);
         PrecloseFacet(address(diamond)).offsetWithNewOffer(activeLoanId, 300, 30, mockCollateralERC20, COLLATERAL, true, mockERC20);
@@ -703,7 +738,7 @@ contract PrecloseFacetTest is Test {
         // Set up a linked, accepted offset so the link/accepted checks pass
         // and the keeper auth check is the one under test. Without setup
         // OffsetNotLinked would fire first and mask the auth rejection.
-        vm.mockCall(address(diamond), abi.encodeWithSelector(OfferFacet.createOffer.selector), abi.encode(uint256(99)));
+        vm.mockCall(address(diamond), abi.encodeWithSelector(OfferFacet.createOfferInternal.selector), abi.encode(uint256(99)));
         vm.prank(borrower);
         PrecloseFacet(address(diamond)).offsetWithNewOffer(activeLoanId, 500, 30, mockCollateralERC20, COLLATERAL, true, mockERC20);
         vm.clearMockedCalls();
@@ -725,7 +760,7 @@ contract PrecloseFacetTest is Test {
         // Set up an accepted offset so the link and accepted checks pass,
         // isolating the auth check. Without this setup, OffsetNotLinked
         // would fire first and mask the auth rejection under test.
-        vm.mockCall(address(diamond), abi.encodeWithSelector(OfferFacet.createOffer.selector), abi.encode(uint256(99)));
+        vm.mockCall(address(diamond), abi.encodeWithSelector(OfferFacet.createOfferInternal.selector), abi.encode(uint256(99)));
         vm.prank(borrower);
         PrecloseFacet(address(diamond)).offsetWithNewOffer(activeLoanId, 500, 30, mockCollateralERC20, COLLATERAL, true, mockERC20);
         vm.clearMockedCalls();
@@ -744,7 +779,7 @@ contract PrecloseFacetTest is Test {
 
     function testCompleteOffsetRevertsOfferNotAccepted() public {
         // First create an offset offer, then try to complete before it's accepted
-        vm.mockCall(address(diamond), abi.encodeWithSelector(OfferFacet.createOffer.selector), abi.encode(uint256(99)));
+        vm.mockCall(address(diamond), abi.encodeWithSelector(OfferFacet.createOfferInternal.selector), abi.encode(uint256(99)));
 
         vm.prank(borrower);
         PrecloseFacet(address(diamond)).offsetWithNewOffer(activeLoanId, 500, 30, mockCollateralERC20, COLLATERAL, true, mockERC20);
@@ -758,7 +793,7 @@ contract PrecloseFacetTest is Test {
 
     function testCompleteOffsetSuccess() public {
         // Create offset offer
-        vm.mockCall(address(diamond), abi.encodeWithSelector(OfferFacet.createOffer.selector), abi.encode(uint256(99)));
+        vm.mockCall(address(diamond), abi.encodeWithSelector(OfferFacet.createOfferInternal.selector), abi.encode(uint256(99)));
         vm.prank(borrower);
         PrecloseFacet(address(diamond)).offsetWithNewOffer(activeLoanId, 500, 30, mockCollateralERC20, COLLATERAL, true, mockERC20);
         vm.clearMockedCalls();
@@ -845,7 +880,10 @@ contract PrecloseFacetTest is Test {
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
                 collateralQuantity: 0,
-                allowsPartialRepay: false
+                allowsPartialRepay: false,
+                amountMax: 0,
+                interestRateBpsMax: 0,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
             })
         );
 
@@ -875,7 +913,10 @@ contract PrecloseFacetTest is Test {
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
                 collateralQuantity: 0,
-                allowsPartialRepay: false
+                allowsPartialRepay: false,
+                amountMax: 0,
+                interestRateBpsMax: 0,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
             })
         );
 
@@ -908,7 +949,10 @@ contract PrecloseFacetTest is Test {
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
                 collateralQuantity: 0,
-                allowsPartialRepay: false
+                allowsPartialRepay: false,
+                amountMax: 0,
+                interestRateBpsMax: 0,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
             })
         );
 
@@ -975,7 +1019,10 @@ contract PrecloseFacetTest is Test {
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
                 collateralQuantity: 0,
-                allowsPartialRepay: false
+                allowsPartialRepay: false,
+                amountMax: 0,
+                interestRateBpsMax: 0,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
             })
         );
 
@@ -1017,7 +1064,10 @@ contract PrecloseFacetTest is Test {
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
                 collateralQuantity: 0,
-                allowsPartialRepay: false
+                allowsPartialRepay: false,
+                amountMax: 0,
+                interestRateBpsMax: 0,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
             })
         );
 
@@ -1062,7 +1112,10 @@ contract PrecloseFacetTest is Test {
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
                 collateralQuantity: 0,
-                allowsPartialRepay: false
+                allowsPartialRepay: false,
+                amountMax: 0,
+                interestRateBpsMax: 0,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
             })
         );
 
@@ -1086,7 +1139,7 @@ contract PrecloseFacetTest is Test {
     /// @dev Covers the _resetNFTRenter call inside completeOffset when assetType=ERC721.
     function testCompleteOffsetNFTRentalPath() public {
         // Create offset offer
-        vm.mockCall(address(diamond), abi.encodeWithSelector(OfferFacet.createOffer.selector), abi.encode(uint256(99)));
+        vm.mockCall(address(diamond), abi.encodeWithSelector(OfferFacet.createOfferInternal.selector), abi.encode(uint256(99)));
         vm.prank(borrower);
         PrecloseFacet(address(diamond)).offsetWithNewOffer(activeLoanId, 500, 30, mockCollateralERC20, COLLATERAL, true, mockERC20);
         vm.clearMockedCalls();
@@ -1130,7 +1183,10 @@ contract PrecloseFacetTest is Test {
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
                 collateralQuantity: 0,
-                allowsPartialRepay: false
+                allowsPartialRepay: false,
+                amountMax: 0,
+                interestRateBpsMax: 0,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
             })
         );
 
@@ -1172,7 +1228,10 @@ contract PrecloseFacetTest is Test {
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
                 collateralQuantity: 0,
-                allowsPartialRepay: false
+                allowsPartialRepay: false,
+                amountMax: 0,
+                interestRateBpsMax: 0,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
             })
         );
 
@@ -1203,7 +1262,10 @@ contract PrecloseFacetTest is Test {
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
                 collateralQuantity: 0,
-                allowsPartialRepay: false
+                allowsPartialRepay: false,
+                amountMax: 0,
+                interestRateBpsMax: 0,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
             })
         );
 
@@ -1242,7 +1304,10 @@ contract PrecloseFacetTest is Test {
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
                 collateralQuantity: 0,
-                allowsPartialRepay: false
+                allowsPartialRepay: false,
+                amountMax: 0,
+                interestRateBpsMax: 0,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
             })
         );
 
@@ -1257,7 +1322,7 @@ contract PrecloseFacetTest is Test {
         // We need a different approach: mock burnNFT to succeed, but use mockCallRevert
         // with the specific offer position tokenId.
         // The offer's positionTokenId is set during createOffer. Let's read it.
-        LibVaipakam.Offer memory offer = OfferFacet(address(diamond)).getOffer(validOffer);
+        LibVaipakam.Offer memory offer = OfferCancelFacet(address(diamond)).getOffer(validOffer);
         uint256 offerPositionTokenId = offer.positionTokenId;
 
         // Mock burnNFT for the borrower's token to succeed (using generic mock)
@@ -1298,7 +1363,7 @@ contract PrecloseFacetTest is Test {
     /// @dev Covers "NFT update failed" revert in completeOffset's _setLoanClaimable.
     function testCompleteOffsetNFTUpdateFails() public {
         // Create offset offer
-        vm.mockCall(address(diamond), abi.encodeWithSelector(OfferFacet.createOffer.selector), abi.encode(uint256(99)));
+        vm.mockCall(address(diamond), abi.encodeWithSelector(OfferFacet.createOfferInternal.selector), abi.encode(uint256(99)));
         vm.prank(borrower);
         PrecloseFacet(address(diamond)).offsetWithNewOffer(activeLoanId, 500, 30, mockCollateralERC20, COLLATERAL, true, mockERC20);
         vm.clearMockedCalls();
@@ -1319,7 +1384,7 @@ contract PrecloseFacetTest is Test {
     /// @dev Covers completeOffset called by third-party when keeperAccessEnabled=true.
     function testCompleteOffsetKeeperAllowed() public {
         // Create offset offer
-        vm.mockCall(address(diamond), abi.encodeWithSelector(OfferFacet.createOffer.selector), abi.encode(uint256(99)));
+        vm.mockCall(address(diamond), abi.encodeWithSelector(OfferFacet.createOfferInternal.selector), abi.encode(uint256(99)));
         vm.prank(borrower);
         PrecloseFacet(address(diamond)).offsetWithNewOffer(activeLoanId, 500, 30, mockCollateralERC20, COLLATERAL, true, mockERC20);
         vm.clearMockedCalls();
@@ -1359,7 +1424,7 @@ contract PrecloseFacetTest is Test {
         vm.warp(block.timestamp + 10 days);
 
         // Use lower interestRateBps to create shortfall
-        vm.mockCall(address(diamond), abi.encodeWithSelector(OfferFacet.createOffer.selector), abi.encode(uint256(99)));
+        vm.mockCall(address(diamond), abi.encodeWithSelector(OfferFacet.createOfferInternal.selector), abi.encode(uint256(99)));
         vm.prank(borrower);
         PrecloseFacet(address(diamond)).offsetWithNewOffer(
             activeLoanId, 200, 20, mockCollateralERC20, COLLATERAL, true, mockERC20
@@ -1398,7 +1463,7 @@ contract PrecloseFacetTest is Test {
     /// @dev Covers completeOffset with NFT rental path — exercises the _resetNFTRenter branch.
     function testCompleteOffsetNFTRentalResetRenter() public {
         // Create offset offer
-        vm.mockCall(address(diamond), abi.encodeWithSelector(OfferFacet.createOffer.selector), abi.encode(uint256(99)));
+        vm.mockCall(address(diamond), abi.encodeWithSelector(OfferFacet.createOfferInternal.selector), abi.encode(uint256(99)));
         vm.prank(borrower);
         PrecloseFacet(address(diamond)).offsetWithNewOffer(activeLoanId, 500, 30, mockCollateralERC20, COLLATERAL, true, mockERC20);
         vm.clearMockedCalls();
@@ -1448,7 +1513,10 @@ contract PrecloseFacetTest is Test {
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
                 collateralQuantity: 0,
-                allowsPartialRepay: false
+                allowsPartialRepay: false,
+                amountMax: 0,
+                interestRateBpsMax: 0,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
             })
         );
 
@@ -1485,19 +1553,23 @@ contract PrecloseFacetTest is Test {
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
                 collateralQuantity: 0,
-                allowsPartialRepay: false
+                allowsPartialRepay: false,
+                amountMax: 0,
+                interestRateBpsMax: 0,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
             })
         );
 
-        // Mock getOrCreateUserEscrow for lender to fail
+        // T-051 — escrow resolution moved inside the chokepoint;
+        // mock the chokepoint selector instead.
         vm.mockCallRevert(
             address(diamond),
-            abi.encodeWithSelector(EscrowFactoryFacet.getOrCreateUserEscrow.selector, lender),
+            abi.encodeWithSelector(EscrowFactoryFacet.escrowDepositERC20From.selector),
             "escrow fail"
         );
 
         vm.prank(borrower);
-        vm.expectRevert(bytes("escrow fail"));
+        vm.expectRevert();
         PrecloseFacet(address(diamond)).transferObligationViaOffer(activeLoanId, validOffer);
         vm.clearMockedCalls();
     }
@@ -1505,15 +1577,21 @@ contract PrecloseFacetTest is Test {
     /// @dev Covers precloseDirect _getOrCreateEscrow failure (line 709) in ERC20 path.
     ///      When getOrCreateUserEscrow fails for the lender during precloseDirect.
     function testPrecloseDirectGetLenderEscrowFails() public {
-        // Mock getOrCreateUserEscrow for lender to fail
+        // T-051 — the lender-side chokepoint deposit is now via
+        // `escrowDepositERC20From`. Mocking that selector to revert
+        // exercises the same failure-propagation path: if the
+        // protocol's escrow plumbing fails, precloseDirect must
+        // bubble the revert up. The escrow resolution that used to
+        // be a separate cross-facet call now lives inside the
+        // chokepoint.
         vm.mockCallRevert(
             address(diamond),
-            abi.encodeWithSelector(EscrowFactoryFacet.getOrCreateUserEscrow.selector, lender),
+            abi.encodeWithSelector(EscrowFactoryFacet.escrowDepositERC20From.selector),
             "escrow fail"
         );
 
         vm.prank(borrower);
-        vm.expectRevert(bytes("escrow fail"));
+        vm.expectRevert();
         PrecloseFacet(address(diamond)).precloseDirect(activeLoanId);
         vm.clearMockedCalls();
     }

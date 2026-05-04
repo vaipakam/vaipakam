@@ -6,6 +6,7 @@ import {Test} from "forge-std/Test.sol";
 import {VaipakamDiamond} from "../src/VaipakamDiamond.sol";
 import {IDiamondCut} from "@diamond-3/interfaces/IDiamondCut.sol";
 import {OfferFacet} from "../src/facets/OfferFacet.sol";
+import {OfferCancelFacet} from "../src/facets/OfferCancelFacet.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {OracleFacet} from "../src/facets/OracleFacet.sol";
@@ -27,6 +28,7 @@ import {DiamondCutFacet} from "../src/facets/DiamondCutFacet.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {ERC721} from "@openzeppelin/contracts/token/ERC721/ERC721.sol";
 import {HelperTest} from "./HelperTest.sol";
+import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {AccessControlFacet} from "../src/facets/AccessControlFacet.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 
@@ -74,6 +76,7 @@ contract WorkflowComplianceAndRejection is Test {
 
     DiamondCutFacet cutFacet;
     OfferFacet offerFacet;
+    OfferCancelFacet offerCancelFacet;
     ProfileFacet profileFacet;
     OracleFacet oracleFacet;
     VaipakamNFTFacet nftFacet;
@@ -138,6 +141,7 @@ contract WorkflowComplianceAndRejection is Test {
         cutFacet = new DiamondCutFacet();
         diamond = new VaipakamDiamond(owner, address(cutFacet));
         offerFacet = new OfferFacet();
+        offerCancelFacet = new OfferCancelFacet();
         profileFacet = new ProfileFacet();
         oracleFacet = new OracleFacet();
         nftFacet = new VaipakamNFTFacet();
@@ -153,10 +157,10 @@ contract WorkflowComplianceAndRejection is Test {
         precloseFacet = new PrecloseFacet();
         refinanceFacet = new RefinanceFacet();
         accessControlFacet = new AccessControlFacet();
+        TestMutatorFacet testMutatorFacet = new TestMutatorFacet();
         helperTest = new HelperTest();
 
-        // Cut 14 facets + 3 phase-2 facets into diamond
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](16);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](18);
         cuts[0]  = IDiamondCut.FacetCut({facetAddress: address(offerFacet),          action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getOfferFacetSelectors()});
         cuts[1]  = IDiamondCut.FacetCut({facetAddress: address(profileFacet),        action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getProfileFacetSelectors()});
         cuts[2]  = IDiamondCut.FacetCut({facetAddress: address(oracleFacet),         action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getOracleFacetSelectors()});
@@ -173,6 +177,8 @@ contract WorkflowComplianceAndRejection is Test {
         cuts[13] = IDiamondCut.FacetCut({facetAddress: address(precloseFacet),       action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getPrecloseFacetSelectors()});
         cuts[14] = IDiamondCut.FacetCut({facetAddress: address(refinanceFacet),      action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getRefinanceFacetSelectors()});
         cuts[15] = IDiamondCut.FacetCut({facetAddress: address(accessControlFacet),  action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getAccessControlFacetSelectors()});
+        cuts[16] = IDiamondCut.FacetCut({facetAddress: address(testMutatorFacet),    action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getTestMutatorFacetSelectors()});
+        cuts[17] = IDiamondCut.FacetCut({facetAddress: address(offerCancelFacet), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getOfferCancelFacetSelectors()});
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");
         AccessControlFacet(address(diamond)).initializeAccessControl();
 
@@ -276,7 +282,10 @@ contract WorkflowComplianceAndRejection is Test {
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
                 collateralQuantity: 0,
-                allowsPartialRepay: false
+                allowsPartialRepay: false,
+                amountMax: 0,
+                interestRateBpsMax: 0,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
             })
         );
         vm.prank(borrower);
@@ -327,7 +336,10 @@ contract WorkflowComplianceAndRejection is Test {
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
                 collateralQuantity: 0,
-                allowsPartialRepay: false
+                allowsPartialRepay: false,
+                amountMax: 0,
+                interestRateBpsMax: 0,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
             })
         );
 
@@ -364,7 +376,10 @@ contract WorkflowComplianceAndRejection is Test {
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
                 collateralQuantity: 0,
-                allowsPartialRepay: false
+                allowsPartialRepay: false,
+                amountMax: 0,
+                interestRateBpsMax: 0,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
             })
         );
 
@@ -398,7 +413,10 @@ contract WorkflowComplianceAndRejection is Test {
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
                 collateralQuantity: 0,
-                allowsPartialRepay: false
+                allowsPartialRepay: false,
+                amountMax: 0,
+                interestRateBpsMax: 0,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
             })
         );
 
@@ -433,7 +451,10 @@ contract WorkflowComplianceAndRejection is Test {
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
                 collateralQuantity: 0,
-                allowsPartialRepay: false
+                allowsPartialRepay: false,
+                amountMax: 0,
+                interestRateBpsMax: 0,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
             })
         );
 
@@ -481,7 +502,10 @@ contract WorkflowComplianceAndRejection is Test {
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
                 collateralQuantity: 0,
-                allowsPartialRepay: false
+                allowsPartialRepay: false,
+                amountMax: 0,
+                interestRateBpsMax: 0,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
             })
         );
 
@@ -524,7 +548,10 @@ contract WorkflowComplianceAndRejection is Test {
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
                 collateralQuantity: 0,
-                allowsPartialRepay: false
+                allowsPartialRepay: false,
+                amountMax: 0,
+                interestRateBpsMax: 0,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
             })
         );
 
@@ -559,7 +586,10 @@ contract WorkflowComplianceAndRejection is Test {
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
                 collateralQuantity: 0,
-                allowsPartialRepay: false
+                allowsPartialRepay: false,
+                amountMax: 0,
+                interestRateBpsMax: 0,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
             })
         );
 
@@ -598,7 +628,10 @@ contract WorkflowComplianceAndRejection is Test {
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
                 collateralQuantity: 0,
-                allowsPartialRepay: false
+                allowsPartialRepay: false,
+                amountMax: 0,
+                interestRateBpsMax: 0,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
             })
         );
 
@@ -720,15 +753,16 @@ contract WorkflowComplianceAndRejection is Test {
         assertTrue(escrow != address(0), "Escrow should be accessible after upgrade");
     }
 
-    /// @dev Helper to get lender's escrow address directly from storage (bypassing the mandatory check)
+    /// @dev Helper to get lender's escrow address directly from storage,
+    ///      bypassing the production `getOrCreateUserEscrow` path's
+    ///      mandatory-version check (which would revert in the
+    ///      upgrade-required scenario this test exercises). Routes
+    ///      through `TestMutatorFacet.getUserVaipakamEscrowRaw` so the
+    ///      lookup uses the named-field storage path (layout-resilient
+    ///      vs the previous hardcoded `vm.load` at slot offset 1, which
+    ///      broke when the Storage struct shifted under T-048's PAD
+    ///      additions).
     function _getLenderEscrowDirect() internal view returns (address) {
-        // Read the userVaipakamEscrows mapping from diamond storage.
-        // Storage struct position: LibVaipakam.VANGKI_STORAGE_POSITION
-        // userVaipakamEscrows is the second field (offset 1) in the Storage struct.
-        bytes32 baseSlot = LibVaipakam.VANGKI_STORAGE_POSITION;
-        bytes32 mappingSlot = bytes32(uint256(baseSlot) + 1);
-        bytes32 entrySlot = keccak256(abi.encode(lender, mappingSlot));
-        bytes32 value = vm.load(address(diamond), entrySlot);
-        return address(uint160(uint256(value)));
+        return TestMutatorFacet(address(diamond)).getUserVaipakamEscrowRaw(lender);
     }
 }

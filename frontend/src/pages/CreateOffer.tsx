@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
-import { parseAbi, parseUnits, type Abi, type Address, type Hex, encodeFunctionData } from "viem";
+import { parseAbi, parseUnits, formatUnits, type Abi, type Address, type Hex, encodeFunctionData } from "viem";
 import { usePublicClient, useWalletClient } from "wagmi";
 import { useWallet } from "../context/WalletContext";
 import { useMode } from "../context/ModeContext";
@@ -9,11 +9,14 @@ import { useDiamondContract } from "../contracts/useDiamond";
 import { useERC20 } from "../contracts/useERC20";
 import { useOfferForm } from "../hooks/useOfferForm";
 import { useProtocolConfig } from "../hooks/useProtocolConfig";
+import { usePeriodicInterestConfig } from "../hooks/usePeriodicInterestConfig";
+import { PeriodicInterestCadenceField } from "../components/createOffer/PeriodicInterestCadenceField";
 import {
   isNFTRental,
   gracePeriodLabel,
   MIN_OFFER_DURATION_DAYS,
   MAX_OFFER_DURATION_DAYS,
+  OFFER_DURATION_BUCKETS_DAYS,
   type OfferFormState,
   type OfferAssetKind,
   type OfferSide,
@@ -27,11 +30,13 @@ import { SanctionsBanner } from "../components/app/SanctionsBanner";
 import { RiskDisclosures } from "../components/app/RiskDisclosures";
 import { SimulationPreview } from "../components/app/SimulationPreview";
 import { LiquidityPreflightBanner } from "../components/app/LiquidityPreflightBanner";
+import { OfferRiskPreview } from "../components/app/OfferRiskPreview";
 import { useLiquidityPreflight } from "../hooks/useLiquidityPreflight";
 import { usePermit2Signing } from "../hooks/usePermit2Signing";
 import { DIAMOND_ABI_VIEM as DIAMOND_ABI } from "../contracts/abis";
 import { L as Link } from "../components/L";
 import { AssetPicker } from "../components/app/AssetPicker";
+import { Picker } from "../components/Picker";
 import { TokenInfoTag } from "../components/app/TokenInfoTag";
 import { useAssetType, type DetectedAssetType } from "../hooks/useAssetType";
 import { CardInfo } from "../components/CardInfo";
@@ -62,6 +67,16 @@ export default function CreateOffer() {
   const { data: walletClient } = useWalletClient();
   const { mode } = useMode();
   const showAdvanced = mode === "advanced";
+  // Range Orders Phase 1 — the two range-input UIs are gated on BOTH
+  // the user being in Advanced mode AND governance having flipped
+  // the relevant master flag on. When either is false we render the
+  // single-value form unchanged (form.amountMax / form.interestRateMax
+  // stay empty → the schema's auto-collapse produces 0 in the payload
+  // → the contract treats the offer as single-value).
+  // protocolConfig is fetched below; the flags are surfaced through
+  // its bundle. While the config is still loading (`null`) we err on
+  // the side of "ranges off" so users never see broken sliders during
+  // the first render.
   const diamond = useDiamondContract();
   const { sign: permit2Sign, canSign: permit2CanSign } = usePermit2Signing();
   // Live protocol config — `rentalBufferBps` was previously hardcoded
@@ -69,9 +84,18 @@ export default function CreateOffer() {
   // `getProtocolConfigBundle` and any governance change should flow
   // straight through to the prepay calculation below.
   const { config: protocolConfig } = useProtocolConfig();
+  // T-034 — Periodic Interest Payment config; null while loading or on
+  // older deploys without the surface (treated as feature disabled).
+  const { config: periodicConfig } = usePeriodicInterestConfig();
   const rentalBufferBps = protocolConfig
     ? BigInt(protocolConfig.rentalBufferBps)
     : 500n; // fall back to compile-time default during the first render
+  const showAmountRange = Boolean(
+    showAdvanced && protocolConfig?.rangeAmountEnabled,
+  );
+  const showRateRange = Boolean(
+    showAdvanced && protocolConfig?.rangeRateEnabled,
+  );
   // Banner-copy interpolation params for the lender / borrower discount
   // banners — surface live treasury fee, loan-initiation fee, and the
   // top-tier discount % so governance changes flow into the marketing
@@ -166,6 +190,108 @@ export default function CreateOffer() {
     lockAssetContinuity,
     setField,
   ]);
+
+  // Live wallet-balance check. Compares the wallet's current balance
+  // of the asset that will be pulled at offer-create time (lender →
+  // lendingAsset, borrower-ERC20 → collateralAsset) against the
+  // required amount, and surfaces a `balanceShortfall` shape the
+  // form renders inline under the relevant input. Re-runs whenever
+  // the asset, amount, max, or wallet changes — so a user who is
+  // mid-typing sees the shortfall update in real time and can adjust
+  // before the approve / create roundtrips. Uses a 250ms debounce
+  // so each keystroke doesn't fire an RPC roundtrip.
+  useEffect(() => {
+    if (!address) {
+      setBalanceShortfall(null);
+      return;
+    }
+    type BalanceReader = {
+      balanceOf: (a: string) => Promise<bigint>;
+      decimals: () => Promise<number | bigint>;
+      symbol: () => Promise<string>;
+    };
+    const readMeta = async (
+      token: BalanceReader,
+    ): Promise<{ decimals: number; symbol: string }> => {
+      const [d, s] = await Promise.all([
+        token.decimals().catch(() => 18 as number),
+        token.symbol().catch(() => "tokens"),
+      ]);
+      return { decimals: Number(d), symbol: s };
+    };
+    let cancelled = false;
+    const handle = setTimeout(async () => {
+      try {
+        if (form.offerType === "lender" && form.assetType === "erc20" && erc20) {
+          const { decimals, symbol } = await readMeta(
+            erc20 as unknown as BalanceReader,
+          );
+          // Use amountMax if present, else amount.
+          const minStr = form.amount.trim();
+          const maxStr = form.amountMax.trim();
+          const target = maxStr !== "" ? maxStr : minStr;
+          if (target === "" || Number(target) <= 0) {
+            if (!cancelled) setBalanceShortfall(null);
+            return;
+          }
+          const need = parseUnits(target, decimals);
+          const have = await (erc20 as unknown as BalanceReader).balanceOf(
+            address as string,
+          );
+          if (cancelled) return;
+          setBalanceShortfall(
+            have < need
+              ? { have, need, decimals, symbol, side: "lender" }
+              : null,
+          );
+        } else if (
+          form.offerType === "borrower" &&
+          form.assetType === "erc20" &&
+          form.collateralAssetType === "erc20" &&
+          collateralErc20
+        ) {
+          const { decimals, symbol } = await readMeta(
+            collateralErc20 as unknown as BalanceReader,
+          );
+          const target = form.collateralAmount.trim();
+          if (target === "" || Number(target) <= 0) {
+            if (!cancelled) setBalanceShortfall(null);
+            return;
+          }
+          const need = parseUnits(target, decimals);
+          const have = await (
+            collateralErc20 as unknown as BalanceReader
+          ).balanceOf(address as string);
+          if (cancelled) return;
+          setBalanceShortfall(
+            have < need
+              ? { have, need, decimals, symbol, side: "collateral" }
+              : null,
+          );
+        } else {
+          if (!cancelled) setBalanceShortfall(null);
+        }
+      } catch {
+        // Swallow — a transient RPC blip shouldn't paint a stale or
+        // misleading shortfall warning.
+        if (!cancelled) setBalanceShortfall(null);
+      }
+    }, 250);
+    return () => {
+      cancelled = true;
+      clearTimeout(handle);
+    };
+  }, [
+    address,
+    form.offerType,
+    form.assetType,
+    form.collateralAssetType,
+    form.amount,
+    form.amountMax,
+    form.collateralAmount,
+    erc20,
+    collateralErc20,
+  ]);
   // Statically-detectable illiquid leg: any non-ERC-20 asset is illiquid by
   // definition (no Chainlink feed). ERC-20/ERC-20 pairs may still turn out
   // illiquid on-chain if the token lacks an oracle / deep pool — we can't
@@ -177,6 +303,17 @@ export default function CreateOffer() {
   const [step, setStep] = useState<SubmitStep>("form");
   const [error, setError] = useState<string | null>(null);
   const [txHash, setTxHash] = useState<string | null>(null);
+  // Live "you don't have enough X" feedback rendered under the
+  // amount/collateral input so the user catches the shortfall before
+  // hitting submit. Computed in a useEffect that re-runs as the
+  // user types — see `balanceShortfall` block below.
+  const [balanceShortfall, setBalanceShortfall] = useState<{
+    have: bigint;
+    need: bigint;
+    decimals: number;
+    symbol: string;
+    side: "lender" | "collateral";
+  } | null>(null);
 
   // Bounds come from `offerSchema.ts` so the validator, this inline
   // out-of-range check, and the Offer Book duration filter never drift
@@ -309,6 +446,41 @@ export default function CreateOffer() {
         }
       };
 
+      // Range Orders Phase 1 — lender pre-escrows the upper bound of
+      // the amount range so partial fills can draw from the same
+      // pool. `payload.amountMax` is 0 in single-value / collapsed
+      // mode, in which case we fall back to `payload.amount` (the
+      // single value the contract will use). When range mode is
+      // active, the lender's approval / Permit2 sign covers the
+      // ceiling, not the minimum — otherwise the contract's pull
+      // (`params.amountMax`) would revert on insufficient allowance.
+      const lenderPullAmount = payload.amountMax > 0n
+        ? payload.amountMax
+        : payload.amount;
+
+      // Final guard against the inline `balanceShortfall` useEffect:
+      // if the user fired submit while the inline check still flags
+      // a shortfall, refuse to call any approve/create txs. The
+      // inline UI already shows the actionable message under the
+      // relevant input.
+      if (balanceShortfall) {
+        const have = formatUnits(
+          balanceShortfall.have,
+          balanceShortfall.decimals,
+        );
+        const need = formatUnits(
+          balanceShortfall.need,
+          balanceShortfall.decimals,
+        );
+        const sym = balanceShortfall.symbol;
+        const msg =
+          balanceShortfall.side === "lender"
+            ? `Insufficient ${sym} balance: wallet holds ${have} ${sym}, offer requires ${need} ${sym}.`
+            : `Insufficient ${sym} balance: wallet holds ${have} ${sym}, offer requires ${need} ${sym}.`;
+        setError(msg);
+        submit.failure(new Error(msg));
+        return;
+      }
       // Permit2 eligibility: OfferFacet.createOfferWithPermit only accepts
       // ERC-20 creator pulls. Pre-compute the target token+amount so we
       // can skip the classic `approve` leg entirely when the wallet can
@@ -318,7 +490,7 @@ export default function CreateOffer() {
           if (form.assetType === "erc20") {
             return {
               token: form.lendingAsset as Address,
-              amount: payload.amount,
+              amount: lenderPullAmount,
             };
           }
           return null;
@@ -376,7 +548,9 @@ export default function CreateOffer() {
       try {
         if (form.offerType === "lender") {
           if (form.assetType === "erc20" && erc20) {
-            await ensureErc20(asErc20Approvable(erc20), payload.amount);
+            // Approve the upper bound of the range — see
+            // lenderPullAmount derivation above.
+            await ensureErc20(asErc20Approvable(erc20), lenderPullAmount);
           } else if (
             form.assetType === "erc721" ||
             form.assetType === "erc1155"
@@ -624,7 +798,7 @@ export default function CreateOffer() {
                     </div>
                     <p className="stat-label" style={{ margin: "0 0 8px" }}>
                       {t('lenderDiscountCard.borrowerBody1', discountBannerParams)}
-                      <a href="/buy-vpfi" target="_blank" rel="noopener noreferrer">
+                      <a href="/app/buy-vpfi" target="_blank" rel="noopener noreferrer">
                         {t('lenderDiscountCard.buyVpfi')}
                       </a>
                       {t('lenderDiscountCard.routingNote')}
@@ -637,7 +811,7 @@ export default function CreateOffer() {
                     </div>
                     <p className="stat-label" style={{ margin: "0 0 8px" }}>
                       {t('lenderDiscountCard.lenderBody1', discountBannerParams)}
-                      <a href="/buy-vpfi" target="_blank" rel="noopener noreferrer">
+                      <a href="/app/buy-vpfi" target="_blank" rel="noopener noreferrer">
                         {t('lenderDiscountCard.buyVpfi')}
                       </a>
                       {t('lenderDiscountCard.routingNote')}
@@ -743,7 +917,11 @@ export default function CreateOffer() {
           <div className="form-row">
             <div className="form-group">
               <label className="form-label">
-                {isRental ? t('createOffer.dailyRentalFee') : t('createOffer.amount')}
+                {isRental
+                  ? t('createOffer.dailyRentalFee')
+                  : showAmountRange
+                    ? t('createOffer.amountMin')
+                    : t('createOffer.amount')}
               </label>
               <input
                 className="form-input"
@@ -763,7 +941,9 @@ export default function CreateOffer() {
             </div>
             <div className="form-group">
               <label className="form-label">
-                {t('createOffer.interestRate')}
+                {showRateRange
+                  ? t('createOffer.interestRateMin')
+                  : t('createOffer.interestRate')}
               </label>
               <input
                 className="form-input"
@@ -778,6 +958,85 @@ export default function CreateOffer() {
               <span className="form-hint">{t('createOffer.hintInterestBps')}</span>
             </div>
           </div>
+
+          {/* Range Orders Phase 1 — upper-bound inputs. Rendered only
+              when (a) governance has flipped the relevant master flag
+              ON via ConfigFacet AND (b) the user opted into Advanced
+              mode AND (c) we're not on an NFT-rental offer (rentals
+              are single-fill in Phase 1). When this row is hidden
+              `form.amountMax` / `form.interestRateMax` stay empty,
+              `toCreateOfferPayload` collapses them to 0, and the
+              contract treats the offer as single-value. */}
+          {(showAmountRange || showRateRange) && !isRental && (
+            <div className="form-row">
+              {showAmountRange ? (
+                <div className="form-group">
+                  <label className="form-label">
+                    {t('createOffer.amountMax')}
+                  </label>
+                  <input
+                    className="form-input"
+                    type="number"
+                    step="any"
+                    min="0"
+                    placeholder={form.amount || "2000"}
+                    value={form.amountMax}
+                    onChange={(e) => setField("amountMax", e.target.value)}
+                  />
+                  <span className="form-hint">
+                    {t('createOffer.hintAmountMax')}
+                  </span>
+                </div>
+              ) : (
+                <div className="form-group" />
+              )}
+              {showRateRange ? (
+                <div className="form-group">
+                  <label className="form-label">
+                    {t('createOffer.interestRateMax')}
+                  </label>
+                  <input
+                    className="form-input"
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    placeholder={form.interestRate || "6.00"}
+                    value={form.interestRateMax}
+                    onChange={(e) =>
+                      setField("interestRateMax", e.target.value)
+                    }
+                  />
+                  <span className="form-hint">
+                    {t('createOffer.hintInterestRateMax')}
+                  </span>
+                </div>
+              ) : (
+                <div className="form-group" />
+              )}
+            </div>
+          )}
+
+          {/* Live wallet-balance shortfall — see the
+              `balanceShortfall` useEffect above. Renders only on
+              the lender side (the borrower-side render lives
+              under the collateral-amount input below) and once
+              the user has typed enough to compute a meaningful
+              shortfall. Red text is the same `--accent-red`
+              token used by validation errors elsewhere on the
+              form so the visual treatment is consistent. */}
+          {balanceShortfall?.side === "lender" && (
+            <p
+              className="form-hint"
+              style={{ color: "var(--accent-red, #ef4444)", marginTop: -4 }}
+            >
+              Insufficient {balanceShortfall.symbol} balance — wallet holds{" "}
+              {formatUnits(balanceShortfall.have, balanceShortfall.decimals)}{" "}
+              {balanceShortfall.symbol}, offer requires{" "}
+              {formatUnits(balanceShortfall.need, balanceShortfall.decimals)}{" "}
+              {balanceShortfall.symbol}
+              {showAmountRange ? " (the maximum amount you offered to lend)" : ""}.
+            </p>
+          )}
 
           {isRental && (
             <div className="form-row">
@@ -811,22 +1070,31 @@ export default function CreateOffer() {
           )}
 
           <div className="form-group">
-            <label className="form-label" htmlFor="create-offer-duration">
+            {/* Visual label — Picker's trigger is a <button>, not a
+                native form input, so the htmlFor association doesn't
+                apply. Screen-reader text comes from the Picker's
+                `ariaLabel` prop below; sighted users still see this
+                label above the trigger. */}
+            <span className="form-label">
               {t('createOffer.duration')}
-            </label>
-            <input
-              id="create-offer-duration"
-              className={`form-input ${durationOutOfRange ? "form-input-error" : ""}`}
-              type="number"
-              min={MIN_OFFER_DURATION_DAYS}
-              max={MAX_OFFER_DURATION_DAYS}
-              step="1"
-              placeholder="30"
+            </span>
+            {/* Bucketed duration picker. Frontend convention only — the
+                contract still accepts any integer in
+                [MIN_OFFER_DURATION_DAYS, MAX_OFFER_DURATION_DAYS]. The
+                bucket list lives on `OFFER_DURATION_BUCKETS_DAYS` so the
+                picker, the OfferBook duration filter, and any future
+                surface (preclose-via-offer, refinance) all share the
+                same set; widening or narrowing the buckets is a
+                one-line change at the source. */}
+            <Picker
+              items={OFFER_DURATION_BUCKETS_DAYS.map((d) => ({
+                value: String(d),
+                label: t('createOffer.durationBucket', { count: d }),
+              }))}
               value={form.durationDays}
-              onChange={(e) => setField("durationDays", e.target.value)}
-              aria-invalid={durationOutOfRange || undefined}
-              aria-describedby="create-offer-duration-hint"
-              required
+              onSelect={(v) => setField("durationDays", v)}
+              ariaLabel={t('createOffer.durationPickerAria')}
+              minWidth={180}
             />
             <span
               id="create-offer-duration-hint"
@@ -953,6 +1221,28 @@ export default function CreateOffer() {
                 value={form.collateralAmount}
                 onChange={(e) => setField("collateralAmount", e.target.value)}
               />
+              {/* Live shortfall hint for borrower-side ERC-20
+                  collateral pulls — see the `balanceShortfall`
+                  useEffect above. Same shape as the lender hint
+                  rendered under the amount row. */}
+              {balanceShortfall?.side === "collateral" && (
+                <span
+                  className="form-hint"
+                  style={{ color: "var(--accent-red, #ef4444)" }}
+                >
+                  Insufficient {balanceShortfall.symbol} balance — wallet holds{" "}
+                  {formatUnits(
+                    balanceShortfall.have,
+                    balanceShortfall.decimals,
+                  )}{" "}
+                  {balanceShortfall.symbol}, offer requires{" "}
+                  {formatUnits(
+                    balanceShortfall.need,
+                    balanceShortfall.decimals,
+                  )}{" "}
+                  {balanceShortfall.symbol}.
+                </span>
+              )}
             </div>
             {form.collateralAssetType !== "erc20" && (
               <div className="form-group">
@@ -985,6 +1275,32 @@ export default function CreateOffer() {
               </div>
             )}
           </div>
+
+          {/* Tier 2 #4 — live HF / LTV preview during offer creation.
+              Renders only in Advanced mode, only for ERC-20 / ERC-20
+              pairs (NFT-rental loans don't have a meaningful HF). The
+              component itself bails to `null` if the asset addresses
+              aren't valid yet or the oracles revert, so it's safe to
+              mount unconditionally inside the gate. The two-way bound
+              sliders update form state via `setField` so dragging them
+              also updates the number inputs above. */}
+          {showAdvanced && (
+            <OfferRiskPreview
+              lendingAsset={form.lendingAsset}
+              collateralAsset={form.collateralAsset}
+              amountMin={form.amount}
+              amountMax={form.amountMax}
+              collateralAmount={form.collateralAmount}
+              lendingAssetType={form.assetType}
+              collateralAssetType={form.collateralAssetType}
+              showAmountRange={showAmountRange}
+              onAmountMinChange={(v) => setField("amount", v)}
+              onAmountMaxChange={(v) => setField("amountMax", v)}
+              onCollateralAmountChange={(v) =>
+                setField("collateralAmount", v)
+              }
+            />
+          )}
         </div>
 
         {/* Risk disclosures — per README §Frontend Warnings, these must be
@@ -1064,6 +1380,42 @@ export default function CreateOffer() {
                 </small>
               </span>
             </label>
+
+            {/* T-034 — Periodic Interest Payment cadence dropdown.
+                Hidden entirely when the master kill-switch is off OR
+                either side is illiquid. The component handles the
+                null-render rules itself; we just pass the inputs.
+
+                `principalLiquidity` / `collateralLiquidity` are derived
+                from the form's asset-type fields here as a proxy
+                (ERC20-on-both-legs ⇒ Liquid, anything else ⇒ Illiquid).
+                A finer truth — Chainlink-priced + AMM-swappable — is
+                what the contract actually checks; the proxy here just
+                drives the UI's visibility, and the contract is the
+                authoritative gate. */}
+            <PeriodicInterestCadenceField
+              value={form.periodicInterestCadence}
+              onChange={(v) => setField("periodicInterestCadence", v)}
+              durationDays={parseInt(form.durationDays || "0", 10)}
+              principalLiquidity={form.assetType === 'erc20' ? 0 : 1}
+              collateralLiquidity={form.collateralAssetType === 'erc20' ? 0 : 1}
+              principalAssetType={
+                form.assetType === 'erc20' ? 0 : form.assetType === 'erc721' ? 1 : 2
+              }
+              collateralAssetType={
+                form.collateralAssetType === 'erc20'
+                  ? 0
+                  : form.collateralAssetType === 'erc721'
+                  ? 1
+                  : 2
+              }
+              periodicInterestEnabled={
+                periodicConfig?.periodicInterestEnabled ?? false
+              }
+              threshold1e18={
+                periodicConfig?.minPrincipalForFinerCadence1e18 ?? 0n
+              }
+            />
           </div>
         )}
 

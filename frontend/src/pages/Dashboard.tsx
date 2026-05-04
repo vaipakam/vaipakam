@@ -6,13 +6,16 @@ import { useDiamondContract, useDiamondRead } from '../contracts/useDiamond';
 import { useUserLoans } from '../hooks/useUserLoans';
 import { useMyOffers, type MyOfferStatus } from '../hooks/useMyOffers';
 import { useClaimables } from '../hooks/useClaimables';
+import { useIndexedLoansForWallet } from '../hooks/useIndexedLoans';
+import { indexedToLoanSummary } from '../lib/indexerClient';
+import type { LoanSummary } from '../types/loan';
 import { MyOffersTable } from '../components/app/MyOffersTable';
 import { useLoanRisks, type LoanRisk } from '../hooks/useLoanRisks';
 import { LoanStatus, LOAN_STATUS_LABELS } from '../types/loan';
 import {
   LayoutDashboard,
-  TrendingUp,
-  TrendingDown,
+  HandCoins,
+  Coins,
   Clock,
   PlusCircle,
   ExternalLink,
@@ -27,8 +30,10 @@ import { bpsToPercent } from '../lib/format';
 import { HealthFactorGauge, LTVBar } from '../components/app/RiskGauge';
 import VPFIDiscountConsentCard from '../components/app/VPFIDiscountConsentCard';
 import { RewardsSummaryCard } from '../components/app/RewardsSummaryCard';
+import { SanctionsBanner } from '../components/app/SanctionsBanner';
 import { Pager } from '../components/app/Pager';
 import { CardInfo } from '../components/CardInfo';
+import { HoverTip } from '../components/HoverTip';
 import { Picker } from '../components/Picker';
 import { Users, Activity as ActivityIcon, ListOrdered } from 'lucide-react';
 import './Dashboard.css';
@@ -58,7 +63,20 @@ export default function Dashboard() {
   const { address, activeChain } = useWallet();
   const diamond = useDiamondRead();
   const diamondWrite = useDiamondContract();
-  const { loans, loading } = useUserLoans(address);
+  // T-041 — prefer the worker-cached "loans for this wallet" list. The
+  // /loans/by-{lender,borrower} endpoints already live-filter via
+  // multicall(ownerOf), so the indexer's view of "which loans this
+  // wallet holds NFTs for" is equivalent to the on-chain truth at
+  // query time. Fall through to the per-browser useUserLoans flow
+  // when the worker is unreachable. Both produce LoanSummary[]; the
+  // adapter `indexedToLoanSummary` shape-bridges the indexer JSON.
+  const { loans: clientLoans, loading: clientLoading } = useUserLoans(address);
+  const { loans: indexedLoans, source: indexedSource } = useIndexedLoansForWallet(address ?? undefined);
+  const loans: LoanSummary[] =
+    indexedSource === 'indexer' && indexedLoans
+      ? (indexedLoans.map((l) => indexedToLoanSummary(l, l.role)) as LoanSummary[])
+      : clientLoans;
+  const loading = indexedSource === 'indexer' ? false : clientLoading;
   const [myOfferStatus, setMyOfferStatus] = useState<MyOfferStatus>('active');
   const { rows: myOfferRows } = useMyOffers(address, myOfferStatus);
   const { claims: unclaimed } = useClaimables(address);
@@ -211,6 +229,13 @@ export default function Dashboard() {
         <p className="page-subtitle">{t('dashboard.subtitle')}</p>
       </div>
 
+      {address && (
+        <SanctionsBanner
+          address={address as `0x${string}`}
+          label={t('banners.sanctionsLabelWallet')}
+        />
+      )}
+
       {/* Stats row */}
       <div className="stats-grid">
         <div className="stat-card">
@@ -222,9 +247,23 @@ export default function Dashboard() {
             <div className="stat-label">{t('dashboard.activeLoans')}</div>
           </div>
         </div>
+        {/* Lender / borrower role tiles use neutral, role-symmetric
+            icons + the same brand-tinted background. The previous
+            TrendingUp (green) / TrendingDown (amber) pair carried an
+            unintended emotional skew — "lender = good / borrowing =
+            bad" — that's wrong on a peer-to-peer lending app where
+            both sides are equally valid market participants. Coins
+            (lender funds) / HandCoins (borrower receives) keeps the
+            domain semantics without the colour bias. */}
         <div className="stat-card">
-          <div className="stat-icon" style={{ background: 'rgba(16, 185, 129, 0.1)', color: 'var(--accent-green)' }}>
-            <TrendingUp size={20} />
+          <div
+            className="stat-icon"
+            style={{
+              background: 'rgba(99, 102, 241, 0.1)',
+              color: 'var(--brand)',
+            }}
+          >
+            <Coins size={20} />
           </div>
           <div>
             <div className="stat-value">{lentCount}</div>
@@ -232,8 +271,14 @@ export default function Dashboard() {
           </div>
         </div>
         <div className="stat-card">
-          <div className="stat-icon" style={{ background: 'rgba(245, 158, 11, 0.1)', color: 'var(--accent-orange)' }}>
-            <TrendingDown size={20} />
+          <div
+            className="stat-icon"
+            style={{
+              background: 'rgba(99, 102, 241, 0.1)',
+              color: 'var(--brand)',
+            }}
+          >
+            <HandCoins size={20} />
           </div>
           <div>
             <div className="stat-value">{borrowedCount}</div>
@@ -269,7 +314,15 @@ export default function Dashboard() {
           here, the new card supersedes it with broader coverage. */}
       <RewardsSummaryCard address={address ?? null} />
 
-      {/* Escrow info */}
+      {/* Escrow info — redacted address (no copy / no full-reveal),
+          links to block explorer in a new tab so users can verify
+          on-chain holdings independently. The escrow is INTERNAL
+          protocol storage, not a deposit destination — anyone who
+          accidentally sends tokens directly to it may be unable to
+          recover them. Caption + the dedicated `/app/escrow` page
+          carry the full warning. The redacted display + non-
+          selectable styling combat the trivial copy paths; DOM
+          inspection bypass is intentionally out of scope. */}
       {currentEscrow && (
         <div className="card" style={{ marginBottom: 20 }}>
           <div className="card-title">
@@ -281,14 +334,33 @@ export default function Dashboard() {
             <a
               href={`${activeChain?.blockExplorer ?? DEFAULT_CHAIN.blockExplorer}/address/${currentEscrow}`}
               target="_blank"
-              rel="noreferrer"
+              rel="noreferrer noopener"
+              onCopy={(e) => e.preventDefault()}
               className="data-value"
-              style={{ color: 'var(--brand)', display: 'inline-flex', alignItems: 'center', gap: 6 }}
+              style={{
+                color: 'var(--brand)',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 6,
+                userSelect: 'none',
+                fontFamily: 'monospace',
+              }}
+              aria-label={t('escrowAssets.viewOnExplorer')}
             >
-              {currentEscrow.slice(0, 10)}...{currentEscrow.slice(-8)}
+              {currentEscrow.slice(0, 6)}…{currentEscrow.slice(-4)}
               <ExternalLink size={14} />
             </a>
           </div>
+          <p
+            style={{
+              marginTop: 8,
+              marginBottom: 0,
+              fontSize: '0.85rem',
+              color: 'var(--text-secondary)',
+            }}
+          >
+            {t('escrowAssets.addressCaption')}
+          </p>
         </div>
       )}
 
@@ -309,30 +381,6 @@ export default function Dashboard() {
           they became). */}
       {address && (
         <div style={{ marginTop: 16 }}>
-          <div
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: 8,
-              flexWrap: 'wrap',
-              marginBottom: 8,
-            }}
-          >
-            <Picker<MyOfferStatus>
-              icon={<ListOrdered size={14} />}
-              ariaLabel={t('myOffersTable.statusFilter')}
-              triggerPrefix={t('myOffersTable.statusFilter')}
-              value={myOfferStatus}
-              onSelect={setMyOfferStatus}
-              minWidth={170}
-              items={[
-                { value: 'active', label: t('myOffersTable.statusActive') },
-                { value: 'filled', label: t('myOffersTable.statusFilled') },
-                { value: 'cancelled', label: t('myOffersTable.statusCancelled') },
-                { value: 'all', label: t('common.all') },
-              ]}
-            />
-          </div>
           <MyOffersTable
             rows={myOfferRows}
             onCancel={async (offerId) => {
@@ -361,9 +409,33 @@ export default function Dashboard() {
             subtitle={t('myOffersTable.subtitle', { count: myOfferRows.length })}
             cardHelpId="offer-book.your-active-offers"
             headerAction={
-              <Link to="/app/create-offer" className="btn btn-primary btn-sm">
-                <PlusCircle size={16} /> {t('dashboard.newOffer')}
-              </Link>
+              <>
+                {/* Status filter sits inline with the New Offer button
+                    (status chip first, action button after) so the
+                    card title row reads "Your Offers · n offers
+                    [Status: …] [+ New Offer]" left to right. The
+                    filter previously rendered outside the card; moved
+                    in per ToDo polish so the user doesn't lose track
+                    of which filter is in effect when they scroll the
+                    table. */}
+                <Picker<MyOfferStatus>
+                  icon={<ListOrdered size={14} />}
+                  ariaLabel={t('myOffersTable.statusFilter')}
+                  triggerPrefix={t('myOffersTable.statusFilter')}
+                  value={myOfferStatus}
+                  onSelect={setMyOfferStatus}
+                  minWidth={170}
+                  items={[
+                    { value: 'active', label: t('myOffersTable.statusActive') },
+                    { value: 'filled', label: t('myOffersTable.statusFilled') },
+                    { value: 'cancelled', label: t('myOffersTable.statusCancelled') },
+                    { value: 'all', label: t('common.all') },
+                  ]}
+                />
+                <Link to="/app/create-offer" className="btn btn-primary btn-sm">
+                  <PlusCircle size={16} /> {t('dashboard.newOffer')}
+                </Link>
+              </>
             }
           />
         </div>
@@ -471,6 +543,7 @@ export default function Dashboard() {
                   <SortTh sortKey="role" label="Role" sortBy={sortBy} sortDir={sortDir} onToggle={toggleSort} />
                   <SortTh sortKey="positionNft" label="Position NFT" sortBy={sortBy} sortDir={sortDir} onToggle={toggleSort} />
                   <SortTh sortKey="principal" label="Principal" sortBy={sortBy} sortDir={sortDir} onToggle={toggleSort} />
+                  <th>Collateral</th>
                   <SortTh sortKey="rate" label="Rate (APR)" sortBy={sortBy} sortDir={sortDir} onToggle={toggleSort} />
                   <SortTh sortKey="duration" label="Duration" sortBy={sortBy} sortDir={sortDir} onToggle={toggleSort} />
                   <SortTh sortKey="ltv" label="LTV" sortBy={sortBy} sortDir={sortDir} onToggle={toggleSort} />
@@ -502,16 +575,17 @@ export default function Dashboard() {
                       </span>
                     </td>
                     <td className="mono">
-                      <Link
-                        to={`/nft-verifier?id=${(loan.role === 'lender' ? loan.lenderTokenId : loan.borrowerTokenId).toString()}`}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        data-tooltip="Verify on-chain metadata (opens in new tab)"
-                        style={{ color: 'var(--brand)', display: 'inline-flex', alignItems: 'center', gap: 4 }}
-                      >
-                        #{(loan.role === 'lender' ? loan.lenderTokenId : loan.borrowerTokenId).toString()}
-                        <ExternalLink size={12} />
-                      </Link>
+                      <HoverTip text="Verify on-chain metadata (opens in new tab)">
+                        <Link
+                          to={`/nft-verifier?id=${(loan.role === 'lender' ? loan.lenderTokenId : loan.borrowerTokenId).toString()}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          style={{ color: 'var(--brand)', display: 'inline-flex', alignItems: 'center', gap: 4 }}
+                        >
+                          #{(loan.role === 'lender' ? loan.lenderTokenId : loan.borrowerTokenId).toString()}
+                          <ExternalLink size={12} />
+                        </Link>
+                      </HoverTip>
                     </td>
                     <td>
                       {/* Unified principal renderer — handles ERC20
@@ -527,6 +601,26 @@ export default function Dashboard() {
                         chainId={activeChain?.chainId ?? DEFAULT_CHAIN.chainId}
                       />
                     </td>
+                    <td>
+                      {/* Collateral leg — same renderer as principal so
+                          ERC-20 amount, ERC-721 `NFT #id`, and ERC-1155
+                          `Q × NFT #id` all show consistently. Empty
+                          asset address (rare — historical zero-address
+                          mock loans) renders as a dash to avoid the
+                          renderer flagging an "unknown" asset. */}
+                      {loan.collateralAsset &&
+                      loan.collateralAsset !== '0x0000000000000000000000000000000000000000' ? (
+                        <PrincipalCell
+                          assetType={loan.collateralAssetType}
+                          asset={loan.collateralAsset}
+                          amount={loan.collateralAmount}
+                          tokenId={loan.collateralTokenId}
+                          chainId={activeChain?.chainId ?? DEFAULT_CHAIN.chainId}
+                        />
+                      ) : (
+                        <span style={{ opacity: 0.5 }}>—</span>
+                      )}
+                    </td>
                     <td>{bpsToPercent(loan.interestRateBps)}</td>
                     <td>{loan.durationDays.toString()} days</td>
                     <td><LoanLtvCell risk={risks.get(loan.id.toString())} /></td>
@@ -539,13 +633,14 @@ export default function Dashboard() {
                     <td>
                       <div style={{ display: 'inline-flex', gap: 6, alignItems: 'center' }}>
                         {unclaimedLoanIds.has(loan.id.toString()) && (
-                          <Link
-                            to={`/app/loans/${loan.id.toString()}`}
-                            className="btn btn-primary btn-sm"
-                            data-tooltip={t('dashboard.claimReadyTooltip')}
-                          >
-                            {t('dashboard.claim')}
-                          </Link>
+                          <HoverTip text={t('dashboard.claimReadyTooltip')}>
+                            <Link
+                              to={`/app/loans/${loan.id.toString()}`}
+                              className="btn btn-primary btn-sm"
+                            >
+                              {t('dashboard.claim')}
+                            </Link>
+                          </HoverTip>
                         )}
                         <Link to={`/app/loans/${loan.id.toString()}`} className="btn btn-ghost btn-sm">
                           {t('common.view')}

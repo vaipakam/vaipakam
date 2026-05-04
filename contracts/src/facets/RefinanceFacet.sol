@@ -8,6 +8,8 @@ import {LibAuth} from "../libraries/LibAuth.sol";
 import {LibEntitlement} from "../libraries/LibEntitlement.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
 import {LibVPFIDiscount} from "../libraries/LibVPFIDiscount.sol";
+import {LibOfferMatch} from "../libraries/LibOfferMatch.sol";
+import {LibPeriodicInterest} from "../libraries/LibPeriodicInterest.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
@@ -81,6 +83,9 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
         uint256 oldLoanId,
         uint256 borrowerOfferId
     ) external nonReentrant whenNotPaused {
+        // Tier-1 sanctions gate — refinance routes funds + creates
+        // new loan state for msg.sender; sanctioned wallet blocked.
+        LibVaipakam._assertNotSanctioned(msg.sender);
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.Loan storage oldLoan = s.loans[oldLoanId];
         // Phase 6: borrower-entitled strategic flow. Authority binds to the
@@ -97,6 +102,30 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
         if (oldLoan.assetType != LibVaipakam.AssetType.ERC20)
             revert InvalidRefinanceOffer();
 
+        // T-034 §4.6 — settle-first guard. If the old loan has a
+        // Periodic Interest Payment cadence AND the current period is
+        // overdue past its grace window, the original lender is owed
+        // interest right now. Refinance must NOT overwrite the loan's
+        // state until that obligation is settled — otherwise the new
+        // lender's terms (different rate / cadence / start time)
+        // would silently extinguish the original lender's claim.
+        // Caller resolves by running `settlePeriodicInterest` on the
+        // old loan first; that path either just-stamps (no shortfall)
+        // or auto-liquidates (covers the shortfall to the lender),
+        // and refinance can then proceed cleanly.
+        if (
+            oldLoan.periodicInterestCadence !=
+            LibVaipakam.PeriodicInterestCadence.None
+        ) {
+            uint256 graceEndsAt = LibPeriodicInterest.settleAllowedFromAt(oldLoan);
+            if (block.timestamp >= graceEndsAt) {
+                revert IVaipakamErrors.RefinanceRequiresPeriodSettle(
+                    oldLoanId,
+                    graceEndsAt
+                );
+            }
+        }
+
         // Validate: must be a Borrower offer created by Alice, already accepted
         LibVaipakam.Offer storage offer = s.offers[borrowerOfferId];
         if (
@@ -104,12 +133,24 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
             offer.creator != msg.sender
         ) revert InvalidRefinanceOffer();
         if (!offer.accepted) revert OfferNotAccepted();
-        if (offer.amount < oldLoan.principal) revert InvalidRefinanceOffer();
-        // README: same lending, collateral, and prepay asset types as original loan
-        if (offer.lendingAsset != oldLoan.principalAsset) revert InvalidRefinanceOffer();
-        if (offer.collateralAsset != oldLoan.collateralAsset) revert InvalidRefinanceOffer();
-        if (offer.collateralAssetType != oldLoan.collateralAssetType) revert InvalidRefinanceOffer();
-        if (offer.prepayAsset != oldLoan.prepayAsset) revert InvalidRefinanceOffer();
+        // Range-aware amount check: legacy single-value offers satisfy
+        // `amount == amountMax`; range offers satisfy
+        // `amount <= oldLoan.principal <= amountMax` (the borrower's
+        // range must accommodate the existing loan's principal). With
+        // auto-collapse (`amountMax == 0` → treated as `amount`),
+        // legacy single-value offers fall through to the original
+        // `offer.amount >= oldLoan.principal` check unchanged.
+        uint256 effAmountMax = offer.amountMax == 0
+            ? offer.amount
+            : offer.amountMax;
+        if (offer.amount > oldLoan.principal || oldLoan.principal > effAmountMax)
+            revert InvalidRefinanceOffer();
+        // Range Orders Phase 1 — single source of truth for the per-
+        // asset invariants (lendingAsset / collateralAsset /
+        // collateralAssetType / prepayAsset). README: same lending,
+        // collateral, and prepay asset types as original loan.
+        if (!LibOfferMatch.assertAssetContinuity(oldLoan, offer))
+            revert InvalidRefinanceOffer();
 
         // Find the new loan created when Lender B accepted Alice's offer
         uint256 newLoanId = s.offerIdToLoanId[borrowerOfferId];
@@ -161,24 +202,37 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
             }
         }
         uint256 lenderDue = oldLoan.principal + lenderInterest;
-        uint256 totalFromBorrower = lenderDue + treasuryFee;
 
-        // Pull total from borrower (who received new principal from Lender B)
-        IERC20(oldLoan.principalAsset).safeTransferFrom(
-            msg.sender,
-            address(this),
-            totalFromBorrower
-        );
-
-        // Treasury fee transferred immediately (skipped when satisfied in VPFI).
+        // T-037 — pay each party directly from the borrower without
+        // the Diamond holding the asset between transfers. The
+        // borrower's prior `approve()` to the Diamond covers the
+        // total; two `safeTransferFrom` calls (one to treasury, one
+        // to the old lender's escrow) replace the prior pull-and-
+        // split pattern. Treasury share skipped entirely if the
+        // VPFI-discount path satisfied it.
         if (treasuryFee > 0) {
-            IERC20(oldLoan.principalAsset).safeTransfer(LibFacet.getTreasury(), treasuryFee);
+            IERC20(oldLoan.principalAsset).safeTransferFrom(
+                msg.sender,
+                LibFacet.getTreasury(),
+                treasuryFee
+            );
             LibFacet.recordTreasuryAccrual(oldLoan.principalAsset, treasuryFee);
         }
 
-        // Route lender's share to old lender's escrow
-        address lenderEscrow = LibFacet.getOrCreateEscrow(oldLoan.lender);
-        IERC20(oldLoan.principalAsset).safeTransfer(lenderEscrow, lenderDue);
+        // Route lender's share to old lender's escrow via the cross-
+        // payer chokepoint so the protocolTrackedEscrowBalance
+        // counter ticks under the old lender (the escrow owner)
+        // while the borrower remains the payer.
+        LibFacet.crossFacetCall(
+            abi.encodeWithSelector(
+                EscrowFactoryFacet.escrowDepositERC20From.selector,
+                msg.sender,         // payer — borrower
+                oldLoan.lender,     // user — old lender's escrow
+                oldLoan.principalAsset,
+                lenderDue
+            ),
+            EscrowDepositFailed.selector
+        );
 
         // Record lender's claimable. heldForLender handled by ClaimFacet.
         s.lenderClaims[oldLoanId] = LibVaipakam.ClaimInfo({

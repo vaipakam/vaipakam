@@ -12,7 +12,9 @@ import { ErrorAlert } from '../components/app/ErrorAlert';
 import { AssetSymbol } from '../components/app/AssetSymbol';
 import { TokenAmount } from '../components/app/TokenAmount';
 import { InteractionRewardsClaim } from '../components/app/InteractionRewardsClaim';
+import { SanctionsBanner } from '../components/app/SanctionsBanner';
 import { CardInfo } from '../components/CardInfo';
+import { L as Link } from '../components/L';
 import './ClaimCenter.css';
 
 export default function ClaimCenter() {
@@ -79,6 +81,13 @@ export default function ClaimCenter() {
         <p className="page-subtitle">{t('claimCenter.pageSubtitle')}</p>
       </div>
 
+      {address && (
+        <SanctionsBanner
+          address={address as `0x${string}`}
+          label={t('banners.sanctionsLabelWallet')}
+        />
+      )}
+
       {error && <ErrorAlert message={error} />}
 
       {txHash && (
@@ -126,7 +135,19 @@ export default function ClaimCenter() {
               return (
                 <div key={key} className="claim-row">
                   <div className="claim-info">
-                    <div className="claim-loan-id">{t('claimCenter.loanPrefix')} #{claim.loanId.toString()}</div>
+                    <div className="claim-loan-id">
+                      {t('claimCenter.loanPrefix')}{' '}
+                      {/* The loan-id doubles as a deep-link to the loan
+                          details page so a user reviewing a pending
+                          claim can jump to the full timeline / risk
+                          panel without going back to the dashboard. */}
+                      <Link
+                        to={`/app/loans/${claim.loanId.toString()}`}
+                        style={{ color: 'var(--brand)' }}
+                      >
+                        #{claim.loanId.toString()}
+                      </Link>
+                    </div>
                     <div className="claim-meta">
                       <span className={`status-badge ${claim.role}`}>
                         {claim.role === 'lender' ? t('common.lender') : t('common.borrower')}

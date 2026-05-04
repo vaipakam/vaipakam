@@ -22,6 +22,29 @@ const ADDRESS_RE = /^0x[0-9a-fA-F]{40}$/;
 export const MIN_OFFER_DURATION_DAYS = 1;
 export const MAX_OFFER_DURATION_DAYS = 365;
 
+/**
+ * Bucketed duration presets exposed in the Create-Offer dropdown.
+ * Frontend convention only — the contract still accepts any integer
+ * `1 ≤ durationDays ≤ MAX_OFFER_DURATION_DAYS` for power users
+ * calling the Diamond directly. The product reason for buckets is
+ * matching: with seven discrete duration values, exact-equal
+ * matches between lender and borrower offers happen frequently
+ * enough that the keeper bot's matching pass produces useful
+ * pairs without a duration-range model.
+ *
+ * Spread covers the typical lending window: 1 week → 1 year, with
+ * 30-day intervals through the first quarter (where most flow
+ * concentrates) and quarterly steps beyond. Adjust here, every
+ * surface that imports the constant follows.
+ */
+export const OFFER_DURATION_BUCKETS_DAYS: readonly number[] = [
+  7, 14, 30, 60, 90, 180, 365,
+] as const;
+
+/** Default duration selected when the form first renders. Median of
+ *  the bucket list — matches the previous placeholder "30". */
+export const OFFER_DURATION_DEFAULT_DAYS = 30;
+
 export type OfferSide = 'lender' | 'borrower';
 export type OfferAssetKind = 'erc20' | 'erc721' | 'erc1155';
 
@@ -48,6 +71,24 @@ export interface OfferFormState {
    *  flag is set by whichever side authored the offer. Snapshotted to
    *  `Loan.allowsPartialRepay` at init and read by `RepayFacet.repayPartial`. */
   allowsPartialRepay: boolean;
+  /** Range Orders Phase 1 — upper bound of the amount range. Empty
+   *  string ⇒ single-value mode (auto-collapses to `amountMax = 0`
+   *  in the payload, which the contract reads as "match exactly
+   *  `amount`"). Only populated by the UI when the
+   *  `rangeAmountEnabled` master flag is on AND the user is in
+   *  Advanced mode. */
+  amountMax: string;
+  /** Range Orders Phase 1 — upper bound of the interest-rate range
+   *  (entered as a percent like the base `interestRate` field, e.g.
+   *  "5.5"). Empty ⇒ single-value mode. Gated on `rangeRateEnabled`
+   *  + Advanced mode in the UI. */
+  interestRateMax: string;
+  /** T-034 — lender's chosen Periodic Interest Payment cadence.
+   *  Numeric value matches the on-chain enum (0 = None ... 4 = Annual).
+   *  Default `0` (None) preserves backward compat. Visible only when
+   *  Advanced mode AND both legs are liquid AND
+   *  `periodicInterestEnabled` is true on the protocol config. */
+  periodicInterestCadence: number;
 }
 
 export const initialOfferForm: OfferFormState = {
@@ -58,7 +99,7 @@ export const initialOfferForm: OfferFormState = {
   interestRate: '',
   collateralAsset: '',
   collateralAmount: '',
-  durationDays: '',
+  durationDays: String(OFFER_DURATION_DEFAULT_DAYS),
   tokenId: '',
   quantity: '1',
   prepayAsset: '',
@@ -68,6 +109,9 @@ export const initialOfferForm: OfferFormState = {
   collateralTokenId: '',
   collateralQuantity: '0',
   allowsPartialRepay: false,
+  amountMax: '',
+  interestRateMax: '',
+  periodicInterestCadence: 0, // None
 };
 
 /** Payload shape expected by `Diamond.createOffer`. */
@@ -88,6 +132,16 @@ export interface CreateOfferPayload {
   collateralTokenId: bigint;
   collateralQuantity: bigint;
   allowsPartialRepay: boolean;
+  /** Range Orders Phase 1 — upper bound of the amount range.
+   *  `0n` ⇒ auto-collapse to single value (the contract reads
+   *  `amountMax == 0` as "use `amount`"). Otherwise must be
+   *  ≥ `amount`. */
+  amountMax: bigint;
+  /** Range Orders Phase 1 — upper bound of the interest-rate range
+   *  (BPS). `0` ⇒ auto-collapse. Otherwise must be ≥ `interestRateBps`. */
+  interestRateBpsMax: number;
+  /** T-034 — Periodic Interest Payment cadence (0 = None ... 4 = Annual). */
+  periodicInterestCadence: number;
 }
 
 /**
@@ -105,7 +159,9 @@ export type OfferFormError =
   | { code: 'nftTokenIdRequired' }
   | { code: 'collateralAssetInvalid' }
   | { code: 'prepayAssetInvalid' }
-  | { code: 'fallbackConsentRequired' };
+  | { code: 'fallbackConsentRequired' }
+  | { code: 'amountMaxBelowMin' }
+  | { code: 'rateMaxBelowMin' };
 
 /**
  * Shallow field-by-field validation. Returns the first error found, or null
@@ -133,6 +189,20 @@ export function validateOfferForm(s: OfferFormState): OfferFormError | null {
   }
   if (!s.fallbackConsent) {
     return { code: 'fallbackConsentRequired' };
+  }
+  // Range Orders Phase 1 — when an upper bound is populated it must
+  // be ≥ the corresponding minimum. Empty bounds auto-collapse and
+  // are not validated. Numeric comparison here is fine because both
+  // fields share units and parseFloat tolerates the input shape (the
+  // payload-stage `parseUnits` is the integer-precision conversion).
+  if (s.amountMax.trim() !== '' && Number(s.amountMax) < Number(s.amount)) {
+    return { code: 'amountMaxBelowMin' };
+  }
+  if (
+    s.interestRateMax.trim() !== ''
+    && Number(s.interestRateMax) < Number(s.interestRate)
+  ) {
+    return { code: 'rateMaxBelowMin' };
   }
   return null;
 }
@@ -174,6 +244,21 @@ export function toCreateOfferPayload(
     ? parseUnits(s.amount, lendingDecimals)
     : BigInt(s.amount);
 
+  // Range Orders Phase 1 auto-collapse: blank `amountMax` /
+  // `interestRateMax` produces 0 in the payload, which the contract's
+  // `_writeOfferPrincipalFields` reads as "treat as single value"
+  // (`amountMax = amount`, `interestRateBpsMax = interestRateBps`).
+  // Keeps the payload shape stable across basic and advanced modes —
+  // the UI just leaves the bound fields empty when ranges are off.
+  const amountMax = s.amountMax.trim() === ''
+    ? 0n
+    : (s.assetType === 'erc20'
+      ? parseUnits(s.amountMax, lendingDecimals)
+      : BigInt(s.amountMax));
+  const interestRateBpsMax = s.interestRateMax.trim() === ''
+    ? 0
+    : Math.round(parseFloat(s.interestRateMax) * 100);
+
   return {
     offerType: s.offerType === 'lender' ? 0 : 1,
     lendingAsset: s.lendingAsset,
@@ -191,6 +276,9 @@ export function toCreateOfferPayload(
     collateralTokenId: BigInt(s.collateralTokenId || '0'),
     collateralQuantity: BigInt(s.collateralQuantity || '0'),
     allowsPartialRepay: s.allowsPartialRepay,
+    amountMax,
+    interestRateBpsMax,
+    periodicInterestCadence: s.periodicInterestCadence,
   };
 }
 

@@ -17,6 +17,8 @@ import {OracleAdminFacet} from "../src/facets/OracleAdminFacet.sol";
 import {VaipakamNFTFacet} from "../src/facets/VaipakamNFTFacet.sol";
 import {EscrowFactoryFacet} from "../src/facets/EscrowFactoryFacet.sol";
 import {OfferFacet} from "../src/facets/OfferFacet.sol";
+import {OfferMatchFacet} from "../src/facets/OfferMatchFacet.sol";
+import {OfferCancelFacet} from "../src/facets/OfferCancelFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {RepayFacet} from "../src/facets/RepayFacet.sol";
 import {DefaultedFacet} from "../src/facets/DefaultedFacet.sol";
@@ -71,6 +73,14 @@ contract DeployDiamond is Script {
         VaipakamNFTFacet nftFacet = new VaipakamNFTFacet();
         EscrowFactoryFacet escrowFactoryFacet = new EscrowFactoryFacet();
         OfferFacet offerFacet = new OfferFacet();
+        // Range Orders Phase 1 EIP-170 split: matchOffers + previewMatch
+        // live on a separate facet to keep OfferFacet under the
+        // 24576-byte runtime-bytecode ceiling.
+        OfferMatchFacet offerMatchFacet = new OfferMatchFacet();
+        // Same EIP-170 pressure split out cancelOffer + read views into
+        // OfferCancelFacet. Selectors land on the diamond identically;
+        // frontend / keeper-bot bindings unaffected by the move.
+        OfferCancelFacet offerCancelFacet = new OfferCancelFacet();
         LoanFacet loanFacet = new LoanFacet();
         RepayFacet repayFacet = new RepayFacet();
         DefaultedFacet defaultedFacet = new DefaultedFacet();
@@ -97,7 +107,7 @@ contract DeployDiamond is Script {
         // Diamond instead of leaving it as dead code.
         LegalFacet legalFacet = new LegalFacet();
 
-        console.log("All 31 facets deployed.");
+        console.log("All 33 facets deployed.");
 
         // ── Step 2: Deploy Diamond ──────────────────────────────────────
         // Deployer is the initial ERC-173 owner so it can execute the
@@ -114,8 +124,8 @@ contract DeployDiamond is Script {
         console.log("Diamond deployed at:", diamond);
 
         // ── Step 3: Build facet cuts ────────────────────────────────────
-        // 30 facets (DiamondCutFacet already added by constructor)
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](30);
+        // 32 facets (DiamondCutFacet already added by constructor)
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](32);
 
         cuts[0] = _buildCut(address(loupeFacet), _getLoupeSelectors());
         cuts[1] = _buildCut(address(ownershipFacet), _getOwnershipSelectors());
@@ -147,10 +157,29 @@ contract DeployDiamond is Script {
         cuts[27] = _buildCut(address(rewardAggregatorFacet), _getRewardAggregatorSelectors());
         cuts[28] = _buildCut(address(configFacet), _getConfigSelectors());
         cuts[29] = _buildCut(address(legalFacet), _getLegalSelectors());
+        cuts[30] = _buildCut(address(offerMatchFacet), _getOfferMatchSelectors());
+        cuts[31] = _buildCut(address(offerCancelFacet), _getOfferCancelSelectors());
 
         // ── Step 4: Execute diamond cut ─────────────────────────────────
-        IDiamondCut(diamond).diamondCut(cuts, address(0), "");
-        console.log("Diamond cut complete: 30 facets added.");
+        // Split into two halves to stay under Base Sepolia's per-tx
+        // gas cap (~18M observed) — a single 32-facet cut estimates at
+        // ~17M, and forge's default 1.3× multiplier pushes the sent
+        // gas-limit over the cap. Two halves @ ~8.5M each, padded to
+        // ~11M, land well under. Any chain that can take the single
+        // cut will also accept two halves; this is strictly safer.
+        uint256 mid = cuts.length / 2;
+        IDiamondCut.FacetCut[] memory firstHalf = new IDiamondCut.FacetCut[](mid);
+        IDiamondCut.FacetCut[] memory secondHalf = new IDiamondCut.FacetCut[](cuts.length - mid);
+        for (uint256 i = 0; i < mid; i++) {
+            firstHalf[i] = cuts[i];
+        }
+        for (uint256 i = mid; i < cuts.length; i++) {
+            secondHalf[i - mid] = cuts[i];
+        }
+        IDiamondCut(diamond).diamondCut(firstHalf, address(0), "");
+        console.log("Diamond cut 1/2 complete:", mid, "facets added.");
+        IDiamondCut(diamond).diamondCut(secondHalf, address(0), "");
+        console.log("Diamond cut 2/2 complete:", cuts.length - mid, "facets added.");
 
         // ── Step 5: Post-deployment initialization ──────────────────────
         // 5a. Initialize access control (grants all roles to admin)
@@ -177,15 +206,14 @@ contract DeployDiamond is Script {
         // When admin == deployer (single-EOA anvil / CI setup) this block
         // is a no-op and the deployer retains everything.
         if (admin != deployerAddr) {
-            bytes32[7] memory roles = [
-                LibAccessControl.DEFAULT_ADMIN_ROLE,
-                LibAccessControl.ADMIN_ROLE,
-                LibAccessControl.PAUSER_ROLE,
-                LibAccessControl.KYC_ADMIN_ROLE,
-                LibAccessControl.ORACLE_ADMIN_ROLE,
-                LibAccessControl.RISK_ADMIN_ROLE,
-                LibAccessControl.ESCROW_ADMIN_ROLE
-            ];
+            // Single source of truth — the library exposes the canonical
+            // role list (Findings 00010). Adding a new role to
+            // `LibAccessControl.grantableRoles()` automatically flows
+            // here AND through `initializeAccessControl`, so the deploy
+            // script can never grant a strict subset of what the
+            // library granted (which used to leave roles unowned or on
+            // the deployer post-handover).
+            bytes32[] memory roles = LibAccessControl.grantableRoles();
 
             // 6a. Grant every role to admin (deployer holds DEFAULT_ADMIN
             //     from initializeAccessControl above, which is the role
@@ -193,22 +221,23 @@ contract DeployDiamond is Script {
             for (uint256 i = 0; i < roles.length; i++) {
                 AccessControlFacet(diamond).grantRole(roles[i], admin);
             }
-            console.log("All 7 roles granted to admin.");
+            console.log("All roles granted to admin:", roles.length);
 
             // 6b. Transfer ERC-173 ownership (gates future diamondCut).
             OwnershipFacet(diamond).transferOwnership(admin);
             console.log("ERC-173 ownership transferred to:", admin);
 
-            // 6c. Renounce every role from deployer. DEFAULT_ADMIN_ROLE is
-            //     renounced LAST so if any earlier step had reverted the
-            //     deployer still holds the root admin and can recover.
+            // 6c. Renounce every role from deployer. DEFAULT_ADMIN_ROLE
+            //     (index 0 by the library's convention) is renounced
+            //     LAST so if any earlier step had reverted the deployer
+            //     still holds the root admin and can recover.
             for (uint256 i = roles.length; i > 0; i--) {
                 AccessControlFacet(diamond).renounceRole(
                     roles[i - 1],
                     deployerAddr
                 );
             }
-            console.log("Deployer renounced all 7 roles.");
+            console.log("Deployer renounced all roles:", roles.length);
         } else {
             console.log("admin == deployer, skipping handover.");
         }
@@ -271,6 +300,8 @@ contract DeployDiamond is Script {
         Deployments.writeFacet("vaipakamNFTFacet",        address(nftFacet));
         Deployments.writeFacet("escrowFactoryFacet",      address(escrowFactoryFacet));
         Deployments.writeFacet("offerFacet",              address(offerFacet));
+        Deployments.writeFacet("offerMatchFacet",         address(offerMatchFacet));
+        Deployments.writeFacet("offerCancelFacet",        address(offerCancelFacet));
         Deployments.writeFacet("loanFacet",               address(loanFacet));
         Deployments.writeFacet("repayFacet",              address(repayFacet));
         Deployments.writeFacet("defaultedFacet",          address(defaultedFacet));
@@ -313,6 +344,8 @@ contract DeployDiamond is Script {
         console.log("VaipakamNFTFacet:     ", address(nftFacet));
         console.log("EscrowFactoryFacet:   ", address(escrowFactoryFacet));
         console.log("OfferFacet:           ", address(offerFacet));
+        console.log("OfferMatchFacet:      ", address(offerMatchFacet));
+        console.log("OfferCancelFacet:     ", address(offerCancelFacet));
         console.log("LoanFacet:            ", address(loanFacet));
         console.log("RepayFacet:           ", address(repayFacet));
         console.log("DefaultedFacet:       ", address(defaultedFacet));
@@ -395,7 +428,7 @@ contract DeployDiamond is Script {
     }
 
     function _getAdminSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](20);
+        s = new bytes4[](22);
         s[0] = AdminFacet.setTreasury.selector;
         s[1] = AdminFacet.getTreasury.selector;
         s[2] = AdminFacet.setZeroExProxy.selector;
@@ -416,6 +449,12 @@ contract DeployDiamond is Script {
         s[17] = AdminFacet.getPancakeswapV3Factory.selector;
         s[18] = AdminFacet.setSushiswapV3Factory.selector;
         s[19] = AdminFacet.getSushiswapV3Factory.selector;
+        // Auto-pause primitive (Phase 1 follow-up): WATCHER_ROLE-gated
+        // entry that freezes the protocol for
+        // `cfgAutoPauseDurationSeconds` while humans investigate. Plus
+        // a `pausedUntil` view for the frontend countdown.
+        s[20] = AdminFacet.autoPause.selector;
+        s[21] = AdminFacet.pausedUntil.selector;
     }
 
     function _getProfileSelectors() internal pure returns (bytes4[] memory s) {
@@ -503,7 +542,7 @@ contract DeployDiamond is Script {
         // that selector. _registerNFTInterfaces() writes the ERC-721 / metadata
         // interface IDs into LibDiamond storage so the Loupe's implementation
         // returns true for them.
-        s = new bytes4[](26);
+        s = new bytes4[](29);
         s[0] = VaipakamNFTFacet.mintNFT.selector;
         s[1] = VaipakamNFTFacet.updateNFTStatus.selector;
         s[2] = VaipakamNFTFacet.burnNFT.selector;
@@ -514,7 +553,10 @@ contract DeployDiamond is Script {
         s[7] = VaipakamNFTFacet.setContractImageURI.selector;
         s[8] = VaipakamNFTFacet.royaltyInfo.selector;
         s[9] = VaipakamNFTFacet.setDefaultRoyalty.selector;
-        s[10] = VaipakamNFTFacet.setLoanImageURIs.selector;
+        // Status-keyed image URI scheme (replaces the prior 4-slot
+        // setLoanImageURIs). Granular per-(LoanPositionStatus,
+        // isLender) overrides + per-side defaults + a read-back view.
+        s[10] = VaipakamNFTFacet.setImageURIForStatus.selector;
         // Native ERC-721 + lock API added in the transfer-lock refactor.
         s[11] = VaipakamNFTFacet.name.selector;
         s[12] = VaipakamNFTFacet.symbol.selector;
@@ -533,10 +575,16 @@ contract DeployDiamond is Script {
         s[23] = bytes4(keccak256("tokenByIndex(uint256)"));
         s[24] = bytes4(keccak256("tokenOfOwnerByIndex(address,uint256)"));
         s[25] = VaipakamNFTFacet.nftStatusOf.selector;
+        // OpenSea `external_url` admin config — sets the base URL
+        // emitted in tokenURI's JSON for marketplace deep-links.
+        s[26] = VaipakamNFTFacet.setExternalUrlBase.selector;
+        // Status-keyed image URI scheme companions:
+        s[27] = VaipakamNFTFacet.setDefaultImage.selector;
+        s[28] = VaipakamNFTFacet.getImageURIFor.selector;
     }
 
     function _getEscrowFactorySelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](22);
+        s = new bytes4[](31);
         s[0] = EscrowFactoryFacet.initializeEscrowImplementation.selector;
         s[1] = EscrowFactoryFacet.getOrCreateUserEscrow.selector;
         s[2] = EscrowFactoryFacet.upgradeEscrowImplementation.selector;
@@ -559,27 +607,82 @@ contract DeployDiamond is Script {
         s[19] = EscrowFactoryFacet.getEscrowVersionInfo.selector;
         s[20] = EscrowFactoryFacet.escrowSetNFTUser1155.selector;
         s[21] = EscrowFactoryFacet.escrowGetNFTQuantity.selector;
+        // T-051 / T-054 — chokepoint deposit + counter-only companions.
+        // `escrowDepositERC20From` is the third-party-payer variant
+        // RepayFacet uses to pull repayment funds from the borrower
+        // into the lender's escrow; without this selector cut, every
+        // ERC-20 loan repayment reverts with FunctionDoesNotExist.
+        s[22] = EscrowFactoryFacet.escrowDepositERC20From.selector;
+        s[23] = EscrowFactoryFacet.recordEscrowDepositERC20.selector;
+        s[24] = EscrowFactoryFacet.getProtocolTrackedEscrowBalance.selector;
+        // T-054 PR-3 — stuck-token recovery EIP-712 surface.
+        s[25] = EscrowFactoryFacet.recoverStuckERC20.selector;
+        s[26] = EscrowFactoryFacet.disown.selector;
+        s[27] = EscrowFactoryFacet.recoveryDomainSeparator.selector;
+        s[28] = EscrowFactoryFacet.recoveryAckTextHash.selector;
+        s[29] = EscrowFactoryFacet.recoveryNonce.selector;
+        s[30] = EscrowFactoryFacet.escrowBannedSource.selector;
     }
 
     function _getOfferSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](9);
+        s = new bytes4[](7);
         s[0] = OfferFacet.createOffer.selector;
         s[1] = OfferFacet.acceptOffer.selector;
-        s[2] = OfferFacet.cancelOffer.selector;
-        s[3] = OfferFacet.getCompatibleOffers.selector;
-        s[4] = OfferFacet.getUserEscrow.selector;
-        s[5] = OfferFacet.getOffer.selector;
-        s[6] = OfferFacet.getOfferDetails.selector;
+        s[2] = OfferFacet.getUserEscrow.selector;
         // Phase 8b.1 Permit2 additions.
-        s[7] = OfferFacet.createOfferWithPermit.selector;
-        s[8] = OfferFacet.acceptOfferWithPermit.selector;
+        s[3] = OfferFacet.createOfferWithPermit.selector;
+        s[4] = OfferFacet.acceptOfferWithPermit.selector;
+        // Cross-facet entry point used exclusively by
+        // `OfferMatchFacet.matchOffers` to invoke the same
+        // `_acceptOffer` plumbing without re-acquiring the shared
+        // nonReentrant lock that the outer matchOffers already
+        // holds. Gated to `msg.sender == address(this)` inside the
+        // facet body — EOAs cannot call it directly through the
+        // diamond fallback. (Range Orders Phase 1 EIP-170 split.)
+        s[5] = OfferFacet.acceptOfferInternal.selector;
+        // Cross-facet entry used by `PrecloseFacet.offsetWithNewOffer`
+        // (Option 3) to mint a new lender offer without colliding on
+        // the shared diamond reentrancy guard the caller already
+        // holds. Same `address(this)`-only gating as
+        // `acceptOfferInternal`.
+        s[6] = OfferFacet.createOfferInternal.selector;
+        // `cancelOffer`, `getCompatibleOffers`, `getOffer`, and
+        // `getOfferDetails` moved to `OfferCancelFacet` as part of
+        // the second EIP-170 split — see `_getOfferCancelSelectors`.
+    }
+
+    /// @dev OfferMatchFacet — Range Orders Phase 1 bot-driven offer
+    ///      matching surface. Carved out of OfferFacet to bring it
+    ///      under EIP-170; same selectors, separate facet.
+    function _getOfferMatchSelectors() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](2);
+        // `matchOffers` is the write entry bots submit; `previewMatch`
+        // is the structured-error view they consult before
+        // submitting. Both gated on the `partialFillEnabled` master
+        // flag inside the facet body.
+        s[0] = OfferMatchFacet.matchOffers.selector;
+        s[1] = OfferMatchFacet.previewMatch.selector;
+    }
+
+    /// @dev OfferCancelFacet — cancellation + read views carved out of
+    ///      `OfferFacet` to bring it under EIP-170. Same selectors,
+    ///      separate facet — frontend and keeper-bot bindings
+    ///      unaffected by the move.
+    function _getOfferCancelSelectors() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](4);
+        s[0] = OfferCancelFacet.cancelOffer.selector;
+        s[1] = OfferCancelFacet.getCompatibleOffers.selector;
+        s[2] = OfferCancelFacet.getOffer.selector;
+        s[3] = OfferCancelFacet.getOfferDetails.selector;
     }
 
     function _getLoanSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](3);
+        s = new bytes4[](4);
         s[0] = LoanFacet.initiateLoan.selector;
         s[1] = LoanFacet.getLoanDetails.selector;
         s[2] = LoanFacet.getLoanConsents.selector;
+        // T-032 — notification-bill writer entry. NOTIF_BILLER_ROLE-gated.
+        s[3] = LoanFacet.markNotifBilled.selector;
     }
 
     function _getRepaySelectors() internal pure returns (bytes4[] memory s) {
@@ -642,11 +745,15 @@ contract DeployDiamond is Script {
     }
 
     function _getPrecloseSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](4);
+        s = new bytes4[](5);
         s[0] = PrecloseFacet.precloseDirect.selector;
         s[1] = PrecloseFacet.offsetWithNewOffer.selector;
         s[2] = PrecloseFacet.completeOffset.selector;
         s[3] = PrecloseFacet.transferObligationViaOffer.selector;
+        // Cross-facet entry consumed by `OfferFacet._acceptOffer`'s
+        // auto-link block when a third party accepts an offset offer.
+        // Same `address(this)`-only gate as `acceptOfferInternal`.
+        s[4] = PrecloseFacet.completeOffsetInternal.selector;
     }
 
     function _getRefinanceSelectors() internal pure returns (bytes4[] memory s) {
@@ -748,14 +855,14 @@ contract DeployDiamond is Script {
         s[4] = RewardReporterFacet.setBaseEid.selector;
         s[5] = RewardReporterFacet.setIsCanonicalRewardChain.selector;
         s[6] = RewardReporterFacet.setRewardGraceSeconds.selector;
-        s[7] = RewardReporterFacet.getLocalChainInterestUSD18.selector;
+        s[7] = RewardReporterFacet.getLocalChainInterestNumeraire18.selector;
         s[8] = RewardReporterFacet.getChainReportSentAt.selector;
         s[9] = RewardReporterFacet.getRewardReporterConfig.selector;
-        s[10] = RewardReporterFacet.getKnownGlobalInterestUSD18.selector;
+        s[10] = RewardReporterFacet.getKnownGlobalInterestNumeraire18.selector;
     }
 
     function _getConfigSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](16);
+        s = new bytes4[](25);
         // Setters
         s[0] = ConfigFacet.setFeesConfig.selector;
         s[1] = ConfigFacet.setLiquidationConfig.selector;
@@ -777,6 +884,28 @@ contract DeployDiamond is Script {
         s[13] = ConfigFacet.getVpfiTierDiscountBps.selector;
         s[14] = ConfigFacet.getProtocolConfigBundle.selector;
         s[15] = ConfigFacet.getProtocolConstants.selector;
+        // Range Orders Phase 1 master kill-switch flags. Default false
+        // on a fresh deploy; governance flips them via the setters
+        // below. See docs/RangeOffersDesign.md §15 for the staged-
+        // enablement rationale (each flag can be toggled
+        // independently to roll out range / partial-fill behavior).
+        s[16] = ConfigFacet.setRangeAmountEnabled.selector;
+        s[17] = ConfigFacet.setRangeRateEnabled.selector;
+        s[18] = ConfigFacet.setPartialFillEnabled.selector;
+        s[19] = ConfigFacet.getMasterFlags.selector;
+        // Range Orders Phase 1 — governance-tunable matcher BPS.
+        s[20] = ConfigFacet.setLifMatcherFeeBps.selector;
+        // Auto-pause window duration setter (Phase 1 follow-up).
+        s[21] = ConfigFacet.setAutoPauseDurationSeconds.selector;
+        // Findings 00025 — governance-tunable max loan duration.
+        s[22] = ConfigFacet.setMaxOfferDurationDays.selector;
+        // T-032 / Numeraire generalization (Phase 1) — notification fee knob (now in
+        // numeraire-units) + bundled getter. The per-knob
+        // `setNotificationFeeUsdOracle` was retired; the protocol's
+        // reference currency is the global numeraireOracle (set via
+        // setNumeraire on the T-034 surface).
+        s[23] = ConfigFacet.setNotificationFee.selector;
+        s[24] = ConfigFacet.getNotificationFeeConfig.selector;
     }
 
     function _getRewardAggregatorSelectors() internal pure returns (bytes4[] memory s) {
@@ -796,13 +925,13 @@ contract DeployDiamond is Script {
     }
 
     function _getMetricsSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](32);
+        s = new bytes4[](34);
         s[0] = MetricsFacet.getProtocolTVL.selector;
         s[1] = MetricsFacet.getProtocolStats.selector;
         s[2] = MetricsFacet.getUserCount.selector;
         s[3] = MetricsFacet.getActiveLoansCount.selector;
         s[4] = MetricsFacet.getActiveOffersCount.selector;
-        s[5] = MetricsFacet.getTotalInterestEarnedUSD.selector;
+        s[5] = MetricsFacet.getTotalInterestEarnedNumeraire.selector;
         s[6] = MetricsFacet.getTreasuryMetrics.selector;
         s[7] = MetricsFacet.getRevenueStats.selector;
         s[8] = MetricsFacet.getActiveLoansPaginated.selector;
@@ -830,6 +959,16 @@ contract DeployDiamond is Script {
         s[29] = MetricsFacet.getAllOffersPaginated.selector;
         s[30] = MetricsFacet.getLoansByStatusPaginated.selector;
         s[31] = MetricsFacet.getOffersByStatePaginated.selector;
+        // Range Orders Phase 1 — asset-agnostic paginated active-offer
+        // scan, symmetric with `getActiveLoansPaginated`. Consumed by
+        // the keeper-bot's `offerMatcher` detector to enumerate the
+        // order book each tick.
+        s[32] = MetricsFacet.getActiveOffersPaginated.selector;
+        // Position-NFT live summary — single source of truth for
+        // marketplace `tokenURI` rendering AND the frontend's NFT
+        // verifier UI. Returns realized loan terms, locked collateral,
+        // and claim state in one structured read.
+        s[33] = MetricsFacet.getNFTPositionSummary.selector;
     }
 
     /// Phase 4.1 — Terms-of-Service acceptance gate. The gate stays

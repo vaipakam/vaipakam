@@ -22,14 +22,14 @@ import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 ///
 ///         These tests DIRECTLY seed the ETH/USD Chainlink feed slot
 ///         via the test mutator so the cap branch engages — the broader
-///         {InteractionRewardsCoverageTest} suite leaves `ethUsdFeed`
+///         {InteractionRewardsCoverageTest} suite leaves `ethNumeraireFeed`
 ///         unset so it exercises the proportional (uncapped) path. The
 ///         cap helper fails open when the feed is unset, which keeps
 ///         the uncapped coverage valid without changes.
 contract InteractionRewardCapTest is SetupTest, IVaipakamErrors {
     VPFIToken internal vpfi;
     InteractionRewardsFacet internal interactionFacet;
-    MockChainlinkAggregator internal ethUsdFeed;
+    MockChainlinkAggregator internal ethNumeraireFeed;
 
     uint256 internal constant DIAMOND_SEED = 100_000_000 ether;
     // ETH/USD = $4,000 with 8-decimal feed.
@@ -65,12 +65,12 @@ contract InteractionRewardCapTest is SetupTest, IVaipakamErrors {
         });
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");
 
-        ethUsdFeed = new MockChainlinkAggregator(
+        ethNumeraireFeed = new MockChainlinkAggregator(
             ETH_USD_RAW,
             block.timestamp,
             ETH_USD_DEC
         );
-        _mut().setEthUsdFeedRaw(address(ethUsdFeed));
+        _mut().setEthUsdFeedRaw(address(ethNumeraireFeed));
 
         alice = makeAddr("alice");
         _facet().setInteractionLaunchTimestamp(block.timestamp);
@@ -88,15 +88,15 @@ contract InteractionRewardCapTest is SetupTest, IVaipakamErrors {
         return _facet().getInteractionHalfPoolForDay(day);
     }
 
-    /// @dev Expected per-side cap for a user holding `interestUSD18` on
+    /// @dev Expected per-side cap for a user holding `interestNumeraire18` on
     ///      the branch under test, at the test harness's ETH/USD price.
-    function _expectedCap(uint256 interestUSD18, uint256 capRatio)
+    function _expectedCap(uint256 interestNumeraire18, uint256 capRatio)
         internal
         pure
         returns (uint256)
     {
         return
-            (interestUSD18 * (10 ** uint256(ETH_USD_DEC)) * capRatio) /
+            (interestNumeraire18 * (10 ** uint256(ETH_USD_DEC)) * capRatio) /
             uint256(ETH_USD_RAW);
     }
 
@@ -107,13 +107,13 @@ contract InteractionRewardCapTest is SetupTest, IVaipakamErrors {
     ///         half-pool (~10k VPFI on day 1). The §4 cap at $1 of
     ///         interest is ~0.125 VPFI — that is what she must receive.
     function testDefaultCapTruncatesSingleLenderPayout() public {
-        uint256 interestUSD18 = 1e18; // $1
-        _mut().setDailyLenderInterest(1, alice, interestUSD18, interestUSD18);
+        uint256 interestNumeraire18 = 1e18; // $1
+        _mut().setDailyLenderInterest(1, alice, interestNumeraire18, interestNumeraire18);
 
         vm.warp(block.timestamp + 2 days + 1);
 
         uint256 cap = _expectedCap(
-            interestUSD18,
+            interestNumeraire18,
             LibVaipakam.INTERACTION_CAP_DEFAULT_VPFI_PER_ETH
         );
         uint256 rawShare = _halfPool(1);
@@ -134,8 +134,8 @@ contract InteractionRewardCapTest is SetupTest, IVaipakamErrors {
     ///         can't silently change the cap value.
     function testCapMatchesSpecRatioAtKnownEthPrice() public {
         // $0.001 of interest → 0.00000025 ETH → 0.000125 VPFI cap.
-        uint256 interestUSD18 = 1e15;
-        _mut().setDailyLenderInterest(1, alice, interestUSD18, interestUSD18);
+        uint256 interestNumeraire18 = 1e15;
+        _mut().setDailyLenderInterest(1, alice, interestNumeraire18, interestNumeraire18);
 
         vm.warp(block.timestamp + 2 days + 1);
 
@@ -144,7 +144,7 @@ contract InteractionRewardCapTest is SetupTest, IVaipakamErrors {
         //                 = 1.25e14
         uint256 expectedCap = 1.25e14;
         uint256 formula = _expectedCap(
-            interestUSD18,
+            interestNumeraire18,
             LibVaipakam.INTERACTION_CAP_DEFAULT_VPFI_PER_ETH
         );
         assertEq(formula, expectedCap, "formula matches hand-computed cap");
@@ -160,14 +160,14 @@ contract InteractionRewardCapTest is SetupTest, IVaipakamErrors {
     ///         both branches hit the cap. Paid must equal 2 × single-side
     ///         cap — NOT double-dip one side's numerator into the other.
     function testCapAppliesPerSideIndependently() public {
-        uint256 interestUSD18 = 1e18;
-        _mut().setDailyLenderInterest(1, alice, interestUSD18, interestUSD18);
-        _mut().setDailyBorrowerInterest(1, alice, interestUSD18, interestUSD18);
+        uint256 interestNumeraire18 = 1e18;
+        _mut().setDailyLenderInterest(1, alice, interestNumeraire18, interestNumeraire18);
+        _mut().setDailyBorrowerInterest(1, alice, interestNumeraire18, interestNumeraire18);
 
         vm.warp(block.timestamp + 2 days + 1);
 
         uint256 sideCap = _expectedCap(
-            interestUSD18,
+            interestNumeraire18,
             LibVaipakam.INTERACTION_CAP_DEFAULT_VPFI_PER_ETH
         );
 
@@ -186,17 +186,17 @@ contract InteractionRewardCapTest is SetupTest, IVaipakamErrors {
         // $50,000 at $4,000/ETH → 12.5 ETH → cap = 6,250 VPFI.
         // Day-1 half-pool ≈ 10,082 VPFI; two lenders split it 50/50 so
         // each gets ~5,041 VPFI — well under cap.
-        uint256 userUSD18 = 50_000 * 1e18;
-        uint256 totalUSD18 = userUSD18 * 2;
-        _mut().setDailyLenderInterest(1, alice, userUSD18, totalUSD18);
+        uint256 userNumeraire18 = 50_000 * 1e18;
+        uint256 totalNumeraire18 = userNumeraire18 * 2;
+        _mut().setDailyLenderInterest(1, alice, userNumeraire18, totalNumeraire18);
 
         vm.warp(block.timestamp + 2 days + 1);
 
         uint256 cap = _expectedCap(
-            userUSD18,
+            userNumeraire18,
             LibVaipakam.INTERACTION_CAP_DEFAULT_VPFI_PER_ETH
         );
-        uint256 expectedShare = (_halfPool(1) * userUSD18) / totalUSD18;
+        uint256 expectedShare = (_halfPool(1) * userNumeraire18) / totalNumeraire18;
         assertLt(expectedShare, cap, "sanity: share < cap for this fixture");
 
         vm.prank(alice);
@@ -211,8 +211,8 @@ contract InteractionRewardCapTest is SetupTest, IVaipakamErrors {
     ///         (still clamped by the raw proportional share in case the
     ///         new cap exceeds it).
     function testAdminCanRaiseCap() public {
-        uint256 interestUSD18 = 1e18;
-        _mut().setDailyLenderInterest(1, alice, interestUSD18, interestUSD18);
+        uint256 interestNumeraire18 = 1e18;
+        _mut().setDailyLenderInterest(1, alice, interestNumeraire18, interestNumeraire18);
 
         uint256 newRatio = LibVaipakam.INTERACTION_CAP_DEFAULT_VPFI_PER_ETH * 2;
         _facet().setInteractionCapVpfiPerEth(newRatio);
@@ -225,7 +225,7 @@ contract InteractionRewardCapTest is SetupTest, IVaipakamErrors {
         vm.warp(block.timestamp + 2 days + 1);
 
         uint256 raw = _halfPool(1);
-        uint256 cap = _expectedCap(interestUSD18, newRatio);
+        uint256 cap = _expectedCap(interestNumeraire18, newRatio);
         uint256 expected = raw < cap ? raw : cap;
 
         vm.prank(alice);
@@ -237,15 +237,15 @@ contract InteractionRewardCapTest is SetupTest, IVaipakamErrors {
     ///         1/5 of the default, and a tiny-USD claim shrinks
     ///         proportionally.
     function testAdminCanLowerCap() public {
-        uint256 interestUSD18 = 1e18;
-        _mut().setDailyLenderInterest(1, alice, interestUSD18, interestUSD18);
+        uint256 interestNumeraire18 = 1e18;
+        _mut().setDailyLenderInterest(1, alice, interestNumeraire18, interestNumeraire18);
 
         uint256 lowerRatio = 100; // 0.1 VPFI per 0.001 ETH (1/5 of default).
         _facet().setInteractionCapVpfiPerEth(lowerRatio);
 
         vm.warp(block.timestamp + 2 days + 1);
 
-        uint256 cap = _expectedCap(interestUSD18, lowerRatio);
+        uint256 cap = _expectedCap(interestNumeraire18, lowerRatio);
         vm.prank(alice);
         (uint256 paid,,) = _facet().claimInteractionRewards();
         assertEq(paid, cap, "lower cap enforced");
@@ -256,8 +256,8 @@ contract InteractionRewardCapTest is SetupTest, IVaipakamErrors {
     ///         full proportional share regardless of how small their
     ///         USD interest was.
     function testCapCanBeDisabledBySentinel() public {
-        uint256 interestUSD18 = 1e18;
-        _mut().setDailyLenderInterest(1, alice, interestUSD18, interestUSD18);
+        uint256 interestNumeraire18 = 1e18;
+        _mut().setDailyLenderInterest(1, alice, interestNumeraire18, interestNumeraire18);
 
         _facet().setInteractionCapVpfiPerEth(type(uint256).max);
 
@@ -289,16 +289,16 @@ contract InteractionRewardCapTest is SetupTest, IVaipakamErrors {
     /// @notice When the ETH/USD feed returns a zero/negative answer,
     ///         {_capVPFIForInterestUSD} returns the uint256-max sentinel
     ///         so the cap branch short-circuits. Matches the graceful-
-    ///         degradation pattern in {_interestToUSD18} — keeps claim
+    ///         degradation pattern in {_interestToNumeraire18} — keeps claim
     ///         flows live during a transient oracle hiccup. The 69M
     ///         pool hard cap still bounds total emissions.
     function testOracleFailureDisablesCap() public {
-        uint256 interestUSD18 = 1e18;
-        _mut().setDailyLenderInterest(1, alice, interestUSD18, interestUSD18);
+        uint256 interestNumeraire18 = 1e18;
+        _mut().setDailyLenderInterest(1, alice, interestNumeraire18, interestNumeraire18);
 
         // Force the mock to report a zero answer so the helper falls
         // through the `answer <= 0` guard.
-        ethUsdFeed.setAnswer(0);
+        ethNumeraireFeed.setAnswer(0);
 
         vm.warp(block.timestamp + 2 days + 1);
 

@@ -35,6 +35,7 @@ import {ERC1155Mock} from "./mocks/ERC1155Mock.sol";
 import {IERC1155} from "@openzeppelin/contracts/token/ERC1155/IERC1155.sol";
 import {HelperTest} from "./HelperTest.sol";
 import {OfferFacet} from "../src/facets/OfferFacet.sol";
+import {OfferCancelFacet} from "../src/facets/OfferCancelFacet.sol";
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import {OracleFacet} from "../src/facets/OracleFacet.sol";
 import {VaipakamNFTFacet} from "../src/facets/VaipakamNFTFacet.sol";
@@ -114,7 +115,7 @@ contract OfferFacetTest is Test {
         HelperTest helperTest = new HelperTest();
 
         // Prepare cuts for required facets
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](8);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](9);
         cuts[0] = IDiamondCut.FacetCut({
             facetAddress: address(new OfferFacet()),
             action: IDiamondCut.FacetCutAction.Add,
@@ -160,6 +161,14 @@ contract OfferFacetTest is Test {
             facetAddress: address(new TestMutatorFacet()),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getTestMutatorFacetSelectors()
+        });
+        // OfferCancelFacet — cancelOffer + read views, carved out of
+        // OfferFacet for the EIP-170 split. Same selectors land on
+        // the diamond.
+        cuts[8] = IDiamondCut.FacetCut({
+            facetAddress: address(new OfferCancelFacet()),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getOfferCancelFacetSelectors()
         });
 
         console.log("inside setup function 001");
@@ -241,15 +250,15 @@ contract OfferFacetTest is Test {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](6);
+        // OfferFacet split for EIP-170: cancelOffer +
+        // getCompatibleOffers + getOffer moved to OfferCancelFacet,
+        // which is cut into the test diamond separately above.
+        selectors = new bytes4[](3);
         selectors[0] = OfferFacet.createOffer.selector;
         // Single `acceptOffer(uint256,bool)` — VPFI discount path is gated
         // by the platform-level consent flag, not a per-call boolean.
         selectors[1] = bytes4(keccak256("acceptOffer(uint256,bool)"));
-        selectors[2] = OfferFacet.cancelOffer.selector;
-        selectors[3] = OfferFacet.getCompatibleOffers.selector;
-        selectors[4] = OfferFacet.getUserEscrow.selector;
-        selectors[5] = OfferFacet.getOffer.selector;
+        selectors[2] = OfferFacet.getUserEscrow.selector;
         return selectors;
     }
 
@@ -390,12 +399,15 @@ contract OfferFacetTest is Test {
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
                 collateralQuantity: 0,
-                allowsPartialRepay: false
+                allowsPartialRepay: false,
+                amountMax: 0,
+                interestRateBpsMax: 0,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
             })
         );
 
         // LibVaipakam.Offer memory offer = LibVaipakam.storageSlot().offers[offerId];
-        LibVaipakam.Offer memory offer = OfferFacet(address(diamond)).getOffer(
+        LibVaipakam.Offer memory offer = OfferCancelFacet(address(diamond)).getOffer(
             offerId
         );
         assertEq(offer.amount, 1000);
@@ -437,7 +449,10 @@ contract OfferFacetTest is Test {
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
                 collateralQuantity: 0,
-                allowsPartialRepay: false
+                allowsPartialRepay: false,
+                amountMax: 0,
+                interestRateBpsMax: 0,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
             })
         );
     }
@@ -461,12 +476,15 @@ contract OfferFacetTest is Test {
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
                 collateralQuantity: 0,
-                allowsPartialRepay: false
+                allowsPartialRepay: false,
+                amountMax: 0,
+                interestRateBpsMax: 0,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
             })
         );
 
         // LibVaipakam.Offer memory offer = LibVaipakam.storageSlot().offers[offerId];
-        LibVaipakam.Offer memory offer = OfferFacet(address(diamond)).getOffer(
+        LibVaipakam.Offer memory offer = OfferCancelFacet(address(diamond)).getOffer(
             offerId
         );
         assertEq(offer.prepayAsset, mockERC20);
@@ -511,7 +529,10 @@ contract OfferFacetTest is Test {
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
                 collateralQuantity: 0,
-                allowsPartialRepay: false
+                allowsPartialRepay: false,
+                amountMax: 0,
+                interestRateBpsMax: 0,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
             })
         );
 
@@ -571,7 +592,10 @@ contract OfferFacetTest is Test {
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
                 collateralQuantity: 0,
-                allowsPartialRepay: false
+                allowsPartialRepay: false,
+                amountMax: 0,
+                interestRateBpsMax: 0,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
             })
         );
 
@@ -599,7 +623,10 @@ contract OfferFacetTest is Test {
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
                 collateralQuantity: 0,
-                allowsPartialRepay: false
+                allowsPartialRepay: false,
+                amountMax: 0,
+                interestRateBpsMax: 0,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
             })
         );
         assertEq(
@@ -607,12 +634,12 @@ contract OfferFacetTest is Test {
             EscrowFactoryFacet(address(diamond)).getOrCreateUserEscrow(user1)
         );
 
-        // Set KYC tier for users; use low price so valueUSD stays < $1k (Tier0 sufficient)
+        // Set KYC tier for users; use low price so valueNumeraire stays < $1k (Tier0 sufficient)
         vm.prank(owner);
         ProfileFacet(address(diamond)).updateKYCTier(user1, LibVaipakam.KYCTier.Tier2);
         vm.prank(owner);
         ProfileFacet(address(diamond)).updateKYCTier(user2, LibVaipakam.KYCTier.Tier2);
-        mockOraclePrice(mockERC20, 1e6, 6); // Low price to keep valueUSD < $1k
+        mockOraclePrice(mockERC20, 1e6, 6); // Low price to keep valueNumeraire < $1k
 
         uint256 expectedPrepay = 10 * 30;
         uint256 buffer = (expectedPrepay * 500) / 10000; // 5%
@@ -651,7 +678,10 @@ contract OfferFacetTest is Test {
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
                 collateralQuantity: 0,
-                allowsPartialRepay: false
+                allowsPartialRepay: false,
+                amountMax: 0,
+                interestRateBpsMax: 0,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
             })
         );
 
@@ -659,7 +689,7 @@ contract OfferFacetTest is Test {
         console.log("User balanceBefore: ", balanceBefore);
 
         vm.prank(user1);
-        OfferFacet(address(diamond)).cancelOffer(offerId);
+        OfferCancelFacet(address(diamond)).cancelOffer(offerId);
 
         assertEq(ERC20(mockERC20).balanceOf(user1), balanceBefore + 1000); // Released
     }
@@ -688,13 +718,16 @@ contract OfferFacetTest is Test {
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
                 collateralQuantity: 0,
-                allowsPartialRepay: false
+                allowsPartialRepay: false,
+                amountMax: 0,
+                interestRateBpsMax: 0,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
             })
         );
 
         // Both events are expected: the rich detail one + the legacy.
         vm.expectEmit(true, true, false, true, address(diamond));
-        emit OfferFacet.OfferCanceledDetails(
+        emit OfferCancelFacet.OfferCanceledDetails(
             offerId,
             user1,
             LibVaipakam.OfferType.Lender,
@@ -705,13 +738,19 @@ contract OfferFacetTest is Test {
             mockCollateralERC20,
             1500,
             500,
-            30
+            30,
+            // Range Orders Phase 1: legacy single-value offer collapses
+            // amountMax → amount and interestRateBpsMax → interestRateBps
+            // at create-time, with amountFilled staying 0.
+            1000,
+            500,
+            0
         );
         vm.expectEmit(true, true, false, false, address(diamond));
-        emit OfferFacet.OfferCanceled(offerId, user1);
+        emit OfferCancelFacet.OfferCanceled(offerId, user1);
 
         vm.prank(user1);
-        OfferFacet(address(diamond)).cancelOffer(offerId);
+        OfferCancelFacet(address(diamond)).cancelOffer(offerId);
     }
 
     function testGetCompatibleOffersFiltersCountries() public {
@@ -722,7 +761,7 @@ contract OfferFacetTest is Test {
         // Create offers from different countries
         // ... (setup multiple offers with countries)
 
-        (uint256[] memory offers, ) = OfferFacet(address(diamond))
+        (uint256[] memory offers, ) = OfferCancelFacet(address(diamond))
             .getCompatibleOffers(user1, 0, 100); // US user
         // Assert only FR-compatible shown
         offers; // silence unused
@@ -751,7 +790,10 @@ contract OfferFacetTest is Test {
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
                 collateralQuantity: 0,
-                allowsPartialRepay: false
+                allowsPartialRepay: false,
+                amountMax: 0,
+                interestRateBpsMax: 0,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
             })
         );
     }
@@ -788,7 +830,10 @@ contract OfferFacetTest is Test {
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
                 collateralQuantity: 0,
-                allowsPartialRepay: false
+                allowsPartialRepay: false,
+                amountMax: 0,
+                interestRateBpsMax: 0,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
             })
         );
 
@@ -840,7 +885,48 @@ contract OfferFacetTest is Test {
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
                 collateralQuantity: 0,
-                allowsPartialRepay: false
+                allowsPartialRepay: false,
+                amountMax: 0,
+                interestRateBpsMax: 0,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
+            })
+        );
+    }
+
+    /// @dev Findings 00025 — durationDays > governance cap → revert.
+    ///      Default cap is 365 days; at 366 the offer must revert with
+    ///      `OfferDurationExceedsCap(provided, cap)` so external callers
+    ///      can't bypass the frontend validation that already caps at 365.
+    function testCreateOfferRevertsIfDurationAboveCap() public {
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                OfferFacet.OfferDurationExceedsCap.selector,
+                uint256(366),
+                uint256(LibVaipakam.MAX_OFFER_DURATION_DAYS_DEFAULT)
+            )
+        );
+        vm.prank(user1);
+        OfferFacet(address(diamond)).createOffer(
+            LibVaipakam.CreateOfferParams({
+                offerType: LibVaipakam.OfferType.Lender,
+                lendingAsset: mockERC20,
+                amount: 1000,
+                interestRateBps: 500,
+                collateralAsset: mockCollateralERC20,
+                collateralAmount: 1500,
+                durationDays: 366,
+                assetType: LibVaipakam.AssetType.ERC20,
+                tokenId: 0,
+                quantity: 0,
+                creatorFallbackConsent: true,
+                prepayAsset: mockERC20,
+                collateralAssetType: LibVaipakam.AssetType.ERC20,
+                collateralTokenId: 0,
+                collateralQuantity: 0,
+                allowsPartialRepay: false,
+                amountMax: 0,
+                interestRateBpsMax: 0,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
             })
         );
     }
@@ -870,7 +956,10 @@ contract OfferFacetTest is Test {
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
                 collateralQuantity: 0,
-                allowsPartialRepay: false
+                allowsPartialRepay: false,
+                amountMax: 0,
+                interestRateBpsMax: 0,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
             })
         );
     }
@@ -895,11 +984,14 @@ contract OfferFacetTest is Test {
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
                 collateralQuantity: 0,
-                allowsPartialRepay: false
+                allowsPartialRepay: false,
+                amountMax: 0,
+                interestRateBpsMax: 0,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
             })
         );
 
-        LibVaipakam.Offer memory offer = OfferFacet(address(diamond)).getOffer(offerId);
+        LibVaipakam.Offer memory offer = OfferCancelFacet(address(diamond)).getOffer(offerId);
         assertEq(uint8(offer.offerType), uint8(LibVaipakam.OfferType.Borrower));
         assertFalse(offer.accepted);
     }
@@ -924,13 +1016,16 @@ contract OfferFacetTest is Test {
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
                 collateralQuantity: 0,
-                allowsPartialRepay: false
+                allowsPartialRepay: false,
+                amountMax: 0,
+                interestRateBpsMax: 0,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
             })
         );
 
         vm.expectRevert(IVaipakamErrors.NotOfferCreator.selector);
         vm.prank(user2);
-        OfferFacet(address(diamond)).cancelOffer(offerId);
+        OfferCancelFacet(address(diamond)).cancelOffer(offerId);
     }
 
     /// @dev Covers cancelOffer → OfferAlreadyAccepted revert
@@ -959,7 +1054,10 @@ contract OfferFacetTest is Test {
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
                 collateralQuantity: 0,
-                allowsPartialRepay: false
+                allowsPartialRepay: false,
+                amountMax: 0,
+                interestRateBpsMax: 0,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
             })
         );
 
@@ -977,7 +1075,7 @@ contract OfferFacetTest is Test {
 
         vm.expectRevert(OfferFacet.OfferAlreadyAccepted.selector);
         vm.prank(user1);
-        OfferFacet(address(diamond)).cancelOffer(offerId);
+        OfferCancelFacet(address(diamond)).cancelOffer(offerId);
         vm.clearMockedCalls();
     }
 
@@ -1019,7 +1117,10 @@ contract OfferFacetTest is Test {
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
                 collateralQuantity: 0,
-                allowsPartialRepay: false
+                allowsPartialRepay: false,
+                amountMax: 0,
+                interestRateBpsMax: 0,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
             })
         );
 
@@ -1061,7 +1162,10 @@ contract OfferFacetTest is Test {
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
                 collateralQuantity: 0,
-                allowsPartialRepay: false
+                allowsPartialRepay: false,
+                amountMax: 0,
+                interestRateBpsMax: 0,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
             })
         );
 
@@ -1095,7 +1199,10 @@ contract OfferFacetTest is Test {
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
                 collateralQuantity: 0,
-                allowsPartialRepay: false
+                allowsPartialRepay: false,
+                amountMax: 0,
+                interestRateBpsMax: 0,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
             })
         );
 
@@ -1104,7 +1211,7 @@ contract OfferFacetTest is Test {
         assertEq(MockRentableNFT721(mockNFT721).ownerOf(1), lenderEscrow);
 
         vm.prank(user1);
-        OfferFacet(address(diamond)).cancelOffer(offerId);
+        OfferCancelFacet(address(diamond)).cancelOffer(offerId);
 
         // NFT returned to user1
         assertEq(MockRentableNFT721(mockNFT721).ownerOf(1), user1);
@@ -1131,12 +1238,15 @@ contract OfferFacetTest is Test {
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
                 collateralQuantity: 0,
-                allowsPartialRepay: false
+                allowsPartialRepay: false,
+                amountMax: 0,
+                interestRateBpsMax: 0,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
             })
         );
 
         vm.prank(user2);
-        OfferFacet(address(diamond)).cancelOffer(offerId);
+        OfferCancelFacet(address(diamond)).cancelOffer(offerId);
 
         // Collateral returned
         assertEq(ERC20(mockERC20).balanceOf(user2), balBefore);
@@ -1170,7 +1280,10 @@ contract OfferFacetTest is Test {
                 collateralAssetType: LibVaipakam.AssetType.ERC721,
                 collateralTokenId: 42,
                 collateralQuantity: 0,
-                allowsPartialRepay: false
+                allowsPartialRepay: false,
+                amountMax: 0,
+                interestRateBpsMax: 0,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
             })
         );
 
@@ -1179,7 +1292,7 @@ contract OfferFacetTest is Test {
         assertEq(collateralNFT.ownerOf(42), escrow);
 
         vm.prank(user2);
-        OfferFacet(address(diamond)).cancelOffer(offerId);
+        OfferCancelFacet(address(diamond)).cancelOffer(offerId);
 
         // NFT collateral returned to user
         assertEq(collateralNFT.ownerOf(42), user2);
@@ -1213,7 +1326,10 @@ contract OfferFacetTest is Test {
                 collateralAssetType: LibVaipakam.AssetType.ERC1155,
                 collateralTokenId: 7,
                 collateralQuantity: 10,
-                allowsPartialRepay: false
+                allowsPartialRepay: false,
+                amountMax: 0,
+                interestRateBpsMax: 0,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
             })
         );
 
@@ -1223,7 +1339,7 @@ contract OfferFacetTest is Test {
         assertEq(collateral1155.balanceOf(user2, 7), 0);
 
         vm.prank(user2);
-        OfferFacet(address(diamond)).cancelOffer(offerId);
+        OfferCancelFacet(address(diamond)).cancelOffer(offerId);
 
         // ERC-1155 collateral returned to user
         assertEq(collateral1155.balanceOf(user2, 7), 10);
@@ -1255,7 +1371,10 @@ contract OfferFacetTest is Test {
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
                 collateralQuantity: 0,
-                allowsPartialRepay: false
+                allowsPartialRepay: false,
+                amountMax: 0,
+                interestRateBpsMax: 0,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
             })
         );
 
@@ -1298,12 +1417,15 @@ contract OfferFacetTest is Test {
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
                 collateralQuantity: 0,
-                allowsPartialRepay: false
+                allowsPartialRepay: false,
+                amountMax: 0,
+                interestRateBpsMax: 0,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
             })
         );
 
         // user2 (FR) queries; US<->FR is allowed, so should see the offer
-        (uint256[] memory offers, ) = OfferFacet(address(diamond))
+        (uint256[] memory offers, ) = OfferCancelFacet(address(diamond))
             .getCompatibleOffers(user2, 0, 100);
         assertGt(offers.length, 0);
     }
@@ -1329,7 +1451,10 @@ contract OfferFacetTest is Test {
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
                 collateralQuantity: 0,
-                allowsPartialRepay: false
+                allowsPartialRepay: false,
+                amountMax: 0,
+                interestRateBpsMax: 0,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
             })
         );
         // offerId = 1; user1 is lender
@@ -1374,11 +1499,14 @@ contract OfferFacetTest is Test {
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
                 collateralQuantity: 0,
-                allowsPartialRepay: false
+                allowsPartialRepay: false,
+                amountMax: 0,
+                interestRateBpsMax: 0,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
             })
         );
 
-        LibVaipakam.Offer memory offer2 = OfferFacet(address(diamond)).getOffer(offerId2);
+        LibVaipakam.Offer memory offer2 = OfferCancelFacet(address(diamond)).getOffer(offerId2);
         assertEq(uint8(offer2.offerType), uint8(LibVaipakam.OfferType.Borrower));
         vm.clearMockedCalls();
     }
@@ -1421,7 +1549,10 @@ contract OfferFacetTest is Test {
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
                 collateralQuantity: 0,
-                allowsPartialRepay: false
+                allowsPartialRepay: false,
+                amountMax: 0,
+                interestRateBpsMax: 0,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
             })
         );
 
@@ -1431,8 +1562,8 @@ contract OfferFacetTest is Test {
 
         vm.prank(user1);
         vm.expectEmit(true, true, false, false);
-        emit OfferFacet.OfferCanceled(offerId, user1);
-        OfferFacet(address(diamond)).cancelOffer(offerId);
+        emit OfferCancelFacet.OfferCanceled(offerId, user1);
+        OfferCancelFacet(address(diamond)).cancelOffer(offerId);
         vm.clearMockedCalls();
     }
 
@@ -1471,7 +1602,10 @@ contract OfferFacetTest is Test {
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
                 collateralQuantity: 0,
-                allowsPartialRepay: false
+                allowsPartialRepay: false,
+                amountMax: 0,
+                interestRateBpsMax: 0,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
             })
         );
 
@@ -1480,7 +1614,7 @@ contract OfferFacetTest is Test {
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.burnNFT.selector), "");
 
         vm.prank(user2);
-        OfferFacet(address(diamond)).cancelOffer(offerId);
+        OfferCancelFacet(address(diamond)).cancelOffer(offerId);
         vm.clearMockedCalls();
     }
 
@@ -1515,7 +1649,10 @@ contract OfferFacetTest is Test {
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
                 collateralQuantity: 0,
-                allowsPartialRepay: false
+                allowsPartialRepay: false,
+                amountMax: 0,
+                interestRateBpsMax: 0,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
             })
         );
 
@@ -1523,7 +1660,7 @@ contract OfferFacetTest is Test {
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.burnNFT.selector), "");
 
         vm.prank(user2);
-        OfferFacet(address(diamond)).cancelOffer(offerId);
+        OfferCancelFacet(address(diamond)).cancelOffer(offerId);
         vm.clearMockedCalls();
     }
 
@@ -1547,7 +1684,10 @@ contract OfferFacetTest is Test {
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
                 collateralQuantity: 0,
-                allowsPartialRepay: false
+                allowsPartialRepay: false,
+                amountMax: 0,
+                interestRateBpsMax: 0,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
             })
         );
 
@@ -1559,7 +1699,7 @@ contract OfferFacetTest is Test {
 
         vm.prank(user1);
         vm.expectRevert(bytes("withdraw fail"));
-        OfferFacet(address(diamond)).cancelOffer(offerId);
+        OfferCancelFacet(address(diamond)).cancelOffer(offerId);
         vm.clearMockedCalls();
     }
 
@@ -1583,7 +1723,10 @@ contract OfferFacetTest is Test {
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
                 collateralQuantity: 0,
-                allowsPartialRepay: false
+                allowsPartialRepay: false,
+                amountMax: 0,
+                interestRateBpsMax: 0,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
             })
         );
 
@@ -1600,7 +1743,7 @@ contract OfferFacetTest is Test {
 
         vm.prank(user1);
         vm.expectRevert(bytes("burn fail"));
-        OfferFacet(address(diamond)).cancelOffer(offerId);
+        OfferCancelFacet(address(diamond)).cancelOffer(offerId);
         vm.clearMockedCalls();
     }
 
@@ -1642,7 +1785,10 @@ contract OfferFacetTest is Test {
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
                 collateralQuantity: 0,
-                allowsPartialRepay: false
+                allowsPartialRepay: false,
+                amountMax: 0,
+                interestRateBpsMax: 0,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
             })
         );
         assertGt(offerId, 0);
@@ -1669,7 +1815,10 @@ contract OfferFacetTest is Test {
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
                 collateralQuantity: 0,
-                allowsPartialRepay: false
+                allowsPartialRepay: false,
+                amountMax: 0,
+                interestRateBpsMax: 0,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
             })
         );
 
@@ -1681,12 +1830,12 @@ contract OfferFacetTest is Test {
 
         vm.prank(user2);
         vm.expectRevert(bytes("unlock fail"));
-        OfferFacet(address(diamond)).cancelOffer(offerId);
+        OfferCancelFacet(address(diamond)).cancelOffer(offerId);
         vm.clearMockedCalls();
     }
 
-    /// @dev Covers _calculateTransactionValueUSD with illiquid NFT lending asset (else branch)
-    ///      and liquid collateral. valueUSD = 0 (NFT) + collateral value (liquid).
+    /// @dev Covers _calculateTransactionValueNumeraire with illiquid NFT lending asset (else branch)
+    ///      and liquid collateral. valueNumeraire = 0 (NFT) + collateral value (liquid).
     function testAcceptOfferNFTLendingAssetIlliquidCalculatesValueFromCollateral() public {
         // user1 created NFT offer (illiquid lending asset, liquid collateral)
         // already done in setUp. Create a new one for clarity.
@@ -1708,7 +1857,10 @@ contract OfferFacetTest is Test {
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
                 collateralQuantity: 0,
-                allowsPartialRepay: false
+                allowsPartialRepay: false,
+                amountMax: 0,
+                interestRateBpsMax: 0,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
             })
         );
 
@@ -1752,7 +1904,10 @@ contract OfferFacetTest is Test {
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
                 collateralQuantity: 0,
-                allowsPartialRepay: false
+                allowsPartialRepay: false,
+                amountMax: 0,
+                interestRateBpsMax: 0,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
             })
         );
 
@@ -1764,7 +1919,7 @@ contract OfferFacetTest is Test {
 
         vm.prank(user1);
         vm.expectRevert(bytes("withdraw fail"));
-        OfferFacet(address(diamond)).cancelOffer(offerId);
+        OfferCancelFacet(address(diamond)).cancelOffer(offerId);
         vm.clearMockedCalls();
     }
 
@@ -1797,7 +1952,10 @@ contract OfferFacetTest is Test {
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
                 collateralQuantity: 0,
-                allowsPartialRepay: false
+                allowsPartialRepay: false,
+                amountMax: 0,
+                interestRateBpsMax: 0,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
             })
         );
 
@@ -1809,7 +1967,7 @@ contract OfferFacetTest is Test {
 
         vm.prank(user1);
         vm.expectRevert(bytes("withdraw fail"));
-        OfferFacet(address(diamond)).cancelOffer(offerId);
+        OfferCancelFacet(address(diamond)).cancelOffer(offerId);
         vm.clearMockedCalls();
     }
 
@@ -1838,7 +1996,10 @@ contract OfferFacetTest is Test {
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
                 collateralQuantity: 0,
-                allowsPartialRepay: false
+                allowsPartialRepay: false,
+                amountMax: 0,
+                interestRateBpsMax: 0,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
             })
         );
 
@@ -1851,7 +2012,7 @@ contract OfferFacetTest is Test {
 
         vm.prank(user2);
         vm.expectRevert(bytes("unlock fail"));
-        OfferFacet(address(diamond)).cancelOffer(offerId);
+        OfferCancelFacet(address(diamond)).cancelOffer(offerId);
         vm.clearMockedCalls();
     }
 
@@ -1887,7 +2048,10 @@ contract OfferFacetTest is Test {
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
                 collateralQuantity: 0,
-                allowsPartialRepay: false
+                allowsPartialRepay: false,
+                amountMax: 0,
+                interestRateBpsMax: 0,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
             })
         );
 
@@ -1900,7 +2064,7 @@ contract OfferFacetTest is Test {
 
         vm.prank(user2);
         vm.expectRevert(bytes("unlock fail"));
-        OfferFacet(address(diamond)).cancelOffer(offerId);
+        OfferCancelFacet(address(diamond)).cancelOffer(offerId);
         vm.clearMockedCalls();
     }
 
@@ -1929,7 +2093,10 @@ contract OfferFacetTest is Test {
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
                 collateralQuantity: 0,
-                allowsPartialRepay: false
+                allowsPartialRepay: false,
+                amountMax: 0,
+                interestRateBpsMax: 0,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
             })
         );
 
@@ -1977,7 +2144,10 @@ contract OfferFacetTest is Test {
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
                 collateralQuantity: 0,
-                allowsPartialRepay: false
+                allowsPartialRepay: false,
+                amountMax: 0,
+                interestRateBpsMax: 0,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
             })
         );
 
@@ -2052,7 +2222,10 @@ contract OfferFacetTest is Test {
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
                 collateralQuantity: 0,
-                allowsPartialRepay: false
+                allowsPartialRepay: false,
+                amountMax: 0,
+                interestRateBpsMax: 0,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
             })
         );
         vm.clearMockedCalls();
@@ -2084,7 +2257,10 @@ contract OfferFacetTest is Test {
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
                 collateralQuantity: 0,
-                allowsPartialRepay: false
+                allowsPartialRepay: false,
+                amountMax: 0,
+                interestRateBpsMax: 0,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
             })
         );
         vm.clearMockedCalls();
@@ -2118,7 +2294,10 @@ contract OfferFacetTest is Test {
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
                 collateralQuantity: 0,
-                allowsPartialRepay: false
+                allowsPartialRepay: false,
+                amountMax: 0,
+                interestRateBpsMax: 0,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
             })
         );
 
@@ -2163,7 +2342,10 @@ contract OfferFacetTest is Test {
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
                 collateralQuantity: 0,
-                allowsPartialRepay: false
+                allowsPartialRepay: false,
+                amountMax: 0,
+                interestRateBpsMax: 0,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
             })
         );
 
@@ -2176,9 +2358,9 @@ contract OfferFacetTest is Test {
         vm.clearMockedCalls();
     }
 
-    /// @dev Covers _calculateTransactionValueUSD `else if (assetType != ERC20)` FALSE branch:
+    /// @dev Covers _calculateTransactionValueNumeraire `else if (assetType != ERC20)` FALSE branch:
     ///      lendingAsset is illiquid ERC20 (so lentLiquidity=Illiquid, assetType=ERC20).
-    ///      The `else if` condition is false → valueUSD stays 0 from lend side.
+    ///      The `else if` condition is false → valueNumeraire stays 0 from lend side.
     function testAcceptOfferIlliquidERC20LendingAssetCoversBranch() public {
         // Deploy a second ERC20 and mock it as illiquid
         ERC20Mock illiquidERC20 = new ERC20Mock("Illiquid", "ILQ", 18);
@@ -2216,7 +2398,10 @@ contract OfferFacetTest is Test {
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
                 collateralQuantity: 0,
-                allowsPartialRepay: false
+                allowsPartialRepay: false,
+                amountMax: 0,
+                interestRateBpsMax: 0,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
             })
         );
 
@@ -2240,7 +2425,7 @@ contract OfferFacetTest is Test {
         vm.clearMockedCalls();
     }
 
-    /// @dev Covers _calculateTransactionValueUSD `if (collLiquidity == Liquid)` FALSE branch:
+    /// @dev Covers _calculateTransactionValueNumeraire `if (collLiquidity == Liquid)` FALSE branch:
     ///      collateralAsset is illiquid, so collateral value is skipped.
     function testAcceptOfferIlliquidCollateralCoversBranch() public {
         ERC20Mock illiquidCollateral = new ERC20Mock("IlliqColl", "ICL", 18);
@@ -2275,7 +2460,10 @@ contract OfferFacetTest is Test {
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
                 collateralQuantity: 0,
-                allowsPartialRepay: false
+                allowsPartialRepay: false,
+                amountMax: 0,
+                interestRateBpsMax: 0,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
             })
         );
 
@@ -2318,7 +2506,10 @@ contract OfferFacetTest is Test {
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
                 collateralQuantity: 0,
-                allowsPartialRepay: false
+                allowsPartialRepay: false,
+                amountMax: 0,
+                interestRateBpsMax: 0,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
             })
         );
 
@@ -2334,7 +2525,7 @@ contract OfferFacetTest is Test {
         vm.clearMockedCalls();
 
         // getCompatibleOffers iterates over the active-offer list; the accepted one is absent.
-        (uint256[] memory compatibleOffers, ) = OfferFacet(address(diamond))
+        (uint256[] memory compatibleOffers, ) = OfferCancelFacet(address(diamond))
             .getCompatibleOffers(user1, 0, 100);
         // The accepted offer should not be in the result
         for (uint256 i = 0; i < compatibleOffers.length; i++) {
@@ -2379,11 +2570,14 @@ contract OfferFacetTest is Test {
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
                 collateralQuantity: 0,
-                allowsPartialRepay: false
+                allowsPartialRepay: false,
+                amountMax: 0,
+                interestRateBpsMax: 0,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
             })
         );
 
-        LibVaipakam.Offer memory offer = OfferFacet(address(diamond)).getOffer(offerId);
+        LibVaipakam.Offer memory offer = OfferCancelFacet(address(diamond)).getOffer(offerId);
         assertEq(uint8(offer.assetType), uint8(LibVaipakam.AssetType.ERC1155));
         assertEq(offer.quantity, 5);
         // ERC1155 should now be in escrow
@@ -2422,7 +2616,10 @@ contract OfferFacetTest is Test {
                 collateralAssetType: LibVaipakam.AssetType.ERC721,
                 collateralTokenId: 42,
                 collateralQuantity: 0,
-                allowsPartialRepay: false
+                allowsPartialRepay: false,
+                amountMax: 0,
+                interestRateBpsMax: 0,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
             })
         );
 
@@ -2473,7 +2670,10 @@ contract OfferFacetTest is Test {
                 collateralAssetType: LibVaipakam.AssetType.ERC1155,
                 collateralTokenId: 7,
                 collateralQuantity: 10,
-                allowsPartialRepay: false
+                allowsPartialRepay: false,
+                amountMax: 0,
+                interestRateBpsMax: 0,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
             })
         );
 
@@ -2527,7 +2727,10 @@ contract OfferFacetTest is Test {
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
                 collateralQuantity: 0,
-                allowsPartialRepay: false
+                allowsPartialRepay: false,
+                amountMax: 0,
+                interestRateBpsMax: 0,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
             })
         );
 
@@ -2579,7 +2782,10 @@ contract OfferFacetTest is Test {
                 collateralAssetType: LibVaipakam.AssetType.ERC721,
                 collateralTokenId: 50,
                 collateralQuantity: 0,
-                allowsPartialRepay: false
+                allowsPartialRepay: false,
+                amountMax: 0,
+                interestRateBpsMax: 0,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
             })
         );
 
@@ -2591,7 +2797,7 @@ contract OfferFacetTest is Test {
 
         vm.prank(user2);
         vm.expectRevert(bytes("unlock fail"));
-        OfferFacet(address(diamond)).cancelOffer(offerId);
+        OfferCancelFacet(address(diamond)).cancelOffer(offerId);
         vm.clearMockedCalls();
     }
 
@@ -2621,15 +2827,14 @@ contract OfferFacetTest is Test {
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
                 collateralQuantity: 0,
-                allowsPartialRepay: false
+                allowsPartialRepay: false,
+                amountMax: 0,
+                interestRateBpsMax: 0,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
             })
         );
 
-        // Set saleOfferToLoanId[offerId] = 42 via vm.store
-        bytes32 baseSlot = LibVaipakam.VANGKI_STORAGE_POSITION;
-        uint256 saleOfferToLoanIdSlot = uint256(baseSlot) + 26;
-        bytes32 mappingSlot = keccak256(abi.encode(offerId, saleOfferToLoanIdSlot));
-        vm.store(address(diamond), mappingSlot, bytes32(uint256(42)));
+        TestMutatorFacet(address(diamond)).setSaleOfferToLoanIdRaw(offerId, 42);
 
         // Mock completeLoanSale to succeed
         vm.mockCall(
@@ -2678,15 +2883,14 @@ contract OfferFacetTest is Test {
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
                 collateralQuantity: 0,
-                allowsPartialRepay: false
+                allowsPartialRepay: false,
+                amountMax: 0,
+                interestRateBpsMax: 0,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
             })
         );
 
-        // Set saleOfferToLoanId[offerId] = 42 via vm.store
-        bytes32 baseSlot = LibVaipakam.VANGKI_STORAGE_POSITION;
-        uint256 saleOfferToLoanIdSlot = uint256(baseSlot) + 26;
-        bytes32 mappingSlot = keccak256(abi.encode(offerId, saleOfferToLoanIdSlot));
-        vm.store(address(diamond), mappingSlot, bytes32(uint256(42)));
+        TestMutatorFacet(address(diamond)).setSaleOfferToLoanIdRaw(offerId, 42);
 
         // Mock completeLoanSale to revert
         vm.mockCallRevert(
@@ -2735,20 +2939,19 @@ contract OfferFacetTest is Test {
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
                 collateralQuantity: 0,
-                allowsPartialRepay: false
+                allowsPartialRepay: false,
+                amountMax: 0,
+                interestRateBpsMax: 0,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
             })
         );
 
-        // Set offsetOfferToLoanId[offerId] = 99 via vm.store
-        bytes32 baseSlot = LibVaipakam.VANGKI_STORAGE_POSITION;
-        uint256 offsetOfferToLoanIdSlot = uint256(baseSlot) + 25;
-        bytes32 mappingSlot = keccak256(abi.encode(offerId, offsetOfferToLoanIdSlot));
-        vm.store(address(diamond), mappingSlot, bytes32(uint256(99)));
+        TestMutatorFacet(address(diamond)).setOffsetOfferToLoanIdRaw(offerId, 99);
 
         // Mock completeOffset to succeed
         vm.mockCall(
             address(diamond),
-            abi.encodeWithSelector(PrecloseFacet.completeOffset.selector, uint256(99)),
+            abi.encodeWithSelector(PrecloseFacet.completeOffsetInternal.selector, uint256(99)),
             ""
         );
         vm.mockCall(
@@ -2792,20 +2995,19 @@ contract OfferFacetTest is Test {
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
                 collateralQuantity: 0,
-                allowsPartialRepay: false
+                allowsPartialRepay: false,
+                amountMax: 0,
+                interestRateBpsMax: 0,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
             })
         );
 
-        // Set offsetOfferToLoanId[offerId] = 99 via vm.store
-        bytes32 baseSlot = LibVaipakam.VANGKI_STORAGE_POSITION;
-        uint256 offsetOfferToLoanIdSlot = uint256(baseSlot) + 25;
-        bytes32 mappingSlot = keccak256(abi.encode(offerId, offsetOfferToLoanIdSlot));
-        vm.store(address(diamond), mappingSlot, bytes32(uint256(99)));
+        TestMutatorFacet(address(diamond)).setOffsetOfferToLoanIdRaw(offerId, 99);
 
         // Mock completeOffset to revert
         vm.mockCallRevert(
             address(diamond),
-            abi.encodeWithSelector(PrecloseFacet.completeOffset.selector, uint256(99)),
+            abi.encodeWithSelector(PrecloseFacet.completeOffsetInternal.selector, uint256(99)),
             "offset fail"
         );
         vm.mockCall(
@@ -2826,7 +3028,7 @@ contract OfferFacetTest is Test {
         vm.clearMockedCalls();
     }
 
-    /// @dev Covers _calculateTransactionValueUSD with linkedLoanId != 0 (sale-offer KYC path).
+    /// @dev Covers _calculateTransactionValueNumeraire with linkedLoanId != 0 (sale-offer KYC path).
     ///      When saleOfferToLoanId[offerId] != 0 and collateralAmount == 0,
     ///      the function uses the linked loan's collateral amount for KYC value calculation.
     function testAcceptOfferSaleOfferKYCUsesLinkedLoanCollateral() public {
@@ -2851,15 +3053,15 @@ contract OfferFacetTest is Test {
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
                 collateralQuantity: 0,
-                allowsPartialRepay: false
+                allowsPartialRepay: false,
+                amountMax: 0,
+                interestRateBpsMax: 0,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
             })
         );
 
         // Set saleOfferToLoanId[offerId] = 77 and create a loan with collateral at that ID
-        bytes32 baseSlot = LibVaipakam.VANGKI_STORAGE_POSITION;
-        uint256 saleOfferToLoanIdSlot = uint256(baseSlot) + 26;
-        bytes32 saleMapping = keccak256(abi.encode(offerId, saleOfferToLoanIdSlot));
-        vm.store(address(diamond), saleMapping, bytes32(uint256(77)));
+        TestMutatorFacet(address(diamond)).setSaleOfferToLoanIdRaw(offerId, 77);
 
         // Set loan 77's collateralAmount to 5000 via TestMutatorFacet.
         LibVaipakam.Loan memory spoofed;
@@ -2913,7 +3115,10 @@ contract OfferFacetTest is Test {
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
                 collateralQuantity: 0,
-                allowsPartialRepay: false
+                allowsPartialRepay: false,
+                amountMax: 0,
+                interestRateBpsMax: 0,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
             })
         );
 
@@ -2960,7 +3165,10 @@ contract OfferFacetTest is Test {
                 collateralAssetType: LibVaipakam.AssetType.ERC1155,
                 collateralTokenId: 7,
                 collateralQuantity: 10,
-                allowsPartialRepay: false
+                allowsPartialRepay: false,
+                amountMax: 0,
+                interestRateBpsMax: 0,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
             })
         );
 
@@ -2972,7 +3180,7 @@ contract OfferFacetTest is Test {
 
         vm.prank(user2);
         vm.expectRevert(bytes("unlock fail"));
-        OfferFacet(address(diamond)).cancelOffer(offerId);
+        OfferCancelFacet(address(diamond)).cancelOffer(offerId);
         vm.clearMockedCalls();
     }
 
@@ -3006,7 +3214,10 @@ contract OfferFacetTest is Test {
                 collateralAssetType: LibVaipakam.AssetType.ERC721,
                 collateralTokenId: 42,
                 collateralQuantity: 0,
-                allowsPartialRepay: false
+                allowsPartialRepay: false,
+                amountMax: 0,
+                interestRateBpsMax: 0,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
             })
         );
 
@@ -3043,7 +3254,10 @@ contract OfferFacetTest is Test {
                 collateralAssetType: LibVaipakam.AssetType.ERC1155,
                 collateralTokenId: 5,
                 collateralQuantity: 20,
-                allowsPartialRepay: false
+                allowsPartialRepay: false,
+                amountMax: 0,
+                interestRateBpsMax: 0,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
             })
         );
 
@@ -3077,7 +3291,10 @@ contract OfferFacetTest is Test {
                 collateralAssetType: LibVaipakam.AssetType.ERC721,
                 collateralTokenId: 99,
                 collateralQuantity: 0,
-                allowsPartialRepay: false
+                allowsPartialRepay: false,
+                amountMax: 0,
+                interestRateBpsMax: 0,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
             })
         );
 
@@ -3126,7 +3343,10 @@ contract OfferFacetTest is Test {
                 collateralAssetType: LibVaipakam.AssetType.ERC1155,
                 collateralTokenId: 3,
                 collateralQuantity: 15,
-                allowsPartialRepay: false
+                allowsPartialRepay: false,
+                amountMax: 0,
+                interestRateBpsMax: 0,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
             })
         );
 
@@ -3175,7 +3395,10 @@ contract OfferFacetTest is Test {
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
                 collateralQuantity: 0,
-                allowsPartialRepay: false
+                allowsPartialRepay: false,
+                amountMax: 0,
+                interestRateBpsMax: 0,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
             })
         );
 
@@ -3222,7 +3445,10 @@ contract OfferFacetTest is Test {
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
                 collateralQuantity: 0,
-                allowsPartialRepay: false
+                allowsPartialRepay: false,
+                amountMax: 0,
+                interestRateBpsMax: 0,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
             })
         );
 
@@ -3230,9 +3456,9 @@ contract OfferFacetTest is Test {
         vm.mockCall(address(diamond), abi.encodeWithSelector(EscrowFactoryFacet.escrowWithdrawERC20.selector), abi.encode(true));
 
         vm.prank(user2);
-        OfferFacet(address(diamond)).cancelOffer(offerId);
+        OfferCancelFacet(address(diamond)).cancelOffer(offerId);
         // Verify offer deleted
-        LibVaipakam.Offer memory offer = OfferFacet(address(diamond)).getOffer(offerId);
+        LibVaipakam.Offer memory offer = OfferCancelFacet(address(diamond)).getOffer(offerId);
         assertEq(offer.creator, address(0), "Offer should be deleted");
         vm.clearMockedCalls();
     }
@@ -3264,16 +3490,19 @@ contract OfferFacetTest is Test {
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
                 collateralQuantity: 0,
-                allowsPartialRepay: false
+                allowsPartialRepay: false,
+                amountMax: 0,
+                interestRateBpsMax: 0,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
             })
         );
 
         vm.mockCall(address(diamond), abi.encodeWithSelector(EscrowFactoryFacet.escrowWithdrawERC1155.selector), abi.encode(true));
 
         vm.prank(user1);
-        OfferFacet(address(diamond)).cancelOffer(offerId);
+        OfferCancelFacet(address(diamond)).cancelOffer(offerId);
 
-        LibVaipakam.Offer memory offer = OfferFacet(address(diamond)).getOffer(offerId);
+        LibVaipakam.Offer memory offer = OfferCancelFacet(address(diamond)).getOffer(offerId);
         assertEq(offer.creator, address(0), "Offer should be deleted after cancel");
         vm.clearMockedCalls();
     }
@@ -3306,12 +3535,15 @@ contract OfferFacetTest is Test {
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
                 collateralQuantity: 0,
-                allowsPartialRepay: false
+                allowsPartialRepay: false,
+                amountMax: 0,
+                interestRateBpsMax: 0,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
             })
         );
 
         assertGt(offerId, 0, "Borrower ERC1155 rental offer should succeed");
-        LibVaipakam.Offer memory offer = OfferFacet(address(diamond)).getOffer(offerId);
+        LibVaipakam.Offer memory offer = OfferCancelFacet(address(diamond)).getOffer(offerId);
         assertEq(uint8(offer.assetType), uint8(LibVaipakam.AssetType.ERC1155));
     }
 
@@ -3346,7 +3578,10 @@ contract OfferFacetTest is Test {
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
                 collateralQuantity: 0,
-                allowsPartialRepay: false
+                allowsPartialRepay: false,
+                amountMax: 0,
+                interestRateBpsMax: 0,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
             })
         );
 
@@ -3393,16 +3628,19 @@ contract OfferFacetTest is Test {
                 collateralAssetType: LibVaipakam.AssetType.ERC721,
                 collateralTokenId: 55,
                 collateralQuantity: 0,
-                allowsPartialRepay: false
+                allowsPartialRepay: false,
+                amountMax: 0,
+                interestRateBpsMax: 0,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
             })
         );
 
         vm.mockCall(address(diamond), abi.encodeWithSelector(EscrowFactoryFacet.escrowWithdrawERC721.selector), abi.encode(true));
 
         vm.prank(user2);
-        OfferFacet(address(diamond)).cancelOffer(offerId);
+        OfferCancelFacet(address(diamond)).cancelOffer(offerId);
 
-        LibVaipakam.Offer memory offer = OfferFacet(address(diamond)).getOffer(offerId);
+        LibVaipakam.Offer memory offer = OfferCancelFacet(address(diamond)).getOffer(offerId);
         assertEq(offer.creator, address(0), "Offer should be deleted after cancel");
         vm.clearMockedCalls();
     }

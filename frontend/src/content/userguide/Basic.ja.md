@@ -15,18 +15,18 @@
 
 ## Dashboard
 
-<a id="dashboard.your-escrow"></a>
+<a id="dashboard.your-vault"></a>
 
-### あなたの Escrow
+### あなたの Vault
 
-**escrow** は、Vaipakam の中にあるあなた専用の金庫だと考えて
+**vault** は、Vaipakam の中にあるあなた専用の金庫だと考えて
 ください。あなただけのために用意される小さな contract です。
 loan に参加するとき — 担保を入れる場合でも、資産を貸し出す
 場合でも — 資産はいったん wallet からこの金庫へ移動します。
 他の人のお金と混ざることはありません。loan が終わったら、
 そこから直接 claim して取り戻せます。
 
-escrow を自分で「作成」する必要はありません。必要になった
+vault を自分で「作成」する必要はありません。必要になった
 最初のタイミングでアプリが用意します。一度できると、その
 chain 上のあなた専用の置き場所として残ります。
 
@@ -48,13 +48,13 @@ interest、そして必要なタイミングで repay / claim / liquidate
 
 ### このチェーン上の VPFI
 
-**VPFI** は protocol 独自の token です。escrow に入れておくと、
+**VPFI** は protocol 独自の token です。vault に入れておくと、
 protocol fee の割引を受けられ、さらに小さな passive yield
 (5% APR) も得られます。このカードでは、接続中の chain について
 次の内容を確認できます:
 
 - ウォレットに今いくらの VPFI があるか。
-- escrow にいくらあるか (これが「staked」として
+- vault にいくらあるか (これが「staked」として
   カウントされます)。
 - 全 VPFI 供給量に占めるあなたのシェア。
 - 全体としてあと何 VPFI が mint 可能か (protocol には hard cap
@@ -70,19 +70,27 @@ VPFI が mint される **canonical** chain です。その他の chains
 
 ### 手数料割引の同意
 
-Vaipakam は、escrow に置いてある VPFI の一部を使って protocol
+Vaipakam は、vault に置いてある VPFI の一部を使って protocol
 fees の割引を適用できます。この switch は「はい、それを使って
 ください」という同意 toggle です。一度 on にすれば十分です。
 
-割引の大きさは、escrow に保有する VPFI の量で決まります:
+割引の大きさは、vault に保有する VPFI の量で決まります:
 
-- **Tier 1** — 100 VPFI 以上 → 10% off
-- **Tier 2** — 1,000 VPFI 以上 → 15% off
-- **Tier 3** — 5,000 VPFI 以上 → 20% off
-- **Tier 4** — 20,000 VPFI 超 → 24% off
+- **Tier 1** — `{liveValue:tier1Min}` VPFI 以上 → `{liveValue:tier1DiscountBps}`% off
+- **Tier 2** — `{liveValue:tier2Min}` VPFI 以上 → `{liveValue:tier2DiscountBps}`% off
+- **Tier 3** — `{liveValue:tier3Min}` VPFI 以上 → `{liveValue:tier3DiscountBps}`% off
+- **Tier 4** — `{liveValue:tier4Min}` VPFI 超 → `{liveValue:tier4DiscountBps}`% off
 
-switch はいつでも off にできます。escrow から VPFI を引き出す
+switch はいつでも off にできます。vault から VPFI を引き出す
 と、tier はその場で下がります。
+
+> **Blockchain network gasに関する注意。** 上記のdiscountは
+> Vaipakamの**protocol fees**（Yield Fee、Loan Initiation Fee）
+> に適用されます。すべてのon-chain actionに必要な小さな**gas fee**
+> （offer create、accept、repay、claimなどの際にblockchain validators
+> へ支払うもの）は別の費用で、networkへ行くものでありVaipakamへは
+> 行きません。protocolは決して受け取らないため、それに対するdiscount
+> はできません。
 
 <a id="dashboard.rewards-summary"></a>
 
@@ -95,7 +103,7 @@ switch はいつでも off にできます。escrow から VPFI を引き出す
 報酬ストリームは 2 つあり、カードはそれぞれの合計を分解しま
 す：
 
-- **ステーキング利回り** — エスクローに保管している VPFI に
+- **ステーキング利回り** — Vaultに保管している VPFI に
   対して自動的に獲得されます。レートは Buy VPFI ページに表示
   されるプロトコル APR です。
 - **プラットフォーム・インタラクション報酬** — 参加しているす
@@ -145,7 +153,7 @@ X units、interest Z%、期間 D 日で貸します。その代わり、これ
 だけの collateral を入れてください」という意味です。
 
 これを accept した borrower は、その loan の borrower-of-record
-になります。borrower の collateral は escrow に lock され、
+になります。borrower の collateral は vault に lock され、
 principal asset が borrower の wallet に届き、borrower が
 repay するまで interest が積み上がります。
 
@@ -221,7 +229,7 @@ rate (APR %) と duration (日数) です。rate は offer 時に fixed
 rental offer では、このカードで daily rental fee を設定します。
 renter は accept 時に rental cost 全額を前払いし、deal が少し
 長引いた場合に備えて小さな 5% buffer も支払います。NFT 自体は
-ずっと escrow に置かれます — renter は使う権利を持ちますが、
+ずっと vault に置かれます — renter は使う権利を持ちますが、
 NFT を move することはできません。
 
 <a id="create-offer.collateral"></a>
@@ -390,13 +398,13 @@ VPFI に swap できます。supported chain ならどこからでも実行
 ### あなたの VPFI Discount Status
 
 現在どの discount tier にいるかをすばやく確認できます。Tier は
-**escrow** に入っている VPFI の量で決まります (wallet balance
+**vault** に入っている VPFI の量で決まります (wallet balance
 ではありません)。このカードでは、(a) 次の tier に上がるまでに
-escrow へあとどれだけ VPFI が必要か、(b) Dashboard の consent
+vault へあとどれだけ VPFI が必要か、(b) Dashboard の consent
 switch が on かどうかも見られます — discount は on の間だけ
 適用されます。
 
-escrow にある同じ VPFI は自動的に "staked" 扱いになり、5% APR
+vault にある同じ VPFI は自動的に "staked" 扱いになり、5% APR
 を earn します。
 
 <a id="buy-vpfi.buy"></a>
@@ -410,19 +418,19 @@ live 表示されます。
 
 <a id="buy-vpfi.deposit"></a>
 
-### Step 2 — VPFI を escrow に入金する
+### Step 2 — VPFI を vault に入金する
 
-VPFI を買うと、まず wallet に入ります。escrow には入りません。
-fee discount と 5% staking yield を得るには、自分で escrow に
+VPFI を買うと、まず wallet に入ります。vault には入りません。
+fee discount と 5% staking yield を得るには、自分で vault に
 move する必要があります。これは必ず明示的な click です — アプリ
 があなたの VPFI を勝手に動かすことはありません。1 transaction
 (対応 chain では single signature) で完了します。
 
 <a id="buy-vpfi.unstake"></a>
 
-### Step 3 — escrow から VPFI をアンステークする
+### Step 3 — vault から VPFI をアンステークする
 
-VPFI を wallet に戻したいときは、このカードで escrow から
+VPFI を wallet に戻したいときは、このカードで vault から
 withdraw します。注意: VPFI を引き出すと discount tier は
 **即座に**下がります。open loans がある場合、その瞬間以降の
 discount math は低い tier で計算されます。
@@ -437,7 +445,7 @@ discount math は低い tier で計算されます。
 
 Vaipakam では、次の 2 つに対して rewards が支払われます:
 
-1. **Staking** — escrow に置いている VPFI は、自動的に 5% APR
+1. **Staking** — vault に置いている VPFI は、自動的に 5% APR
    を earn します。
 2. **Interaction** — あなたが関わる loan で実際に settle した
    interest 1 ドルごとに、community-wide reward pool の daily
@@ -461,7 +469,7 @@ interaction 部分は次の daily window が閉じた少し後に live に
 
 ### ステーキング済みの VPFI を引き出す
 
-VPFI を escrow から wallet に戻します。wallet に戻ると 5% APR
+VPFI を vault から wallet に戻します。wallet に戻ると 5% APR
 を earn しなくなり、discount tier にも count されなくなります。
 Buy VPFI ページの "unstake" と同じ action です — 便利なように
 ここにも置いてあります。
@@ -535,7 +543,7 @@ residual claim はありません。
 ### Parties
 
 この loan に関わる 2 つの wallet addresses — lender と borrower
-— そして、それぞれの assets を保管する escrow vaults です。loan
+— そして、それぞれの assets を保管する vault vaults です。loan
 が open したとき、各 side は "position NFT" も受け取っています。
 その NFT _こそ_ が、その side の outcome を claim する権利です
 — 大切に扱ってください。誰かに transfer すると、新しい holder
@@ -578,7 +586,7 @@ role-specific tabs で各 side の options を確認できます。今は
   残りを取り戻します。
 - **Refinance** — 新しい terms の loan に乗り換えます。protocol
   は 1 transaction で、新しい principal から古い loan を返済
-  します。collateral は escrow から出ません。
+  します。collateral は vault から出ません。
 - **Claim** — loan が settle された後、full repayment なら
   collateral を返し、default なら loan-initiation fee からの
   leftover VPFI rebate を返します。

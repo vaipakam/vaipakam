@@ -180,20 +180,22 @@ contract ProfileFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors 
     }
 
     /**
-     * @notice Checks whether a user meets the KYC requirement for a given USD transaction value.
-     * @dev Implements the three-tier KYC model:
-     *        < $1,000 USD  → Tier0 required (always passes)
-     *        $1k–$9,999    → Tier1 required
-     *        $10,000+      → Tier2 required
-     *      USD values are scaled to 1e18 (matching Chainlink price feed precision used elsewhere).
+     * @notice Checks whether a user meets the KYC requirement for a given numeraire-quoted transaction value.
+     * @dev Implements the three-tier KYC model (thresholds in the active numeraire,
+     *      scaled to 1e18 — USD by post-deploy default):
+     *        < tier0Threshold  → Tier0 required (always passes)
+     *        tier0–tier1       → Tier1 required
+     *        ≥ tier1Threshold  → Tier2 required
+     *      Values are scaled to 1e18 matching the unit returned by
+     *      `OracleFacet.getAssetPrice` (numeraire-quoted post Numeraire generalization (B1)).
      *      Used by OfferFacet, DefaultedFacet, and RiskFacet for transaction-level compliance.
      * @param user The user's address.
-     * @param valueUSD The transaction value in USD scaled to 1e18 (e.g., $2,000 = 2000 * 1e18).
+     * @param valueNumeraire The transaction value in the active numeraire scaled to 1e18.
      * @return meetsRequirement True if the user's KYC tier is sufficient for the given value.
      */
     function meetsKYCRequirement(
         address user,
-        uint256 valueUSD
+        uint256 valueNumeraire
     ) external view returns (bool meetsRequirement) {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         // README §16 Phase 1 pass-through: when enforcement is disabled the
@@ -206,10 +208,10 @@ contract ProfileFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors 
         uint256 tier0Threshold = LibVaipakam.getKycTier0Threshold();
         uint256 tier1Threshold = LibVaipakam.getKycTier1Threshold();
 
-        if (valueUSD < tier0Threshold) {
+        if (valueNumeraire < tier0Threshold) {
             // Below Tier0 threshold: no KYC required
             return true;
-        } else if (valueUSD < tier1Threshold) {
+        } else if (valueNumeraire < tier1Threshold) {
             // Between Tier0 and Tier1 threshold: Tier1 minimum required
             return tier >= LibVaipakam.KYCTier.Tier1;
         } else {
@@ -219,22 +221,58 @@ contract ProfileFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors 
     }
 
     /**
-     * @notice Updates the KYC tier thresholds (USD values scaled to 1e18).
-     * @dev Admin-only. Tier0 must be < Tier1. Values of 0 revert to compile-time defaults.
-     * @param tier0ThresholdUSD Max USD value for no-KYC tier (e.g., 1000 * 1e18).
-     * @param tier1ThresholdUSD Max USD value for limited-KYC tier (e.g., 10000 * 1e18).
+     * @notice Updates the KYC tier thresholds (numeraire values scaled to 1e18).
+     * @dev Admin-only. Tier0 must be < Tier1. Values of 0 revert to
+     *      compile-time defaults (Tier0 = 1_000 numeraire-units,
+     *      Tier1 = 10_000 numeraire-units; reads as $1k / $10k under
+     *      USD-as-numeraire — the post-deploy default). After
+     *      Generalizing Numeraire (B1) the comparison sites are
+     *      numeraire-vs-numeraire end to end: the getters
+     *      `getKycTier0Threshold` / `getKycTier1Threshold` return raw
+     *      numeraire-units, and `OracleFacet.getAssetPrice` returns
+     *      numeraire-quoted asset prices, so no boundary cast happens
+     *      anywhere along the path.
+     * @param tier0ThresholdNumeraire Max numeraire value for no-KYC tier (default 1_000 * 1e18).
+     * @param tier1ThresholdNumeraire Max numeraire value for limited-KYC tier (default 10_000 * 1e18).
      */
     function updateKYCThresholds(
-        uint256 tier0ThresholdUSD,
-        uint256 tier1ThresholdUSD
+        uint256 tier0ThresholdNumeraire,
+        uint256 tier1ThresholdNumeraire
     ) external whenNotPaused onlyRole(LibAccessControl.ADMIN_ROLE) {
-        if (tier0ThresholdUSD >= tier1ThresholdUSD) revert InvalidThresholds();
+        if (tier0ThresholdNumeraire >= tier1ThresholdNumeraire) revert InvalidThresholds();
+        // Setter-range audit (2026-05-02): added absolute floor +
+        // ceiling on both tiers. KYC is OFF on the retail deploy
+        // (per CLAUDE.md), so these are belt-and-suspenders there;
+        // on the industrial fork they cap the tunable to a
+        // credible per-tier numeraire window.
+        if (
+            tier0ThresholdNumeraire < LibVaipakam.KYC_THRESHOLD_NUMERAIRE_MIN_FLOOR ||
+            tier0ThresholdNumeraire > LibVaipakam.KYC_THRESHOLD_NUMERAIRE_MAX_CEIL
+        ) {
+            revert IVaipakamErrors.ParameterOutOfRange(
+                "kycTier0ThresholdNumeraire",
+                tier0ThresholdNumeraire,
+                LibVaipakam.KYC_THRESHOLD_NUMERAIRE_MIN_FLOOR,
+                LibVaipakam.KYC_THRESHOLD_NUMERAIRE_MAX_CEIL
+            );
+        }
+        if (
+            tier1ThresholdNumeraire < LibVaipakam.KYC_THRESHOLD_NUMERAIRE_MIN_FLOOR ||
+            tier1ThresholdNumeraire > LibVaipakam.KYC_THRESHOLD_NUMERAIRE_MAX_CEIL
+        ) {
+            revert IVaipakamErrors.ParameterOutOfRange(
+                "kycTier1ThresholdNumeraire",
+                tier1ThresholdNumeraire,
+                LibVaipakam.KYC_THRESHOLD_NUMERAIRE_MIN_FLOOR,
+                LibVaipakam.KYC_THRESHOLD_NUMERAIRE_MAX_CEIL
+            );
+        }
 
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        s.kycTier0ThresholdUSD = tier0ThresholdUSD;
-        s.kycTier1ThresholdUSD = tier1ThresholdUSD;
+        s.kycTier0ThresholdNumeraire = tier0ThresholdNumeraire;
+        s.kycTier1ThresholdNumeraire = tier1ThresholdNumeraire;
 
-        emit KYCThresholdsUpdated(tier0ThresholdUSD, tier1ThresholdUSD);
+        emit KYCThresholdsUpdated(tier0ThresholdNumeraire, tier1ThresholdNumeraire);
     }
 
     /**

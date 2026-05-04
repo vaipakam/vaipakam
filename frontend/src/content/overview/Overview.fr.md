@@ -4,14 +4,14 @@ Vaipakam est une plateforme de prêt entre pairs. Vous prêtez des
 actifs et touchez des intérêts. Vous empruntez des actifs et apportez
 une garantie. Vous louez des NFT et le propriétaire perçoit des
 loyers journaliers. Tout se passe directement entre deux portefeuilles,
-les contrats intelligents conservant les actifs en séquestre jusqu'à
+les contrats intelligents conservant les actifs en vault jusqu'à
 la fin du prêt ou de la location.
 
-Cette page est le **tour amical**. Si vous voulez de la profondeur
-technique, utilisez l'onglet **Guide d'utilisation** pour l'aide
-écran par écran, ou l'onglet **Technique** pour le whitepaper
-complet. Si vous voulez juste savoir « qu'est-ce que c'est et
-comment l'utiliser » — continuez à lire.
+Cette page est la **visite guidée accessible**. Si vous cherchez plus
+de profondeur technique, utilisez l'onglet **Guide d'utilisation**
+pour une aide écran par écran, ou l'onglet **Technique** pour le
+whitepaper complet. Si vous voulez simplement comprendre « ce que
+c'est et comment l'utiliser » — continuez.
 
 ---
 
@@ -19,10 +19,11 @@ comment l'utiliser » — continuez à lire.
 
 Vaipakam s'adresse à quatre types de personnes :
 
-- **Prêteurs** — vous avez un actif (USDC, ETH, USDT, etc.) qui ne
-  fait rien. Vous aimeriez qu'il génère des intérêts tout en restant
-  en sécurité. Vous publiez une offre de prêteur ; un emprunteur
-  l'accepte ; vous gagnez des intérêts à vos conditions.
+- **Prêteurs** — vous avez un actif (USDC, ETH, USDT, etc.) qui dort
+  dans votre portefeuille. Vous aimeriez qu'il produise des intérêts
+  sans renoncer à la sécurité. Vous publiez une offre de prêt ; un
+  emprunteur l'accepte ; vous gagnez des intérêts selon vos propres
+  conditions.
 - **Emprunteurs** — vous avez besoin de liquidités pour quelques
   jours, semaines ou mois et vous ne voulez pas vendre votre garantie
   (parce que vous pensez qu'elle va monter, ou parce que c'est un NFT
@@ -33,9 +34,9 @@ Vaipakam s'adresse à quatre types de personnes :
   cette utilité pour toujours. Le louer permet à quelqu'un d'autre
   de l'utiliser pendant quelques jours pendant que vous gardez la
   propriété et collectez un loyer journalier.
-- **Locataires de NFT** — vous voulez un accès temporaire à un NFT
+- **Locataires de NFT** — vous voulez accéder temporairement à un NFT
   (un objet de jeu, un pass d'adhésion, un domaine) sans payer le
-  prix complet. Vous le louez, vous l'utilisez pendant la fenêtre,
+  prix complet. Vous le louez, vous l'utilisez pendant la période,
   et le propriétaire conserve l'actif.
 
 Vous ne créez pas de compte. Vous ne remplissez pas de profil. Vous
@@ -45,7 +46,7 @@ connectez un portefeuille et vous pouvez prêter, emprunter ou louer.
 
 ## Comment fonctionne un prêt (exemple concret)
 
-Disons que vous avez **1 000 USDC** qui dorment dans votre
+Supposons que vous avez **1 000 USDC** qui dorment dans votre
 portefeuille sur Base. Vous aimeriez gagner des intérêts. Voici le
 cycle de vie complet.
 
@@ -61,30 +62,30 @@ remplissez :
 - Durée du prêt : **30 jours**
 
 Vous signez une transaction. Vos 1 000 USDC passent de votre
-portefeuille à votre **séquestre personnel** (un coffre privé que
+portefeuille à votre **vault personnel** (un coffre privé que
 vous seul contrôlez). Ils y restent jusqu'à ce qu'un emprunteur
 accepte votre offre.
 
 ### Étape 2 — Un emprunteur accepte
 
 Une heure plus tard, peut-être, quelqu'un voit votre offre dans le
-**Carnet d'offres**. Cette personne a du WETH et veut emprunter de
-l'USDC contre lui pendant un mois. Elle clique sur **Accepter** et
+**Carnet d'offres**. Cette personne détient du WETH et souhaite
+emprunter de l'USDC contre cette garantie pendant un mois. Elle clique sur **Accepter** et
 apporte du WETH d'une valeur, disons, de 1 500 $ (un LTV d'environ
 67 % — sous votre plafond de 70 %, donc l'offre s'accepte).
 
 Au moment où l'acceptation se déclenche :
 
-- Vos 1 000 USDC passent de votre séquestre au sien
-- Son WETH est verrouillé dans son séquestre comme garantie
+- Vos 1 000 USDC passent de votre Vaipakam Vault au sien
+- Son WETH est verrouillé dans son vault comme garantie
 - Vous recevez chacun un NFT de position — le vôtre dit « on me doit
   1 000 USDC + intérêts » ; le sien dit « on me doit mon WETH au
   remboursement »
 - Le compteur du prêt démarre
 
-Une petite **Frais d'initiation du prêt (0,1 %)** est prélevée sur
-le montant prêté et dirigée vers le trésor du protocole. L'emprunteur
-reçoit donc 999 USDC, pas 1 000. (Vous pouvez payer les frais en
+De modestes **frais d'initiation du prêt (0,1 %)** sont prélevés sur
+le montant prêté et dirigés vers le trésor du protocole. L'emprunteur
+reçoit donc 999 USDC, pas 1 000. (Vous pouvez payer ces frais en
 **VPFI** à la place et l'emprunteur reçoit alors les 1 000 complets
 — plus de détails sur VPFI ci-dessous.)
 
@@ -100,9 +101,9 @@ Intérêts = 1 000 USDC × 8 % × (30 / 365) = ~6,58 USDC
 Il clique sur **Rembourser**, signe une transaction, et 1 006,58 USDC
 arrivent dans le règlement du prêt. À partir de là :
 
-- Vous recevez **1 005,51 USDC** (principal + intérêts moins une
-  Commission de Rendement de 1 % sur la part d'intérêts uniquement)
-- Le trésor reçoit **1,07 USDC** comme Commission de Rendement
+- Vous recevez **1 005,51 USDC** (principal + intérêts, moins une
+  commission de rendement de 1 % appliquée uniquement aux intérêts)
+- Le trésor reçoit **1,07 USDC** au titre de la commission de rendement
 - Le WETH de l'emprunteur est déverrouillé
 
 Vous voyez un bouton **Réclamer** sur votre tableau de bord. Vous
@@ -125,9 +126,9 @@ prend la meilleure exécution, vous rembourse ce qui vous est dû,
 verse une petite prime au liquidateur, et renvoie tout reliquat à
 l'emprunteur.
 
-**L'emprunteur disparaît passé l'échéance.** Après une **période de
+**L'emprunteur disparaît après l'échéance.** Après une **période de
 grâce** configurable (une heure pour les prêts courts, deux semaines
-pour ceux d'un an), n'importe qui peut appeler **Defaut**. Le même
+pour ceux d'un an), n'importe qui peut appeler **Défaut**. Le même
 chemin de liquidation s'exécute.
 
 Dans des cas rares — chaque agrégateur renvoie un mauvais prix, ou
@@ -150,7 +151,7 @@ prêt de quelqu'un d'autre ne vous donne pas sa garantie.
 
 Même flux qu'un prêt, avec deux différences :
 
-- **Le NFT reste en séquestre** ; le locataire ne le détient jamais
+- **Le NFT reste en vault** ; le locataire ne le détient jamais
   directement. À la place, le protocole utilise **ERC-4907** pour
   donner au locataire des « droits d'utilisation » sur le NFT
   pendant la fenêtre de location. Les jeux et apps compatibles
@@ -163,7 +164,7 @@ Même flux qu'un prêt, avec deux différences :
   tôt, les jours non utilisés sont remboursés.
 
 Quand la location se termine (par expiration ou par défaut), le
-NFT retourne dans le séquestre du propriétaire. Le propriétaire peut
+NFT retourne dans le vault du propriétaire. Le propriétaire peut
 alors le re-lister ou le rappeler dans son portefeuille.
 
 ---
@@ -173,10 +174,10 @@ alors le re-lister ou le rappeler dans son portefeuille.
 Prêter et emprunter sur Vaipakam n'est pas sans risque. Mais le
 protocole intègre plusieurs couches :
 
-- **Séquestre par utilisateur.** Vos actifs reposent dans votre
+- **Vault par utilisateur.** Vos actifs restent dans votre
   propre coffre. Le protocole ne les met jamais en commun avec les
   fonds d'autres utilisateurs. Cela signifie qu'un bug affectant un
-  autre utilisateur ne peut pas vous siphonner.
+  autre utilisateur ne peut pas vider votre position.
 - **Application du Facteur de Santé.** Un prêt ne peut démarrer que
   si la garantie vaut au moins 1,5× le montant du prêt à
   l'origination. Si le prix bouge contre l'emprunteur en cours de
@@ -192,7 +193,7 @@ protocole intègre plusieurs couches :
   garantie avec plus de 6 % de slippage. Si le marché est trop
   fin, le protocole bascule pour vous donner la garantie
   directement.
-- **Conscience du séquenceur L2.** Sur les chaînes L2, la
+- **Prise en compte du séquenceur L2.** Sur les chaînes L2, la
   liquidation se met en pause brièvement quand le séquenceur de la
   chaîne vient juste de redémarrer, pour que les attaquants ne
   puissent pas exploiter la fenêtre de prix obsolète pour vous
@@ -218,24 +219,39 @@ vous laissera pas accepter sans cocher la case de consentement.
 
 Deux frais, tous les deux modestes :
 
-- **Commission de Rendement — 1 %** des **intérêts** que vous
-  gagnez en tant que prêteur (pas 1 % du principal). Sur un prêt à
-  30 jours à 8 % APR de 1 000 USDC, le prêteur gagne ~6,58 USDC
-  d'intérêts, dont ~0,066 USDC sont la Commission de Rendement.
-- **Frais d'Initiation du Prêt — 0,1 %** du montant prêté, payés par
-  l'emprunteur à l'origination. Sur un prêt de 1 000 USDC, c'est 1
-  USDC.
+- **Commission de Rendement — `{liveValue:treasuryFeeBps}` %** des
+  **intérêts** que vous gagnez en tant que prêteur (pas du
+  principal). Sur un prêt à 30 jours à 8 % APR de 1 000 USDC, le
+  prêteur gagne ~6,58 USDC d'intérêts, dont ~0,066 USDC sont la
+  Commission de Rendement au taux par défaut.
+- **Frais d'Initiation du Prêt — `{liveValue:loanInitiationFeeBps}` %**
+  du montant prêté, payés par l'emprunteur à l'origination. Sur un
+  prêt de 1 000 USDC, c'est 1 USDC au taux par défaut.
 
-Les deux frais peuvent bénéficier d'une **remise allant jusqu'à 24 %**
-en détenant du VPFI en séquestre (voir ci-dessous). En cas de défaut
-ou de liquidation, aucune Commission de Rendement n'est prélevée sur
-les intérêts récupérés — le protocole ne tire pas profit d'un prêt
-qui échoue.
+Les deux frais peuvent bénéficier d'une **remise allant jusqu'à
+`{liveValue:tier4DiscountBps}` %** en détenant du VPFI en vault
+(voir ci-dessous). En cas de défaut ou de liquidation, aucune
+Commission de Rendement n'est prélevée sur les intérêts récupérés —
+le protocole ne tire pas profit d'un prêt qui échoue.
 
 Pas de frais de retrait, pas de frais d'inactivité, pas de frais de
 streaming, pas de commissions « de performance » sur le principal.
-Le seul argent que prend le protocole, ce sont les deux nombres
+Les seuls montants prélevés par le protocole sont les deux frais
 ci-dessus.
+
+> **Remarque sur les frais de réseau (gas) de la blockchain.**
+> Quand vous créez une offre, acceptez un prêt, remboursez,
+> réclamez ou effectuez toute autre action on-chain, vous payez
+> aussi de petits **frais de gas** aux validateurs de la blockchain
+> qui incluent votre transaction dans un bloc. Ces frais de gas
+> vont au réseau, **pas à Vaipakam** — ce sont les mêmes frais que
+> vous paieriez pour envoyer n'importe quel token sur la même
+> chaîne. Le montant dépend de la chaîne et de la congestion du
+> réseau au moment de la transaction, pas de la taille de votre
+> prêt. Les frais de protocole ci-dessus (Commission de Rendement
+> `{liveValue:treasuryFeeBps}` %, Frais d'Initiation du Prêt
+> `{liveValue:loanInitiationFeeBps}` %) sont entièrement séparés du
+> gas et sont les seuls que le protocole lui-même prélève.
 
 ---
 
@@ -245,16 +261,16 @@ ci-dessus.
 
 ### 1. Remises sur les frais
 
-Si vous détenez du VPFI dans votre séquestre sur une chaîne, cela
-remise vos frais de protocole sur les prêts auxquels vous participez
+Si vous détenez du VPFI dans votre Vaipakam Vault sur une chaîne, cela
+réduit vos frais de protocole sur les prêts auxquels vous participez
 sur cette chaîne :
 
-| VPFI en séquestre | Remise sur les frais |
+| VPFI en vault | Remise sur les frais |
 |---|---|
-| 100 – 999 | 10 % |
-| 1 000 – 4 999 | 15 % |
-| 5 000 – 20 000 | 20 % |
-| Au-delà de 20 000 | 24 % |
+| `{liveValue:tier1Min}` – `{liveValue:tier2Min}` (excl.) | `{liveValue:tier1DiscountBps}` % |
+| `{liveValue:tier2Min}` – `{liveValue:tier3Min}` (excl.) | `{liveValue:tier2DiscountBps}` % |
+| `{liveValue:tier3Min}` – `{liveValue:tier4Min}` | `{liveValue:tier3DiscountBps}` % |
+| Au-delà de `{liveValue:tier4Min}` | `{liveValue:tier4DiscountBps}` % |
 
 Les remises s'appliquent à la fois aux frais du prêteur et de
 l'emprunteur. La remise est **pondérée dans le temps sur la durée
@@ -264,10 +280,10 @@ lequel vous avez réellement détenu le palier.
 
 ### 2. Staking — 5 % APR
 
-Tout VPFI posé dans votre séquestre génère automatiquement des
+Tout VPFI posé dans votre Vaipakam Vault génère automatiquement des
 récompenses de staking au rendement annuel de 5 %. Pas d'action de
 staking séparée, pas de blocage, pas d'attente pour « unstake ».
-Déplacez du VPFI dans votre séquestre et il rapporte à partir de
+Déplacez du VPFI dans votre Vaipakam Vault et il rapporte à partir de
 ce moment. Sortez-le et l'accumulation s'arrête.
 
 ### 3. Récompenses d'interaction sur la plateforme
@@ -291,8 +307,9 @@ Trois voies :
 - **L'acheter** — à un taux fixe (`1 VPFI = 0,001 ETH`) sur la page
   **Acheter VPFI**. Le programme à taux fixe est plafonné par
   portefeuille par chaîne.
-- **Le ponter** — VPFI est un token LayerZero OFT V2, donc il bouge
-  entre les chaînes supportées via le pont officiel.
+- **Le transférer par bridge** — VPFI est un token LayerZero OFT V2,
+  donc il circule entre les chaînes prises en charge via le bridge
+  officiel.
 
 ---
 
@@ -303,10 +320,10 @@ supportée : **Ethereum**, **Base**, **Arbitrum**, **Optimism**,
 **Polygon zkEVM**, **BNB Chain**.
 
 Un prêt ouvert sur Base se règle sur Base. Un prêt ouvert sur
-Arbitrum se règle sur Arbitrum. Pas de dette inter-chaîne. La seule
+Arbitrum se règle sur Arbitrum. Il n'y a pas de dette inter-chaîne. La seule
 chose qui traverse les chaînes, c'est le token VPFI et le
 dénominateur quotidien des récompenses (qui s'assure que les
-récompenses soient justes entre chaînes actives et calmes).
+récompenses restent équitables entre chaînes très actives et chaînes plus calmes).
 
 ---
 
@@ -341,7 +358,7 @@ Même flux, mais sur la page **Créer une offre** vous choisissez
 guidera.
 
 Si vous voulez juste **gagner du rendement passif sur votre VPFI**,
-déposez-le dans votre séquestre depuis la page **Tableau de bord**.
+déposez-le dans votre Vaipakam Vault depuis la page **Tableau de bord**.
 C'est tout — le staking est automatique à partir de ce moment.
 
 ---
@@ -356,13 +373,13 @@ Quelques choses que d'autres plateformes DeFi font et que nous
   consenti. Pas de pool de liquidité partagé, pas de courbe
   d'utilisation, pas de pic de taux surprise.
 - **Pas de garde par proxy.** Vos actifs reposent dans votre propre
-  séquestre, pas dans un coffre partagé. Le protocole ne les déplace
+  vault, pas dans un coffre partagé. Le protocole ne les déplace
   qu'au gré des actions que vous signez.
-- **Pas de boucles de levier par défaut.** Vous pouvez rediffuser
+- **Pas de boucles de levier par défaut.** Vous pouvez republier
   des fonds empruntés comme nouvelle offre de prêteur si vous le
   souhaitez, mais le protocole n'intègre pas le bouclage automatique
-  dans l'UX. Nous pensons que c'est un piège pour soi-même.
-- **Pas de mises à jour surprise.** Les mises à jour du séquestre
+  dans l'UX. Nous considérons que c'est un piège facile à déclencher.
+- **Pas de mises à jour surprise.** Les mises à jour du vault
   sont contrôlées ; les mises à jour obligatoires apparaissent dans
   l'app pour que vous les appliquiez explicitement. Rien ne
   réécrit votre coffre dans votre dos.

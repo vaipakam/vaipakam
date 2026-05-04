@@ -125,7 +125,7 @@ export function RewardsSummaryCard({ address }: Props) {
         pending={stakingStale ? 0n : stakingPending}
         lifetime={stakingLifetimeClaimed}
         total={stakingTotal}
-        linkTo="/buy-vpfi#staking-rewards"
+        linkTo="/app/buy-vpfi#staking-rewards"
         linkLabel={t('rewardsSummary.manageOnBuyVpfi')}
       />
 

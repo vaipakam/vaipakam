@@ -12,6 +12,7 @@ import {OracleFacet} from "../src/facets/OracleFacet.sol";
 import {VaipakamNFTFacet} from "../src/facets/VaipakamNFTFacet.sol";
 import {EscrowFactoryFacet} from "../src/facets/EscrowFactoryFacet.sol";
 import {OfferFacet} from "../src/facets/OfferFacet.sol";
+import {OfferCancelFacet} from "../src/facets/OfferCancelFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
 import {RiskFacet} from "../src/facets/RiskFacet.sol";
@@ -43,6 +44,7 @@ contract EarlyWithdrawalFacetTest is Test {
 
     DiamondCutFacet cutFacet;
     OfferFacet offerFacet;
+    OfferCancelFacet offerCancelFacet;
     ProfileFacet profileFacet;
     OracleFacet oracleFacet;
     VaipakamNFTFacet nftFacet;
@@ -109,14 +111,14 @@ contract EarlyWithdrawalFacetTest is Test {
         // resolves against ownerOf(lenderTokenId); backfilling creator here
         // keeps consumers that read saleOffer.creator pointing at the lender
         // who initiated the flow.
-        LibVaipakam.Offer memory o = OfferFacet(address(diamond)).getOffer(offerId);
+        LibVaipakam.Offer memory o = OfferCancelFacet(address(diamond)).getOffer(offerId);
         o.accepted = true;
         if (o.creator == address(0)) o.creator = lender;
         TestMutatorFacet(address(diamond)).setOffer(offerId, o);
     }
 
     function _setOfferAcceptedAndRate(uint256 offerId, uint256 rateBps) internal {
-        LibVaipakam.Offer memory o = OfferFacet(address(diamond)).getOffer(offerId);
+        LibVaipakam.Offer memory o = OfferCancelFacet(address(diamond)).getOffer(offerId);
         o.accepted = true;
         o.interestRateBps = rateBps;
         if (o.creator == address(0)) o.creator = lender;
@@ -164,6 +166,7 @@ contract EarlyWithdrawalFacetTest is Test {
         cutFacet = new DiamondCutFacet();
         diamond  = new VaipakamDiamond(owner, address(cutFacet));
         offerFacet = new OfferFacet();
+        offerCancelFacet = new OfferCancelFacet();
         profileFacet = new ProfileFacet();
         oracleFacet = new OracleFacet();
         nftFacet = new VaipakamNFTFacet();
@@ -180,7 +183,7 @@ contract EarlyWithdrawalFacetTest is Test {
         testMutatorFacet = new TestMutatorFacet();
         helperTest = new HelperTest();
 
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](15);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](16);
         cuts[0]  = IDiamondCut.FacetCut({facetAddress: address(offerFacet),         action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getOfferFacetSelectors()});
         cuts[1]  = IDiamondCut.FacetCut({facetAddress: address(profileFacet),       action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getProfileFacetSelectors()});
         cuts[2]  = IDiamondCut.FacetCut({facetAddress: address(oracleFacet),        action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getOracleFacetSelectors()});
@@ -196,6 +199,7 @@ contract EarlyWithdrawalFacetTest is Test {
         cuts[12] = IDiamondCut.FacetCut({facetAddress: address(earlyFacet),         action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getEarlyWithdrawalFacetSelectors()});
         cuts[13] = IDiamondCut.FacetCut({facetAddress: address(accessControlFacet), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getAccessControlFacetSelectors()});
         cuts[14] = IDiamondCut.FacetCut({facetAddress: address(testMutatorFacet),   action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getTestMutatorFacetSelectors()});
+        cuts[15] = IDiamondCut.FacetCut({facetAddress: address(offerCancelFacet), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getOfferCancelFacetSelectors()});
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");
 
         AccessControlFacet(address(diamond)).initializeAccessControl();
@@ -262,7 +266,10 @@ contract EarlyWithdrawalFacetTest is Test {
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
                 collateralQuantity: 0,
-                allowsPartialRepay: false
+                allowsPartialRepay: false,
+                amountMax: 0,
+                interestRateBpsMax: 0,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
             })
         );
         vm.prank(borrower);
@@ -287,7 +294,10 @@ contract EarlyWithdrawalFacetTest is Test {
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
                 collateralQuantity: 0,
-                allowsPartialRepay: false
+                allowsPartialRepay: false,
+                amountMax: 0,
+                interestRateBpsMax: 0,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
             })
         );
 
@@ -407,7 +417,10 @@ contract EarlyWithdrawalFacetTest is Test {
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
                 collateralQuantity: 0,
-                allowsPartialRepay: false
+                allowsPartialRepay: false,
+                amountMax: 0,
+                interestRateBpsMax: 0,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
             })
         );
 
@@ -466,7 +479,10 @@ contract EarlyWithdrawalFacetTest is Test {
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
                 collateralQuantity: 0,
-                allowsPartialRepay: false
+                allowsPartialRepay: false,
+                amountMax: 0,
+                interestRateBpsMax: 0,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
             })
         );
 
@@ -509,7 +525,10 @@ contract EarlyWithdrawalFacetTest is Test {
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
                 collateralQuantity: 0,
-                allowsPartialRepay: false
+                allowsPartialRepay: false,
+                amountMax: 0,
+                interestRateBpsMax: 0,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
             })
         );
 
@@ -548,7 +567,10 @@ contract EarlyWithdrawalFacetTest is Test {
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
                 collateralQuantity: 0,
-                allowsPartialRepay: false
+                allowsPartialRepay: false,
+                amountMax: 0,
+                interestRateBpsMax: 0,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
             })
         );
 
@@ -598,7 +620,10 @@ contract EarlyWithdrawalFacetTest is Test {
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
                 collateralQuantity: 0,
-                allowsPartialRepay: false
+                allowsPartialRepay: false,
+                amountMax: 0,
+                interestRateBpsMax: 0,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
             })
         );
 
@@ -634,7 +659,10 @@ contract EarlyWithdrawalFacetTest is Test {
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
                 collateralQuantity: 0,
-                allowsPartialRepay: false
+                allowsPartialRepay: false,
+                amountMax: 0,
+                interestRateBpsMax: 0,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
             })
         );
 
@@ -667,7 +695,10 @@ contract EarlyWithdrawalFacetTest is Test {
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
                 collateralQuantity: 0,
-                allowsPartialRepay: false
+                allowsPartialRepay: false,
+                amountMax: 0,
+                interestRateBpsMax: 0,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
             })
         );
 
@@ -713,7 +744,10 @@ contract EarlyWithdrawalFacetTest is Test {
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
                 collateralQuantity: 0,
-                allowsPartialRepay: false
+                allowsPartialRepay: false,
+                amountMax: 0,
+                interestRateBpsMax: 0,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
             })
         );
         vm.prank(lender);
@@ -741,7 +775,10 @@ contract EarlyWithdrawalFacetTest is Test {
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
                 collateralQuantity: 0,
-                allowsPartialRepay: false
+                allowsPartialRepay: false,
+                amountMax: 0,
+                interestRateBpsMax: 0,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
             })
         );
         vm.mockCall(address(diamond), abi.encodeWithSelector(EscrowFactoryFacet.escrowWithdrawERC20.selector), abi.encode(true));
@@ -777,7 +814,10 @@ contract EarlyWithdrawalFacetTest is Test {
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
                 collateralQuantity: 0,
-                allowsPartialRepay: false
+                allowsPartialRepay: false,
+                amountMax: 0,
+                interestRateBpsMax: 0,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
             })
         );
 
@@ -806,7 +846,10 @@ contract EarlyWithdrawalFacetTest is Test {
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
                 collateralQuantity: 0,
-                allowsPartialRepay: false
+                allowsPartialRepay: false,
+                amountMax: 0,
+                interestRateBpsMax: 0,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
             })
         );
 
@@ -901,7 +944,10 @@ contract EarlyWithdrawalFacetTest is Test {
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
                 collateralQuantity: 0,
-                allowsPartialRepay: false
+                allowsPartialRepay: false,
+                amountMax: 0,
+                interestRateBpsMax: 0,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
             })
         );
 
@@ -937,7 +983,10 @@ contract EarlyWithdrawalFacetTest is Test {
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
                 collateralQuantity: 0,
-                allowsPartialRepay: false
+                allowsPartialRepay: false,
+                amountMax: 0,
+                interestRateBpsMax: 0,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
             })
         );
 
@@ -992,7 +1041,10 @@ contract EarlyWithdrawalFacetTest is Test {
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
                 collateralQuantity: 0,
-                allowsPartialRepay: false
+                allowsPartialRepay: false,
+                amountMax: 0,
+                interestRateBpsMax: 0,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
             })
         );
 
@@ -1030,7 +1082,10 @@ contract EarlyWithdrawalFacetTest is Test {
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
                 collateralQuantity: 0,
-                allowsPartialRepay: false
+                allowsPartialRepay: false,
+                amountMax: 0,
+                interestRateBpsMax: 0,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
             })
         );
 
@@ -1060,7 +1115,10 @@ contract EarlyWithdrawalFacetTest is Test {
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
                 collateralQuantity: 0,
-                allowsPartialRepay: false
+                allowsPartialRepay: false,
+                amountMax: 0,
+                interestRateBpsMax: 0,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
             })
         );
 
@@ -1096,7 +1154,10 @@ contract EarlyWithdrawalFacetTest is Test {
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
                 collateralQuantity: 0,
-                allowsPartialRepay: false
+                allowsPartialRepay: false,
+                amountMax: 0,
+                interestRateBpsMax: 0,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
             })
         );
 
@@ -1161,9 +1222,7 @@ contract EarlyWithdrawalFacetTest is Test {
         _setOfferAcceptedAndRate(50, 1000);
 
         // Set offerIdToLoanId[50] → 2 (tempLoanId). Mapping vm.store is layout-independent.
-        bytes32 baseSlot = LibVaipakam.VANGKI_STORAGE_POSITION;
-        uint256 offerIdToLoanSlot = uint256(baseSlot) + 27; // offerIdToLoanId mapping
-        vm.store(address(diamond), keccak256(abi.encode(uint256(50), offerIdToLoanSlot)), bytes32(uint256(2)));
+        TestMutatorFacet(address(diamond)).setOfferIdToLoanIdRaw(50, 2);
 
         // Set up temp loan (loanId=2) with newLender as lender, burn NFT ids
         _setupTempLoan(2);
@@ -1193,9 +1252,7 @@ contract EarlyWithdrawalFacetTest is Test {
 
         _setOfferAcceptedAndRate(50, 300);
 
-        bytes32 baseSlot = LibVaipakam.VANGKI_STORAGE_POSITION;
-        uint256 offerIdToLoanSlot = uint256(baseSlot) + 27;
-        vm.store(address(diamond), keccak256(abi.encode(uint256(50), offerIdToLoanSlot)), bytes32(uint256(2)));
+        TestMutatorFacet(address(diamond)).setOfferIdToLoanIdRaw(50, 2);
 
         _setupTempLoan(2);
 
@@ -1235,9 +1292,7 @@ contract EarlyWithdrawalFacetTest is Test {
 
         _setOfferAccepted(50);
 
-        bytes32 baseSlot = LibVaipakam.VANGKI_STORAGE_POSITION;
-        uint256 offerIdToLoanSlot = uint256(baseSlot) + 27;
-        vm.store(address(diamond), keccak256(abi.encode(uint256(50), offerIdToLoanSlot)), bytes32(uint256(2)));
+        TestMutatorFacet(address(diamond)).setOfferIdToLoanIdRaw(50, 2);
 
         _setupTempLoan(2);
 
@@ -1264,9 +1319,7 @@ contract EarlyWithdrawalFacetTest is Test {
 
         _setOfferAcceptedAndRate(50, 2000);
 
-        bytes32 baseSlot = LibVaipakam.VANGKI_STORAGE_POSITION;
-        uint256 offerIdToLoanSlot = uint256(baseSlot) + 27;
-        vm.store(address(diamond), keccak256(abi.encode(uint256(50), offerIdToLoanSlot)), bytes32(uint256(2)));
+        TestMutatorFacet(address(diamond)).setOfferIdToLoanIdRaw(50, 2);
 
         _setupTempLoan(2);
 
@@ -1289,9 +1342,7 @@ contract EarlyWithdrawalFacetTest is Test {
 
         _setOfferAcceptedAndRate(50, 300);
 
-        bytes32 baseSlot = LibVaipakam.VANGKI_STORAGE_POSITION;
-        uint256 offerIdToLoanSlot = uint256(baseSlot) + 27;
-        vm.store(address(diamond), keccak256(abi.encode(uint256(50), offerIdToLoanSlot)), bytes32(uint256(2)));
+        TestMutatorFacet(address(diamond)).setOfferIdToLoanIdRaw(50, 2);
 
         _setupTempLoan(2);
 
@@ -1350,9 +1401,7 @@ contract EarlyWithdrawalFacetTest is Test {
         _setOfferAccepted(50);
 
         // Set offerIdToLoanId[50] = 2 (tempLoanId exists)
-        bytes32 baseSlot = LibVaipakam.VANGKI_STORAGE_POSITION;
-        uint256 offerIdToLoanSlot = uint256(baseSlot) + 27;
-        vm.store(address(diamond), keccak256(abi.encode(uint256(50), offerIdToLoanSlot)), bytes32(uint256(2)));
+        TestMutatorFacet(address(diamond)).setOfferIdToLoanIdRaw(50, 2);
 
         // BUT don't set lender on tempLoan (so newLender = address(0))
         // tempLoan.lender is already 0 by default
@@ -1374,9 +1423,7 @@ contract EarlyWithdrawalFacetTest is Test {
 
         _setOfferAcceptedAndRate(50, 500);
 
-        bytes32 baseSlot = LibVaipakam.VANGKI_STORAGE_POSITION;
-        uint256 offerIdToLoanSlot = uint256(baseSlot) + 27;
-        vm.store(address(diamond), keccak256(abi.encode(uint256(50), offerIdToLoanSlot)), bytes32(uint256(2)));
+        TestMutatorFacet(address(diamond)).setOfferIdToLoanIdRaw(50, 2);
 
         _setupTempLoan(2);
 
@@ -1414,9 +1461,7 @@ contract EarlyWithdrawalFacetTest is Test {
 
         _setOfferAccepted(50);
 
-        bytes32 baseSlot = LibVaipakam.VANGKI_STORAGE_POSITION;
-        uint256 offerIdToLoanSlot = uint256(baseSlot) + 27;
-        vm.store(address(diamond), keccak256(abi.encode(uint256(50), offerIdToLoanSlot)), bytes32(uint256(2)));
+        TestMutatorFacet(address(diamond)).setOfferIdToLoanIdRaw(50, 2);
 
         _setupTempLoan(2);
 
@@ -1440,9 +1485,7 @@ contract EarlyWithdrawalFacetTest is Test {
 
         _setOfferAcceptedAndRate(50, 600);
 
-        bytes32 baseSlot = LibVaipakam.VANGKI_STORAGE_POSITION;
-        uint256 offerIdToLoanSlot = uint256(baseSlot) + 27;
-        vm.store(address(diamond), keccak256(abi.encode(uint256(50), offerIdToLoanSlot)), bytes32(uint256(2)));
+        TestMutatorFacet(address(diamond)).setOfferIdToLoanIdRaw(50, 2);
 
         _setupTempLoan(2);
 
@@ -1461,9 +1504,7 @@ contract EarlyWithdrawalFacetTest is Test {
     /// @dev Covers sellLoanViaBuyOffer priorHeld > 0 migration path (line 210)
     function testSellLoanWithPriorHeldMigration() public {
         // Set heldForLender[activeLoanId] > 0 via vm.store
-        bytes32 baseSlot = LibVaipakam.VANGKI_STORAGE_POSITION;
-        uint256 heldSlot = uint256(baseSlot) + 24;
-        vm.store(address(diamond), keccak256(abi.encode(uint256(activeLoanId), heldSlot)), bytes32(uint256(50 ether)));
+        TestMutatorFacet(address(diamond)).setHeldForLenderRaw(activeLoanId, 50 ether);
 
         // Mock getOrCreateUserEscrow for new lender
         address newLenderEscrow = EscrowFactoryFacet(address(diamond)).getOrCreateUserEscrow(newLender);
@@ -1478,9 +1519,7 @@ contract EarlyWithdrawalFacetTest is Test {
 
     /// @dev Covers sellLoanViaBuyOffer priorHeld migration failure
     function testSellLoanPriorHeldMigrationFails() public {
-        bytes32 baseSlot = LibVaipakam.VANGKI_STORAGE_POSITION;
-        uint256 heldSlot = uint256(baseSlot) + 24;
-        vm.store(address(diamond), keccak256(abi.encode(uint256(activeLoanId), heldSlot)), bytes32(uint256(50 ether)));
+        TestMutatorFacet(address(diamond)).setHeldForLenderRaw(activeLoanId, 50 ether);
 
         // Mock principal transfer success, but escrow withdraw for migration fails
         // First call (principal) succeeds, then migration call fails
@@ -1504,9 +1543,7 @@ contract EarlyWithdrawalFacetTest is Test {
 
         _setOfferAccepted(50);
 
-        bytes32 baseSlot = LibVaipakam.VANGKI_STORAGE_POSITION;
-        uint256 offerIdToLoanSlot = uint256(baseSlot) + 27;
-        vm.store(address(diamond), keccak256(abi.encode(uint256(50), offerIdToLoanSlot)), bytes32(uint256(2)));
+        TestMutatorFacet(address(diamond)).setOfferIdToLoanIdRaw(50, 2);
 
         _setupTempLoan(2);
 
@@ -1541,9 +1578,7 @@ contract EarlyWithdrawalFacetTest is Test {
 
         _setOfferAccepted(50);
 
-        bytes32 baseSlot = LibVaipakam.VANGKI_STORAGE_POSITION;
-        uint256 offerIdToLoanSlot = uint256(baseSlot) + 27;
-        vm.store(address(diamond), keccak256(abi.encode(uint256(50), offerIdToLoanSlot)), bytes32(uint256(2)));
+        TestMutatorFacet(address(diamond)).setOfferIdToLoanIdRaw(50, 2);
 
         _setupTempLoan(2);
 
@@ -1566,9 +1601,7 @@ contract EarlyWithdrawalFacetTest is Test {
 
         _setOfferAccepted(50);
 
-        bytes32 baseSlot = LibVaipakam.VANGKI_STORAGE_POSITION;
-        uint256 offerIdToLoanSlot = uint256(baseSlot) + 27;
-        vm.store(address(diamond), keccak256(abi.encode(uint256(50), offerIdToLoanSlot)), bytes32(uint256(2)));
+        TestMutatorFacet(address(diamond)).setOfferIdToLoanIdRaw(50, 2);
 
         _setupTempLoanWithCollateral(2, mockERC20, 500 ether);
 
@@ -1590,9 +1623,7 @@ contract EarlyWithdrawalFacetTest is Test {
 
         _setOfferAccepted(50);
 
-        bytes32 baseSlot = LibVaipakam.VANGKI_STORAGE_POSITION;
-        uint256 offerIdToLoanSlot = uint256(baseSlot) + 27;
-        vm.store(address(diamond), keccak256(abi.encode(uint256(50), offerIdToLoanSlot)), bytes32(uint256(2)));
+        TestMutatorFacet(address(diamond)).setOfferIdToLoanIdRaw(50, 2);
 
         _setupTempLoanWithCollateral(2, mockERC20, 500 ether);
 
@@ -1623,15 +1654,12 @@ contract EarlyWithdrawalFacetTest is Test {
         EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(activeLoanId, 500, true);
         vm.clearMockedCalls();
 
-        bytes32 baseSlot = LibVaipakam.VANGKI_STORAGE_POSITION;
         // Set heldForLender[activeLoanId] > 0 (mapping write is layout-independent)
-        uint256 heldSlot = uint256(baseSlot) + 24;
-        vm.store(address(diamond), keccak256(abi.encode(uint256(activeLoanId), heldSlot)), bytes32(uint256(50 ether)));
+        TestMutatorFacet(address(diamond)).setHeldForLenderRaw(activeLoanId, 50 ether);
 
         _setOfferAccepted(50);
 
-        uint256 offerIdToLoanSlot = uint256(baseSlot) + 27;
-        vm.store(address(diamond), keccak256(abi.encode(uint256(50), offerIdToLoanSlot)), bytes32(uint256(2)));
+        TestMutatorFacet(address(diamond)).setOfferIdToLoanIdRaw(50, 2);
 
         _setupTempLoan(2);
 
@@ -1652,14 +1680,11 @@ contract EarlyWithdrawalFacetTest is Test {
         EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(activeLoanId, 500, true);
         vm.clearMockedCalls();
 
-        bytes32 baseSlot = LibVaipakam.VANGKI_STORAGE_POSITION;
-        uint256 heldSlot = uint256(baseSlot) + 24;
-        vm.store(address(diamond), keccak256(abi.encode(uint256(activeLoanId), heldSlot)), bytes32(uint256(50 ether)));
+        TestMutatorFacet(address(diamond)).setHeldForLenderRaw(activeLoanId, 50 ether);
 
         _setOfferAccepted(50);
 
-        uint256 offerIdToLoanSlot = uint256(baseSlot) + 27;
-        vm.store(address(diamond), keccak256(abi.encode(uint256(50), offerIdToLoanSlot)), bytes32(uint256(2)));
+        TestMutatorFacet(address(diamond)).setOfferIdToLoanIdRaw(50, 2);
 
         _setupTempLoan(2);
 
@@ -1703,9 +1728,7 @@ contract EarlyWithdrawalFacetTest is Test {
         _setOfferAccepted(50);
 
         // Set up temp loan
-        bytes32 baseSlot = LibVaipakam.VANGKI_STORAGE_POSITION;
-        uint256 offerIdToLoanSlot = uint256(baseSlot) + 27;
-        vm.store(address(diamond), keccak256(abi.encode(uint256(50), offerIdToLoanSlot)), bytes32(uint256(2)));
+        TestMutatorFacet(address(diamond)).setOfferIdToLoanIdRaw(50, 2);
         _setupTempLoan(2);
 
         vm.mockCall(address(diamond), abi.encodeWithSelector(EscrowFactoryFacet.escrowWithdrawERC20.selector), abi.encode(true));
@@ -1774,9 +1797,7 @@ contract EarlyWithdrawalFacetTest is Test {
 
         _setOfferAccepted(50);
 
-        bytes32 baseSlot = LibVaipakam.VANGKI_STORAGE_POSITION;
-        uint256 offerIdToLoanSlot = uint256(baseSlot) + 27;
-        vm.store(address(diamond), keccak256(abi.encode(uint256(50), offerIdToLoanSlot)), bytes32(uint256(2)));
+        TestMutatorFacet(address(diamond)).setOfferIdToLoanIdRaw(50, 2);
 
         _setupTempLoan(2);
 
@@ -1808,9 +1829,7 @@ contract EarlyWithdrawalFacetTest is Test {
 
         _setOfferAccepted(50);
 
-        bytes32 baseSlot = LibVaipakam.VANGKI_STORAGE_POSITION;
-        uint256 offerIdToLoanSlot = uint256(baseSlot) + 27;
-        vm.store(address(diamond), keccak256(abi.encode(uint256(50), offerIdToLoanSlot)), bytes32(uint256(2)));
+        TestMutatorFacet(address(diamond)).setOfferIdToLoanIdRaw(50, 2);
 
         _setupTempLoan(2);
 
@@ -1839,9 +1858,7 @@ contract EarlyWithdrawalFacetTest is Test {
 
         _setOfferAcceptedAndRate(50, 600);
 
-        bytes32 baseSlot = LibVaipakam.VANGKI_STORAGE_POSITION;
-        uint256 offerIdToLoanSlot = uint256(baseSlot) + 27;
-        vm.store(address(diamond), keccak256(abi.encode(uint256(50), offerIdToLoanSlot)), bytes32(uint256(2)));
+        TestMutatorFacet(address(diamond)).setOfferIdToLoanIdRaw(50, 2);
 
         _setupTempLoan(2);
 
@@ -1865,15 +1882,14 @@ contract EarlyWithdrawalFacetTest is Test {
     /// @dev Covers sellLoanViaBuyOffer with priorHeld > 0 — the heldForLender migration path.
     function testSellLoanWithPriorHeldForLender() public {
         // Set heldForLender[activeLoanId] > 0 via vm.store
-        bytes32 baseSlot = LibVaipakam.VANGKI_STORAGE_POSITION;
-        // heldForLender is mapping(uint256 => uint256) at storage slot baseSlot + 24
-        uint256 heldForLenderSlot = uint256(baseSlot) + 24;
-        bytes32 heldSlotKey = keccak256(abi.encode(activeLoanId, heldForLenderSlot));
-        vm.store(address(diamond), heldSlotKey, bytes32(uint256(50 ether)));
+        TestMutatorFacet(address(diamond)).setHeldForLenderRaw(activeLoanId, 50 ether);
 
-        // Deposit the held amount into lender's escrow so withdrawal works
+        // Deposit the held amount into lender's escrow so withdrawal works.
+        // T-051 — back the direct deal with a counter record.
         address lenderEscrow = EscrowFactoryFacet(address(diamond)).getOrCreateUserEscrow(lender);
         deal(mockERC20, lenderEscrow, 100 ether);
+        vm.prank(address(diamond));
+        EscrowFactoryFacet(address(diamond)).recordEscrowDepositERC20(lender, mockERC20, 100 ether);
 
         vm.prank(newLender);
         uint256 buyOffer = OfferFacet(address(diamond)).createOffer(
@@ -1893,7 +1909,10 @@ contract EarlyWithdrawalFacetTest is Test {
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
                 collateralQuantity: 0,
-                allowsPartialRepay: false
+                allowsPartialRepay: false,
+                amountMax: 0,
+                interestRateBpsMax: 0,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
             })
         );
 
@@ -1939,7 +1958,10 @@ contract EarlyWithdrawalFacetTest is Test {
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
                 collateralQuantity: 0,
-                allowsPartialRepay: false
+                allowsPartialRepay: false,
+                amountMax: 0,
+                interestRateBpsMax: 0,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
             })
         );
 
@@ -1958,10 +1980,7 @@ contract EarlyWithdrawalFacetTest is Test {
     /// @dev Covers completeLoanSale with priorHeldSale > 0 — the held migration path.
     function testCompleteLoanSaleWithPriorHeldSale() public {
         // Set heldForLender[activeLoanId] > 0 via vm.store
-        bytes32 baseSlot = LibVaipakam.VANGKI_STORAGE_POSITION;
-        uint256 heldForLenderSlot = uint256(baseSlot) + 24;
-        bytes32 heldSlotKey = keccak256(abi.encode(activeLoanId, heldForLenderSlot));
-        vm.store(address(diamond), heldSlotKey, bytes32(uint256(30 ether)));
+        TestMutatorFacet(address(diamond)).setHeldForLenderRaw(activeLoanId, 30 ether);
 
         vm.mockCall(address(diamond), abi.encodeWithSelector(OfferFacet.createOffer.selector), abi.encode(uint256(50)));
         vm.prank(lender);
@@ -1970,8 +1989,7 @@ contract EarlyWithdrawalFacetTest is Test {
 
         _setOfferAccepted(50);
 
-        uint256 offerIdToLoanSlot = uint256(baseSlot) + 27;
-        vm.store(address(diamond), keccak256(abi.encode(uint256(50), offerIdToLoanSlot)), bytes32(uint256(2)));
+        TestMutatorFacet(address(diamond)).setOfferIdToLoanIdRaw(50, 2);
 
         _setupTempLoan(2);
 
@@ -1999,15 +2017,12 @@ contract EarlyWithdrawalFacetTest is Test {
 
         _setOfferAccepted(50);
 
-        bytes32 baseSlot = LibVaipakam.VANGKI_STORAGE_POSITION;
-        uint256 offerIdToLoanSlot = uint256(baseSlot) + 27;
-        vm.store(address(diamond), keccak256(abi.encode(uint256(50), offerIdToLoanSlot)), bytes32(uint256(2)));
+        TestMutatorFacet(address(diamond)).setOfferIdToLoanIdRaw(50, 2);
 
         _setupTempLoan(2);
 
         // Set heldForLender > 0 so _transferToNewLenderEscrow is called (mapping — layout-independent)
-        uint256 heldSlot = uint256(baseSlot) + 24;
-        vm.store(address(diamond), keccak256(abi.encode(uint256(activeLoanId), heldSlot)), bytes32(uint256(50 ether)));
+        TestMutatorFacet(address(diamond)).setHeldForLenderRaw(activeLoanId, 50 ether);
 
         vm.mockCall(address(diamond), abi.encodeWithSelector(EscrowFactoryFacet.escrowWithdrawERC20.selector), abi.encode(true));
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.burnNFT.selector), "");
@@ -2035,9 +2050,7 @@ contract EarlyWithdrawalFacetTest is Test {
 
         _setOfferAccepted(50);
 
-        bytes32 baseSlot = LibVaipakam.VANGKI_STORAGE_POSITION;
-        uint256 offerIdToLoanSlot = uint256(baseSlot) + 27;
-        vm.store(address(diamond), keccak256(abi.encode(uint256(50), offerIdToLoanSlot)), bytes32(uint256(2)));
+        TestMutatorFacet(address(diamond)).setOfferIdToLoanIdRaw(50, 2);
 
         // Build temp loan with ERC721 collateral set via struct setter
         {
@@ -2072,9 +2085,7 @@ contract EarlyWithdrawalFacetTest is Test {
 
         _setOfferAccepted(50);
 
-        bytes32 baseSlot = LibVaipakam.VANGKI_STORAGE_POSITION;
-        uint256 offerIdToLoanSlot = uint256(baseSlot) + 27;
-        vm.store(address(diamond), keccak256(abi.encode(uint256(50), offerIdToLoanSlot)), bytes32(uint256(2)));
+        TestMutatorFacet(address(diamond)).setOfferIdToLoanIdRaw(50, 2);
 
         // Build temp loan with ERC1155 collateral set via struct setter
         {
@@ -2110,9 +2121,7 @@ contract EarlyWithdrawalFacetTest is Test {
 
         _setOfferAcceptedAndRate(50, 5000);
 
-        bytes32 baseSlot = LibVaipakam.VANGKI_STORAGE_POSITION;
-        uint256 offerIdToLoanSlot = uint256(baseSlot) + 27;
-        vm.store(address(diamond), keccak256(abi.encode(uint256(50), offerIdToLoanSlot)), bytes32(uint256(2)));
+        TestMutatorFacet(address(diamond)).setOfferIdToLoanIdRaw(50, 2);
 
         _setupTempLoan(2);
 

@@ -47,7 +47,7 @@ contract MetricsFacetTest is SetupTest {
         l.status = LibVaipakam.LoanStatus.Active;
         l.assetType = LibVaipakam.AssetType.ERC20;
         l.collateralAssetType = LibVaipakam.AssetType.ERC20;
-        l.startTime = block.timestamp;
+        l.startTime = uint64(block.timestamp);
         TestMutatorFacet(address(diamond)).scaffoldActiveLoan(loanId, l);
     }
 
@@ -284,7 +284,7 @@ contract MetricsFacetTest is SetupTest {
         assertEq(avgLTV, 6666);
     }
 
-    // ── getTotalInterestEarnedUSD ──────────────────────────────────────────
+    // ── getTotalInterestEarnedNumeraire ──────────────────────────────────────────
 
     function testGetTotalInterestEarnedUSD_onlyCompleted() public {
         _seedActiveERC20Loan(1, lender, borrower, 1000 ether, 1500 ether, 500); // active — excluded
@@ -302,7 +302,7 @@ contract MetricsFacetTest is SetupTest {
         TestMutatorFacet(address(diamond)).setLoan(2, l2);
         TestMutatorFacet(address(diamond)).setNextLoanId(3);
 
-        assertEq(MetricsFacet(address(diamond)).getTotalInterestEarnedUSD(), 50 ether);
+        assertEq(MetricsFacet(address(diamond)).getTotalInterestEarnedNumeraire(), 50 ether);
     }
 
     // ── Treasury / Revenue ─────────────────────────────────────────────────

@@ -10,6 +10,7 @@ import {AccessControlFacet} from "../src/facets/AccessControlFacet.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {LibAccessControl} from "../src/libraries/LibAccessControl.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
+import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {HelperTest} from "./HelperTest.sol";
 
 /// @title ConfigFacetTest
@@ -224,9 +225,19 @@ contract ConfigFacetTest is Test {
         assertEq(ConfigFacet(address(diamond)).getStakingAprBps(), 750);
     }
 
-    function testSetStakingAprRevertsAbove100Percent() public {
+    function testSetStakingAprRevertsAboveCap() public {
+        // T-033 setter range audit: tightened from `≤ BASIS_POINTS`
+        // (100% APR) to `≤ STAKING_APR_BPS_MAX` (20% APR). Setter now
+        // surfaces `ParameterOutOfRange` instead of the legacy
+        // `InvalidStakingAprBps`.
         vm.expectRevert(
-            abi.encodeWithSelector(ConfigFacet.InvalidStakingAprBps.selector, 10_001)
+            abi.encodeWithSelector(
+                IVaipakamErrors.ParameterOutOfRange.selector,
+                bytes32("stakingAprBps"),
+                uint256(10_001),
+                uint256(0),
+                uint256(LibVaipakam.STAKING_APR_BPS_MAX)
+            )
         );
         ConfigFacet(address(diamond)).setStakingApr(10_001);
     }
@@ -342,7 +353,24 @@ contract ConfigFacetTest is Test {
             uint256 rb,
             uint256 apr,
             uint256[4] memory tiers,
-            uint256[4] memory disc
+            uint256[4] memory disc,
+            // Range Orders Phase 1 master kill-switch flags. All 3
+            // default `false` on a fresh deploy.
+            bool rangeAmount,
+            bool rangeRate,
+            bool partialFill,
+            // Matcher kickback BPS — defaults to LIF_MATCHER_FEE_BPS
+            // (100 = 1%) when unset; governance-tunable via
+            // setLifMatcherFeeBps.
+            uint256 matcherFeeBps,
+            // Auto-pause window duration (seconds). Defaults to
+            // AUTO_PAUSE_DURATION_DEFAULT (1800 = 30 min);
+            // governance-tunable via setAutoPauseDurationSeconds.
+            uint256 autoPauseDur,
+            // Max offer duration in days. Defaults to
+            // MAX_OFFER_DURATION_DAYS_DEFAULT (365 = 1 year);
+            // governance-tunable via setMaxOfferDurationDays.
+            uint256 maxDur
         ) = ConfigFacet(address(diamond)).getProtocolConfigBundle();
 
         // Overridden:
@@ -359,6 +387,12 @@ contract ConfigFacetTest is Test {
         assertEq(tiers[3], LibVaipakam.VPFI_TIER4_THRESHOLD);
         assertEq(disc[0], LibVaipakam.VPFI_TIER1_DISCOUNT_BPS);
         assertEq(disc[3], LibVaipakam.VPFI_TIER4_DISCOUNT_BPS);
+        // Master flags: default off on a fresh deploy.
+        assertFalse(rangeAmount);
+        assertFalse(rangeRate);
+        assertFalse(partialFill);
+        // Max offer duration default — 365 days unless governance has tuned.
+        assertEq(maxDur, LibVaipakam.MAX_OFFER_DURATION_DAYS_DEFAULT);
     }
 
     /// @dev `getProtocolConstants` returns the four compile-time constants

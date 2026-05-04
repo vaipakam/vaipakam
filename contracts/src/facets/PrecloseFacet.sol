@@ -10,6 +10,7 @@ import {LibSettlement} from "../libraries/LibSettlement.sol";
 import {LibCompliance} from "../libraries/LibCompliance.sol";
 import {LibLoan} from "../libraries/LibLoan.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
+import {LibOfferMatch} from "../libraries/LibOfferMatch.sol";
 import {LibERC721} from "../libraries/LibERC721.sol";
 import {LibVPFIDiscount} from "../libraries/LibVPFIDiscount.sol";
 import {LibMetricsHooks} from "../libraries/LibMetricsHooks.sol";
@@ -112,6 +113,9 @@ contract PrecloseFacet is
     function precloseDirect(
         uint256 loanId
     ) external nonReentrant whenNotPaused {
+        // Tier-1 sanctions gate — preclose routes funds back to
+        // msg.sender (borrower closing early); sanctioned blocked.
+        LibVaipakam._assertNotSanctioned(msg.sender);
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.Loan storage loan = s.loans[loanId];
         // Phase 6: borrower-entitled strategic flow. Authority follows the
@@ -162,14 +166,21 @@ contract PrecloseFacet is
                 LibFacet.recordTreasuryAccrual(loan.principalAsset, plan.treasuryShare);
             }
 
-            // Lender's due: borrower -> Diamond -> lender's escrow for claim
-            IERC20(loan.principalAsset).safeTransferFrom(
-                msg.sender,
-                address(this),
-                plan.lenderDue
+            // T-037 — Lender's due: direct borrower → lender's escrow.
+            // Routed through the cross-payer chokepoint variant so the
+            // protocolTrackedEscrowBalance counter ticks under the
+            // LENDER (the escrow owner) while pulling from the
+            // borrower's allowance.
+            LibFacet.crossFacetCall(
+                abi.encodeWithSelector(
+                    EscrowFactoryFacet.escrowDepositERC20From.selector,
+                    msg.sender,        // payer — borrower
+                    loan.lender,       // user — lender's escrow
+                    loan.principalAsset,
+                    plan.lenderDue
+                ),
+                EscrowDepositFailed.selector
             );
-            address lenderEscrow = LibFacet.getOrCreateEscrow(loan.lender);
-            IERC20(loan.principalAsset).safeTransfer(lenderEscrow, plan.lenderDue);
 
             // Record lender's claimable (principal + interest)
             s.lenderClaims[loanId] = LibVaipakam.ClaimInfo({
@@ -254,19 +265,23 @@ contract PrecloseFacet is
                 LibFacet.recordTreasuryAccrual(loan.prepayAsset, treasuryFee);
             }
 
-            // Deduct from borrower's prepay escrow: lender share
+            // T-037 — escrow → escrow direct, no Diamond intermediate.
+            // `escrowWithdrawERC20` accepts an arbitrary recipient
+            // (it's just `safeTransfer(recipient, amount)` from inside
+            // the borrower's escrow), so we pass the lender's escrow
+            // straight in. Saves one transfer + removes a transient
+            // Diamond `prepayAsset` balance.
             address lenderEscrow = LibFacet.getOrCreateEscrow(loan.lender);
             LibFacet.crossFacetCall(
                 abi.encodeWithSelector(
                     EscrowFactoryFacet.escrowWithdrawERC20.selector,
                     msg.sender,
                     loan.prepayAsset,
-                    address(this),
+                    lenderEscrow,
                     lenderShare
                 ),
                 IVaipakamErrors.EscrowWithdrawFailed.selector
             );
-            IERC20(loan.prepayAsset).safeTransfer(lenderEscrow, lenderShare);
 
             // Record lender's claimable (rental fees in prepayAsset)
             s.lenderClaims[loanId] = LibVaipakam.ClaimInfo({
@@ -325,6 +340,9 @@ contract PrecloseFacet is
         uint256 loanId,
         uint256 borrowerOfferId
     ) external nonReentrant whenNotPaused {
+        // Tier-1 sanctions gate — transferring an obligation closes
+        // and re-opens loan state on behalf of msg.sender.
+        LibVaipakam._assertNotSanctioned(msg.sender);
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.Loan storage loan = s.loans[loanId];
         // Phase 6: borrower-entitled strategic flow (Preclose Option 2).
@@ -341,21 +359,33 @@ contract PrecloseFacet is
         LibVaipakam.Offer storage offer = s.offers[borrowerOfferId];
         if (offer.offerType != LibVaipakam.OfferType.Borrower || offer.accepted)
             revert InvalidOfferTerms();
-        // Same asset types as original loan (lending, collateral, and prepay)
-        if (offer.lendingAsset != loan.principalAsset)
+        // Range Orders Phase 1 — single source of truth for the per-
+        // asset invariants (lendingAsset / collateralAsset /
+        // collateralAssetType / prepayAsset). The amount / duration /
+        // collateral-amount checks below stay flow-specific because
+        // their semantics differ between Preclose (exact principal +
+        // strict collateral floor) and Refinance (allows overage).
+        if (!LibOfferMatch.assertAssetContinuity(loan, offer))
             revert InvalidOfferTerms();
-        if (offer.collateralAsset != loan.collateralAsset)
-            revert InvalidOfferTerms();
-        if (offer.collateralAssetType != loan.collateralAssetType)
-            revert InvalidOfferTerms();
-        if (offer.prepayAsset != loan.prepayAsset) revert InvalidOfferTerms();
 
         // Lender-favorability: replacement terms must not reduce Liam's protection
         uint256 remainingDays = _remainingDays(loan);
         if (offer.durationDays > remainingDays) revert InvalidOfferTerms();
         if (offer.collateralAmount < loan.collateralAmount)
             revert InsufficientCollateral();
-        if (offer.amount != loan.principal) revert InvalidOfferTerms();
+        // Range-aware amount check: legacy single-value offers satisfy
+        // `amount == amountMax`; range offers satisfy `amount <=
+        // loan.principal <= amountMax`. The borrower's range must
+        // accommodate the existing loan's exact principal — preclose
+        // is a transfer-of-obligation, not a fresh fill, so principal
+        // doesn't get re-derived as a midpoint. With auto-collapse
+        // (`amountMax == 0` → treated as `amount`) legacy offers fall
+        // through unchanged.
+        uint256 effAmountMax = offer.amountMax == 0
+            ? offer.amount
+            : offer.amountMax;
+        if (offer.amount > loan.principal || loan.principal > effAmountMax)
+            revert InvalidOfferTerms();
 
         address newBorrower = offer.creator;
         if (newBorrower == address(0) || newBorrower == msg.sender)
@@ -410,13 +440,19 @@ contract PrecloseFacet is
             LibFacet.recordTreasuryAccrual(payAsset, treasuryFee);
         }
         if (lenderShare > 0) {
-            IERC20(payAsset).safeTransferFrom(
-                msg.sender,
-                address(this),
-                lenderShare
+            // T-037 — direct borrower → lender's escrow via the
+            // cross-payer chokepoint. Counter ticks up under the
+            // lender even though the borrower is paying.
+            LibFacet.crossFacetCall(
+                abi.encodeWithSelector(
+                    EscrowFactoryFacet.escrowDepositERC20From.selector,
+                    msg.sender,        // payer
+                    loan.lender,       // user (escrow owner)
+                    payAsset,
+                    lenderShare
+                ),
+                EscrowDepositFailed.selector
             );
-            address lenderEscrow = LibFacet.getOrCreateEscrow(loan.lender);
-            IERC20(payAsset).safeTransfer(lenderEscrow, lenderShare);
             s.heldForLender[loanId] += lenderShare;
         }
 
@@ -463,7 +499,8 @@ contract PrecloseFacet is
         loan.borrower = newBorrower;
         loan.collateralAmount = offer.collateralAmount;
         loan.durationDays = offer.durationDays;
-        loan.startTime = block.timestamp;
+        // T-034 — startTime downsized to uint64; explicit cast.
+        loan.startTime = uint64(block.timestamp);
         loan.interestRateBps = offer.interestRateBps;
 
         // ── 5b. NFT rental: reset prepay accounting and reassign user rights ─
@@ -730,17 +767,24 @@ contract PrecloseFacet is
             LibFacet.recordTreasuryAccrual(payAssetOffset, treasuryFee);
         }
 
-        // Repay original principal + interest/shortfall to lender's escrow.
-        // Alice must return Liam's principal; the new offer deposit is
+        // T-037 — Repay original principal + interest/shortfall direct
+        // to old lender's escrow via the cross-payer chokepoint. Alice
+        // must return Liam's principal; the new offer deposit is
         // separate capital Alice puts up to become the new lender.
+        // Routing through `escrowDepositERC20From` keeps the Diamond
+        // out of the funds path AND ticks the
+        // protocolTrackedEscrowBalance counter under the old lender.
         uint256 lenderTotal = loan.principal + interestToLender;
-        IERC20(payAssetOffset).safeTransferFrom(
-            msg.sender,
-            address(this),
-            lenderTotal
+        LibFacet.crossFacetCall(
+            abi.encodeWithSelector(
+                EscrowFactoryFacet.escrowDepositERC20From.selector,
+                msg.sender,        // payer — Alice
+                loan.lender,       // user — old lender (Liam)
+                payAssetOffset,
+                lenderTotal
+            ),
+            EscrowDepositFailed.selector
         );
-        address lenderEscrow = LibFacet.getOrCreateEscrow(loan.lender);
-        IERC20(payAssetOffset).safeTransfer(lenderEscrow, lenderTotal);
         s.heldForLender[loanId] += lenderTotal;
     }
 
@@ -768,8 +812,26 @@ contract PrecloseFacet is
             creatorFallbackConsent,
             prepayAsset
         );
+        // Use `createOfferInternal` not `createOffer`: the outer
+        // `offsetWithNewOffer` already holds the diamond's
+        // `nonReentrant` lock, so a second `nonReentrant` entry via
+        // `createOffer` would revert `ReentrancyGuardReentrantCall`.
+        // The internal entry skips that modifier and is gated on
+        // `msg.sender == address(this)` so EOAs can't call it
+        // through the diamond fallback. Same pattern as
+        // `OfferFacet.acceptOfferInternal` for matchOffers.
+        //
+        // Pass `msg.sender` (Alice, the offset initiator) as
+        // `creator`. Without this the diamond's call() would set
+        // `msg.sender == diamond` inside createOfferInternal,
+        // corrupting `offer.creator` and the asset-pull allowance
+        // check.
         (bool success, bytes memory result) = address(this).call(
-            abi.encodeWithSelector(OfferFacet.createOffer.selector, params)
+            abi.encodeWithSelector(
+                OfferFacet.createOfferInternal.selector,
+                msg.sender,
+                params
+            )
         );
         if (!success) revert OfferCreationFailed();
         newOfferId = abi.decode(result, (uint256));
@@ -825,6 +887,31 @@ contract PrecloseFacet is
     function completeOffset(
         uint256 originalLoanId
     ) external nonReentrant whenNotPaused {
+        _completeOffsetImpl(originalLoanId);
+    }
+
+    /// @notice Cross-facet entry consumed exclusively by
+    ///         `OfferFacet._acceptOffer`'s auto-link block when a
+    ///         third party accepts an offset offer. Skips the outer
+    ///         `nonReentrant` modifier because the calling facet
+    ///         already holds the diamond's reentrancy guard — a second
+    ///         `_enter()` would revert and the entire Option-3 flow
+    ///         would be unusable. Same `address(this)`-only gate as
+    ///         `OfferFacet.acceptOfferInternal` /
+    ///         `createOfferInternal`.
+    function completeOffsetInternal(
+        uint256 originalLoanId
+    ) external whenNotPaused {
+        if (msg.sender != address(this)) {
+            revert UnauthorizedCrossFacetCall();
+        }
+        _completeOffsetImpl(originalLoanId);
+    }
+
+    /// @dev Shared body for `completeOffset` (external,
+    ///      `nonReentrant`) and `completeOffsetInternal` (cross-facet,
+    ///      no guard). Single source of truth for the offset close-out.
+    function _completeOffsetImpl(uint256 originalLoanId) private {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.Loan storage loan = s.loans[originalLoanId];
         if (loan.status != LibVaipakam.LoanStatus.Active)

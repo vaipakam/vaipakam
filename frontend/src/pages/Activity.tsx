@@ -10,6 +10,8 @@ import {
   RefreshCw,
 } from 'lucide-react';
 import { useLogIndex } from '../hooks/useLogIndex';
+import { useIndexedActivity } from '../hooks/useIndexedActivity';
+import { indexedToActivityEvent } from '../lib/indexerClient';
 import { useUserLoans } from '../hooks/useUserLoans';
 import { useWallet } from '../context/WalletContext';
 import { useReadChain } from '../contracts/useDiamond';
@@ -51,8 +53,8 @@ const KIND_LABELS: Record<ActivityEventKind, string> = {
   StakingRewardsClaimed: 'VPFI staking rewards claimed',
   InteractionRewardsClaimed: 'Platform-interaction rewards claimed',
   VPFIPurchasedWithETH: 'VPFI bought with ETH',
-  VPFIDepositedToEscrow: 'VPFI staked to escrow',
-  VPFIWithdrawnFromEscrow: 'VPFI unstaked from escrow',
+  VPFIDepositedToEscrow: 'VPFI staked to vault',
+  VPFIWithdrawnFromEscrow: 'VPFI unstaked from vault',
 };
 
 // Kind-kind → primary row accent colour class. Mirrors status accents from the
@@ -217,7 +219,17 @@ export default function Activity() {
   const { t } = useTranslation();
   const { address } = useWallet();
   const chain = useReadChain();
-  const { events, loading: indexLoading, reload } = useLogIndex();
+  // T-041 — prefer the worker-cached activity ledger; fall through to
+  // the per-browser log scan when the worker is unreachable. Both
+  // sources expose the same `ActivityEvent`-shaped feed via the
+  // `indexedToActivityEvent` adapter, so all downstream filtering
+  // (kind / participant / loanId) is shape-agnostic.
+  const { events: clientEvents, loading: indexLoading, reload } = useLogIndex();
+  const { events: indexedEvents, source: indexedSource } = useIndexedActivity();
+  const events =
+    indexedSource === 'indexer' && indexedEvents
+      ? (indexedEvents.map(indexedToActivityEvent) as typeof clientEvents)
+      : clientEvents;
   // `useUserLoans` drives the LoanDefaulted fallback — that event carries no
   // indexed user, so we match the event's loanId against the user's known
   // loans to decide whether to show it.

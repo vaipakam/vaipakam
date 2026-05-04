@@ -4,6 +4,7 @@ pragma solidity ^0.8.29;
 import {Test} from "forge-std/Test.sol";
 import {InvariantBase} from "./InvariantBase.sol";
 import {OfferFacet} from "../../src/facets/OfferFacet.sol";
+import {OfferCancelFacet} from "../../src/facets/OfferCancelFacet.sol";
 import {LibVaipakam} from "../../src/libraries/LibVaipakam.sol";
 import {LoanFacet} from "../../src/facets/LoanFacet.sol";
 import {Handler} from "./Handler.sol";
@@ -52,7 +53,7 @@ contract OfferAcceptanceIntegrityInvariant is Test {
     function invariant_EveryLoanHasAcceptedOffer() public view {
         uint256 n = handler.loanIdsLength();
         LoanFacet loans = LoanFacet(address(base.diamond()));
-        OfferFacet offers = OfferFacet(address(base.diamond()));
+        OfferCancelFacet offers = OfferCancelFacet(address(base.diamond()));
 
         for (uint256 i = 0; i < n; i++) {
             uint256 loanId = handler.loanIdAt(i);

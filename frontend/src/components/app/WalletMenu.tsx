@@ -161,10 +161,21 @@ export function WalletMenu() {
            *  top of the popover alongside the copy button. */}
           <AddressDisplay address={address} compact />
         </span>
-        {/* Chain badge sits on the trailing edge so the address text
-         *  is the first thing the eye lands on; the chevron stays
-         *  rightmost as the standard "this opens" affordance. */}
-        <ChainIcon chainId={chainId} size={18} />
+        {/* Chain badge — icon + chain name. Lives on the trailing edge
+         *  of the trigger so the address is read first; chevron stays
+         *  rightmost. The full chain name (not just the icon) is
+         *  surfaced here so the user always knows which network they're
+         *  about to transact on without having to open the popover or
+         *  decode the icon. Falls back to "Unsupported" when the wallet
+         *  is on an unrecognised chain (the warning recovery picker
+         *  appears alongside in that state).  */}
+        <span
+          className="wallet-menu-chain"
+          aria-label={`Network: ${currentLabel}`}
+        >
+          <ChainIcon chainId={chainId} size={16} />
+          <span className="wallet-menu-chain-label">{currentLabel}</span>
+        </span>
         <ChevronDown
           size={14}
           className="wallet-menu-chevron"

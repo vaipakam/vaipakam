@@ -12,6 +12,7 @@ import {IERC165} from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
 import {IERC721Metadata} from "@openzeppelin/contracts/token/ERC721/extensions/IERC721Metadata.sol";
 import {DiamondCutFacet} from "../src/facets/DiamondCutFacet.sol";
 import {AccessControlFacet} from "../src/facets/AccessControlFacet.sol";
+import {MetricsFacet} from "../src/facets/MetricsFacet.sol";
 import {HelperTest} from "./HelperTest.sol";
 import {IERC721Receiver} from "@openzeppelin/contracts/token/ERC721/IERC721Receiver.sol";
 
@@ -28,6 +29,7 @@ contract VaipakamNFTFacetTest is Test {
     DiamondCutFacet cutFacet;
     VaipakamNFTFacet nftFacet;
     AccessControlFacet accessControlFacet;
+    MetricsFacet metricsFacet;
     HelperTest helperTest;
 
     // Token IDs used across tests
@@ -66,9 +68,13 @@ contract VaipakamNFTFacetTest is Test {
         diamond = new VaipakamDiamond(owner, address(cutFacet));
         nftFacet = new VaipakamNFTFacet();
         accessControlFacet = new AccessControlFacet();
+        // tokenURI cross-facet-calls MetricsFacet.getNFTPositionSummary
+        // for the live position read (Range Orders Phase 1 follow-up).
+        // Cut MetricsFacet so tokenURI tests can resolve that selector.
+        metricsFacet = new MetricsFacet();
         helperTest = new HelperTest();
 
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](2);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](3);
         cuts[0] = IDiamondCut.FacetCut({
             facetAddress: address(nftFacet),
             action: IDiamondCut.FacetCutAction.Add,
@@ -78,6 +84,11 @@ contract VaipakamNFTFacetTest is Test {
             facetAddress: address(accessControlFacet),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getAccessControlFacetSelectors()
+        });
+        cuts[2] = IDiamondCut.FacetCut({
+            facetAddress: address(metricsFacet),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getMetricsFacetSelectors()
         });
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");
         AccessControlFacet(address(diamond)).initializeAccessControl();

@@ -16,18 +16,18 @@ junto al título de una tarjeta.
 
 ## Dashboard
 
-<a id="dashboard.your-escrow"></a>
+<a id="dashboard.your-vault"></a>
 
-### Tu Escrow
+### Tu Vault
 
-Piensa en tu **escrow** como tu bóveda privada dentro de Vaipakam. Es
+Piensa en tu **vault** como tu bóveda privada dentro de Vaipakam. Es
 un pequeño contrato que sólo tú controlas. Siempre que participes en
 un préstamo —ya sea aportando colateral o prestando un activo— los
 activos pasan de tu billetera a esta bóveda. Nunca se mezclan con el
 dinero de nadie más. Cuando el préstamo termina, los reclamas de
 vuelta directamente.
 
-No tienes que "crear" un escrow tú mismo; la app lo crea la primera
+No tienes que "crear" un vault tú mismo; la app lo crea la primera
 vez que lo necesites. Una vez que existe, queda como tu hogar
 dedicado en esta cadena.
 
@@ -50,13 +50,13 @@ en otro), ambos aparecen —mismo lugar, filas distintas.
 
 ### VPFI en esta cadena
 
-**VPFI** es el token propio del protocolo. Tener algo en tu escrow te
+**VPFI** es el token propio del protocolo. Tener algo en tu vault te
 da un descuento sobre las comisiones del protocolo y te genera un
 pequeño rendimiento pasivo (5% APR). Esta tarjeta te dice, en la
 cadena a la que estás conectado:
 
 - Cuánto VPFI tienes en tu billetera ahora mismo.
-- Cuánto está en tu escrow (lo que cuenta como "stakeado").
+- Cuánto está en tu vault (lo que cuenta como "stakeado").
 - Qué proporción del suministro total de VPFI tienes.
 - Cuánto VPFI queda por mintear en total (el protocolo tiene un
   tope rígido).
@@ -72,19 +72,28 @@ saldo que ves es real en cualquier cadena en la que estés.
 ### Consentimiento de descuento en comisiones
 
 Vaipakam puede pagarte un descuento sobre las comisiones del
-protocolo usando parte del VPFI que tienes guardado en escrow. Este
+protocolo usando parte del VPFI que tienes guardado en vault. Este
 interruptor es el "sí, hazlo". Sólo lo activas una vez.
 
 Cuán grande es el descuento depende de cuánto VPFI mantienes en
-escrow:
+vault:
 
-- **Tier 1** — 100 VPFI o más → 10% de descuento
-- **Tier 2** — 1,000 VPFI o más → 15% de descuento
-- **Tier 3** — 5,000 VPFI o más → 20% de descuento
-- **Tier 4** — más de 20,000 VPFI → 24% de descuento
+- **Tier 1** — `{liveValue:tier1Min}` VPFI o más → `{liveValue:tier1DiscountBps}`% de descuento
+- **Tier 2** — `{liveValue:tier2Min}` VPFI o más → `{liveValue:tier2DiscountBps}`% de descuento
+- **Tier 3** — `{liveValue:tier3Min}` VPFI o más → `{liveValue:tier3DiscountBps}`% de descuento
+- **Tier 4** — más de `{liveValue:tier4Min}` VPFI → `{liveValue:tier4DiscountBps}`% de descuento
 
 Puedes apagar el interruptor en cualquier momento. Si retiras VPFI
-del escrow, tu tier baja en tiempo real.
+del vault, tu tier baja en tiempo real.
+
+> **Nota sobre el gas de la red blockchain.** El descuento anterior
+> se aplica a las **comisiones del protocolo** de Vaipakam (Comisión
+> sobre Rendimiento, Comisión de Iniciación del Préstamo). La pequeña
+> **comisión de gas** que requiere cada acción on-chain — pagada a
+> los validadores de la blockchain al crear una oferta, aceptar,
+> repagar, reclamar, etc. — es un cargo separado que va a la red, no
+> a Vaipakam. El protocolo no puede descontarla porque nunca la
+> recibe.
 
 <a id="dashboard.rewards-summary"></a>
 
@@ -99,7 +108,7 @@ Hay dos flujos de recompensas y la tarjeta desglosa el total
 por cada uno:
 
 - **Rendimiento de staking** — ganado automáticamente sobre
-  cualquier VPFI que mantengas en tu escrow. La tasa es el APR
+  cualquier VPFI que mantengas en tu vault. La tasa es el APR
   del protocolo mostrado en la página Buy VPFI.
 - **Recompensas de interacción con la plataforma** — ganado un
   poco cada día por cada préstamo en el que participes, en
@@ -150,7 +159,7 @@ cambio de esta cantidad de colateral".
 
 Un prestatario que acepta una de estas se convierte en el
 prestatario-de-registro del préstamo: el colateral del prestatario
-queda bloqueado en escrow, el activo principal llega a la billetera
+queda bloqueado en vault, el activo principal llega a la billetera
 del prestatario, y los intereses se acumulan hasta que el prestatario
 repaga.
 
@@ -229,7 +238,7 @@ ventana de gracia antes de que el préstamo pueda entrar en default.
 Para una oferta de alquiler, esta tarjeta fija la tarifa diaria de
 alquiler. El arrendatario paga el coste total del alquiler por
 adelantado al aceptar, más un pequeño buffer del 5% por si la
-operación se alarga un poco. El NFT mismo permanece en escrow durante
+operación se alarga un poco. El NFT mismo permanece en vault durante
 todo el tiempo —el arrendatario tiene derecho a usarlo pero no puede
 moverlo.
 
@@ -402,13 +411,13 @@ Sin necesidad de cambiar de red.
 ### Tu estado de descuento VPFI
 
 Lectura rápida del tier de descuento en el que estás actualmente. El
-tier viene de cuánto VPFI hay en tu **escrow** (no en tu billetera).
+tier viene de cuánto VPFI hay en tu **vault** (no en tu billetera).
 La tarjeta también te dice (a) cuánto VPFI más necesitarías en
-escrow para subir al siguiente tier, y (b) si el interruptor de
+vault para subir al siguiente tier, y (b) si el interruptor de
 consentimiento del Dashboard está activado —el descuento sólo aplica
 mientras lo esté.
 
-El mismo VPFI en tu escrow también está "stakeado" automáticamente y
+El mismo VPFI en tu vault también está "stakeado" automáticamente y
 te genera un 5% APR.
 
 <a id="buy-vpfi.buy"></a>
@@ -422,20 +431,20 @@ formulario para saber cuánto te queda.
 
 <a id="buy-vpfi.deposit"></a>
 
-### Paso 2 — Deposita VPFI en tu escrow
+### Paso 2 — Deposita VPFI en tu vault
 
-Comprar VPFI lo coloca en tu billetera, no en tu escrow. Para
+Comprar VPFI lo coloca en tu billetera, no en tu vault. Para
 obtener el descuento de comisiones y el rendimiento por staking del
-5%, tienes que moverlo al escrow tú mismo. Esto siempre es un clic
+5%, tienes que moverlo al vault tú mismo. Esto siempre es un clic
 explícito —la app nunca mueve tu VPFI sin que se lo pidas. Una
 transacción (o una sola firma, en cadenas que lo soporten) y listo.
 
 <a id="buy-vpfi.unstake"></a>
 
-### Paso 3 — Saca VPFI del staking en tu escrow
+### Paso 3 — Saca VPFI del staking en tu vault
 
 ¿Quieres recuperar algo de VPFI en tu billetera? Esta tarjeta lo
-envía desde el escrow de vuelta a ti. Ten en cuenta: sacar VPFI baja
+envía desde el vault de vuelta a ti. Ten en cuenta: sacar VPFI baja
 tu tier de descuento **inmediatamente**. Si tienes préstamos
 abiertos, la matemática del descuento pasa al tier inferior desde
 ese momento en adelante.
@@ -450,7 +459,7 @@ ese momento en adelante.
 
 Vaipakam te paga por dos cosas:
 
-1. **Staking** — el VPFI que mantienes en escrow gana 5% APR,
+1. **Staking** — el VPFI que mantienes en vault gana 5% APR,
    automáticamente.
 2. **Interacción** — cada dólar de intereses que un préstamo del que
    formas parte llegue a liquidar te otorga una porción diaria de un
@@ -474,7 +483,7 @@ poco después de que cierre la próxima ventana diaria.
 
 ### Retirar VPFI stakeado
 
-Mueve VPFI de tu escrow de vuelta a tu billetera. Una vez en la
+Mueve VPFI de tu vault de vuelta a tu billetera. Una vez en la
 billetera deja de ganar el 5% APR y deja de contar para tu tier de
 descuento. Lo mismo que el paso "unstake" en la página Comprar VPFI
 —misma acción, sólo que también vive aquí por comodidad.
@@ -549,7 +558,7 @@ reclamación residual a tu favor.
 ### Partes
 
 Las dos direcciones de billetera en este préstamo —prestamista y
-prestatario— y los vaults de escrow que guardan sus activos. Cada
+prestatario— y los vaults de vault que guardan sus activos. Cada
 lado también obtuvo un "NFT de posición" cuando se abrió el
 préstamo. Ese NFT _es_ el derecho a la parte del resultado de ese
 lado —cuídalo. Si quien lo tiene lo transfiere a otra persona, el
@@ -592,7 +601,7 @@ explicando por qué.
   usa lo recibido para repagar, y recupera lo que quede.
 - **Refinanciar** — pasa a un préstamo nuevo con términos nuevos; el
   protocolo paga el préstamo viejo desde el principal nuevo en una
-  sola transacción. El colateral nunca sale del escrow.
+  sola transacción. El colateral nunca sale del vault.
 - **Reclamar** — una vez que el préstamo se liquida, devuelve tu
   colateral en caso de repago total, o cualquier reembolso de VPFI
   no usado de la loan-initiation fee en caso de default.

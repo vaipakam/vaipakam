@@ -27,6 +27,7 @@ import {
   CheckCircle,
   Clock,
   Coins,
+  Wallet,
 } from "lucide-react";
 import { parseUnits, encodeFunctionData, type Address, type Hex } from "viem";
 import { SimulationPreview } from "../components/app/SimulationPreview";
@@ -42,7 +43,9 @@ import { LenderDiscountCard } from "../components/app/LenderDiscountCard";
 import { LiquidateButton } from "../components/app/LiquidateButton";
 import { ClaimActionBar } from "../components/app/ClaimActionBar";
 import { LoanTimeline } from "../components/app/LoanTimeline";
+import { SanctionsBanner } from "../components/app/SanctionsBanner";
 import { CardInfo } from "../components/CardInfo";
+import { PeriodicInterestCheckpointCard } from "../components/loanDetails/PeriodicInterestCheckpointCard";
 import "./LoanDetails.css";
 
 export default function LoanDetails() {
@@ -356,6 +359,25 @@ export default function LoanDetails() {
     }
   };
 
+  // Phase 4 polish — every page inside `<AppLayout>` requires a
+  // connected wallet. LoanDetails used to render the full panel
+  // read-only pre-connect (since loan state is public on-chain), but
+  // the post-batch UX direction is "all in-app pages are wallet-gated;
+  // public Analytics is the read-only surface". This avoids two sources
+  // of truth for chain selection (read chain vs wallet chain) and
+  // matches the rest of the in-app empty-state pattern.
+  if (!address) {
+    return (
+      <div className="empty-state" style={{ minHeight: "60vh" }}>
+        <div className="empty-state-icon">
+          <Wallet size={28} />
+        </div>
+        <h3>{t('loanDetails.connectTitle')}</h3>
+        <p>{t('loanDetails.connectBody')}</p>
+      </div>
+    );
+  }
+
   if (loading) {
     return (
       <div className="empty-state" style={{ minHeight: "60vh" }}>
@@ -390,6 +412,13 @@ export default function LoanDetails() {
       <Link to="/app" className="back-link">
         <ArrowLeft size={16} /> {t('loanDetails.backToDashboard')}
       </Link>
+
+      {address && (
+        <SanctionsBanner
+          address={address as `0x${string}`}
+          label={t('banners.sanctionsLabelWallet')}
+        />
+      )}
 
       <div className="loan-header">
         <div>
@@ -461,11 +490,11 @@ export default function LoanDetails() {
                 save up to 24%
               </div>
               <p className="stat-label" style={{ margin: "0 0 8px" }}>
-                Stake VPFI into your escrow on this chain and flip the
+                Stake VPFI into your Vaipakam Vault on this chain and flip the
                 platform-level VPFI consent once on your Dashboard. Future
                 liquid loans will auto-settle the tier-discounted fee in VPFI.
                 Need VPFI?{" "}
-                <a href="/buy-vpfi" target="_blank" rel="noopener noreferrer">
+                <a href="/app/buy-vpfi" target="_blank" rel="noopener noreferrer">
                   Buy VPFI
                 </a>{" "}
                 (buy from your preferred chain — routing is handled for you).
@@ -496,6 +525,26 @@ export default function LoanDetails() {
           </span>
         </div>
       )}
+
+      {/* T-034 PR2 — Periodic Interest Payment checkpoint card. Hidden
+          when the loan's cadence is None (today's terminal-only flow);
+          visible above the main loan grid otherwise so the upcoming
+          period and its expected interest are the FIRST thing the user
+          sees on the loan detail page. The "Pay now" button (visible
+          to the borrower when shortfall > 0) scrolls to the existing
+          partial-repay surface lower on the page — `repayPartial`
+          settles the accrued interest as part of any principal-
+          reduction call, so a single small partial repay closes the
+          period when timed past the boundary. */}
+      <PeriodicInterestCheckpointCard
+        loanId={BigInt(loanId!)}
+        principalAsset={loan.principalAsset}
+        isBorrower={role === 'borrower'}
+        onPayNowClick={() => {
+          const el = document.getElementById('loan-actions-card');
+          if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }}
+      />
 
       {/* Loan details grid */}
       <div className="loan-grid">
@@ -706,7 +755,7 @@ export default function LoanDetails() {
               className="data-value"
               style={{ color: "var(--brand)", fontSize: "0.82rem" }}
             >
-              <AddressDisplay address={loan.lender} withTooltip /> <ExternalLink size={12} />
+              <AddressDisplay address={loan.lender} withTooltip copyable /> <ExternalLink size={12} />
             </a>
           </div>
           <div className="data-row">
@@ -718,7 +767,7 @@ export default function LoanDetails() {
               className="data-value"
               style={{ color: "var(--brand)", fontSize: "0.82rem" }}
             >
-              <AddressDisplay address={loan.borrower} withTooltip /> <ExternalLink size={12} />
+              <AddressDisplay address={loan.borrower} withTooltip copyable /> <ExternalLink size={12} />
             </a>
           </div>
           <div className="data-row">
@@ -758,7 +807,7 @@ export default function LoanDetails() {
 
       {/* Actions */}
       {availability.repay && (
-        <div className="card loan-actions-card">
+        <div id="loan-actions-card" className="card loan-actions-card">
           <div className="card-title" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
             {t('loanDetails.actions')}
             <CardInfo id="loan-details.actions" role={role} />
@@ -1089,7 +1138,7 @@ function LoanKeeperPicker({ loanId, actionLoading, onToggle }: LoanKeeperPickerP
                   }}
                 />
                 <span style={{ fontSize: "0.78rem", fontFamily: 'var(--font-mono, monospace)' }}>
-                  <AddressDisplay address={k} withTooltip />
+                  <AddressDisplay address={k} withTooltip copyable />
                 </span>
               </label>
             );

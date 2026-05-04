@@ -6,6 +6,34 @@ Audience: release engineer + signing multisig.
 
 ---
 
+## TL;DR — pick the right script
+
+| Target | Script | Notes |
+|---|---|---|
+| Local dev (anvil) | `bash contracts/script/anvil-bootstrap.sh` | Full local playground — diamond + mocks + Multicall3 etch + Range Orders flags ON + seed offers + ABI/JSON sync (one command). |
+| Testnet one-shot | `bash contracts/script/deploy-chain.sh <chain-slug>` | Auto-chains build → diamond → timelock → VPFI lane (canonical / mirror branched on slug) → reward OApp → ABI/JSON sync → frontend wrangler deploy → watcher wrangler deploy. Refuses any mainnet slug. |
+| Mainnet | `bash contracts/script/deploy-mainnet.sh <chain-slug> --phase <phase>` | Tiered. Each phase (`preflight`, `contracts`, `lz-config`, `abi-sync`, `cf-frontend`, `cf-watcher`, `verify`) is a deliberate operator action. Confirm flags gate the irreversible phases (`--confirm-i-have-multisig-ready`, `--confirm-dvn-policy-reviewed`). Refuses testnet slugs. |
+
+**What the scripts deliberately do NOT do** (every chain — these stay
+manual for safety):
+
+- **Role rotation** to governance multisig + timelock — multi-party
+  ceremony, see §6 below.
+- **LayerZero peer wiring** across chains — needs both legs deployed
+  first; run `WireVPFIPeers.s.sol` on each (canonical, mirror) pair.
+- **Wrangler secrets** — operator-specific (TG_BOT_TOKEN, RPC API
+  keys, push-channel PK, aggregator keys, keeper PK). `wrangler secret
+  put <KEY>` per the watcher's docs; never in any repo.
+- **Mainnet phases auto-chained** — each `--phase` invocation lands
+  one stage so the operator eyeballs the diff before the next.
+
+The sections below remain the canonical step-by-step. The new scripts
+just bundle the routine forge-script + export-script + wrangler steps
+into reproducible flows; the ceremonies (§6 role rotation, LZ peer
+wiring) stay one-by-one.
+
+---
+
 ## Adding support for a new chain
 
 Before you can run a single deploy step on a chain, the codebase must
@@ -95,11 +123,116 @@ The schema each script populates (no manual editing needed since the
 | `interactionLaunchTimestamp`, `interactionCapVpfiPerEth` | `SetInteractionLaunch` |
 | `weth`, `mockChainlinkAggregator`, `mockUniswapV3Factory`, `mockERC20A/B`, `mockUSDC/WBTC/WETHFeed` | `DeployTestnetLiquidityMocks` |
 
-Frontend `.env.local` and `frontend/.env.example` consume these by
-mirroring the matching keys (e.g. `diamond` → `VITE_<CHAIN>_DIAMOND_ADDRESS`,
-`deployBlock` → `VITE_<CHAIN>_DEPLOY_BLOCK`,
-`facets.metricsFacet` → `VITE_<CHAIN>_METRICS_FACET_ADDRESS`,
-`vpfiBuyAdapter` → `VITE_<CHAIN>_VPFI_BUY_ADAPTER`).
+Both the frontend and the hf-watcher Worker consume these via a
+single consolidated `deployments.json` keyed by `chainId`:
+
+- `frontend/src/contracts/deployments.json` — read by
+  [`frontend/src/contracts/deployments.ts`](../../frontend/src/contracts/deployments.ts)
+  (`getDeployment(chainId)`) and folded into the
+  `CHAIN_REGISTRY` by `frontend/src/contracts/config.ts`.
+- `ops/hf-watcher/src/deployments.json` — read by
+  [`ops/hf-watcher/src/deployments.ts`](../../ops/hf-watcher/src/deployments.ts)
+  and consumed by `getChainConfigs(env)` in `env.ts`.
+
+Both files are byte-identical merges of every per-chain
+`addresses.json`. Don't hand-edit either; both are emitted by:
+
+```bash
+bash contracts/script/exportFrontendDeployments.sh
+```
+
+The script auto-detects both consumers via the sibling layout
+(`vaipakam/frontend` and `vaipakam/ops/hf-watcher`), merges every
+`deployments/<chain>/addresses.json`, and writes the merged JSON
++ a `_deployments_source.json` provenance stamp into each
+target's `src/contracts/` (frontend) / `src/` (watcher). Pass
+`WATCHER_DIR=` (empty) to skip the watcher target. Idempotent:
+re-running with no upstream changes leaves both outputs
+byte-identical.
+
+Run it after every contract redeploy *before*:
+- `cd frontend && npm run deploy` (so new addresses inline into
+  the JS bundle), AND
+- `cd ops/hf-watcher && wrangler deploy` (so the watcher reads
+  the new addresses on its next cron tick).
+
+**T-041 — chain-indexer D1 migrations.** Whenever a new migration
+file lands under `ops/hf-watcher/migrations/` (e.g. `0006_*.sql`),
+apply it to the live D1 database before redeploying the Worker:
+
+```bash
+cd ops/hf-watcher
+npm run db:migrate     # idempotent — wrangler tracks the high-water mark
+npm run deploy
+```
+
+The migration step is independent of contract redeploys; you only
+need it when the watcher's schema changes. Skipping it leaves the
+Worker referencing columns that don't exist and cron ticks fail
+with cryptic "no such column" errors in the logs. See
+[`ops/hf-watcher/README.md`](../../ops/hf-watcher/README.md)
+"Redeploy / migration upgrade path" for the full sequence and
+T-041-specific notes on the bootstrap-time backfill behavior.
+
+**T-046 — chain redeploy / mainnet cutover purge.** When you
+redeploy the diamond on a chain (testnet iteration) or graduate
+from testnet to mainnet, the Worker's cached offer / loan /
+activity rows reference the OLD diamond's offer IDs / loan IDs.
+Cache and chain disagree until you clear the cache.
+
+Per-chain redeploy (testnet diamond bumped on chain X):
+
+```bash
+cd ops/hf-watcher
+npm run db:purge-chain -- <chainId>     # interactive y/N preview
+# … then redeploy contracts on that chain, then:
+npm run deploy
+```
+
+Pre-mainnet full nuke (after extensive testnet iteration —
+optional but recommended for a clean slate):
+
+```bash
+cd ops/hf-watcher
+npm run db:purge-all                    # double-confirmation prompt
+# … then deploy mainnet contracts, run db:migrate if needed,
+#     finally redeploy the Worker:
+npm run deploy
+```
+
+Both scripts preserve `user_locales` (wallet-scoped language
+preference, not chain-scoped). They DELETE rows; they do NOT
+DROP TABLE — schema survives intact, no need to re-run
+migrations after a purge. See
+[`ops/hf-watcher/README.md`](../../ops/hf-watcher/README.md)
+"Purge / reset" for the full table list and `FORCE=1` / `LOCAL=1`
+env-knob behaviour.
+
+**When NOT to purge:** routine Worker code-only redeploys (no
+diamond / contract changes) should NOT trigger a purge — the
+cache is still correct against the existing on-chain state.
+Purge only when the on-chain state model itself has changed.
+
+What stays operator-side after this consolidation:
+
+- Frontend `.env.local`: per-chain RPC URLs (with API key),
+  WalletConnect project ID, default chain ID, log-chunk tuning,
+  feature flags, push channel address.
+- Watcher `wrangler.jsonc:vars`: `FRONTEND_ORIGIN`,
+  `TG_BOT_USERNAME`, `DIAG_*` knobs.
+- Watcher Cloudflare secrets (`wrangler secret put …`):
+  `RPC_*` URLs (carry API keys), `TG_BOT_TOKEN`,
+  `PUSH_CHANNEL_PK`, aggregator API keys, keeper private key.
+
+Caveat for CI: `frontend/.env.local` is gitignored. The
+addresses themselves are NOT in `.env.local` anymore, so a CI
+build that doesn't have the operator's local file will still get
+correct Diamond / facet addresses from the committed
+`frontend/src/contracts/deployments.json`. The CI environment
+only needs the operator-side values listed above (RPC URLs,
+WalletConnect ID, etc.) — set those in the Cloudflare Workers
+Builds → Build environment variables panel one-time, then every
+push picks them up.
 
 ---
 
@@ -145,7 +278,7 @@ If any check fails → **do not broadcast**.
    forge script script/DeployDiamond.s.sol:DeployDiamond \
      --rpc-url $RPC_URL --broadcast --verify
    ```
-4. Record the logged addresses in `deployments/<chain>/addresses.json` and populate `<CHAIN>_DIAMOND_ADDRESS` in `contracts/.env` plus `VITE_<CHAIN>_DIAMOND_ADDRESS` / `VITE_<CHAIN>_DEPLOY_BLOCK` in `frontend/.env.local`.
+4. Record the logged addresses in `deployments/<chain>/addresses.json` and populate `<CHAIN>_DIAMOND_ADDRESS` in `contracts/.env`. The frontend + watcher consumer side is one command — `bash contracts/script/exportFrontendDeployments.sh` merges every chain artifact into `frontend/src/contracts/deployments.json` AND `ops/hf-watcher/src/deployments.json`, plus provenance stamps for both. The frontend's `getDeployment(chainId)` and the watcher's `getChainConfigs(env)` both read from the merged JSON. Idempotent.
 
 **Post-step verification:**
 - `diamondLoupe.facetAddresses()` returns 30 non-zero facets (DiamondCutFacet + 29 cut in).
@@ -172,12 +305,27 @@ On `OracleAdminFacet`:
 7. `setSequencerUptimeFeed(<feed>)` — L2s only (Base / Arbitrum / Optimism / Polygon)
 8. `setUniswapV3Factory(<v3 factory>)`
 
+T-033 Pyth-as-numeraire-redundancy gate (optional but recommended for Phase 1; zero-config-friendly — gate soft-skips when unset, identical to pre-T-033 behavior). When enabling:
+
+9. `setPythOracle(<Pyth contract address on this chain>)` — published per-chain by Pyth at https://docs.pyth.network/price-feeds/contract-addresses/evm
+10. `setPythNumeraireFeedId(<bytes32 feed id>)` — ETH/USD on ETH-native chains; bridged-WETH/USD on BNB / Polygon mainnet. Pyth's price-feed catalog: https://www.pyth.network/developers/price-feed-ids
+11. `setPythMaxStalenessSeconds(<seconds>)` — optional; defaults to 300s (5min). Range [60, 3600].
+12. `setPythNumeraireMaxDeviationBps(<bps>)` — optional; defaults to 500 (5%). Range [100, 2000] = 1%-20%.
+13. `setPythConfidenceMaxBps(<bps>)` — optional; defaults to 100 (1%). Range [50, 500] = 0.5%-5%.
+
 On `AdminFacet`:
 
-9. `setZeroExProxy(<0x ExchangeProxy>)`
-10. `setallowanceTarget(<0x allowance-target>)`
+14. `setZeroExProxy(<0x ExchangeProxy>)`
+15. `setallowanceTarget(<0x allowance-target>)`
 
-**Do not skip 9/10** on any chain where liquidation is enabled — a missing 0x proxy makes HF-based liquidations fail.
+**Do not skip 14/15** on any chain where liquidation is enabled — a missing 0x proxy makes HF-based liquidations fail.
+
+> **Tunable knobs reference.** Every governance-tunable knob in
+> the protocol — including the bounded ranges that even a
+> compromised governance multisig cannot push beyond — is
+> documented in functional/no-code form at
+> [`docs/ops/AdminConfigurableKnobsAndSwitches.md`](AdminConfigurableKnobsAndSwitches.md).
+> Auditors should review that doc alongside the runbook.
 
 ---
 
@@ -250,6 +398,62 @@ Then, once per chain:
 
 ## 5. Smoke tests (required before announcing)
 
+### 5a. Local Anvil regression sweep (run BEFORE every deploy)
+
+The Anvil sweep exercises every recent feature against a freshly-bootstrapped
+diamond on a local Anvil instance. It catches `viaIR` codegen drift, missing
+selectors in `DeployDiamond.s.sol`, cross-facet reentrancy bugs, and gate
+regressions before any testnet RPC is touched. All three scripts run end-to-end
+against the same anvil + bootstrap output and are independently re-runnable.
+
+```bash
+# Boot fresh anvil + run the bootstrap diamond deploy:
+pkill -f '^anvil'; anvil --chain-id 31337 --host 0.0.0.0 --port 8545 &
+sleep 3
+ionice -c 2 -n 0 bash contracts/script/anvil-bootstrap.sh
+
+# Common env vars (anvil default keys):
+export PRIVATE_KEY=0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
+export ADMIN_PRIVATE_KEY=0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d
+export ADMIN_ADDRESS=0x70997970C51812dc3A010C7d01b50e0d17dc79C8
+export LENDER_PRIVATE_KEY=0x7c852118294e51e653712a81e05800f419141751be58f605c371e15141b007a6
+export LENDER_ADDRESS=0x90F79bf6EB2c4f870365E785982E1f101E93b906
+export BORROWER_PRIVATE_KEY=0x47e179ec197488593b187f80a00eb0da91f1b9d0b13f8733639f19c30a34926a
+export BORROWER_ADDRESS=0x15d34AAf54267DB7D7c367839AAf71A00a2C6A65
+export NEW_LENDER_PRIVATE_KEY=0x8b3a350cf5c34c9194ca85829a2df0ec3153be0318b5e2d3348e872092edffba
+export NEW_LENDER_ADDRESS=0x9965507D1a55bcC2695C58ba16FB37d819B0A4dc
+export NEW_BORROWER_PRIVATE_KEY=0x92db14e403b83dfe3df233f83dfa3a0d7096f21ca9b0d6d6b8d88b2b4ec1564e
+export NEW_BORROWER_ADDRESS=0x976EA74026E726554dB657fA54763abd0C3a0aa9
+
+cd contracts
+
+# Positive — 18 scenarios end-to-end (matchOffers, range orders, partial
+# repay, refinance, preclose option-2/3, recovery, sanctions Tier-1/2,
+# keeper auth, VPFI staking + discount + claim, unstake, pause asset/global,
+# treasury surface, master-flag dormancy, sellLoanViaBuyOffer):
+ionice -c 2 -n 0 forge script script/AnvilNewPositiveFlows.s.sol \
+  --rpc-url http://localhost:8545 --broadcast --slow
+
+# Partial — 7 UI-testable midpoint states (offer states, partial repay,
+# collateral doubled, keeper enabled, refinance offer posted, stray token,
+# dual claimable):
+ionice -c 2 -n 0 forge script script/AnvilNewPartialFlows.s.sol \
+  --rpc-url http://localhost:8545 --broadcast --slow
+
+# Negative — 9 gate verifications (range bounds, fallback consent, self-
+# collateralized offer, zero duration, collateral floor, claim before
+# terminal, partial repay opt-out):
+ionice -c 2 -n 0 forge script script/AnvilNegativeFlows.s.sol \
+  --rpc-url http://localhost:8545 --broadcast --slow
+```
+
+Each script must exit `EXIT=0` and log its `*** PASSED ***` banner. Skipped
+scenarios with their unit-test pointers are listed at the bottom of each
+script's banner — those revert paths live in `forge test` because Anvil
+`--broadcast` cannot advance chain time mid-script.
+
+### 5b. Testnet smoke tests (after the Anvil sweep is green)
+
 Run the `Sepolia*` family on the target testnet first, then execute on mainnet forks:
 
 ```bash
@@ -321,6 +525,98 @@ failures in production. Per-chain runbooks
 inherit this step from here — don't duplicate the long form
 there, just point back.
 
+**Local anvil playground** — `contracts/script/anvil-bootstrap.sh`
+ships with this same sync wired in as its final step (6/6) so a
+`bash anvil-bootstrap.sh` lands a fresh diamond, etches Multicall3,
+flips Range Orders flags on, seeds offers, AND regenerates
+`frontend/src/contracts/abis/`, `frontend/src/contracts/deployments.json`,
+`ops/hf-watcher/src/deployments.json`, and (when the sibling repo is
+present) `vaipakam-keeper-bot/src/abis/` — all in one command. The
+keeper-bot export is gated on `../../vaipakam-keeper-bot` existing
+so a contributor without that checkout still gets a clean run. For
+the production deploy path the sync stays manual on purpose so the
+operator can review each diff before committing.
+
+---
+
+## VPFIBuyAdapter — payment-token mode (per-chain MANDATORY config)
+
+The mirror-chain VPFIBuyAdapter pulls the buyer's funds locally and
+forwards a BUY_REQUEST via LayerZero to the canonical Base receiver,
+which mints + sends VPFI. The receiver quotes a single global
+**wei-per-VPFI rate denominated in ETH-equivalent value**. That makes
+the adapter's `paymentToken` a per-chain economic gate, not a free
+choice:
+
+| Chain (mainnet)        | chainId | Mode                | Required env var                  | Canonical bridged WETH9                       |
+|------------------------|--------:|---------------------|-----------------------------------|-----------------------------------------------|
+| Ethereum               |       1 | Native-gas (ETH)    | (leave unset)                     | n/a                                           |
+| Base                   |    8453 | Canonical receiver  | n/a — buys hit Diamond directly   | n/a                                           |
+| Arbitrum One           |   42161 | Native-gas (ETH)    | (leave unset)                     | n/a                                           |
+| Optimism               |      10 | Native-gas (ETH)    | (leave unset)                     | n/a                                           |
+| Polygon zkEVM          |    1101 | Native-gas (ETH)    | (leave unset)                     | n/a                                           |
+| **BNB Smart Chain**    |    **56** | **WETH-pull (REQUIRED)** | `BNB_VPFI_BUY_PAYMENT_TOKEN` | `0x2170Ed0880ac9A755fd29B2688956BD959F933F8` |
+| **Polygon PoS**        |   **137** | **WETH-pull (REQUIRED)** | `POLYGON_VPFI_BUY_PAYMENT_TOKEN` | `0x7ceB23fD6bC0adD59E62ac25578270cFf1b9f619` |
+
+**Why mainnet BNB / Polygon need WETH-pull mode:** native-gas mode
+on these chains would mean the user pays 1 BNB / 1 POL where the
+receiver expects 1 ETH worth of value. Every buy mis-prices vs. the
+global rate. The bridged WETH9 ERC20 fixes this — buyer holds and
+approves WETH; the adapter pulls the ETH-denominated `amountIn`
+unchanged.
+
+**Two-layer enforcement (don't disable, don't paper over):**
+
+1. **Deploy-script pre-flight (`DeployVPFIBuyAdapter.s.sol`)** —
+   `_chainRequiresWethPaymentToken(chainId)` is `true` for chainIds
+   56 and 137. The script reverts before broadcasting if the
+   resolved `paymentToken` is zero on those chains, with an error
+   message naming the env var the operator should set.
+2. **Contract-side validation (`VPFIBuyAdapter.initialize`,
+   `setPaymentToken`)** — when `paymentToken != address(0)`, the
+   adapter requires `code.length > 0` (real contract, not EOA) AND
+   `IERC20Metadata(token).decimals() == 18` (canonical WETH9
+   invariant; catches the most common honest-mistake misconfig of
+   pasting USDC's 6-dec address). New errors:
+   `PaymentTokenNotContract`, `PaymentTokenDecimalsNot18`,
+   `PaymentTokenDecimalsCallFailed`.
+
+**What's NOT enforced on-chain — the operational check.** There's
+no on-chain registry that says "this is *the canonical* bridged
+WETH9 on chain X." A determined operator (or an attacker at deploy
+time) could deploy a fake contract returning the right decimals.
+Defence is operational: the deploy script logs the configured
+token's `name()` / `symbol()` for human-eyeball confirmation
+against the addresses in the table above. Always cross-check
+against the chain's published bridge contracts list (BscScan +
+LayerZero registry for BNB; PolygonScan + Polygon bridge contracts
+for Polygon) before pasting.
+
+**Pre-flight checklist before broadcasting `DeployVPFIBuyAdapter`
+on BNB / Polygon mainnet:**
+
+- [ ] Set `BNB_VPFI_BUY_PAYMENT_TOKEN` (or
+      `POLYGON_VPFI_BUY_PAYMENT_TOKEN`) in `contracts/.env` to the
+      canonical bridged WETH9 address from the table above.
+- [ ] Visually confirm the address on BscScan / PolygonScan —
+      contract verified, deployer is the chain's canonical bridge
+      operator, NOT a recently-deployed proxy or a contract from an
+      unknown EOA.
+- [ ] Confirm `decimals()` returns 18 (block-explorer "Read
+      Contract" tab — one click). If it returns anything else, the
+      env var points at the wrong contract; do NOT proceed.
+- [ ] Run the dry-run (`forge script ... --rpc-url`) without
+      `--broadcast` first; the deploy script's logs print the
+      resolved `paymentToken` address before it would broadcast.
+      Eyeball-compare to the table above one more time.
+
+**Testnet exemption.** BNB Smart Chain Testnet (chainId 97) and
+Polygon Amoy (chainId 80002) are intentionally NOT in the strict
+WETH-pull list. Their gas tokens have no real value and the
+testnet rate is symbolic, so native-gas mode is acceptable for
+dev-loop convenience. Mainnet equivalents must use WETH-pull —
+the deploy-script pre-flight will refuse to proceed otherwise.
+
 ---
 
 ## Chain-specific quirks
@@ -350,6 +646,12 @@ there, just point back.
   `vpfiBuyPaymentToken = 0x0` (native-gas mode); the canonical Base
   receiver still quotes the rate in wei-per-VPFI on its side, so the
   user pays whatever the local chain's native asset is.
+  **Mainnet equivalent (chainId 56) requires WETH-pull mode** — see
+  the "VPFIBuyAdapter — payment-token mode" section above for the
+  canonical bridged-WETH9 address and the deploy-script pre-flight
+  that gates this. The testnet's native-gas mode is a deliberate
+  exemption for dev-loop convenience; production deploys must
+  flip to WETH-pull.
 - **Funding floor**: the §1 Diamond cut + §2 mocks + §3-§6 contract
   deploys cost ~0.13 tBNB at 1 gwei. Have ≥0.3 tBNB on the deployer
   EOA before starting; admin EOA needs ≥0.05 tBNB for handover +
@@ -429,6 +731,101 @@ A `[push] send failed …` line means either `PUSH_CHANNEL_PK` is
 wrong format or the channel hasn't cleared the post-stake delay
 (~10 blocks after channel-create tx on mainnet). Re-stake confirmations
 take a few minutes; nothing else to do.
+
+### 8d. Server-side error capture
+
+The hf-watcher Worker also serves `POST /diag/record` — the
+frontend fires-and-forgets one POST per UI failure event so
+support has a server-side audit trail (UUID embedded in any
+GitHub-issue prefill cross-references back to a real session).
+Lives on the same Worker and the same D1 binding as §8a/§8b
+above; no separate deploy.
+
+**One-time setup (per environment)**:
+
+1. Apply the new migration to the production database:
+   ```bash
+   cd ops/hf-watcher
+   npx wrangler d1 migrations apply vaipakam-alerts-db --remote
+   ```
+   This creates the `diag_errors` table + indexes. Idempotent
+   (uses `CREATE TABLE IF NOT EXISTS`).
+
+2. Deploy the worker (same command as §8b — pushes the new
+   `/diag/record` route + the per-IP rate-limit binding):
+   ```bash
+   npx wrangler deploy
+   ```
+
+3. Smoke test the endpoint:
+   ```bash
+   # From a shell on a host the FRONTEND_ORIGIN allows (or via
+   # `curl --resolve` to bypass DNS):
+   curl -X POST https://alerts.vaipakam.com/diag/record \
+     -H 'origin: https://vaipakam.com' \
+     -H 'content-type: application/json' \
+     -d '{
+       "id":"123e4567-e89b-42d3-a456-426614174000",
+       "client_at":'"$(date +%s)"',
+       "area":"smoke-test",
+       "flow":"runbook-8d"
+     }'
+   # Expect: {"recorded":true,"id":"123e4567-…"}
+   ```
+
+   Then verify the row landed:
+   ```bash
+   npx wrangler d1 execute vaipakam-alerts-db --remote \
+     --command "SELECT id, area, flow, recorded_at FROM diag_errors ORDER BY recorded_at DESC LIMIT 1"
+   ```
+
+**Tunable knobs** (all in `ops/hf-watcher/wrangler.jsonc`,
+override per-environment via `wrangler vars` or the dashboard):
+
+| Var | Default | What it does |
+|---|---|---|
+| `DIAG_SAMPLE_RATE` | `1.0` | Random write sampling. Drop to `0.1` to write 10% when error volume spikes. |
+| `DIAG_RETENTION_DAYS` | `90` | Cron-driven prune deletes rows older than this. Bumped on every 5-min tick. |
+| `DIAG_RECORD_RATELIMIT.simple.limit` / `period` | `60 / 60` | Per-IP rate limit. Tune in the `unsafe.bindings` block. |
+
+**Frontend coupling**:
+
+The frontend reads `VITE_HF_WATCHER_ORIGIN` (already set —
+same origin as the Alerts page uses). No new frontend env var
+is required for capture itself; the optional
+`VITE_APP_VERSION` (CI-injected commit hash) gets stamped on
+each captured row for release-correlation.
+
+A second frontend var, `VITE_DIAG_DRAWER_ENABLED` (default
+`true`), gates the user-facing Diagnostics drawer + FAB. Set
+to `"false"` once server capture is observed healthy in
+production to hide the drawer entirely — server capture
+keeps running regardless. The user can still grab their
+session journey log from the Data Rights page when the
+drawer is hidden.
+
+**GitHub-issue cross-reference workflow** (support team):
+
+When a user files a GitHub issue using the prefill, the body
+contains `**Report ID:** \`<UUID>\``. Look it up:
+
+```bash
+cd ops/hf-watcher
+npx wrangler d1 execute vaipakam-alerts-db --remote \
+  --command "SELECT * FROM diag_errors WHERE id = '<UUID>'"
+```
+
+If the row exists with a matching error fingerprint, the
+report came from a real session. If not, the user fabricated
+or altered the UUID — the surrounding error metadata in their
+issue body is unverified.
+
+**Privacy note**: the `diag_errors` table stores only what
+the existing GitHub-issue prefill already publishes (redacted
+wallet `0x…abcd`, error metadata, locale, viewport). No
+user-agent, no full address, no localStorage / cookies / free-form
+text. The Privacy Policy on the website carries one paragraph
+describing this; keep them in sync if you change the schema.
 
 ---
 

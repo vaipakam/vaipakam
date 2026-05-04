@@ -15,7 +15,7 @@ import {AggregatorV3Interface} from "@chainlink/contracts/src/v0.8/shared/interf
  *         daily accrual:
  *
  *           - registerLoan (LoanFacet.initiateLoan) snapshots the loan's
- *             `perDayUSD18` and applies +Δ at startDay, −Δ at endDay.
+ *             `perDayNumeraire18` and applies +Δ at startDay, −Δ at endDay.
  *           - closeLoan (RepayFacet / DefaultedFacet / RiskFacet) shrinks
  *             the window to `closeDay+1` and sets the CLEAN / FORFEIT
  *             flag on each side's RewardEntry.
@@ -30,10 +30,10 @@ import {AggregatorV3Interface} from "@chainlink/contracts/src/v0.8/shared/interf
  *      the denominator but forfeit their borrower share to treasury).
  *
  *      Claim math per entry:
- *        reward = perDayUSD18 × (cumRPU[endDay-1] − cumRPU[startDay-1]) / 1e18
- *      where cumRPU[d] = Σ_{d'≤d} halfPool[d'] × 1e18 / globalTotalUSD18[d']
+ *        reward = perDayNumeraire18 × (cumRPN[endDay-1] − cumRPN[startDay-1]) / 1e18
+ *      where cumRPN[d] = Σ_{d'≤d} halfPool[d'] × 1e18 / globalTotalNumeraire18[d']
  *      and the global denominator comes from the cross-chain finalized
- *      broadcast (`knownGlobal*InterestUSD18[d]`).
+ *      broadcast (`knownGlobal*InterestNumeraire18[d]`).
  *
  *      Decay schedule (unchanged from Phase 1):
  *        days   0..182   → 32% (3200 bps)   day 0 excluded
@@ -45,8 +45,8 @@ import {AggregatorV3Interface} from "@chainlink/contracts/src/v0.8/shared/interf
  *        days 2008..2372 →  5% ( 500)
  *        days     2373+  →  5% ( 500)   // until pool cap
  *
- *      Legacy per-day counter API (userLenderInterestUSD18 /
- *      totalLenderInterestUSD18 etc.) is retained for the cross-chain
+ *      Legacy per-day counter API (userLenderInterestNumeraire18 /
+ *      totalLenderInterestNumeraire18 etc.) is retained for the cross-chain
  *      reporter and for test harnesses that seed per-day state directly
  *      via {TestMutatorFacet.setDailyLenderInterest}. The legacy claim
  *      path ({claimForUserWindow}) coexists with the new entry claim
@@ -126,11 +126,11 @@ library LibInteractionRewards {
     ) internal {
         (uint256 day, bool active) = currentDayOrZero();
         if (!active) return;
-        uint256 usd = _interestToUSD18(feeAsset, interestAmount);
+        uint256 usd = _interestToNumeraire18(feeAsset, interestAmount);
         if (usd == 0) return;
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        s.userLenderInterestUSD18[day][lender] += usd;
-        s.totalLenderInterestUSD18[day] += usd;
+        s.userLenderInterestNumeraire18[day][lender] += usd;
+        s.totalLenderInterestNumeraire18[day] += usd;
     }
 
     /// @notice [LEGACY] Mirror of {recordLenderInterest} for borrower side.
@@ -141,11 +141,11 @@ library LibInteractionRewards {
     ) internal {
         (uint256 day, bool active) = currentDayOrZero();
         if (!active) return;
-        uint256 usd = _interestToUSD18(feeAsset, interestAmount);
+        uint256 usd = _interestToNumeraire18(feeAsset, interestAmount);
         if (usd == 0) return;
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        s.userBorrowerInterestUSD18[day][borrower] += usd;
-        s.totalBorrowerInterestUSD18[day] += usd;
+        s.userBorrowerInterestNumeraire18[day][borrower] += usd;
+        s.totalBorrowerInterestNumeraire18[day] += usd;
     }
 
     // ─── Phase-2 reward entry registration / close / transfer ───────────────
@@ -155,7 +155,7 @@ library LibInteractionRewards {
      *         accrual machinery. Silent no-op when:
      *           - emissions haven't been seeded (launch timestamp zero);
      *           - the principal asset has no Chainlink feed / malformed
-     *             decimals (perDayUSD18 rounds to zero);
+     *             decimals (perDayNumeraire18 rounds to zero);
      *           - principal × bps rounds to zero.
      *
      *         `startDay` is always `currentDay + 1` so a sub-24h-old loan
@@ -183,12 +183,12 @@ library LibInteractionRewards {
         if (!active) return;
         if (principal == 0 || interestRateBps == 0 || durationDays == 0) return;
 
-        uint256 perDayUSD18 = _perDayInterestUSD18(
+        uint256 perDayNumeraire18 = _perDayInterestNumeraire18(
             principalAsset,
             principal,
             interestRateBps
         );
-        if (perDayUSD18 == 0) return;
+        if (perDayNumeraire18 == 0) return;
 
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         uint256 startDay = today + 1;
@@ -201,7 +201,7 @@ library LibInteractionRewards {
             startDay,
             endDay,
             LibVaipakam.RewardSide.Lender,
-            perDayUSD18
+            perDayNumeraire18
         );
         s.loanActiveLenderEntryId[loanId] = lenderId;
 
@@ -212,17 +212,17 @@ library LibInteractionRewards {
             startDay,
             endDay,
             LibVaipakam.RewardSide.Borrower,
-            perDayUSD18
+            perDayNumeraire18
         );
         s.loanBorrowerEntryId[loanId] = borrowerId;
 
         // Only apply deltas that lie in the future relative to the
         // reporter frontier. Past deltas can't retroactively change an
         // already-shipped day's total.
-        _applyDelta(s.lenderPerDayDeltaUSD18, s.lenderFrontierDay, startDay, int256(perDayUSD18));
-        _applyDelta(s.lenderPerDayDeltaUSD18, s.lenderFrontierDay, endDay, -int256(perDayUSD18));
-        _applyDelta(s.borrowerPerDayDeltaUSD18, s.borrowerFrontierDay, startDay, int256(perDayUSD18));
-        _applyDelta(s.borrowerPerDayDeltaUSD18, s.borrowerFrontierDay, endDay, -int256(perDayUSD18));
+        _applyDelta(s.lenderPerDayDeltaNumeraire18, s.lenderFrontierDay, startDay, int256(perDayNumeraire18));
+        _applyDelta(s.lenderPerDayDeltaNumeraire18, s.lenderFrontierDay, endDay, -int256(perDayNumeraire18));
+        _applyDelta(s.borrowerPerDayDeltaNumeraire18, s.borrowerFrontierDay, startDay, int256(perDayNumeraire18));
+        _applyDelta(s.borrowerPerDayDeltaNumeraire18, s.borrowerFrontierDay, endDay, -int256(perDayNumeraire18));
     }
 
     /**
@@ -264,7 +264,7 @@ library LibInteractionRewards {
                 lenderId,
                 today,
                 /* forfeited */ lenderForfeit,
-                s.lenderPerDayDeltaUSD18,
+                s.lenderPerDayDeltaNumeraire18,
                 s.lenderFrontierDay
             );
             s.loanActiveLenderEntryId[loanId] = 0;
@@ -276,7 +276,7 @@ library LibInteractionRewards {
                 borrowerId,
                 today,
                 /* forfeited */ !borrowerClean,
-                s.borrowerPerDayDeltaUSD18,
+                s.borrowerPerDayDeltaNumeraire18,
                 s.borrowerFrontierDay
             );
             // Leave s.loanBorrowerEntryId set so {sweepForfeitedByLoanId}
@@ -304,7 +304,7 @@ library LibInteractionRewards {
 
         LibVaipakam.RewardEntry storage oldEntry = s.rewardEntries[oldId];
         uint256 originalEnd = oldEntry.endDay; // snapshot before close mutates it
-        uint256 perDay = oldEntry.perDayUSD18;
+        uint256 perDay = oldEntry.perDayNumeraire18;
 
         // Shrink the old entry at today+1 (or earlier if already closed).
         _closeEntry(
@@ -312,7 +312,7 @@ library LibInteractionRewards {
             oldId,
             today,
             /* forfeited */ true,
-            s.lenderPerDayDeltaUSD18,
+            s.lenderPerDayDeltaNumeraire18,
             s.lenderFrontierDay
         );
 
@@ -338,8 +338,8 @@ library LibInteractionRewards {
         // a fresh end-delta at newStart; we now RE-apply matching deltas
         // for the new entry so the net denominator contribution is
         // preserved across the transfer.
-        _applyDelta(s.lenderPerDayDeltaUSD18, s.lenderFrontierDay, newStart, int256(perDay));
-        _applyDelta(s.lenderPerDayDeltaUSD18, s.lenderFrontierDay, originalEnd, -int256(perDay));
+        _applyDelta(s.lenderPerDayDeltaNumeraire18, s.lenderFrontierDay, newStart, int256(perDay));
+        _applyDelta(s.lenderPerDayDeltaNumeraire18, s.lenderFrontierDay, originalEnd, -int256(perDay));
     }
 
     // ─── Frontier advance (local totals + cum-per-USD) ──────────────────────
@@ -347,13 +347,13 @@ library LibInteractionRewards {
     /**
      * @notice Advance the lender side's per-day local-total frontier
      *         through `through`. Applies each pending delta and writes
-     *         `totalLenderInterestUSD18[d] += openPerDayUSD18` for every
+     *         `totalLenderInterestNumeraire18[d] += openPerDayNumeraire18` for every
      *         advanced day. ADDITIVE so legacy test mutators that seed
-     *         `totalLenderInterestUSD18[d]` directly aren't overwritten.
+     *         `totalLenderInterestNumeraire18[d]` directly aren't overwritten.
      *
      *         Called by the cross-chain reporter before shipping a day's
      *         local total, and by claim/preview paths that need the
-     *         local totals to be in sync before computing cumRPU.
+     *         local totals to be in sync before computing cumRPN.
      *
      *         Bounded at {MAX_FRONTIER_ADVANCE_DAYS}; extra calls are
      *         required to catch up beyond the per-tx cap.
@@ -367,16 +367,16 @@ library LibInteractionRewards {
         uint256 cap = frontier + MAX_FRONTIER_ADVANCE_DAYS;
         if (through > cap) through = cap;
 
-        uint256 open = s.lenderOpenPerDayUSD18;
+        uint256 open = s.lenderOpenPerDayNumeraire18;
         for (uint256 d = frontier + 1; d <= through; ) {
-            int256 delta = s.lenderPerDayDeltaUSD18[d];
+            int256 delta = s.lenderPerDayDeltaNumeraire18[d];
             if (delta != 0) {
                 open = uint256(int256(open) + delta);
             }
-            s.totalLenderInterestUSD18[d] += open;
+            s.totalLenderInterestNumeraire18[d] += open;
             unchecked { ++d; }
         }
-        s.lenderOpenPerDayUSD18 = open;
+        s.lenderOpenPerDayNumeraire18 = open;
         s.lenderFrontierDay = through;
     }
 
@@ -389,23 +389,23 @@ library LibInteractionRewards {
         uint256 cap = frontier + MAX_FRONTIER_ADVANCE_DAYS;
         if (through > cap) through = cap;
 
-        uint256 open = s.borrowerOpenPerDayUSD18;
+        uint256 open = s.borrowerOpenPerDayNumeraire18;
         for (uint256 d = frontier + 1; d <= through; ) {
-            int256 delta = s.borrowerPerDayDeltaUSD18[d];
+            int256 delta = s.borrowerPerDayDeltaNumeraire18[d];
             if (delta != 0) {
                 open = uint256(int256(open) + delta);
             }
-            s.totalBorrowerInterestUSD18[d] += open;
+            s.totalBorrowerInterestNumeraire18[d] += open;
             unchecked { ++d; }
         }
-        s.borrowerOpenPerDayUSD18 = open;
+        s.borrowerOpenPerDayNumeraire18 = open;
         s.borrowerFrontierDay = through;
     }
 
     /**
      * @notice Advance the lender-side cumulative-reward-per-USD cursor
      *         through `through`. Uses the GLOBAL finalized denominator
-     *         (`knownGlobalLenderInterestUSD18[d]`) so cross-chain
+     *         (`knownGlobalLenderInterestNumeraire18[d]`) so cross-chain
      *         correctness is preserved. Halts at the first day without
      *         `knownGlobalSet[d]`. Bounded at {MAX_CUM_ADVANCE_DAYS}.
      *
@@ -423,10 +423,10 @@ library LibInteractionRewards {
         uint256 cap = cursor + MAX_CUM_ADVANCE_DAYS;
         if (through > cap) through = cap;
 
-        uint256 prev = cursor == 0 ? 0 : s.cumLenderRPU18[cursor];
+        uint256 prev = cursor == 0 ? 0 : s.cumLenderRPN18[cursor];
         for (uint256 d = cursor + 1; d <= through; ) {
             if (!s.knownGlobalSet[d]) break;
-            uint256 globalTotal = s.knownGlobalLenderInterestUSD18[d];
+            uint256 globalTotal = s.knownGlobalLenderInterestNumeraire18[d];
             uint256 half = halfPoolForDay(d);
             uint256 next;
             if (globalTotal == 0 || half == 0) {
@@ -434,7 +434,7 @@ library LibInteractionRewards {
             } else {
                 next = prev + (half * 1e18) / globalTotal;
             }
-            s.cumLenderRPU18[d] = next;
+            s.cumLenderRPN18[d] = next;
             prev = next;
             cursor = d;
             unchecked { ++d; }
@@ -454,10 +454,10 @@ library LibInteractionRewards {
         uint256 cap = cursor + MAX_CUM_ADVANCE_DAYS;
         if (through > cap) through = cap;
 
-        uint256 prev = cursor == 0 ? 0 : s.cumBorrowerRPU18[cursor];
+        uint256 prev = cursor == 0 ? 0 : s.cumBorrowerRPN18[cursor];
         for (uint256 d = cursor + 1; d <= through; ) {
             if (!s.knownGlobalSet[d]) break;
-            uint256 globalTotal = s.knownGlobalBorrowerInterestUSD18[d];
+            uint256 globalTotal = s.knownGlobalBorrowerInterestNumeraire18[d];
             uint256 half = halfPoolForDay(d);
             uint256 next;
             if (globalTotal == 0 || half == 0) {
@@ -465,7 +465,7 @@ library LibInteractionRewards {
             } else {
                 next = prev + (half * 1e18) / globalTotal;
             }
-            s.cumBorrowerRPU18[d] = next;
+            s.cumBorrowerRPN18[d] = next;
             prev = next;
             cursor = d;
             unchecked { ++d; }
@@ -478,7 +478,7 @@ library LibInteractionRewards {
 
     /**
      * @notice Walk `user`'s reward entries and route each CLOSED entry
-     *         whose endDay is finalized in the cumRPU cursor. Processed
+     *         whose endDay is finalized in the cumRPN cursor. Processed
      *         entries are flagged so follow-up claims don't re-credit.
      *         Forfeited entries accumulate in `treasuryTotal` (payout is
      *         made separately by the facet wrapping this helper).
@@ -608,7 +608,7 @@ library LibInteractionRewards {
             uint256 half = halfPoolForDay(d);
             if (half > 0) {
                 (uint256 totalL, uint256 totalB) = _denominatorsForDay(s, d);
-                uint256 myL = s.userLenderInterestUSD18[d][user];
+                uint256 myL = s.userLenderInterestNumeraire18[d][user];
                 if (myL > 0 && totalL > 0) {
                     uint256 raw = (half * myL) / totalL;
                     uint256 cap = _capVPFIForInterestUSD(
@@ -618,9 +618,9 @@ library LibInteractionRewards {
                         capRatio
                     );
                     total += raw < cap ? raw : cap;
-                    delete s.userLenderInterestUSD18[d][user];
+                    delete s.userLenderInterestNumeraire18[d][user];
                 }
-                uint256 myB = s.userBorrowerInterestUSD18[d][user];
+                uint256 myB = s.userBorrowerInterestNumeraire18[d][user];
                 if (myB > 0 && totalB > 0) {
                     uint256 raw = (half * myB) / totalB;
                     uint256 cap = _capVPFIForInterestUSD(
@@ -630,7 +630,7 @@ library LibInteractionRewards {
                         capRatio
                     );
                     total += raw < cap ? raw : cap;
-                    delete s.userBorrowerInterestUSD18[d][user];
+                    delete s.userBorrowerInterestNumeraire18[d][user];
                 }
             }
             unchecked { ++d; }
@@ -650,7 +650,7 @@ library LibInteractionRewards {
             uint256 half = halfPoolForDay(d);
             if (half > 0) {
                 (uint256 totalL, uint256 totalB) = _denominatorsForDay(s, d);
-                uint256 myL = s.userLenderInterestUSD18[d][user];
+                uint256 myL = s.userLenderInterestNumeraire18[d][user];
                 if (myL > 0 && totalL > 0) {
                     uint256 raw = (half * myL) / totalL;
                     uint256 cap = _capVPFIForInterestUSD(
@@ -661,7 +661,7 @@ library LibInteractionRewards {
                     );
                     total += raw < cap ? raw : cap;
                 }
-                uint256 myB = s.userBorrowerInterestUSD18[d][user];
+                uint256 myB = s.userBorrowerInterestNumeraire18[d][user];
                 if (myB > 0 && totalB > 0) {
                     uint256 raw = (half * myB) / totalB;
                     uint256 cap = _capVPFIForInterestUSD(
@@ -682,8 +682,8 @@ library LibInteractionRewards {
         uint256 d
     ) private view returns (uint256 totalL, uint256 totalB) {
         return (
-            s.knownGlobalLenderInterestUSD18[d],
-            s.knownGlobalBorrowerInterestUSD18[d]
+            s.knownGlobalLenderInterestNumeraire18[d],
+            s.knownGlobalBorrowerInterestNumeraire18[d]
         );
     }
 
@@ -737,7 +737,7 @@ library LibInteractionRewards {
             return (0, 0);
         }
 
-        // Need cumRPU populated through endDay - 1 for the matching side.
+        // Need cumRPN populated through endDay - 1 for the matching side.
         uint256 need = e.endDay - 1;
         uint256 cursor;
         if (e.side == LibVaipakam.RewardSide.Lender) {
@@ -758,24 +758,24 @@ library LibInteractionRewards {
         uint256 cumEnd;
         uint256 cumStart;
         if (e.side == LibVaipakam.RewardSide.Lender) {
-            cumEnd = s.cumLenderRPU18[e.endDay - 1];
-            cumStart = e.startDay == 0 ? 0 : s.cumLenderRPU18[e.startDay - 1];
+            cumEnd = s.cumLenderRPN18[e.endDay - 1];
+            cumStart = e.startDay == 0 ? 0 : s.cumLenderRPN18[e.startDay - 1];
         } else {
-            cumEnd = s.cumBorrowerRPU18[e.endDay - 1];
-            cumStart = e.startDay == 0 ? 0 : s.cumBorrowerRPU18[e.startDay - 1];
+            cumEnd = s.cumBorrowerRPN18[e.endDay - 1];
+            cumStart = e.startDay == 0 ? 0 : s.cumBorrowerRPN18[e.startDay - 1];
         }
         if (cumEnd <= cumStart) {
             if (mutate) e.processed = true;
             return (0, 0);
         }
 
-        uint256 reward = (e.perDayUSD18 * (cumEnd - cumStart)) / 1e18;
+        uint256 reward = (e.perDayNumeraire18 * (cumEnd - cumStart)) / 1e18;
 
         // Apply the §4 per-user daily cap, scaled to the entry window:
-        // cap = daysInWindow * capVPFIForPerDayUSD(perDayUSD18).
+        // cap = daysInWindow * capVPFIForPerDayNumeraire(perDayNumeraire18).
         uint256 daysInWindow = e.endDay - e.startDay;
         uint256 perDayCap = _capVPFIForInterestUSD(
-            e.perDayUSD18,
+            e.perDayNumeraire18,
             ethPriceRaw,
             ethPriceDec,
             capRatio
@@ -807,18 +807,18 @@ library LibInteractionRewards {
         uint256 cumStart;
         if (e.side == LibVaipakam.RewardSide.Lender) {
             if (s.cumLenderCursor < need) return 0;
-            cumEnd = s.cumLenderRPU18[e.endDay - 1];
-            cumStart = e.startDay == 0 ? 0 : s.cumLenderRPU18[e.startDay - 1];
+            cumEnd = s.cumLenderRPN18[e.endDay - 1];
+            cumStart = e.startDay == 0 ? 0 : s.cumLenderRPN18[e.startDay - 1];
         } else {
             if (s.cumBorrowerCursor < need) return 0;
-            cumEnd = s.cumBorrowerRPU18[e.endDay - 1];
-            cumStart = e.startDay == 0 ? 0 : s.cumBorrowerRPU18[e.startDay - 1];
+            cumEnd = s.cumBorrowerRPN18[e.endDay - 1];
+            cumStart = e.startDay == 0 ? 0 : s.cumBorrowerRPN18[e.startDay - 1];
         }
         if (cumEnd <= cumStart) return 0;
-        reward = (e.perDayUSD18 * (cumEnd - cumStart)) / 1e18;
+        reward = (e.perDayNumeraire18 * (cumEnd - cumStart)) / 1e18;
 
         uint256 perDayCap = _capVPFIForInterestUSD(
-            e.perDayUSD18,
+            e.perDayNumeraire18,
             ethPriceRaw,
             ethPriceDec,
             capRatio
@@ -839,7 +839,7 @@ library LibInteractionRewards {
         uint256 startDay,
         uint256 endDay,
         LibVaipakam.RewardSide side,
-        uint256 perDayUSD18
+        uint256 perDayNumeraire18
     ) private returns (uint256 id) {
         id = ++s.nextRewardEntryId;
         LibVaipakam.RewardEntry storage e = s.rewardEntries[id];
@@ -848,7 +848,7 @@ library LibInteractionRewards {
         e.startDay = uint32(startDay);
         e.endDay = uint32(endDay);
         e.side = side;
-        e.perDayUSD18 = perDayUSD18;
+        e.perDayNumeraire18 = perDayNumeraire18;
         // processed/forfeited default to false
         s.userRewardEntryIds[user].push(id);
     }
@@ -874,7 +874,7 @@ library LibInteractionRewards {
         if (newEnd < e.startDay) newEnd = e.startDay;    // closed before accrual began
 
         if (newEnd != originalEnd) {
-            uint256 perDay = e.perDayUSD18;
+            uint256 perDay = e.perDayNumeraire18;
             _applyDelta(deltas, frontier, originalEnd, int256(perDay));
             _applyDelta(deltas, frontier, newEnd, -int256(perDay));
             e.endDay = uint32(newEnd);
@@ -898,11 +898,11 @@ library LibInteractionRewards {
         deltas[day] += change;
     }
 
-    /// @dev Compute per-day USD18 interest for a loan at register time.
+    /// @dev Compute per-day Numeraire18 interest for a loan at register time.
     ///      Annualized bps divided by 365; principal converted at
     ///      Chainlink spot. Returns 0 on any oracle / decimals failure
     ///      so {registerLoan} silently skips.
-    function _perDayInterestUSD18(
+    function _perDayInterestNumeraire18(
         address asset,
         uint256 principal,
         uint256 interestRateBps
@@ -930,20 +930,20 @@ library LibInteractionRewards {
         }
         if (tokenDec == 0) return 0;
 
-        // principalUSD18 = principal * price * 1e18 / (10^feedDec * 10^tokenDec)
-        uint256 principalUSD18 =
+        // principalNumeraire18 = principal * price * 1e18 / (10^feedDec * 10^tokenDec)
+        uint256 principalNumeraire18 =
             (principal * price * 1e18) /
             (10 ** feedDec) /
             (10 ** tokenDec);
-        // perDayUSD18 = principalUSD18 * bps / BASIS_POINTS / 365
+        // perDayNumeraire18 = principalNumeraire18 * bps / BASIS_POINTS / 365
         return
-            (principalUSD18 * interestRateBps) /
+            (principalNumeraire18 * interestRateBps) /
             LibVaipakam.BASIS_POINTS /
             365;
     }
 
     /// @dev Best-effort USD conversion at Chainlink spot (legacy).
-    function _interestToUSD18(address feeAsset, uint256 interestAmount)
+    function _interestToNumeraire18(address feeAsset, uint256 interestAmount)
         private
         view
         returns (uint256)
@@ -983,7 +983,7 @@ library LibInteractionRewards {
         view
         returns (uint256 price, uint8 feedDec)
     {
-        address feed = LibVaipakam.storageSlot().ethUsdFeed;
+        address feed = LibVaipakam.storageSlot().ethNumeraireFeed;
         if (feed == address(0)) return (0, 0);
 
         int256 answer;
@@ -1014,7 +1014,7 @@ library LibInteractionRewards {
     ///      when the cap is disabled (ETH feed unavailable or admin
     ///      override == max sentinel).
     function _capVPFIForInterestUSD(
-        uint256 interestUSD18,
+        uint256 interestNumeraire18,
         uint256 ethPriceRaw,
         uint8 feedDec,
         uint256 capRatio
@@ -1022,6 +1022,6 @@ library LibInteractionRewards {
         if (ethPriceRaw == 0 || capRatio == type(uint256).max) {
             return type(uint256).max;
         }
-        return (interestUSD18 * (10 ** feedDec) * capRatio) / ethPriceRaw;
+        return (interestNumeraire18 * (10 ** feedDec) * capRatio) / ethPriceRaw;
     }
 }

@@ -123,8 +123,8 @@ contract DeployTestnetLiquidityMocks is Script {
     function run() external {
         uint256 cid = block.chainid;
         require(
-            cid == 84532 || cid == 11155111 || cid == 97,
-            "DeployTestnetLiquidityMocks: chain not supported (need 84532, 11155111, or 97)"
+            cid == 84532 || cid == 11155111 || cid == 97 || cid == 31337,
+            "DeployTestnetLiquidityMocks: chain not supported (need 84532, 11155111, 97, or 31337)"
         );
 
         uint256 deployerKey = vm.envUint("PRIVATE_KEY");
@@ -134,10 +134,18 @@ contract DeployTestnetLiquidityMocks is Script {
             weth = vm.envOr("BASE_SEPOLIA_WETH", BASE_WETH_DEFAULT);
         } else if (cid == 11155111) {
             weth = vm.envOr("SEPOLIA_WETH", SEPOLIA_WETH_DEFAULT);
-        } else {
+        } else if (cid == 97) {
             // BNB Smart Chain Testnet — chainid 97. WBNB plays the
             // WETH role in the Diamond's price-asset wiring.
             weth = vm.envOr("BNB_TESTNET_WBNB", BNB_TESTNET_WBNB_DEFAULT);
+        } else {
+            // Anvil (31337): no canonical WETH contract — fall back to
+            // an env-supplied address (when a prior step deployed a
+            // mock WETH) or `address(0)` to signal we should deploy
+            // our own mock inline below. The Diamond only uses this
+            // address as a quote-asset sentinel for the price-feed
+            // wiring; no `deposit` / `withdraw` is called.
+            weth = vm.envOr("ANVIL_WETH", address(0));
         }
         address diamond = Deployments.readDiamond();
 
@@ -150,6 +158,14 @@ contract DeployTestnetLiquidityMocks is Script {
 
         // ── Step 1: Deployer-side: deploy mocks ────────────────────────
         vm.startBroadcast(deployerKey);
+
+        // Anvil-only: when ANVIL_WETH is unset, mint a mock WETH inline
+        // so the rest of the wiring is identical to the testnet flow.
+        if (cid == 31337 && weth == address(0)) {
+            ERC20Mock mockWeth = new ERC20Mock("Wrapped ETH", "WETH", 18);
+            weth = address(mockWeth);
+            console.log("Deployed mock WETH for anvil:", weth);
+        }
 
         ERC20Mock mUSDC = new ERC20Mock("Mock USDC", "mUSDC", 6);
         ERC20Mock mWBTC = new ERC20Mock("Mock WBTC", "mWBTC", 8);

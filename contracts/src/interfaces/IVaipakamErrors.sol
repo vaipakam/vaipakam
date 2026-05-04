@@ -28,7 +28,38 @@ interface IVaipakamErrors {
     error NFTTransferFailed();
     error EscrowResolutionFailed();
     error EscrowWithdrawFailed();
+    error EscrowDepositFailed();
     error EscrowTransferFailed();
+    /// @dev Stuck-token recovery: caller passed an `amount` greater
+    ///      than `max(0, balanceOf(escrow, token) - tracked)`. The
+    ///      cap is the load-bearing safety property — recovery can
+    ///      never reach into protocol-tracked collateral / claims.
+    error RecoveryAmountExceedsUnsolicited();
+    /// @dev Stuck-token recovery: zero-amount call.
+    error RecoveryAmountZero();
+    /// @dev Stuck-token recovery: caller-supplied deadline already
+    ///      passed.
+    error RecoveryDeadlineExpired();
+    /// @dev Stuck-token recovery: signature does not recover to
+    ///      `msg.sender` for the supplied payload.
+    error RecoverySignatureInvalid();
+    /// @dev Stuck-token recovery: caller has no escrow proxy
+    ///      deployed — nothing to recover from.
+    error RecoveryUserHasNoEscrow();
+    /// @dev Stuck-token recovery: user declared a source address that
+    ///      the sanctions oracle flags. Their escrow has been LOCKED
+    ///      under the existing sanctioned-address Tier-1 / Tier-2
+    ///      semantics; the ban auto-unlocks when the address is
+    ///      de-listed from the oracle.
+    error EscrowBannedDueToSanctionedSource();
+    /// @dev Stuck-token recovery: sanctions oracle is currently
+    ///      unset OR returned an error. Fail-safe: refuse to execute
+    ///      until the oracle is reachable.
+    error SanctionsOracleUnavailable();
+    /// @dev Stuck-token recovery: caller's escrow is already locked
+    ///      under a previously-recorded sanctioned-source ban; the
+    ///      ban hasn't lifted (oracle still flags the source).
+    error EscrowAlreadyBanned();
     error TreasuryTransferFailed();
     error LoanInitiationFailed();
     error OfferCreationFailed();
@@ -45,6 +76,17 @@ interface IVaipakamErrors {
     error NotOfferCreator();
     error InvalidAddress();
     error InvalidAmount();
+    /// @notice A governance-tunable parameter setter rejected the
+    ///         write because the new value sits outside its
+    ///         compiled-in min/max range. The `name` is a short
+    ///         bytes32 tag for the parameter (e.g.
+    ///         `bytes32("pythCrossCheckMaxDeviationBps")`) so callers
+    ///         can disambiguate without parsing reverts. Used as the
+    ///         shared "every governance knob is bounded" error —
+    ///         even a compromised admin / governance multisig can't
+    ///         push a tunable beyond the policy range without a
+    ///         contract upgrade.
+    error ParameterOutOfRange(bytes32 name, uint256 value, uint256 min, uint256 max);
 
     // ─── Loan State ──────────────────────────────────────────────────────────
     error LoanNotActive();
@@ -139,7 +181,7 @@ interface IVaipakamErrors {
     error InteractionPoolExhausted();
     /// @notice The caller's next claimable day does not yet have the
     ///         finalized global denominator broadcast into this chain's
-    ///         `knownGlobal*InterestUSD18` slots. Per docs/TokenomicsTechSpec.md
+    ///         `knownGlobal*InterestNumeraire18` slots. Per docs/TokenomicsTechSpec.md
     ///         §4a the local fallback path is gone — claimers wait for the
     ///         Base aggregator to finalize and broadcast the day.
     /// @param dayId First day on the claim cursor that is missing a global.
@@ -225,4 +267,118 @@ interface IVaipakamErrors {
     /// @param expected The asset the protocol entry point expected.
     /// @param signed   The asset the user signed over in the Permit2 digest.
     error Permit2TokenMismatch(address expected, address signed);
+
+    // ─── T-034 — Periodic Interest Payment ──────────────────────────────────
+    /// @notice Master kill-switch is off — cadence != None blocked at
+    ///         `createOffer`, and `settlePeriodicInterest` (PR2) is
+    ///         entirely closed. See LibVaipakam.ProtocolConfig
+    ///         `periodicInterestEnabled`.
+    error PeriodicInterestDisabled();
+
+    /// @notice Filter 1 / Filter 2 violation at `createOffer`. The
+    ///         lender picked a cadence whose interval is ≥ duration
+    ///         (Filter 1 — interval not strictly less than duration),
+    ///         OR whose duration / threshold combination is outside
+    ///         the matrix in
+    ///         docs/DesignsAndPlans/PeriodicInterestPaymentDesign.md §3.
+    /// @param cadence The cadence value the lender chose.
+    /// @param duration The loan duration in days.
+    /// @param principalNumeraire The principal value in numeraire-units
+    ///        (1e18-scaled), as resolved at create time via the
+    ///        configured `numeraireOracle` (or USD direct when unset).
+    /// @param threshold The current
+    ///        `minPrincipalForFinerCadence` value in numeraire-units.
+    error CadenceNotAllowed(
+        uint8 cadence,
+        uint256 duration,
+        uint256 principalNumeraire,
+        uint256 threshold
+    );
+
+    /// @notice Filter 0 violation at `createOffer`. Either the lending
+    ///         asset OR the collateral asset is illiquid AND the
+    ///         lender tried to set a cadence other than `None`.
+    ///         Periodic settlement is only meaningful when both sides
+    ///         can be auto-liquidated; illiquid loans must run on the
+    ///         terminal-only path. See design doc §3.0.
+    /// @param principalLiquidity 0 = Liquid, 1 = Illiquid.
+    /// @param collateralLiquidity 0 = Liquid, 1 = Illiquid.
+    /// @param cadence The cadence value the lender chose.
+    error CadenceNotAllowedForIlliquid(
+        uint8 principalLiquidity,
+        uint8 collateralLiquidity,
+        uint8 cadence
+    );
+
+    /// @notice Cross-numeraire batched setter `setNumeraire` is
+    ///         gated by the `numeraireSwapEnabled` flag. Threshold-
+    ///         only updates via `setMinPrincipalForFinerCadence` are
+    ///         NOT gated by this error. See design doc §10.2.
+    error NumeraireSwapDisabled();
+
+    /// @notice `settlePeriodicInterest` was called before the period's
+    ///         grace window expired. Settler must wait until
+    ///         `lastPeriodicInterestSettledAt + intervalDays(cadence) +
+    ///         gracePeriod(intervalDays)` before retrying.
+    /// @param loanId Loan identifier.
+    /// @param dueAt Period boundary (inclusive of grace).
+    /// @param graceEndsAt Earliest timestamp at which settle is allowed.
+    error PeriodicSettleNotDue(uint256 loanId, uint256 dueAt, uint256 graceEndsAt);
+
+    /// @notice `settlePeriodicInterest` cannot operate on this loan —
+    ///         either the cadence is None (terminal-only repayment) or
+    ///         the loan isn't in `Active` status.
+    error PeriodicSettleNotApplicable(uint256 loanId);
+
+    /// @notice Auto-liquidate path required a swap, but the settler
+    ///         provided an empty `adapterCalls` list. Settle reverts
+    ///         rather than emitting a soft-fail event because the
+    ///         shortfall cannot be covered without selling collateral.
+    error PeriodicSettleSwapPathRequired(uint256 loanId, uint256 shortfall);
+
+    /// @notice Auto-liquidate path attempted but every adapter in the
+    ///         supplied try-list reverted. Period is still due —
+    ///         settler must retry with a fresh quote / different venues.
+    error PeriodicSettleSwapFailed(uint256 loanId);
+
+    /// @notice `refinanceLoan` called while the old loan's current
+    ///         periodic-interest period is overdue past its grace
+    ///         window. Caller must first run `settlePeriodicInterest`
+    ///         on the old loan so the original lender is made whole
+    ///         BEFORE the refinance overwrites the loan's state.
+    /// @param oldLoanId The loan being refinanced.
+    /// @param graceEndsAt Timestamp from which a settler call would be
+    ///        accepted on the old loan (i.e. the moment the refinance
+    ///        gate first failed).
+    error RefinanceRequiresPeriodSettle(uint256 oldLoanId, uint256 graceEndsAt);
+
+    // ─── T-048 — Predominantly Available Denominator (PAD) ─────────────
+
+    /// @notice Reverted when an industrial-fork deploy's
+    ///         `numeraire ≠ PAD` AND the protocol can't compute the
+    ///         PAD/<numeraire> FX rate — neither the direct
+    ///         `padNumeraireRateFeed` is set, nor are both
+    ///         `ethPadFeed` + `ethNumeraireFeed` populated for the
+    ///         derived path. Configuration error caught at the first
+    ///         priced read; nothing on-chain can recover except a
+    ///         governance call to `setPredominantDenominator` with a
+    ///         reachable rate path.
+    error PadNumeraireRateUnavailable();
+
+    /// @notice Reverted when `_primaryPrice` is asked to price an
+    ///         asset on a `numeraire ≠ PAD` deploy but no PAD-side
+    ///         feed (asset/PAD direct OR asset/ETH-pivot via PAD)
+    ///         resolves on the active chain. Same shape as
+    ///         {NoPriceFeed} but specific to the PAD-pivot path so
+    ///         operator monitoring can distinguish "asset never had a
+    ///         feed" from "feed setup mid-rotation."
+    error PadPivotFeedUnavailable(address asset);
+
+    /// @notice Reverted when the operator sets
+    ///         `padNumeraireRateFeed` but the feed read returns a
+    ///         non-positive answer or is stale beyond the
+    ///         secondary-oracle staleness budget. Operator must point
+    ///         at a fresh feed or clear the slot to fall back to the
+    ///         derived rate.
+    error PadNumeraireRateFeedStale();
 }

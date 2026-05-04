@@ -66,6 +66,14 @@
      * hidden at this breakpoint — display:none below. */
     padding: 96px 32px 96px;
   }
+
+  /* Single-column variant for pages that don't have a TOC sidebar
+   * (e.g. /help/search results). Without this override the parent's
+   * 2-column grid would place a single child in the 260px sidebar
+   * cell, making the content render as a narrow column on desktop. */
+  .user-guide-layout.user-guide-layout-wide {
+    display: block;
+  }
 }
 
 /* ── Mobile combined sticky bar (role tabs + TOC accordion) ─────── */

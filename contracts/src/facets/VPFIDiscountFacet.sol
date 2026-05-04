@@ -212,6 +212,10 @@ contract VPFIDiscountFacet is
      *      Emits {VPFIPurchasedWithETH}.
      */
     function buyVPFIWithETH() external payable nonReentrant whenNotPaused {
+        // Tier-1 sanctions gate. Sanctioned wallet cannot acquire
+        // new VPFI via the fixed-rate buy. See policy block on
+        // `LibVaipakam.isSanctionedAddress`.
+        LibVaipakam._assertNotSanctioned(msg.sender);
         // Direct buy on the canonical Base Diamond — origin = local
         // chain. The per-wallet cap is keyed on the buyer's origin
         // chain (Base in this case), so Base-direct buys do not
@@ -392,8 +396,26 @@ contract VPFIDiscountFacet is
         nonReentrant
         whenNotPaused
     {
-        (address vpfi, address escrow) = _prepareDeposit(amount);
-        IERC20(vpfi).safeTransferFrom(msg.sender, escrow, amount);
+        // Tier-1 sanctions gate. Don't let a sanctioned wallet
+        // accumulate VPFI in their own escrow.
+        LibVaipakam._assertNotSanctioned(msg.sender);
+        (address vpfi, ) = _prepareDeposit(amount);
+        // Route through the protocol's chokepoint so the
+        // protocolTrackedEscrowBalance counter ticks for the staked
+        // VPFI. The chokepoint resolves the user's escrow
+        // internally — `_prepareDeposit` still creates it (via
+        // `getOrCreateUserEscrow`) so the staking-checkpoint /
+        // discount-accumulator can rollup against the post-mutation
+        // balance, but we no longer need the address back here.
+        LibFacet.crossFacetCall(
+            abi.encodeWithSelector(
+                EscrowFactoryFacet.escrowDepositERC20.selector,
+                msg.sender,
+                vpfi,
+                amount
+            ),
+            EscrowDepositFailed.selector
+        );
         emit VPFIDepositedToEscrow(msg.sender, amount);
     }
 
@@ -425,6 +447,8 @@ contract VPFIDiscountFacet is
         ISignatureTransfer.PermitTransferFrom calldata permit,
         bytes calldata signature
     ) external nonReentrant whenNotPaused {
+        // Tier-1 sanctions gate (mirrors `depositVPFIToEscrow`).
+        LibVaipakam._assertNotSanctioned(msg.sender);
         (address vpfi, address escrow) = _prepareDeposit(amount);
         // Bind the Permit2 pull to the registered VPFI token. Without
         // this check a permit signed for a different ERC-20 would be
@@ -433,6 +457,20 @@ contract VPFIDiscountFacet is
         // checkpoint at the post-mutation balance — the on-chain VPFI
         // balance would not actually move and accounting would drift.
         LibPermit2.pull(msg.sender, escrow, vpfi, amount, permit, signature);
+        // Permit2 already moved VPFI to the user's escrow; record the
+        // deposit in the protocolTrackedEscrowBalance counter so the
+        // staking checkpoint's `min(balanceOf, tracked)` reads the
+        // staked balance correctly and the future stuck-recovery
+        // path's cap math stays consistent.
+        LibFacet.crossFacetCall(
+            abi.encodeWithSelector(
+                EscrowFactoryFacet.recordEscrowDepositERC20.selector,
+                msg.sender,
+                vpfi,
+                amount
+            ),
+            EscrowDepositFailed.selector
+        );
         emit VPFIDepositedToEscrow(msg.sender, amount);
     }
 
@@ -454,14 +492,25 @@ contract VPFIDiscountFacet is
             msg.sender
         );
         uint256 prevBal = IERC20(vpfi).balanceOf(escrow);
+        // T-054 PR-2 — clamp the rollup / checkpoint balance against
+        // the protocol-tracked counter so unsolicited dust pushed in
+        // via direct `IERC20.transfer` does NOT inflate the user's
+        // staking yield or VPFI discount tier. Post-mutation values
+        // computed from current storage + the amount about to be
+        // deposited via the chokepoint.
+        uint256 prevTracked = s.protocolTrackedEscrowBalance[msg.sender][vpfi];
+        uint256 newStakedBal = LibVPFIDiscount.clampToTracked(
+            prevBal + amount,
+            prevTracked + amount
+        );
         // Roll up the VPFI discount accumulator, re-stamping at the
         // post-mutation balance so the next period accrues at the tier
         // the user will actually hold after this deposit lands.
-        LibVPFIDiscount.rollupUserDiscount(msg.sender, prevBal + amount);
+        LibVPFIDiscount.rollupUserDiscount(msg.sender, newStakedBal);
         // Checkpoint the staker BEFORE the deposit lands so the accrual
         // captures the pre-deposit staked amount for the period it was
         // active, then adopts the new balance as the next accrual baseline.
-        LibStakingRewards.updateUser(msg.sender, prevBal + amount);
+        LibStakingRewards.updateUser(msg.sender, newStakedBal);
     }
 
     /**
@@ -492,6 +541,8 @@ contract VPFIDiscountFacet is
         nonReentrant
         whenNotPaused
     {
+        // Tier-1 sanctions gate. Funds OUT to msg.sender — block.
+        LibVaipakam._assertNotSanctioned(msg.sender);
         if (amount == 0) revert InvalidAmount();
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         address vpfi = s.vpfiToken;
@@ -502,14 +553,23 @@ contract VPFIDiscountFacet is
         uint256 prevBal = IERC20(vpfi).balanceOf(escrow);
         if (prevBal < amount) revert VPFIEscrowBalanceInsufficient();
 
+        // T-054 PR-2 — clamp the post-withdraw balance against the
+        // protocol-tracked counter (less the same withdraw amount).
+        // Excludes any unsolicited dust still sitting in the escrow
+        // from the post-mutation yield-bearing balance.
+        uint256 prevTracked = s.protocolTrackedEscrowBalance[msg.sender][vpfi];
+        uint256 newStakedBal = LibVPFIDiscount.clampToTracked(
+            prevBal - amount,
+            prevTracked - amount
+        );
         // Close the VPFI-discount period and re-stamp at the post-
         // mutation balance. The closing period carries the stamp left
         // by the prior rollup (whatever tier was in effect up to now);
         // the next period starts at the tier the user will hold after
         // this withdraw.
-        LibVPFIDiscount.rollupUserDiscount(msg.sender, prevBal - amount);
+        LibVPFIDiscount.rollupUserDiscount(msg.sender, newStakedBal);
         // Staking checkpoint on the OLD balance before the pull.
-        LibStakingRewards.updateUser(msg.sender, prevBal - amount);
+        LibStakingRewards.updateUser(msg.sender, newStakedBal);
 
         EscrowFactoryFacet(address(this)).escrowWithdrawERC20(
             msg.sender,

@@ -1,15 +1,16 @@
 # Bienvenido a Vaipakam
 
-Vaipakam es una plataforma de préstamos entre pares. Tú prestas
-activos y ganas intereses. Tomas prestados activos y aportas garantía.
-Alquilas NFTs y el propietario recibe pagos diarios. Todo ocurre
+Vaipakam es una plataforma de préstamos entre pares. Prestas activos
+y ganas intereses. Tomas activos prestados y aportas garantía.
+Alquilas NFTs y el propietario cobra renta diaria. Todo ocurre
 directamente entre dos billeteras, con los contratos inteligentes
-custodiando los activos hasta que termina el préstamo o el alquiler.
+manteniendo los activos en vault hasta que termina el préstamo o el
+alquiler.
 
-Esta página es el **recorrido amigable**. Si quieres profundidad
-técnica, usa la pestaña **Guía de usuario** para ayuda por pantalla,
-o la pestaña **Técnico** para el whitepaper completo. Si solo quieres
-saber "qué es esto y cómo lo uso" — sigue leyendo.
+Esta página es el **recorrido amigable**. Si buscas más profundidad
+técnica, usa la pestaña **Guía de usuario** para ayuda pantalla por
+pantalla, o la pestaña **Técnico** para el whitepaper completo. Si
+solo quieres saber "qué es esto y cómo lo uso" — sigue leyendo.
 
 ---
 
@@ -18,8 +19,8 @@ saber "qué es esto y cómo lo uso" — sigue leyendo.
 Vaipakam es para cuatro tipos de personas:
 
 - **Prestamistas** — tienes un activo (USDC, ETH, USDT, etc.) sin uso.
-  Te gustaría que generara intereses sin perder seguridad. Publicas
-  una oferta de prestamista; un prestatario la acepta; ganas
+  Te gustaría que generara intereses sin renunciar a la seguridad.
+  Publicas una oferta de prestamista; un prestatario la acepta; ganas
   intereses según tus condiciones.
 - **Prestatarios** — necesitas efectivo durante unos días, semanas o
   meses y no quieres vender tu garantía (porque crees que va a subir,
@@ -42,7 +43,7 @@ puedes prestar, pedir prestado o alquilar.
 
 ## Cómo funciona un préstamo (ejemplo concreto)
 
-Supongamos que tienes **1.000 USDC** parados en tu billetera en Base.
+Supongamos que tienes **1.000 USDC** quietos en tu billetera en Base.
 Te gustaría ganar intereses. Aquí está el ciclo completo.
 
 ### Paso 1 — Crear una oferta
@@ -56,26 +57,26 @@ Abres la app de Vaipakam, conectas tu billetera y haces clic en
 - Duración del préstamo: **30 días**
 
 Firmas una transacción. Tus 1.000 USDC se mueven de tu billetera a
-tu **escrow personal** (una bóveda privada que solo tú controlas).
+tu **vault personal** (una bóveda privada que solo tú controlas).
 Permanecen ahí hasta que un prestatario acepte tu oferta.
 
 ### Paso 2 — Un prestatario acepta
 
 Tal vez una hora después, otra persona ve tu oferta en el **Libro
-de ofertas**. Tiene WETH y quiere pedir prestado USDC contra él
+de ofertas**. Tiene WETH y quiere pedir prestado USDC usando ese WETH
 durante un mes. Hace clic en **Aceptar** y aporta WETH por valor,
 digamos, de 1.500 $ (un LTV de aproximadamente 67% — por debajo de
 tu límite del 70%, así que la oferta se acepta).
 
 En el momento que acepta:
 
-- Tus 1.000 USDC se mueven de tu escrow al suyo
-- Su WETH queda bloqueado en su escrow como garantía
+- Tus 1.000 USDC se mueven de tu vault al suyo
+- Su WETH queda bloqueado en su vault como garantía
 - Ambos recibís un NFT de posición — el tuyo dice "Se me deben 1.000
   USDC + intereses"; el suyo dice "Se me debe mi WETH cuando pague"
 - El cronómetro del préstamo empieza a correr
 
-Una pequeña **Comisión de iniciación del préstamo (0,1%)** se toma
+Una pequeña **Comisión de iniciación del préstamo (0,1%)** se descuenta
 del importe prestado y se envía al tesoro del protocolo. Así que el
 prestatario recibe 999 USDC, no 1.000. (Puedes pagar la comisión en
 **VPFI** y entonces el prestatario recibe los 1.000 completos —
@@ -93,8 +94,7 @@ Hace clic en **Devolver**, firma una transacción, y 1.006,58 USDC
 entran en la liquidación del préstamo. De ahí:
 
 - Tú recibes **1.005,51 USDC** (principal + intereses menos una
-  Comisión sobre Rendimiento del 1% sobre la parte de intereses
-  únicamente)
+  Comisión sobre Rendimiento del 1% aplicada únicamente a los intereses)
 - El tesoro recibe **1,07 USDC** como Comisión sobre Rendimiento
 - El WETH del prestatario se desbloquea
 
@@ -143,7 +143,7 @@ sentido: pagar el préstamo de otra persona no te da su garantía.
 
 Mismo flujo que un préstamo, con dos diferencias:
 
-- **El NFT permanece en escrow**; el inquilino nunca lo tiene
+- **El NFT permanece en vault**; el inquilino nunca lo tiene
   directamente. En su lugar, el protocolo usa **ERC-4907** para dar
   al inquilino "derechos de uso" sobre el NFT durante la ventana
   de alquiler. Los juegos y apps compatibles leen los derechos de
@@ -156,7 +156,7 @@ Mismo flujo que un préstamo, con dos diferencias:
   los días no usados se reembolsan.
 
 Cuando el alquiler termina (por vencimiento o por incumplimiento),
-el NFT vuelve al escrow del propietario. El propietario puede
+el NFT vuelve al vault del propietario. El propietario puede
 entonces volver a listarlo o reclamarlo de vuelta a su billetera.
 
 ---
@@ -166,7 +166,7 @@ entonces volver a listarlo o reclamarlo de vuelta a su billetera.
 Prestar y pedir prestado en Vaipakam no está libre de riesgo. Pero
 el protocolo tiene varias capas integradas:
 
-- **Escrow por usuario.** Tus activos están en tu propia bóveda.
+- **Vault por usuario.** Tus activos están en tu propia bóveda.
   El protocolo nunca los junta con los fondos de otros usuarios.
   Esto significa que un fallo que afecte a otro usuario no puede
   drenarte.
@@ -210,25 +210,39 @@ dejará aceptar hasta marcar la casilla de consentimiento.
 
 Dos comisiones, ambas pequeñas:
 
-- **Comisión sobre Rendimiento — 1%** de los **intereses** que ganas
-  como prestamista (no 1% del principal). En un préstamo a 30 días
-  al 8% APR de 1.000 USDC, el prestamista gana ~6,58 USDC de
-  intereses, de los cuales ~0,066 USDC son la Comisión sobre
-  Rendimiento.
-- **Comisión de Iniciación del Préstamo — 0,1%** del importe
-  prestado, pagada por el prestatario en el origen. En un préstamo
-  de 1.000 USDC, eso es 1 USDC.
+- **Comisión sobre Rendimiento — `{liveValue:treasuryFeeBps}`%** de
+  los **intereses** que ganas como prestamista (no de tu principal).
+  En un préstamo a 30 días al 8% APR de 1.000 USDC, el prestamista
+  gana ~6,58 USDC de intereses, de los cuales ~0,066 USDC son la
+  Comisión sobre Rendimiento al tipo por defecto.
+- **Comisión de Iniciación del Préstamo — `{liveValue:loanInitiationFeeBps}`%**
+  del importe prestado, pagada por el prestatario en el origen. En
+  un préstamo de 1.000 USDC, eso es 1 USDC al tipo por defecto.
 
-Ambas comisiones pueden tener un **descuento de hasta el 24%**
-manteniendo VPFI en escrow (ver más abajo). En caso de
-incumplimiento o liquidación, no se cobra Comisión sobre Rendimiento
-sobre los intereses recuperados — el protocolo no se beneficia de un
-préstamo fallido.
+Ambas comisiones pueden tener un **descuento de hasta el
+`{liveValue:tier4DiscountBps}`%** manteniendo VPFI en vault (ver más
+abajo). En caso de incumplimiento o liquidación, no se cobra Comisión
+sobre Rendimiento sobre los intereses recuperados — el protocolo no
+se beneficia de un préstamo fallido.
 
 No hay comisiones de retirada, ni comisiones por inactividad, ni
 comisiones de streaming, ni comisiones de "rendimiento" sobre el
-principal. El único dinero que toma el protocolo son los dos números
-de arriba.
+principal. Los únicos importes que toma el protocolo son las dos
+comisiones anteriores.
+
+> **Nota sobre la comisión de gas de la red blockchain.** Cuando
+> creas una oferta, aceptas un préstamo, repagas, reclamas o haces
+> cualquier otra acción on-chain, también pagas una pequeña
+> **comisión de gas de red** a los validadores de la blockchain que
+> incluyen tu transacción en un bloque. Esa comisión de gas va a la
+> red, **no a Vaipakam** — es la misma comisión que pagarías al
+> enviar cualquier token en la misma cadena. El importe depende de
+> la cadena y de la congestión de la red en ese momento, no del
+> tamaño de tu préstamo. Las comisiones del protocolo anteriores
+> (Comisión sobre Rendimiento `{liveValue:treasuryFeeBps}`%,
+> Comisión de Iniciación del Préstamo `{liveValue:loanInitiationFeeBps}`%)
+> son completamente independientes del gas de red y son las únicas
+> que cobra el propio protocolo.
 
 ---
 
@@ -238,16 +252,16 @@ de arriba.
 
 ### 1. Descuentos en comisiones
 
-Si mantienes VPFI en tu escrow en una cadena, eso descuenta tus
+Si mantienes VPFI en tu vault en una cadena, eso descuenta tus
 comisiones de protocolo en los préstamos en los que participes en
 esa cadena:
 
-| VPFI en escrow | Descuento de comisión |
+| VPFI en vault | Descuento de comisión |
 |---|---|
-| 100 – 999 | 10% |
-| 1.000 – 4.999 | 15% |
-| 5.000 – 20.000 | 20% |
-| Por encima de 20.000 | 24% |
+| `{liveValue:tier1Min}` – `{liveValue:tier2Min}` (excl.) | `{liveValue:tier1DiscountBps}`% |
+| `{liveValue:tier2Min}` – `{liveValue:tier3Min}` (excl.) | `{liveValue:tier2DiscountBps}`% |
+| `{liveValue:tier3Min}` – `{liveValue:tier4Min}` | `{liveValue:tier3DiscountBps}`% |
+| Por encima de `{liveValue:tier4Min}` | `{liveValue:tier4DiscountBps}`% |
 
 Los descuentos se aplican tanto a las comisiones del prestamista
 como del prestatario. El descuento es **ponderado en el tiempo a lo
@@ -257,9 +271,9 @@ proporción al tiempo que efectivamente mantuviste el nivel.
 
 ### 2. Staking — 5% APR
 
-Cualquier VPFI en tu escrow gana automáticamente recompensas de
+Cualquier VPFI en tu vault gana automáticamente recompensas de
 staking al 5% anual. No hay una acción de staking aparte, ni
-bloqueo, ni espera para retirar. Mueve VPFI a tu escrow y gana desde
+bloqueo, ni espera para retirar. Mueve VPFI a tu vault y gana desde
 ese momento. Sácalo y la acumulación se detiene.
 
 ### 3. Recompensas por interacción en la plataforma
@@ -282,8 +296,8 @@ Tres caminos:
 - **Comprarlo** — a tasa fija (`1 VPFI = 0,001 ETH`) en la página
   **Comprar VPFI**. El programa de tasa fija tiene tope por
   billetera por cadena.
-- **Hacer puente** — VPFI es un token LayerZero OFT V2, así que se
-  mueve entre cadenas compatibles usando el puente oficial.
+- **Moverlo por puente** — VPFI es un token LayerZero OFT V2, así que
+  se mueve entre cadenas compatibles usando el puente oficial.
 
 ---
 
@@ -294,7 +308,7 @@ compatible: **Ethereum**, **Base**, **Arbitrum**, **Optimism**,
 **Polygon zkEVM**, **BNB Chain**.
 
 Un préstamo abierto en Base se liquida en Base. Un préstamo abierto
-en Arbitrum se liquida en Arbitrum. No hay deuda multi-cadena. Lo
+en Arbitrum se liquida en Arbitrum. No hay deuda entre cadenas. Lo
 único que cruza cadenas es el token VPFI y el denominador diario de
 recompensas (que asegura que las recompensas sean justas entre
 cadenas activas y tranquilas).
@@ -330,7 +344,7 @@ Mismo flujo, pero en la página **Crear oferta** eliges "Alquiler de
 NFT" en lugar de préstamo ERC-20. El formulario te guía.
 
 Si solo quieres **ganar rendimiento pasivo sobre tu VPFI**, deposítalo
-en tu escrow en la página de **Panel**. Eso es todo — el staking es
+en tu vault en la página de **Panel**. Eso es todo — el staking es
 automático desde ese momento.
 
 ---
@@ -344,14 +358,14 @@ deliberadamente **no**:
   específicas con condiciones que ambas firmaron. Sin pool de
   liquidez compartido, sin curva de utilización, sin picos
   sorpresivos de tasa.
-- **Sin custodia por proxy.** Tus activos están en tu propio escrow,
+- **Sin custodia por proxy.** Tus activos están en tu propio vault,
   no en una bóveda compartida. El protocolo solo los mueve con las
   acciones que firmas.
-- **Sin bucles de apalancamiento por defecto.** Puedes retransmitir
+- **Sin bucles de apalancamiento por defecto.** Puedes volver a publicar
   los fondos prestados como nueva oferta de prestamista si quieres,
   pero el protocolo no integra el bucle automático en la UX.
-  Pensamos que es un footgun.
-- **Sin actualizaciones sorpresa.** Las actualizaciones del escrow
+  Creemos que es una trampa demasiado fácil de activar.
+- **Sin actualizaciones sorpresa.** Las actualizaciones del vault
   están limitadas; las actualizaciones obligatorias aparecen en la
   app para que las apliques explícitamente. Nada reescribe tu
   bóveda a tus espaldas.

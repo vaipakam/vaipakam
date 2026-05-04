@@ -8,6 +8,9 @@
 
 import type { Env } from './env';
 import { runWatcher } from './watcher';
+import { runBuyWatchdog } from './buyWatchdog';
+import { runChainIndexer } from './chainIndexer';
+import { runPeriodicPreNotify } from './periodicPreNotify';
 import {
   consumeTelegramLinkCode,
   issueTelegramLinkCode,
@@ -18,11 +21,27 @@ import { extractLinkCode, sendMessage, type TelegramUpdate } from './telegram';
 import { handshakeExpired, handshakeLinked } from './i18n';
 import { handle0xQuote, handle1inchQuote } from './quoteProxy';
 import { handleBlockaidScan } from './scanProxy';
+import { handleDiagRecord, pruneOldDiagErrors } from './diagRecord';
 import {
   handleActiveLoansFrameInitial,
   handleActiveLoansFramePost,
   handleActiveLoansFrameImage,
 } from './frames';
+import {
+  handleOffersStats,
+  handleOffersActive,
+  handleOfferById,
+  handleOffersByCreator,
+  handleOffersPreflight,
+} from './offerRoutes';
+import {
+  handleLoansActive,
+  handleLoanById,
+  handleLoansByParticipant,
+  handleActivity,
+  handleClaimables,
+  handleLoansPreflight,
+} from './loanRoutes';
 
 export default {
   async scheduled(
@@ -31,10 +50,119 @@ export default {
     ctx: ExecutionContext,
   ): Promise<void> {
     ctx.waitUntil(runWatcher(env));
+    // 2026-05-01 — diagnostics retention prune. Cheap (one DELETE
+    // gated by an indexed predicate). Piggybacks on the existing
+    // 5-min cron — no separate trigger needed. Failing here must
+    // not break the watcher, so wrap in catch.
+    ctx.waitUntil(
+      pruneOldDiagErrors(env).catch(() => {
+        // Swallow — a transient D1 hiccup shouldn't fail the
+        // whole scheduled tick. Next tick retries.
+      }),
+    );
+    // T-031 Layer 4a — cross-chain reconciliation watchdog.
+    // Piggybacks on the existing scheduled cron. Same swallow-and-
+    // log policy as the diagnostics prune so a transient RPC hiccup
+    // on a source chain can't wedge the HF watcher pass.
+    ctx.waitUntil(
+      runBuyWatchdog(env).catch((err) => {
+        console.error('[buyWatchdog] pass failed:', err);
+      }),
+    );
+    // T-041 — unified chain indexer. ONE event scan per tick,
+    // dispatched to per-domain handlers (offers in Phase A; loans /
+    // activity / VPFI / NFT lifecycle in subsequent phases). Same
+    // isolation policy as the other passes: a failure here must not
+    // wedge the HF watcher.
+    ctx.waitUntil(
+      runChainIndexer(env).catch((err) => {
+        console.error('[chainIndexer] pass failed:', err);
+      }),
+    );
+    // T-034 PR2 — Periodic Interest Payment pre-notify lane. Walks
+    // the indexed `loans` table for active periodic-cadence loans
+    // whose next checkpoint is within `preNotifyDays` and pushes to
+    // both borrower (priority) and lender (courtesy). Same isolation
+    // policy as the chainIndexer above so a transient D1/RPC blip
+    // can't wedge the HF watcher pass.
+    ctx.waitUntil(
+      runPeriodicPreNotify(env).catch((err) => {
+        console.error('[periodicPreNotify] pass failed:', err);
+      }),
+    );
   },
 
   async fetch(req: Request, env: Env): Promise<Response> {
     const url = new URL(req.url);
+
+    // T-041 — public chain-indexer reads. Open CORS, no origin gate.
+    // Handled BEFORE the generic preflight + origin gate so a non-
+    // allow-list origin (e.g. third-party explorer) can read public
+    // data cleanly.
+    if (url.pathname.startsWith('/offers')) {
+      if (req.method === 'OPTIONS') {
+        return handleOffersPreflight();
+      }
+      if (req.method === 'GET') {
+        if (url.pathname === '/offers/stats') {
+          return handleOffersStats(req, env);
+        }
+        if (url.pathname === '/offers/active') {
+          return handleOffersActive(req, env);
+        }
+        const byCreator = url.pathname.match(/^\/offers\/by-creator\/(0x[0-9a-fA-F]{40})$/);
+        if (byCreator) {
+          return handleOffersByCreator(req, env, byCreator[1]);
+        }
+        const byId = url.pathname.match(/^\/offers\/(\d+)$/);
+        if (byId) {
+          return handleOfferById(req, env, byId[1]);
+        }
+      }
+      return new Response('Not found', { status: 404 });
+    }
+    if (url.pathname.startsWith('/loans')) {
+      if (req.method === 'OPTIONS') {
+        return handleLoansPreflight();
+      }
+      if (req.method === 'GET') {
+        if (url.pathname === '/loans/active') {
+          return handleLoansActive(req, env);
+        }
+        const byLender = url.pathname.match(/^\/loans\/by-lender\/(0x[0-9a-fA-F]{40})$/);
+        if (byLender) {
+          return handleLoansByParticipant(req, env, byLender[1], 'lender');
+        }
+        const byBorrower = url.pathname.match(/^\/loans\/by-borrower\/(0x[0-9a-fA-F]{40})$/);
+        if (byBorrower) {
+          return handleLoansByParticipant(req, env, byBorrower[1], 'borrower');
+        }
+        const byId = url.pathname.match(/^\/loans\/(\d+)$/);
+        if (byId) {
+          return handleLoanById(req, env, byId[1]);
+        }
+      }
+      return new Response('Not found', { status: 404 });
+    }
+    if (url.pathname === '/activity') {
+      if (req.method === 'OPTIONS') {
+        return handleLoansPreflight();
+      }
+      if (req.method === 'GET') {
+        return handleActivity(req, env);
+      }
+      return new Response('Not found', { status: 404 });
+    }
+    if (url.pathname.startsWith('/claimables/')) {
+      if (req.method === 'OPTIONS') {
+        return handleLoansPreflight();
+      }
+      if (req.method === 'GET') {
+        const m = url.pathname.match(/^\/claimables\/(0x[0-9a-fA-F]{40})$/);
+        if (m) return handleClaimables(req, env, m[1]);
+      }
+      return new Response('Not found', { status: 404 });
+    }
 
     // Preflight: allow the frontend origin with credentials.
     if (req.method === 'OPTIONS') {
@@ -98,6 +226,18 @@ export default {
     // preview hook on review modals.
     if (url.pathname === '/scan/blockaid' && req.method === 'POST') {
       return handleBlockaidScan(req, env);
+    }
+
+    // 2026-05-01 — diagnostics error capture endpoint. Frontend
+    // fires-and-forgets one POST per `failure` journey event so
+    // support has a server-side audit trail (UUID embedded in any
+    // GitHub-issue prefill cross-references back to a real session).
+    // CORS-locked to FRONTEND_ORIGIN, per-IP rate-limited via the
+    // DIAG_RECORD_RATELIMIT binding, dedup'd at the 5-consecutive-
+    // same-fingerprint threshold. Always returns 200 even on dedup
+    // skip — caller doesn't retry.
+    if (url.pathname === '/diag/record') {
+      return handleDiagRecord(req, env);
     }
 
     return new Response('Not found', { status: 404 });

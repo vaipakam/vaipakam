@@ -42,6 +42,8 @@ import { useReadChain } from '../contracts/useDiamond';
 import { useWallet } from '../context/WalletContext';
 import { useChainOverride } from '../context/ChainContext';
 import { shortenAddr, bpsToPercent, formatUnitsPretty } from '../lib/format';
+import { CopyableAddress } from '../components/app/CopyableAddress';
+import { AssetLink } from '../components/app/AssetLink';
 import { AssetType, LoanStatus, LOAN_STATUS_LABELS } from '../types/loan';
 import { Pager } from '../components/app/Pager';
 import './PublicDashboard.css';
@@ -223,10 +225,10 @@ export default function PublicDashboard() {
         totalVolumeLentUsd: stats.totalVolumeLentUsd,
         totalInterestEarnedUsd: stats.totalInterestEarnedUsd,
         activeLoansValueUsd: stats.activeLoansValueUsd,
-        treasuryBalanceUsd: treasuryMetrics?.treasuryBalanceUsd ?? 0,
-        treasuryFeesLifetimeUsd: treasuryMetrics?.totalFeesCollectedUsd ?? 0,
-        treasuryFees24hUsd: treasuryMetrics?.feesLast24hUsd ?? 0,
-        treasuryFees7dUsd: treasuryMetrics?.feesLast7dUsd ?? 0,
+        treasuryBalanceUsd: treasuryMetrics?.treasuryBalanceNumeraire ?? 0,
+        treasuryFeesLifetimeUsd: treasuryMetrics?.totalFeesCollectedNumeraire ?? 0,
+        treasuryFees24hUsd: treasuryMetrics?.feesLast24hNumeraire ?? 0,
+        treasuryFees7dUsd: treasuryMetrics?.feesLast7dNumeraire ?? 0,
       },
       assetBreakdown: stats.assetBreakdown,
       collateralBreakdown: stats.collateralBreakdown,
@@ -267,7 +269,7 @@ export default function PublicDashboard() {
   return (
     <>
       <Navbar />
-      <main className="public-dashboard">
+      <main className="public-dashboard public-page-glow">
         <div className="container">
           <header className="pd-header">
             <div>
@@ -457,15 +459,15 @@ export default function PublicDashboard() {
                   label="Interest Earned by Lenders"
                   value={formatUsd(stats.totalInterestEarnedUsd)}
                   hint="Lifetime, completed loans only"
-                  onchainFn="getTotalInterestEarnedUSD"
+                  onchainFn="getTotalInterestEarnedNumeraire"
                 />
                 <MetricCard
                   icon={<Landmark size={18} />}
                   label="Treasury Balance"
-                  value={formatUsd(treasuryMetrics?.treasuryBalanceUsd ?? 0)}
+                  value={formatUsd(treasuryMetrics?.treasuryBalanceNumeraire ?? 0)}
                   hint={
                     treasuryMetrics
-                      ? `${formatUsd(treasuryMetrics.totalFeesCollectedUsd)} lifetime · ${formatUsd(treasuryMetrics.feesLast24hUsd)} 24h`
+                      ? `${formatUsd(treasuryMetrics.totalFeesCollectedNumeraire)} lifetime · ${formatUsd(treasuryMetrics.feesLast24hNumeraire)} 24h`
                       : 'Unclaimed protocol fees'
                   }
                   onchainFn="getTreasuryMetrics"
@@ -577,8 +579,16 @@ export default function PublicDashboard() {
                       <div className="pd-dist-row" key={row.asset}>
                         <div className="pd-dist-label">
                           <span>
-                            <strong>{row.symbol}</strong>{' '}
-                            <span className="mono pd-subtle">{shortenAddr(row.asset)}</span>
+                            <strong>
+                              <AssetLink
+                                kind="erc20"
+                                chainId={chainId}
+                                address={row.asset}
+                                showIcon={false}
+                                label={row.symbol}
+                              />
+                            </strong>{' '}
+                            <CopyableAddress address={row.asset} className="pd-subtle" />
                           </span>
                           <span className="pd-dist-share">
                             {row.liquid ? `${row.share.toFixed(1)}%` : 'illiquid'}
@@ -590,7 +600,14 @@ export default function PublicDashboard() {
                         />
                         <div className="pd-dist-meta">
                           {row.loans} loan{row.loans === 1 ? '' : 's'} ·{' '}
-                          {formatUnitsPretty(row.volume, row.decimals)} {row.symbol}
+                          {formatUnitsPretty(row.volume, row.decimals)}{' '}
+                          <AssetLink
+                            kind="erc20"
+                            chainId={chainId}
+                            address={row.asset}
+                            showIcon={false}
+                            label={row.symbol}
+                          />
                           {row.liquid && <> · {formatUsd(row.volumeUsd)}</>}
                           <a
                             href={`${blockExplorer}/address/${row.asset}`}
@@ -719,8 +736,18 @@ export default function PublicDashboard() {
                             const share = totalUsd === 0 ? 0 : (row.usd / totalUsd) * 100;
                             return (
                               <tr key={row.asset}>
-                                <td className="mono">{shortenAddr(row.asset)}</td>
-                                <td>{row.symbol}</td>
+                                <td>
+                                  <CopyableAddress address={row.asset} />
+                                </td>
+                                <td>
+                                  <AssetLink
+                                    kind="erc20"
+                                    chainId={chainId}
+                                    address={row.asset}
+                                    showIcon={false}
+                                    label={row.symbol}
+                                  />
+                                </td>
                                 <td className="mono">
                                   {formatUnitsPretty(row.amount, row.decimals)}
                                 </td>
@@ -906,7 +933,10 @@ export default function PublicDashboard() {
                 </>
               )}
 
-              <section className="pd-section pd-transparency">
+              <section
+                id="transparency"
+                className="pd-section pd-transparency"
+              >
                 <h2 style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                   Transparency &amp; Source
                   <CardInfo id="public-dashboard.transparency" />

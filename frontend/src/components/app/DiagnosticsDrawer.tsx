@@ -1,16 +1,16 @@
 import { useEffect, useState } from 'react';
-import { LifeBuoy, Copy, X, FileDown, ShieldAlert } from 'lucide-react';
+import { LifeBuoy, Copy, X, FileDown, Trash2, Lock } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
+import { L as Link } from '../L';
 import {
   subscribe,
   exportDiagnostics,
+  clearJourney,
   type JourneyEvent,
 } from '../../lib/journeyLog';
 import { formatTime } from '../../lib/format';
-import { downloadMyData, deleteMyData } from '../../lib/gdpr';
 import { useMode } from '../../context/ModeContext';
 import { ReportIssueLink } from './ReportIssueLink';
-import { InfoTip } from '../InfoTip';
 import './DiagnosticsDrawer.css';
 
 /**
@@ -27,6 +27,27 @@ const FILTERS: { key: StatusFilter; labelKey: string }[] = [
   { key: 'start', labelKey: 'diagnostics.filterStart' },
   { key: 'success', labelKey: 'diagnostics.filterSuccess' },
 ];
+
+/**
+ * Master flag — when `VITE_DIAG_DRAWER_ENABLED` is the literal string
+ * "false" the drawer (floating LifeBuoy button + slide-over panel)
+ * doesn't mount at all. Lets the operator hide the user-facing
+ * "report issue" affordance once server-side error capture is the
+ * canonical reporting channel — no other major DeFi platform asks
+ * users to hand-author bug reports, and the drawer's mere presence
+ * signals "this might break". Default behaviour (env var unset OR
+ * any value other than "false") is to render the drawer, so existing
+ * deploys are unchanged. Read once at module load — no hot-toggle;
+ * a redeploy with the new env value flips the behaviour.
+ */
+const DRAWER_ENABLED = (() => {
+  try {
+    const raw = (import.meta.env.VITE_DIAG_DRAWER_ENABLED as string | undefined) ?? '';
+    return raw.toLowerCase() !== 'false';
+  } catch {
+    return true;
+  }
+})();
 
 export default function DiagnosticsDrawer() {
   const { t } = useTranslation();
@@ -68,6 +89,13 @@ export default function DiagnosticsDrawer() {
     ? events
     : events.filter((e) => e.status === filter);
 
+  // Master flag (see DRAWER_ENABLED constant above). When the
+  // operator has opted out, render nothing — no FAB, no drawer.
+  // Server-side error capture in `lib/journeyLog.ts` continues to
+  // run in the background regardless, so the support team still
+  // sees every failure even when the user-facing affordance is off.
+  if (!DRAWER_ENABLED) return null;
+
   return (
     <>
       {fabVisible && (
@@ -98,91 +126,65 @@ export default function DiagnosticsDrawer() {
 
             <p className="diag-hint">{t('diagnostics.hint')}</p>
 
+            {/* Single row of journey-buffer-scoped support actions.
+                The hint paragraph above already establishes the scope
+                ("a redacted log of recent steps … report directly on
+                GitHub … or copy / download the full JSON"), so the
+                buttons read as just `Download` and `Delete` — extra
+                "journey log" qualifier would be redundant. The pair
+                acts only on the in-memory journey buffer; the
+                broader GDPR Download / Delete pair lives on the
+                Data Rights page (link below) since the broader
+                Delete also wipes cookies and cached event indexes
+                (a reflexive click from this support drawer would be
+                surprising). */}
             <div className="diag-actions">
-              {/* Two complementary support actions:
-                  • Report on GitHub — one-click prefilled issue.
-                  • Copy JSON       — paste-into-chat workflow.
-                  The previous Download / Clear buttons were removed
-                  in favour of the broader GDPR row below — Download
-                  my data covers the file-export case (and exports
-                  more than the journey log), and Delete my data
-                  covers the wipe case (and clears the rest of the
-                  client-side namespace too). */}
               <ReportIssueLink variant="button" label={t('diagnostics.reportOnGithub')} />
               <button className="btn btn-secondary btn-sm" onClick={handleCopy}>
                 <Copy size={14} />
                 {copied ? t('diagnostics.copied') : t('diagnostics.copyJson')}
               </button>
-            </div>
-
-            {/* Phase 4.4 — GDPR data-subject-rights surface. Distinct
-                from the Copy / Download / Clear row above (which is a
-                support-debug flow for the journey buffer only): these
-                two buttons export or erase EVERY piece of client-side
-                data Vaipakam has on the user — journey log, consent
-                choice, cached event index — and cover the Privacy
-                Policy's "right to access" + "right to erasure" boxes
-                end-to-end. On-chain positions are unaffected; the
-                banner text on the button tooltips makes this clear. */}
-            <div
-              className="diag-actions"
-              style={{ marginTop: 10, paddingTop: 10, borderTop: '1px solid var(--border)' }}
-            >
-              <span
-                style={{
-                  fontSize: '0.75rem',
-                  color: 'var(--text-tertiary)',
-                  width: '100%',
-                  marginBottom: 4,
+              <button
+                className="btn btn-secondary btn-sm"
+                onClick={() => {
+                  const blob = new Blob([exportDiagnostics()], {
+                    type: 'application/json',
+                  });
+                  const url = URL.createObjectURL(blob);
+                  const a = document.createElement('a');
+                  a.href = url;
+                  a.download = `vaipakam-journey-${Date.now()}.json`;
+                  a.click();
+                  URL.revokeObjectURL(url);
                 }}
               >
-                {t('diagnostics.dataRights')}
-              </span>
-              {/* Each action is wrapped with its own InfoTip so the
-                  helper text stays anchored next to its button when
-                  the row wraps on narrow viewports. The (i) icon is
-                  the same surface mobile users tap to read the
-                  explanation — desktop users still get hover. The
-                  bubble is portal-rendered, so the drawer's
-                  `transform`/`overflow` clipping context can't
-                  truncate it. */}
-              <span className="diag-action-with-info">
-                <button
-                  className="btn btn-secondary btn-sm"
-                  onClick={() => {
-                    downloadMyData();
-                  }}
-                >
-                  <FileDown size={14} />
-                  {t('diagnostics.downloadMyData')}
-                </button>
-                <InfoTip ariaLabel={t('diagnostics.downloadMyDataAria')}>
-                  {t('diagnostics.downloadMyDataTip')}
-                </InfoTip>
-              </span>
-              <span className="diag-action-with-info">
-                <button
-                  className="btn btn-ghost btn-sm"
-                  onClick={() => {
-                    // Two-step confirm — delete is irreversible on the
-                    // client side (though everything is restorable by
-                    // re-using the app; on-chain state stays).
-                    const ok = window.confirm(t('diagnostics.deleteConfirm'));
-                    if (!ok) return;
-                    deleteMyData();
-                    // Reload so every hook / banner rehydrates from
-                    // the now-empty storage.
-                    window.location.reload();
-                  }}
-                >
-                  <ShieldAlert size={14} />
-                  {t('diagnostics.deleteMyData')}
-                </button>
-                <InfoTip ariaLabel={t('diagnostics.deleteMyDataAria')}>
-                  {t('diagnostics.deleteMyDataTip')}
-                </InfoTip>
-              </span>
+                <FileDown size={14} />
+                {t('diagnostics.download')}
+              </button>
+              <button
+                className="btn btn-ghost btn-sm"
+                onClick={() => clearJourney()}
+              >
+                <Trash2 size={14} />
+                {t('diagnostics.delete')}
+              </button>
             </div>
+
+            <Link
+              to="/app/data-rights"
+              onClick={() => setOpen(false)}
+              style={{
+                marginTop: 8,
+                fontSize: '0.78rem',
+                color: 'var(--brand)',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 4,
+              }}
+            >
+              <Lock size={12} />
+              {t('diagnostics.dataRightsLink')}
+            </Link>
 
             <div className="diag-filters" role="tablist" aria-label={t('diagnostics.filterAriaLabel')}>
               {FILTERS.map((f) => {

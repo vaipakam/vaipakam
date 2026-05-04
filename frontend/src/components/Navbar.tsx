@@ -2,32 +2,27 @@ import { useEffect, useRef, useState } from 'react';
 import { L as Link } from './L';
 import { useTranslation } from 'react-i18next';
 import { useTheme } from '../context/ThemeContext';
-import { useWallet } from '../context/WalletContext';
 import {
   Sun,
   Moon,
   Menu,
   X,
-  AlertTriangle,
   ArrowRight,
   Settings,
   Globe,
-  LogOut,
   ChevronDown,
 } from 'lucide-react';
 import './Navbar.css';
-import { ReportIssueLink } from './app/ReportIssueLink';
-import { ConnectWalletButton } from './app/ConnectWalletButton';
-import { WalletMenu } from './app/WalletMenu';
-import { WalletAddressPill } from './app/WalletAddressPill';
-import { ChainPicker } from './ChainPicker';
-import {
-  CHAIN_REGISTRY,
-  compareChainsForDisplay,
-} from '../contracts/config';
 import { LanguagePicker } from './LanguagePicker';
 
-type NavLink = { labelKey: string; href: string };
+type NavLink = {
+  labelKey: string;
+  href: string;
+  /** Open in a new browser tab. Used for VPFI dropdown's action items
+   *  (Buy / Stake-Unstake) which jump from the public marketing site
+   *  into the wallet-gated app at `/app/buy-vpfi`. */
+  newTab?: boolean;
+};
 
 interface NavGroup {
   /** Translation key for the dropdown trigger label. Resolved via
@@ -70,22 +65,14 @@ const NAV_GROUPS: NavGroup[] = [
     links: [
       { labelKey: 'nav.analytics', href: '/analytics' },
       { labelKey: 'nav.nftVerifier', href: '/nft-verifier' },
+      // Public read-only governance dashboard. Same surface as
+      // Aave's "Governance" / Compound's "Governance" — public visit
+      // shows current values + ranges + pending timelock changes;
+      // admin-wallet visit unlocks the propose flow. Footer carries
+      // the same link too; the dropdown entry meaningfully improves
+      // discoverability for a transparency-first audience.
+      { labelKey: 'nav.protocolConsole', href: '/protocol-console' },
       { labelKey: 'nav.security', href: '/#security' },
-    ],
-  },
-  {
-    // VPFI surface — Buy / Stake / Unstake all live on the same public
-    // `/buy-vpfi` page; deep-link anchors (`#step-1` / `#step-2` /
-    // `#step-3`) jump straight to the relevant card. Staking is open to
-    // anyone (the contract auto-creates an escrow on first deposit), so
-    // a fresh visitor with ETH and no loan history can still earn the
-    // 5% APR yield from this entry-point.
-    id: 'vpfi',
-    labelKey: 'nav.vpfi',
-    links: [
-      { labelKey: 'nav.vpfiBuy', href: '/buy-vpfi#step-1' },
-      { labelKey: 'nav.vpfiStake', href: '/buy-vpfi#step-2' },
-      { labelKey: 'nav.vpfiUnstake', href: '/buy-vpfi#step-3' },
     ],
   },
 ];
@@ -93,22 +80,6 @@ const NAV_GROUPS: NavGroup[] = [
 export default function Navbar() {
   const { t } = useTranslation();
   const { theme, toggleTheme } = useTheme();
-  const {
-    address,
-    chainId,
-    isCorrectChain,
-    disconnect,
-    switchToChain,
-    switchToDefaultChain,
-    error,
-    warning,
-  } = useWallet();
-  // Chain options for the inline picker — every chain we have a
-  // Diamond on, sorted in canonical display order. Memoised since
-  // CHAIN_REGISTRY is module-level (won't change at runtime).
-  const deployedChains = Object.values(CHAIN_REGISTRY)
-    .filter((c) => c.diamondAddress !== null)
-    .sort(compareChainsForDisplay);
   const [mobileOpen, setMobileOpen] = useState(false);
   // Which nav-group dropdown (if any) is currently expanded on
   // desktop. Mobile flyout shows both groups inline (no popover).
@@ -264,21 +235,45 @@ export default function Navbar() {
                 // modern browsers + React 19.
                 inert={openGroup !== group.id}
               >
-                {group.links.map((link) => (
-                  <Link
-                    key={link.href}
-                    to={link.href}
-                    className="navbar-group-item"
-                    role="menuitem"
-                    tabIndex={openGroup === group.id ? 0 : -1}
-                    onClick={() => {
-                      setOpenGroup(null);
-                      setMobileOpen(false);
-                    }}
-                  >
-                    {t(link.labelKey)}
-                  </Link>
-                ))}
+                {group.links.map((link) =>
+                  link.newTab ? (
+                    // Plain <a target="_blank"> for items that cross
+                    // the public→app boundary (VPFI Buy / Stake-Unstake)
+                    // so the marketing tab stays open behind. React-
+                    // router's <Link> doesn't natively model new-tab
+                    // navigation, and noopener/noreferrer are
+                    // required for the cross-origin-style target.
+                    <a
+                      key={link.href}
+                      href={link.href}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="navbar-group-item"
+                      role="menuitem"
+                      tabIndex={openGroup === group.id ? 0 : -1}
+                      onClick={() => {
+                        setOpenGroup(null);
+                        setMobileOpen(false);
+                      }}
+                    >
+                      {t(link.labelKey)}
+                    </a>
+                  ) : (
+                    <Link
+                      key={link.href}
+                      to={link.href}
+                      className="navbar-group-item"
+                      role="menuitem"
+                      tabIndex={openGroup === group.id ? 0 : -1}
+                      onClick={() => {
+                        setOpenGroup(null);
+                        setMobileOpen(false);
+                      }}
+                    >
+                      {t(link.labelKey)}
+                    </Link>
+                  ),
+                )}
               </div>
 
               {/* Mobile inline list — collapsed by default,
@@ -299,16 +294,29 @@ export default function Navbar() {
                 <span className="navbar-group-mobile-label">
                   {t(group.labelKey)}
                 </span>
-                {group.links.map((link) => (
-                  <Link
-                    key={link.href}
-                    to={link.href}
-                    className="navbar-link navbar-link--mobile-nested"
-                    onClick={() => setMobileOpen(false)}
-                  >
-                    {t(link.labelKey)}
-                  </Link>
-                ))}
+                {group.links.map((link) =>
+                  link.newTab ? (
+                    <a
+                      key={link.href}
+                      href={link.href}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="navbar-link navbar-link--mobile-nested"
+                      onClick={() => setMobileOpen(false)}
+                    >
+                      {t(link.labelKey)}
+                    </a>
+                  ) : (
+                    <Link
+                      key={link.href}
+                      to={link.href}
+                      className="navbar-link navbar-link--mobile-nested"
+                      onClick={() => setMobileOpen(false)}
+                    >
+                      {t(link.labelKey)}
+                    </Link>
+                  ),
+                )}
               </div>
             </div>
           ))}
@@ -316,88 +324,39 @@ export default function Navbar() {
           {/* Mobile Launch App button — routes to the authenticated app shell.
               Present only here (on Navbar) because AppLayout has its own
               internal nav and shouldn't show this CTA. */}
-          <Link
-            to="/app"
+          <a
+            href="/app"
+            target="_blank"
+            rel="noopener noreferrer"
             className="btn btn-primary navbar-launch-mobile"
             onClick={() => setMobileOpen(false)}
           >
             {t('nav.launchApp')} <ArrowRight size={16} />
-          </Link>
-
-          {/* Mobile wallet block — same triplet as the desktop row
-              (wallet pill → chain picker → disconnect), arranged as
-              a column inside the open hamburger flyout. The chain
-              picker shows up only when the user is connected and on
-              a supported chain, mirroring the desktop's "session-
-              state controls live as inline siblings" pattern. */}
-          <div className="navbar-wallet-mobile">
-            {!address ? (
-              <ConnectWalletButton fullWidth />
-            ) : !isCorrectChain ? (
-              <button
-                className="btn btn-warning"
-                onClick={switchToDefaultChain}
-                style={{ width: '100%' }}
-              >
-                <AlertTriangle size={16} />
-                {t('nav.switchNetwork')}
-              </button>
-            ) : (
-              <div className="wallet-connected-mobile">
-                <WalletAddressPill address={address} />
-                <ChainPicker
-                  chains={deployedChains}
-                  value={chainId}
-                  onSelect={switchToChain}
-                  ariaLabel={t('nav.switchNetworkAria')}
-                />
-                <button
-                  className="btn btn-ghost"
-                  onClick={() => {
-                    disconnect();
-                    setMobileOpen(false);
-                  }}
-                >
-                  <LogOut size={16} /> {t('common.disconnect')}
-                </button>
-              </div>
-            )}
-          </div>
+          </a>
 
         </div>
 
         <div className="navbar-actions">
           {/* Desktop Launch App button — visible on every public page (landing,
-              analytics, public Buy VPFI) because this Navbar only renders
-              outside /app. AppLayout owns its own chrome, so no extra
-              route-based gating needed here. */}
-          <Link to="/app" className="btn btn-primary navbar-cta navbar-launch">
+              analytics, public Buy VPFI marketing) because this Navbar
+              only renders outside /app. Opens in a new tab so the
+              marketing page stays open behind — same pattern as the
+              VPFI dropdown's Buy / Stake-Unstake action items. */}
+          <a
+            href="/app"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="btn btn-primary navbar-cta navbar-launch"
+          >
             {t('nav.launchApp')} <ArrowRight size={14} />
-          </Link>
+          </a>
 
-          {/* Desktop wallet block — combined `<WalletMenu>` pill
-              (address + chain icon + chevron, click to open popover
-              with chain switcher + copy + disconnect inside). The
-              expanded inline triplet (pill + chain picker +
-              disconnect) lives only inside the mobile hamburger
-              flyout above; on desktop the topbar is too tight for
-              three side-by-side controls and the consolidated pill
-              keeps the row balanced. */}
-          {!address ? (
-            <ConnectWalletButton className="navbar-cta" />
-          ) : !isCorrectChain ? (
-            <button
-              className="btn btn-warning navbar-cta"
-              onClick={switchToDefaultChain}
-            >
-              <AlertTriangle size={16} />
-              {t('nav.wrongNetwork')}
-            </button>
-          ) : (
-            <span className="navbar-cta">
-              <WalletMenu />
-            </span>
-          )}
+          {/* Wallet UI removed from the public Navbar — every public
+              route is read-only / marketing after the Buy-VPFI split,
+              so a wallet connection here has no purpose. All wallet-
+              bearing surfaces live inside `<AppLayout>` (reachable via
+              the Launch App button above), where the WalletMenu chain
+              pill is always prominent. */}
 
           {/* Settings gear — Language picker + Theme toggle. Sits
               left of the hamburger on mobile and rightmost on
@@ -465,31 +424,6 @@ export default function Navbar() {
         </div>
       </div>
 
-      {error && (
-        <div className="wallet-error">
-          <div
-            className="container"
-            style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}
-          >
-            <span style={{ flex: 1, minWidth: 0 }}>{error}</span>
-            <ReportIssueLink variant="inline" />
-          </div>
-        </div>
-      )}
-
-      {/* Warning surface — "no wallet detected" etc. Amber banner, no
-       *  "report this" link because it's a user-environment nudge,
-       *  not a system failure. */}
-      {warning && !error && (
-        <div className="wallet-warning">
-          <div
-            className="container"
-            style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}
-          >
-            <span style={{ flex: 1, minWidth: 0 }}>{warning}</span>
-          </div>
-        </div>
-      )}
     </nav>
   );
 }

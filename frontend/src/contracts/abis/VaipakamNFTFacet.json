@@ -83,6 +83,30 @@
   },
   {
     "type": "function",
+    "name": "getImageURIFor",
+    "inputs": [
+      {
+        "name": "status",
+        "type": "uint8",
+        "internalType": "enum LibVaipakam.LoanPositionStatus"
+      },
+      {
+        "name": "isLender",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "string",
+        "internalType": "string"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "initializeNFT",
     "inputs": [],
     "outputs": [],
@@ -333,6 +357,24 @@
   },
   {
     "type": "function",
+    "name": "setDefaultImage",
+    "inputs": [
+      {
+        "name": "isLender",
+        "type": "bool",
+        "internalType": "bool"
+      },
+      {
+        "name": "uri",
+        "type": "string",
+        "internalType": "string"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "setDefaultRoyalty",
     "inputs": [
       {
@@ -351,25 +393,33 @@
   },
   {
     "type": "function",
-    "name": "setLoanImageURIs",
+    "name": "setExternalUrlBase",
     "inputs": [
       {
-        "name": "lenderActive",
+        "name": "newBase",
         "type": "string",
         "internalType": "string"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "setImageURIForStatus",
+    "inputs": [
+      {
+        "name": "status",
+        "type": "uint8",
+        "internalType": "enum LibVaipakam.LoanPositionStatus"
       },
       {
-        "name": "lenderClosed",
-        "type": "string",
-        "internalType": "string"
+        "name": "isLender",
+        "type": "bool",
+        "internalType": "bool"
       },
       {
-        "name": "borrowerActive",
-        "type": "string",
-        "internalType": "string"
-      },
-      {
-        "name": "borrowerClosed",
+        "name": "uri",
         "type": "string",
         "internalType": "string"
       }
@@ -632,6 +682,38 @@
   },
   {
     "type": "event",
+    "name": "DefaultImageURIUpdated",
+    "inputs": [
+      {
+        "name": "isLender",
+        "type": "bool",
+        "indexed": true,
+        "internalType": "bool"
+      },
+      {
+        "name": "uri",
+        "type": "string",
+        "indexed": false,
+        "internalType": "string"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "ExternalUrlBaseUpdated",
+    "inputs": [
+      {
+        "name": "newBase",
+        "type": "string",
+        "indexed": false,
+        "internalType": "string"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "NFTBurned",
     "inputs": [
       {
@@ -702,6 +784,31 @@
         "type": "uint96",
         "indexed": false,
         "internalType": "uint96"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "StatusImageURIUpdated",
+    "inputs": [
+      {
+        "name": "status",
+        "type": "uint8",
+        "indexed": true,
+        "internalType": "enum LibVaipakam.LoanPositionStatus"
+      },
+      {
+        "name": "isLender",
+        "type": "bool",
+        "indexed": true,
+        "internalType": "bool"
+      },
+      {
+        "name": "uri",
+        "type": "string",
+        "indexed": false,
+        "internalType": "string"
       }
     ],
     "anonymous": false

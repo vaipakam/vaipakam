@@ -1,0 +1,165 @@
+/*
+ * T-042 Phase 3 — admin dashboard theme variants.
+ *
+ * Two CSS surfaces, switched by the `data-admin-theme` attribute on
+ * the dashboard wrapper:
+ *
+ *   - data-admin-theme="public": inherits the site's normal look.
+ *     We define no overrides — the cards render with the same
+ *     `.card` rules every other page uses. This is the default.
+ *
+ *   - data-admin-theme="terminal": Bloomberg / mission-control look.
+ *     Dark high-contrast background, denser layout, monospace
+ *     numerics, neon-grade green / amber / red accents on the zone
+ *     bars + status pills. Same React tree underneath — only the
+ *     CSS vars + a few selectors change.
+ *
+ * The KnobZoneBar already reads its three colours from CSS vars
+ * (`--knob-zone-safe`, `--knob-zone-mid`, `--knob-zone-caution`),
+ * so flipping the theme just retargets those vars + tightens
+ * paddings + applies the dark surface.
+ *
+ * Why CSS vars instead of two component variants: avoids
+ * duplicating the markup or maintaining parallel components. One
+ * change (e.g. adding a new zone status) lands in one place.
+ */
+
+/* ── Public mode — rely on site theme. No overrides needed; left in
+ * for documentation parity. */
+.admin-dashboard-wrap[data-admin-theme="public"] {
+  /* intentionally empty */
+}
+
+/* ── Terminal mode ─────────────────────────────────────────────── */
+.admin-dashboard-wrap[data-admin-theme="terminal"] {
+  /* Reframe the colour vars used by KnobZoneBar + status pills. */
+  --knob-zone-safe: #00ff88;
+  --knob-zone-mid: #ffb000;
+  --knob-zone-caution: #ff3b3b;
+
+  /* Mission-control surface: deep gunmetal background with subtle
+   * scanline-grid overlay. The grid is rendered via a tiny
+   * background-image gradient so we don't ship an SVG asset for it. */
+  background:
+    repeating-linear-gradient(
+      0deg,
+      rgba(0, 255, 136, 0.025) 0px,
+      rgba(0, 255, 136, 0.025) 1px,
+      transparent 1px,
+      transparent 24px
+    ),
+    repeating-linear-gradient(
+      90deg,
+      rgba(0, 255, 136, 0.025) 0px,
+      rgba(0, 255, 136, 0.025) 1px,
+      transparent 1px,
+      transparent 24px
+    ),
+    #0a0d12;
+  color: #e6e9ef;
+  border-top: 1px solid #1c2330;
+  border-bottom: 1px solid #1c2330;
+  /* Tighten the page padding so more cards fit on a viewport. */
+  padding-bottom: 32px !important;
+}
+
+.admin-dashboard-wrap[data-admin-theme="terminal"] h1 {
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #00ff88;
+  text-shadow: 0 0 12px rgba(0, 255, 136, 0.25);
+  font-size: 1.4rem;
+  margin-bottom: 4px;
+}
+
+.admin-dashboard-wrap[data-admin-theme="terminal"] h2 {
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 0.78rem;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: #4d5d7a;
+  border-bottom: 1px solid #1c2330 !important;
+  padding-bottom: 6px;
+  margin-bottom: 12px;
+}
+
+/* Cards in terminal mode: dark surface, sharp 2px corners,
+ * monospace top to bottom, denser padding. */
+.admin-dashboard-wrap[data-admin-theme="terminal"] .card {
+  background: #11161f !important;
+  border: 1px solid #1c2330 !important;
+  border-radius: 2px !important;
+  padding: 12px !important;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 0.86rem;
+  min-height: auto !important;
+  position: relative;
+  /* Subtle inner glow — readable on the dark background but doesn't
+   * scream. */
+  box-shadow:
+    inset 0 0 0 1px rgba(0, 255, 136, 0.04),
+    0 1px 0 rgba(0, 0, 0, 0.4);
+}
+
+.admin-dashboard-wrap[data-admin-theme="terminal"] .card:hover {
+  border-color: rgba(0, 255, 136, 0.35) !important;
+}
+
+.admin-dashboard-wrap[data-admin-theme="terminal"] .card h3 {
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 0.78rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #c2c8d2;
+  font-weight: 600;
+  margin: 0;
+}
+
+.admin-dashboard-wrap[data-admin-theme="terminal"] .card p {
+  color: #8b95a7;
+  font-size: 0.74rem;
+  line-height: 1.45;
+}
+
+/* The "current value" line — make it dominant in terminal mode. */
+.admin-dashboard-wrap[data-admin-theme="terminal"] .card span {
+  color: inherit;
+}
+
+/* Override the status pill styles applied inline by KnobCard so
+ * they read as terminal LCD-style chips instead of soft pastels. */
+.admin-dashboard-wrap[data-admin-theme="terminal"] .card span[style*="background"] {
+  border: 1px solid currentColor;
+  background: transparent !important;
+  text-shadow: 0 0 4px currentColor;
+  letter-spacing: 0.12em !important;
+}
+
+/* Theme toggle pill — sits at the top-right of the dashboard. */
+.admin-theme-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: transparent;
+  font-size: 0.78rem;
+  cursor: pointer;
+  color: inherit;
+  transition: background 0.15s, border-color 0.15s;
+}
+.admin-theme-toggle:hover {
+  border-color: var(--brand);
+}
+.admin-dashboard-wrap[data-admin-theme="terminal"] .admin-theme-toggle {
+  border-color: #00ff88;
+  color: #00ff88;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.admin-dashboard-wrap[data-admin-theme="terminal"] .admin-theme-toggle:hover {
+  background: rgba(0, 255, 136, 0.1);
+}

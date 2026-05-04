@@ -7,6 +7,7 @@ import {console} from "forge-std/console.sol";
 import {VaipakamDiamond} from "../src/VaipakamDiamond.sol";
 import {IDiamondCut} from "@diamond-3/interfaces/IDiamondCut.sol";
 import {OfferFacet} from "../src/facets/OfferFacet.sol";
+import {OfferCancelFacet} from "../src/facets/OfferCancelFacet.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
@@ -21,7 +22,7 @@ import {VaipakamEscrowImplementation} from "../src/VaipakamEscrowImplementation.
 import {RiskFacet} from "../src/facets/RiskFacet.sol";
 import {IZeroExProxy} from "../src/interfaces/IZeroExProxy.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
- // For mock ERC20
+// For mock ERC20
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
@@ -29,7 +30,7 @@ import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {DiamondCutFacet} from "../src/facets/DiamondCutFacet.sol";
 import {IDiamondCut} from "@diamond-3/interfaces/IDiamondCut.sol";
- // For cutting
+// For cutting
 import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
@@ -42,7 +43,7 @@ import {IZeroExProxy} from "../src/interfaces/IZeroExProxy.sol";
 import {AddCollateralFacet} from "../src/facets/AddCollateralFacet.sol";
 import {RiskFacet} from "../src/facets/RiskFacet.sol";
 import {VaipakamEscrowImplementation} from "../src/VaipakamEscrowImplementation.sol";
- // For escrow impl
+// For escrow impl
 import {Test} from "forge-std/Test.sol";
 import {console} from "forge-std/console.sol";
 import {VaipakamDiamond} from "../src/VaipakamDiamond.sol";
@@ -110,7 +111,10 @@ contract RiskFacetTest is Test {
         // DefaultedFacet (README §1 two-layer liquidity model).
         vm.mockCall(
             address(diamond),
-            abi.encodeWithSelector(OracleFacet.checkLiquidityOnActiveNetwork.selector, asset),
+            abi.encodeWithSelector(
+                OracleFacet.checkLiquidityOnActiveNetwork.selector,
+                asset
+            ),
             abi.encode(status)
         );
     }
@@ -130,6 +134,7 @@ contract RiskFacetTest is Test {
     // Facet addresses
     DiamondCutFacet cutFacet;
     OfferFacet offerFacet;
+    OfferCancelFacet offerCancelFacet;
     ProfileFacet profileFacet;
     OracleFacet oracleFacet;
     VaipakamNFTFacet nftFacet;
@@ -177,7 +182,9 @@ contract RiskFacetTest is Test {
 
         // Deploy mocks
         mockERC20 = address(new ERC20Mock("MockLiquid", "MLQ", 18));
-        mockCollateralERC20 = address(new ERC20Mock("MockCollateral", "MCK", 18));
+        mockCollateralERC20 = address(
+            new ERC20Mock("MockCollateral", "MCK", 18)
+        );
         mockIlliquidERC20 = address(new ERC20Mock("MockIlliquid", "MIL", 18));
         mockNFT721 = address(new MockRentableNFT721());
         mockZeroExProxy = address(new ZeroExProxyMock());
@@ -195,7 +202,10 @@ contract RiskFacetTest is Test {
 
         // Mint output tokens to mock (e.g., principalAsset)
         ERC20Mock(mockERC20).mint(address(mockZeroExProxy), 1000000 ether); // Enough for proceeds
-        ERC20Mock(mockCollateralERC20).mint(address(mockZeroExProxy), 1000000 ether);
+        ERC20Mock(mockCollateralERC20).mint(
+            address(mockZeroExProxy),
+            1000000 ether
+        );
 
         // Set mock rate if needed (e.g., for liqBonus)
         ZeroExProxyMock(address(mockZeroExProxy)).setRate(11, 10); // 10% more for profit
@@ -205,6 +215,8 @@ contract RiskFacetTest is Test {
         diamond = new VaipakamDiamond(owner, address(cutFacet));
 
         offerFacet = new OfferFacet();
+
+        offerCancelFacet = new OfferCancelFacet();
         profileFacet = new ProfileFacet();
         oracleFacet = new OracleFacet();
         nftFacet = new VaipakamNFTFacet();
@@ -224,7 +236,7 @@ contract RiskFacetTest is Test {
         escrowImpl = new VaipakamEscrowImplementation();
 
         // Cut facets into diamond
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](14);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](15);
         cuts[0] = IDiamondCut.FacetCut({
             facetAddress: address(offerFacet),
             action: IDiamondCut.FacetCutAction.Add,
@@ -295,6 +307,7 @@ contract RiskFacetTest is Test {
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getTestMutatorFacetSelectors()
         });
+        cuts[14] = IDiamondCut.FacetCut({facetAddress: address(offerCancelFacet), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getOfferCancelFacetSelectors()});
 
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");
         AccessControlFacet(address(diamond)).initializeAccessControl();
@@ -337,7 +350,10 @@ contract RiskFacetTest is Test {
 
         // Mock Oracle: Liquid for ERC20, Illiquid for NFT
         mockOracleLiquidity(mockERC20, LibVaipakam.LiquidityStatus.Liquid);
-        mockOracleLiquidity(mockCollateralERC20, LibVaipakam.LiquidityStatus.Liquid);
+        mockOracleLiquidity(
+            mockCollateralERC20,
+            LibVaipakam.LiquidityStatus.Liquid
+        );
         mockOracleLiquidity(mockNFT721, LibVaipakam.LiquidityStatus.Illiquid);
         mockOracleLiquidity(
             mockIlliquidERC20,
@@ -358,15 +374,27 @@ contract RiskFacetTest is Test {
 
         // Set KYC (Tier2 = full KYC; also sets legacy kycVerified = true)
         vm.prank(owner);
-        ProfileFacet(address(diamond)).updateKYCTier(lender, LibVaipakam.KYCTier.Tier2);
+        ProfileFacet(address(diamond)).updateKYCTier(
+            lender,
+            LibVaipakam.KYCTier.Tier2
+        );
         vm.prank(owner);
-        ProfileFacet(address(diamond)).updateKYCTier(borrower, LibVaipakam.KYCTier.Tier2);
+        ProfileFacet(address(diamond)).updateKYCTier(
+            borrower,
+            LibVaipakam.KYCTier.Tier2
+        );
         // Give the test contract and diamond itself Tier2 — needed for liquidation KYC checks
         // where msg.sender is address(this) (direct call) or address(diamond) (internal call)
         vm.prank(owner);
-        ProfileFacet(address(diamond)).updateKYCTier(address(this), LibVaipakam.KYCTier.Tier2);
+        ProfileFacet(address(diamond)).updateKYCTier(
+            address(this),
+            LibVaipakam.KYCTier.Tier2
+        );
         vm.prank(owner);
-        ProfileFacet(address(diamond)).updateKYCTier(address(diamond), LibVaipakam.KYCTier.Tier2);
+        ProfileFacet(address(diamond)).updateKYCTier(
+            address(diamond),
+            LibVaipakam.KYCTier.Tier2
+        );
 
         // Note: calculateHealthFactor and calculateLTV are NOT globally mocked — real logic runs.
         // createAndAcceptOffer uses 1800 ether collateral → real HF = 1.53 >= MIN_HF(1.5). ✓
@@ -681,7 +709,12 @@ contract RiskFacetTest is Test {
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
                 collateralQuantity: 0,
-                allowsPartialRepay: false
+                allowsPartialRepay: false,
+                amountMax: 0,
+                interestRateBpsMax: 0,
+                periodicInterestCadence: LibVaipakam
+                    .PeriodicInterestCadence
+                    .None
             })
         );
 
@@ -708,8 +741,21 @@ contract RiskFacetTest is Test {
     }
 
     function testUpdateAssetRiskParamsRevertsInvalidParams() public {
+        // maxLtv=9000 is in-range; liqThreshold=8000 fails the
+        // composite check (`liqThreshold > maxLtv` is required).
+        // Under the T-033 audit the composite path emits
+        // `ParameterOutOfRange("liqThresholdBps", ...)` rather than
+        // the legacy `UpdateNotAllowed()` so callers can disambiguate.
         vm.prank(owner);
-        vm.expectRevert(IVaipakamErrors.UpdateNotAllowed.selector);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IVaipakamErrors.ParameterOutOfRange.selector,
+                bytes32("liqThresholdBps"),
+                uint256(8000),
+                uint256(LibVaipakam.RISK_PARAMS_LIQ_THRESHOLD_BPS_MIN),
+                LibVaipakam.BASIS_POINTS
+            )
+        );
         RiskFacet(address(diamond)).updateRiskParams(
             mockERC20,
             9000,
@@ -721,7 +767,13 @@ contract RiskFacetTest is Test {
 
     function testUpdateAssetRiskParamsRevertsNotOwner() public {
         vm.prank(lender);
-        vm.expectRevert(abi.encodeWithSelector(LibAccessControl.AccessControlUnauthorizedAccount.selector, lender, LibAccessControl.RISK_ADMIN_ROLE));
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                LibAccessControl.AccessControlUnauthorizedAccount.selector,
+                lender,
+                LibAccessControl.RISK_ADMIN_ROLE
+            )
+        );
         RiskFacet(address(diamond)).updateRiskParams(
             mockERC20,
             8000,
@@ -829,11 +881,19 @@ contract RiskFacetTest is Test {
         // Expect: HFLiquidationTriggered(loanId, liquidator=address(this), proceeds=1980 ether)
         // loanId and liquidator are indexed (topic1, topic2); proceeds is data.
         vm.expectEmit(true, true, false, true);
-        emit RiskFacet.HFLiquidationTriggered(loanId, address(this), 1980 ether);
+        emit RiskFacet.HFLiquidationTriggered(
+            loanId,
+            address(this),
+            1980 ether
+        );
 
-        RiskFacet(address(diamond)).triggerLiquidation(loanId, defaultAdapterCalls());
+        RiskFacet(address(diamond)).triggerLiquidation(
+            loanId,
+            defaultAdapterCalls()
+        );
 
-        LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(loanId);
+        LibVaipakam.Loan memory loan = LoanFacet(address(diamond))
+            .getLoanDetails(loanId);
         assertEq(uint8(loan.status), uint8(LibVaipakam.LoanStatus.Defaulted));
     }
 
@@ -843,7 +903,8 @@ contract RiskFacetTest is Test {
     function testCalculateLTVRevertsForIlliquidLoan() public {
         uint256 loanId = createAndAcceptOffer();
 
-        LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(loanId);
+        LibVaipakam.Loan memory loan = LoanFacet(address(diamond))
+            .getLoanDetails(loanId);
         loan.principalLiquidity = LibVaipakam.LiquidityStatus.Illiquid;
         loan.collateralLiquidity = LibVaipakam.LiquidityStatus.Illiquid;
         TestMutatorFacet(address(diamond)).setLoan(loanId, loan);
@@ -856,7 +917,8 @@ contract RiskFacetTest is Test {
     function testCalculateHealthFactorRevertsForIlliquidLoan() public {
         uint256 loanId = createAndAcceptOffer();
 
-        LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(loanId);
+        LibVaipakam.Loan memory loan = LoanFacet(address(diamond))
+            .getLoanDetails(loanId);
         loan.principalLiquidity = LibVaipakam.LiquidityStatus.Illiquid;
         loan.collateralLiquidity = LibVaipakam.LiquidityStatus.Illiquid;
         TestMutatorFacet(address(diamond)).setLoan(loanId, loan);
@@ -869,7 +931,9 @@ contract RiskFacetTest is Test {
     function testIsCollateralValueCollapsedFalseForHealthyLoan() public {
         uint256 loanId = createAndAcceptOffer();
         // HF = 1.53 > 1.0; LTV = 5555 < 11000 → not collapsed
-        bool collapsed = RiskFacet(address(diamond)).isCollateralValueCollapsed(loanId);
+        bool collapsed = RiskFacet(address(diamond)).isCollateralValueCollapsed(
+            loanId
+        );
         assertFalse(collapsed);
     }
 
@@ -878,11 +942,14 @@ contract RiskFacetTest is Test {
     function testIsCollateralValueCollapsedTrueWhenLTVHigh() public {
         uint256 loanId = createAndAcceptOffer();
         // With same $1 price: LTV = 20000 / 1800 * 10000 ≈ 111111 bps > 11000 → collapsed
-        LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(loanId);
+        LibVaipakam.Loan memory loan = LoanFacet(address(diamond))
+            .getLoanDetails(loanId);
         loan.principal = 20000 ether;
         TestMutatorFacet(address(diamond)).setLoan(loanId, loan);
 
-        bool collapsed = RiskFacet(address(diamond)).isCollateralValueCollapsed(loanId);
+        bool collapsed = RiskFacet(address(diamond)).isCollateralValueCollapsed(
+            loanId
+        );
         assertTrue(collapsed);
     }
 
@@ -890,7 +957,13 @@ contract RiskFacetTest is Test {
     function testUpdateRiskParamsRevertsZeroAsset() public {
         vm.prank(owner);
         vm.expectRevert(IVaipakamErrors.InvalidAsset.selector);
-        RiskFacet(address(diamond)).updateRiskParams(address(0), 8000, 8500, 300, 1000);
+        RiskFacet(address(diamond)).updateRiskParams(
+            address(0),
+            8000,
+            8500,
+            300,
+            1000
+        );
     }
 
     /// @dev Tests triggerLiquidation reverts if loan is not Active.
@@ -900,22 +973,37 @@ contract RiskFacetTest is Test {
         // Mock HF < 1e18
         vm.mockCall(
             address(diamond),
-            abi.encodeWithSelector(RiskFacet.calculateHealthFactor.selector, loanId),
+            abi.encodeWithSelector(
+                RiskFacet.calculateHealthFactor.selector,
+                loanId
+            ),
             abi.encode(HF_SCALE - 1)
         );
         vm.mockCall(
             address(diamond),
-            abi.encodeWithSelector(EscrowFactoryFacet.escrowWithdrawERC20.selector),
+            abi.encodeWithSelector(
+                EscrowFactoryFacet.escrowWithdrawERC20.selector
+            ),
             abi.encode(true)
         );
         deal(mockERC20, address(diamond), 1800 ether);
         deal(mockCollateralERC20, address(diamond), 1800 ether);
-        vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector), abi.encode(true));
-        RiskFacet(address(diamond)).triggerLiquidation(loanId, defaultAdapterCalls());
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector),
+            abi.encode(true)
+        );
+        RiskFacet(address(diamond)).triggerLiquidation(
+            loanId,
+            defaultAdapterCalls()
+        );
 
         // Second call should revert as loan is now Defaulted
         vm.expectRevert(RiskFacet.InvalidLoan.selector);
-        RiskFacet(address(diamond)).triggerLiquidation(loanId, defaultAdapterCalls());
+        RiskFacet(address(diamond)).triggerLiquidation(
+            loanId,
+            defaultAdapterCalls()
+        );
         vm.clearMockedCalls();
     }
 
@@ -943,7 +1031,12 @@ contract RiskFacetTest is Test {
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
                 collateralQuantity: 0,
-                allowsPartialRepay: false
+                allowsPartialRepay: false,
+                amountMax: 0,
+                interestRateBpsMax: 0,
+                periodicInterestCadence: LibVaipakam
+                    .PeriodicInterestCadence
+                    .None
             })
         );
         vm.prank(borrower);
@@ -955,12 +1048,18 @@ contract RiskFacetTest is Test {
         // Mock HF < 1e18
         vm.mockCall(
             address(diamond),
-            abi.encodeWithSelector(RiskFacet.calculateHealthFactor.selector, loanId),
+            abi.encodeWithSelector(
+                RiskFacet.calculateHealthFactor.selector,
+                loanId
+            ),
             abi.encode(HF_SCALE - 1)
         );
 
         vm.expectRevert(IVaipakamErrors.NonLiquidAsset.selector);
-        RiskFacet(address(diamond)).triggerLiquidation(loanId, defaultAdapterCalls());
+        RiskFacet(address(diamond)).triggerLiquidation(
+            loanId,
+            defaultAdapterCalls()
+        );
         vm.clearMockedCalls();
     }
 
@@ -971,11 +1070,13 @@ contract RiskFacetTest is Test {
         // Warp past grace
         vm.warp(block.timestamp + 30 days + 3 days + 1);
 
-
         // HF-based liquidation always requires HF < 1, even past grace.
         // Healthy loans past grace are handled by DefaultedFacet, not RiskFacet.
         vm.expectRevert(RiskFacet.HealthFactorNotLow.selector);
-        RiskFacet(address(diamond)).triggerLiquidation(loanId, defaultAdapterCalls());
+        RiskFacet(address(diamond)).triggerLiquidation(
+            loanId,
+            defaultAdapterCalls()
+        );
     }
 
     /// @dev Tests triggerLiquidation reverts if HF >= 1 and still within grace (HealthFactorNotLow).
@@ -985,7 +1086,10 @@ contract RiskFacetTest is Test {
         // HF is 1.53 (healthy) and still within grace period
         // The real calculateHealthFactor returns 1.53e18 (> 1e18)
         vm.expectRevert(RiskFacet.HealthFactorNotLow.selector);
-        RiskFacet(address(diamond)).triggerLiquidation(loanId, defaultAdapterCalls());
+        RiskFacet(address(diamond)).triggerLiquidation(
+            loanId,
+            defaultAdapterCalls()
+        );
     }
 
     /// @dev Tests that borrow balance grows over time (indirectly via calculateLTV).
@@ -1014,21 +1118,28 @@ contract RiskFacetTest is Test {
         // Mock HF < 1e18
         vm.mockCall(
             address(diamond),
-            abi.encodeWithSelector(RiskFacet.calculateHealthFactor.selector, loanId),
+            abi.encodeWithSelector(
+                RiskFacet.calculateHealthFactor.selector,
+                loanId
+            ),
             abi.encode(HF_SCALE - 1)
         );
 
         // Mock collateral withdrawal to succeed
         vm.mockCall(
             address(diamond),
-            abi.encodeWithSelector(EscrowFactoryFacet.escrowWithdrawERC20.selector),
+            abi.encodeWithSelector(
+                EscrowFactoryFacet.escrowWithdrawERC20.selector
+            ),
             abi.encode(true)
         );
 
         // Fallback path needs to look up the lender's escrow.
         vm.mockCall(
             address(diamond),
-            abi.encodeWithSelector(EscrowFactoryFacet.getOrCreateUserEscrow.selector),
+            abi.encodeWithSelector(
+                EscrowFactoryFacet.getOrCreateUserEscrow.selector
+            ),
             abi.encode(address(diamond))
         );
 
@@ -1048,10 +1159,17 @@ contract RiskFacetTest is Test {
 
         vm.expectEmit(true, true, false, true);
         emit RiskFacet.LiquidationFallback(loanId, lender, 1800 ether);
-        RiskFacet(address(diamond)).triggerLiquidation(loanId, defaultAdapterCalls());
+        RiskFacet(address(diamond)).triggerLiquidation(
+            loanId,
+            defaultAdapterCalls()
+        );
 
-        LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(loanId);
-        assertEq(uint8(loan.status), uint8(LibVaipakam.LoanStatus.FallbackPending));
+        LibVaipakam.Loan memory loan = LoanFacet(address(diamond))
+            .getLoanDetails(loanId);
+        assertEq(
+            uint8(loan.status),
+            uint8(LibVaipakam.LoanStatus.FallbackPending)
+        );
         vm.clearMockedCalls();
     }
 
@@ -1069,14 +1187,19 @@ contract RiskFacetTest is Test {
         // Mock HF < 1e18
         vm.mockCall(
             address(diamond),
-            abi.encodeWithSelector(RiskFacet.calculateHealthFactor.selector, loanId),
+            abi.encodeWithSelector(
+                RiskFacet.calculateHealthFactor.selector,
+                loanId
+            ),
             abi.encode(HF_SCALE - 1)
         );
 
         // Mock collateral withdrawal to succeed
         vm.mockCall(
             address(diamond),
-            abi.encodeWithSelector(EscrowFactoryFacet.escrowWithdrawERC20.selector),
+            abi.encodeWithSelector(
+                EscrowFactoryFacet.escrowWithdrawERC20.selector
+            ),
             abi.encode(true)
         );
 
@@ -1098,7 +1221,10 @@ contract RiskFacetTest is Test {
 
         vm.prank(liquidator);
         vm.expectRevert(IVaipakamErrors.KYCRequired.selector);
-        RiskFacet(address(diamond)).triggerLiquidation(loanId, defaultAdapterCalls());
+        RiskFacet(address(diamond)).triggerLiquidation(
+            loanId,
+            defaultAdapterCalls()
+        );
         vm.clearMockedCalls();
     }
 
@@ -1109,19 +1235,27 @@ contract RiskFacetTest is Test {
         // Mock HF < 1e18
         vm.mockCall(
             address(diamond),
-            abi.encodeWithSelector(RiskFacet.calculateHealthFactor.selector, loanId),
+            abi.encodeWithSelector(
+                RiskFacet.calculateHealthFactor.selector,
+                loanId
+            ),
             abi.encode(HF_SCALE - 1)
         );
 
         // Mock collateral withdrawal to fail
         vm.mockCallRevert(
             address(diamond),
-            abi.encodeWithSelector(EscrowFactoryFacet.escrowWithdrawERC20.selector),
+            abi.encodeWithSelector(
+                EscrowFactoryFacet.escrowWithdrawERC20.selector
+            ),
             "withdraw failed"
         );
 
         vm.expectRevert(bytes("withdraw failed"));
-        RiskFacet(address(diamond)).triggerLiquidation(loanId, defaultAdapterCalls());
+        RiskFacet(address(diamond)).triggerLiquidation(
+            loanId,
+            defaultAdapterCalls()
+        );
         vm.clearMockedCalls();
     }
 
@@ -1132,14 +1266,19 @@ contract RiskFacetTest is Test {
         // Mock HF < 1e18
         vm.mockCall(
             address(diamond),
-            abi.encodeWithSelector(RiskFacet.calculateHealthFactor.selector, loanId),
+            abi.encodeWithSelector(
+                RiskFacet.calculateHealthFactor.selector,
+                loanId
+            ),
             abi.encode(HF_SCALE - 1)
         );
 
         // Mock collateral withdrawal to succeed
         vm.mockCall(
             address(diamond),
-            abi.encodeWithSelector(EscrowFactoryFacet.escrowWithdrawERC20.selector),
+            abi.encodeWithSelector(
+                EscrowFactoryFacet.escrowWithdrawERC20.selector
+            ),
             abi.encode(true)
         );
 
@@ -1149,12 +1288,17 @@ contract RiskFacetTest is Test {
         // Mock getOrCreateUserEscrow to fail
         vm.mockCallRevert(
             address(diamond),
-            abi.encodeWithSelector(EscrowFactoryFacet.getOrCreateUserEscrow.selector),
+            abi.encodeWithSelector(
+                EscrowFactoryFacet.getOrCreateUserEscrow.selector
+            ),
             "escrow fail"
         );
 
         vm.expectRevert(bytes("escrow fail"));
-        RiskFacet(address(diamond)).triggerLiquidation(loanId, defaultAdapterCalls());
+        RiskFacet(address(diamond)).triggerLiquidation(
+            loanId,
+            defaultAdapterCalls()
+        );
         vm.clearMockedCalls();
     }
 
@@ -1165,14 +1309,19 @@ contract RiskFacetTest is Test {
         // Mock HF < 1e18
         vm.mockCall(
             address(diamond),
-            abi.encodeWithSelector(RiskFacet.calculateHealthFactor.selector, loanId),
+            abi.encodeWithSelector(
+                RiskFacet.calculateHealthFactor.selector,
+                loanId
+            ),
             abi.encode(HF_SCALE - 1)
         );
 
         // Mock collateral withdrawal to succeed
         vm.mockCall(
             address(diamond),
-            abi.encodeWithSelector(EscrowFactoryFacet.escrowWithdrawERC20.selector),
+            abi.encodeWithSelector(
+                EscrowFactoryFacet.escrowWithdrawERC20.selector
+            ),
             abi.encode(true)
         );
 
@@ -1187,7 +1336,10 @@ contract RiskFacetTest is Test {
         );
 
         vm.expectRevert(bytes("nft fail"));
-        RiskFacet(address(diamond)).triggerLiquidation(loanId, defaultAdapterCalls());
+        RiskFacet(address(diamond)).triggerLiquidation(
+            loanId,
+            defaultAdapterCalls()
+        );
         vm.clearMockedCalls();
     }
 
@@ -1200,14 +1352,19 @@ contract RiskFacetTest is Test {
         // Mock HF < 1e18
         vm.mockCall(
             address(diamond),
-            abi.encodeWithSelector(RiskFacet.calculateHealthFactor.selector, loanId),
+            abi.encodeWithSelector(
+                RiskFacet.calculateHealthFactor.selector,
+                loanId
+            ),
             abi.encode(HF_SCALE - 1)
         );
 
         // Mock collateral withdrawal to succeed
         vm.mockCall(
             address(diamond),
-            abi.encodeWithSelector(EscrowFactoryFacet.escrowWithdrawERC20.selector),
+            abi.encodeWithSelector(
+                EscrowFactoryFacet.escrowWithdrawERC20.selector
+            ),
             abi.encode(true)
         );
 
@@ -1217,18 +1374,31 @@ contract RiskFacetTest is Test {
         // First NFT update (lenderTokenId=1) succeeds
         vm.mockCall(
             address(diamond),
-            abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector, uint256(1), loanId, LibVaipakam.LoanPositionStatus.LoanLiquidated),
+            abi.encodeWithSelector(
+                VaipakamNFTFacet.updateNFTStatus.selector,
+                uint256(1),
+                loanId,
+                LibVaipakam.LoanPositionStatus.LoanLiquidated
+            ),
             abi.encode(true)
         );
         // Second NFT update (borrowerTokenId=2) fails
         vm.mockCallRevert(
             address(diamond),
-            abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector, uint256(2), loanId, LibVaipakam.LoanPositionStatus.LoanLiquidated),
+            abi.encodeWithSelector(
+                VaipakamNFTFacet.updateNFTStatus.selector,
+                uint256(2),
+                loanId,
+                LibVaipakam.LoanPositionStatus.LoanLiquidated
+            ),
             "nft fail"
         );
 
         vm.expectRevert(bytes("nft fail"));
-        RiskFacet(address(diamond)).triggerLiquidation(loanId, defaultAdapterCalls());
+        RiskFacet(address(diamond)).triggerLiquidation(
+            loanId,
+            defaultAdapterCalls()
+        );
         vm.clearMockedCalls();
     }
 
@@ -1245,21 +1415,28 @@ contract RiskFacetTest is Test {
         // Mock HF < 1e18
         vm.mockCall(
             address(diamond),
-            abi.encodeWithSelector(RiskFacet.calculateHealthFactor.selector, loanId),
+            abi.encodeWithSelector(
+                RiskFacet.calculateHealthFactor.selector,
+                loanId
+            ),
             abi.encode(HF_SCALE - 1)
         );
 
         // Mock collateral withdrawal to succeed
         vm.mockCall(
             address(diamond),
-            abi.encodeWithSelector(EscrowFactoryFacet.escrowWithdrawERC20.selector),
+            abi.encodeWithSelector(
+                EscrowFactoryFacet.escrowWithdrawERC20.selector
+            ),
             abi.encode(true)
         );
 
         // Mock lender escrow lookup — fallback transfers collateral here.
         vm.mockCall(
             address(diamond),
-            abi.encodeWithSelector(EscrowFactoryFacet.getOrCreateUserEscrow.selector),
+            abi.encodeWithSelector(
+                EscrowFactoryFacet.getOrCreateUserEscrow.selector
+            ),
             abi.encode(address(diamond))
         );
 
@@ -1284,28 +1461,67 @@ contract RiskFacetTest is Test {
 
         vm.expectEmit(true, true, false, true);
         emit RiskFacet.LiquidationFallback(loanId, lender, 1800 ether);
-        RiskFacet(address(diamond)).triggerLiquidation(loanId, defaultAdapterCalls());
+        RiskFacet(address(diamond)).triggerLiquidation(
+            loanId,
+            defaultAdapterCalls()
+        );
 
         // Loan should now be Defaulted; lender claim should record the full collateral.
-        LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(loanId);
-        assertEq(uint8(loan.status), uint8(LibVaipakam.LoanStatus.FallbackPending));
+        LibVaipakam.Loan memory loan = LoanFacet(address(diamond))
+            .getLoanDetails(loanId);
+        assertEq(
+            uint8(loan.status),
+            uint8(LibVaipakam.LoanStatus.FallbackPending)
+        );
         vm.clearMockedCalls();
     }
 
     // ─── Tests L–Q: updateRiskParams validation and liquidation edge cases ─
 
-    /// @dev Test L: updateRiskParams reverts when maxLtvBps is 0.
+    /// @dev Test L: updateRiskParams reverts when maxLtvBps is below the
+    ///      hard floor (T-033 setter range audit: floor is
+    ///      `RISK_PARAMS_MAX_LTV_BPS_MIN = 1000`; previously only `> 0`
+    ///      which let a degenerate `1`-bp setting effectively disable
+    ///      borrowing for the asset).
     function testUpdateRiskParamsRevertsMaxLtvZero() public {
         vm.prank(owner);
-        vm.expectRevert(IVaipakamErrors.UpdateNotAllowed.selector);
-        RiskFacet(address(diamond)).updateRiskParams(mockERC20, 0, 8500, 300, 1000);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IVaipakamErrors.ParameterOutOfRange.selector,
+                bytes32("maxLtvBps"),
+                uint256(0),
+                uint256(LibVaipakam.RISK_PARAMS_MAX_LTV_BPS_MIN),
+                LibVaipakam.BASIS_POINTS
+            )
+        );
+        RiskFacet(address(diamond)).updateRiskParams(
+            mockERC20,
+            0,
+            8500,
+            300,
+            1000
+        );
     }
 
     /// @dev Test M: updateRiskParams reverts when maxLtvBps > 10000.
     function testUpdateRiskParamsRevertsMaxLtvExceedsBasis() public {
         vm.prank(owner);
-        vm.expectRevert(IVaipakamErrors.UpdateNotAllowed.selector);
-        RiskFacet(address(diamond)).updateRiskParams(mockERC20, 10001, 10002, 300, 1000);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IVaipakamErrors.ParameterOutOfRange.selector,
+                bytes32("maxLtvBps"),
+                uint256(10001),
+                uint256(LibVaipakam.RISK_PARAMS_MAX_LTV_BPS_MIN),
+                LibVaipakam.BASIS_POINTS
+            )
+        );
+        RiskFacet(address(diamond)).updateRiskParams(
+            mockERC20,
+            10001,
+            10002,
+            300,
+            1000
+        );
     }
 
     /// @dev Test N: updateRiskParams reverts when liqBonusBps exceeds the
@@ -1314,14 +1530,38 @@ contract RiskFacetTest is Test {
     function testUpdateRiskParamsRevertsLiqBonusExceedsBasis() public {
         vm.prank(owner);
         vm.expectRevert(IVaipakamErrors.UpdateNotAllowed.selector);
-        RiskFacet(address(diamond)).updateRiskParams(mockERC20, 8000, 8500, 301, 1000);
+        RiskFacet(address(diamond)).updateRiskParams(
+            mockERC20,
+            8000,
+            8500,
+            301,
+            1000
+        );
     }
 
-    /// @dev Test O: updateRiskParams reverts when reserveFactorBps > 10000.
+    /// @dev Test O: updateRiskParams reverts when reserveFactorBps is
+    ///      above the hard ceiling (T-033 setter range audit: ceiling is
+    ///      `RISK_PARAMS_RESERVE_FACTOR_BPS_MAX = 5000`; previously
+    ///      only `≤ BASIS_POINTS` which allowed `100% reserveFactor` =
+    ///      lender receives 0% interest, defeats the lending product).
     function testUpdateRiskParamsRevertsReserveFactorExceedsBasis() public {
         vm.prank(owner);
-        vm.expectRevert(IVaipakamErrors.UpdateNotAllowed.selector);
-        RiskFacet(address(diamond)).updateRiskParams(mockERC20, 8000, 8500, 300, 10001);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IVaipakamErrors.ParameterOutOfRange.selector,
+                bytes32("reserveFactorBps"),
+                uint256(10001),
+                uint256(0),
+                uint256(LibVaipakam.RISK_PARAMS_RESERVE_FACTOR_BPS_MAX)
+            )
+        );
+        RiskFacet(address(diamond)).updateRiskParams(
+            mockERC20,
+            8000,
+            8500,
+            300,
+            10001
+        );
     }
 
     /// @dev Test P: the hard-coded 3% incentive cap (README §3) blocks any
@@ -1331,7 +1571,13 @@ contract RiskFacetTest is Test {
     function testUpdateRiskParamsRespectsIncentiveCap() public {
         vm.prank(owner);
         vm.expectRevert(IVaipakamErrors.UpdateNotAllowed.selector);
-        RiskFacet(address(diamond)).updateRiskParams(mockERC20, 8000, 8500, 10000, 1000);
+        RiskFacet(address(diamond)).updateRiskParams(
+            mockERC20,
+            8000,
+            8500,
+            10000,
+            1000
+        );
     }
 
     /// @dev Test Q: triggerLiquidation where afterBonus < totalDebt (undercollateralized).
@@ -1341,18 +1587,27 @@ contract RiskFacetTest is Test {
 
         vm.mockCall(
             address(diamond),
-            abi.encodeWithSelector(RiskFacet.calculateHealthFactor.selector, loanId),
+            abi.encodeWithSelector(
+                RiskFacet.calculateHealthFactor.selector,
+                loanId
+            ),
             abi.encode(HF_SCALE - 1)
         );
         vm.mockCall(
             address(diamond),
-            abi.encodeWithSelector(EscrowFactoryFacet.escrowWithdrawERC20.selector),
+            abi.encodeWithSelector(
+                EscrowFactoryFacet.escrowWithdrawERC20.selector
+            ),
             abi.encode(true)
         );
 
         deal(mockERC20, address(diamond), 1800 ether);
         deal(mockCollateralERC20, address(diamond), 1800 ether);
-        vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector), abi.encode(true));
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector),
+            abi.encode(true)
+        );
 
         // Mock the 0x swap call to return a low proceeds value (e.g., 900 ether).
         // This bypasses ZeroExProxyMock's slippage check entirely.
@@ -1368,16 +1623,25 @@ contract RiskFacetTest is Test {
         deal(mockERC20, address(diamond), 1800 ether + 900 ether);
         deal(mockCollateralERC20, address(diamond), 1800 ether);
 
-        RiskFacet(address(diamond)).triggerLiquidation(loanId, defaultAdapterCalls());
+        RiskFacet(address(diamond)).triggerLiquidation(
+            loanId,
+            defaultAdapterCalls()
+        );
 
         // Lender gets allocated (afterBonus), no treasury fee since allocated < principal
-        (, uint256 lenderAmt,) = ClaimFacet(address(diamond)).getClaimableAmount(loanId, true);
+        (, uint256 lenderAmt, ) = ClaimFacet(address(diamond))
+            .getClaimableAmount(loanId, true);
         // afterBonus=855 < principal(1000) → lenderProceeds=855, toTreasury=0
-        assertLt(lenderAmt, 1000 ether, "Lender should get less than principal");
+        assertLt(
+            lenderAmt,
+            1000 ether,
+            "Lender should get less than principal"
+        );
         assertGt(lenderAmt, 0, "Lender should get some proceeds");
 
         // No borrower surplus
-        (, uint256 borrowerAmt,) = ClaimFacet(address(diamond)).getClaimableAmount(loanId, false);
+        (, uint256 borrowerAmt, ) = ClaimFacet(address(diamond))
+            .getClaimableAmount(loanId, false);
         assertEq(borrowerAmt, 0, "Borrower should have no surplus");
 
         vm.clearMockedCalls();
@@ -1390,7 +1654,10 @@ contract RiskFacetTest is Test {
         // Mock borrow price to $0 → borrowValueUSD = 0 → should return type(uint256).max
         vm.mockCall(
             address(diamond),
-            abi.encodeWithSelector(OracleFacet.getAssetPrice.selector, mockERC20),
+            abi.encodeWithSelector(
+                OracleFacet.getAssetPrice.selector,
+                mockERC20
+            ),
             abi.encode(0, 8)
         );
 
@@ -1404,15 +1671,23 @@ contract RiskFacetTest is Test {
         mockOraclePrice(mockERC20, 1e8, 8);
         mockOraclePrice(mockCollateralERC20, 1e8, 8);
         mockOracleLiquidity(mockERC20, LibVaipakam.LiquidityStatus.Liquid);
-        mockOracleLiquidity(mockCollateralERC20, LibVaipakam.LiquidityStatus.Liquid);
+        mockOracleLiquidity(
+            mockCollateralERC20,
+            LibVaipakam.LiquidityStatus.Liquid
+        );
 
         // Set loan.principal = 0 → _calculateCurrentBorrowBalance returns 0
-        LibVaipakam.Loan memory loanZero = LoanFacet(address(diamond)).getLoanDetails(loanId);
+        LibVaipakam.Loan memory loanZero = LoanFacet(address(diamond))
+            .getLoanDetails(loanId);
         loanZero.principal = 0;
         TestMutatorFacet(address(diamond)).setLoan(loanId, loanZero);
 
         uint256 hf = RiskFacet(address(diamond)).calculateHealthFactor(loanId);
-        assertEq(hf, type(uint256).max, "HF should be max when borrow value is 0");
+        assertEq(
+            hf,
+            type(uint256).max,
+            "HF should be max when borrow value is 0"
+        );
     }
 
     /// @dev Tests triggerLiquidation where proceeds > totalDebt (over-recovery and borrower surplus).
@@ -1422,15 +1697,24 @@ contract RiskFacetTest is Test {
 
         vm.mockCall(
             address(diamond),
-            abi.encodeWithSelector(RiskFacet.calculateHealthFactor.selector, loanId),
+            abi.encodeWithSelector(
+                RiskFacet.calculateHealthFactor.selector,
+                loanId
+            ),
             abi.encode(HF_SCALE - 1)
         );
         vm.mockCall(
             address(diamond),
-            abi.encodeWithSelector(EscrowFactoryFacet.escrowWithdrawERC20.selector),
+            abi.encodeWithSelector(
+                EscrowFactoryFacet.escrowWithdrawERC20.selector
+            ),
             abi.encode(true)
         );
-        vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector), abi.encode(true));
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector),
+            abi.encode(true)
+        );
 
         // Mock the swap call to return very high proceeds (bypass ZeroExProxyMock slippage check)
         uint256 highProceeds = 5000 ether; // >> totalDebt (~1005 ether)
@@ -1442,36 +1726,41 @@ contract RiskFacetTest is Test {
         deal(mockERC20, address(diamond), 1800 ether + highProceeds); // enough for all transfers
         deal(mockCollateralERC20, address(diamond), 1800 ether);
 
-        RiskFacet(address(diamond)).triggerLiquidation(loanId, defaultAdapterCalls());
+        RiskFacet(address(diamond)).triggerLiquidation(
+            loanId,
+            defaultAdapterCalls()
+        );
 
         // Verify borrower surplus exists
-        (, uint256 borrowerAmt,) = ClaimFacet(address(diamond)).getClaimableAmount(loanId, false);
+        (, uint256 borrowerAmt, ) = ClaimFacet(address(diamond))
+            .getClaimableAmount(loanId, false);
         assertGt(borrowerAmt, 0, "Borrower should have surplus");
 
         // Verify lender got at least principal (interest minus treasury fee)
-        (, uint256 lenderAmt,) = ClaimFacet(address(diamond)).getClaimableAmount(loanId, true);
+        (, uint256 lenderAmt, ) = ClaimFacet(address(diamond))
+            .getClaimableAmount(loanId, true);
         assertGe(lenderAmt, 1000 ether, "Lender should get at least principal");
 
         vm.clearMockedCalls();
     }
 
     /// @dev Tests calculateHealthFactor when liqThresholdBps is 0 → riskAdjustedCollateral=0, healthFactor=0.
+    ///      Uses TestMutatorFacet.setLiqThresholdBpsRaw to bypass the
+    ///      bounded-range guard on the production setter (which floors
+    ///      liqThresholdBps at RISK_PARAMS_LIQ_THRESHOLD_BPS_MIN).
+    ///      Layout-resilient: the mutator references the field by
+    ///      named storage path so it stays correct when the Storage
+    ///      struct shifts (e.g. T-048 PAD additions).
     function testCalculateHealthFactorZeroLiqThreshold() public {
         uint256 loanId = createAndAcceptOffer();
 
-        // Use vm.store to set liqThresholdBps = 0 for the collateral asset in assetRiskParams
-        bytes32 baseSlot = LibVaipakam.VANGKI_STORAGE_POSITION;
-        // assetRiskParams mapping is at slot offset 17 in Storage struct
-        uint256 riskParamsSlot = uint256(baseSlot) + 16;
-        bytes32 paramsBase = keccak256(abi.encode(mockCollateralERC20, riskParamsSlot));
-        // RiskParams struct: maxLtvBps(slot+0), liqThresholdBps(slot+1)
-        vm.store(address(diamond), bytes32(uint256(paramsBase) + 1), bytes32(uint256(0))); // liqThresholdBps = 0
+        TestMutatorFacet(address(diamond)).setLiqThresholdBpsRaw(mockCollateralERC20, 0);
 
         uint256 hf = RiskFacet(address(diamond)).calculateHealthFactor(loanId);
         assertEq(hf, 0, "HF should be 0 when liqThresholdBps is 0");
 
-        // Restore risk params
-        vm.store(address(diamond), bytes32(uint256(paramsBase) + 1), bytes32(uint256(8500)));
+        // Restore risk params for any subsequent assertions in this test contract.
+        TestMutatorFacet(address(diamond)).setLiqThresholdBpsRaw(mockCollateralERC20, 8500);
     }
 
     /// @dev Tests calculateLTV when collateral price = 0 → collateralValueUSD = 0 → ZeroCollateral revert.
@@ -1484,14 +1773,24 @@ contract RiskFacetTest is Test {
         ERC20Mock(collateralToken).mint(borrower, 100000 ether);
         vm.prank(borrower);
         ERC20(collateralToken).approve(address(diamond), type(uint256).max);
-        address borrowerEscrow = EscrowFactoryFacet(address(diamond)).getOrCreateUserEscrow(borrower);
+        address borrowerEscrow = EscrowFactoryFacet(address(diamond))
+            .getOrCreateUserEscrow(borrower);
         vm.prank(borrower);
         ERC20(collateralToken).approve(borrowerEscrow, type(uint256).max);
 
-        mockOracleLiquidity(collateralToken, LibVaipakam.LiquidityStatus.Liquid);
+        mockOracleLiquidity(
+            collateralToken,
+            LibVaipakam.LiquidityStatus.Liquid
+        );
         mockOraclePrice(collateralToken, 1e8, 8);
         vm.prank(owner);
-        RiskFacet(address(diamond)).updateRiskParams(collateralToken, 8000, 8500, 300, 1000);
+        RiskFacet(address(diamond)).updateRiskParams(
+            collateralToken,
+            8000,
+            8500,
+            300,
+            1000
+        );
 
         vm.prank(lender);
         uint256 offerId = OfferFacet(address(diamond)).createOffer(
@@ -1511,11 +1810,19 @@ contract RiskFacetTest is Test {
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
                 collateralQuantity: 0,
-                allowsPartialRepay: false
+                allowsPartialRepay: false,
+                amountMax: 0,
+                interestRateBpsMax: 0,
+                periodicInterestCadence: LibVaipakam
+                    .PeriodicInterestCadence
+                    .None
             })
         );
         vm.prank(borrower);
-        uint256 loanId = OfferFacet(address(diamond)).acceptOffer(offerId, true);
+        uint256 loanId = OfferFacet(address(diamond)).acceptOffer(
+            offerId,
+            true
+        );
 
         // Now mock collateral price to 0
         mockOraclePrice(collateralToken, 0, 8);
@@ -1528,20 +1835,31 @@ contract RiskFacetTest is Test {
     /// @dev Tests triggerLiquidation where allocated > loan.principal is FALSE (undercollateralized,
     ///      no treasury fee) - exercises the else branch of `if (allocated > loan.principal)`.
     ///      Mocks swap call directly to return low proceeds.
-    function testTriggerLiquidationAllocatedBelowPrincipalNoTreasuryFee() public {
+    function testTriggerLiquidationAllocatedBelowPrincipalNoTreasuryFee()
+        public
+    {
         uint256 loanId = createAndAcceptOffer();
 
         vm.mockCall(
             address(diamond),
-            abi.encodeWithSelector(RiskFacet.calculateHealthFactor.selector, loanId),
+            abi.encodeWithSelector(
+                RiskFacet.calculateHealthFactor.selector,
+                loanId
+            ),
             abi.encode(HF_SCALE - 1)
         );
         vm.mockCall(
             address(diamond),
-            abi.encodeWithSelector(EscrowFactoryFacet.escrowWithdrawERC20.selector),
+            abi.encodeWithSelector(
+                EscrowFactoryFacet.escrowWithdrawERC20.selector
+            ),
             abi.encode(true)
         );
-        vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector), abi.encode(true));
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector),
+            abi.encode(true)
+        );
 
         // Mock swap to return low proceeds: 360 ether.
         // Realized slippage 80% clamps to 6%, dynamic incentive = 0, so
@@ -1555,15 +1873,24 @@ contract RiskFacetTest is Test {
         deal(mockERC20, address(diamond), 1800 ether + lowProceeds);
         deal(mockCollateralERC20, address(diamond), 1800 ether);
 
-        RiskFacet(address(diamond)).triggerLiquidation(loanId, defaultAdapterCalls());
+        RiskFacet(address(diamond)).triggerLiquidation(
+            loanId,
+            defaultAdapterCalls()
+        );
 
         // Verify: lender gets allocated (afterBonus=342), no treasury fee
-        (, uint256 lenderAmt,) = ClaimFacet(address(diamond)).getClaimableAmount(loanId, true);
-        assertLt(lenderAmt, 1000 ether, "Lender should get less than principal");
+        (, uint256 lenderAmt, ) = ClaimFacet(address(diamond))
+            .getClaimableAmount(loanId, true);
+        assertLt(
+            lenderAmt,
+            1000 ether,
+            "Lender should get less than principal"
+        );
         assertGt(lenderAmt, 0);
 
         // No borrower surplus
-        (, uint256 borrowerAmt,) = ClaimFacet(address(diamond)).getClaimableAmount(loanId, false);
+        (, uint256 borrowerAmt, ) = ClaimFacet(address(diamond))
+            .getClaimableAmount(loanId, false);
         assertEq(borrowerAmt, 0);
 
         vm.clearMockedCalls();
@@ -1576,7 +1903,7 @@ contract RiskFacetTest is Test {
             mockERC20,
             8000,
             8500,
-            0,    // liqBonusBps = 0
+            0, // liqBonusBps = 0
             1000
         );
 
@@ -1585,29 +1912,46 @@ contract RiskFacetTest is Test {
         // Mock HF < 1e18
         vm.mockCall(
             address(diamond),
-            abi.encodeWithSelector(RiskFacet.calculateHealthFactor.selector, loanId),
+            abi.encodeWithSelector(
+                RiskFacet.calculateHealthFactor.selector,
+                loanId
+            ),
             abi.encode(HF_SCALE - 1)
         );
 
         // Mock collateral withdrawal to succeed
         vm.mockCall(
             address(diamond),
-            abi.encodeWithSelector(EscrowFactoryFacet.escrowWithdrawERC20.selector),
+            abi.encodeWithSelector(
+                EscrowFactoryFacet.escrowWithdrawERC20.selector
+            ),
             abi.encode(true)
         );
 
         deal(mockERC20, address(diamond), 1800 ether);
         deal(mockCollateralERC20, address(diamond), 1800 ether);
 
-        vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector), abi.encode(true));
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector),
+            abi.encode(true)
+        );
 
         // bonus = 0, so bonus transfer is skipped; proceeds all go to lender escrow
         // ZeroExProxyMock rate is 11/10 → proceeds = 1980 ether
         vm.expectEmit(true, true, false, true);
-        emit RiskFacet.HFLiquidationTriggered(loanId, address(this), 1980 ether);
-        RiskFacet(address(diamond)).triggerLiquidation(loanId, defaultAdapterCalls());
+        emit RiskFacet.HFLiquidationTriggered(
+            loanId,
+            address(this),
+            1980 ether
+        );
+        RiskFacet(address(diamond)).triggerLiquidation(
+            loanId,
+            defaultAdapterCalls()
+        );
 
-        LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(loanId);
+        LibVaipakam.Loan memory loan = LoanFacet(address(diamond))
+            .getLoanDetails(loanId);
         assertEq(uint8(loan.status), uint8(LibVaipakam.LoanStatus.Defaulted));
         vm.clearMockedCalls();
     }
@@ -1621,15 +1965,24 @@ contract RiskFacetTest is Test {
 
         vm.mockCall(
             address(diamond),
-            abi.encodeWithSelector(RiskFacet.calculateHealthFactor.selector, loanId),
+            abi.encodeWithSelector(
+                RiskFacet.calculateHealthFactor.selector,
+                loanId
+            ),
             abi.encode(HF_SCALE - 1)
         );
         vm.mockCall(
             address(diamond),
-            abi.encodeWithSelector(EscrowFactoryFacet.escrowWithdrawERC20.selector),
+            abi.encodeWithSelector(
+                EscrowFactoryFacet.escrowWithdrawERC20.selector
+            ),
             abi.encode(true)
         );
-        vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector), abi.encode(true));
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector),
+            abi.encode(true)
+        );
 
         // Very high swap proceeds: 5x rate → proceeds = 9000 ether.
         // Proceeds exceed oracle-expected, so realized slippage is 0 and the
@@ -1640,14 +1993,23 @@ contract RiskFacetTest is Test {
         deal(mockERC20, address(diamond), 1800 ether);
         deal(mockCollateralERC20, address(diamond), 1800 ether);
 
-        RiskFacet(address(diamond)).triggerLiquidation(loanId, defaultAdapterCalls());
+        RiskFacet(address(diamond)).triggerLiquidation(
+            loanId,
+            defaultAdapterCalls()
+        );
 
         // Verify borrower has surplus
-        (, uint256 borrowerAmt,) = ClaimFacet(address(diamond)).getClaimableAmount(loanId, false);
-        assertGt(borrowerAmt, 0, "Borrower should get surplus when proceeds >> debt");
+        (, uint256 borrowerAmt, ) = ClaimFacet(address(diamond))
+            .getClaimableAmount(loanId, false);
+        assertGt(
+            borrowerAmt,
+            0,
+            "Borrower should get surplus when proceeds >> debt"
+        );
 
         // Verify lender got at least principal (may be equal if treasury takes all interest)
-        (, uint256 lenderAmt,) = ClaimFacet(address(diamond)).getClaimableAmount(loanId, true);
+        (, uint256 lenderAmt, ) = ClaimFacet(address(diamond))
+            .getClaimableAmount(loanId, true);
         assertGe(lenderAmt, 1000 ether, "Lender should get at least principal");
 
         vm.clearMockedCalls();
@@ -1661,15 +2023,24 @@ contract RiskFacetTest is Test {
 
         vm.mockCall(
             address(diamond),
-            abi.encodeWithSelector(RiskFacet.calculateHealthFactor.selector, loanId),
+            abi.encodeWithSelector(
+                RiskFacet.calculateHealthFactor.selector,
+                loanId
+            ),
             abi.encode(HF_SCALE - 1)
         );
         vm.mockCall(
             address(diamond),
-            abi.encodeWithSelector(EscrowFactoryFacet.escrowWithdrawERC20.selector),
+            abi.encodeWithSelector(
+                EscrowFactoryFacet.escrowWithdrawERC20.selector
+            ),
             abi.encode(true)
         );
-        vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector), abi.encode(true));
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector),
+            abi.encode(true)
+        );
 
         deal(mockERC20, address(diamond), 1800 ether);
         deal(mockCollateralERC20, address(diamond), 1800 ether);
@@ -1683,23 +2054,41 @@ contract RiskFacetTest is Test {
 
         vm.expectEmit(true, true, false, true);
         emit RiskFacet.LiquidationFallback(loanId, lender, 1800 ether);
-        RiskFacet(address(diamond)).triggerLiquidation(loanId, defaultAdapterCalls());
+        RiskFacet(address(diamond)).triggerLiquidation(
+            loanId,
+            defaultAdapterCalls()
+        );
 
-        LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(loanId);
-        assertEq(uint8(loan.status), uint8(LibVaipakam.LoanStatus.FallbackPending));
+        LibVaipakam.Loan memory loan = LoanFacet(address(diamond))
+            .getLoanDetails(loanId);
+        assertEq(
+            uint8(loan.status),
+            uint8(LibVaipakam.LoanStatus.FallbackPending)
+        );
 
         // Lender claim should be on collateral (not principal) under the new
         // README §7 fallback: claims are recorded in collateral units and
         // the collateral stays in the Diamond until ClaimFacet resolves it.
-        (address claimAsset, uint256 lenderAmt,) = ClaimFacet(address(diamond)).getClaimableAmount(loanId, true);
+        (address claimAsset, uint256 lenderAmt, ) = ClaimFacet(address(diamond))
+            .getClaimableAmount(loanId, true);
         assertEq(claimAsset, mockCollateralERC20);
-        assertGt(lenderAmt, 0, "lender should have a collateral-denominated claim");
+        assertGt(
+            lenderAmt,
+            0,
+            "lender should have a collateral-denominated claim"
+        );
 
         // Borrower may now have a non-zero surplus when collateral value
         // exceeds the lender's 3% fallback entitlement (README §7 line 153).
-        (address borrowerAsset, uint256 borrowerAmt,) = ClaimFacet(address(diamond)).getClaimableAmount(loanId, false);
+        (address borrowerAsset, uint256 borrowerAmt, ) = ClaimFacet(
+            address(diamond)
+        ).getClaimableAmount(loanId, false);
         assertEq(borrowerAsset, mockCollateralERC20);
-        assertLe(lenderAmt + borrowerAmt, 1800 ether, "split must not exceed available collateral");
+        assertLe(
+            lenderAmt + borrowerAmt,
+            1800 ether,
+            "split must not exceed available collateral"
+        );
 
         vm.clearMockedCalls();
     }
@@ -1710,18 +2099,27 @@ contract RiskFacetTest is Test {
 
         vm.mockCall(
             address(diamond),
-            abi.encodeWithSelector(RiskFacet.calculateHealthFactor.selector, loanId),
+            abi.encodeWithSelector(
+                RiskFacet.calculateHealthFactor.selector,
+                loanId
+            ),
             abi.encode(HF_SCALE - 1)
         );
         // Mock collateral as illiquid on active network
         vm.mockCall(
             address(diamond),
-            abi.encodeWithSelector(OracleFacet.checkLiquidityOnActiveNetwork.selector, mockCollateralERC20),
+            abi.encodeWithSelector(
+                OracleFacet.checkLiquidityOnActiveNetwork.selector,
+                mockCollateralERC20
+            ),
             abi.encode(LibVaipakam.LiquidityStatus.Illiquid)
         );
 
         vm.expectRevert(IVaipakamErrors.NonLiquidAsset.selector);
-        RiskFacet(address(diamond)).triggerLiquidation(loanId, defaultAdapterCalls());
+        RiskFacet(address(diamond)).triggerLiquidation(
+            loanId,
+            defaultAdapterCalls()
+        );
         vm.clearMockedCalls();
     }
 
@@ -1732,12 +2130,17 @@ contract RiskFacetTest is Test {
 
         vm.mockCall(
             address(diamond),
-            abi.encodeWithSelector(RiskFacet.calculateHealthFactor.selector, loanId),
+            abi.encodeWithSelector(
+                RiskFacet.calculateHealthFactor.selector,
+                loanId
+            ),
             abi.encode(HF_SCALE - 1)
         );
         vm.mockCall(
             address(diamond),
-            abi.encodeWithSelector(EscrowFactoryFacet.escrowWithdrawERC20.selector),
+            abi.encodeWithSelector(
+                EscrowFactoryFacet.escrowWithdrawERC20.selector
+            ),
             abi.encode(true)
         );
 
@@ -1759,7 +2162,10 @@ contract RiskFacetTest is Test {
         );
 
         vm.expectRevert(bytes("nft update fail"));
-        RiskFacet(address(diamond)).triggerLiquidation(loanId, defaultAdapterCalls());
+        RiskFacet(address(diamond)).triggerLiquidation(
+            loanId,
+            defaultAdapterCalls()
+        );
         vm.clearMockedCalls();
     }
 
@@ -1771,19 +2177,49 @@ contract RiskFacetTest is Test {
     function testFallbackThreeWaySplit() public {
         uint256 loanId = createAndAcceptOffer();
 
-        vm.mockCall(address(diamond), abi.encodeWithSelector(RiskFacet.calculateHealthFactor.selector, loanId), abi.encode(HF_SCALE - 1));
-        vm.mockCall(address(diamond), abi.encodeWithSelector(EscrowFactoryFacet.escrowWithdrawERC20.selector), abi.encode(true));
-        vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector), abi.encode(true));
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(
+                RiskFacet.calculateHealthFactor.selector,
+                loanId
+            ),
+            abi.encode(HF_SCALE - 1)
+        );
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(
+                EscrowFactoryFacet.escrowWithdrawERC20.selector
+            ),
+            abi.encode(true)
+        );
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector),
+            abi.encode(true)
+        );
         deal(mockERC20, address(diamond), 1800 ether);
         deal(mockCollateralERC20, address(diamond), 1800 ether);
-        vm.mockCallRevert(address(mockZeroExProxy), abi.encodeWithSelector(IZeroExProxy.swap.selector), "swap revert");
+        vm.mockCallRevert(
+            address(mockZeroExProxy),
+            abi.encodeWithSelector(IZeroExProxy.swap.selector),
+            "swap revert"
+        );
 
-        RiskFacet(address(diamond)).triggerLiquidation(loanId, defaultAdapterCalls());
+        RiskFacet(address(diamond)).triggerLiquidation(
+            loanId,
+            defaultAdapterCalls()
+        );
 
-        (, uint256 lenderAmt,) = ClaimFacet(address(diamond)).getClaimableAmount(loanId, true);
-        (, uint256 borrowerAmt,) = ClaimFacet(address(diamond)).getClaimableAmount(loanId, false);
+        (, uint256 lenderAmt, ) = ClaimFacet(address(diamond))
+            .getClaimableAmount(loanId, true);
+        (, uint256 borrowerAmt, ) = ClaimFacet(address(diamond))
+            .getClaimableAmount(loanId, false);
         assertEq(lenderAmt, 1030 ether, "lender = principal + 3%");
-        assertEq(borrowerAmt, 750 ether, "borrower = collateral - lender - treasury");
+        assertEq(
+            borrowerAmt,
+            750 ether,
+            "borrower = collateral - lender - treasury"
+        );
         vm.clearMockedCalls();
     }
 
@@ -1798,17 +2234,44 @@ contract RiskFacetTest is Test {
         uint256 loanId = createAndAcceptOffer();
         vm.warp(block.timestamp + 100 * 365 days);
 
-        vm.mockCall(address(diamond), abi.encodeWithSelector(RiskFacet.calculateHealthFactor.selector, loanId), abi.encode(HF_SCALE - 1));
-        vm.mockCall(address(diamond), abi.encodeWithSelector(EscrowFactoryFacet.escrowWithdrawERC20.selector), abi.encode(true));
-        vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector), abi.encode(true));
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(
+                RiskFacet.calculateHealthFactor.selector,
+                loanId
+            ),
+            abi.encode(HF_SCALE - 1)
+        );
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(
+                EscrowFactoryFacet.escrowWithdrawERC20.selector
+            ),
+            abi.encode(true)
+        );
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector),
+            abi.encode(true)
+        );
         deal(mockERC20, address(diamond), 1800 ether);
         deal(mockCollateralERC20, address(diamond), 1800 ether);
-        vm.mockCallRevert(address(mockZeroExProxy), abi.encodeWithSelector(IZeroExProxy.swap.selector), "swap revert");
+        vm.mockCallRevert(
+            address(mockZeroExProxy),
+            abi.encodeWithSelector(IZeroExProxy.swap.selector),
+            "swap revert"
+        );
 
-        RiskFacet(address(diamond)).triggerLiquidation(loanId, defaultAdapterCalls());
+        RiskFacet(address(diamond)).triggerLiquidation(
+            loanId,
+            defaultAdapterCalls()
+        );
 
-        (, uint256 lenderAmt,) = ClaimFacet(address(diamond)).getClaimableAmount(loanId, true);
-        (, uint256 borrowerAmt, bool borrowerClaimed) = ClaimFacet(address(diamond)).getClaimableAmount(loanId, false);
+        (, uint256 lenderAmt, ) = ClaimFacet(address(diamond))
+            .getClaimableAmount(loanId, true);
+        (, uint256 borrowerAmt, bool borrowerClaimed) = ClaimFacet(
+            address(diamond)
+        ).getClaimableAmount(loanId, false);
         assertEq(lenderAmt, 1800 ether, "lender takes full collateral");
         assertEq(borrowerAmt, 0, "borrower zero");
         assertTrue(borrowerClaimed, "borrower claim auto-marked settled");
@@ -1820,37 +2283,86 @@ contract RiskFacetTest is Test {
     function testClaimRetrySucceeds() public {
         uint256 loanId = createAndAcceptOffer();
 
-        vm.mockCall(address(diamond), abi.encodeWithSelector(RiskFacet.calculateHealthFactor.selector, loanId), abi.encode(HF_SCALE - 1));
-        vm.mockCall(address(diamond), abi.encodeWithSelector(EscrowFactoryFacet.escrowWithdrawERC20.selector), abi.encode(true));
-        vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector), abi.encode(true));
-        vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.burnNFT.selector), abi.encode(true));
         vm.mockCall(
             address(diamond),
-            abi.encodeWithSelector(OracleFacet.getAssetPrice.selector, mockERC20),
+            abi.encodeWithSelector(
+                RiskFacet.calculateHealthFactor.selector,
+                loanId
+            ),
+            abi.encode(HF_SCALE - 1)
+        );
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(
+                EscrowFactoryFacet.escrowWithdrawERC20.selector
+            ),
+            abi.encode(true)
+        );
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector),
+            abi.encode(true)
+        );
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(VaipakamNFTFacet.burnNFT.selector),
+            abi.encode(true)
+        );
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(
+                OracleFacet.getAssetPrice.selector,
+                mockERC20
+            ),
             abi.encode(uint256(1e8), uint8(8))
         );
         deal(mockERC20, address(diamond), 1800 ether);
         deal(mockCollateralERC20, address(diamond), 1800 ether);
 
         // Initial swap reverts → fallback. Collateral stays in Diamond.
-        vm.mockCallRevert(address(mockZeroExProxy), abi.encodeWithSelector(IZeroExProxy.swap.selector), "swap revert");
-        RiskFacet(address(diamond)).triggerLiquidation(loanId, defaultAdapterCalls());
+        vm.mockCallRevert(
+            address(mockZeroExProxy),
+            abi.encodeWithSelector(IZeroExProxy.swap.selector),
+            "swap revert"
+        );
+        RiskFacet(address(diamond)).triggerLiquidation(
+            loanId,
+            defaultAdapterCalls()
+        );
 
         // Now stub swap for the retry: return 1980 ether proceeds.
         vm.clearMockedCalls();
-        vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector), abi.encode(true));
-        vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.burnNFT.selector), abi.encode(true));
         vm.mockCall(
             address(diamond),
-            abi.encodeWithSelector(OracleFacet.getAssetPrice.selector, mockERC20),
+            abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector),
+            abi.encode(true)
+        );
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(VaipakamNFTFacet.burnNFT.selector),
+            abi.encode(true)
+        );
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(
+                OracleFacet.getAssetPrice.selector,
+                mockERC20
+            ),
             abi.encode(uint256(1e8), uint8(8))
         );
         vm.mockCall(
             address(diamond),
-            abi.encodeWithSelector(OracleFacet.getAssetPrice.selector, mockCollateralERC20),
+            abi.encodeWithSelector(
+                OracleFacet.getAssetPrice.selector,
+                mockCollateralERC20
+            ),
             abi.encode(uint256(1e8), uint8(8))
         );
-        vm.mockCall(address(mockZeroExProxy), abi.encodeWithSelector(IZeroExProxy.swap.selector), abi.encode(uint256(1980 ether)));
+        vm.mockCall(
+            address(mockZeroExProxy),
+            abi.encodeWithSelector(IZeroExProxy.swap.selector),
+            abi.encode(uint256(1980 ether))
+        );
         deal(mockERC20, address(diamond), 1980 ether); // simulate swap proceeds in diamond
         deal(mockCollateralERC20, address(diamond), 1800 ether);
 
@@ -1859,7 +2371,10 @@ contract RiskFacetTest is Test {
         // Phase 7a: auto-retry was removed from single-arg claimAsLender;
         // tests asserting retry success use the explicit overload that
         // takes a ranked AdapterCall[] try-list.
-        ClaimFacet(address(diamond)).claimAsLenderWithRetry(loanId, defaultAdapterCalls());
+        ClaimFacet(address(diamond)).claimAsLenderWithRetry(
+            loanId,
+            defaultAdapterCalls()
+        );
 
         assertEq(
             IERC20(mockERC20).balanceOf(lender) - lenderBefore,
@@ -1874,14 +2389,36 @@ contract RiskFacetTest is Test {
     function testClaimRetryFailsFallsThroughToSplit() public {
         uint256 loanId = createAndAcceptOffer();
 
-        vm.mockCall(address(diamond), abi.encodeWithSelector(RiskFacet.calculateHealthFactor.selector, loanId), abi.encode(HF_SCALE - 1));
-        vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector), abi.encode(true));
-        vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.burnNFT.selector), abi.encode(true));
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(
+                RiskFacet.calculateHealthFactor.selector,
+                loanId
+            ),
+            abi.encode(HF_SCALE - 1)
+        );
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector),
+            abi.encode(true)
+        );
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(VaipakamNFTFacet.burnNFT.selector),
+            abi.encode(true)
+        );
         deal(mockERC20, address(diamond), 1800 ether);
         deal(mockCollateralERC20, address(diamond), 1800 ether);
-        vm.mockCallRevert(address(mockZeroExProxy), abi.encodeWithSelector(IZeroExProxy.swap.selector), "swap revert");
+        vm.mockCallRevert(
+            address(mockZeroExProxy),
+            abi.encodeWithSelector(IZeroExProxy.swap.selector),
+            "swap revert"
+        );
 
-        RiskFacet(address(diamond)).triggerLiquidation(loanId, defaultAdapterCalls());
+        RiskFacet(address(diamond)).triggerLiquidation(
+            loanId,
+            defaultAdapterCalls()
+        );
 
         // Retry also reverts.
         uint256 lenderBefore = IERC20(mockCollateralERC20).balanceOf(lender);
@@ -1910,12 +2447,17 @@ contract RiskFacetTest is Test {
 
         vm.mockCall(
             address(diamond),
-            abi.encodeWithSelector(RiskFacet.calculateHealthFactor.selector, loanId),
+            abi.encodeWithSelector(
+                RiskFacet.calculateHealthFactor.selector,
+                loanId
+            ),
             abi.encode(HF_SCALE - 1)
         );
         vm.mockCall(
             address(diamond),
-            abi.encodeWithSelector(EscrowFactoryFacet.escrowWithdrawERC20.selector),
+            abi.encodeWithSelector(
+                EscrowFactoryFacet.escrowWithdrawERC20.selector
+            ),
             abi.encode(true)
         );
 
@@ -1930,12 +2472,16 @@ contract RiskFacetTest is Test {
         );
 
         // Get the lender and borrower token IDs from the loan
-        LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(loanId);
+        LibVaipakam.Loan memory loan = LoanFacet(address(diamond))
+            .getLoanDetails(loanId);
 
         // First NFT update (lender) succeeds
         vm.mockCall(
             address(diamond),
-            abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector, loan.lenderTokenId),
+            abi.encodeWithSelector(
+                VaipakamNFTFacet.updateNFTStatus.selector,
+                loan.lenderTokenId
+            ),
             ""
         );
 
@@ -1943,12 +2489,18 @@ contract RiskFacetTest is Test {
         // Actually, use specific token IDs to differentiate
         vm.mockCallRevert(
             address(diamond),
-            abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector, loan.borrowerTokenId),
+            abi.encodeWithSelector(
+                VaipakamNFTFacet.updateNFTStatus.selector,
+                loan.borrowerTokenId
+            ),
             "nft update fail"
         );
 
         vm.expectRevert(bytes("nft update fail"));
-        RiskFacet(address(diamond)).triggerLiquidation(loanId, defaultAdapterCalls());
+        RiskFacet(address(diamond)).triggerLiquidation(
+            loanId,
+            defaultAdapterCalls()
+        );
         vm.clearMockedCalls();
     }
 
@@ -1960,7 +2512,10 @@ contract RiskFacetTest is Test {
         // Mock collateral price to 0 → collateralValueUSD = 0 → ZeroCollateral revert
         vm.mockCall(
             address(diamond),
-            abi.encodeWithSelector(OracleFacet.getAssetPrice.selector, mockCollateralERC20),
+            abi.encodeWithSelector(
+                OracleFacet.getAssetPrice.selector,
+                mockCollateralERC20
+            ),
             abi.encode(uint256(0), uint8(8))
         );
 
@@ -1988,19 +2543,27 @@ contract RiskFacetTest is Test {
 
         // Give liquidator KYC (needed for liquidation)
         vm.prank(owner);
-        ProfileFacet(address(diamond)).updateKYCTier(randomLiquidator, LibVaipakam.KYCTier.Tier2);
+        ProfileFacet(address(diamond)).updateKYCTier(
+            randomLiquidator,
+            LibVaipakam.KYCTier.Tier2
+        );
 
         // Mock HF < 1e18 so liquidation condition is met
         vm.mockCall(
             address(diamond),
-            abi.encodeWithSelector(RiskFacet.calculateHealthFactor.selector, loanId),
+            abi.encodeWithSelector(
+                RiskFacet.calculateHealthFactor.selector,
+                loanId
+            ),
             abi.encode(HF_SCALE - 1)
         );
 
         // Mock collateral withdrawal
         vm.mockCall(
             address(diamond),
-            abi.encodeWithSelector(EscrowFactoryFacet.escrowWithdrawERC20.selector),
+            abi.encodeWithSelector(
+                EscrowFactoryFacet.escrowWithdrawERC20.selector
+            ),
             abi.encode(true)
         );
 
@@ -2017,11 +2580,18 @@ contract RiskFacetTest is Test {
 
         // Third-party liquidator triggers liquidation — should SUCCEED
         vm.prank(randomLiquidator);
-        RiskFacet(address(diamond)).triggerLiquidation(loanId, defaultAdapterCalls());
+        RiskFacet(address(diamond)).triggerLiquidation(
+            loanId,
+            defaultAdapterCalls()
+        );
 
         // Verify loan is now Defaulted
-        LibVaipakam.Loan memory loanAfter = LoanFacet(address(diamond)).getLoanDetails(loanId);
-        assertEq(uint8(loanAfter.status), uint8(LibVaipakam.LoanStatus.Defaulted));
+        LibVaipakam.Loan memory loanAfter = LoanFacet(address(diamond))
+            .getLoanDetails(loanId);
+        assertEq(
+            uint8(loanAfter.status),
+            uint8(LibVaipakam.LoanStatus.Defaulted)
+        );
         vm.clearMockedCalls();
     }
 }

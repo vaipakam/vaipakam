@@ -16,11 +16,11 @@ Karten-Titel.
 
 ## Dashboard
 
-<a id="dashboard.your-escrow"></a>
+<a id="dashboard.your-vault"></a>
 
-### Dein Escrow
+### Dein Vault
 
-Stell dir deinen **Escrow** als deinen privaten Tresor innerhalb von
+Stell dir deinen **Vault** als deinen privaten Tresor innerhalb von
 Vaipakam vor. Es ist ein kleiner Vertrag, den nur du kontrollierst.
 Immer wenn du an einem Loan teilnimmst — entweder als Sicherheit
 oder als Verleiher eines Assets — wandern die Assets aus deinem
@@ -28,7 +28,7 @@ Wallet in diesen Tresor. Sie werden nie mit dem Geld anderer
 vermischt. Wenn der Loan endet, claimst du sie direkt wieder
 heraus.
 
-Du musst keinen Escrow selbst "anlegen"; die App erstellt einen
+Du musst keinen Vault selbst "anlegen"; die App erstellt einen
 beim ersten Mal, wenn du ihn brauchst. Sobald er existiert, bleibt
 er als deine zugewiesene Heimat auf dieser Chain.
 
@@ -53,13 +53,13 @@ Ort, verschiedene Zeilen.
 
 ### VPFI auf dieser Chain
 
-**VPFI** ist der eigene Token des Protokolls. Etwas davon im Escrow
+**VPFI** ist der eigene Token des Protokolls. Etwas davon im Vault
 zu halten verschafft dir einen Rabatt auf Protokollgebühren und
 bringt dir eine kleine passive Rendite (5% APR). Diese Karte sagt
 dir, auf der Chain, mit der du verbunden bist:
 
 - Wie viel VPFI gerade in deinem Wallet liegt.
-- Wie viel in deinem Escrow liegt (was als "gestaked" zählt).
+- Wie viel in deinem Vault liegt (was als "gestaked" zählt).
 - Welchen Anteil am Gesamt-VPFI-Supply du hältst.
 - Wie viel VPFI insgesamt noch geminted werden kann (das Protokoll
   hat eine harte Obergrenze).
@@ -76,20 +76,29 @@ Chain, auf der du gerade bist, real.
 ### Zustimmung zum Gebühren-Rabatt
 
 Vaipakam kann dir einen Rabatt auf Protokollgebühren auszahlen,
-indem ein Teil des VPFI verwendet wird, das du im Escrow geparkt
+indem ein Teil des VPFI verwendet wird, das du im Vault geparkt
 hast. Dieser Schalter ist das "ja, gerne". Du legst ihn nur einmal
 um.
 
 Wie groß der Rabatt ist, hängt davon ab, wie viel VPFI du im
-Escrow hältst:
+Vault hältst:
 
-- **Tier 1** — 100 VPFI oder mehr → 10% Rabatt
-- **Tier 2** — 1.000 VPFI oder mehr → 15% Rabatt
-- **Tier 3** — 5.000 VPFI oder mehr → 20% Rabatt
-- **Tier 4** — mehr als 20.000 VPFI → 24% Rabatt
+- **Tier 1** — `{liveValue:tier1Min}` VPFI oder mehr → `{liveValue:tier1DiscountBps}`% Rabatt
+- **Tier 2** — `{liveValue:tier2Min}` VPFI oder mehr → `{liveValue:tier2DiscountBps}`% Rabatt
+- **Tier 3** — `{liveValue:tier3Min}` VPFI oder mehr → `{liveValue:tier3DiscountBps}`% Rabatt
+- **Tier 4** — mehr als `{liveValue:tier4Min}` VPFI → `{liveValue:tier4DiscountBps}`% Rabatt
 
 Du kannst den Schalter jederzeit ausschalten. Wenn du VPFI aus dem
-Escrow abhebst, fällt dein Tier in Echtzeit.
+Vault abhebst, fällt dein Tier in Echtzeit.
+
+> **Hinweis zur Blockchain-Netzwerkgebühr (Gas).** Der obige Rabatt
+> gilt für die **Protokollgebühren** von Vaipakam (Renditegebühr,
+> Kreditinitiierungsgebühr). Die kleine **Gas-Gebühr**, die jede
+> On-Chain-Aktion zusätzlich erfordert — gezahlt an die
+> Blockchain-Validatoren beim Erstellen eines Angebots, Annehmen,
+> Zurückzahlen, Beanspruchen usw. — ist eine separate Gebühr, die
+> ans Netzwerk geht, nicht an Vaipakam. Das Protokoll kann darauf
+> keinen Rabatt geben, weil es sie nie erhält.
 
 <a id="dashboard.rewards-summary"></a>
 
@@ -104,7 +113,7 @@ Es gibt zwei Belohnungsströme und die Karte schlüsselt die
 Summe nach jedem auf:
 
 - **Staking-Rendite** — automatisch auf jedem VPFI verdient,
-  das Sie in Ihrem Escrow halten. Der Satz ist der Protokoll-
+  das Sie in Ihrem Vault halten. Der Satz ist der Protokoll-
   APR, der auf der Buy-VPFI-Seite angezeigt wird.
 - **Plattform-Interaktions-Belohnungen** — täglich ein wenig
   für jeden Kredit verdient, an dem Sie auf einer Seite
@@ -154,7 +163,7 @@ Posts von Leuten, die anbieten zu verleihen. Jeder davon sagt:
 gegen so viel Collateral".
 
 Ein Borrower, der eine davon akzeptiert, wird zum Borrower-of-record
-des Loans: das Collateral des Borrowers wird im Escrow gesperrt,
+des Loans: das Collateral des Borrowers wird im Vault gesperrt,
 das Hauptasset kommt im Wallet des Borrowers an, und Zinsen laufen
 auf, bis der Borrower zurückzahlt.
 
@@ -233,7 +242,7 @@ bevor der Loan in Default gehen kann.
 Für eine Rental-Offer setzt diese Karte die tägliche Mietgebühr.
 Der Mieter zahlt die volle Mietkosten beim Akzeptieren im Voraus,
 plus einen kleinen 5%-Buffer, falls die Sache leicht überzieht.
-Der NFT selbst bleibt während der ganzen Zeit im Escrow — der
+Der NFT selbst bleibt während der ganzen Zeit im Vault — der
 Mieter hat Nutzungsrechte, kann ihn aber nicht bewegen.
 
 <a id="create-offer.collateral"></a>
@@ -411,12 +420,12 @@ verbunden bist. Kein Netzwerkwechsel nötig.
 
 Schneller Überblick darüber, in welchem Rabatt-Tier du gerade
 sitzt. Das Tier ergibt sich daraus, wie viel VPFI in deinem
-**Escrow** liegt (nicht in deinem Wallet). Die Karte sagt dir
-außerdem (a) wie viel VPFI mehr du im Escrow brauchen würdest, um
+**Vault** liegt (nicht in deinem Wallet). Die Karte sagt dir
+außerdem (a) wie viel VPFI mehr du im Vault brauchen würdest, um
 ins nächste Tier aufzusteigen, und (b) ob der Zustimmungsschalter
 auf dem Dashboard an ist — der Rabatt gilt nur, solange er an ist.
 
-Dasselbe VPFI in deinem Escrow ist außerdem automatisch "gestaked"
+Dasselbe VPFI in deinem Vault ist außerdem automatisch "gestaked"
 und bringt dir 5% APR.
 
 <a id="buy-vpfi.buy"></a>
@@ -431,21 +440,21 @@ viel dir noch bleibt.
 
 <a id="buy-vpfi.deposit"></a>
 
-### Schritt 2 — VPFI in deinen Escrow einzahlen
+### Schritt 2 — VPFI in deinen Vault einzahlen
 
-VPFI zu kaufen legt es in dein Wallet, nicht in deinen Escrow. Um
+VPFI zu kaufen legt es in dein Wallet, nicht in deinen Vault. Um
 den Gebühren-Rabatt und die 5%-Staking-Rendite zu bekommen, musst
-du es selbst in den Escrow bewegen. Das ist immer ein expliziter
+du es selbst in den Vault bewegen. Das ist immer ein expliziter
 Klick — die App bewegt dein VPFI nie ohne deine Aufforderung. Eine
 Transaktion (oder eine einzige Signatur, auf Chains, die das
 unterstützen) und du bist fertig.
 
 <a id="buy-vpfi.unstake"></a>
 
-### Schritt 3 — VPFI aus deinem Escrow unstaken
+### Schritt 3 — VPFI aus deinem Vault unstaken
 
 Willst du etwas VPFI zurück in deinem Wallet? Diese Karte schickt
-es vom Escrow zurück zu dir. Achtung: VPFI rauszuziehen senkt dein
+es vom Vault zurück zu dir. Achtung: VPFI rauszuziehen senkt dein
 Rabatt-Tier **sofort**. Wenn du offene Loans hast, wechselt die
 Rabatt-Mathematik ab diesem Moment auf das niedrigere Tier.
 
@@ -459,7 +468,7 @@ Rabatt-Mathematik ab diesem Moment auf das niedrigere Tier.
 
 Vaipakam zahlt dir für zwei Dinge:
 
-1. **Staking** — VPFI, das du im Escrow hältst, verdient
+1. **Staking** — VPFI, das du im Vault hältst, verdient
    automatisch 5% APR.
 2. **Interaktion** — jeder Dollar Zinsen, den ein Loan, an dem du
    beteiligt bist, tatsächlich settled, bringt dir einen täglichen
@@ -483,7 +492,7 @@ nächsten Tagesfensters scharfgeschaltet.
 
 ### Gestaktes VPFI abheben
 
-Bewege VPFI aus deinem Escrow zurück in dein Wallet. Sobald es im
+Bewege VPFI aus deinem Vault zurück in dein Wallet. Sobald es im
 Wallet ist, hört es auf, die 5% APR zu verdienen, und zählt nicht
 mehr für dein Rabatt-Tier. Dasselbe wie der "Unstake"-Schritt auf
 der VPFI-kaufen-Seite — gleiche Aktion, lebt nur auch hier zur
@@ -561,7 +570,7 @@ Rest-Anspruch zurück an dich.
 ### Parteien
 
 Die zwei Wallet-Adressen auf diesem Loan — Lender und Borrower —
-und die Escrow-Tresore, die ihre Assets halten. Jede Seite hat
+und die Vault-Tresore, die ihre Assets halten. Jede Seite hat
 außerdem einen "Position-NFT" bekommen, als der Loan eröffnet
 wurde. Dieser NFT _ist_ das Recht auf den Anteil dieser Seite am
 Ergebnis — pass darauf auf. Wenn ein Halter ihn an jemand anderen
@@ -606,7 +615,7 @@ mit einem kleinen Tooltip, das erklärt, warum.
   bleibt.
 - **Refinance** — roll in einen neuen Loan mit neuen Konditionen;
   das Protokoll zahlt den alten Loan vom neuen Principal in einer
-  Transaktion ab. Das Collateral verlässt nie den Escrow.
+  Transaktion ab. Das Collateral verlässt nie den Vault.
 - **Claim** — sobald der Loan settled, gibt dein Collateral bei
   voller Rückzahlung zurück, oder einen etwaig übrig gebliebenen
   VPFI-Rebate aus der Loan-Initiation-Fee bei Default.

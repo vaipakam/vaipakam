@@ -3,9 +3,11 @@
 pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
+import {LibERC721} from "../libraries/LibERC721.sol";
 import {LibPausable} from "../libraries/LibPausable.sol";
 import {OracleFacet} from "./OracleFacet.sol";
 import {RiskFacet} from "./RiskFacet.sol";
+import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 
 /**
  * @title MetricsFacet
@@ -30,19 +32,22 @@ import {RiskFacet} from "./RiskFacet.sol";
  *      The previous MAX_ITER-based silent truncation has been removed —
  *      no view returns a wrong answer because the sequence grew past a
  *      hidden cap. Lifetime aggregators that inherently span every loan
- *      ever created (e.g. `getProtocolStats.totalVolumeLentUSD`,
- *      `getTotalInterestEarnedUSD`) iterate `[1 .. nextLoanId)` without a
+ *      ever created (e.g. `getProtocolStats.totalVolumeLentNumeraire`,
+ *      `getTotalInterestEarnedNumeraire`) iterate `[1 .. nextLoanId)` without a
  *      cap; on very large deployments prefer the paginated reverse-index
  *      views (`getAllLoansPaginated`, `getLoansByStatusPaginated`) and
  *      aggregate off-chain.
  *
- *      Cross-facet reads for USD pricing go through `address(this)` so the
- *      Diamond routes to OracleFacet (getAssetPrice) at runtime. Pricing
- *      failures (no feed / stale) are treated as $0 for the affected leg so
- *      the aggregate metrics never revert due to a single misbehaving asset.
+ *      Cross-facet reads for numeraire-quoted pricing go through
+ *      `address(this)` so the Diamond routes to OracleFacet (getAssetPrice)
+ *      at runtime. Pricing failures (no feed / stale) are treated as 0 for
+ *      the affected leg so the aggregate metrics never revert due to a
+ *      single misbehaving asset. The protocol is currency-agnostic — every
+ *      `*Numeraire` figure below is denominated in whatever numeraire
+ *      governance has configured (USD by post-deploy default).
  */
 contract MetricsFacet {
-    uint256 private constant USD_SCALE = 1e18;
+    uint256 private constant NUMERAIRE_SCALE = 1e18;
 
     // ─── 1. Protocol-Wide Metrics ───────────────────────────────────────────
 
@@ -50,29 +55,29 @@ contract MetricsFacet {
      * @notice Aggregated TVL across active loans, priced live at current
      *         Chainlink rates.
      * @dev Iterates `activeLoanIdsList` (bounded by `activeLoansCount`), so
-     *      closed loans no longer contribute. USD values are repriced on
-     *      every call — a loan priced at $100 today may be priced at $80
-     *      tomorrow if the underlying asset moves; this is the intended
-     *      semantic of "TVL" as a live market snapshot.
-     * @return tvlInUSD Sum of `principalUsdLocked` + `erc20CollateralTVL`.
-     * @return erc20CollateralTVL USD value of ERC-20 collateral on active loans.
+     *      closed loans no longer contribute. Numeraire-quoted values are
+     *      repriced on every call — a loan priced at 100 today may be priced
+     *      at 80 tomorrow if the underlying asset moves; this is the
+     *      intended semantic of "TVL" as a live market snapshot.
+     * @return tvlInNumeraire Sum of `principalNumeraireLocked` + `erc20CollateralTVL`.
+     * @return erc20CollateralTVL Numeraire-quoted value of ERC-20 collateral on active loans.
      * @return nftCollateralTVL NFT collateral is priced at $0 (no on-chain oracle);
      *         returns the COUNT of active loans with NFT collateral instead.
      */
     function getProtocolTVL()
         external
         view
-        returns (uint256 tvlInUSD, uint256 erc20CollateralTVL, uint256 nftCollateralTVL)
+        returns (uint256 tvlInNumeraire, uint256 erc20CollateralTVL, uint256 nftCollateralTVL)
     {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         uint256[] storage active = s.activeLoanIdsList;
         uint256 len = active.length;
-        uint256 principalUsd;
+        uint256 principalNumeraire;
         uint256 nftCount;
         for (uint256 i = 0; i < len; i++) {
             LibVaipakam.Loan storage l = s.loans[active[i]];
             if (l.assetType == LibVaipakam.AssetType.ERC20) {
-                principalUsd += _priceAmount(l.principalAsset, l.principal);
+                principalNumeraire += _priceAmount(l.principalAsset, l.principal);
             }
             if (l.collateralAssetType == LibVaipakam.AssetType.ERC20) {
                 erc20CollateralTVL += _priceAmount(l.collateralAsset, l.collateralAmount);
@@ -80,7 +85,7 @@ contract MetricsFacet {
                 nftCount += 1;
             }
         }
-        tvlInUSD = principalUsd + erc20CollateralTVL;
+        tvlInNumeraire = principalNumeraire + erc20CollateralTVL;
         nftCollateralTVL = nftCount;
     }
 
@@ -88,8 +93,8 @@ contract MetricsFacet {
      * @notice Protocol-wide aggregate counters and rate summaries.
      * @dev Counter-backed fields (`totalUniqueUsers`, `activeLoansCount`,
      *      `activeOffersCount`, `totalLoansEverCreated`, `defaultRateBps`,
-     *      `averageAPR`) resolve to single SLOADs — O(1). `totalVolumeLentUSD`
-     *      and `totalInterestEarnedUSD` are repriced live and require a full
+     *      `averageAPR`) resolve to single SLOADs — O(1). `totalVolumeLentNumeraire`
+     *      and `totalInterestEarnedNumeraire` are repriced live and require a full
      *      scan over `[1 .. nextLoanId)`; the numbers are never truncated
      *      (no silent MAX_ITER cap), and dashboards that need to call this
      *      on deployments with very large loan histories should aggregate
@@ -103,8 +108,8 @@ contract MetricsFacet {
             uint256 activeLoansCount,
             uint256 activeOffersCount,
             uint256 totalLoansEverCreated,
-            uint256 totalVolumeLentUSD,
-            uint256 totalInterestEarnedUSD,
+            uint256 totalVolumeLentNumeraire,
+            uint256 totalInterestEarnedNumeraire,
             uint256 defaultRateBps,
             uint256 averageAPR
         )
@@ -128,13 +133,13 @@ contract MetricsFacet {
             LibVaipakam.Loan storage l = s.loans[i];
             if (l.id == 0) continue;
             if (l.assetType != LibVaipakam.AssetType.ERC20) continue;
-            uint256 pUsd = _priceAmount(l.principalAsset, l.principal);
-            totalVolumeLentUSD += pUsd;
+            uint256 pNumeraire = _priceAmount(l.principalAsset, l.principal);
+            totalVolumeLentNumeraire += pNumeraire;
             if (
                 l.status != LibVaipakam.LoanStatus.Active &&
                 l.status != LibVaipakam.LoanStatus.FallbackPending
             ) {
-                totalInterestEarnedUSD += (pUsd * l.interestRateBps) / LibVaipakam.BASIS_POINTS;
+                totalInterestEarnedNumeraire += (pNumeraire * l.interestRateBps) / LibVaipakam.BASIS_POINTS;
             }
         }
     }
@@ -165,7 +170,7 @@ contract MetricsFacet {
      *      reverse-index views (`getLoansByStatusPaginated(Repaid|Defaulted|
      *      Settled, ..)`) and aggregate off-chain with event-time pricing.
      */
-    function getTotalInterestEarnedUSD() external view returns (uint256 total) {
+    function getTotalInterestEarnedNumeraire() external view returns (uint256 total) {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         uint256 end = s.nextLoanId;
         for (uint256 i = 1; i <= end; i++) {
@@ -176,8 +181,8 @@ contract MetricsFacet {
                 l.status == LibVaipakam.LoanStatus.Active ||
                 l.status == LibVaipakam.LoanStatus.FallbackPending
             ) continue;
-            uint256 pUsd = _priceAmount(l.principalAsset, l.principal);
-            total += (pUsd * l.interestRateBps) / LibVaipakam.BASIS_POINTS;
+            uint256 pNumeraire = _priceAmount(l.principalAsset, l.principal);
+            total += (pNumeraire * l.interestRateBps) / LibVaipakam.BASIS_POINTS;
         }
     }
 
@@ -185,7 +190,7 @@ contract MetricsFacet {
 
     /**
      * @notice Treasury balance snapshot plus lifetime and rolling-window
-     *         revenue metrics, all priced in USD.
+     *         revenue metrics, all priced in the active numeraire.
      * @dev Asset discovery scans only the active-loan list (not the full
      *      lifetime sequence) unioning `principalAsset`, `collateralAsset`,
      *      and `prepayAsset` per live loan — bounded by `activeLoansCount`.
@@ -193,21 +198,22 @@ contract MetricsFacet {
      *      by any active loan should supplement off-chain with direct reads
      *      of `treasuryBalances(asset)`. Rolling windows are backed by the
      *      append-only `feeEventsLog` populated by
-     *      `LibFacet.recordTreasuryAccrual`. Values are frozen in USD at the
-     *      moment of accrual. Window scan is capped at
-     *      `LibVaipakam.MAX_FEE_EVENTS_ITER` from the tail; older events are
-     *      skipped from the window count but still counted in
-     *      `totalFeesCollectedUSD` via the O(1) `cumulativeFeesUSD`
-     *      accumulator.
+     *      `LibFacet.recordTreasuryAccrual`. Values are frozen in the active
+     *      numeraire at the moment of accrual (currency-agnostic — USD by
+     *      post-deploy default, governance-rotatable). Window scan is capped
+     *      at `LibVaipakam.MAX_FEE_EVENTS_ITER` from the tail; older events
+     *      are skipped from the window count but still counted in
+     *      `totalFeesCollectedNumeraire` via the O(1)
+     *      `cumulativeFeesNumeraire` accumulator.
      */
     function getTreasuryMetrics()
         external
         view
         returns (
-            uint256 treasuryBalanceUSD,
-            uint256 totalFeesCollectedUSD,
-            uint256 feesLast24hUSD,
-            uint256 feesLast7dUSD
+            uint256 treasuryBalanceNumeraire,
+            uint256 totalFeesCollectedNumeraire,
+            uint256 feesLast24hNumeraire,
+            uint256 feesLast7dNumeraire
         )
     {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
@@ -222,33 +228,34 @@ contract MetricsFacet {
             if (l.prepayAsset != address(0)) n = _pushUnique(assets, n, l.prepayAsset);
         }
         for (uint256 k = 0; k < n; k++) {
-            treasuryBalanceUSD += _priceAmount(assets[k], s.treasuryBalances[assets[k]]);
+            treasuryBalanceNumeraire += _priceAmount(assets[k], s.treasuryBalances[assets[k]]);
         }
-        totalFeesCollectedUSD = s.cumulativeFeesUSD;
+        totalFeesCollectedNumeraire = s.cumulativeFeesNumeraire;
         uint256 since24h = block.timestamp > 1 days ? block.timestamp - 1 days : 0;
         uint256 since7d = block.timestamp > 7 days ? block.timestamp - 7 days : 0;
-        (feesLast24hUSD, feesLast7dUSD) = _sumFeesInWindows(since24h, since7d);
+        (feesLast24hNumeraire, feesLast7dNumeraire) = _sumFeesInWindows(since24h, since7d);
     }
 
     /**
-     * @notice Revenue over the last `days_` days, priced in USD at accrual time.
+     * @notice Revenue over the last `days_` days, priced in the active
+     *         numeraire at accrual time.
      * @dev Sums `feeEventsLog` entries whose timestamp is within the window.
      *      Scan is bounded by `LibVaipakam.MAX_FEE_EVENTS_ITER` entries from
      *      the tail so the call stays cheap on long-lived deployments; on
      *      exceeding that bound the returned figure is a lower bound on the
      *      true window revenue. `days_ == 0` returns 0.
      * @param days_ Look-back window in days.
-     * @return totalRevenueUSD Fees accrued to treasury in the window.
+     * @return totalRevenueNumeraire Fees accrued to treasury in the window.
      */
     function getRevenueStats(uint256 days_)
         external
         view
-        returns (uint256 totalRevenueUSD)
+        returns (uint256 totalRevenueNumeraire)
     {
         if (days_ == 0) return 0;
         uint256 windowSpan = days_ * 1 days;
         uint256 windowStart = block.timestamp > windowSpan ? block.timestamp - windowSpan : 0;
-        totalRevenueUSD = _sumFeesSince(windowStart);
+        totalRevenueNumeraire = _sumFeesSince(windowStart);
     }
 
     // ─── 3. Lending & Offer Metrics ─────────────────────────────────────────
@@ -262,6 +269,21 @@ contract MetricsFacet {
     {
         uint256[] storage src = LibVaipakam.storageSlot().activeLoanIdsList;
         loanIds = _slice(src, offset, limit);
+    }
+
+    /// @notice Paginated slice of the active-offer list. O(limit) — the
+    ///         underlying list is maintained swap-and-pop by LibMetricsHooks.
+    /// @dev Symmetric with `getActiveLoansPaginated` so off-chain consumers
+    ///      (matching bot, indexers) can scan the order book the same way
+    ///      they scan the loan book. Asset-agnostic; for filtered scans use
+    ///      `getActiveOffersByAsset` below.
+    function getActiveOffersPaginated(uint256 offset, uint256 limit)
+        external
+        view
+        returns (uint256[] memory offerIds)
+    {
+        uint256[] storage src = LibVaipakam.storageSlot().activeOfferIdsList;
+        offerIds = _slice(src, offset, limit);
     }
 
     /// @notice Paginated list of open offer IDs filtered by lending asset.
@@ -291,7 +313,7 @@ contract MetricsFacet {
 
     /**
      * @notice Aggregate summary across active loans.
-     * @return totalActiveLoanValueUSD Sum of priced principal across ERC-20 loans.
+     * @return totalActiveLoanValueNumeraire Sum of priced principal across ERC-20 loans.
      * @return averageLoanDuration Simple mean of durationDays across active loans.
      * @return averageLTV Simple mean of per-loan LTV (bps) via RiskFacet; 0 for NFT legs.
      */
@@ -299,7 +321,7 @@ contract MetricsFacet {
         external
         view
         returns (
-            uint256 totalActiveLoanValueUSD,
+            uint256 totalActiveLoanValueNumeraire,
             uint256 averageLoanDuration,
             uint256 averageLTV
         )
@@ -314,7 +336,7 @@ contract MetricsFacet {
             LibVaipakam.Loan storage l = s.loans[active[i]];
             durSum += l.durationDays;
             if (l.assetType == LibVaipakam.AssetType.ERC20) {
-                totalActiveLoanValueUSD += _priceAmount(l.principalAsset, l.principal);
+                totalActiveLoanValueNumeraire += _priceAmount(l.principalAsset, l.principal);
             }
             if (
                 l.assetType == LibVaipakam.AssetType.ERC20 &&
@@ -336,9 +358,9 @@ contract MetricsFacet {
      * @notice NFT/escrow activity summary. Iterates the active-loan list
      *         (bounded by `activeLoansCount`). A "rental" here is any
      *         active loan whose principal (lending) asset is an NFT.
-     *         `totalRentalVolumeUSD` is the current-term USD price of each
-     *         active rental's principal where the `prepayAsset` has a live
-     *         feed.
+     *         `totalRentalVolumeNumeraire` is the current-term
+     *         numeraire-quoted price of each active rental's principal where
+     *         the `prepayAsset` has a live feed.
      */
     function getEscrowStats()
         external
@@ -346,7 +368,7 @@ contract MetricsFacet {
         returns (
             uint256 totalNFTsInEscrow,
             uint256 activeRentalsCount,
-            uint256 totalRentalVolumeUSD
+            uint256 totalRentalVolumeNumeraire
         )
     {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
@@ -357,7 +379,7 @@ contract MetricsFacet {
             if (l.assetType != LibVaipakam.AssetType.ERC20) {
                 activeRentalsCount += 1;
                 if (l.prepayAsset != address(0) && l.prepayAmount > 0) {
-                    totalRentalVolumeUSD += _priceAmount(l.prepayAsset, l.prepayAmount);
+                    totalRentalVolumeNumeraire += _priceAmount(l.prepayAsset, l.prepayAmount);
                 }
                 totalNFTsInEscrow += 1;
             }
@@ -399,7 +421,7 @@ contract MetricsFacet {
      *      is the MINIMUM HF across the user's borrower-side active loans
      *      (worst-case). If the user has no borrower legs, returns
      *      `type(uint256).max` (i.e. infinitely safe).
-     *      `availableToClaimUSD` currently returns 0 — claim valuations
+     *      `availableToClaimNumeraire` currently returns 0 — claim valuations
      *      require ClaimInfo iteration with per-asset pricing beyond the
      *      scope of this snapshot; integrators should call
      *      `ClaimFacet.getClaimable` per loan.
@@ -408,9 +430,9 @@ contract MetricsFacet {
         external
         view
         returns (
-            uint256 totalCollateralUSD,
-            uint256 totalBorrowedUSD,
-            uint256 availableToClaimUSD,
+            uint256 totalCollateralNumeraire,
+            uint256 totalBorrowedNumeraire,
+            uint256 availableToClaimNumeraire,
             uint256 healthFactor,
             uint256 activeLoanCount
         )
@@ -428,10 +450,10 @@ contract MetricsFacet {
             activeLoanCount += 1;
             if (isBorrower) {
                 if (l.assetType == LibVaipakam.AssetType.ERC20) {
-                    totalBorrowedUSD += _priceAmount(l.principalAsset, l.principal);
+                    totalBorrowedNumeraire += _priceAmount(l.principalAsset, l.principal);
                 }
                 if (l.collateralAssetType == LibVaipakam.AssetType.ERC20) {
-                    totalCollateralUSD += _priceAmount(l.collateralAsset, l.collateralAmount);
+                    totalCollateralNumeraire += _priceAmount(l.collateralAsset, l.collateralAmount);
                 }
                 if (
                     l.assetType == LibVaipakam.AssetType.ERC20 &&
@@ -445,7 +467,7 @@ contract MetricsFacet {
             }
         }
         healthFactor = anyBorrow ? minHF : type(uint256).max;
-        availableToClaimUSD = 0;
+        availableToClaimNumeraire = 0;
     }
 
     /// @notice Active loan IDs where `user` is lender or borrower.
@@ -513,8 +535,8 @@ contract MetricsFacet {
     /**
      * @notice Protocol-level health snapshot over active loans, priced live.
      * @return utilizationRateBps totalDebt / totalCollateral (bps); 0 if no collateral.
-     * @return totalCollateralUSD USD value of ERC-20 collateral on active loans.
-     * @return totalDebtUSD USD value of principal on active ERC-20 loans.
+     * @return totalCollateralNumeraire Numeraire-quoted value of ERC-20 collateral on active loans.
+     * @return totalDebtNumeraire Numeraire-quoted value of principal on active ERC-20 loans.
      * @return isPaused True iff the protocol is currently paused.
      */
     function getProtocolHealth()
@@ -522,8 +544,8 @@ contract MetricsFacet {
         view
         returns (
             uint256 utilizationRateBps,
-            uint256 totalCollateralUSD,
-            uint256 totalDebtUSD,
+            uint256 totalCollateralNumeraire,
+            uint256 totalDebtNumeraire,
             bool isPaused
         )
     {
@@ -533,15 +555,15 @@ contract MetricsFacet {
         for (uint256 i = 0; i < len; i++) {
             LibVaipakam.Loan storage l = s.loans[active[i]];
             if (l.assetType == LibVaipakam.AssetType.ERC20) {
-                totalDebtUSD += _priceAmount(l.principalAsset, l.principal);
+                totalDebtNumeraire += _priceAmount(l.principalAsset, l.principal);
             }
             if (l.collateralAssetType == LibVaipakam.AssetType.ERC20) {
-                totalCollateralUSD += _priceAmount(l.collateralAsset, l.collateralAmount);
+                totalCollateralNumeraire += _priceAmount(l.collateralAsset, l.collateralAmount);
             }
         }
-        utilizationRateBps = totalCollateralUSD == 0
+        utilizationRateBps = totalCollateralNumeraire == 0
             ? 0
-            : (totalDebtUSD * LibVaipakam.BASIS_POINTS) / totalCollateralUSD;
+            : (totalDebtNumeraire * LibVaipakam.BASIS_POINTS) / totalCollateralNumeraire;
         isPaused = LibPausable.paused();
     }
 
@@ -795,7 +817,7 @@ contract MetricsFacet {
         return OfferState.Open;
     }
 
-    /// @dev Safe USD valuation. Returns 0 if feed missing or stale.
+    /// @dev Safe numeraire-quoted valuation. Returns 0 if feed missing or stale.
     function _priceAmount(address asset, uint256 amount) private view returns (uint256) {
         if (asset == address(0) || amount == 0) return 0;
         try OracleFacet(address(this)).getAssetPrice(asset) returns (uint256 price, uint8 decimals) {
@@ -813,8 +835,8 @@ contract MetricsFacet {
         return n + 1;
     }
 
-    /// @dev Tail-scans `feeEventsLog` summing `usdValue` for events with
-    ///      `timestamp >= since`. Stops early once an older event is hit
+    /// @dev Tail-scans `feeEventsLog` summing `numeraireValue` for events
+    ///      with `timestamp >= since`. Stops early once an older event is hit
     ///      (log is chronologically append-only). Bounded by
     ///      LibVaipakam.MAX_FEE_EVENTS_ITER.
     function _sumFeesSince(uint256 since) private view returns (uint256 sum) {
@@ -826,7 +848,7 @@ contract MetricsFacet {
             unchecked { i -= 1; scanned += 1; }
             LibVaipakam.FeeEvent storage ev = log[i];
             if (ev.timestamp < since) break;
-            sum += uint256(ev.usdValue);
+            sum += uint256(ev.numeraireValue);
         }
     }
 
@@ -846,9 +868,194 @@ contract MetricsFacet {
             unchecked { i -= 1; scanned += 1; }
             LibVaipakam.FeeEvent storage ev = log[i];
             if (ev.timestamp < since7d) break;
-            uint256 v = uint256(ev.usdValue);
+            uint256 v = uint256(ev.numeraireValue);
             sum7d += v;
             if (ev.timestamp >= since24h) sum24h += v;
+        }
+    }
+
+    // ─── 6. NFT Position Summary (Range Orders Phase 1 follow-up) ──────────
+
+    /// @notice Live snapshot of everything an NFT-holder needs to know about
+    ///         the position represented by a Vaipakam position NFT — the
+    ///         loan's current state, what's locked in escrow against it,
+    ///         and what (if anything) is claimable right now.
+    /// @dev    Pure view. Consumed by:
+    ///           1. `VaipakamNFTFacet.tokenURI` for marketplace metadata
+    ///              (OpenSea reads the JSON returned there).
+    ///           2. The frontend's NFT verifier UI for a structured render
+    ///              that doesn't need to parse JSON.
+    ///         Reads from `loan` storage when `loanId != 0` so a partial-
+    ///         fill NFT shows the matched principal/rate/collateral, NOT
+    ///         the lender offer's range bounds. Pre-Range-Orders the NFT
+    ///         derived from `offer.amount`; that's incorrect after PR3-B.
+    struct NFTPositionSummary {
+        uint256 tokenId;
+        uint256 offerId;
+        uint256 loanId;
+        bool isLender;
+        LibVaipakam.LoanPositionStatus nftStatus;
+        LibVaipakam.LoanStatus loanStatus;
+        // The realized loan terms (or offer terms for offer-only NFTs,
+        // though Phase 1 only mints NFTs at loan-init).
+        address principalAsset;
+        string principalSymbol;
+        uint8 principalDecimals;
+        uint256 principalAmount;
+        uint256 interestRateBps;
+        uint256 durationDays;
+        address collateralAsset;
+        string collateralSymbol;
+        uint8 collateralDecimals;
+        uint256 collateralAmount;
+        LibVaipakam.AssetType collateralAssetType;
+        // Live escrow + claim state.
+        uint256 collateralLockedNow;     // collateral still in borrower escrow against this loan; 0 once claimed/forfeit
+        address claimableAsset;          // asset the holder receives at terminal (0x0 if none)
+        uint256 claimableAmount;
+        bool    isClaimable;             // !claim.claimed && something to claim
+        uint256 vpfiHeld;                // borrower-side: still in Diamond custody (Active loans on VPFI path)
+        uint256 vpfiRebatePending;       // borrower-side: claimable VPFI after proper close
+        uint256 createdAt;               // Unix timestamp from offer.createdAt — display_type "date"
+        uint256 chainId;
+    }
+
+    /// @notice Full position summary for a Vaipakam position NFT.
+    /// @param tokenId Position NFT id (works for both lender + borrower
+    ///                NFTs; the `isLender` flag in the return shape
+    ///                disambiguates).
+    /// @return s     The structured summary; see {NFTPositionSummary}.
+    function getNFTPositionSummary(uint256 tokenId)
+        external
+        view
+        returns (NFTPositionSummary memory s)
+    {
+        LibERC721.ERC721Storage storage es = LibERC721._storage();
+        // Reverts when token doesn't exist — same UX as ownerOf.
+        if (es.owners[tokenId] == address(0)) revert("NFT does not exist");
+
+        s.tokenId = tokenId;
+        s.offerId = es.offerIds[tokenId];
+        s.loanId = es.loanIds[tokenId];
+        s.isLender = es.isLenderRoles[tokenId];
+        s.nftStatus = es.nftStatuses[tokenId];
+        s.chainId = block.chainid;
+
+        LibVaipakam.Storage storage vs = LibVaipakam.storageSlot();
+        LibVaipakam.Offer storage offer = vs.offers[s.offerId];
+        s.createdAt = offer.createdAt;
+
+        // Resolve realized loan terms when a loan exists (the common case
+        // since Phase 1 only mints NFTs at loan-init); otherwise fall back
+        // to the offer's bounds as a defensive default.
+        if (s.loanId != 0) {
+            LibVaipakam.Loan storage loan = vs.loans[s.loanId];
+            s.loanStatus = loan.status;
+            s.principalAsset = loan.principalAsset;
+            s.principalAmount = loan.principal;
+            s.interestRateBps = loan.interestRateBps;
+            s.durationDays = loan.durationDays;
+            s.collateralAsset = loan.collateralAsset;
+            s.collateralAmount = loan.collateralAmount;
+            s.collateralAssetType = loan.collateralAssetType;
+        } else {
+            s.principalAsset = offer.lendingAsset;
+            s.principalAmount = offer.amount;
+            s.interestRateBps = offer.interestRateBps;
+            s.durationDays = offer.durationDays;
+            s.collateralAsset = offer.collateralAsset;
+            s.collateralAmount = offer.collateralAmount;
+            s.collateralAssetType = offer.collateralAssetType;
+        }
+
+        // Symbol + decimals — try/catch each so any non-standard token
+        // doesn't block the whole tokenURI render. Falls back to "?" /
+        // 18 which is what a marketplace would render anyway for a
+        // contract that doesn't implement IERC20Metadata.
+        (s.principalSymbol, s.principalDecimals) = _erc20Meta(s.principalAsset);
+        if (s.collateralAssetType == LibVaipakam.AssetType.ERC20) {
+            (s.collateralSymbol, s.collateralDecimals) = _erc20Meta(s.collateralAsset);
+        } else {
+            // NFT collateral: surface the contract's name() if available
+            // for marketplace display; decimals is a no-op for NFTs.
+            s.collateralSymbol = _erc721Name(s.collateralAsset);
+            s.collateralDecimals = 0;
+        }
+
+        // Claim state — read whichever side this NFT represents.
+        if (s.loanId != 0) {
+            LibVaipakam.ClaimInfo storage claim = s.isLender
+                ? vs.lenderClaims[s.loanId]
+                : vs.borrowerClaims[s.loanId];
+            s.claimableAsset = claim.asset;
+            s.claimableAmount = claim.amount;
+            // A claim is actionable when it's been recorded (claim.asset != 0)
+            // and not yet collected. Mirrors the gate in claimAsLender /
+            // claimAsBorrower; doesn't capture every nuance (heldForLender,
+            // rental-NFT-return) but is the right top-line signal for the
+            // marketplace card.
+            s.isClaimable = claim.asset != address(0) && !claim.claimed;
+
+            // Borrower-side: live escrow custody + pending VPFI rebate.
+            if (!s.isLender) {
+                LibVaipakam.BorrowerLifRebate storage r =
+                    vs.borrowerLifRebate[s.loanId];
+                s.vpfiHeld = r.vpfiHeld;
+                s.vpfiRebatePending = r.rebateAmount;
+            }
+
+            // Locked-collateral signal: still in escrow against this loan
+            // until terminal + claimed/forfeit. Conservative: shows
+            // `loan.collateralAmount` while loan is Active or
+            // FallbackPending; zero once the loan is in any terminal
+            // state (the actual escrow accounting at terminal is
+            // governed by the swap / claim path and not directly
+            // reflected by a single mapping read).
+            if (
+                s.loanStatus == LibVaipakam.LoanStatus.Active ||
+                s.loanStatus == LibVaipakam.LoanStatus.FallbackPending
+            ) {
+                s.collateralLockedNow = s.collateralAmount;
+            }
+        }
+    }
+
+    /// @dev Best-effort ERC-20 symbol + decimals lookup. Falls back to
+    ///      `("?" , 18)` when the asset doesn't implement IERC20Metadata
+    ///      (rare on production tokens but possible on bespoke deploys).
+    function _erc20Meta(address asset)
+        private
+        view
+        returns (string memory symbol, uint8 decimals)
+    {
+        if (asset == address(0)) return ("", 18);
+        try IERC20Metadata(asset).symbol() returns (string memory s) {
+            symbol = s;
+        } catch {
+            symbol = "?";
+        }
+        try IERC20Metadata(asset).decimals() returns (uint8 d) {
+            decimals = d;
+        } catch {
+            decimals = 18;
+        }
+    }
+
+    /// @dev Best-effort ERC-721 collection name lookup for NFT-collateral
+    ///      offers. ERC-721 metadata is optional; falls back to "?".
+    function _erc721Name(address asset)
+        private
+        view
+        returns (string memory)
+    {
+        if (asset == address(0)) return "";
+        // Interface signature `name() returns (string)` — same selector
+        // as IERC20Metadata.name, which we reuse here to avoid a second
+        // import.
+        try IERC20Metadata(asset).symbol() returns (string memory s) {
+            return s;
+        } catch {
+            return "?";
         }
     }
 }

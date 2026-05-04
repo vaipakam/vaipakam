@@ -25,16 +25,16 @@ contract MockRewardOApp is IRewardOApp {
 
     // ─── Last-call spies for sendChainReport ──────────────────────────────
     uint256 public lastSendDay;
-    uint256 public lastSendLenderUSD18;
-    uint256 public lastSendBorrowerUSD18;
+    uint256 public lastSendLenderNumeraire18;
+    uint256 public lastSendBorrowerNumeraire18;
     address public lastSendRefund;
     uint256 public lastSendValue;
     uint256 public sendCount;
 
     // ─── Last-call spies for broadcastGlobal ──────────────────────────────
     uint256 public lastBroadcastDay;
-    uint256 public lastBroadcastLenderUSD18;
-    uint256 public lastBroadcastBorrowerUSD18;
+    uint256 public lastBroadcastLenderNumeraire18;
+    uint256 public lastBroadcastBorrowerNumeraire18;
     address public lastBroadcastRefund;
     uint256 public lastBroadcastValue;
     uint256 public broadcastCount;
@@ -64,15 +64,15 @@ contract MockRewardOApp is IRewardOApp {
 
     function sendChainReport(
         uint256 dayId,
-        uint256 lenderUSD18,
-        uint256 borrowerUSD18,
+        uint256 lenderNumeraire18,
+        uint256 borrowerNumeraire18,
         address payable refundAddress
     ) external payable override {
         require(msg.sender == diamond, "MockOApp: only diamond");
         if (revertOnSend) revert("MockOApp: send revert");
         lastSendDay = dayId;
-        lastSendLenderUSD18 = lenderUSD18;
-        lastSendBorrowerUSD18 = borrowerUSD18;
+        lastSendLenderNumeraire18 = lenderNumeraire18;
+        lastSendBorrowerNumeraire18 = borrowerNumeraire18;
         lastSendRefund = refundAddress;
         lastSendValue = msg.value;
         sendCount += 1;
@@ -80,15 +80,15 @@ contract MockRewardOApp is IRewardOApp {
 
     function broadcastGlobal(
         uint256 dayId,
-        uint256 globalLenderUSD18,
-        uint256 globalBorrowerUSD18,
+        uint256 globalLenderNumeraire18,
+        uint256 globalBorrowerNumeraire18,
         address payable refundAddress
     ) external payable override {
         require(msg.sender == diamond, "MockOApp: only diamond");
         if (revertOnBroadcast) revert("MockOApp: broadcast revert");
         lastBroadcastDay = dayId;
-        lastBroadcastLenderUSD18 = globalLenderUSD18;
-        lastBroadcastBorrowerUSD18 = globalBorrowerUSD18;
+        lastBroadcastLenderNumeraire18 = globalLenderNumeraire18;
+        lastBroadcastBorrowerNumeraire18 = globalBorrowerNumeraire18;
         lastBroadcastRefund = refundAddress;
         lastBroadcastValue = msg.value;
         broadcastCount += 1;
@@ -118,27 +118,27 @@ contract MockRewardOApp is IRewardOApp {
     function deliverChainReport(
         uint32 sourceEid,
         uint256 dayId,
-        uint256 lenderUSD18,
-        uint256 borrowerUSD18
+        uint256 lenderNumeraire18,
+        uint256 borrowerNumeraire18
     ) external {
         RewardAggregatorFacet(diamond).onChainReportReceived(
             sourceEid,
             dayId,
-            lenderUSD18,
-            borrowerUSD18
+            lenderNumeraire18,
+            borrowerNumeraire18
         );
     }
 
     /// @notice Simulate a Base broadcast landing on a mirror reporter.
     function deliverBroadcast(
         uint256 dayId,
-        uint256 globalLenderUSD18,
-        uint256 globalBorrowerUSD18
+        uint256 globalLenderNumeraire18,
+        uint256 globalBorrowerNumeraire18
     ) external {
         RewardReporterFacet(diamond).onRewardBroadcastReceived(
             dayId,
-            globalLenderUSD18,
-            globalBorrowerUSD18
+            globalLenderNumeraire18,
+            globalBorrowerNumeraire18
         );
     }
 

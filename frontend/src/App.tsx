@@ -1,4 +1,4 @@
-import { BrowserRouter, Routes, Route } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import LandingPage from './pages/LandingPage';
 import PublicDashboard from './pages/PublicDashboard';
 import AppLayout from './pages/AppLayout';
@@ -14,7 +14,11 @@ import NftVerifier from './pages/NftVerifier';
 import KeeperSettings from './pages/KeeperSettings';
 import Alerts from './pages/Alerts';
 import Allowances from './pages/Allowances';
+import EscrowAssets from './pages/EscrowAssets';
+import EscrowRecover from './pages/EscrowRecover';
+import DataRights from './pages/DataRights';
 import BuyVPFI from './pages/BuyVPFI';
+import BuyVPFIMarketing from './pages/BuyVPFIMarketing';
 import Activity from './pages/Activity';
 import DiscordPage from './pages/Discord';
 import TermsPage from './pages/TermsPage';
@@ -22,6 +26,9 @@ import PrivacyPage from './pages/PrivacyPage';
 import UserGuide from './pages/UserGuide';
 import Overview from './pages/Overview';
 import Whitepaper from './pages/Whitepaper';
+import HelpSearch from './pages/HelpSearch';
+import AdminDashboard from './pages/AdminDashboard';
+import AdminKnobsDocs from './pages/AdminKnobsDocs';
 import Navbar from './components/Navbar';
 import Footer from './components/Footer';
 import ConsentBanner from './components/ConsentBanner';
@@ -45,7 +52,7 @@ function PublicNftVerifier() {
       {/* The Navbar is `position: fixed` at 72 px height. paddingTop = 72
           (Navbar) + 32 (breathing room) so the page heading isn't hidden
           behind the bar on first paint. */}
-      <main className="container" style={{ paddingTop: 104, paddingBottom: 32 }}>
+      <main className="container public-page-glow" style={{ paddingTop: 104, paddingBottom: 32 }}>
         <NftVerifier />
       </main>
       <Footer />
@@ -61,13 +68,17 @@ function PublicNftVerifier() {
 // outside the AppLayout so a fresh visitor lands here directly from the
 // landing page's VPFI dropdown without going through the in-app sidebar.
 function PublicBuyVPFI() {
+  // Public route is now marketing-only — the actual buy / stake /
+  // unstake form lives at /app/buy-vpfi (wallet-gated like every other
+  // in-app page). Marketing component CTA opens /app/buy-vpfi in a
+  // new tab so the visitor's marketing tab stays open behind.
   return (
     <>
       <Navbar />
       {/* See PublicNftVerifier above — paddingTop accounts for the fixed
           72 px Navbar plus a 32 px breathing-room buffer. */}
-      <main className="container" style={{ paddingTop: 104, paddingBottom: 32 }}>
-        <BuyVPFI />
+      <main className="container public-page-glow" style={{ paddingTop: 104, paddingBottom: 32 }}>
+        <BuyVPFIMarketing />
       </main>
       <Footer />
       <DiagnosticsDrawer />
@@ -96,6 +107,17 @@ function pageRoutes(): ReactElement {
       <Route path="help/basic" element={<UserGuide variant="basic" />} />
       <Route path="help/advanced" element={<UserGuide variant="advanced" />} />
       <Route path="help/technical" element={<Whitepaper />} />
+      <Route path="help/search" element={<HelpSearch />} />
+      {/* Protocol Console — canonical routes. Path renamed from
+       *  /admin → /protocol-console (2026-05-02) so the URL bar
+       *  matches the page label. The `/admin` and `/admin/docs`
+       *  paths below are kept as backward-compat redirects so
+       *  existing external links / bookmarks / footer references
+       *  on stale-cached deploys keep working. */}
+      <Route path="protocol-console" element={<AdminDashboard />} />
+      <Route path="protocol-console/docs" element={<AdminKnobsDocs />} />
+      <Route path="admin" element={<Navigate to="/protocol-console" replace />} />
+      <Route path="admin/docs" element={<Navigate to="/protocol-console/docs" replace />} />
       <Route path="app" element={<AppLayout />}>
         <Route index element={<Dashboard />} />
         <Route path="offers" element={<OfferBook />} />
@@ -109,6 +131,23 @@ function pageRoutes(): ReactElement {
         <Route path="keepers" element={<KeeperSettings />} />
         <Route path="alerts" element={<Alerts />} />
         <Route path="allowances" element={<Allowances />} />
+        <Route path="escrow" element={<EscrowAssets />} />
+        {/* T-054 PR-4 — stuck-token recovery. INTENTIONALLY HIDDEN
+            from main nav. Reachable only via the deep link in the
+            Advanced User Guide. The page itself injects
+            `<meta name="robots" content="noindex,nofollow">` so the
+            URL doesn't get indexed by search engines. */}
+        <Route path="recover" element={<EscrowRecover />} />
+        <Route path="data-rights" element={<DataRights />} />
+        <Route path="buy-vpfi" element={<BuyVPFI />} />
+        {/* Admin-only Protocol Console mounted INSIDE the app shell.
+         *  Same component as the public /protocol-console route, but
+         *  rendered without its own Navbar / Footer since AppLayout
+         *  provides the chrome. The visibility check on the sidebar
+         *  link (`useIsProtocolAdmin`) gates entry; non-admins
+         *  navigating directly hit the same env-flag gate inside
+         *  the page and get redirected when public view is off. */}
+        <Route path="protocol-console" element={<AdminDashboard inApp />} />
       </Route>
     </>
   );

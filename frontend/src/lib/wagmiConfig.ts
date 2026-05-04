@@ -31,6 +31,7 @@ import {
   optimism,
   optimismSepolia,
   sepolia,
+  foundry,
   type Chain,
 } from "wagmi/chains";
 import { getDefaultConfig } from "connectkit";
@@ -70,6 +71,14 @@ const CHAIN_BY_ID: Record<number, Chain> = {
   [optimism.id]: optimism,
   [optimismSepolia.id]: optimismSepolia,
   [sepolia.id]: sepolia,
+  // Anvil — viem's prebuilt chain id 31337. Surfaced so wagmi /
+  // ConnectKit can switch the wallet to a local foundry node for
+  // Range Orders Phase 1 smoke tests against
+  // `contracts/script/anvil-bootstrap.sh`. Only paired with
+  // CHAIN_REGISTRY's ANVIL entry on dev — production-built bundles
+  // include it but no production user will ever see Anvil offered
+  // unless they're already on chain 31337 in their wallet.
+  [foundry.id]: foundry,
 };
 
 /** Build the ordered chain list from the registry. Preserves the canonical
@@ -116,6 +125,12 @@ const defaultConnectKitConfig = getDefaultConfig({
   appDescription: APP_DESCRIPTION,
   appUrl: APP_URL,
   appIcon: APP_ICON,
+  // ConnectKit v1.9+ ships with `enableAaveAccount: true` as the default —
+  // adding the @aave/account smart-wallet connector and rendering a
+  // "Continue with Aave" CTA at the top of the picker. We do NOT want a
+  // competing-protocol-branded button at the top of Vaipakam's connect
+  // modal; opt out explicitly. Removes the connector AND the CTA.
+  enableAaveAccount: false,
   // Keep wagmi's auto-reconnect on page reload (default true) so a user
   // who just refreshed doesn't have to re-pair their wallet every time.
   ssr: false,

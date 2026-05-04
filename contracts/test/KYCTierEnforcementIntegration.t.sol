@@ -7,6 +7,7 @@ import {IDiamondCut} from "@diamond-3/interfaces/IDiamondCut.sol";
 import {DiamondCutFacet} from "../src/facets/DiamondCutFacet.sol";
 import {AccessControlFacet} from "../src/facets/AccessControlFacet.sol";
 import {OfferFacet} from "../src/facets/OfferFacet.sol";
+import {OfferCancelFacet} from "../src/facets/OfferCancelFacet.sol";
 import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
 import {OracleFacet} from "../src/facets/OracleFacet.sol";
 import {VaipakamNFTFacet} from "../src/facets/VaipakamNFTFacet.sol";
@@ -35,7 +36,7 @@ import {ERC20Mock} from "./mocks/ERC20Mock.sol";
  *
  *         Each rung is exercised via the full offer → accept path so the
  *         test doubles as a regression guard for `OfferFacet.acceptOffer`
- *         and `_calculateTransactionValueUSD`, not just the
+ *         and `_calculateTransactionValueNumeraire`, not just the
  *         `ProfileFacet.meetsKYCRequirement` view (which has unit-level
  *         coverage).
  *
@@ -56,13 +57,14 @@ contract KYCTierEnforcementIntegration is Test {
     uint256 constant RATE_BPS = 500;
 
     // Priced at $1 / 1 USDC and $2000 / 1 WETH below. The transaction-value
-    // calculation sums BOTH legs (principal + collateral) in USD, so the
-    // collateral leg is kept deliberately tiny so that the principal
-    // dominates the threshold math. With COLLATERAL_ERC20 = 0.05 ether the
-    // collateral contributes a flat ~$100 to valueUSD regardless of band:
-    //   400   USDC principal → valueUSD ≈ $500   (under $1k → Tier-0 ok)
-    //   2,500 USDC principal → valueUSD ≈ $2,600 (requires Tier-1)
-    //   15,000 USDC principal → valueUSD ≈ $15,100 (requires Tier-2)
+    // calculation sums BOTH legs (principal + collateral) in the active
+    // numeraire (USD by post-deploy default), so the collateral leg is kept
+    // deliberately tiny so that the principal dominates the threshold math.
+    // With COLLATERAL_ERC20 = 0.05 ether the collateral contributes a flat
+    // ~$100 to valueNumeraire regardless of band:
+    //   400   USDC principal → valueNumeraire ≈ $500   (under $1k → Tier-0 ok)
+    //   2,500 USDC principal → valueNumeraire ≈ $2,600 (requires Tier-1)
+    //   15,000 USDC principal → valueNumeraire ≈ $15,100 (requires Tier-2)
     // HF is oracle-mocked to 2.0 so the small collateral doesn't fail the
     // Health-Factor gate at acceptOffer.
     uint256 constant PRINCIPAL_UNDER_TIER0 = 400 ether;
@@ -215,13 +217,17 @@ contract KYCTierEnforcementIntegration is Test {
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
                 collateralQuantity: 0,
-                allowsPartialRepay: false
+                allowsPartialRepay: false,
+                amountMax: 0,
+                interestRateBpsMax: 0,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
             })
         );
     }
 
     function _cutCoreFacets() internal {
         OfferFacet offerFacet = new OfferFacet();
+        OfferCancelFacet offerCancelFacet = new OfferCancelFacet();
         ProfileFacet profileFacet = new ProfileFacet();
         OracleFacet oracleFacet = new OracleFacet();
         VaipakamNFTFacet nftFacet = new VaipakamNFTFacet();
@@ -231,7 +237,7 @@ contract KYCTierEnforcementIntegration is Test {
         AdminFacet adminFacet = new AdminFacet();
         AccessControlFacet accessControlFacet = new AccessControlFacet();
 
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](9);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](10);
         cuts[0] = IDiamondCut.FacetCut({
             facetAddress: address(offerFacet),
             action: IDiamondCut.FacetCutAction.Add,
@@ -277,6 +283,7 @@ contract KYCTierEnforcementIntegration is Test {
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getAccessControlFacetSelectors()
         });
+        cuts[9] = IDiamondCut.FacetCut({facetAddress: address(offerCancelFacet), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getOfferCancelFacetSelectors()});
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");
     }
 

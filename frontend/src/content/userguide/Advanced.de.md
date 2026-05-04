@@ -16,18 +16,18 @@ Karten-Titel.
 
 ## Dashboard
 
-<a id="dashboard.your-escrow"></a>
+<a id="dashboard.your-vault"></a>
 
-### Dein Escrow
+### Dein Vault
 
 Ein upgradebarer Vertrag pro Nutzer — dein privater Tresor auf
 dieser Chain — der für dich erstellt wird, sobald du zum ersten
-Mal an einem Loan teilnimmst. Ein Escrow pro Adresse pro Chain.
+Mal an einem Loan teilnimmst. Ein Vault pro Adresse pro Chain.
 Er hält ERC-20-, ERC-721- und ERC-1155-Bestände, die mit deinen
 Loan-Positionen verknüpft sind. Es gibt keine Vermischung: Assets
 anderer Nutzer sind niemals in diesem Vertrag.
 
-Der Escrow ist der einzige Ort, an dem Collateral, verliehene
+Der Vault ist der einzige Ort, an dem Collateral, verliehene
 Assets und dein gesperrtes VPFI liegen. Das Protokoll prüft ihn
 bei jedem Deposit und Withdraw. Die Implementierung kann durch den
 Protokolleigentümer aktualisiert werden, aber nur über einen
@@ -54,7 +54,7 @@ Live-VPFI-Buchhaltung für das verbundene Wallet auf der aktiven
 Chain:
 
 - Wallet-Saldo.
-- Escrow-Saldo.
+- Vault-Saldo.
 - Dein Anteil am zirkulierenden Supply (nach Abzug der vom
   Protokoll gehaltenen Bestände).
 - Verbleibender mintbarer Cap.
@@ -79,20 +79,20 @@ abgelehnt.
 
 Ein Opt-in-Flag auf Wallet-Ebene, das dem Protokoll erlaubt, den
 rabattierten Anteil einer Gebühr in VPFI abzurechnen, das bei
-terminalen Ereignissen aus deinem Escrow abgebucht wird. Standard:
+terminalen Ereignissen aus deinem Vault abgebucht wird. Standard:
 aus. Aus bedeutet, dass du 100% jeder Gebühr im Principal-Asset
 zahlst; an bedeutet, dass der zeitgewichtete Rabatt angewendet wird.
 
 Tier-Leiter:
 
-| Tier | Min. Escrow-VPFI | Rabatt |
-| ---- | ---------------- | ------ |
-| 1    | ≥ 100            | 10%    |
-| 2    | ≥ 1.000          | 15%    |
-| 3    | ≥ 5.000          | 20%    |
-| 4    | > 20.000         | 24%    |
+| Tier | Min. Vault-VPFI                       | Rabatt                            |
+| ---- | -------------------------------------- | --------------------------------- |
+| 1    | ≥ `{liveValue:tier1Min}`               | `{liveValue:tier1DiscountBps}`%   |
+| 2    | ≥ `{liveValue:tier2Min}`               | `{liveValue:tier2DiscountBps}`%   |
+| 3    | ≥ `{liveValue:tier3Min}`               | `{liveValue:tier3DiscountBps}`%   |
+| 4    | > `{liveValue:tier4Min}`               | `{liveValue:tier4DiscountBps}`%   |
 
-Das Tier wird gegen deinen Escrow-Saldo **nach der Änderung** in
+Das Tier wird gegen deinen Vault-Saldo **nach der Änderung** in
 dem Moment berechnet, in dem du VPFI einzahlst oder abhebst, und
 dann über die Laufzeit jedes Loans zeitgewichtet. Ein Unstake
 stempelt die Rate sofort auf den neuen niedrigeren Saldo für jeden
@@ -105,6 +105,19 @@ wieder abheben könnte.
 Der Rabatt gilt für die Lender-Yield-Fee beim Settlement und für
 die Borrower-Loan-Initiation-Fee (ausgezahlt als VPFI-Rebate, wenn
 der Borrower claimt).
+
+> **Netzwerk-Gas ist separat.** Der obige Rabatt gilt für die
+> **Protokollgebühren** von Vaipakam (Yield-Fee
+> `{liveValue:treasuryFeeBps}` %, Loan Initiation Fee
+> `{liveValue:loanInitiationFeeBps}` %). Die **Blockchain-Netzwerkgebühr
+> (Gas)**, die jede On-Chain-Aktion zusätzlich erfordert — gezahlt
+> an die Validatoren auf Base / Sepolia / Arbitrum / etc. beim
+> Erstellen einer Offer, Annehmen, Zurückzahlen, Beanspruchen,
+> Abheben usw. — ist keine Protokollgebühr. Vaipakam erhält sie
+> nie; das Netzwerk schon. Sie kann nicht in Tiers eingeteilt oder
+> erstattet werden, und sie variiert mit der Chain-Auslastung zum
+> Zeitpunkt des Submits, nicht mit der Loan-Größe oder deinem
+> VPFI-Tier.
 
 <a id="dashboard.rewards-summary"></a>
 
@@ -122,7 +135,7 @@ und einen Chevron-Deep-Link zur vollständigen Claim-Karte auf der
 jeweiligen Ursprungsseite:
 
 - **Staking-Rendite** — ausstehendes VPFI, das mit der
-  Protokoll-APR auf deinen Escrow-Saldo aufläuft, plus alle
+  Protokoll-APR auf deinen Vault-Saldo aufläuft, plus alle
   Staking-Rewards, die du mit diesem Wallet bereits geclaimt hast.
   Deep-Link zur Staking-Claim-Karte auf der VPFI-kaufen-Seite.
 - **Plattform-Interaction-Rewards** — ausstehendes VPFI, das über
@@ -186,7 +199,7 @@ Zinsen wird beim terminalen Settlement abgezogen, nicht im Voraus.
 
 ### Borrower-Offers
 
-Aktive Offers von Borrowern, die ihr Collateral bereits im Escrow
+Aktive Offers von Borrowern, die ihr Collateral bereits im Vault
 gesperrt haben. Die Annahme erfolgt durch einen Lender; dadurch
 wird der Loan mit dem Principal-Asset finanziert und die
 Position-NFTs werden gemintet. Bei der Initiierung gilt dasselbe
@@ -241,7 +254,7 @@ Das Principal-Asset und die Menge, die du bereit bist anzubieten,
 plus der Zinssatz (APR in %) und die Dauer in Tagen. Der Satz
 wird zum Zeitpunkt der Offer fixiert; die Dauer setzt das
 Gnadenfenster, bevor der Loan in Default gehen kann. Bei der
-Annahme wandert der Principal aus deinem Escrow in den Escrow
+Annahme wandert der Principal aus deinem Vault in den Vault
 des Borrowers als Teil der Loan-Initiierung.
 
 <a id="create-offer.lending-asset:borrower"></a>
@@ -253,7 +266,7 @@ der Zinssatz (APR in %) und die Dauer in Tagen. Der Satz wird
 zum Zeitpunkt der Offer fixiert; die Dauer setzt das
 Gnadenfenster, bevor der Loan in Default gehen kann. Dein
 Collateral wird zum Zeitpunkt der Offer-Erstellung in deinem
-Escrow gesperrt und bleibt gesperrt, bis ein Lender akzeptiert
+Vault gesperrt und bleibt gesperrt, bis ein Lender akzeptiert
 und der Loan eröffnet wird (oder du stornierst).
 
 <a id="create-offer.nft-details"></a>
@@ -263,7 +276,7 @@ und der Loan eröffnet wird (oder du stornierst).
 Felder des Rental-Sub-Typs. Spezifiziert den NFT-Vertrag und die
 Token-ID (und die Menge für ERC-1155), plus die tägliche
 Mietgebühr im Principal-Asset. Bei der Annahme zieht das Protokoll die
-vorausbezahlte Miete aus dem Escrow des Mieters in die
+vorausbezahlte Miete aus dem Vault des Mieters in die
 Verwahrung — das ist Dauer × tägliche Gebühr, plus 5% Puffer.
 Der NFT selbst geht in einen delegierten Zustand (über
 ERC-4907-Nutzungsrechte oder den entsprechenden ERC-1155-Rental-
@@ -318,7 +331,7 @@ erhalten LTV- / HF-Mathematik; illiquide ERC-20s und NFTs haben
 keine On-Chain-Bewertung und erfordern, dass beide Parteien einem
 Ergebnis "vollständiges Collateral bei Default" zustimmen. Bei
 einer Borrower-Offer wird dein Collateral bei der Offer-Erstellung
-in deinem Escrow gesperrt; bei einer Lender-Offer wird es bei der
+in deinem Vault gesperrt; bei einer Lender-Offer wird es bei der
 Annahme der Offer gesperrt. In beiden Fällen muss der von dir
 präsentierte Korb das HF ≥ 1,5-Gate bei der Loan-Initiierung
 bestehen.
@@ -489,13 +502,13 @@ Governance über einen Timelock anpassbar.
 Live-Status:
 
 - Aktuelles Tier (0 bis 4).
-- Escrow-VPFI-Saldo plus die Differenz zum nächsten Tier.
+- Vault-VPFI-Saldo plus die Differenz zum nächsten Tier.
 - Rabatt-Prozentsatz auf dem aktuellen Tier.
 - Consent-Flag auf Wallet-Ebene.
 
-Beachte, dass VPFI im Escrow auch 5% APR über den Staking-Pool
+Beachte, dass VPFI im Vault auch 5% APR über den Staking-Pool
 verdient — es gibt keine separate "Stake"-Aktion. VPFI in deinen
-Escrow einzuzahlen IST Staking.
+Vault einzuzahlen IST Staking.
 
 <a id="buy-vpfi.buy"></a>
 
@@ -506,17 +519,17 @@ Protokoll direkt. Auf Mirror-Chains nimmt der Buy-Adapter die
 Zahlung, schickt eine Cross-Chain-Nachricht, und der Receiver
 führt den Kauf auf Base aus und bridget VPFI zurück. Bridge-Fee
 plus Verifier-Netzwerk-Kosten werden live quotiert und im
-Formular angezeigt. VPFI wird nicht automatisch in den Escrow
+Formular angezeigt. VPFI wird nicht automatisch in den Vault
 eingezahlt — Schritt 2 ist per Design eine explizite
 Nutzeraktion.
 
 <a id="buy-vpfi.deposit"></a>
 
-### Schritt 2 — VPFI in deinen Escrow einzahlen
+### Schritt 2 — VPFI in deinen Vault einzahlen
 
 Ein separater, expliziter Deposit-Schritt von deinem Wallet zu
-deinem Escrow auf derselben Chain. Auf jeder Chain erforderlich —
-auch auf der kanonischen — weil Escrow-Deposit per Spec immer
+deinem Vault auf derselben Chain. Auf jeder Chain erforderlich —
+auch auf der kanonischen — weil Vault-Deposit per Spec immer
 eine explizite Nutzeraktion ist. Auf Chains, auf denen Permit2
 konfiguriert ist, bevorzugt die App den Single-Signature-Pfad
 gegenüber dem klassischen Approve-+-Deposit-Pattern; sie fällt
@@ -525,11 +538,11 @@ ist.
 
 <a id="buy-vpfi.unstake"></a>
 
-### Schritt 3 — VPFI aus deinem Escrow unstaken
+### Schritt 3 — VPFI aus deinem Vault unstaken
 
-Hebe VPFI aus deinem Escrow zurück in dein Wallet ab. Es gibt
+Hebe VPFI aus deinem Vault zurück in dein Wallet ab. Es gibt
 keinen separaten Approve-Schritt — das Protokoll besitzt den
-Escrow und zieht von sich selbst ab. Der Withdraw löst ein
+Vault und zieht von sich selbst ab. Der Withdraw löst ein
 sofortiges Neu-Stempeln des Rabatt-Satzes auf den neuen
 (niedrigeren) Saldo aus, angewendet auf jeden offenen Loan, an dem
 du beteiligt bist. Es gibt kein Gnadenfenster, in dem das alte Tier
@@ -545,7 +558,7 @@ noch gilt.
 
 Zwei Streams:
 
-- **Staking-Pool** — im Escrow gehaltenes VPFI läuft kontinuierlich
+- **Staking-Pool** — im Vault gehaltenes VPFI läuft kontinuierlich
   zu 5% APR auf, mit Verzinsung pro Sekunde.
 - **Interaction-Pool** — täglicher Pro-rata-Anteil an einer festen
   täglichen Emission, gewichtet nach deinem Beitrag an
@@ -575,7 +588,7 @@ damit Nutzer nicht unter-claimen.
 ### Gestaktes VPFI abheben
 
 Identische Oberfläche wie "Schritt 3 — Unstake" auf der
-VPFI-kaufen-Seite — hebe VPFI aus dem Escrow zurück in dein Wallet
+VPFI-kaufen-Seite — hebe VPFI aus dem Vault zurück in dein Wallet
 ab. Abgehobenes VPFI verlässt den Staking-Pool sofort
 (Rewards hören für diesen Betrag in diesem Block auf
 aufzulaufen) und verlässt den Rabatt-Akkumulator sofort
@@ -670,10 +683,10 @@ ungenutzter VPFI-Loan-Initiation-Fee-Rebate zum Claimen.
 
 ### Parteien
 
-Lender, Borrower, Lender-Escrow, Borrower-Escrow und die zwei
+Lender, Borrower, Lender-Vault, Borrower-Vault und die zwei
 Position-NFTs (je einer pro Seite). Jeder NFT ist ein ERC-721
 mit On-Chain-Metadaten; ihn zu übertragen, überträgt das Recht
-zu claimen. Die Escrow-Verträge sind pro Adresse deterministisch
+zu claimen. Die Vault-Verträge sind pro Adresse deterministisch
 — gleiche Adresse über Deploys hinweg.
 
 <a id="loan-details.actions"></a>
@@ -727,7 +740,7 @@ verfügbar sind:
 - **Refinance** — poste eine Borrower-Offer für neue
   Konditionen; sobald ein Lender akzeptiert, tauscht der
   Refinance-Abschluss die Loans atomar, ohne dass das
-  Collateral deinen Escrow verlässt.
+  Collateral deinen Vault verlässt.
 - **Als Borrower claimen** — nur in terminalen Zuständen. Gibt das
   Collateral bei voller Rückzahlung zurück, oder den ungenutzten
   VPFI-Loan-Initiation-Fee-Rebate bei Default / Liquidation.
@@ -951,7 +964,7 @@ seinem Loan initiiert.
 Refinance zahlt deinen bestehenden Loan atomar aus neuem Principal
 ab und eröffnet einen frischen Loan mit den neuen Konditionen —
 alles in einer Transaktion. Collateral bleibt die ganze Zeit in
-deinem Escrow; es gibt kein ungesichertes Fenster. Der neue Loan
+deinem Vault; es gibt kein ungesichertes Fenster. Der neue Loan
 muss bei der Initiierung das HF ≥ 1,5-Gate genauso bestehen wie
 jeder andere Loan.
 
@@ -966,7 +979,7 @@ Snapshot des Loans, der refinanziert wird — aktueller Principal,
 bisher aufgelaufene Zinsen, HF / LTV und Collateral-Korb. Die neue
 Offer sollte mindestens den ausstehenden Betrag abdecken
 (Principal + aufgelaufene Zinsen); jeglicher Überschuss auf der
-neuen Offer wird als freier Principal an deinen Escrow
+neuen Offer wird als freier Principal an deinen Vault
 geliefert.
 
 <a id="refinance.step-1-post-offer"></a>

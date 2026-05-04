@@ -24,11 +24,20 @@
   font-size: 1.3rem;
   font-weight: 700;
   color: var(--text-primary);
+  /* Without `flex-shrink: 0` the brand cell shrinks first when the
+   * right-side actions cluster (Launch App + wallet) competes for
+   * width on narrow viewports — the logo's `height: 36px; width: auto`
+   * means the image dimensions change as the flex item shrinks.
+   * Pinning the brand fixes the logo at its intended size; if room
+   * gets tight, the nav-links cluster wraps into the hamburger
+   * (already handled at the 768 px breakpoint below). */
+  flex-shrink: 0;
 }
 
 .navbar-logo {
   height: 36px;
   width: auto;
+  flex-shrink: 0;
 }
 
 .navbar-logo--icon {
@@ -50,7 +59,11 @@
 
 .navbar-links {
   display: none;
-  gap: 8px;
+  /* Bumped from 8px → 16px for more breathing room between the
+   * Learn / Verify / Launch App slots. Equal gap between every
+   * pair (it's a single flexbox row), no per-slot adjustment
+   * needed. */
+  gap: 16px;
 }
 
 .navbar-link {
@@ -175,22 +188,38 @@
     visibility 0s 0s;
 }
 
-/* Invisible hover-bridge that spans the 8px visual gap between
- * the trigger and the panel. Without it, the cursor crossing
- * that gap exits `.navbar-group`'s subtree (the trigger and the
- * panel are siblings with empty space between them), `pointer-
- * leave` fires on the wrapper, and the menu closes mid-traverse
- * — the classic dropdown-disappears-when-you-try-to-click-it
- * bug. The pseudo-element is a child of the panel, so as long
- * as the cursor is over it, hit-testing treats the panel as
- * hovered and `pointerleave` on the wrapper stays silent. */
+/* Invisible hover-bridge that spans the visual gap between the
+ * trigger and the panel. Without it, the cursor crossing that gap
+ * exits `.navbar-group`'s subtree (the trigger and the panel are
+ * siblings with empty space between them), `pointerleave` fires
+ * on the wrapper, and the menu closes mid-traverse — the classic
+ * dropdown-disappears-when-you-try-to-click-it bug.
+ *
+ * Two design choices that make the bridge robust:
+ *
+ *   1. **`pointer-events: auto` set explicitly** so the bridge stays
+ *      hit-testable even when the panel itself carries
+ *      `pointer-events: none` (the closed state). Combined with the
+ *      panel's `visibility: hidden` only firing AFTER the close
+ *      transition, the bridge keeps catching pointer transit during
+ *      the entire 280 ms fade-out — re-entering reverses the
+ *      animation cleanly.
+ *
+ *   2. **Wider than the visual gap** (16 px tall, the gap is 8 px) +
+ *      negative left/right offsets so the bridge extends a few
+ *      pixels under the trigger AND beyond the panel's left/right
+ *      edges. Forgiving for diagonal cursor transit (e.g. moving
+ *      from the trigger to the second item in the panel) — the
+ *      8 px exact-match bridge was technically correct but caught
+ *      only straight-down trajectories. */
 .navbar-group-panel::before {
   content: '';
   position: absolute;
-  top: -8px;
-  left: 0;
-  right: 0;
-  height: 8px;
+  top: -16px;
+  left: -8px;
+  right: -8px;
+  height: 16px;
+  pointer-events: auto;
 }
 
 .navbar-group-item {
@@ -393,6 +422,14 @@
  * the shared .btn.navbar-cta rule. */
 .navbar-launch {
   letter-spacing: 0.01em;
+  /* The parent `.navbar-inner` uses `justify-content: space-between`,
+   * so the visible gap between the right edge of `.navbar-links`
+   * (last entry: "Verify" dropdown) and the Launch App button is
+   * leftover-space-driven and shrinks below the 16 px we use INSIDE
+   * `.navbar-links` between Learn ↔ Verify. A fixed left margin
+   * here pegs the minimum gap so Verify ↔ Launch App matches the
+   * Learn ↔ Verify rhythm. */
+  margin-left: 16px;
 }
 
 .navbar-cta-mobile {

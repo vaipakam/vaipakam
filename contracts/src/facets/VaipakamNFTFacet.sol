@@ -13,6 +13,7 @@ import {IERC721Metadata} from "@openzeppelin/contracts/token/ERC721/extensions/I
 import {IERC721Enumerable} from "@openzeppelin/contracts/token/ERC721/extensions/IERC721Enumerable.sol";
 import {Base64} from "@openzeppelin/contracts/utils/Base64.sol";
 import {Strings} from "@openzeppelin/contracts/utils/Strings.sol";
+import {MetricsFacet} from "./MetricsFacet.sol";
 
 
 /**
@@ -70,33 +71,106 @@ contract VaipakamNFTFacet is IERC721, IERC721Metadata, IERC721Enumerable, Diamon
         // hazard (wallets can't tell if it's still the same collection).
         // Get the values right before the first mainnet deploy; future
         // changes mean redeploy, not in-place mutation.
-        LibERC721.initialize(
-            "Vaipakam NFT",
-            "VAIPAK",
-            "https://ipfs.io/ipfs/QmahNt61bcS6dySxy2qszmXC3AsRMoUxapttrj4WLHNc7k",
-            "https://ipfs.io/ipfs/QmahNt61bcS6dySxy2qszmXC3AsRMoUxapttrj4WLHNc7k",
-            "https://ipfs.io/ipfs/QmahNt61bcS6dySxy2qszmXC3AsRMoUxapttrj4WLHNc7k",
-            "https://ipfs.io/ipfs/QmahNt61bcS6dySxy2qszmXC3AsRMoUxapttrj4WLHNc7k"
-        );
+        //
+        // Image URIs: only the two per-side defaults seed at init;
+        // granular per-(status, isLender) overrides are populated
+        // afterwards via `setImageURIForStatus` (or via
+        // `ConfigureNFTImageURIs.s.sol` post-deploy). Default IPFS
+        // URL here is a placeholder — operators MUST swap it via the
+        // setter before mainnet launch.
+        string memory defaultIpfs =
+            "https://ipfs.io/ipfs/QmahNt61bcS6dySxy2qszmXC3AsRMoUxapttrj4WLHNc7k";
+        LibERC721.initialize("Vaipakam NFT", "VAIPAK", defaultIpfs, defaultIpfs);
         _registerNFTInterfaces();
     }
 
+    /// @notice Emitted when the image URI for a (status, isLender) pair
+    ///         is rotated. Indexers + frontends can listen for this to
+    ///         invalidate any cached `tokenURI` reads downstream.
+    event StatusImageURIUpdated(
+        LibVaipakam.LoanPositionStatus indexed status,
+        bool indexed isLender,
+        string uri
+    );
+
+    /// @notice Emitted when the per-side default image URL is rotated.
+    event DefaultImageURIUpdated(bool indexed isLender, string uri);
+
     /**
-     * @notice Overrides the four position-NFT image URIs set at initialize-time.
-     * @dev Admin-only. Lets governance rotate collection artwork without
-     *      re-running `initializeNFT()`.
+     * @notice Sets the image URI for a specific (LoanPositionStatus,
+     *         isLender) pair. Granular: changing the borrower-defaulted
+     *         art doesn't affect the lender-active art.
+     * @dev    Admin-only; ADMIN_ROLE is governance-transferable. Pass
+     *         an empty string to clear the override and fall back to
+     *         the per-side default image. Lookup chain consumed by
+     *         `tokenURI`:
+     *           1. statusImageURIs[status][isLender]
+     *           2. defaultLenderImage / defaultBorrowerImage
+     *           3. contractImageURI
+     *           4. empty string
+     * @param status   The position-status enum value to override.
+     * @param isLender `true` for lender NFTs, `false` for borrower NFTs.
+     * @param uri      Image URL (IPFS, https, or data URI).
      */
-    function setLoanImageURIs(
-        string calldata lenderActive,
-        string calldata lenderClosed,
-        string calldata borrowerActive,
-        string calldata borrowerClosed
+    function setImageURIForStatus(
+        LibVaipakam.LoanPositionStatus status,
+        bool isLender,
+        string calldata uri
     ) external onlyRole(LibAccessControl.ADMIN_ROLE) {
+        LibERC721._storage().statusImageURIs[status][isLender] = uri;
+        emit StatusImageURIUpdated(status, isLender, uri);
+    }
+
+    /**
+     * @notice Sets the per-side default image URL. Used by `tokenURI`
+     *         when no granular `(status, isLender)` override is set.
+     * @dev    Admin-only. Empty string disables the side-level default,
+     *         pushing the fallback to `contractImageURI`.
+     * @param isLender `true` for lender default, `false` for borrower.
+     * @param uri      Image URL (IPFS, https, or data URI).
+     */
+    function setDefaultImage(bool isLender, string calldata uri)
+        external
+        onlyRole(LibAccessControl.ADMIN_ROLE)
+    {
+        if (isLender) {
+            LibERC721._storage().defaultLenderImage = uri;
+        } else {
+            LibERC721._storage().defaultBorrowerImage = uri;
+        }
+        emit DefaultImageURIUpdated(isLender, uri);
+    }
+
+    /**
+     * @notice Read the resolved image URI for a given `(status, isLender)`
+     *         pair, walking the same fallback chain `tokenURI` uses.
+     *         Lets the frontend admin dashboard preview which image
+     *         will render before broadcasting an override.
+     * @return uri The resolved image URI string. Empty when no entry is
+     *             set at any level of the chain.
+     */
+    function getImageURIFor(
+        LibVaipakam.LoanPositionStatus status,
+        bool isLender
+    ) external view returns (string memory) {
+        return _resolveImageURI(status, isLender);
+    }
+
+    /// @dev Image-URI resolution. See {setImageURIForStatus} for the
+    ///      lookup-chain spec. Pure storage reads; gas-cheap.
+    function _resolveImageURI(
+        LibVaipakam.LoanPositionStatus status,
+        bool isLender
+    ) internal view returns (string memory) {
         LibERC721.ERC721Storage storage es = LibERC721._storage();
-        es.lenderActiveIPFS = lenderActive;
-        es.lenderClosedIPFS = lenderClosed;
-        es.borrowerActiveIPFS = borrowerActive;
-        es.borrowerClosedIPFS = borrowerClosed;
+        string memory specific = es.statusImageURIs[status][isLender];
+        if (bytes(specific).length > 0) return specific;
+        string memory sideDefault = isLender
+            ? es.defaultLenderImage
+            : es.defaultBorrowerImage;
+        if (bytes(sideDefault).length > 0) return sideDefault;
+        if (bytes(es.contractImageURI).length > 0) return es.contractImageURI;
+        return "";
     }
 
     function _registerNFTInterfaces() internal {
@@ -256,6 +330,15 @@ contract VaipakamNFTFacet is IERC721, IERC721Metadata, IERC721Enumerable, Diamon
     /**
      * @notice Returns the URI for a given token ID, dynamically generating JSON metadata.
      * @dev Generates Base64-encoded JSON with on-chain data.
+     *
+     *      Range Orders Phase 1 follow-up: reads the live NFT position
+     *      summary via {MetricsFacet.getNFTPositionSummary} so the
+     *      rendered metadata reflects the realized loan terms (matched
+     *      principal/rate after a partial fill), live escrow state,
+     *      and current claim availability — not the original offer's
+     *      range bounds. Numeric traits use OpenSea `display_type`
+     *      conventions (`number`, `boost_percentage`, `date`) for
+     *      sensible marketplace rendering.
      */
     function tokenURI(
         uint256 tokenId
@@ -263,28 +346,38 @@ contract VaipakamNFTFacet is IERC721, IERC721Metadata, IERC721Enumerable, Diamon
         ownerOf(tokenId); // Reverts for non-existent tokens
 
         LibERC721.ERC721Storage storage es = LibERC721._storage();
-        uint256 offerId = es.offerIds[tokenId];
-        uint256 loanId = es.loanIds[tokenId];
-        LibVaipakam.LoanPositionStatus statusEnum = es.nftStatuses[tokenId];
-        bool isLender = es.isLenderRoles[tokenId];
-        bool isClosed = _isClosedStatus(statusEnum);
 
-        LibVaipakam.Offer storage offer = LibVaipakam.storageSlot().offers[offerId];
+        // Single-source-of-truth read for everything the metadata
+        // surfaces. MetricsFacet computes loan-vs-offer fallback,
+        // symbol/decimals lookup, and claim state in one shot.
+        MetricsFacet.NFTPositionSummary memory s =
+            MetricsFacet(address(this)).getNFTPositionSummary(tokenId);
 
-        string memory image = isLender
-            ? (isClosed ? es.lenderClosedIPFS : es.lenderActiveIPFS)
-            : (isClosed ? es.borrowerClosedIPFS : es.borrowerActiveIPFS);
+        // Image lookup walks the per-(status, isLender) → per-side
+        // default → contractImageURI chain. Granular over the prior
+        // 4-slot active/closed binary so a defaulted lender NFT can
+        // render distinct art from a repaid one.
+        string memory image = _resolveImageURI(s.nftStatus, s.isLender);
+
+        // Optional `external_url` — only emitted when an admin has
+        // configured the base URL. Empty base ⇒ field omitted, JSON
+        // stays lean.
+        string memory externalUrlField = _externalUrlField(es.externalUrlBase, s);
 
         string memory json = string(
             abi.encodePacked(
                 '{"name":"Vaipakam NFT #',
                 tokenId.toString(),
                 '","description":"',
-                _buildDescription(tokenId, isLender, statusEnum, offerId, loanId),
+                _buildDescription(s),
                 '","image":"',
                 image,
-                '","attributes":',
-                _buildAttributes(isLender, statusEnum, offer, offerId, loanId),
+                '","background_color":"',
+                _backgroundColor(s),
+                '"',
+                externalUrlField,
+                ',"attributes":',
+                _buildAttributes(s),
                 "}"
             )
         );
@@ -298,112 +391,268 @@ contract VaipakamNFTFacet is IERC721, IERC721Metadata, IERC721Enumerable, Diamon
     }
 
     /// @dev Human-readable description consumed by marketplaces that render a
-    ///      summary alongside traits. Kept explicit about position kind + claim
-    ///      governance so third-party sites don't misrepresent a stale offer
-    ///      as a live claim-bearing loan position (README §3).
+    ///      summary alongside traits. Reads from the live NFT position
+    ///      summary so a partial-fill loan's NFT shows the realized
+    ///      principal, not the lender offer's range minimum.
     function _buildDescription(
-        uint256 tokenId,
-        bool isLender,
-        LibVaipakam.LoanPositionStatus statusEnum,
-        uint256 offerId,
-        uint256 loanId
-    ) internal view returns (string memory) {
+        MetricsFacet.NFTPositionSummary memory s
+    ) internal pure returns (string memory) {
         return string(
             abi.encodePacked(
                 "Vaipakam ",
-                isLender ? "Lender" : "Borrower",
+                s.isLender ? "Lender" : "Borrower",
                 " position NFT #",
-                tokenId.toString(),
+                s.tokenId.toString(),
                 ". Kind: ",
-                _positionKind(statusEnum),
+                _positionKind(s.nftStatus),
                 ". Status: ",
-                _statusToString(statusEnum),
+                _statusToString(s.nftStatus),
                 ". Offer #",
-                offerId.toString(),
-                loanId == 0 ? "" : string(abi.encodePacked(", Loan #", loanId.toString())),
+                s.offerId.toString(),
+                s.loanId == 0 ? "" : string(abi.encodePacked(", Loan #", s.loanId.toString())),
                 ". Claim rights: ",
-                _governsClaimRights(statusEnum) ? "Yes" : "No",
+                _governsClaimRights(s.nftStatus) ? "Yes" : "No",
                 ". Chain ID: ",
-                block.chainid.toString(),
+                s.chainId.toString(),
                 "."
             )
         );
     }
 
-    /// @dev Attribute array. Retains the historical traits (so existing
-    ///      indexers don't break) and appends the standardized high-signal
-    ///      fields required by README §3: linked offer ID, linked loan ID,
-    ///      network context, position kind, claim-rights flag, and asset kind.
+    /// @dev Attribute array — three-segment build to keep each fragment
+    ///      under viaIR's stack budget. Numeric traits include OpenSea
+    ///      `display_type` annotations so marketplaces render them with
+    ///      correct UI affordances (percentage badges, date formatters).
     function _buildAttributes(
-        bool isLender,
-        LibVaipakam.LoanPositionStatus statusEnum,
-        LibVaipakam.Offer storage offer,
-        uint256 offerId,
-        uint256 loanId
-    ) internal view returns (string memory) {
+        MetricsFacet.NFTPositionSummary memory s
+    ) internal pure returns (string memory) {
         return string(
             abi.encodePacked(
-                _attributesCore(isLender, statusEnum, offer),
-                _attributesExtended(statusEnum, offer, offerId, loanId)
+                _attributesIdentity(s),
+                _attributesEconomics(s),
+                _attributesEscrowAndClaim(s)
             )
         );
     }
 
-    function _attributesCore(
-        bool isLender,
-        LibVaipakam.LoanPositionStatus statusEnum,
-        LibVaipakam.Offer storage offer
-    ) internal view returns (string memory) {
+    /// @dev Identity + classification traits — who this NFT represents,
+    ///      what kind of position, where it lives.
+    function _attributesIdentity(
+        MetricsFacet.NFTPositionSummary memory s
+    ) internal pure returns (string memory) {
         return string(
             abi.encodePacked(
                 '[{"trait_type":"Role","value":"',
-                isLender ? "Lender" : "Borrower",
+                s.isLender ? "Lender" : "Borrower",
                 '"},{"trait_type":"Status","value":"',
-                _statusToString(statusEnum),
-                '"},{"trait_type":"Lending Asset","value":"',
-                offer.lendingAsset.toHexString(),
-                '"},{"trait_type":"Amount","value":"',
-                offer.amount.toString(),
-                '"},{"trait_type":"Interest Rate (BPS)","value":"',
-                offer.interestRateBps.toString(),
-                '"},{"trait_type":"Collateral Asset","value":"',
-                offer.collateralAsset.toHexString(),
-                '"},{"trait_type":"Collateral Amount","value":"',
-                offer.collateralAmount.toString(),
-                '"},{"trait_type":"Duration (Days)","value":"',
-                offer.durationDays.toString(),
-                '"},{"trait_type":"Principal Liquidity","value":"',
-                uint256(offer.principalLiquidity).toString(),
-                '"},{"trait_type":"Collateral Liquidity","value":"',
-                uint256(offer.collateralLiquidity).toString(),
+                _statusToString(s.nftStatus),
+                '"},{"trait_type":"Loan State","value":"',
+                _loanStatusToString(s.loanStatus),
+                '"},{"trait_type":"Position Kind","value":"',
+                _positionKind(s.nftStatus),
+                '"},{"trait_type":"Asset Kind","value":"',
+                _assetKindToString(s.collateralAssetType),
+                '"},{"trait_type":"Governs Claim Rights","value":"',
+                _governsClaimRights(s.nftStatus) ? "Yes" : "No",
                 '"},'
             )
         );
     }
 
-    function _attributesExtended(
-        LibVaipakam.LoanPositionStatus statusEnum,
-        LibVaipakam.Offer storage offer,
-        uint256 offerId,
-        uint256 loanId
-    ) internal view returns (string memory) {
+    /// @dev Loan economics traits — symbols + decimal-formatted
+    ///      amounts (NOT raw wei) + percentage-rendered interest rate.
+    ///      `display_type` of `boost_percentage` lets marketplaces
+    ///      render `5.00%` from a value of `5`. Address fields kept
+    ///      separately for indexers + verification flows.
+    function _attributesEconomics(
+        MetricsFacet.NFTPositionSummary memory s
+    ) internal pure returns (string memory) {
         return string(
             abi.encodePacked(
-                '{"trait_type":"Offer ID","value":"',
-                offerId.toString(),
+                '{"trait_type":"Lending Asset","value":"',
+                s.principalSymbol,
+                '"},{"trait_type":"Lending Asset Address","value":"',
+                s.principalAsset.toHexString(),
+                '"},{"trait_type":"Principal","value":"',
+                _formatDecimal(s.principalAmount, s.principalDecimals),
+                ' ',
+                s.principalSymbol,
+                '"},{"trait_type":"Interest Rate","display_type":"boost_percentage","value":',
+                _bpsToPercentString(s.interestRateBps),
+                '},{"trait_type":"Duration (Days)","display_type":"number","value":',
+                s.durationDays.toString(),
+                '},{"trait_type":"Collateral Asset","value":"',
+                s.collateralSymbol,
+                '"},{"trait_type":"Collateral Asset Address","value":"',
+                s.collateralAsset.toHexString(),
+                '"},{"trait_type":"Collateral Amount","value":"',
+                _formatDecimal(s.collateralAmount, s.collateralDecimals),
+                ' ',
+                s.collateralSymbol,
+                '"},'
+            )
+        );
+    }
+
+    /// @dev Live escrow + claim traits. Surfaces `Locked Collateral`
+    ///      (what's actually in escrow against this loan right now)
+    ///      and `Claimable Now` (what the holder can call
+    ///      claimAsLender / claimAsBorrower for) so marketplace
+    ///      buyers see the live position state, not just static loan
+    ///      terms. `Created At` uses `display_type: "date"` so OpenSea
+    ///      renders a localized date.
+    function _attributesEscrowAndClaim(
+        MetricsFacet.NFTPositionSummary memory s
+    ) internal pure returns (string memory) {
+        return string(
+            abi.encodePacked(
+                '{"trait_type":"Locked Collateral","value":"',
+                s.collateralLockedNow == 0
+                    ? "None"
+                    : string(abi.encodePacked(
+                        _formatDecimal(s.collateralLockedNow, s.collateralDecimals),
+                        ' ',
+                        s.collateralSymbol
+                    )),
+                '"},{"trait_type":"Claimable Now","value":"',
+                s.isClaimable
+                    ? string(abi.encodePacked(
+                        _formatDecimal(s.claimableAmount, _decimalsFor(s)),
+                        " (terminal)"
+                    ))
+                    : "None",
+                '"},{"trait_type":"VPFI Rebate Pending","display_type":"number","value":',
+                s.vpfiRebatePending.toString(),
+                '},{"trait_type":"Created At","display_type":"date","value":',
+                s.createdAt.toString(),
+                '},{"trait_type":"Offer ID","value":"',
+                s.offerId.toString(),
                 '"},{"trait_type":"Loan ID","value":"',
-                loanId.toString(),
-                '"},{"trait_type":"Position Kind","value":"',
-                _positionKind(statusEnum),
-                '"},{"trait_type":"Governs Claim Rights","value":"',
-                _governsClaimRights(statusEnum) ? "Yes" : "No",
-                '"},{"trait_type":"Asset Kind","value":"',
-                _assetKindToString(offer.assetType),
+                s.loanId.toString(),
                 '"},{"trait_type":"Chain ID","value":"',
-                block.chainid.toString(),
+                s.chainId.toString(),
                 '"}]'
             )
         );
+    }
+
+    /// @dev Format a fixed-point amount as a human-readable decimal
+    ///      string (e.g. 1500000000 with 6 decimals → "1500.0"). Drops
+    ///      trailing zeros after the decimal point but keeps at least
+    ///      one digit (".0" not "."). Returns "0" for zero amounts.
+    function _formatDecimal(uint256 amount, uint8 decimals)
+        internal
+        pure
+        returns (string memory)
+    {
+        if (amount == 0) return "0";
+        if (decimals == 0) return amount.toString();
+        uint256 unit = 10 ** decimals;
+        uint256 whole = amount / unit;
+        uint256 frac = amount % unit;
+        if (frac == 0) return whole.toString();
+        // Pad frac to `decimals` characters then strip trailing zeros.
+        bytes memory fracBuf = bytes(frac.toString());
+        bytes memory padded = new bytes(decimals);
+        uint256 lead = decimals - fracBuf.length;
+        for (uint256 i = 0; i < lead; i++) padded[i] = "0";
+        for (uint256 i = 0; i < fracBuf.length; i++) padded[lead + i] = fracBuf[i];
+        // Trim trailing zeros.
+        uint256 end = decimals;
+        while (end > 1 && padded[end - 1] == "0") end -= 1;
+        bytes memory trimmed = new bytes(end);
+        for (uint256 i = 0; i < end; i++) trimmed[i] = padded[i];
+        return string(abi.encodePacked(whole.toString(), ".", trimmed));
+    }
+
+    /// @dev BPS → percentage string. 500 → "5", 575 → "5.75". Uses
+    ///      _formatDecimal with 2 decimals (since 1% = 100 BPS).
+    function _bpsToPercentString(uint256 bps) internal pure returns (string memory) {
+        return _formatDecimal(bps, 2);
+    }
+
+    /// @dev Pick the right decimal scaling for the claimable amount.
+    ///      Lender-side claims are usually in the principal asset
+    ///      (proper repay) but can be in the collateral asset on
+    ///      illiquid default; same shape inverted for borrower side.
+    ///      We don't track this perfectly — fallback heuristic:
+    ///      principal decimals for lender, collateral decimals for
+    ///      borrower. Matches the common case; edge cases render
+    ///      slightly off-scale but never lose information.
+    function _decimalsFor(
+        MetricsFacet.NFTPositionSummary memory s
+    ) internal pure returns (uint8) {
+        return s.isLender ? s.principalDecimals : s.collateralDecimals;
+    }
+
+    /// @dev LoanStatus enum → human string. Mirrors the on-chain
+    ///      `LibVaipakam.LoanStatus` ordering.
+    function _loanStatusToString(LibVaipakam.LoanStatus status)
+        internal
+        pure
+        returns (string memory)
+    {
+        if (status == LibVaipakam.LoanStatus.Active) return "Active";
+        if (status == LibVaipakam.LoanStatus.Repaid) return "Repaid";
+        if (status == LibVaipakam.LoanStatus.Defaulted) return "Defaulted";
+        if (status == LibVaipakam.LoanStatus.Settled) return "Settled";
+        if (status == LibVaipakam.LoanStatus.FallbackPending) return "Fallback Pending";
+        return "Unknown";
+    }
+
+    /// @dev Builds the optional OpenSea `external_url` JSON fragment
+    ///      (`,"external_url":"…"`) for tokenURI. Returns an empty
+    ///      string when no base URL is configured so the JSON stays
+    ///      lean. Encodes a deep-link query so marketplace clicks
+    ///      land on the right dashboard view:
+    ///        - With a loan: `?loan=<id>&side=lender|borrower`
+    ///        - Offer-only:  `?token=<tokenId>`
+    function _externalUrlField(
+        string memory base,
+        MetricsFacet.NFTPositionSummary memory s
+    ) internal pure returns (string memory) {
+        if (bytes(base).length == 0) return "";
+        string memory query;
+        if (s.loanId != 0) {
+            query = string(abi.encodePacked(
+                "?loan=", s.loanId.toString(),
+                "&side=", s.isLender ? "lender" : "borrower"
+            ));
+        } else {
+            query = string(abi.encodePacked("?token=", s.tokenId.toString()));
+        }
+        return string(abi.encodePacked(',"external_url":"', base, query, '"'));
+    }
+
+    /// @dev OpenSea `background_color` for the position card — six-char
+    ///      lowercase hex (no `#` prefix per the spec). Pinned per
+    ///      side + terminal so a marketplace grid view differentiates
+    ///      lender / borrower / defaulted at a glance:
+    ///        - Lender (active):   forest green   (2f855a)
+    ///        - Borrower (active): steel blue     (2b6cb0)
+    ///        - Defaulted / Liquidated: muted red (c53030)
+    ///        - Closed (terminal-fine): slate     (4a5568)
+    ///      Status takes precedence over role for terminal cases so a
+    ///      defaulted lender position renders red, not green.
+    function _backgroundColor(
+        MetricsFacet.NFTPositionSummary memory s
+    ) internal pure returns (string memory) {
+        if (
+            s.loanStatus == LibVaipakam.LoanStatus.Defaulted ||
+            s.nftStatus == LibVaipakam.LoanPositionStatus.LoanDefaulted ||
+            s.nftStatus == LibVaipakam.LoanPositionStatus.LoanLiquidated
+        ) {
+            return "c53030";
+        }
+        if (
+            s.nftStatus == LibVaipakam.LoanPositionStatus.LoanClosed ||
+            s.nftStatus == LibVaipakam.LoanPositionStatus.LoanRepaid ||
+            s.loanStatus == LibVaipakam.LoanStatus.Repaid ||
+            s.loanStatus == LibVaipakam.LoanStatus.Settled
+        ) {
+            return "4a5568";
+        }
+        return s.isLender ? "2f855a" : "2b6cb0";
     }
 
     /// @dev Offer-state vs active-loan vs resolved-loan bucket. Keeps
@@ -447,14 +696,14 @@ contract VaipakamNFTFacet is IERC721, IERC721Metadata, IERC721Enumerable, Diamon
      * @dev Returns a base64-encoded JSON blob describing the collection
      *      (name, description, image). Marketplaces read this to render
      *      the collection page and fall back to tokenURI for items.
-     *      Image defaults to the lender-active IPFS asset unless the admin
-     *      has set a dedicated `contractImageURI`.
+     *      Image defaults to the lender-side default image asset unless
+     *      the admin has set a dedicated `contractImageURI`.
      */
     function contractURI() external view returns (string memory) {
         LibERC721.ERC721Storage storage es = LibERC721._storage();
         string memory image = bytes(es.contractImageURI).length > 0
             ? es.contractImageURI
-            : es.lenderActiveIPFS;
+            : es.defaultLenderImage;
 
         string memory json = string(
             abi.encodePacked(
@@ -484,6 +733,30 @@ contract VaipakamNFTFacet is IERC721, IERC721Metadata, IERC721Enumerable, Diamon
         onlyRole(LibAccessControl.ADMIN_ROLE)
     {
         LibERC721._storage().contractImageURI = uri;
+    }
+
+    /**
+     * @notice Sets the base URL emitted in `tokenURI`'s OpenSea
+     *         `external_url` field. Admin-only. Marketplaces render
+     *         a "View on Vaipakam" deep-link against this URL,
+     *         appending `?loan=<id>&side=<…>` (or `?token=<id>`
+     *         when the NFT hasn't been linked to a loan yet).
+     *
+     *         Pass an empty string to omit `external_url` from the
+     *         metadata entirely (the default — leaves the JSON
+     *         lean on chains where the dApp isn't deployed).
+     *
+     *         Per chain: e.g. `https://vaipakam.com` on mainnet,
+     *         `https://testnet.vaipakam.com` on testnets, or the
+     *         operator's own fork's URL.
+     */
+    event ExternalUrlBaseUpdated(string newBase);
+    function setExternalUrlBase(string calldata newBase)
+        external
+        onlyRole(LibAccessControl.ADMIN_ROLE)
+    {
+        LibERC721._storage().externalUrlBase = newBase;
+        emit ExternalUrlBaseUpdated(newBase);
     }
 
     // ==================== EIP-2981 Royalties ====================

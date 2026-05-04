@@ -41,10 +41,12 @@ import {LibSwap} from "../libraries/LibSwap.sol";
  *      updatable by RISK_ADMIN_ROLE.
  *
  *      Formulas (liquid assets only; illiquid reverts NonLiquidAsset):
- *        LTV  = (borrowBalanceUSD × 10000) / collateralValueUSD  [BPS]
- *        HF   = (collateralUSD × liqThresholdBps / 10000) / borrowBalanceUSD  [1e18]
+ *        LTV  = (borrowBalanceNumeraire × 10000) / collateralValueNumeraire  [BPS]
+ *        HF   = (collateralNumeraire × liqThresholdBps / 10000) / borrowBalanceNumeraire  [1e18]
  *        borrowBalance = principal + accrued interest (pro-rata seconds-based).
- *      USD prices sourced from {OracleFacet.getAssetPrice}.
+ *      Prices sourced from {OracleFacet.getAssetPrice} — quoted in the
+ *      active numeraire (USD by post-deploy default, governance-rotatable).
+ *      The ratio cancels the unit, so HF and LTV are unit-agnostic.
  *
  *      Liquidation ({triggerLiquidation}): permissionless when HF < 1e18.
  *      Swaps collateral → principal-asset via 0x (slippage ≤
@@ -143,13 +145,50 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
         uint256 reserveFactorBps
     ) external whenNotPaused onlyRole(LibAccessControl.RISK_ADMIN_ROLE) {
         if (asset == address(0)) revert InvalidAsset();
-        if (maxLtvBps == 0 || maxLtvBps > LibVaipakam.BASIS_POINTS) revert UpdateNotAllowed();
-        if (liqThresholdBps <= maxLtvBps || liqThresholdBps > LibVaipakam.BASIS_POINTS) revert UpdateNotAllowed();
+        // Setter-range audit (2026-05-02): bounded floors on the
+        // numeric tunables. Previously: maxLtv only `> 0` (allowed
+        // degenerate `1`-bp setting that disables borrowing for the
+        // asset); reserveFactor only `≤ BASIS_POINTS` (allowed 100%
+        // = lender receives 0% interest). Tightened to credible
+        // ranges; surfaced via `ParameterOutOfRange`.
+        if (
+            maxLtvBps < LibVaipakam.RISK_PARAMS_MAX_LTV_BPS_MIN ||
+            maxLtvBps > LibVaipakam.BASIS_POINTS
+        ) {
+            revert IVaipakamErrors.ParameterOutOfRange(
+                "maxLtvBps",
+                maxLtvBps,
+                uint256(LibVaipakam.RISK_PARAMS_MAX_LTV_BPS_MIN),
+                LibVaipakam.BASIS_POINTS
+            );
+        }
+        if (
+            liqThresholdBps < LibVaipakam.RISK_PARAMS_LIQ_THRESHOLD_BPS_MIN ||
+            liqThresholdBps <= maxLtvBps ||
+            liqThresholdBps > LibVaipakam.BASIS_POINTS
+        ) {
+            // Composite check: the relative `> maxLtvBps` rule is
+            // load-bearing for the liquidation math, so it stays.
+            // The absolute floor + ceiling are the new guards.
+            revert IVaipakamErrors.ParameterOutOfRange(
+                "liqThresholdBps",
+                liqThresholdBps,
+                uint256(LibVaipakam.RISK_PARAMS_LIQ_THRESHOLD_BPS_MIN),
+                LibVaipakam.BASIS_POINTS
+            );
+        }
         // README §3: liquidator incentive is dynamic (6% − realized slippage)
         // and capped at 3% of liquidation proceeds. The stored `liqBonusBps`
         // is a legacy ceiling and must never be configured above that cap.
         if (liqBonusBps > LibVaipakam.cfgMaxLiquidatorIncentiveBps()) revert UpdateNotAllowed();
-        if (reserveFactorBps > LibVaipakam.BASIS_POINTS) revert UpdateNotAllowed();
+        if (reserveFactorBps > LibVaipakam.RISK_PARAMS_RESERVE_FACTOR_BPS_MAX) {
+            revert IVaipakamErrors.ParameterOutOfRange(
+                "reserveFactorBps",
+                reserveFactorBps,
+                0,
+                uint256(LibVaipakam.RISK_PARAMS_RESERVE_FACTOR_BPS_MAX)
+            );
+        }
 
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.RiskParams storage params = s.assetRiskParams[asset];
@@ -169,7 +208,8 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
 
     /**
      * @notice Calculates the current LTV for a loan in basis points.
-     * @dev LTV = (borrowedValueUSD * 10000) / collateralValueUSD.
+     * @dev LTV = (borrowedValueNumeraire * 10000) / collateralValueNumeraire.
+     *      The numeraire unit cancels in the ratio — LTV is unit-agnostic.
      *      Reverts if collateral illiquid (NonLiquidAsset).
      *      Uses Oracle for prices.
      *      For Vaipakam Phase 1 single-asset; expand for multi.
@@ -186,19 +226,20 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
             loan.principalLiquidity != LibVaipakam.LiquidityStatus.Liquid)
             revert IlliquidLoanNoRiskMath();
 
-        (uint256 borrowedValueUSD, uint256 collateralValueUSD) = _computeUsdValues(loan);
-        if (collateralValueUSD == 0) revert ZeroCollateral();
+        (uint256 borrowedValueNumeraire, uint256 collateralValueNumeraire) = _computeNumeraireValues(loan);
+        if (collateralValueNumeraire == 0) revert ZeroCollateral();
 
         // Rounds DOWN (borrower-favourable by <=1 BPS). A loan exactly at the
-        // cap slips 1 BPS under; given USD-18 scaled values the absolute error
-        // is sub-dust and acceptable. Do NOT change to ceilDiv without
-        // retuning `maxLTVBps` thresholds.
-        ltv = (borrowedValueUSD * LibVaipakam.BASIS_POINTS) / collateralValueUSD;
+        // cap slips 1 BPS under; given 1e18-scaled numeraire-quoted values
+        // the absolute error is sub-dust and acceptable. Do NOT change to
+        // ceilDiv without retuning `maxLTVBps` thresholds.
+        ltv = (borrowedValueNumeraire * LibVaipakam.BASIS_POINTS) / collateralValueNumeraire;
     }
 
     /**
      * @notice Calculates the Health Factor (HF) for a loan.
-     * @dev HF = (collateralValueUSD * liqThresholdBps / 10000) / currentBorrowBalanceUSD; scaled to 1e18.
+     * @dev HF = (collateralValueNumeraire * liqThresholdBps / 10000) / currentBorrowBalanceNumeraire; scaled to 1e18.
+     *      The numeraire unit cancels in the ratio — HF is unit-agnostic.
      *      Includes accrued interest in borrow balance.
      *      Reverts if collateral illiquid (NonLiquidAsset).
      *      Uses Oracle for prices.
@@ -218,9 +259,9 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
             loan.principalLiquidity != LibVaipakam.LiquidityStatus.Liquid)
             revert IlliquidLoanNoRiskMath();
 
-        (uint256 borrowValueUSD, uint256 collateralValueUSD) = _computeUsdValues(loan);
+        (uint256 borrowValueNumeraire, uint256 collateralValueNumeraire) = _computeNumeraireValues(loan);
 
-        if (borrowValueUSD == 0) return type(uint256).max; // Infinite HF if no borrow
+        if (borrowValueNumeraire == 0) return type(uint256).max; // Infinite HF if no borrow
 
         uint256 liqThresholdBps = s
             .assetRiskParams[loan.collateralAsset]
@@ -229,12 +270,12 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
         // means liquidation may trigger marginally earlier than theoretical.
         // Protocol-favourable (safe direction). Error magnitude: sub-wei on
         // HF_SCALE (1e18) for realistic collateral sizes.
-        uint256 riskAdjustedCollateral = (collateralValueUSD *
+        uint256 riskAdjustedCollateral = (collateralValueNumeraire *
             liqThresholdBps) / LibVaipakam.BASIS_POINTS;
 
         healthFactor =
             (riskAdjustedCollateral * LibVaipakam.HF_SCALE) /
-            borrowValueUSD;
+            borrowValueNumeraire;
     }
 
     /**
@@ -254,22 +295,22 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
             revert IlliquidLoanNoRiskMath();
 
         // Single-pass: fetch prices + decimals once and derive both LTV and
-        // HF from the shared (borrowUSD, collateralUSD) pair.
-        (uint256 borrowValueUSD, uint256 collateralValueUSD) = _computeUsdValues(loan);
-        if (collateralValueUSD == 0) revert ZeroCollateral();
+        // HF from the shared (borrowNumeraire, collateralNumeraire) pair.
+        (uint256 borrowValueNumeraire, uint256 collateralValueNumeraire) = _computeNumeraireValues(loan);
+        if (collateralValueNumeraire == 0) revert ZeroCollateral();
 
-        uint256 ltv = (borrowValueUSD * LibVaipakam.BASIS_POINTS) / collateralValueUSD;
+        uint256 ltv = (borrowValueNumeraire * LibVaipakam.BASIS_POINTS) / collateralValueNumeraire;
 
         uint256 hf;
-        if (borrowValueUSD == 0) {
+        if (borrowValueNumeraire == 0) {
             hf = type(uint256).max;
         } else {
             uint256 liqThresholdBps = s
                 .assetRiskParams[loan.collateralAsset]
                 .liqThresholdBps;
-            uint256 riskAdjustedCollateral = (collateralValueUSD * liqThresholdBps)
+            uint256 riskAdjustedCollateral = (collateralValueNumeraire * liqThresholdBps)
                 / LibVaipakam.BASIS_POINTS;
-            hf = (riskAdjustedCollateral * LibVaipakam.HF_SCALE) / borrowValueUSD;
+            hf = (riskAdjustedCollateral * LibVaipakam.HF_SCALE) / borrowValueNumeraire;
         }
 
         return ltv > LibVaipakam.cfgVolatilityLtvThresholdBps() || hf < LibVaipakam.HF_SCALE;
@@ -287,7 +328,7 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
      *      literally does not execute in the fallback case because the DEX call
      *      reverts before any collateral leaves the diamond.
      *      Deducts liqBonusBps to liquidator, remainder to lender on success.
-     *      Requires KYC for liquidator if bonusUSD > threshold.
+     *      Requires KYC for liquidator if bonusNumeraire > threshold.
      *      Updates loan to Defaulted, marks NFTs Claimable.
      *      Emits HFLiquidationTriggered on success, LiquidationFallback on fallback.
      * @param loanId The loan ID to liquidate.
@@ -296,6 +337,11 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
         uint256 loanId,
         LibSwap.AdapterCall[] calldata adapterCalls
     ) external nonReentrant whenNotPaused {
+        // Tier-1 sanctions gate. The 3% liquidator bonus flows to
+        // msg.sender — value receipt by a sanctioned wallet, blocked.
+        // Anyone unflagged can still call this; liquidation is not
+        // denied, just denied to sanctioned bots / liquidators.
+        LibVaipakam._assertNotSanctioned(msg.sender);
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.Loan storage loan = s.loans[loanId];
         if (loan.status != LibVaipakam.LoanStatus.Active) revert InvalidLoan();
@@ -419,8 +465,8 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
         (uint256 price, uint8 feedDecimals) = OracleFacet(address(this))
             .getAssetPrice(loan.principalAsset);
         uint8 tokenDecimals = IERC20Metadata(loan.principalAsset).decimals();
-        uint256 bonusUSD = (bonus * price * 1e18) / (10 ** feedDecimals) / (10 ** tokenDecimals);
-        if (!ProfileFacet(address(this)).meetsKYCRequirement(msg.sender, bonusUSD))
+        uint256 bonusNumeraire = (bonus * price * 1e18) / (10 ** feedDecimals) / (10 ** tokenDecimals);
+        if (!ProfileFacet(address(this)).meetsKYCRequirement(msg.sender, bonusNumeraire))
             revert KYCRequired();
 
         // Liquidation bonus transferred to liquidator immediately
@@ -476,6 +522,9 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
         address lenderEscrow = LibFacet.getOrCreateEscrow(loan.lender);
         if (lenderProceeds > 0) {
             IERC20(loan.principalAsset).safeTransfer(lenderEscrow, lenderProceeds);
+            // T-051 — Diamond-side transfer to escrow ticks the
+            // protocolTrackedEscrowBalance counter.
+            LibVaipakam.recordEscrowDeposit(loan.lender, loan.principalAsset, lenderProceeds);
         }
 
         // Record lender's claimable proceeds. heldForLender handled by ClaimFacet.
@@ -492,6 +541,7 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
         if (borrowerSurplus > 0) {
             address borrowerEscrow = LibFacet.getOrCreateEscrow(loan.borrower);
             IERC20(loan.principalAsset).safeTransfer(borrowerEscrow, borrowerSurplus);
+            LibVaipakam.recordEscrowDeposit(loan.borrower, loan.principalAsset, borrowerSurplus);
         }
         s.borrowerClaims[loanId] = LibVaipakam.ClaimInfo({
             asset: loan.principalAsset,
@@ -625,9 +675,9 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
     //     // KYC check for liquidator if high value
     //     (uint256 price, uint8 decimals) = OracleFacet(address(this))
     //         .getAssetPrice(loan.principalAsset);
-    //     uint256 bonusUSD = (bonus * price) / (10 ** decimals);
+    //     uint256 bonusNumeraire = (bonus * price) / (10 ** decimals);
     //     if (
-    //         bonusUSD > LibVaipakam.KYC_TIER1_THRESHOLD_USD &&
+    //         bonusNumeraire > LibVaipakam.KYC_TIER1_THRESHOLD_NUMERAIRE &&
     //         !ProfileFacet(address(this)).isKYCVerified(msg.sender)
     //     ) revert KYCRequired();
 
@@ -773,25 +823,27 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
     }
 
     /// @dev Fetch oracle prices and ERC20 decimals for principal and
-    ///      collateral, returning each side's USD value. Used by
-    ///      calculateLTV, calculateHealthFactor, and isCollateralValueCollapsed
-    ///      — the latter previously re-ran the full fetch twice (once per
-    ///      view) for ~6-9k of duplicated oracle/staticcall overhead.
-    function _computeUsdValues(
+    ///      collateral, returning each side's value quoted in the active
+    ///      numeraire (USD by post-deploy default). Used by calculateLTV,
+    ///      calculateHealthFactor, and isCollateralValueCollapsed — the latter
+    ///      previously re-ran the full fetch twice (once per view) for ~6-9k
+    ///      of duplicated oracle/staticcall overhead. Numeraire-quoted prices
+    ///      come from `OracleFacet.getAssetPrice` (Numeraire generalization (B1)).
+    function _computeNumeraireValues(
         LibVaipakam.Loan storage loan
-    ) internal view returns (uint256 borrowValueUSD, uint256 collateralValueUSD) {
+    ) internal view returns (uint256 borrowValueNumeraire, uint256 collateralValueNumeraire) {
         uint256 currentBorrowBalance = _calculateCurrentBorrowBalance(loan);
 
         (uint256 borrowPrice, uint8 borrowFeedDecimals) = OracleFacet(address(this))
             .getAssetPrice(loan.principalAsset);
         uint8 borrowTokenDecimals = IERC20Metadata(loan.principalAsset).decimals();
-        borrowValueUSD = (currentBorrowBalance * borrowPrice) /
+        borrowValueNumeraire = (currentBorrowBalance * borrowPrice) /
             (10 ** borrowFeedDecimals) / (10 ** borrowTokenDecimals);
 
         (uint256 collateralPrice, uint8 collateralFeedDecimals) = OracleFacet(address(this))
             .getAssetPrice(loan.collateralAsset);
         uint8 collateralTokenDecimals = IERC20Metadata(loan.collateralAsset).decimals();
-        collateralValueUSD = (loan.collateralAmount * collateralPrice) /
+        collateralValueNumeraire = (loan.collateralAmount * collateralPrice) /
             (10 ** collateralFeedDecimals) / (10 ** collateralTokenDecimals);
     }
 

@@ -127,6 +127,22 @@ defaults `vpfiBuyPaymentToken` to `0x0` (native BNB) when no
 `vpfiBuyAdapter`, `vpfiBuyAdapterImpl`, `lzEndpoint`,
 `vpfiBuyReceiverEid`, `vpfiBuyPaymentToken` to the artifact.
 
+**Mainnet warning — DO NOT carry native-gas mode forward to BNB
+Smart Chain mainnet (chainId 56).** The receiver's wei-per-VPFI
+rate is denominated in ETH-equivalent value; native-gas mode on
+mainnet would mean users pay 1 BNB where the receiver expects 1 ETH
+worth of value, mis-pricing every buy. For mainnet, set
+`BNB_VPFI_BUY_PAYMENT_TOKEN` to the canonical bridged WETH9 on BNB
+(`0x2170Ed0880ac9A755fd29B2688956BD959F933F8` — verify against
+BscScan and the LayerZero bridged-asset registry before pasting).
+The deploy script's pre-flight will refuse to proceed otherwise —
+that's by design. Same gate applies to Polygon PoS mainnet
+(chainId 137) with `POLYGON_VPFI_BUY_PAYMENT_TOKEN` and the
+canonical Polygon WETH9 (`0x7ceB23fD6bC0adD59E62ac25578270cFf1b9f619`).
+Full per-chain table in
+[`DeploymentRunbook.md`](DeploymentRunbook.md) under "VPFIBuyAdapter —
+payment-token mode".
+
 ---
 
 ## 5. Set the discount ETH price asset (mirror-side §5)
@@ -285,10 +301,15 @@ Cross-chain invariants (all three must hold):
 ## 11. Publish
 
 - Commit `deployments/bnb-testnet/addresses.json`.
-- Update `frontend/.env.local` with the freshly written values
-  (`VITE_BNB_TESTNET_DIAMOND_ADDRESS`, `VITE_BNB_TESTNET_DEPLOY_BLOCK`,
-  `VITE_BNB_TESTNET_METRICS_FACET_ADDRESS`,
-  `VITE_BNB_TESTNET_VPFI_BUY_ADAPTER`).
+- Sync the merged JSON to both consumers in one command:
+  `bash contracts/script/exportFrontendDeployments.sh`. This
+  rewrites `frontend/src/contracts/deployments.json` AND
+  `ops/hf-watcher/src/deployments.json` from the canonical
+  `addresses.json` files. No more `VITE_BNB_TESTNET_DIAMOND_ADDRESS`
+  / `VITE_BNB_TESTNET_*_FACET_ADDRESS` edits in `.env.local` —
+  those env vars were removed when the JSON-import pattern landed.
+- Commit the regenerated `deployments.json` files alongside the
+  contracts change.
 - Update `contracts/.env` chain-prefixed legacy keys
   (`BNB_TESTNET_DIAMOND_ADDRESS` etc.) — these are still consulted as
   env-fallback by some legacy scripts.

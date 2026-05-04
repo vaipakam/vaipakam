@@ -3,6 +3,7 @@ import { ExternalLink, AlertTriangle } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { useVerifyContract } from '../../hooks/useCoinGecko';
 import { useOnchainTokenInfo } from '../../hooks/useOnchainTokenInfo';
+import { erc20LinkFor } from '../../lib/erc20Link';
 
 const ADDRESS_RE = /^0x[a-fA-F0-9]{40}$/;
 
@@ -82,6 +83,13 @@ export function TokenInfoTag({
     ? `${blockExplorer.replace(/\/$/, '')}/address/${address}`
     : null;
 
+  // Symbol-as-link target: CoinGecko when the address is on the
+  // registry, explorer fallback otherwise. Same priority `<AssetLink>`
+  // uses elsewhere; `erc20LinkFor` is the shared lever.
+  const symbolLink = chainId
+    ? erc20LinkFor(chainId, address, cg.result?.id ?? null)
+    : null;
+
   return (
     <div
       className="form-hint"
@@ -90,7 +98,29 @@ export function TokenInfoTag({
       {(symbol || name || decimals !== null || rank !== null || inlineBadge) && (
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'baseline' }}>
           {symbol && (
-            <strong style={{ color: 'var(--text-primary)' }}>{symbol}</strong>
+            symbolLink ? (
+              <a
+                href={symbolLink.href}
+                target="_blank"
+                rel="noopener noreferrer"
+                style={{
+                  color: 'var(--text-primary)',
+                  fontWeight: 'bold',
+                  textDecoration: 'underline',
+                  textDecorationStyle: 'dotted',
+                  textUnderlineOffset: 2,
+                }}
+                aria-label={
+                  symbolLink.kind === 'coingecko'
+                    ? t('assetLink.openOnCoinGecko')
+                    : t('assetLink.openOnExplorer')
+                }
+              >
+                {symbol}
+              </a>
+            ) : (
+              <strong style={{ color: 'var(--text-primary)' }}>{symbol}</strong>
+            )
           )}
           {name && name !== symbol && (
             <span style={{ opacity: 0.85 }}>{name}</span>

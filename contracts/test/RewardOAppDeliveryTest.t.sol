@@ -85,18 +85,18 @@ contract RewardOAppDeliveryTest is TestHelperOz5 {
 
     function test_sendChainReport_deliversToCanonicalDiamond() public {
         uint256 dayId = 20260419;
-        uint256 lenderUSD18 = 1_234e18;
-        uint256 borrowerUSD18 = 5_678e18;
+        uint256 lenderNumeraire18 = 1_234e18;
+        uint256 borrowerNumeraire18 = 5_678e18;
 
-        uint256 fee = mirror.quoteSendChainReport(dayId, lenderUSD18, borrowerUSD18);
+        uint256 fee = mirror.quoteSendChainReport(dayId, lenderNumeraire18, borrowerNumeraire18);
         assertGt(fee, 0, "REPORT fee should be non-zero");
 
         vm.deal(address(mirrorDiamond), fee);
         vm.prank(address(mirrorDiamond));
         mirror.sendChainReport{value: fee}(
             dayId,
-            lenderUSD18,
-            borrowerUSD18,
+            lenderNumeraire18,
+            borrowerNumeraire18,
             payable(address(mirrorDiamond))
         );
 
@@ -111,8 +111,8 @@ contract RewardOAppDeliveryTest is TestHelperOz5 {
         (uint32 srcEid, uint256 dId, uint256 a, uint256 b) = canonicalDiamond.lastReport();
         assertEq(srcEid, MIRROR_EID, "srcEid should match sender chain");
         assertEq(dId, dayId);
-        assertEq(a, lenderUSD18);
-        assertEq(b, borrowerUSD18);
+        assertEq(a, lenderNumeraire18);
+        assertEq(b, borrowerNumeraire18);
 
         // Mirror was never touched on its own ingress.
         assertEq(mirrorDiamond.reportCount(), 0, "mirror diamond should be untouched");
@@ -122,18 +122,18 @@ contract RewardOAppDeliveryTest is TestHelperOz5 {
 
     function test_broadcastGlobal_deliversToMirrorDiamond() public {
         uint256 dayId = 20260419;
-        uint256 globalLenderUSD18 = 99_999e18;
-        uint256 globalBorrowerUSD18 = 88_888e18;
+        uint256 globalLenderNumeraire18 = 99_999e18;
+        uint256 globalBorrowerNumeraire18 = 88_888e18;
 
-        uint256 fee = canonical.quoteBroadcastGlobal(dayId, globalLenderUSD18, globalBorrowerUSD18);
+        uint256 fee = canonical.quoteBroadcastGlobal(dayId, globalLenderNumeraire18, globalBorrowerNumeraire18);
         assertGt(fee, 0, "BROADCAST fee should be non-zero");
 
         vm.deal(address(canonicalDiamond), fee);
         vm.prank(address(canonicalDiamond));
         canonical.broadcastGlobal{value: fee}(
             dayId,
-            globalLenderUSD18,
-            globalBorrowerUSD18,
+            globalLenderNumeraire18,
+            globalBorrowerNumeraire18,
             payable(address(canonicalDiamond))
         );
 
@@ -144,8 +144,8 @@ contract RewardOAppDeliveryTest is TestHelperOz5 {
         assertEq(mirrorDiamond.broadcastCount(), 1, "post-delivery: one broadcast");
         (uint256 dId, uint256 gl, uint256 gb) = mirrorDiamond.lastBroadcast();
         assertEq(dId, dayId);
-        assertEq(gl, globalLenderUSD18);
-        assertEq(gb, globalBorrowerUSD18);
+        assertEq(gl, globalLenderNumeraire18);
+        assertEq(gb, globalBorrowerNumeraire18);
 
         // Canonical never receives its own broadcast.
         assertEq(canonicalDiamond.broadcastCount(), 0, "canonical diamond should be untouched");
@@ -245,13 +245,13 @@ contract MockDiamond {
     struct Report {
         uint32 srcEid;
         uint256 dayId;
-        uint256 lenderUSD18;
-        uint256 borrowerUSD18;
+        uint256 lenderNumeraire18;
+        uint256 borrowerNumeraire18;
     }
     struct Broadcast {
         uint256 dayId;
-        uint256 globalLenderUSD18;
-        uint256 globalBorrowerUSD18;
+        uint256 globalLenderNumeraire18;
+        uint256 globalBorrowerNumeraire18;
     }
 
     uint256 public reportCount;
@@ -262,30 +262,30 @@ contract MockDiamond {
     function onChainReportReceived(
         uint32 sourceEid,
         uint256 dayId,
-        uint256 lenderUSD18,
-        uint256 borrowerUSD18
+        uint256 lenderNumeraire18,
+        uint256 borrowerNumeraire18
     ) external {
-        _lastReport = Report(sourceEid, dayId, lenderUSD18, borrowerUSD18);
+        _lastReport = Report(sourceEid, dayId, lenderNumeraire18, borrowerNumeraire18);
         reportCount += 1;
     }
 
     function onRewardBroadcastReceived(
         uint256 dayId,
-        uint256 globalLenderUSD18,
-        uint256 globalBorrowerUSD18
+        uint256 globalLenderNumeraire18,
+        uint256 globalBorrowerNumeraire18
     ) external {
-        _lastBroadcast = Broadcast(dayId, globalLenderUSD18, globalBorrowerUSD18);
+        _lastBroadcast = Broadcast(dayId, globalLenderNumeraire18, globalBorrowerNumeraire18);
         broadcastCount += 1;
     }
 
     function lastReport() external view returns (uint32, uint256, uint256, uint256) {
         Report memory r = _lastReport;
-        return (r.srcEid, r.dayId, r.lenderUSD18, r.borrowerUSD18);
+        return (r.srcEid, r.dayId, r.lenderNumeraire18, r.borrowerNumeraire18);
     }
 
     function lastBroadcast() external view returns (uint256, uint256, uint256) {
         Broadcast memory b = _lastBroadcast;
-        return (b.dayId, b.globalLenderUSD18, b.globalBorrowerUSD18);
+        return (b.dayId, b.globalLenderNumeraire18, b.globalBorrowerNumeraire18);
     }
 
     // Accept ETH refunds from LZ if any.

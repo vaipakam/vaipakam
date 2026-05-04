@@ -1,6 +1,7 @@
 import { Bug } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { buildGithubIssueUrl } from '../../lib/journeyLog';
+import { HoverTip } from '../HoverTip';
 import './ReportIssueLink.css';
 
 /**
@@ -44,18 +45,27 @@ export function ReportIssueLink({
   };
 
   const base = variant === 'button' ? 'btn btn-ghost btn-sm' : 'report-issue-link';
+  // Portal-based hover tooltip — the previous CSS-only `[data-tooltip]`
+  // pseudo-element clipped against `overflow:hidden` ancestors. Two
+  // common surfaces hit this: the Diagnostics drawer (sets
+  // overflow-x/y: hidden on `.diag-drawer`) and the per-event row
+  // inside the same drawer's events list (each row is its own
+  // overflow-clipping context). `<HoverTip>` portal-renders the
+  // bubble into <body> so the tooltip escapes both clipping
+  // ancestors and stays fully readable.
   return (
-    <a
-      href="https://github.com/vaipakam/vaipakam/issues"
-      target="_blank"
-      rel="noopener noreferrer"
-      onClick={onClick}
-      className={`${base} ${className}`.trim()}
-      aria-label={t('diagnostics.reportIssueAria')}
-      data-tooltip={t('diagnostics.reportIssueTooltip')}
-    >
-      <Bug size={variant === 'button' ? 14 : 12} />
-      <span>{label ?? t('diagnostics.reportOnGithub')}</span>
-    </a>
+    <HoverTip text={t('diagnostics.reportIssueTooltip')}>
+      <a
+        href="https://github.com/vaipakam/vaipakam/issues"
+        target="_blank"
+        rel="noopener noreferrer"
+        onClick={onClick}
+        className={`${base} ${className}`.trim()}
+        aria-label={t('diagnostics.reportIssueAria')}
+      >
+        <Bug size={variant === 'button' ? 14 : 12} />
+        <span>{label ?? t('diagnostics.reportOnGithub')}</span>
+      </a>
+    </HoverTip>
   );
 }

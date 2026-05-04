@@ -276,7 +276,7 @@ contract ProfileFacetTest is Test {
 
     function testFuzzMeetsKYCRequirementTier0OnlyBelowThreshold(uint256 value) public view {
         // user1 has Tier0 by default
-        bool expected = value < LibVaipakam.KYC_TIER0_THRESHOLD_USD;
+        bool expected = value < LibVaipakam.KYC_TIER0_THRESHOLD_NUMERAIRE;
         assertEq(ProfileFacet(address(diamond)).meetsKYCRequirement(user1, value), expected);
     }
 
@@ -359,8 +359,8 @@ contract ProfileFacetTest is Test {
 
     function testGetKYCThresholdsDefaultValues() public view {
         (uint256 tier0, uint256 tier1) = ProfileFacet(address(diamond)).getKYCThresholds();
-        assertEq(tier0, LibVaipakam.KYC_TIER0_THRESHOLD_USD);
-        assertEq(tier1, LibVaipakam.KYC_TIER1_THRESHOLD_USD);
+        assertEq(tier0, LibVaipakam.KYC_TIER0_THRESHOLD_NUMERAIRE);
+        assertEq(tier1, LibVaipakam.KYC_TIER1_THRESHOLD_NUMERAIRE);
     }
 
     // ─── Keeper Access ────────────────────────────────────────────────────────

@@ -7,6 +7,7 @@ import {IDiamondCut} from "@diamond-3/interfaces/IDiamondCut.sol";
 import {DiamondCutFacet} from "../src/facets/DiamondCutFacet.sol";
 import {AccessControlFacet} from "../src/facets/AccessControlFacet.sol";
 import {OfferFacet} from "../src/facets/OfferFacet.sol";
+import {OfferCancelFacet} from "../src/facets/OfferCancelFacet.sol";
 import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
 import {OracleFacet} from "../src/facets/OracleFacet.sol";
 import {VaipakamNFTFacet} from "../src/facets/VaipakamNFTFacet.sol";
@@ -166,26 +167,35 @@ contract PositiveFlowsGapFillers is Test {
         uint256 loanId = OfferFacet(address(diamond)).acceptOffer(offerId, true);
 
         uint256 expectedFee = (PRINCIPAL * LOAN_INITIATION_FEE_BPS) / BASIS_POINTS;
-        uint256 expectedBorrowerCredit = PRINCIPAL - expectedFee;
+        // Range Orders Phase 1 — 1% LIF matcher kickback. The acceptor
+        // (borrower in this test, since they call acceptOffer on a
+        // lender offer) is the matcher in the legacy single-value path,
+        // so msg.sender receives the 1% slice. Borrower's net credit:
+        // principal - 99% of LIF (treasury share). Treasury's net:
+        // 99% of LIF only.
+        uint256 expectedMatcherCut =
+            (expectedFee * LibVaipakam.LIF_MATCHER_FEE_BPS) / BASIS_POINTS;
+        uint256 expectedTreasuryCut = expectedFee - expectedMatcherCut;
+        uint256 expectedBorrowerCredit =
+            PRINCIPAL - expectedTreasuryCut; // includes their matcher kickback
 
-        // Borrower wallet credit is exactly principal minus fee.
+        // Borrower wallet credit is principal minus the treasury share
+        // (the matcher cut comes back to them as msg.sender).
         uint256 borrowerUsdcAfter = IERC20(mockUSDC).balanceOf(borrower);
         assertEq(
             borrowerUsdcAfter - borrowerUsdcBefore,
             expectedBorrowerCredit,
-            "borrower credit != principal - 0.1% fee"
+            "borrower credit != principal - 99% of LIF (1% kicks back to acceptor)"
         );
 
-        // Treasury (the diamond itself in this test) retains the fee
-        // portion of the principal the lender escrowed at offer-create.
-        // Net delta on the diamond: lender-escrowed principal in minus
-        // borrower-credit out; the remainder that stays is the fee.
+        // Treasury (the diamond itself in this test) retains only the
+        // 99% treasury share of LIF.
         uint256 treasuryBalAfter = IERC20(mockUSDC).balanceOf(address(diamond));
         uint256 netRetained = treasuryBalAfter - treasuryBalBefore;
         assertEq(
             netRetained,
-            expectedFee,
-            "treasury net-retained != exact 0.1% fee"
+            expectedTreasuryCut,
+            "treasury net-retained != 99% of LIF (1% kickback to matcher)"
         );
 
         // Loan record captures the full principal (pre-fee) as the
@@ -337,13 +347,17 @@ contract PositiveFlowsGapFillers is Test {
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
                 collateralQuantity: 0,
-                allowsPartialRepay: true
+                allowsPartialRepay: true,
+                amountMax: 0,
+                interestRateBpsMax: 0,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
             })
         );
     }
 
     function _cutCoreFacets() internal {
         OfferFacet offerFacet = new OfferFacet();
+        OfferCancelFacet offerCancelFacet = new OfferCancelFacet();
         ProfileFacet profileFacet = new ProfileFacet();
         OracleFacet oracleFacet = new OracleFacet();
         VaipakamNFTFacet nftFacet = new VaipakamNFTFacet();
@@ -357,7 +371,7 @@ contract PositiveFlowsGapFillers is Test {
         AddCollateralFacet addCollateralFacet = new AddCollateralFacet();
         AccessControlFacet accessControlFacet = new AccessControlFacet();
 
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](13);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](14);
         cuts[0] = IDiamondCut.FacetCut({
             facetAddress: address(offerFacet),
             action: IDiamondCut.FacetCutAction.Add,
@@ -423,6 +437,7 @@ contract PositiveFlowsGapFillers is Test {
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getAccessControlFacetSelectors()
         });
+        cuts[13] = IDiamondCut.FacetCut({facetAddress: address(offerCancelFacet), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getOfferCancelFacetSelectors()});
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");
     }
 

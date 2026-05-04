@@ -11,7 +11,7 @@ import { useWallet } from '../context/WalletContext';
 import { useDiamondContract, useDiamondRead, useDiamondPublicClient, useReadChain } from '../contracts/useDiamond';
 import { DIAMOND_ABI_VIEM as DIAMOND_ABI } from '../contracts/abis';
 import { L as Link } from '../components/L';
-import { BookOpen, PlusCircle, AlertTriangle, ShieldCheck, Droplet, ListOrdered } from 'lucide-react';
+import { BookOpen, PlusCircle, AlertTriangle, ShieldCheck, Droplet, ListOrdered, Wallet } from 'lucide-react';
 import { Picker } from '../components/Picker';
 import { ErrorAlert } from '../components/app/ErrorAlert';
 import { SanctionsBanner } from '../components/app/SanctionsBanner';
@@ -20,6 +20,8 @@ import { DEFAULT_CHAIN } from '../contracts/config';
 import { beginStep, emit } from '../lib/journeyLog';
 import { decodeContractError, extractRevertSelector } from '../lib/decodeContractError';
 import { useLogIndex } from '../hooks/useLogIndex';
+import { useIndexedActiveOffers } from '../hooks/useIndexedActiveOffers';
+import { indexedToRawOffer } from '../lib/indexerClient';
 import { useProtocolConfig, type ProtocolConfig } from '../hooks/useProtocolConfig';
 import { AssetSymbol } from '../components/app/AssetSymbol';
 import { AssetPicker } from '../components/app/AssetPicker';
@@ -30,6 +32,7 @@ import { batchCalls, encodeBatchCalls } from '../lib/multicall';
 import { AddressDisplay } from '../components/app/AddressDisplay';
 import { CardInfo } from '../components/CardInfo';
 import { InfoTip } from '../components/InfoTip';
+import { HoverTip } from '../components/HoverTip';
 import {
   matchesFilter as matchesFilterPure,
   rankLenderSide as rankLenderSidePure,
@@ -72,6 +75,11 @@ export interface OfferData {
    *  there's no acceptor-side override. Snapshotted to
    *  `Loan.allowsPartialRepay` at init and gates `RepayFacet.repayPartial`. */
   allowsPartialRepay: boolean;
+  /** T-034 — lender-set Periodic Interest Payment cadence
+   *  (0 = None ... 4 = Annual). Snapshotted onto the loan at acceptance.
+   *  Acceptors must explicitly acknowledge non-`None` cadences before
+   *  the accept button enables. */
+  periodicInterestCadence: number;
   // Phase 6: per-keeper per-offer enable flags live in
   // `s.offerKeeperEnabled[offerId][keeper]`. No single flag on the offer
   // struct. Per-offer keeper selection is surfaced on the offer card
@@ -144,6 +152,7 @@ export type RawOffer = {
   assetType: bigint | number;
   tokenId: bigint;
   allowsPartialRepay?: boolean;
+  periodicInterestCadence?: bigint | number;
 };
 
 export function toOfferData(r: RawOffer): OfferData {
@@ -163,6 +172,7 @@ export function toOfferData(r: RawOffer): OfferData {
     assetType: Number(r.assetType),
     tokenId: r.tokenId,
     allowsPartialRepay: r.allowsPartialRepay ?? false,
+    periodicInterestCadence: Number(r.periodicInterestCadence ?? 0),
   };
 }
 
@@ -177,6 +187,14 @@ export default function OfferBook() {
   // user's reads are actually hitting, instead of hard-coding DEFAULT_CHAIN.
   const activeReadChain = useReadChain();
   const { openOfferIds, closedOfferIds, recentAcceptedOfferIds, events: indexEvents, loading: indexLoading, reload: reloadIndex } = useLogIndex();
+  // T-041 Phase 1+2 — try the worker-cached active-offers list first.
+  // When `source === 'indexer'`, the OPEN view consumes the indexer's
+  // pre-fetched rows directly via the effect below, skipping the per-
+  // id `getOfferDetails` pagination. When `source === 'fallback'`
+  // (worker down / 5xx / VITE_HF_WATCHER_ORIGIN unset) the existing
+  // log-scan path runs unchanged. The Closed view always takes the
+  // on-chain path — closed-offer rendering isn't a Phase 1 priority.
+  const { offers: indexedOffers, source: indexedSource } = useIndexedActiveOffers();
   // Map<offerId, loanId> derived from `OfferAccepted` events in the
   // log-index. Each accepted offer's event carries its resulting loanId,
   // so we can render an inline `Loan #N →` link next to the Filled pill
@@ -350,15 +368,37 @@ export default function OfferBook() {
     }
   }, [sortedIds, fetchBatch]);
 
-  // Initial bounded fetch + refetch when the open set changes.
+  // T-041 Phase 1+2 — indexer-served path for the OPEN view. When the
+  // worker returned a fresh page, populate `offers` directly from the
+  // pre-fetched rows and skip the on-chain pagination effect below.
+  // Each indexer row is mapped through the same `toOfferData` mapper
+  // used for direct on-chain reads so downstream rendering is shape-
+  // identical regardless of source. Filters that drop a row from the
+  // RPC path (zero-creator from canceled offers; accepted-status
+  // mismatch) don't apply here because the indexer already filtered
+  // by `status = 'active'` server-side.
+  const indexerServingOpen =
+    statusView === 'open' && indexedSource === 'indexer' && indexedOffers !== null;
   useEffect(() => {
+    if (!indexerServingOpen) return;
+    const mapped = (indexedOffers ?? []).map((o) => toOfferData(indexedToRawOffer(o)));
+    setOffers(mapped);
+    setCursor(mapped.length);
+    for (const o of mapped) loadedIdsRef.current.add(o.id.toString());
+  }, [indexerServingOpen, indexedOffers]);
+
+  // Initial bounded fetch + refetch when the open set changes. Skipped
+  // when the indexer path above is serving — but still runs for the
+  // CLOSED view and for the OPEN view in fallback mode.
+  useEffect(() => {
+    if (indexerServingOpen) return;
     if (indexLoading) return;
     if (sortedIds.length === 0) {
       setOffers([]);
       return;
     }
     loadWindow(0, WINDOW_SIZE);
-  }, [indexLoading, sortedIds, loadWindow]);
+  }, [indexerServingOpen, indexLoading, sortedIds, loadWindow]);
 
   // Count-only validator: multicall `getOffer` across the given ID set and
   // apply the same filters as `fetchBatch` (skip zero-creator / accepted-
@@ -773,6 +813,26 @@ export default function OfferBook() {
     return 'Last matched in this market';
   }, [anchorRateBps]);
 
+  // Phase 4 polish — every page inside `<AppLayout>` now requires a
+  // connected wallet. OfferBook used to render the full table read-only
+  // pre-connect (since offer state is public on-chain), but the
+  // post-batch UX direction is "all in-app pages are wallet-gated; the
+  // public Analytics page is the read-only surface". This avoids two
+  // sources of truth for chain selection (read chain vs wallet chain)
+  // inside /app/* and matches the rest of the in-app empty-state
+  // pattern (Dashboard, ClaimCenter, etc.).
+  if (!address) {
+    return (
+      <div className="empty-state" style={{ minHeight: '60vh' }}>
+        <div className="empty-state-icon">
+          <Wallet size={28} />
+        </div>
+        <h3>{t('offerBookPage.connectTitle')}</h3>
+        <p>{t('offerBookPage.connectBody')}</p>
+      </div>
+    );
+  }
+
   return (
     <div>
       <div className="page-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: 12 }}>
@@ -1173,7 +1233,7 @@ function AcceptReviewModal({ offer, illiquid, consent, onConsentChange, submitti
           <dd style={{ margin: 0 }}>{OFFER_TYPE_LABELS[offer.offerType]} · {sideLabel}</dd>
 
           <dt style={{ opacity: 0.7 }}>Counterparty</dt>
-          <dd style={{ margin: 0 }}><AddressDisplay address={offer.creator} withTooltip /></dd>
+          <dd style={{ margin: 0 }}><AddressDisplay address={offer.creator} withTooltip copyable /></dd>
 
           <dt style={{ opacity: 0.7 }}>{isERC20 ? 'Principal' : 'Daily rental fee'}</dt>
           <dd style={{ margin: 0 }}>
@@ -1291,7 +1351,7 @@ function AcceptReviewModal({ offer, illiquid, consent, onConsentChange, submitti
               {discountPreview.willFire ? (
                 <>
                   <strong>Tier-{discountPreview.tier} VPFI path will apply (up to {tierDiscountPct(discountPreview.tier, protocolConfig)} rebate at proper close).</strong>{' '}
-                  Platform consent is enabled and your escrow holds the required{' '}
+                  Platform consent is enabled and your vault holds the required{' '}
                   <span className="mono">{Number(discountPreview.vpfiRequired) / 1e18}</span> VPFI.
                   You pay the full {formatBpsPct(protocolConfig?.loanInitiationFeeBps ?? 10)} LIF up front in VPFI; the discount is earned time-weighted
                   over the loan's lifetime and paid back as a VPFI rebate when you repay, preclose, or refinance properly. Default or
@@ -1304,25 +1364,25 @@ function AcceptReviewModal({ offer, illiquid, consent, onConsentChange, submitti
                   <Link to="/app" style={{ textDecoration: 'underline' }}>
                     Dashboard
                   </Link>{' '}
-                  to pay the {formatBpsPct(protocolConfig?.loanInitiationFeeBps ?? 10)} LIF up front in VPFI and earn a tier-based rebate (up to {protocolConfig ? protocolConfig.tierDiscountBps.map((b) => formatBpsPct(b)).join(' / ') : '10% / 15% / 20% / 24%'} by escrow balance held across the loan). Without consent this acceptance uses
+                  to pay the {formatBpsPct(protocolConfig?.loanInitiationFeeBps ?? 10)} LIF up front in VPFI and earn a tier-based rebate (up to {protocolConfig ? protocolConfig.tierDiscountBps.map((b) => formatBpsPct(b)).join(' / ') : '10% / 15% / 20% / 24%'} by vault balance held across the loan). Without consent this acceptance uses
                   the normal {formatBpsPct(protocolConfig?.loanInitiationFeeBps ?? 10)} lending-asset fee path (no rebate).
                 </>
               ) : !discountPreview.eligible ? (
                 <>
                   <strong>Borrower VPFI rebate unavailable.</strong>{' '}
-                  No oracle route, rate unset, or escrow balance below the tier-1 threshold — this acceptance uses the
+                  No oracle route, rate unset, or vault balance below the tier-1 threshold — this acceptance uses the
                   normal {formatBpsPct(protocolConfig?.loanInitiationFeeBps ?? 10)} lending-asset fee path (no rebate).
                 </>
               ) : (
                 <>
-                  <strong>Tier-{discountPreview.tier} VPFI path pending escrow balance.</strong>{' '}
-                  Consent is enabled but your escrow holds{' '}
+                  <strong>Tier-{discountPreview.tier} VPFI path pending vault balance.</strong>{' '}
+                  Consent is enabled but your vault holds{' '}
                   <span className="mono">{Number(discountPreview.escrowVpfi) / 1e18}</span> VPFI —
                   paying the {formatBpsPct(protocolConfig?.loanInitiationFeeBps ?? 10)} LIF up front in VPFI (up to {tierDiscountPct(discountPreview.tier, protocolConfig)} rebate at proper close) needs{' '}
                   <span className="mono">{Number(discountPreview.vpfiRequired) / 1e18}</span> VPFI.
                   Top up on{' '}
                   <a
-                    href="/buy-vpfi"
+                    href="/app/buy-vpfi"
                     target="_blank"
                     rel="noopener noreferrer"
                     style={{ textDecoration: 'underline' }}
@@ -1366,6 +1426,42 @@ function AcceptReviewModal({ offer, illiquid, consent, onConsentChange, submitti
           offer={offer}
           permit2Eligible={permit2Eligible}
         />
+
+        {/* T-034 — when the offer carries a Periodic Interest Payment
+            cadence other than None, surface a callout above the consent
+            checkbox so the acceptor reads the cadence + missed-payment
+            consequence before signing. The single consent below covers
+            BOTH the abnormal-market fallback AND this cadence — kept as
+            one checkbox per the project's "single mandatory risk
+            consent" policy. */}
+        {offer.periodicInterestCadence !== 0 && (
+          <div
+            style={{
+              border: '1px solid rgba(245,158,11,0.45)',
+              background: 'rgba(245,158,11,0.08)',
+              padding: '10px 14px',
+              borderRadius: 4,
+              fontSize: '0.9rem',
+              marginTop: 12,
+              lineHeight: 1.5,
+            }}
+            role="note"
+          >
+            <strong>
+              {t(
+                `periodicInterest.cadence.${
+                  ['none', 'monthly', 'quarterly', 'semiAnnual', 'annual'][
+                    offer.periodicInterestCadence
+                  ]
+                }`,
+              )}{' '}
+              {t('acceptOffer.periodicInterest.calloutPrefix')}
+            </strong>
+            <div style={{ marginTop: 4 }}>
+              {t('acceptOffer.periodicInterest.calloutBody')}
+            </div>
+          </div>
+        )}
 
         <label className="checkbox-row" style={{ marginTop: 8 }}>
           <input
@@ -1692,13 +1788,14 @@ export function OfferTable({ title, subtitle, offers, anchorRateBps, address, ac
                         // whitelisted keepers to enable for which offer.
                         <div style={{ display: 'flex', flexDirection: 'column', gap: 4, alignItems: 'flex-end' }}>
                           <span className="status-badge settled">{t('offerTable.yourOffer')}</span>
-                          <Link
-                            to="/app/keepers"
-                            data-tooltip="Enable specific keepers to drive this offer via the Keeper Settings page."
-                            style={{ fontSize: '0.72rem', padding: '3px 8px', color: 'var(--brand)' }}
-                          >
-                            {t('offerTable.manageKeepers')}
-                          </Link>
+                          <HoverTip text="Enable specific keepers to drive this offer via the Keeper Settings page.">
+                            <Link
+                              to="/app/keepers"
+                              style={{ fontSize: '0.72rem', padding: '3px 8px', color: 'var(--brand)' }}
+                            >
+                              {t('offerTable.manageKeepers')}
+                            </Link>
+                          </HoverTip>
                         </div>
                       ) : address ? (
                         <button

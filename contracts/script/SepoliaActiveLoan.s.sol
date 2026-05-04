@@ -153,7 +153,10 @@ contract SepoliaActiveLoan is Script {
             collateralAssetType: LibVaipakam.AssetType.ERC20,
             collateralTokenId: 0,
             collateralQuantity: 0,
-            allowsPartialRepay: false
+            allowsPartialRepay: false,
+            amountMax: 0,
+            interestRateBpsMax: 0,
+            periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
         });
     }
 }

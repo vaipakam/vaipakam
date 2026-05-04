@@ -73,7 +73,7 @@ contract SecondaryQuorumTest is Test {
         mockRegistry = makeAddr("registry");
         mockFeed = makeAddr("feed");
         mockWeth = makeAddr("weth");
-        mockEthUsdFeed = makeAddr("ethUsdFeed");
+        mockEthUsdFeed = makeAddr("ethNumeraireFeed");
         mockDenom = makeAddr("denom");
 
         mockTellor = makeAddr("tellor");
@@ -560,10 +560,11 @@ contract SecondaryQuorumTest is Test {
     // Configuration knobs.
 
     function testQuorumTighteningDeviationRejectsPriorAgreement() public {
-        // 1% off — agrees under default 5% tolerance, disagrees once
-        // tolerance is tightened to 50bps (0.5%).
+        // 2% off — agrees under default 5% tolerance, disagrees once
+        // tolerance is tightened to 100bps (1%, the new T-033 audit
+        // floor for `secondaryOracleMaxDeviationBps`).
         _enableTellor();
-        bytes memory raw = abi.encode((SECONDARY_AGREE_18DEC * 101) / 100);
+        bytes memory raw = abi.encode((SECONDARY_AGREE_18DEC * 102) / 100);
         vm.mockCall(
             mockTellor,
             abi.encodeWithSignature("getDataBefore(bytes32,uint256)"),
@@ -574,8 +575,8 @@ contract SecondaryQuorumTest is Test {
         (uint256 price, ) = _readPrice();
         assertEq(price, CHAINLINK_PRICE_8DEC);
 
-        // Tighten to 50bps — same data now disagrees.
-        OracleAdminFacet(address(diamond)).setSecondaryOracleMaxDeviationBps(50);
+        // Tighten to 100bps (1%) — same 2%-off data now disagrees.
+        OracleAdminFacet(address(diamond)).setSecondaryOracleMaxDeviationBps(100);
         vm.expectRevert(OracleFacet.OraclePriceDivergence.selector);
         OracleFacet(address(diamond)).getAssetPrice(mockAsset);
     }

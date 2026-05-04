@@ -248,7 +248,10 @@ contract ClaimFacetTest is Test {
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
                 collateralQuantity: 0,
-                allowsPartialRepay: false
+                allowsPartialRepay: false,
+                amountMax: 0,
+                interestRateBpsMax: 0,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
             })
         );
         vm.prank(borrower);
@@ -591,11 +594,7 @@ contract ClaimFacetTest is Test {
 
         // Zero out lenderClaims[loanId].amount via vm.store
         // lenderClaims is at BASE+22
-        bytes32 baseSlot = LibVaipakam.VANGKI_STORAGE_POSITION;
-        uint256 lenderClaimsSlot = uint256(baseSlot) + 21;
-        bytes32 claimSlot = keccak256(abi.encode(loanId, lenderClaimsSlot));
-        // ClaimInfo layout: asset(+0), amount(+1), ...
-        vm.store(address(diamond), bytes32(uint256(claimSlot) + 1), bytes32(uint256(0))); // amount = 0
+        TestMutatorFacet(address(diamond)).setLenderClaimAmountRaw(loanId, 0);
 
         vm.prank(lender);
         vm.expectRevert(ClaimFacet.NothingToClaim.selector);
@@ -608,14 +607,16 @@ contract ClaimFacetTest is Test {
         _repayLoan(loanId);
 
         // Set heldForLender[loanId] > 0 via vm.store
-        bytes32 baseSlot = LibVaipakam.VANGKI_STORAGE_POSITION;
-        uint256 heldSlot = uint256(baseSlot) + 24; // heldForLender mapping
-        bytes32 heldKey = keccak256(abi.encode(loanId, heldSlot));
-        vm.store(address(diamond), heldKey, bytes32(uint256(50 ether)));
+        TestMutatorFacet(address(diamond)).setHeldForLenderRaw(loanId, 50 ether);
 
-        // Mint enough to lender's escrow for the held amount
+        // Mint enough to lender's escrow for the held amount.
+        // T-051 — back the direct mint with a counter record so the
+        // subsequent claim's escrowWithdrawERC20 doesn't underflow
+        // protocolTrackedEscrowBalance.
         address lenderEscrow = EscrowFactoryFacet(address(diamond)).getOrCreateUserEscrow(lender);
         ERC20Mock(mockERC20).mint(lenderEscrow, 50 ether);
+        vm.prank(address(diamond));
+        EscrowFactoryFacet(address(diamond)).recordEscrowDepositERC20(lender, mockERC20, 50 ether);
 
         vm.prank(lender);
         ClaimFacet(address(diamond)).claimAsLender(loanId);
@@ -630,18 +631,13 @@ contract ClaimFacetTest is Test {
         _repayLoan(loanId);
 
         // Set heldForLender > 0
-        bytes32 baseSlot = LibVaipakam.VANGKI_STORAGE_POSITION;
-        uint256 heldSlot = uint256(baseSlot) + 24;
-        bytes32 heldKey = keccak256(abi.encode(loanId, heldSlot));
-        vm.store(address(diamond), heldKey, bytes32(uint256(50 ether)));
+        TestMutatorFacet(address(diamond)).setHeldForLenderRaw(loanId, 50 ether);
 
         // Mock first escrow withdraw to succeed (claim.amount), second to fail (held)
         // Since we can't easily differentiate, mock all escrow withdrawals to fail after
         // the first claim transfer. Use a different approach: set claim.amount = 0 so
         // only held path is taken, then mock it to fail.
-        uint256 lenderClaimsSlot = uint256(baseSlot) + 21;
-        bytes32 claimSlot = keccak256(abi.encode(loanId, lenderClaimsSlot));
-        vm.store(address(diamond), bytes32(uint256(claimSlot) + 1), bytes32(uint256(0))); // amount = 0
+        TestMutatorFacet(address(diamond)).setLenderClaimAmountRaw(loanId, 0);
 
         vm.mockCallRevert(
             address(diamond),
@@ -661,17 +657,15 @@ contract ClaimFacetTest is Test {
         _repayLoan(loanId);
 
         // Set claim.amount = 0 but heldForLender > 0
-        bytes32 baseSlot = LibVaipakam.VANGKI_STORAGE_POSITION;
-        uint256 lenderClaimsSlot = uint256(baseSlot) + 21;
-        bytes32 claimSlot = keccak256(abi.encode(loanId, uint256(lenderClaimsSlot)));
-        vm.store(address(diamond), bytes32(uint256(claimSlot) + 1), bytes32(uint256(0)));
+        TestMutatorFacet(address(diamond)).setLenderClaimAmountRaw(loanId, 0);
 
-        uint256 heldSlot = uint256(baseSlot) + 24;
-        bytes32 heldKey = keccak256(abi.encode(loanId, heldSlot));
-        vm.store(address(diamond), heldKey, bytes32(uint256(50 ether)));
+        TestMutatorFacet(address(diamond)).setHeldForLenderRaw(loanId, 50 ether);
 
+        // T-051 — pair the direct mint with a counter record.
         address lenderEscrow = EscrowFactoryFacet(address(diamond)).getOrCreateUserEscrow(lender);
         ERC20Mock(mockERC20).mint(lenderEscrow, 50 ether);
+        vm.prank(address(diamond));
+        EscrowFactoryFacet(address(diamond)).recordEscrowDepositERC20(lender, mockERC20, 50 ether);
 
         vm.prank(lender);
         ClaimFacet(address(diamond)).claimAsLender(loanId);
@@ -755,12 +749,7 @@ contract ClaimFacetTest is Test {
         _repayLoan(loanId);
 
         // Override lenderClaims[loanId].assetType to ERC721 (=1) via vm.store
-        bytes32 baseSlot = LibVaipakam.VANGKI_STORAGE_POSITION;
-        uint256 lenderClaimsSlot = uint256(baseSlot) + 21;
-        bytes32 claimSlot = keccak256(abi.encode(loanId, lenderClaimsSlot));
-        // ClaimInfo layout: asset(+0), amount(+1), assetType(+2), tokenId(+3), quantity(+4), claimed(+5)
-        vm.store(address(diamond), bytes32(uint256(claimSlot) + 2), bytes32(uint256(1))); // ERC721
-        vm.store(address(diamond), bytes32(uint256(claimSlot) + 3), bytes32(uint256(42))); // tokenId=42
+        TestMutatorFacet(address(diamond)).setLenderClaimNFTFieldsRaw(loanId, LibVaipakam.AssetType.ERC721, 42, 0);
 
         // Mock escrowWithdrawERC721 to succeed (for the ERC721 claim transfer)
         vm.mockCall(address(diamond), abi.encodeWithSelector(EscrowFactoryFacet.escrowWithdrawERC721.selector), abi.encode(true));
@@ -778,12 +767,7 @@ contract ClaimFacetTest is Test {
         uint256 loanId = _createAndAcceptERC20Loan(1000 ether, 1500 ether, 30);
         _repayLoan(loanId);
 
-        bytes32 baseSlot = LibVaipakam.VANGKI_STORAGE_POSITION;
-        uint256 lenderClaimsSlot = uint256(baseSlot) + 21;
-        bytes32 claimSlot = keccak256(abi.encode(loanId, lenderClaimsSlot));
-        vm.store(address(diamond), bytes32(uint256(claimSlot) + 2), bytes32(uint256(2))); // ERC1155
-        vm.store(address(diamond), bytes32(uint256(claimSlot) + 3), bytes32(uint256(42))); // tokenId=42
-        vm.store(address(diamond), bytes32(uint256(claimSlot) + 4), bytes32(uint256(10))); // quantity=10
+        TestMutatorFacet(address(diamond)).setLenderClaimNFTFieldsRaw(loanId, LibVaipakam.AssetType.ERC1155, 42, 10);
 
         vm.mockCall(address(diamond), abi.encodeWithSelector(EscrowFactoryFacet.escrowWithdrawERC1155.selector), abi.encode(true));
 
@@ -800,11 +784,7 @@ contract ClaimFacetTest is Test {
         uint256 loanId = _createAndAcceptERC20Loan(1000 ether, 1500 ether, 30);
         _repayLoan(loanId);
 
-        bytes32 baseSlot = LibVaipakam.VANGKI_STORAGE_POSITION;
-        uint256 borrowerClaimsSlot = uint256(baseSlot) + 22;
-        bytes32 claimSlot = keccak256(abi.encode(loanId, borrowerClaimsSlot));
-        vm.store(address(diamond), bytes32(uint256(claimSlot) + 2), bytes32(uint256(1))); // ERC721
-        vm.store(address(diamond), bytes32(uint256(claimSlot) + 3), bytes32(uint256(42))); // tokenId=42
+        TestMutatorFacet(address(diamond)).setBorrowerClaimNFTFieldsRaw(loanId, LibVaipakam.AssetType.ERC721, 42, 0);
 
         vm.mockCall(address(diamond), abi.encodeWithSelector(EscrowFactoryFacet.escrowWithdrawERC721.selector), abi.encode(true));
 
@@ -821,12 +801,7 @@ contract ClaimFacetTest is Test {
         uint256 loanId = _createAndAcceptERC20Loan(1000 ether, 1500 ether, 30);
         _repayLoan(loanId);
 
-        bytes32 baseSlot = LibVaipakam.VANGKI_STORAGE_POSITION;
-        uint256 borrowerClaimsSlot = uint256(baseSlot) + 22;
-        bytes32 claimSlot = keccak256(abi.encode(loanId, borrowerClaimsSlot));
-        vm.store(address(diamond), bytes32(uint256(claimSlot) + 2), bytes32(uint256(2))); // ERC1155
-        vm.store(address(diamond), bytes32(uint256(claimSlot) + 3), bytes32(uint256(42))); // tokenId=42
-        vm.store(address(diamond), bytes32(uint256(claimSlot) + 4), bytes32(uint256(10))); // quantity=10
+        TestMutatorFacet(address(diamond)).setBorrowerClaimNFTFieldsRaw(loanId, LibVaipakam.AssetType.ERC1155, 42, 10);
 
         vm.mockCall(address(diamond), abi.encodeWithSelector(EscrowFactoryFacet.escrowWithdrawERC1155.selector), abi.encode(true));
 
@@ -843,11 +818,7 @@ contract ClaimFacetTest is Test {
         uint256 loanId = _createAndAcceptERC20Loan(1000 ether, 1500 ether, 30);
         _repayLoan(loanId);
 
-        bytes32 baseSlot = LibVaipakam.VANGKI_STORAGE_POSITION;
-        uint256 lenderClaimsSlot = uint256(baseSlot) + 21;
-        bytes32 claimSlot = keccak256(abi.encode(loanId, lenderClaimsSlot));
-        vm.store(address(diamond), bytes32(uint256(claimSlot) + 2), bytes32(uint256(1))); // ERC721
-        vm.store(address(diamond), bytes32(uint256(claimSlot) + 3), bytes32(uint256(42))); // tokenId=42
+        TestMutatorFacet(address(diamond)).setLenderClaimNFTFieldsRaw(loanId, LibVaipakam.AssetType.ERC721, 42, 0);
 
         vm.mockCallRevert(address(diamond), abi.encodeWithSelector(EscrowFactoryFacet.escrowWithdrawERC721.selector), "nft fail");
 
@@ -862,12 +833,7 @@ contract ClaimFacetTest is Test {
         uint256 loanId = _createAndAcceptERC20Loan(1000 ether, 1500 ether, 30);
         _repayLoan(loanId);
 
-        bytes32 baseSlot = LibVaipakam.VANGKI_STORAGE_POSITION;
-        uint256 borrowerClaimsSlot = uint256(baseSlot) + 22;
-        bytes32 claimSlot = keccak256(abi.encode(loanId, borrowerClaimsSlot));
-        vm.store(address(diamond), bytes32(uint256(claimSlot) + 2), bytes32(uint256(2))); // ERC1155
-        vm.store(address(diamond), bytes32(uint256(claimSlot) + 3), bytes32(uint256(42))); // tokenId=42
-        vm.store(address(diamond), bytes32(uint256(claimSlot) + 4), bytes32(uint256(10))); // quantity=10
+        TestMutatorFacet(address(diamond)).setBorrowerClaimNFTFieldsRaw(loanId, LibVaipakam.AssetType.ERC1155, 42, 10);
 
         vm.mockCallRevert(address(diamond), abi.encodeWithSelector(EscrowFactoryFacet.escrowWithdrawERC1155.selector), "nft fail");
 
@@ -883,12 +849,15 @@ contract ClaimFacetTest is Test {
         _repayLoan(loanId);
 
         // Set borrowerClaims[loanId]: amount=0, assetType=ERC20(0), claimed=false
-        bytes32 baseSlot = LibVaipakam.VANGKI_STORAGE_POSITION;
-        uint256 borrowerClaimsSlot = uint256(baseSlot) + 22;
-        bytes32 claimSlot = keccak256(abi.encode(loanId, borrowerClaimsSlot));
-        vm.store(address(diamond), bytes32(uint256(claimSlot) + 1), bytes32(uint256(0))); // amount=0
-        vm.store(address(diamond), bytes32(uint256(claimSlot) + 2), bytes32(uint256(0))); // assetType=ERC20
-        vm.store(address(diamond), bytes32(uint256(claimSlot) + 5), bytes32(uint256(0))); // claimed=false
+        TestMutatorFacet(address(diamond)).setBorrowerClaimAmountRaw(loanId, 0);
+        TestMutatorFacet(address(diamond)).setBorrowerClaimNFTFieldsRaw(
+            loanId,
+            LibVaipakam.AssetType.ERC20,
+            0,
+            0
+        );
+        // The `claimed` field defaults to false on a fresh ClaimInfo;
+        // _repayLoan never marks claimed=true, so no setter needed.
 
         // Lender claims; borrower has nothing to claim (amount=0, ERC20) → loan settles
         vm.prank(lender);
@@ -908,11 +877,7 @@ contract ClaimFacetTest is Test {
 
         // Manually zero out lenderClaims[loanId].amount via vm.store
         // lenderClaims is at BASE+22 (mapping), slot = keccak256(abi.encode(loanId, BASE+22))
-        bytes32 baseSlot = LibVaipakam.VANGKI_STORAGE_POSITION;
-        uint256 lenderClaimsSlot = uint256(baseSlot) + 21;
-        bytes32 claimSlot = keccak256(abi.encode(loanId, lenderClaimsSlot));
-        // ClaimInfo layout: asset(+0), amount(+1), assetType(+2), tokenId(+3), quantity(+4), claimed(+5)
-        vm.store(address(diamond), bytes32(uint256(claimSlot) + 1), bytes32(uint256(0))); // amount = 0
+        TestMutatorFacet(address(diamond)).setLenderClaimAmountRaw(loanId, 0);
 
         vm.prank(borrower);
         vm.expectEmit(true, false, false, false);
@@ -932,15 +897,17 @@ contract ClaimFacetTest is Test {
         uint256 loanId = _createAndAcceptERC20Loan(1000 ether, 1500 ether, 30);
         _repayLoan(loanId);
 
-        // Override lenderClaims[loanId].assetType to ERC1155 (=2) via vm.store
-        bytes32 baseSlot = LibVaipakam.VANGKI_STORAGE_POSITION;
-        uint256 lenderClaimsSlot = uint256(baseSlot) + 21;
-        bytes32 claimSlot = keccak256(abi.encode(loanId, lenderClaimsSlot));
-        // ClaimInfo layout: asset(+0), amount(+1), assetType(+2), tokenId(+3), quantity(+4), claimed(+5)
-        vm.store(address(diamond), bytes32(uint256(claimSlot) + 1), bytes32(uint256(0))); // amount = 0 (skip ERC20 path)
-        vm.store(address(diamond), bytes32(uint256(claimSlot) + 2), bytes32(uint256(2))); // ERC1155
-        vm.store(address(diamond), bytes32(uint256(claimSlot) + 3), bytes32(uint256(42))); // tokenId=42
-        vm.store(address(diamond), bytes32(uint256(claimSlot) + 4), bytes32(uint256(10))); // quantity=10
+        // Override lenderClaims[loanId] to a non-zero ERC1155 NFT claim
+        // (assetType=2, tokenId=42, quantity=10), keeping amount = 0
+        // so the path under test is the NFT-claim transfer, not the
+        // ERC20 amount transfer.
+        TestMutatorFacet(address(diamond)).setLenderClaimAmountRaw(loanId, 0);
+        TestMutatorFacet(address(diamond)).setLenderClaimNFTFieldsRaw(
+            loanId,
+            LibVaipakam.AssetType.ERC1155,
+            42,
+            10
+        );
 
         // Mock escrowWithdrawERC1155 to fail
         vm.mockCallRevert(address(diamond), abi.encodeWithSelector(EscrowFactoryFacet.escrowWithdrawERC1155.selector), "nft fail");
@@ -957,11 +924,7 @@ contract ClaimFacetTest is Test {
         _repayLoan(loanId);
 
         // Override borrowerClaims[loanId].assetType to ERC721 (=1) via vm.store
-        bytes32 baseSlot = LibVaipakam.VANGKI_STORAGE_POSITION;
-        uint256 borrowerClaimsSlot = uint256(baseSlot) + 22;
-        bytes32 claimSlot = keccak256(abi.encode(loanId, borrowerClaimsSlot));
-        vm.store(address(diamond), bytes32(uint256(claimSlot) + 2), bytes32(uint256(1))); // ERC721
-        vm.store(address(diamond), bytes32(uint256(claimSlot) + 3), bytes32(uint256(42))); // tokenId=42
+        TestMutatorFacet(address(diamond)).setBorrowerClaimNFTFieldsRaw(loanId, LibVaipakam.AssetType.ERC721, 42, 0);
 
         // Mock escrowWithdrawERC721 to fail
         vm.mockCallRevert(address(diamond), abi.encodeWithSelector(EscrowFactoryFacet.escrowWithdrawERC721.selector), "nft fail");
@@ -979,10 +942,7 @@ contract ClaimFacetTest is Test {
         _repayLoan(loanId);
 
         // Set heldForLender[loanId] > 0 so lender still has something to claim
-        bytes32 baseSlot = LibVaipakam.VANGKI_STORAGE_POSITION;
-        uint256 heldSlot = uint256(baseSlot) + 24; // heldForLender mapping
-        bytes32 heldKey = keccak256(abi.encode(loanId, heldSlot));
-        vm.store(address(diamond), heldKey, bytes32(uint256(50 ether)));
+        TestMutatorFacet(address(diamond)).setHeldForLenderRaw(loanId, 50 ether);
 
         // Borrower claims first
         vm.prank(borrower);
@@ -1000,11 +960,13 @@ contract ClaimFacetTest is Test {
         _repayLoan(loanId);
 
         // Set lenderClaims[loanId].assetType to ERC721 (=1), but amount=0 and not claimed
-        bytes32 baseSlot = LibVaipakam.VANGKI_STORAGE_POSITION;
-        uint256 lenderClaimsSlot = uint256(baseSlot) + 21;
-        bytes32 claimSlot = keccak256(abi.encode(loanId, lenderClaimsSlot));
-        vm.store(address(diamond), bytes32(uint256(claimSlot) + 1), bytes32(uint256(0))); // amount = 0
-        vm.store(address(diamond), bytes32(uint256(claimSlot) + 2), bytes32(uint256(1))); // assetType = ERC721
+        TestMutatorFacet(address(diamond)).setLenderClaimAmountRaw(loanId, 0);
+        TestMutatorFacet(address(diamond)).setLenderClaimNFTFieldsRaw(
+            loanId,
+            LibVaipakam.AssetType.ERC721,
+            0,
+            0
+        );
 
         // Borrower claims first
         vm.prank(borrower);

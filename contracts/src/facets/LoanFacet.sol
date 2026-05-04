@@ -8,6 +8,8 @@ import {LibMetricsHooks} from "../libraries/LibMetricsHooks.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
 import {LibInteractionRewards} from "../libraries/LibInteractionRewards.sol";
 import {LibVPFIDiscount} from "../libraries/LibVPFIDiscount.sol";
+import {LibNotificationFee} from "../libraries/LibNotificationFee.sol";
+import {LibAccessControl, DiamondAccessControl} from "../libraries/LibAccessControl.sol";
 import {DiamondPausable} from "../libraries/LibPausable.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {RiskFacet} from "./RiskFacet.sol";
@@ -43,7 +45,7 @@ import {OracleFacet} from "./OracleFacet.sol";
  *           and mint the counterparty's NFT.
  *      Pausable (whenNotPaused).
  */
-contract LoanFacet is DiamondPausable, IVaipakamErrors {
+contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
     /// @notice Emitted when a new loan is initiated.
     /// @param loanId           The unique ID of the loan.
     /// @param offerId          The associated offer ID.
@@ -466,11 +468,33 @@ contract LoanFacet is DiamondPausable, IVaipakamErrors {
     ) private {
         loan.id = loanId;
         loan.offerId = offerId;
-        loan.startTime = block.timestamp;
+        // T-034 — startTime downsized from uint256 to uint64; explicit cast.
+        // Safe through year 2554; every reader implicitly widens.
+        loan.startTime = uint64(block.timestamp);
         loan.durationDays = offer.durationDays;
-        loan.interestRateBps = offer.interestRateBps;
-        loan.principal = offer.amount;
-        loan.collateralAmount = offer.collateralAmount;
+        // Range Orders Phase 1 — when matchOffers (PR3-B) is in flight,
+        // the per-tx `matchOverride` slot carries the midpoint match
+        // terms (amount / rate / collateral) and the matcher address.
+        // Read from override; fall back to offer fields on the legacy
+        // single-value path that doesn't set the override. matcher
+        // also stamped here when active so the VPFI-path 1% LIF
+        // kickback (deferred to terminal in
+        // `LibVPFIDiscount.settleBorrowerLifProper` / `forfeitBorrowerLif`)
+        // knows where to route on a matched-via-bot loan.
+        LibVaipakam.MatchOverride storage mo =
+            LibVaipakam.storageSlot().matchOverride;
+        if (mo.active) {
+            loan.principal = mo.amount;
+            loan.interestRateBps = mo.rateBps;
+            loan.collateralAmount = mo.collateralAmount;
+            loan.matcher = mo.matcher;
+        } else {
+            loan.interestRateBps = offer.interestRateBps;
+            loan.principal = offer.amount;
+            loan.collateralAmount = offer.collateralAmount;
+            // matcher stamped by the legacy `_acceptOffer` post-init
+            // hook (already in PR3-A).
+        }
     }
 
     function _copyAssetFields(
@@ -516,6 +540,20 @@ contract LoanFacet is DiamondPausable, IVaipakamErrors {
         // authorisation; default false reverts the call with
         // {PartialRepayNotAllowed}.
         loan.allowsPartialRepay = offer.allowsPartialRepay;
+        // T-034 — snapshot the lender's chosen Periodic Interest Payment
+        // cadence onto the loan. Offer-level validation in
+        // `OfferFacet._validatePeriodicCadence` already gated illegal
+        // values (Filters 0/1/2 + master kill-switch); we inherit
+        // verbatim so the loan's terms are immutable for its lifetime.
+        // `lastPeriodicInterestSettledAt` initialised to the loan's
+        // start time so the first checkpoint lands exactly
+        // `intervalDays(cadence)` later.
+        loan.periodicInterestCadence = offer.periodicInterestCadence;
+        loan.lastPeriodicInterestSettledAt = uint64(block.timestamp);
+        // `interestPaidSinceLastPeriod` defaults to zero — Solidity
+        // zero-initialises the field at struct-write time. Spelled out
+        // here as a readable invariant.
+        loan.interestPaidSinceLastPeriod = 0;
         // Snapshot the effective fallback-path split right now so any future
         // governance change via `ConfigFacet.setFallbackSplit` applies
         // prospectively — dual-consent at offer creation guarantees both
@@ -564,6 +602,54 @@ contract LoanFacet is DiamondPausable, IVaipakamErrors {
     ) external view returns (LibVaipakam.Loan memory loan) {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         return s.loans[loanId];
+    }
+
+    /**
+     * @notice T-032 — record the FIRST PaidPush-tier notification for a
+     *         loan-side and immediately bill the corresponding party
+     *         `cfgNotificationFee()`-equivalent in VPFI from their
+     *         escrow → treasury (one transfer, no Diamond custody).
+     * @dev    Idempotent: subsequent calls on an already-billed side
+     *         no-op. Reverts on:
+     *           - caller missing `NOTIF_BILLER_ROLE`
+     *           - loanId past `nextLoanId` or never-initialized
+     *             (InvalidLoanStatus)
+     *           - oracle stale / WETH unset / VPFI not configured
+     *           - payer's escrow has insufficient VPFI (the watcher's
+     *             expected behaviour is to LOG this revert and skip
+     *             the notification — the user's billed flag stays
+     *             false until they top up VPFI)
+     *
+     *         The watcher fires this at notification-send time
+     *         **only on PaidPush tier** subscribers — FreeTelegram
+     *         subscribers are notified for free and never trigger
+     *         this call. The on-chain billed flag is the source of
+     *         truth that "this loan-side has paid for the notification
+     *         service this lifetime."
+     *
+     * @param  loanId        Loan being billed.
+     * @param  isLenderSide  true ⇒ bill `loan.lender`; false ⇒ bill
+     *                       `loan.borrower`.
+     */
+    function markNotifBilled(uint256 loanId, bool isLenderSide)
+        external
+        whenNotPaused
+        onlyRole(LibAccessControl.NOTIF_BILLER_ROLE)
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        // Loan-existence guard. `nextLoanId` is the highest id ever
+        // assigned (pre-increment in `_initiateLoanFinalize` line 158);
+        // valid range is [1, nextLoanId] inclusive. Loans are never
+        // deleted from `s.loans`, so an in-range id always resolves to
+        // a real Loan record. Out-of-range or never-initialized ids
+        // return a zeroed Loan struct (lender == address(0)) — that's
+        // the case we reject here.
+        if (loanId == 0 || loanId > s.nextLoanId) {
+            revert InvalidLoanStatus();
+        }
+        LibVaipakam.Loan storage loan = s.loans[loanId];
+        address payer = isLenderSide ? loan.lender : loan.borrower;
+        LibNotificationFee.bill(loanId, isLenderSide, payer);
     }
 
     /**

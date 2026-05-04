@@ -344,9 +344,50 @@ contract AdminFacet is DiamondAccessControl, IVaipakamErrors {
     }
 
     /// @notice Returns whether the protocol is currently paused.
-    /// @return True iff a {pause} call is currently in effect.
+    /// @return True iff a {pause} call is currently in effect, OR an
+    ///         auto-pause window is still active.
     function paused() external view returns (bool) {
         return LibPausable.paused();
+    }
+
+    /// @notice Auto-pause primitive used by the off-chain anomaly
+    ///         watcher (Phase 1 follow-up). Freezes the protocol for
+    ///         `LibVaipakam.cfgAutoPauseDurationSeconds()` while
+    ///         humans investigate. Time-bounded; auto-clears at
+    ///         `block.timestamp + duration` without a manual
+    ///         unpause tx. Admin can still short-circuit via
+    ///         {unpause}.
+    /// @dev WATCHER_ROLE-only — write-only-pause; admin's PAUSER_ROLE
+    ///      retains the unpause lever, so the worst case for a
+    ///      compromised watcher is a max-window freeze (capped at
+    ///      `MAX_AUTO_PAUSE_SECONDS = 7200`, 2 hours), not
+    ///      indefinite lockup.
+    ///
+    ///      No-op when the protocol is already paused (manual or
+    ///      active auto-pause). This prevents a compromised watcher
+    ///      from chaining repeated calls into an indefinite freeze:
+    ///      the most it can do is set the window once, after which
+    ///      the window auto-clears and any extension would be a
+    ///      separate event the human team can correlate with the
+    ///      attack.
+    /// @param reason Free-form string for indexers + alerting; surfaces
+    ///               in the `LibPausable.AutoPaused` event so on-call
+    ///               can see what triggered.
+    function autoPause(string calldata reason)
+        external
+        onlyRole(LibAccessControl.WATCHER_ROLE)
+    {
+        LibPausable.autoPause(
+            LibVaipakam.cfgAutoPauseDurationSeconds(),
+            reason
+        );
+    }
+
+    /// @notice Block-timestamp at which an active auto-pause window
+    ///         expires. Zero when no auto-pause is currently active.
+    ///         Frontends use this to render a countdown.
+    function pausedUntil() external view returns (uint256) {
+        return LibPausable.pausedUntil();
     }
 
     // ─── Per-Asset Pause (governance-controlled reserve pause) ─────────────

@@ -22,14 +22,18 @@ import {
   AlertTriangle,
   Menu,
   X,
-  ArrowLeft,
   ChevronsLeft,
   ChevronsRight,
   Bell,
   ShieldOff,
   Settings,
   ExternalLink,
+  Lock,
+  Sliders,
+  Vault,
 } from "lucide-react";
+import { useIsProtocolAdmin } from "../lib/useIsProtocolAdmin";
+import { IndexerStatusBadge } from "../components/app/IndexerStatusBadge";
 import { useEffect, useRef, useState } from "react";
 
 const SIDEBAR_COLLAPSED_KEY = "vaipakam:sidebar-collapsed";
@@ -84,11 +88,10 @@ const BASIC_NAV = [
     end: false,
   },
   {
-    to: "/buy-vpfi",
+    to: "/app/buy-vpfi",
     icon: <Coins size={20} />,
     labelKey: "appNav.buyVpfi",
     end: false,
-    external: true,
   },
   {
     to: "/app/activity",
@@ -108,6 +111,18 @@ const BASIC_NAV = [
     labelKey: "appNav.allowances",
     end: false,
   },
+  {
+    to: "/app/escrow",
+    icon: <Vault size={20} />,
+    labelKey: "appNav.escrow",
+    end: false,
+  },
+  {
+    to: "/app/data-rights",
+    icon: <Lock size={20} />,
+    labelKey: "appNav.dataRights",
+    end: false,
+  },
 ];
 
 const ADVANCED_NAV = [
@@ -124,15 +139,24 @@ export default function AppLayout() {
   const activeLocale: SupportedLocale = isSupportedLocale(i18n.resolvedLanguage)
     ? i18n.resolvedLanguage
     : "en";
-  // Locale-aware home URL — `/` for English, `/<locale>` otherwise.
-  // Used by the sidebar brand link so clicking the logo from inside
-  // the app on /es/app/dashboard goes to /es (Spanish landing page)
-  // not / (English landing page).
-  const homePath = withLocalePrefix("/", activeLocale);
+  // Locale-aware in-app dashboard URL. Clicking the logo from anywhere
+  // inside the app routes to the dashboard root (locale-prefixed when
+  // not English) — staying inside the app shell rather than dropping
+  // back out to the marketing landing page, which surprised users
+  // returning to the dashboard from a deep route like
+  // /app/loans/:id.
+  const homePath = withLocalePrefix("/app", activeLocale);
   const { theme, toggleTheme } = useTheme();
   const { mode, setMode } = useMode();
   const { address, isCorrectChain, switchToDefaultChain, error, warning } =
     useWallet();
+  // T-042 — when the connected wallet holds ADMIN_ROLE on the
+  // diamond, surface a "Protocol Console" entry near the bottom
+  // of the sidebar. Auth-by-on-chain-role rather than mode-gated:
+  // a signer doing on-call work shouldn't have to flip Advanced
+  // mode to find the cockpit, and a power-user without role
+  // shouldn't see the link at all.
+  const isAdminWallet = useIsProtocolAdmin();
   const navigate = useNavigate();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] =
@@ -322,19 +346,25 @@ export default function AppLayout() {
               ))}
             </>
           )}
-        </nav>
 
-        <div className="sidebar-footer">
-          <button
-            className="sidebar-link"
-            onClick={() => {
-              navigate("/");
-            }}
-          >
-            <ArrowLeft size={20} />
-            <span>{t("appNav.backToHome")}</span>
-          </button>
-        </div>
+          {isAdminWallet && (
+            <>
+              <div className="sidebar-group-label">
+                {t("appNav.governanceGroupLabel", "Governance")}
+              </div>
+              <NavLink
+                to={withLocalePrefix("/app/protocol-console", activeLocale)}
+                className={({ isActive }) =>
+                  `sidebar-link sidebar-link-nested ${isActive ? "active" : ""}`
+                }
+                onClick={() => setSidebarOpen(false)}
+              >
+                <Sliders size={20} />
+                <span>{t("appNav.protocolConsole", "Protocol Console")}</span>
+              </NavLink>
+            </>
+          )}
+        </nav>
       </aside>
 
       {/* Overlay for mobile */}
@@ -349,21 +379,43 @@ export default function AppLayout() {
       <div className="app-main">
         {/* Top bar */}
         <header className="app-topbar">
-          <button
-            className="topbar-menu-btn"
-            onClick={() => setSidebarOpen(true)}
-          >
-            <Menu size={22} />
-          </button>
+          {/* Inner wrapper centers the topbar's controls inside the
+           *  same 1200px column the content area uses, so on wide
+           *  screens the Connect Wallet button anchors to the right
+           *  edge of the visible content (where the user's eye lands)
+           *  instead of the far right edge of the viewport. The outer
+           *  `.app-topbar` stays full-width so its border-bottom spans
+           *  the whole screen. */}
+          <div className="app-topbar-inner">
+            <button
+              className="topbar-menu-btn"
+              onClick={() => setSidebarOpen(true)}
+            >
+              <Menu size={22} />
+            </button>
 
-          <div className="topbar-right">
-            {/* When disconnected or on an unsupported chain, the
-             *  chain switcher is the standalone read-only mode picker.
-             *  When fully connected, the chain switcher slots between
-             *  the wallet pill and the disconnect button (see below)
-             *  so all session-state controls live as inline siblings
-             *  rather than nested inside a popover. */}
-            {(!address || !isCorrectChain) && <ChainSwitcher />}
+            <div className="topbar-right">
+            {/* T-047 — indexer status badge always visible in the
+             *  top bar. Three states: green (cache fresh) / amber
+             *  (live chain scan, browser reading directly) / blue
+             *  (local dev chain — Anvil / Hardhat). The info icon
+             *  next to the badge opens a popover with plain-English
+             *  copy explaining each state and (for amber) asking
+             *  the user to wait for the page to finish loading
+             *  before submitting transactions. */}
+            <IndexerStatusBadge compact />
+            {/* The standalone chain switcher only renders when the
+             *  wallet is connected but on an unsupported chain — the
+             *  one actionable state where the user needs the picker
+             *  as a recovery affordance. Pre-connect viewers
+             *  (`!address`) auto-route to the canonical default
+             *  chain (Base Sepolia via `VITE_DEFAULT_CHAIN_ID`),
+             *  which is the right read-only fallback; the picker
+             *  added clutter next to the Connect Wallet button
+             *  without giving most users a useful action there.
+             *  When fully connected on a supported chain, the chain
+             *  picker is folded into `<WalletMenu>` instead. */}
+            {address && !isCorrectChain && <ChainSwitcher />}
 
             {!address ? (
               <ConnectWalletButton className="btn-sm" />
@@ -472,6 +524,7 @@ export default function AppLayout() {
                 </div>
               )}
             </div>
+          </div>
           </div>
         </header>
 

@@ -136,7 +136,7 @@ export default function VPFIDiscountConsentCard() {
           <p className="stat-label" style={{ margin: "0 0 10px" }}>
             {t('vpfiDiscountConsent.bodyPrefix', tierParams)}
             <a
-              href="/buy-vpfi"
+              href="/app/buy-vpfi"
               target="_blank"
               rel="noopener noreferrer"
               style={{ color: "var(--brand)", display: 'inline-flex', alignItems: 'center', gap: 3 }}

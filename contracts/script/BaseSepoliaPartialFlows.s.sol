@@ -237,13 +237,20 @@ contract BaseSepoliaPartialFlows is Script {
                 collateralAssetType: LibVaipakam.AssetType.ERC721,
                 collateralTokenId: nftTokenId,
                 collateralQuantity: 0,
-                allowsPartialRepay: false
+                allowsPartialRepay: false,
+                amountMax: 0,
+                interestRateBpsMax: 0,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
             })
         );
         vm.stopBroadcast();
+        // Lender accepts. Post-Option-A `_acceptOffer` pulls the
+        // principal from the lender's wallet via the
+        // `escrowDepositERC20` chokepoint, so an approve is enough —
+        // the legacy direct-transfer-to-escrow workaround would
+        // underflow the `protocolTrackedEscrowBalance` counter.
         vm.startBroadcast(lenderKey);
-        address lEsc = EscrowFactoryFacet(diamond).getOrCreateUserEscrow(lender);
-        usdc.transfer(lEsc, LOAN_AMOUNT);
+        usdc.approve(diamond, LOAN_AMOUNT);
         uint256 loanE = OfferFacet(diamond).acceptOffer(offerE, true);
         vm.stopBroadcast();
         console.log("Active NFT-collateral loan id:", loanE);
@@ -278,7 +285,10 @@ contract BaseSepoliaPartialFlows is Script {
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
                 collateralQuantity: 0,
-                allowsPartialRepay: false
+                allowsPartialRepay: false,
+                amountMax: 0,
+                interestRateBpsMax: 0,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
             })
         );
         vm.stopBroadcast();
@@ -336,7 +346,10 @@ contract BaseSepoliaPartialFlows is Script {
             collateralAssetType: LibVaipakam.AssetType.ERC20,
             collateralTokenId: 0,
             collateralQuantity: 0,
-            allowsPartialRepay: false
+            allowsPartialRepay: false,
+            amountMax: 0,
+            interestRateBpsMax: 0,
+            periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
         });
     }
 
@@ -357,7 +370,10 @@ contract BaseSepoliaPartialFlows is Script {
             collateralAssetType: LibVaipakam.AssetType.ERC20,
             collateralTokenId: 0,
             collateralQuantity: 0,
-            allowsPartialRepay: false
+            allowsPartialRepay: false,
+            amountMax: 0,
+            interestRateBpsMax: 0,
+            periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
         });
     }
 }

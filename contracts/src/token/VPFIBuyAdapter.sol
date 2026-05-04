@@ -6,7 +6,10 @@ import {UUPSUpgradeable} from "@openzeppelin/contracts/proxy/utils/UUPSUpgradeab
 import {OwnableUpgradeable} from "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 import {Ownable2StepUpgradeable} from "@openzeppelin/contracts-upgradeable/access/Ownable2StepUpgradeable.sol";
 import {OAppUpgradeable, Origin, MessagingFee, MessagingReceipt} from "@layerzerolabs/oapp-evm-upgradeable/contracts/oapp/OAppUpgradeable.sol";
+import {IOAppComposer} from "@layerzerolabs/oapp-evm/contracts/oapp/interfaces/IOAppComposer.sol";
+import {OFTComposeMsgCodec} from "@layerzerolabs/oft-evm/contracts/libs/OFTComposeMsgCodec.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {IVPFIBuyMessages} from "../interfaces/IVPFIBuyMessages.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
@@ -64,7 +67,8 @@ contract VPFIBuyAdapter is
     LZGuardianPausable,
     UUPSUpgradeable,
     IVPFIBuyMessages,
-    IVaipakamErrors
+    IVaipakamErrors,
+    IOAppComposer
 {
     using SafeERC20 for IERC20;
 
@@ -157,6 +161,41 @@ contract VPFIBuyAdapter is
     ///         alongside `dailyWindowStart`.
     uint256 public dailyUsed;
 
+    // ─── T-031 Layer 2: OFT-compose success path ────────────────────────────
+
+    /// @notice Local VPFI ERC20 (the canonical-VPFI mirror on this
+    ///         chain). The receiver on Base OFT-composes VPFI here;
+    ///         the adapter then `safeTransfer`s the final amount to
+    ///         the actual buyer recorded in `pendingBuys`.
+    /// @dev    Owner-set via {setVPFIToken}. Held alongside
+    ///         `paymentToken` because the two are different tokens —
+    ///         `paymentToken` is what the buyer paid in (ETH / WETH),
+    ///         `vpfiToken` is what they ultimately receive.
+    address public vpfiToken;
+
+    /// @notice Local VPFIMirror (or VPFIOFTAdapter on Base) — the OFT
+    ///         contract that calls `endpoint.sendCompose` to dispatch
+    ///         `lzCompose` here. Auth gate inside `lzCompose`: only
+    ///         compose calls originating from this address are
+    ///         honoured. Operator must set after the local mirror
+    ///         is deployed.
+    address public vpfiMirror;
+
+    /// @notice requestId → stuck VPFI amount on this contract.
+    ///         Populated when `lzCompose` lands a VPFI delivery whose
+    ///         `requestId` either has no matching `pendingBuys` entry
+    ///         (forged BUY_REQUEST scenario — Layer 2 defense fired)
+    ///         or matches an already-resolved buy (replay / late). The
+    ///         VPFI sits on this contract pending owner recovery via
+    ///         {recoverStuckVPFI}.
+    mapping(uint64 => uint256) public stuckVPFIByRequest;
+
+    /// @notice Sum of VPFI stuck on this contract pending recovery.
+    ///         {rescueERC20}-class flows MUST refuse to drain
+    ///         `vpfiToken` below this figure so a compromised owner
+    ///         can't sweep VPFI tied to specific stuck request ids.
+    uint256 public totalStuckVPFI;
+
     // ─── Events ─────────────────────────────────────────────────────────────
 
     event ReceiverEidSet(uint32 indexed oldEid, uint32 indexed newEid);
@@ -207,13 +246,42 @@ contract VPFIBuyAdapter is
         address caller
     );
 
-    /// @notice Late BUY_SUCCESS / BUY_FAILED landed after the buy was
-    ///         already resolved (typically timed-out then manually
-    ///         refunded). Payload is logged but ignored.
+    /// @notice Late BUY_FAILED landed after the buy was already
+    ///         resolved (typically timed-out then manually refunded).
+    ///         Payload is logged but ignored. Pre-Layer-2 this also
+    ///         covered late BUY_SUCCESS; that path is gone — success
+    ///         arrives via OFT-compose now and {LateComposeStuck}
+    ///         covers the equivalent late-success case.
     event LateResponseDropped(
         uint64 indexed requestId,
         uint8 msgType,
         BuyStatus currentStatus
+    );
+
+    // ─── T-031 Layer 2 events ────────────────────────────────────────────────
+
+    event VPFITokenSet(address indexed oldToken, address indexed newToken);
+    event VPFIMirrorSet(address indexed oldMirror, address indexed newMirror);
+
+    /// @notice OFT-compose landed VPFI on this contract for a request
+    ///         id whose `pendingBuys` entry either doesn't exist
+    ///         (forged BUY_REQUEST scenario — Layer 2 defense fired)
+    ///         or is already resolved. The VPFI is recorded as stuck
+    ///         pending owner recovery via {recoverStuckVPFI}.
+    event UnsolicitedComposeArrival(
+        uint64 indexed requestId,
+        uint256 vpfiAmount,
+        BuyStatus pendingStatus
+    );
+
+    /// @notice Owner recovered VPFI that was stuck on this contract
+    ///         from an {UnsolicitedComposeArrival} — typically by
+    ///         bridging it back to Base and burning, or routing it
+    ///         to a designated recovery wallet.
+    event StuckVPFIRecovered(
+        uint64 indexed requestId,
+        address indexed recipient,
+        uint256 amount
     );
 
     // ─── Errors ─────────────────────────────────────────────────────────────
@@ -230,6 +298,42 @@ contract VPFIBuyAdapter is
     error RescueWouldTouchPendingLock();
     error BuyExceedsPerRequestCap(uint256 amountIn, uint256 cap);
     error BuyExceedsDailyCap(uint256 attemptedTotal, uint256 cap);
+    /// @dev Operator passed a non-zero `paymentToken` whose address has no
+    ///      bytecode (an EOA, or zero-code precompile slot). The receiver's
+    ///      wei-per-VPFI rate is denominated in ETH-equivalent value, so on
+    ///      non-ETH-native chains the adapter MUST be in WETH-pull mode
+    ///      against a real ERC20 contract.
+    error PaymentTokenNotContract(address token);
+    /// @dev Operator passed a non-zero `paymentToken` whose `decimals()`
+    ///      returns ≠ 18. Canonical WETH9 (every chain's bridged-ETH
+    ///      ERC20) is 18-dec; an honest wrapped-ETH is 18-dec by
+    ///      convention. Most common misconfig this catches: pasting the
+    ///      6-dec USDC address by mistake.
+    error PaymentTokenDecimalsNot18(address token, uint8 decimals);
+    /// @dev `paymentToken.decimals()` reverted (non-IERC20Metadata
+    ///      contract, or contract with no view function). Catches the
+    ///      operator pasting a random non-ERC20 contract address.
+    error PaymentTokenDecimalsCallFailed(address token);
+
+    // T-031 Layer 2 errors — `lzCompose` auth gates.
+    /// @dev `lzCompose` was called by something other than the LZ
+    ///      endpoint. Only the endpoint dispatcher should ever invoke
+    ///      this entrypoint.
+    error NotEndpoint(address caller);
+    /// @dev `lzCompose` was dispatched with `_from != vpfiMirror`.
+    ///      Only OFT-compose calls originating from the local mirror
+    ///      OFT contract are honoured.
+    error UnauthorizedComposeSource(address from);
+    /// @dev `lzCompose` arrived but {vpfiMirror} hasn't been set yet
+    ///      by the operator. Same soft-fail philosophy as
+    ///      `BuyAdapterNotSet` on the receiver — never accept a
+    ///      compose against an unset registry.
+    error VpfiMirrorNotSet();
+    /// @dev `lzCompose` arrived but {vpfiToken} hasn't been set.
+    error VpfiTokenNotSet();
+    /// @dev Owner attempted {recoverStuckVPFI} for a requestId that
+    ///      has no recorded stuck balance.
+    error NoStuckVPFI(uint64 requestId);
 
     // ─── Construction ───────────────────────────────────────────────────────
 
@@ -261,6 +365,21 @@ contract VPFIBuyAdapter is
         if (owner_ == address(0) || treasury_ == address(0)) {
             revert InvalidAddress();
         }
+        // Validate `paymentToken_` BEFORE any state writes. On non-ETH-
+        // native chains (BNB, Polygon, etc.) the receiver's wei-per-VPFI
+        // rate is denominated in ETH-equivalent value, so the adapter
+        // MUST pull a bridged-WETH ERC20 with decimals() == 18 from the
+        // user. Native-gas mode (paymentToken_ == address(0)) is only
+        // valid on chains where 1 unit of native gas == 1 ETH for the
+        // purpose of the rate (Sepolia / OP / Arbitrum / Base / Ethereum
+        // mainnet). Operators selecting native-gas mode on BNB / Polygon
+        // mainnet would silently mis-price every buy — the deploy
+        // script's pre-flight (DeployVPFIBuyAdapter) catches that case
+        // by chainId; this contract-side guard catches the operator-
+        // misconfig flavour where paymentToken_ is non-zero but points
+        // at the wrong contract (an EOA, the wrong-decimals stablecoin,
+        // a non-ERC20).
+        _assertPaymentTokenSane(paymentToken_);
 
         __OApp_init(owner_);
         __Ownable_init(owner_);
@@ -495,6 +614,140 @@ contract VPFIBuyAdapter is
         );
     }
 
+    // ─── lzCompose (success path — T-031 Layer 2) ──────────────────────────
+
+    /**
+     * @notice OFT-compose entry point. Fires when the local VPFI mirror
+     *         finishes minting the OFT to this contract and the LayerZero
+     *         endpoint dispatches the compose payload.
+     *
+     * @dev Trust + auth: callable only by the LZ endpoint, only with
+     *      `_from == vpfiMirror` (the local OFT contract that minted).
+     *      The compose payload carries `(uint64 requestId)`. We then
+     *      cross-check our own `pendingBuys[requestId]` — the
+     *      authoritative local truth set by the actual ETH-paying
+     *      tx — and only forward VPFI to the recorded buyer.
+     *
+     *      Forged BUY_REQUEST defense: a forged buy on the receiver
+     *      side mints VPFI on Base which OFT-composes back to this
+     *      adapter. Here we look up `pendingBuys[forgedRequestId]`,
+     *      find `buyer == address(0)` (no real `buy()` was made for
+     *      that id), and record the VPFI as stuck — owner-recoverable
+     *      via {recoverStuckVPFI}. The attacker gets nothing.
+     *
+     *      Replay defense: if the same compose lands twice (LZ retry
+     *      pathology), the second call sees `status != Pending` (we
+     *      flipped to ResolvedSuccess on the first call) and records
+     *      the duplicate VPFI as stuck. No double-payout.
+     *
+     *      Per IOAppComposer the function must be `payable`. We
+     *      ignore any `msg.value` — the executor may forward gas-fee
+     *      ETH but no semantic value transfer is expected.
+     *
+     * @param _from     The OFT contract that triggered the compose
+     *                  dispatch — must equal {vpfiMirror}.
+     * @param _message  OFTComposeMsgCodec-encoded blob:
+     *                  `[nonce(8)][srcEid(4)][amountLD(32)][composeFrom(32)][appMsg…]`.
+     *                  `amountLD` is the VPFI minted to this contract;
+     *                  `composeMsg` decodes as `(uint64 requestId)`.
+     */
+    function lzCompose(
+        address _from,
+        bytes32 /* _guid */,
+        bytes calldata _message,
+        address /* _executor */,
+        bytes calldata /* _extraData */
+    ) external payable override whenNotPaused {
+        // Auth: only the local LZ endpoint can dispatch compose. The
+        // OApp base exposes `endpoint` as the L0 endpoint immutable.
+        if (msg.sender != address(endpoint)) revert NotEndpoint(msg.sender);
+
+        address mirror = vpfiMirror;
+        if (mirror == address(0)) revert VpfiMirrorNotSet();
+        if (_from != mirror) revert UnauthorizedComposeSource(_from);
+
+        address vpfi = vpfiToken;
+        if (vpfi == address(0)) revert VpfiTokenNotSet();
+
+        // Decode the OFT-compose envelope. `amountLD` is the VPFI
+        // amount minted to this contract; the inner `composeMsg`
+        // carries our app payload `(uint64 requestId)`.
+        uint256 vpfiAmount = OFTComposeMsgCodec.amountLD(_message);
+        bytes memory inner = OFTComposeMsgCodec.composeMsg(_message);
+        uint64 requestId = abi.decode(inner, (uint64));
+
+        PendingBuy storage p = pendingBuys[requestId];
+
+        // Forged BUY_REQUEST: no record of this requestId on the
+        // adapter. Record VPFI as stuck and exit. Layer 2 defense
+        // fires here.
+        if (p.buyer == address(0)) {
+            stuckVPFIByRequest[requestId] += vpfiAmount;
+            totalStuckVPFI += vpfiAmount;
+            emit UnsolicitedComposeArrival(
+                requestId,
+                vpfiAmount,
+                BuyStatus.None
+            );
+            return;
+        }
+
+        // Replay / late: this requestId was already resolved (success,
+        // refunded, or timed-out). Record VPFI as stuck and exit.
+        if (p.status != BuyStatus.Pending) {
+            stuckVPFIByRequest[requestId] += vpfiAmount;
+            totalStuckVPFI += vpfiAmount;
+            emit UnsolicitedComposeArrival(
+                requestId,
+                vpfiAmount,
+                p.status
+            );
+            return;
+        }
+
+        // Happy path. Flip status FIRST (CEI: state-before-effects)
+        // so a re-entrant transfer can't re-process the same id.
+        p.status = BuyStatus.ResolvedSuccess;
+        uint256 amt = uint256(p.amountIn);
+        totalPendingAmountIn -= amt;
+
+        // Deliver VPFI to the actual buyer recorded on this chain at
+        // the time of `buy()` (NOT the buyer claimed by the compose
+        // payload). This is the Layer 2 hardening — the buyer
+        // identity comes from authoritative local state, never from
+        // a cross-chain message.
+        IERC20(vpfi).safeTransfer(p.buyer, vpfiAmount);
+
+        // Release the user's ETH (or WETH) escrow to treasury — the
+        // step BUY_SUCCESS used to drive in the pre-Layer-2 protocol.
+        _releaseToTreasury(amt);
+
+        emit BuyResolvedSuccess(requestId, p.buyer, amt, vpfiAmount);
+    }
+
+    /**
+     * @notice Owner recovery path for VPFI stuck on this contract via
+     *         {UnsolicitedComposeArrival}. Sweeps the recorded amount
+     *         to a designated wallet (typically a Vaipakam recovery
+     *         multisig — could later be re-bridged to Base and burned).
+     * @dev    Auth: onlyOwner. Reverts if the recorded stuck balance
+     *         for `requestId` is zero. {totalStuckVPFI} is decremented
+     *         atomically so a compromised owner can't sweep VPFI tied
+     *         to other stuck request ids on this contract.
+     */
+    function recoverStuckVPFI(uint64 requestId, address recipient)
+        external
+        onlyOwner
+    {
+        if (recipient == address(0)) revert InvalidAddress();
+        uint256 amt = stuckVPFIByRequest[requestId];
+        if (amt == 0) revert NoStuckVPFI(requestId);
+        stuckVPFIByRequest[requestId] = 0;
+        totalStuckVPFI -= amt;
+        IERC20(vpfiToken).safeTransfer(recipient, amt);
+        emit StuckVPFIRecovered(requestId, recipient, amt);
+    }
+
     // ─── Receive (endpoint) ─────────────────────────────────────────────────
 
     function _lzReceive(
@@ -520,12 +773,13 @@ contract VPFIBuyAdapter is
         }
 
         uint256 amt = uint256(p.amountIn);
-        if (msgType == MSG_TYPE_BUY_SUCCESS) {
-            p.status = BuyStatus.ResolvedSuccess;
-            totalPendingAmountIn -= amt;
-            _releaseToTreasury(amt);
-            emit BuyResolvedSuccess(requestId, p.buyer, amt, vpfiOut);
-        } else if (msgType == MSG_TYPE_BUY_FAILED) {
+        // T-031 Layer 2: BUY_SUCCESS no longer arrives through this
+        // path — success is delivered as an OFT-compose mint to the
+        // adapter, handled by `lzCompose`. Only BUY_FAILED remains as
+        // an OApp inbound. `vpfiOut` is decoded for the BUY_FAILED
+        // payload-shape compatibility but is always 0 on this kind.
+        vpfiOut; // silence unused-var lint for the dropped success branch
+        if (msgType == MSG_TYPE_BUY_FAILED) {
             p.status = BuyStatus.ResolvedRefunded;
             totalPendingAmountIn -= amt;
             _returnFunds(p.buyer, amt);
@@ -619,10 +873,44 @@ contract VPFIBuyAdapter is
     ///         flips the adapter into WETH-pull mode. CAUTION: only
     ///         change when there are no PENDING buys — existing locked
     ///         balances would refund in the wrong asset.
+    /// @dev    Validates the new token via {_assertPaymentTokenSane}
+    ///         before mutating storage so a misconfigured rotation
+    ///         (EOA, non-ERC20, wrong-decimals token) reverts up-front
+    ///         rather than corrupting the buy path.
     function setPaymentToken(address newToken) external onlyOwner {
+        _assertPaymentTokenSane(newToken);
         address old = paymentToken;
         paymentToken = newToken;
         emit PaymentTokenSet(old, newToken);
+    }
+
+    /// @dev Sanity-checks `token` for the WETH-pull mode contract:
+    ///        - `address(0)` is the native-gas-mode sentinel — passes
+    ///          unconditionally (the deploy-script pre-flight is
+    ///          responsible for catching native-gas-mode-on-BNB-mainnet
+    ///          and similar economic misconfigs by chainId).
+    ///        - Any non-zero token must (a) have bytecode (not an EOA),
+    ///          (b) respond to `decimals()`, and (c) return exactly 18.
+    ///      The 18-decimal check is the canonical WETH9 invariant and
+    ///      catches the most common operator-side misconfig: pasting a
+    ///      6-dec stablecoin address (USDC / USDT) where a bridged-WETH
+    ///      address belongs. It does NOT prove the token is the
+    ///      *canonical* bridged WETH on this chain — that's an
+    ///      operational check (deploy-script pre-flight prints
+    ///      `name()` / `symbol()` for human-eyeball confirmation
+    ///      against the chain's published WETH9 address).
+    function _assertPaymentTokenSane(address token) internal view {
+        if (token == address(0)) return;
+        if (token.code.length == 0) {
+            revert PaymentTokenNotContract(token);
+        }
+        try IERC20Metadata(token).decimals() returns (uint8 d) {
+            if (d != 18) {
+                revert PaymentTokenDecimalsNot18(token, d);
+            }
+        } catch {
+            revert PaymentTokenDecimalsCallFailed(token);
+        }
     }
 
     function setRefundTimeout(uint64 newSeconds) external onlyOwner {
@@ -634,6 +922,31 @@ contract VPFIBuyAdapter is
     function setBuyOptions(bytes calldata newOptions) external onlyOwner {
         buyOptions = newOptions;
         emit BuyOptionsSet(newOptions);
+    }
+
+    /// @notice Set the local VPFI ERC20 (mirror on this chain). T-031
+    ///         Layer 2: this is the token transferred to buyers when
+    ///         `lzCompose` lands. Must be set before bridged buys can
+    ///         settle on this chain.
+    function setVPFIToken(address newToken) external onlyOwner {
+        if (newToken == address(0)) revert InvalidAddress();
+        address old = vpfiToken;
+        vpfiToken = newToken;
+        emit VPFITokenSet(old, newToken);
+    }
+
+    /// @notice Set the local OFT mirror — the contract that calls
+    ///         `endpoint.sendCompose` to dispatch `lzCompose` here.
+    ///         T-031 Layer 2: auth gate inside `lzCompose` requires
+    ///         `_from == vpfiMirror`. Operator must set this to the
+    ///         deployed VPFIMirror address on this chain (or to the
+    ///         canonical VPFIOFTAdapter on Base if this adapter ever
+    ///         co-locates on Base).
+    function setVPFIMirror(address newMirror) external onlyOwner {
+        if (newMirror == address(0)) revert InvalidAddress();
+        address old = vpfiMirror;
+        vpfiMirror = newMirror;
+        emit VPFIMirrorSet(old, newMirror);
     }
 
     // ─── Rescue ─────────────────────────────────────────────────────────────

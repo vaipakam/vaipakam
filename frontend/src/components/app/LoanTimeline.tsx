@@ -14,6 +14,8 @@ import {
   Coins,
 } from 'lucide-react';
 import { useLogIndex } from '../../hooks/useLogIndex';
+import { useIndexedActivity } from '../../hooks/useIndexedActivity';
+import { indexedToActivityEvent } from '../../lib/indexerClient';
 import { useReadChain } from '../../contracts/useDiamond';
 import type { ActivityEvent, ActivityEventKind } from '../../lib/logIndex';
 import { TokenAmount } from './TokenAmount';
@@ -152,22 +154,38 @@ export function LoanTimeline({
   collateralAsset,
 }: Props) {
   const { t } = useTranslation();
-  const { events, loading } = useLogIndex();
+  const { events: clientEvents, loading: clientLoading } = useLogIndex();
+  // T-041 — pull this loan's events from the worker-cached activity
+  // ledger when available (server-side filter `?loanId=N`). Fall
+  // through to the client-side filter on the per-browser scan when
+  // the worker is unreachable. The two sources expose the same
+  // ActivityEvent shape via the `indexedToActivityEvent` adapter.
+  const { events: indexedEvents, source: indexedSource, loading: indexedLoading } =
+    useIndexedActivity({ loanId: Number(loanId) });
+  const loading = indexedSource === 'indexer' ? indexedLoading : clientLoading;
   const chain = useReadChain();
   const [blockTimes, setBlockTimes] = useState<Record<number, number>>({});
 
-  // Filter to events touching this specific loan. Most loan-lifecycle events
-  // carry `args.loanId` as a decimal string; the few that don't (`Transfer`,
-  // VPFI buy/stake, staking rewards) are intentionally excluded.
   const loanEvents = useMemo<ActivityEvent[]>(() => {
-    return events
+    if (indexedSource === 'indexer' && indexedEvents) {
+      // Server has already filtered by loanId — sort ascending for
+      // the timeline render (oldest at top).
+      return indexedEvents
+        .map((e) => indexedToActivityEvent(e) as unknown as ActivityEvent)
+        .slice()
+        .sort((a, b) => {
+          if (a.blockNumber !== b.blockNumber) return a.blockNumber - b.blockNumber;
+          return a.logIndex - b.logIndex;
+        });
+    }
+    return clientEvents
       .filter((ev) => typeof ev.args.loanId === 'string' && ev.args.loanId === loanId)
       .slice()
       .sort((a, b) => {
         if (a.blockNumber !== b.blockNumber) return a.blockNumber - b.blockNumber;
         return a.logIndex - b.logIndex;
       });
-  }, [events, loanId]);
+  }, [indexedSource, indexedEvents, clientEvents, loanId]);
 
   // Lazy block-time lookup. Activity uses the same pattern: collect the
   // distinct block numbers in view, fetch their timestamps in parallel, cache.
@@ -286,12 +304,12 @@ function Breakdown({ ev, principalAsset, collateralAsset }: BreakdownProps) {
           </Row>
           {typeof args.lender === 'string' && (
             <Row label={t('loanTimeline.lblLender')}>
-              <AddressDisplay address={args.lender as string} />
+              <AddressDisplay address={args.lender as string} copyable />
             </Row>
           )}
           {typeof args.borrower === 'string' && (
             <Row label={t('loanTimeline.lblBorrower')}>
-              <AddressDisplay address={args.borrower as string} />
+              <AddressDisplay address={args.borrower as string} copyable />
             </Row>
           )}
         </dl>
@@ -302,7 +320,7 @@ function Breakdown({ ev, principalAsset, collateralAsset }: BreakdownProps) {
         <dl className="loan-timeline-grid">
           {typeof args.acceptor === 'string' && (
             <Row label={t('loanTimeline.lblAcceptor')}>
-              <AddressDisplay address={args.acceptor as string} />
+              <AddressDisplay address={args.acceptor as string} copyable />
             </Row>
           )}
         </dl>

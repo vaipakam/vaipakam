@@ -266,6 +266,27 @@ contract InteractionRewardsFacet is
         external
         onlyRole(LibAccessControl.ADMIN_ROLE)
     {
+        // Setter-range audit (2026-05-02): bound the in-range
+        // regime to `[INTERACTION_CAP_VPFI_PER_ETH_MIN,
+        // INTERACTION_CAP_VPFI_PER_ETH_MAX]`. The two documented
+        // sentinels are preserved: `value == 0` resets to the
+        // library default at read time, `value == type(uint256).max`
+        // is the emergency "disable cap" knob.
+        if (
+            value != 0 &&
+            value != type(uint256).max &&
+            (
+                value < LibVaipakam.INTERACTION_CAP_VPFI_PER_ETH_MIN ||
+                value > LibVaipakam.INTERACTION_CAP_VPFI_PER_ETH_MAX
+            )
+        ) {
+            revert IVaipakamErrors.ParameterOutOfRange(
+                "interactionCapVpfiPerEth",
+                value,
+                LibVaipakam.INTERACTION_CAP_VPFI_PER_ETH_MIN,
+                LibVaipakam.INTERACTION_CAP_VPFI_PER_ETH_MAX
+            );
+        }
         LibVaipakam.storageSlot().interactionCapVpfiPerEth = value;
         emit InteractionCapVpfiPerEthSet(value);
     }
@@ -348,26 +369,26 @@ contract InteractionRewardsFacet is
     ///         transparency + frontend reconciliation.
     /// @param day  Zero-based day index to inspect.
     /// @param user User whose per-day contribution is returned.
-    /// @return userLenderUSD18    USD-18 lender interest credited to `user` on `day`.
-    /// @return userBorrowerUSD18  USD-18 borrower interest credited to `user` on `day`.
-    /// @return totalLenderUSD18   USD-18 lender total for `day` across all users.
-    /// @return totalBorrowerUSD18 USD-18 borrower total for `day` across all users.
+    /// @return userLenderNumeraire18    USD-18 lender interest credited to `user` on `day`.
+    /// @return userBorrowerNumeraire18  USD-18 borrower interest credited to `user` on `day`.
+    /// @return totalLenderNumeraire18   USD-18 lender total for `day` across all users.
+    /// @return totalBorrowerNumeraire18 USD-18 borrower total for `day` across all users.
     function getInteractionDayEntry(uint256 day, address user)
         external
         view
         returns (
-            uint256 userLenderUSD18,
-            uint256 userBorrowerUSD18,
-            uint256 totalLenderUSD18,
-            uint256 totalBorrowerUSD18
+            uint256 userLenderNumeraire18,
+            uint256 userBorrowerNumeraire18,
+            uint256 totalLenderNumeraire18,
+            uint256 totalBorrowerNumeraire18
         )
     {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         return (
-            s.userLenderInterestUSD18[day][user],
-            s.userBorrowerInterestUSD18[day][user],
-            s.totalLenderInterestUSD18[day],
-            s.totalBorrowerInterestUSD18[day]
+            s.userLenderInterestNumeraire18[day][user],
+            s.userBorrowerInterestNumeraire18[day][user],
+            s.totalLenderInterestNumeraire18[day],
+            s.totalBorrowerInterestNumeraire18[day]
         );
     }
 
@@ -424,7 +445,7 @@ contract InteractionRewardsFacet is
      *         window. Lets frontends distinguish "nothing to claim yet"
      *         from "claim blocked waiting for the cross-chain global
      *         denominator to be broadcast" without a round-trip through
-     *         {RewardReporterFacet.getKnownGlobalInterestUSD18}.
+     *         {RewardReporterFacet.getKnownGlobalInterestNumeraire18}.
      * @param user    User whose next-window status is inspected.
      * @return fromDay           First day the next claim would walk
      *                           (inclusive); 0 when nothing is claimable.

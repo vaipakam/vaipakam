@@ -324,11 +324,6 @@
   padding-left: 28px;
 }
 
-.sidebar-footer {
-  padding: 12px;
-  border-top: 1px solid var(--border);
-}
-
 /* Collapsed rail — group label becomes a simple divider (text is noise at
  * 72px); footer button centers its icon and hides the label like nav links.
  * Hover-expand restores the full appearance. */
@@ -403,16 +398,29 @@
 
 /* ── Top bar ── */
 .app-topbar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
+  /* Outer bar stays full-width so the border-bottom spans the
+   * whole screen. The inner `.app-topbar-inner` wrapper holds the
+   * actual controls in a 1200 px column that aligns with the
+   * content area below — keeps the Connect Wallet button at the
+   * right edge of the visible content on wide screens instead of
+   * the far right of the viewport. */
+  display: block;
   height: 64px;
-  padding: 0 24px;
   background: var(--bg-primary);
   border-bottom: 1px solid var(--border);
   position: sticky;
   top: 0;
   z-index: 100;
+}
+
+.app-topbar-inner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 100%;
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 0 24px;
 }
 
 .topbar-menu-btn {
@@ -620,6 +628,12 @@
   padding: 24px;
   max-width: 1200px;
   width: 100%;
+  /* Center the content column inside `.app-main`. Without this,
+   * cards sit left-aligned against the sidebar and a wide screen
+   * leaves a large dead band on the right; with `margin: 0 auto`
+   * the content cluster sits in the visual center of the
+   * available space, matching the topbar's centered column above. */
+  margin: 0 auto;
 }
 
 @media (min-width: 768px) {

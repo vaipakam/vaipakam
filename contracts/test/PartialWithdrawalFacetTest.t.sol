@@ -12,6 +12,7 @@ import {OracleFacet} from "../src/facets/OracleFacet.sol";
 import {RiskFacet} from "../src/facets/RiskFacet.sol";
 import {EscrowFactoryFacet} from "../src/facets/EscrowFactoryFacet.sol";
 import {OfferFacet} from "../src/facets/OfferFacet.sol";
+import {OfferCancelFacet} from "../src/facets/OfferCancelFacet.sol";
 import {VaipakamNFTFacet} from "../src/facets/VaipakamNFTFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
@@ -42,6 +43,7 @@ contract PartialWithdrawalFacetTest is Test {
 
     DiamondCutFacet cutFacet;
     OfferFacet offerFacet;
+    OfferCancelFacet offerCancelFacet;
     ProfileFacet profileFacet;
     OracleFacet oracleFacet;
     VaipakamNFTFacet nftFacet;
@@ -86,6 +88,7 @@ contract PartialWithdrawalFacetTest is Test {
         cutFacet = new DiamondCutFacet();
         diamond  = new VaipakamDiamond(owner, address(cutFacet));
         offerFacet = new OfferFacet();
+        offerCancelFacet = new OfferCancelFacet();
         profileFacet = new ProfileFacet();
         oracleFacet = new OracleFacet();
         nftFacet = new VaipakamNFTFacet();
@@ -102,7 +105,7 @@ contract PartialWithdrawalFacetTest is Test {
         testMutatorFacet = new TestMutatorFacet();
         helperTest = new HelperTest();
 
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](15);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](16);
         cuts[0]  = IDiamondCut.FacetCut({facetAddress: address(offerFacet),         action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getOfferFacetSelectors()});
         cuts[1]  = IDiamondCut.FacetCut({facetAddress: address(profileFacet),       action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getProfileFacetSelectors()});
         cuts[2]  = IDiamondCut.FacetCut({facetAddress: address(oracleFacet),        action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getOracleFacetSelectors()});
@@ -118,6 +121,7 @@ contract PartialWithdrawalFacetTest is Test {
         cuts[12] = IDiamondCut.FacetCut({facetAddress: address(partialFacet),       action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getPartialWithdrawalFacetSelectors()});
         cuts[13] = IDiamondCut.FacetCut({facetAddress: address(accessControlFacet), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getAccessControlFacetSelectors()});
         cuts[14] = IDiamondCut.FacetCut({facetAddress: address(testMutatorFacet),   action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getTestMutatorFacetSelectors()});
+        cuts[15] = IDiamondCut.FacetCut({facetAddress: address(offerCancelFacet), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getOfferCancelFacetSelectors()});
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");
 
         AccessControlFacet(address(diamond)).initializeAccessControl();
@@ -175,7 +179,10 @@ contract PartialWithdrawalFacetTest is Test {
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
                 collateralQuantity: 0,
-                allowsPartialRepay: false
+                allowsPartialRepay: false,
+                amountMax: 0,
+                interestRateBpsMax: 0,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
             })
         );
         vm.prank(borrower);
@@ -281,15 +288,17 @@ contract PartialWithdrawalFacetTest is Test {
     /// @dev Covers LTVExceeded branch in partialWithdrawCollateral.
     ///      Set a low maxLtvBps via updateRiskParams so post-withdrawal LTV exceeds it.
     function testPartialWithdrawRevertsLTVExceeded() public {
-        // Set risk params: maxLtvBps=100 (1%), liqThresholdBps=9000, so HF passes but LTV fails
-        // With collateral=1800, principal=10 (store low principal):
-        //   HF = 1800*0.9/10 = 162 > 1.5 (passes)
-        //   LTV_after_withdraw = borrowVal/collVal_after; even small withdrawal → LTV>1%
+        // Set risk params: maxLtvBps=1000 (10% — the new T-033 floor;
+        // previously used 100 (1%) but the audit floor rejects that
+        // as a degenerate setting). liqThresholdBps must be > maxLtv
+        // and ≥ the 1500-floor; liqBonus + reserveFactor unchanged.
+        // With principal=1000, collateral_after=1770:
+        //   LTV ≈ 56.5% > maxLtvBps=10% → LTVExceeded still triggers.
         vm.prank(owner);
-        RiskFacet(address(diamond)).updateRiskParams(mockCollateralERC20, 100, 9000, 300, 1000);
+        RiskFacet(address(diamond)).updateRiskParams(mockCollateralERC20, 1000, 9000, 300, 1000);
 
         // Set principal = 1000 ether; collateral = 1800 ether via mutator.
-        // After withdrawal of 30: LTV = 1000/1770 * 10000 ≈ 5650 > maxLtvBps=100 → LTVExceeded
+        // After withdrawal of 30: LTV = 1000/1770 * 10000 ≈ 5650 > maxLtvBps=1000 → LTVExceeded
         LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
         loan.principal = 1000 ether;
         loan.collateralAmount = 1800 ether;

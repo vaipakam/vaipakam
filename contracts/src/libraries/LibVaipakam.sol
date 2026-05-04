@@ -5,6 +5,14 @@ pragma solidity ^0.8.29;
 import {LibDiamond} from "@diamond-3/libraries/LibDiamond.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {ISanctionsList} from "../interfaces/ISanctionsList.sol";
+// Numeraire generalization (B1) (T-047 prep): the INumeraireOracle interface that
+// Phase 1+2 introduced for numeraire→USD boundary conversion is no
+// longer needed — `OracleFacet.getAssetPrice` now returns numeraire-
+// quoted prices directly via the renamed Chainlink slots
+// (ethNumeraireFeed, numeraireChainlinkDenominator, numeraireSymbol).
+// All comparison sites now compare numeraire-vs-numeraire, so the
+// boundary conversion that lived in `_convertNumeraireToUsd` /
+// `getKycTier{0,1}Threshold` is removed.
 
 /**
  * @title LibVaipakam
@@ -85,11 +93,163 @@ library LibVaipakam {
     // `initiateLoan` so the dual-consent contract at offer creation is
     // never retroactively altered. Stored zero ⇒ use these defaults.
     uint256 constant FALLBACK_LENDER_BONUS_BPS = 300; // 3% lender bonus on fallback path
-    uint256 constant FALLBACK_TREASURY_BPS = 200;     // 2% treasury cut on fallback path
-    uint256 constant KYC_TIER0_THRESHOLD_USD = 1_000 * 1e18; // Tier0 max
-    uint256 constant KYC_TIER1_THRESHOLD_USD = 10_000 * 1e18; // Tier1 max
+    uint256 constant FALLBACK_TREASURY_BPS = 200; // 2% treasury cut on fallback path
+    // ─── Range Orders Phase 1 constants (docs/RangeOffersDesign.md) ─────
+    // Cancel cooldown: when an offer has zero matches against it
+    // (`amountFilled == 0`), `cancelOffer` reverts until this many seconds
+    // after `Offer.createdAt`. Blunts the cancel-front-run attack on the
+    // matching path (§9.2 of the design). Partial-filled offers can be
+    // cancelled immediately because the lender has already committed value.
+    uint256 constant MIN_OFFER_CANCEL_DELAY = 5 minutes;
+    // Loan duration cap defaults + bounds (Findings 00025).
+    // ProjectDetailsREADME §2 mandates `1 ≤ durationDays ≤ 365` with
+    // on-chain enforcement so external callers cannot bypass the
+    // frontend validation. Default is 365 days; admin can re-tune via
+    // `ConfigFacet.setMaxOfferDurationDays(uint16)` within the
+    // [floor, ceil] bounds below. The floor prevents an accidental
+    // "1 day max" lockout (a bricked governance call that locks every
+    // user out of placing a meaningful offer); the ceiling caps how
+    // far governance can stretch the interest formula
+    // `principal × rate × days / 365` before its accuracy degrades
+    // for multi-year loans. Lower bound at offer creation is the
+    // existing `durationDays == 0 → InvalidOfferType` check (so the
+    // minimum loan duration is 1 day; that's not governance-tunable).
+    uint16 constant MAX_OFFER_DURATION_DAYS_DEFAULT = 365;
+    uint16 constant MIN_OFFER_DURATION_DAYS_FLOOR = 7;
+    uint16 constant MAX_OFFER_DURATION_DAYS_CEIL = 4385; // 12+ years
+    // Matcher fee, in BPS of LIF: when LIF flows to treasury, this
+    // fraction kicks to `msg.sender` of the matching call (whoever
+    // submitted `matchOffers` / `acceptOffer` / preclose-offset /
+    // refinance). 1% of LIF — symbolic on L2s where gas is cheap;
+    // establishes the seam for Phase 2 to dial up if community bots
+    // need stronger incentives.
+    uint256 constant LIF_MATCHER_FEE_BPS = 100;
+
+    /// @dev Auto-pause defaults + bounds (Phase 1 follow-up). Default
+    ///      30 min: long enough for human incident-response, short
+    ///      enough that a false-positive doesn't strand users. Floor
+    ///      5 min so admin can't stealth-disable by setting to ~0.
+    ///      Ceiling 2 hours so a compromised watcher's worst case is
+    ///      a 2-hour freeze (admin can short-circuit via `unpause()`).
+    uint256 constant AUTO_PAUSE_DURATION_DEFAULT = 1800; // 30 min
+    uint256 constant MIN_AUTO_PAUSE_SECONDS = 300; // 5 min
+    uint256 constant MAX_AUTO_PAUSE_SECONDS = 7200; // 2 hours
+
+    /// @dev T-032 / Numeraire generalization (B1) — Notification fee (per loan-side)
+    ///      defaults + bounds. Charged in VPFI, denominated in the
+    ///      ACTIVE NUMERAIRE (1e18-scaled — USD by post-deploy default;
+    ///      whatever governance has rotated to otherwise), deducted on
+    ///      first paid-tier notification fired by the off-chain
+    ///      hf-watcher. Default 2.0 numeraire-units covers Push
+    ///      Protocol channel-side delivery costs at the operator's
+    ///      expected notification volumes (~5-10 notifications per
+    ///      loan lifetime). Floor 0.1 prevents governance accidentally
+    ///      setting it to ~0 and starving the channel; ceiling 50.0
+    ///      caps the worst-case bill on a per-loan basis if governance
+    ///      misfires upward.
+    ///
+    ///      The numeraire-quoted fee converts to VPFI via the
+    ///      ETH/numeraire price returned by `OracleFacet.getAssetPrice(WETH)`
+    ///      (anchored at the oracle layer post-B1) times the fixed
+    ///      `VPFI_PER_ETH_FIXED_PHASE1` rate. No USD-intermediate is
+    ///      involved — the fee storage value, the oracle return, and
+    ///      the resulting math are all in the active numeraire end to
+    ///      end. Atomic multi-arg `setNumeraire` in `ConfigFacet` keeps
+    ///      this in lockstep with the threshold and KYC tiers when
+    ///      governance rotates.
+    uint256 constant NOTIFICATION_FEE_DEFAULT = 2 * 1e18;
+    uint256 constant MIN_NOTIFICATION_FEE_FLOOR = 1e17; // 0.1 numeraire-units
+    uint256 constant MAX_NOTIFICATION_FEE_CEIL = 50 * 1e18; // 50 numeraire-units
+
+    /// @dev T-032 — Phase 1 fixed VPFI/ETH rate. VPFI doesn't have a
+    ///      real market price yet; the fee math is anchored to
+    ///      ETH/numeraire times this fixed rate so VPFI gets a
+    ///      synthetic numeraire quote without needing a tradable VPFI
+    ///      market:
+    ///        `vpfiAmount = feeNumeraire
+    ///                       / (ethPriceNumeraire × VPFI_PER_ETH_FIXED_PHASE1)`
+    ///      where `VPFI_PER_ETH_FIXED_PHASE1 = 1e15` (1 VPFI = 0.001
+    ///      ETH, both 18-dec). The constant is unit-agnostic — it
+    ///      describes the VPFI-to-ETH peg, independent of the active
+    ///      numeraire. When VPFI lists on an exchange (Phase 2),
+    ///      governance can replace this fixed rate with a live
+    ///      VPFI/numeraire feed without needing the USD intermediate
+    ///      that the pre-B1 design carried.
+    uint256 constant VPFI_PER_ETH_FIXED_PHASE1 = 1e15;
+    // Sanity ceiling on `interestRateBpsMax` at offer creation. Below
+    // 100% APR equivalent (10000 bps). Tighter would risk rejecting
+    // legitimate distressed-borrower offers; higher would let pranks
+    // / typo-grade offers spam the book.
+    uint256 constant MAX_INTEREST_BPS = 10_000;
+
+    // ─── T-034 — Periodic Interest Payment defaults + bounds ─────────────
+    // See docs/DesignsAndPlans/PeriodicInterestPaymentDesign.md.
+    //
+    // Cadence interval lookup table (in days). The `intervalDays` library
+    // helper returns these for the four non-`None` cadences. None → 0.
+    uint256 constant PERIODIC_INTERVAL_MONTHLY_DAYS = 30;
+    uint256 constant PERIODIC_INTERVAL_QUARTERLY_DAYS = 90;
+    uint256 constant PERIODIC_INTERVAL_SEMI_ANNUAL_DAYS = 180;
+    uint256 constant PERIODIC_INTERVAL_ANNUAL_DAYS = 365;
+
+    // Pre-notify lead time. Single knob shared between the maturity
+    // pre-notify lane and the new periodic-checkpoint pre-notify lane in
+    // the off-chain hf-watcher. Range narrow on purpose: <1 day misses
+    // weekend-buffer; >14 days creates noise that trains users to ignore
+    // the alert. Default 3 mirrors the existing maturity-warning cadence.
+    uint8 constant PERIODIC_PRE_NOTIFY_DAYS_DEFAULT = 3;
+    uint8 constant PERIODIC_PRE_NOTIFY_DAYS_FLOOR = 1;
+    uint8 constant PERIODIC_PRE_NOTIFY_DAYS_CEIL = 14;
+
+    // Principal threshold above which the lender can opt the loan into a
+    // finer-than-mandatory cadence (Monthly / Quarterly / SemiAnnual on
+    // any duration; finer-than-Annual on multi-year). Denominated in
+    // numeraire-units (1e18-scaled). Default $100k under USD-as-
+    // numeraire (post-deploy default; B1 — read from Chainlink ETH/USD
+    // via `ethNumeraireFeed`). Floor $1k stops a
+    // misconfigured "everyone qualifies" setting; ceiling $10M caps the
+    // worst-case "nobody qualifies" misfire.
+    uint256 constant PERIODIC_MIN_PRINCIPAL_FOR_FINER_CADENCE_DEFAULT = 100_000 * 1e18;
+    uint256 constant PERIODIC_MIN_PRINCIPAL_FOR_FINER_CADENCE_FLOOR = 1_000 * 1e18;
+    uint256 constant PERIODIC_MIN_PRINCIPAL_FOR_FINER_CADENCE_CEIL = 10_000_000 * 1e18;
+
+    uint256 constant KYC_TIER0_THRESHOLD_NUMERAIRE = 1_000 * 1e18; // Tier0 max
+    uint256 constant KYC_TIER1_THRESHOLD_NUMERAIRE = 10_000 * 1e18; // Tier1 max
     uint256 constant MAX_FEE_EVENTS_ITER = 10_000; // Max feeEventsLog entries scanned per window query in MetricsFacet
     uint256 constant SEQUENCER_GRACE_PERIOD = 3600; // 1h post-recovery grace on L2s before prices are trusted again
+
+    // ─── T-044 — duration-tiered loan-default grace bounds ───────────────
+    // The grace period applied between a loan's `endTime` and the moment
+    // {DefaultedFacet.markDefaulted} can fire is a function of the loan's
+    // original `durationDays`. Short loans get a short grace; long loans
+    // get a longer one. Both the bucket threshold (`maxDurationDays`)
+    // AND the per-bucket grace (`graceSeconds`) are admin-configurable
+    // via {ConfigFacet.setGraceBuckets}, with `gracePeriod()` falling back
+    // to the compile-time default schedule when storage is empty.
+    //
+    // **Schedule shape — fixed 6-slot positional table**:
+    // The schedule is exactly 6 slots; admin can edit the values inside
+    // each slot but cannot add or remove rows. Each slot carries its own
+    // hard bounds for BOTH the duration threshold and the grace period
+    // (see {graceSlotBounds}). This gives operators the flexibility to
+    // tune values within sensible per-slot windows — a < 7 day bucket
+    // can never be set to a 90-day grace, a < 365 day bucket can never
+    // be flipped down to a 1-hour grace.
+    //
+    // Slot 5 is the catch-all (`maxDurationDays == 0`); it covers any
+    // loan duration above slot 4's threshold and is governed only by its
+    // own grace bounds (no duration ceiling).
+    //
+    // Defended against compromised-admin attacks the same way every other
+    // governance setter is (see T-033) — every value is range-checked at
+    // the setter and the bounds themselves are compile-time constants.
+    uint256 constant GRACE_BUCKETS_FIXED_COUNT = 6;
+    // Absolute floor / ceiling — every per-slot bound below stays inside
+    // these. Belt-and-braces guard against a future per-slot-bound bump
+    // that accidentally breaks the global invariants (TZ tolerance + max
+    // lender lock-up).
+    uint256 constant GRACE_SECONDS_MIN = 1 hours;
+    uint256 constant GRACE_SECONDS_MAX = 90 days;
 
     // ─── Chainlink staleness thresholds (stable-peg-aware hybrid) ───────
     // Volatile feeds (ETH/BTC/etc.-USD) publish on a 1h heartbeat + 0.5%
@@ -117,7 +277,7 @@ library LibVaipakam {
     uint256 constant ORACLE_VOLATILE_STALENESS = 2 hours;
     uint256 constant ORACLE_STABLE_STALENESS = 25 hours;
     uint256 constant ORACLE_PEG_TOLERANCE_BPS = 300; // 3%
-    int256  constant ORACLE_USD_PEG_1E8 = 1e8;        // $1 scaled to 8 decimals
+    int256 constant ORACLE_USD_PEG_1E8 = 1e8; // $1 scaled to 8 decimals
 
     // ─── VPFI Discount Tier Table (docs/TokenomicsTechSpec.md §6) ────────
     // Tiered fee discount gated purely by the user's escrow VPFI balance.
@@ -138,14 +298,14 @@ library LibVaipakam {
     //
     // Boundary semantics matter at the T3/T4 split: exactly 20,000 VPFI is
     // T3 (not T4), so the check is strictly `> 20_000e18` for T4.
-    uint256 constant VPFI_TIER1_MIN = 100 * 1e18;         // T1 starts at ≥ 100
-    uint256 constant VPFI_TIER2_MIN = 1_000 * 1e18;       // T2 starts at ≥ 1,000
-    uint256 constant VPFI_TIER3_MIN = 5_000 * 1e18;       // T3 starts at ≥ 5,000
+    uint256 constant VPFI_TIER1_MIN = 100 * 1e18; // T1 starts at ≥ 100
+    uint256 constant VPFI_TIER2_MIN = 1_000 * 1e18; // T2 starts at ≥ 1,000
+    uint256 constant VPFI_TIER3_MIN = 5_000 * 1e18; // T3 starts at ≥ 5,000
     uint256 constant VPFI_TIER4_THRESHOLD = 20_000 * 1e18; // T4 starts strictly ABOVE this
-    uint256 constant VPFI_TIER1_DISCOUNT_BPS = 1000;       // 10%
-    uint256 constant VPFI_TIER2_DISCOUNT_BPS = 1500;       // 15%
-    uint256 constant VPFI_TIER3_DISCOUNT_BPS = 2000;       // 20%
-    uint256 constant VPFI_TIER4_DISCOUNT_BPS = 2400;       // 24%
+    uint256 constant VPFI_TIER1_DISCOUNT_BPS = 1000; // 10%
+    uint256 constant VPFI_TIER2_DISCOUNT_BPS = 1500; // 15%
+    uint256 constant VPFI_TIER3_DISCOUNT_BPS = 2000; // 20%
+    uint256 constant VPFI_TIER4_DISCOUNT_BPS = 2400; // 24%
 
     uint256 constant VPFI_FIXED_RATE_DEFAULT_WEI_PER_VPFI = 1e15; // 1 VPFI = 0.001 ETH
     uint256 constant VPFI_FIXED_GLOBAL_CAP = 2_300_000 * 1e18; // 2.3M VPFI pool (spec §8)
@@ -155,8 +315,8 @@ library LibVaipakam {
     // Hard caps on each Phase-1 emission category. The diamond pays
     // claims from its own VPFI balance; a cumulative paid-out counter
     // enforces these caps at claim time.
-    uint256 constant VPFI_STAKING_POOL_CAP = 55_200_000 * 1e18;      // 24% of supply
-    uint256 constant VPFI_INTERACTION_POOL_CAP = 69_000_000 * 1e18;  // 30% of supply
+    uint256 constant VPFI_STAKING_POOL_CAP = 55_200_000 * 1e18; // 24% of supply
+    uint256 constant VPFI_INTERACTION_POOL_CAP = 69_000_000 * 1e18; // 30% of supply
     // Reward base for interaction daily pool — multiplied by the
     // schedule's annualRate and `dt / 365` to size each day's emission.
     uint256 constant VPFI_INITIAL_MINT = 23_000_000 * 1e18;
@@ -205,6 +365,30 @@ library LibVaipakam {
     enum OfferType {
         Lender,
         Borrower
+    }
+
+    /**
+     * @notice T-034 — cadence at which the borrower must settle accrued
+     *         interest during the loan's lifetime.
+     * @dev `None` is today's behavior — terminal-only repayment. The four
+     *      finer values correspond to fixed intervals (30 / 90 / 180 /
+     *      365 days). For loans with `durationDays > 365` the contract
+     *      enforces a minimum cadence of `Annual`. For all loans, the
+     *      cadence interval must be strictly less than `durationDays`
+     *      (a cadence whose first checkpoint lands at or after maturity
+     *      is meaningless). For loans where either side is illiquid,
+     *      cadence MUST be `None` (the auto-liquidate path requires
+     *      both assets to be DEX-swappable). See
+     *      docs/DesignsAndPlans/PeriodicInterestPaymentDesign.md §3.
+     *      Lookup helper: `intervalDays(cadence)` returns the matching
+     *      day count or 0 for `None`.
+     */
+    enum PeriodicInterestCadence {
+        None,
+        Monthly,
+        Quarterly,
+        SemiAnnual,
+        Annual
     }
 
     /**
@@ -286,29 +470,130 @@ library LibVaipakam {
      */
     struct ProtocolConfig {
         // ── Packed BPS slot (14 × uint16 = 224 bits; 32 bits of headroom) ──
-        uint16 treasuryFeeBps;              // 0 ⇒ TREASURY_FEE_BPS (100)
-        uint16 loanInitiationFeeBps;        // 0 ⇒ LOAN_INITIATION_FEE_BPS (10)
-        uint16 liquidationHandlingFeeBps;   // 0 ⇒ LIQUIDATION_HANDLING_FEE_BPS (200)
-        uint16 maxLiquidationSlippageBps;   // 0 ⇒ MAX_LIQUIDATION_SLIPPAGE_BPS (600)
-        uint16 maxLiquidatorIncentiveBps;   // 0 ⇒ MAX_LIQUIDATOR_INCENTIVE_BPS (300)
-        uint16 volatilityLtvThresholdBps;   // 0 ⇒ VOLATILITY_LTV_THRESHOLD_BPS (11000)
-        uint16 rentalBufferBps;             // 0 ⇒ RENTAL_BUFFER_BPS (500)
-        uint16 vpfiStakingAprBps;           // 0 ⇒ VPFI_STAKING_APR_BPS (500)
-        uint16 vpfiTier1DiscountBps;        // 0 ⇒ VPFI_TIER1_DISCOUNT_BPS (1000)
-        uint16 vpfiTier2DiscountBps;        // 0 ⇒ VPFI_TIER2_DISCOUNT_BPS (1500)
-        uint16 vpfiTier3DiscountBps;        // 0 ⇒ VPFI_TIER3_DISCOUNT_BPS (2000)
-        uint16 vpfiTier4DiscountBps;        // 0 ⇒ VPFI_TIER4_DISCOUNT_BPS (2400)
+        uint16 treasuryFeeBps; // 0 ⇒ TREASURY_FEE_BPS (100)
+        uint16 loanInitiationFeeBps; // 0 ⇒ LOAN_INITIATION_FEE_BPS (10)
+        uint16 liquidationHandlingFeeBps; // 0 ⇒ LIQUIDATION_HANDLING_FEE_BPS (200)
+        uint16 maxLiquidationSlippageBps; // 0 ⇒ MAX_LIQUIDATION_SLIPPAGE_BPS (600)
+        uint16 maxLiquidatorIncentiveBps; // 0 ⇒ MAX_LIQUIDATOR_INCENTIVE_BPS (300)
+        uint16 volatilityLtvThresholdBps; // 0 ⇒ VOLATILITY_LTV_THRESHOLD_BPS (11000)
+        uint16 rentalBufferBps; // 0 ⇒ RENTAL_BUFFER_BPS (500)
+        uint16 vpfiStakingAprBps; // 0 ⇒ VPFI_STAKING_APR_BPS (500)
+        uint16 vpfiTier1DiscountBps; // 0 ⇒ VPFI_TIER1_DISCOUNT_BPS (1000)
+        uint16 vpfiTier2DiscountBps; // 0 ⇒ VPFI_TIER2_DISCOUNT_BPS (1500)
+        uint16 vpfiTier3DiscountBps; // 0 ⇒ VPFI_TIER3_DISCOUNT_BPS (2000)
+        uint16 vpfiTier4DiscountBps; // 0 ⇒ VPFI_TIER4_DISCOUNT_BPS (2400)
         // Fallback-path split, governance-configurable. Prospective
         // semantics: `Loan.fallbackLenderBonusBpsAtInit` / `...TreasuryBpsAtInit`
         // are snapshotted at `initiateLoan`, so governance changes via
         // `setFallbackSplit` never retroactively alter dual-consent offers.
-        uint16 fallbackLenderBonusBps;      // 0 ⇒ FALLBACK_LENDER_BONUS_BPS (300)
-        uint16 fallbackTreasuryBps;         // 0 ⇒ FALLBACK_TREASURY_BPS (200)
+        uint16 fallbackLenderBonusBps; // 0 ⇒ FALLBACK_LENDER_BONUS_BPS (300)
+        uint16 fallbackTreasuryBps; // 0 ⇒ FALLBACK_TREASURY_BPS (200)
+        // Range Orders Phase 1: matcher's slice of the LIF that flows
+        // to treasury at match-time (lender-asset path) or at terminal
+        // (VPFI path). 0 ⇒ LIF_MATCHER_FEE_BPS (100 = 1%). Tunable so
+        // governance can dial up to 5-10% if community bot operators
+        // need a stronger incentive to compete (per the design plan's
+        // "Match-fee economics revisit" Phase 2 item). Capped at
+        // MAX_FEE_BPS (50%) by the setter.
+        uint16 lifMatcherFeeBps; // 0 ⇒ LIF_MATCHER_FEE_BPS (100)
+        // Auto-pause window (Phase 1 follow-up). Duration in seconds
+        // for an off-chain anomaly-watcher's `autoPause()` to freeze
+        // the protocol while humans investigate. 0 ⇒
+        // AUTO_PAUSE_DURATION_DEFAULT (1800 = 30 min). Capped at
+        // [MIN_AUTO_PAUSE_SECONDS, MAX_AUTO_PAUSE_SECONDS] by the
+        // setter — floor prevents "set to 0" disable-by-stealth,
+        // ceiling caps a compromised watcher's worst-case freeze.
+        uint32 autoPauseDurationSeconds; // 0 ⇒ AUTO_PAUSE_DURATION_DEFAULT
+        // Maximum offer durationDays (Findings 00025). 0 ⇒
+        // MAX_OFFER_DURATION_DAYS_DEFAULT (365). Bounded at the setter
+        // by [MIN_OFFER_DURATION_DAYS_FLOOR, MAX_OFFER_DURATION_DAYS_CEIL]
+        // — floor prevents an accidental "1 day max" lockout, ceiling
+        // caps how far governance can stretch the duration interest
+        // formula's accuracy. Stored as uint16 so the slot stays
+        // packed; the runtime read returns uint256 via `cfgMaxOfferDurationDays`.
+        uint16 maxOfferDurationDays; // 0 ⇒ MAX_OFFER_DURATION_DAYS_DEFAULT (365)
+        // ── Range Orders Phase 1 master kill-switch flags ─────────────
+        // All default `false` on a fresh deploy. Flipped on by governance
+        // via `ConfigFacet.setRangeAmountEnabled` / `setRangeRateEnabled`
+        // / `setPartialFillEnabled` after the testnet bake. While off,
+        // `OfferFacet.createOffer` enforces the legacy single-value
+        // shape — see docs/RangeOffersDesign.md §15.
+        bool rangeAmountEnabled;
+        bool rangeRateEnabled;
+        bool partialFillEnabled;
         // ── VPFI discount tier thresholds (18-dec VPFI; 0 ⇒ default) ──
-        uint256 vpfiTier1Min;               // 0 ⇒ VPFI_TIER1_MIN (100e18)
-        uint256 vpfiTier2Min;               // 0 ⇒ VPFI_TIER2_MIN (1_000e18)
-        uint256 vpfiTier3Min;               // 0 ⇒ VPFI_TIER3_MIN (5_000e18)
-        uint256 vpfiTier4Threshold;         // 0 ⇒ VPFI_TIER4_THRESHOLD (20_000e18)
+        uint256 vpfiTier1Min; // 0 ⇒ VPFI_TIER1_MIN (100e18)
+        uint256 vpfiTier2Min; // 0 ⇒ VPFI_TIER2_MIN (1_000e18)
+        uint256 vpfiTier3Min; // 0 ⇒ VPFI_TIER3_MIN (5_000e18)
+        uint256 vpfiTier4Threshold; // 0 ⇒ VPFI_TIER4_THRESHOLD (20_000e18)
+        // ── T-032 / Numeraire generalization (B1) — Notification fee config ─────────
+        // Flat per-loan-side notification fee, denominated in the
+        // ACTIVE NUMERAIRE (1e18 scaled — USD by post-deploy default;
+        // whatever governance has rotated to otherwise). Charged in
+        // VPFI from the user's escrow at the moment the off-chain
+        // hf-watcher fires the FIRST notification on a PaidPush-tier
+        // subscription for that loan-side. Zero (default) means use
+        // the library constant `NOTIFICATION_FEE_DEFAULT` (2.0
+        // numeraire-units); set via `ConfigFacet.setNotificationFee`.
+        // Bounded `[MIN_NOTIFICATION_FEE_FLOOR, MAX_NOTIFICATION_FEE_CEIL]`
+        // at the setter so a misfire can't lock users out OR drain
+        // their escrows. The fee → VPFI math is anchored end-to-end
+        // in the active numeraire: `getAssetPrice(WETH)` returns
+        // ETH/numeraire post-B1, multiplied by the fixed
+        // `VPFI_PER_ETH_FIXED_PHASE1` peg gives a synthetic
+        // VPFI/numeraire rate, and the stored fee divides directly. No
+        // USD-intermediate is involved at any step (the per-knob
+        // `notificationFeeUsdOracle` was retired in Numeraire generalization (Phase 1);
+        // the `INumeraireOracle` abstraction was retired in B1).
+        uint256 notificationFee; // 0 ⇒ NOTIFICATION_FEE_DEFAULT (2e18)
+        // ── T-034 / B1 — Periodic Interest Payment config ─────────────
+        // See docs/DesignsAndPlans/PeriodicInterestPaymentDesign.md §6.
+        //
+        // The numeraire identity is captured by the feed-side slots at
+        // the top-level Storage struct (`ethNumeraireFeed`,
+        // `numeraireChainlinkDenominator`, `numeraireSymbol`) — there
+        // is no longer a dedicated "numeraire oracle" contract. The
+        // post-Numeraire-generalization design has `OracleFacet.getAssetPrice` return
+        // numeraire-quoted prices natively; comparison sites compare
+        // numeraire-vs-numeraire without any boundary conversion.
+        // Principal threshold for opting into a finer-than-mandatory
+        // cadence. Stored in numeraire-units (1e18-scaled). 0 ⇒
+        // PERIODIC_MIN_PRINCIPAL_FOR_FINER_CADENCE_DEFAULT. Range
+        // `[PERIODIC_MIN_PRINCIPAL_FOR_FINER_CADENCE_FLOOR,
+        //   PERIODIC_MIN_PRINCIPAL_FOR_FINER_CADENCE_CEIL]` enforced
+        // by both setters. Read at `createOffer` to gate Filter 2.
+        uint256 minPrincipalForFinerCadence; // 0 ⇒ default
+        // Pre-notify lead time, in days. Single knob shared between
+        // the maturity pre-notify lane and the new periodic-checkpoint
+        // pre-notify lane in the off-chain hf-watcher. 0 ⇒
+        // PERIODIC_PRE_NOTIFY_DAYS_DEFAULT (3). Range
+        // `[PERIODIC_PRE_NOTIFY_DAYS_FLOOR, PERIODIC_PRE_NOTIFY_DAYS_CEIL]`
+        // enforced by `ConfigFacet.setPreNotifyDays`.
+        uint8 preNotifyDays; // 0 ⇒ default 3
+        // Master kill-switch for the entire Periodic Interest Payment
+        // mechanic. Default `false` — the feature ships dormant. While
+        // `false`:
+        //   - `OfferFacet.createOffer` reverts `PeriodicInterestDisabled`
+        //     for any non-`None` cadence.
+        //   - `RepayFacet.settlePeriodicInterest` reverts wholesale (PR2).
+        //   - `RepayFacet.repayPartial` interest-first fold + inline
+        //     checkpoint advance is bypassed (PR2).
+        //   - Every cadence-aware UI surface in the frontend is hidden.
+        // Flipped on by `ADMIN_ROLE` via
+        // `ConfigFacet.setPeriodicInterestEnabled(bool)` once governance
+        // is ready to activate the feature mesh-wide. See §10.1 of the
+        // design doc for the full behavior matrix.
+        bool periodicInterestEnabled;
+        // Independently gates the atomic batched `setNumeraire` setter.
+        // Default `false` — a fresh deploy ships USD-as-numeraire (the
+        // ETH/USD Chainlink feed pointed at by `s.ethNumeraireFeed`,
+        // empty `s.numeraireSymbol` interpreted as "usd") and
+        // governance cannot rotate to a different numeraire until this
+        // flag flips. Threshold-only updates via
+        // `setMinPrincipalForFinerCadence(uint256)` and the per-knob
+        // setters are NOT gated by this flag — governance can tune
+        // individual values within the same numeraire freely.
+        bool numeraireSwapEnabled;
     }
 
     /// @dev Struct to store parameters of createOffer function, avoiding stack-too-deep.
@@ -348,6 +633,25 @@ library LibVaipakam {
         // enforced at the top of `RepayFacet.repayPartial`. Default
         // `false` is the Phase-1-safe behaviour: explicit opt-in only.
         bool allowsPartialRepay;
+        // ── Range Orders Phase 1 max fields (docs/RangeOffersDesign.md
+        //    §2.2). Pair with the legacy `amount` / `interestRateBps`
+        //    fields above (= the min). Auto-collapsed to single-value
+        //    semantics when left at 0 — preserves backward compat with
+        //    every existing test / script that builds CreateOfferParams.
+        //    Range mode requires the corresponding master flag
+        //    (`rangeAmountEnabled` / `rangeRateEnabled`) to be true on
+        //    the protocol config; see §15 of the design doc.
+        uint256 amountMax;
+        uint256 interestRateBpsMax;
+        // ── T-034 — Periodic Interest Payment cadence ─────────────────
+        // Lender's chosen settlement cadence. Default `None` (zero in
+        // the enum) preserves backward compat with every existing
+        // CreateOfferParams construction site that doesn't set this
+        // field. While `periodicInterestEnabled == false`, any non-`None`
+        // value is rejected at `createOffer` with
+        // `PeriodicInterestDisabled`. See
+        // docs/DesignsAndPlans/PeriodicInterestPaymentDesign.md §3.
+        PeriodicInterestCadence periodicInterestCadence;
     }
 
     /**
@@ -359,7 +663,8 @@ library LibVaipakam {
     struct Offer {
         // Slot 0
         uint256 id;
-        // Slot 1: creator(20) + 10 small fields (10) = 30 bytes packed
+        // Slot 1: creator(20) + 10 small fields (10) + 1 enum (1)
+        //         = 31 bytes packed; 1 free
         address creator;
         OfferType offerType;
         LiquidityStatus principalLiquidity;
@@ -372,6 +677,14 @@ library LibVaipakam {
         // Carried into `Loan.allowsPartialRepay` at offer acceptance.
         // See {CreateOfferParams.allowsPartialRepay} for full semantics.
         bool allowsPartialRepay;
+        // ── T-034 — Periodic Interest Payment cadence ─────────────────
+        // Lender's chosen settlement cadence (None for terminal-only).
+        // Validated at `createOffer` per the matrix in
+        // docs/DesignsAndPlans/PeriodicInterestPaymentDesign.md §3 — three
+        // filters: liquid-both precondition, interval < duration, and
+        // duration-vs-threshold gating. Snapshotted onto `Loan` at
+        // acceptance and immutable for the loan's lifetime.
+        PeriodicInterestCadence periodicInterestCadence;
         // Slot 2
         address lendingAsset; // ERC20 or NFT contract
         // Slot 3
@@ -396,6 +709,25 @@ library LibVaipakam {
         uint256 collateralTokenId; // Token ID for NFT collateral; 0 for ERC20
         // Slot 13
         uint256 collateralQuantity; // Quantity for ERC1155 collateral; 0 for ERC20/ERC721
+        // ── Range Orders Phase 1 fields (append-only; see
+        //    docs/RangeOffersDesign.md §2.1). The legacy `amount` and
+        //    `interestRateBps` fields above semantically equal the MIN
+        //    of each range; the matching new field is the inclusive max.
+        //    A single-value offer satisfies `amountMax == amount` and
+        //    `interestRateBpsMax == interestRateBps`. Auto-collapsed at
+        //    `createOffer` time when the caller leaves the max field
+        //    zero so existing single-value tests / scripts compile + run
+        //    unchanged.
+        // Slot 14
+        uint256 amountMax; // ≥ amount (= the min); 0 ⇒ collapse to amount at create.
+        // Slot 15 — cumulative principal consumed across all matches
+        //          against this offer. Lender-side partial fills only;
+        //          borrower offers stay at 0 (Phase 1 single-fill).
+        uint256 amountFilled;
+        // Slot 16
+        uint256 interestRateBpsMax; // ≥ interestRateBps; 0 ⇒ collapse to interestRateBps.
+        // Slot 17 — packed: createdAt(8) + 24 bytes headroom
+        uint64 createdAt; // Unix-seconds; stamped at createOffer.
     }
 
     /**
@@ -433,7 +765,8 @@ library LibVaipakam {
         // in `LibFallback` (backfill-safe).
         uint16 fallbackLenderBonusBpsAtInit;
         uint16 fallbackTreasuryBpsAtInit;
-        // Slot 3: borrower(20) + 1 small field (1) = 21 bytes packed
+        // Slot 3: borrower(20) + 1 small field (1) + 1 enum (1)
+        //         + uint64 (8) = 30 bytes packed; 2 free
         address borrower;
         // Snapshotted from `Offer.allowsPartialRepay` at loan init.
         // Read by `RepayFacet.repayPartial` to gate borrower-initiated
@@ -443,6 +776,21 @@ library LibVaipakam {
         // immutable for the loan's lifetime regardless of any later
         // governance / offer-level change.
         bool allowsPartialRepay;
+        // ── T-034 — Periodic Interest Payment fields ──────────────────
+        // Snapshotted from `Offer.periodicInterestCadence` at loan init.
+        // Immutable for the loan's lifetime — same snapshot discipline as
+        // `allowsPartialRepay` and the fallback split bps. None on every
+        // loan created while `periodicInterestEnabled` is false. See
+        // docs/DesignsAndPlans/PeriodicInterestPaymentDesign.md §2.1.
+        PeriodicInterestCadence periodicInterestCadence;
+        // Unix-seconds timestamp of the most recent fully-settled period
+        // checkpoint. Initialised to `startTime` at `initiateLoan`.
+        // Advanced by exactly `intervalDays(cadence) * 1 days` per
+        // settlement (just-stamp or auto-liquidate). Zero on loans whose
+        // cadence is None (the field is read but the next-checkpoint
+        // computation in `RepayFacet` short-circuits when cadence is
+        // None, so this never matters there).
+        uint64 lastPeriodicInterestSettledAt;
         // Slot 4
         uint256 lenderTokenId;
         // Slot 5
@@ -453,8 +801,25 @@ library LibVaipakam {
         address principalAsset;
         // Slot 8
         uint256 interestRateBps;
-        // Slot 9
-        uint256 startTime; // Timestamp of initiation
+        // Slot 9: startTime(8) + interestPaidSinceLastPeriod(16)
+        //        = 24 bytes packed; 8 free
+        // T-034 downsized startTime from uint256 to uint64 to free 24
+        // bytes for `interestPaidSinceLastPeriod` and future expansion.
+        // uint64 holds Unix-seconds through year 2554 — well past any
+        // plausible loan horizon. Every reader implicitly widens to
+        // uint256 via Solidity arithmetic; only the three write sites
+        // (`LoanFacet.initiateLoan`, `RepayFacet`, `PrecloseFacet`) need
+        // explicit `uint64(block.timestamp)` casts.
+        uint64 startTime; // Timestamp of initiation
+        // T-034 — interest paid by the borrower since the most recent
+        // periodic checkpoint (or since `startTime` for the first
+        // period). Reset to zero on each settlement. Only the interest
+        // portion of `repayPartial` payments accumulates here — under
+        // T-034's interest-first allocation, that's the same value as
+        // `min(payment, accruedThisPeriod)`. uint128 is plenty: it
+        // overflows at ~3.4 × 10^38 wei, far above any conceivable
+        // single-period interest amount in any asset.
+        uint128 interestPaidSinceLastPeriod;
         // Slot 10
         uint256 durationDays;
         // Slot 11
@@ -500,6 +865,30 @@ library LibVaipakam {
         // accept and unstakes the next block earns only a prorated
         // rebate (~0) instead of the full discount.
         uint256 borrowerDiscountAccAtInit;
+        // ── Range Orders Phase 1 — matcher address ─────────────────────
+        // Recorded at loan init from the matching write's `msg.sender`
+        // (`matchOffers` / `acceptOffer` / preclose-offset / refinance).
+        // Consumed by `LibVPFIDiscount.settleBorrowerLifProper` and
+        // `forfeitBorrowerLif` to route 1% of any LIF flowing to
+        // treasury (lender-asset path: directly at match; VPFI path:
+        // deferred to terminal). Zero on legacy loans created before
+        // the Range Orders Phase 1 cutover. See
+        // docs/RangeOffersDesign.md §"1% match fee mechanic."
+        address matcher;
+        // ── T-032 — notification-fee billed flags ──────────────────────
+        // Set by `LoanFacet.markNotifBilled` (callable only by
+        // `NOTIF_BILLER_ROLE` — held by the off-chain hf-watcher) the
+        // first time a paid-tier (Push-Protocol) notification fires
+        // for the corresponding side of this loan. Once set, the user's
+        // VPFI escrow has already been debited the
+        // `cfgNotificationFee()`-equivalent amount in VPFI,
+        // routed directly to treasury (no Diamond custody — see
+        // `LibNotificationFee.bill` for the routing). Idempotent: the
+        // facet method no-ops if the flag is already true. Free-tier
+        // (Telegram-only) subscribers and unsubscribed users always
+        // leave both flags `false` — they're billed only on PaidPush.
+        bool lenderNotifBilled;
+        bool borrowerNotifBilled;
     }
 
     /**
@@ -546,6 +935,24 @@ library LibVaipakam {
         uint256 minPartialBps; // Min partial repay % (e.g., 100 for 1%)
     }
 
+    /// @notice One row of the duration-tiered grace-period table.
+    /// @dev Buckets are stored as a sorted array in
+    ///      `Storage.graceBuckets`, with `maxDurationDays` strictly
+    ///      ascending across the array. `gracePeriod(durationDays)`
+    ///      returns the `graceSeconds` of the first bucket whose
+    ///      `maxDurationDays > durationDays`. The LAST bucket is the
+    ///      catch-all and is identified by `maxDurationDays == 0` —
+    ///      its `graceSeconds` applies to every duration above the
+    ///      penultimate bucket's threshold. This shape matches the
+    ///      compile-time default schedule in `gracePeriod()` exactly,
+    ///      so a fresh deploy with empty storage and a storage-driven
+    ///      deploy produce identical lookups for the original 5
+    ///      buckets, plus the new `≥ 365 days → 30 days` row.
+    struct GraceBucket {
+        uint256 maxDurationDays;
+        uint256 graceSeconds;
+    }
+
     /// @notice Per-feed oracle override. Governance-installed tighter
     ///         staleness bound and/or minimum-valid-answer floor on a
     ///         specific Chainlink aggregator address. `maxStaleness == 0`
@@ -587,19 +994,21 @@ library LibVaipakam {
      *      site so MetricsFacet can report rolling 24h/7d windows and a true
      *      lifetime cumulative total. Packed into a single slot:
      *      `timestamp` fits any reasonable future block time in uint64, and
-     *      `usdValue` in uint192 accommodates USD amounts scaled to 1e18 up
-     *      to ~6.28e39 — vastly beyond any single fee.
-     *      `usdValue` is 0 when the priced asset lacks a Chainlink feed at
-     *      the time of accrual. The underlying asset-denominated accrual is
-     *      reflected in `treasuryBalances[asset]` only when the configured
+     *      `numeraireValue` in uint192 accommodates active-numeraire amounts
+     *      scaled to 1e18 up to ~6.28e39 — vastly beyond any single fee. The
+     *      protocol is currency-agnostic: amounts are quoted in whatever
+     *      numeraire governance has configured (USD by post-deploy default).
+     *      `numeraireValue` is 0 when the priced asset lacks a Chainlink feed
+     *      at the time of accrual. The underlying asset-denominated accrual
+     *      is reflected in `treasuryBalances[asset]` only when the configured
      *      treasury is the Diamond itself; external-treasury deployments
      *      push the tokens straight to the multisig, so `treasuryBalances`
      *      stays at zero for those fee paths (the fee still lives on-chain
-     *      in the event log and `cumulativeFeesUSD`).
+     *      in the event log and `cumulativeFeesNumeraire`).
      */
     struct FeeEvent {
         uint64 timestamp;
-        uint192 usdValue;
+        uint192 numeraireValue;
     }
 
     /// @notice Which side of a loan a {RewardEntry} represents.
@@ -623,12 +1032,12 @@ library LibVaipakam {
     struct RewardEntry {
         address user;
         uint64 loanId;
-        uint32 startDay;     // inclusive
-        uint32 endDay;       // exclusive; 0 = still open
+        uint32 startDay; // inclusive
+        uint32 endDay; // exclusive; 0 = still open
         RewardSide side;
-        bool processed;      // claim/sweep already routed this entry
-        bool forfeited;      // true ⇒ route to treasury on processing
-        uint256 perDayUSD18; // USD18 interest-per-day snapshotted at register
+        bool processed; // claim/sweep already routed this entry
+        bool forfeited; // true ⇒ route to treasury on processing
+        uint256 perDayNumeraire18; // Numeraire18 interest-per-day snapshotted at register
     }
 
     /**
@@ -652,8 +1061,8 @@ library LibVaipakam {
      *      minute top-up cannot backdate its effect onto prior periods.
      */
     struct UserVpfiDiscountState {
-        uint16  discountBpsAtPreviousRollup;
-        uint64  lastRollupAt;
+        uint16 discountBpsAtPreviousRollup;
+        uint64 lastRollupAt;
         uint256 cumulativeDiscountBpsSeconds;
     }
 
@@ -678,8 +1087,8 @@ library LibVaipakam {
      *      settlement side-effects and no claim.
      */
     struct BorrowerLifRebate {
-        uint256 vpfiHeld;      // Diamond's custody while the loan is live
-        uint256 rebateAmount;  // Claimable VPFI after proper settlement
+        uint256 vpfiHeld; // Diamond's custody while the loan is live
+        uint256 rebateAmount; // Claimable VPFI after proper settlement
     }
 
     /**
@@ -713,7 +1122,7 @@ library LibVaipakam {
      *          {LibFacet.recordTreasuryAccrual} only when `treasury ==
      *          address(this)`; external-treasury deployments leave this
      *          ledger at zero because the fees are pushed out synchronously
-     *          (see `feeEventsLog` / `cumulativeFeesUSD` for the analytics
+     *          (see `feeEventsLog` / `cumulativeFeesNumeraire` for the analytics
      *          of record). Monotone non-decreasing between accruals;
      *          reset to zero by `TreasuryFacet.claimTreasuryFees`. Any
      *          interest/late-fee split that debits lender/borrower MUST
@@ -745,7 +1154,70 @@ library LibVaipakam {
         address treasury; // Configurable treasury address
         address zeroExProxy; // 0x proxy for liquidations
         address allowanceTarget; // allowance target for 0x proxy protocol
-        address usdChainlinkDenominator; // Chainlink Feed Registry USD denominator (mainnet only)
+        address numeraireChainlinkDenominator; // Chainlink Feed Registry denominator constant for the active numeraire (Denominations.USD by default; rotates with the numeraire)
+        // T-034 Numeraire generalization (B1) — symbol of the active numeraire used by
+        // the symbol-derived secondary oracles (Tellor / API3 / DIA). Stored
+        // as bytes32 (max 32 ASCII chars) for cheap on-chain comparison;
+        // governance writes lowercase ASCII (e.g. "usd", "eur", "xau").
+        // Empty bytes32 (post-deploy default before governance writes)
+        // is interpreted as "usd" in `_checkTellor` / `_checkApi3` /
+        // `_checkDIA` so the protocol behaves identically to the pre-
+        // sweep deploy out of the box.
+        bytes32 numeraireSymbol;
+        // T-048 — Predominantly Available Denominator (PAD).
+        // PAD is the Chainlink-denomination side that the protocol expects
+        // to have UNIVERSAL coverage on every supported chain — USD by the
+        // post-deploy default. `_primaryPrice` queries `asset/PAD` first
+        // (Chainlink Feed Registry, deepest coverage); if PAD ≠ active
+        // numeraire, the PAD-quoted price is then converted via the
+        // PAD/<numeraire> rate (direct feed if `padNumeraireRateFeed` is
+        // set, else derived from `ethNumeraireFeed ÷ ethPadFeed`). When
+        // PAD == numeraire (retail default — both are
+        // `Denominations.USD`), the conversion is short-circuited and the
+        // PAD price IS the numeraire price — zero overhead, behavior
+        // identical to the pre-T-048 deploy.
+        //
+        // Tunable via `ConfigFacet.setPredominantDenominator`; zero on a
+        // fresh deploy, in which case `_primaryPrice` falls through to the
+        // legacy numeraire-direct path. An industrial-fork deploy on a
+        // non-USD numeraire MUST set PAD before opening loans (a deploy-
+        // script pre-flight enforces it).
+        address predominantDenominator;
+        // bytes32 lowercase ASCII symbol for the symbol-derived secondary
+        // oracles (Tellor / API3 / DIA) when querying asset/PAD pairs.
+        // Empty bytes32 is interpreted as "usd" — matches the existing
+        // numeraireSymbol fallback convention.
+        bytes32 predominantDenominatorSymbol;
+        // Chainlink ETH/<PAD> AggregatorV3 — always populated when PAD is
+        // set. Used (a) directly when the asset is WETH and PAD == numeraire,
+        // and (b) as the denominator of the derived PAD/<numeraire> rate
+        // when the direct feed is absent: rate = ETH/<numeraire> ÷ ETH/PAD.
+        // On retail (PAD == numeraire == USD), this typically points at
+        // the same Chainlink ETH/USD address as `ethNumeraireFeed` — the
+        // two slots are allowed to alias.
+        address ethPadFeed;
+        // Optional Chainlink PAD/<numeraire> AggregatorV3 (e.g. USD/EUR
+        // on Ethereum mainnet). When set, the FX rate is read from this
+        // feed directly. When unset (the more common case on L2s), the
+        // protocol derives the rate from ETH/<numeraire> ÷ ETH/PAD using
+        // existing infrastructure. Address(0) on retail (PAD == numeraire)
+        // is correct — no FX conversion is needed.
+        address padNumeraireRateFeed;
+        // Per-asset opt-in override for the PAD-pivot path. When non-zero,
+        // `_primaryPrice` reads this Chainlink AggregatorV3 directly as the
+        // asset's numeraire-quoted price and skips the PAD pivot entirely
+        // (no FX multiply, no asset/PAD lookup). Use case: on a non-USD
+        // numeraire deploy, an operator finds a 🟢-rated direct
+        // `asset/<numeraire>` Chainlink feed (rare but possible) and wants
+        // to use it instead of pivoting via USD. Default zero = pivot via
+        // PAD (the structurally-safe path that biases toward the top-rated
+        // asset/USD feed set). Cleared by writing zero.
+        //
+        // Operator vouches for the feed's quality when setting this — the
+        // protocol does NOT cross-check the override against Pyth or the
+        // secondary quorum, since both are configured for ETH/<numeraire>
+        // not asset/<numeraire>. Use only for verified-rated feeds.
+        mapping(address => address) assetNumeraireDirectFeedOverride;
         address chainlnkRegistry; // Chainlink Feed Registry (mainnet only; address(0) on L2s)
         address wethContract; // Canonical WETH on the active network — v3-style AMM liquidity quote asset
         address uniswapV3Factory; // UNISWAP_V3_FACTORY
@@ -770,8 +1242,8 @@ library LibVaipakam {
         uint256 currentEscrowVersion; // incremented on each implementation upgrade
         uint256 mandatoryEscrowVersion; // minimum version required; 0 = no mandatory upgrade
         mapping(address => uint256) escrowVersion; // user => version when their proxy was last upgraded
-        uint256 kycTier0ThresholdUSD; // Tier0 max (default 1_000 * 1e18)
-        uint256 kycTier1ThresholdUSD; // Tier1 max (default 10_000 * 1e18)
+        uint256 kycTier0ThresholdNumeraire; // Tier0 max (default 1_000 * 1e18)
+        uint256 kycTier1ThresholdNumeraire; // Tier1 max (default 10_000 * 1e18)
         mapping(address => bool) keeperAccessEnabled; // User-level master switch — quick "pause all keepers for me" (default: false)
         // Snapshot of liquid-collateral liquidations that fell back to the
         // claim-time settlement path (README §7). Written by RiskFacet /
@@ -798,15 +1270,16 @@ library LibVaipakam {
         mapping(uint256 => mapping(address => bool)) loanKeeperEnabled;
         mapping(uint256 => mapping(address => bool)) offerKeeperEnabled;
         // README §13 analytics surface: timestamped log of every treasury-fee
-        // accrual, priced in USD at accrual time. Appended by
-        // LibFacet.recordTreasuryAccrual. Consumed by MetricsFacet for the
+        // accrual, priced in the active numeraire at accrual time. Appended
+        // by LibFacet.recordTreasuryAccrual. Consumed by MetricsFacet for the
         // 24h/7d revenue windows and getRevenueStats(days_). Capped per query
         // by MAX_FEE_EVENTS_ITER on read.
         FeeEvent[] feeEventsLog;
-        // Monotone cumulative sum of usdValue across feeEventsLog entries —
-        // tracked separately so MetricsFacet.getTreasuryMetrics.totalFeesCollectedUSD
-        // is an O(1) read. Never decreases.
-        uint256 cumulativeFeesUSD;
+        // Monotone cumulative sum of numeraireValue across feeEventsLog
+        // entries — tracked separately so
+        // MetricsFacet.getTreasuryMetrics.totalFeesCollectedNumeraire is an
+        // O(1) read. Never decreases.
+        uint256 cumulativeFeesNumeraire;
         // README §16 Phase 1 KYC pass-through flag. When FALSE (the default
         // at Phase 1 launch), every `meetsKYCRequirement` / `isKYCVerified`
         // check returns true so KYC logic does not block any user flow. The
@@ -894,7 +1367,6 @@ library LibVaipakam {
         // applied automatically whenever the escrow holds enough VPFI and
         // the asset leg is eligible (liquidity + oracle availability).
         mapping(address => bool) vpfiDiscountConsent;
-
         // ─── VPFI Staking Rewards (spec §7) ─────────────────────────────
         // Escrow-held VPFI is automatically "staked" and earns 5% APR from
         // VPFI_STAKING_POOL_CAP. reward-per-token time-weighted accrual —
@@ -917,7 +1389,6 @@ library LibVaipakam {
         mapping(address => uint256) userStakedVPFI;
         mapping(address => uint256) userStakingRewardPerTokenPaid;
         mapping(address => uint256) userStakingPendingReward;
-
         // ─── VPFI Lender Yield-Fee Time-Weighted Discount (§5.2a) ──────
         // Per-user accumulator backing the lender-side time-weighted
         // yield-fee discount. Each loan stores `lenderDiscountAccAtInit`
@@ -929,7 +1400,6 @@ library LibVaipakam {
         // lookup. See docs/GovernanceConfigDesign.md §5.2a for the full
         // rationale and the anti-gaming design sketch.
         mapping(address => UserVpfiDiscountState) userVpfiDiscountState;
-
         // ─── VPFI Platform Interaction Rewards (spec §4) ────────────────
         // Daily emission pool split 50/50 across lenders (by USD interest
         // earned that day) and borrowers (by USD interest paid that day on
@@ -946,17 +1416,17 @@ library LibVaipakam {
         // Settlement hooks (RepayFacet on clean full repay, and any
         // future preclose path on a strict clean-repay outcome) record
         // the USD-valued (Chainlink spot) interest booked on day `d`:
-        //   totalLenderInterestUSD18[d] += interestUSD
-        //   userLenderInterestUSD18[d][lender] += interestUSD
+        //   totalLenderInterestNumeraire18[d] += interestUSD
+        //   userLenderInterestNumeraire18[d][lender] += interestUSD
         //   (and borrower mirror iff clean)
         // Claims walk finalized days < today, cap at MAX_INTERACTION_CLAIM_DAYS
         // per tx, and advance interactionLastClaimedDay.
         uint256 interactionLaunchTimestamp;
         uint256 interactionPoolPaidOut;
-        mapping(uint256 => uint256) totalLenderInterestUSD18;
-        mapping(uint256 => uint256) totalBorrowerInterestUSD18;
-        mapping(uint256 => mapping(address => uint256)) userLenderInterestUSD18;
-        mapping(uint256 => mapping(address => uint256)) userBorrowerInterestUSD18;
+        mapping(uint256 => uint256) totalLenderInterestNumeraire18;
+        mapping(uint256 => uint256) totalBorrowerInterestNumeraire18;
+        mapping(uint256 => mapping(address => uint256)) userLenderInterestNumeraire18;
+        mapping(uint256 => mapping(address => uint256)) userBorrowerInterestNumeraire18;
         mapping(address => uint256) interactionLastClaimedDay;
         /// @dev Admin-configurable "whole VPFI per 1 ETH of eligible
         ///      interest" per-user daily cap used in
@@ -965,7 +1435,6 @@ library LibVaipakam {
         ///      0.5 VPFI per 0.001 ETH, matching docs/TokenomicsTechSpec.md
         ///      §4). Applied independently per side per day.
         uint256 interactionCapVpfiPerEth;
-
         // ─── Cross-Chain Reward Accounting (spec §4a) ────────────────────
         // The §4 reward formula's denominator `totalDailyInterestUSD` is
         // PROTOCOL-WIDE, not per-chain — but each independent Diamond
@@ -974,12 +1443,12 @@ library LibVaipakam {
         //   - every Diamond (Base + mirrors) runs a reporter that ships
         //     its day-`D` local (lender, borrower) USD totals to Base
         //   - Base runs an aggregator that sums per-chain reports into
-        //     `dailyGlobalLenderInterestUSD18[D]` and
-        //     `dailyGlobalBorrowerInterestUSD18[D]` once all expected
+        //     `dailyGlobalLenderInterestNumeraire18[D]` and
+        //     `dailyGlobalBorrowerInterestNumeraire18[D]` once all expected
         //     mirrors have reported OR `rewardGraceSeconds` has elapsed
         //   - Base then broadcasts the finalized global pair back to
         //     every mirror, where {LibInteractionRewards.claimForUserWindow}
-        //     prefers `knownGlobal*InterestUSD18[D]` over the local total
+        //     prefers `knownGlobal*InterestNumeraire18[D]` over the local total
         //     as the formula denominator
         //
         // Trust model: LayerZero packets flow through the dedicated
@@ -1014,21 +1483,19 @@ library LibVaipakam {
         ///      mesh, PLUS the Base chain's own `localEid` because Base
         ///      is also a source of interest). Admin-maintained.
         uint32[] expectedSourceEids;
-
         // ── Reporter side (every chain) ────────────────────────────────
         /// @dev Per-chain per-day "already reported" guard. Set when the
         ///      local Diamond successfully ships its day-`D` report (on
         ///      Base: writes directly to aggregator storage; on mirrors:
         ///      queues the OApp send).
         mapping(uint256 => uint64) chainReportSentAt;
-
         // ── Aggregator side (Base only) ────────────────────────────────
-        /// @dev Base-only: lender-side local USD18 interest reported by
+        /// @dev Base-only: lender-side local Numeraire18 interest reported by
         ///      chain `eid` for day `D`.
-        mapping(uint256 => mapping(uint32 => uint256)) chainDailyLenderInterestUSD18;
-        /// @dev Base-only: borrower-side local USD18 interest reported by
+        mapping(uint256 => mapping(uint32 => uint256)) chainDailyLenderInterestNumeraire18;
+        /// @dev Base-only: borrower-side local Numeraire18 interest reported by
         ///      chain `eid` for day `D`.
-        mapping(uint256 => mapping(uint32 => uint256)) chainDailyBorrowerInterestUSD18;
+        mapping(uint256 => mapping(uint32 => uint256)) chainDailyBorrowerInterestNumeraire18;
         /// @dev Base-only: `(dayId, eid)` idempotency guard — rejects
         ///      duplicate reports for the same `(day, chain)` pair.
         mapping(uint256 => mapping(uint32 => bool)) chainDailyReported;
@@ -1045,13 +1512,12 @@ library LibVaipakam {
         ///      finalization are rejected (idempotency preserves claim
         ///      determinism).
         mapping(uint256 => bool) dailyGlobalFinalized;
-        /// @dev Base-only: finalized global lender USD18 interest for
+        /// @dev Base-only: finalized global lender Numeraire18 interest for
         ///      day `D` (sum across reported eids).
-        mapping(uint256 => uint256) dailyGlobalLenderInterestUSD18;
-        /// @dev Base-only: finalized global borrower USD18 interest for
+        mapping(uint256 => uint256) dailyGlobalLenderInterestNumeraire18;
+        /// @dev Base-only: finalized global borrower Numeraire18 interest for
         ///      day `D` (sum across reported eids).
-        mapping(uint256 => uint256) dailyGlobalBorrowerInterestUSD18;
-
+        mapping(uint256 => uint256) dailyGlobalBorrowerInterestNumeraire18;
         // ── Consumer side (every chain) ────────────────────────────────
         /// @dev Finalized global lender denominator known on this chain
         ///      for day `D`. On Base it is set directly by
@@ -1059,16 +1525,15 @@ library LibVaipakam {
         ///      set by {RewardReporterFacet.onRewardBroadcastReceived}.
         ///      Zero means "not yet known locally" — claims for `D`
         ///      revert until the broadcast lands.
-        mapping(uint256 => uint256) knownGlobalLenderInterestUSD18;
-        /// @dev Mirror of {knownGlobalLenderInterestUSD18} for the
+        mapping(uint256 => uint256) knownGlobalLenderInterestNumeraire18;
+        /// @dev Mirror of {knownGlobalLenderInterestNumeraire18} for the
         ///      borrower side.
-        mapping(uint256 => uint256) knownGlobalBorrowerInterestUSD18;
+        mapping(uint256 => uint256) knownGlobalBorrowerInterestNumeraire18;
         /// @dev Per-day `knownGlobal*` set-flag. Cheaper than comparing
         ///      both sides to zero; distinguishes "day `D` finalized
         ///      with zero global interest" from "day `D` not yet
         ///      broadcast here".
         mapping(uint256 => bool) knownGlobalSet;
-
         // ─── Bridged Fixed-Rate VPFI Buy (spec §: Early Fixed-Rate ──────
         // Purchase Program, cross-chain extension) ─────────────────────────
         // Base is the SOLE seller of the fixed-rate VPFI. Non-Base chains
@@ -1085,7 +1550,6 @@ library LibVaipakam {
         ///      Set via {setBridgedBuyReceiver}; zero disables the
         ///      bridged-buy ingress.
         address bridgedBuyReceiver;
-
         // ─── L2 Sequencer Uptime Circuit Breaker ────────────────────────
         // On L2s (Base/Arb/OP/etc.) we must not consume Chainlink prices
         // while the sequencer has been down — users can't submit txs, so
@@ -1100,7 +1564,6 @@ library LibVaipakam {
         ///      mainnet: 0xBCF85224fc0756B9Fa45aA7892530B47e10b6433).
         ///      Zero = check skipped (L1/mainnet deployments).
         address sequencerUptimeFeed;
-
         // ─── Per-Asset Pause (governance-controlled reserve pause) ──────
         // Governance can pause a specific asset without flipping the
         // protocol-wide pause. Creation paths (createOffer, acceptOffer,
@@ -1113,7 +1576,6 @@ library LibVaipakam {
         /// @dev `assetPaused[asset] == true` ⇒ new exposure through this
         ///      asset is blocked. Defaults to false for every asset.
         mapping(address => bool) assetPaused;
-
         // ─── Per-user reverse indexes for on-chain enumeration ──────────
         // Bot / indexer / frontend friendly: lets callers page through
         // every loan and offer a user has touched without scanning event
@@ -1136,7 +1598,6 @@ library LibVaipakam {
         ///      terminal — either flag means the offer is no longer
         ///      matchable.
         mapping(uint256 => bool) offerCancelled;
-
         // ─── MetricsFacet O(1) analytics layer ──────────────────────────
         // Counters and active-set indices maintained by LibMetricsHooks
         // at every loan/offer lifecycle edge. Eliminates the MAX_ITER
@@ -1176,6 +1637,13 @@ library LibVaipakam {
         /// @dev Σ interestRateBps across every loan ever initiated.
         ///      Divided by totalLoansEverCreated to yield averageAPR.
         uint256 interestRateBpsSum;
+        /// @dev T-032 — cumulative VPFI debited from user escrows and
+        ///      routed to treasury via `LoanFacet.markNotifBilled`.
+        ///      Never decremented; the operator monitors this for
+        ///      anomaly detection (a compromised NOTIF_BILLER_ROLE
+        ///      could falsely bill, capped at the per-loan-side fee
+        ///      but observable here as a spike).
+        uint256 notificationFeesAccrued;
         /// @dev Count of offers currently not accepted and not cancelled.
         uint256 activeOffersCount;
         /// @dev Count of unique wallets that have ever created an offer
@@ -1205,7 +1673,6 @@ library LibVaipakam {
         uint256[] activeOfferIdsList;
         /// @dev 1-based position map for active-offer swap-and-pop.
         mapping(uint256 => uint256) activeOfferIdsListPos;
-
         // ─── ETH-referenced oracle / liquidity config ────────────────────
         // OracleFacet classifies an ERC-20 as Liquid via a v3-style AMM
         // asset/WETH 0.3% pool (the deepest quote layer across EVM
@@ -1215,21 +1682,20 @@ library LibVaipakam {
         // direct USD feed exists. On L2s where the Chainlink Feed
         // Registry is not deployed, `chainlnkRegistry` is address(0)
         // and both the USD and ETH Feed Registry lookups are skipped —
-        // pricing flows through the direct `ethUsdFeed` address for
+        // pricing flows through the direct `ethNumeraireFeed` address for
         // WETH and reverts with {NoPriceFeed} for other assets unless
         // the admin wires a per-asset direct feed (not yet exposed;
         // tracked in the follow-up).
         /// @dev AggregatorV3 address for ETH/USD (8 decimals). REQUIRED
         ///      for liquidity depth conversion and for pricing WETH
         ///      itself. Zero disables every ETH-quoted code path.
-        address ethUsdFeed;
+        address ethNumeraireFeed;
         /// @dev Chainlink Feed Registry ETH pseudo-address denominator
         ///      (mainnet: 0x0000...0000000EeeeE...). Used by
         ///      getAssetPrice to look up asset/ETH feeds as the USD
         ///      fallback. Zero on L2s and disables the asset/ETH
         ///      fallback path.
         address ethChainlinkDenominator;
-
         // ─── Generalized stablecoin peg registry ─────────────────────────
         // OracleFacet's peg-aware stale branch accepts a price as fresh
         // if the feed (8-decimal USD-quoted) reports within
@@ -1249,7 +1715,6 @@ library LibVaipakam {
         bytes32[] stableFeedSymbolsList;
         /// @dev 1-based position map for swap-and-pop removal.
         mapping(bytes32 => uint256) stableFeedSymbolPos;
-
         // ─── Per-feed oracle override (Phase 3.1 hardening) ──────────────
         // Lets governance tighten `maxStaleness` and install a minimum-
         // valid-answer floor on individual Chainlink aggregators WITHOUT
@@ -1269,7 +1734,6 @@ library LibVaipakam {
         //   - An off-US-market-hours commodity feed gets a relaxed
         //     staleness to avoid false stalenesss reverts overnight.
         mapping(address => FeedOverride) feedOverrides;
-
         // ─── Address-level sanctions oracle (Phase 4.3) ─────────────────
         // Chainalysis operates a free on-chain sanctions oracle on every
         // chain it supports; governance sets this slot to the per-chain
@@ -1282,7 +1746,6 @@ library LibVaipakam {
         // check entirely, which is the correct state on chains where
         // Chainalysis does not deploy an oracle.
         address sanctionsOracle;
-
         // ─── Legal: Terms of Service acceptance (Phase 4.1) ──────────────
         // On-chain record of every wallet's acceptance of the current ToS
         // version. `currentTosVersion` starts at 0 (no ToS in force), which
@@ -1296,21 +1759,20 @@ library LibVaipakam {
         uint32 currentTosVersion;
         bytes32 currentTosHash;
         mapping(address => TosAcceptance) tosAcceptance;
-
         // ─── Phase 2 Interaction Reward Accrual (spec §4 daily) ─────────
         // Replaces the Phase-1 "lump-sum-at-settlement" accounting with
         // per-day accrual. Each loan, on {LoanFacet.initiateLoan},
-        // contributes `perDayUSD18` to the running open-per-day counter
+        // contributes `perDayNumeraire18` to the running open-per-day counter
         // via a START-day delta. At close, a matching NEGATIVE delta is
         // stamped on the close day (exclusive endDay). The delta cursor
         // is advanced lazily by the reporter path when shipping day `d`
         // AND by the claim path when walking reward entries.
         //
         // Claim math: per-entry reward =
-        //   perDayUSD18 × (cumRPU18[endDay-1] − cumRPU18[startDay-1]) / 1e18
-        // where cumRPU18[d] = Σ_{d' ≤ d} halfPool[d'] × 1e18 / globalTotal[d'].
+        //   perDayNumeraire18 × (cumRPN18[endDay-1] − cumRPN18[startDay-1]) / 1e18
+        // where cumRPN18[d] = Σ_{d' ≤ d} halfPool[d'] × 1e18 / globalTotal[d'].
         // Global denominator comes from the finalized cross-chain
-        // broadcast (`knownGlobal*InterestUSD18[d]`); cumRPU cannot advance
+        // broadcast (`knownGlobal*InterestNumeraire18[d]`); cumRPN cannot advance
         // past days whose broadcast hasn't landed.
         //
         // Forfeit routing (user directive):
@@ -1336,43 +1798,40 @@ library LibVaipakam {
         ///      new lender's freshly forged entry; the prior entry is
         ///      closed with forfeit=true.
         mapping(uint256 => uint256) loanActiveLenderEntryId;
-
-        /// @dev Net change applied to {lenderOpenPerDayUSD18} at the START
+        /// @dev Net change applied to {lenderOpenPerDayNumeraire18} at the START
         ///      of day `d`. registerLoan bumps [startDay] up, closeLoan
         ///      bumps [endDay] down. Stored as int256 for the net-zero
         ///      symmetry on same-day register + close.
-        mapping(uint256 => int256) lenderPerDayDeltaUSD18;
-        /// @dev Mirror of {lenderPerDayDeltaUSD18} for the borrower side.
+        mapping(uint256 => int256) lenderPerDayDeltaNumeraire18;
+        /// @dev Mirror of {lenderPerDayDeltaNumeraire18} for the borrower side.
         ///      Clean / forfeit status is recorded on the RewardEntry, NOT
         ///      by reversing deltas — defaulted borrowers remain in the
         ///      denominator to keep the daily pool budget stable.
-        mapping(uint256 => int256) borrowerPerDayDeltaUSD18;
-        /// @dev Running sum of `perDayUSD18` across lender-side loans open
+        mapping(uint256 => int256) borrowerPerDayDeltaNumeraire18;
+        /// @dev Running sum of `perDayNumeraire18` across lender-side loans open
         ///      at {lenderFrontierDay}. Advanced by {advanceLenderThrough}.
-        uint256 lenderOpenPerDayUSD18;
-        /// @dev Running sum of `perDayUSD18` across borrower-side loans
+        uint256 lenderOpenPerDayNumeraire18;
+        /// @dev Running sum of `perDayNumeraire18` across borrower-side loans
         ///      open at {borrowerFrontierDay}.
-        uint256 borrowerOpenPerDayUSD18;
-        /// @dev Last day for which {totalLenderInterestUSD18}[d] has been
+        uint256 borrowerOpenPerDayNumeraire18;
+        /// @dev Last day for which {totalLenderInterestNumeraire18}[d] has been
         ///      snapshotted from the delta walk. Advance must be called
         ///      before the reporter ships day `d`.
         uint256 lenderFrontierDay;
         /// @dev Mirror of {lenderFrontierDay} for the borrower side.
         uint256 borrowerFrontierDay;
-
-        /// @dev cumRPU18[d] = cumulative VPFI-wei reward per 1e18 USD18
+        /// @dev cumRPN18[d] = cumulative VPFI-wei reward per 1e18 Numeraire18
         ///      through END of day `d`, using the GLOBAL (cross-chain)
         ///      denominator. Populated lazily by {advanceCumLenderThrough};
         ///      halts at the first day without `knownGlobalSet[d]`.
-        mapping(uint256 => uint256) cumLenderRPU18;
-        /// @dev Mirror of {cumLenderRPU18} for the borrower side.
-        mapping(uint256 => uint256) cumBorrowerRPU18;
-        /// @dev Last day through which {cumLenderRPU18} is populated
+        mapping(uint256 => uint256) cumLenderRPN18;
+        /// @dev Mirror of {cumLenderRPN18} for the borrower side.
+        mapping(uint256 => uint256) cumBorrowerRPN18;
+        /// @dev Last day through which {cumLenderRPN18} is populated
         ///      (contiguous from day 0). Day 0 cum = 0 (spec §4 exclusion).
         uint256 cumLenderCursor;
         /// @dev Mirror of {cumLenderCursor} for the borrower side.
         uint256 cumBorrowerCursor;
-
         /// @dev Admin-configurable protocol parameters (fees, VPFI tier
         ///      table, risk knobs). Zero fields fall back to their
         ///      `LibVaipakam` constant defaults — see {ProtocolConfig}
@@ -1380,7 +1839,6 @@ library LibVaipakam {
         ///      {ConfigFacet} under ADMIN_ROLE (routed through the 48h
         ///      Timelock post-handover).
         ProtocolConfig protocolCfg;
-
         // ─── Borrower LIF discount claim bookkeeping (Phase 5 / §5.2b) ─
         /// @dev Per-loan custody + claimable rebate for the borrower
         ///      VPFI-path LIF. Keys are loan ids. A loan that took the
@@ -1388,7 +1846,6 @@ library LibVaipakam {
         ///      mapping — the zero struct reads correctly and settlement
         ///      helpers no-op on zero vpfiHeld.
         mapping(uint256 => BorrowerLifRebate) borrowerLifRebate;
-
         // ─── Phase 7a: liquidation swap adapter failover chain ──────────
         /// @dev Priority-ordered list of {ISwapAdapter} contracts.
         ///      {LibSwap.swapWithFailover} iterates from index 0 and
@@ -1401,7 +1858,6 @@ library LibVaipakam {
         ///      that routes liquidations must populate this array
         ///      before the first loan settles.
         address[] swapAdapters;
-
         // ─── Phase 7b: multi-venue oracle liquidity check ───────────────
         /// @dev PancakeSwap V3 factory address on this chain. PancakeV3
         ///      is a Uniswap V3 fork — same `IUniswapV3Factory.getPool`
@@ -1414,14 +1870,12 @@ library LibVaipakam {
         ///      3000) so the on-chain probe iterates a superset that
         ///      covers every clone.
         address pancakeswapV3Factory;
-
         /// @dev SushiSwap V3 factory address on this chain. Also a
         ///      Uniswap V3 fork; same probe semantics as PancakeV3.
         ///      Together with `uniswapV3Factory` and
         ///      `pancakeswapV3Factory`, gives the liquidity check 1-of-3
         ///      OR-redundancy without any per-asset governance config.
         address sushiswapV3Factory;
-
         // ─── Phase 7b.2: cross-provider price-feed redundancy ──────────
         /// @dev Tellor oracle address on this chain. Tellor is keyed
         ///      by 32-byte queryId derived from the asset's symbol via
@@ -1433,21 +1887,18 @@ library LibVaipakam {
         ///      primary still works, no revert. Per-asset governance
         ///      config is intentionally NOT present.
         address tellorOracle;
-
         /// @dev API3 ServerV1 address on this chain. API3 is keyed by
         ///      32-byte dapiName hash derived from the asset's symbol
         ///      via `keccak256(abi.encodePacked(bytes32(string(symbol,
         ///      "/USD"))))`. Same derivation pattern as Tellor; same
         ///      no-per-asset-config policy.
         address api3ServerV1;
-
         /// @dev DIA Oracle V2 address on this chain. DIA is keyed by
         ///      a string `<SYMBOL>/USD` (e.g. "ETH/USD"). {OracleFacet}
         ///      derives the key by reading `asset.symbol()` and
         ///      concatenating `/USD`. Same no-per-asset-config policy
         ///      as Tellor + API3.
         address diaOracleV2;
-
         /// @dev Maximum allowed deviation between the Chainlink
         ///      primary and any secondary oracle (Tellor / API3),
         ///      in basis points. Chain-level config — no per-asset
@@ -1456,13 +1907,57 @@ library LibVaipakam {
         ///      `setSecondaryOracleMaxDeviationBps`. Zero is treated
         ///      as "use the LibVaipakam.SECONDARY_ORACLE_MAX_DEVIATION_BPS_DEFAULT".
         uint16 secondaryOracleMaxDeviationBps;
-
         /// @dev Maximum acceptable secondary-oracle data age, in
         ///      seconds. Chain-level. Defaults to
         ///      `LibVaipakam.SECONDARY_ORACLE_MAX_STALENESS_DEFAULT`
         ///      when zero.
         uint40 secondaryOracleMaxStaleness;
+        // ─── T-033 — Pyth as numeraire-redundancy oracle ───────────────
+        //
+        // Pyth was removed in Phase 7b.2 because a per-asset `priceId`
+        // mapping conflicts with the no-per-asset-config policy. T-033
+        // re-introduces it in a *numeraire-only* shape: one Pyth feed
+        // per chain (ETH/USD or, on non-ETH-native chains, WETH/USD)
+        // is consulted as a sanity gate alongside Chainlink's
+        // ETH/USD reading. Per-asset redundancy stays the symbol-
+        // derived Tellor / API3 / DIA secondary quorum — Pyth doesn't
+        // replace it, just adds a single load-bearing-peg defense.
 
+        /// @dev Pyth contract address on this chain. Zero disables
+        ///      the numeraire gate silently — protocol falls back to
+        ///      Chainlink-only on the WETH/USD reading. Same
+        ///      "off-by-default-on-fresh-deploy" pattern as the other
+        ///      secondary oracles.
+        address pythOracle;
+        /// @dev Pyth feed id for this chain's numeraire ETH/USD (or
+        ///      bridged WETH/USD on chains where bridged WETH is the
+        ///      unit of account, e.g. BNB / Polygon mainnet). Single
+        ///      governance write per chain — adding new collateral
+        ///      assets never touches this slot.
+        bytes32 pythCrossCheckFeedId;
+        /// @dev Maximum acceptable staleness (in seconds) for the
+        ///      Pyth numeraire snapshot. Beyond this, the gate soft-
+        ///      skips (treats Pyth as unavailable for this read);
+        ///      Chainlink-only proceeds. Bounded to
+        ///      `[PYTH_MAX_STALENESS_MIN_SECONDS,
+        ///      PYTH_MAX_STALENESS_MAX_SECONDS]` by the setter.
+        uint64 pythMaxStalenessSeconds;
+        /// @dev Maximum tolerated divergence between Chainlink ETH/USD
+        ///      and Pyth ETH/USD, in basis points (1 bp = 0.01%).
+        ///      Beyond this, the price view fails-closed
+        ///      (`OracleCrossCheckDivergence`). Bounded to
+        ///      `[PYTH_NUMERAIRE_MAX_DEVIATION_BPS_MIN,
+        ///      PYTH_NUMERAIRE_MAX_DEVIATION_BPS_MAX]` by the setter
+        ///      so a misconfig can't accidentally halt the protocol
+        ///      (zero) or effectively disable the gate (≥ 100%).
+        uint16 pythCrossCheckMaxDeviationBps;
+        /// @dev Maximum tolerated Pyth confidence fraction
+        ///      (`conf / price`) in basis points. When the published
+        ///      uncertainty exceeds this, the gate soft-skips Pyth
+        ///      (the publisher window is too thin to trust). Bounded
+        ///      to `[PYTH_CONFIDENCE_MAX_BPS_MIN,
+        ///      PYTH_CONFIDENCE_MAX_BPS_MAX]` by the setter.
+        uint16 pythConfidenceMaxBps;
         // ─── Per-Origin-Chain VPFI Fixed-Rate Wallet Caps ───────────────
         /// @dev Per-(buyer, originEid) running total of VPFI bought at
         ///      the fixed rate. Replaces the legacy
@@ -1482,6 +1977,108 @@ library LibVaipakam {
         ///      caller-asserted `originEid` argument carried from the
         ///      OFT message.
         mapping(address => mapping(uint32 => uint256)) vpfiFixedRateSoldToByEid;
+        // ── Range Orders Phase 1 — match-override slot ─────────────────
+        // Set by `OfferFacet.matchOffers` immediately before
+        // cross-facet-calling `LoanFacet.initiateLoan`, read by
+        // `LoanFacet._copyFinancialFields`, cleared at the end of the
+        // matchOffers tx. Lets matchOffers inject the midpoint match
+        // terms (amount / rateBps / collateralAmount) into the loan
+        // without changing `LoanFacet.initiateLoan`'s signature. The
+        // `active` flag distinguishes "matchOffers in flight" from
+        // "legacy single-value path" — the latter never sets it, so
+        // _copyFinancialFields falls back to reading offer.amount /
+        // offer.interestRateBps / offer.collateralAmount as before
+        // (auto-collapse keeps that semantically correct because in
+        // single-value mode amountMax == amount).
+        MatchOverride matchOverride;
+        // ── T-044 — admin-configurable loan-default grace schedule ─────
+        // Empty array (length == 0) means "use the compile-time default
+        // schedule embedded in `gracePeriod()`" — zero-config-friendly.
+        // Populated array overrides the defaults; entries must be sorted
+        // ascending on `maxDurationDays`, with the final entry's
+        // `maxDurationDays == 0` marking the catch-all bucket. Validated
+        // by {ConfigFacet.setGraceBuckets} against
+        // GRACE_BUCKETS_MAX_LEN / GRACE_BUCKET_DAYS_MIN/MAX /
+        // GRACE_SECONDS_MIN/MAX before any write.
+        GraceBucket[] graceBuckets;
+        // ── Stuck-token recovery (T-054 PR-3) ──────────────────────
+        // Per-user replay-protection nonce for the EIP-712 recovery
+        // acknowledgment. Incremented on every successful
+        // `recoverStuckERC20` call so a previously-signed payload
+        // can't be re-submitted. See
+        // `docs/DesignsAndPlans/EscrowStuckRecoveryDesign.md` §5.
+        mapping(address => uint256) recoveryNonce;
+        // Per-user "this escrow declared a sanctioned source via the
+        // recovery flow" mapping. When set to a non-zero address, the
+        // sanctions check delegates to that source's CURRENT oracle
+        // status — so the ban auto-unlocks if the address is later
+        // de-listed without any on-chain action by us. Zero ⇒ no
+        // recovery-induced ban.
+        mapping(address => address) escrowBannedSource;
+        // ── Escrow protocol-tracked balance counter (T-051 / T-054) ──
+        // Per-(user, token) running counter of ERC-20 amount the
+        // protocol has deposited into / withdrawn from the user's
+        // escrow proxy. Incremented by `EscrowFactoryFacet.escrowDepositERC20`
+        // (and the counter-only sibling `recordEscrowDepositERC20`,
+        // used after Permit2 pulls); decremented by
+        // `escrowWithdrawERC20`. Every protocol-side ERC-20 deposit
+        // is required to flow through one of those entry points so
+        // the counter stays correct.
+        //
+        // Two consumers depend on this being accurate:
+        //
+        //   1. The Asset Viewer / external integrations that want to
+        //      display only protocol-managed balances. They render
+        //      `min(balanceOf(escrow, token), protocolTrackedEscrowBalance[user][token])`
+        //      so unsolicited dust someone pushed in directly via
+        //      `IERC20.transfer` is structurally hidden from the UI.
+        //
+        //   2. The future stuck-token recovery flow (T-054). Recovery
+        //      is capped at `max(0, balanceOf - tracked)` — the
+        //      arithmetic itself prevents the recovery path from
+        //      ever pulling protocol-managed collateral / claims /
+        //      staked VPFI no matter what other checks were
+        //      bypassed. Load-bearing safety property.
+        //
+        // The staking checkpoint (`LibStakingRewards.updateUser`) and
+        // VPFI discount accumulator (`LibVPFIDiscount.rollupUserDiscount`)
+        // also clamp to `min(balanceOf, tracked)` so unsolicited VPFI
+        // dust does NOT earn yield and does NOT inflate the tier.
+        //
+        // Underflow on withdraw means a withdrawal fired without a
+        // matching deposit — that's an accounting bug somewhere upstream
+        // and we want it to revert loudly rather than silently rolling
+        // negative.
+        mapping(address => mapping(address => uint256)) protocolTrackedEscrowBalance;
+    }
+
+    /// @dev Range Orders Phase 1 — set by matchOffers, read by
+    ///      LoanFacet._copyFinancialFields + OfferFacet._acceptOffer,
+    ///      cleared post-match. See `Storage.matchOverride` for full
+    ///      semantics. Carries both the concrete match terms (amount /
+    ///      rateBps / collateralAmount) AND the address-resolution
+    ///      override (counterparty / matcher) needed when matchOffers
+    ///      processes a lender offer with msg.sender = bot rather than
+    ///      a counterparty.
+    struct MatchOverride {
+        // Match terms read by LoanFacet._copyFinancialFields.
+        uint256 amount;
+        uint256 rateBps;
+        uint256 collateralAmount;
+        // Address-resolution override read by OfferFacet._acceptOffer.
+        // counterparty: the OTHER party in the match (= the borrower
+        // when matchOffers processes a lender offer). _acceptOffer
+        // uses this in place of msg.sender for sanctions/country/KYC
+        // checks + the borrower-resolution branch + the borrower
+        // collateral pull (which is SKIPPED when override active
+        // because the borrower already escrowed at borrower-offer
+        // create time).
+        address counterparty;
+        // matcher: receives the 1% LIF kickback. Same as msg.sender on
+        // the legacy acceptOffer path (set client-side from msg.sender
+        // there), distinct from msg.sender on the matchOffers path.
+        address matcher;
+        bool active;
     }
 
     /// @dev Default secondary-oracle deviation tolerance: 5%.
@@ -1489,6 +2086,148 @@ library LibVaipakam {
 
     /// @dev Default secondary-oracle staleness: 1h.
     uint40 internal constant SECONDARY_ORACLE_MAX_STALENESS_DEFAULT = 3600;
+
+    // ─── T-033 — Pyth numeraire-redundancy bounds ──────────────────────────
+    //
+    // Every Pyth knob is governance-tunable but bounded so a
+    // compromised admin / governance multisig cannot push the value
+    // to a degenerate setting that effectively disables the gate
+    // (too-loose bounds) or fail-closes the protocol (too-tight
+    // bounds). The setter on {OracleAdminFacet} reverts on out-of-
+    // range writes with a `ParameterOutOfRange(name, value, min,
+    // max)` error so failed governance proposals surface clearly.
+
+    /// @dev Default deviation between Chainlink and Pyth ETH/USD
+    ///      that's tolerated before {OracleCrossCheckDivergence}
+    ///      fires: 5%. Pyth and Chainlink can naturally drift this
+    ///      far in fast markets without either being compromised.
+    uint16 internal constant PYTH_NUMERAIRE_MAX_DEVIATION_BPS_DEFAULT = 500;
+
+    /// @dev Lower bound on the deviation tolerance — 1% (100 bps).
+    ///      Tighter than this would fail-close on legitimate
+    ///      cross-oracle drift and DoS the protocol. The bound
+    ///      applies to setter writes; the runtime value is allowed
+    ///      to be at the floor.
+    uint16 internal constant PYTH_NUMERAIRE_MAX_DEVIATION_BPS_MIN = 100;
+
+    /// @dev Upper bound on the deviation tolerance — 20% (2000 bps).
+    ///      Looser than this and the gate is effectively disabled
+    ///      (a 20% peg-feed drift between independent oracles is
+    ///      already unusual; a 30%+ drift is "one is compromised"
+    ///      no matter how charitable the variance assumption).
+    uint16 internal constant PYTH_NUMERAIRE_MAX_DEVIATION_BPS_MAX = 2000;
+
+    /// @dev Default Pyth confidence-fraction ceiling: 1% (100 bps).
+    ///      `conf / price > 1%` → soft-skip Pyth on this read.
+    uint16 internal constant PYTH_CONFIDENCE_MAX_BPS_DEFAULT = 100;
+
+    /// @dev Lower bound on confidence ceiling — 0.5% (50 bps).
+    ///      Tighter and Pyth gets soft-skipped too often (most
+    ///      well-published feeds run conf < 0.3%, so 0.5% gives
+    ///      headroom for fast markets without going opaque).
+    uint16 internal constant PYTH_CONFIDENCE_MAX_BPS_MIN = 50;
+
+    /// @dev Upper bound on confidence ceiling — 5% (500 bps).
+    ///      Beyond this the "Pyth said the price is X" claim has
+    ///      enough uncertainty that consulting it is meaningless.
+    uint16 internal constant PYTH_CONFIDENCE_MAX_BPS_MAX = 500;
+
+    /// @dev Default Pyth max-staleness: 5 min. Pyth's published
+    ///      heartbeat on ETH/USD is sub-second on Base; 5min is a
+    ///      generous "the publishers are at least breathing" bound.
+    uint64 internal constant PYTH_MAX_STALENESS_DEFAULT_SECONDS = 300;
+
+    /// @dev Lower bound on Pyth staleness budget — 1 min. Tighter
+    ///      and a transient mempool jam soft-skips Pyth too often.
+    uint64 internal constant PYTH_MAX_STALENESS_MIN_SECONDS = 60;
+
+    /// @dev Upper bound on Pyth staleness budget — 1 h. Beyond this
+    ///      Pyth is effectively cached forever and a stale-but-
+    ///      manipulated reading could drive divergence outcomes.
+    uint64 internal constant PYTH_MAX_STALENESS_MAX_SECONDS = 3600;
+
+    // ─── Setter range audit (2026-05-02) — bounds for governance-tunable
+    //     parameters that previously had no min/max. The shared
+    //     `ParameterOutOfRange(name, value, min, max)` error in
+    //     {IVaipakamErrors} is the load-bearing guard; even a
+    //     compromised governance multisig cannot push these values
+    //     beyond the policy range without a contract upgrade.
+
+    /// @dev Tighter cap on the secondary-oracle deviation tolerance
+    ///      (Tellor / API3 / DIA). Replaces the previous
+    ///      `(0, BASIS_POINTS)` window — too wide. Same shape as the
+    ///      Pyth gate.
+    uint16 internal constant SECONDARY_ORACLE_MAX_DEVIATION_BPS_MIN = 100;
+    uint16 internal constant SECONDARY_ORACLE_MAX_DEVIATION_BPS_MAX = 2000;
+
+    /// @dev Bounds for {setSecondaryOracleMaxStaleness}. Previous
+    ///      `!= 0` had no upper bound — a misconfig could allow
+    ///      arbitrary stale data through the secondary quorum.
+    ///      Upper at 29h leaves a 5h buffer above the 24h heartbeat
+    ///      that some stablecoin price feeds (USDC, USDT) publish on
+    ///      — tightening below 24h would soft-skip those feeds on
+    ///      every legitimate update.
+    uint40 internal constant SECONDARY_ORACLE_MAX_STALENESS_MIN_SECONDS = 60;
+    uint40 internal constant SECONDARY_ORACLE_MAX_STALENESS_MAX_SECONDS =
+        29 * 3600;
+
+    /// @dev Bounds for {setRewardGraceSeconds}. Previous setter had
+    ///      no bounds. Min 5 min so a transient outage can't be
+    ///      confused with a real grace; max 30 days so the grace
+    ///      window can't be set to "indefinite" (defeats the purpose).
+    uint64 internal constant REWARD_GRACE_MIN_SECONDS = 300;
+    uint64 internal constant REWARD_GRACE_MAX_SECONDS = 30 days;
+
+    /// @dev Bounds for {setInteractionCapVpfiPerEth}. The setter's
+    ///      `value` is "whole VPFI per ETH of eligible interest"
+    ///      (NOT 1e18-scaled; spec default is `500`). Previously
+    ///      unbounded — a compromised admin could push to absurd
+    ///      ratios. Min 1 VPFI/ETH (effectively shuts down rewards
+    ///      without flipping the disable sentinel); max 1,000,000
+    ///      VPFI/ETH (above any realistic interaction-rate spec).
+    ///      The two intentional sentinels documented on the setter
+    ///      (`0` = reset-to-default, `type(uint256).max` = disable
+    ///      cap emergency knob) are preserved as escape paths.
+    uint256 internal constant INTERACTION_CAP_VPFI_PER_ETH_MIN = 1;
+    uint256 internal constant INTERACTION_CAP_VPFI_PER_ETH_MAX = 1_000_000;
+
+    /// @dev Bounds for {RiskFacet.updateRiskParams.maxLtvBps}. Min
+    ///      10% — `maxLtv = 1` would effectively disable borrowing
+    ///      for the asset. Upper bound stays at BASIS_POINTS via
+    ///      the existing inline check.
+    uint16 internal constant RISK_PARAMS_MAX_LTV_BPS_MIN = 1000;
+
+    /// @dev Bounds for {RiskFacet.updateRiskParams.liqThresholdBps}.
+    ///      Min 15%. The existing inline check enforces
+    ///      `liqThreshold > maxLtv`, so the absolute floor only
+    ///      kicks in for unrealistically-low maxLtv settings the
+    ///      RISK_PARAMS_MAX_LTV_BPS_MIN already prevents.
+    uint16 internal constant RISK_PARAMS_LIQ_THRESHOLD_BPS_MIN = 1500;
+
+    /// @dev Bounds for {RiskFacet.updateRiskParams.reserveFactorBps}.
+    ///      Max 50% — `reserveFactor = BASIS_POINTS` (100%) means
+    ///      lender receives 0% interest, defeats the lending
+    ///      product. Existing inline `≤ BASIS_POINTS` is replaced
+    ///      by this tighter cap.
+    uint16 internal constant RISK_PARAMS_RESERVE_FACTOR_BPS_MAX = 5000;
+
+    /// @dev Bound for {ConfigFacet.setStakingApr}. Max 20% APR.
+    ///      Previous `≤ BASIS_POINTS` (100%) is permissive but
+    ///      unrealistic; protocol staking APRs even reaching 20% are
+    ///      already very generous for VPFI staking, and a higher
+    ///      cap is a governance-error vector rather than a feature.
+    uint16 internal constant STAKING_APR_BPS_MAX = 2000;
+
+    /// @dev Bounds for {ProfileFacet.updateKYCThresholds}. The
+    ///      existing inline check enforces `tier0 < tier1`;
+    ///      these bounds prevent governance from setting absurdly
+    ///      low or high USD thresholds (denominated in 1e18).
+    ///      KYC is OFF on the retail deploy (per CLAUDE.md), so
+    ///      these bounds are belt-and-suspenders rather than
+    ///      load-bearing on retail; on the industrial fork they
+    ///      cap the tunable to a credible per-tier USD window.
+    uint256 internal constant KYC_THRESHOLD_NUMERAIRE_MIN_FLOOR = 100e18; // $100
+    uint256 internal constant KYC_THRESHOLD_NUMERAIRE_MAX_CEIL = 1_000_000e18; // $1M
 
     uint256 internal constant MAX_APPROVED_KEEPERS = 5;
 
@@ -1498,13 +2237,13 @@ library LibVaipakam {
     // (5 used today, 3 spare). The constants are `uint8` to match the
     // `approvedKeeperActions[user][keeper]` storage type and to keep mask
     // operations on the stack small.
-    uint8 internal constant KEEPER_ACTION_COMPLETE_LOAN_SALE   = 1 << 0; // 0x01
-    uint8 internal constant KEEPER_ACTION_COMPLETE_OFFSET      = 1 << 1; // 0x02
-    uint8 internal constant KEEPER_ACTION_INIT_EARLY_WITHDRAW  = 1 << 2; // 0x04
-    uint8 internal constant KEEPER_ACTION_INIT_PRECLOSE        = 1 << 3; // 0x08
-    uint8 internal constant KEEPER_ACTION_REFINANCE            = 1 << 4; // 0x10
+    uint8 internal constant KEEPER_ACTION_COMPLETE_LOAN_SALE = 1 << 0; // 0x01
+    uint8 internal constant KEEPER_ACTION_COMPLETE_OFFSET = 1 << 1; // 0x02
+    uint8 internal constant KEEPER_ACTION_INIT_EARLY_WITHDRAW = 1 << 2; // 0x04
+    uint8 internal constant KEEPER_ACTION_INIT_PRECLOSE = 1 << 3; // 0x08
+    uint8 internal constant KEEPER_ACTION_REFINANCE = 1 << 4; // 0x10
     /// @dev All actions — convenience for "grant everything" UX flows.
-    uint8 internal constant KEEPER_ACTION_ALL                  = 0x1F;
+    uint8 internal constant KEEPER_ACTION_ALL = 0x1F;
 
     /**
      * @notice Retrieves the Vaipakam storage slot.
@@ -1529,20 +2268,24 @@ library LibVaipakam {
         s.userCountry[user] = country;
     }
 
-    /// @dev Returns the KYC Tier-0 USD threshold, falling back to
-    ///      {KYC_TIER0_THRESHOLD_USD} when the governance override is unset.
-    /// @return threshold USD threshold scaled to 1e18.
+    /// @dev Returns the KYC Tier-0 threshold in NUMERAIRE-units (1e18-
+    ///      scaled). After Numeraire generalization (B1), `OracleFacet.getAssetPrice`
+    ///      returns numeraire-quoted prices directly, so comparison
+    ///      sites (`OfferFacet`, `RiskFacet`, `DefaultedFacet`) compute
+    ///      `valueNumeraire` and compare against this return value
+    ///      numeraire-vs-numeraire. The boundary conversion that lived
+    ///      here under Phase 2 is removed — the numeraire abstraction
+    ///      moved up to the oracle layer.
     function getKycTier0Threshold() internal view returns (uint256 threshold) {
-        uint256 v = storageSlot().kycTier0ThresholdUSD;
-        return v == 0 ? KYC_TIER0_THRESHOLD_USD : v;
+        uint256 v = storageSlot().kycTier0ThresholdNumeraire;
+        return v == 0 ? KYC_TIER0_THRESHOLD_NUMERAIRE : v;
     }
 
-    /// @dev Returns the KYC Tier-1 USD threshold, falling back to
-    ///      {KYC_TIER1_THRESHOLD_USD} when the governance override is unset.
-    /// @return threshold USD threshold scaled to 1e18.
+    /// @dev Returns the KYC Tier-1 threshold in NUMERAIRE-units (1e18-
+    ///      scaled). Same shape as Tier-0 above. Numeraire generalization (B1).
     function getKycTier1Threshold() internal view returns (uint256 threshold) {
-        uint256 v = storageSlot().kycTier1ThresholdUSD;
-        return v == 0 ? KYC_TIER1_THRESHOLD_USD : v;
+        uint256 v = storageSlot().kycTier1ThresholdNumeraire;
+        return v == 0 ? KYC_TIER1_THRESHOLD_NUMERAIRE : v;
     }
 
     /// @dev Returns the effective per-user daily interaction-reward cap
@@ -1617,6 +2360,50 @@ library LibVaipakam {
         return v == 0 ? FALLBACK_TREASURY_BPS : uint256(v);
     }
 
+    /// @dev Range Orders Phase 1 — matcher's slice of any LIF that
+    ///      flows to treasury, in BPS. Governance-tunable via
+    ///      `ConfigFacet.setLifMatcherFeeBps`; falls back to the
+    ///      LIF_MATCHER_FEE_BPS constant (100 = 1%) when unset.
+    function cfgLifMatcherFeeBps() internal view returns (uint256) {
+        uint16 v = storageSlot().protocolCfg.lifMatcherFeeBps;
+        return v == 0 ? LIF_MATCHER_FEE_BPS : uint256(v);
+    }
+
+    /// @dev Phase 1 follow-up — auto-pause duration (seconds) used by
+    ///      `LibPausable.autoPause`. Governance-tunable via
+    ///      `ConfigFacet.setAutoPauseDurationSeconds` within
+    ///      [MIN_AUTO_PAUSE_SECONDS, MAX_AUTO_PAUSE_SECONDS]. Falls
+    ///      back to AUTO_PAUSE_DURATION_DEFAULT (1800 = 30 min)
+    ///      when unset.
+    function cfgAutoPauseDurationSeconds() internal view returns (uint256) {
+        uint32 v = storageSlot().protocolCfg.autoPauseDurationSeconds;
+        return v == 0 ? AUTO_PAUSE_DURATION_DEFAULT : uint256(v);
+    }
+
+    /// @dev Maximum offer duration in days (Findings 00025).
+    ///      Governance-tunable via `ConfigFacet.setMaxOfferDurationDays`
+    ///      within [MIN_OFFER_DURATION_DAYS_FLOOR,
+    ///      MAX_OFFER_DURATION_DAYS_CEIL]. Falls back to
+    ///      MAX_OFFER_DURATION_DAYS_DEFAULT (365) when unset.
+    function cfgMaxOfferDurationDays() internal view returns (uint256) {
+        uint16 v = storageSlot().protocolCfg.maxOfferDurationDays;
+        return v == 0 ? MAX_OFFER_DURATION_DAYS_DEFAULT : uint256(v);
+    }
+
+    /// @dev T-032 / Numeraire generalization (Phase 1) — Notification fee in NUMERAIRE
+    ///      units (1e18 scaled). Governance-tunable via
+    ///      `ConfigFacet.setNotificationFee` within
+    ///      [MIN_NOTIFICATION_FEE_FLOOR, MAX_NOTIFICATION_FEE_CEIL].
+    ///      Falls back to `NOTIFICATION_FEE_DEFAULT` (2.0 numeraire-units
+    ///      = $2 under USD-as-numeraire) when unset. The numeraire-to-USD
+    ///      conversion happens at the `LibNotificationFee.vpfiAmountForFee`
+    ///      boundary so the stored value can be re-anchored when
+    ///      governance rotates the numeraire.
+    function cfgNotificationFee() internal view returns (uint256) {
+        uint256 v = storageSlot().protocolCfg.notificationFee;
+        return v == 0 ? NOTIFICATION_FEE_DEFAULT : v;
+    }
+
     /// @dev Returns the four tier thresholds (T1 min, T2 min, T3 min, T4 min-exclusive).
     function cfgVpfiTierThresholds()
         internal
@@ -1624,20 +2411,40 @@ library LibVaipakam {
         returns (uint256 t1, uint256 t2, uint256 t3, uint256 t4Excl)
     {
         ProtocolConfig storage c = storageSlot().protocolCfg;
-        t1     = c.vpfiTier1Min        == 0 ? VPFI_TIER1_MIN        : c.vpfiTier1Min;
-        t2     = c.vpfiTier2Min        == 0 ? VPFI_TIER2_MIN        : c.vpfiTier2Min;
-        t3     = c.vpfiTier3Min        == 0 ? VPFI_TIER3_MIN        : c.vpfiTier3Min;
-        t4Excl = c.vpfiTier4Threshold  == 0 ? VPFI_TIER4_THRESHOLD  : c.vpfiTier4Threshold;
+        t1 = c.vpfiTier1Min == 0 ? VPFI_TIER1_MIN : c.vpfiTier1Min;
+        t2 = c.vpfiTier2Min == 0 ? VPFI_TIER2_MIN : c.vpfiTier2Min;
+        t3 = c.vpfiTier3Min == 0 ? VPFI_TIER3_MIN : c.vpfiTier3Min;
+        t4Excl = c.vpfiTier4Threshold == 0
+            ? VPFI_TIER4_THRESHOLD
+            : c.vpfiTier4Threshold;
     }
 
     /// @dev Discount BPS for a tier index 1..4. Tier 0 is always zero.
-    function cfgVpfiTierDiscountBps(uint8 tier) internal view returns (uint256) {
+    function cfgVpfiTierDiscountBps(
+        uint8 tier
+    ) internal view returns (uint256) {
         if (tier == 0) return 0;
         ProtocolConfig storage c = storageSlot().protocolCfg;
-        if (tier == 4) return c.vpfiTier4DiscountBps == 0 ? VPFI_TIER4_DISCOUNT_BPS : uint256(c.vpfiTier4DiscountBps);
-        if (tier == 3) return c.vpfiTier3DiscountBps == 0 ? VPFI_TIER3_DISCOUNT_BPS : uint256(c.vpfiTier3DiscountBps);
-        if (tier == 2) return c.vpfiTier2DiscountBps == 0 ? VPFI_TIER2_DISCOUNT_BPS : uint256(c.vpfiTier2DiscountBps);
-        if (tier == 1) return c.vpfiTier1DiscountBps == 0 ? VPFI_TIER1_DISCOUNT_BPS : uint256(c.vpfiTier1DiscountBps);
+        if (tier == 4)
+            return
+                c.vpfiTier4DiscountBps == 0
+                    ? VPFI_TIER4_DISCOUNT_BPS
+                    : uint256(c.vpfiTier4DiscountBps);
+        if (tier == 3)
+            return
+                c.vpfiTier3DiscountBps == 0
+                    ? VPFI_TIER3_DISCOUNT_BPS
+                    : uint256(c.vpfiTier3DiscountBps);
+        if (tier == 2)
+            return
+                c.vpfiTier2DiscountBps == 0
+                    ? VPFI_TIER2_DISCOUNT_BPS
+                    : uint256(c.vpfiTier2DiscountBps);
+        if (tier == 1)
+            return
+                c.vpfiTier1DiscountBps == 0
+                    ? VPFI_TIER1_DISCOUNT_BPS
+                    : uint256(c.vpfiTier1DiscountBps);
         return 0;
     }
 
@@ -1660,21 +2467,136 @@ library LibVaipakam {
         return v == 0 ? VPFI_FIXED_WALLET_CAP : v;
     }
 
-    /// @dev Duration-tiered grace period used by DefaultedFacet. The tiers
-    ///      are inclusive of the lower bound and exclusive of the upper:
+    /// @dev Duration-tiered grace period used by DefaultedFacet, RepayFacet,
+    ///      RiskFacet. T-044 made the schedule admin-configurable; when
+    ///      `Storage.graceBuckets` is empty (the post-deploy default) this
+    ///      function falls back to the original compile-time schedule
+    ///      below, extended with a new ≥ 365 days bucket per T-044's spec.
+    ///
+    ///      Default schedule (used when `graceBuckets.length == 0`):
     ///        durationDays < 7    → 1 hour
     ///        durationDays < 30   → 1 day
     ///        durationDays < 90   → 3 days
     ///        durationDays < 180  → 1 week
-    ///        durationDays >= 180 → 2 weeks
+    ///        durationDays < 365  → 2 weeks
+    ///        durationDays >= 365 → 30 days   (T-044 — new bucket)
+    ///
+    ///      Configured-array semantics: walk buckets in storage order; the
+    ///      first bucket whose `maxDurationDays > durationDays` wins. The
+    ///      final bucket carries `maxDurationDays == 0` as the catch-all
+    ///      marker. Setter validation (see ConfigFacet.setGraceBuckets)
+    ///      guarantees the array is sorted, monotonic, and fully bounded.
+    ///
+    ///      Note: this used to be `pure`. T-044 changed it to `view`
+    ///      because it now reads `s.graceBuckets`. Every existing caller
+    ///      is `view` or `nonpayable` — no signature impact downstream.
     /// @param durationDays Loan duration in days.
     /// @return grace Grace period in seconds.
-    function gracePeriod(uint256 durationDays) internal pure returns (uint256 grace) {
-        if (durationDays < 7) return 1 hours;
-        if (durationDays < 30) return 1 days;
-        if (durationDays < 90) return 3 days;
-        if (durationDays < 180) return 1 weeks;
-        return 2 weeks;
+    function gracePeriod(
+        uint256 durationDays
+    ) internal view returns (uint256 grace) {
+        GraceBucket[] storage buckets = storageSlot().graceBuckets;
+        uint256 len = buckets.length;
+        if (len == 0) {
+            // Compile-time default schedule (T-044 extended).
+            if (durationDays < 7) return 1 hours;
+            if (durationDays < 30) return 1 days;
+            if (durationDays < 90) return 3 days;
+            if (durationDays < 180) return 1 weeks;
+            if (durationDays < 365) return 2 weeks;
+            return 30 days;
+        }
+        // Storage-driven path. Last entry's maxDurationDays == 0 marks
+        // the catch-all; any bucket whose threshold strictly exceeds
+        // durationDays wins, walked in array order.
+        for (uint256 i = 0; i < len; i++) {
+            uint256 maxD = buckets[i].maxDurationDays;
+            if (maxD == 0) return buckets[i].graceSeconds;
+            if (durationDays < maxD) return buckets[i].graceSeconds;
+        }
+        // Defensive fallback — setter validation prevents reaching here
+        // (every valid array ends in a maxDurationDays == 0 catch-all),
+        // but if storage is somehow malformed return the last entry's
+        // grace rather than reverting.
+        return buckets[len - 1].graceSeconds;
+    }
+
+    /// @notice T-034 — interval-in-days lookup for a cadence enum value.
+    /// @dev Pure helper (no storage reads) so callers can fold it inline
+    ///      cheaply. Returns 0 for `None` (the no-cadence sentinel) so
+    ///      arithmetic that adds the result to a timestamp short-circuits
+    ///      to "no checkpoint" automatically. See
+    ///      docs/DesignsAndPlans/PeriodicInterestPaymentDesign.md §2.4.
+    function intervalDays(
+        PeriodicInterestCadence cadence
+    ) internal pure returns (uint256) {
+        if (cadence == PeriodicInterestCadence.Monthly)
+            return PERIODIC_INTERVAL_MONTHLY_DAYS;
+        if (cadence == PeriodicInterestCadence.Quarterly)
+            return PERIODIC_INTERVAL_QUARTERLY_DAYS;
+        if (cadence == PeriodicInterestCadence.SemiAnnual)
+            return PERIODIC_INTERVAL_SEMI_ANNUAL_DAYS;
+        if (cadence == PeriodicInterestCadence.Annual)
+            return PERIODIC_INTERVAL_ANNUAL_DAYS;
+        return 0; // None
+    }
+
+    /// @notice External view exposing the current grace-bucket schedule.
+    ///         Returns an empty array when storage is unconfigured (the
+    ///         compile-time defaults in `gracePeriod()` are in force).
+    /// @dev Read by the admin console's GraceBucketsCard via
+    ///      ConfigFacet.getGraceBuckets — kept here as a library helper
+    ///      so callers don't have to know storage layout.
+    function getGraceBucketsConfigured()
+        internal
+        view
+        returns (GraceBucket[] memory)
+    {
+        return storageSlot().graceBuckets;
+    }
+
+    /// @notice Per-slot policy bounds for the fixed 6-slot grace schedule
+    ///         (T-044). Returns the inclusive bounds the setter validates
+    ///         each slot against; the admin console reads the same view
+    ///         to render per-row min/max hints.
+    ///
+    ///         Slot semantics:
+    ///         | Slot | Default tier | maxDays bounds | grace bounds |
+    ///         |------|--------------|----------------|--------------|
+    ///         | 0    | < 7 days     | [1, 14]        | [1h,  5d]    |
+    ///         | 1    | < 30 days    | [7, 60]        | [1h, 15d]    |
+    ///         | 2    | < 90 days    | [30, 180]      | [1d, 30d]    |
+    ///         | 3    | < 180 days   | [90, 270]      | [3d, 45d]    |
+    ///         | 4    | < 365 days   | [180, 540]     | [7d, 60d]    |
+    ///         | 5    | catch-all    | (must == 0)    | [14d, 90d]   |
+    ///
+    /// @param slot 0-indexed slot id (must be < GRACE_BUCKETS_FIXED_COUNT).
+    /// @return minDays Lower bound on `maxDurationDays` for this slot.
+    ///         For slot 5 (catch-all) returns 0 to indicate the only
+    ///         legal value is 0.
+    /// @return maxDays Upper bound on `maxDurationDays`. For slot 5
+    ///         returns 0 to enforce the catch-all marker.
+    /// @return minGrace Lower bound on `graceSeconds` for this slot.
+    /// @return maxGrace Upper bound on `graceSeconds` for this slot.
+    function graceSlotBounds(
+        uint256 slot
+    )
+        internal
+        pure
+        returns (
+            uint256 minDays,
+            uint256 maxDays,
+            uint256 minGrace,
+            uint256 maxGrace
+        )
+    {
+        if (slot == 0) return (1, 14, 1 hours, 5 days);
+        if (slot == 1) return (7, 60, 1 hours, 15 days);
+        if (slot == 2) return (30, 180, 1 days, 30 days);
+        if (slot == 3) return (90, 270, 3 days, 45 days);
+        if (slot == 4) return (180, 540, 7 days, 60 days);
+        if (slot == 5) return (0, 0, 14 days, 90 days);
+        revert("graceSlotBounds: slot out of range");
     }
 
     /// @dev Late fee schedule: 1% on the first day past due, +0.5% each
@@ -1746,6 +2668,41 @@ library LibVaipakam {
         return true;
     }
 
+    /**
+     * @notice Gated, default-DENY country-pair check. Returns `true` only
+     *         when governance has explicitly whitelisted the pair via
+     *         {setTradeAllowance}; an unset entry (and self-trade) is
+     *         denied.
+     * @dev    NOT used by the retail Vaipakam deploy. The retail flow goes
+     *         through {canTradeBetween} which is hardcoded to `true`.
+     *         This helper exists for two reasons:
+     *           1. The industrial-fork variant of the protocol switches
+     *              the gate on without a storage-layout migration; that
+     *              fork's facets call this function instead of the pure
+     *              one.
+     *           2. Test coverage: `CountryPairGatedTest` exercises the
+     *              storage-driven semantics (whitelist, symmetry, missing
+     *              pair => deny) so the gated branch stays truthful even
+     *              while it's dormant on retail.
+     *         Both helpers share the same `s.allowedTrades` storage —
+     *         {setTradeAllowance} writes are visible to both, so the
+     *         retail deploy can ship pre-populated whitelists for a
+     *         later cutover without rewriting the setter API.
+     * @param  countryA ISO-3166 alpha-2 / alpha-3 code (whatever the
+     *         operator standardised on; comparison is keccak-by-bytes).
+     * @param  countryB Same encoding as `countryA`.
+     * @return canTrade  `true` iff `s.allowedTrades[hashA][hashB]` is set.
+     */
+    function _canTradeBetweenStorageGated(
+        string memory countryA,
+        string memory countryB
+    ) internal view returns (bool canTrade) {
+        Storage storage s = storageSlot();
+        bytes32 hashA = keccak256(bytes(countryA));
+        bytes32 hashB = keccak256(bytes(countryB));
+        return s.allowedTrades[hashA][hashB];
+    }
+
     /// @dev Set the Chainlink Feed Registry USD denominator. Owner-only.
     ///      Setting to `address(0)` forces {OracleFacet.getAssetPrice} down
     ///      the NoPriceFeed branch.
@@ -1757,7 +2714,7 @@ library LibVaipakam {
     ) internal {
         LibDiamond.enforceIsContractOwner();
         Storage storage s = storageSlot();
-        s.usdChainlinkDenominator = newUsdChainlinkDenominator;
+        s.numeraireChainlinkDenominator = newUsdChainlinkDenominator;
     }
 
     /// @dev Set the Chainlink Feed Registry contract used by OracleFacet.
@@ -1789,7 +2746,7 @@ library LibVaipakam {
     function setEthUsdFeed(address newEthUsdFeed) internal {
         LibDiamond.enforceIsContractOwner();
         Storage storage s = storageSlot();
-        s.ethUsdFeed = newEthUsdFeed;
+        s.ethNumeraireFeed = newEthUsdFeed;
     }
 
     /// @dev Set the Chainlink Feed Registry ETH-denominator pseudo-address
@@ -1799,7 +2756,9 @@ library LibVaipakam {
     ///      asset/USD feed revert NoPriceFeed).
     /// @param newEthChainlinkDenominator ETH-denominator address recognised
     ///        by the Chainlink Feed Registry.
-    function setEthChainlinkDenominator(address newEthChainlinkDenominator) internal {
+    function setEthChainlinkDenominator(
+        address newEthChainlinkDenominator
+    ) internal {
         LibDiamond.enforceIsContractOwner();
         Storage storage s = storageSlot();
         s.ethChainlinkDenominator = newEthChainlinkDenominator;
@@ -1968,13 +2927,28 @@ library LibVaipakam {
     }
 
     /// @notice Set the chain-level deviation tolerance applied to
-    ///         every secondary oracle (Tellor / API3) when it
-    ///         disagrees with the Chainlink primary. `bps` must be
-    ///         in (0, BASIS_POINTS) — zero or `>= 10000` rejected.
+    ///         every secondary oracle (Tellor / API3 / DIA) when it
+    ///         disagrees with the Chainlink primary.
+    /// @dev    Setter-range audit (2026-05-02): tightened from the
+    ///         original `(0, BASIS_POINTS)` window to
+    ///         `[SECONDARY_ORACLE_MAX_DEVIATION_BPS_MIN,
+    ///         SECONDARY_ORACLE_MAX_DEVIATION_BPS_MAX]` so a
+    ///         compromised governance multisig cannot push the
+    ///         tolerance to a degenerate setting (1 bps fail-closes
+    ///         every legitimate cross-oracle drift; 9999 effectively
+    ///         disables the gate).
     function setSecondaryOracleMaxDeviationBps(uint16 bps) internal {
         LibDiamond.enforceIsContractOwner();
-        if (bps == 0 || bps >= BASIS_POINTS) {
-            revert IVaipakamErrors.InvalidAmount();
+        if (
+            bps < SECONDARY_ORACLE_MAX_DEVIATION_BPS_MIN ||
+            bps > SECONDARY_ORACLE_MAX_DEVIATION_BPS_MAX
+        ) {
+            revert IVaipakamErrors.ParameterOutOfRange(
+                "secondaryOracleMaxDeviationBps",
+                uint256(bps),
+                uint256(SECONDARY_ORACLE_MAX_DEVIATION_BPS_MIN),
+                uint256(SECONDARY_ORACLE_MAX_DEVIATION_BPS_MAX)
+            );
         }
         Storage storage s = storageSlot();
         uint16 prev = s.secondaryOracleMaxDeviationBps;
@@ -1983,10 +2957,24 @@ library LibVaipakam {
     }
 
     /// @notice Set the chain-level secondary-oracle staleness tolerance
-    ///         in seconds. Must be non-zero.
+    ///         in seconds.
+    /// @dev    Setter-range audit (2026-05-02): added upper bound.
+    ///         Previously only `!= 0` — a misconfig could allow
+    ///         arbitrary stale data through the secondary quorum,
+    ///         defeating the freshness gate.
     function setSecondaryOracleMaxStaleness(uint40 maxStaleness) internal {
         LibDiamond.enforceIsContractOwner();
-        if (maxStaleness == 0) revert IVaipakamErrors.InvalidAmount();
+        if (
+            maxStaleness < SECONDARY_ORACLE_MAX_STALENESS_MIN_SECONDS ||
+            maxStaleness > SECONDARY_ORACLE_MAX_STALENESS_MAX_SECONDS
+        ) {
+            revert IVaipakamErrors.ParameterOutOfRange(
+                "secondaryOracleMaxStaleness",
+                uint256(maxStaleness),
+                uint256(SECONDARY_ORACLE_MAX_STALENESS_MIN_SECONDS),
+                uint256(SECONDARY_ORACLE_MAX_STALENESS_MAX_SECONDS)
+            );
+        }
         Storage storage s = storageSlot();
         uint40 prev = s.secondaryOracleMaxStaleness;
         s.secondaryOracleMaxStaleness = maxStaleness;
@@ -1995,16 +2983,209 @@ library LibVaipakam {
 
     /// @notice Read the effective deviation tolerance — falls back to
     ///         the package default when no value is configured.
-    function effectiveSecondaryOracleMaxDeviationBps() internal view returns (uint16) {
+    function effectiveSecondaryOracleMaxDeviationBps()
+        internal
+        view
+        returns (uint16)
+    {
         uint16 v = storageSlot().secondaryOracleMaxDeviationBps;
         return v == 0 ? SECONDARY_ORACLE_MAX_DEVIATION_BPS_DEFAULT : v;
     }
 
     /// @notice Read the effective staleness tolerance — falls back to
     ///         the package default when no value is configured.
-    function effectiveSecondaryOracleMaxStaleness() internal view returns (uint40) {
+    function effectiveSecondaryOracleMaxStaleness()
+        internal
+        view
+        returns (uint40)
+    {
         uint40 v = storageSlot().secondaryOracleMaxStaleness;
         return v == 0 ? SECONDARY_ORACLE_MAX_STALENESS_DEFAULT : v;
+    }
+
+    // ─── T-033 — Pyth setters + readers with bounded ranges ────────────────
+
+    /// @notice Emitted when the chain-level Pyth contract address
+    ///         changes. Setting to `address(0)` disables the
+    ///         numeraire gate globally, so the event is worth a
+    ///         human review either way.
+    event PythOracleSet(address indexed previous, address indexed next);
+
+    /// @notice Emitted when the chain's Pyth ETH/USD (or WETH/USD)
+    ///         feed id changes. Single-write-per-chain — emitted at
+    ///         init and on any subsequent governance update.
+    event PythNumeraireFeedIdSet(
+        bytes32 indexed previous,
+        bytes32 indexed next
+    );
+
+    /// @notice Emitted when the Pyth max-staleness budget changes.
+    event PythMaxStalenessSecondsSet(uint64 previous, uint64 current);
+
+    /// @notice Emitted when the Pyth numeraire deviation tolerance
+    ///         changes. Stored value applies on the next price view.
+    event PythNumeraireMaxDeviationBpsSet(uint16 previous, uint16 current);
+
+    /// @notice Emitted when the Pyth confidence ceiling changes.
+    event PythConfidenceMaxBpsSet(uint16 previous, uint16 current);
+
+    /// @notice Set the Pyth contract address on this chain. Zero
+    ///         disables the numeraire gate globally — protocol price
+    ///         views fall back to Chainlink-only on the WETH/USD leg.
+    /// @dev    Owner-only. No range bound — `address(0)` is the
+    ///         meaningful "disabled" sentinel and any non-zero
+    ///         contract is acceptable here (sanity-check that it
+    ///         responds to {IPyth.getPriceUnsafe} happens on first
+    ///         use, not at setter time).
+    function setPythOracle(address oracle) internal {
+        LibDiamond.enforceIsContractOwner();
+        Storage storage s = storageSlot();
+        address prev = s.pythOracle;
+        s.pythOracle = oracle;
+        emit PythOracleSet(prev, oracle);
+    }
+
+    /// @notice Set the Pyth feed id used as this chain's numeraire
+    ///         (ETH/USD on ETH-native chains, bridged-WETH/USD on
+    ///         BNB / Polygon mainnet).
+    /// @dev    Zero disables the gate at the feed-id layer (same
+    ///         soft-skip semantics as a zero `pythOracle`); non-zero
+    ///         values are accepted as-is. The price-read path
+    ///         catches a mis-identified feed via the deviation gate.
+    function setPythCrossCheckFeedId(bytes32 feedId) internal {
+        LibDiamond.enforceIsContractOwner();
+        Storage storage s = storageSlot();
+        bytes32 prev = s.pythCrossCheckFeedId;
+        s.pythCrossCheckFeedId = feedId;
+        emit PythNumeraireFeedIdSet(prev, feedId);
+    }
+
+    /// @notice Set the Pyth max-staleness budget in seconds. Bounded
+    ///         to `[PYTH_MAX_STALENESS_MIN_SECONDS,
+    ///         PYTH_MAX_STALENESS_MAX_SECONDS]`. A compromised
+    ///         governance multisig cannot push the budget tighter
+    ///         than 1 min (would soft-skip Pyth on every transient
+    ///         mempool jam, defeating the gate) or looser than 1 h
+    ///         (a stale-but-manipulated reading could drive the
+    ///         deviation outcome).
+    function setPythMaxStalenessSeconds(uint64 secondsBudget) internal {
+        LibDiamond.enforceIsContractOwner();
+        if (
+            secondsBudget < PYTH_MAX_STALENESS_MIN_SECONDS ||
+            secondsBudget > PYTH_MAX_STALENESS_MAX_SECONDS
+        ) {
+            revert IVaipakamErrors.ParameterOutOfRange(
+                "pythMaxStalenessSeconds",
+                uint256(secondsBudget),
+                uint256(PYTH_MAX_STALENESS_MIN_SECONDS),
+                uint256(PYTH_MAX_STALENESS_MAX_SECONDS)
+            );
+        }
+        Storage storage s = storageSlot();
+        uint64 prev = s.pythMaxStalenessSeconds;
+        s.pythMaxStalenessSeconds = secondsBudget;
+        emit PythMaxStalenessSecondsSet(prev, secondsBudget);
+    }
+
+    /// @notice Set the Chainlink ↔ Pyth max-deviation tolerance, in
+    ///         basis points. Bounded to
+    ///         `[PYTH_NUMERAIRE_MAX_DEVIATION_BPS_MIN,
+    ///         PYTH_NUMERAIRE_MAX_DEVIATION_BPS_MAX]`.
+    function setPythCrossCheckMaxDeviationBps(uint16 bps) internal {
+        LibDiamond.enforceIsContractOwner();
+        if (
+            bps < PYTH_NUMERAIRE_MAX_DEVIATION_BPS_MIN ||
+            bps > PYTH_NUMERAIRE_MAX_DEVIATION_BPS_MAX
+        ) {
+            revert IVaipakamErrors.ParameterOutOfRange(
+                "pythCrossCheckMaxDeviationBps",
+                uint256(bps),
+                uint256(PYTH_NUMERAIRE_MAX_DEVIATION_BPS_MIN),
+                uint256(PYTH_NUMERAIRE_MAX_DEVIATION_BPS_MAX)
+            );
+        }
+        Storage storage s = storageSlot();
+        uint16 prev = s.pythCrossCheckMaxDeviationBps;
+        s.pythCrossCheckMaxDeviationBps = bps;
+        emit PythNumeraireMaxDeviationBpsSet(prev, bps);
+    }
+
+    /// @notice Set the Pyth confidence-fraction ceiling, in basis
+    ///         points. Bounded to `[PYTH_CONFIDENCE_MAX_BPS_MIN,
+    ///         PYTH_CONFIDENCE_MAX_BPS_MAX]`.
+    function setPythConfidenceMaxBps(uint16 bps) internal {
+        LibDiamond.enforceIsContractOwner();
+        if (
+            bps < PYTH_CONFIDENCE_MAX_BPS_MIN ||
+            bps > PYTH_CONFIDENCE_MAX_BPS_MAX
+        ) {
+            revert IVaipakamErrors.ParameterOutOfRange(
+                "pythConfidenceMaxBps",
+                uint256(bps),
+                uint256(PYTH_CONFIDENCE_MAX_BPS_MIN),
+                uint256(PYTH_CONFIDENCE_MAX_BPS_MAX)
+            );
+        }
+        Storage storage s = storageSlot();
+        uint16 prev = s.pythConfidenceMaxBps;
+        s.pythConfidenceMaxBps = bps;
+        emit PythConfidenceMaxBpsSet(prev, bps);
+    }
+
+    /// @notice Read the effective Pyth max-staleness — falls back to
+    ///         the package default when no value is configured.
+    function effectivePythMaxStalenessSeconds() internal view returns (uint64) {
+        uint64 v = storageSlot().pythMaxStalenessSeconds;
+        return v == 0 ? PYTH_MAX_STALENESS_DEFAULT_SECONDS : v;
+    }
+
+    /// @notice Read the effective Pyth deviation tolerance — falls
+    ///         back to the package default when no value is
+    ///         configured.
+    function effectivePythCrossCheckMaxDeviationBps()
+        internal
+        view
+        returns (uint16)
+    {
+        uint16 v = storageSlot().pythCrossCheckMaxDeviationBps;
+        return v == 0 ? PYTH_NUMERAIRE_MAX_DEVIATION_BPS_DEFAULT : v;
+    }
+
+    /// @notice Read the effective Pyth confidence ceiling — falls
+    ///         back to the package default when no value is
+    ///         configured.
+    function effectivePythConfidenceMaxBps() internal view returns (uint16) {
+        uint16 v = storageSlot().pythConfidenceMaxBps;
+        return v == 0 ? PYTH_CONFIDENCE_MAX_BPS_DEFAULT : v;
+    }
+
+    /// @notice T-048 — read the effective PAD symbol used by the
+    ///         symbol-derived secondary oracles. Empty bytes32
+    ///         (post-deploy default before governance writes) is
+    ///         interpreted as `"usd"`, matching the
+    ///         `numeraireSymbol` fallback convention.
+    function effectivePadSymbol() internal view returns (bytes32) {
+        bytes32 v = storageSlot().predominantDenominatorSymbol;
+        return v == bytes32(0) ? bytes32("usd") : v;
+    }
+
+    /// @notice T-048 — `true` when the active numeraire's Chainlink
+    ///         denomination matches the PAD denomination. On retail
+    ///         (both default to `Denominations.USD`), this returns
+    ///         `true` and the oracle path short-circuits the FX
+    ///         conversion. Industrial-fork deploys with
+    ///         `numeraire == EUR / JPY / XAU` return `false` and
+    ///         require the FX conversion path (direct or derived).
+    ///
+    ///         Treats unset `predominantDenominator` (zero) as a
+    ///         pre-T-048 deploy where PAD wasn't configured: returns
+    ///         `false` so the legacy numeraire-direct path keeps
+    ///         working without a forced PAD configuration.
+    function isPadEqualToNumeraire() internal view returns (bool) {
+        Storage storage s = storageSlot();
+        address pad = s.predominantDenominator;
+        if (pad == address(0)) return false;
+        return pad == s.numeraireChainlinkDenominator;
     }
 
     /// @notice Emitted when the chain's sanctions oracle address changes.
@@ -2035,14 +3216,146 @@ library LibVaipakam {
     ///         every interaction on the chain whenever Chainalysis's
     ///         oracle has an outage, which would over-react to a
     ///         vendor availability issue).
+    ///
+    /// ─── Sanctions enforcement policy (Phase 1, retail deploy) ───
+    ///
+    /// The retail deploy may have a sanctions oracle configured (e.g.
+    /// Chainalysis on-chain SDN list). When set, the gate splits the
+    /// callable surface into two tiers:
+    ///
+    /// **Tier 1 — BLOCK** when `msg.sender` is sanctioned (revert
+    /// with `ProfileFacet.SanctionedAddress(who)`). Any entry point
+    /// that creates new state or routes funds TO the caller:
+    ///   - `OfferFacet.createOffer` / `acceptOffer` (creator + acceptor checks)
+    ///   - `EscrowFactoryFacet.getOrCreateUserEscrow` (no escrow ever
+    ///     exists for a sanctioned wallet)
+    ///   - `ClaimFacet.claimAsLender` / `claimAsBorrower` (funds OUT)
+    ///   - `VPFIDiscountFacet.buyVPFI` (token purchase)
+    ///   - `RiskFacet.triggerLiquidation` (3% liquidator bonus → caller)
+    ///   - `EarlyWithdrawalFacet.withdrawEarly` (lender pulls early)
+    ///   - `PrecloseFacet.transferObligationViaOffer` (funds + state)
+    ///   - `RefinanceFacet.refinanceLoan` (funds + new loan state)
+    ///
+    /// **Tier 2 — ALLOW** even when `msg.sender` is sanctioned. Each
+    /// entry point either CLOSES exposure to the sanctioned party or
+    /// is a permissionless safety action that benefits the
+    /// non-sanctioned counterparty:
+    ///   - `RepayFacet.repay` / `repayPartial` — closes the loan,
+    ///     unsanctioned lender gets paid. Refusing this would force
+    ///     default → liquidation, which routes the same value through
+    ///     a worse path; counter-productive for compliance.
+    ///   - `AddCollateralFacet.addCollateral` — borrower puts MORE
+    ///     skin in to keep loan healthy; pro-protocol.
+    ///   - `DefaultedFacet.markDefaulted` — anyone unflagged calls
+    ///     this; value flows to lender, not msg.sender.
+    ///
+    /// ─── Legal reasoning for Tier-2 carve-outs ───
+    ///
+    /// Liquidation of a sanctioned-borrower's collateral is allowed
+    /// because the lender's claim was established BEFORE the
+    /// sanction (security interest in the collateral, contractually
+    /// pledged at loan-init). Executing on a pre-existing security
+    /// interest is the pattern OFAC General Licenses authorize for
+    /// "wind-down of contracts entered into prior to designation".
+    /// The sanctioned party's residual interest (collateral surplus
+    /// after debt + bonus) stays frozen in their own escrow — Tier-1
+    /// blocks `claimAsBorrower`, so no value flows to the sanctioned
+    /// wallet. Lender (unsanctioned) receives principal+interest;
+    /// liquidator (must be unsanctioned, Tier-1 blocks the bonus)
+    /// receives the 3% bonus. Sanctioned residue is held but not
+    /// transferred to any other address.
+    ///
+    /// ─── What about funds frozen in a sanctioned wallet's escrow? ───
+    ///
+    /// The protocol does not seize, redirect, or release these funds.
+    /// They remain in the sanctioned wallet's own escrow and become
+    /// claimable again if the oracle delists the address. This is
+    /// the same behaviour as Circle's USDC blocklist — frozen, not
+    /// seized. The frontend communicates this to a sanctioned wallet
+    /// when it connects; the public Terms of Service carries one
+    /// generic disclosure line about restricted access.
+    ///
     /// @param who The address to check.
     function isSanctionedAddress(address who) internal view returns (bool) {
         address oracle = storageSlot().sanctionsOracle;
         if (oracle == address(0)) return false;
+
+        // Recovery-induced ban (T-054 PR-3): if `who` previously
+        // declared a sanctioned source via the recovery flow, treat
+        // them as sanctioned for as long as that source IS still
+        // sanctioned. Source-tracked rather than persistent so the
+        // ban auto-unlocks if the underlying address is de-listed.
+        address bannedSource = storageSlot().escrowBannedSource[who];
+        if (bannedSource != address(0)) {
+            try ISanctionsList(oracle).isSanctioned(bannedSource) returns (bool sourceFlagged) {
+                if (sourceFlagged) return true;
+                // Else fall through: source de-listed → ban lifted →
+                // direct check on `who` decides.
+            } catch {
+                // Oracle call failed — fall through. Direct check on
+                // `who` retains the existing fail-open behaviour
+                // documented at the top of this block.
+            }
+        }
+
         try ISanctionsList(oracle).isSanctioned(who) returns (bool flagged) {
             return flagged;
         } catch {
             return false;
         }
+    }
+
+    /// @notice Mirrors `ProfileFacet.SanctionedAddress` (same name +
+    ///         same args ⇒ same EVM selector). Declared here so
+    ///         LibVaipakam doesn't have to import ProfileFacet,
+    ///         which would create a circular dependency. Consumers
+    ///         see identical revert data regardless of which file
+    ///         emits.
+    error SanctionedAddress(address who);
+
+    /// @notice Tier-1 enforcement helper. Reverts with
+    ///         `SanctionedAddress(who)` (selector identical to
+    ///         `ProfileFacet.SanctionedAddress`) when `who` is
+    ///         flagged by the configured oracle. No-op when the
+    ///         oracle is unset or fails open. See the policy block
+    ///         above for the full Tier-1 / Tier-2 split.
+    /// @dev Plant this at every Tier-1 entry point. Co-located here
+    ///      so a single edit point dedups the boilerplate.
+    function _assertNotSanctioned(address who) internal view {
+        if (isSanctionedAddress(who)) {
+            revert SanctionedAddress(who);
+        }
+    }
+
+    /// @notice Internal accountant for protocol-deposited ERC-20
+    ///         tokens in a user's escrow. Increments the per-(user,
+    ///         token) counter that the Asset Viewer and the future
+    ///         stuck-token recovery flow read.
+    /// @dev    Library-internal helper called from
+    ///         `EscrowFactoryFacet.escrowDepositERC20` and
+    ///         `recordEscrowDepositERC20` (the counter-only sibling
+    ///         used after Permit2 pulls). Solidity 0.8+ checked
+    ///         arithmetic protects against overflow.
+    function recordEscrowDeposit(
+        address user,
+        address token,
+        uint256 amount
+    ) internal {
+        storageSlot().protocolTrackedEscrowBalance[user][token] += amount;
+    }
+
+    /// @notice Internal accountant for protocol-withdrawn ERC-20
+    ///         tokens from a user's escrow.
+    /// @dev    Called from `EscrowFactoryFacet.escrowWithdrawERC20`.
+    ///         Underflow reverts — a decrement greater than the
+    ///         tracked balance means a withdraw fired without a
+    ///         matching deposit somewhere, which is an accounting
+    ///         bug upstream that we want to surface loudly.
+    function recordEscrowWithdraw(
+        address user,
+        address token,
+        uint256 amount
+    ) internal {
+        storageSlot().protocolTrackedEscrowBalance[user][token] -= amount;
     }
 }

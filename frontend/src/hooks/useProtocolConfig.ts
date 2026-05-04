@@ -91,6 +91,24 @@ export interface ProtocolConfig {
    *  truth rather than a hardcoded constant. Falls back to 18 if the
    *  read fails (no token registered yet, RPC blip). */
   vpfiDecimals: number;
+  /** Range Orders Phase 1 master kill-switch flags. All three default
+   *  `false` on a fresh deploy. UI gates (range sliders, partial-fill
+   *  checkbox, advanced-mode reveals) must consult these so users
+   *  never see controls for mechanics governance hasn't enabled. */
+  rangeAmountEnabled: boolean;
+  rangeRateEnabled: boolean;
+  partialFillEnabled: boolean;
+  /** Matcher's slice of LIF that flows to treasury, in BPS. Default
+   *  100 (1%) but governance-tunable up to 5000 (50%). Frontend
+   *  bot-economics copy renders against this so a flag flip
+   *  propagates without redeploy. */
+  lifMatcherFeeBps: number;
+  lifMatcherFeePct: number;
+  /** Auto-pause window duration (seconds). Default 1800 (30 min);
+   *  governance-tunable via setAutoPauseDurationSeconds within
+   *  [300, 7200]. Frontend renders the security disclosure + the
+   *  live countdown when AdminFacet.pausedUntil() returns non-zero. */
+  autoPauseDurationSeconds: number;
   fetchedAt: number;
 }
 
@@ -113,6 +131,23 @@ type BundleTuple = [
   bigint, // vpfiStakingAprBps
   [bigint, bigint, bigint, bigint], // tierThresholds
   [bigint, bigint, bigint, bigint], // tierDiscountBps
+  // Range Orders Phase 1 master kill-switch flags. All three default
+  // `false` on a fresh deploy. Frontend conditionals + Advanced-mode
+  // reveals for range sliders / partial-fill checkbox gate on these.
+  // See docs/RangeOffersDesign.md §15.
+  boolean, // rangeAmountEnabled
+  boolean, // rangeRateEnabled
+  boolean, // partialFillEnabled
+  // Matcher's slice of any LIF that flows to treasury (BPS).
+  // Default 100 (1%); governance-tunable via setLifMatcherFeeBps,
+  // capped at 5000 (50%). Surfaced so the bot-economics dashboard
+  // can render "you earn X% of the LIF" copy without recompiling.
+  bigint, // lifMatcherFeeBps
+  // Auto-pause window duration (seconds). Default 1800 (30 min);
+  // governance-tunable via setAutoPauseDurationSeconds within
+  // [300, 7200] (5 min – 2h). Frontend renders the security
+  // disclosure + the live countdown when an auto-pause is active.
+  bigint, // autoPauseDurationSeconds
 ];
 
 function bpsToPct(bps: bigint | number): number {
@@ -256,6 +291,11 @@ export function useProtocolConfig() {
         vpfiStakingAprBps,
         tierThresholds,
         tierDiscountBps,
+        rangeAmountEnabled,
+        rangeRateEnabled,
+        partialFillEnabled,
+        lifMatcherFeeBps,
+        autoPauseDurationSeconds,
       ] = tuple;
       const [minHealthFactor, vpfiStakingPoolCap, vpfiInteractionPoolCap, maxInteractionClaimDays] = consts;
 
@@ -313,6 +353,12 @@ export function useProtocolConfig() {
         vpfiInteractionPoolCapCompact: vpfiCapToCompact(vpfiInteractionPoolCap, vpfiDecimals),
         maxInteractionClaimDays: Number(maxInteractionClaimDays),
         vpfiDecimals,
+        rangeAmountEnabled,
+        rangeRateEnabled,
+        partialFillEnabled,
+        lifMatcherFeeBps: Number(lifMatcherFeeBps),
+        lifMatcherFeePct: bpsToPct(lifMatcherFeeBps),
+        autoPauseDurationSeconds: Number(autoPauseDurationSeconds),
         fetchedAt: Date.now(),
       };
       cached = { data: next, at: Date.now(), key: cacheKey };

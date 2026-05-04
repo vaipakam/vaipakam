@@ -80,6 +80,30 @@
   },
   {
     "type": "function",
+    "name": "getActiveOffersPaginated",
+    "inputs": [
+      {
+        "name": "offset",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "limit",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "offerIds",
+        "type": "uint256[]",
+        "internalType": "uint256[]"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "getAllLoansPaginated",
     "inputs": [
       {
@@ -165,7 +189,7 @@
         "internalType": "uint256"
       },
       {
-        "name": "totalRentalVolumeUSD",
+        "name": "totalRentalVolumeNumeraire",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -196,7 +220,7 @@
     "inputs": [],
     "outputs": [
       {
-        "name": "totalActiveLoanValueUSD",
+        "name": "totalActiveLoanValueNumeraire",
         "type": "uint256",
         "internalType": "uint256"
       },
@@ -243,6 +267,152 @@
         "name": "matched",
         "type": "uint256",
         "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getNFTPositionSummary",
+    "inputs": [
+      {
+        "name": "tokenId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "s",
+        "type": "tuple",
+        "internalType": "struct MetricsFacet.NFTPositionSummary",
+        "components": [
+          {
+            "name": "tokenId",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "offerId",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "loanId",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "isLender",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
+            "name": "nftStatus",
+            "type": "uint8",
+            "internalType": "enum LibVaipakam.LoanPositionStatus"
+          },
+          {
+            "name": "loanStatus",
+            "type": "uint8",
+            "internalType": "enum LibVaipakam.LoanStatus"
+          },
+          {
+            "name": "principalAsset",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "principalSymbol",
+            "type": "string",
+            "internalType": "string"
+          },
+          {
+            "name": "principalDecimals",
+            "type": "uint8",
+            "internalType": "uint8"
+          },
+          {
+            "name": "principalAmount",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "interestRateBps",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "durationDays",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "collateralAsset",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "collateralSymbol",
+            "type": "string",
+            "internalType": "string"
+          },
+          {
+            "name": "collateralDecimals",
+            "type": "uint8",
+            "internalType": "uint8"
+          },
+          {
+            "name": "collateralAmount",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "collateralAssetType",
+            "type": "uint8",
+            "internalType": "enum LibVaipakam.AssetType"
+          },
+          {
+            "name": "collateralLockedNow",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "claimableAsset",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "claimableAmount",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "isClaimable",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
+            "name": "vpfiHeld",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "vpfiRebatePending",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "createdAt",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "chainId",
+            "type": "uint256",
+            "internalType": "uint256"
+          }
+        ]
       }
     ],
     "stateMutability": "view"
@@ -334,6 +504,16 @@
             "internalType": "bool"
           },
           {
+            "name": "periodicInterestCadence",
+            "type": "uint8",
+            "internalType": "enum LibVaipakam.PeriodicInterestCadence"
+          },
+          {
+            "name": "lastPeriodicInterestSettledAt",
+            "type": "uint64",
+            "internalType": "uint64"
+          },
+          {
             "name": "lenderTokenId",
             "type": "uint256",
             "internalType": "uint256"
@@ -360,8 +540,13 @@
           },
           {
             "name": "startTime",
-            "type": "uint256",
-            "internalType": "uint256"
+            "type": "uint64",
+            "internalType": "uint64"
+          },
+          {
+            "name": "interestPaidSinceLastPeriod",
+            "type": "uint128",
+            "internalType": "uint128"
           },
           {
             "name": "durationDays",
@@ -427,6 +612,21 @@
             "name": "borrowerDiscountAccAtInit",
             "type": "uint256",
             "internalType": "uint256"
+          },
+          {
+            "name": "matcher",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "lenderNotifBilled",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
+            "name": "borrowerNotifBilled",
+            "type": "bool",
+            "internalType": "bool"
           }
         ]
       }
@@ -478,12 +678,12 @@
         "internalType": "uint256"
       },
       {
-        "name": "totalCollateralUSD",
+        "name": "totalCollateralNumeraire",
         "type": "uint256",
         "internalType": "uint256"
       },
       {
-        "name": "totalDebtUSD",
+        "name": "totalDebtNumeraire",
         "type": "uint256",
         "internalType": "uint256"
       },
@@ -521,12 +721,12 @@
         "internalType": "uint256"
       },
       {
-        "name": "totalVolumeLentUSD",
+        "name": "totalVolumeLentNumeraire",
         "type": "uint256",
         "internalType": "uint256"
       },
       {
-        "name": "totalInterestEarnedUSD",
+        "name": "totalInterestEarnedNumeraire",
         "type": "uint256",
         "internalType": "uint256"
       },
@@ -549,7 +749,7 @@
     "inputs": [],
     "outputs": [
       {
-        "name": "tvlInUSD",
+        "name": "tvlInNumeraire",
         "type": "uint256",
         "internalType": "uint256"
       },
@@ -578,7 +778,7 @@
     ],
     "outputs": [
       {
-        "name": "totalRevenueUSD",
+        "name": "totalRevenueNumeraire",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -587,7 +787,7 @@
   },
   {
     "type": "function",
-    "name": "getTotalInterestEarnedUSD",
+    "name": "getTotalInterestEarnedNumeraire",
     "inputs": [],
     "outputs": [
       {
@@ -623,22 +823,22 @@
     "inputs": [],
     "outputs": [
       {
-        "name": "treasuryBalanceUSD",
+        "name": "treasuryBalanceNumeraire",
         "type": "uint256",
         "internalType": "uint256"
       },
       {
-        "name": "totalFeesCollectedUSD",
+        "name": "totalFeesCollectedNumeraire",
         "type": "uint256",
         "internalType": "uint256"
       },
       {
-        "name": "feesLast24hUSD",
+        "name": "feesLast24hNumeraire",
         "type": "uint256",
         "internalType": "uint256"
       },
       {
-        "name": "feesLast7dUSD",
+        "name": "feesLast7dNumeraire",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -911,17 +1111,17 @@
     ],
     "outputs": [
       {
-        "name": "totalCollateralUSD",
+        "name": "totalCollateralNumeraire",
         "type": "uint256",
         "internalType": "uint256"
       },
       {
-        "name": "totalBorrowedUSD",
+        "name": "totalBorrowedNumeraire",
         "type": "uint256",
         "internalType": "uint256"
       },
       {
-        "name": "availableToClaimUSD",
+        "name": "availableToClaimNumeraire",
         "type": "uint256",
         "internalType": "uint256"
       },

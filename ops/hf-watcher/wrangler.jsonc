@@ -62,6 +62,21 @@
           "period": 60,
         },
       },
+      // 2026-05-01 — diagnostics error capture (POST /diag/record).
+      // Per-IP budget of 60 requests / 60 seconds — generous for a
+      // single user (a normal session emits a handful of failures at
+      // most), restrictive for an abusive flooder. Tune via the
+      // `limit` / `period` values below if real-world volume needs
+      // it; this is the master per-IP knob the user asked for.
+      {
+        "type": "ratelimit",
+        "name": "DIAG_RECORD_RATELIMIT",
+        "namespace_id": "1004",
+        "simple": {
+          "limit": 60,
+          "period": 60,
+        },
+      },
     ],
   },
   // Env-scoped secrets (set via `wrangler secret put`):
@@ -84,15 +99,23 @@
   //                           TG_BOT_TOKEN. Distinct from any
   //                           operator's personal Telegram handle —
   //                           Telegram bots are their own accounts.
+  // Diamond addresses per chain are NO LONGER set here. They live in
+  // `src/deployments.json`, generated from
+  // `contracts/deployments/<chain-slug>/addresses.json` by
+  // `contracts/script/exportFrontendDeployments.sh`. The Worker
+  // imports the merged JSON at build time; no `DIAMOND_ADDR_*` env
+  // vars are read.
   "vars": {
-    "DIAMOND_ADDR_BASE": "",
-    "DIAMOND_ADDR_ETH": "",
-    "DIAMOND_ADDR_ARB": "",
-    "DIAMOND_ADDR_OP": "",
-    "DIAMOND_ADDR_ZKEVM": "",
-    "DIAMOND_ADDR_BNB": "",
     "FRONTEND_ORIGIN": "https://vaipakam.com",
     // "FRONTEND_ORIGIN": "https://vaipakam.com",
+
+    // 2026-05-01 — diagnostics error capture knobs (POST /diag/record).
+    // DIAG_SAMPLE_RATE in [0, 1]; 1.0 writes every accepted POST.
+    // Drop to e.g. "0.1" to write 10% (random sampling) when error
+    // volume spikes and storage matters. DIAG_RETENTION_DAYS drives
+    // the cron-prune; rows older than this many days are deleted.
+    "DIAG_SAMPLE_RATE": "1.0",
+    "DIAG_RETENTION_DAYS": "90",
 
     // Public Telegram bot handle (the @-name from BotFather). The
     // worker uses this to build `https://t.me/<TG_BOT_USERNAME>?start=…`

@@ -10,8 +10,10 @@ import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {VaipakamNFTFacet} from "../src/facets/VaipakamNFTFacet.sol";
 import {EscrowFactoryFacet} from "../src/facets/EscrowFactoryFacet.sol";
 import {OfferFacet} from "../src/facets/OfferFacet.sol";
+import {OfferCancelFacet} from "../src/facets/OfferCancelFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
+import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {OracleFacet} from "../src/facets/OracleFacet.sol";
 import {RiskFacet} from "../src/facets/RiskFacet.sol";
 import {RepayFacet} from "../src/facets/RepayFacet.sol";
@@ -43,6 +45,7 @@ contract Scenario8_BorrowerPreclose is Test {
 
     DiamondCutFacet cutFacet;
     OfferFacet offerFacet;
+    OfferCancelFacet offerCancelFacet;
     ProfileFacet profileFacet;
     OracleFacet oracleFacet;
     VaipakamNFTFacet nftFacet;
@@ -99,6 +102,7 @@ contract Scenario8_BorrowerPreclose is Test {
         cutFacet = new DiamondCutFacet();
         diamond  = new VaipakamDiamond(owner, address(cutFacet));
         offerFacet = new OfferFacet();
+        offerCancelFacet = new OfferCancelFacet();
         profileFacet = new ProfileFacet();
         oracleFacet = new OracleFacet();
         nftFacet = new VaipakamNFTFacet();
@@ -114,7 +118,8 @@ contract Scenario8_BorrowerPreclose is Test {
         accessControlFacet = new AccessControlFacet();
         helperTest = new HelperTest();
 
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](14);
+        TestMutatorFacet testMutatorFacet = new TestMutatorFacet();
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](16);
         cuts[0]  = IDiamondCut.FacetCut({facetAddress: address(offerFacet),          action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getOfferFacetSelectors()});
         cuts[1]  = IDiamondCut.FacetCut({facetAddress: address(profileFacet),        action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getProfileFacetSelectors()});
         cuts[2]  = IDiamondCut.FacetCut({facetAddress: address(oracleFacet),         action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getOracleFacetSelectors()});
@@ -129,6 +134,8 @@ contract Scenario8_BorrowerPreclose is Test {
         cuts[11] = IDiamondCut.FacetCut({facetAddress: address(addCollateralFacet),  action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getAddCollateralFacetSelectors()});
         cuts[12] = IDiamondCut.FacetCut({facetAddress: address(precloseFacet),       action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getPrecloseFacetSelectors()});
         cuts[13] = IDiamondCut.FacetCut({facetAddress: address(accessControlFacet),  action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getAccessControlFacetSelectors()});
+        cuts[14] = IDiamondCut.FacetCut({facetAddress: address(testMutatorFacet),    action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getTestMutatorFacetSelectors()});
+        cuts[15] = IDiamondCut.FacetCut({facetAddress: address(offerCancelFacet), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getOfferCancelFacetSelectors()});
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");
         AccessControlFacet(address(diamond)).initializeAccessControl();
 
@@ -203,7 +210,10 @@ contract Scenario8_BorrowerPreclose is Test {
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
                 collateralQuantity: 0,
-                allowsPartialRepay: false
+                allowsPartialRepay: false,
+                amountMax: 0,
+                interestRateBpsMax: 0,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
             })
         );
         vm.prank(borrower);
@@ -238,7 +248,10 @@ contract Scenario8_BorrowerPreclose is Test {
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
                 collateralQuantity: 0,
-                allowsPartialRepay: false
+                allowsPartialRepay: false,
+                amountMax: 0,
+                interestRateBpsMax: 0,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
             })
         );
 
@@ -276,7 +289,7 @@ contract Scenario8_BorrowerPreclose is Test {
         assertEq(loan.startTime, block.timestamp, "Start time should be reset");
 
         // Verify: borrower offer is marked accepted
-        LibVaipakam.Offer memory offer = OfferFacet(address(diamond)).getOffer(borrowerOfferId);
+        LibVaipakam.Offer memory offer = OfferCancelFacet(address(diamond)).getOffer(borrowerOfferId);
         assertTrue(offer.accepted, "Borrower offer should be marked accepted");
 
         // Verify: original borrower paid accrued interest (balance decreased)
@@ -301,7 +314,7 @@ contract Scenario8_BorrowerPreclose is Test {
         uint256 expectedNewOfferId = 3;
         vm.mockCall(
             address(diamond),
-            abi.encodeWithSelector(OfferFacet.createOffer.selector),
+            abi.encodeWithSelector(OfferFacet.createOfferInternal.selector),
             abi.encode(expectedNewOfferId)
         );
 
@@ -334,21 +347,19 @@ contract Scenario8_BorrowerPreclose is Test {
         vm.prank(borrower);
         PrecloseFacet(address(diamond)).completeOffset(activeLoanId);
 
-        // Step 3: Simulate offer acceptance by writing offer.accepted = true in storage.
-        // Also backfill creator = borrower, since createOffer was mocked above (defaulting
-        // creator to 0). With native NFT locking, completeOffset authorizes via
-        // requireBorrowerNFTOwnerOrKeeper — the NFT stays with the borrower, so
-        // prank(borrower) is sufficient even though offer.creator is set here.
-        bytes32 baseSlot = LibVaipakam.VANGKI_STORAGE_POSITION;
-        // offers mapping is at storage offset 13 in LibVaipakam.Storage
-        uint256 offersSlot = uint256(baseSlot) + 13;
-        bytes32 offerBase = keccak256(abi.encode(expectedNewOfferId, offersSlot));
-        // Post-repack Offer layout: slot 1 packs creator(20) + offerType(1) + principalLiquidity(1)
-        // + collateralLiquidity(1) + accepted(1) + ... — accepted is at byte offset 23 of slot 1,
-        // creator occupies the low 20 bytes.
-        bytes32 acceptedSlot = bytes32(uint256(offerBase) + 1);
-        uint256 packed = uint256(uint160(borrower)) | (uint256(1) << 184);
-        vm.store(address(diamond), acceptedSlot, bytes32(packed));
+        // Step 3: Simulate offer acceptance by writing offer.accepted = true
+        // and creator = borrower via the layout-resilient mutator (the
+        // pre-T-048 path used hand-packed vm.store on a slot offset that
+        // shifted under the PAD storage extension; routing through the
+        // named-field setter on TestMutatorFacet keeps this stable).
+        // With native NFT locking, completeOffset authorizes via
+        // requireBorrowerNFTOwnerOrKeeper — the NFT stays with the
+        // borrower, so prank(borrower) is sufficient even though
+        // offer.creator is set here.
+        LibVaipakam.Offer memory acceptedOffer;
+        acceptedOffer.creator = borrower;
+        acceptedOffer.accepted = true;
+        TestMutatorFacet(address(diamond)).setOffer(expectedNewOfferId, acceptedOffer);
 
         // Mock cross-facet NFT calls for completeOffset
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector), "");

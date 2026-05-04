@@ -24,6 +24,33 @@ library LibAccessControl {
     bytes32 internal constant ORACLE_ADMIN_ROLE = keccak256("ORACLE_ADMIN_ROLE");
     bytes32 internal constant RISK_ADMIN_ROLE = keccak256("RISK_ADMIN_ROLE");
     bytes32 internal constant ESCROW_ADMIN_ROLE = keccak256("ESCROW_ADMIN_ROLE");
+    /// @dev Off-chain anomaly-watcher role (Phase 1 follow-up). Granted
+    ///      to the Cloudflare Worker / cron EOA that monitors the
+    ///      protocol for incident-class anomaly signals (treasury
+    ///      drain rate, liquidation spike, etc.) and fires
+    ///      `AdminFacet.autoPause(...)` to freeze the protocol for
+    ///      `cfgAutoPauseDurationSeconds()` while humans investigate.
+    ///      Strictly write-only-pause: the role can call autoPause
+    ///      but NOT unpause — admin (PAUSER_ROLE) retains the
+    ///      unpause lever, so a compromised watcher's worst case is
+    ///      a max-window freeze (capped at 2h via the duration
+    ///      ceiling), not indefinite lockup.
+    bytes32 internal constant WATCHER_ROLE = keccak256("WATCHER_ROLE");
+    /// @dev T-032 — Notification-bill writer role. Granted to the
+    ///      off-chain hf-watcher Worker so it can call
+    ///      `LoanFacet.markNotifBilled(loanId, isLenderSide)` on the
+    ///      first PaidPush-tier notification fired for a loan-side.
+    ///      That call debits the user's VPFI escrow by
+    ///      `cfgNotificationFee()`-equivalent → treasury directly
+    ///      (no Diamond custody — see `LibNotificationFee`).
+    ///      Distinct from `WATCHER_ROLE` because the operations have
+    ///      different blast radii: WATCHER's worst case is a 2h freeze
+    ///      (recoverable by PAUSER_ROLE); NOTIF_BILLER's worst case is
+    ///      false-billing capped per loan-side at the fee ceiling
+    ///      (`MAX_NOTIFICATION_FEE_CEIL`). Rotating one without
+    ///      the other lets the operator respond proportionally to a
+    ///      compromise on either side.
+    bytes32 internal constant NOTIF_BILLER_ROLE = keccak256("NOTIF_BILLER_ROLE");
 
     struct RoleData {
         mapping(address => bool) hasRole;
@@ -114,6 +141,21 @@ library LibAccessControl {
         grantRole(ORACLE_ADMIN_ROLE, owner);
         grantRole(RISK_ADMIN_ROLE, owner);
         grantRole(ESCROW_ADMIN_ROLE, owner);
+        // WATCHER_ROLE was previously declared but never granted at init —
+        // see Findings 00010. Without this grant `AdminFacet.autoPause`
+        // (the always-armed safety net documented in CLAUDE.md) is
+        // unreachable on a fresh deploy until governance grants the role
+        // explicitly. Granting at init mirrors the rest of the role list
+        // and lets `DeployDiamond`'s post-init handover loop transfer it
+        // to the operator's admin EOA the same way every other role gets
+        // transferred. If a deploy doesn't want WATCHER on the deployer
+        // EOA, the handover loop renounces it from the deployer at the
+        // end of step 6 just like every other role.
+        grantRole(WATCHER_ROLE, owner);
+        // T-032 — same shape as WATCHER_ROLE: granted at init, handed
+        // over to the operator's notification-bill bot during the
+        // post-deploy handover loop.
+        grantRole(NOTIF_BILLER_ROLE, owner);
 
         // Set DEFAULT_ADMIN_ROLE as admin for all roles
         setRoleAdmin(ADMIN_ROLE, DEFAULT_ADMIN_ROLE);
@@ -122,6 +164,37 @@ library LibAccessControl {
         setRoleAdmin(ORACLE_ADMIN_ROLE, DEFAULT_ADMIN_ROLE);
         setRoleAdmin(RISK_ADMIN_ROLE, DEFAULT_ADMIN_ROLE);
         setRoleAdmin(ESCROW_ADMIN_ROLE, DEFAULT_ADMIN_ROLE);
+        setRoleAdmin(WATCHER_ROLE, DEFAULT_ADMIN_ROLE);
+        setRoleAdmin(NOTIF_BILLER_ROLE, DEFAULT_ADMIN_ROLE);
+    }
+
+    /**
+     * @notice Canonical list of every role this library defines that
+     *         should be granted to the initial owner at init time AND
+     *         transferred to the operator-admin during deploy handover.
+     * @dev Single source of truth that closes the drift hazard called
+     *      out in Findings 00010 — when a new role is added to the
+     *      library and to `initializeAccessControl` but missed in
+     *      `DeployDiamond`'s handover array (or vice-versa), the deploy
+     *      ships a Diamond where the role is unowned (or stays on the
+     *      deployer post-handover). Both sites should now consume this
+     *      list. Tests assert the library's grants match this list.
+     *      `DEFAULT_ADMIN_ROLE` is the first entry — handover code that
+     *      renounces in reverse keeps DEFAULT_ADMIN until last so an
+     *      earlier-step revert leaves the deployer recoverable.
+     */
+    function grantableRoles() internal pure returns (bytes32[] memory) {
+        bytes32[] memory roles = new bytes32[](9);
+        roles[0] = DEFAULT_ADMIN_ROLE;
+        roles[1] = ADMIN_ROLE;
+        roles[2] = PAUSER_ROLE;
+        roles[3] = KYC_ADMIN_ROLE;
+        roles[4] = ORACLE_ADMIN_ROLE;
+        roles[5] = RISK_ADMIN_ROLE;
+        roles[6] = ESCROW_ADMIN_ROLE;
+        roles[7] = WATCHER_ROLE;
+        roles[8] = NOTIF_BILLER_ROLE;
+        return roles;
     }
 }
 

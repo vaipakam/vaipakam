@@ -4,6 +4,8 @@ pragma solidity ^0.8.29;
 import {LibVaipakam} from "./LibVaipakam.sol";
 import {LibFacet} from "./LibFacet.sol";
 import {LibStakingRewards} from "./LibStakingRewards.sol";
+import {LibOfferMatch} from "./LibOfferMatch.sol";
+import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 import {OracleFacet} from "../facets/OracleFacet.sol";
@@ -101,6 +103,36 @@ library LibVPFIDiscount {
         address escrow = s.userVaipakamEscrows[user];
         if (escrow == address(0)) return 0;
         return IERC20(s.vpfiToken).balanceOf(escrow);
+    }
+
+    /// @notice Returns the protocol-tracked VPFI balance for `user`,
+    ///         used to clamp the yield-bearing balance against
+    ///         unsolicited dust. Mirrors {escrowVPFIBalance}'s
+    ///         defensive zero-returns when VPFI / escrow are
+    ///         unset.
+    function trackedVPFIBalance(address user) internal view returns (uint256) {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        if (s.vpfiToken == address(0)) return 0;
+        return s.protocolTrackedEscrowBalance[user][s.vpfiToken];
+    }
+
+    /// @notice Pure clamp helper — returns
+    ///         `min(actualBalance, trackedAfter)`. Used by every
+    ///         staking-checkpoint and discount-accumulator caller to
+    ///         exclude unsolicited dust from yield + tier accrual.
+    /// @dev    The two arguments are the post-mutation values the
+    ///         caller already computed (typically `prevBal ± amount`
+    ///         and `prevTracked ± amount`). For legitimate flows
+    ///         post-T-051 the two numbers track each other, so the
+    ///         clamp is a no-op. Where the actual balance is inflated
+    ///         by direct `IERC20.transfer` dust the protocol never
+    ///         saw, the tracked side is unchanged and the clamp
+    ///         excludes the dust.
+    function clampToTracked(
+        uint256 actualBalance,
+        uint256 trackedAfter
+    ) internal pure returns (uint256) {
+        return actualBalance < trackedAfter ? actualBalance : trackedAfter;
     }
 
     // ─── Time-weighted discount rollup (§5.2a) ───────────────────────────────
@@ -362,9 +394,17 @@ library LibVPFIDiscount {
         uint256 escrowBal = IERC20(vpfi).balanceOf(borrowerEscrow);
         if (escrowBal < vpfiRequired) return (false, 0);
 
+        // T-054 PR-2 — clamp checkpoint balance against the tracked
+        // counter so unsolicited dust isn't counted as stake.
+        uint256 prevTracked = s.protocolTrackedEscrowBalance[borrower][vpfi];
+        uint256 newStakedBal = clampToTracked(
+            escrowBal - vpfiRequired,
+            prevTracked - vpfiRequired
+        );
+
         // Staking checkpoint BEFORE the balance leaves escrow so the
         // accrual captures the pre-deduction staked amount.
-        LibStakingRewards.updateUser(borrower, escrowBal - vpfiRequired);
+        LibStakingRewards.updateUser(borrower, newStakedBal);
 
         // Withdraw VPFI from borrower's escrow into Diamond custody (the
         // Diamond holds it until settlement splits it between rebate and
@@ -387,7 +427,7 @@ library LibVPFIDiscount {
         // borrower actually holds from here on. The prior rollup (at
         // `_snapshotBorrowerDiscount`) closed the period at the pre-
         // withdraw stamp.
-        rollupUserDiscount(borrower, escrowBal - vpfiRequired);
+        rollupUserDiscount(borrower, newStakedBal);
 
         return (true, vpfiRequired);
     }
@@ -433,10 +473,13 @@ library LibVPFIDiscount {
 
         // Roll up "as of now" (no mutation on this read) so the window
         // average sees every period up to this settlement instant.
+        // T-054 PR-2 — clamp against tracked so dust doesn't shift
+        // the tier on the snapshot read.
         uint256 borrowerBal = IERC20(vpfi).balanceOf(
             s.userVaipakamEscrows[loan.borrower]
         );
-        rollupUserDiscount(loan.borrower, borrowerBal);
+        uint256 borrowerTracked = s.protocolTrackedEscrowBalance[loan.borrower][vpfi];
+        rollupUserDiscount(loan.borrower, clampToTracked(borrowerBal, borrowerTracked));
 
         uint256 avgBps = borrowerTimeWeightedDiscountBps(loan);
         uint256 rebate = (held * avgBps) / LibVaipakam.BASIS_POINTS;
@@ -447,7 +490,24 @@ library LibVPFIDiscount {
         r.rebateAmount = rebate;
 
         if (treasuryShare > 0) {
-            LibFacet.transferToTreasury(vpfi, treasuryShare);
+            // Range Orders Phase 1 — VPFI-path 1% LIF matcher kickback.
+            // Per design §"1% match fee mechanic": when LIF flows to
+            // treasury, 1% goes to the matcher recorded on the loan.
+            // VPFI path kickback fires here at proper-close (rather
+            // than at match) because the borrower's VPFI sits in
+            // Diamond custody until terminal. Zero-matcher loans
+            // (legacy pre-Phase-1) skip the split — full amount goes
+            // to treasury.
+            uint256 matcherCut = loan.matcher == address(0)
+                ? 0
+                : LibOfferMatch.matcherShareOf(treasuryShare);
+            uint256 net = treasuryShare - matcherCut;
+            if (matcherCut > 0) {
+                SafeERC20.safeTransfer(IERC20(vpfi), loan.matcher, matcherCut);
+            }
+            if (net > 0) {
+                LibFacet.transferToTreasury(vpfi, net);
+            }
         }
     }
 
@@ -468,7 +528,22 @@ library LibVPFIDiscount {
         if (held == 0) return;
         r.vpfiHeld = 0;
         // rebateAmount stays at 0 — no claim on forfeiture.
-        LibFacet.transferToTreasury(s.vpfiToken, held);
+        // Range Orders Phase 1 — VPFI-path 1% LIF matcher kickback.
+        // Default / HF-liquidation forfeits the full VPFI to treasury;
+        // the matcher's slice still applies because LIF reaching
+        // treasury is the trigger (per design §"1% match fee mechanic").
+        // Zero-matcher loans (legacy) skip the split.
+        address vpfi = s.vpfiToken;
+        uint256 matcherCut = loan.matcher == address(0)
+            ? 0
+            : LibOfferMatch.matcherShareOf(held);
+        uint256 net = held - matcherCut;
+        if (matcherCut > 0) {
+            SafeERC20.safeTransfer(IERC20(vpfi), loan.matcher, matcherCut);
+        }
+        if (net > 0) {
+            LibFacet.transferToTreasury(vpfi, net);
+        }
     }
 
     /**
@@ -520,8 +595,11 @@ library LibVPFIDiscount {
         //    re-stamps at the post-mutation tier; splitting the two
         //    protects against silent-fallback failure committing a
         //    wrong stamp.
+        //    T-054 PR-2 — clamp against tracked so dust doesn't shift
+        //    the tier on the snapshot read.
         uint256 escrowBal = IERC20(vpfi).balanceOf(lenderEscrow);
-        rollupUserDiscount(lender, escrowBal);
+        uint256 prevTracked = s.protocolTrackedEscrowBalance[lender][vpfi];
+        rollupUserDiscount(lender, clampToTracked(escrowBal, prevTracked));
 
         // 2. Quote against the now-current accumulator + the loan's
         //    init snapshot. This returns the time-weighted avg discount
@@ -532,7 +610,12 @@ library LibVPFIDiscount {
 
         // 3. Checkpoint staking accrual at the post-mutation balance.
         //    Mirrors the pattern at every other escrow-mutation site.
-        LibStakingRewards.updateUser(lender, escrowBal - vpfiRequired);
+        //    Clamped against tracked-after-withdraw.
+        uint256 newStakedBal = clampToTracked(
+            escrowBal - vpfiRequired,
+            prevTracked - vpfiRequired
+        );
+        LibStakingRewards.updateUser(lender, newStakedBal);
 
         address treasury = LibFacet.getTreasury();
         (bool ok, ) = address(this).call(
@@ -550,7 +633,7 @@ library LibVPFIDiscount {
         //    that the withdraw has committed. Zero elapsed between this
         //    call and step 1 — purely a stamp refresh so the next period
         //    accrues at the tier the lender actually holds from here on.
-        rollupUserDiscount(lender, escrowBal - vpfiRequired);
+        rollupUserDiscount(lender, newStakedBal);
 
         LibFacet.recordTreasuryAccrual(vpfi, vpfiRequired);
         return (true, vpfiRequired);

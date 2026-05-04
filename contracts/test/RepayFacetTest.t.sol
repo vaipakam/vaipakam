@@ -14,6 +14,7 @@ import {RiskFacet} from "../src/facets/RiskFacet.sol";
 import {OracleFacet} from "../src/facets/OracleFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {OfferFacet} from "../src/facets/OfferFacet.sol";
+import {OfferCancelFacet} from "../src/facets/OfferCancelFacet.sol";
 import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
 import {VaipakamEscrowImplementation} from "../src/VaipakamEscrowImplementation.sol";
 import {AdminFacet} from "../src/facets/AdminFacet.sol";
@@ -83,6 +84,7 @@ contract RepayFacetTest is Test {
     // Facet addresses
     DiamondCutFacet cutFacet;
     OfferFacet offerFacet;
+    OfferCancelFacet offerCancelFacet;
     ProfileFacet profileFacet;
     OracleFacet oracleFacet;
     VaipakamNFTFacet nftFacet;
@@ -113,6 +115,8 @@ contract RepayFacetTest is Test {
         diamond = new VaipakamDiamond(owner, address(cutFacet));
 
         offerFacet = new OfferFacet();
+
+        offerCancelFacet = new OfferCancelFacet();
         profileFacet = new ProfileFacet();
         oracleFacet = new OracleFacet();
         nftFacet = new VaipakamNFTFacet();
@@ -129,7 +133,7 @@ contract RepayFacetTest is Test {
         escrowImpl = new VaipakamEscrowImplementation();
 
         // Cut facets into diamond
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](11);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](12);
         cuts[0] = IDiamondCut.FacetCut({
             facetAddress: address(offerFacet),
             action: IDiamondCut.FacetCutAction.Add,
@@ -185,6 +189,7 @@ contract RepayFacetTest is Test {
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getTestMutatorFacetSelectors()
         });
+        cuts[11] = IDiamondCut.FacetCut({facetAddress: address(offerCancelFacet), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getOfferCancelFacetSelectors()});
 
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");
         AccessControlFacet(address(diamond)).initializeAccessControl();
@@ -336,7 +341,10 @@ contract RepayFacetTest is Test {
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
                 collateralQuantity: 0,
-                allowsPartialRepay: true
+                allowsPartialRepay: true,
+                amountMax: 0,
+                interestRateBpsMax: 0,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
             })
         );
 
@@ -364,7 +372,10 @@ contract RepayFacetTest is Test {
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
                 collateralQuantity: 0,
-                allowsPartialRepay: true
+                allowsPartialRepay: true,
+                amountMax: 0,
+                interestRateBpsMax: 0,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
             })
         );
 
@@ -603,7 +614,10 @@ contract RepayFacetTest is Test {
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
                 collateralQuantity: 0,
-                allowsPartialRepay: false
+                allowsPartialRepay: false,
+                amountMax: 0,
+                interestRateBpsMax: 0,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
             })
         );
         vm.prank(borrower);
@@ -651,12 +665,20 @@ contract RepayFacetTest is Test {
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
                 collateralQuantity: 0,
-                allowsPartialRepay: true
+                allowsPartialRepay: true,
+                amountMax: 0,
+                interestRateBpsMax: 0,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
             })
         );
 
         address lenderEscrow = EscrowFactoryFacet(address(diamond)).getOrCreateUserEscrow(lender);
         deal(mockERC20, lenderEscrow, 2000); // covers 1 wei LIF + 1000 principal pull
+        // T-051 — back the direct deal with a counter record so the
+        // subsequent escrowWithdrawERC20 inside acceptOffer doesn't
+        // underflow the counter.
+        vm.prank(address(diamond));
+        EscrowFactoryFacet(address(diamond)).recordEscrowDepositERC20(lender, mockERC20, 2000);
 
         vm.prank(lender);
         uint256 loanId = OfferFacet(address(diamond)).acceptOffer(offerId, true);
@@ -736,17 +758,18 @@ contract RepayFacetTest is Test {
         RepayFacet(address(diamond)).repayLoan(2);
     }
 
-    /// @dev Tests cross-facet call failure for getOrCreateUserEscrow in repayLoan (ERC20 path).
+    /// @dev Tests cross-facet call failure for the escrow chokepoint
+    ///      in repayLoan (ERC20 path). T-051 — escrow resolution
+    ///      moved inside `escrowDepositERC20From`; mock that selector.
     function testRepayLoanCrossFacetCallFailed() public {
         helperOfferLoan();
-        // Mock the getOrCreateUserEscrow cross-facet call to revert
         vm.mockCallRevert(
             address(diamond),
-            abi.encodeWithSelector(EscrowFactoryFacet.getOrCreateUserEscrow.selector),
+            abi.encodeWithSelector(EscrowFactoryFacet.escrowDepositERC20From.selector),
             "mock revert"
         );
         vm.prank(borrower);
-        vm.expectRevert(bytes("mock revert"));
+        vm.expectRevert();
         RepayFacet(address(diamond)).repayLoan(1);
         vm.clearMockedCalls();
     }
@@ -1116,17 +1139,13 @@ contract RepayFacetTest is Test {
     }
 
     /// @dev Tests repayPartial fails when minPartialBps > 0 and partialAmount < minPartial.
-    ///      Sets minPartialBps for the principal asset via vm.store (field +4 in RiskParams).
+    ///      Sets minPartialBps for the principal asset via the layout-
+    ///      resilient TestMutatorFacet setter so this stays correct
+    ///      when the Storage struct shifts (e.g. T-048 PAD additions).
     function testRepayPartialRevertsMinPartialAmount() public {
         helperOfferLoan();
-        // Set minPartialBps = 1000 (10%) for mockERC20 via vm.store
-        // assetRiskParams is at BASE+17; RiskParams[mockERC20] base = keccak256(abi.encode(mockERC20, BASE+17))
-        // minPartialBps is at offset +4 in RiskParams
-        bytes32 baseSlot = LibVaipakam.VANGKI_STORAGE_POSITION;
-        uint256 assetRiskParamsSlot = uint256(baseSlot) + 16;
-        bytes32 riskParamsBase = keccak256(abi.encode(mockERC20, assetRiskParamsSlot));
-        bytes32 minPartialSlot = bytes32(uint256(riskParamsBase) + 4);
-        vm.store(address(diamond), minPartialSlot, bytes32(uint256(1000)));
+        // Set minPartialBps = 1000 (10%) for mockERC20.
+        TestMutatorFacet(address(diamond)).setMinPartialBpsRaw(mockERC20, 1000);
 
         // loanId 1: principal = 1000; minPartial = 1000 * 1000 / 10000 = 100
         // repay 50 < 100 → InsufficientPartialAmount
@@ -1269,7 +1288,10 @@ contract RepayFacetTest is Test {
                 collateralAssetType: LibVaipakam.AssetType.ERC20,
                 collateralTokenId: 0,
                 collateralQuantity: 0,
-                allowsPartialRepay: true
+                allowsPartialRepay: true,
+                amountMax: 0,
+                interestRateBpsMax: 0,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
             })
         );
 

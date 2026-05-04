@@ -116,7 +116,16 @@ function notify() {
 }
 
 function randomId(): string {
-  // Short opaque id; avoids pulling in a uuid dep for a debug aid.
+  // UUIDv4 — satisfies the worker's `/diag/record` validation when
+  // this id is sent as the per-failure row PK, AND doubles as the
+  // GitHub-issue cross-reference key. Falls back to a short base36
+  // string in environments without crypto.randomUUID (extremely old
+  // browsers); those calls will still produce a working in-memory
+  // event id but won't pass server validation, so the server simply
+  // won't record them — fail-soft.
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
   return Math.random().toString(36).slice(2, 10);
 }
 
@@ -188,7 +197,159 @@ export function emit(input: EmitInput): JourneyEvent {
   if (buffer.length > BUFFER_SIZE) buffer = buffer.slice(-BUFFER_SIZE);
   persist();
   notify();
+  // 2026-05-01 — server-side error capture. Only fires for `failure`
+  // events (success / start telemetry stays client-side). Fire-and-
+  // forget; non-blocking even on slow networks. See
+  // `recordFailureToServer` for the local 5-streak dedup that keeps
+  // a runaway re-render loop from flooding the worker.
+  if (ev.status === 'failure') {
+    recordFailureToServer(ev);
+  }
   return ev;
+}
+
+// ─── Server-side error capture (2026-05-01) ───────────────────────────
+//
+// Every `failure` event is fired-and-forgotten to the hf-watcher
+// Worker's `/diag/record` endpoint. The Worker writes a row to D1
+// (`diag_errors` table) with a UUIDv4 PK matching `ev.id`. That id
+// also surfaces in the GitHub-issue prefill as the report id, so a
+// support engineer can cross-reference any reported issue against
+// the server-side audit trail to confirm the report came from a
+// real session — not fabricated.
+//
+// Defenses (frontend side):
+//
+//   1. **5-streak local cap.** If the last 5 failures all had the
+//      same fingerprint (area+flow+step+errorType+errorName+
+//      errorSelector), stop POSTing until a different fingerprint
+//      arrives. Saves Worker invocations against a runaway re-render
+//      loop or a stuck retry path. The Worker has a secondary cap as
+//      belt-and-suspenders.
+//   2. **No-op when origin not configured.** If
+//      `VITE_HF_WATCHER_ORIGIN` is unset (local dev without the
+//      worker), capture silently disabled.
+//   3. **`navigator.sendBeacon` first, fetch fallback.** Beacon
+//      survives page-unload and is non-blocking by definition;
+//      `fetch` with `keepalive: true` is the modern fallback for
+//      browsers where Beacon refused the payload (rare).
+//   4. **Never throws upward.** Capture failure cannot break the
+//      app's error-handling path. The catch is silent on purpose.
+
+let lastFingerprint: string | null = null;
+let consecutiveCount = 0;
+const STREAK_CAP = 5;
+
+function failureFingerprint(ev: JourneyEvent): string {
+  return [
+    ev.area,
+    ev.flow,
+    ev.step ?? '',
+    ev.errorType ?? '',
+    ev.errorName ?? '',
+    ev.errorSelector ?? '',
+  ].join('|');
+}
+
+function recordFailureToServer(ev: JourneyEvent): void {
+  // Module-level state guard. Wrapped in try because the env var read
+  // can throw in some bundler edge cases.
+  let origin: string;
+  let enabled: string;
+  try {
+    origin = (import.meta.env.VITE_HF_WATCHER_ORIGIN as string | undefined) ?? '';
+    enabled = (import.meta.env.VITE_DIAG_RECORD_ENABLED as string | undefined) ?? '';
+  } catch {
+    return;
+  }
+  // Master kill-switch — defaults OFF (must be explicitly set to the
+  // literal string "true" to enable). Until the worker's D1 migration
+  // has been applied + the endpoint smoke-tested in production, we
+  // don't want a flood of POSTs hitting an endpoint that might 500
+  // or rate-limit us into our own bucket. Flip to "true" only once
+  // the operator has run through DeploymentRunbook §8d.
+  if (enabled.toLowerCase() !== 'true') return;
+  if (!origin) return;
+
+  const fp = failureFingerprint(ev);
+  if (fp === lastFingerprint) {
+    consecutiveCount++;
+    if (consecutiveCount > STREAK_CAP) return;
+  } else {
+    lastFingerprint = fp;
+    consecutiveCount = 1;
+  }
+
+  // Build the redacted payload. Wallet is shortened via the existing
+  // contract; error message is left as-is here (the Worker truncates
+  // server-side). The Worker validates field types + lengths and
+  // returns 400 on garbage; we don't retry.
+  const payload = {
+    id: ev.id,
+    client_at: Math.floor(ev.timestamp / 1000),
+    area: ev.area,
+    flow: ev.flow,
+    step: ev.step ?? null,
+    errorType: ev.errorType ?? null,
+    errorName: ev.errorName ?? null,
+    errorSelector: ev.errorSelector ?? null,
+    errorMessage: ev.errorMessage ? ev.errorMessage.slice(0, 1000) : null,
+    redactedWallet: redactAddress(ev.wallet ?? null),
+    chainId: ev.chainId ?? null,
+    loanId: ev.loanId ?? null,
+    offerId: ev.offerId ?? null,
+    appLocale:
+      typeof document !== 'undefined'
+        ? document.documentElement.lang || null
+        : null,
+    appTheme:
+      typeof document !== 'undefined'
+        ? document.documentElement.getAttribute('data-theme') || null
+        : null,
+    viewport:
+      typeof window !== 'undefined' && typeof window.innerWidth === 'number'
+        ? `${window.innerWidth}x${window.innerHeight}`
+        : null,
+    appVersion:
+      ((import.meta.env.VITE_APP_VERSION as string | undefined) ?? null) ||
+      null,
+  };
+
+  const url = `${origin.replace(/\/$/, '')}/diag/record`;
+  const json = JSON.stringify(payload);
+
+  // Beacon path — survives page-unload, doesn't block the UI thread.
+  // `sendBeacon` only accepts opaque CORS POSTs without a content-type
+  // header you can set, so we wrap the JSON in a Blob with the right
+  // MIME type. Returns false when the browser refused (e.g. payload
+  // too large) — fall through to fetch in that case.
+  if (typeof navigator !== 'undefined' && typeof navigator.sendBeacon === 'function') {
+    try {
+      const blob = new Blob([json], { type: 'application/json' });
+      const sent = navigator.sendBeacon(url, blob);
+      if (sent) return;
+    } catch {
+      // Fall through to fetch.
+    }
+  }
+
+  // Fetch fallback — keepalive: true so the request survives the page
+  // closing right after a failure (e.g. user instinctively closes the
+  // tab when something errors). No await, no .then — this is fire-and-
+  // forget by design.
+  try {
+    void fetch(url, {
+      method: 'POST',
+      mode: 'cors',
+      keepalive: true,
+      headers: { 'content-type': 'application/json' },
+      body: json,
+    }).catch(() => {
+      // Silent — capture failure cannot break the app's error path.
+    });
+  } catch {
+    // Same — never throw upward.
+  }
 }
 
 /**
@@ -423,7 +584,7 @@ export function enrichFetchError(err: unknown, url: string): unknown {
 let activeReportId: string | null = null;
 function reportId(): string {
   if (!activeReportId) {
-    activeReportId = Math.random().toString(36).slice(2, 10);
+    activeReportId = randomId();
   }
   return activeReportId;
 }
@@ -466,20 +627,50 @@ function readProviderChainId(): number | null {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
-// 8000 chars leaves comfortable headroom under GitHub's practical issue-URL
-// length (~16k). The dense events list lives inside a folded `<details>`
-// section, so the visible top-of-issue triage remains scannable even when
-// the body approaches the cap.
-const MAX_BODY_LEN = 8_000;
-const MAX_EVENTS_IN_ISSUE = 20;
+// GitHub's practical issue-URL ceiling sits around ~8KB of FINAL URL
+// (origin + path + URL-encoded querystring). Each newline / brace /
+// paren in the markdown body becomes 3 chars after URL-encoding, so a
+// raw body length is a poor proxy for final URL length. We cap both:
+//   - `MAX_BODY_LEN`: hard slice of body markdown (cheap, runs first)
+//   - `maxUrlChars`: post-encode check (the real GitHub gate)
+// Both are env-tunable so operators can dial conservative caps without
+// recompiling. Defaults below were dialled in after a real "request
+// URL is too long" incident (15+5 events at the prior 8000 body cap).
+//
+// Operator overrides (Vite env, all optional):
+//   VITE_DIAG_MAX_BODY_CHARS         (default 5000)
+//   VITE_DIAG_MAX_URL_CHARS          (default 7000)
+//   VITE_DIAG_EVENTS_BEFORE_FAILURE  (default 10)
+//   VITE_DIAG_EVENTS_AFTER_FAILURE   (default 2)
+//   VITE_DIAG_MAX_EVENTS_NO_FAILURE  (default 12)
+//   VITE_GITHUB_ISSUES_URL           (default the public Vaipakam repo)
+function envInt(key: string, fallback: number): number {
+  const env = (import.meta as unknown as { env: Record<string, string | undefined> }).env;
+  const raw = env[key];
+  if (!raw) return fallback;
+  const n = Number(raw);
+  return Number.isFinite(n) && n > 0 ? n : fallback;
+}
+function envStr(key: string, fallback: string): string {
+  const env = (import.meta as unknown as { env: Record<string, string | undefined> }).env;
+  const raw = env[key];
+  return raw && raw.trim() !== '' ? raw : fallback;
+}
+
+const MAX_BODY_LEN = envInt('VITE_DIAG_MAX_BODY_CHARS', 5_000);
+const MAX_URL_LEN = envInt('VITE_DIAG_MAX_URL_CHARS', 7_000);
 /** How many events to include on either side of the most-recent failure
  *  when the buffer contains one. The error itself is always included.
- *  Picked so the lead-up (15) is long enough to see what the user was
- *  doing before the revert, and the tail (5) captures any retry or
- *  cascaded failures the app emitted after the initial error. */
-const EVENTS_BEFORE_FAILURE = 15;
-const EVENTS_AFTER_FAILURE = 5;
-const VAIPAKAM_ISSUES_URL = 'https://github.com/vaipakam/vaipakam/issues/new';
+ *  Defaults dialled down from 15+5 → 10+2 after a real URL-too-long
+ *  incident; the trim-fallback halves these further if the assembled
+ *  URL still overshoots `MAX_URL_LEN`. */
+const EVENTS_BEFORE_FAILURE = envInt('VITE_DIAG_EVENTS_BEFORE_FAILURE', 10);
+const EVENTS_AFTER_FAILURE = envInt('VITE_DIAG_EVENTS_AFTER_FAILURE', 2);
+const MAX_EVENTS_IN_ISSUE = envInt('VITE_DIAG_MAX_EVENTS_NO_FAILURE', 12);
+const VAIPAKAM_ISSUES_URL = envStr(
+  'VITE_GITHUB_ISSUES_URL',
+  'https://github.com/vaipakam/vaipakam/issues/new',
+);
 
 const TX_HASH_RE = /\b0x[0-9a-fA-F]{64}\b/;
 
@@ -557,9 +748,11 @@ function errorDetailsBlock(ev: JourneyEvent | null): string {
   if (ev.offerId) lines.push(`- **Offer id:** \`#${ev.offerId}\``);
   if (ev.nftId) lines.push(`- **NFT id:** \`#${ev.nftId}\``);
   if (ev.role) lines.push(`- **Role:** \`${ev.role}\``);
-  if (ev.chainId != null) lines.push(`- **Chain id:** \`${ev.chainId}\``);
-  const txHash = extractTxHash(ev);
-  if (txHash) lines.push(`- **Tx hash:** \`${txHash}\``);
+  // Chain id + tx hash are already surfaced in the header block above
+  // (`**Chain:**` / `**Last tx hash:**`), so we don't re-emit them
+  // here. Saves ~110 chars per failure on the first-view body —
+  // useful budget against GitHub's URL length cap when several
+  // events accumulate before the user reports.
   if (ev.errorMessage) {
     // No 140-char cap here — this is the dedicated detail block. We
     // still strip control chars and escape pipe / backtick so the
@@ -698,13 +891,14 @@ function browserEnvSection(): string {
     window.matchMedia('(prefers-color-scheme: dark)').matches
       ? 'dark'
       : 'light';
-  const lang = (document.documentElement.lang || 'unknown').slice(0, 16);
   const referrer = sanitiseForIssue(document.referrer || '(none)', 120);
+  // Document language is already surfaced in the header (`**Language:**`),
+  // sourced from the same `document.documentElement.lang` attribute, so
+  // we don't re-emit it here.
   const lines = [
     `- **Viewport:** \`${viewport}\``,
     `- **Online:** \`${online}\``,
     `- **Prefers color scheme:** \`${colorScheme}\``,
-    `- **Document language:** \`${lang}\``,
     `- **Referrer:** \`${referrer}\``,
   ];
   return [
@@ -779,81 +973,104 @@ export function buildGithubIssueUrl(): string {
     typeof document !== 'undefined'
       ? document.documentElement.getAttribute('data-theme') || 'unknown'
       : 'unknown';
-  const header = [
-    `**Report ID:** \`${id}\``,
-    `**Wallet (redacted):** \`${wallet}\``,
-    `**Chain:** \`${chainLabel}\``,
-    `**Language:** \`${lang}\``,
-    `**Theme:** \`${theme}\``,
-    tx ? `**Last tx hash:** \`${tx}\`` : null,
-    `**Generated:** ${new Date().toISOString()}`,
-    '',
-    '### What happened?',
-    '<!-- Please describe in your own words what you were trying to do. -->',
-    '',
-    '---',
-    '',
-    '> Auto-generated by the Vaipakam diagnostics drawer. No personal',
-    '> information is published: wallet addresses are shortened to',
-    '> `0x…abcd`, the browser user-agent is NOT included, no localStorage',
-    '> contents, no cookies. The "Error details" block carries the full',
-    '> first-level diagnostic info for the most recent failure; the folded',
-    '> sections below carry the deeper second-level data (stack trace,',
-    '> cause chain, browser env, dense events list) so a developer can',
-    '> pinpoint the bug without a back-and-forth.',
-    '',
-    errorDetailsBlock(lastFailure),
-    stackTraceSection(lastFailure),
-    causeChainSection(lastFailure),
-    browserEnvSection(),
-    '',
-  ].filter((l) => l != null).join('\n');
+  // ── Body builder, parameterized by trim tier ───────────────────
+  // Tier 0 (default): all sections, full event window per env config.
+  // Tier 1: events halved.
+  // Tier 2: drop browser env section.
+  // Tier 3: drop stack trace + cause chain.
+  // Tier 4: drop everything except header + error details + truncated
+  //         events list — last resort before slice.
+  // After each tier, re-encode the URL and check against MAX_URL_LEN;
+  // stop at the first tier that fits. The intent is graceful
+  // degradation: every reporter still hands triage actionable info,
+  // but no one ever hits GitHub's "request URL is too long" gate.
+  const buildBody = (tier: number): string => {
+    const eventsBefore = tier >= 1
+      ? Math.floor(EVENTS_BEFORE_FAILURE / 2)
+      : EVENTS_BEFORE_FAILURE;
+    const eventsAfter = tier >= 1
+      ? Math.max(1, Math.floor(EVENTS_AFTER_FAILURE / 2))
+      : EVENTS_AFTER_FAILURE;
+    const maxNoFailure = tier >= 1
+      ? Math.floor(MAX_EVENTS_IN_ISSUE / 2)
+      : MAX_EVENTS_IN_ISSUE;
+    const dropBrowserEnv = tier >= 2;
+    const dropStackTrace = tier >= 3;
+    const dropCauseChain = tier >= 3;
 
-  // Window the event list around the failure so the issue body always shows
-  // the error itself plus context. Just taking the last N events can miss
-  // the revert entirely when the UI emitted retries or follow-up reads
-  // after the failure — pushing the original error out of the tail. When a
-  // failure exists we take the 15 events before it, the failure itself,
-  // and up to the next 5. Falls back to the tail slice when there's no
-  // failure in the buffer (pure "diag" report).
-  const windowStart = lastFailureIdx >= 0
-    ? Math.max(0, lastFailureIdx - EVENTS_BEFORE_FAILURE)
-    : Math.max(0, buffer.length - MAX_EVENTS_IN_ISSUE);
-  const windowEnd = lastFailureIdx >= 0
-    ? Math.min(buffer.length, lastFailureIdx + 1 + EVENTS_AFTER_FAILURE)
-    : buffer.length;
-  const eventLines = buffer
-    .slice(windowStart, windowEnd)
-    .map(eventToIssueLine)
-    .join('\n');
-  // Wrap the events list in a folded `<details>` block so the
-  // top-of-issue triage stays scannable. The summary count gives
-  // triage an at-a-glance signal of how chatty the session was
-  // before they decide to expand. Window window window — the
-  // visible boundaries are also shown so a reader knows whether
-  // the buffer was clipped.
-  const eventCount = windowEnd - windowStart;
-  const recent = [
-    '<details>',
-    `<summary><strong>Recent events</strong> (${eventCount} entries — click to expand)</summary>`,
-    '',
-    eventLines,
-    '',
-    '</details>',
-    '',
-  ].join('\n');
+    const header = [
+      `**Report ID:** \`${id}\``,
+      `**Wallet (redacted):** \`${wallet}\``,
+      `**Chain:** \`${chainLabel}\``,
+      `**Language:** \`${lang}\``,
+      `**Theme:** \`${theme}\``,
+      tx ? `**Last tx hash:** \`${tx}\`` : null,
+      `**Generated:** ${new Date().toISOString()}`,
+      '',
+      '### What happened?',
+      '<!-- Please describe in your own words what you were trying to do. -->',
+      '',
+      '---',
+      '',
+      '> Auto-generated by the Vaipakam diagnostics drawer. No personal information published: wallet addresses are shortened to `0x…abcd`; the browser user-agent, localStorage contents, and cookies are NOT included.',
+      '',
+      errorDetailsBlock(lastFailure),
+      dropStackTrace ? '' : stackTraceSection(lastFailure),
+      dropCauseChain ? '' : causeChainSection(lastFailure),
+      dropBrowserEnv ? '' : browserEnvSection(),
+      '',
+    ].filter((l) => l != null).join('\n');
 
-  let body = header + recent;
-  if (body.length > MAX_BODY_LEN) {
-    body =
-      body.slice(0, MAX_BODY_LEN - 80) +
-      '\n\n> _(truncated — attach full diagnostics JSON for complete log)_';
+    const windowStart = lastFailureIdx >= 0
+      ? Math.max(0, lastFailureIdx - eventsBefore)
+      : Math.max(0, buffer.length - maxNoFailure);
+    const windowEnd = lastFailureIdx >= 0
+      ? Math.min(buffer.length, lastFailureIdx + 1 + eventsAfter)
+      : buffer.length;
+    const eventLines = buffer
+      .slice(windowStart, windowEnd)
+      .map(eventToIssueLine)
+      .join('\n');
+    const eventCount = windowEnd - windowStart;
+    const tierNote = tier > 0
+      ? ` · trimmed (tier ${tier})`
+      : '';
+    const recent = [
+      '<details>',
+      `<summary><strong>Recent events</strong> (${eventCount} entries${tierNote} — click to expand)</summary>`,
+      '',
+      eventLines,
+      '',
+      '</details>',
+      '',
+    ].join('\n');
+
+    let body = header + recent;
+    if (body.length > MAX_BODY_LEN) {
+      body =
+        body.slice(0, MAX_BODY_LEN - 80) +
+        '\n\n> _(truncated — attach full diagnostics JSON for complete log)_';
+    }
+    return body;
+  };
+
+  const buildUrl = (tier: number): string => {
+    const params = new URLSearchParams({
+      title,
+      body: buildBody(tier),
+      labels: 'bug,diagnostics',
+    });
+    return `${VAIPAKAM_ISSUES_URL}?${params.toString()}`;
+  };
+
+  // Try each tier in order; return the first URL that fits under
+  // MAX_URL_LEN. Tier 4 always wins on the last iteration even if
+  // still over (the body slice in `buildBody` enforces the body
+  // hard cap, so the URL is bounded regardless).
+  for (let tier = 0; tier <= 4; tier++) {
+    const url = buildUrl(tier);
+    if (url.length <= MAX_URL_LEN || tier === 4) return url;
   }
-
-  const params = new URLSearchParams({
-    title,
-    body,
-    labels: 'bug,diagnostics',
-  });
-  return `${VAIPAKAM_ISSUES_URL}?${params.toString()}`;
+  // Unreachable but typed-required.
+  return buildUrl(4);
 }

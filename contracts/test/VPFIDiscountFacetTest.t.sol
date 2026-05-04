@@ -356,7 +356,9 @@ contract VPFIDiscountFacetTest is SetupTest {
         // to tier 1 (>= 100 VPFI) so the tier gate does not short-circuit.
         uint256 offerId = _createLenderERC20Offer(10_000 ether);
         address borrowerEscrow = _buyerEscrow(borrower);
-        vpfiToken.transfer(borrowerEscrow, 500 ether); // tier 1
+        vpfiToken.transfer(borrowerEscrow, 500 ether);
+        vm.prank(address(diamond));
+        EscrowFactoryFacet(address(diamond)).recordEscrowDepositERC20(borrower, address(vpfiToken), 500 ether); // tier 1
 
         (bool eligible, uint256 vpfi, uint256 bal, uint8 tier) = _facet()
             .quoteVPFIDiscountFor(offerId, borrower);
@@ -378,7 +380,9 @@ contract VPFIDiscountFacetTest is SetupTest {
         _facet().setVPFIBuyRate(0);
         uint256 offerId = _createLenderERC20Offer(10_000 ether);
         address borrowerEscrow = _buyerEscrow(borrower);
-        vpfiToken.transfer(borrowerEscrow, 500 ether); // tier 1
+        vpfiToken.transfer(borrowerEscrow, 500 ether);
+        vm.prank(address(diamond));
+        EscrowFactoryFacet(address(diamond)).recordEscrowDepositERC20(borrower, address(vpfiToken), 500 ether); // tier 1
 
         (bool eligible, , , ) = _facet().quoteVPFIDiscountFor(offerId, borrower);
         assertFalse(eligible);
@@ -455,7 +459,9 @@ contract VPFIDiscountFacetTest is SetupTest {
         address borrowerEscrow = _buyerEscrow(borrower);
         address lenderEscrow = EscrowFactoryFacet(address(diamond))
             .getOrCreateUserEscrow(lender);
-        vpfiToken.transfer(borrowerEscrow, 500 ether); // tier 1
+        vpfiToken.transfer(borrowerEscrow, 500 ether);
+        vm.prank(address(diamond));
+        EscrowFactoryFacet(address(diamond)).recordEscrowDepositERC20(borrower, address(vpfiToken), 500 ether); // tier 1
 
         (bool eligible, uint256 vpfiRequired, , uint8 tier) = _facet()
             .quoteVPFIDiscountFor(offerId, borrower);
@@ -466,6 +472,8 @@ contract VPFIDiscountFacetTest is SetupTest {
         // Top up so the escrow has the tier-1 seed + enough to cover the
         // FULL VPFI-denominated LIF (not a discounted slice).
         vpfiToken.transfer(borrowerEscrow, vpfiRequired * 2);
+        vm.prank(address(diamond));
+        EscrowFactoryFacet(address(diamond)).recordEscrowDepositERC20(borrower, address(vpfiToken), vpfiRequired * 2);
 
         uint256 treasuryVpfiBefore = vpfiToken.balanceOf(treasuryRecipient);
         uint256 treasuryErc20Before = IERC20(mockERC20).balanceOf(
@@ -547,12 +555,16 @@ contract VPFIDiscountFacetTest is SetupTest {
         vm.prank(borrower);
         OfferFacet(address(diamond)).acceptOffer(offerId, true);
 
-        // Fee = 0.1% of principal flows into treasury in the lending asset.
+        // Fee = 0.1% of principal flows into treasury in the lending
+        // asset, MINUS the 1% Range Orders Phase 1 matcher kickback
+        // that goes to msg.sender (the borrower in this test).
         uint256 expectedFee = (principal * 10) / 10_000;
+        uint256 expectedMatcherCut = (expectedFee * LibVaipakam.LIF_MATCHER_FEE_BPS) / 10_000;
+        uint256 expectedTreasuryCut = expectedFee - expectedMatcherCut;
         assertEq(
             IERC20(mockERC20).balanceOf(treasuryRecipient) - treasuryErc20Before,
-            expectedFee,
-            "treasury credited lending-asset fee on fallback"
+            expectedTreasuryCut,
+            "treasury credited 99% of LIF on fallback (1% matcher kickback)"
         );
         // No VPFI moved when fallback fires.
         assertEq(
@@ -579,7 +591,9 @@ contract VPFIDiscountFacetTest is SetupTest {
         uint256 offerId = _createLenderERC20Offer(principal);
 
         address borrowerEscrow = _buyerEscrow(borrower);
-        vpfiToken.transfer(borrowerEscrow, 5_000 ether); // plenty
+        vpfiToken.transfer(borrowerEscrow, 5_000 ether);
+        vm.prank(address(diamond));
+        EscrowFactoryFacet(address(diamond)).recordEscrowDepositERC20(borrower, address(vpfiToken), 5_000 ether); // plenty
 
         // Borrower opts in; discount still skipped because asset is illiquid.
         vm.prank(borrower);
@@ -777,6 +791,8 @@ contract VPFIDiscountFacetTest is SetupTest {
             borrower
         );
         vpfiToken.transfer(_buyerEscrow(borrower), vpfiRequired * 2);
+        vm.prank(address(diamond));
+        EscrowFactoryFacet(address(diamond)).recordEscrowDepositERC20(borrower, address(vpfiToken), vpfiRequired * 2);
 
         // Also fund borrower collateral for acceptOffer.
         ERC20Mock(mockCollateralERC20).mint(borrower, principal);
@@ -819,13 +835,22 @@ contract VPFIDiscountFacetTest is SetupTest {
         uint256 expected = (vpfiRequired * 1000) / 10_000;
         assertApproxEqRel(rebateAfterRepay, expected, 0.01e18, "rebate ~10% of held");
 
-        // Treasury received (held − rebate) in VPFI.
+        // Treasury received (held − rebate) in VPFI MINUS the 1% Range
+        // Orders matcher kickback. Per design §"1% match fee mechanic"
+        // the matcher gets 1% of any LIF flowing to treasury; on the
+        // VPFI path this fires at proper-close (here). msg.sender at
+        // accept = borrower = matcher, so the borrower receives the
+        // matcher cut directly in VPFI.
+        uint256 fullTreasuryShare = vpfiRequired - rebateAfterRepay;
+        uint256 expectedMatcherCut =
+            (fullTreasuryShare * LibVaipakam.LIF_MATCHER_FEE_BPS) / 10_000;
+        uint256 expectedTreasuryDelta = fullTreasuryShare - expectedMatcherCut;
         uint256 treasuryDelta = vpfiToken.balanceOf(treasuryRecipient) -
             treasuryVpfiBefore;
         assertEq(
             treasuryDelta,
-            vpfiRequired - rebateAfterRepay,
-            "treasury got (held - rebate) VPFI"
+            expectedTreasuryDelta,
+            "treasury got (held - rebate) MINUS 1% matcher kickback in VPFI"
         );
     }
 
@@ -855,6 +880,8 @@ contract VPFIDiscountFacetTest is SetupTest {
         );
         // Top up so the escrow can cover the LIF itself.
         vpfiToken.transfer(_buyerEscrow(borrower), vpfiRequired * 2);
+        vm.prank(address(diamond));
+        EscrowFactoryFacet(address(diamond)).recordEscrowDepositERC20(borrower, address(vpfiToken), vpfiRequired * 2);
 
         ERC20Mock(mockCollateralERC20).mint(borrower, principal);
         vm.prank(borrower);
@@ -917,6 +944,8 @@ contract VPFIDiscountFacetTest is SetupTest {
             borrower
         );
         vpfiToken.transfer(_buyerEscrow(borrower), vpfiRequired * 2);
+        vm.prank(address(diamond));
+        EscrowFactoryFacet(address(diamond)).recordEscrowDepositERC20(borrower, address(vpfiToken), vpfiRequired * 2);
 
         ERC20Mock(mockCollateralERC20).mint(borrower, principal);
         vm.prank(borrower);
@@ -940,17 +969,22 @@ contract VPFIDiscountFacetTest is SetupTest {
         assertEq(held, 0, "custody drained on default");
         assertEq(rebate, 0, "no rebate on default");
 
-        // Full held amount went to treasury — Diamond no longer holds the
-        // loan's VPFI, treasury increased by exactly vpfiRequired.
+        // Full held amount left the Diamond — drained correctly.
+        // Range Orders Phase 1: 1% goes to the recorded matcher
+        // (msg.sender at accept = borrower), 99% to treasury. Both
+        // outflow paths together drain the full vpfiRequired.
         assertEq(
             diamondVpfiBefore - vpfiToken.balanceOf(address(diamond)),
             vpfiRequired,
             "Diamond drained the full custody"
         );
+        uint256 expectedMatcherCut =
+            (vpfiRequired * LibVaipakam.LIF_MATCHER_FEE_BPS) / 10_000;
+        uint256 expectedTreasuryDelta = vpfiRequired - expectedMatcherCut;
         assertEq(
             vpfiToken.balanceOf(treasuryRecipient) - treasuryVpfiBefore,
-            vpfiRequired,
-            "treasury got full forfeited VPFI"
+            expectedTreasuryDelta,
+            "treasury got 99% of forfeited VPFI (1% matcher kickback)"
         );
     }
 
@@ -977,7 +1011,10 @@ contract VPFIDiscountFacetTest is SetupTest {
                     collateralAssetType: LibVaipakam.AssetType.ERC20,
                     collateralTokenId: 0,
                     collateralQuantity: 0,
-                    allowsPartialRepay: false
+                    allowsPartialRepay: false,
+                    amountMax: 0,
+                    interestRateBpsMax: 0,
+                    periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
                 })
             );
     }

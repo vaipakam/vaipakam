@@ -22,11 +22,11 @@ import {ERC20Mock} from "./mocks/ERC20Mock.sol";
  * Post-refactor oracle surface (recap):
  *   - Liquidity reference quote asset = WETH (was USDT).
  *   - Pool depth in ETH is converted to USD via a direct ETH/USD Chainlink
- *     feed (`ethUsdFeed`) and compared to `MIN_LIQUIDITY_USD`.
+ *     feed (`ethNumeraireFeed`) and compared to `MIN_LIQUIDITY_USD`.
  *   - Asset pricing uses a hybrid path: direct asset/USD via the Feed
  *     Registry is primary; asset/ETH × ETH/USD is the fallback.
  *   - WETH itself is a supported quote/asset — its price comes directly
- *     from `ethUsdFeed` and its liquidity check skips the pool hop.
+ *     from `ethNumeraireFeed` and its liquidity check skips the pool hop.
  *   - Peg-aware staleness grace applies only within ±3% of any registered
  *     peg ($1, or a non-USD peg registered via `setStableTokenFeed`).
  *
@@ -64,7 +64,7 @@ contract OracleFacetTest is Test {
         mockFeed        = makeAddr("feed");
         mockFeed2       = makeAddr("feed2");
         mockWeth        = makeAddr("weth");
-        mockEthUsdFeed  = makeAddr("ethUsdFeed");
+        mockEthUsdFeed  = makeAddr("ethNumeraireFeed");
         mockFactory     = makeAddr("factory");
         mockDenom       = makeAddr("denom");
 
@@ -411,7 +411,7 @@ contract OracleFacetTest is Test {
     }
 
     function testGetAssetPriceForWethUsesEthUsdFeedDirectly() public view {
-        // Set-up already mocks ethUsdFeed @ $2000 / 8 decimals.
+        // Set-up already mocks ethNumeraireFeed @ $2000 / 8 decimals.
         (uint256 price, uint8 decimals) = OracleFacet(address(diamond)).getAssetPrice(mockWeth);
         assertEq(price, 2000e8);
         assertEq(decimals, 8);
@@ -579,7 +579,7 @@ contract OracleFacetTest is Test {
         );
 
         vm.clearMockedCalls();
-        // clearMockedCalls wipes the default ethUsdFeed mock too — restore it.
+        // clearMockedCalls wipes the default ethNumeraireFeed mock too — restore it.
         _mockFeedFull(mockEthUsdFeed, int256(2000e8), 8);
 
         // (b) No feed, plenty of DEX depth → still Illiquid.
