@@ -8,7 +8,9 @@ import { LiquidityPreflightBanner } from '../components/app/LiquidityPreflightBa
 import { useLiquidityPreflight } from '../hooks/useLiquidityPreflight';
 import { usePermit2Signing } from '../hooks/usePermit2Signing';
 import { useWallet } from '../context/WalletContext';
+import { useWalletClient } from 'wagmi';
 import { useDiamondContract, useDiamondRead, useDiamondPublicClient, useReadChain } from '../contracts/useDiamond';
+import { buildErc20Proxy } from '../contracts/useERC20';
 import { DIAMOND_ABI_VIEM as DIAMOND_ABI } from '../contracts/abis';
 import { L as Link } from '../components/L';
 import { BookOpen, PlusCircle, AlertTriangle, ShieldCheck, Droplet, ListOrdered, Wallet } from 'lucide-react';
@@ -181,6 +183,7 @@ export default function OfferBook() {
   const { address, chainId } = useWallet();
   const diamond = useDiamondContract();
   const diamondRead = useDiamondRead();
+  const { data: walletClient } = useWalletClient();
   const { sign: permit2Sign, canSign: permit2CanSign } = usePermit2Signing();
   // The wallet's active chain (or DEFAULT_CHAIN fallback when disconnected).
   // Used to target multicalls and build explorer links at the Diamond the
@@ -504,6 +507,43 @@ export default function OfferBook() {
   const isIlliquidOffer = (o: OfferData) =>
     o.principalLiquidity === 1 || o.collateralLiquidity === 1;
 
+  /// Approve the diamond to pull `needed` of `token` from the
+  /// connected wallet, but only if the existing allowance is
+  /// insufficient. Returns immediately when the user already has
+  /// enough (covers the common Permit2-fell-through-to-classic case
+  /// where the Permit2 spender pre-approval is intact).
+  const ensureAllowance = async (token: Address, needed: bigint) => {
+    if (!address || needed === 0n) return;
+    const diamondAddr = (activeReadChain.diamondAddress ??
+      DEFAULT_CHAIN.diamondAddress) as Address;
+    if (!publicClient) return;
+    const currentRaw = await publicClient.readContract({
+      address: token,
+      abi: [
+        {
+          name: 'allowance',
+          type: 'function',
+          stateMutability: 'view',
+          inputs: [
+            { name: 'owner', type: 'address' },
+            { name: 'spender', type: 'address' },
+          ],
+          outputs: [{ name: '', type: 'uint256' }],
+        },
+      ] as const,
+      functionName: 'allowance',
+      args: [address as Address, diamondAddr],
+    });
+    const current = currentRaw as bigint;
+    if (current >= needed) return;
+    if (!walletClient) {
+      throw new Error('Wallet client unavailable — cannot send approve tx.');
+    }
+    const erc20 = buildErc20Proxy(token, publicClient as never, walletClient as never);
+    const tx = await erc20.approve(diamondAddr, needed);
+    await tx.wait();
+  };
+
   const submitAccept = async (offerId: bigint, acceptorConsent: boolean) => {
     if (!address) {
       emit({ area: 'offer-accept', flow: 'acceptOffer', step: 'precheck', status: 'failure', errorType: 'validation', errorMessage: 'Wallet not connected', offerId });
@@ -561,6 +601,39 @@ export default function OfferBook() {
     }
 
     try {
+      // Classic path needs an explicit ERC-20 approval to the diamond
+      // before `acceptOffer` can pull the acceptor-side asset. Without
+      // this gate, MetaMask's eth_estimateGas hits an
+      // `ERC20InsufficientAllowance` revert; MetaMask falls back to
+      // a default ceiling (often 30M) which exceeds Base Sepolia's
+      // per-tx gas cap → confusing "exceeds max transaction gas
+      // limit" error surfaces instead of the real allowance issue.
+      //
+      // Per `feedback_token_approvals.md`: approve the EXACT amount
+      // needed for this action, never MaxUint256.
+      //
+      // For lender offers (offerType==0) the acceptor (borrower)
+      // pulls collateralAmount of collateralAsset. For borrower
+      // offers (offerType==1) the acceptor (lender) pulls `amount`
+      // of lendingAsset (range-amount upper-bound `amountMax` isn't
+      // surfaced on the local OfferData yet — Range Orders Phase 1
+      // borrower-side range support is a follow-up; the lower-bound
+      // approve covers single-amount offers which is the common case
+      // hitting this error in production today). NFT collateral
+      // offers (assetType != 0) use a different approval surface
+      // (`setApprovalForAll`) handled by the NFT-aware path; we only
+      // gate ERC-20 transfers here.
+      if (offer && offer.assetType === 0) {
+        const isLenderOffer = offer.offerType === 0;
+        const tokenToApprove = (
+          isLenderOffer ? offer.collateralAsset : offer.lendingAsset
+        ) as Address;
+        const amountToApprove = isLenderOffer
+          ? offer.collateralAmount
+          : offer.amount;
+        await ensureAllowance(tokenToApprove, amountToApprove);
+      }
+
       const tx = await diamond.acceptOffer(offerId, acceptorConsent);
       setTxHash(tx.hash);
       await tx.wait();

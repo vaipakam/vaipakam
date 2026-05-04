@@ -42,7 +42,11 @@ const VIEW_FUNCTIONS = new Set([
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export type Erc20Handle = Record<string, any>;
 
-function buildErc20Proxy(
+/// Build an Ethers-Contract-shaped ERC20 handle without going through
+/// the React-hook wrapper. Useful inside event handlers where the
+/// `useERC20` hook can't be called (hook rules) but the same
+/// `.allowance()` / `.approve()` interface is needed.
+export function buildErc20Proxy(
   address: Address,
   publicClient: PublicClient,
   walletClient: WalletClient | null,
