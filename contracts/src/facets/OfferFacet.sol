@@ -1190,6 +1190,15 @@ contract OfferFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
             // the subsequent `escrowWithdrawERC20(lender, …)` calls
             // below underflow the counter (Solidity 0.8 `-=` panic).
             //
+            // Skip the pull on the matching path
+            // (`matchOverride.active`): there the lender funded their
+            // SIDE via a Lender offer's `amountMax` pre-escrow at
+            // create time, and the matched principal is debited from
+            // that pool (with `amountFilled` accounting in
+            // `LibOfferMatch.executeMatch`). Pulling again from the
+            // lender's wallet would be a double-deposit they never
+            // approved.
+            //
             // Why no public self-deposit chokepoint instead: a
             // standalone `escrowDepositERC20Self(token, amount)` would
             // let any address park funds in escrow with the counter
@@ -1200,7 +1209,10 @@ contract OfferFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
             //
             // Lender-offer path is unchanged: the creator pre-funded
             // at create time and the counter is already correct here.
-            if (offer.offerType == LibVaipakam.OfferType.Borrower) {
+            if (
+                offer.offerType == LibVaipakam.OfferType.Borrower
+                && !s.matchOverride.active
+            ) {
                 LibFacet.crossFacetCall(
                     abi.encodeWithSelector(
                         EscrowFactoryFacet.escrowDepositERC20.selector,
