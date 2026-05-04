@@ -264,6 +264,36 @@ else
   echo "[4-5] Skipping VPFI lane + Reward OApp (--skip-vpfi)"
 fi
 
+# ── 5b. Master-flag flip (testnet ergonomics) ─────────────────────────
+# Range Orders Phase 1 governance-gated kill switches default `false` on
+# every fresh deploy (per docs/RangeOffersDesign.md §15 staged-enablement
+# rationale). On Anvil the bootstrap script flips them; on testnet
+# operators previously had to do this manually after every fresh deploy.
+# Flipping here removes the manual step — no functional change to
+# mainnet behaviour because deploy-mainnet.sh does NOT call this script
+# (and mainnet should keep the staged-rollout discipline).
+#
+# Idempotent — `setRange*Enabled(true)` on an already-true flag is a
+# successful no-op state write.
+
+echo
+echo "[5b] Master-flag flip (testnet ergonomics)"
+DIAMOND_ADDR=$(jq -r '.diamond // empty' "$CONTRACTS_DIR/deployments/$CHAIN_SLUG/addresses.json" 2>/dev/null || echo "")
+if [ -z "$DIAMOND_ADDR" ]; then
+  echo "    (no diamond address yet — skipping master-flag flip)"
+elif [ -z "${ADMIN_PRIVATE_KEY:-}" ]; then
+  echo "    (ADMIN_PRIVATE_KEY missing — skipping master-flag flip)"
+else
+  for fn in setRangeAmountEnabled setRangeRateEnabled setPartialFillEnabled; do
+    echo "  cast send $fn(true) on $DIAMOND_ADDR"
+    cast send "$DIAMOND_ADDR" "$fn(bool)" true \
+      --private-key "$ADMIN_PRIVATE_KEY" \
+      --rpc-url "$RPC" \
+      2>&1 | grep -E "^status" | head -1 || true
+  done
+  echo "  Final master flags: $(cast call $DIAMOND_ADDR 'getMasterFlags()(bool,bool,bool)' --rpc-url $RPC | tr '\n' ' ')"
+fi
+
 # ── 6. Sync ABIs + consolidated deployments JSON ──────────────────────
 
 echo
@@ -294,6 +324,22 @@ else
 fi
 
 # ── 8. hf-watcher Cloudflare deploy ───────────────────────────────────
+#
+# Three sub-steps:
+#   8a. wrangler deploy — push the Worker bundle (idempotent on
+#       unchanged source).
+#   8b. D1 migrations — apply any pending schema migrations to the
+#       remote `vaipakam-alerts-db` database. Idempotent — wrangler
+#       skips already-applied entries. Without this step the Worker
+#       returns 500 `byParticipant-failed` (D1_ERROR no such table)
+#       on every loan/offer query.
+#   8c. RPC-secret check — warn (don't fail) if the per-chain
+#       `RPC_<CHAIN>` Cloudflare secret is unset. The Worker returns
+#       503 `chain-not-configured` for any chainId whose RPC secret
+#       isn't set. Operators set these via
+#       `wrangler secret put RPC_<CHAIN>` from inside ops/hf-watcher.
+#       The script does NOT auto-set them — the values carry API keys
+#       and are operator-curated per CLAUDE.md.
 
 if [ "$SKIP_WATCHER" = "0" ]; then
   echo
@@ -304,7 +350,44 @@ if [ "$SKIP_WATCHER" = "0" ]; then
     echo "Error: $WATCHER_DIR/node_modules missing — run \`cd ops/hf-watcher && npm install\` first." >&2
     exit 1
   else
+    echo "  [8a] wrangler deploy"
     ( cd "$WATCHER_DIR" && npx wrangler deploy )
+
+    echo
+    echo "  [8b] D1 migrations (vaipakam-alerts-db)"
+    ( cd "$WATCHER_DIR" && npm run db:migrate )
+
+    echo
+    echo "  [8c] RPC-secret check for chainId=$CHAIN_ID"
+    # Map chain-slug → expected secret name (mirrors loanRoutes.ts/offerRoutes.ts).
+    case "$CHAIN_SLUG" in
+      base-sepolia)  EXPECTED_RPC_SECRET="RPC_BASE_SEPOLIA" ;;
+      sepolia)       EXPECTED_RPC_SECRET="RPC_SEPOLIA" ;;
+      arb-sepolia)   EXPECTED_RPC_SECRET="RPC_ARB_SEPOLIA" ;;
+      op-sepolia)    EXPECTED_RPC_SECRET="RPC_OP_SEPOLIA" ;;
+      bnb-testnet)   EXPECTED_RPC_SECRET="RPC_BNB_TESTNET" ;;
+      polygon-amoy)  EXPECTED_RPC_SECRET="RPC_POLYGON_AMOY" ;;
+      *)             EXPECTED_RPC_SECRET="" ;;
+    esac
+    if [ -n "$EXPECTED_RPC_SECRET" ]; then
+      SECRET_PRESENT=$(
+        cd "$WATCHER_DIR" && npx wrangler secret list 2>/dev/null \
+          | grep -c "\"$EXPECTED_RPC_SECRET\"" \
+          || echo 0
+      )
+      if [ "$SECRET_PRESENT" = "0" ]; then
+        echo "  ⚠  $EXPECTED_RPC_SECRET is NOT set on the watcher Worker."
+        echo "     The watcher will return 503 'chain-not-configured' for"
+        echo "     chainId=$CHAIN_ID until you set it. From inside ops/hf-watcher:"
+        echo
+        echo "       echo -n '<your-rpc-url>' | npx wrangler secret put $EXPECTED_RPC_SECRET"
+        echo
+        echo "     (Per CLAUDE.md, RPC secrets are operator-curated and"
+        echo "      live as wrangler secrets, never in the repo.)"
+      else
+        echo "  ✓ $EXPECTED_RPC_SECRET is set"
+      fi
+    fi
   fi
 else
   echo

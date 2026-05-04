@@ -378,7 +378,49 @@ phase_cf_watcher() {
   echo "═══════════════════════════════════════════════════════════════"
   echo "deploy-mainnet.sh — cf-watcher"
   echo "═══════════════════════════════════════════════════════════════"
+
+  echo "[a] wrangler deploy"
   ( cd "$WATCHER_DIR" && npx wrangler deploy )
+
+  echo
+  echo "[b] D1 migrations (vaipakam-alerts-db)"
+  # Idempotent — wrangler skips already-applied entries. Without this the
+  # Worker returns 500 'byParticipant-failed' (D1_ERROR no such table).
+  ( cd "$WATCHER_DIR" && npm run db:migrate )
+
+  echo
+  echo "[c] RPC-secret check for chainId=$CHAIN_ID"
+  # Mainnet chain-slug → expected secret name (mirrors loanRoutes.ts).
+  case "$CHAIN_SLUG" in
+    ethereum)      EXPECTED_RPC_SECRET="RPC_ETH" ;;
+    base)          EXPECTED_RPC_SECRET="RPC_BASE" ;;
+    arbitrum)      EXPECTED_RPC_SECRET="RPC_ARB" ;;
+    optimism)      EXPECTED_RPC_SECRET="RPC_OP" ;;
+    polygon-zkevm) EXPECTED_RPC_SECRET="RPC_ZKEVM" ;;
+    bnb)           EXPECTED_RPC_SECRET="RPC_BNB" ;;
+    polygon)       EXPECTED_RPC_SECRET="RPC_POLYGON" ;;
+    *)             EXPECTED_RPC_SECRET="" ;;
+  esac
+  if [ -n "$EXPECTED_RPC_SECRET" ]; then
+    SECRET_PRESENT=$(
+      cd "$WATCHER_DIR" && npx wrangler secret list 2>/dev/null \
+        | grep -c "\"$EXPECTED_RPC_SECRET\"" \
+        || echo 0
+    )
+    if [ "$SECRET_PRESENT" = "0" ]; then
+      echo "  ⚠  $EXPECTED_RPC_SECRET is NOT set on the watcher Worker."
+      echo "     The watcher will return 503 'chain-not-configured' for"
+      echo "     chainId=$CHAIN_ID until you set it. From inside ops/hf-watcher:"
+      echo
+      echo "       echo -n '<your-rpc-url>' | npx wrangler secret put $EXPECTED_RPC_SECRET"
+      echo
+      echo "     Per CLAUDE.md mainnet hot-key policy, this RPC URL should"
+      echo "     carry an API key from a paid tier (Alchemy / Infura /"
+      echo "     QuickNode / DRPC) and live ONLY as a wrangler secret."
+    else
+      echo "  ✓ $EXPECTED_RPC_SECRET is set"
+    fi
+  fi
 }
 
 # ── Phase: verify ─────────────────────────────────────────────────────

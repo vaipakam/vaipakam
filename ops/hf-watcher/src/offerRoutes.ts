@@ -139,9 +139,14 @@ export async function handleOffersStats(req: Request, env: Env): Promise<Respons
     )
       .bind(chainId)
       .all<{ status: string; n: number }>();
+    // Note: chainIndexer.ts writes the cursor with `kind = 'diamond'`
+    // (it scans the diamond's full event surface — offers + loans).
+    // The earlier 'offers' literal was a stale split that never
+    // matched, so this lookup returned null and the frontend showed
+    // a permanent amber "indexer disconnected" badge.
     const cursor = await env.DB.prepare(
       `SELECT last_block, updated_at FROM indexer_cursor
-       WHERE chain_id = ? AND kind = 'offers'`,
+       WHERE chain_id = ? AND kind = 'diamond'`,
     )
       .bind(chainId)
       .first<{ last_block: number; updated_at: number }>();

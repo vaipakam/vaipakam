@@ -236,7 +236,7 @@ export const ADMIN_KNOBS: KnobMeta[] = [
     },
     setter: {
       facet: 'OracleAdminFacet',
-      fn: 'setPythNumeraireMaxDeviationBps',
+      fn: 'setPythCrossCheckMaxDeviationBps',
       args: [{ name: 'bps', type: 'uint16' }],
     },
     infoAnchor: 'pyth-numeraire-max-deviation-bps',
@@ -380,7 +380,7 @@ export const ADMIN_KNOBS: KnobMeta[] = [
     getter: { facet: 'OracleAdminFacet', fn: 'getPythNumeraireFeedId', returns: 'bytes32' },
     setter: {
       facet: 'OracleAdminFacet',
-      fn: 'setPythNumeraireFeedId',
+      fn: 'setPythCrossCheckFeedId',
       args: [{ name: 'feedId', type: 'bytes32' }],
     },
     infoAnchor: 'pyth-numeraire-feed-id',

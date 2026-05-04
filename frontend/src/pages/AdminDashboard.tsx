@@ -250,7 +250,17 @@ export default function AdminDashboard({ inApp = false }: Props = {}) {
         )}
 
         {KNOB_CATEGORY_ORDER.map((cat) => {
-          const knobs = grouped[cat] ?? [];
+          // VPFIBuyReceiver knobs only have a target on canonical-VPFI
+          // chains (Base / Base Sepolia). On every mirror chain the
+          // receiver address is null and the read would fail with
+          // `no-target` — hide those cards instead of surfacing the
+          // confusing error to users who can't act on it from here
+          // anyway (the receiver lives on a different chain).
+          const knobs = (grouped[cat] ?? []).filter(
+            (k) =>
+              k.getter.facet !== 'VPFIBuyReceiver' ||
+              readChain.isCanonicalVPFI === true,
+          );
           if (knobs.length === 0) return null;
           return (
             <section key={cat} style={{ marginBottom: 32 }}>

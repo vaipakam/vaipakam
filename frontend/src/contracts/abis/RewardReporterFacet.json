@@ -86,6 +86,19 @@
   },
   {
     "type": "function",
+    "name": "getRewardGraceSeconds",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "getRewardReporterConfig",
     "inputs": [],
     "outputs": [

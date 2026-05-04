@@ -660,7 +660,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](45);
+        selectors = new bytes4[](55);
         selectors[0] = ConfigFacet.setFeesConfig.selector;
         selectors[1] = ConfigFacet.setLiquidationConfig.selector;
         selectors[2] = ConfigFacet.setRiskConfig.selector;
@@ -726,6 +726,21 @@ contract HelperTest {
         selectors[42] = ConfigFacet.getEthPadFeed.selector;
         selectors[43] = ConfigFacet.getPadNumeraireRateFeed.selector;
         selectors[44] = ConfigFacet.getAssetNumeraireDirectFeedOverride.selector;
+        // Single-field fee getters added for the protocol-console knob
+        // schema (per-knob single-value getters; tuple-returning
+        // getFeesConfig doesn't fit the schema).
+        selectors[45] = ConfigFacet.getTreasuryFeeBps.selector;
+        selectors[46] = ConfigFacet.getLoanInitiationFeeBps.selector;
+        selectors[47] = ConfigFacet.getLifMatcherFeeBps.selector;
+        // Range Orders Phase 1 master kill-switch flags + companion
+        // single-field getters (matches DeployDiamond's full surface).
+        selectors[48] = ConfigFacet.setRangeAmountEnabled.selector;
+        selectors[49] = ConfigFacet.setRangeRateEnabled.selector;
+        selectors[50] = ConfigFacet.setPartialFillEnabled.selector;
+        selectors[51] = ConfigFacet.getMasterFlags.selector;
+        selectors[52] = ConfigFacet.getRangeAmountEnabled.selector;
+        selectors[53] = ConfigFacet.getRangeRateEnabled.selector;
+        selectors[54] = ConfigFacet.getPartialFillEnabled.selector;
         return selectors;
     }
 
@@ -761,7 +776,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](11);
+        selectors = new bytes4[](12);
         selectors[0] = RewardReporterFacet.closeDay.selector;
         selectors[1] = RewardReporterFacet.onRewardBroadcastReceived.selector;
         selectors[2] = RewardReporterFacet.setRewardOApp.selector;
@@ -773,6 +788,8 @@ contract HelperTest {
         selectors[8] = RewardReporterFacet.getChainReportSentAt.selector;
         selectors[9] = RewardReporterFacet.getRewardReporterConfig.selector;
         selectors[10] = RewardReporterFacet.getKnownGlobalInterestNumeraire18.selector;
+        // Single-field getter for the protocol-console knob registry.
+        selectors[11] = RewardReporterFacet.getRewardGraceSeconds.selector;
         return selectors;
     }
 

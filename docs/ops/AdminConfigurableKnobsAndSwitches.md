@@ -1,4 +1,4 @@
-# Admin-Configurable Knobs and Switches
+# Protocol-Configurable Knobs and Switches
 
 Functional reference for every governance-tunable parameter in the
 Vaipakam Diamond. Audience: protocol auditors, governance signers, ops.
@@ -33,7 +33,7 @@ rather than acceptance.
 A knob defaulting to "library default" (often signalled by a stored
 `0`) is fine and intended. The fallback values live alongside the
 range constants in the library; reading the `getX()` view always
-returns the *effective* value (default OR stored, whichever applies).
+returns the _effective_ value (default OR stored, whichever applies).
 
 ---
 
@@ -81,7 +81,6 @@ via `updateRiskParams`) cannot exceed the chain-level
 
 ### Risk config — volatility-LTV threshold + rental buffer
 
-
 `volatilityLtvThresholdBps` must be > `BASIS_POINTS` (i.e. > 100%) —
 it's a "collapse the position when LTV exceeds this" guard, must be
 above the normal liquidation threshold to be meaningful. `rentalBufferBps`
@@ -101,26 +100,26 @@ cannot add or remove rows.
 Default schedule (also the compile-time fallback when no override is
 configured):
 
-| Slot | Bucket label   | Default `maxDurationDays` | Default `graceSeconds` |
-|------|----------------|---------------------------|------------------------|
-| 0    | < 7 days       | 7                         | 1 hour                 |
-| 1    | < 30 days      | 30                        | 1 day                  |
-| 2    | < 90 days      | 90                        | 3 days                 |
-| 3    | < 180 days     | 180                       | 1 week                 |
-| 4    | < 365 days     | 365                       | 2 weeks                |
-| 5    | catch-all      | 0 (marker)                | 30 days                |
+| Slot | Bucket label | Default `maxDurationDays` | Default `graceSeconds` |
+| ---- | ------------ | ------------------------- | ---------------------- |
+| 0    | < 7 days     | 7                         | 1 hour                 |
+| 1    | < 30 days    | 30                        | 1 day                  |
+| 2    | < 90 days    | 90                        | 3 days                 |
+| 3    | < 180 days   | 180                       | 1 week                 |
+| 4    | < 365 days   | 365                       | 2 weeks                |
+| 5    | catch-all    | 0 (marker)                | 30 days                |
 
 Per-slot bounds (the admin console exposes these via `getGraceSlotBounds`
 and renders them inline next to each editable row):
 
 | Slot | `maxDurationDays` window | `graceSeconds` window |
-|------|---------------------------|------------------------|
-| 0    | [1, 14]                   | [1 hour, 5 days]       |
-| 1    | [7, 60]                   | [1 hour, 15 days]      |
-| 2    | [30, 180]                 | [1 day, 30 days]       |
-| 3    | [90, 270]                 | [3 days, 45 days]      |
-| 4    | [180, 540]                | [7 days, 60 days]      |
-| 5    | (must be 0)               | [14 days, 90 days]     |
+| ---- | ------------------------ | --------------------- |
+| 0    | [1, 14]                  | [1 hour, 5 days]      |
+| 1    | [7, 60]                  | [1 hour, 15 days]     |
+| 2    | [30, 180]                | [1 day, 30 days]      |
+| 3    | [90, 270]                | [3 days, 45 days]     |
+| 4    | [180, 540]               | [7 days, 60 days]     |
+| 5    | (must be 0)              | [14 days, 90 days]    |
 
 Plus two absolute global bounds applied to every slot as a defence-
 in-depth check:
@@ -151,6 +150,7 @@ emergency rollback if a bad schedule was pushed by mistake.
 ### Per-asset risk parameters
 
 (`updateRiskParams`):
+
 - `maxLtvBps`: range **[10%, 100%]**. The 10% floor prevents a
   compromised admin from setting a degenerate `maxLtv = 1` that
   effectively disables borrowing for that asset.
@@ -369,7 +369,6 @@ which, under the post-deploy default (`numeraireSymbol` empty,
 
 ### Range Orders kill-switch flags (rangeAmountEnabled, rangeRateEnabled, partialFillEnabled)
 
-
 All three default `false` post-deploy. Governance flips each on once
 the corresponding mechanic is ready to ship. No range bound (bool).
 Each flip emits a config event so off-chain monitoring can correlate
@@ -394,14 +393,15 @@ way every other knob in this document is.
 
 Master kill-switch for the entire mechanic. Default `false`
 post-deploy. While off:
-  - `OfferFacet.createOffer` rejects any cadence other than `None`
-    with `PeriodicInterestDisabled`.
-  - `RepayFacet.settlePeriodicInterest` reverts wholesale.
-  - `RepayFacet.repayPartial` skips the interest-first checkpoint
-    accounting fold — today's allocation behavior is preserved.
-  - The frontend hides every cadence-related UI surface
-    (CreateOffer dropdown, AcceptOffer acknowledgement callout,
-    LoanDetails countdown card).
+
+- `OfferFacet.createOffer` rejects any cadence other than `None`
+  with `PeriodicInterestDisabled`.
+- `RepayFacet.settlePeriodicInterest` reverts wholesale.
+- `RepayFacet.repayPartial` skips the interest-first checkpoint
+  accounting fold — today's allocation behavior is preserved.
+- The frontend hides every cadence-related UI surface
+  (CreateOffer dropdown, AcceptOffer acknowledgement callout,
+  LoanDetails countdown card).
 
 Governance flips this on once the rest of the protocol is ready to
 honor cadence-bearing loans on-chain. Boolean — no range.
@@ -430,8 +430,8 @@ slots. Comparison sites compare numeraire-vs-numeraire with no
 intermediate USD detour.
 
 **Feed-side slots** (drive `OracleFacet.getAssetPrice` paths 1/2/3
-+ Tellor / API3 / DIA query construction + Pyth cross-check):
 
+- Tellor / API3 / DIA query construction + Pyth cross-check):
   - `s.ethNumeraireFeed` — Chainlink AggregatorV3 returning ETH/<numeraire>
     price. ETH/USD on USD-as-numeraire deploys; rotates to ETH/EUR /
     ETH/XAU / etc. when the numeraire changes.
@@ -450,9 +450,9 @@ intermediate USD detour.
 **Value-side knobs** (each per-knob bounded; settable individually
 within the same numeraire OR atomically as part of `setNumeraire`):
 
-  - `minPrincipalForFinerCadence` (numeraire-units, 1e18-scaled)
-  - `notificationFee` (numeraire-units)
-  - `kycTier0ThresholdNumeraire` + `kycTier1ThresholdNumeraire`
+- `minPrincipalForFinerCadence` (numeraire-units, 1e18-scaled)
+- `notificationFee` (numeraire-units)
+- `kycTier0ThresholdNumeraire` + `kycTier1ThresholdNumeraire`
 
 **Atomic rotation setter** —
 `setNumeraire(ethNumeraireFeed, numeraireChainlinkDenominator,
@@ -568,7 +568,7 @@ finer-than-Annual on multi-year). Stored in numeraire-units
 (1e18-scaled). Default $100,000 (USD-as-numeraire).
 
 > **Range bounds.** Values outside `[1_000e18,
-> 10_000_000e18]` revert `ParameterOutOfRange`. Floor stops a
+10_000_000e18]` revert `ParameterOutOfRange`. Floor stops a
 > "everyone qualifies" misconfig that would burden small borrowers
 > with monthly settlements; ceiling caps the worst-case "nobody
 > qualifies" misfire that would silently disable finer cadences for
@@ -683,7 +683,7 @@ pair OFF on the retail deploy.
   silently widen.
 - **Auditor hint**: when reviewing a setter, check three things:
   (1) does it accept the value as-is, or does it run a range check
-  via `ParameterOutOfRange`?  (2) does the bound's policy rationale
+  via `ParameterOutOfRange`? (2) does the bound's policy rationale
   appear next to the constant declaration in `LibVaipakam.sol`?
   (3) is the bound tight enough that a compromised admin can't push
   to a degenerate setting? The setter range audit document

@@ -588,6 +588,43 @@ contract ConfigFacet is DiamondAccessControl {
         return LibVaipakam.cfgVpfiStakingAprBps();
     }
 
+    /// @notice Single-field getter for the treasury fee. Mirrors the
+    ///         tuple-returning {getFeesConfig} but returns just the
+    ///         treasury slice. Added for the protocol console knob
+    ///         schema, which expects per-knob single-value getters.
+    function getTreasuryFeeBps() external view returns (uint256) {
+        return LibVaipakam.cfgTreasuryFeeBps();
+    }
+
+    /// @notice Single-field getter for the loan-initiation fee.
+    ///         Companion of {getTreasuryFeeBps}; same rationale.
+    function getLoanInitiationFeeBps() external view returns (uint256) {
+        return LibVaipakam.cfgLoanInitiationFeeBps();
+    }
+
+    /// @notice Single-field getter for the LIF matcher fee (1% kickback
+    ///         to the matcher on each successful match).
+    function getLifMatcherFeeBps() external view returns (uint256) {
+        return LibVaipakam.cfgLifMatcherFeeBps();
+    }
+
+    /// @notice Single-field getter for the rangeAmount master flag.
+    ///         Mirrors {getMasterFlags}'s first return value. Added for
+    ///         the protocol-console knob schema.
+    function getRangeAmountEnabled() external view returns (bool) {
+        return LibVaipakam.storageSlot().protocolCfg.rangeAmountEnabled;
+    }
+
+    /// @notice Single-field getter for the rangeRate master flag.
+    function getRangeRateEnabled() external view returns (bool) {
+        return LibVaipakam.storageSlot().protocolCfg.rangeRateEnabled;
+    }
+
+    /// @notice Single-field getter for the partialFill master flag.
+    function getPartialFillEnabled() external view returns (bool) {
+        return LibVaipakam.storageSlot().protocolCfg.partialFillEnabled;
+    }
+
     /// @notice Current effective fallback-path split. Each value is in BPS
     ///         of principal. These are the **live** values — the UI should
     ///         use them when showing "what terms would apply to a new

@@ -359,6 +359,13 @@ contract RewardReporterFacet is
         );
     }
 
+    /// @notice Single-field getter for the reward grace seconds. Added
+    ///         for the protocol-console knob schema (per-knob single-
+    ///         value getters).
+    function getRewardGraceSeconds() external view returns (uint64) {
+        return LibVaipakam.storageSlot().rewardGraceSeconds;
+    }
+
     // ─── Views ──────────────────────────────────────────────────────────────
 
     /// @notice Returns the local (this chain's) unreported totals on `dayId`.

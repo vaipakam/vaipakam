@@ -505,7 +505,7 @@ contract DeployDiamond is Script {
     }
 
     function _getOracleAdminSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](20);
+        s = new bytes4[](30);
         s[0] = OracleAdminFacet.setChainlinkRegistry.selector;
         s[1] = OracleAdminFacet.setUsdChainlinkDenominator.selector;
         s[2] = OracleAdminFacet.setEthChainlinkDenominator.selector;
@@ -535,6 +535,18 @@ contract DeployDiamond is Script {
         s[17] = OracleAdminFacet.getSecondaryOracleMaxDeviationBps.selector;
         s[18] = OracleAdminFacet.setSecondaryOracleMaxStaleness.selector;
         s[19] = OracleAdminFacet.getSecondaryOracleMaxStaleness.selector;
+        // Phase 7b.3 — Pyth cross-check + per-knob single-value getters
+        // consumed by the protocol-console knob registry.
+        s[20] = OracleAdminFacet.setPythOracle.selector;
+        s[21] = OracleAdminFacet.getPythOracle.selector;
+        s[22] = OracleAdminFacet.setPythCrossCheckFeedId.selector;
+        s[23] = OracleAdminFacet.getPythNumeraireFeedId.selector;
+        s[24] = OracleAdminFacet.setPythMaxStalenessSeconds.selector;
+        s[25] = OracleAdminFacet.getPythMaxStalenessSeconds.selector;
+        s[26] = OracleAdminFacet.setPythCrossCheckMaxDeviationBps.selector;
+        s[27] = OracleAdminFacet.getPythNumeraireMaxDeviationBps.selector;
+        s[28] = OracleAdminFacet.setPythConfidenceMaxBps.selector;
+        s[29] = OracleAdminFacet.getPythConfidenceMaxBps.selector;
     }
 
     function _getNFTSelectors() internal pure returns (bytes4[] memory s) {
@@ -847,7 +859,7 @@ contract DeployDiamond is Script {
     }
 
     function _getRewardReporterSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](11);
+        s = new bytes4[](12);
         s[0] = RewardReporterFacet.closeDay.selector;
         s[1] = RewardReporterFacet.onRewardBroadcastReceived.selector;
         s[2] = RewardReporterFacet.setRewardOApp.selector;
@@ -859,10 +871,12 @@ contract DeployDiamond is Script {
         s[8] = RewardReporterFacet.getChainReportSentAt.selector;
         s[9] = RewardReporterFacet.getRewardReporterConfig.selector;
         s[10] = RewardReporterFacet.getKnownGlobalInterestNumeraire18.selector;
+        // Single-field getter for the protocol-console knob registry.
+        s[11] = RewardReporterFacet.getRewardGraceSeconds.selector;
     }
 
     function _getConfigSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](25);
+        s = new bytes4[](55);
         // Setters
         s[0] = ConfigFacet.setFeesConfig.selector;
         s[1] = ConfigFacet.setLiquidationConfig.selector;
@@ -906,6 +920,49 @@ contract DeployDiamond is Script {
         // setNumeraire on the T-034 surface).
         s[23] = ConfigFacet.setNotificationFee.selector;
         s[24] = ConfigFacet.getNotificationFeeConfig.selector;
+        // Single-field fee getters added for the protocol-console knob
+        // schema (which expects per-knob single-value getters; the
+        // tuple-returning getFeesConfig doesn't fit). See
+        // frontend/src/lib/protocolConsoleKnobs.ts.
+        s[25] = ConfigFacet.getTreasuryFeeBps.selector;
+        s[26] = ConfigFacet.getLoanInitiationFeeBps.selector;
+        s[27] = ConfigFacet.getLifMatcherFeeBps.selector;
+        // Single-field master-flag getters (companion of getMasterFlags).
+        s[28] = ConfigFacet.getRangeAmountEnabled.selector;
+        s[29] = ConfigFacet.getRangeRateEnabled.selector;
+        s[30] = ConfigFacet.getPartialFillEnabled.selector;
+        // T-044 admin-configurable loan-default grace schedule.
+        s[31] = ConfigFacet.setGraceBuckets.selector;
+        s[32] = ConfigFacet.clearGraceBuckets.selector;
+        s[33] = ConfigFacet.getGraceBuckets.selector;
+        s[34] = ConfigFacet.getEffectiveGraceSeconds.selector;
+        s[35] = ConfigFacet.getGraceSlotBounds.selector;
+        // T-034 Periodic Interest Payment knobs + master kill-switches +
+        // per-knob single-value getters consumed by the protocol-console
+        // knob registry.
+        s[36] = ConfigFacet.setNumeraire.selector;
+        s[37] = ConfigFacet.setMinPrincipalForFinerCadence.selector;
+        s[38] = ConfigFacet.setPreNotifyDays.selector;
+        s[39] = ConfigFacet.setPeriodicInterestEnabled.selector;
+        s[40] = ConfigFacet.setNumeraireSwapEnabled.selector;
+        s[41] = ConfigFacet.getPeriodicInterestConfig.selector;
+        s[42] = ConfigFacet.getNumeraireSymbol.selector;
+        s[43] = ConfigFacet.getEthNumeraireFeed.selector;
+        s[44] = ConfigFacet.getMinPrincipalForFinerCadence.selector;
+        s[45] = ConfigFacet.getPreNotifyDays.selector;
+        s[46] = ConfigFacet.getPeriodicInterestEnabled.selector;
+        s[47] = ConfigFacet.getNumeraireSwapEnabled.selector;
+        // T-048 Predominantly Available Denominator (PAD) — atomic
+        // rotation setter + per-asset numeraire-direct override setter
+        // + 5 individual getters consumed by the protocol-console
+        // knob registry.
+        s[48] = ConfigFacet.setPredominantDenominator.selector;
+        s[49] = ConfigFacet.setAssetNumeraireDirectFeedOverride.selector;
+        s[50] = ConfigFacet.getPredominantDenominator.selector;
+        s[51] = ConfigFacet.getPredominantDenominatorSymbol.selector;
+        s[52] = ConfigFacet.getEthPadFeed.selector;
+        s[53] = ConfigFacet.getPadNumeraireRateFeed.selector;
+        s[54] = ConfigFacet.getAssetNumeraireDirectFeedOverride.selector;
     }
 
     function _getRewardAggregatorSelectors() internal pure returns (bytes4[] memory s) {

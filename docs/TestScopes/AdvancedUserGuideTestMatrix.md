@@ -48,6 +48,32 @@ Three Diamond-level changes landed alongside the test scripts:
 For the corresponding deploy / verification workflow, see
 `docs/ops/DeploymentRunbook.md` §5a "Local Anvil regression sweep".
 
+## Live testnet sweep — 2026-05-05 (Base Sepolia)
+
+All four scripts also pass against the live Base Sepolia diamond
+(`0x94F551549898d23a5645F8628dE57d2E0C56c776`, chainId 84532) after
+the master-flag flip. Run order: SepoliaPositiveFlows →
+AnvilNewPositiveFlows → AnvilNewPartialFlows → AnvilNegativeFlows.
+Each forge script exits `EXIT=0`.
+
+- **SepoliaPositiveFlows.s.sol** — 15/15 PASS (NFT/illiquid/classic
+  ERC-20 lifecycle).
+- **AnvilNewPositiveFlows.s.sol** — 18/18 PASS.
+- **AnvilNewPartialFlows.s.sol** — 7/7 PASS.
+- **AnvilNegativeFlows.s.sol** — 9/9 PASS.
+
+**Total: 49 scenarios green end-to-end on the live Base Sepolia
+diamond.** Same coverage holds on Sepolia (mirror) by construction
+since the diamond bytecode is identical and the master flags are
+flipped on both chains.
+
+The first attempted run had AnvilNewPositive failing at N22 and
+AnvilNewPartial failing immediately, both with `FunctionDisabled(1)`,
+because the Range Orders Phase 1 master kill switches default
+`false` on every fresh deploy and `deploy-chain.sh` was not flipping
+them. The fix (added `[5b]` master-flag flip step to
+`deploy-chain.sh`) is detailed in `docs/ReleaseNotes/ReleaseNotes-2026-05-05.md`.
+
 ---
 
 
