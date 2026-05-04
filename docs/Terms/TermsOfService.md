@@ -54,6 +54,25 @@ transfer your position NFT. You can enable or disable keeper access
 per-loan or per-offer at any time while the position is active. You
 remain responsible for any action a keeper you authorized takes.
 
+**Stuck-token recovery.** Vaipakam offers a recovery flow for tokens
+accidentally transferred into your isolated escrow that the protocol
+does not track. To use it, you sign an EIP-712 attestation declaring
+the source of the stuck tokens. That attestation is your representation
+that you know where the funds came from. The protocol does not
+independently verify the truthfulness of your declaration. You are
+responsible for the contents of every recovery signature you produce.
+If the source you declare is flagged on the on-chain sanctions oracle,
+the recovery transaction will not move the funds and your nonce will
+burn. Your wallet will be treated as sanctioned by the protocol for
+as long as the source remains flagged on the oracle — new positions,
+recovery, and claims are blocked, while you can still repay your
+existing loans so the counterparty can be made whole. The block lifts
+automatically when the source is de-listed, and any claims that
+accrued in the meantime can then be processed normally. This is
+distinct from *lost-wallet* recovery: stuck-token recovery returns
+funds you can prove the source of to your wallet; it cannot restore
+access to a wallet you no longer control.
+
 **Your wallet is your signature.** The wallet address you connect IS
 your identity on the protocol. Your acceptance of these Terms is a
 cryptographic record anchored to that wallet, time-stamped by the
