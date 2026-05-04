@@ -1180,6 +1180,38 @@ contract OfferFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
         }
         uint256 vpfiDiscountDeducted;
         if (offer.assetType == LibVaipakam.AssetType.ERC20) {
+            // Borrower-offer ERC-20 path: lender is the acceptor and has
+            // NOT pre-funded principal at any earlier step (only Lender
+            // offers do that, at `createOffer` time via
+            // `_pullCreatorAssetsClassic`). Pull `offer.amount` from the
+            // lender's wallet into the lender's escrow now, through the
+            // standard `escrowDepositERC20` chokepoint so the
+            // `protocolTrackedEscrowBalance` counter ticks. Without this,
+            // the subsequent `escrowWithdrawERC20(lender, …)` calls
+            // below underflow the counter (Solidity 0.8 `-=` panic).
+            //
+            // Why no public self-deposit chokepoint instead: a
+            // standalone `escrowDepositERC20Self(token, amount)` would
+            // let any address park funds in escrow with the counter
+            // ticking but with no protocol-flow context, opening a
+            // VPFI-staking-tier-snapshot griefing surface. Keeping the
+            // pull bound to `acceptOffer` ensures every counter
+            // increment maps 1:1 to a specific protocol action.
+            //
+            // Lender-offer path is unchanged: the creator pre-funded
+            // at create time and the counter is already correct here.
+            if (offer.offerType == LibVaipakam.OfferType.Borrower) {
+                LibFacet.crossFacetCall(
+                    abi.encodeWithSelector(
+                        EscrowFactoryFacet.escrowDepositERC20.selector,
+                        lender,
+                        offer.lendingAsset,
+                        offer.amount
+                    ),
+                    EscrowDepositFailed.selector
+                );
+            }
+
             // Default path: deduct the 0.1% Loan Initiation Fee from the
             // lender's escrow BEFORE the net is delivered to the borrower
             // (README §6 lines 280, 332). Borrower still owes the full

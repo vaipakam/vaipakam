@@ -12,6 +12,7 @@ import {OfferFacet} from "../src/facets/OfferFacet.sol";
 import {OfferCancelFacet} from "../src/facets/OfferCancelFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {RepayFacet} from "../src/facets/RepayFacet.sol";
+import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
 import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
 import {EscrowFactoryFacet} from "../src/facets/EscrowFactoryFacet.sol";
@@ -267,10 +268,14 @@ contract SepoliaPositiveFlows is Script {
         vm.stopBroadcast();
         console.log("Borrower created offer:", offerId3);
 
-        // Lender transfers USDC directly to their escrow then accepts
+        // Lender approves Diamond and accepts. Post-Option-A,
+        // `_acceptOffer` pulls the principal from the lender's wallet
+        // into the lender's escrow inline via the `escrowDepositERC20`
+        // chokepoint, so the legacy direct-transfer-to-escrow workaround
+        // is no longer needed (and would underflow the
+        // `protocolTrackedEscrowBalance` counter).
         vm.startBroadcast(lenderKey);
-        address lenderEscrow = EscrowFactoryFacet(diamond).getOrCreateUserEscrow(lender);
-        usdc.transfer(lenderEscrow, LOAN_AMOUNT);
+        usdc.approve(diamond, LOAN_AMOUNT);
         uint256 loanId3 = OfferFacet(diamond).acceptOffer(offerId3, true);
         vm.stopBroadcast();
         console.log("Lender accepted, loanId:", loanId3);
@@ -317,23 +322,40 @@ contract SepoliaPositiveFlows is Script {
         console.log("=== SCENARIO 5: Cancel Lender Offer ===");
 
         // Range Orders Phase 1 enforces a 5-min cancel cooldown when
-        // `amountFilled == 0`. On a fresh anvil run we'd have to bump
-        // the chain clock past it via an out-of-band `cast rpc
-        // evm_increaseTime` between the two scenarios — `vm.rpc` from
-        // inside a script's simulation phase tends to deadlock on
-        // anvil. Skip these two scenarios on chain 31337; the cooldown
-        // path itself is exercised by the `OfferFacetCancelCooldown`
-        // unit tests. On real testnets the cooldown elapses naturally
-        // between create and cancel because broadcast is slow enough.
+        // `amountFilled == 0` AND `partialFillEnabled` is on. We need
+        // to advance chain time to step past it. Two foundry primitives
+        // we tried that DON'T work during `--broadcast`:
+        //   - `vm.warp(block.timestamp + 310)` — only mutates the
+        //     simulation EVM state. The broadcast phase submits each
+        //     tx to the real RPC at real chain time, so the cancel
+        //     reverts with `CancelCooldownActive()` on chain.
+        //   - `vm.rpc("evm_increaseTime", "[600]")` — anvil's response
+        //     shape trips foundry's vm.rpc parser and the script
+        //     errors with empty-revert-data before reaching the
+        //     cancel.
+        // Workable options: (a) `vm.ffi` shelling out to `cast rpc
+        // evm_increaseTime` (needs `--ffi` flag at script invocation,
+        // which complicates the bootstrap pipeline); (b) split the
+        // test into pre-cooldown and post-cooldown forge-script
+        // invocations with a `cast rpc` call between them.
+        // Both add operational complexity that isn't worth it when
+        // the cooldown gate itself is already exercised end-to-end by
+        // `OfferFacetCancelCooldownTest` unit tests. Skip on Anvil
+        // (where `partialFillEnabled` is on by default via
+        // BootstrapAnvil) and run on real testnets where the
+        // partialFillEnabled flag is OFF (no cooldown enforced) or
+        // ON (real time passes naturally between broadcasts on
+        // `--slow` mode).
         if (block.chainid == 31337) {
-            console.log("Skipping SCENARIO 5/6 on anvil (cancel cooldown - covered by unit tests)");
+            console.log("Skipping SCENARIO 5/6 on anvil (cancel cooldown - covered by OfferFacetCancelCooldownTest)");
         } else {
+            (, , bool partialFillOn) = ConfigFacet(diamond).getMasterFlags();
             uint256 balBefore5 = usdc.balanceOf(lender);
             vm.startBroadcast(lenderKey);
             usdc.approve(diamond, LOAN_AMOUNT);
             uint256 offerId5 = OfferFacet(diamond).createOffer(_lenderOfferParams());
             vm.stopBroadcast();
-            vm.sleep(310 * 1000); // past the 5-min cooldown
+            if (partialFillOn) vm.sleep(310 * 1000);
             vm.startBroadcast(lenderKey);
             OfferCancelFacet(diamond).cancelOffer(offerId5);
             vm.stopBroadcast();
@@ -351,7 +373,7 @@ contract SepoliaPositiveFlows is Script {
             weth.approve(diamond, COLLATERAL_AMOUNT);
             uint256 offerId6 = OfferFacet(diamond).createOffer(_borrowerOfferParams());
             vm.stopBroadcast();
-            vm.sleep(310 * 1000);
+            if (partialFillOn) vm.sleep(310 * 1000);
             vm.startBroadcast(borrowerKey);
             OfferCancelFacet(diamond).cancelOffer(offerId6);
             vm.stopBroadcast();
@@ -538,10 +560,10 @@ contract SepoliaPositiveFlows is Script {
         vm.stopBroadcast();
         console.log("Borrower offer with NFT721 collateral:", offerId10);
 
-        // Lender accepts: deposit USDC to escrow, then accept
+        // Lender accepts. Post-Option-A `_acceptOffer` pulls the
+        // principal inline via the chokepoint, so an approve is enough.
         vm.startBroadcast(lenderKey);
-        address lenderEscrow10 = EscrowFactoryFacet(diamond).getOrCreateUserEscrow(lender);
-        usdc.transfer(lenderEscrow10, LOAN_AMOUNT);
+        usdc.approve(diamond, LOAN_AMOUNT);
         uint256 loanId10 = OfferFacet(diamond).acceptOffer(offerId10, true);
         vm.stopBroadcast();
         console.log("Loan initiated, loanId:", loanId10);
@@ -591,10 +613,10 @@ contract SepoliaPositiveFlows is Script {
         vm.stopBroadcast();
         console.log("Borrower offer with ERC1155 collateral:", offerId11);
 
-        // Lender accepts
+        // Lender accepts. Post-Option-A `_acceptOffer` pulls the
+        // principal inline via the chokepoint.
         vm.startBroadcast(lenderKey);
-        address lenderEscrow11 = EscrowFactoryFacet(diamond).getOrCreateUserEscrow(lender);
-        usdc.transfer(lenderEscrow11, LOAN_AMOUNT);
+        usdc.approve(diamond, LOAN_AMOUNT);
         uint256 loanId11 = OfferFacet(diamond).acceptOffer(offerId11, true);
         vm.stopBroadcast();
         console.log("Loan initiated, loanId:", loanId11);
