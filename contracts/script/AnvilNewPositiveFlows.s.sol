@@ -125,6 +125,7 @@ contract AnvilNewPositiveFlows is Script {
         _scenarioN10_vpfiStakingDiscount();
         _scenarioN13_stakingRewardsClaim();
         _scenarioN14_unstakeVPFI();
+        _restoreVpfiConfig();
         _scenarioN18_pauseAsset();
         _scenarioN19_globalPause();
         _scenarioN20_treasuryAccrual();
@@ -1246,9 +1247,34 @@ contract AnvilNewPositiveFlows is Script {
     ///      settles. The scenario asserts the loan settled cleanly
     ///      either way; explicit "rebate received" verification is
     ///      best-effort (logged, not required).
+    // ─── VPFI-config snapshot fields (set in N10, restored after N14) ───
+    //
+    // N10 + N13 + N14 form a single VPFI-discount + staking sequence
+    // that requires a mock VPFI token wired on the diamond throughout.
+    // Restoring inside N10 would break N13/N14 because they read
+    // `s.vpfiToken` and expect to find the mock. So the snapshot is
+    // taken at N10 entry and the restore fires after N14 exits, via
+    // `_restoreVpfiConfig`. On a fresh anvil diamond every saved slot
+    // is zero/false and the restore collapses to no-ops; on real
+    // testnets the saved canonical proxy + rate + reference asset are
+    // re-applied so post-run Buy-VPFI page reads succeed.
+    address private _n10SavedVpfiToken;
+    uint256 private _n10SavedVpfiRate;
+    address private _n10SavedVpfiEthRefAsset;
+    bool private _n10SavedBorrowerConsent;
+    bool private _n10SnapshotTaken;
+
     function _scenarioN10_vpfiStakingDiscount() internal {
         console.log("");
         console.log("=== N10: VPFI Staking + Fee-Discount + Claim Rebate ===");
+
+        // Snapshot — see _restoreVpfiConfig() called after N14.
+        _n10SavedVpfiToken = VPFITokenFacet(diamond).getVPFIToken();
+        (_n10SavedVpfiRate, , , , , _n10SavedVpfiEthRefAsset) =
+            VPFIDiscountFacet(diamond).getVPFIBuyConfig();
+        _n10SavedBorrowerConsent =
+            VPFIDiscountFacet(diamond).getVPFIDiscountConsent(borrower);
+        _n10SnapshotTaken = true;
 
         // Step 1: deploy VPFI mock + admin wires it.
         vm.startBroadcast(deployerKey);
@@ -1316,6 +1342,43 @@ contract AnvilNewPositiveFlows is Script {
         );
 
         console.log(">>> N10 PASSED <<<");
+    }
+
+    /// @dev Restore the VPFI-discount config to its pre-N10 state.
+    ///      Called from `run()` after N14 exits — N13 and N14 depend
+    ///      on the mock VPFI being wired on the diamond throughout
+    ///      the staking + discount + unstake sequence, so the restore
+    ///      can't fire inside N10. On a fresh anvil diamond every
+    ///      saved slot is zero/false and the restore is a sequence
+    ///      of no-ops; on real testnets the canonical proxy + rate +
+    ///      ref asset are re-applied so downstream `getVPFICap` /
+    ///      Buy VPFI page reads succeed.
+    ///
+    ///      `setVPFIToken(0x0)` reverts `InvalidAddress`, so the
+    ///      token restore is guarded by a non-zero check — on a
+    ///      throwaway anvil chain we simply leave the mock VPFI
+    ///      wired (no canonical exists to point at anyway), which
+    ///      is fine since anvil state doesn't survive the run.
+    ///      `setVPFIBuyRate(0)` and `setVPFIDiscountETHPriceAsset(0)`
+    ///      accept zero (intentional "disable" semantics), so they
+    ///      can be restored unconditionally.
+    function _restoreVpfiConfig() internal {
+        if (!_n10SnapshotTaken) return;
+        vm.startBroadcast(adminKey);
+        if (_n10SavedVpfiToken != address(0)) {
+            VPFITokenFacet(diamond).setVPFIToken(_n10SavedVpfiToken);
+        }
+        VPFIDiscountFacet(diamond).setVPFIBuyRate(_n10SavedVpfiRate);
+        VPFIDiscountFacet(diamond).setVPFIDiscountETHPriceAsset(
+            _n10SavedVpfiEthRefAsset
+        );
+        vm.stopBroadcast();
+        if (!_n10SavedBorrowerConsent) {
+            vm.startBroadcast(borrowerKey);
+            VPFIDiscountFacet(diamond).setVPFIDiscountConsent(false);
+            vm.stopBroadcast();
+        }
+        console.log("Pre-N10 VPFI config restored (testnet-safe).");
     }
 
     // ─── N13: Staking Rewards Claim ─────────────────────────────────────
