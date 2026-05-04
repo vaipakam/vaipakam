@@ -11,6 +11,10 @@
 
 ---
 
+- [ ] **T-063**: we were discussing on adding a point in terms of services while developing the recovery page right?, do we have done that?
+
+---
+
 - [ ] **T-062**:
       During Buy VPFI from other chain, before canonical chain send VPFI to mirror chain adaptor (we know it sending only to adaptor but cross check the adaptor address in mirror chain by diamond in canonical chain before sending VPFI after minting VPFI on recieving buy_request from the mirror chain), it need to check if the address is ligitimate adapter address in mirror chain, that can be done by setting the adaptor addresses in canaonical chain diamond after the deployemnt in the mirror chain, so that we can have mirror chain adaptor address which need to be updated in the canonical chain diamond by admin configurable setting, what do you say? what's your take? This can prevent any rerouting of VPFI from cananical chain to mirror chain's different address if the message recived by canonical chain from layerZero is malaciously tampered. what do you say? This is only during Buy VPFI scenario.
 

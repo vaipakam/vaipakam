@@ -299,7 +299,7 @@ contract PrecloseFacetTest is Test {
 
     /// @dev Covers CrossFacetCallFailed("Create offset offer failed") in offsetWithNewOffer.
     function testOffsetWithNewOfferCreateOfferFails2() public {
-        vm.mockCallRevert(address(diamond), abi.encodeWithSelector(OfferFacet.createOffer.selector), "offer fail");
+        vm.mockCallRevert(address(diamond), abi.encodeWithSelector(OfferFacet.createOfferInternal.selector), "offer fail");
 
         vm.prank(borrower);
         vm.expectRevert(IVaipakamErrors.OfferCreationFailed.selector);
@@ -708,7 +708,7 @@ contract PrecloseFacetTest is Test {
         vm.warp(block.timestamp + 5 days);
 
         // Mock the createOffer cross-facet call to succeed
-        vm.mockCall(address(diamond), abi.encodeWithSelector(OfferFacet.createOffer.selector), abi.encode(uint256(99)));
+        vm.mockCall(address(diamond), abi.encodeWithSelector(OfferFacet.createOfferInternal.selector), abi.encode(uint256(99)));
 
         vm.prank(borrower);
         PrecloseFacet(address(diamond)).offsetWithNewOffer(activeLoanId, 1000, 25, mockCollateralERC20, COLLATERAL, true, mockERC20);
@@ -716,7 +716,7 @@ contract PrecloseFacetTest is Test {
     }
 
     function testOffsetNoShortfallLowerRate() public {
-        vm.mockCall(address(diamond), abi.encodeWithSelector(OfferFacet.createOffer.selector), abi.encode(uint256(99)));
+        vm.mockCall(address(diamond), abi.encodeWithSelector(OfferFacet.createOfferInternal.selector), abi.encode(uint256(99)));
 
         vm.prank(borrower);
         PrecloseFacet(address(diamond)).offsetWithNewOffer(activeLoanId, 300, 30, mockCollateralERC20, COLLATERAL, true, mockERC20);
@@ -738,7 +738,7 @@ contract PrecloseFacetTest is Test {
         // Set up a linked, accepted offset so the link/accepted checks pass
         // and the keeper auth check is the one under test. Without setup
         // OffsetNotLinked would fire first and mask the auth rejection.
-        vm.mockCall(address(diamond), abi.encodeWithSelector(OfferFacet.createOffer.selector), abi.encode(uint256(99)));
+        vm.mockCall(address(diamond), abi.encodeWithSelector(OfferFacet.createOfferInternal.selector), abi.encode(uint256(99)));
         vm.prank(borrower);
         PrecloseFacet(address(diamond)).offsetWithNewOffer(activeLoanId, 500, 30, mockCollateralERC20, COLLATERAL, true, mockERC20);
         vm.clearMockedCalls();
@@ -760,7 +760,7 @@ contract PrecloseFacetTest is Test {
         // Set up an accepted offset so the link and accepted checks pass,
         // isolating the auth check. Without this setup, OffsetNotLinked
         // would fire first and mask the auth rejection under test.
-        vm.mockCall(address(diamond), abi.encodeWithSelector(OfferFacet.createOffer.selector), abi.encode(uint256(99)));
+        vm.mockCall(address(diamond), abi.encodeWithSelector(OfferFacet.createOfferInternal.selector), abi.encode(uint256(99)));
         vm.prank(borrower);
         PrecloseFacet(address(diamond)).offsetWithNewOffer(activeLoanId, 500, 30, mockCollateralERC20, COLLATERAL, true, mockERC20);
         vm.clearMockedCalls();
@@ -779,7 +779,7 @@ contract PrecloseFacetTest is Test {
 
     function testCompleteOffsetRevertsOfferNotAccepted() public {
         // First create an offset offer, then try to complete before it's accepted
-        vm.mockCall(address(diamond), abi.encodeWithSelector(OfferFacet.createOffer.selector), abi.encode(uint256(99)));
+        vm.mockCall(address(diamond), abi.encodeWithSelector(OfferFacet.createOfferInternal.selector), abi.encode(uint256(99)));
 
         vm.prank(borrower);
         PrecloseFacet(address(diamond)).offsetWithNewOffer(activeLoanId, 500, 30, mockCollateralERC20, COLLATERAL, true, mockERC20);
@@ -793,7 +793,7 @@ contract PrecloseFacetTest is Test {
 
     function testCompleteOffsetSuccess() public {
         // Create offset offer
-        vm.mockCall(address(diamond), abi.encodeWithSelector(OfferFacet.createOffer.selector), abi.encode(uint256(99)));
+        vm.mockCall(address(diamond), abi.encodeWithSelector(OfferFacet.createOfferInternal.selector), abi.encode(uint256(99)));
         vm.prank(borrower);
         PrecloseFacet(address(diamond)).offsetWithNewOffer(activeLoanId, 500, 30, mockCollateralERC20, COLLATERAL, true, mockERC20);
         vm.clearMockedCalls();
@@ -1139,7 +1139,7 @@ contract PrecloseFacetTest is Test {
     /// @dev Covers the _resetNFTRenter call inside completeOffset when assetType=ERC721.
     function testCompleteOffsetNFTRentalPath() public {
         // Create offset offer
-        vm.mockCall(address(diamond), abi.encodeWithSelector(OfferFacet.createOffer.selector), abi.encode(uint256(99)));
+        vm.mockCall(address(diamond), abi.encodeWithSelector(OfferFacet.createOfferInternal.selector), abi.encode(uint256(99)));
         vm.prank(borrower);
         PrecloseFacet(address(diamond)).offsetWithNewOffer(activeLoanId, 500, 30, mockCollateralERC20, COLLATERAL, true, mockERC20);
         vm.clearMockedCalls();
@@ -1363,7 +1363,7 @@ contract PrecloseFacetTest is Test {
     /// @dev Covers "NFT update failed" revert in completeOffset's _setLoanClaimable.
     function testCompleteOffsetNFTUpdateFails() public {
         // Create offset offer
-        vm.mockCall(address(diamond), abi.encodeWithSelector(OfferFacet.createOffer.selector), abi.encode(uint256(99)));
+        vm.mockCall(address(diamond), abi.encodeWithSelector(OfferFacet.createOfferInternal.selector), abi.encode(uint256(99)));
         vm.prank(borrower);
         PrecloseFacet(address(diamond)).offsetWithNewOffer(activeLoanId, 500, 30, mockCollateralERC20, COLLATERAL, true, mockERC20);
         vm.clearMockedCalls();
@@ -1384,7 +1384,7 @@ contract PrecloseFacetTest is Test {
     /// @dev Covers completeOffset called by third-party when keeperAccessEnabled=true.
     function testCompleteOffsetKeeperAllowed() public {
         // Create offset offer
-        vm.mockCall(address(diamond), abi.encodeWithSelector(OfferFacet.createOffer.selector), abi.encode(uint256(99)));
+        vm.mockCall(address(diamond), abi.encodeWithSelector(OfferFacet.createOfferInternal.selector), abi.encode(uint256(99)));
         vm.prank(borrower);
         PrecloseFacet(address(diamond)).offsetWithNewOffer(activeLoanId, 500, 30, mockCollateralERC20, COLLATERAL, true, mockERC20);
         vm.clearMockedCalls();
@@ -1424,7 +1424,7 @@ contract PrecloseFacetTest is Test {
         vm.warp(block.timestamp + 10 days);
 
         // Use lower interestRateBps to create shortfall
-        vm.mockCall(address(diamond), abi.encodeWithSelector(OfferFacet.createOffer.selector), abi.encode(uint256(99)));
+        vm.mockCall(address(diamond), abi.encodeWithSelector(OfferFacet.createOfferInternal.selector), abi.encode(uint256(99)));
         vm.prank(borrower);
         PrecloseFacet(address(diamond)).offsetWithNewOffer(
             activeLoanId, 200, 20, mockCollateralERC20, COLLATERAL, true, mockERC20
@@ -1463,7 +1463,7 @@ contract PrecloseFacetTest is Test {
     /// @dev Covers completeOffset with NFT rental path — exercises the _resetNFTRenter branch.
     function testCompleteOffsetNFTRentalResetRenter() public {
         // Create offset offer
-        vm.mockCall(address(diamond), abi.encodeWithSelector(OfferFacet.createOffer.selector), abi.encode(uint256(99)));
+        vm.mockCall(address(diamond), abi.encodeWithSelector(OfferFacet.createOfferInternal.selector), abi.encode(uint256(99)));
         vm.prank(borrower);
         PrecloseFacet(address(diamond)).offsetWithNewOffer(activeLoanId, 500, 30, mockCollateralERC20, COLLATERAL, true, mockERC20);
         vm.clearMockedCalls();

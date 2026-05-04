@@ -2951,7 +2951,7 @@ contract OfferFacetTest is Test {
         // Mock completeOffset to succeed
         vm.mockCall(
             address(diamond),
-            abi.encodeWithSelector(PrecloseFacet.completeOffset.selector, uint256(99)),
+            abi.encodeWithSelector(PrecloseFacet.completeOffsetInternal.selector, uint256(99)),
             ""
         );
         vm.mockCall(
@@ -3007,7 +3007,7 @@ contract OfferFacetTest is Test {
         // Mock completeOffset to revert
         vm.mockCallRevert(
             address(diamond),
-            abi.encodeWithSelector(PrecloseFacet.completeOffset.selector, uint256(99)),
+            abi.encodeWithSelector(PrecloseFacet.completeOffsetInternal.selector, uint256(99)),
             "offset fail"
         );
         vm.mockCall(

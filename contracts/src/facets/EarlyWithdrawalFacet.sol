@@ -374,18 +374,8 @@ contract EarlyWithdrawalFacet is
             interestRateBps,
             creatorFallbackConsent
         );
-        // Use the cross-facet `createOfferInternal` entry to avoid
-        // colliding with the diamond-shared `nonReentrant` lock that
-        // `createLoanSaleOffer` already holds. Threading `loan.lender`
-        // as `creator` preserves the on-chain offer ownership; the
-        // sale offer mimics a Borrower offer with `collateralAmount=0`
-        // so no creator-side asset pull happens.
         bytes memory result = LibFacet.crossFacetCallReturn(
-            abi.encodeWithSelector(
-                OfferFacet.createOfferInternal.selector,
-                loan.lender,
-                params
-            ),
+            abi.encodeWithSelector(OfferFacet.createOffer.selector, params),
             OfferCreationFailed.selector
         );
         saleOfferId = abi.decode(result, (uint256));

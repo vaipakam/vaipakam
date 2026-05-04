@@ -409,20 +409,30 @@ contract AnvilNewPartialFlows is Script {
 
     // ─── P-T: Loan-sale offer posted, no buyer (SKIPPED) ────────────────
 
-    /// @dev SKIPPED on Anvil broadcast — `createLoanSaleOffer` mimics a
-    ///      Borrower offer with `collateralAmount=0` (the existing
-    ///      loan's collateral continues to back the position post-
-    ///      sale, so Liam shouldn't need to post fresh capital). But
-    ///      the Borrower-side createOffer validation enforces
-    ///      `amountMax <= collateral × price / liqThreshold`, which
-    ///      with collateral=0 reverts `MaxLendingAboveCeiling` for
-    ///      any non-zero amount. This is a pre-existing bug in the
-    ///      createLoanSaleOffer logic — it needs a sale-offer-mode
-    ///      flag in createOfferInternal to bypass the
-    ///      borrower-collateral-floor check. Leaving the deeper fix
-    ///      for a dedicated PR. The sellLoanViaBuyOffer path (covered
-    ///      by AnvilNewPositiveFlows N15) demonstrates the working
-    ///      lender-early-withdrawal alternative.
+    /// @dev SKIPPED on Anvil broadcast — `createLoanSaleOffer` has TWO
+    ///      pre-existing bugs that block end-to-end execution:
+    ///        (a) Reentrancy collision: `_submitSaleOffer` cross-facet-
+    ///            calls `OfferFacet.createOffer`, which is also
+    ///            `nonReentrant` on the diamond-shared lock. Same
+    ///            shape as the completeOffset bug fixed in N6 via
+    ///            `completeOffsetInternal` — needs a parallel
+    ///            `createOfferInternal`-style internal entry.
+    ///        (b) Validation: the sale offer mimics a Borrower offer
+    ///            with `collateralAmount=0` (existing loan collateral
+    ///            already backs the position post-sale), but the
+    ///            Borrower-side createOffer validation requires
+    ///            `amountMax <= collateral × price / liqThreshold`,
+    ///            which reverts `MaxLendingAboveCeiling` for any
+    ///            non-zero amount when collateral=0.
+    ///      A complete fix needs both: a sale-offer-mode bypass flag
+    ///      in createOfferInternal (for the validation), AND
+    ///      switching `_submitSaleOffer` to use that internal entry
+    ///      (for the reentrancy). Earlier in this session I tried
+    ///      the reentrancy-only fix in isolation and it broke 9 unit
+    ///      tests in EarlyWithdrawalFacetTest.t.sol, so reverted.
+    ///      The deeper fix needs a dedicated PR.
+    ///      Working alternative: `sellLoanViaBuyOffer` (covered by
+    ///      AnvilNewPositiveFlows N15).
     function _scenarioPT_loanSaleOfferPosted() internal {
         console.log("");
         console.log("=== P-T: Loan-sale offer posted, no buyer (SKIPPED) ===");

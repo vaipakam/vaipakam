@@ -308,6 +308,44 @@ changes.
 Order matters — install the new Guardian before revoking the old, so
 the pause surface is never unmanned.
 
+### Bumping the Terms of Service
+
+The on-chain ToS gate is the `(currentTosVersion, currentTosHash)`
+pair on `LegalFacet`. The retail launch ships with
+`currentTosVersion == 0`, which short-circuits `isAccepted(...)` to
+`true` for every wallet — the gate is dormant. Whenever the canonical
+ToS text changes (`docs/Terms/TermsOfService.md` is the source of
+truth; `frontend/src/pages/TermsPage.tsx` mirrors it), governance must
+also bump the on-chain pair so users re-sign before the frontend
+re-opens.
+
+1. Edit the canonical text in `docs/Terms/TermsOfService.md` and the
+   mirrored copy in `frontend/src/pages/TermsPage.tsx`. Verify the two
+   bodies are byte-identical (modulo HTML wrapping in the React file).
+2. Compute the canonical content hash. The exact algorithm is whatever
+   the frontend's signing flow uses (see
+   `frontend/src/hooks/useTosAcceptance.ts`); typically a
+   `keccak256` over the normalised text.
+3. Governance Safe schedules
+   `timelock.schedule(target=diamond, data=setCurrentTos(newVersion,
+   newHash), delay=48h)`. `newVersion` MUST strictly exceed
+   `currentTosVersion` — the setter rejects replays and downgrades.
+4. Wait 48h. Execute. The Diamond emits `CurrentTosUpdated(prev,
+   newVersion, newHash)`.
+5. Frontend deploy: ship the updated `TermsPage.tsx` so the rendered
+   text matches the now-pinned hash. Stale frontend pages will
+   continue to render — the on-chain hash gate catches signature
+   mismatches at signing time but does not stop a stale page from
+   loading.
+6. Existing on-chain positions are NOT affected — the gate is a
+   frontend-level UX, not a protocol-level deny. Users keep their
+   loans / claims / repays without re-signing; only NEW state-creating
+   entries through the Vaipakam frontend require a fresh acceptance.
+
+When `currentTosVersion == 0` (retail-launch state), step 1 ships
+without on-chain action. Future bumps from version 0 → version 1 are
+the moment the gate becomes active across all live wallets.
+
 ### Rotating the Timelock itself
 
 Deploy a fresh `TimelockController` with the Safe as proposer. From

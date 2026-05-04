@@ -398,6 +398,62 @@ Then, once per chain:
 
 ## 5. Smoke tests (required before announcing)
 
+### 5a. Local Anvil regression sweep (run BEFORE every deploy)
+
+The Anvil sweep exercises every recent feature against a freshly-bootstrapped
+diamond on a local Anvil instance. It catches `viaIR` codegen drift, missing
+selectors in `DeployDiamond.s.sol`, cross-facet reentrancy bugs, and gate
+regressions before any testnet RPC is touched. All three scripts run end-to-end
+against the same anvil + bootstrap output and are independently re-runnable.
+
+```bash
+# Boot fresh anvil + run the bootstrap diamond deploy:
+pkill -f '^anvil'; anvil --chain-id 31337 --host 0.0.0.0 --port 8545 &
+sleep 3
+ionice -c 2 -n 0 bash contracts/script/anvil-bootstrap.sh
+
+# Common env vars (anvil default keys):
+export PRIVATE_KEY=0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
+export ADMIN_PRIVATE_KEY=0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d
+export ADMIN_ADDRESS=0x70997970C51812dc3A010C7d01b50e0d17dc79C8
+export LENDER_PRIVATE_KEY=0x7c852118294e51e653712a81e05800f419141751be58f605c371e15141b007a6
+export LENDER_ADDRESS=0x90F79bf6EB2c4f870365E785982E1f101E93b906
+export BORROWER_PRIVATE_KEY=0x47e179ec197488593b187f80a00eb0da91f1b9d0b13f8733639f19c30a34926a
+export BORROWER_ADDRESS=0x15d34AAf54267DB7D7c367839AAf71A00a2C6A65
+export NEW_LENDER_PRIVATE_KEY=0x8b3a350cf5c34c9194ca85829a2df0ec3153be0318b5e2d3348e872092edffba
+export NEW_LENDER_ADDRESS=0x9965507D1a55bcC2695C58ba16FB37d819B0A4dc
+export NEW_BORROWER_PRIVATE_KEY=0x92db14e403b83dfe3df233f83dfa3a0d7096f21ca9b0d6d6b8d88b2b4ec1564e
+export NEW_BORROWER_ADDRESS=0x976EA74026E726554dB657fA54763abd0C3a0aa9
+
+cd contracts
+
+# Positive — 18 scenarios end-to-end (matchOffers, range orders, partial
+# repay, refinance, preclose option-2/3, recovery, sanctions Tier-1/2,
+# keeper auth, VPFI staking + discount + claim, unstake, pause asset/global,
+# treasury surface, master-flag dormancy, sellLoanViaBuyOffer):
+ionice -c 2 -n 0 forge script script/AnvilNewPositiveFlows.s.sol \
+  --rpc-url http://localhost:8545 --broadcast --slow
+
+# Partial — 7 UI-testable midpoint states (offer states, partial repay,
+# collateral doubled, keeper enabled, refinance offer posted, stray token,
+# dual claimable):
+ionice -c 2 -n 0 forge script script/AnvilNewPartialFlows.s.sol \
+  --rpc-url http://localhost:8545 --broadcast --slow
+
+# Negative — 9 gate verifications (range bounds, fallback consent, self-
+# collateralized offer, zero duration, collateral floor, claim before
+# terminal, partial repay opt-out):
+ionice -c 2 -n 0 forge script script/AnvilNegativeFlows.s.sol \
+  --rpc-url http://localhost:8545 --broadcast --slow
+```
+
+Each script must exit `EXIT=0` and log its `*** PASSED ***` banner. Skipped
+scenarios with their unit-test pointers are listed at the bottom of each
+script's banner — those revert paths live in `forge test` because Anvil
+`--broadcast` cannot advance chain time mid-script.
+
+### 5b. Testnet smoke tests (after the Anvil sweep is green)
+
 Run the `Sepolia*` family on the target testnet first, then execute on mainnet forks:
 
 ```bash

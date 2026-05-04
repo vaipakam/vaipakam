@@ -314,7 +314,7 @@ contract Scenario8_BorrowerPreclose is Test {
         uint256 expectedNewOfferId = 3;
         vm.mockCall(
             address(diamond),
-            abi.encodeWithSelector(OfferFacet.createOffer.selector),
+            abi.encodeWithSelector(OfferFacet.createOfferInternal.selector),
             abi.encode(expectedNewOfferId)
         );
 

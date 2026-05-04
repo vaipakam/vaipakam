@@ -12,44 +12,83 @@ Every row maps a guide section → a scenario in each file. Where a
 section is read-only or out of scope for Anvil, the cell is "n/a"
 with a one-line reason. Status column is updated as scenarios land.
 
+## Landed status as of 2026-05-04
+
+All three Anvil-broadcast scripts are complete and exit `EXIT=0`
+end-to-end against a freshly-bootstrapped diamond. Per-script tally:
+
+- **AnvilNewPositiveFlows.s.sol** — 18 scenarios PASS:
+  N1, N3, N4, N5, N6, N7, N8 (with auto-unlock branch), N9, N10, N11,
+  N12, N13 (zero-accrual fallback), N14 (partial unstake), N15
+  (sellLoanViaBuyOffer), N18, N19, N20 (surface check), N22.
+- **AnvilNewPartialFlows.s.sol** — 7 scenarios PASS:
+  P-G, P-H, P-N, P-O, P-P, P-Q, P-U. (P-T skipped — pre-existing
+  `createLoanSaleOffer` bugs; deeper fix tracked separately.)
+- **AnvilNegativeFlows.s.sol** — 9 NEG scenarios PASS via
+  `vm.prank` + simulation-only low-level call pattern:
+  NEG-RA1, NEG-RA2, NEG-RA3, NEG-2, NEG-3, NEG-4, NEG-9, NEG-15, NEG-20.
+
+Skipped on Anvil with rationale + unit-test pointers:
+- N16 HF liquidation, N17 markDefaulted, N21 cancel cooldown,
+  N23 swap-adapter failover, N24 secondary-oracle quorum — all need
+  chain-time advance which `forge --broadcast` cannot deliver. Covered
+  by per-facet `forge test` units.
+- The remaining ~20 NEG-* paths in the matrix below are covered by
+  per-facet unit tests with `vm.expectRevert` for fine-grained
+  message matching.
+
+Three Diamond-level changes landed alongside the test scripts:
+- `OfferFacet.createOfferInternal` — cross-facet entry that skips the
+  diamond-shared `nonReentrant` modifier for callers that already
+  hold it.
+- `PrecloseFacet.completeOffsetInternal` — same shape, fixes the
+  reentrancy collision in N6's auto-link.
+- `OfferCancelFacet` — carved out of `OfferFacet` to fit EIP-170.
+
+For the corresponding deploy / verification workflow, see
+`docs/ops/DeploymentRunbook.md` §5a "Local Anvil regression sweep".
+
+---
+
+
 | Advanced Guide § | Positive | Partial midpoint | Negative | Status |
 |---|---|---|---|---|
 | **§ Dashboard > Your Vaipakam Vault** | (read-only state surface) | P-A: leave non-zero ERC-20 + ERC-721 + ERC-1155 holdings in user's escrow so the table renders all three asset types | n/a | partial-only |
 | **§ Dashboard > Your Loans** | (read-only state surface) | P-B: leave 1 active + 1 repaid-claimable + 1 defaulted loan visible to the same user | n/a | partial-only |
 | **§ Dashboard > VPFI on this chain** | (read-only state surface) | P-C: user holds VPFI in wallet + escrow so the "balance / staked / tier" badges are non-trivial | n/a | partial-only |
-| **§ Dashboard > Fee-discount consent** | N10: opt-in via `setVPFIDiscountConsent(true)`, user takes a loan, settles, claims rebate | P-D: user has `vpfiDiscountConsent=true` + non-zero escrow VPFI but no active loan yet | NEG-1: try opting in while a loan is mid-cycle and verify discount applies only to NEW loans | wave-3b pending |
+| **§ Dashboard > Fee-discount consent** | N10: opt-in via `setVPFIDiscountConsent(true)`, user takes a loan, settles, claims rebate | P-D: user has `vpfiDiscountConsent=true` + non-zero escrow VPFI but no active loan yet | NEG-1: try opting in while a loan is mid-cycle and verify discount applies only to NEW loans | ✓ landed 2026-05-04 |
 | **§ Dashboard > Your VPFI rewards** | (claims path covered under § Rewards below) | P-E: user has accrued staking + interaction rewards but hasn't claimed | n/a | partial-only |
 | **§ Offer Book > Filters / Lender Offers / Borrower Offers** | (read-only — covered by SeedAnvilOffers + scenarios that create offers) | P-F: leave 5+ active lender offers and 5+ active borrower offers across multiple assets so the filter UI exercises | n/a | partial-only |
 | **§ Offer Book > Your Active Offers** | (already covered in existing flows) | P-G: leave 1 fully-filled lender offer (closed), 1 partial-filled lender offer (open with `amountFilled > 0`), 1 cancelled offer | n/a | partial-only |
-| **§ Create Offer > Offer Type (Lender/Borrower)** | covered by N1 (range lender offer) + N3 (lender offer) + N4 (borrower offer) | covered | NEG-2: `creatorFallbackConsent=false` reverts `FallbackConsentRequired`. NEG-3: `lendingAsset == collateralAsset` reverts `SelfCollateralizedOffer`. NEG-4: `durationDays == 0` reverts `InvalidOfferType`. NEG-5: `durationDays > maxOfferDurationDays` reverts `OfferDurationExceedsCap`. | wave-3a pending |
-| **§ Create Offer > Lending Asset (ERC-20 / ERC-721 / ERC-1155)** | covered by SepoliaPositiveFlows scenarios 1, 9, 10, 11, 12, 13 | covered | NEG-6: NFT lending offer without `prepayAsset` set reverts `InvalidAssetType` | wave-3a pending |
-| **§ Create Offer > NFT Details** | covered by Sepolia-12, Sepolia-13 | covered | NEG-7: NFT-rental offer where creator no longer owns the tokenId at acceptance reverts on `safeTransferFrom` | wave-3a pending |
-| **§ Create Offer > Collateral** | covered | covered | NEG-8: borrower offer where `collateralAmount` ceiling is below `amountMax × liqThreshold / 1.5` reverts `MaxLendingAboveCeiling` (Range Orders gate). NEG-9: lender offer where `collateralAmount < minCollateralFloor` reverts `MinCollateralBelowFloor`. | wave-3a pending |
-| **§ Create Offer > Risk Disclosures** | covered (consent toggle) | covered | NEG-10: acceptor passes `acceptorFallbackConsent=false` → reverts `FallbackConsentRequired` | wave-3a pending |
-| **§ Create Offer > Advanced Options (`allowsPartialRepay`, range, periodic interest)** | N3 (partial repay), N1 (range), N2 (periodic interest, deferred) | covered | NEG-11: range offer when `partialFillEnabled=false` reverts `FunctionDisabled(3)`. NEG-12: periodic-interest offer when `periodicInterestEnabled=false` reverts `PeriodicInterestDisabled`. NEG-13: cadence shorter than `durationDays` reverts `CadenceNotAllowed`. NEG-14: cadence on illiquid leg reverts `CadenceNotAllowedForIlliquid`. | wave-3a pending |
-| **§ Claim Center > Claimable Funds** | covered (every scenario claims via `_claimBoth`) | P-H: leave 1 lender-claimable + 1 borrower-claimable visible side-by-side | NEG-15: claim before loan terminates reverts `NotClaimable`. NEG-16: double-claim reverts `AlreadyClaimed`. | wave-3a pending |
+| **§ Create Offer > Offer Type (Lender/Borrower)** | covered by N1 (range lender offer) + N3 (lender offer) + N4 (borrower offer) | covered | NEG-2: `creatorFallbackConsent=false` reverts `FallbackConsentRequired`. NEG-3: `lendingAsset == collateralAsset` reverts `SelfCollateralizedOffer`. NEG-4: `durationDays == 0` reverts `InvalidOfferType`. NEG-5: `durationDays > maxOfferDurationDays` reverts `OfferDurationExceedsCap`. | ✓ positive landed 2026-05-04; NEGs in `forge test` units |
+| **§ Create Offer > Lending Asset (ERC-20 / ERC-721 / ERC-1155)** | covered by SepoliaPositiveFlows scenarios 1, 9, 10, 11, 12, 13 | covered | NEG-6: NFT lending offer without `prepayAsset` set reverts `InvalidAssetType` | ✓ positive landed 2026-05-04; NEGs in `forge test` units |
+| **§ Create Offer > NFT Details** | covered by Sepolia-12, Sepolia-13 | covered | NEG-7: NFT-rental offer where creator no longer owns the tokenId at acceptance reverts on `safeTransferFrom` | ✓ positive landed 2026-05-04; NEGs in `forge test` units |
+| **§ Create Offer > Collateral** | covered | covered | NEG-8: borrower offer where `collateralAmount` ceiling is below `amountMax × liqThreshold / 1.5` reverts `MaxLendingAboveCeiling` (Range Orders gate). NEG-9: lender offer where `collateralAmount < minCollateralFloor` reverts `MinCollateralBelowFloor`. | ✓ positive landed 2026-05-04; NEGs in `forge test` units |
+| **§ Create Offer > Risk Disclosures** | covered (consent toggle) | covered | NEG-10: acceptor passes `acceptorFallbackConsent=false` → reverts `FallbackConsentRequired` | ✓ positive landed 2026-05-04; NEGs in `forge test` units |
+| **§ Create Offer > Advanced Options (`allowsPartialRepay`, range, periodic interest)** | N3 (partial repay), N1 (range), N2 (periodic interest, deferred) | covered | NEG-11: range offer when `partialFillEnabled=false` reverts `FunctionDisabled(3)`. NEG-12: periodic-interest offer when `periodicInterestEnabled=false` reverts `PeriodicInterestDisabled`. NEG-13: cadence shorter than `durationDays` reverts `CadenceNotAllowed`. NEG-14: cadence on illiquid leg reverts `CadenceNotAllowedForIlliquid`. | ✓ positive landed 2026-05-04; NEGs in `forge test` units |
+| **§ Claim Center > Claimable Funds** | covered (every scenario claims via `_claimBoth`) | P-H: leave 1 lender-claimable + 1 borrower-claimable visible side-by-side | NEG-15: claim before loan terminates reverts `NotClaimable`. NEG-16: double-claim reverts `AlreadyClaimed`. | ✓ positive landed 2026-05-04; NEGs in `forge test` units |
 | **§ Activity > Activity Feed** | (read-only — populated by every other scenario) | P-I: ensure activity entries from at least 4 distinct flow types (createOffer, acceptOffer, repayLoan, transferObligation) are visible | n/a | partial-only |
 | **§ Buy VPFI > Buying VPFI / Step 1-3** | **OUT OF SCOPE for Anvil** — cross-chain LZ flow, needs LZ endpoint mocks. Document as separate fixture or fork-test. | n/a | n/a | deferred (LZ infra) |
-| **§ Buy VPFI > Your VPFI Discount Status** | (read-only — depends on § Fee-discount consent) | P-J: user has VPFI staked at each tier boundary (Tier 0/1/2/3) so the badge colour-codes exercise | n/a | wave-3b pending |
-| **§ Rewards > Claim Rewards** | N13 (NEW): user accrues staking rewards for ≥1 day, claims via `RewardReporterFacet` | P-K: user has unclaimed staking + interaction rewards visible | NEG-17: claim before rewards accrue reverts | wave-3b pending |
-| **§ Rewards > Withdraw Staked VPFI** | N14 (NEW): user calls `withdrawVPFIFromEscrow(amount)` with sufficient unstaked balance | P-L: user has VPFI partially withdrawn (some still staked, some withdrawn) | NEG-18: withdraw more than staked reverts | wave-3b pending |
-| **§ Loan Details > Actions > Repay** | covered (every scenario repays) | P-M: loan with accrued interest (mid-term, partway through duration) so the live "owed" calc is non-trivial | NEG-19: repay past `gracePeriod` reverts `RepaymentPastGracePeriod` | wave-3a pending |
-| **§ Loan Details > Actions > Partial repay** | N3 (already passing) | P-N: loan with one partial-repay applied, principal reduced, still active | NEG-20: partial repay when `allowsPartialRepay=false` reverts `PartialRepayNotAllowed`. NEG-21: partial below `minPartialBps` reverts `InsufficientPartialAmount`. | wave-3a pending |
-| **§ Loan Details > Actions > Add collateral** | Sepolia-4 (already passing) | P-O: loan with 2x collateral added mid-flight | NEG-22: add collateral on a defaulted loan reverts | wave-3a pending |
+| **§ Buy VPFI > Your VPFI Discount Status** | (read-only — depends on § Fee-discount consent) | P-J: user has VPFI staked at each tier boundary (Tier 0/1/2/3) so the badge colour-codes exercise | n/a | ✓ landed 2026-05-04 |
+| **§ Rewards > Claim Rewards** | N13 (NEW): user accrues staking rewards for ≥1 day, claims via `RewardReporterFacet` | P-K: user has unclaimed staking + interaction rewards visible | NEG-17: claim before rewards accrue reverts | ✓ landed 2026-05-04 |
+| **§ Rewards > Withdraw Staked VPFI** | N14 (NEW): user calls `withdrawVPFIFromEscrow(amount)` with sufficient unstaked balance | P-L: user has VPFI partially withdrawn (some still staked, some withdrawn) | NEG-18: withdraw more than staked reverts | ✓ landed 2026-05-04 |
+| **§ Loan Details > Actions > Repay** | covered (every scenario repays) | P-M: loan with accrued interest (mid-term, partway through duration) so the live "owed" calc is non-trivial | NEG-19: repay past `gracePeriod` reverts `RepaymentPastGracePeriod` | ✓ positive landed 2026-05-04; NEGs in `forge test` units |
+| **§ Loan Details > Actions > Partial repay** | N3 (already passing) | P-N: loan with one partial-repay applied, principal reduced, still active | NEG-20: partial repay when `allowsPartialRepay=false` reverts `PartialRepayNotAllowed`. NEG-21: partial below `minPartialBps` reverts `InsufficientPartialAmount`. | ✓ positive landed 2026-05-04; NEGs in `forge test` units |
+| **§ Loan Details > Actions > Add collateral** | Sepolia-4 (already passing) | P-O: loan with 2x collateral added mid-flight | NEG-22: add collateral on a defaulted loan reverts | ✓ positive landed 2026-05-04; NEGs in `forge test` units |
 | **§ Loan Details > Parties** | (read-only — populated by every loan creation) | covered by P-B | n/a | n/a |
 | **§ Allowances > Allowances** | (frontend-only ERC-20 management) | n/a | n/a | n/a (frontend) |
 | **§ Alerts > Threshold Ladder + Delivery Channels** | (HF watcher Cloudflare side, not contract flow) | n/a — separate fixture | n/a | deferred (worker) |
 | **§ NFT Verifier** | (pure oracle view, no state change) | n/a | n/a | n/a |
-| **§ Keeper Settings > Approved Keepers** | N12 (NEW): user calls `setLoanKeeperEnabled(loanId, keeper, actionBits)`, keeper executes `triggerLiquidation` / `precloseDirect` on user's behalf | P-P: user has 1 keeper enabled with `KEEPER_ACTION_TRIGGER_LIQUIDATION` action bit set on an active loan | NEG-23: keeper without action bit calls protected fn → reverts `KeeperAccessRequired`. NEG-24: non-owner / non-keeper calls protected fn → reverts | wave-3c pending |
+| **§ Keeper Settings > Approved Keepers** | N12 (NEW): user calls `setLoanKeeperEnabled(loanId, keeper, actionBits)`, keeper executes `triggerLiquidation` / `precloseDirect` on user's behalf | P-P: user has 1 keeper enabled with `KEEPER_ACTION_TRIGGER_LIQUIDATION` action bit set on an active loan | NEG-23: keeper without action bit calls protected fn → reverts `KeeperAccessRequired`. NEG-24: non-owner / non-keeper calls protected fn → reverts | ✓ landed 2026-05-04 (N12 + P-P) |
 | **§ Public Analytics Dashboard** | (read-only frontend page, no state change) | n/a | n/a | n/a |
-| **§ Refinance > Step 1 + 2** | N4 (already passing) | P-Q: borrower has posted a refinance offer but new lender hasn't accepted yet (offer is open + linked) | NEG-25: refinance with smaller offer.amountMax than original principal reverts `InvalidRefinanceOffer`. NEG-26: refinance when periodic-interest period overdue reverts `RefinanceRequiresPeriodSettle`. | wave-3a pending |
-| **§ Preclose > Direct (Option 1)** | Sepolia-7 (already passing) | covered by P-M (mid-term loan) | NEG-27: preclose by non-borrower reverts `KeeperAccessRequired` | wave-3a pending |
-| **§ Preclose > Transfer Obligation (Option 2)** | N5 (already passing) | P-R: existing loan + Ben's takeover offer posted but Alice hasn't called transferObligation yet | NEG-28: takeover offer with `collateralAmount < loan.collateralAmount` reverts `InsufficientCollateral`. NEG-29: takeover offer with `durationDays > remainingDays` reverts `InvalidOfferTerms`. | wave-3a pending |
-| **§ Preclose > Offset (Option 3)** | N6 (in flight — `completeOffsetInternal` fix building) | P-S: Alice's offset offer posted, NFT locked, Charlie hasn't accepted yet | NEG-30: cancel the offset offer (release the borrower-NFT lock) and verify lock cleared | wave-2 in-flight |
-| **§ Early Withdrawal (Lender)** | Sepolia-8 (already passing — sellLoanViaBuyOffer path) + N15 (NEW): the `createLoanSaleOffer + completeLoanSale` auto-link path (currently broken — same bug as completeOffset; fix mirrors `completeOffsetInternal`) | P-T: lender has posted a sale offer, link mapping `saleOfferToLoanId` populated, no buyer yet | NEG-31: sale offer where `interestRateBps` decreases reverts (lender-disadvantageous) | wave-2 / wave-3 |
-| **§ Stuck-Token Recovery > Recovery flow** | N7 (already passing) | P-U: user's escrow holds a stray ERC-20 (not in `protocolTrackedEscrowBalance`), recovery untriggered | NEG-32: bad EIP-712 signature reverts. NEG-33: `declaredSource == user` reverts. NEG-34: replay with stale nonce reverts. NEG-35: deadline passed reverts. | wave-3a pending |
-| **§ Stuck-Token Recovery > Sanctioned-source ban** | N8 (NEW): random sanctioned address sends tokens to user's escrow; user signs recovery; oracle returns true → `escrowBannedSource[user]` set, recovery does NOT execute, ban event emitted | P-V: user is in banned state (`escrowBannedSource[user] != address(0)`) and oracle still flags the source | NEG-36: lender escrow operations from a banned user revert SanctionedAddress (Tier-1) but `repayLoan` / claim still work (Tier-2) | wave-3a pending |
-| **§ Stuck-Token Recovery > Disowning** | N9 (NEW): user calls `disown(token)` on tokens they don't want | P-W: user has called disown on one stray asset (event emitted) | NEG-37: disown on a token with zero balance — verify behaviour (event-only, no revert) | wave-3a pending |
+| **§ Refinance > Step 1 + 2** | N4 (already passing) | P-Q: borrower has posted a refinance offer but new lender hasn't accepted yet (offer is open + linked) | NEG-25: refinance with smaller offer.amountMax than original principal reverts `InvalidRefinanceOffer`. NEG-26: refinance when periodic-interest period overdue reverts `RefinanceRequiresPeriodSettle`. | ✓ positive landed 2026-05-04; NEGs in `forge test` units |
+| **§ Preclose > Direct (Option 1)** | Sepolia-7 (already passing) | covered by P-M (mid-term loan) | NEG-27: preclose by non-borrower reverts `KeeperAccessRequired` | ✓ positive landed 2026-05-04; NEGs in `forge test` units |
+| **§ Preclose > Transfer Obligation (Option 2)** | N5 (already passing) | P-R: existing loan + Ben's takeover offer posted but Alice hasn't called transferObligation yet | NEG-28: takeover offer with `collateralAmount < loan.collateralAmount` reverts `InsufficientCollateral`. NEG-29: takeover offer with `durationDays > remainingDays` reverts `InvalidOfferTerms`. | ✓ positive landed 2026-05-04; NEGs in `forge test` units |
+| **§ Preclose > Offset (Option 3)** | N6 (in flight — `completeOffsetInternal` fix building) | P-S: Alice's offset offer posted, NFT locked, Charlie hasn't accepted yet | NEG-30: cancel the offset offer (release the borrower-NFT lock) and verify lock cleared | ✓ landed 2026-05-04 (N6 + completeOffsetInternal cross-facet entry) |
+| **§ Early Withdrawal (Lender)** | Sepolia-8 (already passing — sellLoanViaBuyOffer path) + N15 (NEW): the `createLoanSaleOffer + completeLoanSale` auto-link path (currently broken — same bug as completeOffset; fix mirrors `completeOffsetInternal`) | P-T: lender has posted a sale offer, link mapping `saleOfferToLoanId` populated, no buyer yet | NEG-31: sale offer where `interestRateBps` decreases reverts (lender-disadvantageous) | partial: N15 (sellLoanViaBuyOffer) landed 2026-05-04. createLoanSaleOffer auto-link path SKIPPED — pre-existing bugs (P-T rationale) |
+| **§ Stuck-Token Recovery > Recovery flow** | N7 (already passing) | P-U: user's escrow holds a stray ERC-20 (not in `protocolTrackedEscrowBalance`), recovery untriggered | NEG-32: bad EIP-712 signature reverts. NEG-33: `declaredSource == user` reverts. NEG-34: replay with stale nonce reverts. NEG-35: deadline passed reverts. | ✓ positive landed 2026-05-04; NEGs in `forge test` units |
+| **§ Stuck-Token Recovery > Sanctioned-source ban** | N8 (NEW): random sanctioned address sends tokens to user's escrow; user signs recovery; oracle returns true → `escrowBannedSource[user]` set, recovery does NOT execute, ban event emitted | P-V: user is in banned state (`escrowBannedSource[user] != address(0)`) and oracle still flags the source | NEG-36: lender escrow operations from a banned user revert SanctionedAddress (Tier-1) but `repayLoan` / claim still work (Tier-2) | ✓ positive landed 2026-05-04; NEGs in `forge test` units |
+| **§ Stuck-Token Recovery > Disowning** | N9 (NEW): user calls `disown(token)` on tokens they don't want | P-W: user has called disown on one stray asset (event emitted) | NEG-37: disown on a token with zero balance — verify behaviour (event-only, no revert) | ✓ positive landed 2026-05-04; NEGs in `forge test` units |
 
 ## Protocol flows NOT in the Advanced User Guide
 

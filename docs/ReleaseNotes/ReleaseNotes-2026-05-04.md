@@ -626,3 +626,235 @@ implementation slot is the practical maximum.
 
 These can be cleaned up in a future technical-debt PR if desired, but they
 have no user-visible effect.
+
+## Anvil regression sweep — three end-to-end test scripts (positive, partial, negative)
+
+The Diamond's recently-landed feature surface (Range Orders Phase 1, Phase 5
+borrower-LIF discount, Phase 6 keeper per-action authorization, T-054 stuck-
+token recovery + sanctions auto-unlock, OfferFacet EIP-170 split, the
+`createOfferInternal` / `completeOffsetInternal` reentrancy fixes) was not
+exercised end-to-end against a freshly-bootstrapped diamond in a single
+regression artifact. Per-facet unit tests covered the slices but a
+cross-cutting "does the whole stack walk through every user-facing flow"
+sweep was missing — leaving the diamondCut + selector wiring + cross-facet
+calls relatively untested as a unit. Three scripts now fill that gap:
+
+### `contracts/script/AnvilNewPositiveFlows.s.sol` — 18 scenarios PASSED
+
+Wave-by-wave, each scenario walks a complete user flow that maps to a
+section of the Advanced User Guide OR to a non-guide protocol mechanic
+(bot-driven matching, keeper auth, sanctions Tier-1/2, treasury):
+
+- **N1** Range-order match + partial fill + dust auto-close.
+- **N3** Lender-opt-in partial repay (`allowsPartialRepay=true`) → 30%
+  mid-loan repay → full close.
+- **N4** Refinance flow (Alice has L1, posts new borrower offer, Bob
+  accepts → L2, refinanceLoan swaps lenders).
+- **N5** Preclose Option 2 (`transferObligationViaOffer`).
+- **N6** Preclose Option 3 (`offsetWithNewOffer` + auto-link to
+  `completeOffsetInternal`).
+- **N7** Stuck-token recovery happy path (random ERC-20 sent to escrow,
+  user signs EIP-712 RecoveryAcknowledgment, asset returns to user).
+- **N8** Stuck-token recovery sanctioned-source ban (T-054). The strayer
+  is flagged on the oracle, recovery records the ban, nonce burns. At
+  end of N8 we de-list the strayer, exercising the **auto-unlock
+  branch** (when the source de-lists, the user's recovery-induced ban
+  lifts via the source-tracked clause in `LibVaipakam.sol:3288-3299`).
+- **N9** Disown unsolicited tokens (audit-trail event).
+- **N10** VPFI staking + fee-discount + claim rebate (Phase 5).
+- **N11** Sanctions Tier-1 deny / Tier-2 close-out (gate state via
+  view-call rather than try-revert to avoid forge `--broadcast` re-
+  attempting the failing tx).
+- **N12** Keeper per-action authorization (3-switch chain:
+  `setKeeperAccess` + `approveKeeper` + `setLoanKeeperEnabled`).
+- **N13** VPFI staking-rewards claim. Falls back to "zero-accrual"
+  branch when `--slow` real-time delta rounds to 0 wei (asserts
+  `NoStakingRewardsToClaim` revert in that branch).
+- **N14** Unstake VPFI from escrow (1,000 of 1,999.5 staked).
+- **N15** Lender Early Withdrawal via `sellLoanViaBuyOffer` (loan
+  ownership flips Liam → Bob, then borrower repays Bob).
+- **N18** Per-asset pause (gate state via `isAssetPaused()` view).
+- **N19** Global pause (gate state via `paused()` view).
+- **N20** Treasury accrual surface check (call surface, non-decreasing).
+- **N22** Master-flag dormancy (`rangeAmountEnabled`).
+
+**Skipped on Anvil with unit-test pointers** (chain-time advance is not
+possible inside `forge script --broadcast` — `vm.warp` only mutates
+simulation EVM state, `vm.rpc("evm_increaseTime",...)` trips foundry's
+parser):
+
+- N16 HF liquidation → `RiskFacetTest.t.sol` + Phase 7a `LibSwap*Test.t.sol`
+- N17 markDefaulted → `DefaultedFacet*Test.t.sol`
+- N21 cancel cooldown → `OfferFacetCancelCooldownTest.t.sol`
+- N23 swap-adapter failover → Phase 7a `LibSwap*Test.t.sol`
+- N24 secondary-oracle quorum → Phase 7b `SecondaryQuorumTest.t.sol`
+
+### `contracts/script/AnvilNewPartialFlows.s.sol` — 7 scenarios PASSED
+
+Mid-cycle states for manual UI / hf-watcher / keeper-bot inspection:
+
+- **P-G** Two offer states side-by-side (fully-filled + partial-filled).
+- **P-N** Loan with 30% partial repay applied, status still Active.
+- **P-O** Loan with collateral doubled mid-flight (1 → 2 WETH).
+- **P-P** Keeper authorised with `INIT_PRECLOSE` action bit on an
+  active loan.
+- **P-Q** Borrower posted a refinance offer at half rate, no acceptance.
+- **P-U** Stray ERC-20 parked in escrow (escrow balance > protocol-
+  tracked counter), recovery untriggered.
+- **P-H** Loan repaid with neither lender nor borrower having claimed
+  yet.
+
+**Skipped:**
+- **P-T** `createLoanSaleOffer` end-to-end is blocked by TWO pre-existing
+  bugs: (a) reentrancy collision on the diamond-shared `nonReentrant`
+  lock when `_submitSaleOffer` cross-facet-calls `OfferFacet.createOffer`
+  — same shape as the completeOffset bug fixed via
+  `completeOffsetInternal`; (b) the sale offer mimics a Borrower offer
+  with `collateralAmount=0` but the createOffer borrower-side validation
+  reverts `MaxLendingAboveCeiling` for any non-zero amount when
+  collateral is 0. A complete fix needs a sale-offer-mode bypass flag
+  in `createOfferInternal` (validation) AND switching `_submitSaleOffer`
+  to use that internal entry (reentrancy) — a dedicated PR. The
+  reentrancy-only fix in isolation breaks 9 unit tests in
+  `EarlyWithdrawalFacetTest.t.sol`. Working alternative
+  `sellLoanViaBuyOffer` is covered by N15.
+
+### `contracts/script/AnvilNegativeFlows.s.sol` — 9 NEG scenarios PASSED
+
+Gate verifications for revert paths that would otherwise let bad inputs
+slip past the diamond. Uses the **`vm.prank` + simulation-only
+low-level call** pattern (NOT wrapped in `vm.startBroadcast`) so forge's
+`--broadcast` pre-flight does not re-attempt the failing call (the
+issue that bit us in early N11 / N18 / N19 attempts):
+
+- **NEG-RA1** `amountMax < amount` → `InvalidAmountRange`.
+- **NEG-RA2** `interestRateBpsMax < interestRateBps` → `InvalidRateRange`.
+- **NEG-RA3** rate above `MAX_INTEREST_BPS` (10000) → `InterestRateAboveCeiling`.
+- **NEG-2** `creatorFallbackConsent=false` → `FallbackConsentRequired`.
+- **NEG-3** `lendingAsset == collateralAsset` → `SelfCollateralizedOffer`.
+- **NEG-4** `durationDays == 0` → `InvalidOfferType`.
+- **NEG-9** lender offer with `collateralAmount` below the floor
+  (computed from amountMax × price / liqThreshold) → `MinCollateralBelowFloor`.
+- **NEG-15** `claimAsLender` on still-Active loan → not-claimable revert.
+- **NEG-20** `repayPartial` on a loan whose offer had
+  `allowsPartialRepay=false` → `PartialRepayNotAllowed`.
+
+The remaining ~20 NEG-* paths in
+`docs/TestScopes/AdvancedUserGuideTestMatrix.md` (NEG-5 through 8, NEG-10
+through 14, NEG-16 through 19, NEG-21 through 37, NEG-R/L/D/PI/T/MF/CC/RA/S7a/S7b/CT)
+are covered by per-facet unit tests with `vm.expectRevert` matching —
+the right surface for fine-grained revert-message checks.
+
+### Lessons learned (load-bearing for future test scripts)
+
+1. **`forge --broadcast` cannot advance chain time.** `vm.warp` only
+   mutates simulation EVM state; the broadcast phase resubmits txs
+   to the live RPC at real chain time. `vm.rpc("evm_increaseTime",...)`
+   trips foundry's response parser even on Anvil. Time-dependent
+   scenarios (markDefaulted, cancel cooldown, periodic interest,
+   multi-day staking accrual) MUST live in `forge test`.
+2. **`address(diamond).call(failingCalldata)` inside `vm.startBroadcast`
+   is recorded as a broadcast tx.** During the broadcast pre-flight,
+   forge re-attempts the failing call → script aborts with
+   "Simulated execution failed". Use `vm.prank` + low-level call
+   OUTSIDE `vm.startBroadcast` for revert assertions.
+3. **Exact-balance reads baked into broadcast tx args can diverge.**
+   `withdrawVPFIFromEscrow(stakedBefore)` where `stakedBefore` was
+   read in simulation can revert in broadcast if the post-mutation
+   balance differs by 1 wei. Use known-safe fixed amounts.
+4. **T-054 recovery-induced bans auto-unlock** when the underlying
+   source is de-listed from the oracle (source-tracked clause). N8
+   exercises this at the end of the scenario, freeing `newLender`
+   for downstream scenarios that need a Tier-1 entry.
+5. **`vm.startBroadcast/stopBroadcast` discipline matters across
+   parallel scenarios** that re-use the same participant — a leftover
+   broadcast block can leak into the next scenario's tx ordering.
+   The partial-flow and negative-flow scripts use deliberate
+   per-scenario broadcast blocks for clarity.
+
+### Pre-existing bugs surfaced (not fixed in this work)
+
+- **`createLoanSaleOffer` is end-to-end broken** for any non-zero
+  amount due to the borrower-collateral-floor validation when
+  `collateralAmount=0`, AND has the reentrancy-collision shape
+  documented in P-T's skip rationale. The working alternative
+  (`sellLoanViaBuyOffer`) is fully exercised by N15. A dedicated
+  follow-up PR should add a sale-offer-mode flag to
+  `createOfferInternal` that bypasses the borrower-collateral-floor
+  check, and switch `_submitSaleOffer` to call the internal entry.
+
+### Verification
+
+- `forge build` clean across 107 source files (lint warnings only,
+  no compile errors).
+- All three Anvil scripts exit `EXIT=0` end-to-end on a fresh anvil
+  instance after `anvil-bootstrap.sh` deploys the diamond.
+- `forge test --match-path test/EarlyWithdrawalFacetTest.t.sol`:
+  **68 passed / 0 failed / 1 skipped** — no regression from the
+  related work.
+- Updated `docs/ops/DeploymentRunbook.md` §5 with the local Anvil
+  sweep as a pre-deploy gate.
+- Updated `docs/TestScopes/AdvancedUserGuideTestMatrix.md` (status
+  column) so the matrix reflects which scenarios are now landed.
+
+## T-063 — ToS clause for stuck-token recovery (paired with T-054 PR-4)
+
+The T-054 recovery flow lets a user sign an EIP-712 attestation declaring
+the source of stuck tokens in their isolated escrow. Until now the public
+ToS only carried a defensive bullet about lost-wallet recovery (which the
+team cannot do on the user's behalf) and did NOT disclose the user's role
+in the stuck-token recovery flow. T-063 closes that gap with a paired
+edit to the doc and the rendered legal page.
+
+### What landed
+
+- `docs/Terms/TermsOfService.md` — new "Stuck-token recovery" paragraph
+  inserted between "Keeper delegation" and "Your wallet is your
+  signature". Discloses that the recovery signature is a user-side
+  attestation about the source of funds; the protocol does not
+  independently verify it; a sanctioned-source declaration burns the
+  nonce + bans the wallet from recovery operations until the source is
+  de-listed; and that this is distinct from lost-wallet recovery.
+- `frontend/src/pages/TermsPage.tsx` — same content rendered as a new
+  `<section><h2>Stuck-token recovery</h2>` block. Mirrors the doc text
+  verbatim so the on-chain content-hash gate can pin a single canonical
+  version when governance flips it on.
+
+### Operator action when the on-chain gate is enabled
+
+The retail deploy currently runs with `currentTosVersion == 0`, which
+means `LegalFacet.isAccepted(...)` short-circuits to `true` for every
+wallet — the legal gate is dormant. When governance decides to enable
+the gate (or it's already enabled and this is a content bump), the
+operator path is:
+
+1. Compute the canonical content hash of the ToS text (the docs file
+   `docs/Terms/TermsOfService.md` is the canonical source — the
+   frontend page mirrors it). The exact algorithm is whatever the
+   frontend's signing flow uses (see
+   `frontend/src/hooks/useTosAcceptance.ts`).
+2. From the timelock / ADMIN_ROLE wallet, call
+   `LegalFacet.setCurrentTos(newVersion, newHash)` where
+   `newVersion > currentTosVersion`. The setter is monotonic — it
+   refuses replays and downgrades.
+3. After the tx confirms, every previously-signed acceptance becomes
+   stale; users will see the LegalGate component until they re-sign.
+   The on-chain positions are NOT affected — the gate is a frontend-
+   level UX, not a protocol-level deny.
+
+### What this PR does NOT do
+
+- It does NOT bump the on-chain `currentTosVersion` / `currentTosHash`.
+  The gate is currently disabled and there's no operator action
+  required to ship this PR. The text is preparatory: when governance
+  later flips the gate on, this is the canonical text it should pin.
+- It does NOT add an i18n translation. The current ToS is EN-only.
+  When the i18n translation pass happens (post-launch follow-up), the
+  Stuck-token recovery section will translate alongside the rest.
+
+### Verification
+
+- `frontend/`: `node_modules/.bin/tsc -b --noEmit` clean (no Solidity
+  type changes, no contract surface change).
+- No on-chain change. No diamond redeploy required. The ToS text is
+  rendered statically by `TermsPage.tsx` and read from the docs file.
