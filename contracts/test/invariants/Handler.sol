@@ -5,6 +5,7 @@ import {Test} from "forge-std/Test.sol";
 import {defaultAdapterCalls} from "../helpers/AdapterCallHelpers.sol";
 import {InvariantBase} from "./InvariantBase.sol";
 import {OfferFacet} from "../../src/facets/OfferFacet.sol";
+import {OfferCancelFacet} from "../../src/facets/OfferCancelFacet.sol";
 import {LibVaipakam} from "../../src/libraries/LibVaipakam.sol";
 import {LoanFacet} from "../../src/facets/LoanFacet.sol";
 import {RepayFacet} from "../../src/facets/RepayFacet.sol";
@@ -174,7 +175,7 @@ contract Handler is Test {
         uint256 idx = bound(offerIdx, 0, lenderOfferIds.length - 1);
         uint256 offerId = lenderOfferIds[idx];
 
-        LibVaipakam.Offer memory o = OfferFacet(diamond).getOffer(offerId);
+        LibVaipakam.Offer memory o = OfferCancelFacet(diamond).getOffer(offerId);
         if (o.accepted || o.creator == address(0)) {
             _popOfferAt(lenderOfferIds, idx);
             return;
@@ -198,7 +199,7 @@ contract Handler is Test {
         uint256 idx = bound(offerIdx, 0, borrowerOfferIds.length - 1);
         uint256 offerId = borrowerOfferIds[idx];
 
-        LibVaipakam.Offer memory o = OfferFacet(diamond).getOffer(offerId);
+        LibVaipakam.Offer memory o = OfferCancelFacet(diamond).getOffer(offerId);
         if (o.accepted || o.creator == address(0)) {
             _popOfferAt(borrowerOfferIds, idx);
             return;

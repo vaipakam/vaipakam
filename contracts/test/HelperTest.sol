@@ -4,6 +4,7 @@ pragma solidity ^0.8.29;
 
 import {OfferFacet} from "../src/facets/OfferFacet.sol";
 import {OfferMatchFacet} from "../src/facets/OfferMatchFacet.sol";
+import {OfferCancelFacet} from "../src/facets/OfferCancelFacet.sol";
 import {OracleFacet} from "../src/facets/OracleFacet.sol";
 import {VaipakamNFTFacet} from "../src/facets/VaipakamNFTFacet.sol";
 import {EscrowFactoryFacet} from "../src/facets/EscrowFactoryFacet.sol";
@@ -138,24 +139,40 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](10);
+        selectors = new bytes4[](6);
         selectors[0] = OfferFacet.createOffer.selector;
         // Single `acceptOffer(uint256,bool)` signature — the VPFI discount
         // path is governed by the platform-level consent flag set via
         // VPFIDiscountFacet.setVPFIDiscountConsent, not a per-call boolean.
         selectors[1] = bytes4(keccak256("acceptOffer(uint256,bool)"));
-        selectors[2] = OfferFacet.cancelOffer.selector;
-        selectors[3] = OfferFacet.getCompatibleOffers.selector;
-        selectors[4] = OfferFacet.getUserEscrow.selector;
-        selectors[5] = OfferFacet.getOffer.selector;
-        selectors[6] = OfferFacet.getOfferDetails.selector;
+        selectors[2] = OfferFacet.getUserEscrow.selector;
         // Phase 8b.1 Permit2 additions — additive entries that coexist
         // with the classic `createOffer` / `acceptOffer` paths.
-        selectors[7] = OfferFacet.createOfferWithPermit.selector;
-        selectors[8] = OfferFacet.acceptOfferWithPermit.selector;
+        selectors[3] = OfferFacet.createOfferWithPermit.selector;
+        selectors[4] = OfferFacet.acceptOfferWithPermit.selector;
         // Cross-facet entry consumed by OfferMatchFacet.matchOffers
         // (Range Orders Phase 1 EIP-170 split).
-        selectors[9] = OfferFacet.acceptOfferInternal.selector;
+        selectors[5] = OfferFacet.acceptOfferInternal.selector;
+        // `cancelOffer`, `getCompatibleOffers`, `getOffer`,
+        // `getOfferDetails` moved to OfferCancelFacet — see
+        // `getOfferCancelFacetSelectors` below.
+        return selectors;
+    }
+
+    /// @dev OfferCancelFacet — cancellation + read views carved out
+    ///      of OfferFacet for the second EIP-170 split. Selectors land
+    ///      on the diamond identically; this is just where the
+    ///      bytecode lives.
+    function getOfferCancelFacetSelectors()
+        public
+        pure
+        returns (bytes4[] memory selectors)
+    {
+        selectors = new bytes4[](4);
+        selectors[0] = OfferCancelFacet.cancelOffer.selector;
+        selectors[1] = OfferCancelFacet.getCompatibleOffers.selector;
+        selectors[2] = OfferCancelFacet.getOffer.selector;
+        selectors[3] = OfferCancelFacet.getOfferDetails.selector;
         return selectors;
     }
 

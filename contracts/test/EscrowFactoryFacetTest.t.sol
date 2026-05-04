@@ -15,6 +15,7 @@ import {IERC1155Receiver} from "@openzeppelin/contracts/token/ERC1155/IERC1155Re
 import {LibAccessControl} from "../src/libraries/LibAccessControl.sol";
 import {AdminFacet} from "../src/facets/AdminFacet.sol";
 import {OfferFacet} from "../src/facets/OfferFacet.sol";
+import {OfferCancelFacet} from "../src/facets/OfferCancelFacet.sol";
 import {DiamondCutFacet} from "../src/facets/DiamondCutFacet.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {HelperTest} from "./HelperTest.sol";
@@ -41,6 +42,7 @@ contract EscrowFactoryFacetTest is Test {
     EscrowFactoryFacet escrowFacet;
     AdminFacet adminFacet;
     OfferFacet offerFacet;
+    OfferCancelFacet offerCancelFacet;
     AccessControlFacet accessControlFacet;
     HelperTest helperTest;
     VaipakamEscrowImplementation escrowImpl;
@@ -63,11 +65,12 @@ contract EscrowFactoryFacetTest is Test {
         escrowFacet = new EscrowFactoryFacet();
         adminFacet = new AdminFacet();
         offerFacet = new OfferFacet();
+        offerCancelFacet = new OfferCancelFacet();
         accessControlFacet = new AccessControlFacet();
         TestMutatorFacet testMutatorFacet = new TestMutatorFacet();
         helperTest = new HelperTest();
 
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](5);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](6);
         cuts[0] = IDiamondCut.FacetCut({
             facetAddress: address(escrowFacet),
             action: IDiamondCut.FacetCutAction.Add,
@@ -93,6 +96,7 @@ contract EscrowFactoryFacetTest is Test {
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getTestMutatorFacetSelectors()
         });
+        cuts[5] = IDiamondCut.FacetCut({facetAddress: address(offerCancelFacet), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getOfferCancelFacetSelectors()});
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");
 
         AccessControlFacet(address(diamond)).initializeAccessControl();

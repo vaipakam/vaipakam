@@ -70,13 +70,15 @@ contract ReplaceStaleFacets is Script {
     }
 
     function _offerSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](6);
+        // Post-OfferFacet split: cancelOffer / getCompatibleOffers /
+        // getOffer live on OfferCancelFacet now. This script targets
+        // only what OfferFacet still owns; pair it with a sibling
+        // ReplaceStaleFacets-style cut for OfferCancelFacet if those
+        // selectors also need replacement.
+        s = new bytes4[](3);
         s[0] = OfferFacet.createOffer.selector;
         s[1] = OfferFacet.acceptOffer.selector;
-        s[2] = OfferFacet.cancelOffer.selector;
-        s[3] = OfferFacet.getCompatibleOffers.selector;
-        s[4] = OfferFacet.getUserEscrow.selector;
-        s[5] = OfferFacet.getOffer.selector;
+        s[2] = OfferFacet.getUserEscrow.selector;
     }
 
     function _oracleSelectors() internal pure returns (bytes4[] memory s) {

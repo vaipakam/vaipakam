@@ -13,6 +13,7 @@ import {VaipakamNFTFacet} from "../src/facets/VaipakamNFTFacet.sol";
 import {EscrowFactoryFacet} from "../src/facets/EscrowFactoryFacet.sol";
 import {RiskFacet} from "../src/facets/RiskFacet.sol";
 import {OfferFacet} from "../src/facets/OfferFacet.sol";
+import {OfferCancelFacet} from "../src/facets/OfferCancelFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
 import {RepayFacet} from "../src/facets/RepayFacet.sol";
@@ -43,6 +44,7 @@ contract RefinanceFacetTest is Test {
 
     DiamondCutFacet cutFacet;
     OfferFacet offerFacet;
+    OfferCancelFacet offerCancelFacet;
     ProfileFacet profileFacet;
     OracleFacet oracleFacet;
     VaipakamNFTFacet nftFacet;
@@ -91,6 +93,7 @@ contract RefinanceFacetTest is Test {
         cutFacet = new DiamondCutFacet();
         diamond  = new VaipakamDiamond(owner, address(cutFacet));
         offerFacet = new OfferFacet();
+        offerCancelFacet = new OfferCancelFacet();
         profileFacet = new ProfileFacet();
         oracleFacet = new OracleFacet();
         nftFacet = new VaipakamNFTFacet();
@@ -107,7 +110,7 @@ contract RefinanceFacetTest is Test {
         testMutatorFacet = new TestMutatorFacet();
         helperTest = new HelperTest();
 
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](15);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](16);
         cuts[0]  = IDiamondCut.FacetCut({facetAddress: address(offerFacet),         action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getOfferFacetSelectors()});
         cuts[1]  = IDiamondCut.FacetCut({facetAddress: address(profileFacet),       action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getProfileFacetSelectors()});
         cuts[2]  = IDiamondCut.FacetCut({facetAddress: address(oracleFacet),        action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getOracleFacetSelectors()});
@@ -123,6 +126,7 @@ contract RefinanceFacetTest is Test {
         cuts[12] = IDiamondCut.FacetCut({facetAddress: address(refinanceFacet),     action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getRefinanceFacetSelectors()});
         cuts[13] = IDiamondCut.FacetCut({facetAddress: address(accessControlFacet), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getAccessControlFacetSelectors()});
         cuts[14] = IDiamondCut.FacetCut({facetAddress: address(testMutatorFacet),   action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getTestMutatorFacetSelectors()});
+        cuts[15] = IDiamondCut.FacetCut({facetAddress: address(offerCancelFacet), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getOfferCancelFacetSelectors()});
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");
 
         AccessControlFacet(address(diamond)).initializeAccessControl();
@@ -634,7 +638,7 @@ contract RefinanceFacetTest is Test {
         if (assetTypeVal == 2) loan.collateralQuantity = 10;
         TestMutatorFacet(address(diamond)).setLoan(loanId, loan);
 
-        LibVaipakam.Offer memory offer = OfferFacet(address(diamond)).getOffer(offerId);
+        LibVaipakam.Offer memory offer = OfferCancelFacet(address(diamond)).getOffer(offerId);
         offer.collateralAssetType = assetType;
         TestMutatorFacet(address(diamond)).setOffer(offerId, offer);
     }

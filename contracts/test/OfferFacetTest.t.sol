@@ -35,6 +35,7 @@ import {ERC1155Mock} from "./mocks/ERC1155Mock.sol";
 import {IERC1155} from "@openzeppelin/contracts/token/ERC1155/IERC1155.sol";
 import {HelperTest} from "./HelperTest.sol";
 import {OfferFacet} from "../src/facets/OfferFacet.sol";
+import {OfferCancelFacet} from "../src/facets/OfferCancelFacet.sol";
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import {OracleFacet} from "../src/facets/OracleFacet.sol";
 import {VaipakamNFTFacet} from "../src/facets/VaipakamNFTFacet.sol";
@@ -114,7 +115,7 @@ contract OfferFacetTest is Test {
         HelperTest helperTest = new HelperTest();
 
         // Prepare cuts for required facets
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](8);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](9);
         cuts[0] = IDiamondCut.FacetCut({
             facetAddress: address(new OfferFacet()),
             action: IDiamondCut.FacetCutAction.Add,
@@ -160,6 +161,14 @@ contract OfferFacetTest is Test {
             facetAddress: address(new TestMutatorFacet()),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getTestMutatorFacetSelectors()
+        });
+        // OfferCancelFacet — cancelOffer + read views, carved out of
+        // OfferFacet for the EIP-170 split. Same selectors land on
+        // the diamond.
+        cuts[8] = IDiamondCut.FacetCut({
+            facetAddress: address(new OfferCancelFacet()),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getOfferCancelFacetSelectors()
         });
 
         console.log("inside setup function 001");
@@ -241,15 +250,15 @@ contract OfferFacetTest is Test {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](6);
+        // OfferFacet split for EIP-170: cancelOffer +
+        // getCompatibleOffers + getOffer moved to OfferCancelFacet,
+        // which is cut into the test diamond separately above.
+        selectors = new bytes4[](3);
         selectors[0] = OfferFacet.createOffer.selector;
         // Single `acceptOffer(uint256,bool)` — VPFI discount path is gated
         // by the platform-level consent flag, not a per-call boolean.
         selectors[1] = bytes4(keccak256("acceptOffer(uint256,bool)"));
-        selectors[2] = OfferFacet.cancelOffer.selector;
-        selectors[3] = OfferFacet.getCompatibleOffers.selector;
-        selectors[4] = OfferFacet.getUserEscrow.selector;
-        selectors[5] = OfferFacet.getOffer.selector;
+        selectors[2] = OfferFacet.getUserEscrow.selector;
         return selectors;
     }
 
@@ -398,7 +407,7 @@ contract OfferFacetTest is Test {
         );
 
         // LibVaipakam.Offer memory offer = LibVaipakam.storageSlot().offers[offerId];
-        LibVaipakam.Offer memory offer = OfferFacet(address(diamond)).getOffer(
+        LibVaipakam.Offer memory offer = OfferCancelFacet(address(diamond)).getOffer(
             offerId
         );
         assertEq(offer.amount, 1000);
@@ -475,7 +484,7 @@ contract OfferFacetTest is Test {
         );
 
         // LibVaipakam.Offer memory offer = LibVaipakam.storageSlot().offers[offerId];
-        LibVaipakam.Offer memory offer = OfferFacet(address(diamond)).getOffer(
+        LibVaipakam.Offer memory offer = OfferCancelFacet(address(diamond)).getOffer(
             offerId
         );
         assertEq(offer.prepayAsset, mockERC20);
@@ -680,7 +689,7 @@ contract OfferFacetTest is Test {
         console.log("User balanceBefore: ", balanceBefore);
 
         vm.prank(user1);
-        OfferFacet(address(diamond)).cancelOffer(offerId);
+        OfferCancelFacet(address(diamond)).cancelOffer(offerId);
 
         assertEq(ERC20(mockERC20).balanceOf(user1), balanceBefore + 1000); // Released
     }
@@ -718,7 +727,7 @@ contract OfferFacetTest is Test {
 
         // Both events are expected: the rich detail one + the legacy.
         vm.expectEmit(true, true, false, true, address(diamond));
-        emit OfferFacet.OfferCanceledDetails(
+        emit OfferCancelFacet.OfferCanceledDetails(
             offerId,
             user1,
             LibVaipakam.OfferType.Lender,
@@ -738,10 +747,10 @@ contract OfferFacetTest is Test {
             0
         );
         vm.expectEmit(true, true, false, false, address(diamond));
-        emit OfferFacet.OfferCanceled(offerId, user1);
+        emit OfferCancelFacet.OfferCanceled(offerId, user1);
 
         vm.prank(user1);
-        OfferFacet(address(diamond)).cancelOffer(offerId);
+        OfferCancelFacet(address(diamond)).cancelOffer(offerId);
     }
 
     function testGetCompatibleOffersFiltersCountries() public {
@@ -752,7 +761,7 @@ contract OfferFacetTest is Test {
         // Create offers from different countries
         // ... (setup multiple offers with countries)
 
-        (uint256[] memory offers, ) = OfferFacet(address(diamond))
+        (uint256[] memory offers, ) = OfferCancelFacet(address(diamond))
             .getCompatibleOffers(user1, 0, 100); // US user
         // Assert only FR-compatible shown
         offers; // silence unused
@@ -982,7 +991,7 @@ contract OfferFacetTest is Test {
             })
         );
 
-        LibVaipakam.Offer memory offer = OfferFacet(address(diamond)).getOffer(offerId);
+        LibVaipakam.Offer memory offer = OfferCancelFacet(address(diamond)).getOffer(offerId);
         assertEq(uint8(offer.offerType), uint8(LibVaipakam.OfferType.Borrower));
         assertFalse(offer.accepted);
     }
@@ -1016,7 +1025,7 @@ contract OfferFacetTest is Test {
 
         vm.expectRevert(IVaipakamErrors.NotOfferCreator.selector);
         vm.prank(user2);
-        OfferFacet(address(diamond)).cancelOffer(offerId);
+        OfferCancelFacet(address(diamond)).cancelOffer(offerId);
     }
 
     /// @dev Covers cancelOffer → OfferAlreadyAccepted revert
@@ -1066,7 +1075,7 @@ contract OfferFacetTest is Test {
 
         vm.expectRevert(OfferFacet.OfferAlreadyAccepted.selector);
         vm.prank(user1);
-        OfferFacet(address(diamond)).cancelOffer(offerId);
+        OfferCancelFacet(address(diamond)).cancelOffer(offerId);
         vm.clearMockedCalls();
     }
 
@@ -1202,7 +1211,7 @@ contract OfferFacetTest is Test {
         assertEq(MockRentableNFT721(mockNFT721).ownerOf(1), lenderEscrow);
 
         vm.prank(user1);
-        OfferFacet(address(diamond)).cancelOffer(offerId);
+        OfferCancelFacet(address(diamond)).cancelOffer(offerId);
 
         // NFT returned to user1
         assertEq(MockRentableNFT721(mockNFT721).ownerOf(1), user1);
@@ -1237,7 +1246,7 @@ contract OfferFacetTest is Test {
         );
 
         vm.prank(user2);
-        OfferFacet(address(diamond)).cancelOffer(offerId);
+        OfferCancelFacet(address(diamond)).cancelOffer(offerId);
 
         // Collateral returned
         assertEq(ERC20(mockERC20).balanceOf(user2), balBefore);
@@ -1283,7 +1292,7 @@ contract OfferFacetTest is Test {
         assertEq(collateralNFT.ownerOf(42), escrow);
 
         vm.prank(user2);
-        OfferFacet(address(diamond)).cancelOffer(offerId);
+        OfferCancelFacet(address(diamond)).cancelOffer(offerId);
 
         // NFT collateral returned to user
         assertEq(collateralNFT.ownerOf(42), user2);
@@ -1330,7 +1339,7 @@ contract OfferFacetTest is Test {
         assertEq(collateral1155.balanceOf(user2, 7), 0);
 
         vm.prank(user2);
-        OfferFacet(address(diamond)).cancelOffer(offerId);
+        OfferCancelFacet(address(diamond)).cancelOffer(offerId);
 
         // ERC-1155 collateral returned to user
         assertEq(collateral1155.balanceOf(user2, 7), 10);
@@ -1416,7 +1425,7 @@ contract OfferFacetTest is Test {
         );
 
         // user2 (FR) queries; US<->FR is allowed, so should see the offer
-        (uint256[] memory offers, ) = OfferFacet(address(diamond))
+        (uint256[] memory offers, ) = OfferCancelFacet(address(diamond))
             .getCompatibleOffers(user2, 0, 100);
         assertGt(offers.length, 0);
     }
@@ -1497,7 +1506,7 @@ contract OfferFacetTest is Test {
             })
         );
 
-        LibVaipakam.Offer memory offer2 = OfferFacet(address(diamond)).getOffer(offerId2);
+        LibVaipakam.Offer memory offer2 = OfferCancelFacet(address(diamond)).getOffer(offerId2);
         assertEq(uint8(offer2.offerType), uint8(LibVaipakam.OfferType.Borrower));
         vm.clearMockedCalls();
     }
@@ -1553,8 +1562,8 @@ contract OfferFacetTest is Test {
 
         vm.prank(user1);
         vm.expectEmit(true, true, false, false);
-        emit OfferFacet.OfferCanceled(offerId, user1);
-        OfferFacet(address(diamond)).cancelOffer(offerId);
+        emit OfferCancelFacet.OfferCanceled(offerId, user1);
+        OfferCancelFacet(address(diamond)).cancelOffer(offerId);
         vm.clearMockedCalls();
     }
 
@@ -1605,7 +1614,7 @@ contract OfferFacetTest is Test {
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.burnNFT.selector), "");
 
         vm.prank(user2);
-        OfferFacet(address(diamond)).cancelOffer(offerId);
+        OfferCancelFacet(address(diamond)).cancelOffer(offerId);
         vm.clearMockedCalls();
     }
 
@@ -1651,7 +1660,7 @@ contract OfferFacetTest is Test {
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.burnNFT.selector), "");
 
         vm.prank(user2);
-        OfferFacet(address(diamond)).cancelOffer(offerId);
+        OfferCancelFacet(address(diamond)).cancelOffer(offerId);
         vm.clearMockedCalls();
     }
 
@@ -1690,7 +1699,7 @@ contract OfferFacetTest is Test {
 
         vm.prank(user1);
         vm.expectRevert(bytes("withdraw fail"));
-        OfferFacet(address(diamond)).cancelOffer(offerId);
+        OfferCancelFacet(address(diamond)).cancelOffer(offerId);
         vm.clearMockedCalls();
     }
 
@@ -1734,7 +1743,7 @@ contract OfferFacetTest is Test {
 
         vm.prank(user1);
         vm.expectRevert(bytes("burn fail"));
-        OfferFacet(address(diamond)).cancelOffer(offerId);
+        OfferCancelFacet(address(diamond)).cancelOffer(offerId);
         vm.clearMockedCalls();
     }
 
@@ -1821,7 +1830,7 @@ contract OfferFacetTest is Test {
 
         vm.prank(user2);
         vm.expectRevert(bytes("unlock fail"));
-        OfferFacet(address(diamond)).cancelOffer(offerId);
+        OfferCancelFacet(address(diamond)).cancelOffer(offerId);
         vm.clearMockedCalls();
     }
 
@@ -1910,7 +1919,7 @@ contract OfferFacetTest is Test {
 
         vm.prank(user1);
         vm.expectRevert(bytes("withdraw fail"));
-        OfferFacet(address(diamond)).cancelOffer(offerId);
+        OfferCancelFacet(address(diamond)).cancelOffer(offerId);
         vm.clearMockedCalls();
     }
 
@@ -1958,7 +1967,7 @@ contract OfferFacetTest is Test {
 
         vm.prank(user1);
         vm.expectRevert(bytes("withdraw fail"));
-        OfferFacet(address(diamond)).cancelOffer(offerId);
+        OfferCancelFacet(address(diamond)).cancelOffer(offerId);
         vm.clearMockedCalls();
     }
 
@@ -2003,7 +2012,7 @@ contract OfferFacetTest is Test {
 
         vm.prank(user2);
         vm.expectRevert(bytes("unlock fail"));
-        OfferFacet(address(diamond)).cancelOffer(offerId);
+        OfferCancelFacet(address(diamond)).cancelOffer(offerId);
         vm.clearMockedCalls();
     }
 
@@ -2055,7 +2064,7 @@ contract OfferFacetTest is Test {
 
         vm.prank(user2);
         vm.expectRevert(bytes("unlock fail"));
-        OfferFacet(address(diamond)).cancelOffer(offerId);
+        OfferCancelFacet(address(diamond)).cancelOffer(offerId);
         vm.clearMockedCalls();
     }
 
@@ -2516,7 +2525,7 @@ contract OfferFacetTest is Test {
         vm.clearMockedCalls();
 
         // getCompatibleOffers iterates over the active-offer list; the accepted one is absent.
-        (uint256[] memory compatibleOffers, ) = OfferFacet(address(diamond))
+        (uint256[] memory compatibleOffers, ) = OfferCancelFacet(address(diamond))
             .getCompatibleOffers(user1, 0, 100);
         // The accepted offer should not be in the result
         for (uint256 i = 0; i < compatibleOffers.length; i++) {
@@ -2568,7 +2577,7 @@ contract OfferFacetTest is Test {
             })
         );
 
-        LibVaipakam.Offer memory offer = OfferFacet(address(diamond)).getOffer(offerId);
+        LibVaipakam.Offer memory offer = OfferCancelFacet(address(diamond)).getOffer(offerId);
         assertEq(uint8(offer.assetType), uint8(LibVaipakam.AssetType.ERC1155));
         assertEq(offer.quantity, 5);
         // ERC1155 should now be in escrow
@@ -2788,7 +2797,7 @@ contract OfferFacetTest is Test {
 
         vm.prank(user2);
         vm.expectRevert(bytes("unlock fail"));
-        OfferFacet(address(diamond)).cancelOffer(offerId);
+        OfferCancelFacet(address(diamond)).cancelOffer(offerId);
         vm.clearMockedCalls();
     }
 
@@ -3171,7 +3180,7 @@ contract OfferFacetTest is Test {
 
         vm.prank(user2);
         vm.expectRevert(bytes("unlock fail"));
-        OfferFacet(address(diamond)).cancelOffer(offerId);
+        OfferCancelFacet(address(diamond)).cancelOffer(offerId);
         vm.clearMockedCalls();
     }
 
@@ -3447,9 +3456,9 @@ contract OfferFacetTest is Test {
         vm.mockCall(address(diamond), abi.encodeWithSelector(EscrowFactoryFacet.escrowWithdrawERC20.selector), abi.encode(true));
 
         vm.prank(user2);
-        OfferFacet(address(diamond)).cancelOffer(offerId);
+        OfferCancelFacet(address(diamond)).cancelOffer(offerId);
         // Verify offer deleted
-        LibVaipakam.Offer memory offer = OfferFacet(address(diamond)).getOffer(offerId);
+        LibVaipakam.Offer memory offer = OfferCancelFacet(address(diamond)).getOffer(offerId);
         assertEq(offer.creator, address(0), "Offer should be deleted");
         vm.clearMockedCalls();
     }
@@ -3491,9 +3500,9 @@ contract OfferFacetTest is Test {
         vm.mockCall(address(diamond), abi.encodeWithSelector(EscrowFactoryFacet.escrowWithdrawERC1155.selector), abi.encode(true));
 
         vm.prank(user1);
-        OfferFacet(address(diamond)).cancelOffer(offerId);
+        OfferCancelFacet(address(diamond)).cancelOffer(offerId);
 
-        LibVaipakam.Offer memory offer = OfferFacet(address(diamond)).getOffer(offerId);
+        LibVaipakam.Offer memory offer = OfferCancelFacet(address(diamond)).getOffer(offerId);
         assertEq(offer.creator, address(0), "Offer should be deleted after cancel");
         vm.clearMockedCalls();
     }
@@ -3534,7 +3543,7 @@ contract OfferFacetTest is Test {
         );
 
         assertGt(offerId, 0, "Borrower ERC1155 rental offer should succeed");
-        LibVaipakam.Offer memory offer = OfferFacet(address(diamond)).getOffer(offerId);
+        LibVaipakam.Offer memory offer = OfferCancelFacet(address(diamond)).getOffer(offerId);
         assertEq(uint8(offer.assetType), uint8(LibVaipakam.AssetType.ERC1155));
     }
 
@@ -3629,9 +3638,9 @@ contract OfferFacetTest is Test {
         vm.mockCall(address(diamond), abi.encodeWithSelector(EscrowFactoryFacet.escrowWithdrawERC721.selector), abi.encode(true));
 
         vm.prank(user2);
-        OfferFacet(address(diamond)).cancelOffer(offerId);
+        OfferCancelFacet(address(diamond)).cancelOffer(offerId);
 
-        LibVaipakam.Offer memory offer = OfferFacet(address(diamond)).getOffer(offerId);
+        LibVaipakam.Offer memory offer = OfferCancelFacet(address(diamond)).getOffer(offerId);
         assertEq(offer.creator, address(0), "Offer should be deleted after cancel");
         vm.clearMockedCalls();
     }

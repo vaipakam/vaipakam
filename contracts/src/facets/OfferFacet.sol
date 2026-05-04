@@ -90,56 +90,11 @@ contract OfferFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
         uint256 loanId
     );
 
-    /// @notice Emitted when an offer is canceled.
-    /// @param offerId The ID of the canceled offer.
-    /// @param creator The address of the creator canceling the offer.
-    event OfferCanceled(uint256 indexed offerId, address indexed creator);
-
-    /// @notice Emitted alongside `OfferCanceled` with the full offer terms
-    ///         that would otherwise be irrecoverable after `cancelOffer`
-    ///         executes the `delete s.offers[offerId]` storage wipe.
-    ///
-    ///         Frontends use this event to render cancelled offers in
-    ///         "Your Offers" surfaces (Dashboard) without having to keep
-    ///         a per-create localStorage snapshot. The legacy
-    ///         `OfferCanceled` event remains emitted so historical
-    ///         consumers that only care about identity (id + creator)
-    ///         keep working unchanged.
-    /// @param offerId        The ID of the canceled offer.
-    /// @param creator        The address of the creator canceling.
-    /// @param offerType      Lender (0) or Borrower (1).
-    /// @param assetType      Principal asset type (ERC20=0, ERC721=1, ERC1155=2).
-    /// @param lendingAsset   Principal asset address.
-    /// @param amount         Principal amount (wei for ERC20, quantity for ERC1155).
-    /// @param tokenId        Principal NFT id when `assetType` is ERC721/ERC1155, else 0.
-    /// @param collateralAsset   Collateral asset address.
-    /// @param collateralAmount  Collateral amount in its asset's units.
-    /// @param interestRateBps   Interest rate in basis points.
-    /// @param durationDays      Loan duration in days.
-    event OfferCanceledDetails(
-        uint256 indexed offerId,
-        address indexed creator,
-        LibVaipakam.OfferType offerType,
-        LibVaipakam.AssetType assetType,
-        address lendingAsset,
-        uint256 amount,
-        uint256 tokenId,
-        address collateralAsset,
-        uint256 collateralAmount,
-        uint256 interestRateBps,
-        uint256 durationDays,
-        // ── Range Orders Phase 1 (docs/RangeOffersDesign.md) ─────────
-        // Indexers reconstructing cancelled-offer state from this single
-        // event need the full range tuple, not just the legacy single
-        // values. `amountMax` / `interestRateBpsMax` mirror the offer's
-        // upper bounds; `amountFilled` is the cumulative principal
-        // consumed across matches before the cancel landed (lender-side
-        // partial-fill case). All three are zero on offers created
-        // before Range Orders Phase 1.
-        uint256 amountMax,
-        uint256 interestRateBpsMax,
-        uint256 amountFilled
-    );
+    /// @dev `OfferCanceled` and `OfferCanceledDetails` moved to
+    ///      `OfferCancelFacet` along with `cancelOffer` (Range Orders
+    ///      Phase 1 OfferFacet split for EIP-170). Topic0 hashes are
+    ///      identical so indexers see the same event regardless of
+    ///      which facet emits.
 
     /// @dev Emitted by `OfferFacet.matchOffers` (and the
     ///      `acceptOffer` / `PrecloseFacet.transferObligationViaOffer` /
@@ -177,22 +132,11 @@ contract OfferFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
     ///      signature, so the topic0 hash is identical and downstream
     ///      consumers don't notice the move.
 
-    /// @dev Emitted when an offer's lifecycle terminates. Three reasons
-    ///      cover every terminal state:
-    ///        - `FullyFilled`: lender offer's `amountFilled == amountMax`
-    ///          after a match (rare exact-fit; most large lenders hit
-    ///          `Dust` first).
-    ///        - `Dust`: `amountMax - amountFilled < amountMin` after a
-    ///          match — the leftover can't satisfy the lender's per-
-    ///          match minimum, so `matchOffers` auto-closes the offer
-    ///          and refunds dust.
-    ///        - `Cancelled`: explicit `cancelOffer`. Companion to the
-    ///          legacy `OfferCanceled` / `OfferCanceledDetails` events;
-    ///          this one carries the unified-reason discriminator so
-    ///          frontend pickers can group three terminal classes
-    ///          consistently.
-    enum OfferCloseReason { FullyFilled, Dust, Cancelled }
-    event OfferClosed(uint256 indexed offerId, OfferCloseReason reason);
+    /// @dev `OfferCloseReason` enum + `OfferClosed` event moved to
+    ///      `OfferMatchFacet` and `OfferCancelFacet` (re-declared on
+    ///      both with identical signature, so topic0 lands the same).
+    ///      OfferFacet itself no longer emits `OfferClosed` — every
+    ///      lifecycle terminal lives on the carved-out facets now.
 
     // Facet-specific errors (shared errors inherited from IVaipakamErrors)
     error InvalidOfferType();
@@ -231,11 +175,9 @@ contract OfferFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
     // matchOffers + previewMatch entry points moved there to bring
     // OfferFacet under the EIP-170 24576-byte ceiling.
 
-    /// Cancel fired before `MIN_OFFER_CANCEL_DELAY` elapsed since
-    /// `Offer.createdAt` and `amountFilled == 0` (no match landed yet).
-    /// Partial-filled offers can be cancelled immediately and don't
-    /// raise this.
-    error CancelCooldownActive();
+    // `CancelCooldownActive` moved to `OfferCancelFacet` along with
+    // `cancelOffer` (Range Orders Phase 1 OfferFacet split for
+    // EIP-170).
 
     /**
      * @notice Creates a new lender or borrower offer.
@@ -1542,284 +1484,6 @@ contract OfferFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
         emit OfferAccepted(offerId, msg.sender, loanId);
     }
 
-    /**
-     * @notice Cancels an unaccepted offer and returns the locked assets.
-     * @dev Creator-only (enforced via {LibAuth.requireOfferCreator}).
-     *      Releases whatever was actually locked during {createOffer}:
-     *      principal (Lender side) or collateral / rental prepay+buffer
-     *      (Borrower side), matching the original asset type. Burns the
-     *      offer position NFT and deletes the Offer record.
-     *      Reverts NotOfferCreator or OfferAlreadyAccepted; emits
-     *      OfferCanceled.
-     * @param offerId The offer ID to cancel.
-     */
-    function cancelOffer(uint256 offerId) external nonReentrant whenNotPaused {
-        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        LibVaipakam.Offer storage offer = s.offers[offerId];
-        LibAuth.requireOfferCreator(offer);
-        if (offer.accepted) revert OfferAlreadyAccepted();
-
-        // ── Range Orders Phase 1 — cancel cooldown ─────────────────
-        // Active ONLY when the master `partialFillEnabled` flag is on.
-        // The cooldown defends against the cancel-front-run vector on
-        // the matching path (design §9.2): an attacker can't watch
-        // matchOffers in mempool, race a cancelOffer in, and reclaim
-        // escrowed assets before the match lands. With matching
-        // dormant (default), there's no front-run vector to defend
-        // against, so the cooldown stays off and existing
-        // create-then-cancel test flows compile-clean. Partial-filled
-        // offers (`amountFilled > 0`) bypass the cooldown
-        // unconditionally because the lender has already committed
-        // value through prior matches — no front-run surface left.
-        if (
-            LibVaipakam.storageSlot().protocolCfg.partialFillEnabled
-            && offer.amountFilled == 0
-            && offer.createdAt != 0
-            && block.timestamp < uint256(offer.createdAt) + LibVaipakam.MIN_OFFER_CANCEL_DELAY
-        ) {
-            revert CancelCooldownActive();
-        }
-
-        // ── Strategic-flow NFT unlock on cancel ─────────────────────────────
-        // requireOfferCreator above has bound msg.sender to offer.creator. For
-        // the native-lock design the position NFT never leaves its owner; we
-        // only need to clear the LibERC721 lock to restore ordinary transfer
-        // rights.
-        //
-        // (a) Preclose Option 3 offset: release the borrower position NFT.
-        uint256 lockedOffsetLoanId = s.offsetOfferToLoanId[offerId];
-        if (lockedOffsetLoanId != 0) {
-            LibERC721._unlock(s.loans[lockedOffsetLoanId].borrowerTokenId);
-            delete s.offsetOfferToLoanId[offerId];
-            delete s.loanToOffsetOfferId[lockedOffsetLoanId];
-        }
-
-        // (b) EarlyWithdrawal loan sale: release the lender position NFT.
-        uint256 lockedSaleLoanId = s.saleOfferToLoanId[offerId];
-        if (lockedSaleLoanId != 0) {
-            LibERC721._unlock(s.loans[lockedSaleLoanId].lenderTokenId);
-            delete s.saleOfferToLoanId[offerId];
-            delete s.loanToSaleOfferId[lockedSaleLoanId];
-        }
-
-        if (offer.offerType == LibVaipakam.OfferType.Lender) {
-            if (offer.assetType == LibVaipakam.AssetType.ERC20) {
-                // Range Orders Phase 1 — refund only the UNFILLED
-                // portion. createOffer pre-escrowed `amountMax`; each
-                // partial match consumed a slice via matchOffers (PR3-B
-                // body, dormant until then). Cancel reclaims the
-                // remainder. Legacy single-value offers satisfy
-                // `amountMax == amount && amountFilled == 0`, so the
-                // refund equals `amount` — byte-identical to pre-Phase-1.
-                uint256 effAmountMax = offer.amountMax == 0
-                    ? offer.amount
-                    : offer.amountMax;
-                uint256 refund = effAmountMax - offer.amountFilled;
-                if (refund > 0) {
-                    LibFacet.crossFacetCall(
-                        abi.encodeWithSelector(
-                            EscrowFactoryFacet.escrowWithdrawERC20.selector,
-                            msg.sender,
-                            offer.lendingAsset,
-                            msg.sender,
-                            refund
-                        ),
-                        EscrowWithdrawFailed.selector
-                    );
-                }
-            } else if (offer.assetType == LibVaipakam.AssetType.ERC721) {
-                LibFacet.crossFacetCall(
-                    abi.encodeWithSelector(
-                        EscrowFactoryFacet.escrowWithdrawERC721.selector,
-                        msg.sender,
-                        offer.lendingAsset,
-                        offer.tokenId,
-                        msg.sender
-                    ),
-                    EscrowWithdrawFailed.selector
-                );
-            } else if (offer.assetType == LibVaipakam.AssetType.ERC1155) {
-                LibFacet.crossFacetCall(
-                    abi.encodeWithSelector(
-                        EscrowFactoryFacet.escrowWithdrawERC1155.selector,
-                        msg.sender,
-                        offer.lendingAsset,
-                        offer.tokenId,
-                        offer.quantity,
-                        msg.sender
-                    ),
-                    EscrowWithdrawFailed.selector
-                );
-            }
-        } else {
-            // Borrower: Unlock what was actually deposited during createOffer
-            if (offer.assetType == LibVaipakam.AssetType.ERC20) {
-                // ERC-20 loan: collateral was deposited based on collateralAssetType
-                if (offer.collateralAssetType == LibVaipakam.AssetType.ERC20) {
-                    LibFacet.crossFacetCall(
-                        abi.encodeWithSelector(
-                            EscrowFactoryFacet.escrowWithdrawERC20.selector,
-                            msg.sender,
-                            offer.collateralAsset,
-                            msg.sender,
-                            offer.collateralAmount
-                        ),
-                        EscrowWithdrawFailed.selector
-                    );
-                } else if (offer.collateralAssetType == LibVaipakam.AssetType.ERC721) {
-                    LibFacet.crossFacetCall(
-                        abi.encodeWithSelector(
-                            EscrowFactoryFacet.escrowWithdrawERC721.selector,
-                            msg.sender,
-                            offer.collateralAsset,
-                            offer.collateralTokenId,
-                            msg.sender
-                        ),
-                        EscrowWithdrawFailed.selector
-                    );
-                } else if (offer.collateralAssetType == LibVaipakam.AssetType.ERC1155) {
-                    LibFacet.crossFacetCall(
-                        abi.encodeWithSelector(
-                            EscrowFactoryFacet.escrowWithdrawERC1155.selector,
-                            msg.sender,
-                            offer.collateralAsset,
-                            offer.collateralTokenId,
-                            offer.collateralQuantity,
-                            msg.sender
-                        ),
-                        EscrowWithdrawFailed.selector
-                    );
-                }
-            } else if (
-                offer.assetType == LibVaipakam.AssetType.ERC721 ||
-                offer.assetType == LibVaipakam.AssetType.ERC1155
-            ) {
-                // NFT rental borrower offer: ERC-20 prepayment was deposited
-                uint256 prepayAmount = offer.amount * offer.durationDays;
-                uint256 buffer = (prepayAmount * LibVaipakam.cfgRentalBufferBps()) /
-                    LibVaipakam.BASIS_POINTS;
-                uint256 totalPrepay = prepayAmount + buffer;
-                LibFacet.crossFacetCall(
-                    abi.encodeWithSelector(
-                        EscrowFactoryFacet.escrowWithdrawERC20.selector,
-                        msg.sender,
-                        offer.prepayAsset,
-                        msg.sender,
-                        totalPrepay
-                    ),
-                    EscrowWithdrawFailed.selector
-                );
-            }
-        }
-
-        // Burn position NFT (not the underlying asset tokenId)
-        LibFacet.crossFacetCall(
-            abi.encodeWithSelector(
-                VaipakamNFTFacet.burnNFT.selector,
-                offer.positionTokenId
-            ),
-            NFTBurnFailed.selector
-        );
-
-        // Stamp the cancel marker BEFORE the delete so `offers[id]` going
-        // zero isn't mistaken for "never existed" by readers. The `userOfferIds`
-        // reverse index still contains the id — indexers that want to display
-        // "cancelled" as a terminal state read this map.
-        s.offerCancelled[offerId] = true;
-        LibMetricsHooks.onOfferCancelled(offerId);
-
-        // Emit the detail variant BEFORE the storage delete so the field
-        // values are still readable. Frontend "Your Offers / Cancelled"
-        // surfaces hydrate cancelled rows from this event — the
-        // companion `OfferCanceled` keeps emitting for historical
-        // consumers that only need identity (id + creator).
-        emit OfferCanceledDetails(
-            offerId,
-            msg.sender,
-            offer.offerType,
-            offer.assetType,
-            offer.lendingAsset,
-            offer.amount,
-            offer.tokenId,
-            offer.collateralAsset,
-            offer.collateralAmount,
-            offer.interestRateBps,
-            offer.durationDays,
-            offer.amountMax,
-            offer.interestRateBpsMax,
-            offer.amountFilled
-        );
-
-        // Range Orders Phase 1 — preserve storage on partial-filled
-        // cancel. The N existing loans spawned by prior matches still
-        // reference this offer's terms via `Loan.offerId`, and the
-        // position NFTs' metadata (if any future renderer pulls offer
-        // details) needs them. Mark `accepted = true` so the open-book
-        // queries skip it; the storage slot stays intact. Zero-fill
-        // cancels (no matches) delete normally — frees the slot for
-        // gas refund.
-        if (offer.amountFilled > 0) {
-            offer.accepted = true;
-        } else {
-            delete s.offers[offerId];
-        }
-
-        emit OfferCanceled(offerId, msg.sender);
-        emit OfferClosed(offerId, OfferCloseReason.Cancelled);
-    }
-
-    /**
-     * @notice Returns open offer IDs whose creator country is trade-compatible
-     *         with `user`'s country. Paginated.
-     * @dev Consults {ProfileFacet.getUserCountry} for both sides and
-     *      {LibVaipakam.canTradeBetween} — the trade-pair allowance table is
-     *      governance-configured via {ProfileFacet.setTradeAllowance}. Walks
-     *      the `activeOfferIdsList` maintained by LibMetricsHooks (bounded by
-     *      `activeOffersCount`), not the lifetime sequence, so cancelled and
-     *      accepted offers are never inspected. Pagination lets callers bound
-     *      the per-call work even on very large order books.
-     * @param user The user whose country drives the filter.
-     * @param offset Number of compatible open offers to skip.
-     * @param limit  Maximum number of IDs to return.
-     * @return offerIds Array of compatible, unaccepted offer IDs (length ≤ limit).
-     * @return total   Number of currently open offers scanned (`activeOffersCount`).
-     */
-    function getCompatibleOffers(
-        address user,
-        uint256 offset,
-        uint256 limit
-    ) external view returns (uint256[] memory offerIds, uint256 total) {
-        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        uint256[] storage src = s.activeOfferIdsList;
-        total = src.length;
-        if (limit == 0) return (new uint256[](0), total);
-
-        string memory userCountry = ProfileFacet(address(this)).getUserCountry(user);
-        uint256[] memory buffer = new uint256[](limit);
-        uint256 skipped;
-        uint256 filled;
-        for (uint256 i = 0; i < total && filled < limit; ) {
-            uint256 id = src[i];
-            LibVaipakam.Offer storage offer = s.offers[id];
-            string memory creatorCountry = ProfileFacet(address(this))
-                .getUserCountry(offer.creator);
-            if (LibVaipakam.canTradeBetween(userCountry, creatorCountry)) {
-                if (skipped < offset) {
-                    unchecked { ++skipped; }
-                } else {
-                    buffer[filled] = id;
-                    unchecked { ++filled; }
-                }
-            }
-            unchecked { ++i; }
-        }
-
-        offerIds = new uint256[](filled);
-        for (uint256 j; j < filled; ) {
-            offerIds[j] = buffer[j];
-            unchecked { ++j; }
-        }
-    }
 
     // Internal helpers
 
@@ -1889,22 +1553,4 @@ contract OfferFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
         }
     }
 
-    /**
-     * @notice Gets details of an offer.
-     * @dev View function for off-chain/test queries. Returns full Offer struct.
-     * @param offerId The offer ID.
-     * @return offer The Offer struct.
-     */
-    function getOffer(
-        uint256 offerId
-    ) external view returns (LibVaipakam.Offer memory offer) {
-        return LibVaipakam.storageSlot().offers[offerId];
-    }
-
-    /// @notice README §13.3 alias for {getOffer}. Returns the full Offer struct.
-    function getOfferDetails(
-        uint256 offerId
-    ) external view returns (LibVaipakam.Offer memory) {
-        return LibVaipakam.storageSlot().offers[offerId];
-    }
 }

@@ -18,6 +18,7 @@ import {VaipakamNFTFacet} from "../src/facets/VaipakamNFTFacet.sol";
 import {EscrowFactoryFacet} from "../src/facets/EscrowFactoryFacet.sol";
 import {OfferFacet} from "../src/facets/OfferFacet.sol";
 import {OfferMatchFacet} from "../src/facets/OfferMatchFacet.sol";
+import {OfferCancelFacet} from "../src/facets/OfferCancelFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {RepayFacet} from "../src/facets/RepayFacet.sol";
 import {DefaultedFacet} from "../src/facets/DefaultedFacet.sol";
@@ -76,6 +77,10 @@ contract DeployDiamond is Script {
         // live on a separate facet to keep OfferFacet under the
         // 24576-byte runtime-bytecode ceiling.
         OfferMatchFacet offerMatchFacet = new OfferMatchFacet();
+        // Same EIP-170 pressure split out cancelOffer + read views into
+        // OfferCancelFacet. Selectors land on the diamond identically;
+        // frontend / keeper-bot bindings unaffected by the move.
+        OfferCancelFacet offerCancelFacet = new OfferCancelFacet();
         LoanFacet loanFacet = new LoanFacet();
         RepayFacet repayFacet = new RepayFacet();
         DefaultedFacet defaultedFacet = new DefaultedFacet();
@@ -102,7 +107,7 @@ contract DeployDiamond is Script {
         // Diamond instead of leaving it as dead code.
         LegalFacet legalFacet = new LegalFacet();
 
-        console.log("All 32 facets deployed.");
+        console.log("All 33 facets deployed.");
 
         // ── Step 2: Deploy Diamond ──────────────────────────────────────
         // Deployer is the initial ERC-173 owner so it can execute the
@@ -119,8 +124,8 @@ contract DeployDiamond is Script {
         console.log("Diamond deployed at:", diamond);
 
         // ── Step 3: Build facet cuts ────────────────────────────────────
-        // 31 facets (DiamondCutFacet already added by constructor)
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](31);
+        // 32 facets (DiamondCutFacet already added by constructor)
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](32);
 
         cuts[0] = _buildCut(address(loupeFacet), _getLoupeSelectors());
         cuts[1] = _buildCut(address(ownershipFacet), _getOwnershipSelectors());
@@ -153,10 +158,11 @@ contract DeployDiamond is Script {
         cuts[28] = _buildCut(address(configFacet), _getConfigSelectors());
         cuts[29] = _buildCut(address(legalFacet), _getLegalSelectors());
         cuts[30] = _buildCut(address(offerMatchFacet), _getOfferMatchSelectors());
+        cuts[31] = _buildCut(address(offerCancelFacet), _getOfferCancelSelectors());
 
         // ── Step 4: Execute diamond cut ─────────────────────────────────
         IDiamondCut(diamond).diamondCut(cuts, address(0), "");
-        console.log("Diamond cut complete: 31 facets added.");
+        console.log("Diamond cut complete: 32 facets added.");
 
         // ── Step 5: Post-deployment initialization ──────────────────────
         // 5a. Initialize access control (grants all roles to admin)
@@ -278,6 +284,7 @@ contract DeployDiamond is Script {
         Deployments.writeFacet("escrowFactoryFacet",      address(escrowFactoryFacet));
         Deployments.writeFacet("offerFacet",              address(offerFacet));
         Deployments.writeFacet("offerMatchFacet",         address(offerMatchFacet));
+        Deployments.writeFacet("offerCancelFacet",        address(offerCancelFacet));
         Deployments.writeFacet("loanFacet",               address(loanFacet));
         Deployments.writeFacet("repayFacet",              address(repayFacet));
         Deployments.writeFacet("defaultedFacet",          address(defaultedFacet));
@@ -320,6 +327,8 @@ contract DeployDiamond is Script {
         console.log("VaipakamNFTFacet:     ", address(nftFacet));
         console.log("EscrowFactoryFacet:   ", address(escrowFactoryFacet));
         console.log("OfferFacet:           ", address(offerFacet));
+        console.log("OfferMatchFacet:      ", address(offerMatchFacet));
+        console.log("OfferCancelFacet:     ", address(offerCancelFacet));
         console.log("LoanFacet:            ", address(loanFacet));
         console.log("RepayFacet:           ", address(repayFacet));
         console.log("DefaultedFacet:       ", address(defaultedFacet));
@@ -584,17 +593,13 @@ contract DeployDiamond is Script {
     }
 
     function _getOfferSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](10);
+        s = new bytes4[](6);
         s[0] = OfferFacet.createOffer.selector;
         s[1] = OfferFacet.acceptOffer.selector;
-        s[2] = OfferFacet.cancelOffer.selector;
-        s[3] = OfferFacet.getCompatibleOffers.selector;
-        s[4] = OfferFacet.getUserEscrow.selector;
-        s[5] = OfferFacet.getOffer.selector;
-        s[6] = OfferFacet.getOfferDetails.selector;
+        s[2] = OfferFacet.getUserEscrow.selector;
         // Phase 8b.1 Permit2 additions.
-        s[7] = OfferFacet.createOfferWithPermit.selector;
-        s[8] = OfferFacet.acceptOfferWithPermit.selector;
+        s[3] = OfferFacet.createOfferWithPermit.selector;
+        s[4] = OfferFacet.acceptOfferWithPermit.selector;
         // Cross-facet entry point used exclusively by
         // `OfferMatchFacet.matchOffers` to invoke the same
         // `_acceptOffer` plumbing without re-acquiring the shared
@@ -602,7 +607,10 @@ contract DeployDiamond is Script {
         // holds. Gated to `msg.sender == address(this)` inside the
         // facet body — EOAs cannot call it directly through the
         // diamond fallback. (Range Orders Phase 1 EIP-170 split.)
-        s[9] = OfferFacet.acceptOfferInternal.selector;
+        s[5] = OfferFacet.acceptOfferInternal.selector;
+        // `cancelOffer`, `getCompatibleOffers`, `getOffer`, and
+        // `getOfferDetails` moved to `OfferCancelFacet` as part of
+        // the second EIP-170 split — see `_getOfferCancelSelectors`.
     }
 
     /// @dev OfferMatchFacet — Range Orders Phase 1 bot-driven offer
@@ -616,6 +624,18 @@ contract DeployDiamond is Script {
         // flag inside the facet body.
         s[0] = OfferMatchFacet.matchOffers.selector;
         s[1] = OfferMatchFacet.previewMatch.selector;
+    }
+
+    /// @dev OfferCancelFacet — cancellation + read views carved out of
+    ///      `OfferFacet` to bring it under EIP-170. Same selectors,
+    ///      separate facet — frontend and keeper-bot bindings
+    ///      unaffected by the move.
+    function _getOfferCancelSelectors() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](4);
+        s[0] = OfferCancelFacet.cancelOffer.selector;
+        s[1] = OfferCancelFacet.getCompatibleOffers.selector;
+        s[2] = OfferCancelFacet.getOffer.selector;
+        s[3] = OfferCancelFacet.getOfferDetails.selector;
     }
 
     function _getLoanSelectors() internal pure returns (bytes4[] memory s) {

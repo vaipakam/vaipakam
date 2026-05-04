@@ -10,6 +10,7 @@ import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {VaipakamNFTFacet} from "../src/facets/VaipakamNFTFacet.sol";
 import {EscrowFactoryFacet} from "../src/facets/EscrowFactoryFacet.sol";
 import {OfferFacet} from "../src/facets/OfferFacet.sol";
+import {OfferCancelFacet} from "../src/facets/OfferCancelFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
@@ -44,6 +45,7 @@ contract Scenario8_BorrowerPreclose is Test {
 
     DiamondCutFacet cutFacet;
     OfferFacet offerFacet;
+    OfferCancelFacet offerCancelFacet;
     ProfileFacet profileFacet;
     OracleFacet oracleFacet;
     VaipakamNFTFacet nftFacet;
@@ -100,6 +102,7 @@ contract Scenario8_BorrowerPreclose is Test {
         cutFacet = new DiamondCutFacet();
         diamond  = new VaipakamDiamond(owner, address(cutFacet));
         offerFacet = new OfferFacet();
+        offerCancelFacet = new OfferCancelFacet();
         profileFacet = new ProfileFacet();
         oracleFacet = new OracleFacet();
         nftFacet = new VaipakamNFTFacet();
@@ -116,7 +119,7 @@ contract Scenario8_BorrowerPreclose is Test {
         helperTest = new HelperTest();
 
         TestMutatorFacet testMutatorFacet = new TestMutatorFacet();
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](15);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](16);
         cuts[0]  = IDiamondCut.FacetCut({facetAddress: address(offerFacet),          action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getOfferFacetSelectors()});
         cuts[1]  = IDiamondCut.FacetCut({facetAddress: address(profileFacet),        action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getProfileFacetSelectors()});
         cuts[2]  = IDiamondCut.FacetCut({facetAddress: address(oracleFacet),         action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getOracleFacetSelectors()});
@@ -132,6 +135,7 @@ contract Scenario8_BorrowerPreclose is Test {
         cuts[12] = IDiamondCut.FacetCut({facetAddress: address(precloseFacet),       action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getPrecloseFacetSelectors()});
         cuts[13] = IDiamondCut.FacetCut({facetAddress: address(accessControlFacet),  action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getAccessControlFacetSelectors()});
         cuts[14] = IDiamondCut.FacetCut({facetAddress: address(testMutatorFacet),    action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getTestMutatorFacetSelectors()});
+        cuts[15] = IDiamondCut.FacetCut({facetAddress: address(offerCancelFacet), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getOfferCancelFacetSelectors()});
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");
         AccessControlFacet(address(diamond)).initializeAccessControl();
 
@@ -285,7 +289,7 @@ contract Scenario8_BorrowerPreclose is Test {
         assertEq(loan.startTime, block.timestamp, "Start time should be reset");
 
         // Verify: borrower offer is marked accepted
-        LibVaipakam.Offer memory offer = OfferFacet(address(diamond)).getOffer(borrowerOfferId);
+        LibVaipakam.Offer memory offer = OfferCancelFacet(address(diamond)).getOffer(borrowerOfferId);
         assertTrue(offer.accepted, "Borrower offer should be marked accepted");
 
         // Verify: original borrower paid accrued interest (balance decreased)

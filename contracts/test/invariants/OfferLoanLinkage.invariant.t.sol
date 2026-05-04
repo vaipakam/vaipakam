@@ -5,6 +5,7 @@ import {Test} from "forge-std/Test.sol";
 import {InvariantBase} from "./InvariantBase.sol";
 import {Handler} from "./Handler.sol";
 import {OfferFacet} from "../../src/facets/OfferFacet.sol";
+import {OfferCancelFacet} from "../../src/facets/OfferCancelFacet.sol";
 import {LoanFacet} from "../../src/facets/LoanFacet.sol";
 import {LibVaipakam} from "../../src/libraries/LibVaipakam.sol";
 
@@ -41,7 +42,7 @@ contract OfferLoanLinkageInvariant is Test {
 
     /// @notice Every loan initiated by the fuzzer carries a valid offer link.
     function invariant_EveryLoanLinksBackToAcceptedOffer() public view {
-        OfferFacet offerView = OfferFacet(address(base.diamond()));
+        OfferCancelFacet offerView = OfferCancelFacet(address(base.diamond()));
         LoanFacet loanView = LoanFacet(address(base.diamond()));
         uint256 n = handler.loanIdsLength();
 

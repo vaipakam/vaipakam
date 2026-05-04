@@ -7,6 +7,7 @@ import {Handler} from "./Handler.sol";
 import {LibVaipakam} from "../../src/libraries/LibVaipakam.sol";
 import {LoanFacet} from "../../src/facets/LoanFacet.sol";
 import {OfferFacet} from "../../src/facets/OfferFacet.sol";
+import {OfferCancelFacet} from "../../src/facets/OfferCancelFacet.sol";
 import {MetricsFacet} from "../../src/facets/MetricsFacet.sol";
 import {TestMutatorFacet} from "../mocks/TestMutatorFacet.sol";
 
@@ -120,7 +121,7 @@ contract MetricsCountersParityInvariant is Test {
                 "activeOfferIdsListPos drift at index"
             );
 
-            LibVaipakam.Offer memory O = OfferFacet(diamond).getOffer(id);
+            LibVaipakam.Offer memory O = OfferCancelFacet(diamond).getOffer(id);
             assertTrue(O.creator != address(0), "active offer list points at cleared slot");
             assertTrue(!O.accepted, "active offer list contains accepted offer");
             assertTrue(!metrics.isOfferCancelled(id), "active offer list contains cancelled offer");
@@ -188,7 +189,7 @@ contract MetricsCountersParityInvariant is Test {
 
         uint256 gtActiveOffers;
         for (uint256 i = 1; i <= nextOfferId; i++) {
-            LibVaipakam.Offer memory O = OfferFacet(diamond).getOffer(i);
+            LibVaipakam.Offer memory O = OfferCancelFacet(diamond).getOffer(i);
             if (O.creator == address(0)) continue;
             if (O.accepted) continue;
             if (metrics.isOfferCancelled(i)) continue;

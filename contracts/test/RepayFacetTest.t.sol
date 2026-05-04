@@ -14,6 +14,7 @@ import {RiskFacet} from "../src/facets/RiskFacet.sol";
 import {OracleFacet} from "../src/facets/OracleFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {OfferFacet} from "../src/facets/OfferFacet.sol";
+import {OfferCancelFacet} from "../src/facets/OfferCancelFacet.sol";
 import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
 import {VaipakamEscrowImplementation} from "../src/VaipakamEscrowImplementation.sol";
 import {AdminFacet} from "../src/facets/AdminFacet.sol";
@@ -83,6 +84,7 @@ contract RepayFacetTest is Test {
     // Facet addresses
     DiamondCutFacet cutFacet;
     OfferFacet offerFacet;
+    OfferCancelFacet offerCancelFacet;
     ProfileFacet profileFacet;
     OracleFacet oracleFacet;
     VaipakamNFTFacet nftFacet;
@@ -113,6 +115,8 @@ contract RepayFacetTest is Test {
         diamond = new VaipakamDiamond(owner, address(cutFacet));
 
         offerFacet = new OfferFacet();
+
+        offerCancelFacet = new OfferCancelFacet();
         profileFacet = new ProfileFacet();
         oracleFacet = new OracleFacet();
         nftFacet = new VaipakamNFTFacet();
@@ -129,7 +133,7 @@ contract RepayFacetTest is Test {
         escrowImpl = new VaipakamEscrowImplementation();
 
         // Cut facets into diamond
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](11);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](12);
         cuts[0] = IDiamondCut.FacetCut({
             facetAddress: address(offerFacet),
             action: IDiamondCut.FacetCutAction.Add,
@@ -185,6 +189,7 @@ contract RepayFacetTest is Test {
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getTestMutatorFacetSelectors()
         });
+        cuts[11] = IDiamondCut.FacetCut({facetAddress: address(offerCancelFacet), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getOfferCancelFacetSelectors()});
 
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");
         AccessControlFacet(address(diamond)).initializeAccessControl();

@@ -11,6 +11,7 @@ import {OracleFacet} from "../src/facets/OracleFacet.sol";
 import {VaipakamNFTFacet} from "../src/facets/VaipakamNFTFacet.sol";
 import {EscrowFactoryFacet} from "../src/facets/EscrowFactoryFacet.sol";
 import {OfferFacet} from "../src/facets/OfferFacet.sol";
+import {OfferCancelFacet} from "../src/facets/OfferCancelFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
 import {RiskFacet} from "../src/facets/RiskFacet.sol";
@@ -44,6 +45,7 @@ contract Scenario7_LenderEarlyWithdrawal is Test {
 
     DiamondCutFacet cutFacet;
     OfferFacet offerFacet;
+    OfferCancelFacet offerCancelFacet;
     ProfileFacet profileFacet;
     OracleFacet oracleFacet;
     VaipakamNFTFacet nftFacet;
@@ -95,6 +97,7 @@ contract Scenario7_LenderEarlyWithdrawal is Test {
         cutFacet = new DiamondCutFacet();
         diamond  = new VaipakamDiamond(owner, address(cutFacet));
         offerFacet = new OfferFacet();
+        offerCancelFacet = new OfferCancelFacet();
         profileFacet = new ProfileFacet();
         oracleFacet = new OracleFacet();
         nftFacet = new VaipakamNFTFacet();
@@ -111,7 +114,7 @@ contract Scenario7_LenderEarlyWithdrawal is Test {
         testMutatorFacet = new TestMutatorFacet();
         helperTest = new HelperTest();
 
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](15);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](16);
         cuts[0]  = IDiamondCut.FacetCut({facetAddress: address(offerFacet),         action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getOfferFacetSelectors()});
         cuts[1]  = IDiamondCut.FacetCut({facetAddress: address(profileFacet),       action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getProfileFacetSelectors()});
         cuts[2]  = IDiamondCut.FacetCut({facetAddress: address(oracleFacet),        action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getOracleFacetSelectors()});
@@ -127,6 +130,7 @@ contract Scenario7_LenderEarlyWithdrawal is Test {
         cuts[12] = IDiamondCut.FacetCut({facetAddress: address(earlyFacet),         action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getEarlyWithdrawalFacetSelectors()});
         cuts[13] = IDiamondCut.FacetCut({facetAddress: address(accessControlFacet), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getAccessControlFacetSelectors()});
         cuts[14] = IDiamondCut.FacetCut({facetAddress: address(testMutatorFacet),   action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getTestMutatorFacetSelectors()});
+        cuts[15] = IDiamondCut.FacetCut({facetAddress: address(offerCancelFacet), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getOfferCancelFacetSelectors()});
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");
         AccessControlFacet(address(diamond)).initializeAccessControl();
 
@@ -265,7 +269,7 @@ contract Scenario7_LenderEarlyWithdrawal is Test {
         assertEq(loan.lender, newLender, "Loan lender should be newLender");
 
         // Verify: buyOffer is marked accepted
-        LibVaipakam.Offer memory offer = OfferFacet(address(diamond)).getOffer(buyOfferId);
+        LibVaipakam.Offer memory offer = OfferCancelFacet(address(diamond)).getOffer(buyOfferId);
         assertTrue(offer.accepted, "Buy offer should be marked accepted");
 
         // Net settlement: lender receives `principal - liamCost` directly —
@@ -327,7 +331,7 @@ contract Scenario7_LenderEarlyWithdrawal is Test {
         // native-lock design the auth check is requireLenderNFTOwnerOrKeeper
         // against the *current* lender NFT owner, and mocked cross-facet
         // calls leave the NFT in place as it was before createLoanSaleOffer.
-        LibVaipakam.Offer memory saleOffer = OfferFacet(address(diamond)).getOffer(expectedSaleOfferId);
+        LibVaipakam.Offer memory saleOffer = OfferCancelFacet(address(diamond)).getOffer(expectedSaleOfferId);
         saleOffer.accepted = true;
         saleOffer.creator = lender;
         TestMutatorFacet(address(diamond)).setOffer(expectedSaleOfferId, saleOffer);

@@ -1,4 +1,5 @@
 import OfferFacetABI from './OfferFacet.json';
+import OfferCancelFacetABI from './OfferCancelFacet.json';
 import LoanFacetABI from './LoanFacet.json';
 import RepayFacetABI from './RepayFacet.json';
 import DefaultedFacetABI from './DefaultedFacet.json';
@@ -29,6 +30,7 @@ import LegalFacetABI from './LegalFacet.json';
 
 export {
   OfferFacetABI,
+  OfferCancelFacetABI,
   LoanFacetABI,
   RepayFacetABI,
   DefaultedFacetABI,
@@ -69,6 +71,7 @@ import type { Abi } from 'viem';
  *  is gone, collapse this back to a single `Abi`-typed export. */
 export const DIAMOND_ABI = [
   ...OfferFacetABI,
+  ...OfferCancelFacetABI,
   ...LoanFacetABI,
   ...RepayFacetABI,
   ...DefaultedFacetABI,

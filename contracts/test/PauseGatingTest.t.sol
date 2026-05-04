@@ -11,6 +11,7 @@ import {AdminFacet} from "../src/facets/AdminFacet.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {LibPausable} from "../src/libraries/LibPausable.sol";
 import {OfferFacet} from "../src/facets/OfferFacet.sol";
+import {OfferCancelFacet} from "../src/facets/OfferCancelFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
 import {EarlyWithdrawalFacet} from "../src/facets/EarlyWithdrawalFacet.sol";
@@ -47,10 +48,11 @@ contract PauseGatingTest is Test {
         diamond = new VaipakamDiamond(address(this), address(cutFacet));
         HelperTest helper = new HelperTest();
 
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](15);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](16);
         cuts[0] = _cut(address(new AccessControlFacet()), helper.getAccessControlFacetSelectors());
         cuts[1] = _cut(address(new AdminFacet()), helper.getAdminFacetSelectors());
         cuts[2] = _cut(address(new OfferFacet()), helper.getOfferFacetSelectors());
+        cuts[15] = _cut(address(new OfferCancelFacet()), helper.getOfferCancelFacetSelectors());
         cuts[3] = _cut(address(new LoanFacet()), helper.getLoanFacetSelectors());
         cuts[4] = _cut(address(new RepayFacet()), helper.getRepayFacetSelectors());
         cuts[5] = _cut(address(new PrecloseFacet()), helper.getPrecloseFacetSelectors());
@@ -98,7 +100,7 @@ contract PauseGatingTest is Test {
 
     function test_pause_cancelOffer() public {
         vm.expectRevert(LibPausable.EnforcedPause.selector);
-        OfferFacet(address(diamond)).cancelOffer(0);
+        OfferCancelFacet(address(diamond)).cancelOffer(0);
     }
 
     // ── LoanFacet ───────────────────────────────────────────────────────────

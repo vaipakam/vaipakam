@@ -9,6 +9,7 @@ import {ERC4907Mock} from "../test/mocks/ERC4907Mock.sol";
 import {ERC1155RentableMock} from "../test/mocks/ERC1155RentableMock.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {OfferFacet} from "../src/facets/OfferFacet.sol";
+import {OfferCancelFacet} from "../src/facets/OfferCancelFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {RepayFacet} from "../src/facets/RepayFacet.sol";
 import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
@@ -334,7 +335,7 @@ contract SepoliaPositiveFlows is Script {
             vm.stopBroadcast();
             vm.sleep(310 * 1000); // past the 5-min cooldown
             vm.startBroadcast(lenderKey);
-            OfferFacet(diamond).cancelOffer(offerId5);
+            OfferCancelFacet(diamond).cancelOffer(offerId5);
             vm.stopBroadcast();
             console.log("Offer created & cancelled. USDC returned:", usdc.balanceOf(lender) >= balBefore5 ? "YES" : "NO");
             console.log(">>> SCENARIO 5 PASSED <<<");
@@ -352,7 +353,7 @@ contract SepoliaPositiveFlows is Script {
             vm.stopBroadcast();
             vm.sleep(310 * 1000);
             vm.startBroadcast(borrowerKey);
-            OfferFacet(diamond).cancelOffer(offerId6);
+            OfferCancelFacet(diamond).cancelOffer(offerId6);
             vm.stopBroadcast();
             console.log("Offer created & cancelled. WETH returned:", weth.balanceOf(borrower) >= balBefore6 ? "YES" : "NO");
             console.log(">>> SCENARIO 6 PASSED <<<");

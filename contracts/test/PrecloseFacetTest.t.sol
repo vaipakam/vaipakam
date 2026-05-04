@@ -11,6 +11,7 @@ import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {VaipakamNFTFacet} from "../src/facets/VaipakamNFTFacet.sol";
 import {EscrowFactoryFacet} from "../src/facets/EscrowFactoryFacet.sol";
 import {OfferFacet} from "../src/facets/OfferFacet.sol";
+import {OfferCancelFacet} from "../src/facets/OfferCancelFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
 import {OracleFacet} from "../src/facets/OracleFacet.sol";
@@ -44,6 +45,7 @@ contract PrecloseFacetTest is Test {
 
     DiamondCutFacet cutFacet;
     OfferFacet offerFacet;
+    OfferCancelFacet offerCancelFacet;
     ProfileFacet profileFacet;
     OracleFacet oracleFacet;
     VaipakamNFTFacet nftFacet;
@@ -105,7 +107,7 @@ contract PrecloseFacetTest is Test {
         // resolves against ownerOf(borrowerTokenId); backfilling creator
         // here keeps downstream reads of offer.creator pointing at the
         // borrower who initiated the flow.
-        LibVaipakam.Offer memory o = OfferFacet(address(diamond)).getOffer(offerId);
+        LibVaipakam.Offer memory o = OfferCancelFacet(address(diamond)).getOffer(offerId);
         o.accepted = true;
         if (o.creator == address(0)) o.creator = borrower;
         TestMutatorFacet(address(diamond)).setOffer(offerId, o);
@@ -132,6 +134,8 @@ contract PrecloseFacetTest is Test {
         diamond = new VaipakamDiamond(owner, address(cutFacet));
 
         offerFacet = new OfferFacet();
+
+        offerCancelFacet = new OfferCancelFacet();
         profileFacet = new ProfileFacet();
         oracleFacet = new OracleFacet();
         nftFacet = new VaipakamNFTFacet();
@@ -148,7 +152,7 @@ contract PrecloseFacetTest is Test {
         testMutatorFacet = new TestMutatorFacet();
         helperTest = new HelperTest();
 
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](15);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](16);
         cuts[0]  = IDiamondCut.FacetCut({facetAddress: address(offerFacet),          action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getOfferFacetSelectors()});
         cuts[1]  = IDiamondCut.FacetCut({facetAddress: address(profileFacet),        action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getProfileFacetSelectors()});
         cuts[2]  = IDiamondCut.FacetCut({facetAddress: address(oracleFacet),         action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getOracleFacetSelectors()});
@@ -164,6 +168,7 @@ contract PrecloseFacetTest is Test {
         cuts[12] = IDiamondCut.FacetCut({facetAddress: address(precloseFacet),       action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getPrecloseFacetSelectors()});
         cuts[13] = IDiamondCut.FacetCut({facetAddress: address(accessControlFacet), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getAccessControlFacetSelectors()});
         cuts[14] = IDiamondCut.FacetCut({facetAddress: address(testMutatorFacet),   action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getTestMutatorFacetSelectors()});
+        cuts[15] = IDiamondCut.FacetCut({facetAddress: address(offerCancelFacet), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getOfferCancelFacetSelectors()});
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");
 
         AccessControlFacet(address(diamond)).initializeAccessControl();
@@ -1317,7 +1322,7 @@ contract PrecloseFacetTest is Test {
         // We need a different approach: mock burnNFT to succeed, but use mockCallRevert
         // with the specific offer position tokenId.
         // The offer's positionTokenId is set during createOffer. Let's read it.
-        LibVaipakam.Offer memory offer = OfferFacet(address(diamond)).getOffer(validOffer);
+        LibVaipakam.Offer memory offer = OfferCancelFacet(address(diamond)).getOffer(validOffer);
         uint256 offerPositionTokenId = offer.positionTokenId;
 
         // Mock burnNFT for the borrower's token to succeed (using generic mock)

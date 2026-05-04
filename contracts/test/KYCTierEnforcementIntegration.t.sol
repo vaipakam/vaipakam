@@ -7,6 +7,7 @@ import {IDiamondCut} from "@diamond-3/interfaces/IDiamondCut.sol";
 import {DiamondCutFacet} from "../src/facets/DiamondCutFacet.sol";
 import {AccessControlFacet} from "../src/facets/AccessControlFacet.sol";
 import {OfferFacet} from "../src/facets/OfferFacet.sol";
+import {OfferCancelFacet} from "../src/facets/OfferCancelFacet.sol";
 import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
 import {OracleFacet} from "../src/facets/OracleFacet.sol";
 import {VaipakamNFTFacet} from "../src/facets/VaipakamNFTFacet.sol";
@@ -226,6 +227,7 @@ contract KYCTierEnforcementIntegration is Test {
 
     function _cutCoreFacets() internal {
         OfferFacet offerFacet = new OfferFacet();
+        OfferCancelFacet offerCancelFacet = new OfferCancelFacet();
         ProfileFacet profileFacet = new ProfileFacet();
         OracleFacet oracleFacet = new OracleFacet();
         VaipakamNFTFacet nftFacet = new VaipakamNFTFacet();
@@ -235,7 +237,7 @@ contract KYCTierEnforcementIntegration is Test {
         AdminFacet adminFacet = new AdminFacet();
         AccessControlFacet accessControlFacet = new AccessControlFacet();
 
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](9);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](10);
         cuts[0] = IDiamondCut.FacetCut({
             facetAddress: address(offerFacet),
             action: IDiamondCut.FacetCutAction.Add,
@@ -281,6 +283,7 @@ contract KYCTierEnforcementIntegration is Test {
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getAccessControlFacetSelectors()
         });
+        cuts[9] = IDiamondCut.FacetCut({facetAddress: address(offerCancelFacet), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getOfferCancelFacetSelectors()});
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");
     }
 

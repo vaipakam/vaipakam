@@ -12,6 +12,7 @@ import {OracleFacet} from "../src/facets/OracleFacet.sol";
 import {VaipakamNFTFacet} from "../src/facets/VaipakamNFTFacet.sol";
 import {EscrowFactoryFacet} from "../src/facets/EscrowFactoryFacet.sol";
 import {OfferFacet} from "../src/facets/OfferFacet.sol";
+import {OfferCancelFacet} from "../src/facets/OfferCancelFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
 import {RiskFacet} from "../src/facets/RiskFacet.sol";
@@ -43,6 +44,7 @@ contract EarlyWithdrawalFacetTest is Test {
 
     DiamondCutFacet cutFacet;
     OfferFacet offerFacet;
+    OfferCancelFacet offerCancelFacet;
     ProfileFacet profileFacet;
     OracleFacet oracleFacet;
     VaipakamNFTFacet nftFacet;
@@ -109,14 +111,14 @@ contract EarlyWithdrawalFacetTest is Test {
         // resolves against ownerOf(lenderTokenId); backfilling creator here
         // keeps consumers that read saleOffer.creator pointing at the lender
         // who initiated the flow.
-        LibVaipakam.Offer memory o = OfferFacet(address(diamond)).getOffer(offerId);
+        LibVaipakam.Offer memory o = OfferCancelFacet(address(diamond)).getOffer(offerId);
         o.accepted = true;
         if (o.creator == address(0)) o.creator = lender;
         TestMutatorFacet(address(diamond)).setOffer(offerId, o);
     }
 
     function _setOfferAcceptedAndRate(uint256 offerId, uint256 rateBps) internal {
-        LibVaipakam.Offer memory o = OfferFacet(address(diamond)).getOffer(offerId);
+        LibVaipakam.Offer memory o = OfferCancelFacet(address(diamond)).getOffer(offerId);
         o.accepted = true;
         o.interestRateBps = rateBps;
         if (o.creator == address(0)) o.creator = lender;
@@ -164,6 +166,7 @@ contract EarlyWithdrawalFacetTest is Test {
         cutFacet = new DiamondCutFacet();
         diamond  = new VaipakamDiamond(owner, address(cutFacet));
         offerFacet = new OfferFacet();
+        offerCancelFacet = new OfferCancelFacet();
         profileFacet = new ProfileFacet();
         oracleFacet = new OracleFacet();
         nftFacet = new VaipakamNFTFacet();
@@ -180,7 +183,7 @@ contract EarlyWithdrawalFacetTest is Test {
         testMutatorFacet = new TestMutatorFacet();
         helperTest = new HelperTest();
 
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](15);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](16);
         cuts[0]  = IDiamondCut.FacetCut({facetAddress: address(offerFacet),         action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getOfferFacetSelectors()});
         cuts[1]  = IDiamondCut.FacetCut({facetAddress: address(profileFacet),       action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getProfileFacetSelectors()});
         cuts[2]  = IDiamondCut.FacetCut({facetAddress: address(oracleFacet),        action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getOracleFacetSelectors()});
@@ -196,6 +199,7 @@ contract EarlyWithdrawalFacetTest is Test {
         cuts[12] = IDiamondCut.FacetCut({facetAddress: address(earlyFacet),         action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getEarlyWithdrawalFacetSelectors()});
         cuts[13] = IDiamondCut.FacetCut({facetAddress: address(accessControlFacet), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getAccessControlFacetSelectors()});
         cuts[14] = IDiamondCut.FacetCut({facetAddress: address(testMutatorFacet),   action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getTestMutatorFacetSelectors()});
+        cuts[15] = IDiamondCut.FacetCut({facetAddress: address(offerCancelFacet), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getOfferCancelFacetSelectors()});
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");
 
         AccessControlFacet(address(diamond)).initializeAccessControl();

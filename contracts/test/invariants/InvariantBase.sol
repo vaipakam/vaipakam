@@ -5,6 +5,7 @@ import {Test} from "forge-std/Test.sol";
 import {VaipakamDiamond} from "../../src/VaipakamDiamond.sol";
 import {IDiamondCut} from "@diamond-3/interfaces/IDiamondCut.sol";
 import {OfferFacet} from "../../src/facets/OfferFacet.sol";
+import {OfferCancelFacet} from "../../src/facets/OfferCancelFacet.sol";
 import {LibVaipakam} from "../../src/libraries/LibVaipakam.sol";
 import {OracleFacet} from "../../src/facets/OracleFacet.sol";
 import {VaipakamNFTFacet} from "../../src/facets/VaipakamNFTFacet.sol";
@@ -95,6 +96,7 @@ contract InvariantBase is Test {
 
     function _cutAllFacets() internal {
         OfferFacet offerFacet = new OfferFacet();
+        OfferCancelFacet offerCancelFacet = new OfferCancelFacet();
         ProfileFacet profileFacet = new ProfileFacet();
         OracleFacet oracleFacet = new OracleFacet();
         VaipakamNFTFacet nftFacet = new VaipakamNFTFacet();
@@ -110,8 +112,10 @@ contract InvariantBase is Test {
         TestMutatorFacet mutatorFacet = new TestMutatorFacet();
         MetricsFacet metricsFacet = new MetricsFacet();
 
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](15);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](16);
         cuts[0] = IDiamondCut.FacetCut({facetAddress: address(offerFacet), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getOfferFacetSelectors()});
+        // OfferCancelFacet — cancelOffer + read views, carved out for
+        // the EIP-170 split. Same selectors land on the diamond.
         cuts[1] = IDiamondCut.FacetCut({facetAddress: address(profileFacet), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getProfileFacetSelectors()});
         cuts[2] = IDiamondCut.FacetCut({facetAddress: address(oracleFacet), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getOracleFacetSelectors()});
         cuts[3] = IDiamondCut.FacetCut({facetAddress: address(nftFacet), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getVaipakamNFTFacetSelectors()});
@@ -126,6 +130,7 @@ contract InvariantBase is Test {
         cuts[12] = IDiamondCut.FacetCut({facetAddress: address(accessControlFacet), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getAccessControlFacetSelectors()});
         cuts[13] = IDiamondCut.FacetCut({facetAddress: address(mutatorFacet), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getTestMutatorFacetSelectors()});
         cuts[14] = IDiamondCut.FacetCut({facetAddress: address(metricsFacet), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getMetricsFacetSelectors()});
+        cuts[15] = IDiamondCut.FacetCut({facetAddress: address(offerCancelFacet), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getOfferCancelFacetSelectors()});
 
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");
     }

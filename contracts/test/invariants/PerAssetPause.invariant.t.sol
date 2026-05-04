@@ -5,6 +5,7 @@ import {Test} from "forge-std/Test.sol";
 import {InvariantBase} from "./InvariantBase.sol";
 import {AdminFacet} from "../../src/facets/AdminFacet.sol";
 import {OfferFacet} from "../../src/facets/OfferFacet.sol";
+import {OfferCancelFacet} from "../../src/facets/OfferCancelFacet.sol";
 import {LoanFacet} from "../../src/facets/LoanFacet.sol";
 import {LibVaipakam} from "../../src/libraries/LibVaipakam.sol";
 import {ERC20Mock} from "../mocks/ERC20Mock.sol";
@@ -195,7 +196,7 @@ contract PauseHandler is Test {
         uint256 idx = bound(offerIdx, 0, lenderOfferIds.length - 1);
         uint256 offerId = lenderOfferIds[idx];
 
-        LibVaipakam.Offer memory o = OfferFacet(diamond).getOffer(offerId);
+        LibVaipakam.Offer memory o = OfferCancelFacet(diamond).getOffer(offerId);
         if (o.accepted || o.creator == address(0)) {
             _popAt(lenderOfferIds, idx);
             return;
@@ -218,7 +219,7 @@ contract PauseHandler is Test {
         uint256 idx = bound(offerIdx, 0, borrowerOfferIds.length - 1);
         uint256 offerId = borrowerOfferIds[idx];
 
-        LibVaipakam.Offer memory o = OfferFacet(diamond).getOffer(offerId);
+        LibVaipakam.Offer memory o = OfferCancelFacet(diamond).getOffer(offerId);
         if (o.accepted || o.creator == address(0)) {
             _popAt(borrowerOfferIds, idx);
             return;
