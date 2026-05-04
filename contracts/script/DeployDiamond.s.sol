@@ -161,8 +161,25 @@ contract DeployDiamond is Script {
         cuts[31] = _buildCut(address(offerCancelFacet), _getOfferCancelSelectors());
 
         // ── Step 4: Execute diamond cut ─────────────────────────────────
-        IDiamondCut(diamond).diamondCut(cuts, address(0), "");
-        console.log("Diamond cut complete: 32 facets added.");
+        // Split into two halves to stay under Base Sepolia's per-tx
+        // gas cap (~18M observed) — a single 32-facet cut estimates at
+        // ~17M, and forge's default 1.3× multiplier pushes the sent
+        // gas-limit over the cap. Two halves @ ~8.5M each, padded to
+        // ~11M, land well under. Any chain that can take the single
+        // cut will also accept two halves; this is strictly safer.
+        uint256 mid = cuts.length / 2;
+        IDiamondCut.FacetCut[] memory firstHalf = new IDiamondCut.FacetCut[](mid);
+        IDiamondCut.FacetCut[] memory secondHalf = new IDiamondCut.FacetCut[](cuts.length - mid);
+        for (uint256 i = 0; i < mid; i++) {
+            firstHalf[i] = cuts[i];
+        }
+        for (uint256 i = mid; i < cuts.length; i++) {
+            secondHalf[i - mid] = cuts[i];
+        }
+        IDiamondCut(diamond).diamondCut(firstHalf, address(0), "");
+        console.log("Diamond cut 1/2 complete:", mid, "facets added.");
+        IDiamondCut(diamond).diamondCut(secondHalf, address(0), "");
+        console.log("Diamond cut 2/2 complete:", cuts.length - mid, "facets added.");
 
         // ── Step 5: Post-deployment initialization ──────────────────────
         // 5a. Initialize access control (grants all roles to admin)
