@@ -203,9 +203,41 @@ contract OfferFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
         LibVaipakam.CreateOfferParams calldata params
     ) external nonReentrant whenNotPaused returns (uint256 offerId) {
         address escrow;
-        (offerId, escrow) = _createOfferSetup(params);
-        _pullCreatorAssetsClassic(params, escrow);
-        _createOfferFinish(offerId, params);
+        (offerId, escrow) = _createOfferSetup(msg.sender, params);
+        _pullCreatorAssetsClassic(msg.sender, params, escrow);
+        _createOfferFinish(msg.sender, offerId, params);
+    }
+
+    /// @notice Cross-facet entry used exclusively by
+    ///         `PrecloseFacet.offsetWithNewOffer` (Option 3 offset
+    ///         flow) to mint a new lender offer mid-flight. Skips the
+    ///         outer `nonReentrant` modifier because the calling facet
+    ///         already holds the diamond's reentrancy guard — without
+    ///         the bypass, the second `_enter()` reverts and the
+    ///         entire offset path is unusable.
+    /// @dev    Gated on `msg.sender == address(this)` so EOAs cannot
+    ///         call it directly through the diamond fallback. Same
+    ///         pattern as `acceptOfferInternal`. Pausable still
+    ///         applies — `whenNotPaused` runs.
+    ///
+    ///         The `creator` parameter is the on-behalf-of address.
+    ///         Inside a diamond, `address(this).call(...)` makes
+    ///         `msg.sender == diamond` for the inner code, which
+    ///         would corrupt `offer.creator` and the asset-pull
+    ///         allowance check. The caller passes the real user
+    ///         (e.g. Alice for offsetWithNewOffer) so every helper
+    ///         operates on her behalf instead of the Diamond's.
+    function createOfferInternal(
+        address creator,
+        LibVaipakam.CreateOfferParams calldata params
+    ) external whenNotPaused returns (uint256 offerId) {
+        if (msg.sender != address(this)) {
+            revert UnauthorizedCrossFacetCall();
+        }
+        address escrow;
+        (offerId, escrow) = _createOfferSetup(creator, params);
+        _pullCreatorAssetsClassic(creator, params, escrow);
+        _createOfferFinish(creator, offerId, params);
     }
 
     /**
@@ -258,7 +290,7 @@ contract OfferFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
         }
 
         address escrow;
-        (offerId, escrow) = _createOfferSetup(params);
+        (offerId, escrow) = _createOfferSetup(msg.sender, params);
         uint256 amount = _creatorPullAmount(offerId, params);
         // Resolve the asset the protocol actually expects to pull for
         // this offer shape. Permit2's signature digest binds the user
@@ -296,7 +328,7 @@ contract OfferFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
             ),
             EscrowDepositFailed.selector
         );
-        _createOfferFinish(offerId, params);
+        _createOfferFinish(msg.sender, offerId, params);
     }
 
     /// @dev Shared pre-pull setup. Runs every validation + allocates
@@ -305,6 +337,7 @@ contract OfferFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
     ///      so the caller can do the actual asset pull via whichever
     ///      path (safeTransferFrom vs Permit2) fits.
     function _createOfferSetup(
+        address creator,
         LibVaipakam.CreateOfferParams calldata params
     ) private returns (uint256 offerId, address escrow) {
         if (params.durationDays == 0) revert InvalidOfferType();
@@ -325,9 +358,11 @@ contract OfferFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
 
         // Phase 4.3 — address-level sanctions screening at the "entering
         // a new business relationship" boundary. No-op on chains where
-        // governance has not configured the oracle address.
-        if (LibVaipakam.isSanctionedAddress(msg.sender)) {
-            revert ProfileFacet.SanctionedAddress(msg.sender);
+        // governance has not configured the oracle address. Use the
+        // resolved `creator` (= msg.sender on classic paths, but the
+        // on-behalf-of address on `createOfferInternal`).
+        if (LibVaipakam.isSanctionedAddress(creator)) {
+            revert ProfileFacet.SanctionedAddress(creator);
         }
 
         // Self-lending guard: principal and collateral must reference
@@ -345,10 +380,10 @@ contract OfferFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
         unchecked {
             offerId = ++s.nextOfferId;
         }
-        s.userOfferIds[msg.sender].push(offerId);
+        s.userOfferIds[creator].push(offerId);
 
         LibVaipakam.Offer storage offer = s.offers[offerId];
-        _writeOfferFields(offer, offerId, params);
+        _writeOfferFields(offer, creator, offerId, params);
 
         LibVaipakam.LiquidityStatus principalLiq = OracleFacet(address(this))
             .checkLiquidity(params.lendingAsset);
@@ -414,7 +449,7 @@ contract OfferFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
         //     >365d loans; finer cadences require principal ≥ threshold).
         _validatePeriodicCadence(params, offer, principalLiq, collateralLiq);
 
-        escrow = getUserEscrow(msg.sender);
+        escrow = getUserEscrow(creator);
     }
 
     /// @dev T-034 — extracted to keep `_createOfferSetup` readable. Reverts
@@ -601,6 +636,7 @@ contract OfferFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
     ///      apply to them. The `escrow` argument stays in the
     ///      signature because NFT receivers still target it directly.
     function _pullCreatorAssetsClassic(
+        address creator,
         LibVaipakam.CreateOfferParams calldata params,
         address escrow
     ) private {
@@ -617,7 +653,7 @@ contract OfferFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
                 LibFacet.crossFacetCall(
                     abi.encodeWithSelector(
                         EscrowFactoryFacet.escrowDepositERC20.selector,
-                        msg.sender,
+                        creator,
                         params.lendingAsset,
                         lenderPull
                     ),
@@ -625,13 +661,13 @@ contract OfferFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
                 );
             } else if (params.assetType == LibVaipakam.AssetType.ERC721) {
                 IERC721(params.lendingAsset).safeTransferFrom(
-                    msg.sender,
+                    creator,
                     escrow,
                     params.tokenId
                 );
             } else if (params.assetType == LibVaipakam.AssetType.ERC1155) {
                 IERC1155(params.lendingAsset).safeTransferFrom(
-                    msg.sender,
+                    creator,
                     escrow,
                     params.tokenId,
                     params.quantity,
@@ -647,7 +683,7 @@ contract OfferFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
                     LibFacet.crossFacetCall(
                         abi.encodeWithSelector(
                             EscrowFactoryFacet.escrowDepositERC20.selector,
-                            msg.sender,
+                            creator,
                             params.collateralAsset,
                             params.collateralAmount
                         ),
@@ -655,13 +691,13 @@ contract OfferFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
                     );
                 } else if (params.collateralAssetType == LibVaipakam.AssetType.ERC721) {
                     IERC721(params.collateralAsset).safeTransferFrom(
-                        msg.sender,
+                        creator,
                         escrow,
                         params.collateralTokenId
                     );
                 } else if (params.collateralAssetType == LibVaipakam.AssetType.ERC1155) {
                     IERC1155(params.collateralAsset).safeTransferFrom(
-                        msg.sender,
+                        creator,
                         escrow,
                         params.collateralTokenId,
                         params.collateralQuantity,
@@ -678,7 +714,7 @@ contract OfferFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
                 LibFacet.crossFacetCall(
                     abi.encodeWithSelector(
                         EscrowFactoryFacet.escrowDepositERC20.selector,
-                        msg.sender,
+                        creator,
                         params.prepayAsset,
                         totalPrepay
                     ),
@@ -733,6 +769,7 @@ contract OfferFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
     /// @dev Shared post-pull finish. Mints the Vaipakam position NFT,
     ///      runs MetricsFacet analytics hook, emits OfferCreated.
     function _createOfferFinish(
+        address creator,
         uint256 offerId,
         LibVaipakam.CreateOfferParams calldata params
     ) private {
@@ -745,7 +782,7 @@ contract OfferFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
         (bool success, ) = address(VaipakamNFTFacet(address(this))).call(
             abi.encodeWithSelector(
                 VaipakamNFTFacet.mintNFT.selector,
-                msg.sender,
+                creator,
                 offer.positionTokenId,
                 offerId,
                 0,
@@ -757,7 +794,7 @@ contract OfferFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
 
         LibMetricsHooks.onOfferCreated(offer);
 
-        emit OfferCreated(offerId, msg.sender, params.offerType);
+        emit OfferCreated(offerId, creator, params.offerType);
     }
 
     /**
@@ -767,20 +804,22 @@ contract OfferFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
      */
     function _writeOfferFields(
         LibVaipakam.Offer storage offer,
+        address creator,
         uint256 offerId,
         LibVaipakam.CreateOfferParams calldata params
     ) private {
-        _writeOfferPrincipalFields(offer, offerId, params);
+        _writeOfferPrincipalFields(offer, creator, offerId, params);
         _writeOfferCollateralFields(offer, params);
     }
 
     function _writeOfferPrincipalFields(
         LibVaipakam.Offer storage offer,
+        address creator,
         uint256 offerId,
         LibVaipakam.CreateOfferParams calldata params
     ) private {
         offer.id = offerId;
-        offer.creator = msg.sender;
+        offer.creator = creator;
         offer.offerType = params.offerType;
         offer.lendingAsset = params.lendingAsset;
         offer.amount = params.amount;
@@ -1512,12 +1551,19 @@ contract OfferFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
                     OfferAcceptFailed.selector
                 );
             }
-            // Borrower offset offer (created by offsetWithNewOffer)
+            // Borrower offset offer (created by offsetWithNewOffer).
+            // Use `completeOffsetInternal` not `completeOffset`: this
+            // facet's `acceptOffer` already holds the diamond's
+            // `nonReentrant` lock, so a cross-facet call into
+            // `completeOffset` (also `nonReentrant`) would revert
+            // ReentrancyGuardReentrantCall and break Option-3
+            // settlement entirely. Internal entry is gated on
+            // `msg.sender == address(this)`.
             uint256 offsetLoanId = sCheck.offsetOfferToLoanId[offerId];
             if (offsetLoanId != 0) {
                 LibFacet.crossFacetCall(
                     abi.encodeWithSelector(
-                        PrecloseFacet.completeOffset.selector,
+                        PrecloseFacet.completeOffsetInternal.selector,
                         offsetLoanId
                     ),
                     OfferAcceptFailed.selector

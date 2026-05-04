@@ -139,7 +139,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](6);
+        selectors = new bytes4[](7);
         selectors[0] = OfferFacet.createOffer.selector;
         // Single `acceptOffer(uint256,bool)` signature — the VPFI discount
         // path is governed by the platform-level consent flag set via
@@ -153,6 +153,9 @@ contract HelperTest {
         // Cross-facet entry consumed by OfferMatchFacet.matchOffers
         // (Range Orders Phase 1 EIP-170 split).
         selectors[5] = OfferFacet.acceptOfferInternal.selector;
+        // Cross-facet entry consumed by PrecloseFacet.offsetWithNewOffer
+        // (Option 3 offset flow) — same address(this)-only gating.
+        selectors[6] = OfferFacet.createOfferInternal.selector;
         // `cancelOffer`, `getCompatibleOffers`, `getOffer`,
         // `getOfferDetails` moved to OfferCancelFacet — see
         // `getOfferCancelFacetSelectors` below.
@@ -492,11 +495,13 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](4);
+        selectors = new bytes4[](5);
         selectors[0] = PrecloseFacet.precloseDirect.selector;
         selectors[1] = PrecloseFacet.offsetWithNewOffer.selector;
         selectors[2] = PrecloseFacet.completeOffset.selector;
         selectors[3] = PrecloseFacet.transferObligationViaOffer.selector;
+        // Cross-facet entry consumed by OfferFacet._acceptOffer's auto-link.
+        selectors[4] = PrecloseFacet.completeOffsetInternal.selector;
         return selectors;
     }
 

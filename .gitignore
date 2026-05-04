@@ -35,3 +35,6 @@ docs/internal/RoughNotes.md
 # worktrees/ holds ephemeral agent worktrees. None of these are
 # meaningful across machines.
 .claude/
+
+
+graphify-out/

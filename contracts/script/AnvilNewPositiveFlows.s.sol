@@ -11,6 +11,7 @@ import {OfferCancelFacet} from "../src/facets/OfferCancelFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {RepayFacet} from "../src/facets/RepayFacet.sol";
 import {RefinanceFacet} from "../src/facets/RefinanceFacet.sol";
+import {PrecloseFacet} from "../src/facets/PrecloseFacet.sol";
 import {OfferMatchFacet} from "../src/facets/OfferMatchFacet.sol";
 import {LibOfferMatch} from "../src/libraries/LibOfferMatch.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
@@ -107,10 +108,12 @@ contract AnvilNewPositiveFlows is Script {
         _scenarioN4_refinance();
         _scenarioN7_recoveryHappyPath();
         _scenarioN1_rangeMatchAndPartialFill();
+        _scenarioN5_precloseOption2_transferObligation();
+        _scenarioN6_precloseOption3_offset();
 
         console.log("");
         console.log("============================================");
-        console.log("  WAVE 1+2a (N3, N4, N7, N1) PASSED");
+        console.log("  WAVE 1+2 (N3, N4, N7, N1, N5, N6) PASSED");
         console.log("============================================");
     }
 
@@ -655,6 +658,202 @@ contract AnvilNewPositiveFlows is Script {
             interestRateBpsMax: 0,// single-point rate
             periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
         });
+    }
+
+    // ─── N5: Preclose Option 2 — transferObligationViaOffer ──────────────
+
+    /// @dev Alice (existing borrower of L1, lender = Liam) wants to
+    ///      exit her loan early. Ben (a new borrower) creates a
+    ///      Borrower offer with terms favoring Liam (same asset,
+    ///      collateral >= original, duration <= remaining, principal
+    ///      matches L1.principal). Alice calls
+    ///      `transferObligationViaOffer(L1, benOfferId)` — she pays
+    ///      accrued interest + any shortfall directly to Liam, Ben's
+    ///      collateral becomes the new collateral, Ben becomes the
+    ///      new borrower of the SAME loan slot (L1). Liam stays on as
+    ///      lender; the loan terms (rate, duration end) are preserved.
+    ///
+    ///      Roles in this scenario:
+    ///        Liam      = `newLender` (the lender who stays)
+    ///        Alice     = `lender`  (current borrower; we re-purpose
+    ///                              `lender` because the existing
+    ///                              `borrower` slot is consumed by
+    ///                              earlier scenarios, and Alice's
+    ///                              role is "borrower being replaced".
+    ///                              Naming inversion is local to N5.)
+    ///        Ben       = `borrower` (the new borrower)
+    function _scenarioN5_precloseOption2_transferObligation() internal {
+        console.log("");
+        console.log("=== N5: Preclose Option 2 (transferObligationViaOffer) ===");
+
+        // Liam (newLender) creates a lender offer. Alice (lender slot)
+        // is the borrower of L1 — she'll be replaced by Ben.
+        address Liam = newLender;
+        address Alice = lender;
+        address Ben = borrower;
+        uint256 LiamKey = newLenderKey;
+        uint256 AliceKey = lenderKey;
+        uint256 BenKey = borrowerKey;
+
+        vm.startBroadcast(LiamKey);
+        usdc.approve(diamond, LOAN_AMOUNT);
+        uint256 lenderOfferId = OfferFacet(diamond).createOffer(_lenderOfferStandard());
+        vm.stopBroadcast();
+
+        vm.startBroadcast(AliceKey);
+        weth.approve(diamond, COLLATERAL_AMOUNT);
+        uint256 loanL1 = OfferFacet(diamond).acceptOffer(lenderOfferId, true);
+        vm.stopBroadcast();
+        console.log("L1 (Liam -> Alice) initiated:", loanL1);
+
+        // Ben creates a Borrower offer with terms favoring Liam:
+        // same lending asset, same collateral asset, principal == L1
+        // principal, durationDays <= remaining, collateralAmount >=
+        // L1.collateralAmount. We use exact-match terms for simplicity.
+        vm.startBroadcast(BenKey);
+        weth.approve(diamond, COLLATERAL_AMOUNT);
+        uint256 benOfferId = OfferFacet(diamond).createOffer(_borrowerOfferTakeoverFor(Ben));
+        vm.stopBroadcast();
+        console.log("Ben's takeover offer:", benOfferId);
+
+        // Alice calls transferObligation, paying accrued + shortfall.
+        // Approve generous principal — at t≈0 accrued is tiny but
+        // shortfall could be a few cents to a few dollars depending on
+        // duration mismatch. We approve full LOAN_AMOUNT for headroom.
+        vm.startBroadcast(AliceKey);
+        usdc.approve(diamond, LOAN_AMOUNT);
+        PrecloseFacet(diamond).transferObligationViaOffer(loanL1, benOfferId);
+        vm.stopBroadcast();
+
+        // Verify: L1 is still Active but borrower changed from Alice
+        // to Ben; lender unchanged.
+        LibVaipakam.Loan memory l1After = LoanFacet(diamond).getLoanDetails(loanL1);
+        require(
+            l1After.status == LibVaipakam.LoanStatus.Active,
+            "N5: L1 should still be Active (only obligation transferred)"
+        );
+        require(l1After.borrower == Ben, "N5: borrower should be Ben");
+        require(l1After.lender == Liam, "N5: lender should still be Liam");
+        console.log("L1 borrower (Alice -> Ben):", l1After.borrower);
+        console.log(">>> N5 PASSED <<<");
+    }
+
+    function _borrowerOfferTakeoverFor(address /* who */)
+        internal view returns (LibVaipakam.CreateOfferParams memory)
+    {
+        return LibVaipakam.CreateOfferParams({
+            offerType: LibVaipakam.OfferType.Borrower,
+            lendingAsset: address(usdc),
+            amount: LOAN_AMOUNT,
+            interestRateBps: INTEREST_BPS,
+            collateralAsset: address(weth),
+            collateralAmount: COLLATERAL_AMOUNT,
+            durationDays: DURATION_DAYS,
+            assetType: LibVaipakam.AssetType.ERC20,
+            tokenId: 0,
+            quantity: 0,
+            creatorFallbackConsent: true,
+            prepayAsset: address(usdc),
+            collateralAssetType: LibVaipakam.AssetType.ERC20,
+            collateralTokenId: 0,
+            collateralQuantity: 0,
+            allowsPartialRepay: false,
+            amountMax: 0,
+            interestRateBpsMax: 0,
+            periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
+        });
+    }
+
+    // ─── N6: Preclose Option 3 — offsetWithNewOffer + completeOffset ─────
+
+    /// @dev Alice (borrower of L1, lender = Liam) wants to exit AND
+    ///      become a lender herself (Option 3). She:
+    ///        1. Pays accrued interest + shortfall to Liam.
+    ///        2. Creates a new Lender offer linked to L1 via the
+    ///           `offsetOfferToLoanId` mapping. The borrower NFT for
+    ///           L1 is natively-locked while the offset is in flight.
+    ///        3. Charlie (new borrower) accepts the offset offer.
+    ///           Inside `_acceptOffer` the auto-link triggers
+    ///           `completeOffset(L1)` which:
+    ///             - Settles L1 (status -> Repaid)
+    ///             - Releases Alice's collateral to her escrow
+    ///             - Charlie's loan against Alice as lender goes Active
+    ///
+    ///      Roles:
+    ///        Liam   = `newLender`  (original lender)
+    ///        Alice  = `lender`     (borrower of L1 -> lender of L_new)
+    ///        Charlie = `borrower`  (new borrower)
+    function _scenarioN6_precloseOption3_offset() internal {
+        console.log("");
+        console.log("=== N6: Preclose Option 3 (offsetWithNewOffer + completeOffset) ===");
+
+        address Liam = newLender;
+        address Alice = lender;
+        address Charlie = newBorrower;
+        uint256 LiamKey = newLenderKey;
+        uint256 AliceKey = lenderKey;
+        uint256 CharlieKey = newBorrowerKey;
+
+        // Setup loan L1: Liam -> Alice.
+        vm.startBroadcast(LiamKey);
+        usdc.approve(diamond, LOAN_AMOUNT);
+        uint256 lenderOfferId = OfferFacet(diamond).createOffer(_lenderOfferStandard());
+        vm.stopBroadcast();
+
+        vm.startBroadcast(AliceKey);
+        weth.approve(diamond, COLLATERAL_AMOUNT);
+        uint256 loanL1 = OfferFacet(diamond).acceptOffer(lenderOfferId, true);
+        vm.stopBroadcast();
+        console.log("L1 (Liam -> Alice) initiated:", loanL1);
+
+        // Alice calls offsetWithNewOffer. She pays accrued + shortfall
+        // to Liam (~0 at t≈0 with same rate/duration); deposits new
+        // principal into her escrow; the diamond mints a Lender offer
+        // on her behalf and links it to L1.
+        vm.startBroadcast(AliceKey);
+        // Approve generously: offsetWithNewOffer pulls from Alice's
+        // wallet THREE times — (1) treasuryFee on accrued, (2)
+        // principal+interest to old lender via escrowDepositERC20From,
+        // (3) new principal for the offer createOfferInternal pulls.
+        // Total ≈ 2 × LOAN_AMOUNT + small accrued; we approve 3× for
+        // headroom.
+        usdc.approve(diamond, LOAN_AMOUNT * 3);
+        uint256 offsetOfferId = PrecloseFacet(diamond).offsetWithNewOffer(
+            loanL1,
+            INTEREST_BPS,           // same rate as L1 — minimal shortfall
+            DURATION_DAYS,          // same duration — within remaining
+            address(weth),
+            COLLATERAL_AMOUNT,
+            true,                   // creatorFallbackConsent
+            address(usdc)           // prepayAsset (unused on ERC20 path)
+        );
+        vm.stopBroadcast();
+        console.log("Alice's offset offer:", offsetOfferId);
+
+        // Charlie accepts. The auto-link inside `_acceptOffer` fires
+        // `PrecloseFacet.completeOffset(L1)` which closes L1 and
+        // releases Alice's collateral.
+        vm.startBroadcast(CharlieKey);
+        weth.approve(diamond, COLLATERAL_AMOUNT);
+        uint256 newLoanId = OfferFacet(diamond).acceptOffer(offsetOfferId, true);
+        vm.stopBroadcast();
+        console.log("Charlie accepted -> new loanId:", newLoanId);
+
+        // Verify L1 is no longer Active.
+        LibVaipakam.Loan memory l1Settled = LoanFacet(diamond).getLoanDetails(loanL1);
+        require(
+            l1Settled.status != LibVaipakam.LoanStatus.Active,
+            "N6: L1 should be settled by completeOffset auto-fire"
+        );
+        console.log("L1 status post-offset:", uint8(l1Settled.status));
+
+        // Verify the new loan has Alice as lender, Charlie as borrower.
+        LibVaipakam.Loan memory newLoan = LoanFacet(diamond).getLoanDetails(newLoanId);
+        require(newLoan.lender == Alice, "N6: new loan lender should be Alice");
+        require(newLoan.borrower == Charlie, "N6: new loan borrower should be Charlie");
+        console.log("New loan (Alice -> Charlie) status:", uint8(newLoan.status));
+
+        console.log(">>> N6 PASSED <<<");
     }
 
     // ─── Offer-param helpers ─────────────────────────────────────────────

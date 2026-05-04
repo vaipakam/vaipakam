@@ -608,7 +608,7 @@ contract DeployDiamond is Script {
     }
 
     function _getOfferSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](6);
+        s = new bytes4[](7);
         s[0] = OfferFacet.createOffer.selector;
         s[1] = OfferFacet.acceptOffer.selector;
         s[2] = OfferFacet.getUserEscrow.selector;
@@ -623,6 +623,12 @@ contract DeployDiamond is Script {
         // facet body — EOAs cannot call it directly through the
         // diamond fallback. (Range Orders Phase 1 EIP-170 split.)
         s[5] = OfferFacet.acceptOfferInternal.selector;
+        // Cross-facet entry used by `PrecloseFacet.offsetWithNewOffer`
+        // (Option 3) to mint a new lender offer without colliding on
+        // the shared diamond reentrancy guard the caller already
+        // holds. Same `address(this)`-only gating as
+        // `acceptOfferInternal`.
+        s[6] = OfferFacet.createOfferInternal.selector;
         // `cancelOffer`, `getCompatibleOffers`, `getOffer`, and
         // `getOfferDetails` moved to `OfferCancelFacet` as part of
         // the second EIP-170 split — see `_getOfferCancelSelectors`.
@@ -722,11 +728,15 @@ contract DeployDiamond is Script {
     }
 
     function _getPrecloseSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](4);
+        s = new bytes4[](5);
         s[0] = PrecloseFacet.precloseDirect.selector;
         s[1] = PrecloseFacet.offsetWithNewOffer.selector;
         s[2] = PrecloseFacet.completeOffset.selector;
         s[3] = PrecloseFacet.transferObligationViaOffer.selector;
+        // Cross-facet entry consumed by `OfferFacet._acceptOffer`'s
+        // auto-link block when a third party accepts an offset offer.
+        // Same `address(this)`-only gate as `acceptOfferInternal`.
+        s[4] = PrecloseFacet.completeOffsetInternal.selector;
     }
 
     function _getRefinanceSelectors() internal pure returns (bytes4[] memory s) {

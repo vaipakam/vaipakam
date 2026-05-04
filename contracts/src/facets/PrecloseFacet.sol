@@ -812,8 +812,26 @@ contract PrecloseFacet is
             creatorFallbackConsent,
             prepayAsset
         );
+        // Use `createOfferInternal` not `createOffer`: the outer
+        // `offsetWithNewOffer` already holds the diamond's
+        // `nonReentrant` lock, so a second `nonReentrant` entry via
+        // `createOffer` would revert `ReentrancyGuardReentrantCall`.
+        // The internal entry skips that modifier and is gated on
+        // `msg.sender == address(this)` so EOAs can't call it
+        // through the diamond fallback. Same pattern as
+        // `OfferFacet.acceptOfferInternal` for matchOffers.
+        //
+        // Pass `msg.sender` (Alice, the offset initiator) as
+        // `creator`. Without this the diamond's call() would set
+        // `msg.sender == diamond` inside createOfferInternal,
+        // corrupting `offer.creator` and the asset-pull allowance
+        // check.
         (bool success, bytes memory result) = address(this).call(
-            abi.encodeWithSelector(OfferFacet.createOffer.selector, params)
+            abi.encodeWithSelector(
+                OfferFacet.createOfferInternal.selector,
+                msg.sender,
+                params
+            )
         );
         if (!success) revert OfferCreationFailed();
         newOfferId = abi.decode(result, (uint256));
@@ -869,6 +887,31 @@ contract PrecloseFacet is
     function completeOffset(
         uint256 originalLoanId
     ) external nonReentrant whenNotPaused {
+        _completeOffsetImpl(originalLoanId);
+    }
+
+    /// @notice Cross-facet entry consumed exclusively by
+    ///         `OfferFacet._acceptOffer`'s auto-link block when a
+    ///         third party accepts an offset offer. Skips the outer
+    ///         `nonReentrant` modifier because the calling facet
+    ///         already holds the diamond's reentrancy guard — a second
+    ///         `_enter()` would revert and the entire Option-3 flow
+    ///         would be unusable. Same `address(this)`-only gate as
+    ///         `OfferFacet.acceptOfferInternal` /
+    ///         `createOfferInternal`.
+    function completeOffsetInternal(
+        uint256 originalLoanId
+    ) external whenNotPaused {
+        if (msg.sender != address(this)) {
+            revert UnauthorizedCrossFacetCall();
+        }
+        _completeOffsetImpl(originalLoanId);
+    }
+
+    /// @dev Shared body for `completeOffset` (external,
+    ///      `nonReentrant`) and `completeOffsetInternal` (cross-facet,
+    ///      no guard). Single source of truth for the offset close-out.
+    function _completeOffsetImpl(uint256 originalLoanId) private {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.Loan storage loan = s.loans[originalLoanId];
         if (loan.status != LibVaipakam.LoanStatus.Active)
