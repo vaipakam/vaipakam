@@ -590,6 +590,16 @@ export async function loadLoanIndex(
   diamondAddress: string,
   deployBlock: number,
   chainId: number,
+  /** Optional hint: the indexer's most-recent indexed block. When the
+   *  indexer is healthy, the local log scan can fast-forward its
+   *  `fromBlock` to this hint and skip the long history the indexer
+   *  has already covered — typical scan window collapses to "indexer
+   *  tail → safe head" (~60 s of blocks). The hint is ignored when
+   *  it's behind the local cache's own cursor (i.e. the local scan
+   *  has already gone further than the indexer). When no hint is
+   *  given (indexer unreachable / disabled), behaviour matches the
+   *  original cache-cursor-based incremental scan. */
+  indexerLastBlockHint?: number,
 ): Promise<LogIndexResult> {
   const key = storageKey(chainId, diamondAddress);
   const existing = inflight.get(key);
@@ -600,6 +610,7 @@ export async function loadLoanIndex(
     diamondAddress,
     deployBlock,
     chainId,
+    indexerLastBlockHint,
   ).finally(() => {
     inflight.delete(key);
   });
@@ -612,10 +623,22 @@ async function runScan(
   diamondAddress: string,
   deployBlock: number,
   chainId: number,
+  indexerLastBlockHint?: number,
 ): Promise<LogIndexResult> {
   const cached = readCache(chainId, diamondAddress) ?? emptyCache(deployBlock);
   const head = await getBlockNumber(rpcUrl);
-  const fromBlock = Math.max(cached.lastBlock + 1, deployBlock);
+  // Three-way max: deploy block (lower bound for any scan), the
+  // local cache cursor (don't re-scan blocks we already cached), and
+  // the indexer's lastBlock (skip the long history the indexer has
+  // already covered when it's healthy). The indexer hint only fires
+  // when it's strictly ahead of both other lower bounds — otherwise
+  // the local cache holds richer information and we keep scanning
+  // from there.
+  const baseFrom = Math.max(cached.lastBlock + 1, deployBlock);
+  const fromBlock =
+    indexerLastBlockHint && indexerLastBlockHint + 1 > baseFrom
+      ? indexerLastBlockHint + 1
+      : baseFrom;
 
   if (fromBlock > head) return hydrate(cached);
 

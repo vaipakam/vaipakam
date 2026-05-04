@@ -614,3 +614,61 @@ img { max-width: 100%; display: block; }
   from { opacity: 0; }
   to   { opacity: 1; }
 }
+
+/* ── Rescan button: cooldown + sync status visualisation ──
+ *
+ *   - `.rescan-btn` shares chrome with the surrounding btn-secondary /
+ *     btn-ghost variants; the only addition is `position: relative` so
+ *     the `:after` progress bar can absolutely-position to the bottom
+ *     edge.
+ *   - The progress bar fills from 0% → 100% over the cooldown window
+ *     via the `--rescan-progress` custom property the React component
+ *     sets inline. `transition: width 1s linear` syncs with the hook's
+ *     1 Hz tick so the bar slides smoothly between updates instead of
+ *     stepping.
+ *   - `data-rescan-status` switches the bar tint between in-flight
+ *     (current text colour) and synced (success green) so the
+ *     completed-state confirmation reads at a glance.
+ *   - `.spin` already exists per-page (Activity.css); we don't
+ *     redeclare it here.
+ */
+.rescan-btn {
+  position: relative;
+  overflow: hidden;
+}
+.rescan-btn::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  height: 2px;
+  width: var(--rescan-progress, 0%);
+  background: currentColor;
+  opacity: 0.45;
+  transition: width 1s linear;
+  pointer-events: none;
+}
+.rescan-btn[data-rescan-status='synced']::after {
+  background: #16a34a;
+  opacity: 0.7;
+}
+[data-theme='dark'] .rescan-btn[data-rescan-status='synced']::after {
+  background: #4ade80;
+}
+.rescan-btn:disabled {
+  /* Keep the cursor as a clear "not now" affordance — the default
+   *  `:disabled` opacity drop tells the user the button isn't
+   *  clickable, but we still want the countdown text + progress bar
+   *  fully readable, so we leave colour alone. */
+  cursor: not-allowed;
+}
+
+/* Shared spin keyframes for any consumer that doesn't have its own.
+ * Activity.css declares an identical pair locally; that older copy
+ * stays for now to avoid touching unrelated pages. */
+@keyframes rescan-btn-spin {
+  to { transform: rotate(360deg); }
+}
+.rescan-btn .spin {
+  animation: rescan-btn-spin 1s linear infinite;
+}

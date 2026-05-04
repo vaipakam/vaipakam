@@ -1,9 +1,10 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { useTranslation } from 'react-i18next';
 import { createPublicClient, http } from 'viem';
 import { L as Link } from '../components/L';
 import {
   Activity as ActivityIcon,
+  Check,
   ChevronDown,
   ChevronRight,
   ExternalLink,
@@ -11,6 +12,7 @@ import {
 } from 'lucide-react';
 import { useLogIndex } from '../hooks/useLogIndex';
 import { useIndexedActivity } from '../hooks/useIndexedActivity';
+import { useRescanCooldown } from '../hooks/useRescanCooldown';
 import { indexedToActivityEvent } from '../lib/indexerClient';
 import { useUserLoans } from '../hooks/useUserLoans';
 import { useWallet } from '../context/WalletContext';
@@ -226,6 +228,7 @@ export default function Activity() {
   // (kind / participant / loanId) is shape-agnostic.
   const { events: clientEvents, loading: indexLoading, reload } = useLogIndex();
   const { events: indexedEvents, source: indexedSource } = useIndexedActivity();
+  const rescanCooldown = useRescanCooldown({ loading: indexLoading });
   const events =
     indexedSource === 'indexer' && indexedEvents
       ? (indexedEvents.map(indexedToActivityEvent) as typeof clientEvents)
@@ -399,14 +402,42 @@ export default function Activity() {
         <div className="activity-toolbar-right">
           <button
             type="button"
-            className="btn btn-ghost btn-sm"
-            onClick={reload}
-            disabled={indexLoading}
+            className="btn btn-ghost btn-sm rescan-btn"
+            onClick={() => {
+              rescanCooldown.trigger();
+              void reload();
+            }}
+            disabled={rescanCooldown.disabled}
+            data-rescan-status={rescanCooldown.status}
+            style={
+              {
+                '--rescan-progress': `${rescanCooldown.progress * 100}%`,
+              } as CSSProperties
+            }
             data-tooltip={t('activity.rescanTooltip')}
             data-tooltip-placement="below"
           >
-            <RefreshCw size={14} className={indexLoading ? 'spin' : ''} />
-            {indexLoading ? t('activity.scanning') : t('activity.refresh')}
+            {rescanCooldown.status === 'syncing' ? (
+              <>
+                <RefreshCw size={14} className="spin" />{' '}
+                {t('activity.refreshSyncing', {
+                  defaultValue: 'Refreshing… {{s}}s',
+                  s: rescanCooldown.secondsRemaining,
+                })}
+              </>
+            ) : rescanCooldown.status === 'synced' ? (
+              <>
+                <Check size={14} />{' '}
+                {t('activity.refreshSynced', {
+                  defaultValue: 'Synced — {{s}}s',
+                  s: rescanCooldown.secondsRemaining,
+                })}
+              </>
+            ) : (
+              <>
+                <RefreshCw size={14} /> {t('activity.refresh')}
+              </>
+            )}
           </button>
         </div>
       </div>

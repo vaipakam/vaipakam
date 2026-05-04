@@ -9,6 +9,7 @@ import {
   type LoanIndexEntry,
   type ActivityEvent,
 } from '../lib/logIndex';
+import { useOfferStats } from './useOfferStats';
 
 /** Tier 2 #22 — events that can change the offer-book set; any of them
  *  firing on-chain triggers a debounced incremental rescan so the
@@ -42,6 +43,13 @@ export function useLogIndex() {
   const chainId = chain.chainId ?? DEFAULT_CHAIN.chainId;
   const diamondAddress = chain.diamondAddress ?? DEFAULT_CHAIN.diamondAddress;
   const rpcUrl = chain.rpcUrl ?? DEFAULT_CHAIN.rpcUrl;
+  // The worker stats endpoint exposes `indexer.lastBlock` — when set,
+  // we hand it to `loadLoanIndex` so the local log scan fast-forwards
+  // past everything the indexer already covered. When the worker is
+  // unreachable, `stats` is null and the hint is `undefined`,
+  // collapsing to the legacy local-cache-cursor behaviour.
+  const { stats: offerStats } = useOfferStats();
+  const indexerLastBlock = offerStats?.indexer?.lastBlock;
   // Synchronous first-paint: hydrate whatever the last scan left in
   // localStorage, so Dashboard's "Your Loans" renders instantly on return
   // visits instead of blocking on a fresh `eth_getLogs` paginated scan
@@ -101,6 +109,7 @@ export function useLogIndex() {
         diamondAddress,
         chain.deployBlock ?? DEFAULT_CHAIN.deployBlock,
         chainId,
+        indexerLastBlock,
       );
       setLoans(result.loans);
       setOfferIds(result.offerIds);
@@ -121,7 +130,7 @@ export function useLogIndex() {
     } finally {
       setLoading(false);
     }
-  }, [rpcUrl, diamondAddress, chain.deployBlock, chainId]);
+  }, [rpcUrl, diamondAddress, chain.deployBlock, chainId, indexerLastBlock]);
 
   useEffect(() => {
     load();

@@ -28,7 +28,7 @@
  *      (`chunkedGetLogs` defaults).
  */
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { usePublicClient } from 'wagmi';
 import { type Address } from 'viem';
 import {
@@ -50,6 +50,12 @@ interface UseIndexedActiveOffersResult {
   offers: IndexedOffer[] | null;
   source: 'indexer' | 'fallback' | null;
   loading: boolean;
+  /** Imperative trigger — re-runs the indexer fetch + RPC catch-up
+   *  pipeline. Wired into the OfferBook rescan button so users who
+   *  want fresh data right now don't have to wait for the next 2 s
+   *  watermark tick. The auto-refresh path (mount / focus / version
+   *  bump) keeps running independently. */
+  refetch: () => Promise<void>;
 }
 
 export function useIndexedActiveOffers(): UseIndexedActiveOffersResult {
@@ -62,11 +68,10 @@ export function useIndexedActiveOffers(): UseIndexedActiveOffersResult {
   const [source, setSource] = useState<'indexer' | 'fallback' | null>(null);
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    let cancelled = false;
-    async function tick() {
+  const tick = useCallback(
+    async (signal?: { cancelled: boolean }) => {
       const page = await fetchActiveOffers(chainId, { limit: PAGE_LIMIT });
-      if (cancelled) return;
+      if (signal?.cancelled) return;
       if (!page) {
         setOffers(null);
         setSource('fallback');
@@ -74,19 +79,9 @@ export function useIndexedActiveOffers(): UseIndexedActiveOffersResult {
         return;
       }
 
-      // Bridge the indexer-tail → safe-head gap with a chunked log
-      // catch-up. Skip when the watermark probe is still warming up,
-      // or when we don't have a public client / diamond address. In
-      // those edge cases the indexer page renders as-is and the next
-      // tick reruns once the watermark settles.
       const fromBlock =
         page.offers.length > 0 || (page as { nextBefore?: unknown }).nextBefore
-          ? // Pull the largest known indexer block from the page rows
-            // — that's our true tail. Fall back to 0 if the page is
-            // empty (then catch-up runs from genesis only when there
-            // are no offers indexed yet, which on a working deploy is
-            // a brief warmup state).
-            BigInt(
+          ? BigInt(
               page.offers.reduce(
                 (m, o) => (o.firstSeenBlock > m ? o.firstSeenBlock : m),
                 0,
@@ -105,7 +100,7 @@ export function useIndexedActiveOffers(): UseIndexedActiveOffersResult {
             [TOPIC0.OFFER_CREATED, TOPIC0.OFFER_ACCEPTED, TOPIC0.OFFER_CANCELED],
           ],
         });
-        if (cancelled) return;
+        if (signal?.cancelled) return;
         const delta = decodeOfferDelta(logs);
         terminalIds = new Set(delta.terminal.map((id) => id.toString()));
         createdIds = delta.created;
@@ -118,19 +113,27 @@ export function useIndexedActiveOffers(): UseIndexedActiveOffersResult {
       // rows synchronously. The next indexer cron picks them up; in
       // the meantime the OfferBook UI is consistent (no stale-but-
       // -terminal rows showing) and the next watermark version bump
-      // re-runs this effect to surface them. This trades a brief
-      // (~60 s) "missing new offer" window for cheap RPC usage.
+      // re-runs this effect to surface them.
       void createdIds;
 
       setOffers(merged);
       setSource('indexer');
       setLoading(false);
-    }
-    void tick();
-    return () => {
-      cancelled = true;
-    };
-  }, [chainId, version, publicClient, diamond, snapshot]);
+    },
+    [chainId, publicClient, diamond, snapshot],
+  );
 
-  return { offers, source, loading };
+  useEffect(() => {
+    const signal = { cancelled: false };
+    void tick(signal);
+    return () => {
+      signal.cancelled = true;
+    };
+  }, [version, tick]);
+
+  const refetch = useCallback(async () => {
+    await tick();
+  }, [tick]);
+
+  return { offers, source, loading, refetch };
 }

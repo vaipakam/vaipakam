@@ -28,6 +28,10 @@ interface UseIndexedActivityResult {
   loading: boolean;
   hasMore: boolean;
   loadMore: () => Promise<void>;
+  /** Imperative trigger — re-runs the initial-page fetch. Wired into
+   *  the Activity page's rescan button so users can force fresh
+   *  events without waiting for the next 2 s watermark tick. */
+  refetch: () => Promise<void>;
 }
 
 export function useIndexedActivity(
@@ -81,11 +85,28 @@ export function useIndexedActivity(
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [chainId, filterKey, nextBefore, source]);
 
+  const refetch = useCallback(async () => {
+    setLoading(true);
+    const page = await fetchActivity(chainId, { ...filters, limit: PAGE_LIMIT });
+    if (page) {
+      setEvents(page.events);
+      setSource('indexer');
+      setNextBefore(page.nextBefore);
+    } else {
+      setEvents(null);
+      setSource('fallback');
+      setNextBefore(null);
+    }
+    setLoading(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [chainId, filterKey]);
+
   return {
     events,
     source,
     loading,
     hasMore: nextBefore !== null,
     loadMore,
+    refetch,
   };
 }

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, useCallback, useRef, type ReactNode } from 'react';
+import { useEffect, useMemo, useState, useCallback, useRef, type ReactNode, type CSSProperties } from 'react';
 import { useTranslation } from 'react-i18next';
 import i18n from '../i18n';
 import type { Address, Hex } from 'viem';
@@ -23,6 +23,8 @@ import { beginStep, emit } from '../lib/journeyLog';
 import { decodeContractError, extractRevertSelector } from '../lib/decodeContractError';
 import { useLogIndex } from '../hooks/useLogIndex';
 import { useIndexedActiveOffers } from '../hooks/useIndexedActiveOffers';
+import { useRescanCooldown } from '../hooks/useRescanCooldown';
+import { Check, RefreshCw } from 'lucide-react';
 import { indexedToRawOffer } from '../lib/indexerClient';
 import { useProtocolConfig, type ProtocolConfig } from '../hooks/useProtocolConfig';
 import { AssetSymbol } from '../components/app/AssetSymbol';
@@ -198,6 +200,7 @@ export default function OfferBook() {
   // log-scan path runs unchanged. The Closed view always takes the
   // on-chain path — closed-offer rendering isn't a Phase 1 priority.
   const { offers: indexedOffers, source: indexedSource } = useIndexedActiveOffers();
+  const rescanCooldown = useRescanCooldown({ loading: indexLoading });
   // Map<offerId, loanId> derived from `OfferAccepted` events in the
   // log-index. Each accepted offer's event carries its resulting loanId,
   // so we can render an inline `Loan #N →` link next to the Filled pill
@@ -1173,13 +1176,23 @@ export default function OfferBook() {
         </span>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
           <button
-            className="btn btn-secondary btn-sm"
-            disabled={loading || indexLoading}
+            className="btn btn-secondary btn-sm rescan-btn"
+            disabled={loading || rescanCooldown.disabled}
+            data-rescan-status={rescanCooldown.status}
+            style={
+              {
+                '--rescan-progress': `${rescanCooldown.progress * 100}%`,
+              } as CSSProperties
+            }
             onClick={() => {
-              // Busts the event-indexed id cache and re-scans from
-              // chain. Fixes the case where OfferCreated /
-              // OfferCanceled / OfferAccepted events were missed and
-              // the id set diverges from on-chain state.
+              // Single-pass refresh: `reloadIndex` runs the legacy
+              // local log scan, which starts at
+              // `max(localCacheCursor, indexer.lastBlock)` — a strict
+              // superset of the live-tail's narrow offer-event
+              // catch-up. The cooldown gives the user time to see the
+              // 'syncing' → 'synced' transition and prevents
+              // spam-clicks burning RPC quota.
+              rescanCooldown.trigger();
               loadedIdsRef.current = new Set();
               setOffers([]);
               setCursor(0);
@@ -1187,7 +1200,25 @@ export default function OfferBook() {
             }}
             title={t('offerBookPage.rescanTooltip')}
           >
-            {indexLoading ? t('offerBookPage.rescanning') : t('offerBookPage.rescanChain')}
+            {rescanCooldown.status === 'syncing' ? (
+              <>
+                <RefreshCw size={12} className="spin" />{' '}
+                {t('offerBookPage.rescanSyncing', {
+                  defaultValue: 'Refreshing… {{s}}s',
+                  s: rescanCooldown.secondsRemaining,
+                })}
+              </>
+            ) : rescanCooldown.status === 'synced' ? (
+              <>
+                <Check size={12} />{' '}
+                {t('offerBookPage.rescanSynced', {
+                  defaultValue: 'Synced — {{s}}s',
+                  s: rescanCooldown.secondsRemaining,
+                })}
+              </>
+            ) : (
+              t('offerBookPage.rescanChain')
+            )}
           </button>
           {hasMore && (
             <button
