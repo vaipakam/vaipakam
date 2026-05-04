@@ -70,8 +70,9 @@ FACETS=(
   "MetricsFacet"      # getActiveLoansCount, getActiveLoansPaginated, getActiveOffersCount, getActiveOffersPaginated
   "RiskFacet"         # calculateHealthFactor, triggerLiquidation
   "LoanFacet"         # getLoanDetails
-  "OfferFacet"        # previewMatch, matchOffers (Range Orders Phase 1 matching detector)
+  "OfferFacet"        # createOffer / acceptOffer (kept for completeness — pre-2026-04 the matcher fns lived here)
   "OfferCancelFacet"  # getOffer (offer hydration in offerMatcher detector — moved from OfferFacet in EIP-170 split)
+  "OfferMatchFacet"   # previewMatch, matchOffers — current home of the matcher selectors after the facet split
 )
 
 echo "Exporting ABIs to $OUT_DIR"
