@@ -567,7 +567,7 @@ contract DeployDiamond is Script {
     }
 
     function _getEscrowFactorySelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](22);
+        s = new bytes4[](31);
         s[0] = EscrowFactoryFacet.initializeEscrowImplementation.selector;
         s[1] = EscrowFactoryFacet.getOrCreateUserEscrow.selector;
         s[2] = EscrowFactoryFacet.upgradeEscrowImplementation.selector;
@@ -590,6 +590,21 @@ contract DeployDiamond is Script {
         s[19] = EscrowFactoryFacet.getEscrowVersionInfo.selector;
         s[20] = EscrowFactoryFacet.escrowSetNFTUser1155.selector;
         s[21] = EscrowFactoryFacet.escrowGetNFTQuantity.selector;
+        // T-051 / T-054 — chokepoint deposit + counter-only companions.
+        // `escrowDepositERC20From` is the third-party-payer variant
+        // RepayFacet uses to pull repayment funds from the borrower
+        // into the lender's escrow; without this selector cut, every
+        // ERC-20 loan repayment reverts with FunctionDoesNotExist.
+        s[22] = EscrowFactoryFacet.escrowDepositERC20From.selector;
+        s[23] = EscrowFactoryFacet.recordEscrowDepositERC20.selector;
+        s[24] = EscrowFactoryFacet.getProtocolTrackedEscrowBalance.selector;
+        // T-054 PR-3 — stuck-token recovery EIP-712 surface.
+        s[25] = EscrowFactoryFacet.recoverStuckERC20.selector;
+        s[26] = EscrowFactoryFacet.disown.selector;
+        s[27] = EscrowFactoryFacet.recoveryDomainSeparator.selector;
+        s[28] = EscrowFactoryFacet.recoveryAckTextHash.selector;
+        s[29] = EscrowFactoryFacet.recoveryNonce.selector;
+        s[30] = EscrowFactoryFacet.escrowBannedSource.selector;
     }
 
     function _getOfferSelectors() internal pure returns (bytes4[] memory s) {

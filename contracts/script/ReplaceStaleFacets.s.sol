@@ -90,7 +90,7 @@ contract ReplaceStaleFacets is Script {
     }
 
     function _escrowFactorySelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](18);
+        s = new bytes4[](27);
         s[0] = EscrowFactoryFacet.initializeEscrowImplementation.selector;
         s[1] = EscrowFactoryFacet.getOrCreateUserEscrow.selector;
         s[2] = EscrowFactoryFacet.upgradeEscrowImplementation.selector;
@@ -109,5 +109,16 @@ contract ReplaceStaleFacets is Script {
         s[15] = EscrowFactoryFacet.getDiamondAddress.selector;
         s[16] = EscrowFactoryFacet.setMandatoryEscrowUpgrade.selector;
         s[17] = EscrowFactoryFacet.upgradeUserEscrow.selector;
+        // T-051 / T-054 — chokepoint deposit + counter-only companions
+        // + stuck-token recovery EIP-712 surface.
+        s[18] = EscrowFactoryFacet.escrowDepositERC20From.selector;
+        s[19] = EscrowFactoryFacet.recordEscrowDepositERC20.selector;
+        s[20] = EscrowFactoryFacet.getProtocolTrackedEscrowBalance.selector;
+        s[21] = EscrowFactoryFacet.recoverStuckERC20.selector;
+        s[22] = EscrowFactoryFacet.disown.selector;
+        s[23] = EscrowFactoryFacet.recoveryDomainSeparator.selector;
+        s[24] = EscrowFactoryFacet.recoveryAckTextHash.selector;
+        s[25] = EscrowFactoryFacet.recoveryNonce.selector;
+        s[26] = EscrowFactoryFacet.escrowBannedSource.selector;
     }
 }
