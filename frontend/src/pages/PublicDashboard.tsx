@@ -28,6 +28,7 @@ import { CardInfo } from '../components/CardInfo';
 import { useMode } from '../context/ModeContext';
 import { useProtocolStats } from '../hooks/useProtocolStats';
 import { useLoanStats } from '../hooks/useLoanStats';
+import { useAssetBreakdown } from '../hooks/useAssetBreakdown';
 import { useTVL } from '../hooks/useTVL';
 import { useUserStats } from '../hooks/useUserStats';
 import { useTreasuryMetrics } from '../hooks/useTreasuryMetrics';
@@ -129,6 +130,10 @@ export default function PublicDashboard() {
   // when the worker is unreachable so the cards still render
   // correctly on a worker outage.
   const { stats: loanStats } = useLoanStats();
+  // Indexer-first asset breakdown for the "Asset distribution"
+  // section. When the worker is unreachable, falls back to
+  // `stats.assetBreakdown` from useProtocolStats below.
+  const { rows: indexerAssetBreakdown } = useAssetBreakdown();
   const { snapshot: tvl, loading: tvlLoading } = useTVL();
   const { stats: userStats } = useUserStats();
   const { metrics: treasuryMetrics } = useTreasuryMetrics();
@@ -664,11 +669,26 @@ export default function PublicDashboard() {
 
               <section className="pd-section">
                 <h2>{t('publicDashboard.assetDistribution')}</h2>
-                {stats.assetBreakdown.length === 0 ? (
-                  <p className="empty-state-inline">{t('publicDashboard.noLoanVolume')}</p>
-                ) : (
+                {(() => {
+                  // Prefer the indexer-first breakdown when reachable;
+                  // fall through to the chain-derived
+                  // `useProtocolStats.assetBreakdown` only on worker
+                  // outage. Both shapes carry the same keys
+                  // (asset / symbol / decimals / loans / volume /
+                  // volumeUsd / share / liquid) so the render block
+                  // below doesn't branch.
+                  const breakdown =
+                    indexerAssetBreakdown ?? stats.assetBreakdown;
+                  if (breakdown.length === 0) {
+                    return (
+                      <p className="empty-state-inline">
+                        {t('publicDashboard.noLoanVolume')}
+                      </p>
+                    );
+                  }
+                  return (
                   <div className="pd-distribution">
-                    {stats.assetBreakdown.slice(0, 8).map((row) => (
+                    {breakdown.slice(0, 8).map((row) => (
                       <div className="pd-dist-row" key={row.asset}>
                         <div className="pd-dist-label">
                           <span>
@@ -715,7 +735,8 @@ export default function PublicDashboard() {
                       </div>
                     ))}
                   </div>
-                )}
+                  );
+                })()}
               </section>
 
               <section className="pd-section">

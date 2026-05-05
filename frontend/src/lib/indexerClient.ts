@@ -332,6 +332,9 @@ export interface LoanStats {
    *  principals across all loans of that asset. Caller does BigInt
    *  math + USD pricing client-side. */
   volumeByAsset: Record<string, string>;
+  /** Map of lowercased lending-asset address → loan count. Pairs
+   *  with `volumeByAsset` for the assetBreakdown table on Analytics. */
+  loansByAsset: Record<string, number>;
   averageInterestRateBps: number | null;
   indexer: { lastBlock: number; updatedAt: number } | null;
 }

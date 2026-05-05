@@ -583,6 +583,7 @@ export async function handleLoansStats(req: Request, env: Env): Promise<Response
       .bind(chainId)
       .all<{ lending_asset: string; principal: string; interest_rate_bps: number }>();
     const volumeByAsset: Record<string, bigint> = {};
+    const loansByAsset: Record<string, number> = {};
     let aprSum = 0;
     let aprCount = 0;
     for (const row of volumeRows.results ?? []) {
@@ -598,6 +599,7 @@ export async function handleLoansStats(req: Request, env: Env): Promise<Response
       try {
         const p = BigInt(row.principal || '0');
         volumeByAsset[key] = (volumeByAsset[key] ?? 0n) + p;
+        loansByAsset[key] = (loansByAsset[key] ?? 0) + 1;
       } catch {
         // Malformed principal (shouldn't happen with the indexer's
         // BigInt-safe writer, but guard anyway). Skip the row.
@@ -630,6 +632,7 @@ export async function handleLoansStats(req: Request, env: Env): Promise<Response
       erc20ActiveLoans,
       nftRentalsActive,
       volumeByAsset: volumeByAssetSerialized,
+      loansByAsset,
       averageInterestRateBps,
       indexer: cursor
         ? { lastBlock: cursor.last_block, updatedAt: cursor.updated_at }

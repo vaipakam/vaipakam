@@ -100,19 +100,37 @@ export function useIndexedActiveOffers(): UseIndexedActiveOffersResult {
 
   const tick = useCallback(
     async (signal?: { cancelled: boolean }) => {
-      const page = await fetchActiveOffers(chainId, { limit: PAGE_LIMIT });
-      if (signal?.cancelled) return;
-      if (!page) {
-        setOffers(null);
-        setSource('fallback');
-        setLoading(false);
-        return;
+      // Paginate through every page of `/offers/active` until the
+      // worker says "no more pages" (`nextBefore === null`). Hard-
+      // capped at 25 pages × 200 = 5000 active offers — plenty of
+      // headroom; if the protocol ever genuinely exceeds that, lift
+      // the cap. Without pagination the OfferBook would silently
+      // truncate to the first 200 active offers, which on a busy
+      // mainnet would hide the rest of the book from users. Same
+      // shape as the TVL paginator in useTVL.
+      const allOffers: IndexedOffer[] = [];
+      let before: number | undefined = undefined;
+      for (let i = 0; i < 25; i++) {
+        const page = await fetchActiveOffers(chainId, { limit: PAGE_LIMIT, before });
+        if (signal?.cancelled) return;
+        if (!page) {
+          // Worker unreachable mid-pagination. Bail out and let the
+          // chain-side log-scan fallback (consumed by OfferBook
+          // when `source === 'fallback'`) take over.
+          setOffers(null);
+          setSource('fallback');
+          setLoading(false);
+          return;
+        }
+        allOffers.push(...page.offers);
+        if (page.nextBefore === null) break;
+        before = page.nextBefore;
       }
 
       const fromBlock =
-        page.offers.length > 0 || (page as { nextBefore?: unknown }).nextBefore
+        allOffers.length > 0
           ? BigInt(
-              page.offers.reduce(
+              allOffers.reduce(
                 (m, o) => (o.firstSeenBlock > m ? o.firstSeenBlock : m),
                 0,
               ),
@@ -137,7 +155,7 @@ export function useIndexedActiveOffers(): UseIndexedActiveOffersResult {
         createdIds = delta.created;
       }
 
-      const merged = page.offers.filter(
+      const merged = allOffers.filter(
         (o) => !terminalIds.has(o.offerId.toString()),
       );
       // `createdIds` is informational here — we don't hydrate the new
