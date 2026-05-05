@@ -2,7 +2,8 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { L as Link } from '../components/L';
 import { useTranslation } from 'react-i18next';
 import { useWallet } from '../context/WalletContext';
-import { useDiamondContract, useDiamondRead } from '../contracts/useDiamond';
+import { useDiamondContract, useDiamondPublicClient, useDiamondRead } from '../contracts/useDiamond';
+import { prewarmTokenMeta } from '../lib/tokenMeta';
 import { useUserLoans } from '../hooks/useUserLoans';
 import { useMyOffers, type MyOfferStatus } from '../hooks/useMyOffers';
 import { useClaimables } from '../hooks/useClaimables';
@@ -77,6 +78,24 @@ export default function Dashboard() {
       ? (indexedLoans.map((l) => indexedToLoanSummary(l, l.role)) as LoanSummary[])
       : clientLoans;
   const loading = indexedSource === 'indexer' ? false : clientLoading;
+
+  // Pre-warm the ERC-20 symbol/decimals cache for every asset that
+  // appears in this list. Without it, each `<AssetSymbol>` mounts with
+  // an empty cache, falls back to the shortened-address label until
+  // its async fetch returns, and the user sees an "address flash" on
+  // first paint. Pre-warming runs all the lookups in parallel via
+  // viem's request batcher so the symbols are resolved by the time
+  // any row mounts. Idempotent + memo'd inside `prewarmTokenMeta`,
+  // so repeating the same address set is free.
+  const dashboardPublicClient = useDiamondPublicClient();
+  useEffect(() => {
+    const addresses: string[] = [];
+    for (const loan of loans) {
+      if (loan.principalAsset) addresses.push(loan.principalAsset);
+      if (loan.collateralAsset) addresses.push(loan.collateralAsset);
+    }
+    prewarmTokenMeta(addresses, dashboardPublicClient);
+  }, [loans, dashboardPublicClient]);
   const [myOfferStatus, setMyOfferStatus] = useState<MyOfferStatus>('active');
   const { rows: myOfferRows } = useMyOffers(address, myOfferStatus);
   const { claims: unclaimed } = useClaimables(address);

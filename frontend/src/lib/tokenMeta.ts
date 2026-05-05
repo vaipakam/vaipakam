@@ -97,8 +97,18 @@ export async function fetchTokenMeta(
           .catch(() => 18),
       ]);
       const meta: TokenMeta = { address: key, symbol, decimals };
-      memoryCache.set(key, meta);
-      if (symbol) persist(meta);
+      // Only cache successful resolutions. A failed `symbol()` call
+      // (transient RPC hiccup, wrong-chain client, contract not
+      // deployed on this chain, etc.) used to be cached too, which
+      // wedged AssetSymbol on the shortened-address fallback for the
+      // rest of the session — every render would hit the empty
+      // memory entry and skip the retry. Now an empty symbol means
+      // "couldn't resolve, try again next mount" rather than "this
+      // token has no symbol forever".
+      if (symbol) {
+        memoryCache.set(key, meta);
+        persist(meta);
+      }
       return meta;
     } catch {
       return fallback;
@@ -108,6 +118,36 @@ export async function fetchTokenMeta(
   })();
   inflight.set(key, task);
   return task;
+}
+
+/**
+ * One-shot pre-warm: fetch token metadata for every address in a list,
+ * populating the memory + localStorage cache so subsequent
+ * `useTokenMeta` calls hit the cache synchronously on first render.
+ *
+ * Use this from list views (Dashboard's loan list, Activity, Risk
+ * Watch) right after the loan/offer rows arrive — by the time
+ * `<AssetSymbol>` mounts inside each row, the cache hit returns the
+ * symbol immediately and the user never sees the
+ * shortened-address fallback flash. Idempotent and inflight-coalesced
+ * via `fetchTokenMeta`'s own dedup, so repeated calls with overlapping
+ * address sets are free.
+ */
+export function prewarmTokenMeta(
+  addresses: readonly string[],
+  publicClient: PublicClient | null,
+): void {
+  if (!publicClient) return;
+  const seen = new Set<string>();
+  for (const addr of addresses) {
+    if (!addr) continue;
+    const key = addr.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    if (key === ZERO_ADDRESS) continue;
+    if (memoryCache.has(key)) continue;
+    void fetchTokenMeta(addr, publicClient);
+  }
 }
 
 /**
