@@ -1877,6 +1877,7 @@ export function OfferTable({ title, subtitle, offers, anchorRateBps, address, ac
                         amount={offer.amount}
                         tokenId={offer.tokenId}
                         chainId={chainId}
+                        compact
                       />
                     </td>
                     <td>
@@ -1897,7 +1898,7 @@ export function OfferTable({ title, subtitle, offers, anchorRateBps, address, ac
                     <td>{offer.durationDays.toString()} {t('loanDetails.daysSuffix')}</td>
                     <td>
                       <div>
-                        <span className="mono"><TokenAmount amount={offer.collateralAmount} address={offer.collateralAsset} /></span>
+                        <span className="mono"><TokenAmount amount={offer.collateralAmount} address={offer.collateralAsset} compact /></span>
                         <div className="asset-addr"><AssetSymbol address={offer.collateralAsset} /></div>
                       </div>
                     </td>
