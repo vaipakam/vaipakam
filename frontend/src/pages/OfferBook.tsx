@@ -258,6 +258,15 @@ export default function OfferBook() {
   const [minDuration, setMinDuration] = useState('');
   const [maxDuration, setMaxDuration] = useState('');
   const [liquidityFilter, setLiquidityFilter] = useState<LiquidityFilter>('any');
+  // Default ON — the OfferBook is a market-discovery surface; the
+  // user's own offers are noise on the lender / borrower side they
+  // sit on (the "Your Offer" badge can't be acted on here, only on
+  // Dashboard). Filter applies BEFORE the per-side split + pagination
+  // so the per-page slice fills with actually-actionable offers
+  // instead of leaving gaps where the user's own offers sat. Toggle
+  // OFF to verify your own offer lands on the market with the
+  // expected ranking.
+  const [hideMyOffers, setHideMyOffers] = useState(true);
 
   // Anchor for the currently-filtered market. We pull the last N accepted
   // offers from the log index and pick the freshest one that passes the
@@ -801,7 +810,21 @@ export default function OfferBook() {
     }),
   [lendingAssetFilter, collateralAssetFilter, minDuration, maxDuration, liquidityFilter]);
 
-  const filtered = useMemo(() => offers.filter(matchesFilter), [offers, matchesFilter]);
+  // Two-stage filter: market criteria first, then optionally drop
+  // the connected wallet's own offers. The hide-my-offers gate runs
+  // BEFORE the per-side split + pagination so pagination naturally
+  // fills the per-page slot count with non-my offers instead of
+  // leaving page-position gaps where the user's own offers sat.
+  const filtered = useMemo(() => {
+    const lower = address?.toLowerCase() ?? '';
+    return offers.filter((o) => {
+      if (!matchesFilter(o)) return false;
+      if (hideMyOffers && lower && o.creator.toLowerCase() === lower) {
+        return false;
+      }
+      return true;
+    });
+  }, [offers, matchesFilter, hideMyOffers, address]);
 
   // Market-scoped anchor: walk the rolling recent-accepted list (newest
   // first) and pick the freshest entry that passes the current filter.
@@ -855,7 +878,7 @@ export default function OfferBook() {
   const [page, setPage] = useState(1);
   useEffect(() => {
     setPage(1);
-  }, [tab, lendingAssetFilter, collateralAssetFilter, minDuration, maxDuration, liquidityFilter, perSide, statusView]);
+  }, [tab, lendingAssetFilter, collateralAssetFilter, minDuration, maxDuration, liquidityFilter, perSide, statusView, hideMyOffers]);
   const activeSideList = tab === 'lender' ? lenderAll : tab === 'borrower' ? borrowerAll : null;
   const totalPages = activeSideList ? Math.max(1, Math.ceil(activeSideList.length / perSide)) : 1;
   const safePage = Math.min(page, totalPages);
@@ -1085,22 +1108,57 @@ export default function OfferBook() {
             </button>
           ))}
         </div>
-        <Picker<number>
-          icon={<ListOrdered size={14} />}
-          ariaLabel={t('offerBookPage.perSide')}
-          triggerPrefix={t('offerBookPage.perSide')}
-          value={perSide}
-          onSelect={setPerSide}
-          minWidth={140}
-          menuAlign="right"
-          items={[10, 20, 50, 100]
-            .filter((n) => n <= maxPerSide)
-            .map((n) => ({
-              value: n,
-              label: String(n),
-              pill: n === DEFAULT_PER_SIDE ? 'default' : undefined,
-            }))}
-        />
+        <div style={{ display: 'inline-flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+          {/* Hide-my-offers toggle. Only shown when a wallet is
+              connected (otherwise there are no "my" offers to hide).
+              Default ON — OfferBook is a market-discovery surface and
+              the user's own listings can't be acted on here anyway
+              (the "Your Offer" badge has no Accept button). Clicking
+              flips the filter; the per-side pagination automatically
+              fills the per-page count from non-my offers because the
+              filter runs BEFORE the per-side split. */}
+          {address && (
+            <button
+              type="button"
+              className="btn btn-ghost btn-sm"
+              onClick={() => setHideMyOffers((v) => !v)}
+              title={
+                hideMyOffers
+                  ? t('offerBookPage.hideMineShowAll', {
+                      defaultValue: 'Show all offers including your own',
+                    })
+                  : t('offerBookPage.hideMineHide', {
+                      defaultValue:
+                        "Hide your own offers from the market list (they're still visible on the Dashboard)",
+                    })
+              }
+            >
+              {hideMyOffers
+                ? t('offerBookPage.hideMineToggleShow', {
+                    defaultValue: 'Show my offers',
+                  })
+                : t('offerBookPage.hideMineToggleHide', {
+                    defaultValue: 'Hide my offers',
+                  })}
+            </button>
+          )}
+          <Picker<number>
+            icon={<ListOrdered size={14} />}
+            ariaLabel={t('offerBookPage.perSide')}
+            triggerPrefix={t('offerBookPage.perSide')}
+            value={perSide}
+            onSelect={setPerSide}
+            minWidth={140}
+            menuAlign="right"
+            items={[10, 20, 50, 100]
+              .filter((n) => n <= maxPerSide)
+              .map((n) => ({
+                value: n,
+                label: String(n),
+                pill: n === DEFAULT_PER_SIDE ? 'default' : undefined,
+              }))}
+          />
+        </div>
       </div>
 
       {indexLoading || (loading && offers.length === 0) ? (
