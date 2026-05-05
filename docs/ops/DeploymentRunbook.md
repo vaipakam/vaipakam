@@ -466,6 +466,46 @@ Manual checks post-smoke:
 - `RewardAggregatorFacet.isDayReadyToFinalize(day)` progresses through states 2 → 3 → 1 across the grace window.
 - One user claim succeeds after `finalizeDay` + `broadcastGlobal` + `onRewardBroadcastReceived`.
 
+### 5c. Chain-agnostic full-flow wrappers (preferred for any chain)
+
+The Sepolia / Anvil-prefixed scripts above were authored chain-by-chain
+as features landed; they're kept exactly as-is for historical traceability.
+For any new test run on any chain, prefer these three chain-agnostic
+entry points instead — each composes the legacy + new halves and runs
+them in append order (no merge of state, just one phase after the other):
+
+```bash
+# Full positive flow — 33 scenarios (15 legacy + 18 new):
+forge script script/PositiveFlows.s.sol --rpc-url $RPC_URL --broadcast --slow
+
+# Full partial flow — 13 UI-testable midpoint states (6 legacy + 7 new):
+forge script script/PartialFlows.s.sol  --rpc-url $RPC_URL --broadcast --slow
+
+# Full negative flow — 9 gate verifications:
+forge script script/NegativeFlows.s.sol --rpc-url $RPC_URL --broadcast --slow
+```
+
+Each wrapper instantiates its child scripts in the script-runner's
+own simulation memory and dispatches through their `external run()`
+— no extra deploy txns are emitted by the wrapper itself; the visible
+on-chain effect is exactly the union of the children's broadcasts in
+order. Both halves of each composition already use `Deployments.lib`
+for the diamond address and the standard env-var topology
+(`PRIVATE_KEY`, `ADMIN_*`, `LENDER_*`, `BORROWER_*`, `NEW_LENDER_*`,
+`NEW_BORROWER_*`), so the wrappers inherit chain-agnosticism with
+no further configuration.
+
+When to use which:
+- **Full sweep on a new chain** → use the `*Flows.s.sol` wrappers
+  (this section). One forge invocation per flow type instead of two.
+- **Re-run a specific subset** (e.g. just the new-features positive
+  scenarios) → invoke the underlying script directly
+  (`AnvilNewPositiveFlows.s.sol`, etc.). Useful when iterating on a
+  single feature surface.
+- **Anvil regression sweep** → keep using the per-script form in 5a;
+  the Anvil bootstrap leaves the chain in a known state that maps
+  one-to-one to each underlying script's expectations.
+
 ---
 
 ## 6. Key rotation (within 24h of deploy)

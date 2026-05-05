@@ -8,7 +8,27 @@ scripts that exercise every flow documented in
 - `contracts/script/AnvilNewPartialFlows.s.sol` — UI-testable midpoint states (chain stays at end-state for manual UI checks)
 - `contracts/script/AnvilNegativeFlows.s.sol` — documented reverts / constraints
 
-Every row maps a guide section → a scenario in each file. Where a
+For chain-agnostic full-flow runs (covering both the legacy
+Sepolia-prefixed scripts AND the new-features Anvil-prefixed scripts
+in one invocation per flow type), use the wrappers:
+
+- `contracts/script/PositiveFlows.s.sol` — appends
+  `SepoliaPositiveFlows` (15) + `AnvilNewPositiveFlows` (18) = 33 scenarios.
+- `contracts/script/PartialFlows.s.sol` — appends
+  `BaseSepoliaPartialFlows` (6) + `AnvilNewPartialFlows` (7) = 13 midpoints.
+- `contracts/script/NegativeFlows.s.sol` — chain-agnostic dispatch
+  over `AnvilNegativeFlows` (9 scenarios; only one negative source
+  exists today).
+
+The wrappers do NOT merge state — each child's `external run()` is
+dispatched in append order so the on-chain effect is exactly the
+union of the children's broadcasts. Both halves of each composition
+already use `Deployments.lib` for the diamond address and the
+standard env-var topology, so the wrappers inherit chain-agnosticism
+unchanged. See `docs/ops/DeploymentRunbook.md` §5c.
+
+Every row below maps a guide section → a scenario in each underlying
+file (the wrappers don't add scenarios; they just compose). Where a
 section is read-only or out of scope for Anvil, the cell is "n/a"
 with a one-line reason. Status column is updated as scenarios land.
 
