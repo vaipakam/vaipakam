@@ -1665,6 +1665,10 @@
     "colToken": "Token",
     "colBalance": "Saldo",
     "refresh": "Aktualisieren",
+    "refreshing": "Aktualisiere… ",
+    "synced": "Synchronisiert — ",
+    "secondsSuffix": "s",
+    "lastRefreshed": "Zuletzt aktualisiert {{when}}",
     "doNotSendWarning": "Hier werden ausschließlich vom Vaipakam-Protokoll verwaltete Token angezeigt. Senden Sie keine Token direkt an Ihre Vault-Adresse — eine Wiederherstellung ist möglicherweise nicht möglich.",
     "connectBody": "Verbinden Sie Ihr Wallet, um Ihre Vault-Bestände anzusehen.",
     "switchChainBody": "Wechseln Sie Ihr Wallet zu einer von Vaipakam unterstützten Chain, um Ihre Vault-Bestände anzusehen."

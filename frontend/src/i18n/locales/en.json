@@ -1668,6 +1668,10 @@
     "colToken": "Token",
     "colBalance": "Balance",
     "refresh": "Refresh",
+    "refreshing": "Refreshing… ",
+    "synced": "Synced — ",
+    "secondsSuffix": "s",
+    "lastRefreshed": "Last refreshed {{when}}",
     "doNotSendWarning": "Only tokens managed by the Vaipakam protocol are shown here. Do not send any tokens directly to your vault address — they may not be recoverable.",
     "connectBody": "Connect your wallet to view your vault holdings.",
     "switchChainBody": "Switch your wallet to a Vaipakam-supported chain to view your vault holdings."

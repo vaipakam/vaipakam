@@ -1665,6 +1665,10 @@
     "colToken": "Token",
     "colBalance": "Saldo",
     "refresh": "Actualizar",
+    "refreshing": "Actualizando… ",
+    "synced": "Sincronizado — ",
+    "secondsSuffix": "s",
+    "lastRefreshed": "Última actualización {{when}}",
     "doNotSendWarning": "Aquí solo se muestran los tokens gestionados por el protocolo Vaipakam. No envíes ningún token directamente a tu dirección de vault — podrían no ser recuperables.",
     "connectBody": "Conecta tu billetera para ver las tenencias de tu Vaipakam Vault.",
     "switchChainBody": "Cambia tu billetera a una cadena compatible con Vaipakam para ver las tenencias de tu Vaipakam Vault."

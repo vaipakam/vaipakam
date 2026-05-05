@@ -1665,6 +1665,10 @@
     "colToken": "토큰",
     "colBalance": "잔액",
     "refresh": "새로 고침",
+    "refreshing": "새로고침 중… ",
+    "synced": "동기화됨 — ",
+    "secondsSuffix": "초",
+    "lastRefreshed": "마지막 새로고침 {{when}}",
     "doNotSendWarning": "여기에는 Vaipakam 프로토콜이 관리하는 토큰만 표시됩니다. Vault 주소로 토큰을 직접 보내지 마세요 — 복구가 불가능할 수 있습니다.",
     "connectBody": "Vault 보유 자산을 확인하려면 지갑을 연결하세요.",
     "switchChainBody": "Vault 보유 자산을 확인하려면 지갑을 Vaipakam 지원 체인으로 전환하세요."

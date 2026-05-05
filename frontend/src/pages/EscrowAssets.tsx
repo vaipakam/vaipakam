@@ -10,6 +10,7 @@ import { useIndexedLoansForWallet } from '../hooks/useIndexedLoans';
 import { fetchOffersByCreator, type IndexedOffer } from '../lib/indexerClient';
 import { useLiveWatermark } from '../hooks/useLiveWatermark';
 import { peekTokenMeta, prewarmTokenMeta } from '../lib/tokenMeta';
+import { formatRelativeTime } from '../lib/format';
 import { ChevronDown, ChevronUp, ChevronsUpDown } from 'lucide-react';
 import { CardInfo } from '../components/CardInfo';
 import { AssetLink } from '../components/app/AssetLink';
@@ -303,6 +304,21 @@ export default function EscrowAssets() {
   // (`Refresh` → `Refreshing… 28s` → `Synced — 5s` → `Refresh`),
   // the inline progress bar, and the 30 s spam-click guard.
   const rescanCooldown = useRescanCooldown({ loading });
+
+  // "Last refreshed N min ago" status — paired with the bottom-row
+  // rescan button. Updated whenever the rows array's reference
+  // changes (i.e., the async balance fetch completed). The 30 s
+  // `now` ticker re-renders the relative-time text so it advances
+  // without user input. Same shape as the Dashboard pairing.
+  const [lastRefreshedAt, setLastRefreshedAt] = useState<number>(() => Date.now());
+  const [now, setNow] = useState<number>(() => Date.now());
+  useEffect(() => {
+    setLastRefreshedAt(Date.now());
+  }, [rows]);
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 30_000);
+    return () => clearInterval(id);
+  }, []);
 
   // Initial seed — show one row per token in a "loading" state so the
   // table doesn't reflow when balances arrive.
@@ -615,49 +631,11 @@ export default function EscrowAssets() {
                 are surfaced via the unified toggle's count above
                 (or the empty-state copy below the table). No
                 separate inline "zero hidden" pill needed now that
-                the toggle handles every "uninteresting" balance. */}
+                the toggle handles every "uninteresting" balance.
+                Refresh button moved to the bottom of the card —
+                pairs with the "Last refreshed N min ago" status on
+                the left, same chrome as the Dashboard footer. */}
           </span>
-          <button
-            type="button"
-            className="btn btn-secondary btn-sm rescan-btn"
-            onClick={() => {
-              rescanCooldown.trigger();
-              setReloadCounter((n) => n + 1);
-            }}
-            disabled={rescanCooldown.disabled || !escrow}
-            data-rescan-status={rescanCooldown.status}
-            style={
-              {
-                '--rescan-progress': `${rescanCooldown.remaining * 100}%`,
-              } as CSSProperties
-            }
-            aria-label={t('escrowAssets.refresh')}
-          >
-            {rescanCooldown.status === 'syncing' ? (
-              <>
-                <RefreshCw size={14} className="spin" style={{ marginRight: 4 }} />
-                {t('escrowAssets.refreshing', { defaultValue: 'Refreshing… ' })}
-                <span className="rescan-btn-secs">
-                  {rescanCooldown.secondsRemaining}
-                </span>
-                {t('escrowAssets.secondsSuffix', { defaultValue: 's' })}
-              </>
-            ) : rescanCooldown.status === 'synced' ? (
-              <>
-                <Check size={14} style={{ marginRight: 4 }} />
-                {t('escrowAssets.synced', { defaultValue: 'Synced — ' })}
-                <span className="rescan-btn-secs">
-                  {rescanCooldown.secondsRemaining}
-                </span>
-                {t('escrowAssets.secondsSuffix', { defaultValue: 's' })}
-              </>
-            ) : (
-              <>
-                <RefreshCw size={14} style={{ marginRight: 4 }} />
-                {t('escrowAssets.refresh')}
-              </>
-            )}
-          </button>
         </div>
 
         {err && (
@@ -820,6 +798,80 @@ export default function EscrowAssets() {
               ))}
             </tbody>
           </table>
+        )}
+
+        {/* Card-bottom toolbar — left carries the "last refreshed"
+            status (auto-advancing relative time), right carries the
+            rescan affordance. Same shape as the Dashboard footer so
+            the user learns the pattern once: status reads on the
+            left, action sits on the right edge. Always rendered when
+            an escrow exists so the user can trigger a manual refresh
+            even when the table is in one of the empty-state branches
+            above. */}
+        {escrow && (
+          <div
+            style={{
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              marginTop: 16,
+              flexWrap: 'wrap',
+              gap: 8,
+            }}
+          >
+            <span
+              style={{
+                fontSize: 12,
+                color: 'var(--text-secondary)',
+              }}
+            >
+              {t('escrowAssets.lastRefreshed', {
+                defaultValue: 'Last refreshed {{when}}',
+                when: formatRelativeTime(lastRefreshedAt, now),
+              })}
+            </span>
+            <button
+              type="button"
+              className="btn btn-secondary btn-sm rescan-btn"
+              onClick={() => {
+                rescanCooldown.trigger();
+                setReloadCounter((n) => n + 1);
+              }}
+              disabled={rescanCooldown.disabled || !escrow}
+              data-rescan-status={rescanCooldown.status}
+              style={
+                {
+                  '--rescan-progress': `${rescanCooldown.remaining * 100}%`,
+                } as CSSProperties
+              }
+              aria-label={t('escrowAssets.refresh')}
+            >
+              {rescanCooldown.status === 'syncing' ? (
+                <>
+                  <RefreshCw size={14} className="spin" style={{ marginRight: 4 }} />
+                  {t('escrowAssets.refreshing', { defaultValue: 'Refreshing… ' })}
+                  <span className="rescan-btn-secs">
+                    {rescanCooldown.secondsRemaining}
+                  </span>
+                  {t('escrowAssets.secondsSuffix', { defaultValue: 's' })}
+                </>
+              ) : rescanCooldown.status === 'synced' ? (
+                <>
+                  <Check size={14} style={{ marginRight: 4 }} />
+                  {t('escrowAssets.synced', { defaultValue: 'Synced — ' })}
+                  <span className="rescan-btn-secs">
+                    {rescanCooldown.secondsRemaining}
+                  </span>
+                  {t('escrowAssets.secondsSuffix', { defaultValue: 's' })}
+                </>
+              ) : (
+                <>
+                  <RefreshCw size={14} style={{ marginRight: 4 }} />
+                  {t('escrowAssets.refresh')}
+                </>
+              )}
+            </button>
+          </div>
         )}
       </div>
 

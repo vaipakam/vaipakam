@@ -1665,6 +1665,10 @@
     "colToken": "الرمز",
     "colBalance": "الرصيد",
     "refresh": "تحديث",
+    "refreshing": "جارٍ التحديث… ",
+    "synced": "تمت المزامنة — ",
+    "secondsSuffix": "ث",
+    "lastRefreshed": "آخر تحديث {{when}}",
     "doNotSendWarning": "تُعرض هنا فقط الرموز التي يديرها بروتوكول Vaipakam. لا ترسل أي رموز مباشرةً إلى عنوان مخزن Vaipakam — قد لا يمكن استردادها.",
     "connectBody": "صِل محفظتك لعرض موجودات مخزن Vaipakam الخاص بك.",
     "switchChainBody": "بدّل محفظتك إلى سلسلة مدعومة من Vaipakam لعرض موجودات مخزن Vaipakam الخاص بك."

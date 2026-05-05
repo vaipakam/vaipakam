@@ -1665,6 +1665,10 @@
     "colToken": "टोकन",
     "colBalance": "बैलेंस",
     "refresh": "रिफ्रेश",
+    "refreshing": "रिफ़्रेश हो रहा है… ",
+    "synced": "सिंक हो गया — ",
+    "secondsSuffix": "स",
+    "lastRefreshed": "अंतिम रिफ़्रेश {{when}}",
     "doNotSendWarning": "यहाँ केवल Vaipakam प्रोटोकॉल द्वारा प्रबंधित टोकन दिखाए जाते हैं। अपने Vault पते पर सीधे कोई टोकन न भेजें — वे पुनःप्राप्त नहीं हो सकते।",
     "connectBody": "अपनी Vault धारिताएँ देखने के लिए वॉलेट कनेक्ट करें।",
     "switchChainBody": "अपनी Vault धारिताएँ देखने के लिए वॉलेट को Vaipakam-समर्थित चेन पर बदलें।"

@@ -1665,6 +1665,10 @@
     "colToken": "代币",
     "colBalance": "余额",
     "refresh": "刷新",
+    "refreshing": "刷新中… ",
+    "synced": "已同步 — ",
+    "secondsSuffix": "秒",
+    "lastRefreshed": "上次刷新 {{when}}",
     "doNotSendWarning": "此处仅显示由 Vaipakam 协议管理的代币。请勿直接将任何代币发送到您的 Vaipakam Vault地址 — 这些代币可能无法找回。",
     "connectBody": "连接钱包以查看您的 Vaipakam Vault持仓。",
     "switchChainBody": "请将钱包切换到 Vaipakam 支持的链上以查看您的 Vaipakam Vault持仓。"

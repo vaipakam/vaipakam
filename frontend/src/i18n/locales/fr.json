@@ -1665,6 +1665,10 @@
     "colToken": "Jeton",
     "colBalance": "Solde",
     "refresh": "Actualiser",
+    "refreshing": "Actualisation… ",
+    "synced": "Synchronisé — ",
+    "secondsSuffix": "s",
+    "lastRefreshed": "Dernière actualisation {{when}}",
     "doNotSendWarning": "Seuls les jetons gérés par le protocole Vaipakam sont affichés ici. N'envoyez aucun jeton directement à l'adresse de votre Vaipakam Vault — ils pourraient ne pas être récupérables.",
     "connectBody": "Connectez votre portefeuille pour voir les avoirs de votre Vaipakam Vault.",
     "switchChainBody": "Basculez votre portefeuille vers une chaîne prise en charge par Vaipakam pour voir les avoirs de votre Vaipakam Vault."

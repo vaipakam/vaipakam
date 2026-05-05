@@ -1665,6 +1665,10 @@
     "colToken": "トークン",
     "colBalance": "残高",
     "refresh": "更新",
+    "refreshing": "更新中… ",
+    "synced": "同期済み — ",
+    "secondsSuffix": "秒",
+    "lastRefreshed": "最終更新 {{when}}",
     "doNotSendWarning": "ここに表示されるのは Vaipakam プロトコルが管理する トークンのみです。Vault アドレスにトークンを直接 送らないでください — 復元できない可能性があります。",
     "connectBody": "ウォレットを接続してVault保有資産を表示してください。",
     "switchChainBody": "Vaipakam 対応チェーンにウォレットを切り替えてVault 保有資産を表示してください。"
