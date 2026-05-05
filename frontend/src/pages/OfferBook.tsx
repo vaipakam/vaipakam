@@ -1998,7 +1998,11 @@ export function OfferTable({ title, subtitle, offers, anchorRateBps, address, ac
                   : null;
                 return (
                   <tr key={offer.id.toString()}>
-                    <td>#{offer.id.toString()}</td>
+                    <td>
+                      <Link to={`/app/offers/${offer.id.toString()}`}>
+                        #{offer.id.toString()}
+                      </Link>
+                    </td>
                     <td>
                       <span className={`status-badge ${offer.offerType === 0 ? 'lender' : 'borrower'}`}>
                         {OFFER_TYPE_LABELS[offer.offerType]}

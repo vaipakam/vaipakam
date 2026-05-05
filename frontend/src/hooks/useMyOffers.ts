@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { Address } from 'viem';
 import {
   useDiamondPublicClient,
@@ -9,7 +9,13 @@ import { DEFAULT_CHAIN } from '../contracts/config';
 import { DIAMOND_ABI_VIEM as DIAMOND_ABI } from '../contracts/abis';
 import { batchCalls, encodeBatchCalls } from '../lib/multicall';
 import { useLogIndex } from './useLogIndex';
+import { useLiveWatermark } from './useLiveWatermark';
 import { readOfferSnapshot, writeOfferSnapshot } from '../lib/offerSnapshot';
+import {
+  fetchOffersByCreator,
+  indexedToRawOffer,
+  type IndexedOffer,
+} from '../lib/indexerClient';
 import { toOfferData, type OfferData, type RawOffer } from '../pages/OfferBook';
 
 const ZERO_ADDR = '0x0000000000000000000000000000000000000000';
@@ -73,6 +79,110 @@ export function useMyOffers(
   const diamondRead = useDiamondRead();
   const publicClient = useDiamondPublicClient();
   const activeReadChain = useReadChain();
+  const chainId = activeReadChain.chainId ?? DEFAULT_CHAIN.chainId;
+  // Watermark-driven refresh trigger. When the protocol-wide create
+  // counter advances (or the manual rescan kicks the watermark) the
+  // indexer fetch effect re-runs. 20 s cadence matches the rest of
+  // the slower-page polling tier (Dashboard, Risk Watch, Analytics).
+  const { version: watermarkVersion } = useLiveWatermark({ pollIntervalMs: 20_000 });
+
+  // ── Indexer-first path ──
+  //
+  // Pre-Phase-9, this hook fed exclusively off `useLogIndex` (the
+  // local browser-side log scan), which lags the worker's snapshot
+  // by however long it takes the local cursor to reach the latest
+  // safe block. On a fresh page load that lag was 5–60 s typically,
+  // and during that window recently-created offers were INVISIBLE on
+  // the Dashboard "Your Offers" card while the OfferBook (which
+  // reads from `useIndexedActiveOffers`) already showed them. The
+  // user reported a 2-vs-5 mismatch under that exact pattern.
+  //
+  // The indexer endpoint `/offers/by-creator/{addr}` returns every
+  // offer the wallet has ever created with full struct fields and
+  // a status enum (active / accepted / cancelled / expired). When
+  // reachable, we use it as the SOLE source of truth — no chain
+  // reads at all (the existing `getOffer` multicall is gated off).
+  // When unreachable, the fallback path's `getOffer` multicall
+  // takes over via the existing useLogIndex-driven flow below.
+  //
+  // RPC budget impact: zero new chain reads on the happy path; on
+  // worker-down the cost is identical to before.
+  const [indexerRaw, setIndexerRaw] = useState<IndexedOffer[] | null>(null);
+  const [indexerLoading, setIndexerLoading] = useState<boolean>(Boolean(address));
+  // Bumped by `refetch()` to force the effect to re-run even when
+  // none of its other deps changed (e.g. user clicked the manual
+  // rescan button after an action they want reflected immediately).
+  const [refetchTick, setRefetchTick] = useState(0);
+
+  useEffect(() => {
+    if (!address) {
+      setIndexerRaw(null);
+      setIndexerLoading(false);
+      return;
+    }
+    let cancelled = false;
+    setIndexerLoading(true);
+    (async () => {
+      try {
+        const all: IndexedOffer[] = [];
+        let before: number | undefined = undefined;
+        // Paginate up to 5 × 200 = 1000 offers. A single wallet hitting
+        // that ceiling would be vanishingly rare; if it ever happens
+        // we lift the cap. Caps a runaway server response too.
+        for (let i = 0; i < 5; i++) {
+          const page = await fetchOffersByCreator(chainId, address, {
+            limit: 200,
+            before,
+          });
+          if (!page) {
+            // Worker unreachable — bail out and let the logIndex
+            // fallback path below produce the rows.
+            if (!cancelled) {
+              setIndexerRaw(null);
+              setIndexerLoading(false);
+            }
+            return;
+          }
+          all.push(...page.offers);
+          if (page.nextBefore === null) break;
+          before = page.nextBefore;
+        }
+        if (!cancelled) {
+          setIndexerRaw(all);
+          setIndexerLoading(false);
+        }
+      } catch {
+        if (!cancelled) {
+          setIndexerRaw(null);
+          setIndexerLoading(false);
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [address, chainId, watermarkVersion, refetchTick]);
+
+  // OfferAccepted event → loanId map. Used for the indexer-first
+  // path too: the indexer surfaces status='accepted' but doesn't
+  // currently return the linked loanId in the by-creator endpoint,
+  // so we still need the local events for that mapping. The events
+  // array is already in scope for the fallback path; no extra cost.
+  // While useLogIndex catches up on a fresh just-accepted offer, the
+  // row renders with `loanId: undefined` for a moment — the
+  // "View loan" link is hidden until the event lands.
+  const loanByOfferEvents = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const ev of events) {
+      if (ev.kind !== 'OfferAccepted') continue;
+      const oid = ev.args.offerId;
+      const lid = ev.args.loanId;
+      if (typeof oid === 'string' && typeof lid === 'string') {
+        m.set(oid, lid);
+      }
+    }
+    return m;
+  }, [events]);
 
   // Walk the log-index ONCE per (events, address) pair to bucket the
   // caller's offers by status. The three buckets are derived purely
@@ -234,6 +344,17 @@ export function useMyOffers(
 
   useEffect(() => {
     if (indexLoading) return;
+    // Indexer-first short-circuit: when the worker returned a full
+    // by-creator page, the chain-read multicall is redundant — every
+    // field the table renders already lives on the indexer struct.
+    // Skipping here is the load-bearing "no unnecessary RPC spam"
+    // gate. If the worker is unreachable, `indexerRaw` stays null
+    // and we fall through to the multicall below.
+    if (indexerRaw !== null) {
+      setLiveOffers([]);
+      setLoading(false);
+      return;
+    }
     if (!address || idsToFetch.length === 0) {
       setLiveOffers([]);
       return;
@@ -291,13 +412,49 @@ export function useMyOffers(
     address,
     idsToFetch,
     indexLoading,
+    indexerRaw,
     diamondRead,
     publicClient,
     activeReadChain.diamondAddress,
   ]);
 
   // Assemble the result, status-tagged. Newest first by id.
+  //
+  // Indexer-first: when `indexerRaw` is populated the rows derive
+  // directly from the indexer payload (every field comes from the
+  // worker's snapshot, no chain reads). The fallback branch — a
+  // longer arm that consumes `useLogIndex` events plus the
+  // multicall-fetched `liveOffers` — only runs when the worker is
+  // unreachable.
   const rows = useMemo<MyOfferRow[]>(() => {
+    if (indexerRaw !== null) {
+      const out: MyOfferRow[] = [];
+      for (const o of indexerRaw) {
+        const offer = toOfferData(indexedToRawOffer(o));
+        // Status mapping: indexer 'active'/'accepted'/'cancelled'
+        // map onto MyOfferRow's three buckets. 'expired' offers
+        // (created but never accepted before duration elapsed) are
+        // dropped here — they have no UI surface today; revisit if
+        // we ever build an "expired" tab.
+        if (o.status === 'active') {
+          out.push({ status: 'active', offer });
+        } else if (o.status === 'accepted') {
+          out.push({
+            status: 'filled',
+            offer,
+            loanId: loanByOfferEvents.get(String(o.offerId)),
+          });
+        } else if (o.status === 'cancelled') {
+          out.push({ status: 'cancelled', offer });
+        }
+      }
+      out.sort((a, b) =>
+        a.offer.id > b.offer.id ? -1 : a.offer.id < b.offer.id ? 1 : 0,
+      );
+      return out.filter((r) => status === 'all' || r.status === status);
+    }
+
+    // Fallback path — same shape as before the indexer-first refactor.
     const filledLoanMap = new Map(
       buckets.filledIds.map((r) => [r.offerId, r.loanId]),
     );
@@ -327,9 +484,28 @@ export function useMyOffers(
       a.offer.id > b.offer.id ? -1 : a.offer.id < b.offer.id ? 1 : 0,
     );
     return out;
-  }, [liveOffers, buckets, status]);
+  }, [indexerRaw, loanByOfferEvents, liveOffers, buckets, status]);
 
-  return { rows, loading };
+  // Combined loading: while the indexer has never resolved we show
+  // its loading state; once it has data, loading is false. If the
+  // indexer is unreachable, fall through to the fallback path's
+  // existing `loading` (driven by the multicall fetch).
+  const combinedLoading =
+    indexerRaw !== null
+      ? false
+      : indexerLoading
+        ? true
+        : loading;
+
+  // Imperative refetch — bumps `refetchTick` to re-run the indexer
+  // effect even when none of its other deps changed. Wired into the
+  // Dashboard rescan button so users who want fresh data right now
+  // don't have to wait for the next watermark probe.
+  const refetch = useCallback(async () => {
+    setRefetchTick((n) => n + 1);
+  }, []);
+
+  return { rows, loading: combinedLoading, refetch };
 }
 
 /**

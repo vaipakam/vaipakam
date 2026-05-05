@@ -1488,7 +1488,7 @@
       "basics-vpfi-intro": {
         "q": "What is VPFI, and do I need any to use the app?",
         "a1": "VPFI is Vaipakam's native platform token. It is <s>not</s> required to lend or borrow — the app works entirely without it, and every core feature is open to anyone who shows up.",
-        "a2": "Where VPFI becomes useful is for regular users. Holding it in the Vaipakam vault grants a discount on platform fees and lets the holder earn passive rewards on top. Think of it as an optional loyalty layer, not a gate."
+        "a2": "Where VPFI becomes useful is for regular users. Holding it in the Vaipakam Vaults grants a discount on platform fees and lets the holder earn passive rewards on top. Think of it as an optional loyalty layer, not a gate."
       },
       "assets": {
         "q": "What assets can I lend or borrow?",
@@ -1570,7 +1570,7 @@
       },
       "vpfi-discount": {
         "q": "How does the VPFI discount work?",
-        "a1": "VPFI held in the Vaipakam vault automatically places the holder in a discount tier. One platform-level consent covers both the borrower (initiation) and lender (yield) legs, and the discounted fee is auto-deducted in VPFI from the vault — the borrower then receives the full principal and the lender keeps the full interest on the discount path.",
+        "a1": "VPFI held in the Vaipakam Vaults automatically places the holder in a discount tier. One platform-level consent covers both the borrower (initiation) and lender (yield) legs, and the discounted fee is auto-deducted in VPFI from the vault — the borrower then receives the full principal and the lender keeps the full interest on the discount path.",
         "tableTier": "Tier",
         "tableEscrow": "VPFI in the vault",
         "tableDiscount": "Discount",
@@ -1609,7 +1609,7 @@
       },
       "integrator-rental": {
         "q": "How do I read rental state for a Vaipakam-rented NFT?",
-        "a1": "Query the lender's <s>Vaipakam vault wrapper</s> — not the underlying NFT — through the Diamond. For ERC-1155 rentals with multiple concurrent renters on the same <c>(nftContract, tokenId)</c>, <c2>escrowGetNFTQuantity</c2> returns the <em>active aggregate</em> quantity and <c3>escrowGetNFTUserExpires</c3> returns the minimum active expiry.",
+        "a1": "Query the lender's <s>Vaipakam Vaults wrapper</s> — not the underlying NFT — through the Diamond. For ERC-1155 rentals with multiple concurrent renters on the same <c>(nftContract, tokenId)</c>, <c2>escrowGetNFTQuantity</c2> returns the <em>active aggregate</em> quantity and <c3>escrowGetNFTUserExpires</c3> returns the minimum active expiry.",
         "a2": "The wrapper maintains authoritative rental state even when the underlying NFT does <s>not</s> implement ERC-4907, so integrators get a uniform surface across every rented asset."
       },
       "integrator-subgraph": {

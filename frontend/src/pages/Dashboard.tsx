@@ -103,7 +103,7 @@ export default function Dashboard() {
     prewarmTokenMeta(addresses, dashboardPublicClient);
   }, [loans, dashboardPublicClient]);
   const [myOfferStatus, setMyOfferStatus] = useState<MyOfferStatus>('active');
-  const { rows: myOfferRows } = useMyOffers(address, myOfferStatus);
+  const { rows: myOfferRows, refetch: refetchMyOffers } = useMyOffers(address, myOfferStatus);
   const { claims: unclaimed, reload: reloadClaimables } = useClaimables(address);
   // Same cooldown + sync-status state machine the other rescan buttons
   // use, with adaptive growth that arrests spam-clicks: 30 s base,
@@ -152,6 +152,11 @@ export default function Dashboard() {
   );
   const [escrow, setEscrow] = useState<string | null>(null);
   const [loansPage, setLoansPage] = useState(0);
+  // Independent page cursor for the "Your Offers" card. Same default
+  // page size as Your Loans (no separate picker yet — typical wallets
+  // sit well under 10 offers; revisit if power-user telemetry shows
+  // people stuck on a 10-row page).
+  const [offersPage, setOffersPage] = useState(0);
   const [roleFilter, setRoleFilter] = useState<'all' | 'lender' | 'borrower'>('all');
   const [statusFilter, setStatusFilter] = useState<'all' | LoanStatus>('all');
   const [pageSize, setPageSize] = useState<number>(DEFAULT_PAGE_SIZE);
@@ -203,6 +208,11 @@ export default function Dashboard() {
   useEffect(() => {
     setLoansPage(0);
   }, [roleFilter, statusFilter, pageSize, sortBy, sortDir]);
+  // Snap Your Offers back to page 0 when the status filter narrows
+  // the set — same rationale as the Your Loans pager reset above.
+  useEffect(() => {
+    setOffersPage(0);
+  }, [myOfferStatus]);
 
   // Risks for the FULL filtered set, not just the current page — sorting by
   // HF or LTV needs the values for every candidate row, not only the rows
@@ -445,6 +455,9 @@ export default function Dashboard() {
         <div style={{ marginTop: 16 }}>
           <MyOffersTable
             rows={myOfferRows}
+            page={offersPage}
+            pageSize={DEFAULT_PAGE_SIZE}
+            onPageChange={setOffersPage}
             onCancel={async (offerId) => {
               if (cancellingOfferId !== null) return;
               setCancellingOfferId(offerId);
@@ -774,6 +787,7 @@ export default function Dashboard() {
               void refetchIndexedLoans();
               void reloadUserLoans();
               void reloadClaimables();
+              void refetchMyOffers();
             }}
             disabled={dashboardRescanCooldown.disabled}
             data-rescan-status={dashboardRescanCooldown.status}

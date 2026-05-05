@@ -8,6 +8,7 @@ import {
 import type { MyOfferRow } from '../../hooks/useMyOffers';
 import { CardInfo } from '../CardInfo';
 import { HoverTip } from '../HoverTip';
+import { Pager } from './Pager';
 import { PrincipalCell } from './PrincipalCell';
 
 interface Props {
@@ -33,6 +34,13 @@ interface Props {
   cardHelpId?: string;
   /** Optional element rendered on the right of the card header. */
   headerAction?: React.ReactNode;
+  /** Optional pagination props. When all three are supplied, the
+   *  table slices `rows` to the current page and renders a `<Pager>`
+   *  in the card footer. When omitted (legacy callers), the full
+   *  list is rendered without paging. */
+  page?: number;
+  pageSize?: number;
+  onPageChange?: (page: number) => void;
 }
 
 /**
@@ -66,8 +74,20 @@ export function MyOffersTable({
   subtitle,
   cardHelpId,
   headerAction,
+  page,
+  pageSize,
+  onPageChange,
 }: Props) {
   const { t } = useTranslation();
+  // Pagination is opt-in: when all three props are present, slice;
+  // otherwise render the full list (legacy behaviour).
+  const paginated =
+    typeof page === 'number' &&
+    typeof pageSize === 'number' &&
+    typeof onPageChange === 'function';
+  const visibleRows = paginated
+    ? rows.slice(page * pageSize, (page + 1) * pageSize)
+    : rows;
 
   return (
     <div className="card" style={{ marginTop: 16 }}>
@@ -118,7 +138,7 @@ export function MyOffersTable({
               </tr>
             </thead>
             <tbody>
-              {rows.map((row) => {
+              {visibleRows.map((row) => {
                 const offer = row.offer;
                 if (row.status === 'cancelled') {
                   // Three-state cancelled rendering driven by data
@@ -140,7 +160,7 @@ export function MyOffersTable({
                         key={offer.id.toString()}
                         style={{ opacity: 0.7 }}
                       >
-                        <td>#{offer.id.toString()}</td>
+                        <td><Link to={`/app/offers/${offer.id.toString()}`}>#{offer.id.toString()}</Link></td>
                         <td>
                           <span
                             className={`status-badge ${
@@ -179,7 +199,7 @@ export function MyOffersTable({
                       key={offer.id.toString()}
                       style={{ opacity: 0.65 }}
                     >
-                      <td>#{offer.id.toString()}</td>
+                      <td><Link to={`/app/offers/${offer.id.toString()}`}>#{offer.id.toString()}</Link></td>
                       <td>
                         <span
                           className={`status-badge ${
@@ -232,7 +252,7 @@ export function MyOffersTable({
                 const isFilled = row.status === 'filled';
                 return (
                   <tr key={offer.id.toString()}>
-                    <td>#{offer.id.toString()}</td>
+                    <td><Link to={`/app/offers/${offer.id.toString()}`}>#{offer.id.toString()}</Link></td>
                     <td>
                       <span
                         className={`status-badge ${
@@ -356,6 +376,15 @@ export function MyOffersTable({
               })}
             </tbody>
           </table>
+          {paginated && (
+            <Pager
+              total={rows.length}
+              pageSize={pageSize!}
+              page={page!}
+              onPageChange={onPageChange!}
+              unit="offer"
+            />
+          )}
           <div
             style={{
               fontSize: '0.7rem',

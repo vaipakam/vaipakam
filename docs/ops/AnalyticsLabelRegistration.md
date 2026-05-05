@@ -6,6 +6,7 @@ Audience: release engineer + compliance lead, run after each new
 chain deploy where Vaipakam is operating with real value.
 
 Companion docs:
+
 - [`EscrowStuckRecoveryDesign.md`](../DesignsAndPlans/EscrowStuckRecoveryDesign.md)
   — explains why the labeling matters in the threat model.
 - [`DeploymentRunbook.md`](DeploymentRunbook.md) — the broader deploy
@@ -71,6 +72,7 @@ proxy automatically displays the relationship. Same mechanism Aave /
 Compound / Uniswap rely on for their proxy-based deployments.
 
 So our Etherscan strategy is:
+
 - **One** public-tag submission for the `VaipakamEscrowImplementation`
 - **One** public-tag submission for the `VaipakamDiamond`
 - Verified contract source for both
@@ -238,6 +240,7 @@ ask for additional examples or a technical call.
 ### 5c. What it gets us
 
 Once registered:
+
 - Reactor (their forensic tool) shows "Vaipakam: Vaipakam Vaults"
   on every address they identify as matching the pattern.
 - KYT (their compliance tool used by exchanges and on/off-ramps)
@@ -291,6 +294,7 @@ is a common Arkham operation.
 ## 9. DeBank / Zapper / Zerion (portfolio aggregators)
 
 Each maintains a protocol catalogue. Apply via:
+
 - DeBank: [`debank.com/lounge` → Submit Project](https://debank.com/lounge)
 - Zapper: [`zapper.xyz/dapp/listing`](https://zapper.xyz/dapp/listing)
 - Zerion: [`zerion.io/contact`](https://zerion.io/contact)
@@ -324,8 +328,9 @@ firms), update:
 
 - The Asset Viewer warning copy may be slightly softened (still warn,
   but reference the labeled-protocol status in case of disputes):
+
   > Tokens managed by the Vaipakam protocol are shown here.
-  > Vaipakam vault addresses are registered with major
+  > Vaipakam Vaults addresses are registered with major
   > blockchain analytics providers; if you encounter compliance
   > friction at an external service, contact us with your vault
   > address.
@@ -340,17 +345,17 @@ firms), update:
 
 For each new chain we deploy on, complete in order:
 
-| Step | Action | Owner | Time-box |
-|---|---|---|---|
-| 1 | Verify all contracts on chain explorer + Sourcify | Release eng | Day 1 |
-| 2 | Submit Etherscan-family public name tags (Diamond + Implementation) | Release eng | Day 1 |
-| 3 | Email Chainalysis data team | Compliance lead | Day 2 |
-| 4 | Email TRM Labs | Compliance lead | Day 2 |
-| 5 | Email Elliptic | Compliance lead | Day 2 |
-| 6 | Submit Arkham label | Release eng | Day 3 |
-| 7 | Apply to DeBank / Zapper / Zerion | Marketing / partnerships | Week 1 |
-| 8 | PR to MEW ethereum-lists | Release eng | Week 1 |
-| 9 | Update frontend copy once labels confirmed | Frontend eng | When confirmed |
+| Step | Action                                                              | Owner                    | Time-box       |
+| ---- | ------------------------------------------------------------------- | ------------------------ | -------------- |
+| 1    | Verify all contracts on chain explorer + Sourcify                   | Release eng              | Day 1          |
+| 2    | Submit Etherscan-family public name tags (Diamond + Implementation) | Release eng              | Day 1          |
+| 3    | Email Chainalysis data team                                         | Compliance lead          | Day 2          |
+| 4    | Email TRM Labs                                                      | Compliance lead          | Day 2          |
+| 5    | Email Elliptic                                                      | Compliance lead          | Day 2          |
+| 6    | Submit Arkham label                                                 | Release eng              | Day 3          |
+| 7    | Apply to DeBank / Zapper / Zerion                                   | Marketing / partnerships | Week 1         |
+| 8    | PR to MEW ethereum-lists                                            | Release eng              | Week 1         |
+| 9    | Update frontend copy once labels confirmed                          | Frontend eng             | When confirmed |
 
 Track each chain's progress in
 `docs/internal/AnalyticsLabelStatus.md` (create on first use). Each

@@ -6,6 +6,7 @@ import Dashboard from './pages/Dashboard';
 import OfferBook from './pages/OfferBook';
 import CreateOffer from './pages/CreateOffer';
 import LoanDetails from './pages/LoanDetails';
+import OfferDetails from './pages/OfferDetails';
 import LenderEarlyWithdrawal from './pages/LenderEarlyWithdrawal';
 import BorrowerPreclose from './pages/BorrowerPreclose';
 import Refinance from './pages/Refinance';
@@ -121,6 +122,7 @@ function pageRoutes(): ReactElement {
       <Route path="app" element={<AppLayout />}>
         <Route index element={<Dashboard />} />
         <Route path="offers" element={<OfferBook />} />
+        <Route path="offers/:offerId" element={<OfferDetails />} />
         <Route path="create-offer" element={<CreateOffer />} />
         <Route path="loans/:loanId" element={<LoanDetails />} />
         <Route path="loans/:loanId/early-withdrawal" element={<LenderEarlyWithdrawal />} />
