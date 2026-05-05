@@ -108,6 +108,12 @@ const DETAILS_REFRESH_BATCH = 50;
  *  consumes the same scan window. */
 const CURSOR_KIND = 'diamond';
 
+/** Conservative reorg-horizon buffer used when an RPC doesn't support
+ *  the `safe` block tag. Ethereum's exact finality is 32 blocks; L2s
+ *  (Base / Arb / OP / Polygon zkEVM) settle well within ~10. 32 covers
+ *  every chain we ship on with a comfortable margin. */
+const SAFE_FALLBACK_BUFFER = 32n;
+
 interface ChainIndexerResult {
   chainId?: number;
   scannedFrom: bigint;
@@ -156,7 +162,23 @@ async function runChainIndexerForChain(
   const deployBlock = BigInt(getDeployBlock(chainId) ?? 0);
 
   const client = createPublicClient({ transport: http(chain.rpc) });
-  const head = await client.getBlockNumber();
+  // Use the safe-tag head, NOT latest. Caching events from the unsafe
+  // tip would mean a 1- to 32-block reorg could remove a block whose
+  // OfferAccepted / LoanInitiated we already wrote to D1, and the next
+  // cron run (resuming from `cursor + 1`) would skip the reorged
+  // block, leaving the stale row in D1 forever. Reading at the safe
+  // head keeps the cursor reorg-proof — by the time a block is
+  // safe-tagged its reorg horizon is past. Falls back to
+  // `latest - SAFE_FALLBACK_BUFFER` when the RPC doesn't support the
+  // safe tag (older nodes / some private RPCs).
+  let head: bigint;
+  try {
+    const safeBlock = await client.getBlock({ blockTag: 'safe' });
+    head = safeBlock.number;
+  } catch {
+    const latest = await client.getBlockNumber();
+    head = latest > SAFE_FALLBACK_BUFFER ? latest - SAFE_FALLBACK_BUFFER : 0n;
+  }
 
   // Resume cursor: last block we successfully processed. On first
   // run, start from deployBlock — but cap the per-tick work at

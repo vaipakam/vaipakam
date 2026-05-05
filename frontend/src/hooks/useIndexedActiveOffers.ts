@@ -28,7 +28,7 @@
  *      (`chunkedGetLogs` defaults).
  */
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { usePublicClient } from 'wagmi';
 import { type Address } from 'viem';
 import {
@@ -68,6 +68,21 @@ export function useIndexedActiveOffers(): UseIndexedActiveOffersResult {
   const [source, setSource] = useState<'indexer' | 'fallback' | null>(null);
   const [loading, setLoading] = useState(true);
 
+  // Mirror `snapshot` into a ref so the watermark probe's 5 s cadence
+  // doesn't churn `tick`'s identity. The probe builds a new snapshot
+  // OBJECT on every tick (even when neither counter advanced — the
+  // `safeBlock` value alone changes every block), and putting that
+  // object in `tick`'s dep list propagated up through the effect that
+  // calls `tick`, so the OfferBook was firing an indexer fetch +
+  // chunked-getLogs catch-up every 5 s instead of only on actual
+  // counter advance. The ref pattern reads the latest snapshot at
+  // call-time without making `tick` reactive to it. The catch-up
+  // window's upper bound (`snapshotRef.current?.safeBlock`) is
+  // therefore "freshest known safe block at the moment the refetch
+  // ran", which is exactly what we want.
+  const snapshotRef = useRef(snapshot);
+  snapshotRef.current = snapshot;
+
   const tick = useCallback(
     async (signal?: { cancelled: boolean }) => {
       const page = await fetchActiveOffers(chainId, { limit: PAGE_LIMIT });
@@ -91,10 +106,11 @@ export function useIndexedActiveOffers(): UseIndexedActiveOffersResult {
 
       let terminalIds = new Set<string>();
       let createdIds: bigint[] = [];
-      if (publicClient && diamond && snapshot && snapshot.safeBlock > fromBlock) {
+      const liveSnapshot = snapshotRef.current;
+      if (publicClient && diamond && liveSnapshot && liveSnapshot.safeBlock > fromBlock) {
         const logs = await chunkedGetLogs(publicClient, {
           fromBlock: fromBlock + 1n,
-          toBlock: snapshot.safeBlock,
+          toBlock: liveSnapshot.safeBlock,
           address: diamond as Address,
           topics: [
             [TOPIC0.OFFER_CREATED, TOPIC0.OFFER_ACCEPTED, TOPIC0.OFFER_CANCELED],
@@ -120,7 +136,7 @@ export function useIndexedActiveOffers(): UseIndexedActiveOffersResult {
       setSource('indexer');
       setLoading(false);
     },
-    [chainId, publicClient, diamond, snapshot],
+    [chainId, publicClient, diamond],
   );
 
   useEffect(() => {

@@ -15,7 +15,7 @@
  * worker is a CACHE, not an oracle.
  */
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { usePublicClient } from 'wagmi';
 import { type Address } from 'viem';
 import {
@@ -64,6 +64,13 @@ export function useIndexedActiveLoans(): UseIndexedLoansResult {
   const [source, setSource] = useState<'indexer' | 'fallback' | null>(null);
   const [loading, setLoading] = useState(true);
 
+  // Snapshot in a ref so the watermark probe's 5 s tick doesn't
+  // refire this effect every probe (the snapshot's `safeBlock`
+  // changes every block even when the create counters didn't move).
+  // Refetches now fire only on actual `version` advance.
+  const snapshotRef = useRef(snapshot);
+  snapshotRef.current = snapshot;
+
   useEffect(() => {
     let cancelled = false;
     async function tick() {
@@ -84,10 +91,11 @@ export function useIndexedActiveLoans(): UseIndexedLoansResult {
         page.loans.length > 0
           ? BigInt(page.loans.reduce((m, l) => (l.startBlock > m ? l.startBlock : m), 0))
           : 0n;
-      if (publicClient && diamond && snapshot && snapshot.safeBlock > fromBlock) {
+      const liveSnapshot = snapshotRef.current;
+      if (publicClient && diamond && liveSnapshot && liveSnapshot.safeBlock > fromBlock) {
         const logs = await chunkedGetLogs(publicClient, {
           fromBlock: fromBlock + 1n,
-          toBlock: snapshot.safeBlock,
+          toBlock: liveSnapshot.safeBlock,
           address: diamond as Address,
           topics: [
             [TOPIC0.LOAN_REPAID, TOPIC0.LOAN_DEFAULTED],
@@ -105,7 +113,7 @@ export function useIndexedActiveLoans(): UseIndexedLoansResult {
     return () => {
       cancelled = true;
     };
-  }, [chainId, version, publicClient, diamond, snapshot]);
+  }, [chainId, version, publicClient, diamond]);
 
   return { loans, source, loading };
 }

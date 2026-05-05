@@ -547,6 +547,38 @@ async function getBlockNumber(rpcUrl: string): Promise<number> {
 }
 
 /**
+ * Fetch the safe-tag block number (canonical reorg horizon: Ethereum 32
+ * blocks back from head, L2s typically 2 blocks). Used as the upper
+ * bound of every scan so the cached events never include rows from a
+ * block that could later get reorged out, AND so the cached `lastBlock`
+ * cursor is safe-aligned — rescan / next-mount picks up exactly from
+ * the previous safe head + 1 instead of re-reading the unsafe tail.
+ *
+ * Falls back to `eth_blockNumber - REORG_BUFFER` when the RPC doesn't
+ * support the `safe` tag (older nodes / some private RPCs). The buffer
+ * is conservative for L2 — Sepolia / Base / Arb / OP all have <12 block
+ * reorg horizons in practice, and 32 covers Ethereum's exact finality
+ * window.
+ */
+const SAFE_FALLBACK_BUFFER = 32;
+async function getSafeBlockNumber(rpcUrl: string): Promise<number> {
+  try {
+    const block = await jsonRpcCall<{ number?: string } | null>(
+      rpcUrl,
+      'eth_getBlockByNumber',
+      ['safe', false],
+    );
+    if (block && typeof block.number === 'string') {
+      return Number(block.number);
+    }
+  } catch {
+    // Fall through to latest-minus-buffer.
+  }
+  const latest = await getBlockNumber(rpcUrl);
+  return Math.max(0, latest - SAFE_FALLBACK_BUFFER);
+}
+
+/**
  * In-flight scan promises keyed by (chainId, diamond). Multiple hooks on the
  * same page (`useProtocolStats`, `useUserStats`, `useRecentOffers`, …) all
  * call `loadLoanIndex` on mount — without this, each hook independently
@@ -626,7 +658,16 @@ async function runScan(
   indexerLastBlockHint?: number,
 ): Promise<LogIndexResult> {
   const cached = readCache(chainId, diamondAddress) ?? emptyCache(deployBlock);
-  const head = await getBlockNumber(rpcUrl);
+  // Upper bound is the safe-tag head, NOT latest. Caching events from
+  // the unsafe tip would mean a 1- to 32-block reorg could remove a
+  // block whose `OfferAccepted` we already wrote to localStorage, and
+  // the next scan (which starts at `cached.lastBlock + 1`) would skip
+  // re-reading that block, leaving the stale row in cache forever.
+  // Reading at the safe head instead means the cursor is reorg-proof:
+  // by the time a block is `safe`-tagged, the chain's reorg horizon is
+  // already past it. Rescan / next-mount automatically picks up at
+  // (saved safe block) + 1.
+  const head = await getSafeBlockNumber(rpcUrl);
   // Three-way max: deploy block (lower bound for any scan), the
   // local cache cursor (don't re-scan blocks we already cached), and
   // the indexer's lastBlock (skip the long history the indexer has
