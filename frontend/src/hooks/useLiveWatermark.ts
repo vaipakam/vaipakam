@@ -6,7 +6,7 @@
  * strictly increasing on create events, so a tick where neither moves
  * means no new offers / loans landed since the previous tick — and the
  * subscriber data hooks can skip the heavier indexer + RPC catch-up
- * refetch entirely. That gates the 2s cadence so it stays cheap on RPC.
+ * refetch entirely. That gates the 5s cadence so it stays cheap on RPC.
  *
  * Reads with `blockTag: 'safe'` to avoid reorg flicker — a head-of-chain
  * read could see a counter advance briefly during a one-block reorg and
@@ -14,7 +14,7 @@
  *
  * Pauses on `document.hidden` — when the user switches tabs we stop
  * polling entirely. On re-focus we fire one immediate probe so freshly-
- * focused tabs hydrate without waiting up to 2 s.
+ * focused tabs hydrate without waiting up to 5 s.
  *
  * Cancels / partial-fills are NOT caught by this watermark (lifetime
  * counters don't move on those state transitions). They're covered by:
@@ -37,7 +37,7 @@ import { usePublicClient } from 'wagmi';
 import { type Abi, type Address, type PublicClient } from 'viem';
 import { useReadChain } from '../contracts/useDiamond';
 
-const TICK_MS = 2_000;
+const TICK_MS = 5_000;
 
 /** Minimal ABI surface for the watermark probe. Inlined so the hook
  *  doesn't have to import the full MetricsFacet bundle just to call one
@@ -89,7 +89,7 @@ export interface UseLiveWatermarkResult {
  * Hook signature is intentionally argument-less. It reads the public
  * client + chain config from context so any number of subscribers can
  * call it from anywhere in the tree without prop drilling. The probe is
- * still made per-call rather than via a singleton — at a 2s cadence the
+ * still made per-call rather than via a singleton — at a 5s cadence the
  * cost is negligible and per-instance state simplifies cleanup on
  * unmount / chain switch.
  */
@@ -190,7 +190,7 @@ export function useLiveWatermark(): UseLiveWatermarkResult {
 
 /** Imperative one-shot watermark fetch. Useful inside event handlers
  *  (e.g. post-tx callbacks) where the caller wants to advance the
- *  watermark immediately rather than wait for the next 2 s tick. */
+ *  watermark immediately rather than wait for the next 5 s tick. */
 export async function probeWatermarkOnce(
   publicClient: PublicClient,
   diamond: Address,

@@ -52,7 +52,7 @@ interface UseIndexedActiveOffersResult {
   loading: boolean;
   /** Imperative trigger — re-runs the indexer fetch + RPC catch-up
    *  pipeline. Wired into the OfferBook rescan button so users who
-   *  want fresh data right now don't have to wait for the next 2 s
+   *  want fresh data right now don't have to wait for the next 5 s
    *  watermark tick. The auto-refresh path (mount / focus / version
    *  bump) keeps running independently. */
   refetch: () => Promise<void>;

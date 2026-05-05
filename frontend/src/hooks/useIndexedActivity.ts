@@ -30,7 +30,7 @@ interface UseIndexedActivityResult {
   loadMore: () => Promise<void>;
   /** Imperative trigger — re-runs the initial-page fetch. Wired into
    *  the Activity page's rescan button so users can force fresh
-   *  events without waiting for the next 2 s watermark tick. */
+   *  events without waiting for the next 5 s watermark tick. */
   refetch: () => Promise<void>;
 }
 

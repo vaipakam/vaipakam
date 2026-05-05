@@ -6,7 +6,7 @@
  *   - **Cached (green)**: the worker is up and the indexer cursor
  *     is fresh. The page reads from the cache; "Indexed N min ago"
  *     tells the user how stale the snapshot is. The page polls in
- *     the background (every 2s on focus, paused when the tab is
+ *     the background (every 5s on focus, paused when the tab is
  *     inactive) and merges new chain events on top of the cached
  *     snapshot — no manual rescan needed.
  *
@@ -32,7 +32,7 @@
  * action is an RPC-quota abuse vector (a bot or impatient user can
  * spam-click → quota burn that costs the operator real money on
  * paid RPC tiers) and gives users the wrong mental model that they
- * "need" to refresh. Auto-refetch on tab-focus + 2s background tail
+ * "need" to refresh. Auto-refetch on tab-focus + 5s background tail
  * + post-tx confirmation is the modern DeFi pattern; see the
  * "no production DeFi protocol exposes a manual refetch button"
  * survey in `OperatorNodeDeploymentDesign.md` discussion notes.

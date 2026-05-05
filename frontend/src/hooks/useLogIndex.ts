@@ -49,7 +49,7 @@ export function useLogIndex() {
   const { stats: offerStats, loading: statsLoading } = useOfferStats();
   const statsResolved = !statsLoading;
   const indexerLastBlock = offerStats?.indexer?.lastBlock;
-  // The shared 2 s watermark probe — `version` bumps every time
+  // The shared 5 s watermark probe — `version` bumps every time
   // `nextOfferId` or `nextLoanId` advances on-chain. Subscribing here
   // unifies the refetch trigger with the indexer-driven hooks: a
   // single probe drives both the indexer-served data hooks AND the
