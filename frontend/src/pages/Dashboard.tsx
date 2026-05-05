@@ -113,20 +113,35 @@ export default function Dashboard() {
 
   // "Last refreshed N min ago" status — paired with the right-side
   // rescan button. Updated whenever the underlying data sources tick
-  // (indexed loans array reference change, claimables reload). The
-  // 30 s `now` ticker re-renders the relative time so the text moves
-  // from "just now" → "1 min ago" → "2 min ago" without user input.
-  // Only ticks while the tab is visible; cadence matches the
-  // `Intl.RelativeTimeFormat` minute-bucket boundary.
+  // (indexed loans array reference change, claimables reload).
+  //
+  // Adaptive ticker cadence: 1 Hz while the elapsed delta is under
+  // 60 s (so the visible count moves smoothly from "1 second ago"
+  // through "59 seconds ago"), then 30 s once we cross the minute
+  // boundary (relative-time only changes once per minute past that
+  // point, so a faster tick burns CPU for nothing). The effect
+  // re-runs whenever `lastRefreshedAt` advances, which restarts the
+  // sub-minute fast tick on every fresh refresh. Without the
+  // sub-minute fast tick the user saw a stale string for up to 30 s
+  // — "6 seconds ago" frozen until the next 30 s tick fired and
+  // jumped to "36 seconds ago".
   const [lastRefreshedAt, setLastRefreshedAt] = useState<number>(() => Date.now());
   const [now, setNow] = useState<number>(() => Date.now());
   useEffect(() => {
     setLastRefreshedAt(Date.now());
   }, [indexedLoans, clientLoans, unclaimed]);
   useEffect(() => {
-    const id = setInterval(() => setNow(Date.now()), 30_000);
-    return () => clearInterval(id);
-  }, []);
+    let id: ReturnType<typeof setTimeout>;
+    const schedule = () => {
+      const t = Date.now();
+      setNow(t);
+      const elapsed = t - lastRefreshedAt;
+      id = setTimeout(schedule, elapsed < 60_000 ? 1_000 : 30_000);
+    };
+    const elapsed = Date.now() - lastRefreshedAt;
+    id = setTimeout(schedule, elapsed < 60_000 ? 1_000 : 30_000);
+    return () => clearTimeout(id);
+  }, [lastRefreshedAt]);
   const [cancellingOfferId, setCancellingOfferId] = useState<bigint | null>(null);
   // Set of loanIds (decimal string) where the connected wallet has at least
   // one actionable claim (lender or borrower side). Drives the inline

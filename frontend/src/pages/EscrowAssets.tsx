@@ -307,18 +307,32 @@ export default function EscrowAssets() {
 
   // "Last refreshed N min ago" status — paired with the bottom-row
   // rescan button. Updated whenever the rows array's reference
-  // changes (i.e., the async balance fetch completed). The 30 s
-  // `now` ticker re-renders the relative-time text so it advances
-  // without user input. Same shape as the Dashboard pairing.
+  // changes (i.e., the async balance fetch completed).
+  //
+  // Adaptive ticker cadence: 1 Hz under 60 s elapsed so the count
+  // moves smoothly from "1 second ago" through "59 seconds ago",
+  // then 30 s once we cross the minute boundary (relative-time only
+  // changes once per minute past that, so a faster tick burns CPU
+  // for nothing). The effect re-runs whenever `lastRefreshedAt`
+  // advances, restarting the sub-minute fast tick on every refresh.
+  // Same shape as the Dashboard pairing.
   const [lastRefreshedAt, setLastRefreshedAt] = useState<number>(() => Date.now());
   const [now, setNow] = useState<number>(() => Date.now());
   useEffect(() => {
     setLastRefreshedAt(Date.now());
   }, [rows]);
   useEffect(() => {
-    const id = setInterval(() => setNow(Date.now()), 30_000);
-    return () => clearInterval(id);
-  }, []);
+    let id: ReturnType<typeof setTimeout>;
+    const schedule = () => {
+      const t = Date.now();
+      setNow(t);
+      const elapsed = t - lastRefreshedAt;
+      id = setTimeout(schedule, elapsed < 60_000 ? 1_000 : 30_000);
+    };
+    const elapsed = Date.now() - lastRefreshedAt;
+    id = setTimeout(schedule, elapsed < 60_000 ? 1_000 : 30_000);
+    return () => clearTimeout(id);
+  }, [lastRefreshedAt]);
 
   // Initial seed — show one row per token in a "loading" state so the
   // table doesn't reflow when balances arrive.
