@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { ArrowLeft, ExternalLink, X } from 'lucide-react';
+import { ArrowLeft, ExternalLink, X, Settings } from 'lucide-react';
+import { numberToHex, type Address, type Hex } from 'viem';
+import { usePublicClient } from 'wagmi';
 import { L as Link } from '../components/L';
 import { useWallet } from '../context/WalletContext';
 import { useDiamondContract, useDiamondRead, useReadChain } from '../contracts/useDiamond';
@@ -11,6 +13,7 @@ import {
   indexedToRawOffer,
   type IndexedOffer,
 } from '../lib/indexerClient';
+import { chunkedGetLogs, TOPIC0 } from '../lib/rpcCatchUp';
 import {
   toOfferData,
   type OfferData,
@@ -75,6 +78,13 @@ export default function OfferDetails() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [refetchTick, setRefetchTick] = useState(0);
+  // Tx hash of the OfferCreated event. Resolved lazily after the
+  // indexer payload lands so the explorer-link affordance only
+  // appears once we actually have the hash. Empty when the lookup is
+  // pending OR the worker is unreachable AND the chain-only fallback
+  // is in use (no firstSeenBlock to anchor the targeted log scan).
+  const [createdTxHash, setCreatedTxHash] = useState<Hex | null>(null);
+  const publicClient = usePublicClient();
 
   // Indexer-first read. The worker's `/offers/:id` endpoint returns
   // every field the page renders, including the `firstSeenBlock` that
@@ -139,6 +149,39 @@ export default function OfferDetails() {
       cancelled = true;
     };
   }, [chainId, offerIdBig, diamondRead, refetchTick, t]);
+
+  // Resolve the OfferCreated tx-hash via a targeted single-block
+  // `eth_getLogs` against the indexer-supplied `firstSeenBlock`.
+  // Filter is `(diamond, OfferCreated, offerId-as-bytes32)` — exactly
+  // one log matches per offer, so this is one-block, one-result, one
+  // RPC. Skipped entirely on the chain-only fallback (no
+  // `firstSeenBlock` available) and on a re-render where we've
+  // already resolved the hash.
+  useEffect(() => {
+    if (!indexed || !publicClient || !readChain.diamondAddress) return;
+    if (createdTxHash) return;
+    let cancelled = false;
+    (async () => {
+      const block = BigInt(indexed.firstSeenBlock);
+      const offerIdHex = numberToHex(BigInt(indexed.offerId), { size: 32 });
+      try {
+        const logs = await chunkedGetLogs(publicClient, {
+          fromBlock: block,
+          toBlock: block,
+          address: readChain.diamondAddress as Address,
+          topics: [TOPIC0.OFFER_CREATED, offerIdHex],
+        });
+        if (cancelled || logs.length === 0) return;
+        setCreatedTxHash(logs[0].transactionHash);
+      } catch {
+        // Silent — the explorer link just stays hidden. No fallback
+        // needed; the page still renders fine without the tx hash.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [indexed, publicClient, readChain.diamondAddress, createdTxHash]);
 
   const offerForDisplay: OfferData | null = chainOffer;
 
@@ -261,6 +304,19 @@ export default function OfferDetails() {
                 <StatusBadge status={status} t={t} />
               </div>
               <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                {/* Creator-only "Manage keepers" deep-link mirroring
+                    the OfferBook row affordance. Today this lands on
+                    the generic /app/keepers page rather than a per-
+                    offer route — the page itself surfaces every
+                    offer the wallet owns. */}
+                {isCreator && status === 'active' && (
+                  <Link to="/app/keepers" className="btn btn-secondary btn-sm">
+                    <Settings size={14} style={{ marginRight: 4 }} />
+                    {t('offerDetails.manageKeepers', {
+                      defaultValue: 'Manage keepers',
+                    })}
+                  </Link>
+                )}
                 {canCancel && (
                   <button
                     type="button"
@@ -374,19 +430,67 @@ export default function OfferDetails() {
                     style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
                   >
                     {formatDate(indexed.firstSeenAt * 1000)}
-                    <a
-                      href={`${blockExplorer}/block/${indexed.firstSeenBlock}`}
-                      target="_blank"
-                      rel="noreferrer noopener"
-                      title={t('offerDetails.viewBlockExplorer', {
-                        defaultValue: 'View on block explorer',
-                      })}
-                    >
-                      <ExternalLink size={12} />
-                    </a>
+                    {/* Tx-hash link is preferred — points at the
+                        OfferCreated transaction directly so the user
+                        lands on the calldata that matched their
+                        offer. Falls back to the block-link when the
+                        targeted log scan is still pending OR returned
+                        nothing (RPC ToS rejection, log gone after
+                        reorg, etc.). */}
+                    {createdTxHash ? (
+                      <a
+                        href={`${blockExplorer}/tx/${createdTxHash}`}
+                        target="_blank"
+                        rel="noreferrer noopener"
+                        title={t('offerDetails.viewTx', {
+                          defaultValue: 'View creation transaction on block explorer',
+                        })}
+                      >
+                        <ExternalLink size={12} />
+                      </a>
+                    ) : (
+                      <a
+                        href={`${blockExplorer}/block/${indexed.firstSeenBlock}`}
+                        target="_blank"
+                        rel="noreferrer noopener"
+                        title={t('offerDetails.viewBlockExplorer', {
+                          defaultValue: 'View block on block explorer',
+                        })}
+                      >
+                        <ExternalLink size={12} />
+                      </a>
+                    )}
                   </span>
                 </Field>
               )}
+
+              {/* Partial-fill indicator. Only renders when the indexer
+                  actually reports a non-trivial fill (`amountFilled`
+                  > 0 AND < `amountMax`). Pre-Phase-1 partial-fill
+                  rollout, every offer is single-fill so this branch
+                  is dormant. Forward-compatible — once the partial-
+                  fill plan ships, the indexer's `amountFilled`
+                  starts populating and this surface lights up
+                  without any code change here. */}
+              {indexed &&
+                BigInt(indexed.amountFilled) > 0n &&
+                BigInt(indexed.amountFilled) < BigInt(indexed.amountMax) && (
+                  <Field
+                    label={t('offerDetails.amountFilled', {
+                      defaultValue: 'Amount filled',
+                    })}
+                  >
+                    <TokenAmount
+                      amount={BigInt(indexed.amountFilled)}
+                      address={offerForDisplay.lendingAsset}
+                    />
+                    {' '}/{' '}
+                    <TokenAmount
+                      amount={BigInt(indexed.amountMax)}
+                      address={offerForDisplay.lendingAsset}
+                    />
+                  </Field>
+                )}
             </div>
 
             {/* Indexer / fallback provenance — small print. Helps the

@@ -800,7 +800,11 @@ export default function LoanDetails() {
           </div>
           <div className="data-row">
             <span className="data-label">{t('loanDetails.originalOffer')}</span>
-            <span className="data-value">#{loan.offerId.toString()}</span>
+            <span className="data-value">
+              <Link to={`/app/offers/${loan.offerId.toString()}`}>
+                #{loan.offerId.toString()}
+              </Link>
+            </span>
           </div>
         </div>
       </div>

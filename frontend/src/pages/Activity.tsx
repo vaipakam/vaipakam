@@ -516,7 +516,18 @@ export default function Activity() {
                           Loan #{loanId}
                         </Link>
                       )}
-                      {offerId && <span className="activity-pill">Offer #{offerId}</span>}
+                      {offerId && (
+                        <Link
+                          to={`/app/offers/${offerId}`}
+                          className="activity-pill activity-pill--link"
+                          aria-label={t('activity.viewOffer', {
+                            id: offerId,
+                            defaultValue: 'View offer #{{id}}',
+                          })}
+                        >
+                          Offer #{offerId}
+                        </Link>
+                      )}
                     </div>
 
                     {isOpen && (

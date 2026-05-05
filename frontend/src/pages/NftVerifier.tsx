@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
+import { L as Link } from "../components/L";
 import { useTranslation } from "react-i18next";
 import {
   createPublicClient,
@@ -674,7 +675,11 @@ function BurnedCard({
         <div className="verifier-details-col" style={{ marginTop: 12 }}>
           <div className="data-row">
             <span className="data-label">{t('nftVerifier.origin')}</span>
-            <span className="data-value">Offer #{offerContext.offerId}</span>
+            <span className="data-value">
+              <Link to={`/app/offers/${offerContext.offerId}`}>
+                Offer #{offerContext.offerId}
+              </Link>
+            </span>
           </div>
           <div className="data-row">
             <span className="data-label">{t('nftVerifier.offerStatus')}</span>

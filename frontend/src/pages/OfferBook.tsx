@@ -972,13 +972,19 @@ export default function OfferBook() {
   const showBorrower = tab !== 'lender';
 
   const hasMore = cursor < sortedIds.length;
-  // Prefer the validated count (same source the tab headers use) so
-  // the bottom status bar reflects reality after stale log-index
-  // entries are filtered. Falls back to raw log-index length while
-  // the validation pass is still running.
+  // Indexer-first total: when the worker is serving the OPEN view
+  // (`indexerServingOpen`), the rendered list comes from
+  // `indexedOffers` and the legacy `openOfferIds` log-scan is laggy
+  // — historically that mismatch produced the "Showing 7 of 3 open
+  // offers" bug where the rendered count outran the laggy validated
+  // count. Anchor the total to the same source the rows came from.
+  // Closed view always takes the on-chain path today (no indexer
+  // serving), so it keeps the existing validated-count fallback.
   const validatedTotal =
     statusView === 'open'
-      ? (countByStatus.open ?? openOfferIds.length)
+      ? indexerServingOpen
+        ? indexedOffers?.length ?? sortedIds.length
+        : (countByStatus.open ?? openOfferIds.length)
       : (countByStatus.closed ?? closedOfferIds.length);
   // `shown` is the count AFTER the full render pipeline: dedup +
   // matchesFilter (asset / duration / liquidity) + hide-my-offers.
@@ -1056,7 +1062,11 @@ export default function OfferBook() {
             onClick={() => setStatusView(v)}
           >
             {v === 'open'
-              ? `${t('offerBook.tabOpen')} (${countByStatus.open ?? openOfferIds.length})`
+              ? `${t('offerBook.tabOpen')} (${
+                  indexerServingOpen
+                    ? indexedOffers?.length ?? sortedIds.length
+                    : (countByStatus.open ?? openOfferIds.length)
+                })`
               : `${t('offerBook.tabClosed')} (${countByStatus.closed ?? closedOfferIds.length})`}
           </button>
         ))}

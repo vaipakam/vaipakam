@@ -500,7 +500,11 @@ export default function BorrowerPreclose() {
                 <>
                   <div className="data-row" style={{ marginTop: 12 }}>
                     <span className="data-label">{t('preclose.borrowerOfferIdLabel')}</span>
-                    <span className="data-value">#{transferOfferId}</span>
+                    <span className="data-value">
+                      <Link to={`/app/offers/${transferOfferId}`}>
+                        #{transferOfferId}
+                      </Link>
+                    </span>
                   </div>
                   <p className="action-desc" style={{ marginTop: 12 }}>
                     {t('preclose.transferReviewBody')}

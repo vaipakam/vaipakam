@@ -285,7 +285,9 @@ export default function Refinance() {
             <>
               <div className="data-row" style={{ marginTop: 12 }}>
                 <span className="data-label">{t('refinance.acceptedOfferIdLabel')}</span>
-                <span className="data-value">#{offerIdStr}</span>
+                <span className="data-value">
+                  <Link to={`/app/offers/${offerIdStr}`}>#{offerIdStr}</Link>
+                </span>
               </div>
               <p className="action-desc" style={{ marginTop: 12 }}>
                 Clicking Confirm atomically repays the old lender (principal +
