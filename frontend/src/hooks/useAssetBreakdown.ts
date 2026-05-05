@@ -70,7 +70,18 @@ export function useAssetBreakdown(): UseAssetBreakdownResult {
       setLoading(false);
       return;
     }
-    const assets = Object.keys(loanStats.volumeByAsset);
+    // Defensive shape filter — drop any malformed-address keys
+    // (`"0x"` etc.) before the price multicall encodes them. The
+    // server already filters at write time but old rows can still
+    // surface bad-shape keys; viem's `getAssetPrice` encoder
+    // throws `InvalidAddressError` if a non-20-byte hex slips in,
+    // poisoning the whole batch. Cheap belt-and-braces guard.
+    const assets = Object.keys(loanStats.volumeByAsset).filter(
+      (a) =>
+        typeof a === 'string' &&
+        a.length === 42 &&
+        a.startsWith('0x'),
+    );
     if (assets.length === 0) {
       setRows([]);
       setLoading(false);

@@ -29,6 +29,7 @@ import { useMode } from '../context/ModeContext';
 import { useProtocolStats } from '../hooks/useProtocolStats';
 import { useLoanStats } from '../hooks/useLoanStats';
 import { useAssetBreakdown } from '../hooks/useAssetBreakdown';
+import { useOfferStats } from '../hooks/useOfferStats';
 import { useTVL } from '../hooks/useTVL';
 import { useUserStats } from '../hooks/useUserStats';
 import { useTreasuryMetrics } from '../hooks/useTreasuryMetrics';
@@ -45,7 +46,6 @@ import {
   compareChainsForDisplay,
 } from '../contracts/config';
 import { useReadChain } from '../contracts/useDiamond';
-import { useWallet } from '../context/WalletContext';
 import { useChainOverride } from '../context/ChainContext';
 import { shortenAddr, bpsToPercent, formatUnitsPretty } from '../lib/format';
 import { CopyableAddress } from '../components/app/CopyableAddress';
@@ -106,7 +106,6 @@ export default function PublicDashboard() {
   const { t } = useTranslation();
   const { mode } = useMode();
   const readChain = useReadChain();
-  const { switchToChain, address: walletAddress } = useWallet();
   const { setViewChainId } = useChainOverride();
   const blockExplorer = readChain.blockExplorer ?? DEFAULT_CHAIN.blockExplorer;
   const diamondAddress = readChain.diamondAddress ?? DEFAULT_CHAIN.diamondAddress;
@@ -143,6 +142,11 @@ export default function PublicDashboard() {
   // section. When the worker is unreachable, falls back to
   // `stats.assetBreakdown` from useProtocolStats below.
   const { rows: indexerAssetBreakdown } = useAssetBreakdown();
+  // Indexer-first offer counts. Drives the "Offers Posted" card so
+  // first paint doesn't wait on the chain-side `getOffer` multicall
+  // path that `useProtocolStats` would otherwise need to populate
+  // `totalOffers` / `activeOffers`.
+  const { stats: offerStats } = useOfferStats();
   const { snapshot: tvl, loading: tvlLoading } = useTVL();
   const { stats: userStats } = useUserStats();
   const { metrics: treasuryMetrics } = useTreasuryMetrics();
@@ -199,15 +203,21 @@ export default function PublicDashboard() {
   const handleChainSelect = useCallback(
     (nextChainId: number) => {
       if (nextChainId === chainId) return;
-      // Always pin the view override — this is what makes the selector work
-      // for disconnected visitors, who would otherwise be stuck on
-      // DEFAULT_CHAIN because `switchToChain` needs `window.ethereum`.
+      // Read-only chain switch: Analytics is a browsing surface with
+      // zero write affordances on-page, so the chain picker only
+      // moves the in-page data view (`viewChainId`) without asking
+      // the wallet to follow. Pre-fix the handler also called
+      // `switchToChain(nextChainId)` to "keep writes aligned" — but
+      // that fired a MetaMask popup on every selection and the only
+      // writes reachable from Analytics are deep-links to loan /
+      // offer detail pages, which already handle wallet-vs-view
+      // chain mismatches with their own "Switch chain" CTAs. Keeping
+      // the wallet pinned here turns chain comparison from one click
+      // into "click → confirm in wallet → back to compare" which is
+      // hostile for read-only exploration.
       setViewChainId(nextChainId);
-      // If a wallet is present, ask it to follow so any subsequent writes
-      // land on the same chain the user is reading.
-      if (walletAddress) void switchToChain(nextChainId);
     },
-    [chainId, setViewChainId, switchToChain, walletAddress],
+    [chainId, setViewChainId],
   );
 
   // Drop the view-chain override when leaving the dashboard. The override is a
@@ -515,13 +525,19 @@ export default function PublicDashboard() {
             </p>
           </section>
 
-          {loading && !stats && (
+          {/* Loading-empty state. Pre-fix this gated on `!stats`,
+              but after `useProtocolStats` was lazy-gated to fire
+              only on indexer-failure, `stats` would stay null
+              forever on the happy path → the page rendered nothing
+              until the user clicked Refresh, which bypassed the
+              gate. Now: hidden as soon as EITHER source has data. */}
+          {loading && !loanStats && !stats && (
             <div className="empty-state" style={{ minHeight: 240 }}>
               <p>{t('publicDashboard.aggregatingOnChain')}</p>
             </div>
           )}
 
-          {stats && (
+          {(loanStats || stats) && (
             <>
               <section className="pd-metrics-grid" aria-label="Top-level metrics">
                 <MetricCard
@@ -538,14 +554,25 @@ export default function PublicDashboard() {
                 <MetricCard
                   icon={<TrendingUp size={18} />}
                   label="Total Volume Lent"
-                  value={formatUsd(stats.totalVolumeLentUsd)}
+                  value={
+                    stats
+                      ? formatUsd(stats.totalVolumeLentUsd)
+                      : indexerAssetBreakdown
+                        ? formatUsd(
+                            indexerAssetBreakdown.reduce(
+                              (a, r) => a + r.volumeUsd,
+                              0,
+                            ),
+                          )
+                        : '—'
+                  }
                   hint="Lifetime ERC-20 principal, priced at current oracle"
                   onchainFn="getProtocolStats"
                 />
                 <MetricCard
                   icon={<PiggyBank size={18} />}
                   label="Interest Earned by Lenders"
-                  value={formatUsd(stats.totalInterestEarnedUsd)}
+                  value={stats ? formatUsd(stats.totalInterestEarnedUsd) : '—'}
                   hint="Lifetime, completed loans only"
                   onchainFn="getTotalInterestEarnedNumeraire"
                 />
@@ -563,14 +590,20 @@ export default function PublicDashboard() {
                 <MetricCard
                   icon={<Activity size={18} />}
                   label="Active Loans"
-                  value={(loanStats?.active ?? stats.activeLoans).toString()}
-                  hint={`${formatUsd(stats.activeLoansValueUsd)} live value · ${(loanStats?.nftRentalsActive ?? stats.nftRentalsActive)} NFT rentals`}
+                  value={(loanStats?.active ?? stats?.activeLoans ?? 0).toString()}
+                  hint={`${formatUsd(
+                    tvl?.principalUsd ?? stats?.activeLoansValueUsd ?? 0,
+                  )} live value · ${
+                    loanStats?.nftRentalsActive ?? stats?.nftRentalsActive ?? 0
+                  } NFT rentals`}
                   onchainFn="getActiveLoansCount"
                 />
                 <MetricCard
                   icon={<ImageIcon size={18} />}
                   label="NFTs Rented"
-                  value={(loanStats?.nftRentalsActive ?? stats.nftRentalsActive).toString()}
+                  value={(
+                    loanStats?.nftRentalsActive ?? stats?.nftRentalsActive ?? 0
+                  ).toString()}
                   hint={`Active NFT-collateralised rentals on ${readChain.name}`}
                   onchainFn="getProtocolTVL"
                 />
@@ -588,37 +621,47 @@ export default function PublicDashboard() {
                 <MetricCard
                   icon={<Coins size={18} />}
                   label="Offers Posted"
-                  value={stats.totalOffers.toString()}
-                  hint={`${stats.activeOffers} currently open`}
+                  value={(offerStats?.total ?? stats?.totalOffers ?? 0).toString()}
+                  hint={`${
+                    offerStats?.active ?? stats?.activeOffers ?? 0
+                  } currently open`}
                   onchainFn="getActiveOffersCount"
                 />
                 <MetricCard
                   icon={<Gauge size={18} />}
                   label="Average APR"
-                  value={
-                    (loanStats?.total ?? stats.totalLoans) === 0
-                      ? '—'
-                      : (((loanStats?.averageInterestRateBps ?? stats.averageAprBps) ?? 0) / 100).toFixed(2) + '%'
-                  }
-                  hint={`Across ${loanStats?.total ?? stats.totalLoans} loans`}
+                  value={(() => {
+                    const total = loanStats?.total ?? stats?.totalLoans ?? 0;
+                    if (total === 0) return '—';
+                    const avg =
+                      loanStats?.averageInterestRateBps ??
+                      stats?.averageAprBps ??
+                      0;
+                    return (avg / 100).toFixed(2) + '%';
+                  })()}
+                  hint={`Across ${
+                    loanStats?.total ?? stats?.totalLoans ?? 0
+                  } loans`}
                   onchainFn="getProtocolStats"
                 />
                 <MetricCard
                   icon={<Activity size={18} />}
                   label="Liquidation / Default Rate"
                   value={(() => {
-                    const total = loanStats?.total ?? stats.totalLoans;
+                    const total = loanStats?.total ?? stats?.totalLoans ?? 0;
                     const defaulted = loanStats
                       ? loanStats.defaulted + loanStats.liquidated
-                      : stats.defaultedLoans;
+                      : (stats?.defaultedLoans ?? 0);
                     if (total === 0) return '—';
                     return ((defaulted / total) * 100).toFixed(2) + '%';
                   })()}
                   hint={`${
                     loanStats
                       ? loanStats.defaulted + loanStats.liquidated
-                      : stats.defaultedLoans
-                  } defaulted of ${loanStats?.total ?? stats.totalLoans} total`}
+                      : (stats?.defaultedLoans ?? 0)
+                  } defaulted of ${
+                    loanStats?.total ?? stats?.totalLoans ?? 0
+                  } total`}
                   onchainFn="getProtocolHealth"
                 />
               </section>
@@ -654,21 +697,22 @@ export default function PublicDashboard() {
                     slices={[
                       {
                         label: 'Active',
-                        value: loanStats?.active ?? stats.activeLoans,
+                        value: loanStats?.active ?? stats?.activeLoans ?? 0,
                         color: 'var(--brand)',
                       },
                       {
                         label: 'Completed',
                         value: loanStats
                           ? loanStats.repaid + loanStats.settled
-                          : stats.completedLoans - stats.defaultedLoans,
+                          : (stats?.completedLoans ?? 0) -
+                            (stats?.defaultedLoans ?? 0),
                         color: 'var(--accent-green)',
                       },
                       {
                         label: 'Defaulted',
                         value: loanStats
                           ? loanStats.defaulted + loanStats.liquidated
-                          : stats.defaultedLoans,
+                          : (stats?.defaultedLoans ?? 0),
                         color: 'var(--accent-red)',
                       },
                     ]}
@@ -687,7 +731,7 @@ export default function PublicDashboard() {
                   // volumeUsd / share / liquid) so the render block
                   // below doesn't branch.
                   const breakdown =
-                    indexerAssetBreakdown ?? stats.assetBreakdown;
+                    indexerAssetBreakdown ?? stats?.assetBreakdown ?? [];
                   if (breakdown.length === 0) {
                     return (
                       <p className="empty-state-inline">
@@ -752,7 +796,11 @@ export default function PublicDashboard() {
                 <h2>{t('publicDashboard.nftRentalUtilization')}</h2>
                 <div className="pd-utilization">
                   <div>
-                    <div className="pd-big">{stats.nftRentalsActive}</div>
+                    <div className="pd-big">
+                      {loanStats?.nftRentalsActive ??
+                        stats?.nftRentalsActive ??
+                        0}
+                    </div>
                     <div className="pd-sub">Active NFT rentals</div>
                   </div>
                   <div>
@@ -760,7 +808,11 @@ export default function PublicDashboard() {
                     <div className="pd-sub">Active NFT collateral positions</div>
                   </div>
                   <div>
-                    <div className="pd-big">{stats.erc20ActiveLoans}</div>
+                    <div className="pd-big">
+                      {loanStats?.erc20ActiveLoans ??
+                        stats?.erc20ActiveLoans ??
+                        0}
+                    </div>
                     <div className="pd-sub">Active ERC-20 loans</div>
                   </div>
                 </div>
@@ -901,7 +953,13 @@ export default function PublicDashboard() {
                     <div className="pd-metrics-grid">
                       <MetricCard
                         label="Average APR"
-                        value={(stats.averageAprBps / 100).toFixed(2) + '%'}
+                        value={(() => {
+                          const avg =
+                            loanStats?.averageInterestRateBps ??
+                            stats?.averageAprBps ??
+                            0;
+                          return (avg / 100).toFixed(2) + '%';
+                        })()}
                         hint="Mean across all loans (active + closed)"
                       />
                       <MetricCard
@@ -911,8 +969,21 @@ export default function PublicDashboard() {
                       />
                       <MetricCard
                         label="Default rate"
-                        value={stats.liquidationRate.toFixed(2) + '%'}
-                        hint={`${stats.defaultedLoans} defaulted of ${stats.totalLoans}`}
+                        value={(() => {
+                          const total = loanStats?.total ?? stats?.totalLoans ?? 0;
+                          const defaulted = loanStats
+                            ? loanStats.defaulted + loanStats.liquidated
+                            : (stats?.defaultedLoans ?? 0);
+                          if (total === 0) return '—';
+                          return ((defaulted / total) * 100).toFixed(2) + '%';
+                        })()}
+                        hint={`${
+                          loanStats
+                            ? loanStats.defaulted + loanStats.liquidated
+                            : (stats?.defaultedLoans ?? 0)
+                        } defaulted of ${
+                          loanStats?.total ?? stats?.totalLoans ?? 0
+                        }`}
                       />
                     </div>
                   </section>
@@ -942,7 +1013,7 @@ export default function PublicDashboard() {
                             <tbody>
                               {recentLoansPageSlice.map((l) => {
                                 const status = Number(l.status) as LoanStatus;
-                                const info = stats.assetInfo?.[l.principalAsset.toLowerCase()];
+                                const info = stats?.assetInfo?.[l.principalAsset.toLowerCase()];
                                 const decimals = info?.tokenDecimals ?? 18;
                                 const symbol = info?.symbol ?? '';
                                 return (
@@ -1012,7 +1083,7 @@ export default function PublicDashboard() {
                             </thead>
                             <tbody>
                               {recentOffersPageSlice.map((o) => {
-                                const info = stats.assetInfo?.[o.lendingAsset.toLowerCase()];
+                                const info = stats?.assetInfo?.[o.lendingAsset.toLowerCase()];
                                 const decimals = info?.tokenDecimals ?? 18;
                                 const symbol = info?.symbol ?? '';
                                 return (
@@ -1067,7 +1138,7 @@ export default function PublicDashboard() {
                 <div className="pd-transparency-grid">
                   <div>
                     <div className="pd-sub">Snapshot block</div>
-                    <div className="pd-big">{stats.blockNumber ?? '—'}</div>
+                    <div className="pd-big">{stats?.blockNumber ?? '—'}</div>
                   </div>
                   <div>
                     <div className="pd-sub">Data freshness</div>

@@ -104,6 +104,49 @@ function indexedToRecentOffer(o: IndexedOffer): RecentOffer {
 }
 
 /**
+ * Defensive sanity check on an offer's headline values. Returns
+ * true for an offer that's safe to render in the Analytics recent
+ * feed; false for one whose fields are obviously malformed.
+ *
+ * Why: testnet has a tail of legacy offers indexed against a
+ * previous Diamond deploy whose storage slots returned garbage —
+ * 18-decimal amounts on the order of 1e30+, interest rates of
+ * 10⁹ bps (10 million percent APR), durations in the 1e18-day
+ * range. Rendering them produces visually broken rows like
+ * `546,341,515,459,535,421,382,276,466,788.3682  10,000,000.00%
+ *  10000000000000000000d` which makes the page look broken.
+ *
+ * Thresholds are intentionally generous so legitimate edge cases
+ * pass:
+ *
+ *   - amount     ≤ 1e36 — covers an 18-decimal token at $1e18
+ *                         token-units (1 quintillion tokens), well
+ *                         beyond any realistic offer
+ *   - rateBps    ≤ 100_000 — 1000% APR; on-chain MAX_INTEREST_BPS
+ *                         caps at 10_000 (100%) but we leave 10×
+ *                         headroom for forward-compat
+ *   - duration   ≤ 36_500 days — 100 years
+ *   - asset must be a valid 42-char address (catches the `"0x"`
+ *     short-shape garbage too)
+ */
+function isOfferShapeSane(o: RecentOffer): boolean {
+  const MAX_AMOUNT = BigInt('1' + '0'.repeat(36));
+  const MAX_RATE_BPS = 100_000n;
+  const MAX_DURATION_DAYS = 36_500n;
+  if (
+    typeof o.lendingAsset !== 'string' ||
+    o.lendingAsset.length !== 42 ||
+    !o.lendingAsset.startsWith('0x')
+  ) {
+    return false;
+  }
+  if (o.amount > MAX_AMOUNT) return false;
+  if (o.interestRateBps > MAX_RATE_BPS) return false;
+  if (o.durationDays > MAX_DURATION_DAYS) return false;
+  return true;
+}
+
+/**
  * Fetches the latest `limit` offers (any state — open, accepted, cancelled)
  * for the advanced-mode Recent Activity list on the public dashboard. Uses
  * the event-backed offer index as the source of IDs, then a single multicall
@@ -160,11 +203,20 @@ export function useRecentOffers(limit = 50) {
     try {
       const page = await fetchRecentOffers(chainId, { limit });
       if (page) {
-        const resolved = page.offers.map(indexedToRecentOffer);
+        // Defensive shape filter — drops legacy testnet rows whose
+        // amount / rate / duration / asset fields are obvious
+        // garbage from a stale storage slot. See `isOfferShapeSane`
+        // for thresholds + rationale.
+        const mapped = page.offers.map(indexedToRecentOffer);
+        const resolved = mapped.filter(isOfferShapeSane);
         cache.set(key, { data: resolved, at: Date.now(), limit });
         setOffers(resolved);
         setLoading(false);
-        step.success({ note: `${resolved.length} offers (indexer)` });
+        step.success({
+          note: `${resolved.length} offers (indexer; ${
+            mapped.length - resolved.length
+          } dropped as malformed)`,
+        });
         return;
       }
     } catch {
@@ -197,13 +249,21 @@ export function useRecentOffers(limit = 50) {
         calls,
       );
       const resolved: RecentOffer[] = [];
+      let droppedCount = 0;
       for (const raw of decoded) {
         if (!raw) continue;
-        resolved.push(toRecentOffer(raw));
+        const shaped = toRecentOffer(raw);
+        if (!isOfferShapeSane(shaped)) {
+          droppedCount += 1;
+          continue;
+        }
+        resolved.push(shaped);
       }
       cache.set(key, { data: resolved, at: Date.now(), limit });
       setOffers(resolved);
-      fallbackStep.success({ note: `${resolved.length} offers (chain fallback)` });
+      fallbackStep.success({
+        note: `${resolved.length} offers (chain fallback; ${droppedCount} dropped as malformed)`,
+      });
     } catch (err) {
       setError(err as Error);
       fallbackStep.failure(err);

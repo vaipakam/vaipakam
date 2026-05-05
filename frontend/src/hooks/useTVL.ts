@@ -162,9 +162,27 @@ export function useTVL() {
       }
 
       interface LegKey { asset: string; amount: bigint; kind: 'principal' | 'collateral'; isNft: boolean; }
+      // Some indexer rows surface malformed addresses like the
+      // literal string `"0x"` (2 chars, no hex body) for legacy
+      // testnet loans where a Transfer event was indexed before
+      // the contract write that populated the lendingAsset /
+      // collateralAsset slots. The pre-existing `!== ZERO_ADDRESS`
+      // check (compares against the 42-char zero address) didn't
+      // catch them, so they leaked through into `getAssetPrice`
+      // encoding and threw `InvalidAddressError: Address "0x" is
+      // invalid` (viem hard-validates 20-byte hex). Tighten to
+      // also require the standard 42-char shape — anything that
+      // isn't a real address gets dropped silently rather than
+      // poisoning the multicall batch.
+      const isValidAddr = (a: string): boolean =>
+        typeof a === 'string' && a.length === 42 && a.startsWith('0x');
       const legs: LegKey[] = [];
       for (const loan of activeLoans) {
-        if (loan.principal > 0n && loan.principalAsset !== ZERO_ADDRESS) {
+        if (
+          loan.principal > 0n &&
+          loan.principalAsset !== ZERO_ADDRESS &&
+          isValidAddr(loan.principalAsset)
+        ) {
           legs.push({
             asset: loan.principalAsset.toLowerCase(),
             amount: loan.principal,
@@ -172,7 +190,11 @@ export function useTVL() {
             isNft: Number(loan.assetType) !== AssetType.ERC20,
           });
         }
-        if (loan.collateralAmount > 0n && loan.collateralAsset !== ZERO_ADDRESS) {
+        if (
+          loan.collateralAmount > 0n &&
+          loan.collateralAsset !== ZERO_ADDRESS &&
+          isValidAddr(loan.collateralAsset)
+        ) {
           legs.push({
             asset: loan.collateralAsset.toLowerCase(),
             amount: loan.collateralAmount,

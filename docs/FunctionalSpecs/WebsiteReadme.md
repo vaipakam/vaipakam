@@ -122,8 +122,11 @@ This section will later define:
 Current connected-app surface expectations:
 
 - `Dashboard` is the user's "your stuff" surface: it should include active loans with Role / Status filters, pagination, sortable columns, a most-recent-first default sort, the user's offers across active / filled / cancelled states, the shared VPFI fee-discount consent, a VPFI rewards summary, and a green `Claim` CTA for terminal loans with unclaimed funds
+- Dashboard's active-loans section should expose a manual refresh action for connected wallets that refreshes indexed loans, wallet loan rows, claimability hints, and the user's offers together, while showing a `Last refreshed` indicator and the shared adaptive rescan cooldown chrome
 - `Offer Book` should be wallet-gated inside `/app`; after connection it should keep market browsing filterable by side, asset, status, liquidity, duration, and per-side count; market-rate annotations should use a filter-scoped recent-acceptance anchor with signed deltas and a mobile-friendly explanatory tooltip
 - closed / filled offer rows should link to the loan they created when an `OfferAccepted(offerId, acceptor, loanId)` event is available
+- `Offer Book` and Dashboard offer tables should link offer IDs to `/app/offers/:offerId`; Activity, Loan Details, borrower preclose, refinance, and NFT Verifier surfaces should use the same offer-detail deep link wherever they render a concrete offer ID
+- `/app/offers/:offerId` should mirror Loan Details' read discipline: indexer-first offer lookup, single direct `getOffer` fallback only when the worker is unavailable, creation transaction lookup from the indexed first-seen block, status/type/asset/rate/duration/creator display, contextual creator-only actions, and a `View loan #N` link for accepted offers
 - `Create Offer` should disable submit until full form validation passes, with typed validator error codes mapped through i18n, and should show token-identification trust blocks under address fields so users can distinguish canonical assets from unknown or suspicious contracts
 - in Advanced mode, `Create Offer` should show an ERC-20 / ERC-20 risk-preview card that computes projected Health Factor, LTV, and liquidation-price cushion from live oracle and risk parameters; for Range Orders it should show both best-case and worst-case values and warn clearly when the worst-case Health Factor falls below the initiation floor
 - the primary Create Offer duration control should be a bucketed picker using the standard buckets `7 / 14 / 30 / 60 / 90 / 180 / 365 days`, defaulting to `30 days`; defensive validation should still reject out-of-range or non-bucket values if the form is hydrated from an external source
@@ -138,6 +141,9 @@ Current connected-app surface expectations:
 - user-facing connected-app copy should call the personal escrow experience `Vaipakam Vaults` generally and `Your Vaipakam Vault` for the connected user's own balance surfaces. Solidity / TypeScript identifiers, code-fenced names, diagnostics, and existing route paths may continue to use `escrow`.
 - the existing `/app/escrow` route may remain stable, but its visible sidebar / page label should be `Your Vaipakam Vault`
 - Asset Viewer and vault balance surfaces should display the protocol-managed balance clamp `min(raw token balance, protocol-tracked balance)` so unsolicited direct transfers are hidden from ordinary balance, staking, and discount views
+- Vault token discovery should be history-driven rather than based on a hardcoded deployment-token list: wallet-related indexed loans and offers should provide the ERC-20 token set, while live `balanceOf` and `protocolTrackedEscrowBalance` reads remain direct RPC checks for each discovered token
+- Vault balance rows with a clamped balance of zero should be hidden; tiny display dust below `1e-11` token units may be hidden behind a user toggle that defaults on, with header copy showing how many rows are hidden and low-decimal tokens exempted where the threshold would hide meaningful stablecoin units
+- Vault rows should show token icons when available, fall back without layout jitter when unavailable, and use the shared asset-link behavior so token symbols open CoinGecko when indexed or the active chain explorer otherwise
 - in the connected-app sidebar, `Claim Center` should sit with the core lending actions before `Buy VPFI`, while token-purchase and advanced utility destinations remain secondary to loan management
 - the in-app logo should route to `/app` so connected users return to the dashboard shell; the public navbar logo should continue to route to `/`
 - the app's issue drawer should be labelled as `Report Issue` / `Issue Details`, not `Diagnostics`, and should generate a redacted report suitable for GitHub issue filing
@@ -307,7 +313,7 @@ Unstaking VPFI:
 
 Connected-app network model in Phase 1:
 
-- the Vaipakam core protocol is intended to run as a separate Diamond on each supported network, but the current live deployment is still only on Sepolia
+- the Vaipakam core protocol is intended to run as a separate Diamond on each supported network; current public testnet deployments may exist on Base Sepolia and Sepolia while mainnet deployments remain gated by the production rollout process
 - supported Phase 1 networks are `Base`, `Polygon`, `Arbitrum`, `Optimism`, and `Ethereum mainnet`
 - `VPFI` is cross-chain, and the interaction-reward denominator / reward-funding path also uses cross-chain messaging so each chain can claim against one protocol-wide daily interest total; loans, offers, collateral, repayment, liquidation, preclose, refinance, and keeper actions still stay on the currently selected network
 - the app should make the active network clear and treat each network as its own local protocol instance with a dedicated Diamond deployment per network
@@ -315,10 +321,15 @@ Connected-app network model in Phase 1:
 - in-app pages should not mount a standalone pre-connect chain picker; read-only pre-connect chain exploration belongs on public Analytics, while wallet-gated app pages should take chain context from the connected wallet
 - the connected-app top bar should show one shared indexer status badge for cached / live-read state rather than duplicating badges in individual page headers
 - the indexer badge should have three states:
-  - green `Cached`, showing indexed age and a rescan affordance when the Worker cache is reachable
-  - amber `Live chain scan`, explaining that the browser is reading directly from chain because the cache is unavailable and asking users to wait for page loading to finish before submitting data-dependent transactions
-  - blue `Local dev chain`, for Anvil / Hardhat chain IDs where the cloud indexer cannot reach the local node and direct local RPC reads are expected
-- the rescan affordance may force a full page reload or otherwise trigger the page's existing direct-chain reload path, as long as the user can intentionally bypass the cache
+  - green `Cached`, showing that the worker indexer responded and the page is rendering from a cached snapshot plus narrow RPC catch-up
+  - amber `Live`, explaining that the browser is reading directly from chain because the worker is unreachable, unsupported for that chain, or still loading
+  - blue `Local dev`, for Anvil / Hardhat chain IDs where the cloud indexer cannot reach the local node and direct local RPC reads are expected
+- the top-bar badge should open a structured popover with state, chain, data source, cache age, last update timestamp, and concise user guidance; it should not include the old global manual rescan button
+- on mobile-width viewports the badge popover should dock to the top of the viewport so it cannot clip off-screen
+- manual force-refresh controls belong only on pages where the user is inspecting mutable lists, including OfferBook, Activity, Dashboard, and Your Vaipakam Vault
+- those page-level refresh controls should share one adaptive cooldown state machine: a 30-second baseline, exponential growth for repeated clicks up to a 5-minute cap, reset after a quiet period, a draining right-to-left progress bar, stable-width countdown digits, and `Syncing` / `Synced` / idle status states
+- app refresh probes should use named watermark tiers rather than scattered interval literals: OfferBook `hot` at 5 seconds active with idle backoff, Dashboard / Vault / Offer Details / Activity `warm` at 20 seconds active, and Analytics `cool` at 180 seconds active; all tiers pause while the tab is hidden and resume with an immediate catch-up probe on focus
+- browser-side log cursors and worker-side D1 cursors should advance only to a safe block (`safe` block tag, or `latest - 32` fallback) so cached rows cannot be stranded by reorgs
 
 Wallet connection requirements:
 
@@ -693,15 +704,21 @@ Data-fetching strategy:
 - prefer multicall-based reads for efficiency
 - top-level combined metrics may be assembled by querying each supported chain separately in the frontend and summing the resulting headline values client-side
 - all lower sections should continue to read from one selected chain at a time so the detailed analytics remain attributable to a specific chain
-- when selected-chain dashboard sections need to fetch large sets of loans or offers, the implementation should prefer batching and multicall-style aggregation so the page remains responsive on chains with larger historical datasets
-- derive historical series from raw event logs when feasible
+- when selected-chain dashboard sections need large loan or offer sets, the implementation should prefer worker-indexed aggregate endpoints first and reserve batching / multicall aggregation as an outage fallback
+- derive historical series from worker-bucketed event data when available, with raw event logs or chain-side multicalls kept as fallback paths
 - a shared Cloudflare Worker indexer may maintain D1-backed `offers`, `loans`, and append-only `activity_events` tables for fast first paint across offers, loans, activity, and claimability hints
 - the worker indexer should fan out across configured chains on each cron tick and silently skip chains missing an RPC secret or deployment artifact, rather than failing the whole sweep
 - the worker should perform one shared event scan per chain / tick across the full allow-list instead of separate per-domain scans; per-domain handlers then persist offers, loans, and activity rows from that shared scan output
 - a single cursor per chain / Diamond source should advance atomically so offer, loan, claim, and activity views cannot drift onto different indexed block heights
 - frontend hooks such as active offers, active loans, wallet loans, activity, claimables, and offer stats should prefer the indexer when available and return an explicit `indexer` / `fallback` source state
+- analytics hooks should also be indexer-first: loan stats, recent loans, recent offers, and loan time series should come from worker endpoints when reachable, with `useProtocolStats` and other per-loan multicall walks gated behind a confirmed worker failure
+- expected analytics worker endpoints include `/loans/stats`, `/loans/recent`, `/offers/recent`, and `/loans/timeseries?range=24h|7d|30d|90d|All`; BigInt token sums should be kept out of SQLite integer overflow paths and priced client-side over the unique asset set
+- active-loan and active-offer worker fetches should paginate through the returned cursor rather than reading only the first page; frontend hard caps may bound defensive fetches, but the UI must not silently truncate ordinary active sets at a single default page
 - `Offer Book` should consume indexed active offers first, while keeping the existing browser event watcher so newly created global offers appear within seconds according to the existing non-user-customizable sort
+- OfferBook's displayed totals and tab badges should come from the same indexed list that renders rows when in indexer mode, and `Showing X of Y` copy should reflect post-filter visible rows with an explicit hidden-by-filters suffix where applicable
+- the `Hide my offers` setting should default on and persist across navigation / reloads under a Vaipakam-namespaced localStorage key
 - dashboard loan lists may consume indexed loan origination data, but current lender / borrower NFT-holder views should be live-filtered through `ownerOf(tokenId)` reads so transferred loan NFTs are reflected accurately
+- Dashboard's `Your Offers` card should be indexer-first through the creator endpoint, paginate rows locally, reset pagination on status-filter changes, and fall back to direct reads only when the worker is unavailable
 - the dashboard `Your Loans` card may render directly from indexed wallet-loan endpoints after the worker has live-filtered current NFT ownership; if the worker is unavailable, it should fall back to the existing direct chain / browser-index path
 - Claim Center money-relevant claim payloads should continue to read directly from chain; indexed claimability is only a discovery hint
 - periodic-interest checkpoint state may be mirrored by the indexer for fast display and reminders, but `previewPeriodicSettle` and transaction review amounts should read the current Diamond state before signing

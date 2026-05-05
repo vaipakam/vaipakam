@@ -2,7 +2,12 @@
  * body background, matching the Buy VPFI / Analytics public-page feel. */
 
 .discord-page {
-  padding: 64px 0;
+  /* Clear the fixed 72 px Navbar with the same 32 px breathing-room
+   * offset Public Dashboard / Buy VPFI use (each public-shell page
+   * carries its own offset because there's no global body padding-
+   * top). Pre-fix: `padding: 64px 0` was 8 px short of the navbar's
+   * 72 px height, so the page card's top edge sat behind the navbar. */
+  padding: 104px 0 64px;
   min-height: calc(100vh - 72px); /* push the footer below the fold */
   display: flex;
   align-items: flex-start;

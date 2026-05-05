@@ -130,10 +130,20 @@ export function useHistoricalData(range: TimeRange = '30d') {
         // Worker healthy — release the chain-side fallback gate.
         setIndexerFailed(false);
         // Collect every asset that shows up in any bucket → unique
-        // set for the price multicall + meta fetch.
+        // set for the price multicall + meta fetch. Defensive
+        // shape filter: drop any malformed-address keys (`"0x"`
+        // etc.) — viem's `getAssetPrice` encoder throws
+        // `InvalidAddressError` on non-20-byte hex, which would
+        // poison the whole multicall batch. The server's
+        // timeseries write filters too but old rows can still
+        // surface bad-shape keys.
         const assetSet = new Set<string>();
         for (const b of ts.buckets) {
-          for (const a of Object.keys(b.principalByAsset)) assetSet.add(a);
+          for (const a of Object.keys(b.principalByAsset)) {
+            if (typeof a === 'string' && a.length === 42 && a.startsWith('0x')) {
+              assetSet.add(a);
+            }
+          }
         }
         const assets = Array.from(assetSet);
 
