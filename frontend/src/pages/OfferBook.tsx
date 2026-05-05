@@ -278,13 +278,33 @@ export default function OfferBook() {
     closed: number | null;
   }>({ open: null, closed: null });
 
-  // Reset cumulative state whenever the open set changes so we don't carry
-  // stale rows across reloads.
+  // True when the worker indexer returned a fresh OPEN-tab page. The
+  // OfferBook then renders directly from `indexedOffers` and skips
+  // the legacy on-chain log-scan pagination below. Hoisted up here
+  // so the reset-on-`sortedIds` effect can guard on it (see comment
+  // on that effect).
+  const indexerServingOpen =
+    statusView === 'open' && indexedSource === 'indexer' && indexedOffers !== null;
+
+  // Reset cumulative state whenever the open set changes so we don't
+  // carry stale rows across reloads.
+  //
+  // Skipped while the indexer path is serving — that path owns the
+  // `offers` array through its own effect (the `indexerServingOpen`
+  // block further below) and re-populates from `indexedOffers`, NOT
+  // from `sortedIds`. Wiping here on a `sortedIds` reference change
+  // (which fires every time the legacy log scan returns, even with
+  // an identical-or-empty result) would blank the indexer-served
+  // list and leave the page empty until the user manually clicked
+  // "Load more" — exactly the symptom that triggered this fix. The
+  // indexer effect itself triggers on `indexedOffers` change, which
+  // is the correct reset axis for indexer-served data.
   useEffect(() => {
+    if (indexerServingOpen) return;
     setOffers([]);
     setCursor(0);
     loadedIdsRef.current = new Set();
-  }, [sortedIds]);
+  }, [sortedIds, indexerServingOpen]);
 
   const fetchBatch = useCallback(async (ids: bigint[]): Promise<OfferData[]> => {
     if (ids.length === 0) return [];
@@ -383,8 +403,8 @@ export default function OfferBook() {
   // RPC path (zero-creator from canceled offers; accepted-status
   // mismatch) don't apply here because the indexer already filtered
   // by `status = 'active'` server-side.
-  const indexerServingOpen =
-    statusView === 'open' && indexedSource === 'indexer' && indexedOffers !== null;
+  // (`indexerServingOpen` is declared higher up so the reset-on-
+  // `sortedIds` effect can guard on it; see that effect's comment.)
   useEffect(() => {
     if (!indexerServingOpen) return;
     const mapped = (indexedOffers ?? []).map((o) => toOfferData(indexedToRawOffer(o)));
