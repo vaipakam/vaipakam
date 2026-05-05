@@ -199,7 +199,11 @@ export default function OfferBook() {
   // (worker down / 5xx / VITE_HF_WATCHER_ORIGIN unset) the existing
   // log-scan path runs unchanged. The Closed view always takes the
   // on-chain path — closed-offer rendering isn't a Phase 1 priority.
-  const { offers: indexedOffers, source: indexedSource } = useIndexedActiveOffers();
+  const {
+    offers: indexedOffers,
+    source: indexedSource,
+    refetch: refetchIndexedOffers,
+  } = useIndexedActiveOffers();
   const rescanCooldown = useRescanCooldown({ loading: indexLoading });
   // Map<offerId, loanId> derived from `OfferAccepted` events in the
   // log-index. Each accepted offer's event carries its resulting loanId,
@@ -1205,17 +1209,35 @@ export default function OfferBook() {
               } as CSSProperties
             }
             onClick={() => {
-              // Single-pass refresh: `reloadIndex` runs the legacy
-              // local log scan, which starts at
-              // `max(localCacheCursor, indexer.lastBlock)` — a strict
-              // superset of the live-tail's narrow offer-event
-              // catch-up. The cooldown gives the user time to see the
-              // 'syncing' → 'synced' transition and prevents
-              // spam-clicks burning RPC quota.
+              // Two-target refresh:
+              //   1. `refetchIndexedOffers()` re-pulls the worker's
+              //      indexer page + RPC catch-up over the indexer-tail
+              //      → safe-head gap (the same flow the auto-tail
+              //      uses, just triggered explicitly). This is what
+              //      drives the OfferBook list when the indexer is
+              //      reachable.
+              //   2. `reloadIndex()` re-runs the legacy local log
+              //      scan, which starts at
+              //      `max(localCacheCursor, indexer.lastBlock)` and
+              //      refreshes the per-row events stream the legacy
+              //      rendering pipeline still consumes (also covers
+              //      the case where the indexer is unreachable and
+              //      the OfferBook falls back to RPC pagination off
+              //      `sortedIds`).
+              //
+              // Cumulative state (`offers`, `cursor`, `loadedIdsRef`)
+              // is reset only when the indexer ISN'T serving — the
+              // indexer-served path manages its own `offers` array
+              // through the `indexerServingOpen` effect, and a manual
+              // wipe here would leave the page blank between the wipe
+              // and the next indexer refetch landing.
               rescanCooldown.trigger();
-              loadedIdsRef.current = new Set();
-              setOffers([]);
-              setCursor(0);
+              if (!indexerServingOpen) {
+                loadedIdsRef.current = new Set();
+                setOffers([]);
+                setCursor(0);
+              }
+              void refetchIndexedOffers();
               void reloadIndex();
             }}
             title={t('offerBookPage.rescanTooltip')}
