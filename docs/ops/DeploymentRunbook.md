@@ -533,8 +533,9 @@ See `AdminKeysAndPause.md` for the full role map and the Timelock + Multisig top
 
 Any contract change in this deploy that touches a public selector or
 struct shape needs the dependent ABI bundles regenerated, otherwise
-they encode calldata against stale shapes. Two consumers, both
-sourced via `forge inspect`:
+they encode calldata against stale shapes. **Three** consumers,
+all sourced via `forge inspect` from the compiled bytecode (single
+source of truth — no hand-typed ABI tuples anywhere):
 
 ```bash
 forge build   # if not already built since the last edit
@@ -546,7 +547,21 @@ cd frontend && node_modules/.bin/tsc -b --noEmit && cd ..
 git diff frontend/src/contracts/abis/
 git commit -am 'Sync frontend ABIs with contracts@<hash>'
 
-# (b) Public keeper-bot — narrow surface (Metrics / Risk / Loan).
+# (b) hf-watcher Cloudflare Worker — narrow surface
+#     (OfferCancelFacet, LoanFacet) for `getOfferDetails` /
+#     `getLoanDetails` decoding. Was previously a hand-typed `as
+#     const` tuple in `ops/hf-watcher/src/diamondAbi.ts` — drifted
+#     when `LibVaipakam.Offer` gained `periodicInterestCadence`,
+#     produced the OfferBook display bug captured in
+#     ReleaseNotes-2026-05-05.md "Watcher offer-decode drift".
+#     Auto-export landed alongside the fix; run on every facet
+#     edit that touches OfferCancelFacet / LoanFacet structs.
+bash contracts/script/exportWatcherAbis.sh
+cd ops/hf-watcher && npx tsc -p . --noEmit && cd ../..
+git diff ops/hf-watcher/src/abis/
+git commit -am 'Sync watcher ABIs with contracts@<hash>'
+
+# (c) Public keeper-bot — narrow surface (Metrics / Risk / Loan).
 #     Skip if the deploy didn't touch those selectors.
 KEEPER_BOT_DIR=../../vaipakam-keeper-bot \
   bash contracts/script/exportAbis.sh
@@ -555,12 +570,27 @@ git diff src/abis/ && npm run typecheck
 git commit -am 'Sync ABIs with vaipakam@<hash>' && git push
 ```
 
-Why both: a missed frontend sync surfaces as a generic
-`"exceeds max transaction gas limit"` revert during
-`eth_estimateGas` on Base public RPCs (the calldata is one word
-too long; the RPC strips the real revert reason). A missed keeper
-sync ships a public bot with `"function selector not found"`
-failures in production. Per-chain runbooks
+Why all three:
+
+- **Missed frontend sync** surfaces as a generic
+  `"exceeds max transaction gas limit"` revert during
+  `eth_estimateGas` on Base public RPCs (the calldata is one word
+  too long; the RPC strips the real revert reason).
+- **Missed watcher sync** silently misaligns the worker's
+  positional decoder by N slots. Symptom seen on 2026-05-05: the
+  OfferBook rendered offers with `5×10²⁹ ETH` principals,
+  `10⁷%` rates, and `5×10¹⁸ days` durations because the worker
+  was reading `lendingAsset` from the byte position where a newly-
+  added enum field actually lives. Cron-tick auto-refresh in the
+  worker heals D1 within 5 minutes of redeploy once the ABI is
+  fixed — but only IF you redeploy the worker; the Cloudflare
+  build doesn't re-fetch ABIs.
+- **Missed keeper sync** ships a public bot with
+  `"function selector not found"` failures in production.
+
+`deploy-chain.sh` phase 6 and `deploy-mainnet.sh phase_abi_sync`
+both invoke (a), (b), and (c) automatically — manual run is only
+needed when re-syncing without a full deploy. Per-chain runbooks
 (`BaseSepoliaDeploy.md` §13–14, `BNBTestnetDeploy.md`, etc.)
 inherit this step from here — don't duplicate the long form
 there, just point back.
@@ -569,13 +599,23 @@ there, just point back.
 ships with this same sync wired in as its final step (6/6) so a
 `bash anvil-bootstrap.sh` lands a fresh diamond, etches Multicall3,
 flips Range Orders flags on, seeds offers, AND regenerates
-`frontend/src/contracts/abis/`, `frontend/src/contracts/deployments.json`,
+`frontend/src/contracts/abis/`, `ops/hf-watcher/src/abis/`,
+`frontend/src/contracts/deployments.json`,
 `ops/hf-watcher/src/deployments.json`, and (when the sibling repo is
 present) `vaipakam-keeper-bot/src/abis/` — all in one command. The
 keeper-bot export is gated on `../../vaipakam-keeper-bot` existing
 so a contributor without that checkout still gets a clean run. For
 the production deploy path the sync stays manual on purpose so the
 operator can review each diff before committing.
+
+**Token-icon URL template** (`VITE_TOKEN_ICON_URL_TEMPLATE`) — not
+a deploy artefact; lives in `frontend/.env.local` like the RPC URLs
+and feature flags. Default points at the Trust Wallet CDN
+(`assets-cdn.trustwallet.com`); override to the GitHub raw repo or
+a self-hosted registry per the commented examples in
+`frontend/.env.example`. Any change requires a frontend rebuild +
+Cloudflare deploy to take effect — same as flipping any other
+`VITE_*` flag.
 
 ---
 

@@ -151,6 +151,24 @@ export function prewarmTokenMeta(
 }
 
 /**
+ * Synchronous read of the in-memory + localStorage caches without
+ * triggering a fetch. Returns `null` when the token has never been
+ * resolved on this device. Useful for sort comparators and other
+ * non-React code paths where calling `useTokenMeta` would violate
+ * hook rules; the trade-off is that brand-new tokens read `null`
+ * here even when the per-row hook would have kicked off a fetch
+ * elsewhere on the page. Combine with `prewarmTokenMeta` at the
+ * surrounding component level to keep the cache populated.
+ */
+export function peekTokenMeta(address: string | null | undefined): TokenMeta | null {
+  if (!address) return null;
+  seedMemoryFromStorage();
+  const key = address.toLowerCase();
+  if (key === ZERO_ADDRESS) return nativeMeta();
+  return memoryCache.get(key) ?? null;
+}
+
+/**
  * Resolve ERC-20 symbol + decimals for `address`. Cached in-memory and in
  * localStorage so switching pages doesn't re-query the RPC.
  */

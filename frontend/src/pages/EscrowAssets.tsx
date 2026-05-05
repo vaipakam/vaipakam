@@ -9,8 +9,11 @@ import { useUserEscrowAddress } from '../hooks/useUserEscrowAddress';
 import { useIndexedLoansForWallet } from '../hooks/useIndexedLoans';
 import { fetchOffersByCreator, type IndexedOffer } from '../lib/indexerClient';
 import { useLiveWatermark } from '../hooks/useLiveWatermark';
+import { peekTokenMeta, prewarmTokenMeta } from '../lib/tokenMeta';
+import { ChevronDown, ChevronUp, ChevronsUpDown } from 'lucide-react';
 import { CardInfo } from '../components/CardInfo';
-import { AssetSymbol } from '../components/app/AssetSymbol';
+import { AssetLink } from '../components/app/AssetLink';
+import { TokenIcon } from '../components/app/TokenIcon';
 import { TokenAmount } from '../components/app/TokenAmount';
 import { DEFAULT_CHAIN } from '../contracts/config';
 
@@ -210,10 +213,38 @@ export default function EscrowAssets() {
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [reloadCounter, setReloadCounter] = useState(0);
-  // Default ON — dust amounts are usually rounding residue from
-  // protocol-fee math and have no actionable meaning. Power users who
-  // want to verify a specific tiny balance flip this off.
-  const [hideDust, setHideDust] = useState(true);
+  // Single toggle that controls BOTH the zero-display filter AND the
+  // dust-display filter together. Default OFF (show every row,
+  // including zero / dust / untracked) so the user sees what's
+  // actually in their escrow without the page silently swallowing
+  // anything. Click to flip ON — hides every "uninteresting"
+  // balance: rows where `min(balanceOf, tracked) === 0n` (untracked
+  // tokens, which display as 0 by the trust-model gate) AND rows
+  // whose display value is below the dust threshold (1×10⁻¹¹).
+  // Earlier shipped as two separate filters (always-on zero +
+  // toggleable dust) but that left zero rows unrevealable, even
+  // though the user might want to verify "is something in there
+  // that the protocol isn't tracking?" — with the unified toggle a
+  // single click reveals every row that's been silenced.
+  const [hideLowBalances, setHideLowBalances] = useState(false);
+  // Sort state for the holdings table. `'balance' + 'desc'` is the
+  // default — biggest holdings at the top is the most useful glance
+  // for "what do I have here." Click a column header to flip
+  // direction; click a different header to switch column.
+  type SortBy = 'symbol' | 'balance';
+  type SortDir = 'asc' | 'desc';
+  const [sortBy, setSortBy] = useState<SortBy>('balance');
+  const [sortDir, setSortDir] = useState<SortDir>('desc');
+  const toggleSort = (col: SortBy) => {
+    if (col === sortBy) {
+      setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
+    } else {
+      setSortBy(col);
+      // Sensible per-column default: symbols ascending (A→Z),
+      // balances descending (biggest first).
+      setSortDir(col === 'balance' ? 'desc' : 'asc');
+    }
+  };
   // Same cooldown + sync-status state-machine the Activity / OfferBook
   // rescan buttons use. Drives the button label transitions
   // (`Refresh` → `Refreshing… 28s` → `Synced — 5s` → `Refresh`),
@@ -307,32 +338,82 @@ export default function EscrowAssets() {
     };
   }, [escrow, publicClient, tokens, reloadCounter]);
 
+  // Pre-warm the symbol/decimals cache for every discovered token so
+  // the symbol-sort comparator (`peekTokenMeta`) hits warm entries
+  // synchronously instead of falling back to "address" sentinel
+  // values. Idempotent + dedup'd inside `prewarmTokenMeta`.
+  const escrowAssetsClient = publicClient;
+  useEffect(() => {
+    prewarmTokenMeta(
+      tokens.map((tk) => tk.address),
+      escrowAssetsClient ?? null,
+    );
+  }, [tokens, escrowAssetsClient]);
+
   // Visible rows: drop zero-balance rows always; drop dust rows when
   // the toggle is on. Loading rows (`balance === null`) stay visible
   // so the table doesn't reflow during the fetch — they render as
   // skeletons. Once a row's `balance` resolves, it's filtered.
-  const visibleRows = useMemo(
-    () =>
-      rows.filter((r) => {
-        if (r.balance === null) return true; // still loading
-        if (r.balance === 0n) return false;  // zero — always hidden
-        if (!hideDust) return true;          // toggle off — show all non-zero
-        // Decimals unknown (read failed) — fall back to "show" so a
-        // legitimate balance isn't accidentally hidden by a stale
-        // 18-dec assumption.
-        if (r.decimals === null) return true;
-        return !isDustBalance(r.balance, r.decimals);
-      }),
-    [rows, hideDust],
-  );
-  const hiddenZeroCount = rows.filter((r) => r.balance === 0n).length;
-  const hiddenDustCount = rows.filter(
-    (r) =>
-      r.balance !== null &&
-      r.balance !== 0n &&
-      r.decimals !== null &&
-      isDustBalance(r.balance, r.decimals),
-  ).length;
+  // Sort applied AFTER the filter pass so direction flips don't
+  // re-introduce hidden rows.
+  const visibleRows = useMemo(() => {
+    const filtered = rows.filter((r) => {
+      // Loading rows always render so the table doesn't reflow as
+      // balances arrive.
+      if (r.balance === null) return true;
+      // Toggle OFF (default) — show everything, including zero /
+      // untracked / dust. The trust-model gate (`min(balanceOf,
+      // tracked)`) still applies — untracked tokens render as 0
+      // even when visible — but the row itself is shown so the user
+      // can SEE the row exists and act on it (re-deposit via the
+      // chokepoint to bump the tracked counter).
+      if (!hideLowBalances) return true;
+      // Toggle ON — hide both zero-display rows and dust rows.
+      if (r.balance === 0n) return false;
+      // Decimals unknown (read failed) — fall back to "show" so a
+      // legitimate balance isn't accidentally hidden by a stale
+      // 18-dec assumption.
+      if (r.decimals === null) return true;
+      return !isDustBalance(r.balance, r.decimals);
+    });
+    const dirMul = sortDir === 'asc' ? 1 : -1;
+    if (sortBy === 'balance') {
+      return [...filtered].sort((a, b) => {
+        // Loading rows (balance === null) sink to the bottom regardless
+        // of direction so the user always sees their resolved holdings
+        // at the top edge of the table.
+        if (a.balance === null && b.balance === null) return 0;
+        if (a.balance === null) return 1;
+        if (b.balance === null) return -1;
+        // BigInt comparison via subtraction sign — keeps full precision
+        // (Number(bigint) would lose it past 2^53).
+        if (a.balance === b.balance) return 0;
+        return (a.balance < b.balance ? -1 : 1) * dirMul;
+      });
+    }
+    // Sort by symbol — peek the cached meta synchronously; if symbol
+    // hasn't resolved yet, fall back to the lowercased address so
+    // sort is at least stable even mid-resolution. Locale-aware
+    // string compare so non-Latin scripts sort sanely.
+    return [...filtered].sort((a, b) => {
+      const ma = peekTokenMeta(a.address);
+      const mb = peekTokenMeta(b.address);
+      const sa = (ma?.symbol || a.address).toLowerCase();
+      const sb = (mb?.symbol || b.address).toLowerCase();
+      const cmp = sa.localeCompare(sb);
+      return cmp * dirMul;
+    });
+  }, [rows, hideLowBalances, sortBy, sortDir]);
+  // Unified counter: how many rows would be hidden if the toggle
+  // were ON. Computed against `rows` not `visibleRows` so the count
+  // is constant regardless of the current toggle state — drives the
+  // "Hide low balances (N)" / "Show all (N hidden)" button label.
+  const hiddenLowCount = rows.filter((r) => {
+    if (r.balance === null) return false; // loading — never counts
+    if (r.balance === 0n) return true;    // zero / untracked
+    if (r.decimals === null) return false; // decimals unknown — not classified as dust
+    return isDustBalance(r.balance, r.decimals);
+  }).length;
 
   if (!address) {
     return (
@@ -422,57 +503,55 @@ export default function EscrowAssets() {
             <CardInfo id="escrow-assets.holdings" />
           </span>
           <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-            {/* Dust filter toggle. Default ON to keep the table tidy;
-                power users who need to inspect a tiny balance flip it
-                off. The count of currently-hidden rows surfaces inline
-                so the user knows when filtering is doing real work
-                vs. when there's nothing to hide. */}
-            {(hiddenDustCount > 0 || !hideDust) && (
-              <button
-                type="button"
-                className="btn btn-ghost btn-sm"
-                onClick={() => setHideDust((v) => !v)}
-                title={
-                  hideDust
-                    ? t('escrowAssets.dustShowAll', {
-                        defaultValue: 'Show all balances including dust',
-                      })
-                    : t('escrowAssets.dustHide', {
-                        defaultValue: 'Hide tiny balances under 1e-11',
-                      })
-                }
-              >
-                {hideDust
-                  ? t('escrowAssets.dustToggleShow', {
-                      defaultValue: 'Show all ({{n}} hidden)',
-                      n: hiddenDustCount,
+            {/* Unified low-balance toggle — controls BOTH the zero
+                / untracked filter AND the dust filter together.
+                Default OFF (show every row, including zero-display
+                untracked balances and tiny dust amounts). One click
+                hides every row whose `min(balanceOf, tracked)` is
+                zero or below the dust threshold. The trust-model
+                gate (`min(...)`) still applies to the displayed
+                value regardless of toggle state — untracked tokens
+                show 0 even when visible — but the row itself is
+                shown so the user can verify "is something in the
+                escrow that the protocol isn't tracking?" and act on
+                it (re-deposit via the chokepoint to bump the
+                counter). Always rendered so the toggle is
+                discoverable even when the current dataset has
+                nothing to hide. */}
+            <button
+              type="button"
+              className="btn btn-ghost btn-sm"
+              onClick={() => setHideLowBalances((v) => !v)}
+              title={
+                hideLowBalances
+                  ? t('escrowAssets.lowShowAll', {
+                      defaultValue:
+                        'Show all balances including zero / untracked / dust',
                     })
-                  : t('escrowAssets.dustToggleHide', {
-                      defaultValue: 'Hide dust',
-                    })}
-              </button>
-            )}
+                  : t('escrowAssets.lowHide', {
+                      defaultValue:
+                        'Hide zero / untracked / dust balances (anything below 1×10⁻¹¹ in display units)',
+                    })
+              }
+            >
+              {hideLowBalances
+                ? t('escrowAssets.lowToggleShow', {
+                    defaultValue: 'Show all ({{n}} hidden)',
+                    n: hiddenLowCount,
+                  })
+                : t('escrowAssets.lowToggleHide', {
+                    defaultValue: 'Hide low balances',
+                  })}
+            </button>
             {/* Visibility hint when nothing to render — informs users
                 why a wallet they expect to have escrow balances is
-                showing an empty table. Three causes: never deposited
-                on this chain, all balances filtered as zero / dust,
-                or token discovery hasn't yet populated. The first two
-                resolve naturally; the third resolves on next watermark
-                tick. */}
-            {hiddenZeroCount > 0 && (
-              <span
-                style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)' }}
-                title={t('escrowAssets.zeroHiddenTooltip', {
-                  defaultValue:
-                    'Tokens with zero protocol-tracked balance are not shown. Re-deposit via the staking flow if you expect a balance.',
-                })}
-              >
-                {t('escrowAssets.zeroHidden', {
-                  defaultValue: '{{n}} zero hidden',
-                  n: hiddenZeroCount,
-                })}
-              </span>
-            )}
+                showing an empty table. The Three causes — never
+                deposited on this chain, all balances filtered as
+                zero / dust, token discovery hasn't yet populated —
+                are surfaced via the unified toggle's count above
+                (or the empty-state copy below the table). No
+                separate inline "zero hidden" pill needed now that
+                the toggle handles every "uninteresting" balance. */}
           </span>
           <button
             type="button"
@@ -547,19 +626,18 @@ export default function EscrowAssets() {
             })}
           </p>
         ) : visibleRows.length === 0 ? (
-          // All discovered tokens are filtered out by zero / dust
-          // gates. Surface a helpful empty state instead of a blank
-          // table — and offer the dust-toggle inline so the user
-          // doesn't have to scroll back to the header to flip it.
+          // All discovered tokens are filtered out by the unified
+          // low-balance gate. Surface a helpful empty state and
+          // remind the user the toggle is reachable in the header.
           <p style={{ color: 'var(--text-secondary)' }}>
-            {hideDust && hiddenDustCount > 0
-              ? t('escrowAssets.allFilteredAsDust', {
+            {hideLowBalances && hiddenLowCount > 0
+              ? t('escrowAssets.allFilteredAsLow', {
                   defaultValue:
-                    'All your protocol-tracked balances are below the dust threshold. Click "Show all" above to inspect them.',
+                    'All your discovered balances are zero / untracked / dust. Click "Show all" in the header to inspect them.',
                 })
               : t('escrowAssets.allZero', {
                   defaultValue:
-                    'No non-zero protocol-tracked balances on this chain. Re-deposit via the staking flow to make a balance visible.',
+                    'No protocol-tracked balances on this chain. Re-deposit via the staking flow to make a balance visible.',
                 })}
           </p>
         ) : (
@@ -569,11 +647,72 @@ export default function EscrowAssets() {
           >
             <thead>
               <tr>
+                {/* Click-to-sort headers — same chrome as the
+                    Dashboard loan list (`SortTh` there). Active
+                    column shows the chevron in the current direction;
+                    inactive columns show the muted up-down icon to
+                    invite a click. Default is balance-desc on first
+                    mount; clicking a header flips its direction;
+                    clicking a different header switches column AND
+                    picks a sensible per-column default direction
+                    (asc for symbols / A-Z, desc for balances /
+                    biggest-first). */}
                 <th style={{ textAlign: 'left' }}>
-                  {t('escrowAssets.colToken')}
+                  <button
+                    type="button"
+                    className="loan-sort-th"
+                    onClick={() => toggleSort('symbol')}
+                    aria-sort={
+                      sortBy === 'symbol'
+                        ? sortDir === 'asc'
+                          ? 'ascending'
+                          : 'descending'
+                        : 'none'
+                    }
+                  >
+                    <span>{t('escrowAssets.colToken')}</span>
+                    {sortBy === 'symbol' ? (
+                      sortDir === 'asc' ? (
+                        <ChevronUp size={12} />
+                      ) : (
+                        <ChevronDown size={12} />
+                      )
+                    ) : (
+                      <ChevronsUpDown
+                        size={12}
+                        className="loan-sort-th-idle"
+                      />
+                    )}
+                  </button>
                 </th>
                 <th style={{ textAlign: 'right' }}>
-                  {t('escrowAssets.colBalance')}
+                  <button
+                    type="button"
+                    className="loan-sort-th"
+                    style={{ marginLeft: 'auto' }}
+                    onClick={() => toggleSort('balance')}
+                    aria-sort={
+                      sortBy === 'balance'
+                        ? sortDir === 'asc'
+                          ? 'ascending'
+                          : 'descending'
+                        : 'none'
+                    }
+                  >
+                    <span>{t('escrowAssets.colBalance')}</span>
+                    {sortBy === 'balance' ? (
+                      sortDir === 'asc' ? (
+                        <ChevronUp size={12} />
+                      ) : (
+                        <ChevronDown size={12} />
+                      )
+                    ) : (
+                      <ChevronsUpDown
+                        size={12}
+                        className="loan-sort-th-idle"
+                      />
+                    )}
+                  </button>
                 </th>
               </tr>
             </thead>
@@ -581,7 +720,30 @@ export default function EscrowAssets() {
               {visibleRows.map((row) => (
                 <tr key={row.address}>
                   <td>
-                    <AssetSymbol address={row.address} />
+                    {/* Token cell: small CDN-served icon (Trust
+                        Wallet by default; overridable via
+                        VITE_TOKEN_ICON_URL_TEMPLATE) + symbol +
+                        external-link icon. `<AssetLink kind="erc20">`
+                        wraps `<AssetSymbol>` and routes the click to
+                        CoinGecko when the token is indexed (debounced
+                        verifier hook), else falls back to the chain
+                        explorer's contract page. The hover tooltip
+                        stays on the symbol and surfaces the full
+                        contract address. Icons that don't resolve
+                        (testnet mocks, unrecognised chain) collapse
+                        to a neutral placeholder so the row chrome
+                        doesn't jitter as the image load resolves. */}
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+                      <TokenIcon
+                        chainId={chain.chainId ?? DEFAULT_CHAIN.chainId}
+                        address={row.address}
+                      />
+                      <AssetLink
+                        kind="erc20"
+                        chainId={chain.chainId ?? DEFAULT_CHAIN.chainId}
+                        address={row.address}
+                      />
+                    </span>
                   </td>
                   <td style={{ textAlign: 'right', fontFamily: 'monospace' }}>
                     {row.balance === null ? (

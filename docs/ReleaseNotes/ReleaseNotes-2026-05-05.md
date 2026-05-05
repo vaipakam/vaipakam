@@ -456,6 +456,255 @@ localStorage cache snapshot is still rendered synchronously for
 first-paint via `peekLoanIndex` regardless of the gate, so users
 see content immediately; only the background RPC scan is deferred.
 
+### Per-page polling tiers + activity-aware backoff
+
+The 5-second watermark probe described above turned out to be too
+hot for surfaces other than the OfferBook. Refined into three
+layers:
+
+- **OfferBook (active surface)**: 5 s probe — users actively watch
+  for new offers landing.
+- **Dashboard / Activity / Vault / Loan Details / homepage hero**:
+  20 s probe — counter-driven changes still surface within ~30 s
+  without the OfferBook's RPC cadence. Three-quarters of pages run
+  at this rate now; the budget drop is 60 % vs the original
+  5-second-everywhere build.
+- **Idle / walked-away on OfferBook**: extra activity-aware tiers
+  layered on top of the 5-second baseline. After 5 minutes of no
+  mouse / keyboard / scroll / touch input the cadence backs off to
+  30 s; after 15 minutes the timer pauses entirely until the next
+  activity event. Tab refocus and any input event fire an immediate
+  catch-up probe and reset to the active tier.
+
+`useLiveWatermark` takes four optional knobs (`pollIntervalMs`,
+`idlePollIntervalMs`, `idleAfterMs`, `pausedAfterMs`); only the
+OfferBook hook opts into the activity layer. Other pages stay flat.
+Activity listeners use `passive: true` and a 1 Hz timestamp-write
+throttle so the listener itself isn't a perf cost.
+
+### Adaptive rescan-button cooldown
+
+The rescan buttons (OfferBook, Activity, Vault, plus a new one on
+Dashboard) used to lock out for a flat 30 seconds. The cooldown
+state machine (`useRescanCooldown`) is now adaptive:
+
+- First click after a quiet stretch: 30 s baseline.
+- Each consecutive click within `resetAfterIdleMs` of the previous
+  cooldown ending grows the next cooldown by `growthFactor` (2×),
+  capped at `maxCooldownMs` (5 minutes).
+- After 2 minutes of quiet post-cooldown, the next click resets
+  to the 30 s baseline.
+
+Spam pattern: 30 s → 60 s → 120 s → 240 s → 300 s (capped). Walk-
+away-and-come-back-2-minutes-later: stays at 30 s. The growth fires
+on the second click — the first establishes the cooldown — so
+legitimate "did my tx land?" rechecks after a few minutes always
+get the baseline.
+
+Visual polish from the same pass:
+
+- The countdown progress bar now drains right-to-left ("time
+  remaining") instead of filling left-to-right.
+- The seconds digit sits in a fixed-width slot with `tabular-nums`,
+  so the "Refreshing… 30s" → "Refreshing… 9s" transition doesn't
+  shift the surrounding label by one digit width.
+- All four rescan buttons (Activity / OfferBook / Vault / new
+  Dashboard button) share the same chrome, animation, and adaptive
+  state machine.
+
+### Dashboard rescan button
+
+New rescan button on the Dashboard's "Active loans" section header
+(connected wallets only). Click triggers `refetchIndexedLoans()` +
+`reloadUserLoans()` + `reloadClaimables()` together — three loan-
+list data sources refresh in one action. Same chrome + adaptive
+cooldown as the other rescan buttons.
+
+### Watcher offer-decode drift — incident + structural fix
+
+The OfferBook page rendered offers with garbage values
+(5×10²⁹ ETH amounts, 10⁷% rates, 5×10¹⁸ days durations) for
+several offer IDs while the same IDs rendered correctly on the
+Dashboard. Every value off, every "address" pointing at a
+near-zero / BPS-literal pattern.
+
+Root cause: the hf-watcher Cloudflare Worker carried a hand-typed
+`as const` ABI tuple in `ops/hf-watcher/src/diamondAbi.ts` for
+`getOfferDetails`. When `LibVaipakam.Offer` gained
+`periodicInterestCadence` (T-034 — Periodic Interest Payment) the
+hand-rolled tuple wasn't updated. viem's positional decoder shifted
+every subsequent field by one slot:
+
+- `lendingAsset` decoded from where the cadence enum actually
+  lives — a small enum value padded out to 32 bytes is a
+  near-zero address, which the frontend rendered as "ETH" via
+  its `0x0000…0000`-asset fallback path.
+- `amount` decoded from the lendingAsset bits — an address read
+  as a uint256 produced 5.93×10²⁹.
+- And so on cascading.
+
+Why it only bit OfferBook: Dashboard reads via the auto-synced
+frontend ABI bundle (canonical, byte-perfect), bypassing the
+watcher entirely. The OfferBook indexer pipeline went through the
+watcher's stale tuple.
+
+**Surgical fix**: added `periodicInterestCadence` to the worker
+ABI, redeployed; the worker's `refreshStaleOfferDetails` cron loop
+re-decoded every active offer on the next 5-minute tick, healing
+all 17 polluted D1 rows across Base Sepolia + Sepolia without a
+custom backfill script.
+
+**Structural fix**: replaced the hand-typed ABI tuple with JSON
+imports generated via `forge inspect <Facet> abi --json`. New
+script `contracts/script/exportWatcherAbis.sh` (mirrors
+`exportFrontendAbis.sh` exactly) writes
+`ops/hf-watcher/src/abis/OfferCancelFacet.json` and
+`LoanFacet.json`, plus a `_source.json` provenance stamp.
+`deploy-chain.sh` phase 6 and `deploy-mainnet.sh phase_abi_sync`
+invoke it automatically alongside the existing frontend +
+keeper-bot exports — the watcher ABI can never silently drift from
+the contract struct again. The Solidity compiler is the single
+source of truth for the worker's read-decode shape; hand-typed
+positional ABIs are gone and can't recur. Documented in
+[`CLAUDE.md`](../../CLAUDE.md) "Watcher (hf-watcher) ABI sync".
+
+### Safe-block cursor on the watcher (mirroring the frontend)
+
+The earlier safe-block fix shipped on the browser-side legacy log
+scan but the worker's D1 indexer kept reading at `latest`-tag head.
+That left the cursor exposed to reorgs on the worker side — a
+1- to 32-block reorg could remove a block whose `OfferAccepted`
+the worker had already written to D1, and the next cron run
+(resuming from `cursor + 1`) would skip the reorged block,
+leaving the stale row in D1 forever.
+
+[`chainIndexer.ts`](../../ops/hf-watcher/src/chainIndexer.ts) now
+reads at `client.getBlock({ blockTag: 'safe' })` with a
+`latest - 32` fallback for RPCs that don't support the safe tag.
+Initial page load, tab refocus, manual rescan, the watermark
+auto-refresh, AND the worker cron all now cursor from the same
+safe-aligned position. End-to-end reorg-proof.
+
+### Vault token discovery (drop hardcoded list, pure-history)
+
+The Vault page (`Your Vaipakam Vault`) used to render rows from a
+hardcoded `knownProtocolTokens(chainId)` list pulling
+`vpfiToken / weth / mockERC20A / mockERC20B` from the deployments
+record. That list silently broke for testnet mock tokens because
+each flow run deploys fresh `new ERC20Mock(...)` contracts whose
+addresses are NEVER written into `addresses.json` — a wallet with
+1,000 mUSDC physically in escrow rendered as zero because the page
+didn't know mUSDC was a token to render.
+
+Vaipakam is asset-agnostic — the platform doesn't curate which
+ERC-20s users may transact in. The static list was dropped
+entirely; token discovery is now pure-history:
+
+- `useIndexedLoansForWallet(addr)` — every loan the wallet
+  participated in on either side. Surfaces `lendingAsset` +
+  `collateralAsset`.
+- `fetchOffersByCreator(chainId, addr)` — every offer the wallet
+  created (active / filled / cancelled). Same asset fields.
+
+Both sources are cache-backed via the worker indexer's D1, fronted
+by the worker REST endpoints — no direct historical RPC reads. The
+per-token live `balanceOf` + `protocolTrackedEscrowBalance` reads
+are still RPC (those values must be live), but the token LIST
+itself comes from the indexer cache. Refresh cadence end-to-end:
+worker cron 5 min → frontend probe 20 s on the Vault page →
+immediate refetch on tab focus / post-tx receipt / manual rescan.
+
+`min(balanceOf, tracked)` defensive gate preserved per-token —
+the change is which tokens get checked, not the trust model.
+
+### Vault zero/dust filter + dust toggle
+
+Companion to the discovery change — the Vault now drops zero-
+balance rows always (no information value) and hides dust amounts
+(< 1×10⁻¹¹ in display units) behind a toggle, default ON.
+
+- **Zero filter**: always on; `min(balanceOf, tracked) === 0n`
+  rows never render. No toggle.
+- **Dust filter**: toggle in card header, default ON. Hides rows
+  whose display value is below `1×10⁻¹¹`. Implementation gates the
+  threshold by token decimals: 18-decimal tokens have balances
+  below 10⁷ wei (≈10 gwei) classified as dust; ≤10-decimal tokens
+  are exempt (1 wei on a 10-dec token displays as 1×10⁻¹⁰, above
+  the threshold). 6-decimal stable-coins always show every
+  non-zero balance — even `1 wei = 0.000001 USDC` stays visible.
+
+Counter inline in the header surfaces hidden-row counts so the
+user knows when filtering is doing real work. Empty-state copy
+distinguishes "all your balances are dust → click Show all" from
+"all your balances are zero → re-deposit via staking flow."
+
+### Vault token icons + CoinGecko / explorer external links
+
+Vault rows now render a small circular token icon (Trust Wallet's
+CDN by default, configurable via `VITE_TOKEN_ICON_URL_TEMPLATE`)
+next to the symbol. The symbol itself is wrapped in
+`<AssetLink kind="erc20">` — the same component the OfferBook /
+Dashboard / Loan Details surfaces use — which routes the click to
+CoinGecko when the token is indexed (debounced verifier check)
+and falls back to the chain explorer's contract page otherwise.
+Hover tooltip on the symbol surfaces the full contract address.
+
+Icon sourcing:
+
+- Default: Trust Wallet's purpose-built CDN
+  (`assets-cdn.trustwallet.com`) — designed for wallet/DApp icon
+  traffic, no GitHub-ToS rate-limit caveats.
+- Override via `VITE_TOKEN_ICON_URL_TEMPLATE` (documented in
+  `frontend/.env.example` with two example fallback patterns:
+  GitHub raw + self-hosted registry).
+- Caching: browser HTTP cache only. No localStorage layer — the
+  status-cache pattern was prototyped and reverted; HTTP cache is
+  the right primitive for binary assets and Trust Wallet serves
+  long-cache headers. Negative-cache durability via localStorage
+  was the only real win and only on testnet; not worth the
+  cache-invalidation complexity.
+- On image load failure (testnet mocks, unrecognised chain), the
+  icon collapses to a neutral grey circle placeholder so row
+  chrome doesn't jitter. Chains absent from the slug map
+  (`TRUST_WALLET_SLUG`) short-circuit before the network request.
+
+### Compact locale-aware token amounts in list views
+
+Token amounts in dense list views (Dashboard's loan list, OfferBook
+offer cards + table rows) now render in compact form using
+`Intl.NumberFormat` with `notation: 'compact'`, following the
+in-app language switcher (NOT the OS locale):
+
+- en: `2.5K`, `4.54M`, `1.2B`
+- de: `2,5 Tsd.`, `4,54 Mio.`, `1,2 Mrd.`
+- fr: `2,5 k`, `4,54 M`, `1,2 Md`
+- ja: `2.5万`, `4540万`
+- ar: `٢٫٥ ألف`, `٤٫٥٤ مليون`
+
+Each compact value carries a hover tooltip with the full precise
+decimal-grouped value so users who need the exact number get it
+without clicking through. Detail surfaces (Loan Details, Refinance,
+Preclose, Withdraw, NFT Verifier) keep full precision for tx-bound
+displays.
+
+### HF/LTV chips replacing bar gauges in dense views
+
+The bar gauges that ate ~200 px per row in the Dashboard loan list
+were replaced with compact colour-coded chips (safe-green /
+warning-amber / danger-red). The bar variant survives on
+single-loan / preview surfaces (Loan Details, OfferRiskPreview)
+where the threshold tick-mark adds value; on the Dashboard list
+the chip is enough since users are scanning for the danger zone,
+not measuring exact distance.
+
+### "View" column dropped from loan list
+
+The loan-id in the first column of the Dashboard loan table
+already deep-links to the loan detail page. A separate "View"
+button at the row's far right was duplicate navigation; removed.
+The action cell stays for the conditional Claim CTA on rows where
+the wallet has a terminal-state claimable.
+
 ### Chain-agnostic flow-script wrappers
 
 Three chain-agnostic entry-point scripts landed for the next test

@@ -164,6 +164,24 @@ export interface Deployment {
   // ── Universal cross-chain plumbing ──────────────────────────────
   weth?: HexAddress;
 
+  /** Optional override for the token-icon URL template used by
+   *  `<TokenIcon>` on this specific chain. Two placeholders supported:
+   *  `{chainSlug}` (mapped via `TRUST_WALLET_SLUG` in `TokenIcon.tsx`)
+   *  and `{address}` (checksummed). Read-precedence on the frontend:
+   *
+   *    1. `VITE_TOKEN_ICON_URL_TEMPLATE` env var (chain-agnostic
+   *       operator override — set in `.env.local` / Cloudflare build
+   *       vars).
+   *    2. This per-chain field (chain-specific override; useful when
+   *       one chain needs a different icon source than the rest, e.g.
+   *       a chain with self-hosted icons).
+   *    3. Hardcoded default in `TokenIcon.tsx` — Trust Wallet's CDN.
+   *
+   *  Most deploys leave this unset and rely on the global default.
+   *  The chain-slug map gates icon rendering regardless: chains absent
+   *  from `TRUST_WALLET_SLUG` short-circuit before any URL is built. */
+  tokenIconUrlTemplate?: string;
+
   // ── Testnet / anvil mock fixtures (omitted on mainnet) ──────────
   mockChainlinkAggregator?: HexAddress;
   mockUniswapV3Factory?: HexAddress;
