@@ -411,7 +411,7 @@ export default function Activity() {
             data-rescan-status={rescanCooldown.status}
             style={
               {
-                '--rescan-progress': `${rescanCooldown.progress * 100}%`,
+                '--rescan-progress': `${rescanCooldown.remaining * 100}%`,
               } as CSSProperties
             }
             data-tooltip={t('activity.rescanTooltip')}
@@ -419,23 +419,26 @@ export default function Activity() {
           >
             {rescanCooldown.status === 'syncing' ? (
               <>
-                <RefreshCw size={14} className="spin" />{' '}
-                {t('activity.refreshSyncing', {
-                  defaultValue: 'Refreshing… {{s}}s',
-                  s: rescanCooldown.secondsRemaining,
-                })}
+                <RefreshCw size={14} className="spin" style={{ marginRight: 4 }} />
+                {t('activity.refreshing', { defaultValue: 'Refreshing… ' })}
+                <span className="rescan-btn-secs">
+                  {rescanCooldown.secondsRemaining}
+                </span>
+                {t('activity.secondsSuffix', { defaultValue: 's' })}
               </>
             ) : rescanCooldown.status === 'synced' ? (
               <>
-                <Check size={14} />{' '}
-                {t('activity.refreshSynced', {
-                  defaultValue: 'Synced — {{s}}s',
-                  s: rescanCooldown.secondsRemaining,
-                })}
+                <Check size={14} style={{ marginRight: 4 }} />
+                {t('activity.synced', { defaultValue: 'Synced — ' })}
+                <span className="rescan-btn-secs">
+                  {rescanCooldown.secondsRemaining}
+                </span>
+                {t('activity.secondsSuffix', { defaultValue: 's' })}
               </>
             ) : (
               <>
-                <RefreshCw size={14} /> {t('activity.refresh')}
+                <RefreshCw size={14} style={{ marginRight: 4 }} />
+                {t('activity.refresh')}
               </>
             )}
           </button>

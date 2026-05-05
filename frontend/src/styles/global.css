@@ -635,6 +635,22 @@ img { max-width: 100%; display: block; }
 .rescan-btn {
   position: relative;
   overflow: hidden;
+  /* `tabular-nums` keeps every digit the same width, so 9 → 10 doesn't
+   * widen the button. Combined with the fixed-width `.rescan-btn-secs`
+   * span around the seconds counter (consumers wrap it explicitly),
+   * the surrounding label text — "Refreshing… " / "Synced — " / "s" —
+   * stays put while the number ticks down. */
+  font-variant-numeric: tabular-nums;
+}
+/* Reserve enough room for a 2-digit countdown ("30s") so the trailing
+ * "s" doesn't shift when the number drops to a single digit. ~1.6 ch
+ * is enough for "30" in our default UI font without leaving a gap on
+ * single-digit states; right-align so the digits stay flush against
+ * the "s" suffix. */
+.rescan-btn-secs {
+  display: inline-block;
+  min-width: 1.6ch;
+  text-align: right;
 }
 .rescan-btn::after {
   content: '';
@@ -642,6 +658,12 @@ img { max-width: 100%; display: block; }
   left: 0;
   bottom: 0;
   height: 2px;
+  /* `--rescan-progress` is fed by the consumer and now represents
+   * REMAINING fraction of the cooldown (start = 100 %, end = 0 %).
+   * The bar therefore starts full and shrinks right-to-left as the
+   * timer drains — reflecting "time remaining" rather than "time
+   * elapsed". The width transition + the hook's 1 Hz tick give a
+   * smooth retreat instead of stepwise jumps. */
   width: var(--rescan-progress, 0%);
   background: currentColor;
   opacity: 0.45;

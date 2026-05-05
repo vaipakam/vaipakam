@@ -52,10 +52,15 @@ export interface UseRescanCooldownResult {
   disabled: boolean;
   /** Whole seconds left in the cooldown (0 when not armed). */
   secondsRemaining: number;
-  /** [0, 1] progress through the cooldown window. Useful for a
-   *  CSS-driven progress bar via `style={{ '--rescan-progress':
-   *  `${progress * 100}%` }}`. */
+  /** [0, 1] progress through the cooldown window — increases from 0
+   *  → 1 as time elapses. Kept for callers that want elapsed-fraction
+   *  semantics. */
   progress: number;
+  /** [0, 1] remaining fraction of the cooldown — the inverse of
+   *  `progress`, decreases from 1 → 0 as time elapses. Used to drive
+   *  the rescan-button progress bar so it starts full and visually
+   *  drains right-to-left as the countdown runs out. */
+  remaining: number;
   /** Lifecycle indicator used to drive the button label / status pill. */
   status: 'idle' | 'syncing' | 'synced';
 }
@@ -119,6 +124,7 @@ export function useRescanCooldown({
     endsAt !== null
       ? Math.min(1, Math.max(0, 1 - (endsAt - now) / cooldownMs))
       : 0;
+  const remaining = endsAt !== null ? Math.max(0, 1 - progress) : 0;
 
-  return { trigger, disabled, secondsRemaining, progress, status };
+  return { trigger, disabled, secondsRemaining, progress, remaining, status };
 }

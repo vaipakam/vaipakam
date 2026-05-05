@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, type CSSProperties } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Vault, ExternalLink, RefreshCw, AlertCircle } from 'lucide-react';
+import { Vault, ExternalLink, RefreshCw, AlertCircle, Check } from 'lucide-react';
+import { useRescanCooldown } from '../hooks/useRescanCooldown';
 import { parseAbi, type Address } from 'viem';
 import { useWallet } from '../context/WalletContext';
 import { useDiamondPublicClient, useReadChain } from '../contracts/useDiamond';
@@ -116,6 +117,11 @@ export default function EscrowAssets() {
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [reloadCounter, setReloadCounter] = useState(0);
+  // Same cooldown + sync-status state-machine the Activity / OfferBook
+  // rescan buttons use. Drives the button label transitions
+  // (`Refresh` → `Refreshing… 28s` → `Synced — 5s` → `Refresh`),
+  // the inline progress bar, and the 30 s spam-click guard.
+  const rescanCooldown = useRescanCooldown({ loading });
 
   // Initial seed — show one row per token in a "loading" state so the
   // table doesn't reflow when balances arrive.
@@ -282,13 +288,44 @@ export default function EscrowAssets() {
           </span>
           <button
             type="button"
-            className="btn btn-secondary btn-sm"
-            onClick={() => setReloadCounter((n) => n + 1)}
-            disabled={loading || !escrow}
+            className="btn btn-secondary btn-sm rescan-btn"
+            onClick={() => {
+              rescanCooldown.trigger();
+              setReloadCounter((n) => n + 1);
+            }}
+            disabled={rescanCooldown.disabled || !escrow}
+            data-rescan-status={rescanCooldown.status}
+            style={
+              {
+                '--rescan-progress': `${rescanCooldown.remaining * 100}%`,
+              } as CSSProperties
+            }
             aria-label={t('escrowAssets.refresh')}
           >
-            <RefreshCw size={14} style={{ marginRight: 4 }} />
-            {t('escrowAssets.refresh')}
+            {rescanCooldown.status === 'syncing' ? (
+              <>
+                <RefreshCw size={14} className="spin" style={{ marginRight: 4 }} />
+                {t('escrowAssets.refreshing', { defaultValue: 'Refreshing… ' })}
+                <span className="rescan-btn-secs">
+                  {rescanCooldown.secondsRemaining}
+                </span>
+                {t('escrowAssets.secondsSuffix', { defaultValue: 's' })}
+              </>
+            ) : rescanCooldown.status === 'synced' ? (
+              <>
+                <Check size={14} style={{ marginRight: 4 }} />
+                {t('escrowAssets.synced', { defaultValue: 'Synced — ' })}
+                <span className="rescan-btn-secs">
+                  {rescanCooldown.secondsRemaining}
+                </span>
+                {t('escrowAssets.secondsSuffix', { defaultValue: 's' })}
+              </>
+            ) : (
+              <>
+                <RefreshCw size={14} style={{ marginRight: 4 }} />
+                {t('escrowAssets.refresh')}
+              </>
+            )}
           </button>
         </div>
 

@@ -1205,7 +1205,7 @@ export default function OfferBook() {
             data-rescan-status={rescanCooldown.status}
             style={
               {
-                '--rescan-progress': `${rescanCooldown.progress * 100}%`,
+                '--rescan-progress': `${rescanCooldown.remaining * 100}%`,
               } as CSSProperties
             }
             onClick={() => {
@@ -1244,22 +1244,27 @@ export default function OfferBook() {
           >
             {rescanCooldown.status === 'syncing' ? (
               <>
-                <RefreshCw size={12} className="spin" />{' '}
-                {t('offerBookPage.rescanSyncing', {
-                  defaultValue: 'Refreshing… {{s}}s',
-                  s: rescanCooldown.secondsRemaining,
-                })}
+                <RefreshCw size={14} className="spin" style={{ marginRight: 4 }} />
+                {t('offerBookPage.refreshing', { defaultValue: 'Refreshing… ' })}
+                <span className="rescan-btn-secs">
+                  {rescanCooldown.secondsRemaining}
+                </span>
+                {t('offerBookPage.secondsSuffix', { defaultValue: 's' })}
               </>
             ) : rescanCooldown.status === 'synced' ? (
               <>
-                <Check size={12} />{' '}
-                {t('offerBookPage.rescanSynced', {
-                  defaultValue: 'Synced — {{s}}s',
-                  s: rescanCooldown.secondsRemaining,
-                })}
+                <Check size={14} style={{ marginRight: 4 }} />
+                {t('offerBookPage.synced', { defaultValue: 'Synced — ' })}
+                <span className="rescan-btn-secs">
+                  {rescanCooldown.secondsRemaining}
+                </span>
+                {t('offerBookPage.secondsSuffix', { defaultValue: 's' })}
               </>
             ) : (
-              t('offerBookPage.rescanChain')
+              <>
+                <RefreshCw size={14} style={{ marginRight: 4 }} />
+                {t('offerBookPage.rescanChain')}
+              </>
             )}
           </button>
           {hasMore && (
