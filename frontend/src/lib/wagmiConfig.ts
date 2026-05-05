@@ -37,10 +37,59 @@ import {
 import { getDefaultConfig } from "connectkit";
 import { CHAIN_REGISTRY } from "../contracts/config";
 
-const WC_PROJECT_ID =
+const WC_PROJECT_ID_RAW =
   (
     import.meta.env.VITE_WALLETCONNECT_PROJECT_ID as string | undefined
   )?.trim() || "";
+
+/**
+ * Heuristic: is this build running in a mobile browser?
+ *
+ * We only enable the WalletConnect connector on mobile. On desktop,
+ * clicking a WC mobile-wallet entry navigates the browser to a custom
+ * URI scheme (`wc:...`, `metamask://...`, `trust://...`, etc.), which
+ * triggers Chrome's "Allow this site to access other apps and services
+ * on this device?" prompt. That prompt is OS-level UI we can't reword,
+ * and on desktop the user almost never has the target mobile wallet
+ * installed locally anyway — so the popup looks intrusive ("is this
+ * site peeping on my apps?") for zero functional benefit. Hardware
+ * wallets on desktop don't go through WC at all (WebHID / WebUSB /
+ * extension-bridge paths instead), so removing WC on desktop doesn't
+ * regress the Ledger / Trezor flow.
+ *
+ * On mobile WC is genuinely required — the wallet IS a separate app on
+ * the same device and the deep-link is the canonical handoff. So we
+ * keep WC enabled there.
+ *
+ * UA sniffing covers the common cases; we add `(pointer: coarse)` as a
+ * secondary signal to catch desktop Chrome with mobile-emulation on
+ * (still desktop in spirit, no mobile wallets installed) and to handle
+ * tablets where UA strings vary. The check is lazy / SSR-safe.
+ */
+function isMobileBrowser(): boolean {
+  if (typeof navigator === "undefined" || typeof window === "undefined") return false;
+  const ua = navigator.userAgent || "";
+  const uaMobile = /iPhone|iPad|iPod|Android|webOS|BlackBerry|Windows Phone|Opera Mini|IEMobile/i.test(
+    ua,
+  );
+  if (!uaMobile) return false;
+  // Both UA hints AND a coarse pointer must agree for us to call it
+  // mobile. A desktop dev with the UA spoofed for testing keeps the
+  // desktop-no-WC behaviour because their pointer is still fine.
+  const coarse =
+    typeof window.matchMedia === "function"
+      ? window.matchMedia("(pointer: coarse)").matches
+      : true;
+  return coarse;
+}
+
+const IS_MOBILE = isMobileBrowser();
+
+// Pass the project ID through only on mobile. Empty string disables
+// the WalletConnect connector inside `getDefaultConfig` — it gets
+// dropped from the connectors list rather than rendering a broken
+// "WalletConnect" entry that fails to open.
+const WC_PROJECT_ID = IS_MOBILE ? WC_PROJECT_ID_RAW : "";
 
 const APP_NAME = "Vaipakam";
 const APP_DESCRIPTION =
@@ -151,6 +200,15 @@ export const wagmiConfig = createConfig({
   ],
 });
 
-/** Whether WalletConnect is available in this build. Mirrors the flag
- *  callers used to read from `isWalletConnectConfigured()`. */
+/** Whether WalletConnect is available in *this session*. False on
+ *  desktop (deliberately disabled to avoid the protocol-handler popup)
+ *  AND when the env var is missing. Consumers that want to differentiate
+ *  the two use `walletConnectConfigured` below. */
 export const walletConnectAvailable = WC_PROJECT_ID.length > 0;
+
+/** Whether the WC project id env var is set at all, regardless of
+ *  whether we're using it in this session. Used by main.tsx's
+ *  config-misuse warning so the warning only fires on a genuine
+ *  misconfiguration (env var missing) — desktop's intentional
+ *  WC-suppression doesn't trip it. */
+export const walletConnectConfigured = WC_PROJECT_ID_RAW.length > 0;

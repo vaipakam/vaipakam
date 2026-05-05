@@ -3,7 +3,7 @@ import { createRoot } from 'react-dom/client'
 import { WagmiProvider } from 'wagmi'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { ConnectKitProvider } from 'connectkit'
-import { wagmiConfig, walletConnectAvailable } from './lib/wagmiConfig'
+import { wagmiConfig, walletConnectConfigured } from './lib/wagmiConfig'
 import { ThemeProvider } from './context/ThemeContext'
 import { WalletProvider } from './context/WalletContext'
 import { ChainProvider } from './context/ChainContext'
@@ -19,7 +19,7 @@ import App from './App.tsx'
 // as "nothing happens when I tap a wallet". This surfaces the mis-config
 // loudly in the browser console so a Cloudflare deploy with a missing
 // `VITE_WALLETCONNECT_PROJECT_ID` env var doesn't ship silently.
-if (!walletConnectAvailable) {
+if (!walletConnectConfigured) {
   // eslint-disable-next-line no-console
   console.warn(
     '[vaipakam] VITE_WALLETCONNECT_PROJECT_ID is not set. Mobile wallet ' +
