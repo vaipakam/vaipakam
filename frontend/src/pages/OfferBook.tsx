@@ -810,6 +810,28 @@ export default function OfferBook() {
     }),
   [lendingAssetFilter, collateralAssetFilter, minDuration, maxDuration, liquidityFilter]);
 
+  // Defensive dedup-by-id pass. The `offers` state can transiently
+  // hold duplicates during the indexer-serving ↔ legacy-log-scan race
+  // (the indexer-serving effect calls `setOffers(mapped)` which
+  // replaces, while the RPC `loadWindow` effect calls
+  // `setOffers((prev) => [...prev, ...fresh])` which appends; if
+  // `indexerServingOpen` flips between those two writes, both can
+  // land before React reconciles, leaving the same offerId in the
+  // array twice). The race resolves itself on the next refresh, but
+  // the visible flash is jarring. Deduping here keeps the rendered
+  // list unique regardless of state-mutation order.
+  const dedupedOffers = useMemo(() => {
+    const seen = new Set<string>();
+    const out: OfferData[] = [];
+    for (const o of offers) {
+      const key = o.id.toString();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push(o);
+    }
+    return out;
+  }, [offers]);
+
   // Two-stage filter: market criteria first, then optionally drop
   // the connected wallet's own offers. The hide-my-offers gate runs
   // BEFORE the per-side split + pagination so pagination naturally
@@ -817,14 +839,14 @@ export default function OfferBook() {
   // leaving page-position gaps where the user's own offers sat.
   const filtered = useMemo(() => {
     const lower = address?.toLowerCase() ?? '';
-    return offers.filter((o) => {
+    return dedupedOffers.filter((o) => {
       if (!matchesFilter(o)) return false;
       if (hideMyOffers && lower && o.creator.toLowerCase() === lower) {
         return false;
       }
       return true;
     });
-  }, [offers, matchesFilter, hideMyOffers, address]);
+  }, [dedupedOffers, matchesFilter, hideMyOffers, address]);
 
   // Market-scoped anchor: walk the rolling recent-accepted list (newest
   // first) and pick the freshest entry that passes the current filter.
