@@ -28,6 +28,7 @@ import { Check, RefreshCw } from 'lucide-react';
 import { indexedToRawOffer } from '../lib/indexerClient';
 import { useProtocolConfig, type ProtocolConfig } from '../hooks/useProtocolConfig';
 import { AssetSymbol } from '../components/app/AssetSymbol';
+import { AssetLink } from '../components/app/AssetLink';
 import { AssetPicker } from '../components/app/AssetPicker';
 import { TokenAmount } from '../components/app/TokenAmount';
 import { PrincipalCell } from '../components/app/PrincipalCell';
@@ -1897,9 +1898,33 @@ export function OfferTable({ title, subtitle, offers, anchorRateBps, address, ac
                     </td>
                     <td>{offer.durationDays.toString()} {t('loanDetails.daysSuffix')}</td>
                     <td>
+                      {/* Collateral cell — same shape as the
+                          principal `<PrincipalCell>` two-row layout
+                          (compact amount on top, symbol + external
+                          link below) but inlined here because
+                          `OfferData` doesn't currently carry the
+                          collateral asset type, and `<PrincipalCell>`
+                          would mis-render an NFT collateral as
+                          ERC-20. The inline `<AssetLink>` gives the
+                          external-link icon next to the symbol and
+                          the address tooltip, fixing the earlier
+                          `<AssetSymbol>`-only render that dropped the
+                          link affordance. */}
                       <div>
-                        <span className="mono"><TokenAmount amount={offer.collateralAmount} address={offer.collateralAsset} compact /></span>
-                        <div className="asset-addr"><AssetSymbol address={offer.collateralAsset} /></div>
+                        <span className="mono">
+                          <TokenAmount
+                            amount={offer.collateralAmount}
+                            address={offer.collateralAsset}
+                            compact
+                          />
+                        </span>
+                        <div className="asset-addr">
+                          <AssetLink
+                            kind="erc20"
+                            chainId={chainId}
+                            address={offer.collateralAsset}
+                          />
+                        </div>
                       </div>
                     </td>
                     <td>
