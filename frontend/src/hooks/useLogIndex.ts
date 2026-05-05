@@ -9,6 +9,7 @@ import {
 } from '../lib/logIndex';
 import { useOfferStats } from './useOfferStats';
 import { useLiveWatermark } from './useLiveWatermark';
+import { watermarkPolicy } from './watermarkPolicy';
 
 type LoanInitiatedForToken = {
   loanId: string;
@@ -64,7 +65,7 @@ export function useLogIndex() {
   // OfferBook's hot path goes through `useIndexedActiveOffers` (which
   // probes at 5 s); the legacy scan in this hook is a fallback path
   // for non-OfferBook surfaces, where 20 s is plenty.
-  const { version: watermarkVersion } = useLiveWatermark({ pollIntervalMs: 20_000 });
+  const { version: watermarkVersion } = useLiveWatermark(watermarkPolicy('warm'));
   // Synchronous first-paint: hydrate whatever the last scan left in
   // localStorage, so Dashboard's "Your Loans" renders instantly on return
   // visits instead of blocking on a fresh `eth_getLogs` paginated scan

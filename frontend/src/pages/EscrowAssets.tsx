@@ -9,6 +9,7 @@ import { useUserEscrowAddress } from '../hooks/useUserEscrowAddress';
 import { useIndexedLoansForWallet } from '../hooks/useIndexedLoans';
 import { fetchOffersByCreator, type IndexedOffer } from '../lib/indexerClient';
 import { useLiveWatermark } from '../hooks/useLiveWatermark';
+import { watermarkPolicy } from '../hooks/watermarkPolicy';
 import { peekTokenMeta, prewarmTokenMeta } from '../lib/tokenMeta';
 import { formatRelativeTime } from '../lib/format';
 import { ChevronDown, ChevronUp, ChevronsUpDown } from 'lucide-react';
@@ -165,7 +166,7 @@ export default function EscrowAssets() {
   // surfaces here without waiting for tab focus / manual rescan.
   // Polls at 20 s on this page, paused on tab hidden, immediate
   // refetch on tab refocus.
-  const { version: watermarkVersion } = useLiveWatermark({ pollIntervalMs: 20_000 });
+  const { version: watermarkVersion } = useLiveWatermark(watermarkPolicy('warm'));
   const [discoveredOffers, setDiscoveredOffers] = useState<IndexedOffer[]>([]);
   useEffect(() => {
     if (!address) {

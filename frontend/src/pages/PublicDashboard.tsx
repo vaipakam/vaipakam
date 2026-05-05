@@ -27,6 +27,7 @@ import { ErrorAlert } from '../components/app/ErrorAlert';
 import { CardInfo } from '../components/CardInfo';
 import { useMode } from '../context/ModeContext';
 import { useProtocolStats } from '../hooks/useProtocolStats';
+import { useLoanStats } from '../hooks/useLoanStats';
 import { useTVL } from '../hooks/useTVL';
 import { useUserStats } from '../hooks/useUserStats';
 import { useTreasuryMetrics } from '../hooks/useTreasuryMetrics';
@@ -35,6 +36,8 @@ import { useVPFIToken } from '../hooks/useVPFIToken';
 import { useHistoricalData, type TimeRange } from '../hooks/useHistoricalData';
 import { useCombinedChainsStats } from '../hooks/useCombinedChainsStats';
 import { useRescanCooldown } from '../hooks/useRescanCooldown';
+import { useLiveWatermark } from '../hooks/useLiveWatermark';
+import { watermarkPolicy } from '../hooks/watermarkPolicy';
 import {
   DEFAULT_CHAIN,
   CHAIN_REGISTRY,
@@ -119,6 +122,13 @@ export default function PublicDashboard() {
     ? `${blockExplorer}/address/${metricsFacetAddress}#readContract`
     : `${blockExplorer}/address/${diamondAddress}#readProxyContract`;
   const { stats, loading: statsLoading, error: statsError, reload } = useProtocolStats();
+  // Indexer-first aggregate counts. Used as the primary source for
+  // the count cards (active / completed / defaulted / volume / APR /
+  // NFT rentals) so first paint isn't gated on the chain-side
+  // multicall storm. Falls through to `stats` from useProtocolStats
+  // when the worker is unreachable so the cards still render
+  // correctly on a worker outage.
+  const { stats: loanStats } = useLoanStats();
   const { snapshot: tvl, loading: tvlLoading } = useTVL();
   const { stats: userStats } = useUserStats();
   const { metrics: treasuryMetrics } = useTreasuryMetrics();
@@ -129,6 +139,26 @@ export default function PublicDashboard() {
     loading: combinedLoading,
     reload: reloadCombined,
   } = useCombinedChainsStats();
+
+  // Cool-tier auto-refresh — 180 s active probe, 600 s once the user
+  // has been idle for 5 min, full pause after 15 min walked-away.
+  // Aggregate metrics move slowly; sub-minute refresh would be
+  // theatre. The visibility-pause is implicit (every tier stops the
+  // probe when the tab is hidden), and the watchermark probe itself
+  // is one cheap `getGlobalCounts` `eth_call` so the active cadence
+  // is fine even on a metered RPC.
+  const { version: analyticsWatermark } = useLiveWatermark(
+    watermarkPolicy('cool'),
+  );
+  useEffect(() => {
+    // Skip the initial-mount fire — both `reload()` and
+    // `reloadCombined()` already run on first mount via their hooks'
+    // own effects. We only want subsequent watermark advances to
+    // trigger a refresh; otherwise we'd double-fetch on page load.
+    if (analyticsWatermark <= 1) return;
+    void reload();
+    void reloadCombined();
+  }, [analyticsWatermark, reload, reloadCombined]);
   const [range, setRange] = useState<TimeRange>('30d');
   const { series } = useHistoricalData(range);
   const isAdvanced = mode === 'advanced';
@@ -519,14 +549,14 @@ export default function PublicDashboard() {
                 <MetricCard
                   icon={<Activity size={18} />}
                   label="Active Loans"
-                  value={stats.activeLoans.toString()}
-                  hint={`${formatUsd(stats.activeLoansValueUsd)} live value · ${stats.nftRentalsActive} NFT rentals`}
+                  value={(loanStats?.active ?? stats.activeLoans).toString()}
+                  hint={`${formatUsd(stats.activeLoansValueUsd)} live value · ${(loanStats?.nftRentalsActive ?? stats.nftRentalsActive)} NFT rentals`}
                   onchainFn="getActiveLoansCount"
                 />
                 <MetricCard
                   icon={<ImageIcon size={18} />}
                   label="NFTs Rented"
-                  value={stats.nftRentalsActive.toString()}
+                  value={(loanStats?.nftRentalsActive ?? stats.nftRentalsActive).toString()}
                   hint={`Active NFT-collateralised rentals on ${readChain.name}`}
                   onchainFn="getProtocolTVL"
                 />
@@ -552,18 +582,29 @@ export default function PublicDashboard() {
                   icon={<Gauge size={18} />}
                   label="Average APR"
                   value={
-                    stats.totalLoans === 0
+                    (loanStats?.total ?? stats.totalLoans) === 0
                       ? '—'
-                      : (stats.averageAprBps / 100).toFixed(2) + '%'
+                      : (((loanStats?.averageInterestRateBps ?? stats.averageAprBps) ?? 0) / 100).toFixed(2) + '%'
                   }
-                  hint={`Across ${stats.totalLoans} loans`}
+                  hint={`Across ${loanStats?.total ?? stats.totalLoans} loans`}
                   onchainFn="getProtocolStats"
                 />
                 <MetricCard
                   icon={<Activity size={18} />}
                   label="Liquidation / Default Rate"
-                  value={stats.totalLoans === 0 ? '—' : stats.liquidationRate.toFixed(2) + '%'}
-                  hint={`${stats.defaultedLoans} defaulted of ${stats.totalLoans} total`}
+                  value={(() => {
+                    const total = loanStats?.total ?? stats.totalLoans;
+                    const defaulted = loanStats
+                      ? loanStats.defaulted + loanStats.liquidated
+                      : stats.defaultedLoans;
+                    if (total === 0) return '—';
+                    return ((defaulted / total) * 100).toFixed(2) + '%';
+                  })()}
+                  hint={`${
+                    loanStats
+                      ? loanStats.defaulted + loanStats.liquidated
+                      : stats.defaultedLoans
+                  } defaulted of ${loanStats?.total ?? stats.totalLoans} total`}
                   onchainFn="getProtocolHealth"
                 />
               </section>
@@ -597,15 +638,23 @@ export default function PublicDashboard() {
                   <h2>{t('publicDashboard.activeVsCompleted')}</h2>
                   <Donut
                     slices={[
-                      { label: 'Active', value: stats.activeLoans, color: 'var(--brand)' },
+                      {
+                        label: 'Active',
+                        value: loanStats?.active ?? stats.activeLoans,
+                        color: 'var(--brand)',
+                      },
                       {
                         label: 'Completed',
-                        value: stats.completedLoans - stats.defaultedLoans,
+                        value: loanStats
+                          ? loanStats.repaid + loanStats.settled
+                          : stats.completedLoans - stats.defaultedLoans,
                         color: 'var(--accent-green)',
                       },
                       {
                         label: 'Defaulted',
-                        value: stats.defaultedLoans,
+                        value: loanStats
+                          ? loanStats.defaulted + loanStats.liquidated
+                          : stats.defaultedLoans,
                         color: 'var(--accent-red)',
                       },
                     ]}

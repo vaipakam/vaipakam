@@ -38,6 +38,7 @@ import {
 import { useReadChain } from '../contracts/useDiamond';
 import { DEFAULT_CHAIN } from '../contracts/config';
 import { useLiveWatermark } from './useLiveWatermark';
+import { watermarkPolicy } from './watermarkPolicy';
 import {
   chunkedGetLogs,
   decodeOfferDelta,
@@ -77,12 +78,7 @@ export function useIndexedActiveOffers(): UseIndexedActiveOffersResult {
   // background reference, and either way the next mouse-wiggle /
   // keypress / scroll / touch fires an immediate catch-up probe.
   // Tab-focus events count as activity and reset the timer to 0.
-  const { version, snapshot } = useLiveWatermark({
-    pollIntervalMs: 5_000,
-    idlePollIntervalMs: 30_000,
-    idleAfterMs: 5 * 60_000,
-    pausedAfterMs: 15 * 60_000,
-  });
+  const { version, snapshot } = useLiveWatermark(watermarkPolicy('hot'));
   const [offers, setOffers] = useState<IndexedOffer[] | null>(null);
   const [source, setSource] = useState<'indexer' | 'fallback' | null>(null);
   const [loading, setLoading] = useState(true);

@@ -5,6 +5,12 @@ import { DEFAULT_CHAIN } from '../contracts/config';
 import { DIAMOND_ABI_VIEM as DIAMOND_ABI } from '../contracts/abis';
 import { batchCalls, encodeBatchCalls } from '../lib/multicall';
 import { useLogIndex } from './useLogIndex';
+import { useLiveWatermark } from './useLiveWatermark';
+import { watermarkPolicy } from './watermarkPolicy';
+import {
+  fetchRecentOffers,
+  type IndexedOffer,
+} from '../lib/indexerClient';
 import { beginStep } from '../lib/journeyLog';
 
 const STALE_MS = 30_000;
@@ -74,6 +80,29 @@ function toRecentOffer(r: RawOffer): RecentOffer {
   };
 }
 
+/** Indexer→RecentOffer adapter. Same shape as `toRecentOffer`, but
+ *  reads off the indexer's IndexedOffer struct instead of the on-
+ *  chain `getOffer` return tuple. The indexer carries every field
+ *  RecentOffer needs already, so no chain reads. */
+function indexedToRecentOffer(o: IndexedOffer): RecentOffer {
+  return {
+    id: BigInt(o.offerId),
+    creator: o.creator,
+    offerType: o.offerType,
+    lendingAsset: o.lendingAsset,
+    amount: BigInt(o.amount),
+    interestRateBps: BigInt(o.interestRateBps),
+    collateralAsset: o.collateralAsset,
+    collateralAmount: BigInt(o.collateralAmount),
+    durationDays: BigInt(o.durationDays),
+    principalLiquidity: o.principalLiquidity,
+    collateralLiquidity: o.collateralLiquidity,
+    accepted: o.status === 'accepted',
+    assetType: o.assetType,
+    tokenId: BigInt(o.tokenId),
+  };
+}
+
 /**
  * Fetches the latest `limit` offers (any state — open, accepted, cancelled)
  * for the advanced-mode Recent Activity list on the public dashboard. Uses
@@ -90,6 +119,9 @@ export function useRecentOffers(limit = 50) {
   const chainId = chain.chainId ?? DEFAULT_CHAIN.chainId;
   const diamondAddress = (chain.diamondAddress ?? DEFAULT_CHAIN.diamondAddress) as Address;
   const { offerIds, loading: indexLoading, error: indexError } = useLogIndex();
+  // Cool-tier auto-refresh: 180 s active, 600 s idle, pause @ 15 min.
+  // Aggregate / dashboard surface — sub-minute refresh would be theatre.
+  const { version: watermarkVersion } = useLiveWatermark(watermarkPolicy('cool'));
   const [offers, setOffers] = useState<RecentOffer[]>(
     () => cache.get(cacheKey(chainId, diamondAddress, limit))?.data ?? [],
   );
@@ -110,14 +142,47 @@ export function useRecentOffers(limit = 50) {
       setLoading(false);
       return;
     }
+    setLoading(true);
+    setError(null);
+
+    // Indexer-first path. The new `/offers/recent?limit=...` endpoint
+    // returns the latest N IndexedOffer rows across every status, so
+    // the multicall storm against the chain disappears on the happy
+    // path. When the worker is unreachable (`fetchRecentOffers`
+    // returns null), we fall through to the legacy log-scan +
+    // multicall path below — which still gets the work done, just at
+    // higher RPC cost.
+    const step = beginStep({
+      area: 'dashboard',
+      flow: 'useRecentOffers',
+      step: 'indexer-recent',
+    });
+    try {
+      const page = await fetchRecentOffers(chainId, { limit });
+      if (page) {
+        const resolved = page.offers.map(indexedToRecentOffer);
+        cache.set(key, { data: resolved, at: Date.now(), limit });
+        setOffers(resolved);
+        setLoading(false);
+        step.success({ note: `${resolved.length} offers (indexer)` });
+        return;
+      }
+    } catch {
+      // Worker unreachable — fall through to chain reads below.
+    }
+
+    // Fallback: legacy log-scan + multicall (preserved exactly so a
+    // worker outage doesn't blank the dashboard).
     if (recentIds.length === 0) {
       setOffers([]);
       setLoading(false);
       return;
     }
-    setLoading(true);
-    setError(null);
-    const step = beginStep({ area: 'dashboard', flow: 'useRecentOffers', step: 'multicall-offers' });
+    const fallbackStep = beginStep({
+      area: 'dashboard',
+      flow: 'useRecentOffers',
+      step: 'multicall-offers',
+    });
     try {
       const calls = encodeBatchCalls(
         diamondAddress,
@@ -138,10 +203,10 @@ export function useRecentOffers(limit = 50) {
       }
       cache.set(key, { data: resolved, at: Date.now(), limit });
       setOffers(resolved);
-      step.success({ note: `${resolved.length} offers` });
+      fallbackStep.success({ note: `${resolved.length} offers (chain fallback)` });
     } catch (err) {
       setError(err as Error);
-      step.failure(err);
+      fallbackStep.failure(err);
     } finally {
       setLoading(false);
     }
@@ -150,7 +215,11 @@ export function useRecentOffers(limit = 50) {
   useEffect(() => {
     if (indexLoading) return;
     load();
-  }, [load, indexLoading]);
+    // `watermarkVersion` is in the dep list so cool-tier auto-
+    // refresh reaches this hook. The hook's own 30 s stale cache
+    // still amortises across versions where neither create-counter
+    // moved between probes.
+  }, [load, indexLoading, watermarkVersion]);
 
   return {
     offers,

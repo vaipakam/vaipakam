@@ -10,6 +10,7 @@ import { DIAMOND_ABI_VIEM as DIAMOND_ABI } from '../contracts/abis';
 import { batchCalls, encodeBatchCalls } from '../lib/multicall';
 import { useLogIndex } from './useLogIndex';
 import { useLiveWatermark } from './useLiveWatermark';
+import { watermarkPolicy } from './watermarkPolicy';
 import { readOfferSnapshot, writeOfferSnapshot } from '../lib/offerSnapshot';
 import {
   fetchOffersByCreator,
@@ -84,7 +85,7 @@ export function useMyOffers(
   // counter advances (or the manual rescan kicks the watermark) the
   // indexer fetch effect re-runs. 20 s cadence matches the rest of
   // the slower-page polling tier (Dashboard, Risk Watch, Analytics).
-  const { version: watermarkVersion } = useLiveWatermark({ pollIntervalMs: 20_000 });
+  const { version: watermarkVersion } = useLiveWatermark(watermarkPolicy('warm'));
 
   // ── Indexer-first path ──
   //

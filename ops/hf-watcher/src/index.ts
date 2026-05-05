@@ -30,12 +30,15 @@ import {
 import {
   handleOffersStats,
   handleOffersActive,
+  handleOffersRecent,
   handleOfferById,
   handleOffersByCreator,
   handleOffersPreflight,
 } from './offerRoutes';
 import {
   handleLoansActive,
+  handleLoansRecent,
+  handleLoansStats,
   handleLoanById,
   handleLoansByParticipant,
   handleActivity,
@@ -110,6 +113,9 @@ export default {
         if (url.pathname === '/offers/active') {
           return handleOffersActive(req, env);
         }
+        if (url.pathname === '/offers/recent') {
+          return handleOffersRecent(req, env);
+        }
         const byCreator = url.pathname.match(/^\/offers\/by-creator\/(0x[0-9a-fA-F]{40})$/);
         if (byCreator) {
           return handleOffersByCreator(req, env, byCreator[1]);
@@ -128,6 +134,12 @@ export default {
       if (req.method === 'GET') {
         if (url.pathname === '/loans/active') {
           return handleLoansActive(req, env);
+        }
+        if (url.pathname === '/loans/recent') {
+          return handleLoansRecent(req, env);
+        }
+        if (url.pathname === '/loans/stats') {
+          return handleLoansStats(req, env);
         }
         const byLender = url.pathname.match(/^\/loans\/by-lender\/(0x[0-9a-fA-F]{40})$/);
         if (byLender) {

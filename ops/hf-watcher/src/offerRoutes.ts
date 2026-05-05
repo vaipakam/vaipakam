@@ -283,6 +283,49 @@ export async function handleOffersByCreator(
 }
 
 /**
+ * GET /offers/recent?chainId=8453&limit=50&before=<offer_id>
+ *
+ * Cross-status recent feed: returns the most recent N offers
+ * regardless of state (active / accepted / cancelled / expired) so
+ * the Analytics page can render a "Recent offer activity" list
+ * without falling back to a chain log scan + multicall storm. Newest
+ * first by offer_id (the on-chain create-counter, monotonic).
+ *
+ * The legacy frontend path (`useRecentOffers` via `useLogIndex` →
+ * `getOffer` multicall) stays available as the no-indexer fallback;
+ * this endpoint is the indexer-first happy path.
+ */
+export async function handleOffersRecent(req: Request, env: Env): Promise<Response> {
+  const url = new URL(req.url);
+  const chainId = parseChainId(url.searchParams.get('chainId')) ?? 8453;
+  const limit = parseLimit(url.searchParams.get('limit'));
+  const before = parseBefore(url.searchParams.get('before'));
+  try {
+    const stmt = before
+      ? env.DB.prepare(
+          `SELECT * FROM offers
+           WHERE chain_id = ? AND offer_id < ?
+           ORDER BY offer_id DESC LIMIT ?`,
+        ).bind(chainId, before, limit)
+      : env.DB.prepare(
+          `SELECT * FROM offers
+           WHERE chain_id = ?
+           ORDER BY offer_id DESC LIMIT ?`,
+        ).bind(chainId, limit);
+    const rows = await stmt.all<OfferRow>();
+    const offers = (rows.results ?? []).map(toJson);
+    const next =
+      offers.length === limit && offers.length > 0
+        ? (offers[offers.length - 1] as { offerId: number }).offerId
+        : null;
+    return jsonResponse({ chainId, offers, nextBefore: next });
+  } catch (err) {
+    console.error('[offerRoutes] recent failed', err);
+    return jsonResponse({ error: 'recent-failed' }, 500);
+  }
+}
+
+/**
  * Preflight echo for /offers/* — returns the open CORS shape so the
  * browser doesn't get rejected when posting from a non-allow-list
  * origin. Offer reads have no auth, so blanket allow is safe.

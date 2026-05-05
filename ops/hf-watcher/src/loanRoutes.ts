@@ -506,6 +506,180 @@ export async function handleClaimables(
   }
 }
 
+/**
+ * GET /loans/stats?chainId=8453
+ *
+ * Aggregate loan counters + USD-agnostic per-asset volume. Replaces
+ * the Analytics page's per-loan `getLoanDetails` multicall storm
+ * with one O(table-scan) D1 query. Mirrors `/offers/stats` shape so
+ * the frontend has a consistent contract.
+ *
+ * Returned shape:
+ *   {
+ *     chainId,
+ *     active, repaid, defaulted, liquidated, settled, total,  // counts
+ *     erc20ActiveLoans, nftRentalsActive,
+ *     volumeByAsset: { [lowercaseAddr]: principalSumDecimal },
+ *     averageInterestRateBps: number | null,
+ *     indexer: { lastBlock, updatedAt } | null,
+ *   }
+ *
+ * USD pricing is NOT done here — the frontend pulls oracle prices
+ * via `getAssetPrice` and multiplies. This endpoint stays
+ * deterministic and fast (no oracle dep).
+ */
+export async function handleLoansStats(req: Request, env: Env): Promise<Response> {
+  const url = new URL(req.url);
+  const chainId = parseChainId(url.searchParams.get('chainId')) ?? 8453;
+  try {
+    // Counts per status.
+    const counts = await env.DB.prepare(
+      `SELECT status, COUNT(*) as n FROM loans WHERE chain_id = ? GROUP BY status`,
+    )
+      .bind(chainId)
+      .all<{ status: string; n: number }>();
+    const tally: Record<string, number> = {
+      active: 0,
+      repaid: 0,
+      defaulted: 0,
+      liquidated: 0,
+      settled: 0,
+    };
+    for (const row of counts.results ?? []) {
+      tally[row.status] = row.n;
+    }
+    // Asset-type breakdown for the active set (ERC-20 vs NFT rental).
+    const assetTypeBreakdown = await env.DB.prepare(
+      `SELECT asset_type, COUNT(*) as n
+       FROM loans
+       WHERE chain_id = ? AND status = 'active'
+       GROUP BY asset_type`,
+    )
+      .bind(chainId)
+      .all<{ asset_type: number; n: number }>();
+    let erc20ActiveLoans = 0;
+    let nftRentalsActive = 0;
+    for (const row of assetTypeBreakdown.results ?? []) {
+      // 0 = ERC-20, others = NFT-side variants. Matches the frontend
+      // `AssetType.ERC20 = 0` enum convention.
+      if (row.asset_type === 0) erc20ActiveLoans += row.n;
+      else nftRentalsActive += row.n;
+    }
+    // Per-asset principal volume across ALL statuses (lifetime
+    // protocol throughput). D1's SQLite stores `principal` as TEXT
+    // (decimal string) since 18-decimal ERC-20 amounts overflow
+    // 64-bit integer arithmetic — `SUM(CAST(principal AS INTEGER))`
+    // would silently cap at 2^63-1 once a single loan's principal
+    // crossed ~9.2e18 (just above 9.2 ETH-in-wei). So aggregate
+    // client-side with BigInt instead. Bounded scan: rows are
+    // already chain-scoped, and the loans table is on the order of
+    // thousands at most for the foreseeable future. If that grows
+    // past memory pressure we can add a precomputed
+    // `volume_by_asset` materialised view.
+    const volumeRows = await env.DB.prepare(
+      `SELECT lending_asset, principal, interest_rate_bps
+       FROM loans WHERE chain_id = ?`,
+    )
+      .bind(chainId)
+      .all<{ lending_asset: string; principal: string; interest_rate_bps: number }>();
+    const volumeByAsset: Record<string, bigint> = {};
+    let aprSum = 0;
+    let aprCount = 0;
+    for (const row of volumeRows.results ?? []) {
+      // Drop rows with unset / malformed `lending_asset` (legacy
+      // testnet bookkeeping wrote `0x` for some NFT-rental loans
+      // before the indexer normalised the column). Keeps the per-
+      // asset breakdown clean without affecting the count tallies
+      // computed above.
+      if (!row.lending_asset || !row.lending_asset.startsWith('0x') || row.lending_asset.length < 42) {
+        continue;
+      }
+      const key = row.lending_asset.toLowerCase();
+      try {
+        const p = BigInt(row.principal || '0');
+        volumeByAsset[key] = (volumeByAsset[key] ?? 0n) + p;
+      } catch {
+        // Malformed principal (shouldn't happen with the indexer's
+        // BigInt-safe writer, but guard anyway). Skip the row.
+      }
+      if (typeof row.interest_rate_bps === 'number') {
+        aprSum += row.interest_rate_bps;
+        aprCount += 1;
+      }
+    }
+    const volumeByAssetSerialized: Record<string, string> = {};
+    for (const [k, v] of Object.entries(volumeByAsset)) {
+      volumeByAssetSerialized[k] = v.toString();
+    }
+    const averageInterestRateBps = aprCount > 0 ? aprSum / aprCount : null;
+    const cursor = await env.DB.prepare(
+      `SELECT last_block, updated_at FROM indexer_cursor
+       WHERE chain_id = ? AND kind = 'diamond'`,
+    )
+      .bind(chainId)
+      .first<{ last_block: number; updated_at: number }>();
+    return jsonResponse({
+      chainId,
+      active: tally.active,
+      repaid: tally.repaid,
+      defaulted: tally.defaulted,
+      liquidated: tally.liquidated,
+      settled: tally.settled,
+      total:
+        tally.active + tally.repaid + tally.defaulted + tally.liquidated + tally.settled,
+      erc20ActiveLoans,
+      nftRentalsActive,
+      volumeByAsset: volumeByAssetSerialized,
+      averageInterestRateBps,
+      indexer: cursor
+        ? { lastBlock: cursor.last_block, updatedAt: cursor.updated_at }
+        : null,
+    });
+  } catch (err) {
+    console.error('[loanRoutes] stats failed', err);
+    return jsonResponse({ error: 'stats-failed' }, 500);
+  }
+}
+
+/**
+ * GET /loans/recent?chainId=8453&limit=50&before=<loan_id>
+ *
+ * Cross-status recent feed: most recent N loans regardless of state
+ * (active / repaid / defaulted / liquidated / settled). Mirrors
+ * `/offers/recent` — same indexer-first replacement for the per-loan
+ * multicall the Analytics page used to do via `useLogIndex` ID
+ * discovery + `getLoanDetails` multicall.
+ */
+export async function handleLoansRecent(req: Request, env: Env): Promise<Response> {
+  const url = new URL(req.url);
+  const chainId = parseChainId(url.searchParams.get('chainId')) ?? 8453;
+  const limit = parseLimit(url.searchParams.get('limit'));
+  const before = parseBefore(url.searchParams.get('before'));
+  try {
+    const stmt = before
+      ? env.DB.prepare(
+          `SELECT * FROM loans
+           WHERE chain_id = ? AND loan_id < ?
+           ORDER BY loan_id DESC LIMIT ?`,
+        ).bind(chainId, before, limit)
+      : env.DB.prepare(
+          `SELECT * FROM loans
+           WHERE chain_id = ?
+           ORDER BY loan_id DESC LIMIT ?`,
+        ).bind(chainId, limit);
+    const rows = await stmt.all<LoanRow>();
+    const loans = (rows.results ?? []).map(loanToJson);
+    const next =
+      loans.length === limit && loans.length > 0
+        ? (loans[loans.length - 1] as { loanId: number }).loanId
+        : null;
+    return jsonResponse({ chainId, loans, nextBefore: next });
+  } catch (err) {
+    console.error('[loanRoutes] recent failed', err);
+    return jsonResponse({ error: 'recent-failed' }, 500);
+  }
+}
+
 export function handleLoansPreflight(): Response {
   return new Response(null, {
     status: 204,

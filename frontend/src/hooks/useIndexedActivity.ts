@@ -19,6 +19,7 @@ import {
 import { useReadChain } from '../contracts/useDiamond';
 import { DEFAULT_CHAIN } from '../contracts/config';
 import { useLiveWatermark } from './useLiveWatermark';
+import { watermarkPolicy } from './watermarkPolicy';
 
 const PAGE_LIMIT = 100;
 
@@ -41,7 +42,7 @@ export function useIndexedActivity(
   const chainId = chain.chainId ?? DEFAULT_CHAIN.chainId;
   // Activity feed uses the 20 s slower-page cadence — counter advances
   // surface within ~30 s without the OfferBook's 5 s probe rate.
-  const { version } = useLiveWatermark({ pollIntervalMs: 20_000 });
+  const { version } = useLiveWatermark(watermarkPolicy('warm'));
   const [events, setEvents] = useState<IndexedActivityEvent[] | null>(null);
   const [source, setSource] = useState<'indexer' | 'fallback' | null>(null);
   const [loading, setLoading] = useState(true);

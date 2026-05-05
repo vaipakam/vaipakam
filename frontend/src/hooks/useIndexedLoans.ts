@@ -27,6 +27,7 @@ import {
 import { useReadChain } from '../contracts/useDiamond';
 import { DEFAULT_CHAIN } from '../contracts/config';
 import { useLiveWatermark } from './useLiveWatermark';
+import { watermarkPolicy } from './watermarkPolicy';
 import {
   chunkedGetLogs,
   decodeLoanDelta,
@@ -67,7 +68,7 @@ export function useIndexedActiveLoans(): UseIndexedLoansResult {
   // Slower-moving surface (Risk Watch, Analytics, Dashboard) — 20 s
   // probe is enough to keep counter-driven changes visible without
   // the OfferBook's 5 s cadence. ~3 probes/min on idle.
-  const { version, snapshot } = useLiveWatermark({ pollIntervalMs: 20_000 });
+  const { version, snapshot } = useLiveWatermark(watermarkPolicy('warm'));
   const [loans, setLoans] = useState<IndexedLoan[] | null>(null);
   const [source, setSource] = useState<'indexer' | 'fallback' | null>(null);
   const [loading, setLoading] = useState(true);
@@ -133,7 +134,7 @@ export function useIndexedLoansForWallet(
   const chainId = chain.chainId ?? DEFAULT_CHAIN.chainId;
   // Same rationale as `useIndexedActiveLoans` — Dashboard's "Your
   // Loans" card uses the 20 s slower-page cadence.
-  const { version } = useLiveWatermark({ pollIntervalMs: 20_000 });
+  const { version } = useLiveWatermark(watermarkPolicy('warm'));
   const [loans, setLoans] = useState<IndexedLoanWithRole[] | null>(null);
   const [source, setSource] = useState<'indexer' | 'fallback' | null>(null);
   const [loading, setLoading] = useState(Boolean(address));

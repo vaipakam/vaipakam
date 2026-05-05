@@ -8,6 +8,12 @@ import { AssetType, LoanStatus, type LoanDetails } from '../types/loan';
 import { fetchTokenMeta } from '../lib/tokenMeta';
 import { beginStep } from '../lib/journeyLog';
 import { useProtocolStats } from './useProtocolStats';
+import {
+  fetchActiveLoans,
+  type IndexedLoan,
+} from '../lib/indexerClient';
+import { useLiveWatermark } from './useLiveWatermark';
+import { watermarkPolicy } from './watermarkPolicy';
 
 const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
 const STALE_MS = 30_000;
@@ -54,15 +60,40 @@ export function useTVL() {
   const chainId = chain.chainId ?? DEFAULT_CHAIN.chainId;
   const diamondAddress = (chain.diamondAddress ?? DEFAULT_CHAIN.diamondAddress) as Address;
   const { stats, loading: statsLoading, error: statsError } = useProtocolStats();
+  // Cool-tier auto-refresh — TVL is a slow-moving aggregate; 180 s
+  // active probe with the standard idle/walk-away backoff matches
+  // the rest of the Analytics surface.
+  const { version: tvlWatermark } = useLiveWatermark(watermarkPolicy('cool'));
   const [snapshot, setSnapshot] = useState<TVLSnapshot | null>(
     () => cache.get(cacheKey(chainId, diamondAddress))?.data ?? null,
   );
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<Error | null>(statsError ?? null);
 
-  const load = useCallback(async () => {
-    if (!stats) return;
+  // Paginate `/loans/active` until the worker says "no more pages"
+  // (`nextBefore === null`). Hard-capped at 25 pages × 200 rows =
+  // 5000 active loans — plenty of headroom; if the protocol ever
+  // genuinely exceeds that, lift the cap. Returns null on any
+  // worker-side failure so the caller can fall through to the
+  // legacy multicall path. Without pagination the TVL would
+  // silently truncate to the worker's default page size of 50,
+  // understating the real-world value locked.
+  const fetchActiveLoansFromIndexer = useCallback(async (): Promise<
+    IndexedLoan[] | null
+  > => {
+    const all: IndexedLoan[] = [];
+    let before: number | undefined = undefined;
+    for (let i = 0; i < 25; i++) {
+      const page = await fetchActiveLoans(chainId, { limit: 200, before });
+      if (!page) return null;
+      all.push(...page.loans);
+      if (page.nextBefore === null) return all;
+      before = page.nextBefore;
+    }
+    return all;
+  }, [chainId]);
 
+  const load = useCallback(async () => {
     const key = cacheKey(chainId, diamondAddress);
     const cached = cache.get(key);
     if (cached && Date.now() - cached.at < STALE_MS) {
@@ -75,10 +106,45 @@ export function useTVL() {
     setError(null);
     const step = beginStep({ area: 'dashboard', flow: 'useTVL', step: 'price-active-loans' });
     try {
-      const activeLoans = stats.loans.filter((l: LoanDetails) => {
-        const s = Number(l.status);
-        return s === LoanStatus.Active || s === LoanStatus.FallbackPending;
-      });
+      // Indexer-first: pull the FULL active-loans set via paginated
+      // `/loans/active`. Falls back to `useProtocolStats.loans`
+      // (which derives from the chain-side `getLoanDetails` multi-
+      // call) only when the worker is unreachable. Both paths feed
+      // the same downstream pricing logic; the difference is
+      // whether the loans-list discovery cost was indexer JSON or
+      // chain RPCs.
+      let activeLoans: Pick<
+        LoanDetails,
+        | 'principal'
+        | 'principalAsset'
+        | 'assetType'
+        | 'collateralAmount'
+        | 'collateralAsset'
+        | 'collateralAssetType'
+        | 'status'
+      >[];
+      const indexerActive = await fetchActiveLoansFromIndexer();
+      if (indexerActive !== null) {
+        activeLoans = indexerActive.map((l) => ({
+          principal: BigInt(l.principal),
+          principalAsset: l.lendingAsset,
+          assetType: BigInt(l.assetType),
+          collateralAmount: BigInt(l.collateralAmount),
+          collateralAsset: l.collateralAsset,
+          collateralAssetType: BigInt(l.collateralAssetType),
+          status: BigInt(LoanStatus.Active),
+        }));
+      } else {
+        // Worker unreachable — fall back to the multicall'd loans
+        // list from useProtocolStats. May not be available if that
+        // hook is also still loading; we exit early in that case
+        // and the next watermark tick will retry.
+        if (!stats) return;
+        activeLoans = stats.loans.filter((l: LoanDetails) => {
+          const s = Number(l.status);
+          return s === LoanStatus.Active || s === LoanStatus.FallbackPending;
+        });
+      }
 
       interface LegKey { asset: string; amount: bigint; kind: 'principal' | 'collateral'; isNft: boolean; }
       const legs: LegKey[] = [];
@@ -212,12 +278,16 @@ export function useTVL() {
     } finally {
       setLoading(false);
     }
-  }, [publicClient, stats, chainId, diamondAddress]);
+  }, [publicClient, stats, chainId, diamondAddress, fetchActiveLoansFromIndexer]);
 
   useEffect(() => {
-    if (statsLoading || !stats) return;
+    // No longer gated on `stats` being ready — the indexer-first
+    // path doesn't need it. Only the worker-down fallback consults
+    // `stats`, and that branch handles the still-loading case
+    // internally with an early return. `tvlWatermark` provides the
+    // cool-tier auto-refresh trigger on its own watermark cadence.
     load();
-  }, [load, statsLoading, stats]);
+  }, [load, tvlWatermark]);
 
   return { snapshot, loading: loading || statsLoading, error: error ?? statsError };
 }

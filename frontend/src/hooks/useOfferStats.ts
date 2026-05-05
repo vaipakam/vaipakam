@@ -21,6 +21,7 @@ import { fetchOfferStats, type OfferStats } from '../lib/indexerClient';
 import { useReadChain } from '../contracts/useDiamond';
 import { DEFAULT_CHAIN } from '../contracts/config';
 import { useLiveWatermark } from './useLiveWatermark';
+import { watermarkPolicy } from './watermarkPolicy';
 
 interface UseOfferStatsResult {
   stats: OfferStats | null;
@@ -33,7 +34,7 @@ export function useOfferStats(): UseOfferStatsResult {
   // Stats are aggregate counters; 20 s probe is enough for the
   // homepage hero / dashboard cards. Saves 60 % of the RPC budget vs
   // the OfferBook's 5 s cadence.
-  const { version } = useLiveWatermark({ pollIntervalMs: 20_000 });
+  const { version } = useLiveWatermark(watermarkPolicy('warm'));
   const [stats, setStats] = useState<OfferStats | null>(null);
   const [loading, setLoading] = useState(true);
 

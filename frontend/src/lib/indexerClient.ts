@@ -286,6 +286,60 @@ export function fetchLoansByBorrower(
   );
 }
 
+export interface RecentLoansPage {
+  chainId: number;
+  loans: IndexedLoan[];
+  nextBefore: number | null;
+}
+
+export function fetchRecentLoans(
+  chainId: number,
+  opts: { limit?: number; before?: number } = {},
+): Promise<RecentLoansPage | null> {
+  const params = new URLSearchParams({ chainId: String(chainId) });
+  if (opts.limit) params.set('limit', String(opts.limit));
+  if (opts.before) params.set('before', String(opts.before));
+  return getJson<RecentLoansPage>(`/loans/recent?${params}`);
+}
+
+export interface RecentOffersPage {
+  chainId: number;
+  offers: IndexedOffer[];
+  nextBefore: number | null;
+}
+
+export function fetchRecentOffers(
+  chainId: number,
+  opts: { limit?: number; before?: number } = {},
+): Promise<RecentOffersPage | null> {
+  const params = new URLSearchParams({ chainId: String(chainId) });
+  if (opts.limit) params.set('limit', String(opts.limit));
+  if (opts.before) params.set('before', String(opts.before));
+  return getJson<RecentOffersPage>(`/offers/recent?${params}`);
+}
+
+export interface LoanStats {
+  chainId: number;
+  active: number;
+  repaid: number;
+  defaulted: number;
+  liquidated: number;
+  settled: number;
+  total: number;
+  erc20ActiveLoans: number;
+  nftRentalsActive: number;
+  /** Map of lowercased lending-asset address → decimal-string sum of
+   *  principals across all loans of that asset. Caller does BigInt
+   *  math + USD pricing client-side. */
+  volumeByAsset: Record<string, string>;
+  averageInterestRateBps: number | null;
+  indexer: { lastBlock: number; updatedAt: number } | null;
+}
+
+export function fetchLoanStats(chainId: number): Promise<LoanStats | null> {
+  return getJson<LoanStats>(`/loans/stats?chainId=${chainId}`);
+}
+
 export interface IndexedActivityEvent {
   chainId: number;
   blockNumber: number;
