@@ -15,6 +15,11 @@ interface Props {
   amount: bigint;
   /** Required for ERC721 / ERC1155 — the specific NFT id. */
   tokenId?: bigint;
+  /** When true, ERC-20 amounts render in locale-aware compact notation
+   *  (`2.5K` / `4.54M` / locale-equivalent) with the full precise value
+   *  surfaced as a hover tooltip. NFT cells are unaffected — they're
+   *  already compact by structure (`NFT #42`, `5 × NFT #42`). */
+  compact?: boolean;
   /**
    * Chain id this asset lives on. Drives the per-row "open externally"
    * link target via `<AssetLink>`:
@@ -51,6 +56,7 @@ export function PrincipalCell({
   amount,
   tokenId,
   chainId,
+  compact = false,
 }: Props) {
   const { t } = useTranslation();
   const isERC721 = assetType === 1;
@@ -82,7 +88,7 @@ export function PrincipalCell({
   return (
     <div>
       <span className="mono">
-        <TokenAmount amount={amount} address={asset} />
+        <TokenAmount amount={amount} address={asset} compact={compact} />
       </span>
       <div className="asset-addr">
         <AssetLink kind="erc20" chainId={chainId} address={asset} />

@@ -93,6 +93,43 @@ export function formatNumber(
 }
 
 /**
+ * Compact, human-readable token amount. Uses `Intl.NumberFormat`'s
+ * `notation: 'compact'` so the result is locale-aware:
+ *
+ *   en  →  `2.5K`, `4.54M`, `1.2B`
+ *   de  →  `2,5 Tsd.`, `4,54 Mio.`, `1,2 Mrd.`
+ *   fr  →  `2,5 k`, `4,54 M`, `1,2 Md`
+ *   ja  →  `2.5万`, `4540万` (the platform's compact buckets — 10K,
+ *          100M, 1T — match Japanese conventions automatically)
+ *   ar  →  `٢٫٥ ألف`, `٤٫٥٤ مليون` (Arabic-Indic digits + suffix)
+ *
+ * Used in dense list views (Dashboard's loan list, OfferBook offer
+ * cards) where the precise value isn't load-bearing — every consumer
+ * pairs this with a tooltip / detail page showing the full amount.
+ *
+ * Precision: converts the post-decimals nominal value through
+ * `Number()` so amounts above ~1e15 nominal units lose absolute
+ * precision. That ceiling is well above any realistic single-asset
+ * exposure on this platform; the compact format itself rounds to the
+ * `maxFrac` digits anyway, so the lossy step is invisible in output.
+ */
+export function formatUnitsCompact(
+  amount: bigint,
+  decimals = 18,
+  maxFrac = 2,
+): string {
+  const lng = activeLocale();
+  if (amount === 0n) return new Intl.NumberFormat(lng).format(0);
+  const raw = Number(formatUnits(amount, decimals));
+  return new Intl.NumberFormat(lng, {
+    notation: 'compact',
+    compactDisplay: 'short',
+    maximumFractionDigits: maxFrac,
+    minimumFractionDigits: 0,
+  }).format(raw);
+}
+
+/**
  * Format a fractional `value` (0..1 range) as a percentage string.
  *   formatPercent(0.05)        → "5%"
  *   formatPercent(0.05, 2)     → "5.00%" (en) / "5,00 %" (fr)

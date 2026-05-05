@@ -1388,7 +1388,7 @@ function AcceptReviewModal({ offer, illiquid, consent, onConsentChange, submitti
 
           <dt style={{ opacity: 0.7 }}>{isERC20 ? 'Principal' : 'Daily rental fee'}</dt>
           <dd style={{ margin: 0 }}>
-            <span className="mono"><TokenAmount amount={offer.amount} address={offer.lendingAsset} /></span>{' '}
+            <span className="mono"><TokenAmount amount={offer.amount} address={offer.lendingAsset} compact /></span>{' '}
             <AssetSymbol address={offer.lendingAsset} />
             {' '}<span style={{ opacity: 0.6 }}>({ASSET_TYPE_LABELS[offer.assetType]})</span>
           </dd>
@@ -1401,7 +1401,7 @@ function AcceptReviewModal({ offer, illiquid, consent, onConsentChange, submitti
 
           <dt style={{ opacity: 0.7 }}>Collateral</dt>
           <dd style={{ margin: 0 }}>
-            <span className="mono"><TokenAmount amount={offer.collateralAmount} address={offer.collateralAsset} /></span>{' '}
+            <span className="mono"><TokenAmount amount={offer.collateralAmount} address={offer.collateralAsset} compact /></span>{' '}
             <AssetSymbol address={offer.collateralAsset} />
           </dd>
 
@@ -1409,7 +1409,7 @@ function AcceptReviewModal({ offer, illiquid, consent, onConsentChange, submitti
             <>
               <dt style={{ opacity: 0.7 }}>Projected repayment</dt>
               <dd style={{ margin: 0 }}>
-                <span className="mono"><TokenAmount amount={projectedRepayment} address={offer.lendingAsset} /></span>{' '}
+                <span className="mono"><TokenAmount amount={projectedRepayment} address={offer.lendingAsset} compact /></span>{' '}
                 <AssetSymbol address={offer.lendingAsset} />
                 <span style={{ opacity: 0.6 }}> (principal + {bpsToPercent(offer.interestRateBps)} APR × {offer.durationDays.toString()}d)</span>
               </dd>
@@ -1437,7 +1437,7 @@ function AcceptReviewModal({ offer, illiquid, consent, onConsentChange, submitti
                     </>
                   ) : (
                     <>
-                      <span className="mono"><TokenAmount amount={normalFee} address={offer.lendingAsset} /></span>{' '}
+                      <span className="mono"><TokenAmount amount={normalFee} address={offer.lendingAsset} compact /></span>{' '}
                       <AssetSymbol address={offer.lendingAsset} />
                       <span style={{ opacity: 0.6 }}> ({baseFeePctLabel} — routed to treasury at loan start)</span>
                     </>
@@ -1446,7 +1446,7 @@ function AcceptReviewModal({ offer, illiquid, consent, onConsentChange, submitti
 
                 <dt style={{ opacity: 0.7 }}>Net proceeds to borrower</dt>
                 <dd style={{ margin: 0 }}>
-                  <span className="mono"><TokenAmount amount={netToBorrower} address={offer.lendingAsset} /></span>{' '}
+                  <span className="mono"><TokenAmount amount={netToBorrower} address={offer.lendingAsset} compact /></span>{' '}
                   <AssetSymbol address={offer.lendingAsset} />
                   <span style={{ opacity: 0.6 }}>
                     {discountFires

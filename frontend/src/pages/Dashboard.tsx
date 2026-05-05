@@ -618,6 +618,7 @@ export default function Dashboard() {
                         amount={loan.principal}
                         tokenId={loan.principalTokenId}
                         chainId={activeChain?.chainId ?? DEFAULT_CHAIN.chainId}
+                        compact
                       />
                     </td>
                     <td>
@@ -635,6 +636,7 @@ export default function Dashboard() {
                           amount={loan.collateralAmount}
                           tokenId={loan.collateralTokenId}
                           chainId={activeChain?.chainId ?? DEFAULT_CHAIN.chainId}
+                          compact
                         />
                       ) : (
                         <span style={{ opacity: 0.5 }}>—</span>

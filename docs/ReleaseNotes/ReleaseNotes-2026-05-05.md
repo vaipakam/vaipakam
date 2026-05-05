@@ -28,6 +28,50 @@ Base Sepolia was exercised end-to-end against four flow-test scripts
 
 Same total holds on Sepolia by parity (mirror chain).
 
+## Live testnet sweep on Sepolia (L1) — direct execution
+
+Earlier the parity claim above was just an inference from the mirror-chain
+relationship; on 2026-05-05 the same four flow-test scripts were executed
+end-to-end against the Sepolia diamond at
+`0x3458758ec056db565CBE3FC6489480cd6f8B8eb7` (chainId 11155111). Result:
+
+- **AnvilNewPositiveFlows** — `exit=0` ONCHAIN EXECUTION COMPLETE &
+  SUCCESSFUL. 18/18 scenarios green over ~63 minutes of `--slow`-paced
+  Sepolia broadcasts (range orders, partial repay, refinance, preclose
+  2/3, recovery happy path + sanctioned-source ban, disown, sanctions
+  Tier-1/Tier-2, keeper per-action authorization, VPFI staking +
+  discount + claim rebate, unstake, per-asset pause, global pause,
+  treasury accrual, master-flag dormancy, sellLoanViaBuyOffer).
+- **BaseSepoliaPartialFlows** — `exit=0` ONCHAIN EXECUTION COMPLETE &
+  SUCCESSFUL. 6/6 UI-testable midpoint states populated over ~27
+  minutes (open lender offer / open borrower offer / active liquid
+  loan / repaid-but-unclaimed / ERC-721-collateral active / ERC-721
+  rental active).
+- **AnvilNewPartialFlows** — `exit=0` ONCHAIN EXECUTION COMPLETE &
+  SUCCESSFUL. 7/7 midpoints populated over ~67 minutes (P-G / P-H /
+  P-N / P-O / P-P / P-Q / P-U).
+- **SepoliaPositiveFlows** — `exit=1` at Scenario 5 ("Cancel Lender
+  Offer") with `CancelCooldownActive()`. Pre-existing legacy-script
+  bug surfaced: the script creates a lender offer and calls
+  `cancelOffer` in the same broadcast tick, which the 5-minute
+  `MIN_OFFER_CANCEL_DELAY` introduced by the offer-cancel PR rejects
+  on a real chain. The first four scenarios passed cleanly before
+  the cooldown bit. Earlier "passes" of this script on Anvil / Base
+  Sepolia had this hidden because Anvil timestamps are
+  deployer-controlled and Base Sepolia run-history happened to land
+  on a longer wall-clock between create and cancel. The contract
+  behaviour is correct; the script needs a `vm.warp(+5 minutes)` (or
+  a different scenario shape that doesn't depend on instant cancel)
+  before this test can run end-to-end on a real chain. Tracked
+  separately — fix in a future PR.
+
+Total broadcast time on Sepolia: ~2h 50m across the four scripts (chain
+confirmations, not script logic, dominated). Bash chain ran sequentially
+without `set -e` so the SepoliaPositiveFlows failure didn't abort the
+remaining three. Logs at `/tmp/sepolia-flow-logs/{01..04}-*.log` for
+post-mortem; broadcast artifacts at
+`contracts/broadcast/<Script>.s.sol/11155111/run-latest.json`.
+
 ## Pre-existing bugs surfaced + fixed
 
 ### Diamond selector gap — 38 functions missing on-chain
@@ -196,6 +240,246 @@ stay operator-curated — the script never auto-populates them.
   - VPFIBuyReceiver knob hidden on non-canonical chains ✓
 - **Forge test regression** — 1613/1613 PASS, 0 failed (after every
   contract change in this session)
+
+## Frontend UX + indexer/refresh-pipeline rebuild
+
+A large frontend pass shipped today reshapes how the app pulls data
+from chain + worker, how it surfaces "is this fresh?" to the user, and
+how a handful of dense list views render token amounts. The pieces are
+related — they move together as one coherent shift from "bulk-scan
+on every render" to "indexer first, narrow RPC delta on top, with a
+single 5-second watermark probe driving the whole tree."
+
+### Indexer status badge + popover
+
+The top-bar status pill that surfaces "what's serving the data right
+now" was rebuilt to remove the manual rescan button and replace its
+explanatory tooltip with a structured popover. Three states:
+
+- **Cached (green)** — the worker indexer responded; the page renders
+  from its snapshot and a 5-second background tail merges new
+  on-chain events on top.
+- **Live (amber)** — the worker is unreachable, the chain isn't
+  covered by the cache, or the snapshot hasn't returned yet. The
+  browser falls back to direct RPC reads.
+- **Local dev (blue)** — wallet connected to chainId 31337
+  (Anvil / Foundry / Hardhat). The cloud worker by definition can't
+  reach a local dev node; surfacing this as a distinct colour keeps
+  the badge from flashing amber during normal dev work.
+
+Clicking the info icon next to the pill opens a popover with:
+
+- A structured status block (State / Chain / Data source / Cache age /
+  Last update timestamp) so a curious user can see the exact health
+  of the pipeline without digging into devtools.
+- A plain-English explanation of what the colour means and what to
+  expect if the user submits a transaction in this state.
+
+The previous rescan button on the badge was removed deliberately:
+manual chain-scans are an RPC-quota abuse vector (a frustrated user
+or a trivial bot can spam-click into a paid-tier RPC bill) AND they
+gave users the wrong mental model that they "need" to refresh.
+Auto-refetch on tab-focus + the 5-second background tail + post-tx
+receipt refetch is the modern DeFi pattern; users who want to force
+a fresh read still have a cooldown-gated rescan button on the pages
+where it belongs (OfferBook, Activity, Vault — see below). The
+popover is mobile-aware: on viewports below 640 px it docks fixed
+to the top of the viewport instead of anchoring to the badge,
+preventing the off-screen-clip bug on narrow screens.
+
+### Live-tail data pipeline (5-second watermark, indexer + RPC catch-up)
+
+Replaced every page's per-page-mounted polling timer with a single,
+shared "watermark probe" pattern shared across the app:
+
+1. **Initial mount + tab-focus** — the page snapshots from the
+   indexer (cheap, fast, complete up to the indexer's last cron
+   tick), then runs a chunked `eth_getLogs` catch-up over the
+   indexer-tail → safe-head gap (1000-block windows so it slots
+   into the strictest free-tier RPC caps). The catch-up reads at
+   the safe block tag so a reorg can never deliver a then-discarded
+   log into the cache.
+2. **Live tail** — every 5 seconds (paused when the tab is hidden,
+   re-fired immediately on visibility change), one cheap on-chain
+   read of a single contract view returns the lifetime offer count
+   and lifetime loan count. Strictly increasing on creates. The
+   subscriber data hooks listen on a `version` integer that bumps
+   only when one of those numbers actually advanced — so a quiet
+   chain with no new offers / no new loans uses ~12 RPC calls per
+   minute total across the entire page, not per-hook.
+3. **Per-tx receipt refetch** — the user's own actions trigger an
+   immediate refetch of the surfaces they touched (already standard
+   wagmi behaviour); doesn't go through the watermark.
+
+The 5-second cadence was chosen as a balance: tighter than every
+chain we ship on except Arbitrum (where the user sees a new block at
+most ~3 s after creation), well under the threshold where a
+freshly-created offer "should have appeared by now," and exactly
+half the indexer cron's 60-second minimum so the next-cron-data is
+always available when the rescan cooldown expires. Earlier in the
+session the cadence was 2 s; raised to 5 s because the perceptual
+benefit of 2 s was zero (post-tx refetch handles "after I clicked"
+freshness) and the RPC budget at 2 s was 60 % higher.
+
+The watermark probe doesn't replace contract-event subscriptions
+indiscriminately — it specifically replaces the long-lived
+`eth_newFilter` / `eth_getFilterChanges` poll loops that the legacy
+on-chain log scan used to keep alive. Those polls were running 4
+times per page (one per offer-book event), even on idle. Removed.
+Now a single 5-second multicall against the diamond drives every
+data-hook subscriber AND triggers the legacy log-scan refresh.
+
+### Safe-block cursor everywhere — reorg-proof refresh
+
+Both layers of the indexer pipeline (browser-side legacy log scan +
+worker-side D1 indexer) used to cursor on `latest`-tag head, which
+meant cached events near the unsafe tip could include rows from a
+soon-to-reorg block. The next scan would skip those blocks (fromBlock
+= cached.lastBlock + 1), leaving the stale row in cache forever.
+
+Fix shipped on both sides:
+
+- Browser localStorage cursor reads at `eth_getBlockByNumber('safe')`
+  (fallback: `latest - 32` on older RPCs that don't support the safe
+  tag).
+- Worker D1 cursor reads at `client.getBlock({ blockTag: 'safe' })`
+  with the same fallback.
+
+By the time a block is safe-tagged, its reorg horizon is already
+past it, so the cursor is structurally reorg-proof. Initial page
+load, tab refocus, manual rescan, the watermark refresh, and the
+worker cron all pull from the same safe-aligned cursor — no path
+ever caches a row from a block that could later get reorged out.
+
+### Rescan-button cooldown + sync-status state machine
+
+Three pages have an explicit "force-fresh-now" rescan button:
+OfferBook, Activity, and the Vault (Your Vaipakam Vault). All three
+now drive their button through a shared state machine:
+
+- **30-second cooldown** prevents spam-clicks burning RPC quota. The
+  legacy chain scan completes in 1–5 seconds on healthy RPC, so the
+  cooldown is longer than the underlying refresh — that gap is
+  exactly where the user reads the confirmation status, and the
+  cooldown's end is timed so the next indexer cron run has likely
+  also fired before the button re-enables.
+- **Animated progress bar** along the bottom edge of the button
+  shrinks right-to-left as the cooldown drains. Visual semantic:
+  "this much time still locked" — easier to read at a glance than
+  a fill-from-empty bar.
+- **Status pill transitions** — Idle → Syncing… (with spinning
+  refresh icon and live seconds-remaining) → Synced ✓ (with
+  check-mark icon and the seconds remaining until re-enabled) →
+  Idle. The user sees the underlying scan finish ("Synced") well
+  before the button returns to its idle state.
+- **Stable-width seconds** — the digits (e.g. "30" → "9") sit in a
+  fixed-width slot with tabular numerals, so the surrounding
+  "Refreshing… " / "Synced — " / "s" labels don't shift left or
+  right as the countdown ticks down.
+
+Same chrome on all three buttons so users learn the pattern once.
+
+### Layered refresh — indexer first, RPC delta on top
+
+When the user clicks rescan:
+
+1. The page re-pulls the indexer snapshot (fast, complete up to the
+   indexer's last cron tick).
+2. On top of that snapshot, a chunked `eth_getLogs` catch-up reads
+   only the indexer-tail → safe-head delta and merges new offer
+   events / loan events / activity events into the rendered list.
+3. The legacy in-browser log scan also re-runs as a fallback, but
+   now starts at `max(local-cached-block, indexer.lastBlock + 1)`
+   — when the indexer is healthy, that collapses to a ~60-second
+   window of blocks instead of the entire deploy-block → head
+   history. Combined with the safe-block cursor, the legacy scan's
+   typical per-rescan work is now a few hundred blocks at most.
+
+The OfferBook had a long-standing race where the legacy log scan
+completing AFTER the indexer-served path populated the offer list
+would clobber the page back to empty (the reset-on-`sortedIds`
+effect didn't know to skip when the indexer was already serving).
+Fixed: the reset effect now defers to the indexer-served path when
+that path is active, and the rescan button no longer manually
+blanks the offers state during an indexer-serve refresh.
+
+### Refresh + offer/loan-list rendering polish
+
+A pile of smaller polish items shipped alongside the data-pipeline
+work:
+
+- **Loan-list HF / LTV columns** — the bar gauges that ate ~200 px
+  per row are replaced with compact colour-coded chips
+  (safe-green / warning-amber / danger-red). The bar variant is
+  retained for single-loan / preview surfaces (Loan Details,
+  OfferRiskPreview) where the threshold tick-mark adds value; on
+  the dashboard list, the chip is enough since users are scanning
+  for the danger zone, not measuring exact distance.
+- **View column dropped from the loan list** — the loan-id in the
+  first column already deep-links to the loan detail page; a
+  separate "View" button at the row's far right was duplicate
+  navigation. The cell is kept for the conditional Claim CTA on
+  rows where the wallet has a terminal-state claimable.
+- **Token symbols pre-warmed** — the loan list pre-fetches every
+  unique principal + collateral asset's `symbol()` and `decimals()`
+  in parallel before any row mounts, so users see "USDC ↗" / "WETH ↗"
+  on first paint instead of a shortened-address flash. Combined
+  with a fix to the token-meta cache (which used to poison itself
+  on a transient RPC hiccup and persistently render the address
+  forever), the list now renders symbols cleanly on first load and
+  every refresh.
+- **Compact locale-aware amounts** — token amounts in the loan list
+  + offer cards now render in compact form (`2.5K`, `4.54M`,
+  `1.2B` in English; `2,5 Tsd.` / `2,5 Mio.` in German;
+  `2,5 k` / `4,54 M` in French; `2.5万` / `4540万` in Japanese;
+  `٢٫٥ ألف` / `٤٫٥٤ مليون` in Arabic with Arabic-Indic digits)
+  following the in-app language switcher, NOT the OS locale.
+  Each compact value carries a hover tooltip with the full precise
+  decimal-grouped value so users who need the exact number get it
+  without clicking through. Detail pages (Loan Details, Refinance,
+  Preclose, Withdraw, NFT Verifier) keep full precision since the
+  exact amount is load-bearing for a tx the user is about to sign.
+
+### Initial-load deep-scan race
+
+Before today, mounting a page on a fresh browser kicked off a
+deploy-block → head log scan immediately, BEFORE the indexer's
+`/offers/stats` endpoint had returned the indexer's `lastBlock`
+hint. That meant a fresh user on Sepolia (which is at hundreds of
+thousands of blocks) waited tens of seconds on the slow scan even
+when the indexer was healthy and could have provided the cursor
+hint. Fixed: the legacy log scan is now gated on the indexer-stats
+fetch resolving (success or failure). Once it resolves, the scan
+either fast-forwards to the indexer's last block (cheap) or falls
+back to the local cache cursor (also cheap on warm browsers). The
+localStorage cache snapshot is still rendered synchronously for
+first-paint via `peekLoanIndex` regardless of the gate, so users
+see content immediately; only the background RPC scan is deferred.
+
+### Chain-agnostic flow-script wrappers
+
+Three chain-agnostic entry-point scripts landed for the next test
+run, composing the existing per-feature scripts with no internal
+state merge — Phase A runs to completion, Phase B follows:
+
+- `contracts/script/PositiveFlows.s.sol` — appends
+  SepoliaPositiveFlows (15 legacy lifecycle scenarios) +
+  AnvilNewPositiveFlows (18 new-features scenarios) for a 33-scenario
+  full-positive sweep on any chain.
+- `contracts/script/PartialFlows.s.sol` — appends
+  BaseSepoliaPartialFlows (6 UI-testable midpoints) +
+  AnvilNewPartialFlows (7 new-features midpoints) for a 13-midpoint
+  partial sweep on any chain.
+- `contracts/script/NegativeFlows.s.sol` — chain-agnostic dispatch
+  over AnvilNegativeFlows (9 gate-rejection scenarios; only one
+  negative-flow source exists today).
+
+Both halves of each composition already pulled the diamond address
+from `Deployments.lib` and read the standard env-var topology, so
+the wrappers inherit chain-agnosticism with no further configuration.
+Originals are untouched. Updated `docs/ops/DeploymentRunbook.md` §5c
+and `docs/TestScopes/AdvancedUserGuideTestMatrix.md` to point new
+testnet sweeps at the wrappers.
 
 ## What this PR does NOT do
 
