@@ -2,18 +2,17 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { ArrowLeft, ExternalLink, X, Settings } from 'lucide-react';
-import { numberToHex, type Address, type Hex } from 'viem';
-import { usePublicClient } from 'wagmi';
+import { type Hex } from 'viem';
 import { L as Link } from '../components/L';
 import { useWallet } from '../context/WalletContext';
 import { useDiamondContract, useDiamondRead, useReadChain } from '../contracts/useDiamond';
 import { DEFAULT_CHAIN } from '../contracts/config';
 import {
+  fetchActivity,
   fetchOfferById,
   indexedToRawOffer,
   type IndexedOffer,
 } from '../lib/indexerClient';
-import { chunkedGetLogs, TOPIC0 } from '../lib/rpcCatchUp';
 import {
   toOfferData,
   type OfferData,
@@ -78,13 +77,16 @@ export default function OfferDetails() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [refetchTick, setRefetchTick] = useState(0);
-  // Tx hash of the OfferCreated event. Resolved lazily after the
-  // indexer payload lands so the explorer-link affordance only
-  // appears once we actually have the hash. Empty when the lookup is
-  // pending OR the worker is unreachable AND the chain-only fallback
-  // is in use (no firstSeenBlock to anchor the targeted log scan).
+  // Tx hash of the OfferCreated event. Resolved lazily via the
+  // indexer's activity feed (`/activity?offerId=N&kind=OfferCreated`)
+  // — the worker already captured the tx hash when it indexed the
+  // event into the `activity_events` table, so this is one HTTP
+  // call with no chain reads. The previous implementation did a
+  // targeted single-block `eth_getLogs` against the user's RPC,
+  // which silently returned 0 logs on public providers that throttle
+  // or restrict log queries (the row would never appear regardless
+  // of how long the user waited).
   const [createdTxHash, setCreatedTxHash] = useState<Hex | null>(null);
-  const publicClient = usePublicClient();
 
   // Indexer-first read. The worker's `/offers/:id` endpoint returns
   // every field the page renders, including the `firstSeenBlock` that
@@ -150,38 +152,40 @@ export default function OfferDetails() {
     };
   }, [chainId, offerIdBig, diamondRead, refetchTick, t]);
 
-  // Resolve the OfferCreated tx-hash via a targeted single-block
-  // `eth_getLogs` against the indexer-supplied `firstSeenBlock`.
-  // Filter is `(diamond, OfferCreated, offerId-as-bytes32)` — exactly
-  // one log matches per offer, so this is one-block, one-result, one
-  // RPC. Skipped entirely on the chain-only fallback (no
-  // `firstSeenBlock` available) and on a re-render where we've
-  // already resolved the hash.
+  // Resolve the OfferCreated tx-hash via the indexer's activity
+  // endpoint. The worker captured the hash into D1 at indexing time;
+  // a filtered `/activity?offerId=N&kind=OfferCreated&limit=1` call
+  // returns it directly. Single HTTP call, zero chain reads, no
+  // dependency on the user's RPC honouring topic-filtered log
+  // queries (which is what made the earlier `eth_getLogs` approach
+  // fail silently on restrictive public RPCs — the row would never
+  // appear regardless of wait time).
   useEffect(() => {
-    if (!indexed || !publicClient || !readChain.diamondAddress) return;
+    if (!indexed) return;
     if (createdTxHash) return;
     let cancelled = false;
     (async () => {
-      const block = BigInt(indexed.firstSeenBlock);
-      const offerIdHex = numberToHex(BigInt(indexed.offerId), { size: 32 });
       try {
-        const logs = await chunkedGetLogs(publicClient, {
-          fromBlock: block,
-          toBlock: block,
-          address: readChain.diamondAddress as Address,
-          topics: [TOPIC0.OFFER_CREATED, offerIdHex],
+        const page = await fetchActivity(chainId, {
+          offerId: indexed.offerId,
+          kind: 'OfferCreated',
+          limit: 1,
         });
-        if (cancelled || logs.length === 0) return;
-        setCreatedTxHash(logs[0].transactionHash);
+        if (cancelled) return;
+        const ev = page?.events?.[0];
+        if (ev?.txHash) {
+          setCreatedTxHash(ev.txHash as Hex);
+        }
       } catch {
-        // Silent — the explorer link just stays hidden. No fallback
-        // needed; the page still renders fine without the tx hash.
+        // Silent — the explorer link just stays hidden. The page
+        // still renders fine without the tx hash; the existing
+        // "First seen" block link is the fallback affordance.
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, [indexed, publicClient, readChain.diamondAddress, createdTxHash]);
+  }, [indexed, chainId, createdTxHash]);
 
   const offerForDisplay: OfferData | null = chainOffer;
 
@@ -354,9 +358,24 @@ export default function OfferDetails() {
               </div>
             )}
 
-            <div className="loan-details-grid">
-              <Field label={t('offerDetails.principal', { defaultValue: 'Principal' })}>
-                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+            {/* Two-column "Label | Value" rows using the existing
+                `.data-row` / `.data-label` / `.data-value` chrome
+                from AppLayout.css — same shape Loan Details uses,
+                so the visual rhythm carries across detail surfaces.
+                Earlier iteration used non-existent
+                `.loan-detail-*` classes which fell back to the
+                default block layout (label-on-its-own-line, value-
+                on-its-own-line) — that's the "juggled" appearance
+                the screenshot caught. */}
+            <div>
+              <div className="data-row">
+                <span className="data-label">
+                  {t('offerDetails.principal', { defaultValue: 'Principal' })}
+                </span>
+                <span
+                  className="data-value"
+                  style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
+                >
                   <TokenIcon
                     chainId={chainId}
                     address={offerForDisplay.lendingAsset}
@@ -371,21 +390,33 @@ export default function OfferDetails() {
                     address={offerForDisplay.lendingAsset}
                   />
                 </span>
-              </Field>
+              </div>
 
-              <Field label={t('offerDetails.rate', { defaultValue: 'Rate' })}>
-                {bpsToPercent(offerForDisplay.interestRateBps)}
-              </Field>
+              <div className="data-row">
+                <span className="data-label">
+                  {t('offerDetails.rate', { defaultValue: 'Rate' })}
+                </span>
+                <span className="data-value">
+                  {bpsToPercent(offerForDisplay.interestRateBps)}
+                </span>
+              </div>
 
-              <Field label={t('offerDetails.duration', { defaultValue: 'Duration' })}>
-                {offerForDisplay.durationDays.toString()}{' '}
-                {t('loanDetails.daysSuffix', { defaultValue: 'days' })}
-              </Field>
+              <div className="data-row">
+                <span className="data-label">
+                  {t('offerDetails.duration', { defaultValue: 'Duration' })}
+                </span>
+                <span className="data-value">
+                  {offerForDisplay.durationDays.toString()}{' '}
+                  {t('loanDetails.daysSuffix', { defaultValue: 'days' })}
+                </span>
+              </div>
 
-              <Field
-                label={t('offerDetails.collateral', { defaultValue: 'Collateral' })}
-              >
+              <div className="data-row">
+                <span className="data-label">
+                  {t('offerDetails.collateral', { defaultValue: 'Collateral' })}
+                </span>
                 <span
+                  className="data-value"
                   style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
                 >
                   {offerForDisplay.collateralAsset !== ZERO_ADDR && (
@@ -404,64 +435,206 @@ export default function OfferDetails() {
                     address={offerForDisplay.collateralAsset}
                   />
                 </span>
-              </Field>
+              </div>
 
-              <Field label={t('offerDetails.creator', { defaultValue: 'Creator' })}>
-                <AddressDisplay address={offerForDisplay.creator} />
-              </Field>
+              <div className="data-row">
+                <span className="data-label">
+                  {t('offerDetails.creator', { defaultValue: 'Creator' })}
+                </span>
+                <span className="data-value">
+                  <AddressDisplay address={offerForDisplay.creator} />
+                </span>
+              </div>
 
               {offerForDisplay.allowsPartialRepay && (
-                <Field
-                  label={t('offerDetails.partialRepay', {
-                    defaultValue: 'Partial repay',
-                  })}
-                >
-                  {t('common.yes', { defaultValue: 'Yes' })}
-                </Field>
+                <div className="data-row">
+                  <span className="data-label">
+                    {t('offerDetails.partialRepay', {
+                      defaultValue: 'Partial repay',
+                    })}
+                  </span>
+                  <span className="data-value">
+                    {t('common.yes', { defaultValue: 'Yes' })}
+                  </span>
+                </div>
               )}
 
+              {/* Position NFT — minted to the creator at offer
+                  creation, transferable. The Diamond itself is the
+                  ERC-721 issuer (via VaipakamNFTFacet), so the
+                  verifier link points at the Diamond as the
+                  contract. Hidden when `positionTokenId` is 0
+                  (legacy offers indexed before the field was
+                  populated, or fallback path with no indexer data). */}
+              {indexed &&
+                indexed.positionTokenId &&
+                indexed.positionTokenId !== '0' &&
+                readChain.diamondAddress && (
+                  <div className="data-row">
+                    <span className="data-label">
+                      {t('offerDetails.positionNft', {
+                        defaultValue: 'Position NFT',
+                      })}
+                    </span>
+                    <span
+                      className="data-value"
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: 6,
+                      }}
+                    >
+                      <Link
+                        to={`/nft-verifier?contract=${readChain.diamondAddress}&id=${indexed.positionTokenId}`}
+                        title={t('offerDetails.positionNftTitle', {
+                          defaultValue:
+                            'Verify this position NFT in the Vaipakam NFT Verifier',
+                        })}
+                      >
+                        #{indexed.positionTokenId}
+                      </Link>
+                    </span>
+                  </div>
+                )}
+
+              {/* Principal NFT — only meaningful when the offer's
+                  principal is an NFT asset (assetType !== ERC20).
+                  Links to the verifier with the underlying NFT
+                  contract + tokenId so users can confirm it's the
+                  expected asset before accepting. */}
+              {indexed &&
+                indexed.assetType !== 0 &&
+                indexed.tokenId &&
+                indexed.tokenId !== '0' && (
+                  <div className="data-row">
+                    <span className="data-label">
+                      {t('offerDetails.principalNft', {
+                        defaultValue: 'Principal NFT ID',
+                      })}
+                    </span>
+                    <span
+                      className="data-value"
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: 6,
+                      }}
+                    >
+                      <Link
+                        to={`/nft-verifier?contract=${offerForDisplay.lendingAsset}&id=${indexed.tokenId}`}
+                        title={t('offerDetails.principalNftTitle', {
+                          defaultValue:
+                            'Verify the principal NFT in the Vaipakam NFT Verifier',
+                        })}
+                      >
+                        #{indexed.tokenId}
+                      </Link>
+                    </span>
+                  </div>
+                )}
+
+              {/* Collateral NFT — same shape as Principal NFT, gated
+                  on collateralAssetType !== ERC20. */}
+              {indexed &&
+                indexed.collateralAssetType !== 0 &&
+                indexed.collateralTokenId &&
+                indexed.collateralTokenId !== '0' && (
+                  <div className="data-row">
+                    <span className="data-label">
+                      {t('offerDetails.collateralNft', {
+                        defaultValue: 'Collateral NFT ID',
+                      })}
+                    </span>
+                    <span
+                      className="data-value"
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: 6,
+                      }}
+                    >
+                      <Link
+                        to={`/nft-verifier?contract=${offerForDisplay.collateralAsset}&id=${indexed.collateralTokenId}`}
+                        title={t('offerDetails.collateralNftTitle', {
+                          defaultValue:
+                            'Verify the collateral NFT in the Vaipakam NFT Verifier',
+                        })}
+                      >
+                        #{indexed.collateralTokenId}
+                      </Link>
+                    </span>
+                  </div>
+                )}
+
               {indexed && (
-                <Field
-                  label={t('offerDetails.firstSeen', {
-                    defaultValue: 'First seen',
-                  })}
-                >
+                <div className="data-row">
+                  <span className="data-label">
+                    {t('offerDetails.firstSeen', {
+                      defaultValue: 'First seen',
+                    })}
+                  </span>
                   <span
-                    style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
+                    className="data-value"
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: 6,
+                    }}
                   >
                     {formatDate(indexed.firstSeenAt * 1000)}
-                    {/* Tx-hash link is preferred — points at the
-                        OfferCreated transaction directly so the user
-                        lands on the calldata that matched their
-                        offer. Falls back to the block-link when the
-                        targeted log scan is still pending OR returned
-                        nothing (RPC ToS rejection, log gone after
-                        reorg, etc.). */}
-                    {createdTxHash ? (
-                      <a
-                        href={`${blockExplorer}/tx/${createdTxHash}`}
-                        target="_blank"
-                        rel="noreferrer noopener"
-                        title={t('offerDetails.viewTx', {
-                          defaultValue: 'View creation transaction on block explorer',
-                        })}
-                      >
-                        <ExternalLink size={12} />
-                      </a>
-                    ) : (
-                      <a
-                        href={`${blockExplorer}/block/${indexed.firstSeenBlock}`}
-                        target="_blank"
-                        rel="noreferrer noopener"
-                        title={t('offerDetails.viewBlockExplorer', {
-                          defaultValue: 'View block on block explorer',
-                        })}
-                      >
-                        <ExternalLink size={12} />
-                      </a>
-                    )}
+                    <a
+                      href={`${blockExplorer}/block/${indexed.firstSeenBlock}`}
+                      target="_blank"
+                      rel="noreferrer noopener"
+                      title={t('offerDetails.viewBlockExplorer', {
+                        defaultValue: 'View block on block explorer',
+                      })}
+                    >
+                      <ExternalLink size={12} />
+                    </a>
                   </span>
-                </Field>
+                </div>
+              )}
+
+              {/* Creation transaction hash — explicit row instead of
+                  hiding behind an icon next to "First seen". Renders
+                  the redacted hash (`0xabcd…1234`) as the visible
+                  link target so users see at a glance what they're
+                  navigating to. Resolved lazily via the targeted
+                  single-block log scan in the effect above; while
+                  pending OR if the lookup failed (RPC ToS rejection,
+                  reorg) the row stays hidden — the "First seen"
+                  block link above is the fallback affordance. */}
+              {createdTxHash && (
+                <div className="data-row">
+                  <span className="data-label">
+                    {t('offerDetails.creationTx', {
+                      defaultValue: 'Creation tx',
+                    })}
+                  </span>
+                  <span
+                    className="data-value"
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: 6,
+                    }}
+                  >
+                    <a
+                      href={`${blockExplorer}/tx/${createdTxHash}`}
+                      target="_blank"
+                      rel="noreferrer noopener"
+                      title={t('offerDetails.viewTx', {
+                        defaultValue:
+                          'View creation transaction on block explorer',
+                      })}
+                      style={{ fontFamily: 'monospace' }}
+                    >
+                      {`${createdTxHash.slice(0, 6)}…${createdTxHash.slice(-4)}`}
+                    </a>
+                    <ExternalLink size={12} aria-hidden="true" />
+                  </span>
+                </div>
               )}
 
               {/* Partial-fill indicator. Only renders when the indexer
@@ -475,21 +648,24 @@ export default function OfferDetails() {
               {indexed &&
                 BigInt(indexed.amountFilled) > 0n &&
                 BigInt(indexed.amountFilled) < BigInt(indexed.amountMax) && (
-                  <Field
-                    label={t('offerDetails.amountFilled', {
-                      defaultValue: 'Amount filled',
-                    })}
-                  >
-                    <TokenAmount
-                      amount={BigInt(indexed.amountFilled)}
-                      address={offerForDisplay.lendingAsset}
-                    />
-                    {' '}/{' '}
-                    <TokenAmount
-                      amount={BigInt(indexed.amountMax)}
-                      address={offerForDisplay.lendingAsset}
-                    />
-                  </Field>
+                  <div className="data-row">
+                    <span className="data-label">
+                      {t('offerDetails.amountFilled', {
+                        defaultValue: 'Amount filled',
+                      })}
+                    </span>
+                    <span className="data-value">
+                      <TokenAmount
+                        amount={BigInt(indexed.amountFilled)}
+                        address={offerForDisplay.lendingAsset}
+                      />
+                      {' '}/{' '}
+                      <TokenAmount
+                        amount={BigInt(indexed.amountMax)}
+                        address={offerForDisplay.lendingAsset}
+                      />
+                    </span>
+                  </div>
                 )}
             </div>
 
@@ -518,21 +694,6 @@ export default function OfferDetails() {
               (today users accept from OfferBook only). */}
         </>
       )}
-    </div>
-  );
-}
-
-function Field({
-  label,
-  children,
-}: {
-  label: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <div className="loan-detail-field">
-      <div className="loan-detail-label">{label}</div>
-      <div className="loan-detail-value">{children}</div>
     </div>
   );
 }

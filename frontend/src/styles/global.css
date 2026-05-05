@@ -270,7 +270,14 @@ img { max-width: 100%; display: block; }
 .btn-secondary {
   background: transparent;
   color: var(--text-primary);
-  border: 1.5px solid var(--border);
+  /* `--border` (dark mode: #1e293b) is intentionally subtle for
+     hairline card / table separators, but it's barely distinguishable
+     from `--bg-card` (#1e2538) — secondary buttons sitting inside a
+     card lose their outline entirely. `--border-hover` (#334155) is
+     the design system's "visibly bordered" tone for the same family;
+     using it as the resting border keeps secondary buttons readable
+     as buttons regardless of the surface they're rendered on. */
+  border: 1.5px solid var(--border-hover);
 }
 .btn-secondary:hover {
   border-color: var(--brand);

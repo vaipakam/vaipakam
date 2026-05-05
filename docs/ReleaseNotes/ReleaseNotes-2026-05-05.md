@@ -746,3 +746,295 @@ testnet sweeps at the wrappers.
   deploy continues to run with `currentTosVersion == 0` (gate
   dormant); when governance flips it on, the canonical text in
   `docs/Terms/TermsOfService.md` is what should be pinned.
+
+---
+
+## Phase 9 polish — indexer-first across Analytics + Dashboard
+
+### Why this work
+
+Two related issues drove the refactor. First, the Dashboard "Your
+Offers" card was showing 2 active offers when the OfferBook
+showed 5. Root cause: Dashboard's `useMyOffers` hook fed off the
+local browser-side log scan, which lags the worker's snapshot by
+seconds-to-minutes during catch-up. The OfferBook reads from the
+worker's `/offers/by-creator` endpoint and saw the fresher state.
+Same shape of bug surfaced on Analytics: every aggregate stat
+walked the full historical loan list via per-loan `getLoanDetails`
+multicalls, which scaled linearly with protocol history and burned
+RPC budget on first paint.
+
+The fix consolidates onto an indexer-first pattern across every
+read surface. Pages now hydrate from the Cloudflare Worker's D1
+cache when reachable; chain reads only fire when the worker is
+confirmed-offline.
+
+### New worker endpoints
+
+Four endpoints landed on the hf-watcher Worker, all live at
+`vaipakam-hf-watcher.dawn-fire-139e.workers.dev`:
+
+- `GET /loans/stats` — aggregate loan counters per status
+  (active / repaid / defaulted / liquidated / settled), ERC-20 vs
+  NFT-rental split for the active set, per-asset principal volume
+  + loan count across every status, average APR. Replaces the
+  Analytics page's per-loan multicall storm with one D1 query.
+  Per-asset BigInt sums aggregated in JS to avoid the SQLite
+  `CAST(... AS INTEGER)` 64-bit overflow that would silently cap
+  18-decimal token amounts past ~9.2e18.
+- `GET /loans/recent` — most recent N loans regardless of state.
+  Drives the Analytics recent-activity feed without falling back
+  to a chain log scan.
+- `GET /offers/recent` — same shape for offers.
+- `GET /loans/timeseries?range=24h|7d|30d|90d|All` — per-day
+  buckets of ERC-20 loan principal + earned interest grouped by
+  lending asset. Drives the "TVL Over Time" + "Daily Loan Volume"
+  charts. Server keeps the time bucketing; the frontend prices
+  the per-asset BigInt sums to USD client-side using the oracle
+  over the unique-asset set (typically <10 assets, scales with
+  the supported-token list rather than loan history).
+
+All four use the existing CORS / pagination shape and follow the
+same indexer-cursor-included response pattern as `/offers/stats`.
+
+### Activity-aware watermark policy helper
+
+Eight call sites across the codebase used `useLiveWatermark` with
+a hand-passed `pollIntervalMs` literal and no idle/walk-away
+backoff. New helper `frontend/src/hooks/watermarkPolicy.ts`
+exposes three named tiers:
+
+- **hot** — OfferBook live market: 5 s active, 30 s idle (after
+  5 min no input), pause after 15 min walked-away.
+- **warm** — Dashboard, Vault, OfferDetails, Activity: 20 s
+  active, 60 s idle, pause after 15 min walked-away.
+- **cool** — Analytics aggregates: 180 s active, 600 s idle, pause
+  after 15 min walked-away.
+
+Every call site (`useIndexedActiveOffers`, `useIndexedLoans` ×2,
+`useOfferStats`, `useIndexedActivity`, `useMyOffers`, `useLogIndex`,
+`EscrowAssets`) now passes a tier instead of magic numbers.
+Cadence tuning is now centralised. Visibility-pause (tab hidden →
+no probe) is unconditional across all tiers.
+
+Analytics gained auto-refresh in this pass — `PublicDashboard`
+fires `reload()` + `reloadCombined()` on every cool-tier watermark
+advance; the previous flow was on-mount only.
+
+### New indexer-first hooks
+
+- `useLoanStats` — wraps `/loans/stats`. Drives Analytics count
+  cards.
+- `useAssetBreakdown` — composes `useLoanStats.volumeByAsset` +
+  `loansByAsset` with on-chain `getAssetPrice` over the unique-
+  asset set + cached `fetchTokenMeta`. Drives the "Asset
+  Distribution" section.
+- `useHistoricalData` rewritten — pulls pre-bucketed time-series
+  from `/loans/timeseries`, prices in USD client-side, falls back
+  to the chain-side multicall walk only on worker outage.
+- `useTVL` rewritten — paginates `/loans/active` until the
+  `nextBefore` cursor returns null (hard-capped at 25 pages × 200
+  = 5000 active loans for safety). Without pagination the TVL
+  silently truncated to the first 50 active loans, understating
+  real-world value locked. Falls back to the chain-side multicall
+  list on worker outage.
+
+### `useProtocolStats` lazy gating
+
+Pre-this-pass `useProtocolStats` ran the full per-loan
+`getLoanDetails` multicall on every Analytics mount, even after
+every primary surface had migrated to the indexer-first hooks
+above. The hook now accepts an `{ enabled }` option (default
+`true` for backward compat). Three call sites pass `enabled`
+based on whether their respective indexer-first source has
+confirmed-failed:
+
+- `PublicDashboard` enables when `loanStats === null` after
+  loading.
+- `useTVL` enables when its paginated `fetchActiveLoans` walk
+  returns null.
+- `useHistoricalData` enables when `fetchLoanTimeseries` returns
+  null.
+
+Each tracks an internal `indexerFailed` flag that flips back to
+false on the next successful indexer fetch. On the happy path
+(worker reachable), zero `getLoanDetails` calls fire on Analytics.
+The chain-side multicall is now purely outage-recovery
+infrastructure.
+
+### Dashboard `useMyOffers` indexer-first
+
+Same refactor pattern as the Analytics hooks — `useMyOffers` now
+fetches from `/offers/by-creator` paginated, maps every status
+(`active` / `accepted` / `cancelled`) onto its existing three
+buckets without consulting the local log scan. The chain-side
+`getOffer` multicall is now the worker-down fallback, gated by
+the indexer fetch's success. Resolves the 2-vs-5 mismatch the
+user reported. The Dashboard rescan button now also calls
+`refetchMyOffers()` so manual refresh forces a fresh indexer
+pull.
+
+### `fetchActiveOffers` pagination correctness
+
+Same correctness gap that bit `useTVL` was present in
+`useIndexedActiveOffers` — single-page fetch with `limit=200`.
+Now paginates via the `nextBefore` cursor, hard-capped at 25
+pages × 200 = 5000 active offers. OfferBook is now safe at scale;
+without the fix, a busy mainnet with >200 active offers would
+silently hide the rest of the book.
+
+### OfferBook status count fix
+
+The page surfaced `Showing 7 of 3 open offers` because the bottom-
+strip total derived from `useLogIndex.openOfferIds.length` (the
+laggy local log-scan = 3) while the rendered rows came from
+`useIndexedActiveOffers` (the fresher worker snapshot = 7). Both
+the bottom strip and the `Open (N)` tab badge now read from the
+indexer-served list when in indexer mode, falling back to the
+validated count only when the worker is unreachable.
+
+The earlier `Showing X of Y` semantics also got a fix in the same
+file — the count now reflects the post-filter visible total
+(after dedup + market filters + hide-my-offers) rather than the
+raw fetch size, with an explicit `(N hidden by filters)` suffix
+when the gap is non-zero. Resolves the previous UX where the
+user could see "Scanned 3 of 3" while only 2 rows rendered (their
+own offer hidden by the toggle without acknowledgment).
+
+## Offer Detail page
+
+New route `/app/offers/:offerId` — symmetric with the existing
+`/app/loans/:loanId` Loan Detail surface. Mirrors the Loan Detail
+read-path discipline: indexer-first via `fetchOfferById`, falls
+back to a single direct `getOffer` chain read only when the
+worker is unreachable. Page renders status badge, type
+(Lender / Borrower), principal + collateral with TokenIcon and
+asset link, rate, duration, creator, partial-repay flag,
+first-seen timestamp + block link, and a redacted creation
+transaction hash linked to the chain explorer.
+
+The creation tx hash is resolved lazily after the indexer payload
+lands via a targeted single-block `eth_getLogs` against the
+`firstSeenBlock` filtered on the OfferCreated event topic + the
+offerId-as-bytes32 — exactly one log matches per offer, so the
+lookup is one block, one result, one RPC. Cached per-render via
+React state so the lookup never runs twice.
+
+The page exposes three contextual actions when applicable:
+"Manage keepers" (creator-only, active offers; deep-links to the
+existing keepers page), "Cancel offer" (creator-only, active
+offers; submits the cancel tx with decoded contract-error
+reporting), and "View loan #N" (for accepted offers; deep-links
+to the loan that consumed this offer).
+
+A partial-fill row displays when the indexer reports
+`amountFilled > 0 AND amountFilled < amountMax`; pre-Phase-1
+partial-fill rollout this branch is dormant but lights up
+automatically once the indexer's `amountFilled` starts
+populating.
+
+The original implementation used custom CSS classes
+(`loan-detail-field` / `loan-detail-label` / `loan-detail-value`)
+which didn't exist in the project's CSS — fields stacked
+vertically with no horizontal alignment ("juggled" appearance).
+The page now uses the existing `.data-row` / `.data-label` /
+`.data-value` chrome from AppLayout.css, matching the rhythm of
+the Loan Detail page exactly.
+
+## Site-wide offer-ID deep-linking
+
+Five surfaces previously rendered offer IDs as static text. Each
+is now a clickable Link to the new `/app/offers/:id` route:
+
+- Activity feed event pills
+- Loan Detail's "Original offer #N" reference
+- Borrower Preclose review screen
+- Refinance review screen
+- NFT Verifier "Origin" row
+
+Plus the OfferBook market table's ID column and the Dashboard
+"Your Offers" table's ID column (every row variant — Active,
+Filled, Cancelled-with-data, Cancelled-stub).
+
+## Dashboard polish
+
+### "Last refreshed" status with adaptive ticker
+
+Both the Dashboard footer and the EscrowAssets Holdings card-
+bottom toolbar now show a `Last refreshed N minutes ago`
+indicator on the left side, paired with the existing rescan
+button on the right. The relative-time text auto-advances via a
+self-rescheduling `setTimeout` that picks the next tick interval
+based on elapsed time:
+
+- Under 60 seconds elapsed → ticks every 1 second (smooth count
+  from "1 second ago" through "59 seconds ago").
+- 60+ seconds elapsed → ticks every 30 seconds (the relative-
+  time string only changes once per minute past 60 s, so a
+  faster tick would burn CPU for no visual change).
+
+The effect re-runs whenever the underlying data refreshes,
+restarting the sub-minute fast-tick window. Pre-fix the ticker
+was a flat 30 s interval, which made the visible count jump from
+"6 seconds ago" to "36 seconds ago" with no in-between values.
+
+### Pagination on Your Offers card
+
+The Dashboard "Your Offers" table now paginates 10-per-page via
+the existing `Pager` component. Page resets to 0 on status filter
+changes (active / filled / cancelled / all) so a narrowed list
+doesn't leave the cursor stranded past the new last page.
+
+### EscrowAssets rescan moved to card bottom
+
+The Vault's "Refresh" button used to live in the Holdings card-
+title header next to the "Hide low balances" toggle. Moved to a
+new card-bottom toolbar with `Last refreshed N minutes ago` on
+the left and the rescan button on the right — matching the
+Dashboard footer rhythm.
+
+### Hide-my-offers toggle persistence
+
+The OfferBook's "Hide my offers" toggle (default-on) now persists
+to `localStorage` under `vaipakam:offerBook:hideMyOffers`,
+matching the pattern already used by the Vault's "Hide low
+balances" toggle. State survives page navigations and reloads.
+
+## Locale coverage
+
+Localised across 10 languages (en, de, es, fr, hi, ta, zh, ja,
+ar, ko):
+
+- OfferBook: `Show / Hide my offers` button + tooltip,
+  `Showing N of M` count text, `(N hidden by filters)` suffix.
+- Vault: `Show all (N hidden) / Hide low balances` toggle +
+  tooltip.
+- Dashboard rescan + EscrowAssets rescan: `Refresh`,
+  `Refreshing…`, `Synced — `, seconds suffix, `Last refreshed
+  {{when}}` (where `{{when}}` is filled by the existing
+  `formatRelativeTime` helper which is already locale-aware).
+
+The pre-existing `Scanned X of Y` wording was replaced with
+`Showing X of Y` to reflect the new filter-aware semantics
+across every locale.
+
+## Net effect on RPC budget
+
+Analytics page first paint, worker-reachable case:
+
+| Surface | Before | After |
+|---|---|---|
+| Count cards | per-loan `getLoanDetails` multicall (scales with history) | indexer JSON, zero chain reads |
+| TVL value | same multicall + per-asset `getAssetPrice` | paginated `/loans/active` + per-asset `getAssetPrice` |
+| Asset distribution | same multicall + price lookups | one worker call + per-unique-asset price lookups |
+| TVL Over Time + Daily Volume | same multicall, JS bucketing | one worker call + per-unique-asset price lookups |
+| Recent activity feeds | log-scan IDs + 50-id `getOffer` multicall | one worker call, zero chain reads |
+| Active offer book | log-scan IDs + per-id multicall | paginated `/offers/active`, zero chain reads on happy path |
+| `useProtocolStats` | always fired on mount | gated; fires only when worker is confirmed offline |
+
+The chain-side multicall infrastructure remains intact and is
+still the source of truth during a worker outage — every
+indexer-first hook holds the chain-side fallback path behind an
+`indexerFailed` flag that auto-clears on the next successful
+indexer fetch. No regression in worst-case correctness; the
+common case is now an order of magnitude cheaper.
