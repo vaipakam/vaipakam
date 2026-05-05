@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState, type CSSProperties } from 'react';
 import { L as Link } from '../components/L';
 import { useTranslation } from 'react-i18next';
 import i18n from '../i18n';
@@ -13,6 +13,7 @@ import {
   Gauge,
   Coins,
   RefreshCw,
+  Check,
   TrendingUp,
   PiggyBank,
   Landmark,
@@ -33,6 +34,7 @@ import { useRecentOffers } from '../hooks/useRecentOffers';
 import { useVPFIToken } from '../hooks/useVPFIToken';
 import { useHistoricalData, type TimeRange } from '../hooks/useHistoricalData';
 import { useCombinedChainsStats } from '../hooks/useCombinedChainsStats';
+import { useRescanCooldown } from '../hooks/useRescanCooldown';
 import {
   DEFAULT_CHAIN,
   CHAIN_REGISTRY,
@@ -184,6 +186,17 @@ export default function PublicDashboard() {
   const loading = statsLoading || tvlLoading;
   const error = statsError;
 
+  // Same cooldown + sync-status state-machine the Vault / OfferBook /
+  // Activity / Dashboard rescan buttons use. Watches the union of all
+  // three data-source loadings so the 'syncing' → 'synced' transition
+  // only fires once every refresh source has actually returned.
+  // Adaptive growth (30 s → 60 → 120 → 240 → 300, reset after 2 min
+  // idle) is inherited from `useRescanCooldown` defaults; spam
+  // protection comes for free.
+  const analyticsRescanCooldown = useRescanCooldown({
+    loading: statsLoading || tvlLoading || combinedLoading,
+  });
+
   const recentLoans = useMemo(() => {
     if (!stats) return [];
     return [...stats.loans]
@@ -283,14 +296,45 @@ export default function PublicDashboard() {
             <div className="pd-header-actions">
               <button
                 type="button"
-                className="btn btn-secondary btn-sm"
+                className="btn btn-secondary btn-sm rescan-btn"
                 onClick={() => {
+                  analyticsRescanCooldown.trigger();
                   void reload();
                   void reloadCombined();
                 }}
+                disabled={analyticsRescanCooldown.disabled}
+                data-rescan-status={analyticsRescanCooldown.status}
+                style={
+                  {
+                    '--rescan-progress': `${analyticsRescanCooldown.remaining * 100}%`,
+                  } as CSSProperties
+                }
                 aria-label={t('publicDashboard.refreshAria')}
               >
-                <RefreshCw size={14} /> {t('publicDashboard.refresh')}
+                {analyticsRescanCooldown.status === 'syncing' ? (
+                  <>
+                    <RefreshCw size={14} className="spin" style={{ marginRight: 4 }} />
+                    {t('publicDashboard.refreshing', { defaultValue: 'Refreshing… ' })}
+                    <span className="rescan-btn-secs">
+                      {analyticsRescanCooldown.secondsRemaining}
+                    </span>
+                    {t('publicDashboard.secondsSuffix', { defaultValue: 's' })}
+                  </>
+                ) : analyticsRescanCooldown.status === 'synced' ? (
+                  <>
+                    <Check size={14} style={{ marginRight: 4 }} />
+                    {t('publicDashboard.synced', { defaultValue: 'Synced — ' })}
+                    <span className="rescan-btn-secs">
+                      {analyticsRescanCooldown.secondsRemaining}
+                    </span>
+                    {t('publicDashboard.secondsSuffix', { defaultValue: 's' })}
+                  </>
+                ) : (
+                  <>
+                    <RefreshCw size={14} style={{ marginRight: 4 }} />
+                    {t('publicDashboard.refresh')}
+                  </>
+                )}
               </button>
               <button
                 type="button"
