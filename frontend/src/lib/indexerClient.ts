@@ -343,6 +343,35 @@ export function fetchLoanStats(chainId: number): Promise<LoanStats | null> {
   return getJson<LoanStats>(`/loans/stats?chainId=${chainId}`);
 }
 
+export type LoanTimeseriesRange = '24h' | '7d' | '30d' | '90d' | 'All';
+
+export interface LoanTimeseriesBucket {
+  /** Unix-seconds at bucket start (midnight UTC for daily buckets,
+   *  hour-aligned for 24h). */
+  t: number;
+  /** Per-asset principal sum at this bucket, decimal-string for
+   *  BigInt-safe parsing. */
+  principalByAsset: Record<string, string>;
+  /** Per-asset earned interest at this bucket (principal × rate-bps
+   *  / 10_000), decimal-string for BigInt-safe parsing. */
+  interestByAsset: Record<string, string>;
+}
+
+export interface LoanTimeseriesPage {
+  chainId: number;
+  range: LoanTimeseriesRange;
+  buckets: LoanTimeseriesBucket[];
+}
+
+export function fetchLoanTimeseries(
+  chainId: number,
+  range: LoanTimeseriesRange = '30d',
+): Promise<LoanTimeseriesPage | null> {
+  return getJson<LoanTimeseriesPage>(
+    `/loans/timeseries?chainId=${chainId}&range=${range}`,
+  );
+}
+
 export interface IndexedActivityEvent {
   chainId: number;
   blockNumber: number;

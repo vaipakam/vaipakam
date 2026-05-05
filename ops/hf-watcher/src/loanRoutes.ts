@@ -683,6 +683,146 @@ export async function handleLoansRecent(req: Request, env: Env): Promise<Respons
   }
 }
 
+/**
+ * GET /loans/timeseries?chainId=8453&range=30d
+ *
+ * Per-day buckets of ERC-20 loan principal + earned interest grouped
+ * by lending_asset. Drives the Analytics "TVL Over Time" + "Daily
+ * Loan Volume" charts. Frontend prices the per-asset BigInt volumes
+ * to USD client-side using the oracle (`getAssetPrice`) over the
+ * unique-asset set, same pattern as `useAssetBreakdown`. Server
+ * stays deterministic + price-feed-free.
+ *
+ * Range:
+ *   '24h' | '7d' | '30d' | '90d' | 'All'
+ *
+ * '24h' returns hourly buckets; the longer ranges return daily
+ * buckets keyed at midnight-UTC of the day a loan started. 'All'
+ * caps at 365 days back to match the existing frontend semantics
+ * (the previous chain-derived flow used the same 365-day ceiling).
+ *
+ * Returned shape:
+ *   {
+ *     chainId,
+ *     range,
+ *     buckets: [
+ *       {
+ *         t: <unix-seconds at bucket start>,
+ *         principalByAsset: { [lowercaseAddr]: decimal-string },
+ *         interestByAsset:  { [lowercaseAddr]: decimal-string }
+ *       },
+ *       …
+ *     ]
+ *   }
+ *
+ * Interest is `principal × interest_rate_bps / 10_000` summed at the
+ * bucket level — matches the lifetime-interest approximation the
+ * frontend's chart used pre-refactor.
+ */
+export async function handleLoansTimeseries(
+  req: Request,
+  env: Env,
+): Promise<Response> {
+  const url = new URL(req.url);
+  const chainId = parseChainId(url.searchParams.get('chainId')) ?? 8453;
+  const rangeRaw = (url.searchParams.get('range') || '30d').trim();
+  // 'All' uses the same 365-day cap as the frontend's previous
+  // implementation; not strictly "all-time" but matches expectations
+  // and keeps the result set bounded so a popular protocol can't
+  // accidentally ship a 50 MB response.
+  const RANGE_DAYS: Record<string, number> = {
+    '24h': 1,
+    '7d': 7,
+    '30d': 30,
+    '90d': 90,
+    All: 365,
+  };
+  const days = RANGE_DAYS[rangeRaw] ?? 30;
+  const bucketSec = rangeRaw === '24h' ? 3600 : 86400;
+  const nowSec = Math.floor(Date.now() / 1000);
+  const fromSec = nowSec - days * 86400;
+  try {
+    // Pull only the columns the bucketing needs. ERC-20-only filter
+    // (`asset_type = 0`) matches the frontend's exclusion of NFT
+    // rentals from USD time-series — those have no oracle price.
+    const rows = await env.DB.prepare(
+      `SELECT start_at, lending_asset, principal, interest_rate_bps
+       FROM loans
+       WHERE chain_id = ? AND asset_type = 0 AND start_at >= ?
+       ORDER BY start_at ASC`,
+    )
+      .bind(chainId, fromSec)
+      .all<{
+        start_at: number;
+        lending_asset: string;
+        principal: string;
+        interest_rate_bps: number;
+      }>();
+
+    // Bucket by day (or hour for 24h). Per-asset BigInt
+    // accumulators avoid the 2^53 floating-point ceiling that would
+    // otherwise eat the low-end digits of 18-decimal token sums.
+    const principalByBucket = new Map<number, Map<string, bigint>>();
+    const interestByBucket = new Map<number, Map<string, bigint>>();
+    for (const row of rows.results ?? []) {
+      if (
+        !row.lending_asset ||
+        !row.lending_asset.startsWith('0x') ||
+        row.lending_asset.length < 42
+      ) {
+        continue;
+      }
+      const t = Math.floor(row.start_at / bucketSec) * bucketSec;
+      const asset = row.lending_asset.toLowerCase();
+      let principal: bigint;
+      try {
+        principal = BigInt(row.principal || '0');
+      } catch {
+        continue;
+      }
+      // Lifetime interest approximation matches the pre-refactor
+      // frontend behaviour: principal × rate-bps / 10_000. Real-time
+      // accrual / partial-repay refinements live further down the
+      // chart pipeline; the bucket sum is a "potential interest at
+      // origination" lens, deliberately simple.
+      const interest = (principal * BigInt(row.interest_rate_bps || 0)) / 10_000n;
+
+      let pBucket = principalByBucket.get(t);
+      if (!pBucket) {
+        pBucket = new Map();
+        principalByBucket.set(t, pBucket);
+      }
+      pBucket.set(asset, (pBucket.get(asset) ?? 0n) + principal);
+
+      let iBucket = interestByBucket.get(t);
+      if (!iBucket) {
+        iBucket = new Map();
+        interestByBucket.set(t, iBucket);
+      }
+      iBucket.set(asset, (iBucket.get(asset) ?? 0n) + interest);
+    }
+
+    const buckets = Array.from(principalByBucket.keys())
+      .sort((a, b) => a - b)
+      .map((t) => {
+        const principalByAsset: Record<string, string> = {};
+        const interestByAsset: Record<string, string> = {};
+        for (const [k, v] of principalByBucket.get(t) ?? new Map()) {
+          principalByAsset[k] = v.toString();
+        }
+        for (const [k, v] of interestByBucket.get(t) ?? new Map()) {
+          interestByAsset[k] = v.toString();
+        }
+        return { t, principalByAsset, interestByAsset };
+      });
+
+    return jsonResponse({ chainId, range: rangeRaw, buckets });
+  } catch (err) {
+    console.error('[loanRoutes] timeseries failed', err);
+    return jsonResponse({ error: 'timeseries-failed' }, 500);
+  }
+}
+
 export function handleLoansPreflight(): Response {
   return new Response(null, {
     status: 204,

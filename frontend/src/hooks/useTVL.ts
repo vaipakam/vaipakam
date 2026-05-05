@@ -59,7 +59,16 @@ export function useTVL() {
   const chain = useReadChain();
   const chainId = chain.chainId ?? DEFAULT_CHAIN.chainId;
   const diamondAddress = (chain.diamondAddress ?? DEFAULT_CHAIN.diamondAddress) as Address;
-  const { stats, loading: statsLoading, error: statsError } = useProtocolStats();
+  // Indexer-failure tracker — flips to true the first time the
+  // paginated `/loans/active` walk returns null (worker offline).
+  // Drives the `useProtocolStats({ enabled })` gate below so the
+  // chain-side fallback only fires when the indexer is confirmed-
+  // unreachable. Sticky-true until the next `tvlWatermark` advance
+  // resets it via the load callback's success path.
+  const [indexerFailed, setIndexerFailed] = useState(false);
+  const { stats, loading: statsLoading, error: statsError } = useProtocolStats({
+    enabled: indexerFailed,
+  });
   // Cool-tier auto-refresh — TVL is a slow-moving aggregate; 180 s
   // active probe with the standard idle/walk-away backoff matches
   // the rest of the Analytics surface.
@@ -125,6 +134,10 @@ export function useTVL() {
       >[];
       const indexerActive = await fetchActiveLoansFromIndexer();
       if (indexerActive !== null) {
+        // Worker is healthy — clear the fallback gate. If we'd
+        // previously flipped to the chain-side path during an
+        // outage, this returns us to the indexer-first happy path.
+        setIndexerFailed(false);
         activeLoans = indexerActive.map((l) => ({
           principal: BigInt(l.principal),
           principalAsset: l.lendingAsset,
@@ -135,10 +148,12 @@ export function useTVL() {
           status: BigInt(LoanStatus.Active),
         }));
       } else {
-        // Worker unreachable — fall back to the multicall'd loans
-        // list from useProtocolStats. May not be available if that
-        // hook is also still loading; we exit early in that case
-        // and the next watermark tick will retry.
+        // Worker unreachable — engage the chain-side fallback by
+        // flipping the gate flag. `useProtocolStats` will then
+        // fire its multicall on the next render. The first render
+        // after the flip will see `stats === null` and bail; the
+        // re-fired effect after stats lands picks it up.
+        setIndexerFailed(true);
         if (!stats) return;
         activeLoans = stats.loans.filter((l: LoanDetails) => {
           const s = Number(l.status);

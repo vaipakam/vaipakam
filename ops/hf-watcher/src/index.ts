@@ -39,6 +39,7 @@ import {
   handleLoansActive,
   handleLoansRecent,
   handleLoansStats,
+  handleLoansTimeseries,
   handleLoanById,
   handleLoansByParticipant,
   handleActivity,
@@ -140,6 +141,9 @@ export default {
         }
         if (url.pathname === '/loans/stats') {
           return handleLoansStats(req, env);
+        }
+        if (url.pathname === '/loans/timeseries') {
+          return handleLoansTimeseries(req, env);
         }
         const byLender = url.pathname.match(/^\/loans\/by-lender\/(0x[0-9a-fA-F]{40})$/);
         if (byLender) {

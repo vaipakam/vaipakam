@@ -83,7 +83,28 @@ function cacheKey(chainId: number, diamondAddress: string): string {
  * Results are cached in-memory for {@link STALE_MS} to amortize the
  * multicall + log-scan cost across dashboard navigations.
  */
-export function useProtocolStats() {
+export interface UseProtocolStatsOptions {
+  /**
+   * When `false`, the hook skips the `getLoanDetails` multicall +
+   * `useLogIndex`-driven discovery entirely and returns the
+   * module-level cached value (if any) or `null`. Default `true`
+   * for backward compatibility, but post-T-041 the Analytics-page
+   * primary surfaces (count cards, TVL, asset distribution, time-
+   * series charts) are all served by indexer-first hooks
+   * (`useLoanStats`, `useTVL` paginating `fetchActiveLoans`,
+   * `useAssetBreakdown`, `useHistoricalData`) that no longer need
+   * the per-loan multicall on the happy path.
+   *
+   * Callers should pass `enabled: false` while their indexer-first
+   * source is healthy, and `enabled: true` only when that source
+   * has confirmed-failed (worker offline / 5xx). This eliminates
+   * the multicall storm on the happy path; on a worker outage the
+   * fallback is reactivated automatically.
+   */
+  enabled?: boolean;
+}
+
+export function useProtocolStats({ enabled = true }: UseProtocolStatsOptions = {}) {
   const publicClient = useDiamondPublicClient();
   const chain = useReadChain();
   const chainId = chain.chainId ?? DEFAULT_CHAIN.chainId;
@@ -325,9 +346,19 @@ export function useProtocolStats() {
   }, [publicClient, indexedLoans, offerIds, openOfferIds, chainId, diamondAddress]);
 
   useEffect(() => {
+    if (!enabled) {
+      // Disabled: surface the cached snapshot if any (so a callsite
+      // that's already seen a hydrated cache doesn't blank to null
+      // when it gates back off), and stop the loading spinner.
+      // Don't fire the multicall.
+      const cached = cache.get(cacheKey(chainId, diamondAddress));
+      setStats(cached?.data ?? null);
+      setLoading(false);
+      return;
+    }
     if (indexLoading) return;
     load();
-  }, [load, indexLoading]);
+  }, [enabled, load, indexLoading, chainId, diamondAddress]);
 
   const reload = useCallback(async () => {
     cache.delete(cacheKey(chainId, diamondAddress));

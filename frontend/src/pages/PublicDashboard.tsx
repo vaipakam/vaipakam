@@ -122,14 +122,23 @@ export default function PublicDashboard() {
   const transparencyHref = metricsFacetAddress
     ? `${blockExplorer}/address/${metricsFacetAddress}#readContract`
     : `${blockExplorer}/address/${diamondAddress}#readProxyContract`;
-  const { stats, loading: statsLoading, error: statsError, reload } = useProtocolStats();
   // Indexer-first aggregate counts. Used as the primary source for
   // the count cards (active / completed / defaulted / volume / APR /
   // NFT rentals) so first paint isn't gated on the chain-side
   // multicall storm. Falls through to `stats` from useProtocolStats
   // when the worker is unreachable so the cards still render
   // correctly on a worker outage.
-  const { stats: loanStats } = useLoanStats();
+  const { stats: loanStats, loading: loanStatsLoading } = useLoanStats();
+  // useProtocolStats is the FALLBACK source — only fire the
+  // multicall storm when the indexer is confirmed-offline. While
+  // loanStats is still loading we can't tell yet, so wait. Once
+  // it's loaded, treat null-stats as "worker offline → enable
+  // fallback". Common-case (worker up): zero multicall on this
+  // page. Outage case: fallback re-engages automatically.
+  const indexerOffline = !loanStatsLoading && !loanStats;
+  const { stats, loading: statsLoading, error: statsError, reload } = useProtocolStats({
+    enabled: indexerOffline,
+  });
   // Indexer-first asset breakdown for the "Asset distribution"
   // section. When the worker is unreachable, falls back to
   // `stats.assetBreakdown` from useProtocolStats below.
