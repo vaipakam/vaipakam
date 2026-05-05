@@ -1,8 +1,6 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
-import type { Address } from 'viem';
-import { useDiamondPublicClient, useReadChain } from '../contracts/useDiamond';
+import { useCallback, useEffect, useState } from 'react';
+import { useReadChain } from '../contracts/useDiamond';
 import { DEFAULT_CHAIN } from '../contracts/config';
-import { DIAMOND_ABI_VIEM } from '../contracts/abis';
 import {
   loadLoanIndex,
   peekLoanIndex,
@@ -10,20 +8,7 @@ import {
   type ActivityEvent,
 } from '../lib/logIndex';
 import { useOfferStats } from './useOfferStats';
-
-/** Tier 2 #22 — events that can change the offer-book set; any of them
- *  firing on-chain triggers a debounced incremental rescan so the
- *  offer book + dashboard reflect the new state without the user
- *  hitting "Rescan chain" by hand. The list intentionally covers
- *  *both* sides of the matching surface (`OfferAccepted` from
- *  `acceptOffer`, `OfferMatched` from `matchOffers`) so range-order
- *  partial fills don't slip through. */
-const OFFER_BOOK_EVENTS = [
-  'OfferCreated',
-  'OfferAccepted',
-  'OfferCanceled',
-  'OfferMatched',
-] as const;
+import { useLiveWatermark } from './useLiveWatermark';
 
 type LoanInitiatedForToken = {
   loanId: string;
@@ -48,8 +33,34 @@ export function useLogIndex() {
   // past everything the indexer already covered. When the worker is
   // unreachable, `stats` is null and the hint is `undefined`,
   // collapsing to the legacy local-cache-cursor behaviour.
-  const { stats: offerStats } = useOfferStats();
+  //
+  // `statsResolved` gates the initial scan: until `useOfferStats` has
+  // returned its first response (success or null-on-failure), we
+  // don't fire the scan at all. This avoids the page-load race where
+  // `load()` would otherwise run synchronously on first render with
+  // `indexerLastBlock = undefined`, falling through to a full
+  // deployBlock → head scan (hundreds of thousands of blocks on a
+  // mature chain). Once stats resolve, the scan starts at
+  // `max(cached.lastBlock+1, indexer.lastBlock+1)` — typically a ~60 s
+  // catch-up window, not the entire history. localStorage's cached
+  // snapshot is still rendered synchronously for first-paint via
+  // `peekLoanIndex` regardless of the gate, so users see content
+  // immediately.
+  const { stats: offerStats, loading: statsLoading } = useOfferStats();
+  const statsResolved = !statsLoading;
   const indexerLastBlock = offerStats?.indexer?.lastBlock;
+  // The shared 2 s watermark probe — `version` bumps every time
+  // `nextOfferId` or `nextLoanId` advances on-chain. Subscribing here
+  // unifies the refetch trigger with the indexer-driven hooks: a
+  // single probe drives both the indexer-served data hooks AND the
+  // legacy log-scan refresh, replacing the per-event
+  // `watchContractEvent` watcher we used to keep alive (which was
+  // running an `eth_newFilter` / `eth_getFilterChanges` poll loop in
+  // the background even when the page was idle). Cancels and
+  // partial-fills don't advance the watermark counters; those are
+  // covered by tab-focus probe + post-tx-receipt refetch + the
+  // explicit Rescan button.
+  const { version: watermarkVersion } = useLiveWatermark();
   // Synchronous first-paint: hydrate whatever the last scan left in
   // localStorage, so Dashboard's "Your Loans" renders instantly on return
   // visits instead of blocking on a fresh `eth_getLogs` paginated scan
@@ -133,51 +144,23 @@ export function useLogIndex() {
   }, [rpcUrl, diamondAddress, chain.deployBlock, chainId, indexerLastBlock]);
 
   useEffect(() => {
-    load();
-  }, [load]);
-
-  // Tier 2 #22 — auto-refresh the index when any offer-book-affecting
-  // event fires on-chain. Without this, a freshly created offer (or a
-  // freshly matched / cancelled one) doesn't appear in the offer book
-  // until the user reloads the page or clicks "Rescan chain". The
-  // underlying scan is incremental (only blocks past `lastBlock`), so
-  // the cost per trigger is small.
-  //
-  // Debounce: a single user action can emit multiple events in the
-  // same tx (a `matchOffers` call emits both `OfferAccepted` and
-  // `OfferMatched`, plus optionally a dust-close `OfferCanceled`).
-  // Coalesce them into one rescan ~750ms after the last log lands.
-  const publicClient = useDiamondPublicClient();
-  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  useEffect(() => {
-    if (!publicClient || !diamondAddress) return;
-    const scheduleReload = () => {
-      if (debounceRef.current) clearTimeout(debounceRef.current);
-      debounceRef.current = setTimeout(() => {
-        debounceRef.current = null;
-        void load();
-      }, 750);
-    };
-    const unwatchers = OFFER_BOOK_EVENTS.map((eventName) =>
-      publicClient.watchContractEvent({
-        address: diamondAddress as Address,
-        abi: DIAMOND_ABI_VIEM,
-        eventName,
-        onLogs: scheduleReload,
-        // Suppress noisy onError logs — public RPCs sometimes drop the
-        // filter and viem retries internally; we don't need to show
-        // anything to the user.
-        onError: () => {},
-      }),
-    );
-    return () => {
-      if (debounceRef.current) {
-        clearTimeout(debounceRef.current);
-        debounceRef.current = null;
-      }
-      for (const unwatch of unwatchers) unwatch();
-    };
-  }, [publicClient, diamondAddress, load]);
+    // Wait for the indexer-stats fetch to resolve (success or
+    // null-on-failure) before kicking off the on-chain scan. The
+    // initial mount, every tab-focus refetch, and every watermark
+    // version bump (= someone created an offer or a loan landed)
+    // all flow through this single effect. Mirrors the rescan
+    // button's behaviour: indexer-snapshot first, RPC delta on top.
+    //
+    // `watermarkVersion` is in the dep array so the legacy log scan
+    // re-runs when the live-tail watermark detects on-chain change.
+    // This replaces the prior per-event `watchContractEvent` watcher
+    // that kept an `eth_getFilterChanges` poll loop alive in the
+    // background — the watermark is a strict superset (covers
+    // creates) and is shared with the indexer-driven hooks, so we
+    // avoid duplicating the polling channel.
+    if (!statsResolved) return;
+    void load();
+  }, [load, statsResolved, watermarkVersion]);
 
   return {
     loans,
