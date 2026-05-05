@@ -66,9 +66,23 @@ export function useIndexedActiveOffers(): UseIndexedActiveOffersResult {
   // OfferBook is the one surface where the 5 s polling cadence is
   // load-bearing — users actively watch for new offers landing. Other
   // hooks pass `pollIntervalMs: null` to skip the timer; this hook
-  // explicitly opts in to the default 5 s cadence so the OfferBook
-  // list refreshes on counter advance without waiting for tab focus.
-  const { version, snapshot } = useLiveWatermark({ pollIntervalMs: 5_000 });
+  // explicitly opts in to the active 5 s cadence.
+  //
+  // Activity-aware tiers: while the tab is focused AND the user is
+  // actually interacting with the page, poll at 5 s. After 5 minutes
+  // of no input, slow to 30 s — same data freshness, 6× cheaper RPC,
+  // good enough for a returning user who's been reading something
+  // off-screen. After 15 minutes of no input, pause entirely; the
+  // user has either walked away or genuinely left the tab open as a
+  // background reference, and either way the next mouse-wiggle /
+  // keypress / scroll / touch fires an immediate catch-up probe.
+  // Tab-focus events count as activity and reset the timer to 0.
+  const { version, snapshot } = useLiveWatermark({
+    pollIntervalMs: 5_000,
+    idlePollIntervalMs: 30_000,
+    idleAfterMs: 5 * 60_000,
+    pausedAfterMs: 15 * 60_000,
+  });
   const [offers, setOffers] = useState<IndexedOffer[] | null>(null);
   const [source, setSource] = useState<'indexer' | 'fallback' | null>(null);
   const [loading, setLoading] = useState(true);

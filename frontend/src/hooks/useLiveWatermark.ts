@@ -91,7 +91,7 @@ export interface UseLiveWatermarkResult {
 
 export interface UseLiveWatermarkOptions {
   /**
-   * Background-poll cadence in ms. Pass `null` to disable the timer
+   * Active-state poll cadence in ms. Pass `null` to disable the timer
    * entirely — useful on quieter surfaces (Dashboard, Vault, Activity,
    * Loan Details) where the page is already authoritative on mount and
    * the user's own actions are caught by the post-tx receipt path.
@@ -103,6 +103,30 @@ export interface UseLiveWatermarkOptions {
    * pass anything keep the previous behaviour.
    */
   pollIntervalMs?: number | null;
+  /**
+   * Slower poll cadence used while the user is "idle" — tab is
+   * focused but no mouse / keyboard / scroll / touch input has been
+   * observed for `idleAfterMs`. Set to `null` to skip the idle tier
+   * (cadence stays at `pollIntervalMs` until paused).
+   */
+  idlePollIntervalMs?: number | null;
+  /**
+   * Inactivity threshold (ms) after which we drop from `pollIntervalMs`
+   * to `idlePollIntervalMs`. Default 5 minutes. Set to `null` to
+   * disable the activity-aware backoff entirely; the hook then runs
+   * at `pollIntervalMs` regardless of user attention.
+   */
+  idleAfterMs?: number | null;
+  /**
+   * Inactivity threshold (ms) after which we pause polling entirely
+   * — the schedule loop stops scheduling further ticks until the next
+   * activity event resets the timer. Catches the
+   * tab-focused-but-user-walked-away case so an OfferBook left open
+   * for hours doesn't quietly burn 720 RPC probes per hour. Default
+   * 15 minutes. Set to `null` to never pause from idleness alone
+   * (visibility-pause still applies).
+   */
+  pausedAfterMs?: number | null;
 }
 
 /**
@@ -115,7 +139,12 @@ export interface UseLiveWatermarkOptions {
 export function useLiveWatermark(
   options: UseLiveWatermarkOptions = {},
 ): UseLiveWatermarkResult {
-  const { pollIntervalMs = TICK_MS } = options;
+  const {
+    pollIntervalMs = TICK_MS,
+    idlePollIntervalMs = null,
+    idleAfterMs = null,
+    pausedAfterMs = null,
+  } = options;
   const publicClient = usePublicClient();
   const chain = useReadChain();
   const diamond = chain.diamondAddress;
@@ -193,15 +222,39 @@ export function useLiveWatermark(
       }
     }
 
+    // Track when the user last did anything on the page. Updated by
+    // the activity listeners below. Polling cadence is then computed
+    // off `now - lastActivityAt` (active tier / idle tier / paused).
+    let lastActivityAt = Date.now();
+    // Throttle activity-update writes to once per second so a flood of
+    // mousemove events isn't itself a perf cost — the precise
+    // millisecond doesn't matter for the 5 s-vs-30 s tier check.
+    let lastActivityWriteAt = 0;
+
+    function chooseInterval(): number | null {
+      if (pollIntervalMs === null) return null;
+      const idle = Date.now() - lastActivityAt;
+      if (pausedAfterMs !== null && idle >= pausedAfterMs) {
+        // Walked-away tier — no timer at all. Resume on next activity.
+        return null;
+      }
+      if (idleAfterMs !== null && idle >= idleAfterMs && idlePollIntervalMs !== null) {
+        return idlePollIntervalMs;
+      }
+      return pollIntervalMs;
+    }
+
     function schedule(): void {
       if (cancelled) return;
       if (document.hidden) return; // paused while tab is hidden
-      // `pollIntervalMs === null` → no timer; only mount + focus probes.
-      if (pollIntervalMs === null) return;
+      const interval = chooseInterval();
+      // null → no further scheduling for now. The next probe fires on
+      // tab-focus or activity event.
+      if (interval === null) return;
       timer = setTimeout(async () => {
         await probe();
         schedule();
-      }, pollIntervalMs);
+      }, interval);
     }
 
     function onVisibility(): void {
@@ -212,26 +265,61 @@ export function useLiveWatermark(
         }
         return;
       }
-      // Re-focused: fire an immediate probe + (re)start the loop. When
-      // the timer is disabled (`pollIntervalMs === null`) the schedule
-      // call here is a no-op, but the focus-driven probe still runs —
-      // which is the whole point of leaving the listener wired up on
-      // quieter surfaces.
+      // Re-focused: count it as activity (the user just clicked the
+      // tab) and fire an immediate probe. Scheduling resumes against
+      // the active-tier cadence regardless of how long the tab was
+      // hidden, since a focused-now tab IS active by definition.
+      lastActivityAt = Date.now();
       void probe().then(() => {
         if (!cancelled) schedule();
       });
+    }
+
+    function onActivity(): void {
+      const now = Date.now();
+      // 1 Hz throttle on the activity-timestamp write.
+      if (now - lastActivityWriteAt < 1_000) return;
+      lastActivityWriteAt = now;
+      const wasIdle = pausedAfterMs !== null && now - lastActivityAt >= pausedAfterMs;
+      lastActivityAt = now;
+      // If we were in the paused tier, the schedule loop has stopped
+      // — fire an immediate probe + restart it. Catches the user up
+      // to whatever drift accumulated while they were away. If we
+      // were merely in the slower idle tier, the next scheduled tick
+      // already covers us; no need to restart.
+      if (wasIdle && !cancelled && !document.hidden) {
+        void probe().then(() => {
+          if (!cancelled && !timer) schedule();
+        });
+      }
     }
 
     void probe().then(() => {
       if (!cancelled) schedule();
     });
     document.addEventListener('visibilitychange', onVisibility);
+    // Document-level activity listeners. `passive: true` keeps them
+    // off the scroll/touch perf hot path. We don't listen for every
+    // possible event — mousemove + keydown + scroll + touchstart
+    // covers the common "user is interacting with the page" cases
+    // without producing noise from mouseenter/mouseleave on every
+    // small element on the page.
+    const activityOpts = { passive: true } as const;
+    document.addEventListener('mousemove', onActivity, activityOpts);
+    document.addEventListener('keydown', onActivity, activityOpts);
+    document.addEventListener('scroll', onActivity, activityOpts);
+    document.addEventListener('touchstart', onActivity, activityOpts);
+
     return () => {
       cancelled = true;
       if (timer) clearTimeout(timer);
       document.removeEventListener('visibilitychange', onVisibility);
+      document.removeEventListener('mousemove', onActivity);
+      document.removeEventListener('keydown', onActivity);
+      document.removeEventListener('scroll', onActivity);
+      document.removeEventListener('touchstart', onActivity);
     };
-  }, [publicClient, diamond, pollIntervalMs]);
+  }, [publicClient, diamond, pollIntervalMs, idlePollIntervalMs, idleAfterMs, pausedAfterMs]);
 
   return { version, snapshot, status };
 }
