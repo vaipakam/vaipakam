@@ -385,10 +385,21 @@ export default function EscrowAssets() {
         if (a.balance === null && b.balance === null) return 0;
         if (a.balance === null) return 1;
         if (b.balance === null) return -1;
-        // BigInt comparison via subtraction sign — keeps full precision
-        // (Number(bigint) would lose it past 2^53).
-        if (a.balance === b.balance) return 0;
-        return (a.balance < b.balance ? -1 : 1) * dirMul;
+        // Sort by DISPLAYED amount, not raw wei. Without this, a 1 WETH
+        // balance (1×10¹⁸ wei) ranks above a 6,010 USDC balance
+        // (6.01×10⁹ wei) because the raw bigint comparison is blind to
+        // each token's decimal scale. Normalise both sides to the
+        // larger of the two decimal counts, then compare bigints —
+        // precision-preserving (vs `Number(formatUnits(...))` which
+        // would lose precision past 2^53). Decimals fall back to 18
+        // (ERC-20 default) when the meta read failed for a row.
+        const aDec = a.decimals ?? 18;
+        const bDec = b.decimals ?? 18;
+        const maxDec = aDec > bDec ? aDec : bDec;
+        const aScaled = a.balance * 10n ** BigInt(maxDec - aDec);
+        const bScaled = b.balance * 10n ** BigInt(maxDec - bDec);
+        if (aScaled === bScaled) return 0;
+        return (aScaled < bScaled ? -1 : 1) * dirMul;
       });
     }
     // Sort by symbol — peek the cached meta synchronously; if symbol
