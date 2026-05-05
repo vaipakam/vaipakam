@@ -15,7 +15,7 @@
  * worker is a CACHE, not an oracle.
  */
 
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { usePublicClient } from 'wagmi';
 import { type Address } from 'viem';
 import {
@@ -52,6 +52,11 @@ interface UseIndexedLoansForWalletResult {
   loans: IndexedLoanWithRole[] | null;
   source: 'indexer' | 'fallback' | null;
   loading: boolean;
+  /** Imperative trigger — re-runs the lender + borrower indexer
+   *  fetches in parallel. Wired into the Dashboard rescan button so
+   *  users who want fresh data right now don't have to wait for the
+   *  next watermark probe. */
+  refetch: () => Promise<void>;
 }
 
 export function useIndexedActiveLoans(): UseIndexedLoansResult {
@@ -59,7 +64,10 @@ export function useIndexedActiveLoans(): UseIndexedLoansResult {
   const chainId = chain.chainId ?? DEFAULT_CHAIN.chainId;
   const diamond = chain.diamondAddress;
   const publicClient = usePublicClient();
-  const { version, snapshot } = useLiveWatermark();
+  // Slower-moving surface (Risk Watch, Analytics, Dashboard) — 20 s
+  // probe is enough to keep counter-driven changes visible without
+  // the OfferBook's 5 s cadence. ~3 probes/min on idle.
+  const { version, snapshot } = useLiveWatermark({ pollIntervalMs: 20_000 });
   const [loans, setLoans] = useState<IndexedLoan[] | null>(null);
   const [source, setSource] = useState<'indexer' | 'fallback' | null>(null);
   const [loading, setLoading] = useState(true);
@@ -123,21 +131,22 @@ export function useIndexedLoansForWallet(
 ): UseIndexedLoansForWalletResult {
   const chain = useReadChain();
   const chainId = chain.chainId ?? DEFAULT_CHAIN.chainId;
-  const { version } = useLiveWatermark();
+  // Same rationale as `useIndexedActiveLoans` — Dashboard's "Your
+  // Loans" card uses the 20 s slower-page cadence.
+  const { version } = useLiveWatermark({ pollIntervalMs: 20_000 });
   const [loans, setLoans] = useState<IndexedLoanWithRole[] | null>(null);
   const [source, setSource] = useState<'indexer' | 'fallback' | null>(null);
   const [loading, setLoading] = useState(Boolean(address));
 
-  useEffect(() => {
-    if (!address) {
-      setLoans(null);
-      setSource(null);
-      setLoading(false);
-      return;
-    }
-    let cancelled = false;
-    async function tick() {
-      const wallet = address as string;
+  const tick = useCallback(
+    async (signal?: { cancelled: boolean }) => {
+      if (!address) {
+        setLoans(null);
+        setSource(null);
+        setLoading(false);
+        return;
+      }
+      const wallet = address;
       // Run both sides in parallel — typical wallet has loans on
       // ≤1 side, so the second call usually returns an empty list.
       // Both endpoints already live-filter via multicall(ownerOf), so
@@ -147,7 +156,7 @@ export function useIndexedLoansForWallet(
         fetchLoansByLender(chainId, wallet, { limit: PAGE_LIMIT }),
         fetchLoansByBorrower(chainId, wallet, { limit: PAGE_LIMIT }),
       ]);
-      if (cancelled) return;
+      if (signal?.cancelled) return;
       if (!lenderPage || !borrowerPage) {
         setLoans(null);
         setSource('fallback');
@@ -176,12 +185,21 @@ export function useIndexedLoansForWallet(
       setLoans(merged);
       setSource('indexer');
       setLoading(false);
-    }
-    void tick();
-    return () => {
-      cancelled = true;
-    };
-  }, [chainId, address, version]);
+    },
+    [chainId, address],
+  );
 
-  return { loans, source, loading };
+  useEffect(() => {
+    const signal = { cancelled: false };
+    void tick(signal);
+    return () => {
+      signal.cancelled = true;
+    };
+  }, [version, tick]);
+
+  const refetch = useCallback(async () => {
+    await tick();
+  }, [tick]);
+
+  return { loans, source, loading, refetch };
 }

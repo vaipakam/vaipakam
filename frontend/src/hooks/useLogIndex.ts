@@ -60,7 +60,11 @@ export function useLogIndex() {
   // partial-fills don't advance the watermark counters; those are
   // covered by tab-focus probe + post-tx-receipt refetch + the
   // explicit Rescan button.
-  const { version: watermarkVersion } = useLiveWatermark();
+  // Legacy log scan uses the 20 s slower-page cadence by default.
+  // OfferBook's hot path goes through `useIndexedActiveOffers` (which
+  // probes at 5 s); the legacy scan in this hook is a fallback path
+  // for non-OfferBook surfaces, where 20 s is plenty.
+  const { version: watermarkVersion } = useLiveWatermark({ pollIntervalMs: 20_000 });
   // Synchronous first-paint: hydrate whatever the last scan left in
   // localStorage, so Dashboard's "Your Loans" renders instantly on return
   // visits instead of blocking on a fresh `eth_getLogs` paginated scan

@@ -39,7 +39,9 @@ export function useIndexedActivity(
 ): UseIndexedActivityResult {
   const chain = useReadChain();
   const chainId = chain.chainId ?? DEFAULT_CHAIN.chainId;
-  const { version } = useLiveWatermark();
+  // Activity feed uses the 20 s slower-page cadence — counter advances
+  // surface within ~30 s without the OfferBook's 5 s probe rate.
+  const { version } = useLiveWatermark({ pollIntervalMs: 20_000 });
   const [events, setEvents] = useState<IndexedActivityEvent[] | null>(null);
   const [source, setSource] = useState<'indexer' | 'fallback' | null>(null);
   const [loading, setLoading] = useState(true);

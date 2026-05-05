@@ -63,7 +63,12 @@ export function useIndexedActiveOffers(): UseIndexedActiveOffersResult {
   const chainId = chain.chainId ?? DEFAULT_CHAIN.chainId;
   const diamond = chain.diamondAddress;
   const publicClient = usePublicClient();
-  const { version, snapshot } = useLiveWatermark();
+  // OfferBook is the one surface where the 5 s polling cadence is
+  // load-bearing — users actively watch for new offers landing. Other
+  // hooks pass `pollIntervalMs: null` to skip the timer; this hook
+  // explicitly opts in to the default 5 s cadence so the OfferBook
+  // list refreshes on counter advance without waiting for tab focus.
+  const { version, snapshot } = useLiveWatermark({ pollIntervalMs: 5_000 });
   const [offers, setOffers] = useState<IndexedOffer[] | null>(null);
   const [source, setSource] = useState<'indexer' | 'fallback' | null>(null);
   const [loading, setLoading] = useState(true);

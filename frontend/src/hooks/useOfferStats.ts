@@ -30,7 +30,10 @@ interface UseOfferStatsResult {
 export function useOfferStats(): UseOfferStatsResult {
   const chain = useReadChain();
   const chainId = chain.chainId ?? DEFAULT_CHAIN.chainId;
-  const { version } = useLiveWatermark();
+  // Stats are aggregate counters; 20 s probe is enough for the
+  // homepage hero / dashboard cards. Saves 60 % of the RPC budget vs
+  // the OfferBook's 5 s cadence.
+  const { version } = useLiveWatermark({ pollIntervalMs: 20_000 });
   const [stats, setStats] = useState<OfferStats | null>(null);
   const [loading, setLoading] = useState(true);
 

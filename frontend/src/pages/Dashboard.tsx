@@ -1,4 +1,6 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState, type CSSProperties } from 'react';
+import { Check, RefreshCw } from 'lucide-react';
+import { useRescanCooldown } from '../hooks/useRescanCooldown';
 import { L as Link } from '../components/L';
 import { useTranslation } from 'react-i18next';
 import { useWallet } from '../context/WalletContext';
@@ -71,8 +73,12 @@ export default function Dashboard() {
   // query time. Fall through to the per-browser useUserLoans flow
   // when the worker is unreachable. Both produce LoanSummary[]; the
   // adapter `indexedToLoanSummary` shape-bridges the indexer JSON.
-  const { loans: clientLoans, loading: clientLoading } = useUserLoans(address);
-  const { loans: indexedLoans, source: indexedSource } = useIndexedLoansForWallet(address ?? undefined);
+  const { loans: clientLoans, loading: clientLoading, reload: reloadUserLoans } = useUserLoans(address);
+  const {
+    loans: indexedLoans,
+    source: indexedSource,
+    refetch: refetchIndexedLoans,
+  } = useIndexedLoansForWallet(address ?? undefined);
   const loans: LoanSummary[] =
     indexedSource === 'indexer' && indexedLoans
       ? (indexedLoans.map((l) => indexedToLoanSummary(l, l.role)) as LoanSummary[])
@@ -98,7 +104,12 @@ export default function Dashboard() {
   }, [loans, dashboardPublicClient]);
   const [myOfferStatus, setMyOfferStatus] = useState<MyOfferStatus>('active');
   const { rows: myOfferRows } = useMyOffers(address, myOfferStatus);
-  const { claims: unclaimed } = useClaimables(address);
+  const { claims: unclaimed, reload: reloadClaimables } = useClaimables(address);
+  // Same cooldown + sync-status state machine the other rescan buttons
+  // use, with adaptive growth that arrests spam-clicks: 30 s base,
+  // doubles each consecutive trigger up to 5 min, resets to base after
+  // 2 min of quiet.
+  const dashboardRescanCooldown = useRescanCooldown({ loading });
   const [cancellingOfferId, setCancellingOfferId] = useState<bigint | null>(null);
   // Set of loanIds (decimal string) where the connected wallet has at least
   // one actionable claim (lender or borrower side). Drives the inline
@@ -509,6 +520,59 @@ export default function Dashboard() {
                 pill: n === DEFAULT_PAGE_SIZE ? 'default' : undefined,
               }))}
             />
+            {/* Rescan button — same chrome + adaptive cooldown as the
+                buttons on Activity / OfferBook / Vault. Refreshes both
+                the indexer-served loans hook (the primary data source
+                for the row list) and the legacy log-scan path used by
+                useUserLoans / useClaimables (per-row claimable status,
+                NFT ownership). Adaptive growth (30 s → 60 s → … → 5 min,
+                resetting after 2 min of quiet) discourages spam-clicks
+                without punishing legitimate "did my tx land?" rechecks. */}
+            {address && (
+              <button
+                type="button"
+                className="btn btn-secondary btn-sm rescan-btn"
+                onClick={() => {
+                  dashboardRescanCooldown.trigger();
+                  void refetchIndexedLoans();
+                  void reloadUserLoans();
+                  void reloadClaimables();
+                }}
+                disabled={dashboardRescanCooldown.disabled}
+                data-rescan-status={dashboardRescanCooldown.status}
+                style={
+                  {
+                    '--rescan-progress': `${dashboardRescanCooldown.remaining * 100}%`,
+                  } as CSSProperties
+                }
+                aria-label={t('dashboard.refresh', { defaultValue: 'Refresh' })}
+              >
+                {dashboardRescanCooldown.status === 'syncing' ? (
+                  <>
+                    <RefreshCw size={14} className="spin" style={{ marginRight: 4 }} />
+                    {t('dashboard.refreshing', { defaultValue: 'Refreshing… ' })}
+                    <span className="rescan-btn-secs">
+                      {dashboardRescanCooldown.secondsRemaining}
+                    </span>
+                    {t('dashboard.secondsSuffix', { defaultValue: 's' })}
+                  </>
+                ) : dashboardRescanCooldown.status === 'synced' ? (
+                  <>
+                    <Check size={14} style={{ marginRight: 4 }} />
+                    {t('dashboard.synced', { defaultValue: 'Synced — ' })}
+                    <span className="rescan-btn-secs">
+                      {dashboardRescanCooldown.secondsRemaining}
+                    </span>
+                    {t('dashboard.secondsSuffix', { defaultValue: 's' })}
+                  </>
+                ) : (
+                  <>
+                    <RefreshCw size={14} style={{ marginRight: 4 }} />
+                    {t('dashboard.refresh', { defaultValue: 'Refresh' })}
+                  </>
+                )}
+              </button>
+            )}
             {/* The "New Offer" CTA on this row only renders for
                 disconnected users — once connected the Your Offers
                 card directly above always renders (with its own

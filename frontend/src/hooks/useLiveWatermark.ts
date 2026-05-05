@@ -37,6 +37,10 @@ import { usePublicClient } from 'wagmi';
 import { type Abi, type Address, type PublicClient } from 'viem';
 import { useReadChain } from '../contracts/useDiamond';
 
+/** Default poll interval for OfferBook-class active surfaces. Other
+ *  consumers pass `pollIntervalMs: null` to disable the timer entirely
+ *  while keeping the focus-refetch listener alive (so coming back to
+ *  the tab still surfaces fresh data via a single probe). */
 const TICK_MS = 5_000;
 
 /** Minimal ABI surface for the watermark probe. Inlined so the hook
@@ -85,15 +89,33 @@ export interface UseLiveWatermarkResult {
   status: WatermarkStatus;
 }
 
+export interface UseLiveWatermarkOptions {
+  /**
+   * Background-poll cadence in ms. Pass `null` to disable the timer
+   * entirely — useful on quieter surfaces (Dashboard, Vault, Activity,
+   * Loan Details) where the page is already authoritative on mount and
+   * the user's own actions are caught by the post-tx receipt path.
+   * The visibilitychange listener still fires one probe when the tab
+   * returns to focus regardless of this value, so coming-back-to-tab
+   * UX is preserved even with the timer off.
+   *
+   * Defaults to 5_000 ms (the OfferBook cadence), so callers that don't
+   * pass anything keep the previous behaviour.
+   */
+  pollIntervalMs?: number | null;
+}
+
 /**
- * Hook signature is intentionally argument-less. It reads the public
- * client + chain config from context so any number of subscribers can
- * call it from anywhere in the tree without prop drilling. The probe is
- * still made per-call rather than via a singleton — at a 5s cadence the
- * cost is negligible and per-instance state simplifies cleanup on
- * unmount / chain switch.
+ * Reads the public client + chain config from context so any number of
+ * subscribers can call it from anywhere in the tree without prop
+ * drilling. The probe is per-call rather than via a singleton — at a
+ * 5 s cadence the cost is negligible and per-instance state simplifies
+ * cleanup on unmount / chain switch.
  */
-export function useLiveWatermark(): UseLiveWatermarkResult {
+export function useLiveWatermark(
+  options: UseLiveWatermarkOptions = {},
+): UseLiveWatermarkResult {
+  const { pollIntervalMs = TICK_MS } = options;
   const publicClient = usePublicClient();
   const chain = useReadChain();
   const diamond = chain.diamondAddress;
@@ -174,10 +196,12 @@ export function useLiveWatermark(): UseLiveWatermarkResult {
     function schedule(): void {
       if (cancelled) return;
       if (document.hidden) return; // paused while tab is hidden
+      // `pollIntervalMs === null` → no timer; only mount + focus probes.
+      if (pollIntervalMs === null) return;
       timer = setTimeout(async () => {
         await probe();
         schedule();
-      }, TICK_MS);
+      }, pollIntervalMs);
     }
 
     function onVisibility(): void {
@@ -188,7 +212,11 @@ export function useLiveWatermark(): UseLiveWatermarkResult {
         }
         return;
       }
-      // Re-focused: fire an immediate probe + restart the loop.
+      // Re-focused: fire an immediate probe + (re)start the loop. When
+      // the timer is disabled (`pollIntervalMs === null`) the schedule
+      // call here is a no-op, but the focus-driven probe still runs —
+      // which is the whole point of leaving the listener wired up on
+      // quieter surfaces.
       void probe().then(() => {
         if (!cancelled) schedule();
       });
@@ -203,7 +231,7 @@ export function useLiveWatermark(): UseLiveWatermarkResult {
       if (timer) clearTimeout(timer);
       document.removeEventListener('visibilitychange', onVisibility);
     };
-  }, [publicClient, diamond]);
+  }, [publicClient, diamond, pollIntervalMs]);
 
   return { version, snapshot, status };
 }
