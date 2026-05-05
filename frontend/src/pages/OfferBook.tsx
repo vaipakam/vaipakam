@@ -266,7 +266,35 @@ export default function OfferBook() {
   // instead of leaving gaps where the user's own offers sat. Toggle
   // OFF to verify your own offer lands on the market with the
   // expected ranking.
-  const [hideMyOffers, setHideMyOffers] = useState(true);
+  // Persisted to localStorage so the toggle survives page navigations
+  // (returning to OfferBook from Dashboard / Loan Details shouldn't
+  // reset). Read synchronously inside the useState initializer so first
+  // paint already reflects the saved choice — no flicker between the
+  // default and persisted value. Default-true when no key exists yet
+  // (the on-by-default rationale that the existing comment captures
+  // below: a market browser usually wants to see counterparties' offers,
+  // not their own).
+  const [hideMyOffers, setHideMyOffers] = useState<boolean>(() => {
+    try {
+      const raw = localStorage.getItem('vaipakam:offerBook:hideMyOffers');
+      if (raw === null) return true;
+      return raw === 'true';
+    } catch {
+      // localStorage disabled / private mode — fall through to the
+      // default. Toggle still works in-session; just won't persist.
+      return true;
+    }
+  });
+  useEffect(() => {
+    try {
+      localStorage.setItem(
+        'vaipakam:offerBook:hideMyOffers',
+        String(hideMyOffers),
+      );
+    } catch {
+      // Ignore quota / disabled — same fallback as the read path.
+    }
+  }, [hideMyOffers]);
 
   // Anchor for the currently-filtered market. We pull the last N accepted
   // offers from the log index and pick the freshest one that passes the
@@ -952,7 +980,21 @@ export default function OfferBook() {
     statusView === 'open'
       ? (countByStatus.open ?? openOfferIds.length)
       : (countByStatus.closed ?? closedOfferIds.length);
-  const scanned = Math.min(offers.length, validatedTotal);
+  // `shown` is the count AFTER the full render pipeline: dedup +
+  // matchesFilter (asset / duration / liquidity) + hide-my-offers.
+  // Status bar used to read pre-dedup `offers.length`, which made the
+  // X of Y look aligned even when the filter pipeline was hiding rows
+  // — the user saw "Scanned 3 of 3 open" while only 2 rows rendered
+  // (one of theirs hidden by `hideMyOffers`). Pinning to `filtered`
+  // keeps the X tied to "what's visible right now"; the gap is
+  // explicitly named via the `hidden` suffix below so users can
+  // attribute the missing rows to their active filters instead of
+  // suspecting a bug.
+  const shown = filtered.length;
+  // Capped at zero so the brief render where `validatedTotal` resolves
+  // before `filtered` does (the validation pass hits before the first
+  // batch decode) doesn't flash a negative count.
+  const hiddenByFilters = Math.max(0, validatedTotal - shown);
 
   const anchorLabel = useMemo(() => {
     if (anchorRateBps === null) return 'No prior matched rate yet';
@@ -1276,8 +1318,19 @@ export default function OfferBook() {
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 12, flexWrap: 'wrap', gap: 8 }}>
         <span style={{ fontSize: '0.8rem', opacity: 0.7 }}>
           {statusView === 'open'
-            ? t('offerBookPage.scannedOffersOpen', { scanned, total: validatedTotal })
-            : t('offerBookPage.scannedOffersFilled', { scanned, total: validatedTotal })}
+            ? t('offerBookPage.scannedOffersOpen', { scanned: shown, total: validatedTotal })
+            : t('offerBookPage.scannedOffersFilled', { scanned: shown, total: validatedTotal })}
+          {hiddenByFilters > 0 && (
+            <>
+              {' '}
+              <span style={{ opacity: 0.85 }}>
+                {t('offerBookPage.hiddenByFilters', {
+                  defaultValue: '({{count}} hidden by filters)',
+                  count: hiddenByFilters,
+                })}
+              </span>
+            </>
+          )}
         </span>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
           <button
