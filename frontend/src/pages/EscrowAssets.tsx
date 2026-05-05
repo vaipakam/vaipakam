@@ -221,20 +221,73 @@ export default function EscrowAssets() {
   // balance: rows where `min(balanceOf, tracked) === 0n` (untracked
   // tokens, which display as 0 by the trust-model gate) AND rows
   // whose display value is below the dust threshold (1×10⁻¹¹).
-  // Earlier shipped as two separate filters (always-on zero +
-  // toggleable dust) but that left zero rows unrevealable, even
-  // though the user might want to verify "is something in there
-  // that the protocol isn't tracking?" — with the unified toggle a
-  // single click reveals every row that's been silenced.
-  const [hideLowBalances, setHideLowBalances] = useState(false);
+  //
+  // Persisted to localStorage so the user's preference survives page
+  // navigations (returning to the Vault from Dashboard / Loan Details
+  // shouldn't reset the toggle). Read synchronously inside the
+  // useState initializer so first paint already reflects the saved
+  // choice — no flicker between default and persisted value.
+  const [hideLowBalances, setHideLowBalances] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem('vaipakam:vault:hideLowBalances') === 'true';
+    } catch {
+      // localStorage disabled / private mode — fall through to the
+      // default. Toggle still works in-session; just won't persist.
+      return false;
+    }
+  });
+  useEffect(() => {
+    try {
+      localStorage.setItem(
+        'vaipakam:vault:hideLowBalances',
+        String(hideLowBalances),
+      );
+    } catch {
+      // Ignore quota / disabled — same fallback as the read path.
+    }
+  }, [hideLowBalances]);
   // Sort state for the holdings table. `'balance' + 'desc'` is the
-  // default — biggest holdings at the top is the most useful glance
-  // for "what do I have here." Click a column header to flip
-  // direction; click a different header to switch column.
+  // default on first visit — biggest holdings at the top is the most
+  // useful glance for "what do I have here." Click a column header
+  // to flip direction; click a different header to switch column.
+  //
+  // Persisted to localStorage so the user's preference survives page
+  // navigations (returning to the Vault from Dashboard / Loan Details
+  // shouldn't reset the sort). Same try/catch shape as
+  // `hideLowBalances` above — falls through to default in private
+  // mode / quota / disabled-storage contexts.
   type SortBy = 'symbol' | 'balance';
   type SortDir = 'asc' | 'desc';
-  const [sortBy, setSortBy] = useState<SortBy>('balance');
-  const [sortDir, setSortDir] = useState<SortDir>('desc');
+  const [sortBy, setSortBy] = useState<SortBy>(() => {
+    try {
+      const v = localStorage.getItem('vaipakam:vault:sortBy');
+      return v === 'symbol' || v === 'balance' ? v : 'balance';
+    } catch {
+      return 'balance';
+    }
+  });
+  const [sortDir, setSortDir] = useState<SortDir>(() => {
+    try {
+      const v = localStorage.getItem('vaipakam:vault:sortDir');
+      return v === 'asc' || v === 'desc' ? v : 'desc';
+    } catch {
+      return 'desc';
+    }
+  });
+  useEffect(() => {
+    try {
+      localStorage.setItem('vaipakam:vault:sortBy', sortBy);
+    } catch {
+      // ignore — same fallback as the read path
+    }
+  }, [sortBy]);
+  useEffect(() => {
+    try {
+      localStorage.setItem('vaipakam:vault:sortDir', sortDir);
+    } catch {
+      // ignore
+    }
+  }, [sortDir]);
   const toggleSort = (col: SortBy) => {
     if (col === sortBy) {
       setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
