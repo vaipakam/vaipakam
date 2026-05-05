@@ -56,6 +56,37 @@
 #     --skip-vpfi      — skip the VPFI lane + reward OApp (handy when
 #                        re-running after a partial failure that already
 #                        landed those)
+#     --skip-lz-config — skip the per-chain `ConfigureLZConfig.s.sol`
+#                        DVN policy step (auto-skipped anyway when
+#                        DVN_REQUIRED_1 isn't set in .env, but the
+#                        explicit flag also suppresses the warning)
+#     --fresh          — wipe contracts/deployments/<chain>/addresses.json
+#                        AND the watcher's D1 rows for this chainId
+#                        before deploying. Use when rehearsing — old
+#                        state from a prior deploy can't bleed into the
+#                        new one. NEVER pass on a chain whose existing
+#                        deploy you want to preserve; this is destructive.
+#                        Also wipes step-marker files so every step
+#                        runs even if a prior partial deploy left them.
+#     --resume         — re-run after a partial-fail. Skips any step
+#                        whose marker file (`.markers/<step>-done`)
+#                        exists in the deployments dir, so a script
+#                        that died at step 4 can restart from step 4
+#                        without redoing the diamond + timelock.
+#                        Implied behaviour by default: markers ARE
+#                        written after each step but NOT consulted
+#                        unless --resume is passed (so a vanilla
+#                        re-run still re-deploys, matching the prior
+#                        behaviour).
+#     --verify-contracts
+#                      — run `forge verify-contract` against the
+#                        chain's block explorer for every deployed
+#                        contract after the deploy lands. Requires
+#                        ETHERSCAN_API_KEY (or per-chain equivalent;
+#                        Foundry's etherscan multi-chain config in
+#                        foundry.toml handles routing). Off by default
+#                        on testnet — toggling on for rehearsal is a
+#                        real-world dry-run of the mainnet flow.
 #
 # Pre-flight:
 #   - `.env` populated (PRIVATE_KEY, ADMIN_PRIVATE_KEY, ADMIN_ADDRESS,
@@ -101,13 +132,21 @@ CHAIN_SLUG="$1"; shift
 SKIP_FRONTEND=0
 SKIP_WATCHER=0
 SKIP_VPFI=0
+SKIP_LZ_CONFIG=0
+FRESH=0
+RESUME=0
+VERIFY_CONTRACTS=0
 
 while [ $# -gt 0 ]; do
   case "$1" in
-    --skip-frontend) SKIP_FRONTEND=1 ;;
-    --skip-watcher)  SKIP_WATCHER=1 ;;
-    --skip-cf)       SKIP_FRONTEND=1; SKIP_WATCHER=1 ;;
-    --skip-vpfi)     SKIP_VPFI=1 ;;
+    --skip-frontend)    SKIP_FRONTEND=1 ;;
+    --skip-watcher)     SKIP_WATCHER=1 ;;
+    --skip-cf)          SKIP_FRONTEND=1; SKIP_WATCHER=1 ;;
+    --skip-vpfi)        SKIP_VPFI=1 ;;
+    --skip-lz-config)   SKIP_LZ_CONFIG=1 ;;
+    --fresh)            FRESH=1 ;;
+    --resume)           RESUME=1 ;;
+    --verify-contracts) VERIFY_CONTRACTS=1 ;;
     *)
       echo "Unknown flag: $1" >&2
       exit 1
@@ -115,6 +154,11 @@ while [ $# -gt 0 ]; do
   esac
   shift
 done
+
+if [ "$FRESH" = "1" ] && [ "$RESUME" = "1" ]; then
+  echo "Error: --fresh and --resume are mutually exclusive." >&2
+  exit 1
+fi
 
 # ── Chain registry ────────────────────────────────────────────────────
 # Refuse mainnet here. Anvil delegates to the more complete bootstrap
@@ -207,31 +251,172 @@ else
 fi
 echo "  rpc:           $RPC"
 echo "  skip-vpfi:     $SKIP_VPFI"
+echo "  skip-lz-config:$SKIP_LZ_CONFIG"
+echo "  fresh:         $FRESH"
+echo "  resume:        $RESUME"
+echo "  verify-cts:    $VERIFY_CONTRACTS"
 echo "  skip-frontend: $SKIP_FRONTEND"
 echo "  skip-watcher:  $SKIP_WATCHER"
 echo "═══════════════════════════════════════════════════════════════"
 echo
 
+# ── Step-marker + history-sidecar helpers ─────────────────────────────
+# Every named step writes a marker file after success. With --resume,
+# a re-run skips any step whose marker exists — so a deploy that died
+# at step 4 can resume at step 4 without redoing diamond + timelock.
+# --fresh wipes the markers dir before starting.
+#
+# History sidecar: after each addresses.json-updating step (Diamond,
+# Timelock, VPFI lane, Reward OApp), copy the file into
+# `.history/<step>-<unix-ts>.json` so the operator has a recoverable
+# audit trail of each rehearsal's intermediate states (useful when
+# investigating mid-flight failures).
+
+DEPLOY_DIR="$CONTRACTS_DIR/deployments/$CHAIN_SLUG"
+MARKERS_DIR="$DEPLOY_DIR/.markers"
+HISTORY_DIR="$DEPLOY_DIR/.history"
+
+mkdir -p "$DEPLOY_DIR" "$MARKERS_DIR" "$HISTORY_DIR"
+
+step_done() {
+  # Returns 0 (true) if the step has already been run successfully
+  # AND the user opted into resume. With --resume off the function
+  # always returns 1 so every step runs.
+  local step="$1"
+  if [ "$RESUME" = "1" ] && [ -f "$MARKERS_DIR/$step.done" ]; then
+    return 0
+  fi
+  return 1
+}
+
+mark_done() {
+  local step="$1"
+  date +"%Y-%m-%dT%H:%M:%S%z" > "$MARKERS_DIR/$step.done"
+}
+
+snapshot_addresses() {
+  # Sidecar copy of the current addresses.json. Skips silently if no
+  # addresses.json exists yet (the very first step).
+  local label="$1"
+  if [ -f "$DEPLOY_DIR/addresses.json" ]; then
+    cp "$DEPLOY_DIR/addresses.json" "$HISTORY_DIR/$label-$(date +%s).json"
+  fi
+}
+
+# ── 0. --fresh cleanup (rehearsal hygiene) ────────────────────────────
+# Wipes prior deploy artefacts + indexer rows for THIS chain so the
+# rehearsal starts from a known-empty state. Without this:
+#   - DeployDiamond reuses the existing addresses.json's diamond, so
+#     storage from the prior rehearsal persists. Old offers/loans
+#     written under a previous struct shape silently poison reads
+#     (the May-2026 garbage-values bug we hit).
+#   - The watcher's D1 keeps rows decoded against the prior bytecode,
+#     surfacing them in /offers/recent etc. with garbage amount /
+#     rate / duration values.
+# Mainnet slugs are refused by the chain registry above, so this
+# block can only fire on testnets.
+
+if [ "$FRESH" = "1" ]; then
+  echo "[0] --fresh cleanup"
+  if [ -f "$CONTRACTS_DIR/deployments/$CHAIN_SLUG/addresses.json" ]; then
+    BACKUP="$CONTRACTS_DIR/deployments/$CHAIN_SLUG/addresses.prior-rehearsal.$(date +%s).json"
+    mv "$CONTRACTS_DIR/deployments/$CHAIN_SLUG/addresses.json" "$BACKUP"
+    echo "  ✓ backed up prior addresses.json → $(basename "$BACKUP")"
+  else
+    echo "  (no prior addresses.json — already clean)"
+  fi
+  # Wipe step markers so every step re-runs.
+  rm -f "$MARKERS_DIR"/*.done 2>/dev/null || true
+  echo "  ✓ cleared step markers in $MARKERS_DIR"
+  if [ -d "$WATCHER_DIR" ] && [ -f "$WATCHER_DIR/scripts/purge-chain.sh" ]; then
+    echo "  purging watcher D1 rows for chainId=$CHAIN_ID"
+    # FORCE=1 skips the interactive y/N prompt — purge-chain.sh's
+    # default flow is operator-confirmation-gated, but inside an
+    # automated --fresh sweep that's noise. The destructive scope
+    # (D1 rows scoped to ONE chainId, never user_locales) is
+    # already conservative.
+    ( cd "$WATCHER_DIR" && FORCE=1 bash scripts/purge-chain.sh "$CHAIN_ID" ) || \
+      echo "    (purge-chain returned non-zero — check watcher logs)"
+  else
+    echo "  (no watcher purge-chain.sh — skipping D1 cleanup)"
+  fi
+  echo
+fi
+
 # ── 1. Build ──────────────────────────────────────────────────────────
 
-echo "[1] forge build"
-forge build
+if step_done "build"; then
+  echo "[1] forge build (skipped — marker exists)"
+else
+  echo "[1] forge build"
+  forge build
+  mark_done "build"
+fi
 
 # ── 2. Diamond ────────────────────────────────────────────────────────
 
+if step_done "diamond"; then
+  echo
+  echo "[2] DeployDiamond.s.sol (skipped — marker exists)"
+else
+  echo
+  echo "[2] DeployDiamond.s.sol"
+  forge script script/DeployDiamond.s.sol --rpc-url "$RPC" --broadcast --slow
+  snapshot_addresses "post-diamond"
+  mark_done "diamond"
+fi
+
+# ── 2b. Post-cut facet verification ───────────────────────────────────
+# DeployDiamond's `diamondCut` is split into two halves to stay under
+# the per-tx gas cap (commit `585179f`). If the second half silently
+# fails (gas spike, RPC hiccup, etc.), the diamond ends up with only
+# the first 16 facets registered — selectors from the second half
+# revert with `FunctionDoesNotExist`, but the deploy script itself
+# returns 0. The May-2026 testnet rehearsal hit exactly this pattern
+# (offer struct decoded as garbage because the OfferFacet selectors
+# came back from the OLD pre-redeploy facet, while the indexer used
+# the new ABI). DiamondLoupe's `facetAddresses()` is the authoritative
+# post-deploy answer.
+#
+# Expected: 32 cut facets + 1 DiamondCutFacet (constructor-added) = 33.
+
 echo
-echo "[2] DeployDiamond.s.sol"
-forge script script/DeployDiamond.s.sol --rpc-url "$RPC" --broadcast --slow
+echo "[2b] Post-cut facet-count verification (DiamondLoupe)"
+DIAMOND_ADDR=$(jq -r '.diamond // empty' "$CONTRACTS_DIR/deployments/$CHAIN_SLUG/addresses.json" 2>/dev/null || echo "")
+if [ -z "$DIAMOND_ADDR" ]; then
+  echo "FAIL: no diamond address in deployments/$CHAIN_SLUG/addresses.json after DeployDiamond." >&2
+  echo "      Either the script reverted silently or addresses.json wasn't written." >&2
+  exit 1
+fi
+EXPECTED_FACETS=33
+FACET_COUNT_RAW=$(cast call "$DIAMOND_ADDR" 'facetAddresses()(address[])' --rpc-url "$RPC" 2>/dev/null \
+  | tr ',' '\n' | grep -c '0x' || echo 0)
+if [ "$FACET_COUNT_RAW" -lt "$EXPECTED_FACETS" ]; then
+  echo "FAIL: diamond at $DIAMOND_ADDR has $FACET_COUNT_RAW facets, expected $EXPECTED_FACETS." >&2
+  echo "      The diamondCut likely landed only its first half. Re-run with --fresh." >&2
+  exit 1
+fi
+echo "  ✓ diamond at $DIAMOND_ADDR has $FACET_COUNT_RAW facets (≥ $EXPECTED_FACETS expected)"
 
 # ── 3. Timelock ───────────────────────────────────────────────────────
 
-echo
-echo "[3] DeployTimelock.s.sol"
-forge script script/DeployTimelock.s.sol --rpc-url "$RPC" --broadcast --slow
+if step_done "timelock"; then
+  echo
+  echo "[3] DeployTimelock.s.sol (skipped — marker exists)"
+else
+  echo
+  echo "[3] DeployTimelock.s.sol"
+  forge script script/DeployTimelock.s.sol --rpc-url "$RPC" --broadcast --slow
+  snapshot_addresses "post-timelock"
+  mark_done "timelock"
+fi
 
 # ── 4. VPFI lane (canonical vs mirror) ────────────────────────────────
 
-if [ "$SKIP_VPFI" = "0" ]; then
+if [ "$SKIP_VPFI" = "0" ] && step_done "vpfi-lane"; then
+  echo
+  echo "[4-5] VPFI lane + Reward OApp (skipped — marker exists)"
+elif [ "$SKIP_VPFI" = "0" ]; then
   if [ "$IS_CANONICAL" = "1" ]; then
     echo
     echo "[4a] DeployVPFICanonical.s.sol  (canonical lane — OFTAdapter + token)"
@@ -248,6 +433,35 @@ if [ "$SKIP_VPFI" = "0" ]; then
     echo
     echo "[4b] DeployVPFIBuyAdapter.s.sol  (mirror lane — buy adapter)"
     forge script script/DeployVPFIBuyAdapter.s.sol --rpc-url "$RPC" --broadcast --slow
+
+    # ── 4c. Buy-VPFI rate limits (mirror chains only) ─────────────────
+    # The BuyAdapter ships with `setRateLimits(uint256.max, uint256.max)`
+    # at deploy time — i.e. effectively disabled — per the project's
+    # mainnet-deploy gate (`CLAUDE.md` "Cross-Chain Security Policy").
+    # Without an explicit `setRateLimits` after deploy, a buy request
+    # carrying a malformed amount could mint unbounded VPFI on the
+    # canonical receiver. Defaults applied here:
+    #   per-block:  50_000 × 1e18 VPFI  (override via VPFI_BUY_RATE_PER_BLOCK)
+    #   per-day:    500_000 × 1e18 VPFI (override via VPFI_BUY_RATE_PER_DAY)
+    # The April-2026 cross-chain bridge incident (~$200M drained) rode
+    # an unrate-limited adapter; setting these on every deploy makes
+    # mainnet readiness depend on the deploy artefact, not on a manual
+    # follow-up step that's easy to forget.
+    echo
+    echo "[4c] Buy-VPFI rate limits (mirror — VPFIBuyAdapter.setRateLimits)"
+    BUY_ADAPTER=$(jq -r '.vpfiBuyAdapter // empty' "$CONTRACTS_DIR/deployments/$CHAIN_SLUG/addresses.json" 2>/dev/null || echo "")
+    if [ -z "$BUY_ADAPTER" ]; then
+      echo "  ⚠ no vpfiBuyAdapter in addresses.json — skipping rate-limit set."
+    else
+      RATE_PER_BLOCK="${VPFI_BUY_RATE_PER_BLOCK:-50000000000000000000000}"   # 50_000 × 1e18
+      RATE_PER_DAY="${VPFI_BUY_RATE_PER_DAY:-500000000000000000000000}"     # 500_000 × 1e18
+      echo "  cast send setRateLimits($RATE_PER_BLOCK, $RATE_PER_DAY) on $BUY_ADAPTER"
+      cast send "$BUY_ADAPTER" 'setRateLimits(uint256,uint256)' \
+        "$RATE_PER_BLOCK" "$RATE_PER_DAY" \
+        --private-key "$ADMIN_PRIVATE_KEY" \
+        --rpc-url "$RPC" \
+        2>&1 | grep -E "^status" | head -1 || true
+    fi
   fi
 
   # Reward OApp — canonical-vs-mirror branched the same way.
@@ -259,6 +473,8 @@ if [ "$SKIP_VPFI" = "0" ]; then
     export IS_CANONICAL_REWARD=false
   fi
   forge script script/DeployRewardOAppCreate2.s.sol --rpc-url "$RPC" --broadcast --slow
+  snapshot_addresses "post-vpfi-and-reward"
+  mark_done "vpfi-lane"
 else
   echo
   echo "[4-5] Skipping VPFI lane + Reward OApp (--skip-vpfi)"
@@ -294,8 +510,186 @@ else
   echo "  Final master flags: $(cast call $DIAMOND_ADDR 'getMasterFlags()(bool,bool,bool)' --rpc-url $RPC | tr '\n' ' ')"
 fi
 
-# ── 6. Sync ABIs + consolidated deployments JSON ──────────────────────
+# ── 5c. LZ DVN policy (per-chain) ─────────────────────────────────────
+# `ConfigureLZConfig.s.sol` sets the DVN required + optional set,
+# confirmations, send/recv libraries, and threshold for each (OApp,
+# remote-eid) pair on THIS chain. Per CLAUDE.md "Cross-Chain Security
+# Policy": 3 required + 2 optional, threshold 1-of-2, operator
+# diversity load-bearing. Without this step, OApps inherit
+# LayerZero's 1-required / 0-optional default — the same single-
+# verifier shape that rode the April-2026 cross-chain bridge exploit.
+#
+# Cross-chain peer-wiring (`setPeer`) is NOT here — peers need both
+# legs deployed first, so the wiring lives in `deploy-peers.sh`
+# which runs once after every chain's `deploy-chain.sh` lands.
+#
+# Auto-skipped if DVN_REQUIRED_1 isn't set (testnet rehearsals
+# without a curated DVN set just leave OApps on LayerZero defaults
+# — acceptable on a chain with no real value, but logged loudly so
+# the operator notices).
 
+if [ "$SKIP_LZ_CONFIG" = "1" ]; then
+  echo
+  echo "[5c] Skipping ConfigureLZConfig (--skip-lz-config)"
+elif [ -z "${DVN_REQUIRED_1:-}" ]; then
+  echo
+  echo "[5c] Skipping ConfigureLZConfig — DVN_REQUIRED_1 not set in .env."
+  echo "     OApps remain on LayerZero's 1-required / 0-optional default."
+  echo "     For mainnet this is a security gap; populate DVN_REQUIRED_1/2/3,"
+  echo "     DVN_OPTIONAL_1/2, CONFIRMATIONS, OAPP, SEND_LIB, RECV_LIB,"
+  echo "     REMOTE_EIDS in .env per contracts/README.md before re-running."
+elif step_done "lz-config"; then
+  echo
+  echo "[5c] ConfigureLZConfig (skipped — marker exists)"
+else
+  echo
+  echo "[5c] ConfigureLZConfig.s.sol  (per-chain DVN + libs + confirmations)"
+  forge script script/ConfigureLZConfig.s.sol --rpc-url "$RPC" --broadcast --slow
+  mark_done "lz-config"
+fi
+
+# ── 5d. Post-deploy health check ──────────────────────────────────────
+# Reads sentinel state from the deployed Diamond + (where applicable)
+# the BuyAdapter rate limits. Logs a clear PASS/FAIL line per check
+# so a deploy that landed structurally but mis-configured (e.g.
+# default-uint256.max rate limits, paused diamond, missing treasury)
+# fails LOUDLY here rather than silently shipping a broken state.
+# Health-check log is also persisted to .history/ for audit trail.
+
+echo
+echo "[5d] Post-deploy health check"
+DIAMOND_FOR_HEALTH=$(jq -r '.diamond // empty' "$DEPLOY_DIR/addresses.json" 2>/dev/null || echo "")
+if [ -z "$DIAMOND_FOR_HEALTH" ]; then
+  echo "  ⚠ no diamond in addresses.json — skipping health check"
+else
+  HEALTH_LOG="$HISTORY_DIR/health-$(date +%s).log"
+  {
+    echo "deploy-chain.sh health check"
+    echo "  chain:    $CHAIN_SLUG ($CHAIN_ID)"
+    echo "  diamond:  $DIAMOND_FOR_HEALTH"
+    echo "  ts:       $(date +%Y-%m-%dT%H:%M:%S%z)"
+    echo
+    echo "  paused()         = $(cast call "$DIAMOND_FOR_HEALTH" 'paused()(bool)' --rpc-url "$RPC" 2>/dev/null || echo '?')"
+    echo "  getTreasury()    = $(cast call "$DIAMOND_FOR_HEALTH" 'getTreasury()(address)' --rpc-url "$RPC" 2>/dev/null || echo '?')"
+    echo "  nextOfferId()    = $(cast call "$DIAMOND_FOR_HEALTH" 'nextOfferId()(uint256)' --rpc-url "$RPC" 2>/dev/null || echo '?')"
+    echo "  nextLoanId()     = $(cast call "$DIAMOND_FOR_HEALTH" 'nextLoanId()(uint256)' --rpc-url "$RPC" 2>/dev/null || echo '?')"
+    echo "  facetCount       = $(cast call "$DIAMOND_FOR_HEALTH" 'facetAddresses()(address[])' --rpc-url "$RPC" 2>/dev/null | tr ',' '\n' | grep -c '0x' || echo '?')"
+    echo "  getMasterFlags() = $(cast call "$DIAMOND_FOR_HEALTH" 'getMasterFlags()(bool,bool,bool)' --rpc-url "$RPC" 2>/dev/null | tr '\n' ' ' || echo '?')"
+    BA=$(jq -r '.vpfiBuyAdapter // empty' "$DEPLOY_DIR/addresses.json" 2>/dev/null || echo "")
+    if [ -n "$BA" ]; then
+      echo "  buyAdapter       = $BA"
+      echo "    perBlockLimit  = $(cast call "$BA" 'perBlockLimit()(uint256)' --rpc-url "$RPC" 2>/dev/null || echo '?')"
+      echo "    perDayLimit    = $(cast call "$BA" 'perDayLimit()(uint256)' --rpc-url "$RPC" 2>/dev/null || echo '?')"
+    fi
+  } | tee "$HEALTH_LOG"
+  echo "  ✓ health log → $(basename "$HEALTH_LOG")"
+fi
+
+# ── 5e. Deployment-source marker ──────────────────────────────────────
+# Records which CONTRACTS commit produced the deployed bytecode + when
+# the deploy ran + which deployer signed. The May-2026 rehearsal
+# revealed that addresses.json's `deployedAt` field gets stale (the
+# deploy script doesn't update it on redeploy), so the operator
+# couldn't tell at a glance which version was actually live. This
+# sidecar fixes that — written fresh on every deploy completion.
+
+DEPLOYER_ADDR=$(cast wallet address --private-key "$PRIVATE_KEY" 2>/dev/null || echo "?")
+COMMIT_HASH=$(git -C "$REPO_ROOT" rev-parse HEAD 2>/dev/null || echo "?")
+COMMIT_DIRTY=""
+if ! git -C "$REPO_ROOT" diff --quiet 2>/dev/null; then
+  COMMIT_DIRTY=" (dirty)"
+fi
+cat > "$DEPLOY_DIR/deployment_source.json" <<EOF
+{
+  "chainSlug": "$CHAIN_SLUG",
+  "chainId": $CHAIN_ID,
+  "deployedAt": "$(date +%Y-%m-%dT%H:%M:%S%z)",
+  "monorepoCommit": "$COMMIT_HASH$COMMIT_DIRTY",
+  "deployer": "$DEPLOYER_ADDR",
+  "diamond": "$DIAMOND_FOR_HEALTH"
+}
+EOF
+echo "  ✓ deployment_source.json written ($(echo "$COMMIT_HASH" | head -c 8)$COMMIT_DIRTY)"
+
+# ── 5f. Source-code verification on chain explorer ────────────────────
+# Runs `forge verify-contract` against the chain's Etherscan-family
+# explorer for every deployed contract. Verified source on the
+# explorer is a baseline for user trust + makes audit / debugging
+# painless. Off by default on testnet (saves API quota during quick
+# iteration); turn on for rehearsal / mainnet via --verify-contracts.
+#
+# Foundry's etherscan multi-chain config (in foundry.toml) handles
+# routing — we just need ETHERSCAN_API_KEY (or per-chain equivalent)
+# in the env. Failures don't bubble up: a single contract that fails
+# verification (already-verified, rate-limited, broken bytecode-vs-
+# source) shouldn't bring down the rest of the deploy. Each line is
+# logged; operator eyeballs the summary at the end.
+#
+# Walks the chain-specific broadcast records (one per forge script
+# that ran above) and verifies every CREATE2 / contract creation it
+# captures.
+
+if [ "$VERIFY_CONTRACTS" = "1" ] && step_done "verify-contracts"; then
+  echo
+  echo "[5f] Source-code verification (skipped — marker exists)"
+elif [ "$VERIFY_CONTRACTS" = "1" ]; then
+  echo
+  echo "[5f] Source-code verification on explorer (forge verify-contract)"
+  if [ -z "${ETHERSCAN_API_KEY:-}" ]; then
+    echo "  ⚠ ETHERSCAN_API_KEY not set — verification will fail. Set in .env"
+    echo "    (or per-chain equivalent in foundry.toml's etherscan config)"
+    echo "    and re-run with --verify-contracts."
+  else
+    BROADCAST_DIR="$CONTRACTS_DIR/broadcast"
+    if [ ! -d "$BROADCAST_DIR" ]; then
+      echo "  ⚠ no broadcast/ dir — was forge script ever run with --broadcast?"
+    else
+      VERIFIED=0
+      FAILED=0
+      # For each script that wrote a run-latest.json on this chainId,
+      # walk the transactions and verify every CREATE / CREATE2.
+      while IFS= read -r run_file; do
+        # contractAddress + contractName from the broadcast record.
+        # `--watch` polls the explorer until verification settles
+        # (avoids "submitted but not yet indexed" false-failures).
+        while IFS= read -r line; do
+          ADDR=$(echo "$line" | jq -r '.contractAddress // empty')
+          NAME=$(echo "$line" | jq -r '.contractName // empty')
+          [ -z "$ADDR" ] && continue
+          [ -z "$NAME" ] && continue
+          [ "$ADDR" = "null" ] && continue
+          [ "$NAME" = "null" ] && continue
+          if forge verify-contract --chain-id "$CHAIN_ID" --watch \
+              "$ADDR" "$NAME" >/dev/null 2>&1; then
+            echo "  ✓ $NAME @ $ADDR"
+            VERIFIED=$((VERIFIED + 1))
+          else
+            echo "  ✗ $NAME @ $ADDR  (already-verified / rate-limit / mismatch)"
+            FAILED=$((FAILED + 1))
+          fi
+        done < <(jq -c '.transactions[]?' "$run_file" 2>/dev/null)
+      done < <(find "$BROADCAST_DIR" -path "*/$CHAIN_ID/run-latest.json" 2>/dev/null)
+      echo "  Summary: $VERIFIED verified, $FAILED failed"
+    fi
+  fi
+  mark_done "verify-contracts"
+fi
+
+# ── 6. Sync ABIs + consolidated deployments JSON ──────────────────────
+# ABIs auto-exported from compiled bytecode → frontend + watcher +
+# (if sibling repo present) keeper-bot. Consolidated deployments.json
+# (addresses + facet addrs) is also written to BOTH frontend and
+# watcher targets — `exportFrontendDeployments.sh` auto-detects the
+# watcher's directory at `vaipakam/ops/hf-watcher` and writes to it
+# whenever the sibling layout exists. So this single step keeps the
+# entire downstream surface (frontend reads, watcher decode, keeper-
+# bot reads) on the same `89b551e`-style commit stamp — no manual
+# follow-up needed before the cf-frontend / cf-watcher steps below.
+
+if step_done "abi-sync"; then
+  echo
+  echo "[6] Sync ABIs + consolidated deployments JSON (skipped — marker exists)"
+else
 echo
 echo "[6] Sync ABIs + consolidated deployments JSON"
 bash "$SCRIPT_DIR/exportFrontendAbis.sh"
@@ -317,10 +711,15 @@ if [ -d "$KEEPER_BOT_DIR_DEFAULT" ]; then
 else
   echo "    (skipping keeper-bot ABI export — sibling repo not at $KEEPER_BOT_DIR_DEFAULT)"
 fi
+mark_done "abi-sync"
+fi  # close step_done "abi-sync" else branch
 
 # ── 7. Frontend Cloudflare deploy ─────────────────────────────────────
 
-if [ "$SKIP_FRONTEND" = "0" ]; then
+if [ "$SKIP_FRONTEND" = "0" ] && step_done "frontend"; then
+  echo
+  echo "[7] Frontend deploy (skipped — marker exists)"
+elif [ "$SKIP_FRONTEND" = "0" ]; then
   echo
   echo "[7] Frontend build + Cloudflare Workers Static Assets deploy"
   if [ ! -d "$FRONTEND_DIR/node_modules" ]; then
@@ -328,6 +727,7 @@ if [ "$SKIP_FRONTEND" = "0" ]; then
     exit 1
   fi
   ( cd "$FRONTEND_DIR" && npm run build && npx wrangler deploy )
+  mark_done "frontend"
 else
   echo
   echo "[7] Skipping frontend deploy (--skip-frontend)"
@@ -351,7 +751,10 @@ fi
 #       The script does NOT auto-set them — the values carry API keys
 #       and are operator-curated per CLAUDE.md.
 
-if [ "$SKIP_WATCHER" = "0" ]; then
+if [ "$SKIP_WATCHER" = "0" ] && step_done "watcher"; then
+  echo
+  echo "[8] Watcher deploy (skipped — marker exists)"
+elif [ "$SKIP_WATCHER" = "0" ]; then
   echo
   echo "[8] hf-watcher Cloudflare Worker deploy"
   if [ ! -d "$WATCHER_DIR" ]; then
@@ -360,6 +763,21 @@ if [ "$SKIP_WATCHER" = "0" ]; then
     echo "Error: $WATCHER_DIR/node_modules missing — run \`cd ops/hf-watcher && npm install\` first." >&2
     exit 1
   else
+    # Pre-deploy D1 purge — fires only with --fresh, before the new
+    # worker bundle goes live. Why HERE and not just at step [0]:
+    # the cron tick fires every 5 min. If a redeploy takes longer
+    # than that (slow chain, retries, whatever), the OLD worker
+    # could re-populate D1 with rows decoded against the OLD
+    # bytecode between step [0] and step [8]. Purging again right
+    # before the new worker takes over guarantees the new cron tick
+    # starts with clean state. With --fresh OFF this block is a
+    # no-op so non-rehearsal redeploys keep their indexed history.
+    if [ "$FRESH" = "1" ] && [ -f "$WATCHER_DIR/scripts/purge-chain.sh" ]; then
+      echo "  [8a-pre] watcher D1 purge for chainId=$CHAIN_ID  (--fresh)"
+      ( cd "$WATCHER_DIR" && FORCE=1 bash scripts/purge-chain.sh "$CHAIN_ID" ) || \
+        echo "    (purge-chain returned non-zero — check watcher logs)"
+    fi
+
     echo "  [8a] wrangler deploy"
     ( cd "$WATCHER_DIR" && npx wrangler deploy )
 
@@ -398,6 +816,7 @@ if [ "$SKIP_WATCHER" = "0" ]; then
         echo "  ✓ $EXPECTED_RPC_SECRET is set"
       fi
     fi
+    mark_done "watcher"
   fi
 else
   echo
@@ -418,9 +837,11 @@ fi
 echo "  artifact:      contracts/deployments/$CHAIN_SLUG/addresses.json"
 echo
 echo "Follow-up steps NOT in this script:"
-echo "  1. Configure LZ DVN policy:  forge script script/ConfigureLZConfig.s.sol --rpc-url \$$RPC_VAR --broadcast"
-echo "     (sets the 3-required + 2-optional DVN set + confirmations per the project policy)"
-echo "  2. LZ peer wiring across chains:  forge script script/WireVPFIPeers.s.sol ..."
-echo "     (run after both legs of every cross-chain pair are deployed)"
-echo "  3. Role rotation to governance + timelock — DeploymentRunbook §6"
+echo "  1. Cross-chain LZ peer wiring (after EVERY chain in your"
+echo "     topology has had this script run):"
+echo "        bash contracts/script/deploy-peers.sh"
+echo "     Walks the deployments/ tree and wires setPeer on every"
+echo "     (canonical, mirror) leg + Reward-OApp mesh."
+echo "  2. Role rotation to governance + timelock — DeploymentRunbook §6"
+echo "     (multi-party ceremony, deliberately out of any script)"
 echo "═══════════════════════════════════════════════════════════════"

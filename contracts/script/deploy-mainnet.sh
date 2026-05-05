@@ -174,6 +174,36 @@ if [ -z "$RPC" ]; then
   exit 1
 fi
 
+# ── Phase markers + history sidecar ───────────────────────────────────
+# Mainnet runs each phase as a deliberate operator action — no auto-
+# resume / auto-chain. Markers serve as a tamper-evident record of
+# "did I already run this phase?" so the operator can audit ahead of
+# the role-rotation ceremony, and so a re-run of a phase that already
+# landed prints a loud notice (instead of silently re-broadcasting
+# txs that would mint a duplicate Diamond etc.).
+
+DEPLOY_DIR="$CONTRACTS_DIR/deployments/$CHAIN_SLUG"
+MARKERS_DIR="$DEPLOY_DIR/.markers"
+HISTORY_DIR="$DEPLOY_DIR/.history"
+mkdir -p "$DEPLOY_DIR" "$MARKERS_DIR" "$HISTORY_DIR"
+
+phase_already_done() {
+  local p="$1"
+  [ -f "$MARKERS_DIR/phase-$p.done" ]
+}
+
+mark_phase_done() {
+  local p="$1"
+  date +"%Y-%m-%dT%H:%M:%S%z" > "$MARKERS_DIR/phase-$p.done"
+}
+
+snapshot_addresses() {
+  local label="$1"
+  if [ -f "$DEPLOY_DIR/addresses.json" ]; then
+    cp "$DEPLOY_DIR/addresses.json" "$HISTORY_DIR/$label-$(date +%s).json"
+  fi
+}
+
 # ── Phase: preflight ──────────────────────────────────────────────────
 
 phase_preflight() {
@@ -246,6 +276,22 @@ EOF
     exit 1
   fi
 
+  if phase_already_done "contracts"; then
+    cat >&2 <<EOF
+Refusing --phase contracts: marker file exists at
+  $MARKERS_DIR/phase-contracts.done
+indicating this phase already landed for $CHAIN_SLUG. Re-running would
+deploy a SECOND Diamond with a different address and orphan the first.
+
+If this is intentional (forensic redeploy / aborted prior attempt that
+left a marker but no on-chain effect), remove the marker manually:
+  rm $MARKERS_DIR/phase-contracts.done
+then re-run. We refuse to auto-clear it because automated overwrites
+on mainnet have a high blast radius.
+EOF
+    exit 1
+  fi
+
   echo "═══════════════════════════════════════════════════════════════"
   echo "deploy-mainnet.sh — contracts  ($CHAIN_SLUG)"
   echo "═══════════════════════════════════════════════════════════════"
@@ -289,11 +335,33 @@ EOF
 
   echo
   echo "✓ contracts phase done."
+  snapshot_addresses "post-contracts"
+  # Write deployment_source.json (commit + deployer + timestamp) —
+  # same shape as deploy-chain.sh writes, so the operator can see
+  # at a glance which monorepo commit is live on this chain.
+  DEPLOYER_ADDR=$(cast wallet address --private-key "$PRIVATE_KEY" 2>/dev/null || echo "?")
+  COMMIT_HASH=$(git -C "$REPO_ROOT" rev-parse HEAD 2>/dev/null || echo "?")
+  COMMIT_DIRTY=""
+  if ! git -C "$REPO_ROOT" diff --quiet 2>/dev/null; then COMMIT_DIRTY=" (dirty)"; fi
+  DIAMOND_NOW=$(jq -r '.diamond // empty' "$DEPLOY_DIR/addresses.json" 2>/dev/null || echo "")
+  cat > "$DEPLOY_DIR/deployment_source.json" <<EOF
+{
+  "chainSlug": "$CHAIN_SLUG",
+  "chainId": $CHAIN_ID,
+  "deployedAt": "$(date +%Y-%m-%dT%H:%M:%S%z)",
+  "monorepoCommit": "$COMMIT_HASH$COMMIT_DIRTY",
+  "deployer": "$DEPLOYER_ADDR",
+  "diamond": "$DIAMOND_NOW"
+}
+EOF
+  mark_phase_done "contracts"
+  echo
   echo "Next:"
   echo "  1. --phase abi-sync   (sync the freshly-written addresses.json)"
   echo "  2. --phase lz-config --confirm-dvn-policy-reviewed   (DVN set)"
   echo "  3. WireVPFIPeers.s.sol on each (canonical, mirror) pair"
-  echo "  4. Role rotation ceremony per DeploymentRunbook §6"
+  echo "  4. --phase verify   (sentinel reads + facet count + rate-limit check)"
+  echo "  5. Role rotation ceremony per DeploymentRunbook §6"
 }
 
 # ── Phase: lz-config ──────────────────────────────────────────────────
@@ -324,6 +392,7 @@ EOF
   echo "deploy-mainnet.sh — lz-config  ($CHAIN_SLUG)"
   echo "═══════════════════════════════════════════════════════════════"
   forge script script/ConfigureLZConfig.s.sol --rpc-url "$RPC" --broadcast --slow
+  mark_phase_done "lz-config"
 }
 
 # ── Phase: abi-sync ───────────────────────────────────────────────────
@@ -357,6 +426,7 @@ phase_abi_sync() {
   if [ -d "$KEEPER_BOT_DIR_DEFAULT" ]; then
     echo "  cd $KEEPER_BOT_DIR_DEFAULT && git diff src/abis/"
   fi
+  mark_phase_done "abi-sync"
 }
 
 # ── Phase: cf-frontend ────────────────────────────────────────────────
@@ -370,6 +440,7 @@ phase_cf_frontend() {
   echo "deploy-mainnet.sh — cf-frontend"
   echo "═══════════════════════════════════════════════════════════════"
   ( cd "$FRONTEND_DIR" && npm run build && npx wrangler deploy )
+  mark_phase_done "cf-frontend"
 }
 
 # ── Phase: cf-watcher ─────────────────────────────────────────────────
@@ -429,6 +500,7 @@ phase_cf_watcher() {
       echo "  ✓ $EXPECTED_RPC_SECRET is set"
     fi
   fi
+  mark_phase_done "cf-watcher"
 }
 
 # ── Phase: verify ─────────────────────────────────────────────────────
@@ -446,11 +518,56 @@ phase_verify() {
   echo "  diamond: $DIAMOND"
 
   echo
-  echo "  paused()        = $(cast call "$DIAMOND" 'paused()(bool)' --rpc-url "$RPC" 2>/dev/null || echo '?')"
-  echo "  getTreasury()   = $(cast call "$DIAMOND" 'getTreasury()(address)' --rpc-url "$RPC" 2>/dev/null || echo '?')"
+  echo "[1] Sentinel reads"
+  echo "  paused()         = $(cast call "$DIAMOND" 'paused()(bool)' --rpc-url "$RPC" 2>/dev/null || echo '?')"
+  echo "  getTreasury()    = $(cast call "$DIAMOND" 'getTreasury()(address)' --rpc-url "$RPC" 2>/dev/null || echo '?')"
+  echo "  nextOfferId()    = $(cast call "$DIAMOND" 'nextOfferId()(uint256)' --rpc-url "$RPC" 2>/dev/null || echo '?')"
+  echo "  nextLoanId()     = $(cast call "$DIAMOND" 'nextLoanId()(uint256)' --rpc-url "$RPC" 2>/dev/null || echo '?')"
+
+  echo
+  echo "[2] Facet-count verification (DiamondLoupe)"
+  # Same check as deploy-chain.sh step 2b — the two-half diamondCut
+  # split (commit `585179f`) can leave the diamond half-cut if the
+  # second half silently drops due to a gas spike or RPC hiccup. Catch
+  # it here on mainnet too, before any role-rotation ceremony locks
+  # the deploy in.
+  EXPECTED_FACETS=33
+  FACET_COUNT_RAW=$(cast call "$DIAMOND" 'facetAddresses()(address[])' --rpc-url "$RPC" 2>/dev/null \
+    | tr ',' '\n' | grep -c '0x' || echo 0)
+  if [ "$FACET_COUNT_RAW" -lt "$EXPECTED_FACETS" ]; then
+    echo "  FAIL: $FACET_COUNT_RAW facets registered, expected $EXPECTED_FACETS." >&2
+    echo "        Run --phase contracts again before any other phase." >&2
+    exit 1
+  fi
+  echo "  ✓ $FACET_COUNT_RAW facets (≥ $EXPECTED_FACETS expected)"
+
+  echo
+  echo "[3] Master flag state"
+  echo "  getMasterFlags() = $(cast call "$DIAMOND" 'getMasterFlags()(bool,bool,bool)' --rpc-url "$RPC" 2>/dev/null | tr '\n' ' ' || echo '?')"
+
+  # If a VPFIBuyAdapter is present (mirror chain), confirm rate
+  # limits are non-default (i.e. NOT uint256.max). The mainnet
+  # cross-chain security policy requires explicit limits before any
+  # buy-vpfi traffic — this is the verify-time backstop in case
+  # `--phase contracts` skipped the post-deploy setRateLimits.
+  BUY_ADAPTER=$(jq -r '.vpfiBuyAdapter // empty' "$CONTRACTS_DIR/deployments/$CHAIN_SLUG/addresses.json" 2>/dev/null || echo "")
+  if [ -n "$BUY_ADAPTER" ]; then
+    echo
+    echo "[4] Buy-VPFI rate limits"
+    UINT256_MAX="115792089237316195423570985008687907853269984665640564039457584007913129639935"
+    PER_BLOCK=$(cast call "$BUY_ADAPTER" 'perBlockLimit()(uint256)' --rpc-url "$RPC" 2>/dev/null || echo "?")
+    PER_DAY=$(cast call "$BUY_ADAPTER" 'perDayLimit()(uint256)' --rpc-url "$RPC" 2>/dev/null || echo "?")
+    if [ "$PER_BLOCK" = "$UINT256_MAX" ] || [ "$PER_DAY" = "$UINT256_MAX" ]; then
+      echo "  FAIL: BuyAdapter rate limits at uint256.max (effectively disabled)." >&2
+      echo "        Run setRateLimits(50_000e18, 500_000e18) before declaring deploy ready." >&2
+      exit 1
+    fi
+    echo "  ✓ perBlock=$PER_BLOCK  perDay=$PER_DAY"
+  fi
 
   echo
   echo "verify OK. Continue with the role-rotation + LZ peer-wiring ceremonies."
+  mark_phase_done "verify"
 }
 
 # ── Dispatch ──────────────────────────────────────────────────────────
