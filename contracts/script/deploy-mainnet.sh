@@ -333,6 +333,14 @@ phase_abi_sync() {
   echo "deploy-mainnet.sh — abi-sync"
   echo "═══════════════════════════════════════════════════════════════"
   bash "$SCRIPT_DIR/exportFrontendAbis.sh"
+  # Watcher ABI sync — mirrors the rationale in deploy-chain.sh phase
+  # 6 (and ReleaseNotes-2026-05-05.md "Watcher offer-decode drift").
+  # The hand-typed `as const` ABI tuples in
+  # `ops/hf-watcher/src/diamondAbi.ts` were replaced by JSON imports
+  # generated from the compiled bytecode via this script — auto-
+  # exporting on every deploy ensures the worker's positional decoder
+  # can never silently misalign from a struct-shape change.
+  bash "$SCRIPT_DIR/exportWatcherAbis.sh"
   bash "$SCRIPT_DIR/exportFrontendDeployments.sh"
 
   KEEPER_BOT_DIR_DEFAULT="$REPO_ROOT/../vaipakam-keeper-bot"

@@ -1963,7 +1963,16 @@ export function OfferTable({ title, subtitle, offers, anchorRateBps, address, ac
                         // page pre-acceptance (setOfferKeeperEnabled), since
                         // that's where the user picks which of their
                         // whitelisted keepers to enable for which offer.
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: 4, alignItems: 'flex-end' }}>
+                        //
+                        // Layout: both elements inline (row, not column) so
+                        // the cell stays single-line and the Accept button
+                        // rows / Your-Offer rows share a common vertical
+                        // baseline across the action column. Stacking via
+                        // column-flex used to push these rows ~30 px taller
+                        // than the Accept rows, breaking the visual
+                        // alignment readers expect when scanning a table
+                        // column.
+                        <div style={{ display: 'inline-flex', gap: 8, alignItems: 'center', justifyContent: 'flex-end', flexWrap: 'wrap' }}>
                           <span className="status-badge settled">{t('offerTable.yourOffer')}</span>
                           <HoverTip text="Enable specific keepers to drive this offer via the Keeper Settings page.">
                             <Link

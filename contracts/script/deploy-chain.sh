@@ -299,6 +299,16 @@ fi
 echo
 echo "[6] Sync ABIs + consolidated deployments JSON"
 bash "$SCRIPT_DIR/exportFrontendAbis.sh"
+# Watcher's `getOfferDetails` / `getLoanDetails` tuples used to live as
+# hand-typed `as const` arrays in `ops/hf-watcher/src/diamondAbi.ts`.
+# A struct-shape change in `LibVaipakam.Offer` (added
+# `periodicInterestCadence`) silently misaligned the worker's
+# positional decoder and produced the OfferBook display bug captured
+# in ReleaseNotes-2026-05-05.md. Auto-exporting the watcher's ABIs
+# from the compiled bytecode on every deploy makes that drift
+# structurally impossible — the Solidity compiler is now the single
+# source of truth for the worker's read-decode shape.
+bash "$SCRIPT_DIR/exportWatcherAbis.sh"
 bash "$SCRIPT_DIR/exportFrontendDeployments.sh"
 
 KEEPER_BOT_DIR_DEFAULT="$REPO_ROOT/../vaipakam-keeper-bot"
