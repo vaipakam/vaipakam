@@ -78,3 +78,39 @@
 .ltv-danger .risk-gauge-value {
   color: var(--accent-red);
 }
+
+/* Compact chip — used in dense table rows. Same zone classes
+ * (`hf-safe` / `hf-warning` / `hf-danger`, etc.) drive the
+ * background tint via colour-mix, and the foreground number stays
+ * in the zone colour so it reads at a glance. Width is intrinsic
+ * (no fixed min-width) so a column carrying the chip collapses to
+ * the natural number width. */
+.risk-chip {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: var(--radius-full);
+  font-size: 0.8rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  cursor: help;
+  white-space: nowrap;
+  line-height: 1.4;
+}
+
+.hf-safe.risk-chip,
+.ltv-safe.risk-chip {
+  background: color-mix(in srgb, var(--accent-green) 15%, transparent);
+  color: var(--accent-green);
+}
+
+.hf-warning.risk-chip,
+.ltv-warning.risk-chip {
+  background: color-mix(in srgb, var(--accent-orange) 18%, transparent);
+  color: var(--accent-orange);
+}
+
+.hf-danger.risk-chip,
+.ltv-danger.risk-chip {
+  background: color-mix(in srgb, var(--accent-red) 18%, transparent);
+  color: var(--accent-red);
+}

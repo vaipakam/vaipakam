@@ -89,3 +89,67 @@ export function LTVBar({ percent }: LTVProps) {
     </div>
   );
 }
+
+/**
+ * Compact chip variants — number-only with a coloured background per
+ * zone. Use these in dense table rows where the full track + fill bar
+ * eats too much horizontal space (Dashboard's loan list, Risk Watch
+ * grid). The single-loan / preview surfaces keep the bar variant
+ * because they have room and the threshold-mark gives users a feel
+ * for "how far from liquidation am I?". Both share the same zone
+ * classification + tooltip so the colour grammar is consistent across
+ * compact and full views.
+ */
+export function HealthFactorChip({ value }: HealthFactorProps) {
+  const { t } = useTranslation();
+  if (value === null) {
+    return <span className="risk-gauge-empty">—</span>;
+  }
+  const zone = hfZone(value);
+  const label =
+    zone === 'danger'
+      ? t('riskGauge.hfDanger')
+      : zone === 'warning'
+        ? t('riskGauge.hfWarning', {
+            init: HF_INITIATION_MIN.toFixed(2),
+            liq: HF_LIQUIDATION_THRESHOLD.toFixed(2),
+          })
+        : t('riskGauge.hfSafe', {
+            init: HF_INITIATION_MIN.toFixed(2),
+            liq: HF_LIQUIDATION_THRESHOLD.toFixed(2),
+          });
+
+  return (
+    <span
+      className={`risk-chip hf-${zone}`}
+      data-tooltip={label}
+      aria-label={label}
+    >
+      {value.toFixed(2)}
+    </span>
+  );
+}
+
+export function LTVChip({ percent }: LTVProps) {
+  const { t } = useTranslation();
+  if (percent === null) {
+    return <span className="risk-gauge-empty">—</span>;
+  }
+  const zone = ltvZone(percent);
+  const label =
+    zone === 'danger'
+      ? t('riskGauge.ltvDanger', { threshold: LTV_VOLATILITY_THRESHOLD })
+      : zone === 'warning'
+        ? t('riskGauge.ltvWarning', { threshold: LTV_VOLATILITY_THRESHOLD })
+        : t('riskGauge.ltvSafe', { threshold: LTV_VOLATILITY_THRESHOLD });
+
+  return (
+    <span
+      className={`risk-chip ltv-${zone}`}
+      data-tooltip={label}
+      aria-label={label}
+    >
+      {percent.toFixed(2)}%
+    </span>
+  );
+}

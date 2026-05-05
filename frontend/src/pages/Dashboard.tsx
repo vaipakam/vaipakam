@@ -27,7 +27,7 @@ import {
 import { DEFAULT_CHAIN } from '../contracts/config';
 import { PrincipalCell } from '../components/app/PrincipalCell';
 import { bpsToPercent } from '../lib/format';
-import { HealthFactorGauge, LTVBar } from '../components/app/RiskGauge';
+import { HealthFactorChip, LTVChip } from '../components/app/RiskGauge';
 import VPFIDiscountConsentCard from '../components/app/VPFIDiscountConsentCard';
 import { RewardsSummaryCard } from '../components/app/RewardsSummaryCard';
 import { SanctionsBanner } from '../components/app/SanctionsBanner';
@@ -631,21 +631,26 @@ export default function Dashboard() {
                       </span>
                     </td>
                     <td>
-                      <div style={{ display: 'inline-flex', gap: 6, alignItems: 'center' }}>
-                        {unclaimedLoanIds.has(loan.id.toString()) && (
-                          <HoverTip text={t('dashboard.claimReadyTooltip')}>
-                            <Link
-                              to={`/app/loans/${loan.id.toString()}`}
-                              className="btn btn-primary btn-sm"
-                            >
-                              {t('dashboard.claim')}
-                            </Link>
-                          </HoverTip>
-                        )}
-                        <Link to={`/app/loans/${loan.id.toString()}`} className="btn btn-ghost btn-sm">
-                          {t('common.view')}
-                        </Link>
-                      </div>
+                      {/* The View button used to live here; it was
+                          redundant with the loan-id link in the first
+                          column (which deep-links to the same page).
+                          The cell stays for the Claim CTA — only
+                          rendered when this loan has terminal-state
+                          claimables waiting on this wallet, otherwise
+                          empty. Empty cells in this last column are
+                          fine; the column header is intentionally
+                          unlabelled (an "Actions" header would
+                          mislead since most rows have no action). */}
+                      {unclaimedLoanIds.has(loan.id.toString()) && (
+                        <HoverTip text={t('dashboard.claimReadyTooltip')}>
+                          <Link
+                            to={`/app/loans/${loan.id.toString()}`}
+                            className="btn btn-primary btn-sm"
+                          >
+                            {t('dashboard.claim')}
+                          </Link>
+                        </HoverTip>
+                      )}
                     </td>
                   </tr>
                 ))}
@@ -700,11 +705,11 @@ function SortTh({
 
 function LoanLtvCell({ risk }: { risk: LoanRisk | undefined }) {
   const ltv = risk?.ltv ?? null;
-  return <LTVBar percent={ltv === null ? null : Number(ltv) / 1e16} />;
+  return <LTVChip percent={ltv === null ? null : Number(ltv) / 1e16} />;
 }
 
 function LoanHfCell({ risk }: { risk: LoanRisk | undefined }) {
   const hf = risk?.hf ?? null;
-  return <HealthFactorGauge value={hf === null ? null : Number(hf) / 1e18} />;
+  return <HealthFactorChip value={hf === null ? null : Number(hf) / 1e18} />;
 }
 
