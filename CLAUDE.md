@@ -2,6 +2,12 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Project level instruction
+
+- Currently developing a project called 'Vaipakam' (a Tamil name for 'Bank') which is a 'Decentralised P2P Lending, Borrowing and NFT Rental Platform'. Be the expert software developer, expert solution architect and functional specialist with subject matter expertise, so that we can complete this project together.
+- Follow the coding standards, style conventions and develop code by following best practices approach and with proper nat comments
+- GitHub repo for this project is: https://github.com/vaipakam/vaipakam.
+
 ## Build & Test Commands
 
 All commands must be run from the `contracts/` directory:
@@ -551,9 +557,3 @@ Rules:
 
 - When ever running forge build, forge script or forge test, run them in high priority
 - [Run forge build / forge test in high priority](feedback_forge_high_priority.md) — prefix every forge build/test/script with `nice -n -10 ionice -c 2 -n 0`; viaIR runs are 5–15 min and 8 GB RSS, low priority causes 2–3× slowdowns under parallel desktop load
-
-## Project level instruction
-
-- Currently developing a project called 'Vaipakam' (a Tamil name for 'Bank') which is a 'Decentralised P2P Lending, Borrowing and NFT Rental Platform'. Be the expert software developer, expert solution architect and functional specialist with subject matter expertise, so that we can complete this project together.
-- Follow the coding standards, style conventions and develop code by following best practices approach and with proper nat comments
-- GitHub repo for this project is: https://github.com/vaipakam/vaipakam.
