@@ -1750,6 +1750,12 @@
     "cacheOrigin": "इंडेक्सर एंडपॉइंट",
     "frontendBuild": "फ्रंटएंड बिल्ड",
     "frontendBuildUnknown": "अज्ञात",
-    "cursorAdvancedAt": "इंडेक्सर कर्सर का अंतिम अग्रसरण (UTC)"
+    "cursorAdvancedAt": "इंडेक्सर कर्सर का अंतिम अग्रसरण (UTC)",
+    "purgeButton": "ब्राउज़र-साइड स्थिति मिटाएँ",
+    "purgeInProgress": "मिटाया जा रहा है…",
+    "purgeConfirm": "इस साइट के लिए सभी ब्राउज़र-साइड स्थिति (IndexedDB, localStorage, sessionStorage) मिटाएँ? कनेक्ट किए गए वॉलेट और सहेजी गई प्राथमिकताएँ मिट जाएँगी। पेज को पुनः लोड करना होगा।",
+    "purgeDone": "मिटा दिया गया। प्रभावी होने के लिए पेज पुनः लोड करें।",
+    "purgeFailed": "मिटाने में विफल: {{err}}",
+    "frontendBuildTime": "फ्रंटएंड बिल्ड समय (UTC)"
   }
 }

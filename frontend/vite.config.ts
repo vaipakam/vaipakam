@@ -1,7 +1,26 @@
 import { defineConfig } from 'vitest/config'
 import react from '@vitejs/plugin-react'
+import { execSync } from 'node:child_process'
 
 import { cloudflare } from "@cloudflare/vite-plugin";
+
+// Stamp the current git commit + build timestamp into the bundle so the
+// DiagnosticsDrawer's "Frontend build" row can show what code is live.
+// Vite picks up `VITE_*` env vars from `process.env` and exposes them as
+// `import.meta.env.VITE_*` — assigning here, before `defineConfig`,
+// makes them available to source code without any custom `define`.
+process.env.VITE_BUILD_HASH = (() => {
+  try {
+    return execSync('git rev-parse --short HEAD', {
+      stdio: ['ignore', 'pipe', 'ignore'],
+    })
+      .toString()
+      .trim();
+  } catch {
+    return 'unknown';
+  }
+})();
+process.env.VITE_BUILD_TIME = new Date().toISOString();
 
 export default defineConfig({
   plugins: [react(), cloudflare()],

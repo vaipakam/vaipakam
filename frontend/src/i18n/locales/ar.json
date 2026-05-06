@@ -1750,6 +1750,12 @@
     "cacheOrigin": "نقطة نهاية المُفهرس",
     "frontendBuild": "بناء الواجهة الأمامية",
     "frontendBuildUnknown": "غير معروف",
-    "cursorAdvancedAt": "آخر تقدّم لمؤشر المُفهرس (UTC)"
+    "cursorAdvancedAt": "آخر تقدّم لمؤشر المُفهرس (UTC)",
+    "purgeButton": "مسح حالة المتصفح",
+    "purgeInProgress": "جارٍ المسح…",
+    "purgeConfirm": "مسح كل حالة المتصفح لهذا الموقع (IndexedDB وlocalStorage وsessionStorage)؟ ستُمسح المحافظ المتصلة والتفضيلات المحفوظة. ستحتاج إلى إعادة تحميل الصفحة.",
+    "purgeDone": "تم المسح. أعد تحميل الصفحة لتفعيل التغييرات.",
+    "purgeFailed": "فشل المسح: {{err}}",
+    "frontendBuildTime": "وقت بناء الواجهة الأمامية (UTC)"
   }
 }

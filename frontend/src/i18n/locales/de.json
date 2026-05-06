@@ -1750,6 +1750,12 @@
     "cacheOrigin": "Indexer-Endpunkt",
     "frontendBuild": "Frontend-Build",
     "frontendBuildUnknown": "unbekannt",
-    "cursorAdvancedAt": "Letzter Cursor-Fortschritt des Indexers (UTC)"
+    "cursorAdvancedAt": "Letzter Cursor-Fortschritt des Indexers (UTC)",
+    "purgeButton": "Browser-Zustand löschen",
+    "purgeInProgress": "Lösche…",
+    "purgeConfirm": "Den gesamten Browser-Zustand für diese Site (IndexedDB, localStorage, sessionStorage) löschen? Verbundene Wallets und gespeicherte Einstellungen werden entfernt. Die Seite muss neu geladen werden.",
+    "purgeDone": "Gelöscht. Seite neu laden, damit es wirksam wird.",
+    "purgeFailed": "Löschen fehlgeschlagen: {{err}}",
+    "frontendBuildTime": "Frontend gebaut (UTC)"
   }
 }

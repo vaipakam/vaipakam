@@ -320,3 +320,27 @@
   color: var(--text-secondary, #888);
   line-height: 1.4;
 }
+
+/* Purge-state action — only rendered in `advanced` UIMode. Mirrors the
+   journey-buffer `Delete` button visual for consistency. */
+.chain-diag-purge {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+  margin: 0.4rem 0;
+}
+
+.chain-diag-purge-btn {
+  font-size: 0.72rem;
+  color: #ff7a7a !important;
+}
+
+.chain-diag-purge-msg {
+  font-size: 0.72rem;
+  color: var(--text-secondary, #aaa);
+}
+
+.chain-diag-purge-msg--err {
+  color: #ff7a7a;
+}

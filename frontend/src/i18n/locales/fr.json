@@ -1750,6 +1750,12 @@
     "cacheOrigin": "Point de terminaison de l'indexeur",
     "frontendBuild": "Build frontend",
     "frontendBuildUnknown": "inconnu",
-    "cursorAdvancedAt": "Dernière progression du curseur de l'indexeur (UTC)"
+    "cursorAdvancedAt": "Dernière progression du curseur de l'indexeur (UTC)",
+    "purgeButton": "Purger l'état du navigateur",
+    "purgeInProgress": "Purge…",
+    "purgeConfirm": "Purger tout l'état du navigateur pour ce site (IndexedDB, localStorage, sessionStorage) ? Les wallets connectés et les préférences enregistrées seront effacés. La page devra être rechargée.",
+    "purgeDone": "Purgé. Rechargez la page pour appliquer.",
+    "purgeFailed": "Échec de la purge : {{err}}",
+    "frontendBuildTime": "Frontend compilé (UTC)"
   }
 }

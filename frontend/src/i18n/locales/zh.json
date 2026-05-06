@@ -1750,6 +1750,12 @@
     "cacheOrigin": "索引器端点",
     "frontendBuild": "前端构建",
     "frontendBuildUnknown": "未知",
-    "cursorAdvancedAt": "索引器光标最后推进时间 (UTC)"
+    "cursorAdvancedAt": "索引器光标最后推进时间 (UTC)",
+    "purgeButton": "清除浏览器端状态",
+    "purgeInProgress": "正在清除…",
+    "purgeConfirm": "清除此站点的所有浏览器端状态 (IndexedDB、localStorage、sessionStorage)? 已连接的钱包和保存的偏好将被清除。需要重新加载页面。",
+    "purgeDone": "已清除。重新加载页面以生效。",
+    "purgeFailed": "清除失败: {{err}}",
+    "frontendBuildTime": "前端构建时间 (UTC)"
   }
 }

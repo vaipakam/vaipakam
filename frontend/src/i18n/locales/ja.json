@@ -1750,6 +1750,12 @@
     "cacheOrigin": "インデクサーのエンドポイント",
     "frontendBuild": "フロントエンドビルド",
     "frontendBuildUnknown": "不明",
-    "cursorAdvancedAt": "インデクサーカーソルの最終更新 (UTC)"
+    "cursorAdvancedAt": "インデクサーカーソルの最終更新 (UTC)",
+    "purgeButton": "ブラウザ側の状態を削除",
+    "purgeInProgress": "削除中…",
+    "purgeConfirm": "このサイトのブラウザ側の状態 (IndexedDB、localStorage、sessionStorage) をすべて削除しますか? 接続されたウォレットや保存された設定が消去されます。ページの再読み込みが必要です。",
+    "purgeDone": "削除しました。ページを再読み込みして反映してください。",
+    "purgeFailed": "削除に失敗しました: {{err}}",
+    "frontendBuildTime": "フロントエンドビルド時刻 (UTC)"
   }
 }

@@ -1753,6 +1753,12 @@
     "cacheOrigin": "Indexer endpoint",
     "frontendBuild": "Frontend build",
     "frontendBuildUnknown": "unknown",
-    "cursorAdvancedAt": "Indexer cursor last advanced (UTC)"
+    "cursorAdvancedAt": "Indexer cursor last advanced (UTC)",
+    "purgeButton": "Purge browser-side state",
+    "purgeInProgress": "Purging…",
+    "purgeConfirm": "Purge all browser-side state for this site (IndexedDB, localStorage, sessionStorage)? Connected wallets and saved preferences will be cleared. The page will need a reload.",
+    "purgeDone": "Purged. Reload the page to take effect.",
+    "purgeFailed": "Purge failed: {{err}}",
+    "frontendBuildTime": "Frontend built (UTC)"
   }
 }

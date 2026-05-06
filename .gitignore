@@ -57,3 +57,5 @@ graphify-out/
 contracts/deployments/*/.markers/
 contracts/deployments/*/.history/
 contracts/deployments/*/addresses.prior-rehearsal.*.json
+
+.vscode/

@@ -17,10 +17,12 @@
 
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { Trash2 } from 'lucide-react';
 import { useOfferStats } from '../../hooks/useOfferStats';
 import { useReadChain } from '../../contracts/useDiamond';
 import { useLiveWatermark } from '../../hooks/useLiveWatermark';
 import { watermarkPolicy } from '../../hooks/watermarkPolicy';
+import { useMode } from '../../context/ModeContext';
 
 /** Mirror the badge's block-space thresholds — single source of truth
  *  in the badge file would be cleaner, but keeping the constants local
@@ -45,6 +47,7 @@ function formatBytes(n: number | undefined): string {
 
 export function ChainDiagnosticsPanel() {
   const { t } = useTranslation();
+  const { mode } = useMode();
   const chain = useReadChain();
   const { stats } = useOfferStats();
   // Independent watermark probe — useLiveWatermark is per-call and cheap
@@ -55,6 +58,15 @@ export function ChainDiagnosticsPanel() {
   );
   const [storage, setStorage] = useState<StorageEstimate | null>(null);
   const [storageError, setStorageError] = useState<boolean>(false);
+  // Purge state — only used when `mode === 'advanced'` (the dev / debug
+  // toggle on the user-mode picker). Tri-state UI:
+  //   - 'idle': default, button enabled.
+  //   - 'purging': disable while async work runs.
+  //   - 'done' / 'failed': inline message; revert to 'idle' on next click.
+  const [purgeState, setPurgeState] = useState<
+    'idle' | 'purging' | 'done' | 'failed'
+  >('idle');
+  const [purgeMessage, setPurgeMessage] = useState<string | null>(null);
 
   useEffect(() => {
     // navigator.storage.estimate() is widely supported but absent in
@@ -74,11 +86,73 @@ export function ChainDiagnosticsPanel() {
     }
   }, []);
 
-  // Build identifier — plumbed in via Vite at build time (`define` in
-  // vite.config.ts can stamp `VITE_BUILD_HASH`). Falls through to
-  // i18n "unknown" when not set so the row is always rendered.
+  // Build identifier — plumbed in via Vite at build time. The
+  // `vite.config.ts` execSyncs `git rev-parse --short HEAD` and
+  // assigns `process.env.VITE_BUILD_HASH` before defineConfig runs, so
+  // this read sees a real short SHA in built bundles. In `npm run dev`
+  // the same path runs (vite re-evaluates the config on dev start)
+  // so the dev page shows the local working-tree HEAD.
   const buildHash =
     (import.meta.env.VITE_BUILD_HASH as string | undefined) ?? null;
+  const buildTime =
+    (import.meta.env.VITE_BUILD_TIME as string | undefined) ?? null;
+
+  // Advanced-mode-only client-state purge. Clears IndexedDB databases,
+  // localStorage, and sessionStorage so the next load is a true cold
+  // start. Useful when:
+  //   - the cached offer/loan rows in IndexedDB get into a weird shape
+  //     after a contract redeploy (stale ABI decode, etc.);
+  //   - a wallet auth handshake gets stuck and the user needs to reset
+  //     all client state without nuking the entire browser profile.
+  // Gated on `mode === 'advanced'` so the average user can't trip it
+  // by accident — connecting wallets / settings / preferences all live
+  // in localStorage and would be wiped.
+  async function handlePurge() {
+    if (purgeState === 'purging') return;
+    // Confirm because this is destructive — wipes wallet-connect
+    // handshake, dApp settings, every cached row.
+    const confirmed = window.confirm(
+      t('chainDiagnostics.purgeConfirm', {
+        defaultValue:
+          'Purge all browser-side state for this site (IndexedDB, localStorage, sessionStorage)? Connected wallets and saved preferences will be cleared. The page will need a reload.',
+      }),
+    );
+    if (!confirmed) return;
+    setPurgeState('purging');
+    setPurgeMessage(null);
+    try {
+      // IndexedDB — `databases()` is widely supported (Firefox 126+,
+      // Safari 16+, every Chromium). On the rare browser without it,
+      // we silently skip; localStorage clear below is the more
+      // important reset path anyway.
+      if (
+        typeof indexedDB !== 'undefined' &&
+        typeof (indexedDB as unknown as { databases?: unknown }).databases ===
+          'function'
+      ) {
+        const dbs = await indexedDB.databases();
+        for (const db of dbs) {
+          if (db.name) indexedDB.deleteDatabase(db.name);
+        }
+      }
+      try { localStorage.clear(); } catch { /* private mode safari */ }
+      try { sessionStorage.clear(); } catch { /* same */ }
+      setPurgeState('done');
+      setPurgeMessage(
+        t('chainDiagnostics.purgeDone', {
+          defaultValue: 'Purged. Reload the page to take effect.',
+        }),
+      );
+    } catch (err) {
+      setPurgeState('failed');
+      setPurgeMessage(
+        t('chainDiagnostics.purgeFailed', {
+          defaultValue: 'Purge failed: {{err}}',
+          err: String(err).slice(0, 120),
+        }),
+      );
+    }
+  }
   const apiOrigin =
     (import.meta.env.VITE_API_ORIGIN as string | undefined) ?? null;
 
@@ -252,7 +326,49 @@ export function ChainDiagnosticsPanel() {
             })
           }
         />
+        {buildTime && (
+          <Row
+            label={t('chainDiagnostics.frontendBuildTime', {
+              defaultValue: 'Frontend built (UTC)',
+            })}
+            value={buildTime}
+          />
+        )}
       </dl>
+      {/* Advanced-mode-only client-state purge. The Trash2 / red text
+          colour mirrors the journey-buffer `Delete` button below for
+          consistency. Hidden in basic mode so the average user can't
+          accidentally wipe their wallet-connect handshake. */}
+      {mode === 'advanced' && (
+        <div className="chain-diag-purge">
+          <button
+            type="button"
+            className="btn btn-ghost btn-sm chain-diag-purge-btn"
+            onClick={handlePurge}
+            disabled={purgeState === 'purging'}
+          >
+            <Trash2 size={14} />
+            {purgeState === 'purging'
+              ? t('chainDiagnostics.purgeInProgress', {
+                  defaultValue: 'Purging…',
+                })
+              : t('chainDiagnostics.purgeButton', {
+                  defaultValue: 'Purge browser-side state',
+                })}
+          </button>
+          {purgeMessage && (
+            <span
+              className={
+                purgeState === 'failed'
+                  ? 'chain-diag-purge-msg chain-diag-purge-msg--err'
+                  : 'chain-diag-purge-msg'
+              }
+            >
+              {purgeMessage}
+            </span>
+          )}
+        </div>
+      )}
       <p className="chain-diag-footnote">
         {t('indexerBadge.safeBlockFootnote')}
       </p>
