@@ -640,8 +640,8 @@ function readProviderChainId(): number | null {
 // Operator overrides (Vite env, all optional):
 //   VITE_DIAG_MAX_BODY_CHARS         (default 5000)
 //   VITE_DIAG_MAX_URL_CHARS          (default 7000)
-//   VITE_DIAG_EVENTS_BEFORE_FAILURE  (default 10)
-//   VITE_DIAG_EVENTS_AFTER_FAILURE   (default 2)
+//   VITE_DIAG_EVENTS_BEFORE_FAILURE  (default 5)
+//   VITE_DIAG_EVENTS_AFTER_FAILURE   (default 5)
 //   VITE_DIAG_MAX_EVENTS_NO_FAILURE  (default 12)
 //   VITE_GITHUB_ISSUES_URL           (default the public Vaipakam repo)
 function envInt(key: string, fallback: number): number {
@@ -661,11 +661,14 @@ const MAX_BODY_LEN = envInt('VITE_DIAG_MAX_BODY_CHARS', 5_000);
 const MAX_URL_LEN = envInt('VITE_DIAG_MAX_URL_CHARS', 7_000);
 /** How many events to include on either side of the most-recent failure
  *  when the buffer contains one. The error itself is always included.
- *  Defaults dialled down from 15+5 → 10+2 after a real URL-too-long
- *  incident; the trim-fallback halves these further if the assembled
- *  URL still overshoots `MAX_URL_LEN`. */
-const EVENTS_BEFORE_FAILURE = envInt('VITE_DIAG_EVENTS_BEFORE_FAILURE', 10);
-const EVENTS_AFTER_FAILURE = envInt('VITE_DIAG_EVENTS_AFTER_FAILURE', 2);
+ *  Default 5+5 (2026-05-06): symmetric window centred on the failure
+ *  reads cleanest in the rendered issue body. Earlier passes were
+ *  15+5 (URL-too-long incident → trimmed) and 10+2 (asymmetric, biased
+ *  toward the lead-up at the cost of post-failure context). The trim-
+ *  fallback halves the smaller of the two if the assembled URL still
+ *  overshoots `MAX_URL_LEN`. */
+const EVENTS_BEFORE_FAILURE = envInt('VITE_DIAG_EVENTS_BEFORE_FAILURE', 5);
+const EVENTS_AFTER_FAILURE = envInt('VITE_DIAG_EVENTS_AFTER_FAILURE', 5);
 const MAX_EVENTS_IN_ISSUE = envInt('VITE_DIAG_MAX_EVENTS_NO_FAILURE', 12);
 const VAIPAKAM_ISSUES_URL = envStr(
   'VITE_GITHUB_ISSUES_URL',

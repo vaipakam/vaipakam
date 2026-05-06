@@ -124,7 +124,6 @@ export default function DiagnosticsDrawer() {
                 (a reflexive click from this support drawer would be
                 surprising). */}
             <div className="diag-actions">
-              <ReportIssueLink variant="button" label={t('diagnostics.reportOnGithub')} />
               <button
                 className="btn btn-secondary btn-sm"
                 onClick={() => {
@@ -142,6 +141,7 @@ export default function DiagnosticsDrawer() {
                 <FileDown size={14} />
                 {t('diagnostics.download')}
               </button>
+              <ReportIssueLink variant="button" label={t('diagnostics.reportOnGithub')} />
               <button
                 className="btn btn-ghost btn-sm"
                 onClick={() => clearJourney()}
