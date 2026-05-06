@@ -125,6 +125,7 @@ contract PartialWithdrawalFacetTest is Test {
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");
 
         AccessControlFacet(address(diamond)).initializeAccessControl();
+        AdminFacet(address(diamond)).unpause();
         EscrowFactoryFacet(address(diamond)).initializeEscrowImplementation();
         AdminFacet(address(diamond)).setTreasury(address(diamond));
         AdminFacet(address(diamond)).setZeroExProxy(mockZeroExProxy);

@@ -143,6 +143,97 @@ contract AccessControlFacet is DiamondAccessControl {
         emit EmergencyRoleRevoked(role, account, msg.sender, reason);
     }
 
+    // ─── Atomic role + ownership handover ───────────────────────────────
+
+    /// @notice Emitted by {transferAdmin} once every grant + revoke + ERC-173
+    ///         transfer has landed atomically. Indexers correlate this with
+    ///         the per-role `RoleGranted` / `RoleRevoked` log burst the same
+    ///         tx emits.
+    /// @param prevAdmin  `msg.sender` at the time of the call — the address
+    ///                   that held DEFAULT_ADMIN_ROLE before the swap.
+    /// @param newAdmin   The new holder of every grantable role and ERC-173
+    ///                   ownership.
+    event AdminTransferred(address indexed prevAdmin, address indexed newAdmin);
+
+    /// @dev Reverts when {transferAdmin} is called with `address(0)`.
+    error TransferAdminToZero();
+
+    /// @dev Reverts when {transferAdmin} is called with the caller's own
+    ///      address — would be a no-op and risks the caller mistaking it
+    ///      for a successful handover.
+    error TransferAdminToSelf();
+
+    /**
+     * @notice Atomically hand every privileged role + ERC-173 ownership
+     *         from the caller to `newAdmin` in a single transaction.
+     *
+     * @dev DEFAULT_ADMIN_ROLE-gated. Replaces the legacy 23-tx role-handover
+     *      sequence (11 grants + 1 ownership transfer + 11 renounces) with
+     *      one atomic tx — same end-state, gas-cheaper, impossible to leave
+     *      in a half-applied middle state if any sub-step reverts (the
+     *      whole tx reverts together).
+     *
+     *      Order inside the function (matters for recoverability if called
+     *      via a multisig that itself holds the source admin):
+     *
+     *        1. Grant every role in `LibAccessControl.grantableRoles()` to
+     *           `newAdmin`. Iterates forward — DEFAULT_ADMIN_ROLE is index
+     *           0, so `newAdmin` gets root admin first.
+     *        2. Transfer ERC-173 ownership via `LibDiamond.setContractOwner`
+     *           — gates future `diamondCut` calls to `newAdmin`.
+     *        3. Revoke every role from the caller, iterating in REVERSE so
+     *           DEFAULT_ADMIN_ROLE comes off last. This way if a future
+     *           library bug / future revoke step were to revert, the caller
+     *           still holds root admin and can recover. Today this is
+     *           defensive — `LibAccessControl.revokeRole` is a pure
+     *           storage write that can't revert — but the ordering costs
+     *           nothing and survives future surface changes.
+     *
+     *      PAUSER_ROLE and KYC_ADMIN_ROLE are NOT special-cased here — both
+     *      transfer to `newAdmin` along with everything else. The mainnet
+     *      pattern in [`MainnetMultisigSetup.md`](../../docs/ops/MainnetMultisigSetup.md)
+     *      §F.1 expects governance to move PAUSER_ROLE + KYC_ADMIN_ROLE
+     *      to a separate ops Safe AFTER this call, via timelock-gated
+     *      grants. If you want PAUSER_ROLE to stay on the source admin,
+     *      keep using the legacy explicit-flow handover instead.
+     *
+     *      Sanctions: `_assertNotSanctioned` is intentionally NOT applied
+     *      here — this is a privileged governance op, not a user-side
+     *      action. The caller is by definition the current root admin;
+     *      gating it on the sanctions oracle would be a self-imposed lock
+     *      if the oracle ever flags the wrong address.
+     *
+     * @param newAdmin Destination address (multi-sig / Safe / Timelock /
+     *                 EOA). Must be non-zero and not the caller. The caller
+     *                 holds DEFAULT_ADMIN_ROLE per `onlyRole`.
+     */
+    function transferAdmin(
+        address newAdmin
+    ) external onlyRole(LibAccessControl.DEFAULT_ADMIN_ROLE) {
+        if (newAdmin == address(0)) revert TransferAdminToZero();
+        if (newAdmin == msg.sender) revert TransferAdminToSelf();
+
+        bytes32[] memory roles = LibAccessControl.grantableRoles();
+
+        // 1. Grant every role to the new admin (DEFAULT_ADMIN first).
+        uint256 n = roles.length;
+        for (uint256 i = 0; i < n; ) {
+            LibAccessControl.grantRole(roles[i], newAdmin);
+            unchecked { ++i; }
+        }
+
+        // 2. Hand ERC-173 ownership to gate future diamondCut calls.
+        LibDiamond.setContractOwner(newAdmin);
+
+        // 3. Revoke every role from the caller, DEFAULT_ADMIN_ROLE last.
+        for (uint256 i = n; i > 0; ) {
+            unchecked { --i; }
+            LibAccessControl.revokeRole(roles[i], msg.sender);
+        }
+
+        emit AdminTransferred(msg.sender, newAdmin);
+    }
+
     // ─── Role Constants (view helpers for off-chain/UI) ──────────────────
     // Mirror the bytes32 role identifiers from LibAccessControl so the
     // frontend / indexers can query them via a stable diamond selector

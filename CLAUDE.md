@@ -554,7 +554,7 @@ Rules:
 
 ## Project level instruction
 
-- I am currently developing a project called 'Vaipakam' (a Tamil name for 'Bank') which is a 'Decentralised P2P Lending Platform'. Be my expert software developer, expert solution architect and functional specialist with subject matter expertise, so that we can complete this project together.
+- I am currently developing a project called 'Vaipakam' (a Tamil name for 'Bank') which is a 'Decentralised P2P Lending, Borrowing and NFT Rental Platform'. Be my expert software developer, expert solution architect and functional specialist with subject matter expertise, so that we can complete this project together.
   Note:
 - Let us follow the coding standards, style conventions and develop code by following best practices approach and with proper nat comments
 

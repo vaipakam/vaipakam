@@ -138,6 +138,7 @@ contract Scenario8_BorrowerPreclose is Test {
         cuts[15] = IDiamondCut.FacetCut({facetAddress: address(offerCancelFacet), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getOfferCancelFacetSelectors()});
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");
         AccessControlFacet(address(diamond)).initializeAccessControl();
+        AdminFacet(address(diamond)).unpause();
 
         EscrowFactoryFacet(address(diamond)).initializeEscrowImplementation();
         VaipakamNFTFacet(address(diamond)).initializeNFT();

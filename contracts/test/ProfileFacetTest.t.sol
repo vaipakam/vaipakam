@@ -61,6 +61,7 @@ contract ProfileFacetTest is Test {
         });
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");
         AccessControlFacet(address(diamond)).initializeAccessControl();
+        AdminFacet(address(diamond)).unpause();
 
         // README §16 Phase 1 launches with KYC checks in pass-through mode
         // (flag defaults to false). ProfileFacetTest asserts the *retained*

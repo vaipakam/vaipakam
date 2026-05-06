@@ -146,6 +146,7 @@ contract AddCollateralFacetTest is Test {
 
         // Initialize access control roles (must be first — all admin calls require roles)
         AccessControlFacet(address(diamond)).initializeAccessControl();
+        AdminFacet(address(diamond)).unpause();
 
         // Init admin state
         EscrowFactoryFacet(address(diamond)).initializeEscrowImplementation();

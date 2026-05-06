@@ -311,6 +311,7 @@ contract RiskFacetTest is Test {
 
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");
         AccessControlFacet(address(diamond)).initializeAccessControl();
+        AdminFacet(address(diamond)).unpause();
 
         // Init escrow factory with impl
         EscrowFactoryFacet(address(diamond)).initializeEscrowImplementation();

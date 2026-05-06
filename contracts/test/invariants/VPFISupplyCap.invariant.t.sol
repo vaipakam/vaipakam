@@ -82,6 +82,7 @@ contract VPFISupplyCapInvariant is Test {
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");
 
         AccessControlFacet(address(diamond)).initializeAccessControl();
+        AdminFacet(address(diamond)).unpause();
         AdminFacet(address(diamond)).setTreasury(address(diamond));
 
         // ── VPFI token proxy ────────────────────────────────────────────

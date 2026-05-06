@@ -63,6 +63,7 @@ contract GovernanceHandoverTest is Test {
         // ORACLE_ADMIN + RISK_ADMIN + KYC_ADMIN + ESCROW_ADMIN all land
         // on the deployer initially (matching the real deploy flow).
         AccessControlFacet(address(diamond)).initializeAccessControl();
+        AdminFacet(address(diamond)).unpause();
 
         // Ownable2Step stand-ins for the LZ OApps + VPFIToken. Real
         // OApps would inherit LZGuardianPausable via OAppUpgradeable;

@@ -520,7 +520,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](13);
+        selectors = new bytes4[](14);
         selectors[0] = AccessControlFacet.initializeAccessControl.selector;
         selectors[1] = AccessControlFacet.grantRole.selector;
         selectors[2] = AccessControlFacet.revokeRole.selector;
@@ -534,6 +534,7 @@ contract HelperTest {
         selectors[10] = AccessControlFacet.ORACLE_ADMIN_ROLE.selector;
         selectors[11] = AccessControlFacet.RISK_ADMIN_ROLE.selector;
         selectors[12] = AccessControlFacet.emergencyRevokeRole.selector;
+        selectors[13] = AccessControlFacet.transferAdmin.selector;
         return selectors;
     }
 

@@ -38,6 +38,9 @@ contract AccessControlFacetTest is Test {
         });
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");
         AccessControlFacet(address(diamond)).initializeAccessControl();
+        // Diamond born paused (LibPausable). Clear via direct
+        // storage write since this fixture doesn't cut AdminFacet.
+        vm.store(address(diamond), bytes32(uint256(0x2160e84a745d8897ad2778886d40d3563c8bc30c059c5f2173e21e9d47057400)), bytes32(0));
     }
 
     // ─── initializeAccessControl ─────────────────────────────────────────
@@ -55,6 +58,9 @@ contract AccessControlFacetTest is Test {
         vm.prank(user1);
         vm.expectRevert("LibDiamond: Must be contract owner");
         AccessControlFacet(address(diamond)).initializeAccessControl();
+        // Diamond born paused (LibPausable). Clear via direct
+        // storage write since this fixture doesn't cut AdminFacet.
+        vm.store(address(diamond), bytes32(uint256(0x2160e84a745d8897ad2778886d40d3563c8bc30c059c5f2173e21e9d47057400)), bytes32(0));
     }
 
     // ─── grantRole ───────────────────────────────────────────────────────

@@ -181,6 +181,7 @@ contract WorkflowComplianceAndRejection is Test {
         cuts[17] = IDiamondCut.FacetCut({facetAddress: address(offerCancelFacet), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getOfferCancelFacetSelectors()});
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");
         AccessControlFacet(address(diamond)).initializeAccessControl();
+        AdminFacet(address(diamond)).unpause();
 
         // Initialize diamond services
         EscrowFactoryFacet(address(diamond)).initializeEscrowImplementation();

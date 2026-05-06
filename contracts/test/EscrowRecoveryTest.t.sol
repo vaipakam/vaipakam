@@ -97,6 +97,7 @@ contract EscrowRecoveryTest is Test {
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");
 
         AccessControlFacet(address(diamond)).initializeAccessControl();
+        AdminFacet(address(diamond)).unpause();
         EscrowFactoryFacet(address(diamond)).initializeEscrowImplementation();
 
         // Wire the sanctions oracle. Recovery requires a configured

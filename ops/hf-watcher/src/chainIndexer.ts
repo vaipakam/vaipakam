@@ -58,6 +58,15 @@ const EVENT_ABI = parseAbi([
   'event OfferCreated(uint256 indexed offerId, address indexed creator, uint8 offerType)',
   'event OfferAccepted(uint256 indexed offerId, address indexed acceptor, uint256 loanId)',
   'event OfferCanceled(uint256 indexed offerId, address indexed creator)',
+  // Range-Orders Phase 1 — partial fills + terminal close.
+  // OfferMatched fires once per partial / full match; payload carries
+  // the post-match `remaining` so the watcher can compute the new
+  // amount_filled = amountMax - lenderRemainingPostMatch in a single
+  // event-driven UPDATE, no RPC round-trip.
+  'event OfferMatched(uint256 indexed lenderOfferId, uint256 indexed borrowerOfferId, uint256 indexed loanId, address matcher, uint256 matchAmount, uint256 matchRateBps, uint256 lenderRemainingPostMatch, uint256 lifMatcherFee)',
+  // OfferClosed fires once per offer reaching a terminal state.
+  // `reason` is the OfferCloseReason enum: 0=FullyFilled 1=Dust 2=Cancelled.
+  'event OfferClosed(uint256 indexed offerId, uint8 reason)',
   // Phase B — loan lifecycle
   'event LoanInitiated(uint256 indexed loanId, uint256 indexed offerId, address indexed lender, address borrower, uint256 principal, uint256 collateralAmount)',
   'event LoanRepaid(uint256 indexed loanId, address indexed repayer, uint256 interestPaid, uint256 lateFeePaid)',
@@ -137,16 +146,56 @@ interface ChainIndexerResult {
  */
 export async function runChainIndexer(env: Env): Promise<ChainIndexerResult[]> {
   const chains = getChainConfigs(env);
+  if (chains.length === 0) return [];
+
+  // Round-robin: process exactly ONE chain per cron invocation. Free-tier
+  // Workers cap at 50 subrequests per invocation; backfill on a single
+  // chain can spend ~38 (events + inline-fetch + token-id refresh).
+  // Processing all chains serially in one tick blew past 50 and dropped
+  // events for chains 2 and 3. Pointer-stepping spreads the budget
+  // across N invocations; combined with a 1-min cron the per-chain
+  // refresh cadence is `len(chains) * 1min` ≈ 3 min today.
+  //
+  // Pointer is stored in `indexer_cursor` under
+  // `(chain_id=0, kind='roundrobin')` — `chain_id=0` is a reserved
+  // "meta" sentinel that doesn't collide with any real chain (EIP-155
+  // chain IDs are >= 1). `last_block` is repurposed as the pointer
+  // value; `updated_at` is its tick timestamp for diagnostics.
+  const ROUND_ROBIN_KIND = 'roundrobin';
+  const META_CHAIN_ID = 0;
+  const pointerRow = await env.DB.prepare(
+    `SELECT last_block FROM indexer_cursor WHERE chain_id = ? AND kind = ?`,
+  )
+    .bind(META_CHAIN_ID, ROUND_ROBIN_KIND)
+    .first<{ last_block: number }>();
+  const pointer = pointerRow?.last_block ?? 0;
+  const idx = pointer % chains.length;
+  const chain = chains[idx];
+
   const results: ChainIndexerResult[] = [];
-  for (const chain of chains) {
-    try {
-      const r = await runChainIndexerForChain(env, chain);
-      results.push(r);
-    } catch (err) {
-      console.error(`[chainIndexer] chain ${chain.id} failed`, err);
-      results.push({ ...emptyResult('chain-error'), chainId: chain.id });
-    }
+  try {
+    const r = await runChainIndexerForChain(env, chain);
+    results.push(r);
+  } catch (err) {
+    console.error(`[chainIndexer] chain ${chain.id} failed`, err);
+    results.push({ ...emptyResult('chain-error'), chainId: chain.id });
   }
+
+  // Advance pointer regardless of pass success — sticking on a failing
+  // chain would starve the others. The chain's cursor stays where it
+  // was (transactional with the per-chain pass), so the next round-trip
+  // retries from the same point.
+  const now = Math.floor(Date.now() / 1000);
+  await env.DB.prepare(
+    `INSERT INTO indexer_cursor (chain_id, kind, last_block, updated_at)
+     VALUES (?, ?, ?, ?)
+     ON CONFLICT(chain_id, kind) DO UPDATE SET
+       last_block = excluded.last_block,
+       updated_at = excluded.updated_at`,
+  )
+    .bind(META_CHAIN_ID, ROUND_ROBIN_KIND, pointer + 1, now)
+    .run();
+
   return results;
 }
 
@@ -359,6 +408,15 @@ async function processOfferLogs(
   const created: { offerId: bigint; creator: Address; offerType: number; blockNumber: bigint }[] = [];
   const accepted: { offerId: bigint; loanId: bigint }[] = [];
   const cancelled: { offerId: bigint }[] = [];
+  // Range-Orders Phase 1 — partial-fill ratchet + terminal close.
+  // Both replace the prior cron-driven `OR status = 'active'` refresh
+  // sweep with single-field event-driven UPDATEs.
+  const matched: {
+    lenderOfferId: bigint;
+    matchAmount: bigint;
+    lenderRemainingPostMatch: bigint;
+  }[] = [];
+  const closed: { offerId: bigint; reason: number }[] = [];
   for (const log of logs) {
     const a = log.args;
     if (log.eventName === 'OfferCreated') {
@@ -379,6 +437,17 @@ async function processOfferLogs(
       });
     } else if (log.eventName === 'OfferCanceled') {
       cancelled.push({ offerId: a.offerId as bigint });
+    } else if (log.eventName === 'OfferMatched') {
+      matched.push({
+        lenderOfferId: a.lenderOfferId as bigint,
+        matchAmount: a.matchAmount as bigint,
+        lenderRemainingPostMatch: a.lenderRemainingPostMatch as bigint,
+      });
+    } else if (log.eventName === 'OfferClosed') {
+      closed.push({
+        offerId: a.offerId as bigint,
+        reason: Number(a.reason),
+      });
     }
   }
 
@@ -452,9 +521,10 @@ async function processOfferLogs(
            quantity, collateral_quantity, position_token_id,
            prepay_asset,
            use_full_term_interest, creator_fallback_consent, allows_partial_repay,
+           is_stub,
            first_seen_block, first_seen_at, updated_at)
          VALUES
-          (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)`,
       )
         .bind(
           chainId,
@@ -493,18 +563,22 @@ async function processOfferLogs(
       continue;
     }
 
-    // Fallback: RPC failed — record the offer with the create-time
-    // placeholder. `refreshStaleOfferDetails` (selects `lending_asset
-    // = '0x'`) heals the row on a later tick.
+    // Fallback: RPC failed during the inline fetch. Record the offer
+    // as a stub (`is_stub = 1`) so `refreshStaleOfferDetails` heals
+    // it on a later tick. The targeted predicate selects on this
+    // boolean, not on `lending_asset` content — once
+    // `refreshOfferDetails` UPDATEs canonical data + flips `is_stub`
+    // to 0, the row drops out of the refresh queue forever.
     const result = await env.DB.prepare(
       `INSERT OR IGNORE INTO offers
         (chain_id, offer_id, status, creator, offer_type, lending_asset,
          collateral_asset, asset_type, collateral_asset_type,
          principal_liquidity, collateral_liquidity,
          amount, interest_rate_bps, collateral_amount, duration_days,
+         is_stub,
          first_seen_block, first_seen_at, updated_at)
        VALUES
-        (?, ?, 'active', ?, ?, '0x', '0x', 0, 0, 1, 1, '0', 0, '0', 0, ?, ?, ?)`,
+        (?, ?, 'active', ?, ?, '0x', '0x', 0, 0, 1, 1, '0', 0, '0', 0, 1, ?, ?, ?)`,
     )
       .bind(
         chainId,
@@ -539,6 +613,67 @@ async function processOfferLogs(
     if ((r.meta?.changes ?? 0) > 0) statusUpdates++;
   }
 
+  // Range-Orders Phase 1 — partial-fill ratchet. Each `OfferMatched`
+  // event carries the lender-side `lenderRemainingPostMatch` AFTER
+  // the match, so the new on-chain `amountFilled = amountMax -
+  // lenderRemainingPostMatch`. We can update directly without an RPC
+  // round-trip — replaces the prior "select all status='active' and
+  // re-pull" cron-driven refresh with cheaper event-driven targeted
+  // updates that scale at zero subrequest cost regardless of active
+  // offer count.
+  //
+  // Note: borrower-side partial fills are out of Phase 1 scope (the
+  // borrowerOfferId is single-fill). The event still fires for them
+  // but `lenderRemainingPostMatch` semantics only apply to the
+  // lender-side row, so we filter on `lenderOfferId` only.
+  for (const m of matched) {
+    const r = await env.DB.prepare(
+      `UPDATE offers
+       SET amount_filled = CAST(amount_max AS INTEGER) - ?,
+           updated_at = ?
+       WHERE chain_id = ? AND offer_id = ? AND amount_max != '0'`,
+    )
+      .bind(
+        m.lenderRemainingPostMatch.toString(),
+        now,
+        chainId,
+        Number(m.lenderOfferId),
+      )
+      .run();
+    if ((r.meta?.changes ?? 0) > 0) statusUpdates++;
+  }
+
+  // Range-Orders Phase 1 — terminal close. Maps the OfferCloseReason
+  // enum to the indexer's status string. Mainline contract enum:
+  //   0 = FullyFilled  → status 'fullyFilled'
+  //   1 = Dust         → status 'fullyFilled' (dust remainder is
+  //                      semantically "no more lending available";
+  //                      indexers can filter via amount_filled vs
+  //                      amount_max if they want the distinction)
+  //   2 = Cancelled    → status 'cancelled' (also handled by the
+  //                      OfferCanceled UPDATE above; idempotent)
+  for (const cl of closed) {
+    let status: string;
+    if (cl.reason === 0 || cl.reason === 1) {
+      status = 'fullyFilled';
+    } else if (cl.reason === 2) {
+      status = 'cancelled';
+    } else {
+      // Future-proof: unknown reason codes don't break the watcher.
+      console.warn(
+        `[chainIndexer] OfferClosed(${Number(cl.offerId)}) unknown reason ${cl.reason}`,
+      );
+      continue;
+    }
+    const r = await env.DB.prepare(
+      `UPDATE offers SET status = ?, updated_at = ?
+       WHERE chain_id = ? AND offer_id = ?`,
+    )
+      .bind(status, now, chainId, Number(cl.offerId))
+      .run();
+    if ((r.meta?.changes ?? 0) > 0) statusUpdates++;
+  }
+
   return { newOffers, statusUpdates };
 }
 
@@ -553,9 +688,16 @@ async function refreshStaleOfferDetails(
   chainId: number,
   env: Env,
 ): Promise<number> {
+  // Targeted refresh: only rows actually flagged as stub. Every row
+  // INSERTed via the inline-success path lands with `is_stub = 0`, and
+  // `refreshOfferDetails` flips the flag back to 0 once it writes
+  // canonical data. Active-offer churn is handled event-driven via the
+  // `OfferMatched` / `OfferClosed` handlers in `processOfferLogs`, so
+  // no `OR status = 'active'` clause is needed here. Cheap on free
+  // tier — `idx_offers_chain_is_stub` keeps the lookup index-only.
   const stale = await env.DB.prepare(
     `SELECT offer_id FROM offers
-     WHERE chain_id = ? AND (lending_asset = '0x' OR status = 'active')
+     WHERE chain_id = ? AND is_stub = 1
      ORDER BY updated_at ASC
      LIMIT ?`,
   )
@@ -636,6 +778,7 @@ async function refreshOfferDetails(
        collateral_amount = ?, duration_days = ?, position_token_id = ?,
        prepay_asset = ?, use_full_term_interest = ?,
        creator_fallback_consent = ?, allows_partial_repay = ?,
+       is_stub = 0,
        updated_at = ?
      WHERE chain_id = ? AND offer_id = ?`,
   )
@@ -680,14 +823,17 @@ const LOAN_TOKEN_ID_BATCH = 50;
 
 /**
  * Pull `getLoanDetails(loanId).{lenderTokenId, borrowerTokenId}` for
- * any loan rows where the columns are still '0'. Bootstraps the
+ * any loan row currently flagged `is_stub = 1`. Bootstraps the
  * one-time mapping (loanId → lender NFT, borrower NFT) so the
  * by-lender / by-borrower / claimables endpoints can multicall
  * `ownerOf` against current chain state.
  *
- * The field is immutable for the loan's lifetime — once written, the
- * next tick's `WHERE lender_token_id = '0'` predicate filters this
- * loan out. So this is a per-loan one-time cost.
+ * `is_stub` mirrors the offers-side flag (migration 0008) and is
+ * authoritative — `lender_token_id != '0'` could in principle be
+ * legit (highly unlikely but possible) so the explicit boolean is
+ * a less ambiguous staleness signal. Once `getLoanDetails` returns
+ * canonical values and the UPDATE writes them, `is_stub` flips to 0
+ * and the row drops out of this predicate forever.
  */
 async function refreshStaleLoanTokenIds(
   client: PublicClient,
@@ -697,7 +843,7 @@ async function refreshStaleLoanTokenIds(
 ): Promise<void> {
   const stale = await env.DB.prepare(
     `SELECT loan_id FROM loans
-     WHERE chain_id = ? AND lender_token_id = '0'
+     WHERE chain_id = ? AND is_stub = 1
      ORDER BY loan_id DESC LIMIT ?`,
   )
     .bind(chainId, LOAN_TOKEN_ID_BATCH)
@@ -728,6 +874,7 @@ async function refreshStaleLoanTokenIds(
                           allows_partial_repay = ?,
                           periodic_interest_cadence = ?,
                           last_period_settled_at = ?,
+                          is_stub = 0,
                           updated_at = ?
          WHERE chain_id = ? AND loan_id = ?`,
       )
@@ -846,14 +993,101 @@ async function processLoanLogs(
       }
 
       const blockAt = blockTimestamps.get(log.blockNumber) ?? now;
+
+      // Inline-fetch `getLoanDetails` to populate the loan-specific
+      // fields (lender_token_id, borrower_token_id, interest_rate_bps,
+      // start_time, allows_partial_repay, periodic_interest_cadence,
+      // last_period_settled_at). Saves the post-INSERT bootstrap pass
+      // by `refreshStaleLoanTokenIds` (one fewer D1 write per loan)
+      // and closes the cold-start window where downstream readers see
+      // `lender_token_id = '0'`.
+      //
+      // Fail-soft: RPC failure → INSERT with default '0' token ids /
+      // 0 cadence and let `refreshStaleLoanTokenIds` heal on a later
+      // tick. Same shape as the OfferCreated inline-fetch pattern.
+      type LoanDetail = {
+        lenderTokenId: bigint;
+        borrowerTokenId: bigint;
+        interestRateBps: bigint;
+        startTime: bigint;
+        allowsPartialRepay: boolean;
+        periodicInterestCadence: number;
+        lastPeriodicInterestSettledAt: bigint;
+      };
+      let loanDetail: LoanDetail | null = null;
+      try {
+        loanDetail = (await client.readContract({
+          address: diamond,
+          abi: DIAMOND_LOAN_DETAILS_ABI,
+          functionName: 'getLoanDetails',
+          args: [BigInt(loanId)],
+        })) as LoanDetail;
+      } catch (err) {
+        console.error(
+          `[chainIndexer] inline getLoanDetails(${loanId}) failed; falling back to bootstrap path`,
+          err,
+        );
+      }
+
+      if (loanDetail) {
+        const result = await env.DB.prepare(
+          `INSERT OR IGNORE INTO loans
+            (chain_id, loan_id, offer_id, status, lender, borrower,
+             principal, collateral_amount,
+             asset_type, collateral_asset_type, lending_asset, collateral_asset,
+             duration_days, token_id, collateral_token_id,
+             lender_token_id, borrower_token_id,
+             interest_rate_bps, start_time, allows_partial_repay,
+             periodic_interest_cadence, last_period_settled_at,
+             is_stub,
+             start_block, start_at, updated_at)
+           VALUES (?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)`,
+        )
+          .bind(
+            chainId,
+            loanId,
+            offerId,
+            (a.lender as string).toLowerCase(),
+            (a.borrower as string).toLowerCase(),
+            (a.principal as bigint).toString(),
+            (a.collateralAmount as bigint).toString(),
+            offerRow.asset_type,
+            offerRow.collateral_asset_type,
+            offerRow.lending_asset,
+            offerRow.collateral_asset,
+            offerRow.duration_days,
+            offerRow.token_id,
+            offerRow.collateral_token_id,
+            loanDetail.lenderTokenId.toString(),
+            loanDetail.borrowerTokenId.toString(),
+            Number(loanDetail.interestRateBps),
+            Number(loanDetail.startTime),
+            loanDetail.allowsPartialRepay ? 1 : 0,
+            Number(loanDetail.periodicInterestCadence ?? 0),
+            Number(loanDetail.lastPeriodicInterestSettledAt ?? 0n),
+            Number(log.blockNumber),
+            blockAt,
+            now,
+          )
+          .run();
+        if ((result.meta?.changes ?? 0) > 0) newLoans++;
+        continue;
+      }
+
+      // Fallback: getLoanDetails RPC failed. Stub-INSERT with `is_stub
+      // = 1` and default '0' token IDs. `refreshStaleLoanTokenIds`
+      // heals via the targeted `is_stub = 1` predicate on the next
+      // cron tick — flips `is_stub` back to 0 once canonical token
+      // IDs land.
       const result = await env.DB.prepare(
         `INSERT OR IGNORE INTO loans
           (chain_id, loan_id, offer_id, status, lender, borrower,
            principal, collateral_amount,
            asset_type, collateral_asset_type, lending_asset, collateral_asset,
            duration_days, token_id, collateral_token_id,
+           is_stub,
            start_block, start_at, updated_at)
-         VALUES (?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         VALUES (?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)`,
       )
         .bind(
           chainId,

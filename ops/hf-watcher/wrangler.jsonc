@@ -7,12 +7,20 @@
   "observability": {
     "enabled": true,
   },
-  // Cron triggers — fire every 5 minutes. HF moves slowly enough that
-  // 5-min polling catches every band crossing well before it becomes
-  // actionable. Users who need sub-minute alerts should rely on the
-  // Push Protocol event-driven path below rather than this cron.
+  // Cron triggers — fire every minute. The chainIndexer round-robins
+  // across active chains (one chain per cron tick), so the per-chain
+  // refresh cadence is `len(chains) * 1min` ≈ 3 min today. The 1-min
+  // tick keeps backfill catch-up fast: at the prior 5-min cadence,
+  // a fresh purge took ~20 min to repopulate; at 1-min round-robin,
+  // ~3-5 min. The free-tier Workers 50-subrequest cap binds per
+  // invocation, so giving each chain its own dedicated invocation
+  // keeps the budget far below the cap (~12 subs / chain / tick).
+  // HF moves slowly enough that 3-min polling still catches every
+  // band crossing well before it becomes actionable; users who need
+  // sub-minute alerts rely on the Push Protocol event-driven path
+  // below rather than this cron.
   "triggers": {
-    "crons": ["*/5 * * * *"],
+    "crons": ["* * * * *"],
   },
   // D1 — user thresholds + last-notified state. Single DB across all
   // watched chains; per-chain rows in the tables.

@@ -76,6 +76,7 @@ contract InvariantBase is Test {
         _cutAllFacets();
 
         AccessControlFacet(address(diamond)).initializeAccessControl();
+        AdminFacet(address(diamond)).unpause();
         EscrowFactoryFacet(address(diamond)).initializeEscrowImplementation();
         VaipakamNFTFacet(address(diamond)).initializeNFT();
         AdminFacet(address(diamond)).setTreasury(address(diamond));

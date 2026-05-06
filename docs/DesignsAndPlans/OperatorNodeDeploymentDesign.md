@@ -247,3 +247,7 @@ Recommended phase order:
 ## Deployment Plan
 
 - Planing to deploy all these in Oracle Cloud (ARM) `Ampere A1 (ARMv8)` free tier with `Provision the instance with 1 OCPU + 6 GB RAM` or more as required, so degin accordingly
+
+## Including Web hook
+
+can we include web hook in this, os that it server an alternative (or a complimentary, indexer will be fallback for webhook) for indexer, what do you say, is there a better approach?
