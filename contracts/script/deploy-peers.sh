@@ -40,6 +40,23 @@
 #   --only-chains    — restrict to a comma-separated subset (handy when
 #                       re-running after a partial-fail; safe to repeat
 #                       since `setPeer` is idempotent)
+#   --include-stale  — include chains whose deployment_source.json is
+#                       older than the most-recent chain's. Off by
+#                       default — when running peer-wiring after a
+#                       fresh rehearsal, you want to wire ONLY the
+#                       chains you just deployed. The auto-filter
+#                       skips legacy `deployments/<slug>/` directories
+#                       from prior rehearsals (e.g. `bnb-testnet`,
+#                       `sepolia`) without forcing the operator to
+#                       enumerate them via --only-chains.
+#
+# Authority note (load-bearing):
+#   `setPeer` is owner-gated on each OApp. The DeployVPFI* /
+#   DeployRewardOAppCreate2 scripts transfer ownership of the OApps
+#   to ADMIN_ADDRESS at the end. So this script overrides
+#   PRIVATE_KEY → ADMIN_PRIVATE_KEY for the duration of the run.
+#   Without that override, every setPeer reverts with
+#   `OwnableUnauthorizedAccount(<deployer>)`.
 
 set -euo pipefail
 
@@ -52,11 +69,13 @@ cd "$CONTRACTS_DIR"
 
 DRY_RUN=0
 ONLY_CHAINS=""
+INCLUDE_STALE=0
 
 while [ $# -gt 0 ]; do
   case "$1" in
-    --dry-run)     DRY_RUN=1 ;;
-    --only-chains) shift; ONLY_CHAINS="$1" ;;
+    --dry-run)       DRY_RUN=1 ;;
+    --only-chains)   shift; ONLY_CHAINS="$1" ;;
+    --include-stale) INCLUDE_STALE=1 ;;
     *)
       echo "Unknown flag: $1" >&2
       exit 1
@@ -78,6 +97,20 @@ if [ -z "${PRIVATE_KEY:-}" ]; then
   echo "Error: PRIVATE_KEY required in .env." >&2
   exit 1
 fi
+
+# OApp ownership transfers to ADMIN_ADDRESS at the end of each
+# DeployVPFI*/DeployRewardOAppCreate2 script. So `setPeer` calls
+# need to be signed by the admin key, not the deployer key. The
+# WireVPFIPeers.s.sol script reads `PRIVATE_KEY` from env, so we
+# override it here for the duration of this script with the admin
+# key. The original deployer key is restored at the end.
+if [ -z "${ADMIN_PRIVATE_KEY:-}" ]; then
+  echo "Error: ADMIN_PRIVATE_KEY required in .env (admin owns the OApps post-deploy)." >&2
+  exit 1
+fi
+ORIGINAL_PRIVATE_KEY="$PRIVATE_KEY"
+export PRIVATE_KEY="$ADMIN_PRIVATE_KEY"
+trap 'export PRIVATE_KEY="$ORIGINAL_PRIVATE_KEY"' EXIT
 
 # ── Chain registry (slug → RPC env var) ───────────────────────────────
 # Keep in sync with deploy-chain.sh + deploy-mainnet.sh.
@@ -125,6 +158,51 @@ for dir in "$CONTRACTS_DIR/deployments"/*/; do
 
   CHAINS+=("$slug")
 done
+
+# Stale-chain auto-skip: when there are deployment_source.json files
+# from multiple rehearsals on disk (e.g. legacy `bnb-testnet/` +
+# `sepolia/` from prior testnet runs alongside today's
+# `base-sepolia/`, `arb-sepolia/`, `op-sepolia/`), default to wiring
+# ONLY the chains whose deployment_source.json is within 1 hour of
+# the freshest one. This keeps `bash deploy-peers.sh` (no flags)
+# safe-by-default after a fresh rehearsal — the operator doesn't
+# need to enumerate today's chains via --only-chains. Pass
+# --include-stale to bypass the filter (e.g. when re-wiring an
+# established multi-chain topology that wasn't all redeployed today).
+if [ "$INCLUDE_STALE" = "0" ] && [ ${#INCLUDED_FILTER[@]} -eq 0 ]; then
+  declare -A SOURCE_MTIME
+  MAX_MTIME=0
+  for slug in "${CHAINS[@]}"; do
+    src="$CONTRACTS_DIR/deployments/$slug/deployment_source.json"
+    if [ -f "$src" ]; then
+      mt=$(stat -c %Y "$src" 2>/dev/null || echo 0)
+    else
+      mt=0
+    fi
+    SOURCE_MTIME[$slug]=$mt
+    if [ "$mt" -gt "$MAX_MTIME" ]; then MAX_MTIME=$mt; fi
+  done
+  if [ "$MAX_MTIME" -gt 0 ]; then
+    FRESH_THRESHOLD=$((MAX_MTIME - 3600))  # within 1 hour of the freshest
+    declare -a FRESH_CHAINS=()
+    declare -a SKIPPED_STALE=()
+    for slug in "${CHAINS[@]}"; do
+      mt=${SOURCE_MTIME[$slug]:-0}
+      if [ "$mt" -ge "$FRESH_THRESHOLD" ]; then
+        FRESH_CHAINS+=("$slug")
+      else
+        SKIPPED_STALE+=("$slug")
+      fi
+    done
+    if [ ${#SKIPPED_STALE[@]} -gt 0 ]; then
+      echo "  Skipping stale chains (deployment_source.json older than 1h" \
+           "before the freshest deploy): ${SKIPPED_STALE[*]}"
+      echo "  Pass --include-stale to wire them anyway, or --only-chains" \
+           "to override explicitly."
+    fi
+    CHAINS=("${FRESH_CHAINS[@]}")
+  fi
+fi
 
 if [ ${#CHAINS[@]} -lt 2 ]; then
   echo "Error: need at least 2 deployed chains for peer wiring; found ${#CHAINS[@]}: ${CHAINS[*]:-}" >&2

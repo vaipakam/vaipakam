@@ -172,17 +172,23 @@ case "$CHAIN_SLUG" in
     exec bash "$SCRIPT_DIR/anvil-bootstrap.sh"
     ;;
   base-sepolia)
-    CHAIN_ID=84532;     RPC_VAR="BASE_SEPOLIA_RPC_URL"; IS_CANONICAL=1; LZ_EID=40245 ;;
+    CHAIN_ID=84532;     RPC_VAR="BASE_SEPOLIA_RPC_URL"; IS_CANONICAL=1; LZ_EID=40245
+    LZ_ENDPOINT_VAR="LZ_ENDPOINT_BASE_SEPOLIA" ;;
   sepolia)
-    CHAIN_ID=11155111;  RPC_VAR="SEPOLIA_RPC_URL";       IS_CANONICAL=0; LZ_EID=40161 ;;
+    CHAIN_ID=11155111;  RPC_VAR="SEPOLIA_RPC_URL";       IS_CANONICAL=0; LZ_EID=40161
+    LZ_ENDPOINT_VAR="LZ_ENDPOINT_SEPOLIA" ;;
   arb-sepolia)
-    CHAIN_ID=421614;    RPC_VAR="ARB_SEPOLIA_RPC_URL";   IS_CANONICAL=0; LZ_EID=40231 ;;
+    CHAIN_ID=421614;    RPC_VAR="ARB_SEPOLIA_RPC_URL";   IS_CANONICAL=0; LZ_EID=40231
+    LZ_ENDPOINT_VAR="LZ_ENDPOINT_ARB_SEPOLIA" ;;
   op-sepolia)
-    CHAIN_ID=11155420;  RPC_VAR="OP_SEPOLIA_RPC_URL";    IS_CANONICAL=0; LZ_EID=40232 ;;
+    CHAIN_ID=11155420;  RPC_VAR="OP_SEPOLIA_RPC_URL";    IS_CANONICAL=0; LZ_EID=40232
+    LZ_ENDPOINT_VAR="LZ_ENDPOINT_OP_SEPOLIA" ;;
   bnb-testnet)
-    CHAIN_ID=97;        RPC_VAR="BNB_TESTNET_RPC_URL";   IS_CANONICAL=0; LZ_EID=40102 ;;
+    CHAIN_ID=97;        RPC_VAR="BNB_TESTNET_RPC_URL";   IS_CANONICAL=0; LZ_EID=40102
+    LZ_ENDPOINT_VAR="LZ_ENDPOINT_BNB_TESTNET" ;;
   polygon-amoy)
-    CHAIN_ID=80002;     RPC_VAR="POLYGON_AMOY_RPC_URL";  IS_CANONICAL=0; LZ_EID=40267 ;;
+    CHAIN_ID=80002;     RPC_VAR="POLYGON_AMOY_RPC_URL";  IS_CANONICAL=0; LZ_EID=40267
+    LZ_ENDPOINT_VAR="LZ_ENDPOINT_POLYGON_AMOY" ;;
   base|ethereum|arbitrum|optimism|polygon-zkevm|bnb|polygon)
     cat >&2 <<EOF
 Refusing to run mainnet chain '$CHAIN_SLUG' from deploy-chain.sh.
@@ -213,6 +219,18 @@ if [ -z "$RPC" ]; then
   exit 1
 fi
 
+# Per-chain LZ_ENDPOINT dispatch. The RewardOApp / VPFI deploy
+# scripts read a single `LZ_ENDPOINT` env var, but that's the
+# CURRENT-chain endpoint — it differs per chain on mainnet (Base,
+# Ethereum, Arb, OP, etc. all have distinct V2 endpoints). The
+# rehearsal-time .env carries `LZ_ENDPOINT_<SLUG>` per chain plus
+# a single `LZ_ENDPOINT` that happens to match all 3 sepolia
+# variants. Override LZ_ENDPOINT here from the per-slug var so
+# the same .env works on mainnet without manual editing.
+if [ -n "${!LZ_ENDPOINT_VAR:-}" ]; then
+  export LZ_ENDPOINT="${!LZ_ENDPOINT_VAR}"
+fi
+
 # Confirm RPC actually points at the expected chain. Catches the
 # common cut-and-paste error where SEPOLIA_RPC_URL got pasted into
 # BASE_SEPOLIA_RPC_URL slot — running a $84532-aware Diamond against
@@ -229,10 +247,17 @@ EOF
   exit 1
 fi
 
-# Required env vars for every chain.
+# Required env vars for every chain. REWARD_VERSION baked into the
+# CREATE2 salt for the RewardOApp deploy — same value across chains
+# yields deterministic addresses; missing it bails the script at
+# step [5] mid-flight (after Diamond + Timelock + VPFI lane have
+# already landed on-chain). Catching it in pre-flight saves the
+# faucet-ETH burn from a partial deploy.
 for v in PRIVATE_KEY ADMIN_PRIVATE_KEY ADMIN_ADDRESS TREASURY_ADDRESS \
          VPFI_OWNER VPFI_TREASURY VPFI_INITIAL_MINTER \
-         TIMELOCK_PROPOSER; do
+         TIMELOCK_PROPOSER REWARD_VERSION REWARD_OWNER BASE_EID \
+         VPFI_BUY_RECEIVER_EID LZ_ENDPOINT \
+         REPORT_OPTIONS_HEX BROADCAST_OPTIONS_HEX; do
   if [ -z "${!v:-}" ]; then
     echo "Error: \$$v required in .env but not set." >&2
     exit 1
@@ -388,7 +413,11 @@ if [ -z "$DIAMOND_ADDR" ]; then
   echo "      Either the script reverted silently or addresses.json wasn't written." >&2
   exit 1
 fi
-EXPECTED_FACETS=33
+# DiamondCutFacet is selector-callable but NOT enumerated by the
+# Loupe (constructor writes the selector mapping directly without
+# touching facetAddresses[]), so the visible count is exactly the
+# number of cut entries — 32 today, not 33.
+EXPECTED_FACETS=32
 FACET_COUNT_RAW=$(cast call "$DIAMOND_ADDR" 'facetAddresses()(address[])' --rpc-url "$RPC" 2>/dev/null \
   | tr ',' '\n' | grep -c '0x' || echo 0)
 if [ "$FACET_COUNT_RAW" -lt "$EXPECTED_FACETS" ]; then
@@ -469,8 +498,19 @@ elif [ "$SKIP_VPFI" = "0" ]; then
   echo "[5] DeployRewardOAppCreate2.s.sol"
   if [ "$IS_CANONICAL" = "1" ]; then
     export IS_CANONICAL_REWARD=true
+    # The RewardOApp contract enforces BASE_EID=0 on the canonical
+    # chain (it IS the base, so there's no peer eid to point at).
+    # The user's .env carries BASE_EID=40245 (the canonical eid)
+    # for mirror-chain deploys; override here when we're running
+    # on the canonical itself.
+    export BASE_EID=0
   else
     export IS_CANONICAL_REWARD=false
+    # Mirror chains: BASE_EID points at the canonical's lzEid.
+    # The .env value (40245 for Base Sepolia rehearsal) is correct
+    # for mirrors so no override needed — but make it explicit for
+    # clarity rather than rely on .env being right.
+    export BASE_EID=40245
   fi
   forge script script/DeployRewardOAppCreate2.s.sol --rpc-url "$RPC" --broadcast --slow
   snapshot_addresses "post-vpfi-and-reward"
@@ -578,8 +618,31 @@ else
     BA=$(jq -r '.vpfiBuyAdapter // empty' "$DEPLOY_DIR/addresses.json" 2>/dev/null || echo "")
     if [ -n "$BA" ]; then
       echo "  buyAdapter       = $BA"
-      echo "    perBlockLimit  = $(cast call "$BA" 'perBlockLimit()(uint256)' --rpc-url "$RPC" 2>/dev/null || echo '?')"
-      echo "    perDayLimit    = $(cast call "$BA" 'perDayLimit()(uint256)' --rpc-url "$RPC" 2>/dev/null || echo '?')"
+      # Read both caps via the `getRateLimits()` tuple-getter (added
+      # post-rehearsal — see ContractFollowupsFromRehearsal-2026-05-06.md
+      # Item 1). uint256.max in either field means the post-deploy
+      # `setRateLimits` call (step [4c]) didn't land or didn't take
+      # effect — hard-fail with a non-zero exit so the operator
+      # cannot accidentally treat a deploy as healthy when the
+      # canonical-mint rate limit is still at the unlimited default.
+      RATE_LIMITS_RAW=$(cast call "$BA" 'getRateLimits()(uint256,uint256)' --rpc-url "$RPC" 2>/dev/null || echo "")
+      if [ -z "$RATE_LIMITS_RAW" ]; then
+        echo "    rateLimits     = ? (getRateLimits call failed)"
+      else
+        # cast call returns "<perRequest>\n<daily>" for tuple returns.
+        PER_REQ=$(echo "$RATE_LIMITS_RAW" | sed -n '1p' | awk '{print $1}')
+        DAILY=$(echo "$RATE_LIMITS_RAW" | sed -n '2p' | awk '{print $1}')
+        UINT256_MAX="115792089237316195423570985008687907853269984665640564039457584007913129639935"
+        echo "    perRequestCap  = $PER_REQ"
+        echo "    dailyCap       = $DAILY"
+        if [ "$PER_REQ" = "$UINT256_MAX" ] || [ "$DAILY" = "$UINT256_MAX" ]; then
+          echo "    ✗ FAIL: a rate-limit cap is still at the unlimited default."
+          echo "             setRateLimits in step [4c] either didn't land or"
+          echo "             passed type(uint256).max. Deploy is NOT healthy."
+          exit 1
+        fi
+        echo "    ✓ both caps finite — BuyAdapter ready for canonical mint."
+      fi
     fi
   } | tee "$HEALTH_LOG"
   echo "  ✓ health log → $(basename "$HEALTH_LOG")"
@@ -646,12 +709,33 @@ elif [ "$VERIFY_CONTRACTS" = "1" ]; then
     else
       VERIFIED=0
       FAILED=0
-      # For each script that wrote a run-latest.json on this chainId,
-      # walk the transactions and verify every CREATE / CREATE2.
+      # First pass: collect a deduped (addr, name) pair list from
+      # EVERY run-latest.json under broadcast/, scoped to this chain.
+      # Without dedup, a single ERC20Mock referenced by 5 different
+      # test scripts would be verified 5 times — each `--watch` call
+      # polls the explorer 30-120s, so duplicates blow the loop into
+      # multi-hour territory. Dedup collapses N-script × M-tx down
+      # to the unique-contract set actually present on chain.
+      #
+      # Also scope to records FRESH from this deploy (mtime newer
+      # than the deployment_source.json's write time, which is one
+      # step earlier in the script and stamped fresh on every run).
+      # Old broadcast files from prior testnet runs reference long-
+      # since-redeployed mocks; verifying them is wasted work.
+      DEPLOY_SOURCE_FILE="$DEPLOY_DIR/deployment_source.json"
+      DEPLOY_SOURCE_MTIME=0
+      if [ -f "$DEPLOY_SOURCE_FILE" ]; then
+        DEPLOY_SOURCE_MTIME=$(stat -c %Y "$DEPLOY_SOURCE_FILE" 2>/dev/null || echo 0)
+      fi
+      declare -A SEEN_ADDR
+      VERIFY_QUEUE_FILE=$(mktemp)
       while IFS= read -r run_file; do
-        # contractAddress + contractName from the broadcast record.
-        # `--watch` polls the explorer until verification settles
-        # (avoids "submitted but not yet indexed" false-failures).
+        # Skip stale broadcast records — anything older than the
+        # current deployment_source.json is from a prior deploy.
+        FILE_MTIME=$(stat -c %Y "$run_file" 2>/dev/null || echo 0)
+        if [ "$DEPLOY_SOURCE_MTIME" -gt 0 ] && [ "$FILE_MTIME" -lt "$DEPLOY_SOURCE_MTIME" ]; then
+          continue
+        fi
         while IFS= read -r line; do
           ADDR=$(echo "$line" | jq -r '.contractAddress // empty')
           NAME=$(echo "$line" | jq -r '.contractName // empty')
@@ -659,17 +743,31 @@ elif [ "$VERIFY_CONTRACTS" = "1" ]; then
           [ -z "$NAME" ] && continue
           [ "$ADDR" = "null" ] && continue
           [ "$NAME" = "null" ] && continue
-          if forge verify-contract --chain-id "$CHAIN_ID" --watch \
-              "$ADDR" "$NAME" >/dev/null 2>&1; then
-            echo "  ✓ $NAME @ $ADDR"
-            VERIFIED=$((VERIFIED + 1))
-          else
-            echo "  ✗ $NAME @ $ADDR  (already-verified / rate-limit / mismatch)"
-            FAILED=$((FAILED + 1))
-          fi
+          # Dedupe by lowercased address — same address can appear
+          # under different `contractName` fields if a forge script
+          # references it through different interface types.
+          ADDR_LC=$(echo "$ADDR" | tr 'A-Z' 'a-z')
+          if [ -n "${SEEN_ADDR[$ADDR_LC]:-}" ]; then continue; fi
+          SEEN_ADDR[$ADDR_LC]=1
+          echo "$ADDR $NAME" >> "$VERIFY_QUEUE_FILE"
         done < <(jq -c '.transactions[]?' "$run_file" 2>/dev/null)
       done < <(find "$BROADCAST_DIR" -path "*/$CHAIN_ID/run-latest.json" 2>/dev/null)
-      echo "  Summary: $VERIFIED verified, $FAILED failed"
+
+      QUEUE_LEN=$(wc -l < "$VERIFY_QUEUE_FILE" || echo 0)
+      echo "  $QUEUE_LEN unique contract(s) in verify queue (post-dedup)"
+
+      while read -r ADDR NAME; do
+        if forge verify-contract --chain-id "$CHAIN_ID" --watch \
+            "$ADDR" "$NAME" >/dev/null 2>&1; then
+          echo "  ✓ $NAME @ $ADDR"
+          VERIFIED=$((VERIFIED + 1))
+        else
+          echo "  ✗ $NAME @ $ADDR  (already-verified / rate-limit / mismatch)"
+          FAILED=$((FAILED + 1))
+        fi
+      done < "$VERIFY_QUEUE_FILE"
+      rm -f "$VERIFY_QUEUE_FILE"
+      echo "  Summary: $VERIFIED verified, $FAILED failed (across $QUEUE_LEN unique contracts)"
     fi
   fi
   mark_done "verify-contracts"

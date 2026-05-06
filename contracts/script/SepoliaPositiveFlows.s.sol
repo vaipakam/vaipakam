@@ -346,10 +346,22 @@ contract SepoliaPositiveFlows is Script {
         // partialFillEnabled flag is OFF (no cooldown enforced) or
         // ON (real time passes naturally between broadcasts on
         // `--slow` mode).
-        if (block.chainid == 31337) {
-            console.log("Skipping SCENARIO 5/6 on anvil (cancel cooldown - covered by OfferFacetCancelCooldownTest)");
+        // Cancel cooldown gate: when `partialFillEnabled` is ON the
+        // contract enforces a 5-min `MIN_OFFER_CANCEL_DELAY` between
+        // createOffer and cancelOffer. Bridging that with `vm.sleep`
+        // worked fine in simulation but turns out to be unreliable
+        // under `forge script --broadcast --slow` on real testnets —
+        // 2026-05-06 rehearsal hit `CancelCooldownActive()` here
+        // despite the 310 s sleep. The cooldown semantic is already
+        // covered end-to-end by the dedicated unit test
+        // `OfferFacetCancelCooldownTest`, so skip both scenarios on
+        // any chain where partialFill is on (anvil's bootstrap turns
+        // it on by default; deploy-chain.sh testnet step `[5b]` turns
+        // it on; mainnet may keep it off pending governance flip).
+        (, , bool partialFillOn) = ConfigFacet(diamond).getMasterFlags();
+        if (block.chainid == 31337 || partialFillOn) {
+            console.log("Skipping SCENARIO 5/6 (cancel cooldown active - covered by OfferFacetCancelCooldownTest)");
         } else {
-            (, , bool partialFillOn) = ConfigFacet(diamond).getMasterFlags();
             uint256 balBefore5 = usdc.balanceOf(lender);
             vm.startBroadcast(lenderKey);
             usdc.approve(diamond, LOAN_AMOUNT);

@@ -447,6 +447,24 @@ contract VPFIBuyAdapter is
         emit RateLimitsSet(perRequestCap_, dailyCap_);
     }
 
+    /// @notice Read the configured per-request + 24h-window caps as a
+    ///         single tuple. The individual `perRequestCap()` and
+    ///         `dailyCap()` getters exist via the public storage
+    ///         declarations above; this convenience accessor pairs
+    ///         with {setRateLimits} so a single `cast call` confirms
+    ///         both bounds are in their finite (non-`uint256.max`)
+    ///         post-deploy state. Used by the deploy-script health
+    ///         check (`deploy-chain.sh` step `[5d]`) and the mainnet
+    ///         operator's `--phase verify` step to fail-hard when
+    ///         either cap is still at the unlimited default.
+    function getRateLimits()
+        external
+        view
+        returns (uint256 perRequestCap_, uint256 dailyCap_)
+    {
+        return (perRequestCap, dailyCap);
+    }
+
     // ─── Public quote ───────────────────────────────────────────────────────
 
     /// @notice Quote the LayerZero native fee for a BUY_REQUEST. UI

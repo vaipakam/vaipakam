@@ -38,3 +38,22 @@ docs/internal/RoughNotes.md
 
 
 graphify-out/
+
+# Rehearsal artifacts under contracts/deployments/<slug>/.
+#
+# `addresses.json` and `deployment_source.json` STAY committed — they
+# are the canonical "what's live + which commit produced it" record
+# every consumer reads from. The rest is transient per-rehearsal
+# scratch that accumulates fast and is regenerated on every deploy:
+#
+#   - .markers/           per-step sentinel files for --resume
+#   - .history/           per-step addresses.json snapshots + health logs
+#   - addresses.prior-rehearsal.<unix-ts>.json
+#                         pre-deploy backups written by --fresh
+#
+# A multi-rehearsal session writes hundreds of these files; committing
+# them would clutter the repo without forensic value (deployment_source.json
+# already pins commit→bytecode at deploy time).
+contracts/deployments/*/.markers/
+contracts/deployments/*/.history/
+contracts/deployments/*/addresses.prior-rehearsal.*.json

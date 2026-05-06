@@ -292,6 +292,32 @@ EOF
     exit 1
   fi
 
+  # Refuse a dirty working tree on mainnet. The deployment_source.json
+  # is the load-bearing "which monorepo commit produced this bytecode"
+  # record; with a dirty tree the recorded commit is a lie (the actual
+  # bytecode includes uncommitted changes that no commit captures).
+  # For testnet rehearsal the (dirty) flag is acceptable because the
+  # whole rehearsal can be re-run; for mainnet it's a hard NO since
+  # post-incident forensics depend on commit→bytecode equivalence.
+  if ! git -C "$REPO_ROOT" diff --quiet 2>/dev/null || \
+     ! git -C "$REPO_ROOT" diff --cached --quiet 2>/dev/null; then
+    cat >&2 <<EOF
+Refusing --phase contracts: working tree is dirty (uncommitted changes).
+Mainnet deploys must be reproducible from a commit hash; a dirty deploy
+makes post-incident forensics ambiguous. Either commit / stash the
+changes, or run from a clean checkout.
+
+  git status --short
+
+  # then either commit:
+  git add -A && git commit -m "..."
+
+  # or stash:
+  git stash
+EOF
+    exit 1
+  fi
+
   echo "═══════════════════════════════════════════════════════════════"
   echo "deploy-mainnet.sh — contracts  ($CHAIN_SLUG)"
   echo "═══════════════════════════════════════════════════════════════"
@@ -531,7 +557,9 @@ phase_verify() {
   # second half silently drops due to a gas spike or RPC hiccup. Catch
   # it here on mainnet too, before any role-rotation ceremony locks
   # the deploy in.
-  EXPECTED_FACETS=33
+  # 32 cut facets — DiamondCutFacet is callable but not loupe-
+  # enumerated (see DeployDiamond.s.sol post-cut comment).
+  EXPECTED_FACETS=32
   FACET_COUNT_RAW=$(cast call "$DIAMOND" 'facetAddresses()(address[])' --rpc-url "$RPC" 2>/dev/null \
     | tr ',' '\n' | grep -c '0x' || echo 0)
   if [ "$FACET_COUNT_RAW" -lt "$EXPECTED_FACETS" ]; then
@@ -554,15 +582,30 @@ phase_verify() {
   if [ -n "$BUY_ADAPTER" ]; then
     echo
     echo "[4] Buy-VPFI rate limits"
-    UINT256_MAX="115792089237316195423570985008687907853269984665640564039457584007913129639935"
-    PER_BLOCK=$(cast call "$BUY_ADAPTER" 'perBlockLimit()(uint256)' --rpc-url "$RPC" 2>/dev/null || echo "?")
-    PER_DAY=$(cast call "$BUY_ADAPTER" 'perDayLimit()(uint256)' --rpc-url "$RPC" 2>/dev/null || echo "?")
-    if [ "$PER_BLOCK" = "$UINT256_MAX" ] || [ "$PER_DAY" = "$UINT256_MAX" ]; then
-      echo "  FAIL: BuyAdapter rate limits at uint256.max (effectively disabled)." >&2
-      echo "        Run setRateLimits(50_000e18, 500_000e18) before declaring deploy ready." >&2
+    # Both caps are read via VPFIBuyAdapter.getRateLimits() (added
+    # post-rehearsal — see ContractFollowupsFromRehearsal-2026-05-06.md
+    # Item 1). uint256.max in either slot means the canonical-mint
+    # cap is still at the unlimited default — that's a mainnet-deploy
+    # gate per CLAUDE.md "Cross-Chain Security Policy", so fail-hard
+    # with a non-zero exit and refuse to mark verify done.
+    RATE_LIMITS_RAW=$(cast call "$BUY_ADAPTER" 'getRateLimits()(uint256,uint256)' --rpc-url "$RPC" 2>/dev/null || echo "")
+    if [ -z "$RATE_LIMITS_RAW" ]; then
+      echo "  ✗ getRateLimits() call failed — adapter may not be deployed at $BUY_ADAPTER."
       exit 1
     fi
-    echo "  ✓ perBlock=$PER_BLOCK  perDay=$PER_DAY"
+    PER_REQ=$(echo "$RATE_LIMITS_RAW" | sed -n '1p' | awk '{print $1}')
+    DAILY=$(echo "$RATE_LIMITS_RAW" | sed -n '2p' | awk '{print $1}')
+    UINT256_MAX="115792089237316195423570985008687907853269984665640564039457584007913129639935"
+    echo "  perRequestCap = $PER_REQ"
+    echo "  dailyCap      = $DAILY"
+    if [ "$PER_REQ" = "$UINT256_MAX" ] || [ "$DAILY" = "$UINT256_MAX" ]; then
+      echo "  ✗ FAIL: at least one rate-limit cap is still at type(uint256).max."
+      echo "          A canonical-mint mainnet deploy with unlimited spend is a"
+      echo "          mainnet-deploy gate violation. Send setRateLimits(...) and"
+      echo "          re-run --phase verify before declaring deploy ready."
+      exit 1
+    fi
+    echo "  ✓ both caps finite — BuyAdapter ready for canonical mint."
   fi
 
   echo

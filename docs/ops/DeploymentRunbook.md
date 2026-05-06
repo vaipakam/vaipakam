@@ -11,26 +11,183 @@ Audience: release engineer + signing multisig.
 | Target | Script | Notes |
 |---|---|---|
 | Local dev (anvil) | `bash contracts/script/anvil-bootstrap.sh` | Full local playground — diamond + mocks + Multicall3 etch + Range Orders flags ON + seed offers + ABI/JSON sync (one command). |
-| Testnet one-shot | `bash contracts/script/deploy-chain.sh <chain-slug>` | Auto-chains build → diamond → timelock → VPFI lane (canonical / mirror branched on slug) → reward OApp → ABI/JSON sync → frontend wrangler deploy → watcher wrangler deploy. Refuses any mainnet slug. |
-| Mainnet | `bash contracts/script/deploy-mainnet.sh <chain-slug> --phase <phase>` | Tiered. Each phase (`preflight`, `contracts`, `lz-config`, `abi-sync`, `cf-frontend`, `cf-watcher`, `verify`) is a deliberate operator action. Confirm flags gate the irreversible phases (`--confirm-i-have-multisig-ready`, `--confirm-dvn-policy-reviewed`). Refuses testnet slugs. |
+| Testnet one-shot | `bash contracts/script/deploy-chain.sh <chain-slug> [--fresh] [--resume] [--verify-contracts] [--skip-lz-config] [--skip-vpfi] [--skip-frontend] [--skip-watcher] [--skip-cf]` | Auto-chains: build → diamond (post-cut facet-count assert inside the script) → timelock → VPFI lane (canonical / mirror branched on slug) → buy-VPFI rate-limit set (mirror only) → reward OApp → master-flag flip → LZ DVN policy (auto-skips when `DVN_REQUIRED_1` not in env) → ABI/JSON sync → frontend deploy → pre-watcher D1 purge (only with `--fresh`) → watcher deploy → D1 migrate. Refuses any mainnet slug. |
+| Cross-chain peer wiring | `bash contracts/script/deploy-peers.sh [--dry-run] [--only-chains slug1,slug2]` | Run ONCE after every chain's `deploy-chain.sh` lands. Walks `deployments/*/addresses.json`, auto-detects canonical, wires `setPeer` for the VPFI lane (canonical OFTAdapter ↔ each mirror VPFIMirror, bidirectional), the Buy lane (canonical BuyReceiver ↔ each mirror BuyAdapter, bidirectional), and the Reward OApp full mesh. Idempotent — safe to re-run after partial-fail. |
+| Mainnet | `bash contracts/script/deploy-mainnet.sh <chain-slug> --phase <phase>` | Tiered. Each phase (`preflight`, `contracts`, `lz-config`, `abi-sync`, `cf-frontend`, `cf-watcher`, `verify`) is a deliberate operator action. Confirm flags gate the irreversible phases (`--confirm-i-have-multisig-ready`, `--confirm-dvn-policy-reviewed`). Each successful phase writes a `.markers/phase-<phase>.done` sentinel; `--phase contracts` REFUSES to re-run if its marker exists (prevents duplicate-Diamond mistakes). Refuses testnet slugs. |
+
+**Flags on `deploy-chain.sh`** (testnet rehearsal hygiene):
+
+- `--fresh` — backs up prior `addresses.json`, wipes step markers, AND
+  purges watcher D1 rows for the chainId (twice — once at step `[0]`
+  and again right before `wrangler deploy` so the cron tick can't
+  re-populate stale rows during a long deploy). Use on every fresh
+  rehearsal so old state doesn't bleed in.
+- `--resume` — re-run after a partial-fail. Skips any step whose
+  `.markers/<step>.done` exists, restarting from the failed step
+  instead of redoing the diamond + timelock. Mutually exclusive with
+  `--fresh`.
+- `--verify-contracts` — runs `forge verify-contract --watch` on
+  every contract written to `broadcast/<chainId>/run-latest.json`
+  after the deploy lands. Off by default; on for rehearsal so
+  block-explorer source verification is part of the dry-run. Needs
+  `ETHERSCAN_API_KEY` (or per-chain equivalent in `foundry.toml`).
+- `--skip-lz-config` — skip the per-chain `ConfigureLZConfig.s.sol`
+  step. Auto-skipped when `DVN_REQUIRED_1` isn't set, so this flag
+  is mostly there to suppress the warning during a deliberate skip.
+
+**Artifacts every deploy now writes** (under
+`contracts/deployments/<slug>/`):
+
+- `addresses.json` — the canonical "where everything lives" file
+  every other tool reads.
+- `deployment_source.json` — fresh on every successful deploy:
+  ```json
+  {
+    "chainSlug": "base-sepolia",
+    "chainId": 84532,
+    "deployedAt": "2026-05-06T10:30:00+0530",
+    "monorepoCommit": "<git HEAD sha>[ (dirty)]",
+    "deployer": "0x...",
+    "diamond": "0x..."
+  }
+  ```
+  Solves "which version is actually live?" — the prior `deployedAt`
+  field inside `addresses.json` was stale because the deploy script
+  never updated it on redeploy.
+- `.markers/<step>.done` — per-step sentinel (testnet) /
+  `.markers/phase-<phase>.done` per-phase sentinel (mainnet).
+- `.history/post-<step>-<unix-ts>.json` — snapshot of
+  `addresses.json` after each major step, for forensic reconstruction
+  of mid-flight failures.
+- `.history/health-<unix-ts>.log` — sentinel reads (`paused()`,
+  `getTreasury()`, `nextOfferId()`, `nextLoanId()`, facet count,
+  `getMasterFlags()`, BuyAdapter rate limits) captured by the
+  post-deploy health check on every chain.
 
 **What the scripts deliberately do NOT do** (every chain — these stay
 manual for safety):
 
 - **Role rotation** to governance multisig + timelock — multi-party
   ceremony, see §6 below.
-- **LayerZero peer wiring** across chains — needs both legs deployed
-  first; run `WireVPFIPeers.s.sol` on each (canonical, mirror) pair.
 - **Wrangler secrets** — operator-specific (TG_BOT_TOKEN, RPC API
   keys, push-channel PK, aggregator keys, keeper PK). `wrangler secret
   put <KEY>` per the watcher's docs; never in any repo.
 - **Mainnet phases auto-chained** — each `--phase` invocation lands
   one stage so the operator eyeballs the diff before the next.
 
+LayerZero peer wiring is now scripted via `deploy-peers.sh` (above) —
+no longer a manual step. Per-chain LZ DVN policy is also inline in
+`deploy-chain.sh` step `[5c]` (gated on `DVN_REQUIRED_1` presence).
+
 The sections below remain the canonical step-by-step. The new scripts
 just bundle the routine forge-script + export-script + wrangler steps
 into reproducible flows; the ceremonies (§6 role rotation, LZ peer
 wiring) stay one-by-one.
+
+---
+
+## Mainnet rehearsal — full end-to-end flow
+
+Before mainnet, run the full deployment sequence on testnets that
+mirror the mainnet topology. Today's rehearsal target:
+**Base Sepolia (canonical) ↔ Arb Sepolia + OP Sepolia (mirrors)**.
+
+### 1. Per-chain deploy (run 3 times)
+
+Each invocation deploys contracts, runs the post-cut facet-count
+assertion, applies BuyAdapter rate limits (mirror chains only),
+exports ABIs + `deployments.json` to **both** frontend and watcher,
+and ships frontend + watcher Cloudflare deploys. The `--fresh`
+flag wipes prior state so each rehearsal starts from zero.
+
+```bash
+bash contracts/script/deploy-chain.sh base-sepolia --fresh
+bash contracts/script/deploy-chain.sh arb-sepolia  --fresh
+bash contracts/script/deploy-chain.sh op-sepolia   --fresh
+```
+
+The post-deploy health check (step `[5d]`) runs on every chain and
+its log is persisted to
+`deployments/<slug>/.history/health-<unix-ts>.log` for audit.
+
+### 2. Cross-chain peer wiring (run ONCE after step 1 on all chains)
+
+```bash
+bash contracts/script/deploy-peers.sh --dry-run    # eyeball plan
+bash contracts/script/deploy-peers.sh              # broadcast
+```
+
+Verifies each peer with `cast call <oapp> 'peers(uint32)(bytes32)' <eid>`
+afterwards. `setPeer` is idempotent — safe to re-run on partial fail
+or to add a new chain to an existing topology.
+
+### 3. Smoke tests (positive + partial flow sweeps)
+
+After peers are wired, sanity-check every chain via the
+chain-agnostic flow scripts:
+
+```bash
+forge script script/PositiveFlows.s.sol --rpc-url $BASE_SEPOLIA_RPC_URL --broadcast --slow
+forge script script/PartialFlows.s.sol  --rpc-url $BASE_SEPOLIA_RPC_URL --broadcast --slow
+# Repeat for ARB_SEPOLIA_RPC_URL and OP_SEPOLIA_RPC_URL.
+```
+
+`PositiveFlows.s.sol` chains together SepoliaPositiveFlows (15
+legacy lifecycle scenarios) + AnvilNewPositiveFlows (18
+new-features scenarios) for a 33-scenario full-positive sweep.
+`PartialFlows.s.sol` does the same shape for 13 partial midpoints.
+
+### 4. Recovery from a mid-flight failure
+
+If a chain's `deploy-chain.sh` died at any step, re-run with
+`--resume`:
+
+```bash
+bash contracts/script/deploy-chain.sh arb-sepolia --resume
+```
+
+`--resume` reads `.markers/<step>.done` files and skips every step
+that already landed, restarting at the step that failed. The
+diamond + timelock won't be redeployed; the script picks up at
+the actual failure point. Use `--fresh` instead if you want to
+discard the partial deploy entirely.
+
+### 5. Mid-rehearsal `forge verify-contract`
+
+Add `--verify-contracts` to any rehearsal run to dry-run the
+explorer-verification step that mainnet needs:
+
+```bash
+bash contracts/script/deploy-chain.sh base-sepolia --fresh --verify-contracts
+```
+
+Requires `ETHERSCAN_API_KEY` (or chain-specific equivalent in
+`foundry.toml`'s `[etherscan]` block). Failures don't abort the
+deploy — they're logged + summarised so the operator can re-verify
+manually for any contract that didn't take.
+
+### 6. Mainnet readiness checklist
+
+Once the testnet rehearsal is green, declare readiness only after
+each item is checked:
+
+- [ ] All 3 chains' `deploy-chain.sh` finished with `[5d] health
+      check` reporting non-default rate limits on mirror BuyAdapters
+      (`uint256.max` value = FAIL — the script's mainnet `--phase
+      verify` will refuse to ship in this state).
+- [ ] `deploy-peers.sh` ran clean (every `setPeer` line shipped, no
+      `⚠` lines).
+- [ ] `PositiveFlows.s.sol` + `PartialFlows.s.sol` green on every
+      chain — capture the broadcast logs in
+      `docs/internal/RehearsalReports/<date>/`.
+- [ ] `deployment_source.json` on every chain points at the same
+      monorepo commit + clean working tree (`monorepoCommit` ends
+      WITHOUT ` (dirty)`).
+- [ ] Block-explorer source verification ran clean on at least one
+      mirror chain (catches any bytecode-vs-source drift before
+      mainnet).
+- [ ] Frontend visibly hydrates analytics + offer book correctly on
+      every chain after the rehearsal.
 
 ---
 

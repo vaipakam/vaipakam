@@ -178,8 +178,43 @@ contract DeployDiamond is Script {
         }
         IDiamondCut(diamond).diamondCut(firstHalf, address(0), "");
         console.log("Diamond cut 1/2 complete:", mid, "facets added.");
+        // Post-cut-1 sanity: the loupe should now report every facet
+        // added in the first half. The constructor-installed
+        // DiamondCutFacet is intentionally NOT in `facetAddresses[]`
+        // — `VaipakamDiamond.constructor` calls `LibDiamond.diamondCut`
+        // with an empty array and then writes the cut selector
+        // mapping directly into `selectorToFacetAndPosition` without
+        // touching the loupe-visible registry. So the count is
+        // exactly `mid` here, not `mid + 1`. If a facet write
+        // reverted silently inside the cut, the count is off and the
+        // in-flight script bails BEFORE dispatching cut-2 (which
+        // would otherwise complete and leave a misleadingly-finished
+        // broadcast log).
+        uint256 expectedAfterCut1 = mid;
+        uint256 actualAfterCut1 = DiamondLoupeFacet(diamond)
+            .facetAddresses()
+            .length;
+        require(
+            actualAfterCut1 == expectedAfterCut1,
+            "DeployDiamond: cut 1/2 did not register all facets"
+        );
+
         IDiamondCut(diamond).diamondCut(secondHalf, address(0), "");
         console.log("Diamond cut 2/2 complete:", cuts.length - mid, "facets added.");
+        // Post-cut-2 sanity: every facet added across both cuts must
+        // now be loupe-visible. Same off-by-one note as cut 1 — the
+        // DiamondCutFacet stays out of `facetAddresses[]`, so the
+        // expected count is `cuts.length` (32 today), not 33. The
+        // selector for `diamondCut` itself is still callable; it
+        // just isn't enumerated by the loupe walk.
+        uint256 expectedAfterCut2 = cuts.length;
+        uint256 actualAfterCut2 = DiamondLoupeFacet(diamond)
+            .facetAddresses()
+            .length;
+        require(
+            actualAfterCut2 == expectedAfterCut2,
+            "DeployDiamond: cut 2/2 did not register all facets"
+        );
 
         // ── Step 5: Post-deployment initialization ──────────────────────
         // 5a. Initialize access control (grants all roles to admin)

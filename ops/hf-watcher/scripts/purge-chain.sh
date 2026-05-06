@@ -49,16 +49,16 @@ TARGET_FLAG="${LOCAL:+--local}"
 TARGET_FLAG="${TARGET_FLAG:---remote}"
 
 echo "Counting rows scoped to chain $CHAIN_ID ($TARGET_FLAG)…"
-npx wrangler d1 execute "$DB_NAME" $TARGET_FLAG --command "
-  SELECT 'offers'           AS tbl, COUNT(*) AS rows FROM offers           WHERE chain_id = $CHAIN_ID
-  UNION ALL SELECT 'loans',           COUNT(*)        FROM loans           WHERE chain_id = $CHAIN_ID
-  UNION ALL SELECT 'activity_events', COUNT(*)        FROM activity_events WHERE chain_id = $CHAIN_ID
-  UNION ALL SELECT 'indexer_cursor',  COUNT(*)        FROM indexer_cursor  WHERE chain_id = $CHAIN_ID
-  UNION ALL SELECT 'user_thresholds', COUNT(*)        FROM user_thresholds WHERE chain_id = $CHAIN_ID
-  UNION ALL SELECT 'notify_state',    COUNT(*)        FROM notify_state    WHERE chain_id = $CHAIN_ID
-  UNION ALL SELECT 'telegram_links',  COUNT(*)        FROM telegram_links  WHERE chain_id = $CHAIN_ID
-  UNION ALL SELECT 'diag_errors',     COUNT(*)        FROM diag_errors     WHERE chain_id = $CHAIN_ID;
-"
+# D1 caps compound SELECT at ~6 UNION terms ("too many terms in
+# compound SELECT" SQLITE_ERROR 7500). With 8 chain-scoped tables
+# the single-query approach blows the cap. Issue per-table COUNTs
+# instead — slower (8 round-trips) but works on any D1 size.
+for tbl in offers loans activity_events indexer_cursor user_thresholds notify_state telegram_links diag_errors; do
+  npx wrangler d1 execute "$DB_NAME" $TARGET_FLAG --command \
+    "SELECT '$tbl' AS tbl, COUNT(*) AS rows FROM $tbl WHERE chain_id = $CHAIN_ID;" \
+    2>&1 | grep -E '"rows":|"tbl":' | tr '\n' ' ' | sed -E 's/[[:space:]]+/ /g'
+  echo
+done
 
 if [ "${FORCE:-0}" != "1" ]; then
   echo
@@ -75,14 +75,14 @@ echo "Purging chain $CHAIN_ID…"
 # That's acceptable here — partial failure leaves the DB in a still-
 # coherent state (some tables purged, others not). The next run
 # completes the rest. Idempotent.
-npx wrangler d1 execute "$DB_NAME" $TARGET_FLAG --command "
-  DELETE FROM offers           WHERE chain_id = $CHAIN_ID;
-  DELETE FROM loans            WHERE chain_id = $CHAIN_ID;
-  DELETE FROM activity_events  WHERE chain_id = $CHAIN_ID;
-  DELETE FROM indexer_cursor   WHERE chain_id = $CHAIN_ID;
-  DELETE FROM notify_state     WHERE chain_id = $CHAIN_ID;
-  DELETE FROM user_thresholds  WHERE chain_id = $CHAIN_ID;
-  DELETE FROM telegram_links   WHERE chain_id = $CHAIN_ID;
-  DELETE FROM diag_errors      WHERE chain_id = $CHAIN_ID;
-"
+#
+# Per-table DELETEs (same rationale as the count loop above —
+# wrangler's compound-statement parser is also fragile when the
+# UNION-cap bug kicks in for related shapes).
+for tbl in offers loans activity_events indexer_cursor notify_state user_thresholds telegram_links diag_errors; do
+  npx wrangler d1 execute "$DB_NAME" $TARGET_FLAG --command \
+    "DELETE FROM $tbl WHERE chain_id = $CHAIN_ID;" >/dev/null 2>&1 \
+    && echo "  ✓ $tbl" \
+    || echo "  ✗ $tbl (continuing — re-run will catch it)"
+done
 echo "Done. Chain $CHAIN_ID purged."
