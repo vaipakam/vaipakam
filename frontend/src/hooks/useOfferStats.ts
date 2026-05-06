@@ -48,8 +48,18 @@ export function useOfferStats(): UseOfferStatsResult {
       }
     }
     void tick();
+    // Periodic refetch independent of `version` advances. Without this
+    // the popover's "cache age" stays frozen at first-paint when the
+    // chain is quiet (no `nextOfferId`/`nextLoanId` advance to bump
+    // `version`), even though the watcher cron is ticking every minute.
+    // 60 s cadence keeps the cache-age label honest. Reads from D1 via
+    // `/offers/stats`, not chain RPC — no quota concern.
+    const id = setInterval(() => {
+      void tick();
+    }, 60_000);
     return () => {
       cancelled = true;
+      clearInterval(id);
     };
   }, [chainId, version]);
 

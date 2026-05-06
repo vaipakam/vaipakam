@@ -11,7 +11,14 @@ import {
 import { formatTime } from '../../lib/format';
 import { useMode } from '../../context/ModeContext';
 import { ReportIssueLink } from './ReportIssueLink';
+import { ChainDiagnosticsPanel } from './ChainDiagnosticsPanel';
 import './DiagnosticsDrawer.css';
+
+/** Window-level event the IndexerStatusBadge dispatches on info-icon
+ *  click. Decouples the badge from the drawer's state without pulling
+ *  in a state library — keeps the drawer's existing self-contained
+ *  `open` state model intact. */
+export const OPEN_DIAGNOSTICS_EVENT = 'vp:open-diagnostics';
 
 /**
  * Floating "Support" button + slide-over drawer that renders the latest
@@ -61,6 +68,16 @@ export default function DiagnosticsDrawer() {
   const [filter, setFilter] = useState<StatusFilter>('failure');
 
   useEffect(() => subscribe(setEvents), []);
+
+  // Listen for the IndexerStatusBadge's "open me" custom event. The
+  // badge no longer renders an inline popover — its info icon
+  // dispatches `vp:open-diagnostics` instead, which we catch here and
+  // flip the drawer open.
+  useEffect(() => {
+    const handler = () => setOpen(true);
+    window.addEventListener(OPEN_DIAGNOSTICS_EVENT, handler);
+    return () => window.removeEventListener(OPEN_DIAGNOSTICS_EVENT, handler);
+  }, []);
 
   const handleCopy = async () => {
     const blob = exportDiagnostics();
@@ -185,6 +202,13 @@ export default function DiagnosticsDrawer() {
               <Lock size={12} />
               {t('diagnostics.dataRightsLink')}
             </Link>
+
+            {/* Chain & indexer panel — surfaces what the slim top-bar
+                badge previously showed in an inline popover (state +
+                heading/body + safe-head / indexed block / gap rows).
+                Lives here so the same surface that exposes failure
+                events also exposes the cache-vs-chain truth signal. */}
+            <ChainDiagnosticsPanel />
 
             <div className="diag-filters" role="tablist" aria-label={t('diagnostics.filterAriaLabel')}>
               {FILTERS.map((f) => {

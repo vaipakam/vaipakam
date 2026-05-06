@@ -4,7 +4,7 @@ import { useRescanCooldown } from '../hooks/useRescanCooldown';
 import { L as Link } from '../components/L';
 import { useTranslation } from 'react-i18next';
 import { useWallet } from '../context/WalletContext';
-import { useDiamondContract, useDiamondPublicClient, useDiamondRead } from '../contracts/useDiamond';
+import { useDiamondContract, useDiamondPublicClient } from '../contracts/useDiamond';
 import { prewarmTokenMeta } from '../lib/tokenMeta';
 import { useUserLoans } from '../hooks/useUserLoans';
 import { useMyOffers, type MyOfferStatus } from '../hooks/useMyOffers';
@@ -41,7 +41,6 @@ import { Picker } from '../components/Picker';
 import { Users, Activity as ActivityIcon, ListOrdered } from 'lucide-react';
 import './Dashboard.css';
 
-const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
 const PAGE_SIZE_OPTIONS = [10, 25, 50] as const;
 const DEFAULT_PAGE_SIZE = 10;
 
@@ -64,7 +63,6 @@ function cmpBigint(a: bigint, b: bigint): number {
 export default function Dashboard() {
   const { t } = useTranslation();
   const { address, activeChain } = useWallet();
-  const diamond = useDiamondRead();
   const diamondWrite = useDiamondContract();
   // T-041 — prefer the worker-cached "loans for this wallet" list. The
   // /loans/by-{lender,borrower} endpoints already live-filter via
@@ -150,7 +148,6 @@ export default function Dashboard() {
     () => new Set(unclaimed.map((c) => c.loanId.toString())),
     [unclaimed],
   );
-  const [escrow, setEscrow] = useState<string | null>(null);
   const [loansPage, setLoansPage] = useState(0);
   // Independent page cursor for the "Your Offers" card. Same default
   // page size as Your Loans (no separate picker yet — typical wallets
@@ -162,29 +159,6 @@ export default function Dashboard() {
   const [pageSize, setPageSize] = useState<number>(DEFAULT_PAGE_SIZE);
   const [sortBy, setSortBy] = useState<SortKey>('id');
   const [sortDir, setSortDir] = useState<SortDir>('desc');
-
-  useEffect(() => {
-    // No address = disconnected; the `escrow` slot is derived as null below,
-    // so skipping the effect (rather than setting state inside it) keeps this
-    // out of the setState-in-effect footgun.
-    if (!address) return;
-    (async () => {
-      try {
-        // `getUserEscrow` is `nonpayable` (lazy-deploys a proxy when missing),
-        // so a normal call would prompt the wallet on every page load. Running
-        // it via `staticCall` uses `eth_call` — reverts to "no escrow" silently.
-        const esc: string = await diamond.getUserEscrow.staticCall(address);
-        if (esc && esc !== ZERO_ADDRESS) setEscrow(esc);
-      } catch {
-        // User has no escrow deployed yet — silent is correct here.
-      }
-    })();
-  }, [address, diamond]);
-
-  // Disconnected wallet always surfaces a null escrow, regardless of whatever
-  // value was left in state from a previous session. Derivation keeps this in
-  // sync without a setEscrow(null) inside the effect.
-  const currentEscrow = address ? escrow : null;
 
   const activeLoans = loans.filter((l) => l.status === LoanStatus.Active);
   const lentCount = loans.filter((l) => l.role === 'lender').length;
@@ -385,56 +359,6 @@ export default function Dashboard() {
           StakingRewardsClaim mirror — that variant only ever lived
           here, the new card supersedes it with broader coverage. */}
       <RewardsSummaryCard address={address ?? null} />
-
-      {/* Escrow info — redacted address (no copy / no full-reveal),
-          links to block explorer in a new tab so users can verify
-          on-chain holdings independently. The escrow is INTERNAL
-          protocol storage, not a deposit destination — anyone who
-          accidentally sends tokens directly to it may be unable to
-          recover them. Caption + the dedicated `/app/escrow` page
-          carry the full warning. The redacted display + non-
-          selectable styling combat the trivial copy paths; DOM
-          inspection bypass is intentionally out of scope. */}
-      {currentEscrow && (
-        <div className="card" style={{ marginBottom: 20 }}>
-          <div className="card-title">
-            {t('dashboard.yourEscrow')}
-            <CardInfo id="dashboard.your-escrow" />
-          </div>
-          <div className="data-row">
-            <span className="data-label">{t('dashboard.escrowAddress')}</span>
-            <a
-              href={`${activeChain?.blockExplorer ?? DEFAULT_CHAIN.blockExplorer}/address/${currentEscrow}`}
-              target="_blank"
-              rel="noreferrer noopener"
-              onCopy={(e) => e.preventDefault()}
-              className="data-value"
-              style={{
-                color: 'var(--brand)',
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: 6,
-                userSelect: 'none',
-                fontFamily: 'monospace',
-              }}
-              aria-label={t('escrowAssets.viewOnExplorer')}
-            >
-              {currentEscrow.slice(0, 6)}…{currentEscrow.slice(-4)}
-              <ExternalLink size={14} />
-            </a>
-          </div>
-          <p
-            style={{
-              marginTop: 8,
-              marginBottom: 0,
-              fontSize: '0.85rem',
-              color: 'var(--text-secondary)',
-            }}
-          >
-            {t('escrowAssets.addressCaption')}
-          </p>
-        </div>
-      )}
 
       {/* Connected wallet's own currently-open offers. Lifted from the
           OfferBook page so Dashboard reads as a single "your stuff"

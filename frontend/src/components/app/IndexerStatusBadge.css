@@ -30,6 +30,34 @@
   background: rgba(255, 165, 0, 0.08);
 }
 
+/* Catching-up — same amber family as --live but distinct background
+   tone so operators can tell "indexer reachable but lagging" apart
+   from "indexer unreachable, browser doing direct RPC reads". */
+.indexer-badge--catching-up {
+  border-color: rgba(217, 144, 17, 0.4);
+  color: #b27510;
+  background: rgba(217, 144, 17, 0.10);
+}
+
+[data-theme='dark'] .indexer-badge--catching-up {
+  color: #f0bc56;
+  border-color: rgba(240, 188, 86, 0.4);
+}
+
+/* Severely-behind / cron-stuck — red. Either gap × block_time exceeds
+   SEVERE_LAG_SEC, or the cursor's updated_at hasn't bumped in
+   STALE_CURSOR_SEC. Operator-actionable. */
+.indexer-badge--behind {
+  border-color: rgba(208, 47, 47, 0.45);
+  color: #b22222;
+  background: rgba(208, 47, 47, 0.10);
+}
+
+[data-theme='dark'] .indexer-badge--behind {
+  color: #ff7a7a;
+  border-color: rgba(255, 122, 122, 0.4);
+}
+
 .indexer-badge--localdev {
   border-color: rgba(74, 144, 226, 0.4);
   color: #2678c4;

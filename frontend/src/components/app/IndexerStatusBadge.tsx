@@ -1,321 +1,141 @@
 /**
- * T-041 / T-047 — top-bar status badge surfacing the indexer cache
- * state, with an info icon (ⓘ) that opens a plain-English popover
- * explaining what each state means. Three states:
+ * Top-bar indexer freshness signal — slim glance-only pill.
  *
- *   - **Cached (green)**: the worker is up and the indexer cursor
- *     is fresh. The page reads from the cache; "Indexed N min ago"
- *     tells the user how stale the snapshot is. The page polls in
- *     the background (every 5s on focus, paused when the tab is
- *     inactive) and merges new chain events on top of the cached
- *     snapshot — no manual rescan needed.
+ * Single source of truth: the gap between the watcher's last-indexed
+ * `safe` block and the chain's current `safe` head, in block-space.
+ * No time projections, no "X min ago" framing — the gap captures both
+ * indexer lag and watcher health (a stuck cron lets the gap balloon).
  *
- *   - **Live (amber)**: the indexer endpoint is unreachable / not
- *     configured / the chain isn't covered by the cache. The browser
- *     reads directly from the RPC, which is slower per page load
- *     but always authoritative. The popover asks the user to wait
- *     for all rows to render before submitting transactions — partial
- *     renders during a slow scan can mislead a tx that depends on
- *     "what's currently shown."
+ * Five states drive five colours:
  *
- *   - **Local dev (blue)**: the wallet is connected to a local Anvil
- *     / Foundry node (chainId 31337). The cloud worker by definition
- *     can't reach a local dev node, so the badge is permanently in
- *     a "no indexer" state when developing — surfacing it as a
- *     distinct color + label avoids the confusion of a permanent
- *     amber warning during normal dev work.
+ *   - **Caught up (green)** — gap < CAUGHT_UP_GAP_BLOCKS. Page is
+ *     rendering the latest finalised chain state.
+ *   - **Catching up (amber)** — CAUGHT_UP_GAP_BLOCKS ≤ gap < SEVERE_GAP_BLOCKS.
+ *     Indexer trailing the chain head, cron working.
+ *   - **Behind (red)** — gap ≥ SEVERE_GAP_BLOCKS. Either watcher cron
+ *     stalled or chain spike caused a backlog. Operator-actionable.
+ *   - **Live chain scan (amber)** — indexer cache unreachable, browser
+ *     falls back to direct RPC reads. Different from "catching up" —
+ *     same colour family, distinct background tone.
+ *   - **Local dev (blue)** — wallet on Anvil/Hardhat (31337/1337);
+ *     cloud indexer doesn't cover local nodes.
  *
- * Lives in the in-app top bar so it's visible on every page (T-047),
- * removing the need for per-page badge instances.
+ * The info icon dispatches a window-level `vp:open-diagnostics` event
+ * that the DiagnosticsDrawer subscribes to (see
+ * `ChainDiagnosticsPanel.tsx`). The drawer holds the full state
+ * breakdown — heading, body explanation, all rows (chain safe head,
+ * indexed block, gap, source, browser storage, build version,
+ * footnote on what "safe block" means).
  *
- * The "Rescan" button was deliberately removed: a manual rescan
- * action is an RPC-quota abuse vector (a bot or impatient user can
- * spam-click → quota burn that costs the operator real money on
- * paid RPC tiers) and gives users the wrong mental model that they
- * "need" to refresh. Auto-refetch on tab-focus + 5s background tail
- * + post-tx confirmation is the modern DeFi pattern; see the
- * "no production DeFi protocol exposes a manual refetch button"
- * survey in `OperatorNodeDeploymentDesign.md` discussion notes.
+ * Manual "Rescan" was deliberately omitted: an RPC-quota abuse vector
+ * + wrong mental model that users "need" to refresh. Auto-refetch on
+ * tab-focus + 60 s background tail + post-tx confirmation is the
+ * modern DeFi pattern.
  */
 
-import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Info, Wifi, WifiOff, Cpu } from 'lucide-react';
+import { Info, Wifi, WifiOff, Cpu, RefreshCw, AlertTriangle } from 'lucide-react';
+import type { LucideIcon } from 'lucide-react';
 import { useOfferStats } from '../../hooks/useOfferStats';
 import { useReadChain } from '../../contracts/useDiamond';
+import { useLiveWatermark } from '../../hooks/useLiveWatermark';
+import { watermarkPolicy } from '../../hooks/watermarkPolicy';
+import { OPEN_DIAGNOSTICS_EVENT } from './DiagnosticsDrawer';
 import './IndexerStatusBadge.css';
 
+/** Block-space thresholds — single source of truth here AND mirrored
+ *  in `ChainDiagnosticsPanel.tsx`. Bumping these requires touching
+ *  both sites; the duplication is intentional to avoid a circular
+ *  import (panel imports from this file would need it). */
+const CAUGHT_UP_GAP_BLOCKS = 100;
+const SEVERE_GAP_BLOCKS = 5000;
+
+const LOCAL_DEV_CHAIN_IDS: ReadonlySet<number> = new Set([31337, 1337]);
+
 interface Props {
-  /** Compact: hide the "ago" suffix on narrow viewports. */
+  /** Hide the descriptive text on narrow viewports — keeps just the
+   *  colour-coded icon + info button so the pill collapses cleanly. */
   compact?: boolean;
 }
-
-/** Local development chain ids — Anvil / Foundry / Hardhat default
- *  to 31337. Detected so we can show a distinct "local dev" pill
- *  instead of a permanent amber "live chain scan" warning during
- *  normal dev work. */
-const LOCAL_DEV_CHAIN_IDS: ReadonlySet<number> = new Set([31337, 1337]);
 
 export function IndexerStatusBadge({ compact }: Props) {
   const { t } = useTranslation();
   const { stats } = useOfferStats();
   const chain = useReadChain();
-  const [now, setNow] = useState(() => Math.floor(Date.now() / 1000));
-  const [infoOpen, setInfoOpen] = useState(false);
-  const wrapRef = useRef<HTMLSpanElement | null>(null);
-
-  // Tick once per minute so the "X min ago" label refreshes without
-  // re-fetching from the worker.
-  useEffect(() => {
-    const id = setInterval(() => setNow(Math.floor(Date.now() / 1000)), 60_000);
-    return () => clearInterval(id);
-  }, []);
-
-  // Click-outside / Escape close the info popover.
-  useEffect(() => {
-    if (!infoOpen) return;
-    function onPointerDown(e: PointerEvent) {
-      if (wrapRef.current?.contains(e.target as Node)) return;
-      setInfoOpen(false);
-    }
-    function onKey(e: KeyboardEvent) {
-      if (e.key === 'Escape') setInfoOpen(false);
-    }
-    document.addEventListener('pointerdown', onPointerDown);
-    document.addEventListener('keydown', onKey);
-    return () => {
-      document.removeEventListener('pointerdown', onPointerDown);
-      document.removeEventListener('keydown', onKey);
-    };
-  }, [infoOpen]);
+  // Independent watermark probe at the badge level. `useOfferStats`
+  // upstream runs its own; at 20 s 'warm' cadence the cost of two
+  // subscribers is trivial and avoids prop-drilling.
+  const { snapshot: watermarkSnapshot } = useLiveWatermark(
+    watermarkPolicy('warm'),
+  );
 
   const isLocalDev =
     chain.chainId !== undefined && LOCAL_DEV_CHAIN_IDS.has(chain.chainId);
 
-  const chainLabel = chain.name ? `${chain.name} (${chain.chainId})` : `chainId ${chain.chainId}`;
+  // Resolve to one of five (variantClass, icon, label) tuples. Keeping
+  // the resolution flat avoids the prior 3-branch return tree.
+  let variantClass: string;
+  let Icon: LucideIcon;
+  let label: string;
 
-  // ── Local dev (Anvil / Hardhat) ──────────────────────────────────
   if (isLocalDev) {
-    return (
-      <span className="indexer-badge indexer-badge--localdev" ref={wrapRef}>
-        <Cpu size={12} />
-        {!compact && (
-          <span>
-            {t('indexerBadge.localDev', { defaultValue: 'Local dev chain' })}
-          </span>
-        )}
-        <InfoButton
-          open={infoOpen}
-          onToggle={() => setInfoOpen((o) => !o)}
-          title={t('indexerBadge.infoTitle', {
-            defaultValue: 'What does this mean?',
-          })}
-        />
-        {infoOpen && (
-          <InfoPopover
-            heading={t('indexerBadge.localDevHeading', {
-              defaultValue: 'Local development chain',
-            })}
-            body={t('indexerBadge.localDevBody', {
-              defaultValue:
-                'Your wallet is connected to a local Anvil or Hardhat node (chain id 31337). The cloud indexer can\'t reach local dev nodes, so the page reads directly from your local RPC. This is normal during development — no action needed.',
-            })}
-            status={[
-              {
-                label: t('indexerBadge.statusState', { defaultValue: 'State' }),
-                value: t('indexerBadge.localDev', {
-                  defaultValue: 'Local dev chain',
-                }),
-              },
-              {
-                label: t('indexerBadge.statusChain', { defaultValue: 'Chain' }),
-                value: chainLabel,
-              },
-              {
-                label: t('indexerBadge.statusSource', { defaultValue: 'Data source' }),
-                value: t('indexerBadge.statusSourceLocalRpc', {
-                  defaultValue: 'Local RPC (direct)',
-                }),
-              },
-            ]}
-          />
-        )}
-      </span>
-    );
+    variantClass = 'indexer-badge--localdev';
+    Icon = Cpu;
+    label = t('indexerBadge.localDev');
+  } else if (!stats || !stats.indexer) {
+    variantClass = 'indexer-badge--live';
+    Icon = WifiOff;
+    label = t('indexerBadge.live');
+  } else {
+    const lastIndexedBlock = stats.indexer.lastBlock;
+    const safeBlockNum =
+      watermarkSnapshot && watermarkSnapshot.safeBlock > 0n
+        ? Number(watermarkSnapshot.safeBlock)
+        : null;
+    const blockGap =
+      safeBlockNum !== null
+        ? Math.max(0, safeBlockNum - lastIndexedBlock)
+        : 0;
+
+    if (blockGap >= SEVERE_GAP_BLOCKS) {
+      variantClass = 'indexer-badge--behind';
+      Icon = AlertTriangle;
+      label = t('indexerBadge.behind', { n: blockGap.toLocaleString() });
+    } else if (blockGap >= CAUGHT_UP_GAP_BLOCKS) {
+      variantClass = 'indexer-badge--catching-up';
+      Icon = RefreshCw;
+      label = t('indexerBadge.catchingUp', { n: blockGap.toLocaleString() });
+    } else {
+      variantClass = 'indexer-badge--cached';
+      Icon = Wifi;
+      label = `${t('indexerBadge.lastSafeBlock')}: ${lastIndexedBlock.toLocaleString()}`;
+    }
   }
-
-  // ── Worker unreachable / no cache yet ────────────────────────────
-  if (!stats || !stats.indexer) {
-    return (
-      <span className="indexer-badge indexer-badge--live" ref={wrapRef}>
-        <WifiOff size={12} />
-        {!compact && (
-          <span>
-            {t('indexerBadge.live', { defaultValue: 'Live chain scan' })}
-          </span>
-        )}
-        <InfoButton
-          open={infoOpen}
-          onToggle={() => setInfoOpen((o) => !o)}
-          title={t('indexerBadge.infoTitle', {
-            defaultValue: 'What does this mean?',
-          })}
-        />
-        {infoOpen && (
-          <InfoPopover
-            heading={t('indexerBadge.liveHeading', {
-              defaultValue: 'Reading directly from the chain',
-            })}
-            body={t('indexerBadge.liveBody', {
-              defaultValue:
-                'The indexer cache is unreachable, so your browser is fetching every offer / loan / activity row directly from the chain. The data is always authoritative, but pages take longer to load. Please wait for the page to finish loading before submitting any transaction — a tx that depends on data still being fetched might act on a partial view.',
-            })}
-            status={[
-              {
-                label: t('indexerBadge.statusState', { defaultValue: 'State' }),
-                value: t('indexerBadge.live', {
-                  defaultValue: 'Live chain scan',
-                }),
-              },
-              {
-                label: t('indexerBadge.statusChain', { defaultValue: 'Chain' }),
-                value: chainLabel,
-              },
-              {
-                label: t('indexerBadge.statusSource', { defaultValue: 'Data source' }),
-                value: t('indexerBadge.statusSourceRpc', {
-                  defaultValue: 'RPC (cache unreachable)',
-                }),
-              },
-            ]}
-          />
-        )}
-      </span>
-    );
-  }
-
-  // ── Cache fresh ──────────────────────────────────────────────────
-  const ageSec = Math.max(0, now - stats.indexer.updatedAt);
-  const label =
-    ageSec < 60
-      ? t('indexerBadge.justNow', { defaultValue: 'just now' })
-      : ageSec < 3600
-      ? t('indexerBadge.minutes', {
-          defaultValue: '{{min}} min ago',
-          min: Math.floor(ageSec / 60),
-        })
-      : t('indexerBadge.hours', {
-          defaultValue: '{{h}}h ago',
-          h: Math.floor(ageSec / 3600),
-        });
-
-  const updatedAtIso = new Date(stats.indexer.updatedAt * 1000).toISOString();
 
   return (
-    <span className="indexer-badge indexer-badge--cached" ref={wrapRef}>
-      <Wifi size={12} />
-      {!compact && (
-        <span>
-          {t('indexerBadge.indexed', { defaultValue: 'Indexed' })} {label}
-        </span>
-      )}
-      <InfoButton
-        open={infoOpen}
-        onToggle={() => setInfoOpen((o) => !o)}
-        title={t('indexerBadge.infoTitle', {
-          defaultValue: 'What does this mean?',
+    <span className={`indexer-badge ${variantClass}`}>
+      <Icon size={12} />
+      {!compact && <span>{label}</span>}
+      <button
+        type="button"
+        className="indexer-badge-info"
+        onClick={(e) => {
+          e.stopPropagation();
+          // Decoupled drawer-open via window event — avoids dragging
+          // a state library in for one cross-component handshake.
+          // DiagnosticsDrawer.tsx subscribes to OPEN_DIAGNOSTICS_EVENT
+          // and flips its `open` state to true.
+          window.dispatchEvent(new CustomEvent(OPEN_DIAGNOSTICS_EVENT));
+        }}
+        title={t('indexerBadge.openDiagnosticsTitle', {
+          defaultValue: 'Open diagnostics',
         })}
-      />
-      {infoOpen && (
-        <InfoPopover
-          heading={t('indexerBadge.cachedHeading', {
-            defaultValue: 'Reading from the indexer cache',
-          })}
-          body={t('indexerBadge.cachedBody', {
-            defaultValue:
-              'A backend worker indexes the chain every few minutes and caches every offer, loan, and activity event. The page reads from that cache for fast first-paint. The page auto-refreshes new on-chain events on top of the cached snapshot — no manual refresh needed. Submitting transactions while green is safe — the page reflects on-chain state as of the cache age.',
-          })}
-          status={[
-            {
-              label: t('indexerBadge.statusState', { defaultValue: 'State' }),
-              value: t('indexerBadge.cached', { defaultValue: 'Cached' }),
-            },
-            {
-              label: t('indexerBadge.statusChain', { defaultValue: 'Chain' }),
-              value: chainLabel,
-            },
-            {
-              label: t('indexerBadge.statusSource', { defaultValue: 'Data source' }),
-              value: t('indexerBadge.statusSourceCache', {
-                defaultValue: 'Indexer cache + RPC live tail',
-              }),
-            },
-            {
-              label: t('indexerBadge.statusCacheAge', {
-                defaultValue: 'Cache age',
-              }),
-              value: label,
-            },
-            {
-              label: t('indexerBadge.statusUpdatedAt', {
-                defaultValue: 'Last update',
-              }),
-              value: updatedAtIso,
-            },
-          ]}
-        />
-      )}
+        aria-label={t('indexerBadge.openDiagnosticsTitle', {
+          defaultValue: 'Open diagnostics',
+        })}
+      >
+        <Info size={12} />
+      </button>
     </span>
-  );
-}
-
-interface InfoButtonProps {
-  open: boolean;
-  onToggle: () => void;
-  title: string;
-}
-
-function InfoButton({ open, onToggle, title }: InfoButtonProps) {
-  return (
-    <button
-      type="button"
-      className="indexer-badge-info"
-      onClick={(e) => {
-        e.stopPropagation();
-        onToggle();
-      }}
-      aria-expanded={open}
-      title={title}
-    >
-      <Info size={12} />
-    </button>
-  );
-}
-
-interface StatusRow {
-  label: string;
-  value: string;
-}
-
-interface InfoPopoverProps {
-  heading: string;
-  body: string;
-  status: StatusRow[];
-}
-
-function InfoPopover({ heading, body, status }: InfoPopoverProps) {
-  return (
-    <div className="indexer-badge-popover" role="dialog">
-      <div className="indexer-badge-popover-heading">{heading}</div>
-      <dl className="indexer-badge-popover-status">
-        {status.map((row) => (
-          <div className="indexer-badge-popover-status-row" key={row.label}>
-            <dt>{row.label}</dt>
-            <dd>{row.value}</dd>
-          </div>
-        ))}
-      </dl>
-      <div className="indexer-badge-popover-body">{body}</div>
-    </div>
   );
 }

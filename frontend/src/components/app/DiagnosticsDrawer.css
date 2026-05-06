@@ -232,3 +232,91 @@
   font-size: 0.7rem;
   color: var(--text-secondary, #666);
 }
+
+/* ─── Chain & Indexer panel ──────────────────────────────────
+   Rendered at the top of the drawer (above the events list).
+   Mirrors the pill colours used by IndexerStatusBadge so the
+   state pill in the panel reads with the same visual language
+   as the top-bar badge that opened the drawer. */
+.chain-diag-panel {
+  margin: 0.75rem 0 0.5rem 0;
+  padding: 0.6rem 0.7rem;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.chain-diag-title {
+  margin: 0 0 0.4rem 0;
+  font-size: 0.78rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-secondary, #999);
+}
+
+.chain-diag-state-line {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.4rem;
+}
+
+.chain-diag-state-pill {
+  font-size: 0.7rem;
+  font-weight: 600;
+  padding: 0.15rem 0.5rem;
+  border-radius: 999px;
+  border: 1px solid currentColor;
+}
+
+.chain-diag-state-heading {
+  font-size: 0.85rem;
+  font-weight: 500;
+}
+
+.chain-diag-state--caught-up    { color: #6ed16e; }
+.chain-diag-state--catching-up  { color: #f0bc56; }
+.chain-diag-state--behind       { color: #ff7a7a; }
+.chain-diag-state--localdev     { color: #6db4ff; }
+
+.chain-diag-body {
+  margin: 0 0 0.5rem 0;
+  font-size: 0.78rem;
+  color: var(--text-secondary, #bbb);
+  line-height: 1.45;
+}
+
+.chain-diag-rows {
+  margin: 0 0 0.5rem 0;
+  display: grid;
+  grid-template-columns: minmax(120px, auto) 1fr;
+  row-gap: 0.2rem;
+  column-gap: 0.6rem;
+  font-size: 0.74rem;
+}
+
+.chain-diag-row {
+  display: contents;
+}
+
+.chain-diag-row dt {
+  color: var(--text-secondary, #888);
+}
+
+.chain-diag-row dd {
+  margin: 0;
+  font-family: var(--font-mono, ui-monospace, "SFMono-Regular", Menlo, monospace);
+  word-break: break-word;
+  color: var(--text-primary, #ddd);
+}
+
+.chain-diag-footnote {
+  margin: 0;
+  padding-top: 0.4rem;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  font-size: 0.7rem;
+  color: var(--text-secondary, #888);
+  line-height: 1.4;
+}

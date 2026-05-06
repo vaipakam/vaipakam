@@ -52,10 +52,6 @@ const TOKENOMICS =
 
 export const CARD_HELP: Record<string, CardHelpEntry> = {
   // ── Dashboard ──────────────────────────────────────────────────────────
-  "dashboard.your-escrow": {
-    summary: "cardHelp.dashboardYourEscrow",
-    learnMoreHref: `${README}#3-offer-creation`,
-  },
   "dashboard.your-loans": {
     summary: "cardHelp.dashboardYourLoans",
     learnMoreHref: `${README}#6-loan-closure--repayment`,
