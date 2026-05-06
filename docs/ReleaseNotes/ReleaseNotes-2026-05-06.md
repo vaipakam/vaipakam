@@ -593,54 +593,6 @@ EVM warm/cold storage transitions, etc.). The runbook's rehearsal-
 lessons section was updated to call out this anti-pattern alongside
 the dRPC stale-view bullet.
 
-## Diagnostics-drawer UX revisions
-
-Three small but operator-meaningful changes after a quick
-walkthrough with the IndexerStatusBadge live:
-
-- **Restored inline popover on the badge info icon.** Earlier today
-  the badge's ⓘ click was wired to open the diagnostics drawer
-  scrolled to the chain panel. The drawer felt too heavy for
-  "what does this colour mean?" — now the icon toggles a small
-  popover anchored under the pill, showing only what someone
-  glancing at the badge cares about: state pill, chain, last safe
-  block, chain safe head, blocks-to-catch-up, plus the safe-block
-  footnote. The full breakdown (browser storage, build hash,
-  cursor advance time, advanced-mode purge button) stays in the
-  drawer as it was. Click-outside / Escape close.
-- **Chain & Indexer panel is now collapsible inside the drawer.**
-  Default state is collapsed: when an operator opens the drawer
-  via the FAB they're usually triaging a failure event, so the
-  events list should sit at the top. The chain panel becomes a
-  click-to-peek affordance. The state pill stays visible in the
-  collapsed header so the at-a-glance signal isn't hidden, and
-  expanding shows the full row table. Toggle uses ARIA
-  `expanded`/`controls` for screen readers.
-- **Drawer toolbar trim.** Dropped the `Copy JSON` button — the
-  `Download` button covers the same need with a clean filename
-  and no clipboard-permission edge cases. Renamed the trash-can
-  button label from "Delete" to "Clear" (it just empties the
-  in-memory journey buffer; "Delete" reads more destructive than
-  the action warrants). Reordered to **Download → Report on
-  GitHub → Clear**: the most common support flow opens with the
-  artefact, then the reporting affordance, then the destructive
-  action sits at the end. The renamed label landed in all ten
-  locales; the orphaned `copyJson` / `copied` / `delete` keys
-  were dropped from each.
-
-## "Report on GitHub" — symmetric event window
-
-The GitHub issue body that the diagnostics drawer's Report link
-populates centres on the most-recent failure event in the journey
-buffer. Earlier defaults included **10 events before + 2 events
-after** the failure. The asymmetric window biased the issue toward
-lead-up context at the cost of the post-failure trail (retries,
-recovery attempts, follow-on errors).
-
-New defaults are **5 events before + 5 events after**, plus the
-failure event itself — a symmetric window that reads more cleanly
-in the rendered issue body. Total event budget is unchanged at
-roughly 11 events; the URL-too-long trim-fallback continues to
-halve to 2+2 if the assembled body overshoots `MAX_URL_LEN`.
-Operator can still override via `VITE_DIAG_EVENTS_BEFORE_FAILURE`
-and `VITE_DIAG_EVENTS_AFTER_FAILURE`.
+_(Diagnostics-drawer UX revisions and the GitHub-issue event-window
+change moved to `ReleaseNotes-2026-05-07.md` — those edits landed
+post-midnight on the 7th.)_

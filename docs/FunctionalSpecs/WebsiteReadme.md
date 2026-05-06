@@ -100,7 +100,7 @@ Legal and data-rights requirements:
 - a disabled Terms gate state should exist for testnet / pre-launch operation, so the code path can ship without forcing acceptance before governance activates it
 - the Privacy page should explain what Vaipakam collects, what it deliberately does not collect, who receives consented analytics data, and how users can exercise GDPR / CCPA-style data rights
 - data-rights UI must live on a dedicated connected-app page at `/app/data-rights`, with action cards for exporting or deleting Vaipakam-namespaced browser storage and clear explanation that public on-chain state cannot be erased by frontend action
-- the issue-details drawer should stay scoped to support diagnostics: reporting, copying JSON, downloading / clearing the current in-memory journey log, and linking to `/app/data-rights` for broader browser-storage rights
+- the issue-details drawer should stay scoped to support diagnostics: reporting, downloading / clearing the current in-memory journey log, and linking to `/app/data-rights` for broader browser-storage rights
 - the Data Rights page should also expose a `Download journey log (this session)` card so a user can share the live session buffer even when the issue drawer is hidden by operator configuration
 - Delete-my-data controls should use a deliberate confirmation step and should enumerate the concrete local effects before deleting, including consent reset, journey-log clearing, cached event-index removal, and theme / language / mode preference reset
 
@@ -325,12 +325,17 @@ Connected-app network model in Phase 1:
 - the indexer badge should be a compact single-signal freshness pill based primarily on block-space: the gap between the worker's last-indexed safe block and the chain's current safe head
 - badge states should distinguish caught-up, catching-up, behind, live-chain fallback when the indexer is unreachable, and local-dev mode when the wallet is on Anvil / Hardhat
 - the badge should avoid stale `minutes ago` framing as the primary health signal because block gap captures both chain progress and watcher liveness more directly
-- the badge's info action should open the existing Issue Details / diagnostics drawer rather than a separate popover; the drawer should include a `Chain & Indexer` panel with chain id, last indexed safe block, safe head, blocks-to-catch-up, cursor last-advance timestamp, data source, indexer endpoint, browser storage usage, frontend build identifier, and a short explanation of safe blocks
+- the badge's info action should open a concise inline popover anchored to the badge, not the full diagnostics drawer; the popover should show the state pill, chain, last safe block indexed, last safe block available, blocks-to-catch-up, live-tail status, and a short safe-block footnote, and it should close on click-outside or Escape
+- the Issue Details / diagnostics drawer should include a collapsible `Chain & Indexer` panel; its collapsed header should preserve the state pill, while the expanded table should show chain id, last indexed safe block, last safe block available, blocks-to-catch-up, next index fetch countdown, live-tail status, cursor last-advance timestamp, data source, indexer endpoint, browser storage usage, frontend build identifier, and a short explanation of safe blocks
+- the Chain & Indexer panel should default collapsed when the drawer is opened from the floating issue button so failure events remain the first visible support context; the expand/collapse control should expose ARIA expanded / controls semantics
+- labels should use `Last safe block (indexed)` and `Last safe block (available)` so operators can distinguish watcher D1 progress from the chain safe head the page can live-tail to
+- `Live-tail status` should summarize whether the page is in sync, catching up with a bounded block gap, or in a deep backlog that will take many cron ticks; this diagnostic indicator should not imply that money-moving actions are safe without direct contract reads
+- `Next index fetch in` should count down to the next `/offers/stats` / indexer-cursor fetch and reset from observed indexer updates rather than a guessed timer
 - advanced-mode users may get a deliberate `Purge browser-side state` control in that diagnostics panel; it must require confirmation and should clear IndexedDB, localStorage, and sessionStorage for the current origin so stale decode/cache states can be reset after redeploys
 - frontend builds should expose a build hash and build timestamp in the diagnostics panel when available, falling back gracefully when git metadata is unavailable
 - manual force-refresh controls belong only on pages where the user is inspecting mutable lists, including OfferBook, Activity, Dashboard, and Your Vaipakam Vault
 - those page-level refresh controls should share one adaptive cooldown state machine: a 30-second baseline, exponential growth for repeated clicks up to a 5-minute cap, reset after a quiet period, a draining right-to-left progress bar, stable-width countdown digits, and `Syncing` / `Synced` / idle status states
-- app refresh probes should use named watermark tiers rather than scattered interval literals: OfferBook `hot` at 5 seconds active with idle backoff, Dashboard / Vault / Offer Details / Activity `warm` at 20 seconds active, and Analytics `cool` at 180 seconds active; all tiers pause while the tab is hidden and resume with an immediate catch-up probe on focus
+- app refresh probes should use named watermark tiers rather than scattered interval literals: OfferBook `hot` at 5 seconds active with idle backoff, Dashboard / Vault / Offer Details / Activity / badge diagnostics `warm` at 30 seconds active, and Analytics `cool` at 180 seconds active; all tiers pause while the tab is hidden and resume with an immediate catch-up probe on focus
 - browser-side log cursors and worker-side D1 cursors should advance only to a safe block (`safe` block tag, or `latest - 32` fallback) so cached rows cannot be stranded by reorgs
 
 Wallet connection requirements:
@@ -713,7 +718,7 @@ Data-fetching strategy:
 - when selected-chain dashboard sections need large loan or offer sets, the implementation should prefer worker-indexed aggregate endpoints first and reserve batching / multicall aggregation as an outage fallback
 - derive historical series from worker-bucketed event data when available, with raw event logs or chain-side multicalls kept as fallback paths
 - a shared Cloudflare Worker indexer may maintain D1-backed `offers`, `loans`, and append-only `activity_events` tables for fast first paint across offers, loans, activity, and claimability hints
-- the worker indexer should fan out across configured chains on each cron tick and silently skip chains missing an RPC secret or deployment artifact, rather than failing the whole sweep
+- the worker indexer should fan out across configured active chains according to the deployment allow-list; inactive or missing deployment artifacts should be skipped, while an active chain missing its RPC secret should be treated as an operator configuration error before deploy completion rather than silently disappearing from the cache
 - the worker should perform one shared event scan per chain / tick across the full allow-list instead of separate per-domain scans; per-domain handlers then persist offers, loans, and activity rows from that shared scan output
 - a single cursor per chain / Diamond source should advance atomically so offer, loan, claim, and activity views cannot drift onto different indexed block heights
 - frontend hooks such as active offers, active loans, wallet loans, activity, claimables, and offer stats should prefer the indexer when available and return an explicit `indexer` / `fallback` source state
@@ -731,7 +736,7 @@ Data-fetching strategy:
 - VPFI token-panel scans may remain direct filtered log reads while volume stays low
 - ERC-721 `Transfer` events for Vaipakam position NFTs should enter the shared `activity_events` ledger so ownership history is queryable without maintaining a separate mutable `nft_positions` table
 - the app footer should expose one active-chain `Verify on-chain` affordance that opens the current Diamond on the relevant explorer; repeated per-row verify links are not required
-- Durable Objects and WebSocket push are not required for this cache layer while browser event watchers already refresh visible pages after relevant on-chain events. The worker's primary job is fast cold-load first paint, not replacing direct RPC truth.
+- Durable Objects, WebSocket, SSE, or webhook push are not required for this cache layer while browser event watchers already refresh visible pages after relevant on-chain events. A future push channel may be layered on for lower-latency client updates, but polling / live-tail reads must remain the canonical fallback for disconnects and unsupported clients.
 - for aggregates that are too expensive to reconstruct repeatedly on the client, the protocol may expose lightweight read-only helper functions such as `getProtocolTVL`, `getUserCount`, `getActiveLoansCountAndValue`, and `getTotalInterestEarned`
 - direct contract reads and browser log indexing remain the fallback path whenever the worker is unavailable, times out, or has no configured origin; the cache must never become an oracle for money-moving actions
 
@@ -796,10 +801,13 @@ Implementation requirements:
 - observability should work in both basic and advanced modes, and in both light and dark themes, without degrading the user experience
 - the issue-details / troubleshooting surface should be available where the operator leaves `VITE_DIAG_DRAWER_ENABLED` on; hiding the drawer must not disable the separate server-side failure capture when that capture is enabled
 - the floating issue-reporting entry point should stay hidden on the normal happy path and should become visible when there is at least one recorded failure, when the drawer is already open, or when the user is in `Advanced` mode
+- the drawer toolbar should prioritize artifact and support actions in the order `Download`, `Report on GitHub`, then `Clear`; `Clear` should describe emptying the in-memory journey buffer and should not use more destructive `Delete` language
+- the drawer should not expose a separate `Copy JSON` action when `Download` already produces a clean support artifact without clipboard-permission edge cases
 - the drawer should allow users to filter visible log events by `All`, `Failure`, `Start`, and `Success`, with live counts shown on each filter option
 - the default event filter should be `Failure`, because that is the most likely support-relevant subset when the user opens the drawer after something breaks
-- event filtering is a display concern only; export, copy, download, or `Report on GitHub` actions should continue to include the full unfiltered event history unless the product later explicitly adds scoped export choices
+- event filtering is a display concern only; export, download, or `Report on GitHub` actions should continue to include the full unfiltered event history unless the product later explicitly adds scoped export choices
 - generated GitHub issue bodies should use a human-readable summary first and place stack trace, cause chain, browser environment, and recent event details inside expandable sections
+- generated GitHub issue bodies should center recent-event context on the most recent failure with a symmetric default window of 5 events before and 5 events after the failure, plus the failure itself; environment variables may override the before / after window, and URL-length fallback may shrink the window symmetrically
 - the filter controls should sit directly above the event list rather than being buried only near the drawer header, so users can clearly understand that the filter changes the list below
 - the layout of fixed diagnostics affordances must not cover important page controls, pagination buttons, or footer/legal text; public pages and app pages should reserve enough bottom breathing room so the floating button does not obstruct critical content
 - every shared user-facing error alert should include a `Dismiss` action when local dismissal is safe

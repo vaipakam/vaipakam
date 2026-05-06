@@ -166,7 +166,7 @@ Vaipakam is a decentralized peer-to-peer (P2P) lending and borrowing platform bu
 
 _Note: For Phase 1, all lending, borrowing, and collateralization activities for a specific loan must occur on a single network (e.g., a loan initiated on Polygon must have its collateral and repayment on Polygon)._
 
-The chain-indexer and public analytics support layer may also fan out across the broader configured mainnet and testnet chain lists used by deployment metadata. A configured chain is active for indexing only when both its RPC secret and deployment artifact exist; missing entries should be skipped without breaking other chains.
+The chain-indexer and public analytics support layer may also fan out across the broader configured mainnet and testnet chain lists used by deployment metadata. A chain is active for indexing only when it is included in the explicit deployment allow-list, has an exported deployment artifact, and has the required Worker RPC secret configured. Retired or non-allow-listed chain folders may be skipped without breaking other chains, but an allow-listed chain missing its RPC secret is an operator configuration error that deployment preflight should hard-fail.
 
 ### Asset Viability, Oracles, and Liquidity Determination
 

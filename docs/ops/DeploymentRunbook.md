@@ -290,6 +290,30 @@ chain. Tail the live Worker logs to inspect:
 cd ops/hf-watcher && npx wrangler tail --format=pretty
 ```
 
+#### Quick sanity check from the frontend (added 2026-05-07)
+
+The frontend's diagnostics surface now exposes the same signals
+without the operator having to drop to a shell. After connecting
+the wallet to the deployed chain:
+
+- **Top-bar status pill** — hover the small ⓘ next to the indexer
+  status badge. The popover shows `Last safe block (indexed)`,
+  `Last safe block (available)`, and `Blocks to catch up` in
+  block-space. Green pill + small gap = healthy. Amber/red pill =
+  the same condition the cursor query above would show.
+- **Diagnostics drawer (LifeBuoy FAB → expand "Chain & Indexer"
+  panel)** — same numbers plus `Live-tail status` (In sync /
+  Catching up · ~N blocks remaining / Deep backlog), the indexer
+  cursor's `updated_at` timestamp, the indexer endpoint URL, and
+  a `Next index fetch in: Ns` countdown to the next D1 read. The
+  countdown ticking from 30 → 0 confirms the polling loop is
+  alive without needing a `wrangler tail`.
+
+These read directly from the same D1 table + chain RPC the shell
+queries hit, so they're not a separate source of truth — they're
+the same data, surfaced in the UI for operators who'd rather not
+context-switch to a terminal during a deploy verification.
+
 ### 1. Per-chain deploy (run 3 times)
 
 Each invocation deploys contracts, runs the post-cut facet-count
