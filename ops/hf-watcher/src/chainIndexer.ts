@@ -274,8 +274,21 @@ async function runChainIndexerForChain(
     }
   }
 
-  const offerStats = await processOfferLogs(allLogs, env, chainId);
-  const loanStats = await processLoanLogs(allLogs, env, chainId, blockTimestamps);
+  const offerStats = await processOfferLogs(
+    allLogs,
+    env,
+    chainId,
+    client,
+    diamond,
+  );
+  const loanStats = await processLoanLogs(
+    allLogs,
+    env,
+    chainId,
+    blockTimestamps,
+    client,
+    diamond,
+  );
   // Activity ledger captures EVERY decoded event in `allLogs`. Phase
   // A and Phase B handlers above mutate domain tables; this writer
   // appends one row per log to the unified feed for the Activity
@@ -337,6 +350,8 @@ async function processOfferLogs(
   logs: DecodedLog[],
   env: Env,
   chainId: number,
+  client: PublicClient,
+  diamond: Address,
 ): Promise<{ newOffers: number; statusUpdates: number }> {
   // Bucket by event name — all the OfferCreated rows first (so the
   // row exists before any later status flip in the same scan window),
@@ -370,6 +385,117 @@ async function processOfferLogs(
   const now = Math.floor(Date.now() / 1000);
   let newOffers = 0;
   for (const o of created) {
+    // Try to fetch the full Offer struct inline — saves a later
+    // UPDATE from `refreshStaleOfferDetails` and closes the
+    // stub-row window so no downstream reader (loan handler,
+    // loanRoutes API, frontend) ever sees `'0x'` placeholder
+    // assets. Cost: same number of RPC calls (one per OfferCreated)
+    // either way, just shifted earlier; one fewer D1 write per
+    // offer (no follow-up UPDATE).
+    //
+    // Fail-soft: if the RPC reverts or times out, fall through to
+    // the placeholder INSERT — `refreshStaleOfferDetails` retries
+    // on the next cron tick. No event is dropped on the floor.
+    let detail: Record<string, unknown> | null = null;
+    try {
+      detail = (await client.readContract({
+        address: diamond,
+        abi: DIAMOND_OFFER_DETAILS_ABI,
+        functionName: 'getOfferDetails',
+        args: [o.offerId],
+      })) as Record<string, unknown>;
+    } catch (err) {
+      console.error(
+        `[chainIndexer] inline getOfferDetails(${Number(o.offerId)}) failed; falling back to stub`,
+        err,
+      );
+    }
+
+    if (detail) {
+      const od = detail as {
+        creator: Address;
+        offerType: number;
+        principalLiquidity: number;
+        collateralLiquidity: number;
+        accepted: boolean;
+        assetType: number;
+        collateralAssetType: number;
+        useFullTermInterest: boolean;
+        creatorFallbackConsent: boolean;
+        allowsPartialRepay: boolean;
+        lendingAsset: Address;
+        amount: bigint;
+        interestRateBps: bigint;
+        collateralAsset: Address;
+        collateralAmount: bigint;
+        durationDays: bigint;
+        tokenId: bigint;
+        positionTokenId: bigint;
+        quantity: bigint;
+        collateralTokenId: bigint;
+        collateralQuantity: bigint;
+        prepayAsset: Address;
+        amountMax?: bigint;
+        amountFilled?: bigint;
+        interestRateBpsMax?: bigint;
+      };
+      const result = await env.DB.prepare(
+        `INSERT OR IGNORE INTO offers
+          (chain_id, offer_id, status, creator, offer_type,
+           lending_asset, collateral_asset,
+           asset_type, collateral_asset_type,
+           principal_liquidity, collateral_liquidity,
+           amount, amount_max, amount_filled,
+           interest_rate_bps, interest_rate_bps_max,
+           collateral_amount, duration_days,
+           token_id, collateral_token_id,
+           quantity, collateral_quantity, position_token_id,
+           prepay_asset,
+           use_full_term_interest, creator_fallback_consent, allows_partial_repay,
+           first_seen_block, first_seen_at, updated_at)
+         VALUES
+          (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+        .bind(
+          chainId,
+          Number(o.offerId),
+          od.accepted ? 'accepted' : 'active',
+          od.creator.toLowerCase(),
+          od.offerType,
+          od.lendingAsset.toLowerCase(),
+          od.collateralAsset.toLowerCase(),
+          od.assetType,
+          od.collateralAssetType,
+          od.principalLiquidity,
+          od.collateralLiquidity,
+          od.amount.toString(),
+          (od.amountMax ?? 0n).toString(),
+          (od.amountFilled ?? 0n).toString(),
+          Number(od.interestRateBps),
+          Number(od.interestRateBpsMax ?? 0n),
+          od.collateralAmount.toString(),
+          Number(od.durationDays),
+          od.tokenId.toString(),
+          od.collateralTokenId.toString(),
+          od.quantity.toString(),
+          od.collateralQuantity.toString(),
+          od.positionTokenId.toString(),
+          od.prepayAsset.toLowerCase(),
+          od.useFullTermInterest ? 1 : 0,
+          od.creatorFallbackConsent ? 1 : 0,
+          od.allowsPartialRepay ? 1 : 0,
+          Number(o.blockNumber),
+          now,
+          now,
+        )
+        .run();
+      if ((result.meta?.changes ?? 0) > 0) newOffers++;
+      continue;
+    }
+
+    // Fallback: RPC failed — record the offer with the create-time
+    // placeholder. `refreshStaleOfferDetails` (selects `lending_asset
+    // = '0x'`) heals the row on a later tick.
     const result = await env.DB.prepare(
       `INSERT OR IGNORE INTO offers
         (chain_id, offer_id, status, creator, offer_type, lending_asset,
@@ -634,6 +760,8 @@ async function processLoanLogs(
   env: Env,
   chainId: number,
   blockTimestamps: Map<bigint, number>,
+  client: PublicClient,
+  diamond: Address,
 ): Promise<{ newLoans: number; statusUpdates: number }> {
   // Walk in scan order so a LoanInitiated and a LoanRepaid in the
   // same window (cron caught up after a stretch of downtime) write
@@ -646,15 +774,28 @@ async function processLoanLogs(
     if (log.eventName === 'LoanInitiated') {
       const loanId = Number(a.loanId as bigint);
       const offerId = Number(a.offerId as bigint);
+
       // Cross-domain reuse: pull asset metadata from the offers row
-      // populated by Phase A's offer-detail refresh. If that row
-      // doesn't exist yet (cold start before offers caught up), the
-      // INSERT still lands with default zero/empty values; the next
-      // tick's offer refresh will not back-fill the loan row, but a
-      // subsequent terminal-event UPDATE will see the JOIN ready.
-      // Fail-soft: missing offer row → loan row still recorded with
-      // default placeholder asset fields.
-      const offerRow = await env.DB.prepare(
+      // populated by Phase A's offer-detail refresh. The offer row
+      // exists even before its details are populated — `processOfferLogs`
+      // INSERTs a stub on `OfferCreated` with `lending_asset = '0x'`,
+      // `asset_type = 0`, etc., which `refreshStaleOfferDetails`
+      // overwrites on a later tick. Within a single block a tx can
+      // emit `OfferCreated → OfferAccepted → LoanInitiated` together;
+      // when that happens, this handler reads the freshly-stubbed
+      // offer row and would otherwise propagate the `'0x'` placeholder
+      // into the loan row permanently (no UPDATE path back-fills it).
+      //
+      // Root-cause fix: if the offer row is missing or its
+      // `lending_asset` is the create-time placeholder, call
+      // `refreshOfferDetails` synchronously to populate the offer row
+      // from chain BEFORE we read its fields. Adds one
+      // `getOfferDetails` RPC per LoanInitiated whose offer row was
+      // still a placeholder — bounded by N loans per block, so the
+      // cost is negligible. Once the offer row is populated, every
+      // subsequent reader (loan handler, loanRoutes API) sees the
+      // canonical values.
+      let offerRow = await env.DB.prepare(
         `SELECT asset_type, collateral_asset_type, lending_asset,
                 collateral_asset, duration_days, token_id, collateral_token_id
          FROM offers WHERE chain_id = ? AND offer_id = ?`,
@@ -669,6 +810,41 @@ async function processLoanLogs(
           token_id: string;
           collateral_token_id: string;
         }>();
+      const isPlaceholder =
+        !offerRow ||
+        !offerRow.lending_asset ||
+        offerRow.lending_asset.length < 42;
+      if (isPlaceholder) {
+        const ok = await refreshOfferDetails(client, diamond, chainId, offerId, env);
+        if (ok) {
+          offerRow = await env.DB.prepare(
+            `SELECT asset_type, collateral_asset_type, lending_asset,
+                    collateral_asset, duration_days, token_id, collateral_token_id
+             FROM offers WHERE chain_id = ? AND offer_id = ?`,
+          )
+            .bind(chainId, offerId)
+            .first();
+        }
+      }
+
+      // Hard fail policy: if after the inline refresh we STILL don't
+      // have a populated offer row (RPC down, ABI drift, etc.), skip
+      // the loan INSERT entirely rather than write a placeholder row.
+      // The next cron tick's `refreshStaleOfferDetails` will eventually
+      // populate the offer, and this branch is idempotent — the
+      // LoanInitiated log replays via `INSERT OR IGNORE`'s safety net
+      // when re-scanned.
+      if (
+        !offerRow ||
+        !offerRow.lending_asset ||
+        offerRow.lending_asset.length < 42
+      ) {
+        console.warn(
+          `[chainIndexer] LoanInitiated(${loanId}) skipped — offer ${offerId} row still placeholder after inline refresh`,
+        );
+        continue;
+      }
+
       const blockAt = blockTimestamps.get(log.blockNumber) ?? now;
       const result = await env.DB.prepare(
         `INSERT OR IGNORE INTO loans
@@ -687,13 +863,13 @@ async function processLoanLogs(
           (a.borrower as string).toLowerCase(),
           (a.principal as bigint).toString(),
           (a.collateralAmount as bigint).toString(),
-          offerRow?.asset_type ?? 0,
-          offerRow?.collateral_asset_type ?? 0,
-          offerRow?.lending_asset ?? '0x0000000000000000000000000000000000000000',
-          offerRow?.collateral_asset ?? '0x0000000000000000000000000000000000000000',
-          offerRow?.duration_days ?? 0,
-          offerRow?.token_id ?? '0',
-          offerRow?.collateral_token_id ?? '0',
+          offerRow.asset_type,
+          offerRow.collateral_asset_type,
+          offerRow.lending_asset,
+          offerRow.collateral_asset,
+          offerRow.duration_days,
+          offerRow.token_id,
+          offerRow.collateral_token_id,
           Number(log.blockNumber),
           blockAt,
           now,

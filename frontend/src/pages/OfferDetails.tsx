@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { ArrowLeft, ExternalLink, X, Settings } from 'lucide-react';
+import { ArrowLeft, ExternalLink, X } from 'lucide-react';
 import { type Hex } from 'viem';
 import { L as Link } from '../components/L';
 import { useWallet } from '../context/WalletContext';
@@ -26,6 +26,7 @@ import { TokenAmount } from '../components/app/TokenAmount';
 import { TokenIcon } from '../components/app/TokenIcon';
 import { ErrorAlert } from '../components/app/ErrorAlert';
 import { decodeContractError } from '../lib/decodeContractError';
+import { PerThingKeeperToggles } from '../components/app/PerThingKeeperToggles';
 
 const ZERO_ADDR = '0x0000000000000000000000000000000000000000';
 
@@ -308,19 +309,6 @@ export default function OfferDetails() {
                 <StatusBadge status={status} t={t} />
               </div>
               <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                {/* Creator-only "Manage keepers" deep-link mirroring
-                    the OfferBook row affordance. Today this lands on
-                    the generic /app/keepers page rather than a per-
-                    offer route — the page itself surfaces every
-                    offer the wallet owns. */}
-                {isCreator && status === 'active' && (
-                  <Link to="/app/keepers" className="btn btn-secondary btn-sm">
-                    <Settings size={14} style={{ marginRight: 4 }} />
-                    {t('offerDetails.manageKeepers', {
-                      defaultValue: 'Manage keepers',
-                    })}
-                  </Link>
-                )}
                 {canCancel && (
                   <button
                     type="button"
@@ -486,12 +474,29 @@ export default function OfferDetails() {
                     >
                       <Link
                         to={`/nft-verifier?contract=${readChain.diamondAddress}&id=${indexed.positionTokenId}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
                         title={t('offerDetails.positionNftTitle', {
                           defaultValue:
-                            'Verify this position NFT in the Vaipakam NFT Verifier',
+                            'Verify this position NFT in the Vaipakam NFT Verifier (opens in new tab)',
                         })}
+                        style={{
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: 4,
+                          color: 'inherit',
+                          textDecoration: 'none',
+                        }}
                       >
                         #{indexed.positionTokenId}
+                        <ExternalLink
+                          size={12}
+                          aria-hidden="true"
+                          style={{
+                            color: 'var(--brand)',
+                            flexShrink: 0,
+                          }}
+                        />
                       </Link>
                     </span>
                   </div>
@@ -522,12 +527,29 @@ export default function OfferDetails() {
                     >
                       <Link
                         to={`/nft-verifier?contract=${offerForDisplay.lendingAsset}&id=${indexed.tokenId}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
                         title={t('offerDetails.principalNftTitle', {
                           defaultValue:
-                            'Verify the principal NFT in the Vaipakam NFT Verifier',
+                            'Verify the principal NFT in the Vaipakam NFT Verifier (opens in new tab)',
                         })}
+                        style={{
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: 4,
+                          color: 'inherit',
+                          textDecoration: 'none',
+                        }}
                       >
                         #{indexed.tokenId}
+                        <ExternalLink
+                          size={12}
+                          aria-hidden="true"
+                          style={{
+                            color: 'var(--brand)',
+                            flexShrink: 0,
+                          }}
+                        />
                       </Link>
                     </span>
                   </div>
@@ -555,12 +577,29 @@ export default function OfferDetails() {
                     >
                       <Link
                         to={`/nft-verifier?contract=${offerForDisplay.collateralAsset}&id=${indexed.collateralTokenId}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
                         title={t('offerDetails.collateralNftTitle', {
                           defaultValue:
-                            'Verify the collateral NFT in the Vaipakam NFT Verifier',
+                            'Verify the collateral NFT in the Vaipakam NFT Verifier (opens in new tab)',
                         })}
+                        style={{
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: 4,
+                          color: 'inherit',
+                          textDecoration: 'none',
+                        }}
                       >
                         #{indexed.collateralTokenId}
+                        <ExternalLink
+                          size={12}
+                          aria-hidden="true"
+                          style={{
+                            color: 'var(--brand)',
+                            flexShrink: 0,
+                          }}
+                        />
                       </Link>
                     </span>
                   </div>
@@ -590,7 +629,14 @@ export default function OfferDetails() {
                         defaultValue: 'View block on block explorer',
                       })}
                     >
-                      <ExternalLink size={12} />
+                      <ExternalLink
+                        size={12}
+                        aria-hidden="true"
+                        style={{
+                          color: 'var(--brand)',
+                          flexShrink: 0,
+                        }}
+                      />
                     </a>
                   </span>
                 </div>
@@ -632,7 +678,14 @@ export default function OfferDetails() {
                     >
                       {`${createdTxHash.slice(0, 6)}…${createdTxHash.slice(-4)}`}
                     </a>
-                    <ExternalLink size={12} aria-hidden="true" />
+                    <ExternalLink
+                      size={12}
+                      aria-hidden="true"
+                      style={{
+                        color: 'var(--brand)',
+                        flexShrink: 0,
+                      }}
+                    />
                   </span>
                 </div>
               )}
@@ -689,9 +742,20 @@ export default function OfferDetails() {
             </div>
           </div>
 
-          {/* Phase 2 placeholder — partial-fill history, keeper config
-              inline editor, accept-button surface for the OFFER side
-              (today users accept from OfferBook only). */}
+          {/* Per-offer keeper toggles (gate 3 of the Phase-6 keeper
+              auth model). Creator-only, hidden post-acceptance — see
+              PerThingKeeperToggles for the full gate-3 rationale.
+              The component itself defends against an off-creator
+              caller, so the visibility gate here just keeps the
+              non-creator UI tight. */}
+          {isCreator && offerForDisplay && status === 'active' && (
+            <PerThingKeeperToggles
+              kind="offer"
+              offerId={offerIdBig!}
+              ownerAddress={offerForDisplay.creator}
+              isAccepted={false}
+            />
+          )}
         </>
       )}
     </div>

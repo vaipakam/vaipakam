@@ -343,18 +343,10 @@ export function MyOffersTable({
                             flexWrap: 'wrap',
                           }}
                         >
-                          <HoverTip text={t('myOffersTable.manageKeepersTooltip')}>
-                            <Link
-                              to="/app/keepers"
-                              style={{
-                                fontSize: '0.72rem',
-                                padding: '3px 8px',
-                                color: 'var(--brand)',
-                              }}
-                            >
-                              {t('offerTable.manageKeepers')}
-                            </Link>
-                          </HoverTip>
+                          {/* Per-offer keeper toggles moved to the offer
+                              details page — list rows now show only the
+                              cancel action so the action column scans as
+                              a single button per row. */}
                           <HoverTip text={t('myOffersTable.cancelTooltip')}>
                             <button
                               className="btn btn-secondary btn-sm"

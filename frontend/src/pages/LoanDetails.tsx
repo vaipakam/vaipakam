@@ -37,6 +37,7 @@ import { TokenAmount } from "../components/app/TokenAmount";
 import { ErrorAlert } from "../components/app/ErrorAlert";
 import { bpsToPercent, formatDate } from "../lib/format";
 import { AddressDisplay } from "../components/app/AddressDisplay";
+import { PerThingKeeperToggles } from "../components/app/PerThingKeeperToggles";
 import { HealthFactorGauge, LTVBar } from "../components/app/RiskGauge";
 import { LiquidationProjection } from "../components/app/LiquidationProjection";
 import { LenderDiscountCard } from "../components/app/LenderDiscountCard";
@@ -1029,6 +1030,31 @@ export default function LoanDetails() {
             </>
           )}
         </div>
+      )}
+
+      {/* Per-loan keeper toggles (gate 3 of the Phase-6 keeper auth
+          model). Each NFT holder sees their own whitelist's keepers
+          with the per-loan flag inline — toggling here writes the
+          shared `loanKeeperEnabled[loanId][keeper]` flag. Per-side
+          authority is enforced at call time by each side's own
+          action-bitmask, so showing both cards (when the connected
+          wallet holds both NFTs) is correct: each lists keepers
+          from msg.sender's whitelist. */}
+      {isLender && lenderHolder && (
+        <PerThingKeeperToggles
+          kind="loan"
+          loanId={loan.id}
+          ownerAddress={lenderHolder}
+          side="lender"
+        />
+      )}
+      {isBorrower && borrowerHolder && (
+        <PerThingKeeperToggles
+          kind="loan"
+          loanId={loan.id}
+          ownerAddress={borrowerHolder}
+          side="borrower"
+        />
       )}
 
       <div className="card" style={{ marginTop: 16 }}>

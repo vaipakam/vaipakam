@@ -37,7 +37,6 @@ import { batchCalls, encodeBatchCalls } from '../lib/multicall';
 import { AddressDisplay } from '../components/app/AddressDisplay';
 import { CardInfo } from '../components/CardInfo';
 import { InfoTip } from '../components/InfoTip';
-import { HoverTip } from '../components/HoverTip';
 import {
   matchesFilter as matchesFilterPure,
   rankLenderSide as rankLenderSidePure,
@@ -2104,32 +2103,13 @@ export function OfferTable({ title, subtitle, offers, anchorRateBps, address, ac
                           );
                         })()
                       ) : isOwn ? (
-                        // Phase 6: Offer creator sees Your-Offer badge + a
-                        // "Manage keepers" deep-link. Per-keeper enables for
-                        // this specific offer happen on the Keeper Settings
-                        // page pre-acceptance (setOfferKeeperEnabled), since
-                        // that's where the user picks which of their
-                        // whitelisted keepers to enable for which offer.
-                        //
-                        // Layout: both elements inline (row, not column) so
-                        // the cell stays single-line and the Accept button
-                        // rows / Your-Offer rows share a common vertical
-                        // baseline across the action column. Stacking via
-                        // column-flex used to push these rows ~30 px taller
-                        // than the Accept rows, breaking the visual
-                        // alignment readers expect when scanning a table
-                        // column.
-                        <div style={{ display: 'inline-flex', gap: 8, alignItems: 'center', justifyContent: 'flex-end', flexWrap: 'wrap' }}>
-                          <span className="status-badge settled">{t('offerTable.yourOffer')}</span>
-                          <HoverTip text="Enable specific keepers to drive this offer via the Keeper Settings page.">
-                            <Link
-                              to="/app/keepers"
-                              style={{ fontSize: '0.72rem', padding: '3px 8px', color: 'var(--brand)' }}
-                            >
-                              {t('offerTable.manageKeepers')}
-                            </Link>
-                          </HoverTip>
-                        </div>
+                        // Offer creator sees the Your-Offer badge only.
+                        // The per-offer keeper toggles live on the offer
+                        // details page (KeeperSettings card) — surfacing
+                        // a deep-link from the list row added clutter to
+                        // a column that scans far better as a single
+                        // vertical baseline of Accept buttons.
+                        <span className="status-badge settled">{t('offerTable.yourOffer')}</span>
                       ) : address ? (
                         <button
                           className="btn btn-primary btn-sm"
