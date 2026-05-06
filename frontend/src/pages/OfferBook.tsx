@@ -196,7 +196,7 @@ export default function OfferBook() {
   // When `source === 'indexer'`, the OPEN view consumes the indexer's
   // pre-fetched rows directly via the effect below, skipping the per-
   // id `getOfferDetails` pagination. When `source === 'fallback'`
-  // (worker down / 5xx / VITE_HF_WATCHER_ORIGIN unset) the existing
+  // (worker down / 5xx / VITE_API_ORIGIN unset) the existing
   // log-scan path runs unchanged. The Closed view always takes the
   // on-chain path — closed-offer rendering isn't a Phase 1 priority.
   const {
@@ -1859,7 +1859,7 @@ function AcceptSimulationPreview({
 
 const PREFLIGHT_WORKER_ORIGIN_OB =
   (import.meta as unknown as { env: Record<string, string | undefined> }).env
-    .VITE_HF_WATCHER_ORIGIN ?? null;
+    .VITE_API_ORIGIN ?? null;
 
 /**
  * Phase 7b.1 — wraps {useLiquidityPreflight} for OfferBook's accept

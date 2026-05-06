@@ -457,7 +457,7 @@ contract DeployDiamond is Script {
     }
 
     function _getAccessControlSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](14);
+        s = new bytes4[](15);
         s[0] = AccessControlFacet.initializeAccessControl.selector;
         s[1] = AccessControlFacet.grantRole.selector;
         s[2] = AccessControlFacet.revokeRole.selector;
@@ -477,6 +477,11 @@ contract DeployDiamond is Script {
         // 48h. See AccessControlFacet implementation for the role
         // gate that scopes this.
         s[13] = AccessControlFacet.emergencyRevokeRole.selector;
+        // Atomic role + ERC-173 ownership handover (Item 3 of the
+        // 2026-05-06 rehearsal follow-ups). Replaces the legacy
+        // 23-tx grant + transferOwnership + renounce sequence.
+        // Gated by `onlyRole(DEFAULT_ADMIN_ROLE)`.
+        s[14] = AccessControlFacet.transferAdmin.selector;
     }
 
     function _getAdminSelectors() internal pure returns (bytes4[] memory s) {

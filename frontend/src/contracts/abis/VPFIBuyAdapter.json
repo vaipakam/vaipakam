@@ -166,6 +166,24 @@
   },
   {
     "type": "function",
+    "name": "getRateLimits",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "perRequestCap_",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "dailyCap_",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "guardian",
     "inputs": [],
     "outputs": [

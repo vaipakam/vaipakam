@@ -1,8 +1,8 @@
 {
   "chainSlug": "arb-sepolia",
   "chainId": 421614,
-  "deployedAt": "2026-05-06T02:38:12+0530",
-  "monorepoCommit": "674938b9f6111729cde3a9a7cda4c7d1a66fbb1d (dirty)",
+  "deployedAt": "2026-05-06T19:28:42+0530",
+  "monorepoCommit": "618f4e87c047ca544cb65eb0d19d32b3f3185ae3 (dirty)",
   "deployer": "0xb985F8987720C6d76f02909890AA21C11bC6EBCA",
-  "diamond": "0x49fA14A0D82EF7bf535d62C3371a676A3c843A2a"
+  "diamond": "0x8EcD41ecE070f6B68ae35A495AA820E1bFC19AeC"
 }

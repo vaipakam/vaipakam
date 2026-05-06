@@ -7,7 +7,7 @@ import { useWallet } from '../context/WalletContext';
  *
  * Before the user clicks Confirm in the wallet, call `simulate()` with
  * the pending tx's `{ to, data, value }`. The hook posts to the
- * operator's Cloudflare Worker proxy at `${VITE_HF_WATCHER_ORIGIN}/scan/blockaid`,
+ * operator's Cloudflare Worker proxy at `${VITE_API_ORIGIN}/scan/blockaid`,
  * which injects the Blockaid API key server-side and pass-throughs the
  * scanner JSON. The browser never sees the API key, satisfying the
  * docs' "API keys for transaction scanning and swap quotes must stay
@@ -27,7 +27,7 @@ import { useWallet } from '../context/WalletContext';
  * "preview unavailable" footer instead of a full preview card.
  */
 
-const HF_WATCHER_ORIGIN = (import.meta.env.VITE_HF_WATCHER_ORIGIN as
+const HF_WATCHER_ORIGIN = (import.meta.env.VITE_API_ORIGIN as
   | string
   | undefined) ?? '';
 

@@ -856,8 +856,17 @@ async function refreshStaleLoanTokenIds(
         functionName: 'getLoanDetails',
         args: [BigInt(row.loan_id)],
       })) as {
+        assetType: number;
+        collateralAssetType: number;
+        principalAsset: Address;
+        collateralAsset: Address;
+        durationDays: bigint;
+        tokenId: bigint;
+        collateralTokenId: bigint;
         lenderTokenId: bigint;
         borrowerTokenId: bigint;
+        principal: bigint;
+        collateralAmount: bigint;
         interestRateBps: bigint;
         startTime: bigint;
         allowsPartialRepay: boolean;
@@ -868,8 +877,20 @@ async function refreshStaleLoanTokenIds(
       // same getLoanDetails bootstrap so the pre-notify cron lane
       // can filter by cadence + compute the next checkpoint without
       // re-fetching the loan struct on every pass.
+      //
+      // Also heal asset fields (asset_type, lending_asset, etc.) in
+      // case the row was inserted via the stub-fallback path with
+      // is_stub = 1 and zero/placeholder asset metadata. The
+      // `getLoanDetails` return now carries everything, so a single
+      // RPC + UPDATE restores the row to canonical state and flips
+      // is_stub back to 0.
       await env.DB.prepare(
-        `UPDATE loans SET lender_token_id = ?, borrower_token_id = ?,
+        `UPDATE loans SET asset_type = ?, collateral_asset_type = ?,
+                          lending_asset = ?, collateral_asset = ?,
+                          duration_days = ?, token_id = ?,
+                          collateral_token_id = ?,
+                          lender_token_id = ?, borrower_token_id = ?,
+                          principal = ?, collateral_amount = ?,
                           interest_rate_bps = ?, start_time = ?,
                           allows_partial_repay = ?,
                           periodic_interest_cadence = ?,
@@ -879,8 +900,17 @@ async function refreshStaleLoanTokenIds(
          WHERE chain_id = ? AND loan_id = ?`,
       )
         .bind(
+          detail.assetType,
+          detail.collateralAssetType,
+          detail.principalAsset.toLowerCase(),
+          detail.collateralAsset.toLowerCase(),
+          Number(detail.durationDays),
+          detail.tokenId.toString(),
+          detail.collateralTokenId.toString(),
           detail.lenderTokenId.toString(),
           detail.borrowerTokenId.toString(),
+          detail.principal.toString(),
+          detail.collateralAmount.toString(),
           Number(detail.interestRateBps),
           Number(detail.startTime),
           detail.allowsPartialRepay ? 1 : 0,
@@ -893,7 +923,7 @@ async function refreshStaleLoanTokenIds(
         .run();
     } catch (err) {
       console.error(`[chainIndexer] getLoanDetails(${row.loan_id}) failed`, err);
-      // Soft-skip: leave row at '0', next tick retries.
+      // Soft-skip: leave row at is_stub = 1, next tick retries.
     }
   }
 }
@@ -921,98 +951,50 @@ async function processLoanLogs(
     if (log.eventName === 'LoanInitiated') {
       const loanId = Number(a.loanId as bigint);
       const offerId = Number(a.offerId as bigint);
-
-      // Cross-domain reuse: pull asset metadata from the offers row
-      // populated by Phase A's offer-detail refresh. The offer row
-      // exists even before its details are populated — `processOfferLogs`
-      // INSERTs a stub on `OfferCreated` with `lending_asset = '0x'`,
-      // `asset_type = 0`, etc., which `refreshStaleOfferDetails`
-      // overwrites on a later tick. Within a single block a tx can
-      // emit `OfferCreated → OfferAccepted → LoanInitiated` together;
-      // when that happens, this handler reads the freshly-stubbed
-      // offer row and would otherwise propagate the `'0x'` placeholder
-      // into the loan row permanently (no UPDATE path back-fills it).
-      //
-      // Root-cause fix: if the offer row is missing or its
-      // `lending_asset` is the create-time placeholder, call
-      // `refreshOfferDetails` synchronously to populate the offer row
-      // from chain BEFORE we read its fields. Adds one
-      // `getOfferDetails` RPC per LoanInitiated whose offer row was
-      // still a placeholder — bounded by N loans per block, so the
-      // cost is negligible. Once the offer row is populated, every
-      // subsequent reader (loan handler, loanRoutes API) sees the
-      // canonical values.
-      let offerRow = await env.DB.prepare(
-        `SELECT asset_type, collateral_asset_type, lending_asset,
-                collateral_asset, duration_days, token_id, collateral_token_id
-         FROM offers WHERE chain_id = ? AND offer_id = ?`,
-      )
-        .bind(chainId, offerId)
-        .first<{
-          asset_type: number;
-          collateral_asset_type: number;
-          lending_asset: string;
-          collateral_asset: string;
-          duration_days: number;
-          token_id: string;
-          collateral_token_id: string;
-        }>();
-      const isPlaceholder =
-        !offerRow ||
-        !offerRow.lending_asset ||
-        offerRow.lending_asset.length < 42;
-      if (isPlaceholder) {
-        const ok = await refreshOfferDetails(client, diamond, chainId, offerId, env);
-        if (ok) {
-          offerRow = await env.DB.prepare(
-            `SELECT asset_type, collateral_asset_type, lending_asset,
-                    collateral_asset, duration_days, token_id, collateral_token_id
-             FROM offers WHERE chain_id = ? AND offer_id = ?`,
-          )
-            .bind(chainId, offerId)
-            .first();
-        }
-      }
-
-      // Hard fail policy: if after the inline refresh we STILL don't
-      // have a populated offer row (RPC down, ABI drift, etc.), skip
-      // the loan INSERT entirely rather than write a placeholder row.
-      // The next cron tick's `refreshStaleOfferDetails` will eventually
-      // populate the offer, and this branch is idempotent — the
-      // LoanInitiated log replays via `INSERT OR IGNORE`'s safety net
-      // when re-scanned.
-      if (
-        !offerRow ||
-        !offerRow.lending_asset ||
-        offerRow.lending_asset.length < 42
-      ) {
-        console.warn(
-          `[chainIndexer] LoanInitiated(${loanId}) skipped — offer ${offerId} row still placeholder after inline refresh`,
-        );
-        continue;
-      }
-
       const blockAt = blockTimestamps.get(log.blockNumber) ?? now;
 
-      // Inline-fetch `getLoanDetails` to populate the loan-specific
-      // fields (lender_token_id, borrower_token_id, interest_rate_bps,
-      // start_time, allows_partial_repay, periodic_interest_cadence,
-      // last_period_settled_at). Saves the post-INSERT bootstrap pass
-      // by `refreshStaleLoanTokenIds` (one fewer D1 write per loan)
-      // and closes the cold-start window where downstream readers see
-      // `lender_token_id = '0'`.
+      // Inline-fetch `getLoanDetails` for the full Loan struct.
+      // Returns 40+ fields including all the asset metadata that
+      // used to require a cross-domain JOIN with the offer row —
+      // assetType, collateralAssetType, principalAsset (the lending
+      // asset), collateralAsset, durationDays, tokenId,
+      // collateralTokenId, etc. Self-contained: no offer-row
+      // dependency, no cold-start race against the offer-side
+      // refresh pass.
       //
-      // Fail-soft: RPC failure → INSERT with default '0' token ids /
-      // 0 cadence and let `refreshStaleLoanTokenIds` heal on a later
-      // tick. Same shape as the OfferCreated inline-fetch pattern.
+      // Fail-soft: RPC failure → INSERT a stub row (is_stub = 1,
+      // token_ids = '0') and let `refreshStaleLoanTokenIds` heal
+      // it on a later tick via the `is_stub = 1` predicate.
       type LoanDetail = {
-        lenderTokenId: bigint;
-        borrowerTokenId: bigint;
-        interestRateBps: bigint;
-        startTime: bigint;
+        id: bigint;
+        offerId: bigint;
+        lender: Address;
+        principalLiquidity: number;
+        collateralLiquidity: number;
+        status: number;
+        assetType: number;
+        useFullTermInterest: boolean;
+        fallbackConsentFromBoth: boolean;
+        collateralAssetType: number;
+        fallbackLenderBonusBpsAtInit: number;
+        fallbackTreasuryBpsAtInit: number;
+        borrower: Address;
         allowsPartialRepay: boolean;
         periodicInterestCadence: number;
         lastPeriodicInterestSettledAt: bigint;
+        lenderTokenId: bigint;
+        borrowerTokenId: bigint;
+        principal: bigint;
+        principalAsset: Address;
+        interestRateBps: bigint;
+        startTime: bigint;
+        durationDays: bigint;
+        collateralAsset: Address;
+        collateralAmount: bigint;
+        tokenId: bigint;
+        quantity: bigint;
+        collateralTokenId: bigint;
+        collateralQuantity: bigint;
       };
       let loanDetail: LoanDetail | null = null;
       try {
@@ -1024,12 +1006,15 @@ async function processLoanLogs(
         })) as LoanDetail;
       } catch (err) {
         console.error(
-          `[chainIndexer] inline getLoanDetails(${loanId}) failed; falling back to bootstrap path`,
+          `[chainIndexer] inline getLoanDetails(${loanId}) failed; falling back to stub INSERT`,
           err,
         );
       }
 
       if (loanDetail) {
+        // Self-contained INSERT — every field sourced from the
+        // single `getLoanDetails` call. No offer-row JOIN, no
+        // cross-domain dependency, no placeholder-detection pass.
         const result = await env.DB.prepare(
           `INSERT OR IGNORE INTO loans
             (chain_id, loan_id, offer_id, status, lender, borrower,
@@ -1047,17 +1032,17 @@ async function processLoanLogs(
             chainId,
             loanId,
             offerId,
-            (a.lender as string).toLowerCase(),
-            (a.borrower as string).toLowerCase(),
-            (a.principal as bigint).toString(),
-            (a.collateralAmount as bigint).toString(),
-            offerRow.asset_type,
-            offerRow.collateral_asset_type,
-            offerRow.lending_asset,
-            offerRow.collateral_asset,
-            offerRow.duration_days,
-            offerRow.token_id,
-            offerRow.collateral_token_id,
+            loanDetail.lender.toLowerCase(),
+            loanDetail.borrower.toLowerCase(),
+            loanDetail.principal.toString(),
+            loanDetail.collateralAmount.toString(),
+            loanDetail.assetType,
+            loanDetail.collateralAssetType,
+            loanDetail.principalAsset.toLowerCase(),
+            loanDetail.collateralAsset.toLowerCase(),
+            Number(loanDetail.durationDays),
+            loanDetail.tokenId.toString(),
+            loanDetail.collateralTokenId.toString(),
             loanDetail.lenderTokenId.toString(),
             loanDetail.borrowerTokenId.toString(),
             Number(loanDetail.interestRateBps),
@@ -1074,11 +1059,12 @@ async function processLoanLogs(
         continue;
       }
 
-      // Fallback: getLoanDetails RPC failed. Stub-INSERT with `is_stub
-      // = 1` and default '0' token IDs. `refreshStaleLoanTokenIds`
-      // heals via the targeted `is_stub = 1` predicate on the next
-      // cron tick — flips `is_stub` back to 0 once canonical token
-      // IDs land.
+      // Fallback: getLoanDetails RPC failed. Stub-INSERT with
+      // is_stub = 1 — `refreshStaleLoanTokenIds` heals via the
+      // targeted is_stub predicate on a later tick. The event
+      // payload (`a.lender`, `a.borrower`, `a.principal`,
+      // `a.collateralAmount`) gives us enough to record the row
+      // exists; asset metadata stays at 0 / '0x' until the heal.
       const result = await env.DB.prepare(
         `INSERT OR IGNORE INTO loans
           (chain_id, loan_id, offer_id, status, lender, borrower,
@@ -1087,7 +1073,7 @@ async function processLoanLogs(
            duration_days, token_id, collateral_token_id,
            is_stub,
            start_block, start_at, updated_at)
-         VALUES (?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)`,
+         VALUES (?, ?, ?, 'active', ?, ?, ?, ?, 0, 0, '0x', '0x', 0, '0', '0', 1, ?, ?, ?)`,
       )
         .bind(
           chainId,
@@ -1097,13 +1083,6 @@ async function processLoanLogs(
           (a.borrower as string).toLowerCase(),
           (a.principal as bigint).toString(),
           (a.collateralAmount as bigint).toString(),
-          offerRow.asset_type,
-          offerRow.collateral_asset_type,
-          offerRow.lending_asset,
-          offerRow.collateral_asset,
-          offerRow.duration_days,
-          offerRow.token_id,
-          offerRow.collateral_token_id,
           Number(log.blockNumber),
           blockAt,
           now,

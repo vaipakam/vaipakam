@@ -19,7 +19,11 @@
 # blank lines ignored. The allow-list is intentionally explicit —
 # adding a new chain folder to disk does NOT auto-include it.
 #
-# Phase 1 testnet trio (Base, Arb, OP Sepolia):
-84532       # base-sepolia    diamond 0x72c332a37d0f23b6676F26466Ebf22D73D26F7C4
-421614      # arb-sepolia     diamond 0x49fA14A0D82EF7bf535d62C3371a676A3c843A2a
-11155420    # op-sepolia      diamond 0x933f99ae856509c2cF2f47709BD957AdF8477Ed0
+# Phase 1 testnet trio (Base canonical, Arb + OP mirrors). Diamond
+# addresses are NOT listed here — the canonical source is each chain's
+# `contracts/deployments/<slug>/addresses.json`, auto-rewritten by
+# `deploy-chain.sh` on every redeploy. Duplicating addresses here was
+# drift-prone (stale after every fresh redeploy).
+84532       # base-sepolia
+421614      # arb-sepolia
+11155420    # op-sepolia

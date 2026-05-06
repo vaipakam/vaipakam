@@ -22,7 +22,7 @@ interface LiquidateButtonProps {
 
 const WORKER_ORIGIN =
   (import.meta as unknown as { env: Record<string, string | undefined> }).env
-    .VITE_HF_WATCHER_ORIGIN ?? null;
+    .VITE_API_ORIGIN ?? null;
 
 const KIND_LABEL: Record<
   'zeroex' | 'oneinch' | 'univ3' | 'balancerv2',

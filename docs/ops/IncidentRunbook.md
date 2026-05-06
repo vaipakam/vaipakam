@@ -215,7 +215,7 @@ identity), so rotation is time-sensitive.
 4. Re-register the webhook:
    ```bash
    curl "https://api.telegram.org/bot<NEW_TG_BOT_TOKEN>/setWebhook" \
-        --data-urlencode "url=https://alerts.vaipakam.com/tg/webhook"
+        --data-urlencode "url=https://api.vaipakam.com/tg/webhook"
    ```
 5. `npm run deploy` to flush any in-memory clients tied to the old
    token.

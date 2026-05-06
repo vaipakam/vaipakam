@@ -526,6 +526,9 @@ Payment-token mode requirements:
 - the frontend should display the actual buy asset for the active chain and adapter mode rather than hardcoding `ETH`; native-gas chains should show the chain's native gas asset, while WETH-pull chains should show the configured bridged WETH token and provide a verification link to the relevant market-data page
 - in WETH-pull mode, approval and balance checks should target the configured ERC-20 payment token; LayerZero execution fees remain paid in the chain's native gas token and should be labelled with that native symbol
 - buy-adapter deployments should encode a default LayerZero Type-3 buy-options payload so `quoteBuy` works immediately after deploy without requiring a separate post-deploy `setBuyOptions` transaction first; the default LzReceive gas budget should be conservative and chain-tunable, with a companion script able to update live adapters using the same `OptionsBuilder` recipe
+- mirror-chain `VPFIBuyAdapter` deployments must expose `getRateLimits()` returning the per-request cap and rolling 24-hour daily cap configured through `setRateLimits`
+- deployment health checks and mainnet verify phases must treat unlimited default buy-adapter rate limits as a hard readiness failure; operators should be able to verify configured limits through public getters rather than raw storage-slot inspection
+- canonical chains that do not deploy a buy adapter are exempt from buy-adapter rate-limit checks
 
 Cross-chain buy settlement hardening:
 

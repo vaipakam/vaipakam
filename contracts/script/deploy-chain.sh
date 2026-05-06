@@ -102,6 +102,49 @@
 
 set -euo pipefail
 
+# ── Node version preflight ────────────────────────────────────────────
+# Vite 5+ requires Node 20+; Wrangler 4+ requires Node 20+. Both are
+# called from steps `[7]` and `[8a]` respectively, deep into the
+# deploy. A version mismatch there manifests as obscure Node errors
+# (e.g. `ReferenceError: CustomEvent is not defined` from Vite) and
+# the deploy hangs at `[7]`. Failing fast at the top of the script
+# catches the operator before they spend 30 minutes on an on-chain
+# deploy that ends in a frontend-build crash.
+#
+# If `nvm` is present and the active Node is < 20, attempt to use
+# any installed Node ≥ 20 from `~/.nvm/versions/node/`. Fail with
+# a clear message if none available.
+if command -v node >/dev/null 2>&1; then
+  NODE_MAJOR="$(node -v 2>/dev/null | sed -E 's/^v([0-9]+).*/\1/')"
+else
+  NODE_MAJOR=0
+fi
+if [ "${NODE_MAJOR:-0}" -lt 20 ]; then
+  # Look for nvm-managed Node ≥ 20 to recover automatically.
+  if [ -d "$HOME/.nvm/versions/node" ]; then
+    BEST_NODE_BIN=""
+    while IFS= read -r CANDIDATE; do
+      CANDIDATE_MAJOR="$(basename "$CANDIDATE" | sed -E 's/^v([0-9]+).*/\1/')"
+      if [ "${CANDIDATE_MAJOR:-0}" -ge 20 ]; then
+        BEST_NODE_BIN="$CANDIDATE/bin"
+      fi
+    done < <(find "$HOME/.nvm/versions/node" -maxdepth 1 -mindepth 1 -type d 2>/dev/null | sort)
+    if [ -n "$BEST_NODE_BIN" ]; then
+      export PATH="$BEST_NODE_BIN:$PATH"
+      echo "[node-preflight] auto-switched to $BEST_NODE_BIN (was Node v$NODE_MAJOR)"
+    else
+      echo "Error: Node v$NODE_MAJOR detected. Steps [7] and [8a] need Node 20+ for Vite + Wrangler." >&2
+      echo "       Either run \`nvm install 20 && nvm use 20\`, or invoke this script with PATH" >&2
+      echo "       overridden to a Node-20+ install (e.g. \`PATH=/path/to/node-20/bin:\$PATH bash …\`)." >&2
+      exit 1
+    fi
+  else
+    echo "Error: Node v$NODE_MAJOR detected. Steps [7] and [8a] need Node 20+ for Vite + Wrangler." >&2
+    echo "       Install Node 20+ (or nvm) before running this script." >&2
+    exit 1
+  fi
+fi
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONTRACTS_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 REPO_ROOT="$(cd "$CONTRACTS_DIR/.." && pwd)"
@@ -902,18 +945,99 @@ elif [ "$SKIP_WATCHER" = "0" ]; then
           || echo 0
       )
       if [ "$SECRET_PRESENT" = "0" ]; then
-        echo "  ⚠  $EXPECTED_RPC_SECRET is NOT set on the watcher Worker."
-        echo "     The watcher will return 503 'chain-not-configured' for"
-        echo "     chainId=$CHAIN_ID until you set it. From inside ops/hf-watcher:"
+        # Hard-fail (was warn-only pre-2026-05-06). Today's rehearsal
+        # showed that silent-skipping a missing RPC secret leaves the
+        # watcher's `getChainConfigs(env)` filter dropping the chain
+        # entirely (env.ts:151 — `if (!m.rpc) continue;`). The cron
+        # then round-robins through only the chains that DO have a
+        # secret, never visiting this one — D1 stays empty for ~50 min
+        # before the operator notices via missing OfferBook rows. The
+        # fix is to refuse to proceed past `cf-watcher` until the
+        # secret is in place; operator can re-run the script after
+        # `wrangler secret put` and the deploy resumes from this step
+        # via the `mark_done`/`step_done` checkpoint.
+        echo "  ✗ FAIL: $EXPECTED_RPC_SECRET is NOT set on the watcher Worker."
         echo
-        echo "       echo -n '<your-rpc-url>' | npx wrangler secret put $EXPECTED_RPC_SECRET"
+        echo "  The watcher's getChainConfigs() filter (env.ts:151) drops any"
+        echo "  chain whose RPC env binding is empty, so chainId=$CHAIN_ID will"
+        echo "  silently never enter the round-robin. Set the secret before"
+        echo "  re-running this script:"
         echo
-        echo "     (Per CLAUDE.md, RPC secrets are operator-curated and"
-        echo "      live as wrangler secrets, never in the repo.)"
+        echo "    cd $WATCHER_DIR"
+        echo "    echo -n '<your-paid-rpc-url>' | npx wrangler secret put $EXPECTED_RPC_SECRET"
+        echo
+        echo "  (Per CLAUDE.md, RPC secrets are operator-curated and live as"
+        echo "   wrangler secrets, never in the repo. Use a paid-tier provider —"
+        echo "   Alchemy / Infura / QuickNode / DRPC — so the cron isn't"
+        echo "   throttled mid-broadcast.)"
+        exit 1
+      fi
+      echo "  ✓ $EXPECTED_RPC_SECRET is set"
+    fi
+
+    # ── 8d. Seed indexer_cursor to current safe head (FRESH only) ─────
+    #
+    # Reason for existence: after a `--fresh` deploy, D1 has been
+    # purged for this chainId, so the watcher's `indexer_cursor` row
+    # is gone too. The next cron tick reads the missing row, falls
+    # back to `deployBlock - 1`, and starts a multi-tick backfill of
+    # the empty pre-deploy block range. With `len(chains)` × 1-min
+    # round-robin cadence + 2000-block-per-tick scan budget, that
+    # backfill can take 5-10 minutes during which the operator can't
+    # see freshly-broadcast PositiveFlows / smoke-test events on the
+    # frontend's indexer-backed tables.
+    #
+    # Seeding the cursor at current `safe` head closes that gap —
+    # the very next cron tick for this chain starts indexing AT
+    # head, picking up smoke-test events immediately. Misses any
+    # events emitted between deployBlock and seed-time (which on a
+    # fresh deploy is just the deploy script's own role-grant /
+    # init calls — not OfferCreated/LoanInitiated, which only fire
+    # via user-facing flows). The activity_events table loses those
+    # diagnostic admin events on free tier; acceptable trade for
+    # the catch-up latency win.
+    #
+    # No-op when --fresh is OFF: keeping the existing cursor is the
+    # right call for incremental redeploys (a facet swap that
+    # preserves the diamond address).
+    if [ "$FRESH" = "1" ]; then
+      echo
+      echo "  [8d] Seed indexer_cursor for chainId=$CHAIN_ID at safe head"
+      # Map chain-slug → env var holding the RPC URL. Mirrors the
+      # naming convention every env (.env / .env.example / wrangler
+      # secrets) already uses.
+      case "$CHAIN_SLUG" in
+        base-sepolia)  RPC_VAR="BASE_SEPOLIA_RPC_URL" ;;
+        sepolia)       RPC_VAR="SEPOLIA_RPC_URL" ;;
+        arb-sepolia)   RPC_VAR="ARB_SEPOLIA_RPC_URL" ;;
+        op-sepolia)    RPC_VAR="OP_SEPOLIA_RPC_URL" ;;
+        bnb-testnet)   RPC_VAR="BNB_TESTNET_RPC_URL" ;;
+        polygon-amoy)  RPC_VAR="POLYGON_AMOY_RPC_URL" ;;
+        *)             RPC_VAR="" ;;
+      esac
+      RPC_URL="${!RPC_VAR:-}"
+      if [ -z "$RPC_URL" ]; then
+        echo "    ⚠ $RPC_VAR not set in env — skipping cursor seed"
       else
-        echo "  ✓ $EXPECTED_RPC_SECRET is set"
+        SAFE_HEAD="$(cast block-number --rpc-url "$RPC_URL" --tag safe 2>/dev/null \
+          || cast block-number --rpc-url "$RPC_URL" 2>/dev/null \
+          || echo "")"
+        if [ -z "$SAFE_HEAD" ]; then
+          echo "    ⚠ cast block-number failed against $RPC_VAR — skipping cursor seed"
+        else
+          NOW_TS=$(date +%s)
+          ( cd "$WATCHER_DIR" && npx wrangler d1 execute vaipakam-alerts-db --remote --command \
+            "INSERT INTO indexer_cursor (chain_id, kind, last_block, updated_at)
+             VALUES ($CHAIN_ID, 'diamond', $SAFE_HEAD, $NOW_TS)
+             ON CONFLICT(chain_id, kind) DO UPDATE SET
+               last_block = excluded.last_block,
+               updated_at = excluded.updated_at;" >/dev/null 2>&1 ) \
+            && echo "    ✓ cursor seeded at block $SAFE_HEAD" \
+            || echo "    ⚠ wrangler d1 execute failed — cron will fall through to deployBlock-1"
+        fi
       fi
     fi
+
     mark_done "watcher"
   fi
 else

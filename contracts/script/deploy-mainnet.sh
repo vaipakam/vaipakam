@@ -63,6 +63,47 @@
 
 set -euo pipefail
 
+# ── Node version preflight ────────────────────────────────────────────
+# Vite 5+ and Wrangler 4+ both require Node 20+. The cf-frontend +
+# cf-watcher phases call them deep into the deploy; a version
+# mismatch there manifests as obscure crashes (e.g.
+# `ReferenceError: CustomEvent is not defined` from Vite). Failing
+# fast at the top catches the operator before they spend hours on
+# an on-chain deploy that ends in a frontend-build crash.
+#
+# Auto-recovers via nvm if any installed Node ≥ 20 is on disk;
+# hard-fails with a clear message otherwise. Mainnet-strict — this
+# runs at script start regardless of which `--phase` is requested.
+if command -v node >/dev/null 2>&1; then
+  NODE_MAJOR="$(node -v 2>/dev/null | sed -E 's/^v([0-9]+).*/\1/')"
+else
+  NODE_MAJOR=0
+fi
+if [ "${NODE_MAJOR:-0}" -lt 20 ]; then
+  if [ -d "$HOME/.nvm/versions/node" ]; then
+    BEST_NODE_BIN=""
+    while IFS= read -r CANDIDATE; do
+      CANDIDATE_MAJOR="$(basename "$CANDIDATE" | sed -E 's/^v([0-9]+).*/\1/')"
+      if [ "${CANDIDATE_MAJOR:-0}" -ge 20 ]; then
+        BEST_NODE_BIN="$CANDIDATE/bin"
+      fi
+    done < <(find "$HOME/.nvm/versions/node" -maxdepth 1 -mindepth 1 -type d 2>/dev/null | sort)
+    if [ -n "$BEST_NODE_BIN" ]; then
+      export PATH="$BEST_NODE_BIN:$PATH"
+      echo "[node-preflight] auto-switched to $BEST_NODE_BIN (was Node v$NODE_MAJOR)"
+    else
+      echo "Error: Node v$NODE_MAJOR detected. cf-frontend and cf-watcher phases need Node 20+ for Vite + Wrangler." >&2
+      echo "       Either run \`nvm install 20 && nvm use 20\`, or invoke this script with PATH" >&2
+      echo "       overridden to a Node-20+ install (e.g. \`PATH=/path/to/node-20/bin:\$PATH bash …\`)." >&2
+      exit 1
+    fi
+  else
+    echo "Error: Node v$NODE_MAJOR detected. cf-frontend and cf-watcher phases need Node 20+ for Vite + Wrangler." >&2
+    echo "       Install Node 20+ (or nvm) before running this script." >&2
+    exit 1
+  fi
+fi
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONTRACTS_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 REPO_ROOT="$(cd "$CONTRACTS_DIR/.." && pwd)"
@@ -513,19 +554,77 @@ phase_cf_watcher() {
         || echo 0
     )
     if [ "$SECRET_PRESENT" = "0" ]; then
-      echo "  ⚠  $EXPECTED_RPC_SECRET is NOT set on the watcher Worker."
-      echo "     The watcher will return 503 'chain-not-configured' for"
-      echo "     chainId=$CHAIN_ID until you set it. From inside ops/hf-watcher:"
+      # Hard-fail (was warn-only pre-2026-05-06). The 2026-05-06 testnet
+      # rehearsal proved that silent-skipping a missing RPC secret leaves
+      # `getChainConfigs(env)` (env.ts:151 — `if (!m.rpc) continue;`)
+      # filtering this chain out of the round-robin entirely. The cron
+      # never visits it; D1 stays empty for chainId=$CHAIN_ID until an
+      # operator notices via missing OfferBook rows. On mainnet that
+      # window between 'deploy claims success' and 'first user wonders
+      # why their offer isn't showing up' is a credibility hit we don't
+      # need to take. Operator sets the secret, re-runs the script, and
+      # `mark_phase_done` resumes from the next phase.
+      echo "  ✗ FAIL: $EXPECTED_RPC_SECRET is NOT set on the watcher Worker."
       echo
-      echo "       echo -n '<your-rpc-url>' | npx wrangler secret put $EXPECTED_RPC_SECRET"
+      echo "  The watcher's getChainConfigs() filter (env.ts:151) drops any"
+      echo "  chain whose RPC env binding is empty, so chainId=$CHAIN_ID will"
+      echo "  silently never enter the round-robin. Set the secret before"
+      echo "  re-running this script:"
       echo
-      echo "     Per CLAUDE.md mainnet hot-key policy, this RPC URL should"
-      echo "     carry an API key from a paid tier (Alchemy / Infura /"
-      echo "     QuickNode / DRPC) and live ONLY as a wrangler secret."
+      echo "    cd $WATCHER_DIR"
+      echo "    echo -n '<your-paid-rpc-url>' | npx wrangler secret put $EXPECTED_RPC_SECRET"
+      echo
+      echo "  Per CLAUDE.md mainnet hot-key policy, the RPC URL must carry"
+      echo "  an API key from a paid tier (Alchemy / Infura / QuickNode /"
+      echo "  DRPC) and live ONLY as a wrangler secret — never in the repo."
+      exit 1
+    fi
+    echo "  ✓ $EXPECTED_RPC_SECRET is set"
+  fi
+
+  # [d] Seed indexer_cursor at current safe head — closes the
+  # backfill latency window. After the watcher is freshly deployed
+  # AND its D1 schema is migrated (steps a + b above), the next
+  # cron tick reads `indexer_cursor` for this chain. With no row
+  # present, the cron falls back to `deployBlock - 1` and starts a
+  # multi-tick backfill of the empty pre-deploy range.
+  #
+  # Mainnet operators kick off smoke tests + the public deployment
+  # announcement immediately after `--phase cf-watcher` lands; a 5-
+  # to 10-minute backfill window means the indexer-backed views
+  # show stale (empty) data for that long. Seeding the cursor at
+  # current safe head means the next cron tick captures the
+  # smoke-test events directly — no empty backfill.
+  #
+  # Misses any events emitted between deployBlock and seed-time —
+  # which on mainnet is just `--phase contracts` admin calls (role
+  # grants, init steps), no OfferCreated / LoanInitiated. Those
+  # only fire from user-facing flows post-deploy. Activity_events
+  # table loses the diagnostic admin events; trade-off is
+  # documented in DeploymentRunbook.md.
+  echo
+  echo "[d] Seed indexer_cursor for chainId=$CHAIN_ID at safe head"
+  if [ -z "${RPC:-}" ]; then
+    echo "    ⚠ RPC not set — skipping cursor seed (re-run with RPC env exported)"
+  else
+    SAFE_HEAD="$(cast block-number --rpc-url "$RPC" --tag safe 2>/dev/null \
+      || cast block-number --rpc-url "$RPC" 2>/dev/null \
+      || echo "")"
+    if [ -z "$SAFE_HEAD" ]; then
+      echo "    ⚠ cast block-number failed against \$RPC — skipping cursor seed"
     else
-      echo "  ✓ $EXPECTED_RPC_SECRET is set"
+      NOW_TS=$(date +%s)
+      ( cd "$WATCHER_DIR" && npx wrangler d1 execute vaipakam-alerts-db --remote --command \
+        "INSERT INTO indexer_cursor (chain_id, kind, last_block, updated_at)
+         VALUES ($CHAIN_ID, 'diamond', $SAFE_HEAD, $NOW_TS)
+         ON CONFLICT(chain_id, kind) DO UPDATE SET
+           last_block = excluded.last_block,
+           updated_at = excluded.updated_at;" >/dev/null 2>&1 ) \
+        && echo "    ✓ cursor seeded at block $SAFE_HEAD" \
+        || echo "    ⚠ wrangler d1 execute failed — cron will fall through to deployBlock-1"
     fi
   fi
+
   mark_phase_done "cf-watcher"
 }
 

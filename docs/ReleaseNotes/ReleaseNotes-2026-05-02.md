@@ -428,7 +428,7 @@ every cron tick:
   `useIndexedLoansForWallet`, `useIndexedActivity`,
   `useIndexedClaimables`, `useOfferStats`) all return a `source`
   field that flips between `'indexer'` and `'fallback'`. On any
-  worker error / timeout / `VITE_HF_WATCHER_ORIGIN` unset, the
+  worker error / timeout / `VITE_API_ORIGIN` unset, the
   consumer falls through to the existing per-browser
   `lib/logIndex.ts` scan. The worker is a CACHE, not an oracle —
   decentralization is preserved end to end. Every offer card will

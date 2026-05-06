@@ -160,3 +160,50 @@ contracts. With dedup that's roughly 40 × 30s avg = ~20 min.
 **Recommended order**: tackle #1 first (mainnet-blocking), #4 in
 parallel as a side-pass on the next testnet, #2 + #3 as polish in
 a single contract-side hardening PR before mainnet deploy.
+
+## 5. `getLoanDetails(loanId)` should return the full Loan struct — RECOMMENDED
+
+**Status**: nice-to-have consistency cleanup, not blocking.
+
+`OfferCancelFacet.getOfferDetails(offerId)` returns the full
+`LibVaipakam.Offer` struct (28 fields), one RPC = full row. By
+contrast `LoanFacet.getLoanDetails(loanId)` returns a SLIM 7-field
+view (lenderTokenId, borrowerTokenId, interestRateBps, startTime,
+allowsPartialRepay, periodicInterestCadence,
+lastPeriodicInterestSettledAt). Asymmetric.
+
+**Why it matters**: the watcher's `LoanInitiated` handler currently
+needs to JOIN against the offer row in D1 to fetch asset metadata
+(lending_asset, collateral_asset, asset_type, etc.) because
+`getLoanDetails` doesn't return them. That coupling is the reason
+the cold-start race we saw on 2026-05-06 existed in the first place
+— if the offer row was a placeholder when LoanInitiated fired, the
+loan inherited the placeholder. Defended today via an inline
+`refreshOfferDetails` call before the loan INSERT, but a full
+`getLoanDetails` would let us drop the cross-table JOIN entirely.
+
+**Fix**: expand `LoanFacet.getLoanDetails(uint256 loanId)` to return
+the full `LibVaipakam.Loan` struct. Same shape as `getOfferDetails`:
+
+```solidity
+function getLoanDetails(uint256 loanId)
+    external
+    view
+    returns (LibVaipakam.Loan memory)
+{
+    return LibVaipakam.storageSlot().loans[loanId];
+}
+```
+
+**ABI-breaking change** — existing callers need updating in
+lockstep:
+- `frontend/src/hooks/useLoan.ts` (frontend ABI re-export +
+  consumer update)
+- `ops/hf-watcher/src/chainIndexer.ts` (watcher ABI re-export +
+  consumer update; the slim-shape destructure in
+  `refreshStaleLoanTokenIds` and `processLoanLogs:LoanInitiated`
+  becomes a single full-struct read)
+- `vaipakam-keeper-bot` (per CLAUDE.md keeper-bot ABI sync —
+  `bash contracts/script/exportAbis.sh`)
+
+Bundle into the same contract-side hardening PR as #2 + #3.

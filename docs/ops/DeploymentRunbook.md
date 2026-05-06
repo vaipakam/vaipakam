@@ -92,6 +92,171 @@ Before mainnet, run the full deployment sequence on testnets that
 mirror the mainnet topology. Today's rehearsal target:
 **Base Sepolia (canonical) ↔ Arb Sepolia + OP Sepolia (mirrors)**.
 
+### Rehearsal lessons learned (2026-05-06)
+
+These bit us during the multi-chain redeploy and would bite again on
+mainnet without preflight discipline:
+
+- **Node version: 20+ required.** The deploy script's step `[7]`
+  Frontend build invokes `vite build`; Vite 5.x requires Node 20+. The
+  `[8]` watcher deploy invokes `wrangler`; Wrangler 4.x requires Node
+  20+. Both fail with cryptic errors under the system's Node 18
+  default (`ReferenceError: CustomEvent is not defined` for Vite,
+  hard exit for wrangler). The wrapper script propagates exit-0
+  even when these inner steps fail — flagged for a follow-up
+  patch. Until that lands: source `nvm` and `nvm use 20` (or 25)
+  BEFORE running `deploy-chain.sh`. Confirm with `which node && node
+  --version` ≥ 20.0.0.
+- **`REWARD_VERSION` collision recovery.** Step `[5]` deploys the
+  Reward OApp via CREATE2 with a salt derived from `REWARD_VERSION`.
+  If the same `(deployer, salt, init code)` tuple ever landed code
+  on this chain (a prior rehearsal that completed step `[5]` with the
+  same version), the second attempt reverts `Create2DeployFailed
+  (CreateCollision)`. Recovery: bump the `REWARD_VERSION` env var
+  (e.g. `v1-rehearsal-2026-05-06` → `v2-rehearsal-2026-05-06`), then
+  `deploy-chain.sh <slug> --resume` to skip the already-completed
+  steps and re-run from `[5]`. The new salt yields a fresh CREATE2
+  address.
+- **drpc.live throttling on Base Sepolia.** Sustained high-frequency
+  reads during forge's broadcast prep phase silently throttle on
+  `lb.drpc.live/base-sepolia/...`, causing the deploy to hang for
+  30+ minutes at `Estimated total gas used`. Workaround: set
+  `BASE_SEPOLIA_RPC_URL=https://base-sepolia-rpc.publicnode.com` for
+  the deploy run (export inline before invoking `deploy-chain.sh`).
+  publicnode handled the full ~110M gas budget cleanly.
+- **`.active-chains` is the inclusion gate.** The export script
+  reads `contracts/deployments/.active-chains` to filter which
+  per-chain folders fold into the consolidated `deployments.json`.
+  Folders for retired chains stay on disk for forensic value but
+  stop being crawled by the watcher and stop appearing in the
+  frontend's chain picker. NOT auto-updated by deploy scripts —
+  adding/removing a chain is a one-line operator edit.
+- **CREATE2 OApp address is the same across chains for the same
+  `REWARD_VERSION`.** A bumped version on Base only matters for
+  Base; the same bumped version on Arb and OP yields a different
+  CREATE2 address on each chain only because each chain has its
+  own state. If a prior rehearsal landed a Reward OApp at the v1
+  salt on multiple chains, ALL of them need the same version bump
+  in lockstep — otherwise the cross-chain peer wiring (Reward
+  mesh) won't match the deployed addresses.
+- **Rate-limit verification gate (Item 1, 2026-05-06).**
+  `VPFIBuyAdapter.getRateLimits()` is now a public view. Step `[5d]`
+  health check on mirror chains hard-fails the deploy when either
+  cap is at `type(uint256).max` — replaces the prior soft-warn that
+  let unverified rate limits through.
+- **Silent watcher chain-skip on missing per-chain RPC secret.**
+  `getChainConfigs(env)` (`ops/hf-watcher/src/env.ts:151`) drops any
+  chain whose `RPC_<CHAIN>` Cloudflare secret is unset — the
+  watcher's round-robin cron then never visits that chain, D1 stays
+  empty for its `chain_id`, and the OfferBook / loan tables show
+  zero rows for it. The `[8c]` / cf-watcher `[c]` RPC-secret check
+  is now hard-fail (was warn-only pre-2026-05-06): the deploy stops
+  with a clear setup command if the expected `RPC_<CHAIN>` secret is
+  missing on the watcher Worker. **Prerequisite — set ALL per-chain
+  RPC secrets before the first deploy targeting that chain** (see
+  next section).
+
+### Prerequisites: one-time watcher RPC-secret setup
+
+Per `CLAUDE.md`, RPC URLs carry operator-curated paid-tier API keys
+and live ONLY as Cloudflare Worker secrets — never in the repo. Set
+once per chain, BEFORE the first `deploy-chain.sh <slug>` (or
+`deploy-mainnet.sh --phase cf-watcher`) targeting that chain. The
+deploy script's hard-fail check refuses to proceed without them:
+
+```bash
+cd ops/hf-watcher
+
+# Testnet trio
+echo -n "$BASE_SEPOLIA_RPC_URL" | npx wrangler secret put RPC_BASE_SEPOLIA
+echo -n "$ARB_SEPOLIA_RPC_URL"  | npx wrangler secret put RPC_ARB_SEPOLIA
+echo -n "$OP_SEPOLIA_RPC_URL"   | npx wrangler secret put RPC_OP_SEPOLIA
+
+# Mainnet (when those phases land)
+echo -n "$RPC_ETH"    | npx wrangler secret put RPC_ETH
+echo -n "$RPC_BASE"   | npx wrangler secret put RPC_BASE
+echo -n "$RPC_ARB"    | npx wrangler secret put RPC_ARB
+echo -n "$RPC_OP"     | npx wrangler secret put RPC_OP
+echo -n "$RPC_ZKEVM"  | npx wrangler secret put RPC_ZKEVM
+echo -n "$RPC_BNB"    | npx wrangler secret put RPC_BNB
+```
+
+Verify with `npx wrangler secret list` from inside `ops/hf-watcher` —
+each chain you plan to index must show its `RPC_<CHAIN>` entry.
+Cloudflare auto-redeploys the Worker on every `secret put` so the
+new value takes effect on the next cron tick.
+
+### Auto post-deploy steps performed by the script
+
+`deploy-chain.sh` and `deploy-mainnet.sh phase_cf_watcher` already
+perform these AUTOMATICALLY after the contract deploy lands — no
+manual follow-up required when the prerequisites are in place:
+
+1. **ABI + deployments sync** (step `[6]` / `phase_abi_sync`) — re-
+   exports per-facet ABIs to `frontend/src/contracts/abis/`,
+   `ops/hf-watcher/src/abis/`, and (if sibling repo present)
+   `vaipakam-keeper-bot/src/abis/`. Regenerates the consolidated
+   `deployments.json` for both consumer surfaces with the new
+   diamond + facet addresses.
+2. **Frontend build + Cloudflare deploy** (step `[7]` /
+   `phase_cf_frontend`) — runs `npm run build` then
+   `npx wrangler deploy` from `frontend/`. Skip with
+   `--skip-frontend` if the build is intentionally lagging.
+3. **Watcher Cloudflare deploy** (step `[8a]` / cf-watcher `[a]`) —
+   `npx wrangler deploy` from `ops/hf-watcher/`. Pushes the new
+   bundle (which now embeds the new diamond addresses) so the cron
+   reads from the right contract on the next tick.
+4. **D1 migrations** (step `[8b]` / cf-watcher `[b]`) — applies any
+   pending schema migrations to the remote `vaipakam-alerts-db`.
+   Idempotent — wrangler skips already-applied entries.
+5. **RPC-secret presence check** (step `[8c]` / cf-watcher `[c]`) —
+   verifies the per-chain `RPC_<CHAIN>` secret exists on the Worker.
+   **Hard-fails the deploy if missing** — see prerequisite above.
+6. **Indexer-cursor seed** (step `[8d]` / cf-watcher `[d]` —
+   `--fresh` only) — INSERTs/UPDATEs the cursor for the deployed
+   chain at current safe head so the first cron tick starts indexing
+   AT head instead of backfilling an empty pre-deploy block range.
+
+### Post-deploy verification (do this before announcing)
+
+Within ~5 minutes of `deploy-chain.sh <slug>` returning success,
+confirm the watcher is actually indexing the new chain:
+
+```bash
+# 1. Confirm the cursor is advancing (not just seeded)
+cd ops/hf-watcher
+npx wrangler d1 execute vaipakam-alerts-db --remote --json --command \
+  "SELECT chain_id, last_block, datetime(updated_at,'unixepoch') as updated
+     FROM indexer_cursor WHERE kind='diamond' ORDER BY chain_id;" \
+  | jq '.[0].results'
+# Each chain's `updated` should be within the last ~3 minutes.
+
+# 2. Confirm offers / loans rows materialise for the new chain
+#    once smoke-test events have landed on chain.
+npx wrangler d1 execute vaipakam-alerts-db --remote --json --command \
+  "SELECT chain_id, COUNT(*) FROM offers GROUP BY chain_id;
+   SELECT chain_id, COUNT(*) FROM loans  GROUP BY chain_id;" \
+  | jq '.[0].results, .[1].results'
+
+# 3. Direct on-chain truth — count events emitted by the diamond
+#    in the last ~10k blocks; should match the D1 row counts.
+DIAMOND=$(jq -r '.diamond' deployments/<slug>/addresses.json)
+OFFER_TOPIC=$(cast keccak "OfferCreated(uint256,address,uint8)")
+LOAN_TOPIC=$(cast keccak \
+  "LoanInitiated(uint256,uint256,address,address,uint256,uint256)")
+cast logs --rpc-url "$RPC" --from-block latest-10000 \
+  --address "$DIAMOND" "$OFFER_TOPIC" --json | jq 'length'
+cast logs --rpc-url "$RPC" --from-block latest-10000 \
+  --address "$DIAMOND" "$LOAN_TOPIC"  --json | jq 'length'
+```
+
+Mismatches mean the watcher pass is silently throwing for that
+chain. Tail the live Worker logs to inspect:
+
+```bash
+cd ops/hf-watcher && npx wrangler tail --format=pretty
+```
+
 ### 1. Per-chain deploy (run 3 times)
 
 Each invocation deploys contracts, runs the post-cut facet-count
@@ -919,7 +1084,7 @@ Telegram + Push Protocol. This section is one-time setup and does
 3. Register the webhook so Telegram pushes inbound DMs into the worker:
    ```bash
    curl "https://api.telegram.org/bot<TG_BOT_TOKEN>/setWebhook" \
-        --data-urlencode "url=https://alerts.vaipakam.com/tg/webhook"
+        --data-urlencode "url=https://api.vaipakam.com/tg/webhook"
    ```
    Verify with `getWebhookInfo`.
 
@@ -944,7 +1109,7 @@ Telegram + Push Protocol. This section is one-time setup and does
 4. **Frontend env.** Set on every frontend deploy:
    ```
    VITE_PUSH_CHANNEL_ADDRESS=0x6F5847A0CA1F2cB1bbEf944124cE5995988a1D6b
-   VITE_HF_WATCHER_ORIGIN=https://alerts.vaipakam.com
+   VITE_API_ORIGIN=https://api.vaipakam.com
    ```
    Without these, the Alerts page falls closed gracefully; with them,
    the "Subscribe on Push →" deep link and the Push rail enable
@@ -998,7 +1163,7 @@ above; no separate deploy.
    ```bash
    # From a shell on a host the FRONTEND_ORIGIN allows (or via
    # `curl --resolve` to bypass DNS):
-   curl -X POST https://alerts.vaipakam.com/diag/record \
+   curl -X POST https://api.vaipakam.com/diag/record \
      -H 'origin: https://vaipakam.com' \
      -H 'content-type: application/json' \
      -d '{
@@ -1027,7 +1192,7 @@ override per-environment via `wrangler vars` or the dashboard):
 
 **Frontend coupling**:
 
-The frontend reads `VITE_HF_WATCHER_ORIGIN` (already set —
+The frontend reads `VITE_API_ORIGIN` (already set —
 same origin as the Alerts page uses). No new frontend env var
 is required for capture itself; the optional
 `VITE_APP_VERSION` (CI-injected commit hash) gets stamped on

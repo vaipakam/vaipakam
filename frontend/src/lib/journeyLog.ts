@@ -227,7 +227,7 @@ export function emit(input: EmitInput): JourneyEvent {
 //      loop or a stuck retry path. The Worker has a secondary cap as
 //      belt-and-suspenders.
 //   2. **No-op when origin not configured.** If
-//      `VITE_HF_WATCHER_ORIGIN` is unset (local dev without the
+//      `VITE_API_ORIGIN` is unset (local dev without the
 //      worker), capture silently disabled.
 //   3. **`navigator.sendBeacon` first, fetch fallback.** Beacon
 //      survives page-unload and is non-blocking by definition;
@@ -257,7 +257,7 @@ function recordFailureToServer(ev: JourneyEvent): void {
   let origin: string;
   let enabled: string;
   try {
-    origin = (import.meta.env.VITE_HF_WATCHER_ORIGIN as string | undefined) ?? '';
+    origin = (import.meta.env.VITE_API_ORIGIN as string | undefined) ?? '';
     enabled = (import.meta.env.VITE_DIAG_RECORD_ENABLED as string | undefined) ?? '';
   } catch {
     return;
