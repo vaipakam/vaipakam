@@ -301,6 +301,16 @@ with at minimum 3 RPCs per chain plus the wallet provider. Aave
 exposes the user-supplied-RPC setting prominently. Hyperliquid
 documents their public RPC URL list publicly.
 
+**Operator-node twin (Phase 0.5 #10).** The protocol team's
+Oracle Cloud operator instance can run its own chain RPC nodes
+for the testnet trio (Base / Arb / OP Sepolia), feeding into
+the multi-RPC failover list as a self-hosted endpoint. ~30–50 GB
+disk per testnet, ~1.5–2 GB combined RAM. Mainnet RPC sovereignty
+doesn't fit Always Free's storage budget; that layer relies on
+paid-tier + community RPC failover instead. See
+`OperatorNodeDeploymentDesign.md` Phase 0.5 #10 for memory
+budget and instance-sizing options.
+
 ### 4.5 Subgraph as a redundant indexer
 
 **Concern:** today the frontend's "indexer" is a single
@@ -334,6 +344,16 @@ frontend integration.
 **Reference:** Uniswap, Aave, Compound, Lido, Balancer — every
 major DeFi has a subgraph as the canonical "decentralised
 indexer". The Graph + GraphQL is the de facto standard.
+
+**Operator-node twin (Phase 0.5 #8).** The local Postgres mirror
+indexer on the protocol team's operator node can expose an HTTP
+API (`indexer.vaipakam.com`) with the same row shape as the
+worker's `/offers/*`, `/loans/*`, `/activity/*` endpoints. That
+becomes a third tier in the failover chain — Cloudflare Worker
+→ The Graph subgraph → Operator-hosted indexer → Direct chain
+RPC. ~50 MB additional RAM (Express / Fastify sidecar reading
+from the existing Postgres connection pool). See
+`OperatorNodeDeploymentDesign.md` Phase 0.5 #8.
 
 ### 4.6 IPFS hosting + ENS / DNSLink wiring
 
@@ -413,6 +433,16 @@ architecture continues to work as the fallback.
 **Reference:** dYdX / Hyperliquid run WebSocket APIs as primary
 event channel. Uniswap V3 interface uses subgraph subscriptions
 (also WebSocket-backed). 0x's RFQ orderbook is WebSocket.
+
+**Operator-node twin (Phase 0.5 #9 / Phase 8b).** The
+Cloudflare durable-object endpoint is the canonical primary
+push path; a self-hosted twin runs on the protocol team's
+operator node, sourcing events from the local Postgres mirror
+via `LISTEN/NOTIFY` and fanning out to subscribed clients via
+a small Node `ws` server. Frontend's WS-failover order:
+Cloudflare WS (8a) → Operator-hosted WS (8b) → Polling
+(canonical fallback). ~150–200 MB additional RAM. See
+`OperatorNodeDeploymentDesign.md` Phase 0.5 #9.
 
 ### 4.8 Operator-side infrastructure (already designed)
 
@@ -522,6 +552,15 @@ are operator-side ceremonies (~1 day each).
 **Reference:** Aave's `risk.aave.com`, Compound's `compound.finance/markets`,
 Lido's `dashboard.lido.fi`. Public health pages are table stakes.
 
+**Operator-node twin (Phase 0.5 #11).** The public status page
+(`status.vaipakam.com`) is hosted on the protocol team's
+operator node, NOT on Cloudflare — same logic as Pillar 4.6's
+IPFS-hosting argument: the page that says "Cloudflare is
+down" can't itself live on Cloudflare. Small Express + static-
+asset surface, ~50 MB additional RAM. Reads aggregate state
+from the local Postgres mirror + chain-RPC spot-checks. See
+`OperatorNodeDeploymentDesign.md` Phase 0.5 #11.
+
 ### 4.12 Account abstraction + signature flows (future)
 
 **Concern:** ERC-4337 wallets, sponsored gas, session keys —
@@ -567,6 +606,14 @@ Phase 0 — Audit + design docs (2–3 days each, parallel-ish)
   ├── SubgraphSchemaDesign.md
   └── WebhookOrPollingSurvey.md  (research/webhook-vs-polling-defi-survey branch)
 
+Phase 0.5 — Operator-node integration addendum (no separate docs; updates two existing)
+  ├── OperatorNodeDeploymentDesign.md gains "Phase 0.5 addendum" section
+  │   covering 4 new operator-node responsibilities (Postgres HTTP API,
+  │   self-hosted WS pipe, testnet RPC nodes, public status page)
+  └── This anchor doc gains operator-node-twin paragraphs in Pillars
+      4.4 / 4.5 / 4.7 / 4.11 — sovereign protocol-team infrastructure
+      sits as a parallel path alongside hosted alternatives at every layer
+
 Phase 1 — Contract event extensions (4–5 days)  [HARD MAINNET GATE]
   └── Solidity changes + audit re-pass
 
@@ -581,18 +628,34 @@ Phase 4 — IndexedDB cache layer (3–5 days)
 
 Phase 5 — Multi-RPC failover (5–7 days)  [independent; ship any time]
   └── User-supplied RPC + EIP-6963 + health-checked failover
+       Operator-node twin: testnet self-hosted RPC nodes feeding into
+       the failover list (Phase 0.5 #10).
 
 Phase 6 — Subgraph deployment (7–10 days)  [independent; ship any time]
   └── Schema + handlers + deployment + frontend failover wiring
+       Operator-node twin: Postgres HTTP API as third tier in the
+       same failover chain (Phase 0.5 #8).
 
 Phase 7 — IPFS hosting + ENS contenthash (4–6 days)
   └── Pin pipeline + reproducible build + ENS update + service worker
+       Operator-node twin: Kubo daemon as a fourth pin provider
+       (already in OperatorNodeDeploymentDesign.md).
 
-Phase 8 — WebSocket push (4–6 days)
-  └── Worker durable-object + frontend WS-or-polling logic
+Phase 8 — WebSocket push  [SPLIT 8a + 8b]
+  ├── 8a (4–6 days) — Cloudflare Worker durable-object endpoint;
+  │       canonical primary push path. Frontend tries 8a first.
+  └── 8b (3–4 days) — Operator-node WS twin (Phase 0.5 #9).
+          Self-hosted Node WS server reading Postgres LISTEN/NOTIFY,
+          fanning out to subscribed clients. Independent of Cloudflare.
+          Frontend falls through to 8b on 8a disconnect, then to
+          polling on 8b disconnect.
 
 Phase 9 — Status page + Forta + Defender (3–5 days)
   └── Public observability surfaces
+       Operator-node twin: status.vaipakam.com hosted on the operator
+       node decouples the status surface from Cloudflare (Phase 0.5
+       #11) — same logic as Pillar 4.6 (the page that says
+       "Cloudflare is down" can't itself live on Cloudflare).
 
 Phase 10 — Account abstraction (2–3 weeks, deferred until post-mainnet)
   └── EIP-6963 + ERC-4337 + session keys

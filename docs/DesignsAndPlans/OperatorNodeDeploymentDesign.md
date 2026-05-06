@@ -1,11 +1,18 @@
 # Operator Node Deployment — Self-Hosted Infrastructure Design
 
-**Status:** Deferred. Captures the deployment plan for the
-`vaipakam-keeper-bot` and adjacent self-hosted operator services. We
-will return to this after closing out the immediate testnet-burn-in
-work and the mainnet pre-flight tasks.
+**Status:** Partially active. Captures the deployment plan for the
+`vaipakam-keeper-bot` and adjacent self-hosted operator services. The
+`rewardCloser` daemon (Phase A) and the local Postgres mirror indexer
+(Phase B) are pre-mainnet ops needs; the custom LayerZero DVN
+(Phase C/D) and observability layer (Phase E) remain deferred. The
+2026-05-07 platform-decentralisation pivot (see
+`DecentralizedPlatformArchitecture.md`) brings additional
+responsibilities for this node — captured in the Phase 0.5 addendum
+section below — that move the local-indexer Postgres + a new HTTP
+API + a self-hosted WebSocket twin onto the critical path for the
+"no third-party dependency" end-state.
 
-**Last updated:** 2026-05-05.
+**Last updated:** 2026-05-07.
 
 ## Context
 
@@ -173,23 +180,139 @@ Dashboards over the local Postgres + custom exporters for:
 
 RAM footprint: ~600 MB combined.
 
+## Phase 0.5 addendum — integration with the platform decentralisation architecture
+
+The 2026-05-07 architecture pivot (anchor:
+`DesignsAndPlans/DecentralizedPlatformArchitecture.md`) targets a
+"no third-party dependency" posture: every read path on the
+frontend has at least three sources, every server-dependent call has
+a chain-RPC fallback, and the protocol team's own infrastructure
+provides redundancy at every layer alongside hosted alternatives.
+That posture upgrades this operator node from "deferred-but-nice-to-
+have" to "load-bearing for decentralisation". Four new services land
+on this same instance, mapped one-to-one to platform pillars:
+
+### 8. Postgres indexer HTTP API (Pillar 4.5 — subgraph redundancy tier)
+
+The local Postgres mirror indexer (item 4 above) already holds a
+copy of the watcher's D1 schema. A small Express / Fastify
+sidecar exposes the same row shape over HTTP at e.g.
+`indexer.vaipakam.com` — turning it into a third tier in the
+frontend's failover chain (Cloudflare Worker → The Graph subgraph
+→ Operator-hosted indexer → Direct chain RPC). When Cloudflare D1
+is unreachable AND the subgraph is rate-limited / lagging, the
+operator-hosted indexer keeps the page alive without any
+third-party dependency.
+
+API shape mirrors the worker's existing `/offers/*`, `/loans/*`,
+`/activity/*` endpoints so the frontend's `subgraphClient`
+adapter pattern (see `internal/SubgraphSchemaDesign.md`) handles
+this source identically — no special-case wiring per source.
+
+RAM footprint: ~50 MB (Express / Fastify is light; reads from
+existing Postgres connection pool).
+
+Phase order: lands as part of Phase B (local indexer + Postgres);
+~half a day of incremental work on top of the indexer daemon.
+
+### 9. Self-hosted WebSocket pipe (Pillar 4.7 / Phase 8b — operator-node WS twin)
+
+The platform-architecture roadmap's Phase 8 (WebSocket / SSE
+event push) has TWO deliverables: 8a is the Cloudflare Worker
+durable-object endpoint; 8b is its self-hosted twin on this
+operator node. Same protocol (subscribe by chainId + topics,
+server filters, reconnect-with-replay), distinct origin. Sources
+events from the local Postgres mirror, NOT from Cloudflare D1 —
+fully independent of any hosted service.
+
+Frontend's WS-failover order (per `internal/WebhookOrPollingSurvey.md`):
+
+```
+Cloudflare WS (8a)  →  Operator-hosted WS (8b, this node)  →  Polling fallback
+```
+
+Implementation: small Node WS server (`ws` library) reading change
+notifications from Postgres `LISTEN/NOTIFY`, fanning out to
+subscribed clients. ~150–200 MB resident.
+
+Phase order: builds on Phase B's Postgres + Phase 8a's WS
+protocol. Calendar-wise lands after 8a so the protocol's been
+proven in production first.
+
+### 10. Testnet-only chain RPC nodes (Pillar 4.4 — multi-RPC failover)
+
+The operator node can run its own chain RPC for the testnet trio
+(Base / Arb / OP Sepolia) — adding a self-hosted endpoint to the
+multi-RPC failover list (Pillar 4.4) that's independent of
+dRPC / Alchemy / Infura. Each testnet sync footprint is ~30–50 GB
+disk, ~1–2 GB RAM combined for op-geth + arb-nitro syncing the
+three testnets to safe head.
+
+**Mainnet RPC nodes don't fit the 6 GB / 200 GB Always Free
+instance** — Base / Arb / OP mainnet rollups need ~500–800 GB
+disk each, 4+ GB RAM each. Mainnet RPC sovereignty would require
+a separate beefier instance (or a paid-tier provider remains
+acceptable per Pillar 4.4 — not every layer needs sovereign
+hosting). For testnets the cost is in the noise; for mainnets,
+defer to the multi-RPC strategy's paid-primary + community-
+fallback layering.
+
+Phase order: optional Phase 0.5b — only when operators want to
+prove out the self-hosted RPC path on testnet before the broader
+mainnet decision is made.
+
+### 11. Public status page (Pillar 4.11 — observability + transparency)
+
+A small static page + minimal Express health-check API at
+`status.vaipakam.com`. Renders per-chain indexer cursor age,
+watcher health, RPC provider availability, last finalised block
+per chain. Refreshes every 30 s. Same data the user-facing
+DiagnosticsDrawer surfaces, but published publicly so users can
+check platform health without connecting a wallet.
+
+Hosting on this operator node decouples the status page from
+Cloudflare Pages / Workers — survives any centralised-host
+outage. Same decentralisation logic as Pillar 4.6 (IPFS hosting):
+the page that says "Cloudflare is down" can't itself live on
+Cloudflare.
+
+RAM footprint: ~50 MB (Express + a static-asset serving
+goroutine equivalent).
+
+Phase order: optional Phase 0.5c — lands alongside or after
+Phase E (observability layer); needs the local Postgres + a
+small public reverse-proxy already running.
+
 ## Memory budget summary (6 GB instance)
 
-| Process              | RSS estimate              |
-| -------------------- | ------------------------- |
-| keeper-bot           | ~200 MB                   |
-| reward-closer (new)  | ~150 MB                   |
-| LZ DVN (6 chains)    | ~2.5 GB                   |
-| local indexer        | ~200 MB                   |
-| Postgres             | ~400 MB                   |
-| Telegram alerts      | ~100 MB                   |
-| Grafana + Prometheus | ~600 MB                   |
-| **Total resident**   | **~4.2 GB / 6 GB (~70%)** |
+| Process                                             | RSS estimate                |
+| --------------------------------------------------- | --------------------------- |
+| keeper-bot                                          | ~200 MB                     |
+| reward-closer (new)                                 | ~150 MB                     |
+| LZ DVN (6 chains)                                   | ~2.5 GB                     |
+| local indexer                                       | ~200 MB                     |
+| Postgres                                            | ~400 MB                     |
+| Telegram alerts                                     | ~100 MB                     |
+| Grafana + Prometheus                                | ~600 MB                     |
+| **Subtotal (Phase A–E baseline)**                   | **~4.2 GB / 6 GB (~70%)**   |
+| Postgres indexer HTTP API (Phase 0.5 #8)            | ~50 MB                      |
+| Self-hosted WebSocket pipe (Phase 0.5 #9 / 8b)      | ~150–200 MB                 |
+| Public status page (Phase 0.5 #11)                  | ~50 MB                      |
+| **Total resident with Phase 0.5 (no testnet RPC)**  | **~4.4 GB / 6 GB (~73%)**   |
+| Testnet RPC nodes (Phase 0.5 #10, optional)         | ~1.5–2 GB                   |
+| **Total resident with Phase 0.5 + testnet RPC**     | **~6.4 GB — DOES NOT FIT**  |
 
-Comfortably above the 20% memory reclamation floor. CPU averages
-5-15% with occasional bursts on liquidation / DVN message arrival —
-well above the 20% CPU floor too. Network ~10-50 GB/month, far
-below the 10 TB cap.
+Without testnet RPC: comfortably under the 6 GB limit, comfortably
+above the 20% reclamation floor. CPU averages 5–15% with bursts on
+liquidation / DVN message arrival — well above the 20% floor.
+Network ~10–50 GB/month, far below the 10 TB cap.
+
+With testnet RPC (Phase 0.5 #10): doesn't fit the 1 OCPU / 6 GB
+instance. Two paths if RPC sovereignty matters:
+(a) bump THIS instance to 2 OCPU / 12 GB (still inside Always
+Free — the design's headroom of 3 OCPUs / 18 GB covers it);
+(b) peel testnet RPCs onto a second 1 OCPU / 6 GB instance from
+the same Always Free pool. Both stay $0 / month forever.
 
 ## Phasing — when we come back to this
 
@@ -248,6 +371,30 @@ Recommended phase order:
 
 - Planing to deploy all these in Oracle Cloud (ARM) `Ampere A1 (ARMv8)` free tier with `Provision the instance with 1 OCPU + 6 GB RAM` or more as required, so degin accordingly
 
-## Including Web hook
+## Webhook / WebSocket — answered by the platform survey
 
-can we include web hook in this, os that it server an alternative (or a complimentary, indexer will be fallback for webhook) for indexer, what do you say, is there a better approach?
+The original question on this page ("can we include a webhook so it
+serves as an alternative to the indexer?") was answered in
+`docs/internal/WebhookOrPollingSurvey.md` after surveying eight
+mature DeFi / DEX platforms. Summary:
+
+- **Server-to-server webhooks** are NOT the right pattern for the
+  user-facing frontend — DeFi platforms favour client-side
+  WebSocket subscriptions over operator-pushed webhooks. Webhooks
+  fit third-party integrations (CEX listing alerts, custodial
+  notifications) which are out of Vaipakam's current scope.
+- **Client-side WebSocket / SSE** is the right pattern, **additive
+  over polling** — the WS pipe delivers sub-second freshness when
+  the connection is healthy; the polling architecture stays as
+  the canonical fallback on disconnect. Matches the Aave /
+  Balancer pattern; avoids the dYdX / Hyperliquid "WS-first"
+  complexity that Vaipakam's UX freshness needs don't justify.
+- **The WS pipe has two deliverables** (Phase 8a + 8b): the
+  Cloudflare Worker durable-object endpoint is the primary;
+  this operator node hosts the self-hosted twin that activates
+  on Cloudflare-WS disconnect (item 9 in the Phase 0.5 addendum
+  above).
+
+The indexer remains the polling-cadence canonical source; the WS
+pipe is the speed-up, NOT a replacement. Phase 0.5 #9 covers the
+operator-side implementation.
