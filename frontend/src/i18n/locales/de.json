@@ -1739,7 +1739,10 @@
     "statusBlockGap": "Aufzuholende Blöcke",
     "statusBlockGapCaughtUp": "0 (aktuell)",
     "safeBlockFootnote": "\"Safe-Block\" = der aktuellste Block, den die Chain unter ihren Konsensregeln als final betrachtet. Reorgs jenseits dieses Punkts sind auf Rollups extrem selten, daher lesen wir bis dorthin und ignorieren die Live-Spitze bis zu ihrer Finalisierung.",
-    "openDiagnosticsTitle": "Diagnose öffnen"
+    "openDiagnosticsTitle": "Diagnose öffnen",
+    "liveRpcInSync": "Live (synchron)",
+    "liveRpcInSyncHeading": "Live-Lesen von der Chain — synchron",
+    "liveRpcInSyncBody": "Der Indexer-Cache ist nicht erreichbar, daher holt die Seite jede Angebots- / Kredit- / Aktivitätszeile direkt von der Chain via RPC. Der letzte finalisierte (Safe-)Block wurde kürzlich gelesen, daher ist die Seite aktuell. Transaktionen abzusenden ist im grünen Zustand sicher — was die Seite zeigt, ist auf der Chain."
   },
   "chainDiagnostics": {
     "panelTitle": "Chain & Indexer",
@@ -1755,7 +1758,6 @@
     "purgeDone": "Gelöscht. Seite neu laden, damit es wirksam wird.",
     "purgeFailed": "Löschen fehlgeschlagen: {{err}}",
     "frontendBuildTime": "Frontend gebaut (UTC)",
-    "nextRefresh": "Nächster Index-Abruf in",
     "liveTailStatus": "Live-Tail-Status",
     "liveTailInSync": "Synchron",
     "liveTailCatchingUp": "Holt auf · ~{{n}} Blöcke verbleibend",

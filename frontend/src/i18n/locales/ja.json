@@ -1739,7 +1739,10 @@
     "statusBlockGap": "追いつくブロック数",
     "statusBlockGapCaughtUp": "0 (最新)",
     "safeBlockFootnote": "「確定ブロック」とは、チェーンがコンセンサスルールにより最終とみなす最新のブロックです。これより古いリオーグは Rollup ではほとんど発生しないため、確定済みの位置までを読み取り、未確定のチップは読み取りません。",
-    "openDiagnosticsTitle": "診断を開く"
+    "openDiagnosticsTitle": "診断を開く",
+    "liveRpcInSync": "ライブ (同期済み)",
+    "liveRpcInSyncHeading": "チェーンから直接ライブ読み取り — 同期済み",
+    "liveRpcInSyncBody": "インデクサーキャッシュに到達できないため、ページは RPC を介してすべてのオファー / ローン / アクティビティの行をチェーンから直接取得しています。最新の確定 (Safe) ブロックは最近読み取られているため、ページは最新です。緑の状態でトランザクションを送信しても安全です — ページに表示されている内容がチェーンの内容です。"
   },
   "chainDiagnostics": {
     "panelTitle": "チェーンとインデクサー",
@@ -1755,7 +1758,6 @@
     "purgeDone": "削除しました。ページを再読み込みして反映してください。",
     "purgeFailed": "削除に失敗しました: {{err}}",
     "frontendBuildTime": "フロントエンドビルド時刻 (UTC)",
-    "nextRefresh": "次のインデックス取得まで",
     "liveTailStatus": "Live-tail の状態",
     "liveTailInSync": "同期済み",
     "liveTailCatchingUp": "追従中 · 残り ~{{n}} ブロック",

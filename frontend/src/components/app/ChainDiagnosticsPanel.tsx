@@ -18,7 +18,7 @@
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Trash2, ChevronDown, ChevronRight } from 'lucide-react';
-import { useOfferStats, OFFER_STATS_REFETCH_MS } from '../../hooks/useOfferStats';
+import { useOfferStats } from '../../hooks/useOfferStats';
 import { useReadChain } from '../../contracts/useDiamond';
 import { useLiveWatermark } from '../../hooks/useLiveWatermark';
 import { watermarkPolicy } from '../../hooks/watermarkPolicy';
@@ -73,23 +73,6 @@ export function ChainDiagnosticsPanel() {
   // failure events first; the chain panel is a "click to peek" affordance
   // so it doesn't push the events list below the fold on first open.
   const [expanded, setExpanded] = useState<boolean>(false);
-  // "Next refresh in" countdown — purely cosmetic confidence signal that
-  // the polling loop is alive. Restarts every time `stats.indexer.updatedAt`
-  // advances (i.e. a successful /offers/stats fetch landed) so the count
-  // resets on the actual heartbeat, not on a guessed schedule. Stops
-  // ticking when the panel is collapsed so we don't burn renders the
-  // user can't see.
-  const [secondsToRefresh, setSecondsToRefresh] = useState<number>(
-    Math.round(OFFER_STATS_REFETCH_MS / 1000),
-  );
-  useEffect(() => {
-    if (!expanded) return;
-    setSecondsToRefresh(Math.round(OFFER_STATS_REFETCH_MS / 1000));
-    const id = setInterval(() => {
-      setSecondsToRefresh((s) => (s <= 0 ? 0 : s - 1));
-    }, 1000);
-    return () => clearInterval(id);
-  }, [expanded, stats?.indexer?.updatedAt]);
   // Purge state — only used when `mode === 'advanced'` (the dev / debug
   // toggle on the user-mode picker). Tri-state UI:
   //   - 'idle': default, button enabled.
@@ -210,10 +193,30 @@ export function ChainDiagnosticsPanel() {
     stateLabel = t('indexerBadge.localDev');
     stateClass = 'chain-diag-state--localdev';
   } else if (!indexer) {
-    heading = t('indexerBadge.liveHeading');
-    body = t('indexerBadge.liveBody');
-    stateLabel = t('indexerBadge.live');
-    stateClass = 'chain-diag-state--catching-up';
+    // Indexer cache unreachable. Sub-state on watermark health, same
+    // logic as the IndexerStatusBadge: fresh probe + non-zero safe
+    // head means the page IS reading live from chain successfully
+    // (green); stale or missing probe means RPC itself is degraded
+    // (amber).
+    const watermarkAgeSec = watermarkSnapshot
+      ? Math.floor(Date.now() / 1000) - watermarkSnapshot.fetchedAt
+      : null;
+    const liveRpcHealthy =
+      watermarkSnapshot &&
+      watermarkSnapshot.safeBlock > 0n &&
+      watermarkAgeSec !== null &&
+      watermarkAgeSec < 90;
+    if (liveRpcHealthy) {
+      heading = t('indexerBadge.liveRpcInSyncHeading');
+      body = t('indexerBadge.liveRpcInSyncBody');
+      stateLabel = t('indexerBadge.liveRpcInSync');
+      stateClass = 'chain-diag-state--caught-up';
+    } else {
+      heading = t('indexerBadge.liveHeading');
+      body = t('indexerBadge.liveBody');
+      stateLabel = t('indexerBadge.live');
+      stateClass = 'chain-diag-state--catching-up';
+    }
   } else {
     const safeBlockNum =
       watermarkSnapshot && watermarkSnapshot.safeBlock > 0n
@@ -355,14 +358,6 @@ export function ChainDiagnosticsPanel() {
               defaultValue: 'Indexer cursor last advanced (UTC)',
             })}
             value={cursorIso}
-          />
-        )}
-        {indexer && (
-          <Row
-            label={t('chainDiagnostics.nextRefresh', {
-              defaultValue: 'Next refresh in',
-            })}
-            value={`${secondsToRefresh}s`}
           />
         )}
         <Row

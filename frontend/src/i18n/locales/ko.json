@@ -1739,7 +1739,10 @@
     "statusBlockGap": "따라잡을 블록 수",
     "statusBlockGapCaughtUp": "0 (최신 상태)",
     "safeBlockFootnote": "\"안전 블록\"은 체인이 합의 규칙에 따라 최종으로 간주하는 가장 최근의 블록입니다. 롤업에서는 이보다 오래된 재조직이 극히 드물기 때문에 그 지점까지 읽고 확정될 때까지 라이브 팁은 무시합니다.",
-    "openDiagnosticsTitle": "진단 열기"
+    "openDiagnosticsTitle": "진단 열기",
+    "liveRpcInSync": "라이브 (동기화됨)",
+    "liveRpcInSyncHeading": "체인에서 라이브로 읽는 중 — 동기화됨",
+    "liveRpcInSyncBody": "인덱서 캐시에 도달할 수 없으므로 페이지가 RPC를 통해 모든 오퍼 / 대출 / 활동 행을 체인에서 직접 가져오고 있습니다. 가장 최근의 확정된 (안전) 블록이 최근에 읽혔으므로 페이지는 최신 상태입니다. 녹색 상태에서 트랜잭션을 제출해도 안전합니다 — 페이지에 표시된 내용이 체인의 내용입니다."
   },
   "chainDiagnostics": {
     "panelTitle": "체인 및 인덱서",
@@ -1755,7 +1758,6 @@
     "purgeDone": "삭제되었습니다. 페이지를 다시 로드하여 적용하세요.",
     "purgeFailed": "삭제 실패: {{err}}",
     "frontendBuildTime": "프론트엔드 빌드 시각 (UTC)",
-    "nextRefresh": "다음 인덱스 가져오기까지",
     "liveTailStatus": "Live-tail 상태",
     "liveTailInSync": "동기화됨",
     "liveTailCatchingUp": "따라잡는 중 · ~{{n}} 블록 남음",

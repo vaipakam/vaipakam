@@ -1742,7 +1742,10 @@
     "statusBlockGap": "Blocks to catch up",
     "statusBlockGapCaughtUp": "0 (caught up)",
     "safeBlockFootnote": "\"Safe block\" = the most recent block the chain considers final under its consensus rules. Reorgs older than this are exceedingly rare on rollups, so we read up to that point and ignore the live tip until it finalises.",
-    "openDiagnosticsTitle": "Open diagnostics"
+    "openDiagnosticsTitle": "Open diagnostics",
+    "liveRpcInSync": "Live (in sync)",
+    "liveRpcInSyncHeading": "Reading live from the chain — in sync",
+    "liveRpcInSyncBody": "The indexer cache is unreachable, so the page is fetching every offer / loan / activity row directly from the chain via RPC. The latest finalised (safe) block has been read recently, so the page is up-to-date. Submitting transactions while green is safe — what the page shows is what's on chain."
   },
   "chainDiagnostics": {
     "panelTitle": "Chain & Indexer",
@@ -1758,7 +1761,6 @@
     "purgeDone": "Purged. Reload the page to take effect.",
     "purgeFailed": "Purge failed: {{err}}",
     "frontendBuildTime": "Frontend built (UTC)",
-    "nextRefresh": "Next index fetch in",
     "liveTailStatus": "Live-tail status",
     "liveTailInSync": "In sync",
     "liveTailCatchingUp": "Catching up · ~{{n}} blocks remaining",

@@ -104,18 +104,58 @@ export function IndexerStatusBadge({ compact }: Props) {
       blockGap: null,
     };
   } else if (!stats || !stats.indexer) {
-    variantClass = 'indexer-badge--live';
-    Icon = WifiOff;
-    label = t('indexerBadge.live');
-    popover = {
-      heading: t('indexerBadge.liveHeading'),
-      body: t('indexerBadge.liveBody'),
-      stateLabel: t('indexerBadge.live'),
-      showBlockRows: false,
-      lastIndexedBlock: null,
-      safeHead: null,
-      blockGap: null,
-    };
+    // Indexer cache unreachable (worker down, env mis-configured,
+    // hosted-domain retired, etc.). Sub-state on whether the live RPC
+    // tail is healthy: if the watermark probe has succeeded recently
+    // AND we have a non-zero safeBlock, the page IS reading live from
+    // chain successfully — this is a "synced via direct RPC" green
+    // state, not a degraded state. Falls back to the legacy amber
+    // "live chain scan" only when the watermark is stale or missing,
+    // which means RPC itself is also unhealthy.
+    const watermarkAgeSec = watermarkSnapshot
+      ? Math.floor(Date.now() / 1000) - watermarkSnapshot.fetchedAt
+      : null;
+    const liveRpcHealthy =
+      watermarkSnapshot &&
+      watermarkSnapshot.safeBlock > 0n &&
+      watermarkAgeSec !== null &&
+      watermarkAgeSec < 90;
+
+    if (liveRpcHealthy) {
+      // Green — direct-from-chain reads are working; page renders
+      // up to the chain `safe` head via the live RPC tail.
+      const safeBlockNum = Number(watermarkSnapshot.safeBlock);
+      variantClass = 'indexer-badge--cached';
+      Icon = Wifi;
+      label = `${t('indexerBadge.lastSafeBlock')}: ${safeBlockNum.toLocaleString()}`;
+      popover = {
+        heading: t('indexerBadge.liveRpcInSyncHeading'),
+        body: t('indexerBadge.liveRpcInSyncBody'),
+        stateLabel: t('indexerBadge.liveRpcInSync'),
+        showBlockRows: true,
+        // No indexer to compare against — skip the indexed-block row
+        // and the gap row; show only the chain safe head.
+        lastIndexedBlock: null,
+        safeHead: safeBlockNum,
+        blockGap: null,
+      };
+    } else {
+      // Amber — legacy "live chain scan" state, kept for the case
+      // where neither the indexer nor the watermark probe is
+      // returning fresh data (RPC degraded or unreachable).
+      variantClass = 'indexer-badge--live';
+      Icon = WifiOff;
+      label = t('indexerBadge.live');
+      popover = {
+        heading: t('indexerBadge.liveHeading'),
+        body: t('indexerBadge.liveBody'),
+        stateLabel: t('indexerBadge.live'),
+        showBlockRows: false,
+        lastIndexedBlock: null,
+        safeHead: null,
+        blockGap: null,
+      };
+    }
   } else {
     const lastIndexedBlock = stats.indexer.lastBlock;
     const safeBlockNum =

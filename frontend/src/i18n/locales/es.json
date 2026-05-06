@@ -1739,7 +1739,10 @@
     "statusBlockGap": "Bloques por alcanzar",
     "statusBlockGapCaughtUp": "0 (al día)",
     "safeBlockFootnote": "\"Bloque seguro\" = el bloque más reciente que la cadena considera final según sus reglas de consenso. Las reorganizaciones más antiguas son extremadamente raras en rollups, así que leemos hasta ese punto e ignoramos el tip en vivo hasta que se finalice.",
-    "openDiagnosticsTitle": "Abrir diagnósticos"
+    "openDiagnosticsTitle": "Abrir diagnósticos",
+    "liveRpcInSync": "En vivo (sincronizado)",
+    "liveRpcInSyncHeading": "Lectura en vivo desde la cadena — sincronizado",
+    "liveRpcInSyncBody": "El caché del indexador no está accesible, así que la página obtiene cada fila de oferta / préstamo / actividad directamente desde la cadena vía RPC. El último bloque finalizado (seguro) se leyó recientemente, así que la página está al día. Enviar transacciones mientras esté en verde es seguro — lo que muestra la página es lo que hay en la cadena."
   },
   "chainDiagnostics": {
     "panelTitle": "Cadena e indexador",
@@ -1755,7 +1758,6 @@
     "purgeDone": "Purgado. Recarga la página para que surta efecto.",
     "purgeFailed": "Falló la purga: {{err}}",
     "frontendBuildTime": "Frontend compilado (UTC)",
-    "nextRefresh": "Próxima recuperación del índice en",
     "liveTailStatus": "Estado del live-tail",
     "liveTailInSync": "Sincronizado",
     "liveTailCatchingUp": "Poniéndose al día · ~{{n}} bloques restantes",

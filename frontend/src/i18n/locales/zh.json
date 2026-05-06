@@ -1739,7 +1739,10 @@
     "statusBlockGap": "待赶上的区块",
     "statusBlockGapCaughtUp": "0 (已同步)",
     "safeBlockFootnote": "「安全区块」是链根据其共识规则视为最终的最新区块。在 Rollup 上,比这更早的重组极为罕见,因此我们读取到此处并忽略未确定的链尖。",
-    "openDiagnosticsTitle": "打开诊断"
+    "openDiagnosticsTitle": "打开诊断",
+    "liveRpcInSync": "实时 (已同步)",
+    "liveRpcInSyncHeading": "正在直接从链上实时读取 — 已同步",
+    "liveRpcInSyncBody": "索引器缓存不可达,因此页面正通过 RPC 直接从链上获取每一行报价 / 贷款 / 活动。最新的确定 (安全) 区块最近已被读取,因此页面是最新的。在绿色状态下提交交易是安全的 — 页面显示的就是链上的内容。"
   },
   "chainDiagnostics": {
     "panelTitle": "链与索引器",
@@ -1755,7 +1758,6 @@
     "purgeDone": "已清除。重新加载页面以生效。",
     "purgeFailed": "清除失败: {{err}}",
     "frontendBuildTime": "前端构建时间 (UTC)",
-    "nextRefresh": "下次索引获取时间",
     "liveTailStatus": "Live-tail 状态",
     "liveTailInSync": "已同步",
     "liveTailCatchingUp": "同步中 · 剩余 ~{{n}} 个区块",

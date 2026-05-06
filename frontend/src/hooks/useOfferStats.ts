@@ -28,12 +28,13 @@ interface UseOfferStatsResult {
   loading: boolean;
 }
 
-/** Periodic refetch cadence for `/offers/stats`. Exported so any UI that
- *  wants to render a "next refresh" countdown stays in lock-step with the
- *  actual fetch timer (no double source of truth). 30 s aligns with the
- *  `warm` watermark policy so both numbers in the diagnostics panel move
- *  on the same heartbeat. */
-export const OFFER_STATS_REFETCH_MS = 30_000;
+/** Periodic refetch cadence for `/offers/stats`. 30 s aligns with the
+ *  `warm` watermark policy so both numbers in the diagnostics panel
+ *  move on the same heartbeat. Internal-only — the previous countdown
+ *  consumer in `ChainDiagnosticsPanel` was removed 2026-05-07 as
+ *  cosmetic noise (the cursor `updated_at` row already proves the
+ *  loop is alive). */
+const OFFER_STATS_REFETCH_MS = 30_000;
 
 export function useOfferStats(): UseOfferStatsResult {
   const chain = useReadChain();

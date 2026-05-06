@@ -1739,7 +1739,10 @@
     "statusBlockGap": "Blocs à rattraper",
     "statusBlockGapCaughtUp": "0 (à jour)",
     "safeBlockFootnote": "« Bloc sûr » = le bloc le plus récent que la chaîne considère comme final selon ses règles de consensus. Les réorgs plus anciennes sont extrêmement rares sur les rollups, donc nous lisons jusqu'à ce point et ignorons la pointe en direct jusqu'à ce qu'elle soit finalisée.",
-    "openDiagnosticsTitle": "Ouvrir les diagnostics"
+    "openDiagnosticsTitle": "Ouvrir les diagnostics",
+    "liveRpcInSync": "En direct (synchronisé)",
+    "liveRpcInSyncHeading": "Lecture en direct depuis la chaîne — synchronisé",
+    "liveRpcInSyncBody": "Le cache de l'indexeur est inaccessible, donc la page récupère chaque ligne d'offre / prêt / activité directement depuis la chaîne via RPC. Le dernier bloc finalisé (sûr) a été lu récemment, donc la page est à jour. Soumettre des transactions en vert est sûr — ce que la page affiche est ce qui est sur la chaîne."
   },
   "chainDiagnostics": {
     "panelTitle": "Chaîne et indexeur",
@@ -1755,7 +1758,6 @@
     "purgeDone": "Purgé. Rechargez la page pour appliquer.",
     "purgeFailed": "Échec de la purge : {{err}}",
     "frontendBuildTime": "Frontend compilé (UTC)",
-    "nextRefresh": "Prochaine récupération de l'index dans",
     "liveTailStatus": "État du live-tail",
     "liveTailInSync": "Synchronisé",
     "liveTailCatchingUp": "Rattrapage · ~{{n}} blocs restants",
