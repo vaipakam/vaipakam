@@ -233,6 +233,23 @@ contract DeployDiamond is Script {
         VaipakamNFTFacet(diamond).initializeNFT();
         console.log("NFT initialized.");
 
+        // 5e. Unpause the protocol. The Diamond is born paused (see
+        //     `VaipakamDiamond.constructor` — `LibPausable.pause()` is
+        //     the last constructor write) so the half-cut window
+        //     between `diamondCut 1/2` and `diamondCut 2/2` cannot be
+        //     exploited via half-2 selectors. By this point all 32
+        //     facets are cut, every init call above has landed, and
+        //     the post-cut facet-count assertion has passed — safe
+        //     to flip the bit back. The deployer holds PAUSER_ROLE
+        //     from Step 5a's `initializeAccessControl`, so this call
+        //     succeeds without an extra grant. Mainnet operators that
+        //     want a multi-eye review window before unpausing can
+        //     comment this line out and run a separate manual
+        //     `setPaused(false)` after `--phase verify` confirms the
+        //     post-cut state.
+        AdminFacet(diamond).unpause();
+        console.log("Protocol unpaused.");
+
         // ── Step 6: Handover to admin (only when admin != deployer) ─────
         // Phase-1 testnet pattern: deployer EOA signs the deploy but the
         // long-lived privileged EOA is a separate admin address. After the

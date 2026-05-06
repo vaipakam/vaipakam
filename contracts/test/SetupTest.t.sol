@@ -312,6 +312,20 @@ contract SetupTest is Test {
         EscrowFactoryFacet(address(diamond)).initializeEscrowImplementation();
         VaipakamNFTFacet(address(diamond)).initializeNFT();
         AdminFacet(address(diamond)).setTreasury(address(diamond));
+
+        // Unpause the diamond. The Diamond is born paused (see
+        // `VaipakamDiamond.constructor` — `LibPausable.pause()` is the
+        // last constructor write) so the half-cut window between the
+        // raw deploy and the diamondCut above stays frozen on
+        // mainnet. In tests we need facet entry points reachable, so
+        // flip the bit back as soon as PAUSER_ROLE is in effect (i.e.
+        // right after `initializeAccessControl`). Without this every
+        // `whenNotPaused` path in every test would revert
+        // `EnforcedPause`. Pause-specific tests
+        // (`PauseGatingTest.t.sol`) re-pause and re-unpause inside
+        // their own scope so this default doesn't stop them from
+        // exercising the gated semantics.
+        AdminFacet(address(diamond)).unpause();
         AdminFacet(address(diamond)).setZeroExProxy(
             address(mockZeroExProxy)
             // address(0xDef1C0ded9bec7F1a1670819833240f027b25EfF)

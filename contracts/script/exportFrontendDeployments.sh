@@ -132,6 +132,47 @@ from pathlib import Path
 deployments_dir = Path(sys.argv[1])
 out_file = Path(sys.argv[2])
 
+# Active-chains allow-list. When `.active-chains` exists the export
+# only includes per-chain folders whose chainId appears in the list.
+# When it doesn't exist, every folder with a valid `addresses.json`
+# is included (the historical behaviour).
+#
+# Why a dot-prefixed file inside the deployments dir: the export
+# script's loop already skips non-directories, so the file slots in
+# next to the per-chain folders without colliding. Keeping it
+# colocated means a single git diff captures both "what we deployed"
+# (per-chain folders) and "what we currently consider live" (this
+# allow-list).
+#
+# Format: one chainId per line, integer; `#` starts a comment;
+# blank lines ignored. Example:
+#   # Phase 1 testnet trio
+#   84532       # base-sepolia
+#   421614      # arb-sepolia
+#   11155420    # op-sepolia
+#
+# Folders for chains NOT in the list stay on disk for forensic
+# value (audit trail of what was deployed when), but stop being
+# crawled by the watcher and stop appearing in the frontend's
+# chain picker.
+allow_list_path = deployments_dir / ".active-chains"
+allow_list: set[str] | None = None
+if allow_list_path.exists():
+    allow_list = set()
+    with allow_list_path.open() as f:
+        for line in f:
+            line = line.split("#", 1)[0].strip()
+            if not line:
+                continue
+            if not line.isdigit():
+                print(
+                    f"  ✗ .active-chains: '{line}' is not a chainId — ignored",
+                    file=sys.stderr,
+                )
+                continue
+            allow_list.add(line)
+    print(f"  ⓘ active-chains allow-list: {sorted(int(x) for x in allow_list)}")
+
 merged: dict[str, dict] = {}
 warnings: list[str] = []
 
@@ -156,6 +197,11 @@ for chain_dir in sorted(deployments_dir.iterdir()):
         warnings.append(f"  ✗ {chain_dir.name}/addresses.json: 'chainId' is not an integer — skipped")
         continue
     key = str(chain_id)
+    if allow_list is not None and key not in allow_list:
+        warnings.append(
+            f"  ⊘ {chain_dir.name}: chainId {chain_id} not in .active-chains — skipped"
+        )
+        continue
     if key in merged:
         warnings.append(
             f"  ✗ {chain_dir.name}/addresses.json: chainId {chain_id} duplicates "

@@ -5,6 +5,7 @@ pragma solidity ^0.8.29;
 import {IDiamondCut} from "@diamond-3/interfaces/IDiamondCut.sol";
  // For ownership
 import {LibDiamond} from "@diamond-3/libraries/LibDiamond.sol";
+import {LibPausable} from "./libraries/LibPausable.sol";
 
 /**
  * @title VaipakamDiamond
@@ -40,6 +41,21 @@ contract VaipakamDiamond {
         ds
             .selectorToFacetAndPosition[IDiamondCut.diamondCut.selector]
             .facetAddress = diamondCutFacet;
+
+        // Born paused. The half-cut window between `diamondCut 1/2` and
+        // `diamondCut 2/2` leaves half-2 selectors unmapped — today
+        // calls to those selectors clean-revert via {FunctionDoesNotExist},
+        // but a future fallback that swallowed revert reasons would
+        // turn that into a foot-gun. Defence in depth: protocol stays
+        // frozen until the deploy script's final {AdminFacet.unpause}
+        // call lands after every facet is cut, every Step-5 init has
+        // run, and the post-cut facet-count assertion has passed. The
+        // deploy script holds {PAUSER_ROLE} from
+        // {AccessControlFacet.initializeAccessControl}, so it can flip
+        // the bit back without an extra grant. See deploy-chain.sh
+        // step `[5d]` health check — `paused()` must be `false` at the
+        // end of a healthy deploy.
+        LibPausable.pause();
     }
 
     /**

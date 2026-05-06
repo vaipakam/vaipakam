@@ -1,0 +1,25 @@
+# Active chain IDs for the current rehearsal cycle.
+#
+# The export script (`exportFrontendDeployments.sh`) filters the
+# consolidated `deployments.json` by this list:
+#
+#   - Per-chain folders whose chainId is listed → included in the
+#     consolidated `deployments.json` and crawled by the hf-watcher.
+#   - Folders for retired chains stay on disk for forensic value
+#     (audit trail of what was deployed when) but stop being
+#     crawled and stop appearing in the frontend's chain picker.
+#
+# To retire a chain: remove its line from this file, run
+# `bash contracts/script/exportFrontendDeployments.sh`, redeploy
+# the watcher with `cd ops/hf-watcher && npx wrangler deploy`, then
+# purge stale rows with
+# `FORCE=1 bash ops/hf-watcher/scripts/purge-chain.sh <chainId>`.
+#
+# Format: one chainId per line, integer; `#` starts a comment;
+# blank lines ignored. The allow-list is intentionally explicit —
+# adding a new chain folder to disk does NOT auto-include it.
+#
+# Phase 1 testnet trio (Base, Arb, OP Sepolia):
+84532       # base-sepolia    diamond 0x72c332a37d0f23b6676F26466Ebf22D73D26F7C4
+421614      # arb-sepolia     diamond 0x49fA14A0D82EF7bf535d62C3371a676A3c843A2a
+11155420    # op-sepolia      diamond 0x933f99ae856509c2cF2f47709BD957AdF8477Ed0
