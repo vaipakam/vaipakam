@@ -330,3 +330,226 @@ Doesn't require its own redeploy to validate.
 The watcher's D1 schema migration count is now at 9; both 0008 and
 0009 ran cleanly against the live Cloudflare D1 instance for all
 testnet chains.
+
+## Watcher D1 chain skew — silent indexer chain-skip diagnosed and fixed
+
+After today's three-chain redeploy completed cleanly and PositiveFlows
+landed offers/loans on Base, Arb, and OP Sepolia, the indexer's
+`offers` and `loans` tables in Cloudflare D1 only had rows for
+chainId 84532 (Base). Arb and OP rows never appeared, even though
+events were on chain.
+
+Root cause: the watcher's chain-config builder filters out any chain
+whose `RPC_<CHAIN>` Cloudflare Worker secret is unset. Two of the
+three secrets — `RPC_ARB_SEPOLIA` and `RPC_OP_SEPOLIA` — had never
+been set on the deployed Worker. The watcher's round-robin cron
+silently visited only Base every minute; Arb and OP never entered
+the round-robin at all.
+
+Fixes applied:
+
+- Set both missing wrangler secrets from the operator's `.env` dRPC
+  paid URLs. Cloudflare auto-redeployed the Worker on each `secret
+  put`. Within five minutes the round-robin pointer cycled through
+  all three chains and every offer + loan event in the chain's
+  recent history was indexed. Final D1 counts matched on-chain event
+  counts exactly: Base 14 offers / 13 loans, Arb 14 / 13, OP 10 / 9.
+- The `[8c]` step in `deploy-chain.sh` and the `[c]` step in
+  `phase_cf_watcher` of `deploy-mainnet.sh` were upgraded from
+  warn-only to hard-fail. Any future deploy whose `RPC_<CHAIN>`
+  secret is missing now stops with a precise setup command instead
+  of silently completing while the chain is invisible to the
+  indexer. The deploy can be resumed after the operator runs
+  `wrangler secret put`.
+
+## Deployment runbook — prerequisites, auto post-deploy steps, and verification
+
+`docs/ops/DeploymentRunbook.md` gained three new sections to capture
+the discipline that today's rehearsal proved necessary:
+
+- **Prerequisites: one-time watcher RPC-secret setup.** Lists the
+  exact `wrangler secret put` commands per chain (testnet trio
+  today; mainnet five-chain set when those phases land), called out
+  as gating the entire `cf-watcher` phase. The hard-fail check
+  refuses to proceed without them.
+- **Auto post-deploy steps performed by the script.** Enumerates
+  steps `[6]`–`[8d]` that the script already executes automatically
+  after the contract deploy lands — ABI sync, frontend build +
+  Cloudflare deploy, watcher Worker deploy, D1 migrations, RPC-secret
+  presence check, and indexer-cursor seed at the chain's safe head
+  on `--fresh` deploys. Operators reading the runbook now see the
+  end-to-end pipeline at a glance.
+- **Post-deploy verification (do this before announcing).** A three-
+  step check: cursor advancing within three minutes, D1 offer / loan
+  row counts present per chain, and the on-chain event count from
+  `cast logs` matching the D1 count. A mismatch means the watcher's
+  per-chain pass is silently throwing; the recommended next step is
+  tailing the live Worker logs.
+
+A new bullet in the rehearsal lessons section documents the silent
+watcher chain-skip pattern with the env-filter line of code that
+caused it, so future operators recognise the failure mode without
+having to re-derive it.
+
+## dRPC `eth_estimateGas` stale-view pattern — captured in the runbook
+
+Today's broadcast retries surfaced the same failure mode three
+times across two chains:
+
+- PositiveFlows on OP Sepolia halted at the borrower-claim step
+  with `InvalidLoanStatus` after the prior repay tx had landed.
+- PartialFlows on OP Sepolia halted at an `acceptOffer` with an
+  `ERC20InsufficientAllowance` even though the prior `approve` tx
+  had landed.
+- PartialFlows on Base Sepolia halted at a `createOffer` with
+  `NFTMintFailed` even though `cast estimate` against the same
+  calldata succeeded seconds later.
+
+Common signature: forge's broadcast prep calls the RPC's
+`eth_estimateGas` to size each tx; dRPC's load-balancer
+occasionally answers with a slightly-stale snapshot that hasn't yet
+included the previous tx's state mutation; the estimate "reverts"
+against that stale view and forge bails out. None of these were
+contract bugs or test-script logic bugs — every one cleared on a
+re-run with `--no-skip-simulation` (forge then runs its own
+on-chain simulation locally against the live state at submission
+time, bypassing the RPC's stale view).
+
+The runbook's rehearsal-lessons section now carries a bullet
+naming the three custom-error selectors hit today (so operators
+can decode without re-running `cast keccak`) and the
+`--no-skip-simulation` mitigation. `--skip-simulation` remains
+available for operator-confirmed re-broadcasts where the prior
+simulation already passed and faster submission is preferred.
+
+## Frontend — Dashboard cleanup, indexer-status redesign, dev affordances
+
+- **Dashboard "Your Escrow" card removed.** The card surfaced only
+  the redacted escrow address and an explorer link — the dedicated
+  "Your Vaipakam Vault" page (already reachable from the app's top
+  nav) covers the same address plus the full per-asset balance
+  grid, deposit / withdraw flows, dust filtering, and tracked-
+  escrow-balance gate. Removing the card pulled the corresponding
+  i18n keys from all eleven locales and cleaned up the orphan
+  imports in the Dashboard component.
+- **IndexerStatusBadge — single-signal redesign.** The top-bar
+  freshness pill now answers entirely in block-space: the gap
+  between the watcher's last-indexed safe block and the chain's
+  current safe head is the only freshness metric. Three states drive
+  three colours (caught up / catching up / behind), with an extra
+  amber "live chain scan" state when the indexer cache is
+  unreachable and a blue "local dev chain" state when the wallet is
+  on Anvil or Hardhat. The earlier "X minutes ago" framing went
+  away — a stuck cron lets the gap balloon, so the gap captures
+  both indexer lag and watcher health in one number. The badge
+  itself slimmed to a glance-only pill with a small info icon.
+- **DiagnosticsDrawer — Chain & Indexer panel.** The badge's info
+  icon now opens the diagnostics drawer (existing developer-
+  oriented support drawer), where a new top panel shows the full
+  state breakdown: chain identifier, last indexed safe block, chain
+  safe head, blocks to catch up, indexer cursor's last-advance
+  timestamp, data source, indexer endpoint, browser storage usage,
+  frontend build identifier, and a footnote explaining what "safe
+  block" means. The same heading and body copy reuses the existing
+  `indexerBadge` i18n namespace so the drawer wording matches the
+  badge state semantically.
+- **Advanced-mode-only browser-state purge.** Dev-tier users
+  (`mode === 'advanced'`) get a new red "Purge browser-side state"
+  button under the storage row. It clears every IndexedDB database
+  the origin owns plus localStorage and sessionStorage, behind a
+  `window.confirm` because it wipes wallet-connect handshake and
+  saved preferences. Useful for resetting client state after a
+  contract redeploy puts cached rows into a stale-decode shape, or
+  when a wallet auth loop needs a hard reset without nuking the
+  whole browser profile.
+- **Frontend build identifier.** `vite.config.ts` now stamps the
+  current `git rev-parse --short HEAD` and an ISO build timestamp
+  into the bundle as `VITE_BUILD_HASH` and `VITE_BUILD_TIME`. The
+  diagnostics panel's "Frontend build" row shows the real short SHA
+  in deployed builds; falls back to "unknown" if git is unavailable
+  (CI without history).
+- **i18n full coverage.** Both new namespaces — `indexerBadge`
+  (32 keys covering every state, heading, body, status row, and
+  footnote) and `chainDiagnostics` (13 keys covering the panel
+  title, storage labels, build labels, and the purge-button states)
+  — landed in all ten locales (English, Spanish, French, German,
+  Japanese, Mandarin, Korean, Arabic, Hindi, Tamil) with proper
+  translations. Technical terms (block, indexer, cache, RPC, dev,
+  Vault) keep their English form across non-English locales,
+  matching the convention already used for protocol nouns like
+  "Vault" elsewhere in the codebase.
+
+## Smoke-test sweep against the freshly redeployed testnet trio
+
+PartialFlows landed on every chain, PositiveFlows on two of three.
+Each individual halt traces back to the dRPC stale-view pattern
+documented above and clears on a re-run with the simulation flag
+enabled.
+
+| Chain | PositiveFlows (15) | PartialFlows (143) |
+| --- | --- | --- |
+| Arb Sepolia | full pass | full pass |
+| Base Sepolia | full pass | full pass on the v3 retry |
+| OP Sepolia | partial then full pass on the v2 retry | full pass on the v2 retry |
+
+The retries used identical contract bytecode — proof that today's
+contract changes (Items 1, 2, 3 plus the PositiveFlows scenario
+matrix) work end-to-end across the testnet trio.
+
+## Watcher and frontend baselined on the current `deployments.json`
+
+Both consumer surfaces were re-deployed mid-cycle to lock the
+freshly-stamped Arb and OP diamond addresses into their bundles:
+
+- `vaipakam-hf-watcher` — Cloudflare Worker version `8e1f3f68`,
+  reading new diamonds across all three chains.
+- `vaipakam` (frontend) — Cloudflare Pages version `23550921`, with
+  the new addresses + the migrated `api.vaipakam.com` indexer
+  origin baked in.
+
+This pre-empts the future class of incident where the consumer
+points at a stale diamond address while the operator believes a
+deploy was complete.
+
+## Domain migration — `alerts.vaipakam.com` retired in favour of `api.vaipakam.com`
+
+Fourteen monorepo files migrated from the old indexer-API hostname
+to the new one (frontend env files, page-level fetch sites, the
+`useTxSimulation` hook, journey log, indexer client, and the
+relevant runbook / release-note prose). The corresponding frontend
+environment variable also moved from `VITE_HF_WATCHER_ORIGIN` to
+`VITE_API_ORIGIN`, since the Worker now serves more than HF alerts.
+
+The Cloudflare Worker continued answering on both custom domains
+while the operator confirmed end-to-end clean cutover (browser
+network panel showed only `api.vaipakam.com` requests; Push
+Protocol channel registration on app.push.org confirmed pointing
+only at `vaipakam.com`; Farcaster Frame URLs auto-derive the host
+from the inbound request, so old shared casts kept working on
+either domain). With those checks green and zero residual
+references found across the entire monorepo, dist bundle, and
+sibling keeper-bot repo, the `alerts.vaipakam.com` Custom Domain
+was removed from the Cloudflare Worker. Anyone still holding an
+old URL will now see a Cloudflare 1016 origin-unreachable error.
+
+## Workspace tooling — Ruff replaces the deprecated isort extension
+
+The operator's VS Code surfaced a crashloop from Microsoft's
+deprecated `ms-python.isort` extension during today's session
+(triggered by Python helper scripts in the repo). The fix is to
+swap to Astral's Ruff extension, which ships its own Rust binary
+and handles import sorting plus linting plus formatting in one
+extension — no separate `pip install`, no LSP crashloop from a
+missing CPython interpreter.
+
+Two new files capture the swap at the workspace level so future
+contributors land in the same configuration:
+
+- `.vscode/extensions.json` — recommends `charliermarsh.ruff`,
+  marks `ms-python.isort` as unwanted.
+- `.vscode/settings.json` — wires Ruff as the default Python
+  formatter, enables format-on-save and organize-imports-on-save,
+  and silences the legacy isort extension if it's still installed.
+
+VS Code prompts to install the recommended extension and to
+disable the unwanted one on workspace open.

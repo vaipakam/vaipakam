@@ -122,6 +122,7 @@ This section will later define:
 Current connected-app surface expectations:
 
 - `Dashboard` is the user's "your stuff" surface: it should include active loans with Role / Status filters, pagination, sortable columns, a most-recent-first default sort, the user's offers across active / filled / cancelled states, the shared VPFI fee-discount consent, a VPFI rewards summary, and a green `Claim` CTA for terminal loans with unclaimed funds
+- Dashboard should not include a shallow `Your Escrow` / `Your Vault address` card when it only repeats the redacted vault address and explorer link; the dedicated `Your Vaipakam Vault` page is the canonical surface for vault address, asset balances, deposits, withdrawals, dust filtering, and protocol-tracked balance display
 - Dashboard's active-loans section should expose a manual refresh action for connected wallets that refreshes indexed loans, wallet loan rows, claimability hints, and the user's offers together, while showing a `Last refreshed` indicator and the shared adaptive rescan cooldown chrome
 - `Offer Book` should be wallet-gated inside `/app`; after connection it should keep market browsing filterable by side, asset, status, liquidity, duration, and per-side count; market-rate annotations should use a filter-scoped recent-acceptance anchor with signed deltas and a mobile-friendly explanatory tooltip
 - closed / filled offer rows should link to the loan they created when an `OfferAccepted(offerId, acceptor, loanId)` event is available
@@ -321,12 +322,12 @@ Connected-app network model in Phase 1:
 - the connected topbar / wallet menu should show both chain icon and chain name after connection, collapsing to icon-only only on very narrow viewports while preserving the accessible chain name
 - in-app pages should not mount a standalone pre-connect chain picker; read-only pre-connect chain exploration belongs on public Analytics, while wallet-gated app pages should take chain context from the connected wallet
 - the connected-app top bar should show one shared indexer status badge for cached / live-read state rather than duplicating badges in individual page headers
-- the indexer badge should have three states:
-  - green `Cached`, showing that the worker indexer responded and the page is rendering from a cached snapshot plus narrow RPC catch-up
-  - amber `Live`, explaining that the browser is reading directly from chain because the worker is unreachable, unsupported for that chain, or still loading
-  - blue `Local dev`, for Anvil / Hardhat chain IDs where the cloud indexer cannot reach the local node and direct local RPC reads are expected
-- the top-bar badge should open a structured popover with state, chain, data source, cache age, last update timestamp, and concise user guidance; it should not include the old global manual rescan button
-- on mobile-width viewports the badge popover should dock to the top of the viewport so it cannot clip off-screen
+- the indexer badge should be a compact single-signal freshness pill based primarily on block-space: the gap between the worker's last-indexed safe block and the chain's current safe head
+- badge states should distinguish caught-up, catching-up, behind, live-chain fallback when the indexer is unreachable, and local-dev mode when the wallet is on Anvil / Hardhat
+- the badge should avoid stale `minutes ago` framing as the primary health signal because block gap captures both chain progress and watcher liveness more directly
+- the badge's info action should open the existing Issue Details / diagnostics drawer rather than a separate popover; the drawer should include a `Chain & Indexer` panel with chain id, last indexed safe block, safe head, blocks-to-catch-up, cursor last-advance timestamp, data source, indexer endpoint, browser storage usage, frontend build identifier, and a short explanation of safe blocks
+- advanced-mode users may get a deliberate `Purge browser-side state` control in that diagnostics panel; it must require confirmation and should clear IndexedDB, localStorage, and sessionStorage for the current origin so stale decode/cache states can be reset after redeploys
+- frontend builds should expose a build hash and build timestamp in the diagnostics panel when available, falling back gracefully when git metadata is unavailable
 - manual force-refresh controls belong only on pages where the user is inspecting mutable lists, including OfferBook, Activity, Dashboard, and Your Vaipakam Vault
 - those page-level refresh controls should share one adaptive cooldown state machine: a 30-second baseline, exponential growth for repeated clicks up to a 5-minute cap, reset after a quiet period, a draining right-to-left progress bar, stable-width countdown digits, and `Syncing` / `Synced` / idle status states
 - app refresh probes should use named watermark tiers rather than scattered interval literals: OfferBook `hot` at 5 seconds active with idle backoff, Dashboard / Vault / Offer Details / Activity `warm` at 20 seconds active, and Analytics `cool` at 180 seconds active; all tiers pause while the tab is hidden and resume with an immediate catch-up probe on focus

@@ -144,6 +144,26 @@ mainnet without preflight discipline:
   health check on mirror chains hard-fails the deploy when either
   cap is at `type(uint256).max` — replaces the prior soft-warn that
   let unverified rate limits through.
+- **dRPC `eth_estimateGas` stale-view reverts during high-rate
+  broadcasts.** `forge script --broadcast --skip-simulation` leans on
+  the RPC's `eth_estimateGas` to size each tx's gas before submission.
+  dRPC's load-balancer occasionally answers with a slightly-stale
+  state snapshot (a few blocks behind the canonical tip), so a tx
+  whose pre-conditions JUST landed in the prior tx can revert in the
+  estimator with a custom error like `InvalidLoanStatus()` (selector
+  `0x8e0f1450`), `ERC20InsufficientAllowance(...)` (`0xfb8f41b2`), or
+  `NFTMintFailed()` (`0xb70f4664`) — even though `cast estimate` and
+  `cast call` against the same calldata succeed seconds later when
+  the RPC catches up. The 2026-05-06 rehearsal hit this three times
+  (PositiveFlows OP @ tx 152 `claimAsLender`; PartialFlows OP @ tx 57
+  `acceptOffer`; PartialFlows Base @ tx 53 `createOffer`). Mitigation:
+  drop `--skip-simulation` from testnet smoke runs — forge then runs
+  its own on-chain simulation locally against the live state at
+  submission time, bypasses the RPC's stale view, and broadcast
+  proceeds clean. Tradeoff is slower per-tx submission (full local
+  sim each tx) but reliability wins for smoke-test sweeps. Keep
+  `--skip-simulation` only for re-runs where you've confirmed the
+  prior sim already passed and you just want to broadcast faster.
 - **Silent watcher chain-skip on missing per-chain RPC secret.**
   `getChainConfigs(env)` (`ops/hf-watcher/src/env.ts:151`) drops any
   chain whose `RPC_<CHAIN>` Cloudflare secret is unset — the
