@@ -1734,7 +1734,7 @@
     "statusSourceRpc": "RPC (कैश नहीं पहुँच रहा)",
     "statusSourceLocalRpc": "लोकल RPC (सीधा)",
     "statusLastSafeBlock": "अंतिम सेफ ब्लॉक (इंडेक्स्ड)",
-    "statusChainSafeHead": "चेन सेफ हेड",
+    "statusChainSafeHead": "अंतिम सेफ ब्लॉक (उपलब्ध)",
     "statusChainSafeHeadUnknown": "अज्ञात",
     "statusBlockGap": "पकड़ने योग्य ब्लॉक",
     "statusBlockGapCaughtUp": "0 (अपडेटेड)",
@@ -1754,6 +1754,11 @@
     "purgeConfirm": "इस साइट के लिए सभी ब्राउज़र-साइड स्थिति (IndexedDB, localStorage, sessionStorage) मिटाएँ? कनेक्ट किए गए वॉलेट और सहेजी गई प्राथमिकताएँ मिट जाएँगी। पेज को पुनः लोड करना होगा।",
     "purgeDone": "मिटा दिया गया। प्रभावी होने के लिए पेज पुनः लोड करें।",
     "purgeFailed": "मिटाने में विफल: {{err}}",
-    "frontendBuildTime": "फ्रंटएंड बिल्ड समय (UTC)"
+    "frontendBuildTime": "फ्रंटएंड बिल्ड समय (UTC)",
+    "nextRefresh": "अगला इंडेक्स फ़ेच",
+    "liveTailStatus": "Live-tail की स्थिति",
+    "liveTailInSync": "सिंक में",
+    "liveTailCatchingUp": "अपडेट हो रहा है · ~{{n}} ब्लॉक शेष",
+    "liveTailDeepBacklog": "गहरा बैकलॉग · ~{{n}} ब्लॉक शेष (catch-up में कई cron चक्र लगेंगे)"
   }
 }

@@ -1734,7 +1734,7 @@
     "statusSourceRpc": "RPC (캐시 도달 불가)",
     "statusSourceLocalRpc": "로컬 RPC (직접)",
     "statusLastSafeBlock": "마지막 안전 블록 (인덱싱됨)",
-    "statusChainSafeHead": "체인 안전 헤드",
+    "statusChainSafeHead": "마지막 안전 블록 (사용 가능)",
     "statusChainSafeHeadUnknown": "알 수 없음",
     "statusBlockGap": "따라잡을 블록 수",
     "statusBlockGapCaughtUp": "0 (최신 상태)",
@@ -1754,6 +1754,11 @@
     "purgeConfirm": "이 사이트의 모든 브라우저 측 상태(IndexedDB, localStorage, sessionStorage)를 삭제하시겠습니까? 연결된 지갑과 저장된 환경설정이 지워집니다. 페이지를 다시 로드해야 합니다.",
     "purgeDone": "삭제되었습니다. 페이지를 다시 로드하여 적용하세요.",
     "purgeFailed": "삭제 실패: {{err}}",
-    "frontendBuildTime": "프론트엔드 빌드 시각 (UTC)"
+    "frontendBuildTime": "프론트엔드 빌드 시각 (UTC)",
+    "nextRefresh": "다음 인덱스 가져오기까지",
+    "liveTailStatus": "Live-tail 상태",
+    "liveTailInSync": "동기화됨",
+    "liveTailCatchingUp": "따라잡는 중 · ~{{n}} 블록 남음",
+    "liveTailDeepBacklog": "심한 지연 · ~{{n}} 블록 남음 (따라잡기에 여러 cron 주기 소요)"
   }
 }

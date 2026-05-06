@@ -1734,7 +1734,7 @@
     "statusSourceRpc": "RPC (キャッシュ到達不可)",
     "statusSourceLocalRpc": "ローカル RPC (直接)",
     "statusLastSafeBlock": "最終確定ブロック (インデックス済み)",
-    "statusChainSafeHead": "チェーンの確定ヘッド",
+    "statusChainSafeHead": "最終確定ブロック (利用可能)",
     "statusChainSafeHeadUnknown": "不明",
     "statusBlockGap": "追いつくブロック数",
     "statusBlockGapCaughtUp": "0 (最新)",
@@ -1754,6 +1754,11 @@
     "purgeConfirm": "このサイトのブラウザ側の状態 (IndexedDB、localStorage、sessionStorage) をすべて削除しますか? 接続されたウォレットや保存された設定が消去されます。ページの再読み込みが必要です。",
     "purgeDone": "削除しました。ページを再読み込みして反映してください。",
     "purgeFailed": "削除に失敗しました: {{err}}",
-    "frontendBuildTime": "フロントエンドビルド時刻 (UTC)"
+    "frontendBuildTime": "フロントエンドビルド時刻 (UTC)",
+    "nextRefresh": "次のインデックス取得まで",
+    "liveTailStatus": "Live-tail の状態",
+    "liveTailInSync": "同期済み",
+    "liveTailCatchingUp": "追従中 · 残り ~{{n}} ブロック",
+    "liveTailDeepBacklog": "深い遅延 · 残り ~{{n}} ブロック (追従には複数の cron 周期が必要)"
   }
 }

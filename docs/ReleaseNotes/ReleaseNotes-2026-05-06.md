@@ -553,3 +553,94 @@ contributors land in the same configuration:
 
 VS Code prompts to install the recommended extension and to
 disable the unwanted one on workspace open.
+
+## Base PartialFlows — multiplier=100 misuse and the v4 fix
+
+Base PartialFlows took four iterations before landing 143/143 today.
+Each one taught a distinct lesson and the operator's mistake (mine)
+on v2 → v3 is worth recording so the same flag-stacking doesn't
+recur:
+
+- **v1** (`--skip-simulation`, default 130% multiplier): forge
+  submitted `createOffer` with `gas: null`, RPC rejected with
+  `intrinsic gas too high`. 65/143.
+- **v2** (`--skip-simulation --gas-estimate-multiplier 100`):
+  multiplier=100 fixed v1's reject. New halt at `createOffer` with
+  `NFTMintFailed` after 53 receipts. Investigation showed `cast
+  estimate` against the same calldata succeeded with 846k gas; the
+  failure was a dRPC `eth_estimateGas` stale-view, not a contract
+  or script bug. Standard mitigation is to drop `--skip-simulation`
+  so forge runs its own on-chain simulation locally against live
+  state.
+- **v3** (`--no-skip-simulation --gas-estimate-multiplier 100`):
+  the simulation flag fixed the stale-view issue, but I'd left
+  `--gas-estimate-multiplier 100` in place from v2. That flag had
+  removed forge's default 30% safety buffer over its gas estimate.
+  An admin setup tx (`setUsdChainlinkDenominator`) used
+  33,268 gas against a 33,350 limit — 82 gas of slack — and
+  Base's L1-fee accounting nudged real usage past forge's local
+  estimate. Tx landed on chain with `status=0 (failed)` from
+  out-of-gas, not from a revert.
+- **v4** (`--no-skip-simulation`, default 130% multiplier):
+  full 143/143 pass.
+
+The lesson is that `--gas-estimate-multiplier 100` is a narrow fix
+for ONE specific failure mode (RPC per-call gas-cap rejects at
+submit time) and should NOT be combined with `--no-skip-simulation`
+— the combination removes forge's safety margin against gas
+variance that the local simulation can't predict (Base L1-fee,
+EVM warm/cold storage transitions, etc.). The runbook's rehearsal-
+lessons section was updated to call out this anti-pattern alongside
+the dRPC stale-view bullet.
+
+## Diagnostics-drawer UX revisions
+
+Three small but operator-meaningful changes after a quick
+walkthrough with the IndexerStatusBadge live:
+
+- **Restored inline popover on the badge info icon.** Earlier today
+  the badge's ⓘ click was wired to open the diagnostics drawer
+  scrolled to the chain panel. The drawer felt too heavy for
+  "what does this colour mean?" — now the icon toggles a small
+  popover anchored under the pill, showing only what someone
+  glancing at the badge cares about: state pill, chain, last safe
+  block, chain safe head, blocks-to-catch-up, plus the safe-block
+  footnote. The full breakdown (browser storage, build hash,
+  cursor advance time, advanced-mode purge button) stays in the
+  drawer as it was. Click-outside / Escape close.
+- **Chain & Indexer panel is now collapsible inside the drawer.**
+  Default state is collapsed: when an operator opens the drawer
+  via the FAB they're usually triaging a failure event, so the
+  events list should sit at the top. The chain panel becomes a
+  click-to-peek affordance. The state pill stays visible in the
+  collapsed header so the at-a-glance signal isn't hidden, and
+  expanding shows the full row table. Toggle uses ARIA
+  `expanded`/`controls` for screen readers.
+- **Drawer toolbar trim.** Dropped the `Copy JSON` button — the
+  `Download` button covers the same need with a clean filename
+  and no clipboard-permission edge cases. Renamed the trash-can
+  button label from "Delete" to "Clear" (it just empties the
+  in-memory journey buffer; "Delete" reads more destructive than
+  the action warrants). Reordered to **Download → Report on
+  GitHub → Clear**: the most common support flow opens with the
+  artefact, then the reporting affordance, then the destructive
+  action sits at the end. The renamed label landed in all ten
+  locales; the orphaned `copyJson` / `copied` / `delete` keys
+  were dropped from each.
+
+## "Report on GitHub" — symmetric event window
+
+The GitHub issue body that the diagnostics drawer's Report link
+populates centres on the most-recent failure event in the journey
+buffer. Earlier defaults included **10 events before + 2 events
+after** the failure. The asymmetric window biased the issue toward
+lead-up context at the cost of the post-failure trail (retries,
+recovery attempts, follow-on errors).
+
+New defaults are **5 events before + 5 events after**, plus the
+failure event itself — a symmetric window that reads more cleanly
+in the rendered issue body. Total event budget is unchanged at
+roughly 11 events; the URL-too-long trim-fallback continues to
+halve to 2+2 if the assembled body overshoots `MAX_URL_LEN`.
+Operator can still override via `VITE_DIAG_EVENTS_BEFORE_FAILURE`
+and `VITE_DIAG_EVENTS_AFTER_FAILURE`.

@@ -1734,7 +1734,7 @@
     "statusSourceRpc": "RPC (கேஷ் அணுக முடியவில்லை)",
     "statusSourceLocalRpc": "உள்ளூர் RPC (நேரடி)",
     "statusLastSafeBlock": "கடைசி பாதுகாப்பான பிளாக் (இண்டெக்ஸ் செய்யப்பட்டது)",
-    "statusChainSafeHead": "சங்கிலி பாதுகாப்பான தலை",
+    "statusChainSafeHead": "கடைசி பாதுகாப்பான பிளாக் (கிடைக்கிறது)",
     "statusChainSafeHeadUnknown": "தெரியவில்லை",
     "statusBlockGap": "பிடிக்க வேண்டிய பிளாக்கள்",
     "statusBlockGapCaughtUp": "0 (புதுப்பிக்கப்பட்டது)",
@@ -1754,6 +1754,11 @@
     "purgeConfirm": "இந்தத் தளத்தின் அனைத்து உலாவி-பக்க நிலையையும் (IndexedDB, localStorage, sessionStorage) அழிக்கவா? இணைக்கப்பட்ட வாலெட்டுகள் மற்றும் சேமிக்கப்பட்ட விருப்பங்கள் அழிக்கப்படும். பக்கத்தை மீண்டும் ஏற்ற வேண்டும்.",
     "purgeDone": "அழிக்கப்பட்டது. பயன்படுத்த பக்கத்தை மீண்டும் ஏற்றவும்.",
     "purgeFailed": "அழித்தல் தோல்வியடைந்தது: {{err}}",
-    "frontendBuildTime": "முன்-இறுதி பில்ட் நேரம் (UTC)"
+    "frontendBuildTime": "முன்-இறுதி பில்ட் நேரம் (UTC)",
+    "nextRefresh": "அடுத்த இண்டெக்ஸ் பெறுதல்",
+    "liveTailStatus": "Live-tail நிலை",
+    "liveTailInSync": "ஒத்திசைவில்",
+    "liveTailCatchingUp": "பின்தொடர்கிறது · ~{{n}} பிளாக் மீதம்",
+    "liveTailDeepBacklog": "ஆழமான பின்னேறம் · ~{{n}} பிளாக் மீதம் (catch-up பல cron சுழற்சிகள் எடுக்கும்)"
   }
 }

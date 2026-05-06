@@ -35,7 +35,11 @@ const POLICIES: Record<WatermarkTier, UseLiveWatermarkOptions> = {
     pausedAfterMs: FIFTEEN_MIN,
   },
   warm: {
-    pollIntervalMs: 20_000,
+    // 30 s active cadence (was 20 s) — aligned with `useOfferStats` periodic
+    // refetch for a uniform "warm tier refreshes every 30 s" heartbeat
+    // across the badge, drawer panel, and the row hooks (useMyOffers,
+    // useIndexedLoans, useIndexedActivity, etc.).
+    pollIntervalMs: 30_000,
     idlePollIntervalMs: 60_000,
     idleAfterMs: FIVE_MIN,
     pausedAfterMs: FIFTEEN_MIN,

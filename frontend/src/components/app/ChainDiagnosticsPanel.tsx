@@ -18,7 +18,7 @@
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Trash2, ChevronDown, ChevronRight } from 'lucide-react';
-import { useOfferStats } from '../../hooks/useOfferStats';
+import { useOfferStats, OFFER_STATS_REFETCH_MS } from '../../hooks/useOfferStats';
 import { useReadChain } from '../../contracts/useDiamond';
 import { useLiveWatermark } from '../../hooks/useLiveWatermark';
 import { watermarkPolicy } from '../../hooks/watermarkPolicy';
@@ -30,6 +30,17 @@ import { useMode } from '../../context/ModeContext';
  *  numbers are stable; if they change, update both sites. */
 const CAUGHT_UP_GAP_BLOCKS = 100;
 const SEVERE_GAP_BLOCKS = 5000;
+
+/** Threshold for the "deep backlog" framing in the live-tail status row.
+ *  The live-tail does NOT skip past this in current code — it keeps
+ *  chunking. This threshold is purely a diagnostic label so the operator
+ *  knows the catch-up will take many cron ticks. ~50_000 blocks ≈ 1.7 h
+ *  on Base/OP, ~7 min on Arb, ~10 days on Ethereum (block-time-aware
+ *  framing happens elsewhere; this number's rationale is "well above a
+ *  few-tick catch-up, well below a fresh-chain backfill"). When the
+ *  live-tail actually grows a hard cap (post-mainnet roadmap item
+ *  `LiveTailProvider lift`), this threshold will become the cap. */
+const LIVE_TAIL_BACKLOG_BLOCKS = 50_000;
 
 interface StorageEstimate {
   usage?: number;
@@ -62,6 +73,23 @@ export function ChainDiagnosticsPanel() {
   // failure events first; the chain panel is a "click to peek" affordance
   // so it doesn't push the events list below the fold on first open.
   const [expanded, setExpanded] = useState<boolean>(false);
+  // "Next refresh in" countdown — purely cosmetic confidence signal that
+  // the polling loop is alive. Restarts every time `stats.indexer.updatedAt`
+  // advances (i.e. a successful /offers/stats fetch landed) so the count
+  // resets on the actual heartbeat, not on a guessed schedule. Stops
+  // ticking when the panel is collapsed so we don't burn renders the
+  // user can't see.
+  const [secondsToRefresh, setSecondsToRefresh] = useState<number>(
+    Math.round(OFFER_STATS_REFETCH_MS / 1000),
+  );
+  useEffect(() => {
+    if (!expanded) return;
+    setSecondsToRefresh(Math.round(OFFER_STATS_REFETCH_MS / 1000));
+    const id = setInterval(() => {
+      setSecondsToRefresh((s) => (s <= 0 ? 0 : s - 1));
+    }, 1000);
+    return () => clearInterval(id);
+  }, [expanded, stats?.indexer?.updatedAt]);
   // Purge state — only used when `mode === 'advanced'` (the dev / debug
   // toggle on the user-mode picker). Tri-state UI:
   //   - 'idle': default, button enabled.
@@ -298,12 +326,43 @@ export function ChainDiagnosticsPanel() {
             }
           />
         )}
+        {indexer && blockGap !== null && (
+          <Row
+            label={t('chainDiagnostics.liveTailStatus', {
+              defaultValue: 'Live-tail status',
+            })}
+            value={
+              blockGap < CAUGHT_UP_GAP_BLOCKS
+                ? t('chainDiagnostics.liveTailInSync', {
+                    defaultValue: 'In sync',
+                  })
+                : blockGap < LIVE_TAIL_BACKLOG_BLOCKS
+                ? t('chainDiagnostics.liveTailCatchingUp', {
+                    defaultValue: 'Catching up · ~{{n}} blocks remaining',
+                    n: blockGap.toLocaleString(),
+                  })
+                : t('chainDiagnostics.liveTailDeepBacklog', {
+                    defaultValue:
+                      'Deep backlog · ~{{n}} blocks remaining (catch-up will take many cron ticks)',
+                    n: blockGap.toLocaleString(),
+                  })
+            }
+          />
+        )}
         {cursorIso && (
           <Row
             label={t('chainDiagnostics.cursorAdvancedAt', {
               defaultValue: 'Indexer cursor last advanced (UTC)',
             })}
             value={cursorIso}
+          />
+        )}
+        {indexer && (
+          <Row
+            label={t('chainDiagnostics.nextRefresh', {
+              defaultValue: 'Next refresh in',
+            })}
+            value={`${secondsToRefresh}s`}
           />
         )}
         <Row

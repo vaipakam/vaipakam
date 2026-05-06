@@ -1734,7 +1734,7 @@
     "statusSourceRpc": "RPC (الذاكرة المؤقتة غير متاحة)",
     "statusSourceLocalRpc": "RPC محلي (مباشر)",
     "statusLastSafeBlock": "آخر كتلة آمنة (مُفهرسة)",
-    "statusChainSafeHead": "رأس السلسلة الآمن",
+    "statusChainSafeHead": "آخر كتلة آمنة (متاحة)",
     "statusChainSafeHeadUnknown": "غير معروف",
     "statusBlockGap": "كتل يجب اللحاق بها",
     "statusBlockGapCaughtUp": "0 (محدّث)",
@@ -1754,6 +1754,11 @@
     "purgeConfirm": "مسح كل حالة المتصفح لهذا الموقع (IndexedDB وlocalStorage وsessionStorage)؟ ستُمسح المحافظ المتصلة والتفضيلات المحفوظة. ستحتاج إلى إعادة تحميل الصفحة.",
     "purgeDone": "تم المسح. أعد تحميل الصفحة لتفعيل التغييرات.",
     "purgeFailed": "فشل المسح: {{err}}",
-    "frontendBuildTime": "وقت بناء الواجهة الأمامية (UTC)"
+    "frontendBuildTime": "وقت بناء الواجهة الأمامية (UTC)",
+    "nextRefresh": "الجلب التالي للفهرس خلال",
+    "liveTailStatus": "حالة Live-tail",
+    "liveTailInSync": "متزامن",
+    "liveTailCatchingUp": "يلحق · ~{{n}} كتلة متبقية",
+    "liveTailDeepBacklog": "تراكم عميق · ~{{n}} كتلة متبقية (سيستغرق اللحاق دورات cron عديدة)"
   }
 }

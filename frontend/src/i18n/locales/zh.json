@@ -1734,7 +1734,7 @@
     "statusSourceRpc": "RPC (缓存不可达)",
     "statusSourceLocalRpc": "本地 RPC (直接)",
     "statusLastSafeBlock": "最近安全区块 (已索引)",
-    "statusChainSafeHead": "链安全头",
+    "statusChainSafeHead": "最近安全区块 (可用)",
     "statusChainSafeHeadUnknown": "未知",
     "statusBlockGap": "待赶上的区块",
     "statusBlockGapCaughtUp": "0 (已同步)",
@@ -1754,6 +1754,11 @@
     "purgeConfirm": "清除此站点的所有浏览器端状态 (IndexedDB、localStorage、sessionStorage)? 已连接的钱包和保存的偏好将被清除。需要重新加载页面。",
     "purgeDone": "已清除。重新加载页面以生效。",
     "purgeFailed": "清除失败: {{err}}",
-    "frontendBuildTime": "前端构建时间 (UTC)"
+    "frontendBuildTime": "前端构建时间 (UTC)",
+    "nextRefresh": "下次索引获取时间",
+    "liveTailStatus": "Live-tail 状态",
+    "liveTailInSync": "已同步",
+    "liveTailCatchingUp": "同步中 · 剩余 ~{{n}} 个区块",
+    "liveTailDeepBacklog": "深度滞后 · 剩余 ~{{n}} 个区块 (追赶将需要多个 cron 周期)"
   }
 }

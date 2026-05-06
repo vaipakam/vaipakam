@@ -28,6 +28,13 @@ interface UseOfferStatsResult {
   loading: boolean;
 }
 
+/** Periodic refetch cadence for `/offers/stats`. Exported so any UI that
+ *  wants to render a "next refresh" countdown stays in lock-step with the
+ *  actual fetch timer (no double source of truth). 30 s aligns with the
+ *  `warm` watermark policy so both numbers in the diagnostics panel move
+ *  on the same heartbeat. */
+export const OFFER_STATS_REFETCH_MS = 30_000;
+
 export function useOfferStats(): UseOfferStatsResult {
   const chain = useReadChain();
   const chainId = chain.chainId ?? DEFAULT_CHAIN.chainId;
@@ -49,14 +56,18 @@ export function useOfferStats(): UseOfferStatsResult {
     }
     void tick();
     // Periodic refetch independent of `version` advances. Without this
-    // the popover's "cache age" stays frozen at first-paint when the
-    // chain is quiet (no `nextOfferId`/`nextLoanId` advance to bump
-    // `version`), even though the watcher cron is ticking every minute.
-    // 60 s cadence keeps the cache-age label honest. Reads from D1 via
-    // `/offers/stats`, not chain RPC — no quota concern.
+    // the IndexerStatusBadge / ChainDiagnosticsPanel block-space numbers
+    // freeze when the chain is quiet (no `nextOfferId`/`nextLoanId`
+    // advance to bump `version`) even though the watcher cron is ticking.
+    // 30 s cadence (was 60 s) — locks in step with the `warm` watermark
+    // probe so `Last safe block (indexed)` and `Chain safe head` move
+    // on the same heartbeat. /offers/stats reads from D1 only, no chain
+    // RPC quota burn. Exported via `OFFER_STATS_REFETCH_MS` so the
+    // ChainDiagnosticsPanel can render an honest "Next refresh in: Ns"
+    // countdown.
     const id = setInterval(() => {
       void tick();
-    }, 60_000);
+    }, OFFER_STATS_REFETCH_MS);
     return () => {
       cancelled = true;
       clearInterval(id);

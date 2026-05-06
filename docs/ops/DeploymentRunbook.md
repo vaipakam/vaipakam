@@ -164,6 +164,19 @@ mainnet without preflight discipline:
   sim each tx) but reliability wins for smoke-test sweeps. Keep
   `--skip-simulation` only for re-runs where you've confirmed the
   prior sim already passed and you just want to broadcast faster.
+  **Anti-pattern — do NOT combine `--no-skip-simulation` with
+  `--gas-estimate-multiplier 100`.** The latter removes forge's
+  default 30 % safety buffer above its gas estimate. With local
+  simulation enabled, the estimate is tight (it doesn't predict
+  Base's L1-fee accounting or warm/cold storage transitions on
+  chain), so the buffer is what saves the broadcast from
+  out-of-gas reverts on edge-case admin setup txs. Today's Base
+  PartialFlows v3 hit exactly this: 33,268 gas used against a
+  33,350 limit on `setUsdChainlinkDenominator`, only 82 gas of
+  slack. Use `--gas-estimate-multiplier 100` only when forge's
+  pad is itself the problem (`intrinsic gas too high` rejects at
+  submit time on certain RPCs, fixed in v1 → v2 of today's run);
+  otherwise leave the multiplier at its 130 % default.
 - **Silent watcher chain-skip on missing per-chain RPC secret.**
   `getChainConfigs(env)` (`ops/hf-watcher/src/env.ts:151`) drops any
   chain whose `RPC_<CHAIN>` Cloudflare secret is unset — the

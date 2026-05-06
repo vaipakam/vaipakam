@@ -1737,7 +1737,7 @@
     "statusSourceRpc": "RPC (cache unreachable)",
     "statusSourceLocalRpc": "Local RPC (direct)",
     "statusLastSafeBlock": "Last safe block (indexed)",
-    "statusChainSafeHead": "Chain safe head",
+    "statusChainSafeHead": "Last safe block (available)",
     "statusChainSafeHeadUnknown": "unknown",
     "statusBlockGap": "Blocks to catch up",
     "statusBlockGapCaughtUp": "0 (caught up)",
@@ -1757,6 +1757,11 @@
     "purgeConfirm": "Purge all browser-side state for this site (IndexedDB, localStorage, sessionStorage)? Connected wallets and saved preferences will be cleared. The page will need a reload.",
     "purgeDone": "Purged. Reload the page to take effect.",
     "purgeFailed": "Purge failed: {{err}}",
-    "frontendBuildTime": "Frontend built (UTC)"
+    "frontendBuildTime": "Frontend built (UTC)",
+    "nextRefresh": "Next index fetch in",
+    "liveTailStatus": "Live-tail status",
+    "liveTailInSync": "In sync",
+    "liveTailCatchingUp": "Catching up · ~{{n}} blocks remaining",
+    "liveTailDeepBacklog": "Deep backlog · ~{{n}} blocks remaining (catch-up will take many cron ticks)"
   }
 }
