@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { LifeBuoy, Copy, X, FileDown, Trash2, Lock } from 'lucide-react';
+import { LifeBuoy, X, FileDown, Trash2, Lock } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { L as Link } from '../L';
 import {
@@ -13,12 +13,6 @@ import { useMode } from '../../context/ModeContext';
 import { ReportIssueLink } from './ReportIssueLink';
 import { ChainDiagnosticsPanel } from './ChainDiagnosticsPanel';
 import './DiagnosticsDrawer.css';
-
-/** Window-level event the IndexerStatusBadge dispatches on info-icon
- *  click. Decouples the badge from the drawer's state without pulling
- *  in a state library — keeps the drawer's existing self-contained
- *  `open` state model intact. */
-export const OPEN_DIAGNOSTICS_EVENT = 'vp:open-diagnostics';
 
 /**
  * Floating "Support" button + slide-over drawer that renders the latest
@@ -61,38 +55,12 @@ export default function DiagnosticsDrawer() {
   const { mode } = useMode();
   const [open, setOpen] = useState(false);
   const [events, setEvents] = useState<JourneyEvent[]>([]);
-  const [copied, setCopied] = useState(false);
   // Default to "Failure" so users land on what they most likely opened the
   // drawer to investigate. The "Report on GitHub" link always exports the
   // full unfiltered log — the filter is a UI concern only.
   const [filter, setFilter] = useState<StatusFilter>('failure');
 
   useEffect(() => subscribe(setEvents), []);
-
-  // Listen for the IndexerStatusBadge's "open me" custom event. The
-  // badge no longer renders an inline popover — its info icon
-  // dispatches `vp:open-diagnostics` instead, which we catch here and
-  // flip the drawer open.
-  useEffect(() => {
-    const handler = () => setOpen(true);
-    window.addEventListener(OPEN_DIAGNOSTICS_EVENT, handler);
-    return () => window.removeEventListener(OPEN_DIAGNOSTICS_EVENT, handler);
-  }, []);
-
-  const handleCopy = async () => {
-    const blob = exportDiagnostics();
-    try {
-      await navigator.clipboard.writeText(blob);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
-    } catch {
-      // Clipboard blocked (e.g. insecure context). The GDPR-scoped
-      // "Download my data" below covers the file-download path
-      // including the journey log, so a fallback here would be
-      // duplicative — silently no-op and let the user reach for the
-      // larger button.
-    }
-  };
 
   const failureCount = events.filter((e) => e.status === 'failure').length;
   // Basic mode hides the FAB on the happy path — the drawer is primarily a
@@ -157,10 +125,6 @@ export default function DiagnosticsDrawer() {
                 surprising). */}
             <div className="diag-actions">
               <ReportIssueLink variant="button" label={t('diagnostics.reportOnGithub')} />
-              <button className="btn btn-secondary btn-sm" onClick={handleCopy}>
-                <Copy size={14} />
-                {copied ? t('diagnostics.copied') : t('diagnostics.copyJson')}
-              </button>
               <button
                 className="btn btn-secondary btn-sm"
                 onClick={() => {
@@ -183,7 +147,7 @@ export default function DiagnosticsDrawer() {
                 onClick={() => clearJourney()}
               >
                 <Trash2 size={14} />
-                {t('diagnostics.delete')}
+                {t('diagnostics.clear')}
               </button>
             </div>
 

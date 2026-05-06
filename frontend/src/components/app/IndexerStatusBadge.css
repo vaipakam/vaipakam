@@ -215,3 +215,19 @@
 [data-theme='dark'] .indexer-badge-popover-body {
   color: var(--text-secondary, #94a3b8);
 }
+
+/* Restored 2026-05-06: small footnote line at the bottom of the popover
+   explaining what "safe block" means. Same role as in the
+   ChainDiagnosticsPanel; styled tighter for the inline popover surface. */
+.indexer-badge-popover-footnote {
+  margin-top: 0.5rem;
+  padding-top: 0.5rem;
+  border-top: 1px solid rgba(0, 0, 0, 0.06);
+  font-size: 0.7rem;
+  color: var(--text-secondary, #888);
+  line-height: 1.4;
+}
+
+[data-theme='dark'] .indexer-badge-popover-footnote {
+  border-top-color: rgba(255, 255, 255, 0.06);
+}

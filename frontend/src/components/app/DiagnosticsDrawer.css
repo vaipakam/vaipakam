@@ -344,3 +344,23 @@
 .chain-diag-purge-msg--err {
   color: #ff7a7a;
 }
+
+/* Collapsible-header for the Chain & Indexer panel. Whole row is the
+   click target so the chevron + title + state-pill all expand the
+   panel. Default-collapsed so first-open of the drawer doesn't push
+   the events list below the fold. */
+.chain-diag-header {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  width: 100%;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+.chain-diag-header:hover .chain-diag-title { color: var(--text-primary, #ddd); }
+.chain-diag-header .chain-diag-title { margin: 0; }
+.chain-diag-header .chain-diag-state-pill { margin-left: auto; }

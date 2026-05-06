@@ -1177,10 +1177,7 @@
     "reportOnGithub": "在 GitHub 上报告",
     "reportIssueAria": "在 GitHub 上报告此问题",
     "reportIssueTooltip": "打开一个预填的 issue 表单。不会共享任何钱包地址、User-Agent 或自由输入。",
-    "copyJson": "复制 JSON",
-    "copied": "已复制!",
     "download": "下载",
-    "delete": "删除",
     "dataRightsLink": "如需更完整的数据权利操作（下载 / 删除 Vaipakam 存储的全部内容），请查看数据权利 →",
     "filterAriaLabel": "按状态筛选",
     "filterAll": "全部",
@@ -1191,7 +1188,8 @@
     "noFilterMatches": "没有 {{filter}} 事件。切换筛选器查看其他步骤。",
     "errorFallback": "错误",
     "loanSuffix": "贷款 #{{id}}",
-    "offerSuffix": "报价 #{{id}}"
+    "offerSuffix": "报价 #{{id}}",
+    "clear": "清空"
   },
   "discordPage": {
     "title": "加入 Vaipakam Discord",

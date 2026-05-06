@@ -1177,10 +1177,7 @@
     "reportOnGithub": "GitHub पर रिपोर्ट करें",
     "reportIssueAria": "इस समस्या को GitHub पर रिपोर्ट करें",
     "reportIssueTooltip": "पहले से भरा एक इश्यू फ़ॉर्म खोलता है। कोई वॉलेट पता, User-Agent या मुक्त इनपुट साझा नहीं किया जाता।",
-    "copyJson": "JSON कॉपी करें",
-    "copied": "कॉपी हो गया!",
     "download": "डाउनलोड",
-    "delete": "हटाएँ",
     "dataRightsLink": "व्यापक data rights (Vaipakam द्वारा stored सब कुछ download / delete) के लिए, Data Rights देखें →",
     "filterAriaLabel": "स्थिति के अनुसार फ़िल्टर करें",
     "filterAll": "सभी",
@@ -1191,7 +1188,8 @@
     "noFilterMatches": "कोई {{filter}} इवेंट नहीं। अन्य चरण देखने के लिए फ़िल्टर बदलें।",
     "errorFallback": "त्रुटि",
     "loanSuffix": "लोन #{{id}}",
-    "offerSuffix": "ऑफर #{{id}}"
+    "offerSuffix": "ऑफर #{{id}}",
+    "clear": "साफ़ करें"
   },
   "discordPage": {
     "title": "Vaipakam Discord से जुड़ें",

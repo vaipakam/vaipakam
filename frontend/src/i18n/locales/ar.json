@@ -1177,10 +1177,7 @@
     "reportOnGithub": "الإبلاغ على GitHub",
     "reportIssueAria": "الإبلاغ عن هذه المشكلة على GitHub",
     "reportIssueTooltip": "يفتح نموذج إبلاغ مُعبَّأ مسبقًا. لا يُشارَك أي عنوان محفظة أو User-Agent أو إدخال حر.",
-    "copyJson": "نسخ JSON",
-    "copied": "تم النسخ!",
     "download": "تنزيل",
-    "delete": "حذف",
     "dataRightsLink": "لحقوق البيانات الأوسع (تنزيل / حذف كل ما يخزنه Vaipakam)، راجع حقوق البيانات ←",
     "filterAriaLabel": "التصفية حسب الحالة",
     "filterAll": "الكل",
@@ -1191,7 +1188,8 @@
     "noFilterMatches": "لا توجد أحداث {{filter}}. غيِّر عامل التصفية لرؤية خطوات أخرى.",
     "errorFallback": "خطأ",
     "loanSuffix": "قرض رقم {{id}}",
-    "offerSuffix": "عرض رقم {{id}}"
+    "offerSuffix": "عرض رقم {{id}}",
+    "clear": "مسح"
   },
   "discordPage": {
     "title": "انضم إلى Discord الخاص بـ Vaipakam",

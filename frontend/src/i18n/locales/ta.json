@@ -1177,10 +1177,7 @@
     "reportOnGithub": "GitHub-இல் புகாரளி",
     "reportIssueAria": "இந்த சிக்கலை GitHub-இல் புகாரளி",
     "reportIssueTooltip": "முன்னரே நிரப்பப்பட்ட issue படிவத்தைத் திறக்கிறது. எந்த வாலெட் முகவரி, User-Agent அல்லது சுதந்திர உள்ளீடும் பகிரப்படவில்லை.",
-    "copyJson": "JSON-ஐ நகலெடு",
-    "copied": "நகலெடுக்கப்பட்டது!",
     "download": "பதிவிறக்கு",
-    "delete": "நீக்கு",
     "dataRightsLink": "Vaipakam சேமிக்கும் அனைத்தையும் பதிவிறக்க / நீக்க விரிவான தரவு உரிமைகளுக்கு, Data Rights → பார்க்கவும்",
     "filterAriaLabel": "நிலையின்படி வடிகட்டு",
     "filterAll": "அனைத்தும்",
@@ -1191,7 +1188,8 @@
     "noFilterMatches": "{{filter}} நிகழ்வுகள் இல்லை. மற்ற படிகளைப் பார்க்க வடிகட்டியை மாற்றுங்கள்.",
     "errorFallback": "பிழை",
     "loanSuffix": "கடன் #{{id}}",
-    "offerSuffix": "வாய்ப்பு #{{id}}"
+    "offerSuffix": "வாய்ப்பு #{{id}}",
+    "clear": "அழி"
   },
   "discordPage": {
     "title": "Vaipakam Discord-இல் சேருங்கள்",

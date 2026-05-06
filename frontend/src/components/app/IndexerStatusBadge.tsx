@@ -1,38 +1,23 @@
 /**
- * Top-bar indexer freshness signal — slim glance-only pill.
+ * Top-bar indexer freshness signal — a colour-coded pill driven purely
+ * by the gap between the watcher's last-indexed `safe` block and the
+ * chain's current `safe` head, in block-space. Five states:
  *
- * Single source of truth: the gap between the watcher's last-indexed
- * `safe` block and the chain's current `safe` head, in block-space.
- * No time projections, no "X min ago" framing — the gap captures both
- * indexer lag and watcher health (a stuck cron lets the gap balloon).
+ *   - **Caught up (green)** — gap < CAUGHT_UP_GAP_BLOCKS.
+ *   - **Catching up (amber)** — gap below SEVERE_GAP_BLOCKS.
+ *   - **Behind (red)** — gap ≥ SEVERE_GAP_BLOCKS. Operator-actionable.
+ *   - **Live chain scan (amber)** — indexer cache unreachable.
+ *   - **Local dev (blue)** — wallet on Anvil/Hardhat.
  *
- * Five states drive five colours:
- *
- *   - **Caught up (green)** — gap < CAUGHT_UP_GAP_BLOCKS. Page is
- *     rendering the latest finalised chain state.
- *   - **Catching up (amber)** — CAUGHT_UP_GAP_BLOCKS ≤ gap < SEVERE_GAP_BLOCKS.
- *     Indexer trailing the chain head, cron working.
- *   - **Behind (red)** — gap ≥ SEVERE_GAP_BLOCKS. Either watcher cron
- *     stalled or chain spike caused a backlog. Operator-actionable.
- *   - **Live chain scan (amber)** — indexer cache unreachable, browser
- *     falls back to direct RPC reads. Different from "catching up" —
- *     same colour family, distinct background tone.
- *   - **Local dev (blue)** — wallet on Anvil/Hardhat (31337/1337);
- *     cloud indexer doesn't cover local nodes.
- *
- * The info icon dispatches a window-level `vp:open-diagnostics` event
- * that the DiagnosticsDrawer subscribes to (see
- * `ChainDiagnosticsPanel.tsx`). The drawer holds the full state
- * breakdown — heading, body explanation, all rows (chain safe head,
- * indexed block, gap, source, browser storage, build version,
- * footnote on what "safe block" means).
- *
- * Manual "Rescan" was deliberately omitted: an RPC-quota abuse vector
- * + wrong mental model that users "need" to refresh. Auto-refetch on
- * tab-focus + 60 s background tail + post-tx confirmation is the
- * modern DeFi pattern.
+ * Clicking the small ⓘ icon opens a concise popover anchored to the
+ * pill — heading + plain-language body + the three block-space rows
+ * (state, last safe block, gap) + a footnote explaining "safe block".
+ * The popover is the at-a-glance answer; the full diagnostics drawer
+ * (independent FAB) hosts deeper rows like browser-storage usage,
+ * frontend build hash, and the dev-only purge affordance.
  */
 
+import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Info, Wifi, WifiOff, Cpu, RefreshCw, AlertTriangle } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
@@ -40,52 +25,97 @@ import { useOfferStats } from '../../hooks/useOfferStats';
 import { useReadChain } from '../../contracts/useDiamond';
 import { useLiveWatermark } from '../../hooks/useLiveWatermark';
 import { watermarkPolicy } from '../../hooks/watermarkPolicy';
-import { OPEN_DIAGNOSTICS_EVENT } from './DiagnosticsDrawer';
 import './IndexerStatusBadge.css';
 
 /** Block-space thresholds — single source of truth here AND mirrored
- *  in `ChainDiagnosticsPanel.tsx`. Bumping these requires touching
- *  both sites; the duplication is intentional to avoid a circular
- *  import (panel imports from this file would need it). */
+ *  in `ChainDiagnosticsPanel.tsx`. Bumping requires touching both. */
 const CAUGHT_UP_GAP_BLOCKS = 100;
 const SEVERE_GAP_BLOCKS = 5000;
 
 const LOCAL_DEV_CHAIN_IDS: ReadonlySet<number> = new Set([31337, 1337]);
 
 interface Props {
-  /** Hide the descriptive text on narrow viewports — keeps just the
-   *  colour-coded icon + info button so the pill collapses cleanly. */
+  /** Hide the descriptive text on narrow viewports. */
   compact?: boolean;
+}
+
+interface PopoverContent {
+  heading: string;
+  body: string;
+  stateLabel: string;
+  /** Optional rows shown only when the indexer cache is reachable. */
+  showBlockRows: boolean;
+  lastIndexedBlock: number | null;
+  safeHead: number | null;
+  blockGap: number | null;
 }
 
 export function IndexerStatusBadge({ compact }: Props) {
   const { t } = useTranslation();
   const { stats } = useOfferStats();
   const chain = useReadChain();
-  // Independent watermark probe at the badge level. `useOfferStats`
-  // upstream runs its own; at 20 s 'warm' cadence the cost of two
-  // subscribers is trivial and avoids prop-drilling.
   const { snapshot: watermarkSnapshot } = useLiveWatermark(
     watermarkPolicy('warm'),
   );
+  const [popoverOpen, setPopoverOpen] = useState(false);
+  const wrapRef = useRef<HTMLSpanElement | null>(null);
+
+  // Click-outside / Escape close.
+  useEffect(() => {
+    if (!popoverOpen) return;
+    function onPointerDown(e: PointerEvent) {
+      if (wrapRef.current?.contains(e.target as Node)) return;
+      setPopoverOpen(false);
+    }
+    function onKey(e: KeyboardEvent) {
+      if (e.key === 'Escape') setPopoverOpen(false);
+    }
+    document.addEventListener('pointerdown', onPointerDown);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('pointerdown', onPointerDown);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [popoverOpen]);
 
   const isLocalDev =
     chain.chainId !== undefined && LOCAL_DEV_CHAIN_IDS.has(chain.chainId);
+  const chainLabel = chain.name
+    ? `${chain.name} (${chain.chainId})`
+    : `chainId ${chain.chainId ?? '?'}`;
 
-  // Resolve to one of five (variantClass, icon, label) tuples. Keeping
-  // the resolution flat avoids the prior 3-branch return tree.
+  // Resolve all visual + popover content in one pass to keep the JSX flat.
   let variantClass: string;
   let Icon: LucideIcon;
   let label: string;
+  let popover: PopoverContent;
 
   if (isLocalDev) {
     variantClass = 'indexer-badge--localdev';
     Icon = Cpu;
     label = t('indexerBadge.localDev');
+    popover = {
+      heading: t('indexerBadge.localDevHeading'),
+      body: t('indexerBadge.localDevBody'),
+      stateLabel: t('indexerBadge.localDev'),
+      showBlockRows: false,
+      lastIndexedBlock: null,
+      safeHead: null,
+      blockGap: null,
+    };
   } else if (!stats || !stats.indexer) {
     variantClass = 'indexer-badge--live';
     Icon = WifiOff;
     label = t('indexerBadge.live');
+    popover = {
+      heading: t('indexerBadge.liveHeading'),
+      body: t('indexerBadge.liveBody'),
+      stateLabel: t('indexerBadge.live'),
+      showBlockRows: false,
+      lastIndexedBlock: null,
+      safeHead: null,
+      blockGap: null,
+    };
   } else {
     const lastIndexedBlock = stats.indexer.lastBlock;
     const safeBlockNum =
@@ -101,19 +131,46 @@ export function IndexerStatusBadge({ compact }: Props) {
       variantClass = 'indexer-badge--behind';
       Icon = AlertTriangle;
       label = t('indexerBadge.behind', { n: blockGap.toLocaleString() });
+      popover = {
+        heading: t('indexerBadge.behindHeading'),
+        body: t('indexerBadge.behindBody'),
+        stateLabel: t('indexerBadge.behindState'),
+        showBlockRows: true,
+        lastIndexedBlock,
+        safeHead: safeBlockNum,
+        blockGap,
+      };
     } else if (blockGap >= CAUGHT_UP_GAP_BLOCKS) {
       variantClass = 'indexer-badge--catching-up';
       Icon = RefreshCw;
       label = t('indexerBadge.catchingUp', { n: blockGap.toLocaleString() });
+      popover = {
+        heading: t('indexerBadge.catchingUpHeading'),
+        body: t('indexerBadge.catchingUpBody'),
+        stateLabel: t('indexerBadge.catchingUpState'),
+        showBlockRows: true,
+        lastIndexedBlock,
+        safeHead: safeBlockNum,
+        blockGap,
+      };
     } else {
       variantClass = 'indexer-badge--cached';
       Icon = Wifi;
       label = `${t('indexerBadge.lastSafeBlock')}: ${lastIndexedBlock.toLocaleString()}`;
+      popover = {
+        heading: t('indexerBadge.caughtUpHeading'),
+        body: t('indexerBadge.caughtUpBody'),
+        stateLabel: t('indexerBadge.caughtUp'),
+        showBlockRows: true,
+        lastIndexedBlock,
+        safeHead: safeBlockNum,
+        blockGap,
+      };
     }
   }
 
   return (
-    <span className={`indexer-badge ${variantClass}`}>
+    <span className={`indexer-badge ${variantClass}`} ref={wrapRef}>
       <Icon size={12} />
       {!compact && <span>{label}</span>}
       <button
@@ -121,21 +178,73 @@ export function IndexerStatusBadge({ compact }: Props) {
         className="indexer-badge-info"
         onClick={(e) => {
           e.stopPropagation();
-          // Decoupled drawer-open via window event — avoids dragging
-          // a state library in for one cross-component handshake.
-          // DiagnosticsDrawer.tsx subscribes to OPEN_DIAGNOSTICS_EVENT
-          // and flips its `open` state to true.
-          window.dispatchEvent(new CustomEvent(OPEN_DIAGNOSTICS_EVENT));
+          setPopoverOpen((o) => !o);
         }}
-        title={t('indexerBadge.openDiagnosticsTitle', {
-          defaultValue: 'Open diagnostics',
-        })}
-        aria-label={t('indexerBadge.openDiagnosticsTitle', {
-          defaultValue: 'Open diagnostics',
-        })}
+        aria-expanded={popoverOpen}
+        aria-label={t('indexerBadge.infoTitle')}
+        title={t('indexerBadge.infoTitle')}
       >
         <Info size={12} />
       </button>
+      {popoverOpen && (
+        <div className="indexer-badge-popover" role="dialog">
+          <div className="indexer-badge-popover-heading">{popover.heading}</div>
+          <dl className="indexer-badge-popover-status">
+            <Row
+              label={t('indexerBadge.statusState')}
+              value={popover.stateLabel}
+            />
+            <Row
+              label={t('indexerBadge.statusChain')}
+              value={chainLabel}
+            />
+            {popover.showBlockRows && popover.lastIndexedBlock !== null && (
+              <Row
+                label={t('indexerBadge.statusLastSafeBlock')}
+                value={popover.lastIndexedBlock.toLocaleString()}
+              />
+            )}
+            {popover.showBlockRows && (
+              <Row
+                label={t('indexerBadge.statusChainSafeHead')}
+                value={
+                  popover.safeHead !== null
+                    ? popover.safeHead.toLocaleString()
+                    : t('indexerBadge.statusChainSafeHeadUnknown')
+                }
+              />
+            )}
+            {popover.showBlockRows && popover.blockGap !== null && (
+              <Row
+                label={t('indexerBadge.statusBlockGap')}
+                value={
+                  popover.blockGap < CAUGHT_UP_GAP_BLOCKS
+                    ? t('indexerBadge.statusBlockGapCaughtUp')
+                    : popover.blockGap.toLocaleString()
+                }
+              />
+            )}
+          </dl>
+          <div className="indexer-badge-popover-body">{popover.body}</div>
+          <div className="indexer-badge-popover-footnote">
+            {t('indexerBadge.safeBlockFootnote')}
+          </div>
+        </div>
+      )}
     </span>
+  );
+}
+
+interface RowProps {
+  label: string;
+  value: string;
+}
+
+function Row({ label, value }: RowProps) {
+  return (
+    <div className="indexer-badge-popover-status-row">
+      <dt>{label}</dt>
+      <dd>{value}</dd>
+    </div>
   );
 }

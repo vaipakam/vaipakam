@@ -127,10 +127,7 @@
     "reportOnGithub": "Report on GitHub",
     "reportIssueAria": "Report this issue on GitHub",
     "reportIssueTooltip": "Opens a prefilled issue form. No wallet address, user-agent, or free-form input is shared.",
-    "copyJson": "Copy JSON",
-    "copied": "Copied!",
     "download": "Download",
-    "delete": "Delete",
     "dataRightsLink": "For broader data rights (download / delete everything Vaipakam stores), see Data Rights →",
     "filterAriaLabel": "Filter by status",
     "filterAll": "All",
@@ -141,7 +138,8 @@
     "noFilterMatches": "No {{filter}} events. Switch the filter to see other steps.",
     "errorFallback": "error",
     "loanSuffix": "loan #{{id}}",
-    "offerSuffix": "offer #{{id}}"
+    "offerSuffix": "offer #{{id}}",
+    "clear": "Clear"
   },
   "discordPage": {
     "title": "Join the Vaipakam Discord",

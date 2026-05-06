@@ -1177,10 +1177,7 @@
     "reportOnGithub": "Informar en GitHub",
     "reportIssueAria": "Informar este problema en GitHub",
     "reportIssueTooltip": "Abre un formulario de incidencia precompletado. No se comparte ninguna dirección de wallet, user-agent ni entrada libre.",
-    "copyJson": "Copiar JSON",
-    "copied": "¡Copiado!",
     "download": "Descargar",
-    "delete": "Eliminar",
     "dataRightsLink": "Para derechos de datos más amplios (descargar / eliminar todo lo que Vaipakam almacena), consulta Derechos sobre datos →",
     "filterAriaLabel": "Filtrar por estado",
     "filterAll": "Todos",
@@ -1191,7 +1188,8 @@
     "noFilterMatches": "No hay eventos {{filter}}. Cambia el filtro para ver otros pasos.",
     "errorFallback": "error",
     "loanSuffix": "préstamo #{{id}}",
-    "offerSuffix": "oferta #{{id}}"
+    "offerSuffix": "oferta #{{id}}",
+    "clear": "Limpiar"
   },
   "discordPage": {
     "title": "Únete al Discord de Vaipakam",

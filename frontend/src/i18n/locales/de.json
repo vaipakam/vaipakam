@@ -1177,10 +1177,7 @@
     "reportOnGithub": "Auf GitHub melden",
     "reportIssueAria": "Dieses Problem auf GitHub melden",
     "reportIssueTooltip": "Öffnet ein vorausgefülltes Issue-Formular. Es werden keine Wallet-Adresse, User-Agent oder freie Eingaben geteilt.",
-    "copyJson": "JSON kopieren",
-    "copied": "Kopiert!",
     "download": "Herunterladen",
-    "delete": "Löschen",
     "dataRightsLink": "Für weitergehende Datenrechte (alles herunterladen / löschen, was Vaipakam speichert), siehe Datenrechte →",
     "filterAriaLabel": "Nach Status filtern",
     "filterAll": "Alle",
@@ -1191,7 +1188,8 @@
     "noFilterMatches": "Keine {{filter}}-Ereignisse. Filter ändern, um andere Schritte zu sehen.",
     "errorFallback": "Fehler",
     "loanSuffix": "Kredit #{{id}}",
-    "offerSuffix": "Angebot #{{id}}"
+    "offerSuffix": "Angebot #{{id}}",
+    "clear": "Leeren"
   },
   "discordPage": {
     "title": "Vaipakam Discord beitreten",

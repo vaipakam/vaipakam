@@ -17,7 +17,7 @@
 
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Trash2 } from 'lucide-react';
+import { Trash2, ChevronDown, ChevronRight } from 'lucide-react';
 import { useOfferStats } from '../../hooks/useOfferStats';
 import { useReadChain } from '../../contracts/useDiamond';
 import { useLiveWatermark } from '../../hooks/useLiveWatermark';
@@ -58,6 +58,10 @@ export function ChainDiagnosticsPanel() {
   );
   const [storage, setStorage] = useState<StorageEstimate | null>(null);
   const [storageError, setStorageError] = useState<boolean>(false);
+  // Collapsed by default — operators usually open the drawer to inspect
+  // failure events first; the chain panel is a "click to peek" affordance
+  // so it doesn't push the events list below the fold on first open.
+  const [expanded, setExpanded] = useState<boolean>(false);
   // Purge state — only used when `mode === 'advanced'` (the dev / debug
   // toggle on the user-mode picker). Tri-state UI:
   //   - 'idle': default, button enabled.
@@ -232,13 +236,30 @@ export function ChainDiagnosticsPanel() {
       id="chain-diagnostics-panel"
       aria-labelledby="chain-diag-heading"
     >
-      <h4 id="chain-diag-heading" className="chain-diag-title">
-        {t('chainDiagnostics.panelTitle', {
-          defaultValue: 'Chain & Indexer',
-        })}
-      </h4>
+      {/* Collapsed-by-default header. Clicking the whole row toggles —
+          larger hit target for muscle-memory than a tight chevron-only
+          target. State pill stays visible whether expanded or not so
+          the operator gets the at-a-glance signal even when collapsed. */}
+      <button
+        type="button"
+        className="chain-diag-header"
+        aria-expanded={expanded}
+        aria-controls="chain-diag-body-region"
+        onClick={() => setExpanded((v) => !v)}
+      >
+        {expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+        <h4 id="chain-diag-heading" className="chain-diag-title">
+          {t('chainDiagnostics.panelTitle', {
+            defaultValue: 'Chain & Indexer',
+          })}
+        </h4>
+        <span className={`chain-diag-state-pill ${stateClass}`}>
+          {stateLabel}
+        </span>
+      </button>
+      {expanded && (
+      <div id="chain-diag-body-region">
       <div className={`chain-diag-state-line ${stateClass}`}>
-        <span className="chain-diag-state-pill">{stateLabel}</span>
         <span className="chain-diag-state-heading">{heading}</span>
       </div>
       <p className="chain-diag-body">{body}</p>
@@ -372,6 +393,8 @@ export function ChainDiagnosticsPanel() {
       <p className="chain-diag-footnote">
         {t('indexerBadge.safeBlockFootnote')}
       </p>
+      </div>
+      )}
     </section>
   );
 }

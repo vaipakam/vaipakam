@@ -1177,10 +1177,7 @@
     "reportOnGithub": "GitHub で報告",
     "reportIssueAria": "この問題を GitHub で報告",
     "reportIssueTooltip": "事前入力済みのイシューフォームを開きます。ウォレットアドレス、User-Agent、自由入力は共有されません。",
-    "copyJson": "JSON をコピー",
-    "copied": "コピーしました!",
     "download": "ダウンロード",
-    "delete": "削除",
     "dataRightsLink": "より広範なデータ権利 (Vaipakamが保存するすべてのdownload / delete) については Data Rights を参照 →",
     "filterAriaLabel": "ステータスでフィルター",
     "filterAll": "すべて",
@@ -1191,7 +1188,8 @@
     "noFilterMatches": "{{filter}} のイベントはありません。フィルターを切り替えて他のステップを表示してください。",
     "errorFallback": "エラー",
     "loanSuffix": "ローン #{{id}}",
-    "offerSuffix": "オファー #{{id}}"
+    "offerSuffix": "オファー #{{id}}",
+    "clear": "クリア"
   },
   "discordPage": {
     "title": "Vaipakam Discord に参加",
