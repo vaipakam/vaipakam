@@ -46,8 +46,15 @@ interface ISwapAdapter {
     ///                        if realized output < this number.
     /// @param recipient       Address to receive `outputToken` proceeds.
     /// @param adapterData     Venue-specific routing payload:
-    ///                          - 0x / 1inch: keeper-fetched calldata
-    ///                            bytes for the fixed router target.
+    ///                          - 0x / 1inch: abi.encode(address
+    ///                            swapTarget, bytes swapCalldata).
+    ///                            `swapTarget` is the API response's
+    ///                            `transaction.to` (0x v2) or `tx.to`
+    ///                            (1inch v6); the adapter validates
+    ///                            it against an owner-managed
+    ///                            allowlist before forwarding the
+    ///                            calldata. Approvals are pinned to a
+    ///                            separate `allowanceTarget`.
     ///                          - UniV3: abi.encode(uint24 poolFee).
     ///                          - Balancer V2: abi.encode(bytes32 poolId).
     ///                          - Adapters that read their own config

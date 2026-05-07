@@ -33,6 +33,7 @@ export type JourneyArea =
   | 'nft-verifier'
   | 'log-index'
   | 'dashboard'
+  | 'oracle'
   | 'profile'
   | 'vpfi-buy'
   | 'keeper'

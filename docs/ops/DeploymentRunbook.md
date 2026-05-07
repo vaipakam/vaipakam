@@ -694,10 +694,79 @@ T-033 Pyth-as-numeraire-redundancy gate (optional but recommended for Phase 1; z
 
 On `AdminFacet`:
 
-14. `setZeroExProxy(<0x ExchangeProxy>)`
-15. `setallowanceTarget(<0x allowance-target>)`
+14. `setZeroExProxy(<0x ExchangeProxy>)` — legacy backward-compat
+    slot. Preserved so any path still calling the original 0x
+    `ExchangeProxy` ABI keeps working through the cutover. The
+    Phase 7a swap-adapter registry below is the active liquidation
+    path on every chain where it's wired.
+15. `setallowanceTarget(<0x allowance-target>)` — legacy companion
+    to item 14. Same backward-compat lifetime.
 
-**Do not skip 14/15** on any chain where liquidation is enabled — a missing 0x proxy makes HF-based liquidations fail.
+### Phase 7a swap-adapter registry — the modern liquidation path
+
+`AdminFacet.addSwapAdapter(...)` registers an `ISwapAdapter` in
+the diamond's priority-ordered failover chain. Liquidation
+facets walk this chain via `LibSwap.swapWithFailover` and commit
+on the first adapter that delivers ≥ `minOutputAmount`.
+
+Recommended seed for every chain that has 4-DEX coverage:
+
+| Slot | Adapter | Construction args |
+|---|---|---|
+| 0 | `ZeroExAggregatorAdapter` | `(allowanceHolder, settler[])` — see "Aggregator adapter construction" below |
+| 1 | `OneInchAggregatorAdapter` | `(aggregationRouterV6)` |
+| 2 | `UniV3Adapter` | `(uniswapV3SwapRouter02)` |
+| 3 | `BalancerV2Adapter` | `(balancerV2Vault)` (skip on chains where Balancer V2 isn't deployed, e.g. BNB Chain) |
+
+Order is ranked by expected fill quality: 0x and 1inch typically
+win on liquid pairs, UniV3 on long-tail single-hop, Balancer on
+weighted-pool routes. Operators can re-rank later with
+`AdminFacet.reorderSwapAdapters(...)`.
+
+### Aggregator adapter construction — allowanceTarget split
+
+`ZeroExAggregatorAdapter` now takes TWO constructor args (per the
+0x v2 / Settler / AllowanceHolder split documented in
+`contracts/src/adapters/AggregatorAdapterBase.sol`):
+
+- `allowanceHolder` — pinned per chain. The same canonical
+  AllowanceHolder address on every Cancun-fork chain
+  (`0x0000000000001fF3684f28c67538d4D072C22734`); a different
+  address on Mantle (`0x0000000000005E88410CcDFaDe4a5EfaE4b49562`).
+  Source of truth: `0x-settler` repo README.
+- `settler[]` — seed allowlist of permitted Settler call
+  destinations. 0x rotates Settler addresses per release and
+  varies them by route type (taker-submitted, metatransaction,
+  intents, bridge), so this seed is ALWAYS time-sensitive.
+  Resolve the live set at deploy time by querying the 0x
+  deployer at `0x00000000000004533Fe15556B1E086BB1A72cEae`'s
+  `ownerOf(...)` for each Settler feature ID, OR by reading
+  `transaction.to` from a fresh `/swap/allowance-holder/quote`
+  call against each pair the deploy targets.
+
+**Setting allowance on the Settler instead of the AllowanceHolder
+is unsafe** — 0x docs are explicit ("potential loss of tokens or
+exposure to security risks"). The split-immutable shape of
+`AggregatorAdapterBase` makes it structurally impossible to
+commit that mistake even if a keeper is compromised, but the
+deploy operator must still pin the right allowanceHolder for the
+chain — that single arg is immutable post-deploy.
+
+`OneInchAggregatorAdapter` takes one constructor arg
+(`aggregationRouterV6`) because 1inch coalesces both roles into
+the same address today (`0x111111125421cA6dc452d289314280a0f8842A65`,
+identical on every chain we deploy to). The constructor seeds
+the singleton allowlist itself.
+
+After construction, transfer ownership of each aggregator adapter
+to the per-chain `<CHAIN>_TIMELOCK_ADDRESS` via the Ownable2Step
+two-step handoff — the Timelock is what executes the rotation
+calls described in the Governance Runbook §"Aggregator Settler
+rotation" section.
+
+**Do not skip the swap-adapter registry** on any chain where
+HF-based liquidation is enabled — missing adapters force
+liquidations to the full-collateral-transfer fallback path.
 
 > **Tunable knobs reference.** Every governance-tunable knob in
 > the protocol — including the bounded ranges that even a

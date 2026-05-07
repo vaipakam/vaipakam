@@ -218,6 +218,75 @@ A future `test/OraclePolicyReadback.t.sol` should encode all of these
 as fork-CI gates. Until then, use the deploy script's verification
 log as the artifact.
 
+### 6.2 Aggregator adapter Settler-rotation (added 2026-05-08)
+
+The `ZeroExAggregatorAdapter` instance registered in slot 0 of the
+swap-adapter chain (per §6.1) carries an internal allowlist of legal
+0x Settler call destinations. 0x rotates Settler addresses with each
+release and varies them by route type, which means this allowlist
+becomes a recurring governance action — NOT a one-time deploy
+config — for the lifetime of the protocol.
+
+**Why governance and not direct-EOA**: each adapter inherits OpenZeppelin
+`Ownable2Step`; its owner is the per-chain `<CHAIN>_TIMELOCK_ADDRESS`
+established by §3 of this runbook. Rotation calls therefore go through
+the same propose-schedule-execute flow as every other privileged
+diamond mutation, not via an operator hot key.
+
+**Recurring action — when 0x ships a new Settler:**
+
+1. **Detect.** The keeper bot's swap fetcher will start surfacing a
+   new `transaction.to` value in fresh `/swap/allowance-holder/quote`
+   responses. Until the new address is added to the allowlist, the
+   on-chain `triggerLiquidation` path through 0x reverts with
+   `SwapTargetNotAllowed(<newSettler>)` and `LibSwap.swapWithFailover`
+   falls through to the next adapter (1inch, then UniV3, then
+   Balancer V2). The protocol stays live; only the 0x leg is
+   degraded.
+2. **Propose.** Schedule a Timelock call against the affected
+   adapter (the address logged in the deploy artifact under the
+   `swapAdapter[0]` field of `addresses.json`). The call is the
+   adapter's own `addSwapTarget(<newSettler>)`, NOT a diamond
+   selector.
+3. **Wait the 48h delay**, then execute.
+4. **Verify.** Read `swapTargetAllowed(<newSettler>) == true` and
+   `swapTargetCount > prior` on the adapter. Re-trigger one stale
+   quote through the 0x path on a low-stakes loan to confirm the
+   liquidation now lands on slot 0 instead of falling through.
+5. **(Optional) deprecate the old Settler.** When 0x marks an old
+   Settler as deprecated AND the operator has confirmed no in-flight
+   quotes still reference it (a few minutes of stale-quote tail is
+   normal), schedule `removeSwapTarget(<oldSettler>)`. The adapter
+   refuses to remove the LAST allowlisted entry — deprecation always
+   requires `addSwapTarget` to land first.
+
+**One-time action — initial Settler seed at deploy time:**
+already covered in the Deployment Runbook's "Aggregator adapter
+construction — allowanceTarget split" section. The seed is set in
+the constructor; this Governance section covers what happens
+afterwards.
+
+**1inch adapter rotation**: not currently expected. 1inch v6 uses a
+single AggregationRouterV6 address (`0x111111125421cA6dc452d289314280a0f8842A65`,
+identical on every chain). If 1inch ever ships a v7 with a new
+router, the same `addSwapTarget` / `removeSwapTarget` flow applies
+on the `OneInchAggregatorAdapter` instance.
+
+**`allowanceTarget` rotation: not possible.** That field is immutable
+on each adapter. If 0x ever moves the canonical AllowanceHolder
+address (it hasn't and would be a multi-month telegraphed migration),
+the response is to deploy a fresh `ZeroExAggregatorAdapter` against
+the new AllowanceHolder, register it in the diamond via
+`AdminFacet.addSwapAdapter`, and remove the old slot via
+`AdminFacet.removeSwapAdapter` — i.e. a swap-adapter-chain rotation,
+not a per-adapter mutation.
+
+**Privileged-actions table (delta from §"Model recap"):**
+
+| Role | Path | Delay | Adds |
+|---|---|---|---|
+| Owner (Governance Safe) | via Timelock | 48h | `ZeroExAggregatorAdapter.addSwapTarget(...)`, `ZeroExAggregatorAdapter.removeSwapTarget(...)`, equivalent on `OneInchAggregatorAdapter` |
+
 ## Day-to-day operations after handover
 
 ### Routine admin action (e.g. tweak a risk param)

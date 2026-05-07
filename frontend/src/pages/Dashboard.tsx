@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState, type CSSProperties } from 'react';
+import type { Address } from 'viem';
 import { Check, RefreshCw } from 'lucide-react';
 import { useRescanCooldown } from '../hooks/useRescanCooldown';
 import { L as Link } from '../components/L';
@@ -6,14 +7,16 @@ import { useTranslation } from 'react-i18next';
 import { useWallet } from '../context/WalletContext';
 import { useDiamondContract, useDiamondPublicClient } from '../contracts/useDiamond';
 import { prewarmTokenMeta } from '../lib/tokenMeta';
-import { useUserLoans } from '../hooks/useUserLoans';
 import { useMyOffers, type MyOfferStatus } from '../hooks/useMyOffers';
 import { useClaimables } from '../hooks/useClaimables';
-import { useIndexedLoansForWallet } from '../hooks/useIndexedLoans';
-import { indexedToLoanSummary } from '../lib/indexerClient';
+import { useDashboardLoansBothSides } from '../hooks/useDashboardLoansBothSides';
+import {
+  loanWithRiskAndSideToSummary,
+  loansToRiskMap,
+} from '../lib/dashboardAdapters';
 import type { LoanSummary } from '../types/loan';
 import { MyOffersTable } from '../components/app/MyOffersTable';
-import { useLoanRisks, type LoanRisk } from '../hooks/useLoanRisks';
+import { type LoanRisk } from '../hooks/useLoanRisks';
 import { LoanStatus, LOAN_STATUS_LABELS } from '../types/loan';
 import {
   LayoutDashboard,
@@ -64,24 +67,31 @@ export default function Dashboard() {
   const { t } = useTranslation();
   const { address, activeChain } = useWallet();
   const diamondWrite = useDiamondContract();
-  // T-041 — prefer the worker-cached "loans for this wallet" list. The
-  // /loans/by-{lender,borrower} endpoints already live-filter via
-  // multicall(ownerOf), so the indexer's view of "which loans this
-  // wallet holds NFTs for" is equivalent to the on-chain truth at
-  // query time. Fall through to the per-browser useUserLoans flow
-  // when the worker is unreachable. Both produce LoanSummary[]; the
-  // adapter `indexedToLoanSummary` shape-bridges the indexer JSON.
-  const { loans: clientLoans, loading: clientLoading, reload: reloadUserLoans } = useUserLoans(address);
+  // §A.1 / Option B — single bundled fetch via
+  // {MetricsDashboardFacet.getUserDashboardLoansBothSides} returns
+  // every active loan the wallet touches (lender + borrower side
+  // merged) with LTV + HF + side-tag computed inline. Replaces the
+  // legacy useUserLoans + useIndexedLoansForWallet + useLoanRisks
+  // triad with one on-chain call. Adapters in
+  // `lib/dashboardAdapters` shape-bridge to the existing
+  // `LoanSummary` + `LoanRisk` value objects so render / sort /
+  // filter / pagination logic stays unchanged.
   const {
-    loans: indexedLoans,
-    source: indexedSource,
-    refetch: refetchIndexedLoans,
-  } = useIndexedLoansForWallet(address ?? undefined);
-  const loans: LoanSummary[] =
-    indexedSource === 'indexer' && indexedLoans
-      ? (indexedLoans.map((l) => indexedToLoanSummary(l, l.role)) as LoanSummary[])
-      : clientLoans;
-  const loading = indexedSource === 'indexer' ? false : clientLoading;
+    rows: bothSidesRows,
+    loading: clientLoading,
+    reload: reloadUserLoans,
+  } = useDashboardLoansBothSides(address as Address | null, 0, 100);
+  const loans: LoanSummary[] = useMemo(
+    () => bothSidesRows.map(loanWithRiskAndSideToSummary),
+    [bothSidesRows],
+  );
+  const inlineRisks = useMemo(() => loansToRiskMap(bothSidesRows), [bothSidesRows]);
+  // Kept as a `lastRefreshedAt` trigger for the "Last refreshed
+  // N min ago" status — re-renders whenever the bundled fetch
+  // returns a new array reference.
+  const indexedLoans = bothSidesRows;
+  const refetchIndexedLoans = reloadUserLoans;
+  const loading = clientLoading;
 
   // Pre-warm the ERC-20 symbol/decimals cache for every asset that
   // appears in this list. Without it, each `<AssetSymbol>` mounts with
@@ -127,7 +137,7 @@ export default function Dashboard() {
   const [now, setNow] = useState<number>(() => Date.now());
   useEffect(() => {
     setLastRefreshedAt(Date.now());
-  }, [indexedLoans, clientLoans, unclaimed]);
+  }, [indexedLoans, unclaimed]);
   useEffect(() => {
     let id: ReturnType<typeof setTimeout>;
     const schedule = () => {
@@ -192,11 +202,11 @@ export default function Dashboard() {
   // HF or LTV needs the values for every candidate row, not only the rows
   // currently on screen. Two multicalls regardless of list size, so the
   // perf impact is minimal for typical wallet loan counts.
-  const filteredLoanIds = useMemo(
-    () => filteredLoans.map((l) => l.id),
-    [filteredLoans],
-  );
-  const { risks } = useLoanRisks(filteredLoanIds);
+  // Risks come pre-computed inline on each `LoanWithRiskAndSide`
+  // row from the bundled both-sides fetch — no separate multicall
+  // needed. `filteredLoanIds` is no longer required because the
+  // map already covers every visible row.
+  const risks = inlineRisks;
 
   const sortedLoans = useMemo(() => {
     const arr = [...filteredLoans];

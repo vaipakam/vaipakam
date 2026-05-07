@@ -20,10 +20,18 @@
  *     slippageBps?: number; // Default 600 (6% — matches on-chain ceiling)
  *   }
  *
- * Response: pass-through of the aggregator's JSON body. Frontend reads
- * `transaction.data` (0x) or `tx.data` (1inch) for the calldata to pack
- * into an `AdapterCall`, and `buyAmount` for the expected output used
- * to rank the try-list.
+ * Response: pass-through of the aggregator's JSON body. Consumers read:
+ *   - `transaction.to` + `transaction.data` (0x v2) or `tx.to` +
+ *     `tx.data` (1inch v6) — both fields are required because the
+ *     on-chain `AggregatorAdapterBase` expects the calldata packaged
+ *     as `abi.encode(address swapTarget, bytes swapCalldata)`. The
+ *     adapter approves a separate immutable `allowanceTarget` and
+ *     validates `swapTarget` against an owner-managed allowlist
+ *     before forwarding the calldata. See the Deployment Runbook's
+ *     "Aggregator adapter construction — allowanceTarget split"
+ *     section for the why.
+ *   - `buyAmount` (0x) / `dstAmount` or `toAmount` (1inch) for the
+ *     expected output used to rank the try-list.
  *
  * Rate-limit: not enforced here yet — Cloudflare Workers' built-in IP-
  * based rate-limit binding is the next step. For testnet bring-up the

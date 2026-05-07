@@ -93,17 +93,16 @@ contract MetricsDashboardFacetTest is SetupTest {
         assertEq(snap.borrowerLoanCount, 1);
     }
 
-    /// @dev Counts open vs filled offers separately (D4). Open offers
-    ///      live on `activeOfferIdsList`; filled ones are in lifetime
-    ///      offer space but already swap-popped from the active list,
-    ///      simulated here by writing the storage slot directly without
-    ///      the active-list scaffolding.
+    /// @dev Counts open vs filled offers separately (D4). Both states
+    ///      live in the per-user `userOfferIds[creator]` index — only
+    ///      the `accepted` flag distinguishes them. We scaffold both
+    ///      to populate the per-user index, then flip offer #2's
+    ///      accepted flag via `setOffer` to simulate a filled state.
     function testSnapshot_countsOpenAndFilledOffers() public {
         _seedOpenOffer(1, lender);
+        _seedOpenOffer(2, lender);
 
-        // Filled offer: write the slot directly (bypasses
-        // activeOfferIdsList push) and bump nextOfferId so the
-        // lifetime walk includes it.
+        // Flip offer #2 to accepted=true (filled).
         LibVaipakam.Offer memory filled;
         filled.id = 2;
         filled.creator = lender;
@@ -114,7 +113,6 @@ contract MetricsDashboardFacetTest is SetupTest {
         filled.assetType = LibVaipakam.AssetType.ERC20;
         filled.collateralAssetType = LibVaipakam.AssetType.ERC20;
         TestMutatorFacet(address(diamond)).setOffer(2, filled);
-        TestMutatorFacet(address(diamond)).setNextOfferId(3);
 
         MetricsDashboardFacet.DashboardScalars memory snap = dash.getUserDashboardSnapshot(lender);
         assertEq(snap.activeOfferCount, 1);
@@ -158,6 +156,41 @@ contract MetricsDashboardFacetTest is SetupTest {
             abi.encodeWithSelector(MetricsDashboardFacet.LimitTooLarge.selector, 101, 100)
         );
         dash.getUserDashboardLoans(lender, false, 0, 101);
+    }
+
+    // ── unified both-sides loans ───────────────────────────────────────────
+
+    /// @dev User on both sides yields one merged page; the per-row
+    ///      `borrowerSide` tag distinguishes which side they hold.
+    function testLoansBothSides_unifiedMergedPage() public {
+        // 1 lender-side loan + 2 borrower-side loans (where `lender` is
+        // actually the borrower); 1 unrelated loan that shouldn't surface.
+        _seedActiveLoan(1, lender, borrower);
+        _seedActiveLoan(2, borrower, lender);
+        _seedActiveLoan(3, borrower2, lender);
+        _seedActiveLoan(4, lender2, borrower2);
+        TestMutatorFacet(address(diamond)).setNextLoanId(5);
+
+        MetricsDashboardFacet.LoanWithRiskAndSide[] memory rows =
+            dash.getUserDashboardLoansBothSides(lender, 0, 50);
+        assertEq(rows.length, 3);
+
+        // Locate the lender-side row + verify its tag is borrowerSide=false.
+        bool foundLenderSide;
+        uint256 borrowerSideCount;
+        for (uint256 i = 0; i < rows.length; i++) {
+            if (!rows[i].borrowerSide) foundLenderSide = true;
+            else borrowerSideCount += 1;
+        }
+        assertTrue(foundLenderSide);
+        assertEq(borrowerSideCount, 2);
+    }
+
+    function testLoansBothSides_revertsOnLimitTooLarge() public {
+        vm.expectRevert(
+            abi.encodeWithSelector(MetricsDashboardFacet.LimitTooLarge.selector, 101, 100)
+        );
+        dash.getUserDashboardLoansBothSides(lender, 0, 101);
     }
 
     // ── paginated offers ───────────────────────────────────────────────────

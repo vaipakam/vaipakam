@@ -486,6 +486,127 @@ publicly comment on each one.
 
 ---
 
+## 6. Aggregator adapter rotation lag (added 2026-05-08)
+
+### Context
+
+The Phase 7a swap-adapter chain has 0x in slot 0 because it usually
+delivers the best fill on liquid pairs. The `ZeroExAggregatorAdapter`
+holds an internal allowlist of permitted Settler call destinations,
+because 0x's v2 architecture rotates Settler addresses with each
+release while the AllowanceHolder stays canonical. This is by
+design (per 0x's contracts documentation, "you should NEVER set an
+allowance on the Settler contract") and the adapter splits the two
+roles into immutable allowanceTarget + owner-managed allowlist.
+
+When 0x ships a new Settler and the operator hasn't yet rotated the
+allowlist, the on-chain liquidation path through 0x reverts with
+`SwapTargetNotAllowed(<newSettler>)`. `LibSwap.swapWithFailover`
+catches that revert and falls through to the next adapter in the
+chain (1inch, then UniV3, then Balancer V2). The protocol stays
+live; the symptom is a quiet decline in 0x-attributed liquidation
+volume, not a user-facing outage.
+
+### Trigger criteria (rotate allowlist; no pause needed)
+
+This is NOT an emergency-pause class incident. It's a routine
+governance task that becomes due every time 0x publishes a new
+Settler.
+
+### Symptom
+
+- HF watcher / keeper-bot logs show repeated `SwapTargetNotAllowed`
+  reverts on attempted 0x liquidations — the next adapter in the
+  chain succeeds, so loans still close, but the slot-0 success rate
+  trends to zero on fresh quotes.
+- Cloudflare quote-proxy access logs show `transaction.to` values
+  that don't match any address ever passed to
+  `ZeroExAggregatorAdapter.addSwapTarget`.
+- 0x's release feed (or `0x-settler` repo's deployment table)
+  publishes a new Settler revision.
+
+### Detect
+
+On the affected chain's diamond:
+
+```
+adapterAt0 = AdminFacet(diamond).getSwapAdapters()[0]
+ZeroExAggregatorAdapter(adapterAt0).swapTargetAllowed(<newSettler>)
+  → false (the symptom)
+ZeroExAggregatorAdapter(adapterAt0).swapTargetCount()
+  → still equal to the prior count (no rotation has landed)
+```
+
+### Diagnose
+
+Cross-reference:
+
+- The `transaction.to` from a fresh
+  `https://api.0x.org/swap/allowance-holder/quote` call against any
+  active asset pair on the chain.
+- The `0x-settler` repo's `deployer.ownerOf(...)` results for the
+  Settler feature IDs the protocol consumes (currently:
+  taker-submitted; metatransaction / intents / bridge are NOT in
+  the keeper-bot's flow today and need not be in the seed).
+- The chain's keeper-bot logs to confirm fresh quotes are still
+  being fetched (rules out an upstream API outage masquerading as a
+  rotation lag).
+
+### Decide
+
+If the new Settler matches what 0x officially published AND the
+keeper-bot log shows `transaction.to` consistently pointing at it,
+proceed with the rotation. If only some quotes use the new Settler
+and others use the old one (parallel rollout), it is safe to add
+the new one without removing the old.
+
+### Execute
+
+Per the Governance Runbook §6.2:
+
+1. Schedule `ZeroExAggregatorAdapter.addSwapTarget(<newSettler>)`
+   via the chain's Timelock (proposed by `GOVERNANCE_SAFE`).
+2. Wait the 48h delay, then execute.
+3. Verify `swapTargetAllowed(<newSettler>) == true` and
+   `swapTargetCount` incremented by exactly 1.
+4. (Later, after 0x deprecates the old Settler and the keeper-bot
+   log shows zero stale-quote tail) schedule
+   `removeSwapTarget(<oldSettler>)`. The adapter refuses to remove
+   the last allowlisted entry, so a deprecation always requires
+   `addSwapTarget` to land first.
+
+### Communicate
+
+Internal-only. This is not a user-affecting incident — fallback
+adapters absorb the disruption transparently. Note in the rotation
+log so the next on-call rotation knows when the most recent
+Settler addition landed.
+
+### Post-mortem
+
+Routine action; no post-mortem required unless the rotation lag
+actually caused a fallback-failure cascade (all 4 adapters reverted,
+loan went `FallbackPending`). In that case follow §3 emergency-pause
+triage instead.
+
+### Guard rails
+
+- The 48h Timelock delay applies to every rotation. If a Settler
+  rotation is hitting the protocol so fast that the delay is a
+  problem, the response is NOT to bypass the Timelock; it's to
+  ensure the seed allowlist at deploy time is broad enough to
+  cover the next rotation cycle.
+- Never schedule `removeSwapTarget` on an adapter where
+  `swapTargetCount == 1` — the call reverts with
+  `LastSwapTargetCannotBeRemoved`, but a misfired schedule wastes
+  the Timelock cycle. Always pair removals with a prior add.
+- The same shape exists on `OneInchAggregatorAdapter`. 1inch v6
+  doesn't currently rotate (single AggregationRouterV6 across all
+  chains and the v6 lifecycle), so this section's playbook is
+  primarily about 0x; 1inch rotation only applies if a v7 ships.
+
+---
+
 ## Deployment log
 
 Append here on every mainnet deploy / upgrade. Format: `YYYY-MM-DD  chain  tag  diamond-address  summary`.

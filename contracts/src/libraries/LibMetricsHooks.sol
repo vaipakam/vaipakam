@@ -133,18 +133,31 @@ library LibMetricsHooks {
         s.activeOfferIdsList.push(id);
         s.activeOfferIdsListPos[id] = s.activeOfferIdsList.length;
 
+        // Per-asset-pair active index — the OfferBook 2-filter
+        // surface reads from this map. Push + record 1-based pos.
+        s.assetPairActiveOfferIds[offer.lendingAsset][offer.collateralAsset].push(id);
+        s.assetPairActiveOfferIdsPos[offer.lendingAsset][offer.collateralAsset][id] =
+            s.assetPairActiveOfferIds[offer.lendingAsset][offer.collateralAsset].length;
+
         _markUserSeen(s, offer.creator);
     }
 
     /// @notice Removes an offer from the active-offer index when accepted.
     /// @dev Idempotent — a re-entry via a second acceptance path is a no-op.
+    ///      The offer slot must still hold its asset addresses at call
+    ///      time; every prod call site fires the hook before any
+    ///      mutation that could blank `lendingAsset` / `collateralAsset`.
     function onOfferAccepted(uint256 offerId) internal {
-        _removeFromActiveOfferList(LibVaipakam.storageSlot(), offerId);
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        _removeFromActiveOfferList(s, offerId);
+        _removeFromAssetPairOfferList(s, offerId);
     }
 
     /// @notice Removes an offer from the active-offer index when cancelled.
     function onOfferCancelled(uint256 offerId) internal {
-        _removeFromActiveOfferList(LibVaipakam.storageSlot(), offerId);
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        _removeFromActiveOfferList(s, offerId);
+        _removeFromAssetPairOfferList(s, offerId);
     }
 
     // ───────────────────────── Internal helpers ───────────────────
@@ -197,5 +210,31 @@ library LibMetricsHooks {
         delete s.activeOfferIdsListPos[id];
 
         if (s.activeOffersCount > 0) s.activeOffersCount -= 1;
+    }
+
+    /// @dev Swap-pop removal from `assetPairActiveOfferIds`. Reads the
+    ///      offer's lending + collateral asset to find the right
+    ///      sub-array; idempotent (no-op if pos == 0). Caller must
+    ///      ensure the offer's asset addresses are still readable
+    ///      from storage.
+    function _removeFromAssetPairOfferList(
+        LibVaipakam.Storage storage s,
+        uint256 id
+    ) private {
+        LibVaipakam.Offer storage o = s.offers[id];
+        address la = o.lendingAsset;
+        address ca = o.collateralAsset;
+        uint256 pos = s.assetPairActiveOfferIdsPos[la][ca][id];
+        if (pos == 0) return;
+        uint256[] storage list = s.assetPairActiveOfferIds[la][ca];
+        uint256 lastIdx = list.length - 1;
+        uint256 idx = pos - 1;
+        if (idx != lastIdx) {
+            uint256 tail = list[lastIdx];
+            list[idx] = tail;
+            s.assetPairActiveOfferIdsPos[la][ca][tail] = pos;
+        }
+        list.pop();
+        delete s.assetPairActiveOfferIdsPos[la][ca][id];
     }
 }

@@ -353,6 +353,35 @@ contract MetricsFacet {
         for (uint256 k = 0; k < filled; k++) offerIds[k] = buf[k];
     }
 
+    /// @notice Paginated list of open offer IDs filtered by BOTH the
+    ///         lending asset AND the collateral asset — the OfferBook's
+    ///         2-filter UX.
+    /// @dev    O(asset-pair active count) — reads directly from the
+    ///         `assetPairActiveOfferIds[lending][collateral]` swap-pop
+    ///         array maintained by LibMetricsHooks. At protocol scale
+    ///         (10k+ active offers across 100+ pairs) this is a 100x+
+    ///         improvement vs the per-row filter walk in
+    ///         {getActiveOffersByAsset}. Cost: one extra SSTORE per
+    ///         offer create / accept / cancel edge.
+    /// @param  lendingAsset    Required filter (no wildcard).
+    /// @param  collateralAsset Required filter (no wildcard).
+    /// @param  offset          Skip this many entries.
+    /// @param  limit           Max page size.
+    /// @return offerIds        Page of matching active offer IDs.
+    /// @return total           Total active offers for this pair (for
+    ///                         the page-count UI).
+    function getActiveOffersByAssetPair(
+        address lendingAsset,
+        address collateralAsset,
+        uint256 offset,
+        uint256 limit
+    ) external view returns (uint256[] memory offerIds, uint256 total) {
+        uint256[] storage src = LibVaipakam.storageSlot()
+            .assetPairActiveOfferIds[lendingAsset][collateralAsset];
+        total = src.length;
+        offerIds = _slice(src, offset, limit);
+    }
+
     /**
      * @notice Aggregate summary across active loans.
      * @return totalActiveLoanValueNumeraire Sum of priced principal across ERC-20 loans.
@@ -458,15 +487,17 @@ contract MetricsFacet {
 
     /**
      * @notice Per-user position summary.
-     * @dev Iterates `activeLoanIdsList` filtered by the user — bounded by
-     *      `activeLoansCount`, not lifetime loan count. `healthFactor` returned
-     *      is the MINIMUM HF across the user's borrower-side active loans
-     *      (worst-case). If the user has no borrower legs, returns
-     *      `type(uint256).max` (i.e. infinitely safe).
-     *      `availableToClaimNumeraire` currently returns 0 — claim valuations
-     *      require ClaimInfo iteration with per-asset pricing beyond the
-     *      scope of this snapshot; integrators should call
-     *      `ClaimFacet.getClaimable` per loan.
+     * @dev Walks `userLoanIds[user]` filtered to active loans — bounded
+     *      by the user's lifetime loan count, not the protocol-wide
+     *      active count. At scale (10k+ active loans) this is the
+     *      1000× win the per-key index was built for.
+     *      `healthFactor` returned is the MINIMUM HF across the user's
+     *      borrower-side active loans (worst-case). If the user has no
+     *      borrower legs, returns `type(uint256).max` (i.e. infinitely
+     *      safe). `availableToClaimNumeraire` currently returns 0 —
+     *      claim valuations require ClaimInfo iteration with per-asset
+     *      pricing beyond the scope of this snapshot; integrators
+     *      should call `ClaimFacet.getClaimable` per loan.
      */
     function getUserSummary(address user)
         external
@@ -480,12 +511,14 @@ contract MetricsFacet {
         )
     {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        uint256[] storage active = s.activeLoanIdsList;
-        uint256 len = active.length;
+        uint256[] storage userLoans = s.userLoanIds[user];
+        uint256 len = userLoans.length;
         uint256 minHF = type(uint256).max;
         bool anyBorrow;
         for (uint256 i = 0; i < len; i++) {
-            LibVaipakam.Loan storage l = s.loans[active[i]];
+            LibVaipakam.Loan storage l = s.loans[userLoans[i]];
+            // Per-user index covers lifetime; filter to active.
+            if (l.status != LibVaipakam.LoanStatus.Active) continue;
             bool isBorrower = l.borrower == user;
             bool isLender = l.lender == user;
             if (!isBorrower && !isLender) continue;
@@ -513,18 +546,20 @@ contract MetricsFacet {
     }
 
     /// @notice Active loan IDs where `user` is lender or borrower.
-    /// @dev O(activeLoansCount) — iterates the active-loan list rather than
-    ///      the lifetime sequence. For historical loans, use
-    ///      {getUserLoansPaginated} or {getUserLoansByStatusPaginated}.
+    /// @dev O(user's lifetime loan count) — walks `userLoanIds[user]`
+    ///      filtered to Active status. For all-status (lifetime),
+    ///      use {getUserLoansPaginated} which returns the same index
+    ///      without the status filter.
     function getUserActiveLoans(address user) external view returns (uint256[] memory loanIds) {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        uint256[] storage active = s.activeLoanIdsList;
-        uint256 len = active.length;
+        uint256[] storage userLoans = s.userLoanIds[user];
+        uint256 len = userLoans.length;
         uint256[] memory buf = new uint256[](len);
         uint256 n;
         for (uint256 i = 0; i < len; i++) {
-            uint256 id = active[i];
+            uint256 id = userLoans[i];
             LibVaipakam.Loan storage l = s.loans[id];
+            if (l.status != LibVaipakam.LoanStatus.Active) continue;
             if (l.lender == user || l.borrower == user) { buf[n] = id; n += 1; }
         }
         loanIds = new uint256[](n);
@@ -532,17 +567,22 @@ contract MetricsFacet {
     }
 
     /// @notice Open offer IDs created by `user`.
-    /// @dev O(activeOffersCount) — iterates the active-offer list.
+    /// @dev O(user's offer count) — walks `userOfferIds[user]`
+    ///      filtered to non-accepted (= currently open). For
+    ///      lifetime offers regardless of state, use
+    ///      {getUserOffersPaginated}.
     function getUserActiveOffers(address user) external view returns (uint256[] memory offerIds) {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        uint256[] storage active = s.activeOfferIdsList;
-        uint256 len = active.length;
+        uint256[] storage userOffers = s.userOfferIds[user];
+        uint256 len = userOffers.length;
         uint256[] memory buf = new uint256[](len);
         uint256 n;
         for (uint256 i = 0; i < len; i++) {
-            uint256 id = active[i];
+            uint256 id = userOffers[i];
             LibVaipakam.Offer storage o = s.offers[id];
-            if (o.creator == user) { buf[n] = id; n += 1; }
+            // Per-user index already filters by creator; keep only
+            // currently-OPEN (un-accepted) offers for this surface.
+            if (!o.accepted) { buf[n] = id; n += 1; }
         }
         offerIds = new uint256[](n);
         for (uint256 k = 0; k < n; k++) offerIds[k] = buf[k];
@@ -556,12 +596,15 @@ contract MetricsFacet {
      */
     function getUserNFTsInEscrow(address user) external view returns (uint256[] memory tokenIds) {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        uint256[] storage active = s.activeLoanIdsList;
-        uint256 len = active.length;
+        // Walk the user's lifetime loan index, filter to active +
+        // NFT-leg. O(user's loan count).
+        uint256[] storage userLoans = s.userLoanIds[user];
+        uint256 len = userLoans.length;
         uint256[] memory buf = new uint256[](len * 2);
         uint256 n;
         for (uint256 i = 0; i < len; i++) {
-            LibVaipakam.Loan storage l = s.loans[active[i]];
+            LibVaipakam.Loan storage l = s.loans[userLoans[i]];
+            if (l.status != LibVaipakam.LoanStatus.Active) continue;
             bool isNftLoan = l.assetType != LibVaipakam.AssetType.ERC20 ||
                 l.collateralAssetType != LibVaipakam.AssetType.ERC20;
             if (!isNftLoan) continue;
@@ -676,6 +719,37 @@ contract MetricsFacet {
         uint256[] storage src = LibVaipakam.storageSlot().userOfferIds[user];
         total = src.length;
         offerIds = _slice(src, offset, limit);
+    }
+
+    /// @notice Struct-returning variant of {getUserOffersPaginated} —
+    ///         saves frontends a second round-trip for the per-offer
+    ///         struct fetch that they were doing after the IDs came back.
+    /// @dev    O(limit) — page slice of the user's lifetime offer
+    ///         index `userOfferIds[user]`. Returns the FULL Offer
+    ///         struct per row including state flags (`accepted`,
+    ///         `amountFilled`), letting consumers filter
+    ///         active vs filled client-side without a follow-up read.
+    /// @param  user   The offer creator.
+    /// @param  offset Skip this many entries.
+    /// @param  limit  Max page size.
+    /// @return offers Page of {LibVaipakam.Offer} records.
+    /// @return total  Total offers in the user's lifetime index.
+    function getUserAllOffersWithDetails(
+        address user,
+        uint256 offset,
+        uint256 limit
+    ) external view returns (LibVaipakam.Offer[] memory offers, uint256 total) {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        uint256[] storage src = s.userOfferIds[user];
+        total = src.length;
+        if (offset >= total) return (new LibVaipakam.Offer[](0), total);
+        uint256 endExcl = offset + limit;
+        if (endExcl > total) endExcl = total;
+        uint256 size = endExcl - offset;
+        offers = new LibVaipakam.Offer[](size);
+        for (uint256 i = 0; i < size; i++) {
+            offers[i] = s.offers[src[offset + i]];
+        }
     }
 
     /**

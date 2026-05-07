@@ -1269,6 +1269,18 @@ library LibVaipakam {
         // Captured once per day via the permissionless
         // {OracleFacet.captureDailyPriceSnapshot} keeper (D10).
         mapping(address => mapping(uint256 => AssetPriceSnapshot)) assetPriceSnapshots;
+        // OfferBook 2-filter index — `assetPairActiveOfferIds
+        // [lendingAsset][collateralAsset]` is the swap-pop array of
+        // currently-active offer IDs for that exact asset pair, and
+        // `assetPairActiveOfferIdsPos[lending][collateral][offerId]`
+        // is the 1-based position lookup for O(1) removal. Maintained
+        // by LibMetricsHooks at create / accept / cancel; consumed by
+        // {MetricsFacet.getActiveOffersByAssetPair}. Replaces the
+        // O(activeOfferCount) walk in `getActiveOffersByAsset` with
+        // an O(asset-pair count) read at the cost of one extra SSTORE
+        // per offer-lifecycle edge.
+        mapping(address => mapping(address => uint256[])) assetPairActiveOfferIds;
+        mapping(address => mapping(address => mapping(uint256 => uint256))) assetPairActiveOfferIdsPos;
         mapping(address => string) userCountry; // ISO code, e.g., "US"
         mapping(address => bool) kycVerified;
         mapping(bytes32 => mapping(bytes32 => bool)) allowedTrades; // hash(countryA) => hash(countryB) => true if A can trade with B

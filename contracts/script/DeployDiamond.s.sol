@@ -1048,7 +1048,7 @@ contract DeployDiamond is Script {
     }
 
     function _getMetricsSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](35);
+        s = new bytes4[](37);
         s[0] = MetricsFacet.getProtocolTVL.selector;
         s[1] = MetricsFacet.getProtocolStats.selector;
         s[2] = MetricsFacet.getUserCount.selector;
@@ -1099,17 +1099,23 @@ contract DeployDiamond is Script {
         // `getRevenueStats(uint256)` at index 7; selector hashed
         // explicitly because `.selector` is ambiguous on overloads.
         s[34] = bytes4(keccak256("getRevenueStats(address,uint16)"));
+        s[35] = MetricsFacet.getActiveOffersByAssetPair.selector;
+        // Struct-array variant of getUserOffersPaginated — one round
+        // trip returns full Offer rows so the frontend skips the
+        // multicall fan-out for per-user offer detail tables.
+        s[36] = MetricsFacet.getUserAllOffersWithDetails.selector;
     }
 
     /// AnalyticalGettersDesign §3.1 — per-user dashboard surface. One
     /// scalar snapshot + three paginated list views collapse the
     /// frontend Dashboard's 13-RPC first-load into 3 calls.
     function _getMetricsDashboardSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](4);
+        s = new bytes4[](5);
         s[0] = MetricsDashboardFacet.getUserDashboardSnapshot.selector;
         s[1] = MetricsDashboardFacet.getUserDashboardLoans.selector;
         s[2] = MetricsDashboardFacet.getUserDashboardOffers.selector;
         s[3] = MetricsDashboardFacet.getUserDashboardClaimables.selector;
+        s[4] = MetricsDashboardFacet.getUserDashboardLoansBothSides.selector;
     }
 
     /// Phase 4.1 — Terms-of-Service acceptance gate. The gate stays

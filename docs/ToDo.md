@@ -11,6 +11,14 @@
 
 ---
 
+- [ ] **T-066**: Dont allow sorting in offer book with both the lender and borrower open offer view, but allow sorting on lender only and borrower only views of open offers. the sort should be on the entire list of offers not just only on paginated offers. closed or filled offer should also not allow custom sorting, it should show the most recently closed / filled offers with paginated views
+
+---
+
+- [ ] **T-065**: In offer book remove max min durations and provide buketed duration to resemble the one in offr creation page.
+
+---
+
 - [ ] **T-064**: Currently only the home page (the front / landing page) is the only page that gets indexed by goole in all different languages. can ths be done for Buy VPFI page (the marketing page not the inside app page), and also for the pages in documentaion the overview, user guide for both basic and advanced, is tha possible, what wlll be the benefits? is there any other better approach?
 
 ---
@@ -312,3 +320,18 @@ one more feature addition: users need to have na option to ask for mandatory mon
 - [x] **T-001**: The error that is shown to the user may be short, but when user clicks on report to github page, the error information should atleat have second level of verbose information in it.
 
 ---
+
+## Prefered names
+
+defi.vaipakam.com
+labs.vaipakam.com
+www.vaipakam.com --> redirect to --> vaipakam.com
+keeper.vaipakam.com
+vaipakam-keeper
+indexer.vaipakam.com
+vaipakam-indexer
+vaipakam-agent
+agent.vaipakam.com
+vaipakam-archive
+vaipakam-record --> not used as of now
+vaipakam-labs

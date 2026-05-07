@@ -42,21 +42,50 @@ contract SwapAdapterTest is Test {
     // SECTION A — adapter happy paths + rejection of bad inputs
     // ─────────────────────────────────────────────────────────────
 
-    function testAggregatorAdapterHappyPath() public {
-        MockAggregatorRouter router = new MockAggregatorRouter();
-        tokenOut.mint(address(router), 10_000 ether);
-
-        ZeroExAggregatorAdapter adapter = new ZeroExAggregatorAdapter(address(router));
-
-        // Keeper-supplied calldata: abi.encode of the mock's expected args.
-        uint256 amountIn = 1000 ether;
-        uint256 amountOut = 900 ether;
-        bytes memory data = abi.encode(
+    /// @dev `adapterData` for the aggregator base is now
+    ///      `abi.encode(address swapTarget, bytes swapCalldata)`.
+    ///      The inner blob is whatever the keeper would have got
+    ///      from `transaction.data` (0x v2) or `tx.data` (1inch v6).
+    function _zeroExAdapterData(
+        address swapTarget,
+        address adapter,
+        uint256 amountIn,
+        uint256 amountOut
+    ) internal view returns (bytes memory) {
+        bytes memory inner = abi.encode(
             address(tokenIn),
             address(tokenOut),
             amountIn,
             amountOut,
-            address(adapter)
+            adapter
+        );
+        return abi.encode(swapTarget, inner);
+    }
+
+    /// @dev Convenience for tests that deploy a 0x adapter with the
+    ///      router serving as both allowanceTarget AND the singleton
+    ///      seed in the swap-target allowlist (matches today's mock
+    ///      where one address handles both roles).
+    function _newZeroExAdapter(address router) internal returns (ZeroExAggregatorAdapter) {
+        address[] memory seed = new address[](1);
+        seed[0] = router;
+        return new ZeroExAggregatorAdapter(router, seed);
+    }
+
+    function testAggregatorAdapterHappyPath() public {
+        MockAggregatorRouter router = new MockAggregatorRouter();
+        tokenOut.mint(address(router), 10_000 ether);
+
+        ZeroExAggregatorAdapter adapter = _newZeroExAdapter(address(router));
+
+        // Keeper-supplied calldata: abi.encode of the mock's expected args.
+        uint256 amountIn = 1000 ether;
+        uint256 amountOut = 900 ether;
+        bytes memory data = _zeroExAdapterData(
+            address(router),
+            address(adapter),
+            amountIn,
+            amountOut
         );
 
         vm.startPrank(trader);
@@ -78,15 +107,14 @@ contract SwapAdapterTest is Test {
     function testAggregatorAdapterRevertsWhenRouterReverts() public {
         MockAggregatorRouter router = new MockAggregatorRouter();
         tokenOut.mint(address(router), 10_000 ether);
-        ZeroExAggregatorAdapter adapter = new ZeroExAggregatorAdapter(address(router));
+        ZeroExAggregatorAdapter adapter = _newZeroExAdapter(address(router));
         router.setRevert(true);
 
-        bytes memory data = abi.encode(
-            address(tokenIn),
-            address(tokenOut),
-            uint256(1000 ether),
-            uint256(900 ether),
-            address(adapter)
+        bytes memory data = _zeroExAdapterData(
+            address(router),
+            address(adapter),
+            1000 ether,
+            900 ether
         );
 
         vm.startPrank(trader);
@@ -109,16 +137,15 @@ contract SwapAdapterTest is Test {
     function testAggregatorAdapterRevertsOnInsufficientOutput() public {
         MockAggregatorRouter router = new MockAggregatorRouter();
         tokenOut.mint(address(router), 10_000 ether);
-        ZeroExAggregatorAdapter adapter = new ZeroExAggregatorAdapter(address(router));
+        ZeroExAggregatorAdapter adapter = _newZeroExAdapter(address(router));
         // Make router deliver 50% of requested.
         router.setOutputMultiplier(5_000);
 
-        bytes memory data = abi.encode(
-            address(tokenIn),
-            address(tokenOut),
-            uint256(1000 ether),
-            uint256(900 ether),
-            address(adapter)
+        bytes memory data = _zeroExAdapterData(
+            address(router),
+            address(adapter),
+            1000 ether,
+            900 ether
         );
 
         vm.startPrank(trader);
@@ -138,7 +165,7 @@ contract SwapAdapterTest is Test {
 
     function testAggregatorAdapterRejectsEmptyAdapterData() public {
         MockAggregatorRouter router = new MockAggregatorRouter();
-        ZeroExAggregatorAdapter adapter = new ZeroExAggregatorAdapter(address(router));
+        ZeroExAggregatorAdapter adapter = _newZeroExAdapter(address(router));
 
         vm.startPrank(trader);
         tokenIn.approve(address(adapter), 1000 ether);
@@ -154,20 +181,207 @@ contract SwapAdapterTest is Test {
         vm.stopPrank();
     }
 
+    /// @dev Adapter rejects a swap target that is NOT in the
+    ///      owner-managed allowlist — even if the keeper points it at
+    ///      a real-looking router address. Defends against a
+    ///      compromised keeper trying to redirect funds.
+    function testAggregatorAdapterRejectsUnallowlistedSwapTarget() public {
+        MockAggregatorRouter router = new MockAggregatorRouter();
+        tokenOut.mint(address(router), 10_000 ether);
+        ZeroExAggregatorAdapter adapter = _newZeroExAdapter(address(router));
+
+        address rogue = makeAddr("rogue-settler");
+        bytes memory data = _zeroExAdapterData(
+            rogue, // not in allowlist
+            address(adapter),
+            1000 ether,
+            900 ether
+        );
+
+        vm.startPrank(trader);
+        tokenIn.approve(address(adapter), 1000 ether);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                AggregatorAdapterBase.SwapTargetNotAllowed.selector,
+                rogue
+            )
+        );
+        adapter.execute(
+            address(tokenIn),
+            address(tokenOut),
+            1000 ether,
+            800 ether,
+            recipient,
+            data
+        );
+        vm.stopPrank();
+    }
+
+    /// @dev Constructor must reject zero allowance target — an
+    ///      unrecoverable misconfiguration where every approve()
+    ///      would land on address(0).
+    function testZeroExConstructorRejectsZeroAllowanceTarget() public {
+        address[] memory seed = new address[](1);
+        seed[0] = makeAddr("settler");
+        vm.expectRevert(AggregatorAdapterBase.InvalidAllowanceTarget.selector);
+        new ZeroExAggregatorAdapter(address(0), seed);
+    }
+
+    /// @dev Constructor must reject empty allowlist — an adapter with
+    ///      no targets is structurally unusable (every execute call
+    ///      reverts), and "no targets" is more often a deploy bug than
+    ///      a real intent.
+    function testZeroExConstructorRejectsEmptySwapTargetSeed() public {
+        address[] memory empty = new address[](0);
+        vm.expectRevert(AggregatorAdapterBase.InvalidInitialSwapTargets.selector);
+        new ZeroExAggregatorAdapter(makeAddr("ah"), empty);
+    }
+
+    /// @dev Constructor rejects address(0) entries inside the seed —
+    ///      catches a copy-paste deploy mistake.
+    function testZeroExConstructorRejectsZeroEntryInSeed() public {
+        address[] memory seed = new address[](2);
+        seed[0] = makeAddr("settler");
+        seed[1] = address(0);
+        vm.expectRevert(AggregatorAdapterBase.InvalidInitialSwapTargets.selector);
+        new ZeroExAggregatorAdapter(makeAddr("ah"), seed);
+    }
+
+    /// @dev Owner can add new Settler addresses (0x rotates them per
+    ///      release). Non-owner callers are blocked by Ownable.
+    function testAddSwapTargetGated() public {
+        MockAggregatorRouter router = new MockAggregatorRouter();
+        ZeroExAggregatorAdapter adapter = _newZeroExAdapter(address(router));
+        address newSettler = makeAddr("settler-v2");
+
+        // Owner (= deployer = this test contract) can add.
+        adapter.addSwapTarget(newSettler);
+        assertTrue(adapter.swapTargetAllowed(newSettler));
+        assertEq(adapter.swapTargetCount(), 2);
+
+        // Non-owner blocked.
+        vm.prank(trader);
+        vm.expectRevert();
+        adapter.addSwapTarget(makeAddr("settler-v3"));
+
+        // Adding twice reverts.
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                AggregatorAdapterBase.SwapTargetAlreadyAllowed.selector,
+                newSettler
+            )
+        );
+        adapter.addSwapTarget(newSettler);
+    }
+
+    /// @dev Owner can remove Settlers but the LAST target is sticky —
+    ///      forces the operator to {addSwapTarget} a replacement
+    ///      first if they're rotating, preventing an accidentally
+    ///      bricked adapter.
+    function testRemoveSwapTargetGatedAndProtectsLastEntry() public {
+        MockAggregatorRouter router = new MockAggregatorRouter();
+        ZeroExAggregatorAdapter adapter = _newZeroExAdapter(address(router));
+        address newSettler = makeAddr("settler-v2");
+
+        adapter.addSwapTarget(newSettler);
+        assertEq(adapter.swapTargetCount(), 2);
+
+        // Remove the original — leaves count=1.
+        adapter.removeSwapTarget(address(router));
+        assertFalse(adapter.swapTargetAllowed(address(router)));
+        assertEq(adapter.swapTargetCount(), 1);
+
+        // Try to remove the last one → revert.
+        vm.expectRevert(
+            AggregatorAdapterBase.LastSwapTargetCannotBeRemoved.selector
+        );
+        adapter.removeSwapTarget(newSettler);
+
+        // Removing a never-allowed address reverts with NotAllowed.
+        address ghost = makeAddr("ghost");
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                AggregatorAdapterBase.SwapTargetNotAllowed.selector,
+                ghost
+            )
+        );
+        adapter.removeSwapTarget(ghost);
+
+        // Non-owner blocked.
+        vm.prank(trader);
+        vm.expectRevert();
+        adapter.removeSwapTarget(newSettler);
+    }
+
+    /// @dev Approval lands on `allowanceTarget` (the AllowanceHolder
+    ///      analogue), NOT on the swap target. With the two
+    ///      addresses split, a swap target trying to draw via
+    ///      `transferFrom(adapter, ...)` reverts because the adapter
+    ///      never approved it. This is the structural defence
+    ///      against the 0x footgun.
+    function testApprovalLandsOnAllowanceTargetNotSwapTarget() public {
+        MockAggregatorRouter ah = new MockAggregatorRouter(); // serves as AllowanceHolder
+        MockAggregatorRouter settler = new MockAggregatorRouter(); // call destination
+
+        // Pre-fund the SETTLER (which is what would deliver tokenOut
+        // in a real swap), and let it pull from the ADAPTER on the
+        // call. Since approval will land on `ah`, settler's
+        // transferFrom of tokenIn from the adapter MUST fail.
+        tokenOut.mint(address(settler), 10_000 ether);
+
+        address[] memory seed = new address[](1);
+        seed[0] = address(settler);
+        ZeroExAggregatorAdapter adapter = new ZeroExAggregatorAdapter(
+            address(ah),
+            seed
+        );
+
+        bytes memory data = _zeroExAdapterData(
+            address(settler),
+            address(adapter),
+            1000 ether,
+            900 ether
+        );
+
+        vm.startPrank(trader);
+        tokenIn.approve(address(adapter), 1000 ether);
+        // Settler tries `transferFrom(adapter, settler, 1000)` →
+        // reverts because adapter approved `ah`, not settler.
+        // Adapter wraps that as RouterCallFailed.
+        vm.expectRevert();
+        adapter.execute(
+            address(tokenIn),
+            address(tokenOut),
+            1000 ether,
+            800 ether,
+            recipient,
+            data
+        );
+        vm.stopPrank();
+
+        // Adapter's allowance to `ah` must be zeroed post-call (clear
+        // happens regardless of outcome).
+        assertEq(tokenIn.allowance(address(adapter), address(ah)), 0);
+        // Adapter never approved the settler.
+        assertEq(tokenIn.allowance(address(adapter), address(settler)), 0);
+    }
+
     function testOneInchAdapterHappyPath() public {
         // Confirms the OneInch subclass works via the shared base.
+        // OneInch coalesces allowanceTarget + swapTarget into the
+        // single AggregationRouter; the constructor seeds the
+        // singleton allowlist itself.
         MockAggregatorRouter router = new MockAggregatorRouter();
         tokenOut.mint(address(router), 10_000 ether);
         OneInchAggregatorAdapter adapter = new OneInchAggregatorAdapter(address(router));
 
         uint256 amountIn = 500 ether;
         uint256 amountOut = 480 ether;
-        bytes memory data = abi.encode(
-            address(tokenIn),
-            address(tokenOut),
+        bytes memory data = _zeroExAdapterData(
+            address(router),
+            address(adapter),
             amountIn,
-            amountOut,
-            address(adapter)
+            amountOut
         );
 
         vm.startPrank(trader);

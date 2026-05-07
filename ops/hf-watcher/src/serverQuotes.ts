@@ -124,13 +124,42 @@ const CHAIN_SWAP: Record<number, ChainSwap> = {
 // ─── Aggregator API helpers. ───────────────────────────────────────────
 
 interface ZeroExResp {
-  transaction?: { data?: string };
+  transaction?: { to?: string; data?: string };
   buyAmount?: string;
 }
 interface OneInchResp {
-  tx?: { data?: string };
+  tx?: { to?: string; data?: string };
   dstAmount?: string;
   toAmount?: string;
+}
+
+/**
+ * Pack `(swapTarget, swapCalldata)` for the diamond's
+ * `AggregatorAdapterBase`. On-chain decoder is
+ * `abi.decode(adapterData, (address, bytes))` so the wire format must
+ * match the keeper-bot and frontend equivalents — centralised here so
+ * 0x and 1inch can't drift.
+ *
+ * 0x v2 / Settler / AllowanceHolder splits the approve recipient
+ * (immutable AllowanceHolder pinned at adapter construction) from the
+ * swap-call destination (rotating Settler, allowlist-gated). The
+ * watcher passes `transaction.to` here; the adapter rejects anything
+ * not in the allowlist before forwarding the calldata. 1inch v6 uses
+ * AggregationRouterV6 for both today, but the same packing keeps the
+ * adapter's allowlist defending against a rogue `tx.to` and is
+ * forward-compat with a future v7 split.
+ */
+function packAdapterData(swapTarget: Address, swapCalldata: Hex): Hex {
+  return encodeAbiParameters(
+    [{ type: 'address' }, { type: 'bytes' }],
+    [swapTarget, swapCalldata],
+  ) as Hex;
+}
+
+const ADDRESS_HEX_LEN = 42; // 0x + 40 hex chars
+
+function isAddressLike(s: string | undefined): s is Address {
+  return typeof s === 'string' && s.startsWith('0x') && s.length === ADDRESS_HEX_LEN;
 }
 
 async function fetchZeroEx(
@@ -157,13 +186,17 @@ async function fetchZeroEx(
     });
     if (!res.ok) return null;
     const body = (await res.json()) as ZeroExResp;
+    const swapTo = body.transaction?.to;
     const data = body.transaction?.data;
     const out = body.buyAmount;
-    if (!data || !data.startsWith('0x') || !out) return null;
+    if (!isAddressLike(swapTo) || !data || !data.startsWith('0x') || !out) return null;
     return {
       kind: 'zeroex',
       expectedOutput: BigInt(out),
-      call: { adapterIdx: BigInt(cs.adapters.zeroex), data: data as Hex },
+      call: {
+        adapterIdx: BigInt(cs.adapters.zeroex),
+        data: packAdapterData(swapTo, data as Hex),
+      },
     };
   } catch {
     return null;
@@ -195,13 +228,17 @@ async function fetchOneInch(
     });
     if (!res.ok) return null;
     const body = (await res.json()) as OneInchResp;
+    const swapTo = body.tx?.to;
     const data = body.tx?.data;
     const amount = body.dstAmount ?? body.toAmount;
-    if (!data || !data.startsWith('0x') || !amount) return null;
+    if (!isAddressLike(swapTo) || !data || !data.startsWith('0x') || !amount) return null;
     return {
       kind: 'oneinch',
       expectedOutput: BigInt(amount),
-      call: { adapterIdx: BigInt(cs.adapters.oneinch), data: data as Hex },
+      call: {
+        adapterIdx: BigInt(cs.adapters.oneinch),
+        data: packAdapterData(swapTo, data as Hex),
+      },
     };
   } catch {
     return null;

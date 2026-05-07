@@ -35,6 +35,15 @@ contract TestMutatorFacet {
     function scaffoldActiveLoan(uint256 loanId, LibVaipakam.Loan memory data) external {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         s.loans[loanId] = data;
+        // Mirror prod's LoanFacet.initiateLoan: populate the per-user
+        // index so user-keyed views (getUserLoansPaginated,
+        // getUserDashboardLoans, getUserSummary, etc.) see the
+        // scaffolded loan. `LibMetricsHooks.onLoanInitialized` only
+        // updates the active-list + counters, not `userLoanIds`.
+        s.userLoanIds[data.lender].push(loanId);
+        if (data.borrower != address(0) && data.borrower != data.lender) {
+            s.userLoanIds[data.borrower].push(loanId);
+        }
         LibMetricsHooks.onLoanInitialized(s.loans[loanId]);
     }
 
@@ -42,6 +51,10 @@ contract TestMutatorFacet {
     function scaffoldOpenOffer(uint256 offerId, LibVaipakam.Offer memory data) external {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         s.offers[offerId] = data;
+        // Mirror prod's OfferFacet.createOffer: populate the per-user
+        // index. `LibMetricsHooks.onOfferCreated` covers the active
+        // list + counters; the per-user index lives separately.
+        s.userOfferIds[data.creator].push(offerId);
         LibMetricsHooks.onOfferCreated(s.offers[offerId]);
     }
 

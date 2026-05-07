@@ -548,7 +548,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](35);
+        selectors = new bytes4[](37);
         selectors[0] = MetricsFacet.getProtocolTVL.selector;
         selectors[1] = MetricsFacet.getProtocolStats.selector;
         selectors[2] = MetricsFacet.getUserCount.selector;
@@ -596,6 +596,8 @@ contract HelperTest {
         // from its full signature since `.selector` is ambiguous on
         // overloads.
         selectors[34] = bytes4(keccak256("getRevenueStats(address,uint16)"));
+        selectors[35] = MetricsFacet.getActiveOffersByAssetPair.selector;
+        selectors[36] = MetricsFacet.getUserAllOffersWithDetails.selector;
         return selectors;
     }
 
@@ -605,11 +607,12 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](4);
+        selectors = new bytes4[](5);
         selectors[0] = MetricsDashboardFacet.getUserDashboardSnapshot.selector;
         selectors[1] = MetricsDashboardFacet.getUserDashboardLoans.selector;
         selectors[2] = MetricsDashboardFacet.getUserDashboardOffers.selector;
         selectors[3] = MetricsDashboardFacet.getUserDashboardClaimables.selector;
+        selectors[4] = MetricsDashboardFacet.getUserDashboardLoansBothSides.selector;
         return selectors;
     }
 

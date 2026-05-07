@@ -53,7 +53,13 @@ export interface AdapterCall {
   /** Storage index into the diamond's `s.swapAdapters` array. */
   adapterIdx: bigint;
   /** ABI-encoded routing payload the adapter decodes:
-   *    - 0x / 1inch: raw `transaction.data` from the aggregator
+   *    - 0x / 1inch: abi.encode(address swapTarget, bytes swapCalldata)
+   *                  where swapTarget is `transaction.to` (0x v2) or
+   *                  `tx.to` (1inch v6); the on-chain
+   *                  `AggregatorAdapterBase` validates it against an
+   *                  owner-managed allowlist before forwarding the
+   *                  inner calldata. Approvals are pinned to a
+   *                  separate immutable `allowanceTarget`.
    *    - UniV3:      abi.encode(uint24 fee)
    *    - Balancer:   abi.encode(bytes32 poolId)
    */
@@ -96,6 +102,34 @@ interface OneInchQuoteResponse {
 
 // ─── Per-venue fetchers. Each returns RankedQuote | null. ──────────────
 
+/**
+ * Pack `(swapTarget, swapCalldata)` for an `AggregatorAdapterBase`-
+ * style adapter. Mirrors the on-chain decoder
+ * `abi.decode(adapterData, (address, bytes))`. Centralised so 0x and
+ * 1inch can't drift on the wire format.
+ *
+ * 0x v2 / Settler / AllowanceHolder splits the approve recipient
+ * (immutable AllowanceHolder pinned at adapter construction) from the
+ * swap-call destination (rotating Settler, gated by an owner-managed
+ * allowlist). The frontend passes the API's `transaction.to` here;
+ * the adapter rejects anything not in the allowlist before forwarding
+ * the calldata. 1inch v6 currently coalesces both into
+ * AggregationRouterV6 but the same packing applies — the adapter's
+ * allowlist still gates `tx.to` against a compromised quote source.
+ */
+function packAdapterData(swapTarget: Address, swapCalldata: Hex): Hex {
+  return encodeAbiParameters(
+    [{ type: 'address' }, { type: 'bytes' }],
+    [swapTarget, swapCalldata],
+  ) as Hex;
+}
+
+const ADDRESS_HEX_LEN = 42; // 0x + 40 hex chars
+
+function isAddressLike(s: string | undefined): s is Address {
+  return typeof s === 'string' && s.startsWith('0x') && s.length === ADDRESS_HEX_LEN;
+}
+
 export async function fetchZeroExQuote(
   workerOrigin: string,
   req: QuoteRequest,
@@ -117,13 +151,16 @@ export async function fetchZeroExQuote(
     });
     if (!res.ok) return null;
     const body = (await res.json()) as ZeroExQuoteResponse;
+    const swapTo = body.transaction?.to;
     const data = body.transaction?.data;
     const buyAmount = body.buyAmount;
-    if (!data || !data.startsWith('0x') || !buyAmount) return null;
+    // 0x v2: capture transaction.to (rotating Settler) AND
+    // transaction.data; the adapter's allowlist gates the destination.
+    if (!isAddressLike(swapTo) || !data || !data.startsWith('0x') || !buyAmount) return null;
     return {
       adapterKind: 'zeroex',
       expectedOutput: BigInt(buyAmount),
-      call: { adapterIdx: BigInt(idx), data: data as Hex },
+      call: { adapterIdx: BigInt(idx), data: packAdapterData(swapTo, data as Hex) },
     };
   } catch {
     return null;
@@ -151,13 +188,18 @@ export async function fetch1inchQuote(
     });
     if (!res.ok) return null;
     const body = (await res.json()) as OneInchQuoteResponse;
+    const swapTo = body.tx?.to;
     const data = body.tx?.data;
     const amount = body.dstAmount ?? body.toAmount;
-    if (!data || !data.startsWith('0x') || !amount) return null;
+    // 1inch v6: AggregationRouterV6 today serves as both allowance
+    // recipient and call destination, but we still pack tx.to so the
+    // adapter's allowlist gates it AND so the wire format is
+    // forward-compat with a future v7 split.
+    if (!isAddressLike(swapTo) || !data || !data.startsWith('0x') || !amount) return null;
     return {
       adapterKind: 'oneinch',
       expectedOutput: BigInt(amount),
-      call: { adapterIdx: BigInt(idx), data: data as Hex },
+      call: { adapterIdx: BigInt(idx), data: packAdapterData(swapTo, data as Hex) },
     };
   } catch {
     return null;

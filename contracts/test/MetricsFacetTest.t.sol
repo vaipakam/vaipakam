@@ -95,6 +95,25 @@ contract MetricsFacetTest is SetupTest {
         TestMutatorFacet(address(diamond)).scaffoldOpenOffer(offerId, o);
     }
 
+    function _seedOpenOfferWithPair(
+        uint256 offerId,
+        address creator_,
+        address lendingAsset_,
+        address collateralAsset_
+    ) internal {
+        LibVaipakam.Offer memory o;
+        o.id = offerId;
+        o.creator = creator_;
+        o.lendingAsset = lendingAsset_;
+        o.collateralAsset = collateralAsset_;
+        o.amount = 1000 ether;
+        o.accepted = false;
+        o.offerType = LibVaipakam.OfferType.Lender;
+        o.assetType = LibVaipakam.AssetType.ERC20;
+        o.collateralAssetType = LibVaipakam.AssetType.ERC20;
+        TestMutatorFacet(address(diamond)).scaffoldOpenOffer(offerId, o);
+    }
+
     // ── getProtocolTVL ──────────────────────────────────────────────────────
 
     function testGetProtocolTVL_emptyReturnsZero() public view {
@@ -450,5 +469,109 @@ contract MetricsFacetTest is SetupTest {
     function testGetBlockTimestampMatches() public {
         vm.warp(1_777_000_000);
         assertEq(MetricsFacet(address(diamond)).getBlockTimestamp(), 1_777_000_000);
+    }
+
+    // ── getActiveOffersByAssetPair ──────────────────────────────────────────
+
+    /// @dev Reads from the per-pair index — one walk per (lending,
+    ///      collateral) pair, no per-row asset filter.
+    function testGetActiveOffersByAssetPair_returnsMatchingPair() public {
+        _seedOpenOfferWithPair(1, lender, mockERC20, mockCollateralERC20);
+        _seedOpenOfferWithPair(2, lender, mockERC20, mockCollateralERC20);
+        _seedOpenOfferWithPair(3, lender, mockERC20, mockNFT721); // different collateral
+        _seedOpenOfferWithPair(4, lender, mockNFT721, mockCollateralERC20); // different lending
+        TestMutatorFacet(address(diamond)).setNextOfferId(5);
+
+        (uint256[] memory ids, uint256 total) = MetricsFacet(address(diamond))
+            .getActiveOffersByAssetPair(mockERC20, mockCollateralERC20, 0, 50);
+        assertEq(total, 2);
+        assertEq(ids.length, 2);
+        // The two matching offers are #1 and #2 — order is push-order
+        // since no swap-pop has fired.
+        assertEq(ids[0], 1);
+        assertEq(ids[1], 2);
+    }
+
+    /// @dev Pagination cuts the matching set without touching the
+    ///      non-matching pairs.
+    function testGetActiveOffersByAssetPair_pagination() public {
+        _seedOpenOfferWithPair(1, lender, mockERC20, mockCollateralERC20);
+        _seedOpenOfferWithPair(2, lender, mockERC20, mockCollateralERC20);
+        _seedOpenOfferWithPair(3, lender, mockERC20, mockCollateralERC20);
+        TestMutatorFacet(address(diamond)).setNextOfferId(4);
+
+        (uint256[] memory page1, uint256 total1) = MetricsFacet(address(diamond))
+            .getActiveOffersByAssetPair(mockERC20, mockCollateralERC20, 0, 2);
+        (uint256[] memory page2, uint256 total2) = MetricsFacet(address(diamond))
+            .getActiveOffersByAssetPair(mockERC20, mockCollateralERC20, 2, 2);
+        assertEq(total1, 3);
+        assertEq(total2, 3);
+        assertEq(page1.length, 2);
+        assertEq(page2.length, 1);
+    }
+
+    /// @dev Empty pair returns empty page + zero total.
+    function testGetActiveOffersByAssetPair_emptyPair() public view {
+        (uint256[] memory ids, uint256 total) = MetricsFacet(address(diamond))
+            .getActiveOffersByAssetPair(mockERC20, mockCollateralERC20, 0, 50);
+        assertEq(total, 0);
+        assertEq(ids.length, 0);
+    }
+
+    // ── getUserAllOffersWithDetails ─────────────────────────────────────────
+
+    /// @dev Struct-array variant of {getUserOffersPaginated} returns the
+    ///      full Offer rows so the frontend skips the multicall fan-out.
+    ///      This test seeds 3 offers for the same creator and asserts
+    ///      that all three rows come back in push order with the
+    ///      correct field values, plus that `total` matches the
+    ///      lifetime offer count for that user.
+    function testGetUserAllOffersWithDetails_returnsRowsInOrder() public {
+        _seedOpenOffer(1, lender, mockERC20, 1000 ether);
+        _seedOpenOffer(2, lender, mockERC20, 2000 ether);
+        _seedOpenOffer(3, lender, mockERC20, 3000 ether);
+        TestMutatorFacet(address(diamond)).setNextOfferId(4);
+
+        (LibVaipakam.Offer[] memory rows, uint256 total) =
+            MetricsFacet(address(diamond)).getUserAllOffersWithDetails(lender, 0, 50);
+
+        assertEq(total, 3);
+        assertEq(rows.length, 3);
+        assertEq(rows[0].id, 1);
+        assertEq(rows[0].amount, 1000 ether);
+        assertEq(rows[1].id, 2);
+        assertEq(rows[1].amount, 2000 ether);
+        assertEq(rows[2].id, 3);
+        assertEq(rows[2].amount, 3000 ether);
+    }
+
+    /// @dev Pagination clips the slice; `total` keeps reporting the
+    ///      lifetime size so the frontend can drive a "page X of N" UI
+    ///      without a second call.
+    function testGetUserAllOffersWithDetails_pagination() public {
+        _seedOpenOffer(1, lender, mockERC20, 1000 ether);
+        _seedOpenOffer(2, lender, mockERC20, 2000 ether);
+        _seedOpenOffer(3, lender, mockERC20, 3000 ether);
+        TestMutatorFacet(address(diamond)).setNextOfferId(4);
+
+        (LibVaipakam.Offer[] memory page1, uint256 total1) =
+            MetricsFacet(address(diamond)).getUserAllOffersWithDetails(lender, 0, 2);
+        (LibVaipakam.Offer[] memory page2, uint256 total2) =
+            MetricsFacet(address(diamond)).getUserAllOffersWithDetails(lender, 2, 2);
+
+        assertEq(total1, 3);
+        assertEq(total2, 3);
+        assertEq(page1.length, 2);
+        assertEq(page2.length, 1);
+        assertEq(page2[0].id, 3);
+    }
+
+    /// @dev Off-the-end offset returns an empty array (not a revert)
+    ///      so the frontend can probe past the last page safely.
+    function testGetUserAllOffersWithDetails_emptyUser() public view {
+        (LibVaipakam.Offer[] memory rows, uint256 total) =
+            MetricsFacet(address(diamond)).getUserAllOffersWithDetails(lender, 0, 50);
+        assertEq(total, 0);
+        assertEq(rows.length, 0);
     }
 }
