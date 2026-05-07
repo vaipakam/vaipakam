@@ -1,0 +1,22 @@
+{
+  "name": "@vaipakam/agent",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "description": "Vaipakam read/index Cloudflare Worker — agent.vaipakam.com. Hosts diagnostics-drawer endpoints, indexer-status snapshot, cursor-advance heartbeat, plus per-user offers / loans / activity reads paginating over the archive D1 database. Read-only RPC keys + read-only D1 binding; no signing keys, no swap-aggregator credentials. STUB — Stage 3 of the source-tree refactor will populate this from ops/hf-watcher.",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "typecheck": "tsc -p . --noEmit"
+  },
+  "dependencies": {
+    "@vaipakam/contracts": "workspace:*",
+    "@vaipakam/lib": "workspace:*"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.0.0",
+    "typescript": "^6.0.0",
+    "wrangler": "^4.0.0",
+    "viem": "^2.48.4"
+  }
+}

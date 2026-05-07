@@ -1,0 +1,21 @@
+{
+  // Vaipakam read/index Cloudflare Worker.
+  //
+  // STUB — this Worker is structurally provisioned in Cloudflare
+  // (custom domain bound to `agent.vaipakam.com`) and the
+  // wrangler.jsonc + package.json scaffolding live here for the
+  // source-tree decomposition. Stage 3 of the refactor will
+  // populate `src/` from `ops/hf-watcher/`'s read-side surface
+  // (offer routes, loan routes, frames, scan/quote proxies).
+  // Until then `wrangler deploy` from this directory pushes only
+  // the placeholder index.ts — DO NOT deploy on production
+  // chains unless you intend the placeholder.
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "vaipakam-agent",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-04-23",
+  "compatibility_flags": ["nodejs_compat"],
+  "observability": {
+    "enabled": true,
+  },
+}

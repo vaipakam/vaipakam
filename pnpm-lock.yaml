@@ -8,6 +8,28 @@ importers:
 
   .: {}
 
+  apps/agent:
+    dependencies:
+      '@vaipakam/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
+      '@vaipakam/lib':
+        specifier: workspace:*
+        version: link:../../packages/lib
+    devDependencies:
+      '@cloudflare/workers-types':
+        specifier: ^4.0.0
+        version: 4.20260507.1
+      typescript:
+        specifier: ^6.0.0
+        version: 6.0.3
+      viem:
+        specifier: ^2.48.4
+        version: 2.48.11(bufferutil@4.1.0)(typescript@6.0.3)(utf-8-validate@5.0.10)(zod@4.4.3)
+      wrangler:
+        specifier: ^4.0.0
+        version: 4.90.0(@cloudflare/workers-types@4.20260507.1)(bufferutil@4.1.0)(utf-8-validate@5.0.10)
+
   apps/defi:
     dependencies:
       '@tanstack/react-query':
@@ -70,7 +92,7 @@ importers:
     devDependencies:
       '@cloudflare/vite-plugin':
         specifier: ^1.33.1
-        version: 1.36.3(bufferutil@4.1.0)(utf-8-validate@5.0.10)(vite@8.0.11(@types/node@24.12.2)(esbuild@0.27.7)(tsx@4.21.0))(workerd@1.20260507.1)(wrangler@4.90.0(bufferutil@4.1.0)(utf-8-validate@5.0.10))
+        version: 1.36.3(bufferutil@4.1.0)(utf-8-validate@5.0.10)(vite@8.0.11(@types/node@24.12.2)(esbuild@0.27.7)(tsx@4.21.0))(workerd@1.20260507.1)(wrangler@4.90.0(@cloudflare/workers-types@4.20260507.1)(bufferutil@4.1.0)(utf-8-validate@5.0.10))
       '@eslint/js':
         specifier: ^9.39.4
         version: 9.39.4
@@ -130,7 +152,51 @@ importers:
         version: 4.1.5(@types/node@24.12.2)(@vitest/coverage-v8@4.1.5)(jsdom@29.1.1(@noble/hashes@1.8.0))(vite@8.0.11(@types/node@24.12.2)(esbuild@0.27.7)(tsx@4.21.0))
       wrangler:
         specifier: ^4.84.1
-        version: 4.90.0(bufferutil@4.1.0)(utf-8-validate@5.0.10)
+        version: 4.90.0(@cloudflare/workers-types@4.20260507.1)(bufferutil@4.1.0)(utf-8-validate@5.0.10)
+
+  apps/indexer:
+    dependencies:
+      '@vaipakam/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
+      '@vaipakam/lib':
+        specifier: workspace:*
+        version: link:../../packages/lib
+    devDependencies:
+      '@cloudflare/workers-types':
+        specifier: ^4.0.0
+        version: 4.20260507.1
+      typescript:
+        specifier: ^6.0.0
+        version: 6.0.3
+      viem:
+        specifier: ^2.48.4
+        version: 2.48.11(bufferutil@4.1.0)(typescript@6.0.3)(utf-8-validate@5.0.10)(zod@4.4.3)
+      wrangler:
+        specifier: ^4.0.0
+        version: 4.90.0(@cloudflare/workers-types@4.20260507.1)(bufferutil@4.1.0)(utf-8-validate@5.0.10)
+
+  apps/keeper:
+    dependencies:
+      '@vaipakam/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
+      '@vaipakam/lib':
+        specifier: workspace:*
+        version: link:../../packages/lib
+    devDependencies:
+      '@cloudflare/workers-types':
+        specifier: ^4.0.0
+        version: 4.20260507.1
+      typescript:
+        specifier: ^6.0.0
+        version: 6.0.3
+      viem:
+        specifier: ^2.48.4
+        version: 2.48.11(bufferutil@4.1.0)(typescript@6.0.3)(utf-8-validate@5.0.10)(zod@4.4.3)
+      wrangler:
+        specifier: ^4.0.0
+        version: 4.90.0(@cloudflare/workers-types@4.20260507.1)(bufferutil@4.1.0)(utf-8-validate@5.0.10)
 
   packages/contracts:
     devDependencies:
@@ -362,6 +428,9 @@ packages:
     engines: {node: '>=16'}
     cpu: [x64]
     os: [win32]
+
+  '@cloudflare/workers-types@4.20260507.1':
+    resolution: {integrity: sha512-QChtMFu8EeVKaL4dW5r5wfZzlbH5CUnZU5Ef6E1cPjXzqryQuCwmEDNr+Oj2obbKR9jsVIUHPF/pkFaKWdYl2g==}
 
   '@coinbase/cdp-sdk@1.48.2':
     resolution: {integrity: sha512-phsHxF9q4CvF8H1b//aepxy8J/pdORT+btdqv7wbQ1YOi44QYfenima15N8Ok9lZE/XqY81BebsaBkyjqBJgig==}
@@ -4705,13 +4774,13 @@ snapshots:
     optionalDependencies:
       workerd: 1.20260507.1
 
-  '@cloudflare/vite-plugin@1.36.3(bufferutil@4.1.0)(utf-8-validate@5.0.10)(vite@8.0.11(@types/node@24.12.2)(esbuild@0.27.7)(tsx@4.21.0))(workerd@1.20260507.1)(wrangler@4.90.0(bufferutil@4.1.0)(utf-8-validate@5.0.10))':
+  '@cloudflare/vite-plugin@1.36.3(bufferutil@4.1.0)(utf-8-validate@5.0.10)(vite@8.0.11(@types/node@24.12.2)(esbuild@0.27.7)(tsx@4.21.0))(workerd@1.20260507.1)(wrangler@4.90.0(@cloudflare/workers-types@4.20260507.1)(bufferutil@4.1.0)(utf-8-validate@5.0.10))':
     dependencies:
       '@cloudflare/unenv-preset': 2.16.1(unenv@2.0.0-rc.24)(workerd@1.20260507.1)
       miniflare: 4.20260507.1(bufferutil@4.1.0)(utf-8-validate@5.0.10)
       unenv: 2.0.0-rc.24
       vite: 8.0.11(@types/node@24.12.2)(esbuild@0.27.7)(tsx@4.21.0)
-      wrangler: 4.90.0(bufferutil@4.1.0)(utf-8-validate@5.0.10)
+      wrangler: 4.90.0(@cloudflare/workers-types@4.20260507.1)(bufferutil@4.1.0)(utf-8-validate@5.0.10)
       ws: 8.18.0(bufferutil@4.1.0)(utf-8-validate@5.0.10)
     transitivePeerDependencies:
       - bufferutil
@@ -4732,6 +4801,8 @@ snapshots:
 
   '@cloudflare/workerd-windows-64@1.20260507.1':
     optional: true
+
+  '@cloudflare/workers-types@4.20260507.1': {}
 
   '@coinbase/cdp-sdk@1.48.2(bufferutil@4.1.0)(typescript@6.0.3)(utf-8-validate@5.0.10)':
     dependencies:
@@ -9851,7 +9922,7 @@ snapshots:
       '@cloudflare/workerd-linux-arm64': 1.20260507.1
       '@cloudflare/workerd-windows-64': 1.20260507.1
 
-  wrangler@4.90.0(bufferutil@4.1.0)(utf-8-validate@5.0.10):
+  wrangler@4.90.0(@cloudflare/workers-types@4.20260507.1)(bufferutil@4.1.0)(utf-8-validate@5.0.10):
     dependencies:
       '@cloudflare/kv-asset-handler': 0.5.0
       '@cloudflare/unenv-preset': 2.16.1(unenv@2.0.0-rc.24)(workerd@1.20260507.1)
@@ -9862,6 +9933,7 @@ snapshots:
       unenv: 2.0.0-rc.24
       workerd: 1.20260507.1
     optionalDependencies:
+      '@cloudflare/workers-types': 4.20260507.1
       fsevents: 2.3.3
     transitivePeerDependencies:
       - bufferutil

@@ -1,0 +1,22 @@
+{
+  "name": "@vaipakam/keeper",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "description": "Vaipakam autonomous keeper Cloudflare Worker — keeper.vaipakam.com. Owns the HF watcher loop, autonomous liquidation submission, buy-watchdog, periodic-interest pre-notify, push + telegram alert delivery. Holds a signing key (Cloudflare secret) + swap-aggregator API keys; doesn't read user-side state, doesn't serve frontend traffic. STUB — Stage 3 will populate from ops/hf-watcher/src/keeper.ts + watcher.ts + buyWatchdog.ts + serverQuotes.ts + periodicPreNotify.ts + push.ts + telegram.ts.",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "typecheck": "tsc -p . --noEmit"
+  },
+  "dependencies": {
+    "@vaipakam/contracts": "workspace:*",
+    "@vaipakam/lib": "workspace:*"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.0.0",
+    "typescript": "^6.0.0",
+    "wrangler": "^4.0.0",
+    "viem": "^2.48.4"
+  }
+}

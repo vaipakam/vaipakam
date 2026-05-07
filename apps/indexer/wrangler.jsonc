@@ -1,0 +1,21 @@
+{
+  // Vaipakam chain → archive D1 ingester Worker.
+  //
+  // STUB — see apps/agent/wrangler.jsonc for context. Stage 3
+  // populates `src/` from `ops/hf-watcher/`'s indexer-side
+  // surface (chainIndexer + db + dailyOracleSnapshot).
+  // Until populated, deploying from here pushes the placeholder
+  // index.ts which returns 503 to every request and registers
+  // no cron triggers.
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "vaipakam-indexer",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-04-23",
+  "compatibility_flags": ["nodejs_compat"],
+  "observability": {
+    "enabled": true,
+  },
+  // Cron triggers will move here from the watcher's wrangler
+  // config when Stage 3 populates the indexer source.
+  // "triggers": { "crons": ["* * * * *"] },
+}

@@ -1,0 +1,22 @@
+{
+  "name": "@vaipakam/indexer",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "description": "Vaipakam chain → archive D1 ingester Worker — indexer.vaipakam.com. Runs the cursor walk, decodes events (Offer / Loan / VPFI / Reward / NFT lifecycle), writes rows into the archive D1 database. Holds chain RPC credentials + archive D1 write credentials; doesn't sign chain transactions, doesn't serve frontend traffic. STUB — Stage 3 will populate from ops/hf-watcher/src/chainIndexer.ts + db.ts + dailyOracleSnapshot.ts.",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "typecheck": "tsc -p . --noEmit"
+  },
+  "dependencies": {
+    "@vaipakam/contracts": "workspace:*",
+    "@vaipakam/lib": "workspace:*"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.0.0",
+    "typescript": "^6.0.0",
+    "wrangler": "^4.0.0",
+    "viem": "^2.48.4"
+  }
+}
