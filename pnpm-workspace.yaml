@@ -1,0 +1,32 @@
+# Vaipakam monorepo workspace layout.
+#
+# `apps/` holds runnable surfaces — each is its own deployable
+# (Vite SPA, Cloudflare Worker, etc.):
+#   - apps/defi    in-app surface served at defi.vaipakam.com
+#                   (formerly the top-level frontend/)
+#   - apps/labs    marketing + docs site → labs.vaipakam.com
+#                   (and www.vaipakam.com / vaipakam.com on cutover).
+#                   No wallet connect, just a chain picker for
+#                   public-read transparency stats.
+#   - apps/agent   read/index Cloudflare Worker → agent.vaipakam.com
+#   - apps/indexer chain → D1 ingester        → indexer.vaipakam.com
+#   - apps/keeper  autonomous keeper Worker   → keeper.vaipakam.com
+#
+# `packages/` holds shared internal libraries — no deploy of their
+# own, consumed by the apps via workspace `:` protocol:
+#   - packages/contracts  ABI JSONs + deployments + ChainConfig
+#   - packages/ui         shared React components
+#   - packages/lib        shared utilities (formatters, multicall, ...)
+#
+# `contracts/` (Foundry) is intentionally NOT in this workspace —
+# it's a Solidity project, not a JS package. Its build tooling
+# (`forge`) operates on its own root.
+#
+# `ops/hf-watcher` is currently outside the workspace; it migrates
+# into apps/agent + apps/indexer + apps/keeper in Stage 3.
+#
+# `vaipakam-keeper-bot` is a separate sibling repo (extracted
+# Phase 9.A) and stays separate — not part of this workspace.
+packages:
+  - 'apps/*'
+  - 'packages/*'

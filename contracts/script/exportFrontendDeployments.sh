@@ -38,7 +38,7 @@
 #
 # Usage:
 #   bash contracts/script/exportFrontendDeployments.sh
-#       # auto-detects FRONTEND_DIR=../frontend, WATCHER_DIR=../ops/hf-watcher
+#       # auto-detects FRONTEND_DIR=../apps/defi, WATCHER_DIR=../ops/hf-watcher
 #
 #   FRONTEND_DIR=/abs/path WATCHER_DIR=/abs/path \
 #     bash contracts/script/exportFrontendDeployments.sh
@@ -66,7 +66,11 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONTRACTS_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-FRONTEND_DIR="${FRONTEND_DIR:-$CONTRACTS_DIR/../frontend}"
+# Default workspace layout: monorepo at /work/vaipakam, defi app at
+# /work/vaipakam/apps/defi. Pre-Stage 1 the path was
+# /work/vaipakam/frontend; operators with custom env still override
+# via FRONTEND_DIR=...
+FRONTEND_DIR="${FRONTEND_DIR:-$CONTRACTS_DIR/../apps/defi}"
 
 # Watcher target is optional. Auto-detected from the sibling layout
 # at `vaipakam/ops/hf-watcher`. Pass `WATCHER_DIR=` (empty) to skip

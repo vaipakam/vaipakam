@@ -38,7 +38,7 @@
 #
 #   bash contracts/script/deploy-mainnet.sh <chain-slug> --phase cf-frontend
 #       Builds the frontend and deploys to Cloudflare via wrangler.
-#       Requires `frontend/node_modules` (operator runs npm install).
+#       Requires `apps/defi/node_modules` (operator runs pnpm install).
 #
 #   bash contracts/script/deploy-mainnet.sh <chain-slug> --phase cf-watcher
 #       Deploys the hf-watcher Cloudflare Worker via wrangler.
@@ -107,7 +107,7 @@ fi
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONTRACTS_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 REPO_ROOT="$(cd "$CONTRACTS_DIR/.." && pwd)"
-FRONTEND_DIR="$REPO_ROOT/frontend"
+FRONTEND_DIR="$REPO_ROOT/apps/defi"
 WATCHER_DIR="$REPO_ROOT/ops/hf-watcher"
 
 cd "$CONTRACTS_DIR"
@@ -488,7 +488,7 @@ phase_abi_sync() {
 
   echo
   echo "Review and commit:"
-  echo "  git diff frontend/src/contracts/abis/ frontend/src/contracts/deployments.json"
+  echo "  git diff apps/defi/src/contracts/abis/ apps/defi/src/contracts/deployments.json"
   echo "  git diff ops/hf-watcher/src/deployments.json"
   if [ -d "$KEEPER_BOT_DIR_DEFAULT" ]; then
     echo "  cd $KEEPER_BOT_DIR_DEFAULT && git diff src/abis/"
@@ -500,7 +500,7 @@ phase_abi_sync() {
 
 phase_cf_frontend() {
   if [ ! -d "$FRONTEND_DIR/node_modules" ]; then
-    echo "Error: $FRONTEND_DIR/node_modules missing — run \`cd frontend && npm install\` first." >&2
+    echo "Error: $FRONTEND_DIR/node_modules missing — run \`pnpm install\` at the repo root first." >&2
     exit 1
   fi
   echo "═══════════════════════════════════════════════════════════════"

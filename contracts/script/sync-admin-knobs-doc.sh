@@ -7,7 +7,7 @@
 # T-042 admin dashboard renders the same markdown content from inside
 # the app (info-icons deep-link to per-knob anchor IDs), so the
 # canonical source of truth at `docs/ops/AdminConfigurableKnobsAndSwitches.md`
-# is mirrored to `frontend/src/content/admin/AdminConfigurableKnobsAndSwitches.en.md`
+# is mirrored to `apps/defi/src/content/admin/AdminConfigurableKnobsAndSwitches.en.md`
 # at build time. English-only on purpose — the runbook is technical
 # auditor-facing copy that translation drift would harm more than it
 # would help (same policy as the Whitepaper).
@@ -28,7 +28,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 SRC="$REPO_ROOT/docs/ops/AdminConfigurableKnobsAndSwitches.md"
-DST="$REPO_ROOT/frontend/src/content/admin/AdminConfigurableKnobsAndSwitches.en.md"
+DST="$REPO_ROOT/apps/defi/src/content/admin/AdminConfigurableKnobsAndSwitches.en.md"
 
 if [ ! -f "$SRC" ]; then
   echo "Error: canonical doc not found at $SRC" >&2

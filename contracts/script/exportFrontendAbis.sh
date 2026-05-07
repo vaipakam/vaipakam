@@ -38,9 +38,11 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONTRACTS_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-# Default sibling layout: monorepo at /work/vaipakam, frontend at
-# /work/vaipakam/frontend. Override by exporting FRONTEND_DIR.
-FRONTEND_DIR="${FRONTEND_DIR:-$CONTRACTS_DIR/../frontend}"
+# Default workspace layout: monorepo at /work/vaipakam, defi app at
+# /work/vaipakam/apps/defi. Override by exporting FRONTEND_DIR.
+# Pre-Stage 1 the path was /work/vaipakam/frontend; the env override
+# accepts either layout so an old operator script keeps working.
+FRONTEND_DIR="${FRONTEND_DIR:-$CONTRACTS_DIR/../apps/defi}"
 
 if [ ! -d "$FRONTEND_DIR" ]; then
   echo "Error: frontend dir not found at: $FRONTEND_DIR" >&2
