@@ -1,0 +1,159 @@
+# Cloudflare Workers deploy matrix — one job per deployable app.
+#
+# Today (Stage 1 / 2 of the source-tree refactor): only apps/defi
+# (the Vite SPA → defi.vaipakam.com) and ops/hf-watcher (the
+# monolithic indexer + watcher, served at hf-watcher's domain) have
+# real source. apps/labs, apps/agent, apps/indexer, apps/keeper are
+# placeholder Workers in Cloudflare that serve a 503 — their entries
+# below are commented out and activate once Stage 3 (hf-watcher
+# decomposition) and Stage 4 (apps/labs carve-out) land.
+#
+# Deploy strategy:
+#   - Push to main triggers the workflow.
+#   - Path filter scopes which matrix entries run: editing only
+#     apps/defi/ skips the watcher build; editing only
+#     ops/hf-watcher/ skips the SPA build.
+#   - workflow_dispatch lets an operator force a deploy of any
+#     entry without a code push (e.g. after a Cloudflare secret
+#     rotation, or to roll forward after an aborted run).
+#
+# Required repo secrets (GitHub → Settings → Secrets and variables):
+#   CLOUDFLARE_API_TOKEN  — scoped token with "Edit Cloudflare
+#                            Workers" + "D1 Edit" permissions.
+#   CLOUDFLARE_ACCOUNT_ID — same value used in wrangler runs.
+#
+# Each app's `wrangler deploy` reads its own wrangler.jsonc; secrets
+# OTHER than the two above (RPC URLs, alert keys, push keys, etc.)
+# stay set per-Worker via `wrangler secret put` — out-of-band of
+# this workflow on purpose so a CI compromise can't exfiltrate
+# them.
+
+name: deploy-workers
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      apps:
+        description: 'Comma-separated app names to force-deploy (defi,hf-watcher). Leave empty for path-filter-driven default.'
+        required: false
+        default: ''
+
+concurrency:
+  # Per-branch serialisation so two pushes in quick succession don't
+  # race the same Worker's `wrangler deploy`. Cancels the older one.
+  group: deploy-workers-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  detect-changes:
+    runs-on: ubuntu-latest
+    outputs:
+      defi: ${{ steps.filter.outputs.defi }}
+      hf-watcher: ${{ steps.filter.outputs.hf-watcher }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Path filter
+        id: filter
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            defi:
+              - 'apps/defi/**'
+              - 'packages/contracts/**'
+              - 'packages/lib/**'
+              - 'packages/ui/**'
+              - 'pnpm-lock.yaml'
+              - 'pnpm-workspace.yaml'
+              - 'package.json'
+            hf-watcher:
+              - 'ops/hf-watcher/**'
+              - 'packages/contracts/**'
+              - 'packages/lib/**'
+
+  deploy-defi:
+    needs: detect-changes
+    # Workflow_dispatch path: deploy if user listed 'defi' OR if no
+    # app filter was given (deploy all). Push path: deploy if the
+    # path filter matched.
+    if: |
+      (github.event_name == 'workflow_dispatch' &&
+        (inputs.apps == '' || contains(inputs.apps, 'defi'))) ||
+      (github.event_name == 'push' && needs.detect-changes.outputs.defi == 'true')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Node + pnpm
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: corepack enable
+      - run: pnpm install --frozen-lockfile
+      - name: Build apps/defi
+        run: pnpm --filter @vaipakam/defi build
+      - name: Deploy via wrangler
+        working-directory: apps/defi
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: pnpm exec wrangler deploy
+
+  deploy-hf-watcher:
+    needs: detect-changes
+    if: |
+      (github.event_name == 'workflow_dispatch' &&
+        (inputs.apps == '' || contains(inputs.apps, 'hf-watcher'))) ||
+      (github.event_name == 'push' && needs.detect-changes.outputs['hf-watcher'] == 'true')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Node + pnpm
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: corepack enable
+      - run: pnpm install --frozen-lockfile
+      - name: Typecheck ops/hf-watcher
+        working-directory: ops/hf-watcher
+        run: npx tsc -p . --noEmit
+      - name: Deploy via wrangler
+        working-directory: ops/hf-watcher
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: npx wrangler deploy
+
+  # ── Placeholder entries for the post-Stage-3/4 layout ──────────
+  #
+  # apps/agent (read/index Worker → agent.vaipakam.com), apps/indexer
+  # (chain → D1 ingester → indexer.vaipakam.com), apps/keeper
+  # (autonomous Worker → keeper.vaipakam.com), and apps/labs (marketing
+  # site → labs.vaipakam.com) are all provisioned in Cloudflare today
+  # but serve a 503 placeholder. Once the decomposition / carve-out
+  # commits land their real source under those paths, uncomment the
+  # corresponding job below. Each follows the same shape as
+  # deploy-defi / deploy-hf-watcher: detect-changes path filter →
+  # build → wrangler deploy. The two repo secrets above are the only
+  # CI-side credentials each new job needs.
+  #
+  # deploy-agent:
+  #   needs: detect-changes
+  #   if: ...
+  #   runs-on: ubuntu-latest
+  #   steps:
+  #     - uses: actions/checkout@v4
+  #     - uses: actions/setup-node@v4
+  #       with: { node-version: '22' }
+  #     - run: corepack enable
+  #     - run: pnpm install --frozen-lockfile
+  #     - run: pnpm --filter @vaipakam/agent build
+  #     - working-directory: apps/agent
+  #       env:
+  #         CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+  #         CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+  #       run: pnpm exec wrangler deploy
+  #
+  # deploy-indexer: # same shape, working-directory apps/indexer
+  # deploy-keeper:  # same shape, working-directory apps/keeper
+  # deploy-labs:    # same shape, working-directory apps/labs
