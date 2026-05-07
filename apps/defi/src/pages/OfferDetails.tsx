@@ -23,7 +23,7 @@ import { bpsToPercent, formatDate } from '../lib/format';
 import { AddressDisplay } from '../components/app/AddressDisplay';
 import { AssetLink } from '../components/app/AssetLink';
 import { TokenAmount } from '../components/app/TokenAmount';
-import { TokenIcon } from '../components/app/TokenIcon';
+import { TokenIcon } from '@vaipakam/ui/TokenIcon';
 import { ErrorAlert } from '../components/app/ErrorAlert';
 import { decodeContractError } from '@vaipakam/lib/decodeContractError';
 import { PerThingKeeperToggles } from '../components/app/PerThingKeeperToggles';

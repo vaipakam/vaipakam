@@ -7,7 +7,7 @@ import { useVPFIToken } from '../../hooks/useVPFIToken';
 import { useUserVPFI } from '../../hooks/useUserVPFI';
 import { formatVpfiUnits } from '../../hooks/useVPFIDiscount';
 import { CardInfo } from '../CardInfo';
-import { InfoTip } from '../InfoTip';
+import { InfoTip } from '@vaipakam/ui/InfoTip';
 import { Pager } from './Pager';
 
 interface VPFIPanelProps {

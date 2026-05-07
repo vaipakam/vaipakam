@@ -15,7 +15,7 @@ import { formatRelativeTime } from '../lib/format';
 import { ChevronDown, ChevronUp, ChevronsUpDown } from 'lucide-react';
 import { CardInfo } from '../components/CardInfo';
 import { AssetLink } from '../components/app/AssetLink';
-import { TokenIcon } from '../components/app/TokenIcon';
+import { TokenIcon } from '@vaipakam/ui/TokenIcon';
 import { TokenAmount } from '../components/app/TokenAmount';
 import { DEFAULT_CHAIN } from '../contracts/config';
 

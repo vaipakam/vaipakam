@@ -38,7 +38,7 @@ import { bpsToPercent } from '../lib/format';
 import { batchCalls, encodeBatchCalls } from '@vaipakam/lib/multicall';
 import { AddressDisplay } from '../components/app/AddressDisplay';
 import { CardInfo } from '../components/CardInfo';
-import { InfoTip } from '../components/InfoTip';
+import { InfoTip } from '@vaipakam/ui/InfoTip';
 import {
   matchesFilter as matchesFilterPure,
   rankLenderSide as rankLenderSidePure,

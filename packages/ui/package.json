@@ -1,0 +1,42 @@
+{
+  "name": "@vaipakam/ui",
+  "private": true,
+  "version": "0.0.1",
+  "type": "module",
+  "description": "Shared React components for Vaipakam apps. Stage 2b scope: only the truly framework-decoupled primitives (InfoTip, TokenIcon). Most candidate components in apps/defi/src/components/ couple to defi-only hooks (WalletContext, useEnsName, useTokenMeta, coingecko hooks) or app-specific lib (format with i18n, contracts/config with Vite env). Each will migrate in a follow-up Stage 2c after its dependency chain is extracted.",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    },
+    "./InfoTip": {
+      "types": "./src/InfoTip.tsx",
+      "default": "./src/InfoTip.tsx"
+    },
+    "./TokenIcon": {
+      "types": "./src/TokenIcon.tsx",
+      "default": "./src/TokenIcon.tsx"
+    }
+  },
+  "dependencies": {
+    "@vaipakam/contracts": "workspace:*"
+  },
+  "peerDependencies": {
+    "react": "^18.0.0 || ^19.0.0",
+    "react-dom": "^18.0.0 || ^19.0.0",
+    "react-i18next": "^15.0.0 || ^16.0.0 || ^17.0.0",
+    "i18next": "^23.0.0 || ^24.0.0 || ^25.0.0 || ^26.0.0",
+    "viem": "^2.0.0",
+    "lucide-react": "^1.0.0"
+  },
+  "devDependencies": {
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
+    "react": "^19.2.4",
+    "react-dom": "^19.2.4",
+    "react-i18next": "^17.0.4",
+    "i18next": "^26.0.8",
+    "viem": "^2.48.4",
+    "lucide-react": "^1.8.0"
+  }
+}

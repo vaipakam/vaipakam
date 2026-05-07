@@ -55,7 +55,7 @@ import { ChainSwitcher } from "../components/app/ChainSwitcher";
 import { ReportIssueLink } from "../components/app/ReportIssueLink";
 import { ConnectWalletButton } from "../components/app/ConnectWalletButton";
 import { WalletMenu } from "../components/app/WalletMenu";
-import { InfoTip } from "../components/InfoTip";
+import { InfoTip } from "@vaipakam/ui/InfoTip";
 import { LanguagePicker } from "../components/LanguagePicker";
 import "./AppLayout.css";
 
