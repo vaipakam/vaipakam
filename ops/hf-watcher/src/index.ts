@@ -23,6 +23,7 @@ import { handshakeExpired, handshakeLinked } from './i18n';
 import { handle0xQuote, handle1inchQuote } from './quoteProxy';
 import { handleBlockaidScan } from './scanProxy';
 import { handleDiagRecord, pruneOldDiagErrors } from './diagRecord';
+import { pruneOldCancelledOffers } from './cancelledOfferRetention';
 import {
   handleActiveLoansFrameInitial,
   handleActiveLoansFramePost,
@@ -63,6 +64,16 @@ export default {
       pruneOldDiagErrors(env).catch(() => {
         // Swallow — a transient D1 hiccup shouldn't fail the
         // whole scheduled tick. Next tick retries.
+      }),
+    );
+    // 2026-05-08 — cancelled-offer retention prune. Mirrors the diag
+    // prune above (cheap DELETE gated by `idx_offers_cancelled_at`,
+    // partial index covering only cancelled rows). Same swallow-and-
+    // log policy so a transient D1 blip doesn't wedge the rest of
+    // the tick.
+    ctx.waitUntil(
+      pruneOldCancelledOffers(env).catch((err) => {
+        console.error('[cancelledOfferRetention] pass failed:', err);
       }),
     );
     // T-031 Layer 4a — cross-chain reconciliation watchdog.

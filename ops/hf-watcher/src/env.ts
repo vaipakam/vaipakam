@@ -104,6 +104,13 @@ export interface Env {
   // string to int; values < 1 are clamped up to 1.
   DIAG_RETENTION_DAYS?: string;
 
+  // 2026-05-08 — cancelled-offer retention in days. The chainIndexer
+  // stamps `cancelled_at` when an OfferCanceled / OfferClosed
+  // (reason=2) event lands; a cron-driven prune in
+  // cancelledOfferRetention.ts drops rows past this window. Default
+  // 30. Same int-coerce + clamp policy as DIAG_RETENTION_DAYS.
+  CANCELLED_OFFER_RETENTION_DAYS?: string;
+
   // CORS origin the HTTP endpoints will accept. Set to the frontend
   // origin(s); defaults to the vars entry in wrangler.jsonc.
   FRONTEND_ORIGIN: string;

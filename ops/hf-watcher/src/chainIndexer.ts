@@ -604,11 +604,19 @@ async function processOfferLogs(
     if ((r.meta?.changes ?? 0) > 0) statusUpdates++;
   }
   for (const c of cancelled) {
+    // Stamp `cancelled_at` alongside `status` so the Dashboard
+    // "Cancelled" filter can serve the row directly from D1
+    // (the contract's `cancelOffer` deletes the storage slot, so
+    // a re-read returns the zero creator and a follow-up
+    // `getOffer(id)` can't disambiguate "cancelled" from "never
+    // existed"). The retention prune in `pruneOldCancelledOffers`
+    // uses this timestamp to drop rows past the operator-chosen
+    // window.
     const r = await env.DB.prepare(
-      `UPDATE offers SET status = 'cancelled', updated_at = ?
+      `UPDATE offers SET status = 'cancelled', cancelled_at = ?, updated_at = ?
        WHERE chain_id = ? AND offer_id = ?`,
     )
-      .bind(now, chainId, Number(c.offerId))
+      .bind(now, now, chainId, Number(c.offerId))
       .run();
     if ((r.meta?.changes ?? 0) > 0) statusUpdates++;
   }
@@ -665,13 +673,27 @@ async function processOfferLogs(
       );
       continue;
     }
-    const r = await env.DB.prepare(
-      `UPDATE offers SET status = ?, updated_at = ?
-       WHERE chain_id = ? AND offer_id = ?`,
-    )
-      .bind(status, now, chainId, Number(cl.offerId))
-      .run();
-    if ((r.meta?.changes ?? 0) > 0) statusUpdates++;
+    // OfferClosed reason=2 ('cancelled') also stamps `cancelled_at`
+    // so the row falls under the same retention window as a row
+    // that flipped status via the bare OfferCanceled event above.
+    // Other reasons (fullyFilled / dust) leave cancelled_at NULL.
+    if (status === 'cancelled') {
+      const r = await env.DB.prepare(
+        `UPDATE offers SET status = ?, cancelled_at = ?, updated_at = ?
+         WHERE chain_id = ? AND offer_id = ?`,
+      )
+        .bind(status, now, now, chainId, Number(cl.offerId))
+        .run();
+      if ((r.meta?.changes ?? 0) > 0) statusUpdates++;
+    } else {
+      const r = await env.DB.prepare(
+        `UPDATE offers SET status = ?, updated_at = ?
+         WHERE chain_id = ? AND offer_id = ?`,
+      )
+        .bind(status, now, chainId, Number(cl.offerId))
+        .run();
+      if ((r.meta?.changes ?? 0) > 0) statusUpdates++;
+    }
   }
 
   return { newOffers, statusUpdates };
