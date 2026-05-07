@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { createPublicClient, http, parseAbi, type Abi, type Address, type PublicClient } from 'viem';
 import { CHAIN_REGISTRY, type ChainConfig } from '../contracts/config';
-import { MetricsFacetABI } from '../contracts/abis';
+import { MetricsFacetABI } from '@vaipakam/contracts/abis';
 import { beginStep } from '../lib/journeyLog';
 
 // `getGlobalCounts()` exists in current MetricsFacet.sol but not every

@@ -12,7 +12,7 @@ import {
 import { useWallet } from '../context/WalletContext';
 import { useChainOverride } from '../context/ChainContext';
 import { CHAIN_REGISTRY, DEFAULT_CHAIN, type ChainConfig } from './config';
-import { DIAMOND_ABI_VIEM } from './abis';
+import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
 
 /**
  * Resolves the chain that reads should target, in priority order:

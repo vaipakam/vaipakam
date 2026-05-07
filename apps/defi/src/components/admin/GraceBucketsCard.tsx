@@ -20,7 +20,7 @@
 import { useState } from 'react';
 import { ExternalLink, Info, Settings2, Save, X, AlertTriangle } from 'lucide-react';
 import { encodeFunctionData } from 'viem';
-import { DIAMOND_ABI_VIEM } from '../../contracts/abis';
+import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
 import { buildSafeDeepLink } from '../../lib/safeDeepLink';
 import {
   useGraceBuckets,

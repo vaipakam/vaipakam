@@ -33,7 +33,7 @@ import { LiquidityPreflightBanner } from "../components/app/LiquidityPreflightBa
 import { OfferRiskPreview } from "../components/app/OfferRiskPreview";
 import { useLiquidityPreflight } from "../hooks/useLiquidityPreflight";
 import { usePermit2Signing } from "../hooks/usePermit2Signing";
-import { DIAMOND_ABI_VIEM as DIAMOND_ABI } from "../contracts/abis";
+import { DIAMOND_ABI_VIEM as DIAMOND_ABI } from "@vaipakam/contracts/abis";
 import { L as Link } from "../components/L";
 import { AssetPicker } from "../components/app/AssetPicker";
 import { Picker } from "../components/Picker";

@@ -28,7 +28,7 @@ import { useState, useMemo } from 'react';
 import { ExternalLink, Shield, X } from 'lucide-react';
 import type { KnobMeta } from '../../lib/protocolConsoleKnobs';
 import { encodeKnobSetCall, buildSafeDeepLink } from '../../lib/safeDeepLink';
-import { DIAMOND_ABI_VIEM } from '../../contracts/abis';
+import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
 import {
   formatBound,
   type RawValue,

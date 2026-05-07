@@ -10,7 +10,7 @@ import {
   type Address,
   type PublicClient,
 } from "viem";
-import { DIAMOND_ABI_VIEM } from "../contracts/abis";
+import { DIAMOND_ABI_VIEM } from "@vaipakam/contracts/abis";
 import { CHAIN_REGISTRY, type DeployedChain } from "../contracts/config";
 import {
   decodeContractError,

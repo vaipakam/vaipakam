@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { getAddress } from 'viem';
-import { getDeployment } from '../../contracts/deployments';
+import { getDeployment } from '@vaipakam/contracts/deployments';
 
 /**
  * Trust Wallet's public asset CDN slug per chain id. Trust Wallet's

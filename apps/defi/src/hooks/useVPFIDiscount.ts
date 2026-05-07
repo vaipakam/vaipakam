@@ -9,7 +9,7 @@ import { useDiamondPublicClient, useReadChain } from '../contracts/useDiamond';
 import { useWallet } from '../context/WalletContext';
 import { useProtocolConfig } from './useProtocolConfig';
 import { beginStep } from '../lib/journeyLog';
-import { DIAMOND_ABI_VIEM as DIAMOND_ABI } from '../contracts/abis';
+import { DIAMOND_ABI_VIEM as DIAMOND_ABI } from '@vaipakam/contracts/abis';
 import type { ChainConfig } from '../contracts/config';
 
 const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';

@@ -13,9 +13,10 @@
 #
 # Usage:
 #   bash contracts/script/exportFrontendAbis.sh
-#       # defaults to FRONTEND_DIR=../frontend (this repo's frontend)
+#       # defaults to CONTRACTS_PKG_DIR=../packages/contracts (this
+#       # monorepo's @vaipakam/contracts package).
 #
-#   FRONTEND_DIR=/abs/path/to/frontend bash contracts/script/exportFrontendAbis.sh
+#   CONTRACTS_PKG_DIR=/abs/path/to/contracts-pkg bash contracts/script/exportFrontendAbis.sh
 #
 # When to run:
 #   - After every contract change that adds/modifies/removes any
@@ -25,39 +26,39 @@
 #
 # What it does NOT do:
 #   - Doesn't commit anything. The script only writes files; review
-#     the diff with `git diff frontend/src/contracts/abis/` and
+#     the diff with `git diff packages/contracts/src/abis/` and
 #     commit alongside the contract change.
 #   - Doesn't run `forge build` first. Assumes you've run
 #     `forge build` in `contracts/` since the last edit.
 #   - Doesn't touch `index.ts` (the re-export barrel). If you add a
 #     brand-new facet, add it to FACETS below AND wire it into
-#     `frontend/src/contracts/abis/index.ts` manually.
+#     `packages/contracts/src/abis/index.ts` manually.
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONTRACTS_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-# Default workspace layout: monorepo at /work/vaipakam, defi app at
-# /work/vaipakam/apps/defi. Override by exporting FRONTEND_DIR.
-# Pre-Stage 1 the path was /work/vaipakam/frontend; the env override
-# accepts either layout so an old operator script keeps working.
-FRONTEND_DIR="${FRONTEND_DIR:-$CONTRACTS_DIR/../apps/defi}"
+# Default workspace layout: monorepo at /work/vaipakam, ABI bundle at
+# /work/vaipakam/packages/contracts/src/abis (Stage 1b moved the ABIs
+# into the @vaipakam/contracts workspace package so every app shares
+# one copy). Override CONTRACTS_PKG_DIR for a bespoke layout.
+CONTRACTS_PKG_DIR="${CONTRACTS_PKG_DIR:-$CONTRACTS_DIR/../packages/contracts}"
 
-if [ ! -d "$FRONTEND_DIR" ]; then
-  echo "Error: frontend dir not found at: $FRONTEND_DIR" >&2
+if [ ! -d "$CONTRACTS_PKG_DIR" ]; then
+  echo "Error: contracts package dir not found at: $CONTRACTS_PKG_DIR" >&2
   echo "" >&2
   echo "Override the path:" >&2
-  echo "  FRONTEND_DIR=/abs/path bash contracts/script/exportFrontendAbis.sh" >&2
+  echo "  CONTRACTS_PKG_DIR=/abs/path bash contracts/script/exportFrontendAbis.sh" >&2
   exit 1
 fi
 
-FRONTEND_DIR="$(cd "$FRONTEND_DIR" && pwd)"
-OUT_DIR="$FRONTEND_DIR/src/contracts/abis"
+CONTRACTS_PKG_DIR="$(cd "$CONTRACTS_PKG_DIR" && pwd)"
+OUT_DIR="$CONTRACTS_PKG_DIR/src/abis"
 
 if [ ! -d "$OUT_DIR" ]; then
   echo "Error: ABI output dir not found: $OUT_DIR" >&2
-  echo "Expected the frontend to already have src/contracts/abis/." >&2
+  echo "Expected packages/contracts/src/abis/ to exist." >&2
   exit 1
 fi
 
@@ -144,6 +145,6 @@ echo "  source stamp -> $OUT_DIR/_source.json"
 
 echo ""
 echo "Done. Next steps:"
-echo "  git diff frontend/src/contracts/abis/   # review the change"
-echo "  cd $FRONTEND_DIR && node_modules/.bin/tsc -b --noEmit   # confirm frontend still typechecks"
-echo "  git commit -am 'Sync frontend ABIs with contracts@${COMMIT:0:7}'"
+echo "  git diff packages/contracts/src/abis/   # review the change"
+echo "  pnpm --filter @vaipakam/defi exec tsc -b --noEmit   # confirm consumers still typecheck"
+echo "  git commit -am 'Sync ABIs with contracts@${COMMIT:0:7}'"

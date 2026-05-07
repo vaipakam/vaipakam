@@ -143,7 +143,7 @@ PR as the contract change.
 ## Frontend ABI sync
 
 The frontend imports per-facet ABI JSONs from
-`apps/defi/src/contracts/abis/`. Unlike the keeper-bot, the frontend
+`packages/contracts/src/abis/`. Unlike the keeper-bot, the frontend
 imports the **full** Diamond surface (currently 27 facets — see the
 `FACETS=(...)` list in `contracts/script/exportFrontendAbis.sh`),
 so essentially every facet edit needs a re-export.
@@ -164,7 +164,7 @@ and prints the typecheck command. Run that next:
 cd frontend && node_modules/.bin/tsc -b --noEmit
 ```
 
-Review the diff (`git diff apps/defi/src/contracts/abis/`) and
+Review the diff (`git diff packages/contracts/src/abis/`) and
 commit alongside the contract change with a message like
 `"Sync frontend ABIs with contracts@<hash>"`.
 
@@ -182,7 +182,7 @@ person doesn't lose an hour to that.
 **Adding a new facet to the frontend**: append the contract name
 to the `FACETS=(...)` array in
 `contracts/script/exportFrontendAbis.sh` AND wire it into the
-re-export barrel `apps/defi/src/contracts/abis/index.ts` (the
+re-export barrel `packages/contracts/src/abis/index.ts` (the
 script does NOT touch the barrel).
 
 ## Watcher (hf-watcher) ABI sync
@@ -275,14 +275,14 @@ provenance stamp so a deployed bundle can be correlated to a
 specific contracts commit.
 
 The typed loaders live in
-[`apps/defi/src/contracts/deployments.ts`](apps/defi/src/contracts/deployments.ts)
+[`packages/contracts/src/deployments.ts`](packages/contracts/src/deployments.ts)
 and
 [`ops/hf-watcher/src/deployments.ts`](ops/hf-watcher/src/deployments.ts) —
 both expose `getDeployment(chainId)` against the same `Deployment`
 shape, with consumer-specific subsets of the optional facets.
 
 Review the diff with
-`git diff apps/defi/src/contracts/deployments.json ops/hf-watcher/src/deployments.json`
+`git diff packages/contracts/src/deployments.json ops/hf-watcher/src/deployments.json`
 and commit alongside the contracts change.
 
 **What still lives operator-side** — items that are NOT deployment

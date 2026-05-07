@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import type { Address } from 'viem';
 import { useDiamondPublicClient, useReadChain } from '../contracts/useDiamond';
 import { DEFAULT_CHAIN } from '../contracts/config';
-import { DIAMOND_ABI_VIEM as DIAMOND_ABI } from '../contracts/abis';
+import { DIAMOND_ABI_VIEM as DIAMOND_ABI } from '@vaipakam/contracts/abis';
 import { batchCalls, encodeBatchCalls } from '../lib/multicall';
 import { fetchTokenMeta } from '../lib/tokenMeta';
 import { useLoanStats } from './useLoanStats';

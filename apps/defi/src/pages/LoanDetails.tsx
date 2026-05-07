@@ -31,7 +31,7 @@ import {
 } from "lucide-react";
 import { parseUnits, encodeFunctionData, type Address, type Hex } from "viem";
 import { SimulationPreview } from "../components/app/SimulationPreview";
-import { DIAMOND_ABI_VIEM as DIAMOND_ABI } from "../contracts/abis";
+import { DIAMOND_ABI_VIEM as DIAMOND_ABI } from "@vaipakam/contracts/abis";
 import { AssetLink } from "../components/app/AssetLink";
 import { TokenAmount } from "../components/app/TokenAmount";
 import { ErrorAlert } from "../components/app/ErrorAlert";

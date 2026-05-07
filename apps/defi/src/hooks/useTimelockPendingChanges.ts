@@ -40,9 +40,9 @@ import {
   type Address,
 } from 'viem';
 import { useDiamondPublicClient, useReadChain } from '../contracts/useDiamond';
-import { DIAMOND_ABI_VIEM } from '../contracts/abis';
+import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
 import { ADMIN_KNOBS } from '../lib/protocolConsoleKnobs';
-import { getDeployment } from '../contracts/deployments';
+import { getDeployment } from '@vaipakam/contracts/deployments';
 
 /** Minimal TimelockController surface — events + state read. Avoids
  *  a full ABI export; OpenZeppelin's contract is stable + we only

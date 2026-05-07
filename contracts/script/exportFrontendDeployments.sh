@@ -20,8 +20,11 @@
 #     directories exist.
 #
 # Targets:
-#   - **Frontend** (always required): `<FRONTEND_DIR>/src/contracts/deployments.json`
-#     plus a `_deployments_source.json` provenance stamp.
+#   - **Contracts package** (always required):
+#     `<CONTRACTS_PKG_DIR>/src/deployments.json` plus a
+#     `_deployments_source.json` provenance stamp. Consumed by every
+#     app in the monorepo via the `@vaipakam/contracts/deployments`
+#     re-export.
 #   - **hf-watcher** (optional, written when present):
 #     `<WATCHER_DIR>/src/deployments.json`. The Worker's tsconfig has
 #     `resolveJsonModule: true` so this imports natively.
@@ -38,9 +41,10 @@
 #
 # Usage:
 #   bash contracts/script/exportFrontendDeployments.sh
-#       # auto-detects FRONTEND_DIR=../apps/defi, WATCHER_DIR=../ops/hf-watcher
+#       # auto-detects CONTRACTS_PKG_DIR=../packages/contracts,
+#       # WATCHER_DIR=../ops/hf-watcher
 #
-#   FRONTEND_DIR=/abs/path WATCHER_DIR=/abs/path \
+#   CONTRACTS_PKG_DIR=/abs/path WATCHER_DIR=/abs/path \
 #     bash contracts/script/exportFrontendDeployments.sh
 #
 #   # Skip the watcher target explicitly:
@@ -66,11 +70,12 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONTRACTS_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-# Default workspace layout: monorepo at /work/vaipakam, defi app at
-# /work/vaipakam/apps/defi. Pre-Stage 1 the path was
-# /work/vaipakam/frontend; operators with custom env still override
-# via FRONTEND_DIR=...
-FRONTEND_DIR="${FRONTEND_DIR:-$CONTRACTS_DIR/../apps/defi}"
+# Default workspace layout: monorepo at /work/vaipakam, deployments
+# bundle at /work/vaipakam/packages/contracts/src/deployments.json
+# (Stage 1b moved the bundle into the @vaipakam/contracts workspace
+# package so every app shares one copy). Operators with custom
+# layouts override CONTRACTS_PKG_DIR.
+CONTRACTS_PKG_DIR="${CONTRACTS_PKG_DIR:-$CONTRACTS_DIR/../packages/contracts}"
 
 # Watcher target is optional. Auto-detected from the sibling layout
 # at `vaipakam/ops/hf-watcher`. Pass `WATCHER_DIR=` (empty) to skip
@@ -92,17 +97,17 @@ elif [ -n "$WATCHER_DIR" ]; then
   WATCHER_DIR="$(cd "$WATCHER_DIR" && pwd)"
 fi
 
-if [ ! -d "$FRONTEND_DIR" ]; then
-  echo "Error: frontend dir not found at: $FRONTEND_DIR" >&2
+if [ ! -d "$CONTRACTS_PKG_DIR" ]; then
+  echo "Error: contracts package dir not found at: $CONTRACTS_PKG_DIR" >&2
   echo "" >&2
   echo "Override the path:" >&2
-  echo "  FRONTEND_DIR=/abs/path bash contracts/script/exportFrontendDeployments.sh" >&2
+  echo "  CONTRACTS_PKG_DIR=/abs/path bash contracts/script/exportFrontendDeployments.sh" >&2
   exit 1
 fi
 
-FRONTEND_DIR="$(cd "$FRONTEND_DIR" && pwd)"
+CONTRACTS_PKG_DIR="$(cd "$CONTRACTS_PKG_DIR" && pwd)"
 DEPLOYMENTS_DIR="$CONTRACTS_DIR/deployments"
-FRONTEND_OUT_DIR="$FRONTEND_DIR/src/contracts"
+FRONTEND_OUT_DIR="$CONTRACTS_PKG_DIR/src"
 FRONTEND_OUT_FILE="$FRONTEND_OUT_DIR/deployments.json"
 FRONTEND_SOURCE_FILE="$FRONTEND_OUT_DIR/_deployments_source.json"
 
@@ -111,8 +116,8 @@ if [ ! -d "$DEPLOYMENTS_DIR" ]; then
   exit 1
 fi
 if [ ! -d "$FRONTEND_OUT_DIR" ]; then
-  echo "Error: frontend contracts output dir not found: $FRONTEND_OUT_DIR" >&2
-  echo "Expected the frontend to already have src/contracts/." >&2
+  echo "Error: contracts package src dir not found: $FRONTEND_OUT_DIR" >&2
+  echo "Expected packages/contracts/src/ to exist." >&2
   exit 1
 fi
 
@@ -285,11 +290,11 @@ fi
 
 echo ""
 echo "Done. Next steps:"
-echo "  git diff frontend/src/contracts/deployments.json   # review the change"
+echo "  git diff packages/contracts/src/deployments.json   # review the change"
 if [ -n "$WATCHER_DIR" ] && [ -d "$WATCHER_DIR/src" ]; then
   echo "  git diff ops/hf-watcher/src/deployments.json     # review the watcher change"
 fi
-echo "  cd $FRONTEND_DIR && node_modules/.bin/tsc -b --noEmit   # confirm frontend still typechecks"
+echo "  pnpm --filter @vaipakam/defi exec tsc -b --noEmit   # confirm consumers still typecheck"
 if [ -n "$WATCHER_DIR" ] && [ -d "$WATCHER_DIR/src" ]; then
   echo "  cd $WATCHER_DIR && npx tsc -p . --noEmit          # confirm watcher still typechecks"
 fi

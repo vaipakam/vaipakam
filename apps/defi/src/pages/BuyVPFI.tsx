@@ -13,7 +13,7 @@ import { parseEther, formatEther } from "viem";
 import {
   DIAMOND_ABI_VIEM as DIAMOND_ABI,
   VPFIBuyAdapterABI,
-} from "../contracts/abis";
+} from "@vaipakam/contracts/abis";
 import { SimulationPreview } from "../components/app/SimulationPreview";
 import {
   Coins,

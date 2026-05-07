@@ -1,6 +1,6 @@
 import { useReadContracts } from 'wagmi';
 import { useReadChain } from '../contracts/useDiamond';
-import { DIAMOND_ABI_VIEM as DIAMOND_ABI } from '../contracts/abis';
+import { DIAMOND_ABI_VIEM as DIAMOND_ABI } from '@vaipakam/contracts/abis';
 
 /**
  * Live time-weighted lender yield-fee discount for a specific loan.

@@ -3,7 +3,7 @@ import { parseAbiItem, type Address, type PublicClient } from 'viem';
 import { useDiamondPublicClient, useReadChain } from '../contracts/useDiamond';
 import { useProtocolConfig } from './useProtocolConfig';
 import { DEFAULT_CHAIN } from '../contracts/config';
-import { DIAMOND_ABI_VIEM as DIAMOND_ABI } from '../contracts/abis';
+import { DIAMOND_ABI_VIEM as DIAMOND_ABI } from '@vaipakam/contracts/abis';
 import { beginStep } from '../lib/journeyLog';
 
 const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';

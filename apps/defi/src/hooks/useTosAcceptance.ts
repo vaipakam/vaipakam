@@ -5,7 +5,7 @@ import {
   useDiamondPublicClient,
   useReadChain,
 } from '../contracts/useDiamond';
-import { DIAMOND_ABI_VIEM } from '../contracts/abis';
+import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
 import { useWallet } from '../context/WalletContext';
 import { beginStep } from '../lib/journeyLog';
 

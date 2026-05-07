@@ -488,7 +488,7 @@ phase_abi_sync() {
 
   echo
   echo "Review and commit:"
-  echo "  git diff apps/defi/src/contracts/abis/ apps/defi/src/contracts/deployments.json"
+  echo "  git diff packages/contracts/src/abis/ packages/contracts/src/deployments.json"
   echo "  git diff ops/hf-watcher/src/deployments.json"
   if [ -d "$KEEPER_BOT_DIR_DEFAULT" ]; then
     echo "  cd $KEEPER_BOT_DIR_DEFAULT && git diff src/abis/"

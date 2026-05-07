@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import type { Address } from 'viem';
 import { useDiamondPublicClient, useReadChain } from '../contracts/useDiamond';
 import { DEFAULT_CHAIN } from '../contracts/config';
-import { DIAMOND_ABI_VIEM as DIAMOND_ABI } from '../contracts/abis';
+import { DIAMOND_ABI_VIEM as DIAMOND_ABI } from '@vaipakam/contracts/abis';
 
 /** Side of a loan an interaction-reward entry belongs to. Mirrors the
  *  on-chain `LibVaipakam.RewardSide` enum (Lender = 0, Borrower = 1). */

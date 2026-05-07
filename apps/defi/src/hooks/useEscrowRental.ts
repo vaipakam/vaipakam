@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { getAddress, type Address } from 'viem';
 import { useDiamondPublicClient, useReadChain } from '../contracts/useDiamond';
-import { DIAMOND_ABI_VIEM } from '../contracts/abis';
+import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
 
 export interface EscrowRentalState {
   user: string;

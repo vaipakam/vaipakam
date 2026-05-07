@@ -27,9 +27,9 @@
 import { useEffect, useMemo, useState } from 'react';
 import { type Abi } from 'viem';
 import { useDiamondPublicClient, useReadChain } from '../contracts/useDiamond';
-import { DIAMOND_ABI_VIEM, VPFIBuyReceiverABI } from '../contracts/abis';
+import { DIAMOND_ABI_VIEM, VPFIBuyReceiverABI } from '@vaipakam/contracts/abis';
 import { ADMIN_KNOBS, type KnobMeta } from '../lib/protocolConsoleKnobs';
-import { getDeployment } from '../contracts/deployments';
+import { getDeployment } from '@vaipakam/contracts/deployments';
 
 export type KnobReadValue = bigint | boolean | string | null;
 

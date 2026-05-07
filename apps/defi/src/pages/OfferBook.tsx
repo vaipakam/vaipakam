@@ -11,7 +11,7 @@ import { useWallet } from '../context/WalletContext';
 import { useWalletClient } from 'wagmi';
 import { useDiamondContract, useDiamondRead, useDiamondPublicClient, useReadChain } from '../contracts/useDiamond';
 import { buildErc20Proxy } from '../contracts/useERC20';
-import { DIAMOND_ABI_VIEM as DIAMOND_ABI } from '../contracts/abis';
+import { DIAMOND_ABI_VIEM as DIAMOND_ABI } from '@vaipakam/contracts/abis';
 import { L as Link } from '../components/L';
 import { BookOpen, PlusCircle, AlertTriangle, ShieldCheck, Droplet, ListOrdered, Wallet } from 'lucide-react';
 import { Picker } from '../components/Picker';

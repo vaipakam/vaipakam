@@ -15,7 +15,7 @@
 
 import { useEffect, useState } from 'react';
 import type { Abi } from 'viem';
-import { DIAMOND_ABI_VIEM } from '../contracts/abis';
+import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
 import { useDiamondPublicClient, useReadChain } from '../contracts/useDiamond';
 
 export interface GraceBucket {

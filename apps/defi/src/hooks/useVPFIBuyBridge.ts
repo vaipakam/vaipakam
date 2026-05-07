@@ -12,7 +12,7 @@ import {
 } from 'viem';
 import { useWalletClient } from 'wagmi';
 import { useWallet } from '../context/WalletContext';
-import { VPFIBuyAdapterABI } from '../contracts/abis';
+import { VPFIBuyAdapterABI } from '@vaipakam/contracts/abis';
 import { beginStep } from '../lib/journeyLog';
 import { decodeContractError } from '../lib/decodeContractError';
 import type { ChainConfig } from '../contracts/config';

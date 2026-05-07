@@ -4,7 +4,7 @@ import {
   useDiamondPublicClient,
   useReadChain,
 } from '../contracts/useDiamond';
-import { DIAMOND_ABI_VIEM } from '../contracts/abis';
+import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
 
 /**
  * Pre-flight sanctions check for a given address.

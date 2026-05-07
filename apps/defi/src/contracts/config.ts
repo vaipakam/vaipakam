@@ -1,5 +1,5 @@
 import { getAddress, isAddress } from "viem";
-import { getDeployment, type Deployment } from "./deployments";
+import { getDeployment, type Deployment } from "@vaipakam/contracts/deployments";
 
 const env = import.meta.env;
 
