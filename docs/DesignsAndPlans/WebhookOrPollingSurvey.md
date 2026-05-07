@@ -340,13 +340,13 @@ Phase 3 (LiveTailProvider).
 
 - `DesignsAndPlans/DecentralizedPlatformArchitecture.md` Pillar
   4.7 (parent).
-- `internal/MultiRpcStrategyDesign.md` — Pillar 4.4 detailed
+- `DesignsAndPlans/MultiRpcStrategyDesign.md` — Pillar 4.4 detailed
   design.
-- `internal/SubgraphSchemaDesign.md` — Pillar 4.5 detailed
+- `DesignsAndPlans/SubgraphSchemaDesign.md` — Pillar 4.5 detailed
   design.
-- `internal/IPFSHostingPipelineDesign.md` — Pillar 4.6 detailed
+- `DesignsAndPlans/IPFSHostingPipelineDesign.md` — Pillar 4.6 detailed
   design.
-- `internal/LiveTailProviderDesign.md` — Pillar 4.2; the WS
+- `DesignsAndPlans/LiveTailProviderDesign.md` — Pillar 4.2; the WS
   pipe (Phase 8) feeds events into the same dispatcher.
 - Survey sources: each protocol's public docs + GitHub
   monorepo + frontend network-tab inspection. Specific
@@ -360,5 +360,5 @@ This doc lives on `research/webhook-vs-polling-defi-survey`
 until the design is signed off. Once Phase 0 is reviewed and
 the survey's recommendations are accepted, the branch merges
 into `main` with this doc landing at
-`docs/internal/WebhookOrPollingSurvey.md`. No code changes on
+`docs/DesignsAndPlans/WebhookOrPollingSurvey.md`. No code changes on
 this branch — research only.

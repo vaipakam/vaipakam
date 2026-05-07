@@ -304,9 +304,9 @@ probe needed.
 
 - `DesignsAndPlans/DecentralizedPlatformArchitecture.md` Pillar
   4.2 (parent).
-- `internal/EventSourcingAudit.md` — extended event payloads
+- `DesignsAndPlans/EventSourcingAudit.md` — extended event payloads
   the provider's subscribers consume.
-- `internal/CacheStoreDesign.md` — IndexedDB store updated by
+- `DesignsAndPlans/CacheStoreDesign.md` — IndexedDB store updated by
   subscriber `onEvent` handlers.
 - `frontend/src/lib/logIndex.ts` — existing 23-topic-OR scanner
   whose pattern the provider generalises.

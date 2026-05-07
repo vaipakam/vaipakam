@@ -387,9 +387,9 @@ silent drift.
 
 - `DesignsAndPlans/DecentralizedPlatformArchitecture.md` Pillar
   4.6 (parent).
-- `internal/MultiRpcStrategyDesign.md` — bundled-fallback list
+- `DesignsAndPlans/MultiRpcStrategyDesign.md` — bundled-fallback list
   discipline matters most for the IPFS-hosted path.
-- `internal/CacheStoreDesign.md` — IndexedDB cache works
+- `DesignsAndPlans/CacheStoreDesign.md` — IndexedDB cache works
   identically whether the bundle is served from IPFS or
   Cloudflare; both routes hit the same browser-side cache.
 - `OperatorNodeDeploymentDesign.md` — operator's Kubo daemon

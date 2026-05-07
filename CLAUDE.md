@@ -533,7 +533,7 @@ and gate accordingly.
 variant is a separate deploy on a separate fork that re-uses the
 same contracts with KYC + country-pair flipped on. Don't delete the
 gates from the source; just don't enable them on the retail deploy.
-See [`docs/internal/Roadmap.md`](docs/internal/Roadmap.md) for the
+See [`docs/DesignsAndPlans/Roadmap.md`](docs/DesignsAndPlans/Roadmap.md) for the
 fork plan.
 
 The Sepolia test scripts (`SepoliaActiveLoan.s.sol`,

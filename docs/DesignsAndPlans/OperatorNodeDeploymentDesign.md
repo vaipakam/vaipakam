@@ -206,7 +206,7 @@ third-party dependency.
 
 API shape mirrors the worker's existing `/offers/*`, `/loans/*`,
 `/activity/*` endpoints so the frontend's `subgraphClient`
-adapter pattern (see `internal/SubgraphSchemaDesign.md`) handles
+adapter pattern (see `DesignsAndPlans/SubgraphSchemaDesign.md`) handles
 this source identically — no special-case wiring per source.
 
 RAM footprint: ~50 MB (Express / Fastify is light; reads from
@@ -225,7 +225,7 @@ server filters, reconnect-with-replay), distinct origin. Sources
 events from the local Postgres mirror, NOT from Cloudflare D1 —
 fully independent of any hosted service.
 
-Frontend's WS-failover order (per `internal/WebhookOrPollingSurvey.md`):
+Frontend's WS-failover order (per `DesignsAndPlans/WebhookOrPollingSurvey.md`):
 
 ```
 Cloudflare WS (8a)  →  Operator-hosted WS (8b, this node)  →  Polling fallback
@@ -375,7 +375,7 @@ Recommended phase order:
 
 The original question on this page ("can we include a webhook so it
 serves as an alternative to the indexer?") was answered in
-`docs/internal/WebhookOrPollingSurvey.md` after surveying eight
+`docs/DesignsAndPlans/WebhookOrPollingSurvey.md` after surveying eight
 mature DeFi / DEX platforms. Summary:
 
 - **Server-to-server webhooks** are NOT the right pattern for the

@@ -389,9 +389,9 @@ The hooks try (1); on any error, try (2); on any error, try
 
 - `DesignsAndPlans/DecentralizedPlatformArchitecture.md` Pillar
   4.5 (parent).
-- `internal/EventSourcingAudit.md` — handler simplicity depends
+- `DesignsAndPlans/EventSourcingAudit.md` — handler simplicity depends
   on Phase 1's self-sufficient events landing first.
-- `internal/CacheStoreDesign.md` — subgraph queries feed the
+- `DesignsAndPlans/CacheStoreDesign.md` — subgraph queries feed the
   same merge handler as worker / live-tail; consumer-side
   contract is identical.
 - `ops/hf-watcher/src/chainIndexer.ts` — source decoder logic

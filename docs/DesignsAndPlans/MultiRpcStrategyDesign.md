@@ -312,7 +312,7 @@ endpoint" without opening dev tools.
   endpoint list per chain.
 - `frontend/src/contracts/useDiamond.ts` — `useDiamondPublicClient`
   uses the multi-rpc transport.
-- `internal/IPFSHostingPipelineDesign.md` — bundled-fallback
+- `DesignsAndPlans/IPFSHostingPipelineDesign.md` — bundled-fallback
   list discipline matters most for the IPFS-hosted path.
 - Industry refs: Uniswap interface multi-RPC config; Aave
   Settings page custom-RPC UX; EIP-6963 spec.

@@ -328,11 +328,11 @@ default.
 
 - `DesignsAndPlans/DecentralizedPlatformArchitecture.md` Pillar
   4.3 (parent).
-- `internal/EventSourcingAudit.md` — extended event payloads the
+- `DesignsAndPlans/EventSourcingAudit.md` — extended event payloads the
   merge handler decodes.
-- `internal/LiveTailProviderDesign.md` — the dispatcher that
+- `DesignsAndPlans/LiveTailProviderDesign.md` — the dispatcher that
   feeds events into the merge handler.
-- `internal/SubgraphSchemaDesign.md` — third source feeding the
+- `DesignsAndPlans/SubgraphSchemaDesign.md` — third source feeding the
   same merge handler post-Phase-6.
 - `frontend/src/lib/logIndex.ts` — existing localStorage cache
   pattern; the IndexedDB cache supersedes it.
