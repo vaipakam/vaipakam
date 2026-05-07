@@ -326,6 +326,139 @@
   },
   {
     "type": "event",
+    "name": "LoanInitiatedDetails",
+    "inputs": [
+      {
+        "name": "loanId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "lender",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "borrower",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "details",
+        "type": "tuple",
+        "indexed": false,
+        "internalType": "struct LoanFacet.LoanInitDetails",
+        "components": [
+          {
+            "name": "principalAsset",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "interestRateBps",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "durationDays",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "dueTimestamp",
+            "type": "uint64",
+            "internalType": "uint64"
+          },
+          {
+            "name": "assetType",
+            "type": "uint8",
+            "internalType": "enum LibVaipakam.AssetType"
+          },
+          {
+            "name": "collateralAssetType",
+            "type": "uint8",
+            "internalType": "enum LibVaipakam.AssetType"
+          },
+          {
+            "name": "tokenId",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "quantity",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "collateralAsset",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "collateralAmount",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "collateralTokenId",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "collateralQuantity",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "prepayAsset",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "prepayAmount",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "bufferAmount",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "fallbackConsentFromBoth",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
+            "name": "allowsPartialRepay",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
+            "name": "periodicInterestCadence",
+            "type": "uint8",
+            "internalType": "enum LibVaipakam.PeriodicInterestCadence"
+          },
+          {
+            "name": "matcher",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "healthFactorAtInit",
+            "type": "uint256",
+            "internalType": "uint256"
+          }
+        ]
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "NotificationFeeBilled",
     "inputs": [
       {

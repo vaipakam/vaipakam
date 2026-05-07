@@ -272,6 +272,76 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
      *         feed dominates the scale).
      * @return decimals The feed's decimal scaling.
      */
+    /// @notice Permissionless daily oracle snapshot.
+    ///         AnalyticalGettersDesign §3.4 (decisions D9–D11).
+    /// @dev    Anyone may call. First caller per UTC-day per asset
+    ///         wins; subsequent same-day calls revert
+    ///         {AlreadySnapshotted}. Stores the live Chainlink answer
+    ///         (via {getAssetPrice}) into
+    ///         `s.assetPriceSnapshots[asset][dayIndex]` for later
+    ///         historical-TVL reconstruction by the frontend chart.
+    /// @dev    Cadence is enforced by the per-(asset, dayIndex) storage
+    ///         slot — once a day's slot is written, it stays. The
+    ///         permissionless-keeper model (D10) means a single
+    ///         missed cron tick is rescuable by any subsequent
+    ///         caller before the day ends.
+    /// @param  assets List of assets to snapshot in one tx (gas-
+    ///         efficient batch). Order doesn't matter; per-asset
+    ///         snapshots are independent.
+    function captureDailyPriceSnapshot(address[] calldata assets) external {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        uint256 today = block.timestamp / 1 days;
+        for (uint256 i = 0; i < assets.length; i++) {
+            address asset = assets[i];
+            // Skip silently if today's slot is already populated —
+            // batch keepers shouldn't fail-fast on a single
+            // already-captured asset, the rest may still need work.
+            if (s.assetPriceSnapshots[asset][today].capturedAt != 0) continue;
+            // try-call so a single asset whose feed is stale or whose
+            // secondary-quorum check disagrees doesn't take down the
+            // whole batch. The day's slot stays unwritten and any
+            // subsequent caller can retry once the feed recovers.
+            try this.getAssetPrice(asset) returns (uint256 price, uint8 feedDecimals) {
+                s.assetPriceSnapshots[asset][today] = LibVaipakam.AssetPriceSnapshot({
+                    // Cast: Chainlink price is positive in practice and
+                    // we already revert on stale / negative answers
+                    // upstream in `_primaryPrice`.
+                    price: int256(price),
+                    feedDecimals: feedDecimals,
+                    capturedAt: uint64(block.timestamp)
+                });
+                emit DailyAssetPriceCaptured(asset, today, price, feedDecimals);
+            } catch {
+                // No-op for this asset; loop continues.
+            }
+        }
+    }
+
+    /// @notice Read a previously-captured daily oracle snapshot.
+    /// @dev    Returns the zero-struct for unwritten days
+    ///         (`capturedAt == 0` is the canonical "never captured"
+    ///         signal). The frontend's historical-TVL chart shows
+    ///         "data as of HH:MM UTC" using `capturedAt` for
+    ///         transparency about lag (D11).
+    /// @param  asset    Asset whose snapshot to read.
+    /// @param  dayIndex `block.timestamp / 86400` of the queried day.
+    function getHistoricalAssetPrice(address asset, uint32 dayIndex)
+        external
+        view
+        returns (LibVaipakam.AssetPriceSnapshot memory snapshot)
+    {
+        snapshot = LibVaipakam.storageSlot().assetPriceSnapshots[asset][dayIndex];
+    }
+
+    /// @notice Emitted on each `(asset, dayIndex)` snapshot capture.
+    /// @custom:event-category informational/config
+    event DailyAssetPriceCaptured(
+        address indexed asset,
+        uint256 indexed dayIndex,
+        uint256 price,
+        uint8 feedDecimals
+    );
+
     function getAssetPrice(
         address asset
     ) external view returns (uint256 price, uint8 decimals) {

@@ -57,6 +57,7 @@ contract RewardReporterFacet is
     /// @param lenderNumeraire18           Local lender USD-18 interest on `dayId`.
     /// @param borrowerNumeraire18         Local borrower USD-18 interest on `dayId`.
     /// @param viaOApp               False iff recorded directly (Base path).
+    /// @custom:event-category informational/reward-transport
     event ChainInterestReported(
         uint256 indexed dayId,
         uint32 indexed sourceEid,
@@ -72,6 +73,7 @@ contract RewardReporterFacet is
     /// @param dayId                 Day whose denominator landed.
     /// @param globalLenderNumeraire18     Finalized global lender denominator.
     /// @param globalBorrowerNumeraire18   Finalized global borrower denominator.
+    /// @custom:event-category informational/reward-transport
     event KnownGlobalInterestSet(
         uint256 indexed dayId,
         uint256 globalLenderNumeraire18,
@@ -79,6 +81,7 @@ contract RewardReporterFacet is
     );
 
     /// @notice Emitted on any admin setter touching the cross-chain wiring.
+    /// @custom:event-category informational/config
     event RewardReporterConfigUpdated(
         bytes32 indexed key,
         bytes32 oldValue,

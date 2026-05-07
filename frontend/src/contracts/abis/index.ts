@@ -19,6 +19,7 @@ import EarlyWithdrawalFacetABI from './EarlyWithdrawalFacet.json';
 import TreasuryFacetABI from './TreasuryFacet.json';
 import DiamondLoupeFacetABI from './DiamondLoupeFacet.json';
 import MetricsFacetABI from './MetricsFacet.json';
+import MetricsDashboardFacetABI from './MetricsDashboardFacet.json';
 import VPFITokenFacetABI from './VPFITokenFacet.json';
 import VPFIDiscountFacetABI from './VPFIDiscountFacet.json';
 import StakingRewardsFacetABI from './StakingRewardsFacet.json';
@@ -51,6 +52,7 @@ export {
   TreasuryFacetABI,
   DiamondLoupeFacetABI,
   MetricsFacetABI,
+  MetricsDashboardFacetABI,
   VPFITokenFacetABI,
   VPFIDiscountFacetABI,
   StakingRewardsFacetABI,
@@ -93,6 +95,7 @@ export const DIAMOND_ABI = [
   ...TreasuryFacetABI,
   ...DiamondLoupeFacetABI,
   ...MetricsFacetABI,
+  ...MetricsDashboardFacetABI,
   ...VPFITokenFacetABI,
   ...VPFIDiscountFacetABI,
   ...StakingRewardsFacetABI,

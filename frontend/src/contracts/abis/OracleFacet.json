@@ -35,6 +35,19 @@
   },
   {
     "type": "function",
+    "name": "captureDailyPriceSnapshot",
+    "inputs": [
+      {
+        "name": "assets",
+        "type": "address[]",
+        "internalType": "address[]"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "checkLiquidity",
     "inputs": [
       {
@@ -136,6 +149,47 @@
   },
   {
     "type": "function",
+    "name": "getHistoricalAssetPrice",
+    "inputs": [
+      {
+        "name": "asset",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "dayIndex",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "snapshot",
+        "type": "tuple",
+        "internalType": "struct LibVaipakam.AssetPriceSnapshot",
+        "components": [
+          {
+            "name": "price",
+            "type": "int256",
+            "internalType": "int256"
+          },
+          {
+            "name": "feedDecimals",
+            "type": "uint8",
+            "internalType": "uint8"
+          },
+          {
+            "name": "capturedAt",
+            "type": "uint64",
+            "internalType": "uint64"
+          }
+        ]
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "getIlliquidAssets",
     "inputs": [],
     "outputs": [
@@ -191,6 +245,37 @@
       }
     ],
     "stateMutability": "view"
+  },
+  {
+    "type": "event",
+    "name": "DailyAssetPriceCaptured",
+    "inputs": [
+      {
+        "name": "asset",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "dayIndex",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "price",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "feedDecimals",
+        "type": "uint8",
+        "indexed": false,
+        "internalType": "uint8"
+      }
+    ],
+    "anonymous": false
   },
   {
     "type": "error",

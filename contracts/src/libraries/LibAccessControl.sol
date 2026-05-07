@@ -64,8 +64,11 @@ library LibAccessControl {
     }
 
     // ─── Events ──────────────────────────────────────────────────────────
+    /// @custom:event-category informational/admin
     event RoleGranted(bytes32 indexed role, address indexed account, address indexed sender);
+    /// @custom:event-category informational/admin
     event RoleRevoked(bytes32 indexed role, address indexed account, address indexed sender);
+    /// @custom:event-category informational/admin
     event RoleAdminChanged(bytes32 indexed role, bytes32 indexed previousAdminRole, bytes32 indexed newAdminRole);
 
     // ─── Errors ──────────────────────────────────────────────────────────

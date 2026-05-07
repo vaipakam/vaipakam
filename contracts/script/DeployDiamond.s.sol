@@ -31,6 +31,7 @@ import {PartialWithdrawalFacet} from "../src/facets/PartialWithdrawalFacet.sol";
 import {PrecloseFacet} from "../src/facets/PrecloseFacet.sol";
 import {RefinanceFacet} from "../src/facets/RefinanceFacet.sol";
 import {MetricsFacet} from "../src/facets/MetricsFacet.sol";
+import {MetricsDashboardFacet} from "../src/facets/MetricsDashboardFacet.sol";
 import {VPFITokenFacet} from "../src/facets/VPFITokenFacet.sol";
 import {VPFIDiscountFacet} from "../src/facets/VPFIDiscountFacet.sol";
 import {StakingRewardsFacet} from "../src/facets/StakingRewardsFacet.sol";
@@ -93,6 +94,7 @@ contract DeployDiamond is Script {
         PrecloseFacet precloseFacet = new PrecloseFacet();
         RefinanceFacet refinanceFacet = new RefinanceFacet();
         MetricsFacet metricsFacet = new MetricsFacet();
+        MetricsDashboardFacet metricsDashboardFacet = new MetricsDashboardFacet();
         VPFITokenFacet vpfiTokenFacet = new VPFITokenFacet();
         VPFIDiscountFacet vpfiDiscountFacet = new VPFIDiscountFacet();
         StakingRewardsFacet stakingRewardsFacet = new StakingRewardsFacet();
@@ -124,8 +126,8 @@ contract DeployDiamond is Script {
         console.log("Diamond deployed at:", diamond);
 
         // ── Step 3: Build facet cuts ────────────────────────────────────
-        // 32 facets (DiamondCutFacet already added by constructor)
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](32);
+        // 33 facets (DiamondCutFacet already added by constructor)
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](33);
 
         cuts[0] = _buildCut(address(loupeFacet), _getLoupeSelectors());
         cuts[1] = _buildCut(address(ownershipFacet), _getOwnershipSelectors());
@@ -159,6 +161,7 @@ contract DeployDiamond is Script {
         cuts[29] = _buildCut(address(legalFacet), _getLegalSelectors());
         cuts[30] = _buildCut(address(offerMatchFacet), _getOfferMatchSelectors());
         cuts[31] = _buildCut(address(offerCancelFacet), _getOfferCancelSelectors());
+        cuts[32] = _buildCut(address(metricsDashboardFacet), _getMetricsDashboardSelectors());
 
         // ── Step 4: Execute diamond cut ─────────────────────────────────
         // Split into two halves to stay under Base Sepolia's per-tx
@@ -366,6 +369,7 @@ contract DeployDiamond is Script {
         Deployments.writeFacet("precloseFacet",           address(precloseFacet));
         Deployments.writeFacet("refinanceFacet",          address(refinanceFacet));
         Deployments.writeFacet("metricsFacet",            address(metricsFacet));
+        Deployments.writeFacet("metricsDashboardFacet",   address(metricsDashboardFacet));
         Deployments.writeFacet("vpfiTokenFacet",          address(vpfiTokenFacet));
         Deployments.writeFacet("vpfiDiscountFacet",       address(vpfiDiscountFacet));
         Deployments.writeFacet("stakingRewardsFacet",     address(stakingRewardsFacet));
@@ -410,6 +414,7 @@ contract DeployDiamond is Script {
         console.log("PrecloseFacet:        ", address(precloseFacet));
         console.log("RefinanceFacet:       ", address(refinanceFacet));
         console.log("MetricsFacet:         ", address(metricsFacet));
+        console.log("MetricsDashboardFacet:", address(metricsDashboardFacet));
         console.log("VPFITokenFacet:       ", address(vpfiTokenFacet));
         console.log("VPFIDiscountFacet:    ", address(vpfiDiscountFacet));
         console.log("StakingRewardsFacet:  ", address(stakingRewardsFacet));
@@ -549,7 +554,7 @@ contract DeployDiamond is Script {
     }
 
     function _getOracleSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](9);
+        s = new bytes4[](11);
         s[0] = OracleFacet.checkLiquidity.selector;
         s[1] = OracleFacet.getAssetPrice.selector;
         s[2] = OracleFacet.calculateLTV.selector;
@@ -559,6 +564,10 @@ contract DeployDiamond is Script {
         s[6] = OracleFacet.isAssetSupported.selector;
         s[7] = OracleFacet.getSequencerUptimeFeed.selector;
         s[8] = OracleFacet.sequencerHealthy.selector;
+        // AnalyticalGettersDesign §3.4 — daily price-snapshot ring
+        // buffer for historical TVL reconstruction.
+        s[9] = OracleFacet.captureDailyPriceSnapshot.selector;
+        s[10] = OracleFacet.getHistoricalAssetPrice.selector;
     }
 
     function _getOracleAdminSelectors() internal pure returns (bytes4[] memory s) {
@@ -1039,7 +1048,7 @@ contract DeployDiamond is Script {
     }
 
     function _getMetricsSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](34);
+        s = new bytes4[](35);
         s[0] = MetricsFacet.getProtocolTVL.selector;
         s[1] = MetricsFacet.getProtocolStats.selector;
         s[2] = MetricsFacet.getUserCount.selector;
@@ -1047,7 +1056,9 @@ contract DeployDiamond is Script {
         s[4] = MetricsFacet.getActiveOffersCount.selector;
         s[5] = MetricsFacet.getTotalInterestEarnedNumeraire.selector;
         s[6] = MetricsFacet.getTreasuryMetrics.selector;
-        s[7] = MetricsFacet.getRevenueStats.selector;
+        // Legacy overload — disambiguated by full signature now that
+        // the per-asset overload (added in §A.2) shares the name.
+        s[7] = bytes4(keccak256("getRevenueStats(uint256)"));
         s[8] = MetricsFacet.getActiveLoansPaginated.selector;
         s[9] = MetricsFacet.getActiveOffersByAsset.selector;
         s[10] = MetricsFacet.getLoanSummary.selector;
@@ -1083,6 +1094,22 @@ contract DeployDiamond is Script {
         // verifier UI. Returns realized loan terms, locked collateral,
         // and claim state in one structured read.
         s[33] = MetricsFacet.getNFTPositionSummary.selector;
+        // AnalyticalGettersDesign §3.2 — rolling-window per-asset
+        // treasury accrual. Overload of the legacy
+        // `getRevenueStats(uint256)` at index 7; selector hashed
+        // explicitly because `.selector` is ambiguous on overloads.
+        s[34] = bytes4(keccak256("getRevenueStats(address,uint16)"));
+    }
+
+    /// AnalyticalGettersDesign §3.1 — per-user dashboard surface. One
+    /// scalar snapshot + three paginated list views collapse the
+    /// frontend Dashboard's 13-RPC first-load into 3 calls.
+    function _getMetricsDashboardSelectors() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](4);
+        s[0] = MetricsDashboardFacet.getUserDashboardSnapshot.selector;
+        s[1] = MetricsDashboardFacet.getUserDashboardLoans.selector;
+        s[2] = MetricsDashboardFacet.getUserDashboardOffers.selector;
+        s[3] = MetricsDashboardFacet.getUserDashboardClaimables.selector;
     }
 
     /// Phase 4.1 — Terms-of-Service acceptance gate. The gate stays

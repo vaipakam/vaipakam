@@ -42,6 +42,7 @@ contract EscrowFactoryFacet is DiamondAccessControl, IVaipakamErrors {
     /// @notice Emitted when a new user escrow proxy is created.
     /// @param user The address of the user for whom the escrow is created.
     /// @param proxy The address of the newly deployed proxy.
+    /// @custom:event-category state-change/escrow-mutation
     event UserEscrowCreated(address indexed user, address proxy);
 
     /// @notice Emitted whenever the Vaipakam escrow wrapper's rental state
@@ -53,6 +54,7 @@ contract EscrowFactoryFacet is DiamondAccessControl, IVaipakamErrors {
     ///         applied for `user`, while `activeTotalQuantity` /
     ///         `minActiveExpires` reflect the post-update aggregate across
     ///         all active renters of the same (nftContract, tokenId).
+    /// @custom:event-category state-change/escrow-mutation
     event EscrowRentalUpdated(
         address indexed lender,
         address indexed nftContract,
@@ -71,6 +73,7 @@ contract EscrowFactoryFacet is DiamondAccessControl, IVaipakamErrors {
     ///        the upgrade. Indexers use this to correlate later per-user
     ///        `upgradeUserEscrow` events with the implementation that
     ///        became current at this moment.
+    /// @custom:event-category state-change/escrow-mutation
     event EscrowImplementationUpgraded(
         address indexed oldImplementation,
         address indexed newImplementation,
@@ -107,6 +110,7 @@ contract EscrowFactoryFacet is DiamondAccessControl, IVaipakamErrors {
     /// @param  amount  Amount returned to `user` (recipient is locked
     ///                 to the user themselves — admin cannot redirect).
     /// @param  admin   `msg.sender` of the recovery call.
+    /// @custom:event-category state-change/escrow-mutation
     event StuckERC20Recovered(
         address indexed user,
         address indexed token,
@@ -489,6 +493,7 @@ contract EscrowFactoryFacet is DiamondAccessControl, IVaipakamErrors {
     ///                         is locked to the user themselves —
     ///                         no parameter accepted).
     /// @param  nonce           Recovery nonce consumed by this call.
+    /// @custom:event-category state-change/escrow-mutation
     event StuckERC20Recovered(
         address indexed user,
         address indexed token,
@@ -503,6 +508,7 @@ contract EscrowFactoryFacet is DiamondAccessControl, IVaipakamErrors {
     ///         is de-listed from the oracle. The corresponding
     ///         `recoverStuckERC20` call reverts immediately after
     ///         emitting; tokens stay in the escrow.
+    /// @custom:event-category informational/admin
     event EscrowBannedFromRecoveryAttempt(
         address indexed user,
         address indexed token,
@@ -516,6 +522,7 @@ contract EscrowFactoryFacet is DiamondAccessControl, IVaipakamErrors {
     ///         compliance audit trail useful for individual user
     ///         disputes with CEXs / regulators ("here's the on-chain
     ///         record of my disowning the suspicious deposit").
+    /// @custom:event-category state-change/escrow-mutation
     event TokenDisowned(
         address indexed user,
         address indexed token,

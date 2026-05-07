@@ -49,7 +49,35 @@ import {LibSwap} from "../libraries/LibSwap.sol";
 contract DefaultedFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors {
     using SafeERC20 for IERC20;
 
-    /// @notice Emitted when a loan defaults.
+    /// @notice Emitted when a time-based default's swap-path fallback fires
+    ///         and the loan transitions `Active → FallbackPending`. Distinct
+    ///         from {LoanDefaulted} (terminal): the loan is still curable
+    ///         via {RepayFacet.repayLoan} or
+    ///         {AddCollateralFacet.addCollateral} until the lender claims.
+    /// @dev    Mutates `s.loans[loanId].status` to `FallbackPending` via
+    ///         {_fullCollateralTransferFallback} → {LibLifecycle.transition}.
+    ///         Emit-site MUST match the storage transition one-to-one
+    ///         (EventSourcingAudit §1.5 rule 1).
+    /// @param loanId The fallback-pending loan ID.
+    /// @param lender Lender address (indexed for filterable subscriptions).
+    /// @param fallbackConsentFromBoth Mirrors {Loan.fallbackConsentFromBoth}
+    ///        — informational, not a routing signal.
+    /// @param newStatus Post-transition `LoanStatus` (always
+    ///        `FallbackPending` for this event); included so cache-merge
+    ///        consumers can update the row directly from the payload.
+    /// @custom:event-category state-change/loan-mutation
+    event LoanFallbackPending(
+        uint256 indexed loanId,
+        address indexed lender,
+        bool fallbackConsentFromBoth,
+        LibVaipakam.LoanStatus newStatus
+    );
+
+    /// @notice Emitted when a loan reaches the terminal `Defaulted` status.
+    /// @dev    Mutates `s.loans[loanId].status` to `Defaulted`. Sibling
+    ///         {LoanFallbackPending} captures the swap-failure path's
+    ///         intermediate `FallbackPending` transition; this event is
+    ///         strictly the terminal `→ Defaulted` flip.
     /// @param loanId The ID of the defaulted loan.
     /// @param fallbackConsentFromBoth Mirrors {Loan.fallbackConsentFromBoth}
     ///        latched at initiation — the combined abnormal-market +
@@ -62,12 +90,24 @@ contract DefaultedFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
     ///        is decided by live liquidity/collapse state and swap success,
     ///        not by this flag; a liquid-collateral loan with flag=true will
     ///        still DEX-liquidate when conditions allow.
-    event LoanDefaulted(uint256 indexed loanId, bool fallbackConsentFromBoth);
+    /// @param newStatus Post-transition `LoanStatus` (always `Defaulted`
+    ///        for this event).
+    /// @custom:event-category state-change/loan-mutation
+    event LoanDefaulted(
+        uint256 indexed loanId,
+        bool fallbackConsentFromBoth,
+        LibVaipakam.LoanStatus newStatus
+    );
 
     /// @notice Emitted when a liquidation is triggered for liquid collateral.
+    /// @dev    Mutates `s.loans[loanId].status` to `Defaulted` (downstream
+    ///         of the swap-success path). Treated as a `loan-mutation` for
+    ///         the cache-merge contract — the row's terminal label flips
+    ///         from `Active` to `LoanLiquidated` on the NFT side.
     /// @param loanId The ID of the liquidated loan.
     /// @param proceeds The amount recovered from liquidation.
     /// @param treasuryFee The treasury fee deducted (if any).
+    /// @custom:event-category state-change/loan-mutation
     event LoanLiquidated(
         uint256 indexed loanId,
         uint256 proceeds,
@@ -83,26 +123,27 @@ contract DefaultedFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
 
     // MAX_LIQUIDATION_SLIPPAGE_BPS consolidated in LibVaipakam
 
-    /// @notice Emitted when a time-based default falls back to full collateral
-    ///         transfer because the DEX swap reverted or exceeded the 6% slippage
-    ///         threshold (README §7).
+    /// @notice Emitted alongside {LoanFallbackPending} when a time-based
+    ///         default falls back to full-collateral disposition because
+    ///         the DEX swap reverted or exceeded the 6% slippage ceiling
+    ///         (README §7).
+    /// @dev    Informational — the storage transition is captured by
+    ///         {LoanFallbackPending}; lender + collateral amount are
+    ///         recoverable from `s.loans[loanId].lender` and
+    ///         `s.fallbackSnapshot[loanId]` respectively.
+    ///         EventSourcingAudit §1.4 + §1.5 — primary-key-only payload.
     /// @param loanId The defaulted loan ID.
-    /// @param lender The lender who receives the full collateral.
-    /// @param collateralAmount The amount of collateral transferred.
-    event LiquidationFallback(
-        uint256 indexed loanId,
-        address indexed lender,
-        uint256 collateralAmount
-    );
+    /// @custom:event-category informational/liquidation
+    event LiquidationFallback(uint256 indexed loanId);
 
-    /// @notice Emitted alongside LiquidationFallback with the README §7 split
-    ///         (see RiskFacet.LiquidationFallbackSplit for field semantics).
-    event LiquidationFallbackSplit(
-        uint256 indexed loanId,
-        uint256 lenderCollateral,
-        uint256 treasuryCollateral,
-        uint256 borrowerCollateral
-    );
+    /// @notice Emitted alongside {LiquidationFallback} with the README §7
+    ///         three-way split.
+    /// @dev    Informational — the lender / treasury / borrower allocation
+    ///         is stored verbatim in `s.fallbackSnapshot[loanId]`.
+    ///         EventSourcingAudit §1.4 + §1.5 — primary-key-only payload.
+    /// @param loanId The defaulted loan ID.
+    /// @custom:event-category informational/liquidation
+    event LiquidationFallbackSplit(uint256 indexed loanId);
 
     /**
      * @notice Triggers default for a loan past grace period (permissionless).
@@ -244,7 +285,15 @@ contract DefaultedFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
                 );
                 if (!swapSuccess) {
                     _fullCollateralTransferFallback(loanId, loan);
-                    emit LoanDefaulted(loanId, loan.fallbackConsentFromBoth);
+                    // §3.8 — _fullCollateralTransferFallback transitioned the
+                    // loan to FallbackPending; emit the matching state-change
+                    // event (NOT LoanDefaulted — the loan is still curable).
+                    emit LoanFallbackPending(
+                        loanId,
+                        loan.lender,
+                        loan.fallbackConsentFromBoth,
+                        loan.status
+                    );
                     return;
                 }
                 uint256 proceeds = proceedsFromSwap;
@@ -502,7 +551,7 @@ contract DefaultedFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
             // Default → borrower loses interaction rewards, lender keeps hers.
             LibInteractionRewards.closeLoan(loanId, /* borrowerClean */ false, /* lenderForfeit */ false);
         }
-        emit LoanDefaulted(loanId, loan.fallbackConsentFromBoth);
+        emit LoanDefaulted(loanId, loan.fallbackConsentFromBoth, loan.status);
     }
 
     /**
@@ -602,13 +651,11 @@ contract DefaultedFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
             NFTStatusUpdateFailed.selector
         );
 
-        emit LiquidationFallback(loanId, loan.lender, loan.collateralAmount);
-        emit LiquidationFallbackSplit(
-            loanId,
-            s.fallbackSnapshot[loanId].lenderCollateral,
-            s.fallbackSnapshot[loanId].treasuryCollateral,
-            s.fallbackSnapshot[loanId].borrowerCollateral
-        );
+        // §1.4 + §1.5 — informational events carry only the loanId primary
+        // key. lender + split are recoverable from s.loans[loanId] and
+        // s.fallbackSnapshot[loanId] respectively.
+        emit LiquidationFallback(loanId);
+        emit LiquidationFallbackSplit(loanId);
     }
 
 }

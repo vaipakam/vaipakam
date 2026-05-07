@@ -3,7 +3,7 @@ pragma solidity ^0.8.29;
 
 import {Script} from "forge-std/Script.sol";
 import {console} from "forge-std/console.sol";
-import {TimelockController} from "@openzeppelin/contracts/governance/TimelockController.sol";
+import {VaipakamTimelock} from "../src/governance/VaipakamTimelock.sol";
 import {Deployments} from "./lib/Deployments.sol";
 
 /**
@@ -62,7 +62,7 @@ contract DeployTimelock is Script {
         console.log("Executor:       ", executor);
 
         vm.startBroadcast(deployerKey);
-        TimelockController tl = new TimelockController(
+        VaipakamTimelock tl = new VaipakamTimelock(
             minDelay,
             proposers,
             executors,

@@ -70,6 +70,11 @@ library LibFacet {
         if (s.treasury == address(this)) {
             s.treasuryBalances[asset] += amount;
         }
+        // AnalyticalGettersDesign §3.2 / D5 — per-asset day-bucket
+        // running total. dayIndex resets every UTC midnight; the
+        // ring-buffer mapping is unbounded but only the last
+        // {1..365} entries per asset are read by `getRevenueStats`.
+        s.treasuryAccrualByDay[asset][block.timestamp / 1 days] += amount;
         accrueTreasuryFee(asset, amount);
     }
 

@@ -347,7 +347,8 @@ contract EarlyWithdrawalFacetTest is Test {
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.mintNFT.selector), "");
 
         vm.expectEmit(true, true, true, false);
-        emit EarlyWithdrawalFacet.LoanSold(activeLoanId, lender, newLender, 0);
+        // Topic-only check (data=false in expectEmit above); zero placeholders.
+        emit EarlyWithdrawalFacet.LoanSold(activeLoanId, lender, newLender, 0, 0, 0, 0, 0);
         vm.prank(lender);
         EarlyWithdrawalFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
 

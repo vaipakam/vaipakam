@@ -58,6 +58,7 @@ abstract contract LZGuardianPausable is
     /// @notice Emitted whenever the guardian address rotates. Indexed so
     ///         off-chain monitoring can alert on any transition (a silent
     ///         guardian swap during a live incident is itself a red flag).
+    /// @custom:event-category informational/admin
     event GuardianUpdated(
         address indexed previousGuardian,
         address indexed newGuardian

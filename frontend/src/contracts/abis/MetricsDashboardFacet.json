@@ -1,0 +1,602 @@
+[
+  {
+    "type": "function",
+    "name": "MAX_PAGE_LIMIT",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getUserDashboardClaimables",
+    "inputs": [
+      {
+        "name": "user",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "borrowerSide",
+        "type": "bool",
+        "internalType": "bool"
+      },
+      {
+        "name": "offset",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "limit",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "loanIds",
+        "type": "uint256[]",
+        "internalType": "uint256[]"
+      },
+      {
+        "name": "claims",
+        "type": "tuple[]",
+        "internalType": "struct LibVaipakam.ClaimInfo[]",
+        "components": [
+          {
+            "name": "asset",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "amount",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "assetType",
+            "type": "uint8",
+            "internalType": "enum LibVaipakam.AssetType"
+          },
+          {
+            "name": "tokenId",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "quantity",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "claimed",
+            "type": "bool",
+            "internalType": "bool"
+          }
+        ]
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getUserDashboardLoans",
+    "inputs": [
+      {
+        "name": "user",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "borrowerSide",
+        "type": "bool",
+        "internalType": "bool"
+      },
+      {
+        "name": "offset",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "limit",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "loans",
+        "type": "tuple[]",
+        "internalType": "struct MetricsDashboardFacet.LoanWithRisk[]",
+        "components": [
+          {
+            "name": "loan",
+            "type": "tuple",
+            "internalType": "struct LibVaipakam.Loan",
+            "components": [
+              {
+                "name": "id",
+                "type": "uint256",
+                "internalType": "uint256"
+              },
+              {
+                "name": "offerId",
+                "type": "uint256",
+                "internalType": "uint256"
+              },
+              {
+                "name": "lender",
+                "type": "address",
+                "internalType": "address"
+              },
+              {
+                "name": "principalLiquidity",
+                "type": "uint8",
+                "internalType": "enum LibVaipakam.LiquidityStatus"
+              },
+              {
+                "name": "collateralLiquidity",
+                "type": "uint8",
+                "internalType": "enum LibVaipakam.LiquidityStatus"
+              },
+              {
+                "name": "status",
+                "type": "uint8",
+                "internalType": "enum LibVaipakam.LoanStatus"
+              },
+              {
+                "name": "assetType",
+                "type": "uint8",
+                "internalType": "enum LibVaipakam.AssetType"
+              },
+              {
+                "name": "useFullTermInterest",
+                "type": "bool",
+                "internalType": "bool"
+              },
+              {
+                "name": "fallbackConsentFromBoth",
+                "type": "bool",
+                "internalType": "bool"
+              },
+              {
+                "name": "collateralAssetType",
+                "type": "uint8",
+                "internalType": "enum LibVaipakam.AssetType"
+              },
+              {
+                "name": "fallbackLenderBonusBpsAtInit",
+                "type": "uint16",
+                "internalType": "uint16"
+              },
+              {
+                "name": "fallbackTreasuryBpsAtInit",
+                "type": "uint16",
+                "internalType": "uint16"
+              },
+              {
+                "name": "borrower",
+                "type": "address",
+                "internalType": "address"
+              },
+              {
+                "name": "allowsPartialRepay",
+                "type": "bool",
+                "internalType": "bool"
+              },
+              {
+                "name": "periodicInterestCadence",
+                "type": "uint8",
+                "internalType": "enum LibVaipakam.PeriodicInterestCadence"
+              },
+              {
+                "name": "lastPeriodicInterestSettledAt",
+                "type": "uint64",
+                "internalType": "uint64"
+              },
+              {
+                "name": "lenderTokenId",
+                "type": "uint256",
+                "internalType": "uint256"
+              },
+              {
+                "name": "borrowerTokenId",
+                "type": "uint256",
+                "internalType": "uint256"
+              },
+              {
+                "name": "principal",
+                "type": "uint256",
+                "internalType": "uint256"
+              },
+              {
+                "name": "principalAsset",
+                "type": "address",
+                "internalType": "address"
+              },
+              {
+                "name": "interestRateBps",
+                "type": "uint256",
+                "internalType": "uint256"
+              },
+              {
+                "name": "startTime",
+                "type": "uint64",
+                "internalType": "uint64"
+              },
+              {
+                "name": "interestPaidSinceLastPeriod",
+                "type": "uint128",
+                "internalType": "uint128"
+              },
+              {
+                "name": "durationDays",
+                "type": "uint256",
+                "internalType": "uint256"
+              },
+              {
+                "name": "collateralAsset",
+                "type": "address",
+                "internalType": "address"
+              },
+              {
+                "name": "collateralAmount",
+                "type": "uint256",
+                "internalType": "uint256"
+              },
+              {
+                "name": "tokenId",
+                "type": "uint256",
+                "internalType": "uint256"
+              },
+              {
+                "name": "quantity",
+                "type": "uint256",
+                "internalType": "uint256"
+              },
+              {
+                "name": "prepayAmount",
+                "type": "uint256",
+                "internalType": "uint256"
+              },
+              {
+                "name": "bufferAmount",
+                "type": "uint256",
+                "internalType": "uint256"
+              },
+              {
+                "name": "lastDeductTime",
+                "type": "uint256",
+                "internalType": "uint256"
+              },
+              {
+                "name": "prepayAsset",
+                "type": "address",
+                "internalType": "address"
+              },
+              {
+                "name": "collateralTokenId",
+                "type": "uint256",
+                "internalType": "uint256"
+              },
+              {
+                "name": "collateralQuantity",
+                "type": "uint256",
+                "internalType": "uint256"
+              },
+              {
+                "name": "lenderDiscountAccAtInit",
+                "type": "uint256",
+                "internalType": "uint256"
+              },
+              {
+                "name": "borrowerDiscountAccAtInit",
+                "type": "uint256",
+                "internalType": "uint256"
+              },
+              {
+                "name": "matcher",
+                "type": "address",
+                "internalType": "address"
+              },
+              {
+                "name": "lenderNotifBilled",
+                "type": "bool",
+                "internalType": "bool"
+              },
+              {
+                "name": "borrowerNotifBilled",
+                "type": "bool",
+                "internalType": "bool"
+              }
+            ]
+          },
+          {
+            "name": "ltvBps",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "healthFactor",
+            "type": "uint256",
+            "internalType": "uint256"
+          }
+        ]
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getUserDashboardOffers",
+    "inputs": [
+      {
+        "name": "user",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "filledOnly",
+        "type": "bool",
+        "internalType": "bool"
+      },
+      {
+        "name": "offset",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "limit",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "offers",
+        "type": "tuple[]",
+        "internalType": "struct LibVaipakam.Offer[]",
+        "components": [
+          {
+            "name": "id",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "creator",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "offerType",
+            "type": "uint8",
+            "internalType": "enum LibVaipakam.OfferType"
+          },
+          {
+            "name": "principalLiquidity",
+            "type": "uint8",
+            "internalType": "enum LibVaipakam.LiquidityStatus"
+          },
+          {
+            "name": "collateralLiquidity",
+            "type": "uint8",
+            "internalType": "enum LibVaipakam.LiquidityStatus"
+          },
+          {
+            "name": "accepted",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
+            "name": "assetType",
+            "type": "uint8",
+            "internalType": "enum LibVaipakam.AssetType"
+          },
+          {
+            "name": "useFullTermInterest",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
+            "name": "creatorFallbackConsent",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
+            "name": "collateralAssetType",
+            "type": "uint8",
+            "internalType": "enum LibVaipakam.AssetType"
+          },
+          {
+            "name": "allowsPartialRepay",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
+            "name": "periodicInterestCadence",
+            "type": "uint8",
+            "internalType": "enum LibVaipakam.PeriodicInterestCadence"
+          },
+          {
+            "name": "lendingAsset",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "amount",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "interestRateBps",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "collateralAsset",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "collateralAmount",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "durationDays",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "tokenId",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "positionTokenId",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "quantity",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "prepayAsset",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "collateralTokenId",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "collateralQuantity",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "amountMax",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "amountFilled",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "interestRateBpsMax",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "createdAt",
+            "type": "uint64",
+            "internalType": "uint64"
+          }
+        ]
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getUserDashboardSnapshot",
+    "inputs": [
+      {
+        "name": "user",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "snap",
+        "type": "tuple",
+        "internalType": "struct MetricsDashboardFacet.DashboardScalars",
+        "components": [
+          {
+            "name": "stakingRewardsPending",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "escrowVpfiBalance",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "vpfiTier",
+            "type": "uint8",
+            "internalType": "uint8"
+          },
+          {
+            "name": "interactionRewardsPending",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "vpfiDiscountConsented",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
+            "name": "lenderLoanCount",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "borrowerLoanCount",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "activeOfferCount",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "filledOfferCount",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "lenderClaimableCount",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "borrowerClaimableCount",
+            "type": "uint32",
+            "internalType": "uint32"
+          }
+        ]
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "error",
+    "name": "LimitTooLarge",
+    "inputs": [
+      {
+        "name": "requested",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "max",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  }
+]

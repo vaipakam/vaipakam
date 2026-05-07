@@ -137,15 +137,20 @@ contract VPFIBuyReceiver is
 
     // ─── Events ─────────────────────────────────────────────────────────────
 
+    /// @custom:event-category informational/config
     event DiamondSet(address indexed oldDiamond, address indexed newDiamond);
+    /// @custom:event-category informational/config
     event OFTAdapterSet(address indexed oldAdapter, address indexed newAdapter);
+    /// @custom:event-category informational/config
     event VPFITokenSet(address indexed oldToken, address indexed newToken);
+    /// @custom:event-category informational/lz-plumbing
     event OptionsSet(uint8 indexed kind, bytes options);
 
     /// @notice Emitted when the per-eid registry of source-chain
     ///         {VPFIBuyAdapter} addresses is updated. T-031 Layer 2:
     ///         the OFT-compose target on the success path is read
     ///         from `buyAdapterByEid[dstEid]`.
+    /// @custom:event-category informational/config
     event BuyAdapterSet(
         uint32 indexed eid,
         address indexed oldAdapter,
@@ -157,10 +162,12 @@ contract VPFIBuyReceiver is
     ///         T-031 Layer 4a watchdog lane subscribe to this event
     ///         (or poll the `reconciliationWatchdogEnabled` view) to
     ///         pause/resume their reconciliation pass.
+    /// @custom:event-category informational/config
     event ReconciliationWatchdogToggled(bool enabled);
 
     /// @notice Emitted when a BUY_REQUEST was successfully processed
     ///         by the Diamond AND the return OFT send dispatched.
+    /// @custom:event-category state-change/escrow-mutation
     event BridgedBuyProcessed(
         uint64 indexed requestId,
         uint32 indexed originEid,
@@ -172,6 +179,7 @@ contract VPFIBuyReceiver is
 
     /// @notice Emitted when the Diamond rejected the bridged buy.
     ///         Adapter will refund the user.
+    /// @custom:event-category informational/lz-plumbing
     event BridgedBuyFailed(
         uint64 indexed requestId,
         uint32 indexed originEid,
@@ -186,6 +194,7 @@ contract VPFIBuyReceiver is
     ///         STILL sent (caps were debited on Base; the user's
     ///         origin-chain ETH must transfer to the local treasury to
     ///         keep the accounting identity).
+    /// @custom:event-category informational/lz-plumbing
     event VPFIStuckForManualBridge(
         uint64 indexed requestId,
         uint32 indexed originEid,
@@ -196,6 +205,7 @@ contract VPFIBuyReceiver is
 
     /// @notice Emitted when owner replays the OFT bridge for a stuck
     ///         request.
+    /// @custom:event-category state-change/escrow-mutation
     event BridgedBuyRescued(
         uint64 indexed requestId,
         uint32 indexed originEid,
@@ -207,10 +217,12 @@ contract VPFIBuyReceiver is
     /// @notice Inbound LZ packet decoded to a msgType we don't handle.
     ///         Logged (instead of reverted) so a misconfigured peer can't
     ///         stick the packet in LayerZero's retry queue.
+    /// @custom:event-category informational/lz-plumbing
     event UnknownInboundMessage(uint32 indexed srcEid, uint8 msgType);
 
     /// @notice Owner replayed a stuck bridge but the accounting couldn't
     ///         find the requestId (e.g. already rescued). Informational.
+    /// @custom:event-category informational/lz-plumbing
     event RescueNotedForUnknownStuck(uint64 indexed requestId);
 
     // ─── Errors ─────────────────────────────────────────────────────────────

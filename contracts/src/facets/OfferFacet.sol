@@ -74,20 +74,82 @@ contract OfferFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
     /// @param offerId The unique ID of the created offer.
     /// @param creator The address of the user creating the offer.
     /// @param offerType The type of offer (Lender or Borrower).
+    /// @custom:event-category state-change/offer-mutation
     event OfferCreated(
         uint256 indexed offerId,
         address indexed creator,
         LibVaipakam.OfferType offerType
     );
 
+    /// @notice Companion-event payload struct for {OfferCreatedDetails}.
+    /// @dev    Wrapped as a single tuple to dodge the viaIR
+    ///         stack-too-deep that triggers when ~17 inline event args
+    ///         expand at the emit site. ABI consumers see this as a
+    ///         flat tuple after the three indexed topics.
+    struct OfferCreatedFields {
+        LibVaipakam.OfferType offerType;
+        LibVaipakam.AssetType assetType;
+        LibVaipakam.AssetType collateralAssetType;
+        uint256 amount;
+        uint256 tokenId;
+        address collateralAsset;
+        uint256 collateralAmount;
+        uint256 interestRateBps;
+        uint256 durationDays;
+        uint256 amountMax;
+        uint256 interestRateBpsMax;
+        bool creatorFallbackConsent;
+        bool allowsPartialRepay;
+        LibVaipakam.PeriodicInterestCadence periodicInterestCadence;
+    }
+
+    /// @notice Companion to {OfferCreated} — full self-sufficient
+    ///         payload of the new offer. Mirrors the precedent of
+    ///         {OfferCancelFacet.OfferCanceledDetails}: the bare
+    ///         {OfferCreated} keeps its narrow shape for legacy
+    ///         filter consumers, and this companion carries the rest
+    ///         so cache-merge consumers (frontend IndexedDB, watcher
+    ///         D1, subgraph) can build the row entirely from the event
+    ///         payload — no follow-up `getOffer` view-call needed.
+    /// @dev    EventSourcingAudit §3.1 — `createdAt` is DROPPED per
+    ///         §1.4 (block.timestamp lives in the log envelope).
+    ///         Indexed `lendingAsset` adds a per-asset filter for
+    ///         analytical indexers without forcing them to subscribe
+    ///         to every offer creation event.
+    /// @param offerId             Indexed primary key.
+    /// @param creator             Indexed offer creator.
+    /// @param lendingAsset        Indexed loan principal asset.
+    /// @param fields              See {OfferCreatedFields} for field
+    ///        semantics.
+    /// @custom:event-category state-change/offer-mutation
+    event OfferCreatedDetails(
+        uint256 indexed offerId,
+        address indexed creator,
+        address indexed lendingAsset,
+        OfferCreatedFields fields
+    );
+
     /// @notice Emitted when an offer is accepted.
-    /// @param offerId The ID of the accepted offer.
-    /// @param acceptor The address of the user accepting the offer.
-    /// @param loanId The ID of the initiated loan.
+    /// @param offerId            The ID of the accepted offer.
+    /// @param acceptor           The address of the user accepting the offer.
+    /// @param loanId             The ID of the initiated loan.
+    /// @param matchAmount        The per-fill amount consumed by this
+    ///        acceptance. Phase 1 single-fill acceptances always consume
+    ///        the full `offer.amount`; Phase 2 partial fills will report
+    ///        per-acceptance slices.
+    /// @param newAmountFilled    Post-accept `s.offers[offerId].amountFilled`.
+    /// @param newAccepted        Post-accept `s.offers[offerId].accepted`
+    ///        (true once the offer is fully consumed).
+    ///        EventSourcingAudit §3.2 — saves the watcher / cache a
+    ///        follow-up `getOffer` round-trip.
+    /// @custom:event-category state-change/offer-mutation
     event OfferAccepted(
         uint256 indexed offerId,
         address indexed acceptor,
-        uint256 loanId
+        uint256 loanId,
+        uint256 matchAmount,
+        uint256 newAmountFilled,
+        bool newAccepted
     );
 
     /// @dev `OfferCanceled` and `OfferCanceledDetails` moved to
@@ -795,6 +857,32 @@ contract OfferFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
         LibMetricsHooks.onOfferCreated(offer);
 
         emit OfferCreated(offerId, creator, params.offerType);
+        _emitOfferCreatedDetails(offerId, creator);
+    }
+
+    /// @dev Emits {OfferCreatedDetails}. Factored out + populated
+    ///      field-by-field on a memory struct to dodge viaIR's
+    ///      stack-too-deep at the emit site.
+    function _emitOfferCreatedDetails(uint256 offerId, address creator) internal {
+        LibVaipakam.Offer storage offer = LibVaipakam.storageSlot().offers[offerId];
+
+        OfferCreatedFields memory f;
+        f.offerType = offer.offerType;
+        f.assetType = offer.assetType;
+        f.collateralAssetType = offer.collateralAssetType;
+        f.amount = offer.amount;
+        f.tokenId = offer.tokenId;
+        f.collateralAsset = offer.collateralAsset;
+        f.collateralAmount = offer.collateralAmount;
+        f.interestRateBps = offer.interestRateBps;
+        f.durationDays = offer.durationDays;
+        f.amountMax = offer.amountMax;
+        f.interestRateBpsMax = offer.interestRateBpsMax;
+        f.creatorFallbackConsent = offer.creatorFallbackConsent;
+        f.allowsPartialRepay = offer.allowsPartialRepay;
+        f.periodicInterestCadence = offer.periodicInterestCadence;
+
+        emit OfferCreatedDetails(offerId, creator, offer.lendingAsset, f);
     }
 
     /**
@@ -1571,7 +1659,20 @@ contract OfferFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
             }
         }
 
-        emit OfferAccepted(offerId, msg.sender, loanId);
+        // Phase 1 acceptOffer is single-fill: the storage `amountFilled`
+        // counter is reserved for the partial-fill range-orders code path
+        // (gated behind `partialFillEnabled`); it stays 0 in legacy single
+        // accepts. The event reports the EFFECTIVE post-accept fill amount,
+        // which equals the full offer amount once accepted.
+        uint256 effFilled = offer.accepted ? offer.amount : offer.amountFilled;
+        emit OfferAccepted(
+            offerId,
+            msg.sender,
+            loanId,
+            offer.amount,
+            effFilled,
+            offer.accepted
+        );
     }
 
 

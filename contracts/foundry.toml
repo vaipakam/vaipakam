@@ -6,6 +6,7 @@ solc_version = '0.8.29'
 viaIR = true
 optimizer = true
 optimizer_runs = 200
+threads = 8 
 
 # Filesystem cheatcode permissions. Required by `script/lib/Deployments.sol`
 # so deploy scripts can WRITE the per-chain `deployments/<chain>/addresses.json`

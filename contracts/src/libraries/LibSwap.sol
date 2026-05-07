@@ -62,18 +62,33 @@ library LibSwap {
         bytes data;
     }
 
+    /// @notice Per-adapter attempt log entry from the swap-failover loop.
+    /// @dev    Forensic surface — names which registered adapter was tried
+    ///         at which rank and whether it reverted. Storage transition
+    ///         is captured by the calling facet's state-change event.
+    /// @custom:event-category informational/liquidation
     event SwapAdapterAttempted(
         uint256 indexed loanId,
         uint256 indexed adapterIdx,
         address adapter,
         bool success
     );
+
+    /// @notice The first adapter in the failover order to succeed.
+    /// @dev    Companion to {SwapAdapterAttempted}. Calling facet's
+    ///         state-change event captures the resulting loan transition.
+    /// @custom:event-category informational/liquidation
     event SwapAdapterSucceeded(
         uint256 indexed loanId,
         uint256 indexed adapterIdx,
         address adapter,
         uint256 outputAmount
     );
+
+    /// @notice Every registered adapter reverted or under-delivered.
+    /// @dev    Caller falls back to the full-collateral-transfer path,
+    ///         which emits its own state-change event.
+    /// @custom:event-category informational/liquidation
     event SwapAllAdaptersFailed(uint256 indexed loanId);
 
     error NoSwapAdaptersConfigured();

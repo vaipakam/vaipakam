@@ -67,11 +67,24 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
     /// @param repayer The address that submitted the repayment (may differ from borrower).
     /// @param interestPaid The interest paid (full-term or pro-rata based on per-loan config).
     /// @param lateFeePaid The late fee paid (if applicable).
+    /// @param outstandingPrincipal Post-repay `loan.principal`. Always 0
+    ///        on a successful full repay (the loan transitions to
+    ///        `Repaid` / `Settled` here).
+    /// @param accruedInterest Interest accrued AT EMIT TIME against the
+    ///        post-repay principal. Per D15, emitted as the as-of-emit
+    ///        snapshot; consumers must recompute on display freshness.
+    ///        Always 0 on full repay (no remaining principal to accrue).
+    /// @param newStatus Post-repay `LoanStatus` — `Repaid` for the
+    ///        deferred-claim path, otherwise per the lifecycle library.
+    /// @custom:event-category state-change/loan-mutation
     event LoanRepaid(
         uint256 indexed loanId,
         address indexed repayer,
         uint256 interestPaid,
-        uint256 lateFeePaid
+        uint256 lateFeePaid,
+        uint256 outstandingPrincipal,
+        uint256 accruedInterest,
+        LibVaipakam.LoanStatus newStatus
     );
 
     /// @notice Full settlement breakdown for an ERC-20 loan being closed
@@ -80,6 +93,7 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
     ///         amounts routed to treasury vs. lender without re-reading storage.
     /// @dev Invariant: `treasuryShare + lenderShare == interest + lateFee`.
     ///      `principal` is the amount returned to the lender's escrow as claimable.
+    /// @custom:event-category informational/settlement
     event LoanSettlementBreakdown(
         uint256 indexed loanId,
         uint256 principal,
@@ -93,15 +107,24 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
     /// @param loanId The ID of the loan.
     /// @param amountRepaid The partial amount repaid (principal or days' fees).
     /// @param newPrincipal The updated principal (for ERC20) or duration (for NFT).
+    /// @param accruedInterest Interest accrued at emit time against the
+    ///        new (post-repay) principal. The accrual clock is reset
+    ///        inside the partial-repay path right before this emit, so
+    ///        this value is 0 in the same-block — a confirmation that
+    ///        the clock was reset rather than rolled forward.
+    ///        EventSourcingAudit §3.10.
+    /// @custom:event-category state-change/loan-mutation
     event PartialRepaid(
         uint256 indexed loanId,
         uint256 amountRepaid,
-        uint256 newPrincipal
+        uint256 newPrincipal,
+        uint256 accruedInterest
     );
 
     /// @notice Emitted when auto daily deduct is triggered for an NFT rental.
     /// @param loanId The ID of the loan.
     /// @param dayFeeDeducted The daily fee deducted.
+    /// @custom:event-category state-change/loan-mutation
     event AutoDailyDeducted(uint256 indexed loanId, uint256 dayFeeDeducted);
 
     // ─── T-034 Periodic Interest Payment events ───────────────────────────
@@ -122,6 +145,7 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
     /// @param settler `msg.sender` of the call that triggered the
     ///        advance — borrower (via `repayPartial` fold), permissionless
     ///        bot (via `settlePeriodicInterest`), or anyone else.
+    /// @custom:event-category state-change/loan-mutation
     event PeriodicInterestSettled(
         uint256 indexed loanId,
         uint256 periodEndAt,
@@ -149,6 +173,7 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
     /// @param treasuryShare Principal-asset amount paid to treasury as
     ///        the 2% liquidation handling fee.
     /// @param settler `msg.sender` of the settle call.
+    /// @custom:event-category state-change/loan-mutation
     event PeriodicInterestAutoLiquidated(
         uint256 indexed loanId,
         uint256 periodEndAt,
@@ -167,6 +192,7 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
     ///         the interest they were owed despite the swap clearing
     ///         the slippage gate. Off-chain monitors may aggregate
     ///         this to spot DEX-side regression.
+    /// @custom:event-category informational/liquidation
     event PeriodicSlippageOverBuffer(
         uint256 indexed loanId,
         uint256 expectedShortfall,
@@ -178,6 +204,7 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
     ///         period boundary AND covered the period's expected
     ///         interest in full. Off-chain consumers correlate this
     ///         with the standard {PartialRepaid} fired in the same tx.
+    /// @custom:event-category state-change/loan-mutation
     event RepayPartialPeriodAdvanced(
         uint256 indexed loanId,
         uint256 periodEndAt,
@@ -536,7 +563,18 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
             delete s.fallbackSnapshot[loanId];
         }
 
-        emit LoanRepaid(loanId, msg.sender, interest, lateFee);
+        // §3.7 — full repay terminates the loan: outstandingPrincipal &
+        // accruedInterest are both 0; newStatus is whatever the lifecycle
+        // library just transitioned to (typically `Repaid`).
+        emit LoanRepaid(
+            loanId,
+            msg.sender,
+            interest,
+            lateFee,
+            /* outstandingPrincipal */ 0,
+            /* accruedInterest */ 0,
+            loan.status
+        );
     }
 
     /**
@@ -608,7 +646,9 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
             // T-034 — startTime downsized to uint64; explicit cast.
             loan.startTime = uint64(block.timestamp); // Reset accrual start
 
-            emit PartialRepaid(loanId, partialAmount, loan.principal);
+            // §3.10 — accrual clock reset right above (loan.startTime =
+            // block.timestamp), so accruedInterest at emit is 0.
+            emit PartialRepaid(loanId, partialAmount, loan.principal, /* accruedInterest */ 0);
 
             // T-034 §4.5 — track the interest portion that just settled
             // against the period accumulator, and advance the checkpoint
@@ -706,7 +746,10 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
                 NFTRenterUpdateFailed.selector
             );
 
-            emit PartialRepaid(loanId, partialAmount, loan.durationDays);
+            // NFT-rental partial repay: the third slot reuses `newPrincipal`
+            // to carry the remaining duration in days (no ERC-20 principal
+            // exists here). accruedInterest is N/A for rentals — emitted as 0.
+            emit PartialRepaid(loanId, partialAmount, loan.durationDays, /* accruedInterest */ 0);
         }
 
         if (loan.collateralLiquidity == LibVaipakam.LiquidityStatus.Liquid &&

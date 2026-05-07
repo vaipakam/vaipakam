@@ -12,6 +12,7 @@ import {LibLoan} from "../libraries/LibLoan.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
 import {LibOfferMatch} from "../libraries/LibOfferMatch.sol";
 import {LibERC721} from "../libraries/LibERC721.sol";
+import {RiskFacet} from "./RiskFacet.sol";
 import {LibVPFIDiscount} from "../libraries/LibVPFIDiscount.sol";
 import {LibMetricsHooks} from "../libraries/LibMetricsHooks.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
@@ -52,6 +53,7 @@ contract PrecloseFacet is
 
     // ─── Events ────────────────────────────────────��────────────────────────
 
+    /// @custom:event-category state-change/loan-mutation
     event LoanPreclosedDirect(
         uint256 indexed loanId,
         address indexed borrower,
@@ -63,6 +65,7 @@ contract PrecloseFacet is
     ///      single subscriber across both closing paths. Invariant:
     ///      `treasuryShare + lenderShare == interest + lateFee` (lateFee is
     ///      always 0 for preclose, which is strictly pre-maturity).
+    /// @custom:event-category informational/settlement
     event LoanSettlementBreakdown(
         uint256 indexed loanId,
         uint256 principal,
@@ -72,13 +75,40 @@ contract PrecloseFacet is
         uint256 lenderShare
     );
 
+    /// @notice Emitted when a borrower's obligation is transferred to a
+    ///         new borrower via the preclose offset path. Loan terms
+    ///         (rate, duration) DO change here — the offer's terms
+    ///         replace the prior loan's.
+    /// @param loanId The ID of the loan whose borrower changed.
+    /// @param originalBorrower The borrower exiting the loan.
+    /// @param newBorrower The borrower stepping in.
+    /// @param shortfallPaid Any shortfall paid by the original borrower
+    ///        to clear the lender's accrued/principal owed.
+    /// @param newBorrowerTokenId Position-NFT id minted for the new borrower.
+    /// @param newInterestRateBps Loan's interest rate AFTER the transfer
+    ///        (= the offer's interest rate).
+    /// @param newDurationDays Loan's duration AFTER the transfer
+    ///        (= the offer's duration).
+    /// @param newDueTimestamp Computed maturity timestamp
+    ///        (`startTime + durationDays * 1 days` after the term reset).
+    /// @param newHealthFactor Loan's HF immediately after the transfer
+    ///        (1e18 scale; 0 if illiquid). Lets cache surfaces show the
+    ///        new HF without a follow-up `RiskFacet.getHealthFactor`
+    ///        view-call. EventSourcingAudit §3.16.
+    /// @custom:event-category state-change/loan-mutation
     event LoanObligationTransferred(
         uint256 indexed loanId,
         address indexed originalBorrower,
         address indexed newBorrower,
-        uint256 shortfallPaid
+        uint256 shortfallPaid,
+        uint256 newBorrowerTokenId,
+        uint256 newInterestRateBps,
+        uint256 newDurationDays,
+        uint64 newDueTimestamp,
+        uint256 newHealthFactor
     );
 
+    /// @custom:event-category state-change/offer-mutation
     event OffsetOfferCreated(
         uint256 indexed originalLoanId,
         uint256 indexed newOfferId,
@@ -86,6 +116,7 @@ contract PrecloseFacet is
         uint256 shortfallPaid
     );
 
+    /// @custom:event-category state-change/loan-mutation
     event OffsetCompleted(
         uint256 indexed originalLoanId,
         uint256 indexed newOfferId,
@@ -567,11 +598,28 @@ contract PrecloseFacet is
             IVaipakamErrors.NFTStatusUpdateFailed.selector
         );
 
+        // §3.16 — best-effort HF computation for the event payload.
+        // calculateHealthFactor reverts NonLiquidAsset for illiquid loans;
+        // staticcall + degraded-to-0 mirrors the AddCollateralFacet
+        // pattern. Saves the consumer a follow-up RiskFacet read for the
+        // common liquid case.
+        uint256 newHF;
+        (bool hfOk, bytes memory hfRet) = address(this).staticcall(
+            abi.encodeWithSelector(RiskFacet.calculateHealthFactor.selector, loanId)
+        );
+        if (hfOk && hfRet.length > 0) {
+            newHF = abi.decode(hfRet, (uint256));
+        }
         emit LoanObligationTransferred(
             loanId,
             msg.sender,
             newBorrower,
-            accruedInterest + shortfall
+            accruedInterest + shortfall,
+            loan.borrowerTokenId,
+            loan.interestRateBps,
+            loan.durationDays,
+            uint64(loan.startTime + loan.durationDays * 1 days),
+            newHF
         );
     }
 

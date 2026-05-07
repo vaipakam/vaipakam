@@ -6,6 +6,7 @@ import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibLifecycle} from "../libraries/LibLifecycle.sol";
 import {LibAuth} from "../libraries/LibAuth.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
+import {LibVPFIDiscount} from "../libraries/LibVPFIDiscount.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
@@ -43,11 +44,19 @@ contract ClaimFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
     /// @param claimant The address claiming the funds (must own the lender NFT).
     /// @param asset The token address claimed.
     /// @param amount The amount claimed.
+    /// @param newBothClaimed True iff the borrower side has ALSO already
+    ///        claimed (or had nothing to claim) — when true the loan is
+    ///        about to settle and the position NFTs are about to burn.
+    ///        EventSourcingAudit §3.11 — lets cache-merge consumers update
+    ///        the row's terminal-status and NFT-burn-imminent state from
+    ///        this single event.
+    /// @custom:event-category state-change/claim-mutation
     event LenderFundsClaimed(
         uint256 indexed loanId,
         address indexed claimant,
         address asset,
-        uint256 amount
+        uint256 amount,
+        bool newBothClaimed
     );
 
     /// @notice Emitted when a borrower claims their collateral or refund.
@@ -55,21 +64,27 @@ contract ClaimFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
     /// @param claimant The address claiming the funds (must own the borrower NFT).
     /// @param asset The token address claimed.
     /// @param amount The amount claimed.
+    /// @param newBothClaimed True iff the lender side has ALSO already
+    ///        claimed — see {LenderFundsClaimed} for semantics.
+    /// @custom:event-category state-change/claim-mutation
     event BorrowerFundsClaimed(
         uint256 indexed loanId,
         address indexed claimant,
         address asset,
-        uint256 amount
+        uint256 amount,
+        bool newBothClaimed
     );
 
     /// @notice Emitted when both parties have claimed and the loan is fully settled.
     /// @param loanId The now-settled loan ID.
+    /// @custom:event-category state-change/loan-mutation
     event LoanSettled(uint256 indexed loanId);
 
     /// @notice Emitted when a claim-time liquidation retry runs.
     /// @param loanId The loan under claim.
     /// @param succeeded True if the retry swap cleared the 6% slippage gate.
     /// @param proceeds Principal-asset proceeds received on success, 0 on failure.
+    /// @custom:event-category informational/claim
     event ClaimRetryExecuted(
         uint256 indexed loanId,
         bool succeeded,
@@ -80,10 +95,16 @@ contract ClaimFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
     /// @param loanId The loan whose rebate was credited at proper settlement.
     /// @param claimant The address receiving the VPFI (borrower NFT holder).
     /// @param amount VPFI wei transferred.
+    /// @param newEscrowVpfiBalance Borrower's post-claim VPFI escrow balance
+    ///        (sum of any prior staked / discount-tier balance plus this
+    ///        rebate). EventSourcingAudit §3.20 — frontend updates the
+    ///        "VPFI balance is now X" UI directly from the event.
+    /// @custom:event-category state-change/reward-claim
     event BorrowerLifRebateClaimed(
         uint256 indexed loanId,
         address indexed claimant,
-        uint256 amount
+        uint256 amount,
+        uint256 newEscrowVpfiBalance
     );
 
     // ─── Errors ───────────────────────────────────────────────────────────────
@@ -307,8 +328,6 @@ contract ClaimFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
             NFTBurnFailed.selector
         );
 
-        emit LenderFundsClaimed(loanId, msg.sender, claim.asset, claim.amount);
-
         // If borrower already claimed or has nothing to claim, settle the loan.
         // Phase 5: a pending borrower LIF rebate counts as "something to
         // claim" so the loan stays in Repaid/Defaulted until the borrower
@@ -318,7 +337,23 @@ contract ClaimFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
         bool borrowerHasNothing = borrowerClaim.amount == 0 &&
             borrowerClaim.assetType == LibVaipakam.AssetType.ERC20 &&
             s.borrowerLifRebate[loanId].rebateAmount == 0;
-        if (borrowerClaim.claimed || borrowerHasNothing) {
+        bool willSettle = borrowerClaim.claimed || borrowerHasNothing;
+
+        emit LenderFundsClaimed(
+            loanId,
+            msg.sender,
+            claim.asset,
+            claim.amount,
+            // §3.11 — newBothClaimed signals "loan is about to settle and
+            // NFTs are about to burn" rather than the literal "borrower
+            // flag flipped". When the borrower has nothing to claim
+            // (illiquid default, NFT rental terminal, etc.) the
+            // borrowerClaim.claimed flag stays false but the loan still
+            // settles immediately on the lender claim.
+            willSettle
+        );
+
+        if (willSettle) {
             LibLifecycle.transitionFromAny(loan, LibVaipakam.LoanStatus.Settled);
             emit LoanSettled(loanId);
         }
@@ -417,7 +452,12 @@ contract ClaimFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
             address vpfi = s.vpfiToken;
             if (vpfi != address(0)) {
                 IERC20(vpfi).safeTransfer(msg.sender, lifRebate);
-                emit BorrowerLifRebateClaimed(loanId, msg.sender, lifRebate);
+                emit BorrowerLifRebateClaimed(
+                    loanId,
+                    msg.sender,
+                    lifRebate,
+                    LibVPFIDiscount.escrowVPFIBalance(msg.sender)
+                );
             }
         }
 
@@ -438,8 +478,6 @@ contract ClaimFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
             NFTBurnFailed.selector
         );
 
-        emit BorrowerFundsClaimed(loanId, msg.sender, claim.asset, claim.amount);
-
         // If lender already claimed or truly has nothing to claim, settle the loan.
         // Must check heldForLender, NFT rental returns, and NFT collateral claims.
         // Note: the borrower LIF rebate is paid out in the same tx above, so
@@ -451,7 +489,19 @@ contract ClaimFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
         bool lenderHasNFTCollateralClaim = lenderClaim.assetType != LibVaipakam.AssetType.ERC20;
         bool lenderFullyClaimed = lenderClaim.claimed;
         bool lenderHasNothing = lenderClaim.amount == 0 && !lenderHasHeld && !lenderHasRentalNFT && !lenderHasNFTCollateralClaim;
-        if (lenderFullyClaimed || lenderHasNothing) {
+        bool willSettle = lenderFullyClaimed || lenderHasNothing;
+
+        emit BorrowerFundsClaimed(
+            loanId,
+            msg.sender,
+            claim.asset,
+            claim.amount,
+            // §3.11 — newBothClaimed signals "loan is about to settle"
+            // (NFTs about to burn) — see LenderFundsClaimed for rationale.
+            willSettle
+        );
+
+        if (willSettle) {
             LibLifecycle.transitionFromAny(loan, LibVaipakam.LoanStatus.Settled);
             emit LoanSettled(loanId);
         }

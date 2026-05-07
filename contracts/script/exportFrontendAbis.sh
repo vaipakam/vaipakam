@@ -83,6 +83,7 @@ FACETS=(
   "LegalFacet"
   "LoanFacet"
   "MetricsFacet"
+  "MetricsDashboardFacet"
   "OfferCancelFacet"
   "OfferFacet"
   "OracleAdminFacet"

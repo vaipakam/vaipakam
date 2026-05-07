@@ -11,6 +11,7 @@ import { runWatcher } from './watcher';
 import { runBuyWatchdog } from './buyWatchdog';
 import { runChainIndexer } from './chainIndexer';
 import { runPeriodicPreNotify } from './periodicPreNotify';
+import { runDailyOracleSnapshot } from './dailyOracleSnapshot';
 import {
   consumeTelegramLinkCode,
   issueTelegramLinkCode,
@@ -92,6 +93,17 @@ export default {
     ctx.waitUntil(
       runPeriodicPreNotify(env).catch((err) => {
         console.error('[periodicPreNotify] pass failed:', err);
+      }),
+    );
+    // AnalyticalGettersDesign §3.4 — once per UTC day per chain,
+    // call the on-chain `OracleFacet.captureDailyPriceSnapshot` so
+    // the historical-TVL chart can be reconstructed from current-
+    // state reads alone. The pass internally pre-checks the
+    // 00:00–00:09 UTC window + a D1 last-day guard, so most ticks
+    // exit immediately. Same isolation policy as the others.
+    ctx.waitUntil(
+      runDailyOracleSnapshot(env).catch((err) => {
+        console.error('[dailyOracleSnapshot] pass failed:', err);
       }),
     );
   },

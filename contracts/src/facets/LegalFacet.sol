@@ -47,6 +47,7 @@ contract LegalFacet is DiamondPausable, DiamondAccessControl {
     /// @param hash      The content-hash the user submitted (mirrors the
     ///                  current on-chain hash for the version at accept time).
     /// @param timestamp Block timestamp at acceptance.
+    /// @custom:event-category informational/governance
     event TermsAccepted(
         address indexed user,
         uint32 indexed version,
@@ -60,6 +61,7 @@ contract LegalFacet is DiamondPausable, DiamondAccessControl {
     /// @param version Previous on-chain version (0 if first time).
     /// @param newVersion New version now in force.
     /// @param newHash Content hash of the new ToS text.
+    /// @custom:event-category informational/governance
     event CurrentTosUpdated(
         uint32 version,
         uint32 indexed newVersion,

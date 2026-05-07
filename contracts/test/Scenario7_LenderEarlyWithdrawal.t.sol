@@ -259,7 +259,8 @@ contract Scenario7_LenderEarlyWithdrawal is Test {
 
         // Expect LoanSold event
         vm.expectEmit(true, true, true, false);
-        emit EarlyWithdrawalFacet.LoanSold(activeLoanId, lender, newLender, 0);
+        // Topic-only check (data=false in expectEmit above); zero placeholders.
+        emit EarlyWithdrawalFacet.LoanSold(activeLoanId, lender, newLender, 0, 0, 0, 0, 0);
 
         // Original lender sells the loan
         vm.prank(lender);

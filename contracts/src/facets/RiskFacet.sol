@@ -65,6 +65,7 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
     /// @param liqThresholdBps New liquidation threshold in basis points.
     /// @param liqBonusBps New liquidation bonus in basis points.
     /// @param reserveFactorBps New reserve factor in basis points.
+    /// @custom:event-category informational/config
     event RiskParamsUpdated(
         address indexed asset,
         uint256 maxLtvBps,
@@ -77,6 +78,7 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
     /// @param loanId The ID of the liquidated loan.
     /// @param liquidator The caller who triggered.
     /// @param proceeds The recovered amount.
+    /// @custom:event-category state-change/loan-mutation
     event HFLiquidationTriggered(
         uint256 indexed loanId,
         address indexed liquidator,
@@ -94,34 +96,27 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
 
     // MAX_LIQUIDATION_SLIPPAGE_BPS consolidated in LibVaipakam
 
-    /// @notice Emitted when a liquidation falls back to the claim-time
-    ///         settlement path because the DEX swap reverted or exceeded
-    ///         the 6% slippage threshold (README §7). The collateral stays
-    ///         in the Diamond until ClaimFacet either retries the swap or
-    ///         distributes the recorded split. `collateralAmount` is the
-    ///         full borrower collateral entering the fallback — matches the
-    ///         legacy event shape. See LiquidationFallbackSplit for the
-    ///         detailed three-way allocation.
-    event LiquidationFallback(
-        uint256 indexed loanId,
-        address indexed lender,
-        uint256 collateralAmount
-    );
-
-    /// @notice Emitted alongside LiquidationFallback with the README §7 split.
+    /// @notice Emitted when an HF-triggered liquidation falls back to the
+    ///         claim-time settlement path because the DEX swap reverted or
+    ///         exceeded the 6% slippage ceiling (README §7).
+    /// @dev    Informational — the storage transition is captured in
+    ///         {HFLiquidationTriggered} (and the FallbackSnapshot write).
+    ///         Lender + collateral split are recoverable from
+    ///         `s.loans[loanId].lender` and `s.fallbackSnapshot[loanId]`
+    ///         respectively. EventSourcingAudit §1.4 + §1.5 — primary-
+    ///         key-only payload; consumers query the table by loanId.
     /// @param loanId The liquidated loan ID.
-    /// @param lenderCollateral Collateral units allocated to the lender if
-    ///        the claim-time retry fails (equivalent of principal + accrued
-    ///        interest + late fees + 3%, capped at available collateral).
-    /// @param treasuryCollateral Collateral units allocated to the treasury
-    ///        (equivalent of 2% of principal), zero when undercollateralized.
-    /// @param borrowerCollateral Remaining collateral for the borrower.
-    event LiquidationFallbackSplit(
-        uint256 indexed loanId,
-        uint256 lenderCollateral,
-        uint256 treasuryCollateral,
-        uint256 borrowerCollateral
-    );
+    /// @custom:event-category informational/liquidation
+    event LiquidationFallback(uint256 indexed loanId);
+
+    /// @notice Emitted alongside {LiquidationFallback} with the README §7
+    ///         three-way split.
+    /// @dev    Informational — lender / treasury / borrower allocation is
+    ///         stored verbatim in `s.fallbackSnapshot[loanId]`.
+    ///         EventSourcingAudit §1.4 + §1.5 — primary-key-only payload.
+    /// @param loanId The liquidated loan ID.
+    /// @custom:event-category informational/liquidation
+    event LiquidationFallbackSplit(uint256 indexed loanId);
 
     /**
      * @notice Updates risk parameters for an asset.
@@ -798,13 +793,11 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
             NFTStatusUpdateFailed.selector
         );
 
-        emit LiquidationFallback(loanId, loan.lender, loan.collateralAmount);
-        emit LiquidationFallbackSplit(
-            loanId,
-            s.fallbackSnapshot[loanId].lenderCollateral,
-            s.fallbackSnapshot[loanId].treasuryCollateral,
-            s.fallbackSnapshot[loanId].borrowerCollateral
-        );
+        // §1.4 + §1.5 — informational events carry only the loanId primary
+        // key. lender + split are recoverable from s.loans[loanId] and
+        // s.fallbackSnapshot[loanId] respectively.
+        emit LiquidationFallback(loanId);
+        emit LiquidationFallbackSplit(loanId);
     }
 
     // Internal helper for current borrow balance with accrued interest

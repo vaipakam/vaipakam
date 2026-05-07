@@ -153,18 +153,6 @@
         "type": "uint256",
         "indexed": true,
         "internalType": "uint256"
-      },
-      {
-        "name": "lender",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "collateralAmount",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
       }
     ],
     "anonymous": false
@@ -177,24 +165,6 @@
         "name": "loanId",
         "type": "uint256",
         "indexed": true,
-        "internalType": "uint256"
-      },
-      {
-        "name": "lenderCollateral",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "treasuryCollateral",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "borrowerCollateral",
-        "type": "uint256",
-        "indexed": false,
         "internalType": "uint256"
       }
     ],

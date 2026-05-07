@@ -24,6 +24,7 @@ import {PartialWithdrawalFacet} from "../src/facets/PartialWithdrawalFacet.sol";
 import {RefinanceFacet} from "../src/facets/RefinanceFacet.sol";
 import {AccessControlFacet} from "../src/facets/AccessControlFacet.sol";
 import {MetricsFacet} from "../src/facets/MetricsFacet.sol";
+import {MetricsDashboardFacet} from "../src/facets/MetricsDashboardFacet.sol";
 import {VPFITokenFacet} from "../src/facets/VPFITokenFacet.sol";
 import {VPFIDiscountFacet} from "../src/facets/VPFIDiscountFacet.sol";
 import {StakingRewardsFacet} from "../src/facets/StakingRewardsFacet.sol";
@@ -267,7 +268,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](9);
+        selectors = new bytes4[](11);
         selectors[0] = OracleFacet.checkLiquidity.selector;
         selectors[1] = OracleFacet.getAssetPrice.selector;
         selectors[2] = OracleFacet.calculateLTV.selector;
@@ -277,6 +278,10 @@ contract HelperTest {
         selectors[6] = OracleFacet.isAssetSupported.selector;
         selectors[7] = OracleFacet.getSequencerUptimeFeed.selector;
         selectors[8] = OracleFacet.sequencerHealthy.selector;
+        // AnalyticalGettersDesign §3.4 — daily price-snapshot ring
+        // buffer for historical TVL reconstruction.
+        selectors[9] = OracleFacet.captureDailyPriceSnapshot.selector;
+        selectors[10] = OracleFacet.getHistoricalAssetPrice.selector;
         return selectors;
     }
 
@@ -543,7 +548,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](34);
+        selectors = new bytes4[](35);
         selectors[0] = MetricsFacet.getProtocolTVL.selector;
         selectors[1] = MetricsFacet.getProtocolStats.selector;
         selectors[2] = MetricsFacet.getUserCount.selector;
@@ -551,7 +556,9 @@ contract HelperTest {
         selectors[4] = MetricsFacet.getActiveOffersCount.selector;
         selectors[5] = MetricsFacet.getTotalInterestEarnedNumeraire.selector;
         selectors[6] = MetricsFacet.getTreasuryMetrics.selector;
-        selectors[7] = MetricsFacet.getRevenueStats.selector;
+        // Legacy overload — disambiguated by full signature now that
+        // the per-asset overload (added in §A.2) shares the name.
+        selectors[7] = bytes4(keccak256("getRevenueStats(uint256)"));
         selectors[8] = MetricsFacet.getActiveLoansPaginated.selector;
         selectors[9] = MetricsFacet.getActiveOffersByAsset.selector;
         selectors[10] = MetricsFacet.getLoanSummary.selector;
@@ -583,6 +590,26 @@ contract HelperTest {
         // verifier UI).
         selectors[32] = MetricsFacet.getActiveOffersPaginated.selector;
         selectors[33] = MetricsFacet.getNFTPositionSummary.selector;
+        // AnalyticalGettersDesign §3.2 — rolling-window per-asset
+        // treasury accrual. Overloaded with the legacy
+        // `getRevenueStats(uint256)` (index 7); selector is computed
+        // from its full signature since `.selector` is ambiguous on
+        // overloads.
+        selectors[34] = bytes4(keccak256("getRevenueStats(address,uint16)"));
+        return selectors;
+    }
+
+    /// AnalyticalGettersDesign §3.1 — per-user dashboard surface.
+    function getMetricsDashboardFacetSelectors()
+        public
+        pure
+        returns (bytes4[] memory selectors)
+    {
+        selectors = new bytes4[](4);
+        selectors[0] = MetricsDashboardFacet.getUserDashboardSnapshot.selector;
+        selectors[1] = MetricsDashboardFacet.getUserDashboardLoans.selector;
+        selectors[2] = MetricsDashboardFacet.getUserDashboardOffers.selector;
+        selectors[3] = MetricsDashboardFacet.getUserDashboardClaimables.selector;
         return selectors;
     }
 

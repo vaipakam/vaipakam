@@ -23,6 +23,7 @@ import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
 import {AddCollateralFacet} from "../src/facets/AddCollateralFacet.sol";
 import {AccessControlFacet} from "../src/facets/AccessControlFacet.sol";
 import {MetricsFacet} from "../src/facets/MetricsFacet.sol";
+import {MetricsDashboardFacet} from "../src/facets/MetricsDashboardFacet.sol";
 import {TreasuryFacet} from "../src/facets/TreasuryFacet.sol";
 import {VPFITokenFacet} from "../src/facets/VPFITokenFacet.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
@@ -135,6 +136,7 @@ contract SetupTest is Test {
     AddCollateralFacet addCollateralFacet;
     AccessControlFacet accessControlFacet;
     MetricsFacet metricsFacet;
+    MetricsDashboardFacet metricsDashboardFacet;
     TreasuryFacet treasuryFacet;
     VPFITokenFacet vpfiTokenFacet;
     TestMutatorFacet testMutatorFacet;
@@ -193,6 +195,7 @@ contract SetupTest is Test {
         addCollateralFacet = new AddCollateralFacet();
         accessControlFacet = new AccessControlFacet();
         metricsFacet = new MetricsFacet();
+        metricsDashboardFacet = new MetricsDashboardFacet();
         treasuryFacet = new TreasuryFacet();
         vpfiTokenFacet = new VPFITokenFacet();
         testMutatorFacet = new TestMutatorFacet();
@@ -203,7 +206,7 @@ contract SetupTest is Test {
         escrowImpl = new VaipakamEscrowImplementation();
 
         // Cut facets into diamond
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](19);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](20);
         cuts[0] = IDiamondCut.FacetCut({
             facetAddress: address(offerFacet),
             action: IDiamondCut.FacetCutAction.Add,
@@ -301,6 +304,12 @@ contract SetupTest is Test {
             facetAddress: address(offerCancelFacet),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getOfferCancelFacetSelectors()
+        });
+        // AnalyticalGettersDesign §3.1 — per-user dashboard surface.
+        cuts[19] = IDiamondCut.FacetCut({
+            facetAddress: address(metricsDashboardFacet),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getMetricsDashboardFacetSelectors()
         });
 
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");

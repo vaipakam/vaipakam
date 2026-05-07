@@ -335,6 +335,7 @@ library LibVaipakam {
     // zero falls back to this constant (see {getInteractionCapVpfiPerEth}).
     uint256 constant INTERACTION_CAP_DEFAULT_VPFI_PER_ETH = 500;
 
+    /// @custom:event-category informational/config
     event TreasurySet(address indexed newTreasury);
 
     // Shared errors consolidated in IVaipakamErrors.sol
@@ -927,6 +928,31 @@ library LibVaipakam {
         bool retryAttempted;
     }
 
+    /**
+     * @notice Per-day numeraire-quoted price snapshot for an asset.
+     * @dev Captured by {OracleFacet.captureDailyPriceSnapshot}
+     *      (permissionless, first-caller-per-day-per-asset wins,
+     *      D10). Read by {OracleFacet.getHistoricalAssetPrice} —
+     *      lets the frontend's historical-TVL chart be reconstructed
+     *      from current-state reads alone, eliminating the last
+     *      event-replay dependency on the analytical surface
+     *      (AnalyticalGettersDesign §3.4 — Bucket-C → Bucket-A move).
+     *      Slot-packs price + decimals + timestamp into one slot.
+     * @param price         Chainlink-style price answer at capture
+     *        time, denominated in the active numeraire (USD by
+     *        post-deploy default).
+     * @param feedDecimals  The feed's decimals (typically 8 for
+     *        Chainlink, 18 for some VWAP / API3 dapis).
+     * @param capturedAt    Block timestamp of the capture tx
+     *        (informational; lets consumers spot stale snapshots if
+     *        the keeper miss-fired by N hours).
+     */
+    struct AssetPriceSnapshot {
+        int256 price;
+        uint8 feedDecimals;
+        uint64 capturedAt;
+    }
+
     struct RiskParams {
         uint256 maxLtvBps; // Max LTV in basis points
         uint256 liqThresholdBps; // Liquidation Threshold in basis points
@@ -1228,6 +1254,21 @@ library LibVaipakam {
         mapping(address => address) userVaipakamEscrows; // Per-user proxy addresses
         mapping(address => RiskParams) assetRiskParams;
         mapping(address => uint256) treasuryBalances;
+        // AnalyticalGettersDesign §3.2 / D5 — per-asset, per-UTC-day
+        // running total of treasury accruals. dayIndex =
+        // block.timestamp / 86400. Written on every
+        // `LibFacet.recordTreasuryAccrual` call; read by
+        // `MetricsFacet.getRevenueStats(address asset, uint16 windowDays)`
+        // to produce O(windowDays) sums for rolling-window cards
+        // without scanning the full feeEventsLog. Pre-deploy windows
+        // start empty (no backfill — D5).
+        mapping(address => mapping(uint256 => uint256)) treasuryAccrualByDay;
+        // AnalyticalGettersDesign §3.4 — per-asset, per-UTC-day price
+        // snapshot for historical TVL reconstruction without an
+        // event-replay dependency. dayIndex = block.timestamp / 86400.
+        // Captured once per day via the permissionless
+        // {OracleFacet.captureDailyPriceSnapshot} keeper (D10).
+        mapping(address => mapping(uint256 => AssetPriceSnapshot)) assetPriceSnapshots;
         mapping(address => string) userCountry; // ISO code, e.g., "US"
         mapping(address => bool) kycVerified;
         mapping(bytes32 => mapping(bytes32 => bool)) allowedTrades; // hash(countryA) => hash(countryB) => true if A can trade with B
@@ -2834,6 +2875,7 @@ library LibVaipakam {
     /// @param maxStaleness   New max age in seconds (0 = cleared).
     /// @param minValidAnswer New minimum-valid-answer floor (0/negative =
     ///                       no floor).
+    /// @custom:event-category informational/config
     event FeedOverrideSet(
         address indexed feed,
         uint40 maxStaleness,
@@ -2877,22 +2919,27 @@ library LibVaipakam {
     // ─── Phase 7b.2: Tellor + API3 + chain-level secondary config ──
 
     /// @notice Emitted when the chain's Tellor oracle address changes.
+    /// @custom:event-category informational/config
     event TellorOracleSet(address indexed previous, address indexed next);
 
     /// @notice Emitted when the chain's API3 ServerV1 address changes.
+    /// @custom:event-category informational/config
     event Api3ServerV1Set(address indexed previous, address indexed next);
 
     /// @notice Emitted when the chain's DIA Oracle V2 address changes.
+    /// @custom:event-category informational/config
     event DIAOracleV2Set(address indexed previous, address indexed next);
 
     /// @notice Emitted when the chain-level secondary-oracle deviation
     ///         tolerance changes. Off-chain monitors should alert on
     ///         transitions: a wider tolerance weakens the cross-
     ///         provider check.
+    /// @custom:event-category informational/config
     event SecondaryOracleMaxDeviationBpsSet(uint16 previous, uint16 current);
 
     /// @notice Emitted when the chain-level secondary-oracle staleness
     ///         tolerance changes.
+    /// @custom:event-category informational/config
     event SecondaryOracleMaxStalenessSet(uint40 previous, uint40 current);
 
     /// @notice Install the chain's Tellor oracle address. Owner-only;
@@ -3009,24 +3056,29 @@ library LibVaipakam {
     ///         changes. Setting to `address(0)` disables the
     ///         numeraire gate globally, so the event is worth a
     ///         human review either way.
+    /// @custom:event-category informational/config
     event PythOracleSet(address indexed previous, address indexed next);
 
     /// @notice Emitted when the chain's Pyth ETH/USD (or WETH/USD)
     ///         feed id changes. Single-write-per-chain — emitted at
     ///         init and on any subsequent governance update.
+    /// @custom:event-category informational/config
     event PythNumeraireFeedIdSet(
         bytes32 indexed previous,
         bytes32 indexed next
     );
 
     /// @notice Emitted when the Pyth max-staleness budget changes.
+    /// @custom:event-category informational/config
     event PythMaxStalenessSecondsSet(uint64 previous, uint64 current);
 
     /// @notice Emitted when the Pyth numeraire deviation tolerance
     ///         changes. Stored value applies on the next price view.
+    /// @custom:event-category informational/config
     event PythNumeraireMaxDeviationBpsSet(uint16 previous, uint16 current);
 
     /// @notice Emitted when the Pyth confidence ceiling changes.
+    /// @custom:event-category informational/config
     event PythConfidenceMaxBpsSet(uint16 previous, uint16 current);
 
     /// @notice Set the Pyth contract address on this chain. Zero
@@ -3192,6 +3244,7 @@ library LibVaipakam {
     ///         Off-chain monitoring should alert on a transition to or
     ///         from `address(0)`: zero disables the check globally, so
     ///         the event is worth a human review either way.
+    /// @custom:event-category informational/config
     event SanctionsOracleSet(address indexed previous, address indexed next);
 
     /// @notice Installs the per-chain Chainalysis sanctions oracle

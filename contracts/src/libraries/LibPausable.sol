@@ -31,12 +31,15 @@ library LibPausable {
         uint64 pausedUntilTimestamp;
     }
 
+    /// @custom:event-category informational/admin
     event Paused(address account);
+    /// @custom:event-category informational/admin
     event Unpaused(address account);
     /// @dev Emitted when the watcher fires an auto-pause. `until` is the
     ///      block-timestamp at which the auto-pause window expires;
     ///      indexers + alerting use this to render countdown + correlate
     ///      with the off-chain anomaly that triggered.
+    /// @custom:event-category informational/admin
     event AutoPaused(address indexed watcher, string reason, uint64 until);
 
     error EnforcedPause();

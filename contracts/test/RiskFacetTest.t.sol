@@ -1158,8 +1158,10 @@ contract RiskFacetTest is Test {
         // ZeroExProxyMock reverts with SlippageExceeded; RiskFacet catches and falls back.
         ZeroExProxyMock(address(mockZeroExProxy)).setRate(0, 10);
 
-        vm.expectEmit(true, true, false, true);
-        emit RiskFacet.LiquidationFallback(loanId, lender, 1800 ether);
+        // Slim form: only loanId is indexed (informational/liquidation per
+        // EventSourcingAudit §1.4 + §1.5).
+        vm.expectEmit(true, false, false, true);
+        emit RiskFacet.LiquidationFallback(loanId);
         RiskFacet(address(diamond)).triggerLiquidation(
             loanId,
             defaultAdapterCalls()
@@ -1460,8 +1462,10 @@ contract RiskFacetTest is Test {
             "swap failed"
         );
 
-        vm.expectEmit(true, true, false, true);
-        emit RiskFacet.LiquidationFallback(loanId, lender, 1800 ether);
+        // Slim form: only loanId is indexed (informational/liquidation per
+        // EventSourcingAudit §1.4 + §1.5).
+        vm.expectEmit(true, false, false, true);
+        emit RiskFacet.LiquidationFallback(loanId);
         RiskFacet(address(diamond)).triggerLiquidation(
             loanId,
             defaultAdapterCalls()
@@ -2053,8 +2057,10 @@ contract RiskFacetTest is Test {
             "swap reverted"
         );
 
-        vm.expectEmit(true, true, false, true);
-        emit RiskFacet.LiquidationFallback(loanId, lender, 1800 ether);
+        // Slim form: only loanId is indexed (informational/liquidation per
+        // EventSourcingAudit §1.4 + §1.5).
+        vm.expectEmit(true, false, false, true);
+        emit RiskFacet.LiquidationFallback(loanId);
         RiskFacet(address(diamond)).triggerLiquidation(
             loanId,
             defaultAdapterCalls()

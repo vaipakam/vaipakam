@@ -68,6 +68,7 @@ contract RewardAggregatorFacet is
     /// @param borrowerNumeraire18         Reported borrower USD-18 for that chain.
     /// @param reportCount           Running count of expected eids
     ///                              reported for `dayId` (incl. this one).
+    /// @custom:event-category informational/reward-transport
     event ChainReportAggregated(
         uint256 indexed dayId,
         uint32 indexed sourceEid,
@@ -83,6 +84,7 @@ contract RewardAggregatorFacet is
     /// @param globalLenderNumeraire18     Sum-across-eids lender USD-18.
     /// @param globalBorrowerNumeraire18   Sum-across-eids borrower USD-18.
     /// @param participatingEidCount Number of eids that contributed.
+    /// @custom:event-category informational/reward-transport
     event DailyGlobalInterestFinalized(
         uint256 indexed dayId,
         uint256 globalLenderNumeraire18,
@@ -99,6 +101,7 @@ contract RewardAggregatorFacet is
     /// @param sourceEid Mirror eid whose contribution was zeroed.
     /// @param forced    True iff the zero came from {forceFinalizeDay}
     ///                  rather than the grace-window path.
+    /// @custom:event-category informational/reward-transport
     event ChainContributionZeroed(
         uint256 indexed dayId,
         uint32 indexed sourceEid,
@@ -114,6 +117,7 @@ contract RewardAggregatorFacet is
     /// @param globalBorrowerNumeraire18   Borrower denominator at force-finalize time.
     /// @param participatingEidCount Number of eids that contributed.
     /// @param missingEidCount       Number of eids zeroed by the override.
+    /// @custom:event-category informational/reward-transport
     event DayForceFinalized(
         uint256 indexed dayId,
         uint256 globalLenderNumeraire18,
@@ -123,6 +127,7 @@ contract RewardAggregatorFacet is
     );
 
     /// @notice Emitted when ops mutate the Base-side expected-source list.
+    /// @custom:event-category informational/config
     event ExpectedSourceEidsUpdated(uint32[] eids);
 
     // ─── Modifiers ──────────────────────────────────────────────────────────

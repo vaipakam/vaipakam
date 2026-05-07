@@ -89,13 +89,23 @@ contract VPFIDiscountFacet is
     // ─── Events ──────────────────────────────────────────────────────────────
 
     /// @notice Emitted when a user buys VPFI with ETH at the fixed rate.
-    /// @param buyer      The purchaser (VPFI is delivered to their wallet).
-    /// @param vpfiAmount The VPFI amount credited to the buyer's wallet.
-    /// @param ethAmount  The ETH amount accepted (equals `msg.value`).
+    /// @param buyer             The purchaser (VPFI is delivered to their wallet).
+    /// @param vpfiAmount        The VPFI amount credited to the buyer's wallet.
+    /// @param ethAmount         The ETH amount accepted (equals `msg.value`).
+    /// @param newEscrowBalance  Buyer's escrow VPFI balance immediately after
+    ///        the buy. Note: same-chain buys deliver VPFI to the buyer's
+    ///        WALLET (not their escrow), so this value reflects the existing
+    ///        escrow balance unchanged. Cross-chain bridged buys
+    ///        ({VPFIBridgedBuyProcessed}) are emitted from
+    ///        {VPFIBuyReceiver} on Base separately.
+    ///        EventSourcingAudit §3.18 — frontend updates the
+    ///        "your VPFI balance is now X" UI directly from the event.
+    /// @custom:event-category state-change/escrow-mutation
     event VPFIPurchasedWithETH(
         address indexed buyer,
         uint256 vpfiAmount,
-        uint256 ethAmount
+        uint256 ethAmount,
+        uint256 newEscrowBalance
     );
 
     /// @notice Emitted when a bridged buy lands on Base — mirrors the
@@ -107,6 +117,7 @@ contract VPFIDiscountFacet is
     /// @param originEid    LayerZero eid of the buyer's origin chain.
     /// @param vpfiAmount   VPFI credited to the buyer (via OFT bridge back).
     /// @param ethAmountPaid Native ETH the buyer paid on the origin chain.
+    /// @custom:event-category state-change/escrow-mutation
     event VPFIBridgedBuyProcessed(
         address indexed buyer,
         uint32 indexed originEid,
@@ -116,6 +127,7 @@ contract VPFIDiscountFacet is
 
     /// @notice Emitted when admin rotates the authorized bridged-buy
     ///         receiver on Base.
+    /// @custom:event-category informational/config
     event BridgedBuyReceiverUpdated(
         address indexed oldReceiver,
         address indexed newReceiver
@@ -123,17 +135,32 @@ contract VPFIDiscountFacet is
 
     /// @notice Emitted when a holder moves VPFI from their wallet into their
     ///         escrow — typically after bridging from Base.
-    /// @param user   The depositor (and escrow owner).
-    /// @param amount VPFI amount moved from wallet to escrow.
-    event VPFIDepositedToEscrow(address indexed user, uint256 amount);
+    /// @param user             The depositor (and escrow owner).
+    /// @param amount           VPFI amount moved from wallet to escrow.
+    /// @param newEscrowBalance User's escrow VPFI balance after the deposit.
+    ///        EventSourcingAudit §3.19 — saves consumers a follow-up
+    ///        view-call to render the staking UI.
+    /// @custom:event-category state-change/escrow-mutation
+    event VPFIDepositedToEscrow(
+        address indexed user,
+        uint256 amount,
+        uint256 newEscrowBalance
+    );
 
     /// @notice Emitted when a staker unstakes — VPFI moves from the user's
     ///         escrow back to their wallet. Dropping below a tier threshold
     ///         here implicitly lowers the fee-discount tier on subsequent
     ///         acceptance / repayment events.
-    /// @param user   The withdrawer (and escrow owner).
-    /// @param amount VPFI amount moved from escrow to wallet.
-    event VPFIWithdrawnFromEscrow(address indexed user, uint256 amount);
+    /// @param user             The withdrawer (and escrow owner).
+    /// @param amount           VPFI amount moved from escrow to wallet.
+    /// @param newEscrowBalance User's escrow VPFI balance after the
+    ///        withdrawal. EventSourcingAudit §3.19.
+    /// @custom:event-category state-change/escrow-mutation
+    event VPFIWithdrawnFromEscrow(
+        address indexed user,
+        uint256 amount,
+        uint256 newEscrowBalance
+    );
 
     /// @notice Emitted when the discount is successfully applied at loan
     ///         acceptance. Fired from the OfferFacet mutating path via
@@ -143,6 +170,7 @@ contract VPFIDiscountFacet is
     /// @param borrower     The borrower who paid the discounted fee in VPFI.
     /// @param lendingAsset The loan's principal asset.
     /// @param vpfiDeducted VPFI moved from borrower's escrow to treasury.
+    /// @custom:event-category informational/settlement
     event VPFIDiscountApplied(
         uint256 indexed loanId,
         address indexed borrower,
@@ -151,6 +179,7 @@ contract VPFIDiscountFacet is
     );
 
     /// @notice Emitted when any VPFI buy-side config is changed by admin.
+    /// @custom:event-category informational/config
     event VPFIBuyConfigUpdated(
         uint256 weiPerVpfi,
         uint256 globalCap,
@@ -166,6 +195,7 @@ contract VPFIDiscountFacet is
     ///         §"Treasury and Revenue Sharing", TokenomicsTechSpec §6).
     /// @param user    The user whose consent changed.
     /// @param enabled New consent state — true means escrow VPFI may be used.
+    /// @custom:event-category informational/config
     event VPFIDiscountConsentChanged(address indexed user, bool enabled);
 
     /// @notice Emitted when the lender Yield Fee discount is successfully
@@ -177,6 +207,7 @@ contract VPFIDiscountFacet is
     /// @param lender       The lender who paid the discounted yield fee in VPFI.
     /// @param lendingAsset The loan's principal asset.
     /// @param vpfiDeducted VPFI moved from lender's escrow to treasury.
+    /// @custom:event-category informational/settlement
     event VPFIYieldFeeDiscountApplied(
         uint256 indexed loanId,
         address indexed lender,
@@ -237,7 +268,12 @@ contract VPFIDiscountFacet is
         // Forward the ETH to treasury atomically.
         payable(LibFacet.getTreasury()).sendValue(msg.value);
 
-        emit VPFIPurchasedWithETH(msg.sender, vpfiOut, msg.value);
+        emit VPFIPurchasedWithETH(
+            msg.sender,
+            vpfiOut,
+            msg.value,
+            LibVPFIDiscount.escrowVPFIBalance(msg.sender)
+        );
     }
 
     /**
@@ -416,7 +452,7 @@ contract VPFIDiscountFacet is
             ),
             EscrowDepositFailed.selector
         );
-        emit VPFIDepositedToEscrow(msg.sender, amount);
+        emit VPFIDepositedToEscrow(msg.sender, amount, LibVPFIDiscount.escrowVPFIBalance(msg.sender));
     }
 
     /**
@@ -471,7 +507,7 @@ contract VPFIDiscountFacet is
             ),
             EscrowDepositFailed.selector
         );
-        emit VPFIDepositedToEscrow(msg.sender, amount);
+        emit VPFIDepositedToEscrow(msg.sender, amount, LibVPFIDiscount.escrowVPFIBalance(msg.sender));
     }
 
     /// @dev Shared pre-pull setup — validates amount, resolves the VPFI
@@ -578,7 +614,7 @@ contract VPFIDiscountFacet is
             amount
         );
 
-        emit VPFIWithdrawnFromEscrow(msg.sender, amount);
+        emit VPFIWithdrawnFromEscrow(msg.sender, amount, LibVPFIDiscount.escrowVPFIBalance(msg.sender));
     }
 
     /**

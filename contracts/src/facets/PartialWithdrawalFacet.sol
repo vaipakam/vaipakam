@@ -35,6 +35,7 @@ contract PartialWithdrawalFacet is DiamondReentrancyGuard, DiamondPausable, IVai
     /// @param amount The withdrawn collateral amount.
     /// @param newHF The post-withdrawal Health Factor (scaled to 1e18).
     /// @param newLTV The post-withdrawal LTV (in bps).
+    /// @custom:event-category state-change/loan-mutation
     event PartialCollateralWithdrawn(
         uint256 indexed loanId,
         address indexed borrower,

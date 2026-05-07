@@ -51,6 +51,7 @@ contract VPFITokenFacet is DiamondAccessControl, IVaipakamErrors {
     ///         Diamond is updated.
     /// @param previousToken The address previously registered (zero if unset).
     /// @param newToken      The newly-registered VPFI token address.
+    /// @custom:event-category informational/config
     event VPFITokenSet(address indexed previousToken, address indexed newToken);
 
     /// @notice Emitted when the canonical-chain flag flips. Expected exactly
@@ -58,6 +59,7 @@ contract VPFITokenFacet is DiamondAccessControl, IVaipakamErrors {
     ///         Diamond's deploy script. Any flip observed in production on
     ///         other chains indicates misconfiguration.
     /// @param isCanonical The new value.
+    /// @custom:event-category informational/config
     event CanonicalVPFIChainSet(bool isCanonical);
 
     /// @notice Register the VPFI token proxy address with the Diamond.

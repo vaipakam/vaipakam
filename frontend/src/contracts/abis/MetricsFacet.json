@@ -787,6 +787,35 @@
   },
   {
     "type": "function",
+    "name": "getRevenueStats",
+    "inputs": [
+      {
+        "name": "asset",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "windowDays",
+        "type": "uint16",
+        "internalType": "uint16"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "totalAccrued",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "dayCount",
+        "type": "uint16",
+        "internalType": "uint16"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "getTotalInterestEarnedNumeraire",
     "inputs": [],
     "outputs": [
@@ -1156,5 +1185,26 @@
       }
     ],
     "stateMutability": "view"
+  },
+  {
+    "type": "error",
+    "name": "InvalidWindow",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "WindowTooLong",
+    "inputs": [
+      {
+        "name": "requested",
+        "type": "uint16",
+        "internalType": "uint16"
+      },
+      {
+        "name": "max",
+        "type": "uint16",
+        "internalType": "uint16"
+      }
+    ]
   }
 ]

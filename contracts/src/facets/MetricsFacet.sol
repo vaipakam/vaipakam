@@ -258,6 +258,48 @@ contract MetricsFacet {
         totalRevenueNumeraire = _sumFeesSince(windowStart);
     }
 
+    /// @notice `windowDays` must be in `[1, 365]`.
+    error InvalidWindow();
+    error WindowTooLong(uint16 requested, uint16 max);
+
+    /// @notice Per-asset rolling-window treasury accrual.
+    ///         AnalyticalGettersDesign §3.2 (decisions D5–D6).
+    /// @dev    Reads from `treasuryAccrualByDay[asset][dayIndex]` —
+    ///         a running ring-buffer maintained by
+    ///         {LibFacet.recordTreasuryAccrual} on every accrual.
+    ///         Sums the most recent `windowDays` UTC-day buckets
+    ///         (inclusive of today). O(windowDays) SLOADs.
+    ///
+    ///         Pre-deploy revenue is NOT backfilled (D5) — windows
+    ///         spanning the deploy boundary read 0 for the pre-
+    ///         deploy days. The lifetime aggregate stays correct via
+    ///         the legacy {getRevenueStats(uint256)} which scans the
+    ///         feeEventsLog.
+    /// @param  asset       The treasury-receiving asset to query.
+    /// @param  windowDays  Look-back length in days, `1..365`.
+    /// @return totalAccrued Sum of accruals over the window, in the
+    ///         asset's native units.
+    /// @return dayCount    Echo of `windowDays` for caller convenience.
+    function getRevenueStats(address asset, uint16 windowDays)
+        external
+        view
+        returns (uint256 totalAccrued, uint16 dayCount)
+    {
+        if (windowDays == 0) revert InvalidWindow();
+        if (windowDays > 365) revert WindowTooLong(windowDays, 365);
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        uint256 today = block.timestamp / 1 days;
+        for (uint256 i = 0; i < windowDays; i++) {
+            // Guard against underflow when the window stretches past
+            // epoch — relevant in tests where `block.timestamp` may be
+            // tiny. The mapping returns 0 for unwritten days, including
+            // pre-deploy days. No backfill (D5).
+            if (i > today) break;
+            totalAccrued += s.treasuryAccrualByDay[asset][today - i];
+        }
+        dayCount = windowDays;
+    }
+
     // ─── 3. Lending & Offer Metrics ─────────────────────────────────────────
 
     /// @notice Paginated slice of the active-loan list. O(limit) — the

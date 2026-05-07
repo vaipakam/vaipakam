@@ -46,6 +46,7 @@ contract InteractionRewardsFacet is
     /// @param fromDay  First day included in the legacy-window walk (inclusive).
     /// @param toDay    Last day included in the legacy-window walk (inclusive).
     /// @param amount   Total VPFI wei transferred to the user (entry + window).
+    /// @custom:event-category state-change/reward-claim
     event InteractionRewardsClaimed(
         address indexed user,
         uint256 fromDay,
@@ -56,10 +57,12 @@ contract InteractionRewardsFacet is
     /// @notice Emitted when forfeited reward accruals are routed to treasury
     ///         — either as a side effect of a claim or a permissionless sweep.
     /// @param amount VPFI wei routed to the treasury from forfeited entries.
+    /// @custom:event-category state-change/treasury-mutation
     event InteractionForfeitedToTreasury(uint256 amount);
 
     /// @notice Emitted when admin seeds the launch timestamp (once).
     /// @param timestamp UNIX epoch seconds at which day 0 begins.
+    /// @custom:event-category informational/config
     event InteractionLaunchTimestampSet(uint256 timestamp);
 
     /// @notice Emitted when admin updates the per-user daily VPFI cap
@@ -68,6 +71,7 @@ contract InteractionRewardsFacet is
     ///         (500 → 0.5 VPFI / 0.001 ETH); `type(uint256).max` disables
     ///         the cap entirely.
     /// @param value New ratio value (whole VPFI per ETH); zero = default.
+    /// @custom:event-category informational/config
     event InteractionCapVpfiPerEthSet(uint256 value);
 
     // ─── User entry point ────────────────────────────────────────────────────

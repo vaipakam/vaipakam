@@ -42,11 +42,13 @@ contract OfferCancelFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
     ///      filter by signature, so this stays compatible with
     ///      whatever was indexing OfferFacet.OfferCanceled before
     ///      the split.
+    /// @custom:event-category state-change/offer-mutation
     event OfferCanceled(uint256 indexed offerId, address indexed creator);
 
     /// @dev Re-declared from OfferFacet for the same reason. Frontend
     ///      "Your Offers / Cancelled" surfaces hydrate cancelled rows
     ///      from this event.
+    /// @custom:event-category state-change/offer-mutation
     event OfferCanceledDetails(
         uint256 indexed offerId,
         address indexed creator,
@@ -67,6 +69,7 @@ contract OfferCancelFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
     /// @dev Re-declared from OfferFacet / OfferMatchFacet for ABI
     ///      continuity. Topic0 is identical across all three facets.
     enum OfferCloseReason { FullyFilled, Dust, Cancelled }
+    /// @custom:event-category state-change/offer-mutation
     event OfferClosed(uint256 indexed offerId, OfferCloseReason reason);
 
     // ── Errors ──────────────────────────────────────────────────────

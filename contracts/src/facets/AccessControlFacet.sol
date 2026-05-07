@@ -99,6 +99,7 @@ contract AccessControlFacet is DiamondAccessControl {
     /// @param revoker  `msg.sender` at the time of the call (the
     ///                 DEFAULT_ADMIN_ROLE holder driving the response).
     /// @param reason   Caller-supplied free-form reason (e.g. "key compromised 2025-03-01").
+    /// @custom:event-category informational/admin
     event EmergencyRoleRevoked(
         bytes32 indexed role,
         address indexed account,
@@ -153,6 +154,7 @@ contract AccessControlFacet is DiamondAccessControl {
     ///                   that held DEFAULT_ADMIN_ROLE before the swap.
     /// @param newAdmin   The new holder of every grantable role and ERC-173
     ///                   ownership.
+    /// @custom:event-category informational/admin
     event AdminTransferred(address indexed prevAdmin, address indexed newAdmin);
 
     /// @dev Reverts when {transferAdmin} is called with `address(0)`.

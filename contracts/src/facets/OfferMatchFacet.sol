@@ -51,6 +51,17 @@ contract OfferMatchFacet is DiamondReentrancyGuard, DiamondPausable {
     ///      filter by signature, so this stays compatible with
     ///      whatever was indexing OfferFacet.OfferMatched before
     ///      the split.
+    /// @notice Phase 1 Day 3 — extended (per EventSourcingAudit §3.4)
+    ///         with the borrower-side post-match state so consumers no
+    ///         longer need a parallel `getOffer(borrowerOfferId)` read.
+    /// @param borrowerAmountFilled Post-match `s.offers[borrowerOfferId]
+    ///        .amountFilled`. Phase 1 borrower offers are single-fill,
+    ///        so this is `borrowerOffer.amount` once accepted; the
+    ///        field becomes load-bearing in Phase 2 (borrower partials).
+    /// @param borrowerAccepted Post-match `s.offers[borrowerOfferId]
+    ///        .accepted` boolean — true once the borrower offer is
+    ///        fully consumed.
+    /// @custom:event-category state-change/offer-mutation
     event OfferMatched(
         uint256 indexed lenderOfferId,
         uint256 indexed borrowerOfferId,
@@ -59,11 +70,14 @@ contract OfferMatchFacet is DiamondReentrancyGuard, DiamondPausable {
         uint256 matchAmount,
         uint256 matchRateBps,
         uint256 lenderRemainingPostMatch,
-        uint256 lifMatcherFee
+        uint256 lifMatcherFee,
+        uint256 borrowerAmountFilled,
+        bool borrowerAccepted
     );
 
     /// @dev Re-declared from OfferFacet for the same reason.
     enum OfferCloseReason { FullyFilled, Dust, Cancelled }
+    /// @custom:event-category state-change/offer-mutation
     event OfferClosed(uint256 indexed offerId, OfferCloseReason reason);
 
     // ── Errors ──────────────────────────────────────────────────────
@@ -276,6 +290,12 @@ contract OfferMatchFacet is DiamondReentrancyGuard, DiamondPausable {
             );
         }
 
+        // §3.4 — borrower-side post-match snapshot. Phase 1 borrower
+        // offers are single-fill, so `amountFilled` storage stays 0 even
+        // when `accepted == true`; the event reports the EFFECTIVE post-
+        // match fill (= the offer's amount once accepted).
+        LibVaipakam.Offer storage Bm = s.offers[borrowerOfferId];
+        uint256 borrowerEffFilled = Bm.accepted ? Bm.amount : Bm.amountFilled;
         emit OfferMatched(
             lenderOfferId,
             borrowerOfferId,
@@ -293,7 +313,9 @@ contract OfferMatchFacet is DiamondReentrancyGuard, DiamondPausable {
             // constant.
             (mr.matchAmount * LibVaipakam.cfgLoanInitiationFeeBps()
                 * LibVaipakam.cfgLifMatcherFeeBps())
-                / (LibVaipakam.BASIS_POINTS * LibVaipakam.BASIS_POINTS)
+                / (LibVaipakam.BASIS_POINTS * LibVaipakam.BASIS_POINTS),
+            borrowerEffFilled,
+            Bm.accepted
         );
     }
 }

@@ -56,22 +56,41 @@ contract EarlyWithdrawalFacet is
     /// @param originalLender The original lender's address.
     /// @param newLender The new lender's address.
     /// @param shortfallPaid Any shortfall amount paid by original lender.
+    /// @param newLenderTokenId Position-NFT id minted for the new lender.
+    /// @param newInterestRateBps Loan's interest rate AFTER the sale.
+    ///        Unchanged in the lender-side sale path (borrower-favourability
+    ///        rule per README §9 keeps the rate fixed); included for
+    ///        cache-row freshness so consumers can self-update without a
+    ///        follow-up read.
+    /// @param newDurationDays Loan's duration AFTER the sale (unchanged
+    ///        for the same reason).
+    /// @param newDueTimestamp Computed maturity timestamp
+    ///        (`startTime + durationDays * 1 days`) — also unchanged on
+    ///        a sale, but explicit for consumer convenience.
+    ///        EventSourcingAudit §3.15.
+    /// @custom:event-category state-change/loan-mutation
     event LoanSold(
         uint256 indexed loanId,
         address indexed originalLender,
         address indexed newLender,
-        uint256 shortfallPaid
+        uint256 shortfallPaid,
+        uint256 newLenderTokenId,
+        uint256 newInterestRateBps,
+        uint256 newDurationDays,
+        uint64 newDueTimestamp
     );
 
     /// @notice Emitted when a loan sale offer is created and linked to a live loan (Option 2, step 1).
     /// @param loanId The live loan being sold.
     /// @param saleOfferId The borrower-style offer created to execute the sale.
+    /// @custom:event-category state-change/loan-mutation
     event LoanSaleOfferLinked(
         uint256 indexed loanId,
         uint256 indexed saleOfferId
     );
 
     /// @notice Emitted when a loan sale is completed via Option 2.
+    /// @custom:event-category state-change/loan-mutation
     event LoanSaleCompleted(
         uint256 indexed loanId,
         address indexed originalLender,
@@ -278,7 +297,16 @@ contract EarlyWithdrawalFacet is
             NFTBurnFailed.selector
         );
 
-        emit LoanSold(loanId, msg.sender, buyOffer.creator, shortfall);
+        emit LoanSold(
+            loanId,
+            msg.sender,
+            buyOffer.creator,
+            shortfall,
+            loan.lenderTokenId,
+            loan.interestRateBps,
+            loan.durationDays,
+            uint64(loan.startTime + loan.durationDays * 1 days)
+        );
     }
 
     /**

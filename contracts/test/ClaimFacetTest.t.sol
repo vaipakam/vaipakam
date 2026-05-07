@@ -304,7 +304,7 @@ contract ClaimFacetTest is Test {
 
         vm.prank(lender);
         vm.expectEmit(true, true, false, true);
-        emit ClaimFacet.LenderFundsClaimed(loanId, lender, mockERC20, claimAmount);
+        emit ClaimFacet.LenderFundsClaimed(loanId, lender, mockERC20, claimAmount, /* newBothClaimed */ false);
         ClaimFacet(address(diamond)).claimAsLender(loanId);
 
         // Lender received the funds
@@ -358,7 +358,7 @@ contract ClaimFacetTest is Test {
 
         vm.prank(borrower);
         vm.expectEmit(true, true, false, true);
-        emit ClaimFacet.BorrowerFundsClaimed(loanId, borrower, mockCollateralERC20, claimAmount);
+        emit ClaimFacet.BorrowerFundsClaimed(loanId, borrower, mockCollateralERC20, claimAmount, /* newBothClaimed */ false);
         ClaimFacet(address(diamond)).claimAsBorrower(loanId);
 
         assertEq(IERC20(mockCollateralERC20).balanceOf(borrower) - borrowerBalBefore, claimAmount);

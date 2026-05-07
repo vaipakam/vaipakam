@@ -230,7 +230,7 @@ contract Scenario4_IlliquidCollateral is Test {
 
         // Step 4: Trigger default (permissionless — anyone can call)
         vm.expectEmit(true, false, false, true);
-        emit DefaultedFacet.LoanDefaulted(loanId, true); // fallbackConsentFromBoth = true
+        emit DefaultedFacet.LoanDefaulted(loanId, true, LibVaipakam.LoanStatus.Defaulted); // fallbackConsentFromBoth = true
         DefaultedFacet(address(diamond)).triggerDefault(loanId, defaultAdapterCalls());
 
         // Step 5: Verify loan is Defaulted
@@ -253,7 +253,9 @@ contract Scenario4_IlliquidCollateral is Test {
 
         vm.prank(lender);
         vm.expectEmit(true, true, false, true);
-        emit ClaimFacet.LenderFundsClaimed(loanId, lender, mockILLIQUID, COLLATERAL);
+        // Illiquid default: borrower had nothing to claim (claimed=true at default time),
+        // so newBothClaimed=true the moment lender claims → loan settles + NFT burns.
+        emit ClaimFacet.LenderFundsClaimed(loanId, lender, mockILLIQUID, COLLATERAL, /* newBothClaimed */ true);
         ClaimFacet(address(diamond)).claimAsLender(loanId);
 
         // Verify lender received the collateral

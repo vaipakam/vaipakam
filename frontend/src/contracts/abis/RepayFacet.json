@@ -206,6 +206,24 @@
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
+      },
+      {
+        "name": "outstandingPrincipal",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "accruedInterest",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "newStatus",
+        "type": "uint8",
+        "indexed": false,
+        "internalType": "enum LibVaipakam.LoanStatus"
       }
     ],
     "anonymous": false
@@ -271,6 +289,12 @@
       },
       {
         "name": "newPrincipal",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "accruedInterest",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"

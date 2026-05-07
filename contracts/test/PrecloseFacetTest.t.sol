@@ -535,7 +535,8 @@ contract PrecloseFacetTest is Test {
         vm.mockCall(address(diamond), abi.encodeWithSelector(RiskFacet.calculateHealthFactor.selector), abi.encode(2e18));
 
         vm.expectEmit(true, true, true, false);
-        emit PrecloseFacet.LoanObligationTransferred(activeLoanId, borrower, newBorrower, 0);
+        // Topic-only check (data=false in expectEmit above); zero placeholders.
+        emit PrecloseFacet.LoanObligationTransferred(activeLoanId, borrower, newBorrower, 0, 0, 0, 0, 0, 0);
         vm.prank(borrower);
         PrecloseFacet(address(diamond)).transferObligationViaOffer(activeLoanId, validOffer);
 

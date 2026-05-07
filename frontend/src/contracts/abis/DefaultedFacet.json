@@ -57,18 +57,6 @@
         "type": "uint256",
         "indexed": true,
         "internalType": "uint256"
-      },
-      {
-        "name": "lender",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "collateralAmount",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
       }
     ],
     "anonymous": false
@@ -81,24 +69,6 @@
         "name": "loanId",
         "type": "uint256",
         "indexed": true,
-        "internalType": "uint256"
-      },
-      {
-        "name": "lenderCollateral",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "treasuryCollateral",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "borrowerCollateral",
-        "type": "uint256",
-        "indexed": false,
         "internalType": "uint256"
       }
     ],
@@ -119,6 +89,43 @@
         "type": "bool",
         "indexed": false,
         "internalType": "bool"
+      },
+      {
+        "name": "newStatus",
+        "type": "uint8",
+        "indexed": false,
+        "internalType": "enum LibVaipakam.LoanStatus"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "LoanFallbackPending",
+    "inputs": [
+      {
+        "name": "loanId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "lender",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "fallbackConsentFromBoth",
+        "type": "bool",
+        "indexed": false,
+        "internalType": "bool"
+      },
+      {
+        "name": "newStatus",
+        "type": "uint8",
+        "indexed": false,
+        "internalType": "enum LibVaipakam.LoanStatus"
       }
     ],
     "anonymous": false

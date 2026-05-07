@@ -703,7 +703,7 @@ contract DefaultedFacetTest is Test {
 
         vm.prank(lender);
         vm.expectEmit(true, false, false, true);
-        emit DefaultedFacet.LoanDefaulted(loanId, true); // fallbackConsentFromBoth = true
+        emit DefaultedFacet.LoanDefaulted(loanId, true, LibVaipakam.LoanStatus.Defaulted); // fallbackConsentFromBoth = true
         DefaultedFacet(address(diamond)).triggerDefault(loanId, defaultAdapterCalls());
 
         LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(
@@ -736,7 +736,7 @@ contract DefaultedFacetTest is Test {
 
         vm.prank(lender);
         vm.expectEmit(true, false, false, true);
-        emit DefaultedFacet.LoanDefaulted(loanId, true); // fallbackConsentFromBoth = true
+        emit DefaultedFacet.LoanDefaulted(loanId, true, LibVaipakam.LoanStatus.Defaulted); // fallbackConsentFromBoth = true
         DefaultedFacet(address(diamond)).triggerDefault(loanId, defaultAdapterCalls());
 
         // Claim model: collateral stays in borrower's escrow; lender claim is recorded
@@ -772,7 +772,7 @@ contract DefaultedFacetTest is Test {
 
         vm.prank(lender);
         vm.expectEmit(true, false, false, true);
-        emit DefaultedFacet.LoanDefaulted(loanId, true); // fallbackConsentFromBoth = true
+        emit DefaultedFacet.LoanDefaulted(loanId, true, LibVaipakam.LoanStatus.Defaulted); // fallbackConsentFromBoth = true
         DefaultedFacet(address(diamond)).triggerDefault(loanId, defaultAdapterCalls());
 
         // Check NFT user reset
@@ -930,7 +930,7 @@ contract DefaultedFacetTest is Test {
         // collateral is liquid (mockERC20), consent=true, collapsed=true
         // → should take the illiquid/collapsed path (else-if branch)
         vm.expectEmit(true, false, false, true);
-        emit DefaultedFacet.LoanDefaulted(loanId, true);
+        emit DefaultedFacet.LoanDefaulted(loanId, true, LibVaipakam.LoanStatus.Defaulted);
         DefaultedFacet(address(diamond)).triggerDefault(loanId, defaultAdapterCalls());
 
         LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(loanId);
@@ -1093,7 +1093,7 @@ contract DefaultedFacetTest is Test {
         );
 
         vm.expectEmit(true, false, false, false);
-        emit DefaultedFacet.LoanDefaulted(loanId, true);
+        emit DefaultedFacet.LoanDefaulted(loanId, true, LibVaipakam.LoanStatus.Defaulted);
         DefaultedFacet(address(diamond)).triggerDefault(loanId, defaultAdapterCalls());
 
         LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(loanId);
@@ -1263,8 +1263,17 @@ contract DefaultedFacetTest is Test {
         deal(mockERC20, address(diamond), 2000 ether);
         deal(mockCollateralERC20, address(diamond), 2000 ether);
 
-        vm.expectEmit(true, false, false, false);
-        emit DefaultedFacet.LiquidationFallback(loanId, lender, 1500 ether);
+        // Pilot — primary-key-only payload + companion state-change event
+        // LoanFallbackPending fires in the same tx (EventSourcingAudit §1.4 + §1.5).
+        vm.expectEmit(true, false, false, true);
+        emit DefaultedFacet.LiquidationFallback(loanId);
+        vm.expectEmit(true, true, false, true);
+        emit DefaultedFacet.LoanFallbackPending(
+            loanId,
+            lender,
+            true,
+            LibVaipakam.LoanStatus.FallbackPending
+        );
         DefaultedFacet(address(diamond)).triggerDefault(loanId, defaultAdapterCalls());
 
         LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(loanId);
@@ -1768,8 +1777,17 @@ contract DefaultedFacetTest is Test {
             "swap failed"
         );
 
+        // Pilot — primary-key-only payload + companion state-change event
+        // LoanFallbackPending fires in the same tx (EventSourcingAudit §1.4 + §1.5).
+        vm.expectEmit(true, false, false, true);
+        emit DefaultedFacet.LiquidationFallback(loanId);
         vm.expectEmit(true, true, false, true);
-        emit DefaultedFacet.LiquidationFallback(loanId, lender, 1500 ether);
+        emit DefaultedFacet.LoanFallbackPending(
+            loanId,
+            lender,
+            true,
+            LibVaipakam.LoanStatus.FallbackPending
+        );
         DefaultedFacet(address(diamond)).triggerDefault(loanId, defaultAdapterCalls());
 
         // Loan should be defaulted via fallback

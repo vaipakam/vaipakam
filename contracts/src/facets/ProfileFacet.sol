@@ -27,27 +27,32 @@ contract ProfileFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors 
     /// @notice Emitted when a user sets their country.
     /// @param user The user's address.
     /// @param country The ISO country code set.
+    /// @custom:event-category informational/config
     event UserCountrySet(address indexed user, string country);
 
     /// @notice Emitted when a user's KYC status is updated (legacy boolean flag).
     /// @param user The user's address.
     /// @param verified The new KYC verification status.
+    /// @custom:event-category informational/config
     event KYCStatusUpdated(address indexed user, bool verified);
 
     /// @notice Emitted when a user's KYC tier is updated.
     /// @param user The user's address.
     /// @param tier The new KYC tier level.
+    /// @custom:event-category informational/config
     event KYCTierUpdated(address indexed user, LibVaipakam.KYCTier tier);
 
     /// @notice Emitted when trade allowance between two countries is updated.
     /// @param countryA ISO code for country A.
     /// @param countryB ISO code for country B.
     /// @param allowed Whether trade is permitted between the two countries.
+    /// @custom:event-category informational/config
     event TradeAllowanceSet(string countryA, string countryB, bool allowed);
 
     /// @notice Emitted when KYC thresholds are updated.
     /// @param tier0ThresholdUSD New Tier0 ceiling (USD, 1e18-scaled).
     /// @param tier1ThresholdUSD New Tier1 ceiling (USD, 1e18-scaled).
+    /// @custom:event-category informational/config
     event KYCThresholdsUpdated(uint256 tier0ThresholdUSD, uint256 tier1ThresholdUSD);
 
     // Facet-specific errors (CrossFacetCallFailed inherited from IVaipakamErrors)
@@ -290,6 +295,7 @@ contract ProfileFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors 
     /// @notice Emitted when a user updates their keeper/third-party execution preference.
     /// @param user The user's address.
     /// @param enabled Whether keeper access is enabled (opt-in) or disabled (default).
+    /// @custom:event-category informational/config
     event KeeperAccessUpdated(address indexed user, bool enabled);
 
     /**
@@ -318,6 +324,7 @@ contract ProfileFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors 
     /// @param loanId The loan whose flag was updated.
     /// @param keeper The specific keeper being enabled or disabled.
     /// @param enabled New flag value.
+    /// @custom:event-category state-change/loan-mutation
     event LoanKeeperEnabled(uint256 indexed loanId, address indexed keeper, bool enabled);
 
     /**
@@ -370,6 +377,7 @@ contract ProfileFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors 
     /// @param offerId The offer whose flag was updated.
     /// @param keeper The specific keeper being enabled or disabled.
     /// @param enabled New flag value.
+    /// @custom:event-category state-change/offer-mutation
     event OfferKeeperEnabled(uint256 indexed offerId, address indexed keeper, bool enabled);
 
     /**
@@ -419,6 +427,7 @@ contract ProfileFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors 
     /// @param user The whitelist owner (lender or borrower side, per user).
     /// @param keeper The keeper address.
     /// @param actions New action bitmask (see `LibVaipakam.KEEPER_ACTION_*`).
+    /// @custom:event-category informational/config
     event KeeperActionsUpdated(
         address indexed user,
         address indexed keeper,
@@ -428,6 +437,7 @@ contract ProfileFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors 
     /// @notice Emitted when `user` removes `keeper` from their whitelist.
     /// @param user The whitelist owner.
     /// @param keeper The keeper that lost authority.
+    /// @custom:event-category informational/config
     event KeeperRevoked(address indexed user, address indexed keeper);
 
     /**

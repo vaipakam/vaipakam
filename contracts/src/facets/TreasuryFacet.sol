@@ -31,6 +31,7 @@ contract TreasuryFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccess
     /// @param asset The ERC-20 asset claimed.
     /// @param amount The claimed amount.
     /// @param claimant The address receiving the claim (specified by owner).
+    /// @custom:event-category state-change/treasury-mutation
     event TreasuryFeesClaimed(
         address indexed asset,
         uint256 amount,
@@ -43,6 +44,7 @@ contract TreasuryFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccess
     ///         from the Diamond's ADMIN_ROLE flow for governance audit.
     /// @param to     Recipient of the freshly-minted VPFI.
     /// @param amount Amount minted (18 decimals).
+    /// @custom:event-category state-change/escrow-mutation
     event VPFIMinted(address indexed to, uint256 amount);
 
     // Facet-specific errors (InvalidAddress, NotCanonicalVPFIChain inherited

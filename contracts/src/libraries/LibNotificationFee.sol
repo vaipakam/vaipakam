@@ -47,6 +47,7 @@ library LibNotificationFee {
     ///         post-deploy default); off-chain consumers can read the
     ///         current numeraire identity via
     ///         `ConfigFacet.getNumeraireSymbol()` to label the figure.
+    /// @custom:event-category state-change/treasury-mutation
     event NotificationFeeBilled(
         uint256 indexed loanId,
         bool indexed isLenderSide,

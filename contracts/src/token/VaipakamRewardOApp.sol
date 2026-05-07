@@ -120,25 +120,31 @@ contract VaipakamRewardOApp is
 
     /// @notice Emitted once on initial proxy wiring or whenever ops
     ///         rotate the paired Diamond.
+    /// @custom:event-category informational/config
     event DiamondSet(address indexed oldDiamond, address indexed newDiamond);
 
     /// @notice Emitted when the canonical flag flips — governance-level
     ///         action (should only happen during migrations).
+    /// @custom:event-category informational/config
     event CanonicalFlagSet(bool isCanonical);
 
     /// @notice Emitted when the mirror-side destination (Base) eid
     ///         changes.
+    /// @custom:event-category informational/config
     event BaseEidSet(uint32 oldEid, uint32 newEid);
 
     /// @notice Emitted when Base's broadcast destination list changes.
+    /// @custom:event-category informational/lz-plumbing
     event BroadcastDestinationEidsSet(uint32[] eids);
 
     /// @notice Emitted when ops rotate REPORT or BROADCAST executor options.
+    /// @custom:event-category informational/lz-plumbing
     event OptionsSet(uint8 indexed msgType, bytes options);
 
     /// @notice Mirrors {IRewardOApp.sendChainReport} for observability —
     ///         the LayerZero scan UI already shows packet metadata but
     ///         this event ties the GUID to the reporter tuple.
+    /// @custom:event-category informational/reward-transport
     event ReportSent(
         bytes32 indexed guid,
         uint256 indexed dayId,
@@ -147,6 +153,7 @@ contract VaipakamRewardOApp is
     );
 
     /// @notice Emitted once per broadcast destination.
+    /// @custom:event-category informational/reward-transport
     event BroadcastSent(
         bytes32 indexed guid,
         uint32 indexed dstEid,
@@ -157,6 +164,7 @@ contract VaipakamRewardOApp is
 
     /// @notice Emitted when an inbound REPORT is forwarded to the Base
     ///         aggregator Diamond.
+    /// @custom:event-category informational/reward-transport
     event ReportReceived(
         uint32 indexed srcEid,
         uint256 indexed dayId,
@@ -166,6 +174,7 @@ contract VaipakamRewardOApp is
 
     /// @notice Emitted when an inbound BROADCAST is forwarded to a
     ///         mirror reporter Diamond.
+    /// @custom:event-category informational/reward-transport
     event BroadcastReceived(
         uint32 indexed srcEid,
         uint256 indexed dayId,

@@ -56,9 +56,14 @@ contract VPFIDiscountFacetTest is SetupTest {
     event VPFIPurchasedWithETH(
         address indexed buyer,
         uint256 vpfiAmount,
-        uint256 ethAmount
+        uint256 ethAmount,
+        uint256 newEscrowBalance
     );
-    event VPFIDepositedToEscrow(address indexed user, uint256 amount);
+    event VPFIDepositedToEscrow(
+        address indexed user,
+        uint256 amount,
+        uint256 newEscrowBalance
+    );
     event VPFIDiscountApplied(
         uint256 indexed loanId,
         address indexed borrower,
@@ -155,7 +160,8 @@ contract VPFIDiscountFacetTest is SetupTest {
         uint256 expectedVpfi = (sendValue * 1e18) / RATE_WEI_PER_VPFI;
 
         vm.expectEmit(true, false, false, true, address(diamond));
-        emit VPFIPurchasedWithETH(buyer, expectedVpfi, sendValue);
+        // Same-chain buy delivers VPFI to wallet (not escrow), so escrow balance is unchanged at 0.
+        emit VPFIPurchasedWithETH(buyer, expectedVpfi, sendValue, /* newEscrowBalance */ 0);
 
         uint256 buyerBalBefore = vpfiToken.balanceOf(buyer);
 
@@ -333,7 +339,8 @@ contract VPFIDiscountFacetTest is SetupTest {
         vpfiToken.approve(address(diamond), amount);
 
         vm.expectEmit(true, false, false, true, address(diamond));
-        emit VPFIDepositedToEscrow(borrower, amount);
+        // Fresh borrower → post-deposit escrow balance == amount.
+        emit VPFIDepositedToEscrow(borrower, amount, /* newEscrowBalance */ amount);
 
         vm.prank(borrower);
         _facet().depositVPFIToEscrow(amount);

@@ -49,6 +49,7 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
     /// @param oldLender The original lender's address.
     /// @param newLender The new lender's address.
     /// @param shortfallPaid Any shortfall amount paid by borrower.
+    /// @custom:event-category state-change/loan-mutation
     event LoanRefinanced(
         uint256 indexed oldLoanId,
         uint256 indexed newLoanId,

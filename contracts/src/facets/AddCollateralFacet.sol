@@ -38,6 +38,7 @@ contract AddCollateralFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
     ///         top-up that restores HF above MIN_HEALTH_FACTOR. The previously
     ///         held diamond-side collateral has been moved back to the
     ///         borrower's escrow and the snapshot cleared; the loan is Active.
+    /// @custom:event-category state-change/loan-mutation
     event LoanCuredFromFallback(
         uint256 indexed loanId,
         address indexed borrower,
@@ -52,6 +53,7 @@ contract AddCollateralFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
     /// @param newCollateralAmount The total collateral after the addition.
     /// @param newHF The updated Health Factor (scaled to 1e18) after adding collateral.
     /// @param newLTV The updated LTV (in basis points) after adding collateral.
+    /// @custom:event-category state-change/loan-mutation
     event CollateralAdded(
         uint256 indexed loanId,
         address indexed borrower,

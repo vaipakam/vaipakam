@@ -11,10 +11,7 @@ import {
   type PublicClient,
 } from "viem";
 import { DIAMOND_ABI_VIEM } from "../contracts/abis";
-import {
-  CHAIN_REGISTRY,
-  type DeployedChain,
-} from "../contracts/config";
+import { CHAIN_REGISTRY, type DeployedChain } from "../contracts/config";
 import {
   decodeContractError,
   extractRevertData,
@@ -428,17 +425,22 @@ export default function NftVerifier() {
   return (
     <div className="nft-verifier">
       <div className="page-header">
-        <h1 className="page-title" style={{ display: "flex", alignItems: "center", gap: 6 }}>
-          {t('nav.nftVerifier')}
+        <h1
+          className="page-title"
+          style={{ display: "flex", alignItems: "center", gap: 6 }}
+        >
+          {t("nav.nftVerifier")}
           <CardInfo id="nft-verifier.lookup" />
         </h1>
-        <p className="page-subtitle">{t('nftVerifier.pageSubtitle')}</p>
+        <p className="page-subtitle">{t("nftVerifier.pageSubtitle")}</p>
       </div>
 
       <div className="card" style={{ marginBottom: 24 }}>
         <form onSubmit={handleSubmit} className="verifier-form-stacked">
           <div className="form-group" style={{ marginBottom: 16 }}>
-            <label className="form-label">{t('nftVerifier.contractAddressLabel')}</label>
+            <label className="form-label">
+              {t("nftVerifier.contractAddressLabel")}
+            </label>
             <input
               className="form-input"
               type="text"
@@ -449,15 +451,19 @@ export default function NftVerifier() {
               autoComplete="off"
               required
             />
-            <div className="form-hint">{t('nftVerifier.contractAddressHint')}</div>
+            <div className="form-hint">
+              {t("nftVerifier.contractAddressHint")}
+            </div>
           </div>
           <div className="form-group" style={{ marginBottom: 16 }}>
-            <label className="form-label">{t('nftVerifier.tokenIdLabel')}</label>
+            <label className="form-label">
+              {t("nftVerifier.tokenIdLabel")}
+            </label>
             <input
               className="form-input"
               type="number"
               min="1"
-              placeholder="e.g. 9"
+              placeholder="e.g. 6"
               value={tokenIdInput}
               onChange={(e) => setTokenIdInput(e.target.value)}
               required
@@ -469,12 +475,14 @@ export default function NftVerifier() {
             disabled={verdict.kind === "verifying"}
           >
             <Search size={16} />
-            {verdict.kind === "verifying" ? t('nftVerifier.verifying') : t('nftVerifier.verifyButton')}
+            {verdict.kind === "verifying"
+              ? t("nftVerifier.verifying")
+              : t("nftVerifier.verifyButton")}
           </button>
         </form>
 
         <div className="verifier-supported-chains">
-          <span className="data-label">{t('nftVerifier.recognisedOn')}</span>
+          <span className="data-label">{t("nftVerifier.recognisedOn")}</span>
           {chains.map((c) => (
             <span key={c.chainId} className="verifier-chain-pill">
               {c.name}
@@ -550,16 +558,15 @@ function NeverMintedCard({
         The contract is a genuine Vaipakam deployment on{" "}
         <span className="verifier-chain-highlight">{chain.name}</span>, but
         token <span className="mono">#{tokenId}</span> has not been minted on
-        this chain. The seller may have typed the wrong token ID, or the
-        listing may be referring to a token on a different Vaipakam
-        deployment.
+        this chain. The seller may have typed the wrong token ID, or the listing
+        may be referring to a token on a different Vaipakam deployment.
       </p>
       <div className="verifier-advisory verifier-advisory--warn">
         <AlertTriangle size={16} />
         <span>
           Hold off on the purchase. Double-check the token ID with the seller,
-          or ask them to confirm which chain the NFT was minted on, then
-          re-run the verifier on that chain.
+          or ask them to confirm which chain the NFT was minted on, then re-run
+          the verifier on that chain.
         </span>
       </div>
     </div>
@@ -599,7 +606,9 @@ function BurnedCard({
       {lastOwner && (
         <div className="verifier-details-col" style={{ marginTop: 12 }}>
           <div className="data-row">
-            <span className="data-label">{t('nftVerifier.lastOwnerBeforeBurn')}</span>
+            <span className="data-label">
+              {t("nftVerifier.lastOwnerBeforeBurn")}
+            </span>
             <a
               href={`${chain.blockExplorer}/address/${lastOwner}`}
               target="_blank"
@@ -615,28 +624,30 @@ function BurnedCard({
       {loanDetails ? (
         <div className="verifier-details-col" style={{ marginTop: 12 }}>
           <div className="data-row">
-            <span className="data-label">{t('nftVerifier.loanLabel')}</span>
+            <span className="data-label">{t("nftVerifier.loanLabel")}</span>
             <span className="data-value mono">
               #{loanDetails.id.toString()}
             </span>
           </div>
           {role && (
             <div className="data-row">
-              <span className="data-label">{t('common.role')}</span>
+              <span className="data-label">{t("common.role")}</span>
               <span className="data-value">
-                {role === "lender" ? t('nftVerifier.lenderPosition') : t('nftVerifier.borrowerPosition')}
+                {role === "lender"
+                  ? t("nftVerifier.lenderPosition")
+                  : t("nftVerifier.borrowerPosition")}
               </span>
             </div>
           )}
           <div className="data-row">
-            <span className="data-label">{t('common.status')}</span>
+            <span className="data-label">{t("common.status")}</span>
             <span className="data-value">
               {LOAN_STATUS_LABELS[Number(loanDetails.status) as LoanStatus] ??
-                t('nftVerifier.unknown')}
+                t("nftVerifier.unknown")}
             </span>
           </div>
           <div className="data-row">
-            <span className="data-label">{t('nftVerifier.principal')}</span>
+            <span className="data-label">{t("nftVerifier.principal")}</span>
             <span className="data-value">
               <TokenAmount
                 amount={loanDetails.principal}
@@ -648,7 +659,9 @@ function BurnedCard({
           {loanDetails.collateralAsset &&
             loanDetails.collateralAsset !== ZERO_ADDRESS && (
               <div className="data-row">
-                <span className="data-label">{t('nftVerifier.collateral')}</span>
+                <span className="data-label">
+                  {t("nftVerifier.collateral")}
+                </span>
                 <span className="data-value">
                   <TokenAmount
                     amount={loanDetails.collateralAmount}
@@ -659,22 +672,23 @@ function BurnedCard({
               </div>
             )}
           <div className="data-row">
-            <span className="data-label">{t('common.interestRate')}</span>
+            <span className="data-label">{t("common.interestRate")}</span>
             <span className="data-value">
               {bpsToPercent(loanDetails.interestRateBps)}
             </span>
           </div>
           <div className="data-row">
-            <span className="data-label">{t('nftVerifier.duration')}</span>
+            <span className="data-label">{t("nftVerifier.duration")}</span>
             <span className="data-value">
-              {loanDetails.durationDays.toString()} {t('nftVerifier.daysSuffix')}
+              {loanDetails.durationDays.toString()}{" "}
+              {t("nftVerifier.daysSuffix")}
             </span>
           </div>
         </div>
       ) : offerContext ? (
         <div className="verifier-details-col" style={{ marginTop: 12 }}>
           <div className="data-row">
-            <span className="data-label">{t('nftVerifier.origin')}</span>
+            <span className="data-label">{t("nftVerifier.origin")}</span>
             <span className="data-value">
               <Link to={`/app/offers/${offerContext.offerId}`}>
                 Offer #{offerContext.offerId}
@@ -682,13 +696,13 @@ function BurnedCard({
             </span>
           </div>
           <div className="data-row">
-            <span className="data-label">{t('nftVerifier.offerStatus')}</span>
+            <span className="data-label">{t("nftVerifier.offerStatus")}</span>
             <span className="data-value">
               {offerContext.status === "canceled"
-                ? t('nftVerifier.offerCanceled')
+                ? t("nftVerifier.offerCanceled")
                 : offerContext.status === "accepted"
-                  ? t('nftVerifier.offerAccepted')
-                  : t('nftVerifier.offerOpen')}
+                  ? t("nftVerifier.offerAccepted")
+                  : t("nftVerifier.offerOpen")}
             </span>
           </div>
           <p className="page-subtitle" style={{ marginTop: 12 }}>
@@ -749,15 +763,17 @@ function LiveCard({
 
         <div className="verifier-details-col">
           <div className="data-row">
-            <span className="data-label">{t('nftVerifier.tokenIdLabelShort')}</span>
+            <span className="data-label">
+              {t("nftVerifier.tokenIdLabelShort")}
+            </span>
             <span className="data-value mono">#{tokenId}</span>
           </div>
           <div className="data-row">
-            <span className="data-label">{t('common.network')}</span>
+            <span className="data-label">{t("common.network")}</span>
             <span className="data-value">{chain.name}</span>
           </div>
           <div className="data-row">
-            <span className="data-label">{t('nftVerifier.currentOwner')}</span>
+            <span className="data-label">{t("nftVerifier.currentOwner")}</span>
             <a
               href={`${blockExplorer}/address/${owner}`}
               target="_blank"
@@ -770,28 +786,31 @@ function LiveCard({
           </div>
           {role && (
             <div className="data-row">
-              <span className="data-label">{t('common.role')}</span>
+              <span className="data-label">{t("common.role")}</span>
               <span className="data-value">
-                {role === "lender" ? t('nftVerifier.lenderPosition') : t('nftVerifier.borrowerPosition')}
+                {role === "lender"
+                  ? t("nftVerifier.lenderPosition")
+                  : t("nftVerifier.borrowerPosition")}
               </span>
             </div>
           )}
           {loanDetails && (
             <>
               <div className="data-row">
-                <span className="data-label">{t('nftVerifier.loanLabel')}</span>
+                <span className="data-label">{t("nftVerifier.loanLabel")}</span>
                 <span className="data-value mono">
                   #{loanDetails.id.toString()}
                 </span>
               </div>
               <div className="data-row">
-                <span className="data-label">{t('common.status')}</span>
+                <span className="data-label">{t("common.status")}</span>
                 <span className="data-value">
-                  {LOAN_STATUS_LABELS[status ?? LoanStatus.Active] ?? t('nftVerifier.unknown')}
+                  {LOAN_STATUS_LABELS[status ?? LoanStatus.Active] ??
+                    t("nftVerifier.unknown")}
                 </span>
               </div>
               <div className="data-row">
-                <span className="data-label">{t('nftVerifier.principal')}</span>
+                <span className="data-label">{t("nftVerifier.principal")}</span>
                 <span className="data-value">
                   <TokenAmount
                     amount={loanDetails.principal}
@@ -803,7 +822,9 @@ function LiveCard({
               {loanDetails.collateralAsset &&
                 loanDetails.collateralAsset !== ZERO_ADDRESS && (
                   <div className="data-row">
-                    <span className="data-label">{t('nftVerifier.collateral')}</span>
+                    <span className="data-label">
+                      {t("nftVerifier.collateral")}
+                    </span>
                     <span className="data-value">
                       <TokenAmount
                         amount={loanDetails.collateralAmount}
@@ -814,26 +835,29 @@ function LiveCard({
                   </div>
                 )}
               <div className="data-row">
-                <span className="data-label">{t('common.interestRate')}</span>
+                <span className="data-label">{t("common.interestRate")}</span>
                 <span className="data-value">
                   {bpsToPercent(loanDetails.interestRateBps)}
                 </span>
               </div>
               <div className="data-row">
-                <span className="data-label">{t('nftVerifier.duration')}</span>
+                <span className="data-label">{t("nftVerifier.duration")}</span>
                 <span className="data-value">
-                  {loanDetails.durationDays.toString()} {t('nftVerifier.daysSuffix')}
+                  {loanDetails.durationDays.toString()}{" "}
+                  {t("nftVerifier.daysSuffix")}
                 </span>
               </div>
               {hf != null && (
                 <div className="data-row">
-                  <span className="data-label">{t('nftVerifier.healthFactor')}</span>
+                  <span className="data-label">
+                    {t("nftVerifier.healthFactor")}
+                  </span>
                   <span className="data-value mono">{formatScaled18(hf)}</span>
                 </div>
               )}
               {ltv != null && (
                 <div className="data-row">
-                  <span className="data-label">{t('nftVerifier.ltv')}</span>
+                  <span className="data-label">{t("nftVerifier.ltv")}</span>
                   <span className="data-value">{bpsToPercent(ltv)}</span>
                 </div>
               )}
@@ -857,7 +881,11 @@ function LiveCard({
             const showVpfi = vpfiRebate && vpfiRebate !== "0";
             const showCreated = createdAt && createdAt !== "0";
             if (
-              !showLocked && !showClaimable && !showVpfi && !showCreated && !loanState
+              !showLocked &&
+              !showClaimable &&
+              !showVpfi &&
+              !showCreated &&
+              !loanState
             ) {
               return null;
             }

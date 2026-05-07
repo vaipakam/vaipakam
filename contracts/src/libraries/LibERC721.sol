@@ -89,8 +89,11 @@ library LibERC721 {
         string externalUrlBase;
     }
 
+    /// @custom:event-category state-change/nft-mutation
     event Transfer(address indexed from, address indexed to, uint256 indexed tokenId);
+    /// @custom:event-category informational/admin
     event Approval(address indexed owner, address indexed approved, uint256 indexed tokenId);
+    /// @custom:event-category informational/admin
     event ApprovalForAll(address indexed owner, address indexed operator, bool approved);
 
     error ERC721InvalidOwner(address owner);

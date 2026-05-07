@@ -45,6 +45,7 @@ contract StakingRewardsFacet is
     /// @notice Emitted when a staker claims accrued VPFI rewards.
     /// @param user   The claimer and escrow owner.
     /// @param amount VPFI wei transferred from diamond to user's wallet.
+    /// @custom:event-category state-change/reward-claim
     event StakingRewardsClaimed(address indexed user, uint256 amount);
 
     // ─── User entry point ────────────────────────────────────────────────────

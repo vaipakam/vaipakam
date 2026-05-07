@@ -270,7 +270,8 @@ contract Scenario8_BorrowerPreclose is Test {
 
         // Expect LoanObligationTransferred event
         vm.expectEmit(true, true, true, false);
-        emit PrecloseFacet.LoanObligationTransferred(activeLoanId, borrower, newBorrower, 0);
+        // Topic-only check (data=false in expectEmit above); zero placeholders.
+        emit PrecloseFacet.LoanObligationTransferred(activeLoanId, borrower, newBorrower, 0, 0, 0, 0, 0, 0);
 
         // Original borrower transfers obligation
         vm.prank(borrower);

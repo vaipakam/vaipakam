@@ -198,12 +198,19 @@ contract VPFIBuyAdapter is
 
     // ─── Events ─────────────────────────────────────────────────────────────
 
+    /// @custom:event-category informational/lz-plumbing
     event ReceiverEidSet(uint32 indexed oldEid, uint32 indexed newEid);
+    /// @custom:event-category informational/config
     event TreasurySet(address indexed oldTreasury, address indexed newTreasury);
+    /// @custom:event-category informational/config
     event PaymentTokenSet(address indexed oldToken, address indexed newToken);
+    /// @custom:event-category informational/config
     event RefundTimeoutSet(uint64 oldSeconds, uint64 newSeconds);
+    /// @custom:event-category informational/lz-plumbing
     event BuyOptionsSet(bytes options);
+    /// @custom:event-category informational/config
     event RateLimitsSet(uint256 perRequestCap, uint256 dailyCap);
+    /// @custom:event-category informational/config
     event DailyWindowReset(uint256 newWindowStart);
 
     /// @notice Purchase receipt — emitted synchronously when the user
@@ -212,6 +219,7 @@ contract VPFIBuyAdapter is
     ///         into LayerZero Scan. No estimated-out field — the rate
     ///         lives on Base, not this chain, and a cross-chain quote
     ///         preview would require a second LayerZero round trip.
+    /// @custom:event-category state-change/escrow-mutation
     event BuyRequested(
         uint64 indexed requestId,
         address indexed buyer,
@@ -222,6 +230,7 @@ contract VPFIBuyAdapter is
     );
 
     /// @notice Base accepted the buy. `amountIn` released to treasury.
+    /// @custom:event-category state-change/escrow-mutation
     event BuyResolvedSuccess(
         uint64 indexed requestId,
         address indexed buyer,
@@ -230,6 +239,7 @@ contract VPFIBuyAdapter is
     );
 
     /// @notice Base rejected the buy. `amountIn` refunded to buyer.
+    /// @custom:event-category state-change/escrow-mutation
     event BuyRefunded(
         uint64 indexed requestId,
         address indexed buyer,
@@ -239,6 +249,7 @@ contract VPFIBuyAdapter is
 
     /// @notice Buyer (or anyone) reclaimed a stale PENDING buy after
     ///         {refundTimeoutSeconds} elapsed without a Base response.
+    /// @custom:event-category state-change/escrow-mutation
     event BuyTimedOutRefunded(
         uint64 indexed requestId,
         address indexed buyer,
@@ -252,6 +263,7 @@ contract VPFIBuyAdapter is
     ///         covered late BUY_SUCCESS; that path is gone — success
     ///         arrives via OFT-compose now and {LateComposeStuck}
     ///         covers the equivalent late-success case.
+    /// @custom:event-category informational/lz-plumbing
     event LateResponseDropped(
         uint64 indexed requestId,
         uint8 msgType,
@@ -260,7 +272,9 @@ contract VPFIBuyAdapter is
 
     // ─── T-031 Layer 2 events ────────────────────────────────────────────────
 
+    /// @custom:event-category informational/config
     event VPFITokenSet(address indexed oldToken, address indexed newToken);
+    /// @custom:event-category informational/config
     event VPFIMirrorSet(address indexed oldMirror, address indexed newMirror);
 
     /// @notice OFT-compose landed VPFI on this contract for a request
@@ -268,6 +282,7 @@ contract VPFIBuyAdapter is
     ///         (forged BUY_REQUEST scenario — Layer 2 defense fired)
     ///         or is already resolved. The VPFI is recorded as stuck
     ///         pending owner recovery via {recoverStuckVPFI}.
+    /// @custom:event-category informational/lz-plumbing
     event UnsolicitedComposeArrival(
         uint64 indexed requestId,
         uint256 vpfiAmount,
@@ -278,6 +293,7 @@ contract VPFIBuyAdapter is
     ///         from an {UnsolicitedComposeArrival} — typically by
     ///         bridging it back to Base and burning, or routing it
     ///         to a designated recovery wallet.
+    /// @custom:event-category state-change/escrow-mutation
     event StuckVPFIRecovered(
         uint64 indexed requestId,
         address indexed recipient,

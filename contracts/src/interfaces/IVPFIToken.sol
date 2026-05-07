@@ -31,12 +31,14 @@ interface IVPFIToken is IERC20 {
     /// @notice Emitted whenever the privileged minter address is rotated.
     /// @param previousMinter The minter immediately prior to this change.
     /// @param newMinter      The minter effective after this change.
+    /// @custom:event-category informational/config
     event MinterUpdated(address indexed previousMinter, address indexed newMinter);
 
     /// @notice Emitted for every successful `mint(...)` call.
     /// @dev ERC20 itself emits Transfer(address(0), to, amount); this event
     ///      exists so indexers can filter mint events without scanning all
     ///      transfers from the zero address.
+    /// @custom:event-category state-change/escrow-mutation
     event Minted(address indexed to, uint256 amount);
 
     // ─── Errors ──────────────────────────────────────────────────────────────

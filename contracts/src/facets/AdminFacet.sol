@@ -34,31 +34,37 @@ contract AdminFacet is DiamondAccessControl, IVaipakamErrors {
 
     /// @notice Emitted when the protocol treasury address is updated.
     /// @param newTreasury The newly-set treasury address.
+    /// @custom:event-category informational/config
     event TreasurySet(address indexed newTreasury);
 
     /// @notice Emitted when the 0x proxy used for liquidation swaps is updated.
     /// @param newTreasury The newly-set 0x proxy address (parameter kept as
     ///        `newTreasury` for ABI stability — do not rename post-launch).
+    /// @custom:event-category informational/config
     event ZeroExProxySet(address indexed newTreasury);
 
     /// @notice Emitted when the 0x allowance-target is updated.
     /// @param newAllowanceTargetSet The newly-set 0x allowance-target address.
+    /// @custom:event-category informational/config
     event AllowanceTargetSet(address indexed newAllowanceTargetSet);
 
     /// @notice Emitted when the Phase 1 KYC pass-through flag is toggled.
     /// @param enforced True => KYC checks enforce tiered thresholds; false =>
     ///        pass-through (the Phase 1 launch default per README §16).
+    /// @custom:event-category informational/config
     event KYCEnforcementSet(bool enforced);
 
     /// @notice Emitted when an individual asset is paused. Creation paths
     ///         touching this asset will revert `AssetPaused`; exit paths
     ///         (repay / liquidate / claim / withdraw) remain callable.
     /// @param asset The asset (ERC-20 / ERC-721 / ERC-1155) that was paused.
+    /// @custom:event-category informational/admin
     event AssetPauseEnabled(address indexed asset);
 
     /// @notice Emitted when a previously paused asset is unpaused. Creation
     ///         paths touching this asset become callable again.
     /// @param asset The asset that was unpaused.
+    /// @custom:event-category informational/admin
     event AssetPauseDisabled(address indexed asset);
 
     /// @notice Emitted when a swap adapter is appended to the liquidation
@@ -66,18 +72,21 @@ contract AdminFacet is DiamondAccessControl, IVaipakamErrors {
     /// @param index   Slot the adapter occupies after the append (its
     ///                priority — lower runs first).
     /// @param adapter The {ISwapAdapter} contract address.
+    /// @custom:event-category informational/config
     event SwapAdapterAdded(uint256 indexed index, address indexed adapter);
 
     /// @notice Emitted when a swap adapter is removed from the failover
     ///         chain. Remaining adapters shift down to close the gap.
     /// @param index   Slot the adapter occupied before removal.
     /// @param adapter The removed {ISwapAdapter} address.
+    /// @custom:event-category informational/config
     event SwapAdapterRemoved(uint256 indexed index, address indexed adapter);
 
     /// @notice Emitted when the swap adapter chain is reordered. The
     ///         full new ordering is emitted so off-chain monitors can
     ///         pick it up atomically. Phase 7a.
     /// @param adapters The adapter array after reordering, index 0 first.
+    /// @custom:event-category informational/config
     event SwapAdaptersReordered(address[] adapters);
 
     // InvalidAddress inherited from IVaipakamErrors
@@ -252,8 +261,10 @@ contract AdminFacet is DiamondAccessControl, IVaipakamErrors {
     // PancakeV3 + SushiV3 instead.
 
     /// @notice Emitted when the PancakeSwap V3 factory address is updated.
+    /// @custom:event-category informational/config
     event PancakeswapV3FactorySet(address indexed previous, address indexed current);
     /// @notice Emitted when the SushiSwap V3 factory address is updated.
+    /// @custom:event-category informational/config
     event SushiswapV3FactorySet(address indexed previous, address indexed current);
 
     /// @notice Set the chain's PancakeSwap V3 factory address.

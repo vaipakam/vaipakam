@@ -33,6 +33,7 @@ contract VaipakamNFTFacet is IERC721, IERC721Metadata, IERC721Enumerable, Diamon
     /// @param tokenId The unique ID of the minted NFT.
     /// @param owner The address receiving the NFT.
     /// @param role The role associated (Lender or Borrower).
+    /// @custom:event-category state-change/nft-mutation
     event NFTMinted(
         uint256 indexed tokenId,
         address indexed owner,
@@ -42,6 +43,7 @@ contract VaipakamNFTFacet is IERC721, IERC721Metadata, IERC721Enumerable, Diamon
     /// @notice Emitted when an NFT's status is updated.
     /// @param tokenId The ID of the updated NFT.
     /// @param newStatus The new status (enum value).
+    /// @custom:event-category state-change/nft-mutation
     event NFTStatusUpdated(
         uint256 indexed tokenId,
         LibVaipakam.LoanPositionStatus newStatus
@@ -49,6 +51,7 @@ contract VaipakamNFTFacet is IERC721, IERC721Metadata, IERC721Enumerable, Diamon
 
     /// @notice Emitted when an NFT is burned.
     /// @param tokenId The ID of the burned NFT.
+    /// @custom:event-category state-change/nft-mutation
     event NFTBurned(uint256 indexed tokenId);
 
     // Custom errors for clarity and gas efficiency.
@@ -87,6 +90,7 @@ contract VaipakamNFTFacet is IERC721, IERC721Metadata, IERC721Enumerable, Diamon
     /// @notice Emitted when the image URI for a (status, isLender) pair
     ///         is rotated. Indexers + frontends can listen for this to
     ///         invalidate any cached `tokenURI` reads downstream.
+    /// @custom:event-category informational/governance
     event StatusImageURIUpdated(
         LibVaipakam.LoanPositionStatus indexed status,
         bool indexed isLender,
@@ -94,6 +98,7 @@ contract VaipakamNFTFacet is IERC721, IERC721Metadata, IERC721Enumerable, Diamon
     );
 
     /// @notice Emitted when the per-side default image URL is rotated.
+    /// @custom:event-category informational/governance
     event DefaultImageURIUpdated(bool indexed isLender, string uri);
 
     /**
@@ -750,6 +755,7 @@ contract VaipakamNFTFacet is IERC721, IERC721Metadata, IERC721Enumerable, Diamon
      *         `https://testnet.vaipakam.com` on testnets, or the
      *         operator's own fork's URL.
      */
+    /// @custom:event-category informational/governance
     event ExternalUrlBaseUpdated(string newBase);
     function setExternalUrlBase(string calldata newBase)
         external
@@ -762,6 +768,7 @@ contract VaipakamNFTFacet is IERC721, IERC721Metadata, IERC721Enumerable, Diamon
     // ==================== EIP-2981 Royalties ====================
 
     /// @notice Emitted when the collection's default royalty policy is updated.
+    /// @custom:event-category informational/governance
     event RoyaltyUpdated(address indexed receiver, uint96 royaltyBps);
 
     error InvalidRoyalty();

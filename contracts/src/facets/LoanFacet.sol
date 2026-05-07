@@ -56,10 +56,12 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
     /// @param collateralAmount Collateral locked in loan.collateralAsset. For
     ///                         NFT collateral this is 1 (ERC-721) or the ERC-1155
     ///                         quantity. Zero only for lender-sale vehicles.
-    /// @dev Indexers can render a full loan card from this event alone — no
-    ///      follow-up `getLoanDetails` read needed. Non-indexed to keep the
-    ///      topic budget for the 3 address-like identifiers (loanId, offerId,
-    ///      lender) that filters key off.
+    /// @dev Indexers needing a full row build off the {LoanInitiatedDetails}
+    ///      companion (same tx) — no follow-up `getLoanDetails` read needed.
+    ///      The bare event keeps its narrow shape for legacy filter
+    ///      consumers (etherscan / blockscout / partner subgraphs that
+    ///      indexed the original 6-field topic-0 hash).
+    /// @custom:event-category state-change/loan-mutation
     event LoanInitiated(
         uint256 indexed loanId,
         uint256 indexed offerId,
@@ -67,6 +69,52 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
         address borrower,
         uint256 principal,
         uint256 collateralAmount
+    );
+
+    /// @notice Companion-event payload struct for {LoanInitiatedDetails}.
+    /// @dev    Wrapped as a single tuple to dodge the viaIR
+    ///         stack-too-deep that triggers when ~20 inline event args
+    ///         expand at the emit site. ABI consumers see this as a
+    ///         flat tuple after the three indexed topics.
+    struct LoanInitDetails {
+        address principalAsset;
+        uint256 interestRateBps;
+        uint256 durationDays;
+        uint64 dueTimestamp;
+        LibVaipakam.AssetType assetType;
+        LibVaipakam.AssetType collateralAssetType;
+        uint256 tokenId;
+        uint256 quantity;
+        address collateralAsset;
+        uint256 collateralAmount;
+        uint256 collateralTokenId;
+        uint256 collateralQuantity;
+        address prepayAsset;
+        uint256 prepayAmount;
+        uint256 bufferAmount;
+        bool fallbackConsentFromBoth;
+        bool allowsPartialRepay;
+        LibVaipakam.PeriodicInterestCadence periodicInterestCadence;
+        address matcher;
+        uint256 healthFactorAtInit;
+    }
+
+    /// @notice Companion to {LoanInitiated} — full self-sufficient
+    ///         payload of the new loan. Cache-merge consumers (frontend
+    ///         IndexedDB, watcher D1, subgraph) construct the entire
+    ///         loan row from this event without a follow-up
+    ///         `getLoanDetails` view-call.
+    /// @dev    EventSourcingAudit §3.6 — `startTimestamp` is DROPPED
+    ///         per §1.4 (block.timestamp lives in the log envelope).
+    ///         Indexed `loanId` / `lender` / `borrower` per the audit's
+    ///         per-counterparty filter recommendation.
+    /// @param details See {LoanInitDetails} for field-by-field semantics.
+    /// @custom:event-category state-change/loan-mutation
+    event LoanInitiatedDetails(
+        uint256 indexed loanId,
+        address indexed lender,
+        address indexed borrower,
+        LoanInitDetails details
     );
 
     // Facet-specific errors (shared errors inherited from IVaipakamErrors)
@@ -199,6 +247,54 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
             s.loans[loanId].principal,
             s.loans[loanId].collateralAmount
         );
+
+        // §3.6 — companion event with the full loan row. Best-effort HF
+        // computation via staticcall (mirrors AddCollateralFacet's
+        // pattern); reverts cleanly to 0 for illiquid loans without
+        // failing the init.
+        _emitLoanInitiatedDetails(loanId);
+    }
+
+    /// @dev Emits the {LoanInitiatedDetails} companion. Factored out of
+    ///      `initiateLoan` to keep the calling frame's stack-depth
+    ///      manageable. The 20-field payload travels as a single
+    ///      memory-allocated struct, populated field-by-field — the
+    ///      `LoanInitDetails({...})` constructor form pushes every
+    ///      field onto the stack simultaneously and trips viaIR's
+    ///      stack-too-deep at this depth.
+    function _emitLoanInitiatedDetails(uint256 loanId) internal {
+        LibVaipakam.Loan storage loan = LibVaipakam.storageSlot().loans[loanId];
+
+        LoanInitDetails memory d;
+        d.principalAsset = loan.principalAsset;
+        d.interestRateBps = loan.interestRateBps;
+        d.durationDays = loan.durationDays;
+        d.dueTimestamp = uint64(loan.startTime + loan.durationDays * 1 days);
+        d.assetType = loan.assetType;
+        d.collateralAssetType = loan.collateralAssetType;
+        d.tokenId = loan.tokenId;
+        d.quantity = loan.quantity;
+        d.collateralAsset = loan.collateralAsset;
+        d.collateralAmount = loan.collateralAmount;
+        d.collateralTokenId = loan.collateralTokenId;
+        d.collateralQuantity = loan.collateralQuantity;
+        d.prepayAsset = loan.prepayAsset;
+        d.prepayAmount = loan.prepayAmount;
+        d.bufferAmount = loan.bufferAmount;
+        d.fallbackConsentFromBoth = loan.fallbackConsentFromBoth;
+        d.allowsPartialRepay = loan.allowsPartialRepay;
+        d.periodicInterestCadence = loan.periodicInterestCadence;
+        d.matcher = loan.matcher;
+
+        // Best-effort HF — staticcall returns 0 on illiquid (no oracle).
+        (bool ok, bytes memory ret) = address(this).staticcall(
+            abi.encodeWithSelector(RiskFacet.calculateHealthFactor.selector, loanId)
+        );
+        if (ok && ret.length > 0) {
+            d.healthFactorAtInit = abi.decode(ret, (uint256));
+        }
+
+        emit LoanInitiatedDetails(loanId, loan.lender, loan.borrower, d);
     }
 
     struct InitCtx {

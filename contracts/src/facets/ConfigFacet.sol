@@ -42,23 +42,34 @@ contract ConfigFacet is DiamondAccessControl {
     error FallbackSplitCombinedTooHigh(uint256 combinedBps, uint256 maxCombinedBps);
 
     /// ─── Events ─────────────────────────────────────────────────────
+    /// @custom:event-category informational/config
     event FeesConfigSet(uint16 treasuryFeeBps, uint16 loanInitiationFeeBps);
+    /// @custom:event-category informational/config
     event LiquidationConfigSet(
         uint16 handlingFeeBps,
         uint16 maxSlippageBps,
         uint16 maxIncentiveBps
     );
+    /// @custom:event-category informational/config
     event RiskConfigSet(uint16 volatilityLtvThresholdBps, uint16 rentalBufferBps);
+    /// @custom:event-category informational/config
     event StakingAprSet(uint16 aprBps);
+    /// @custom:event-category informational/config
     event VpfiTierThresholdsSet(uint256 t1, uint256 t2, uint256 t3, uint256 t4);
+    /// @custom:event-category informational/config
     event VpfiTierDiscountsSet(uint16 t1, uint16 t2, uint16 t3, uint16 t4);
+    /// @custom:event-category informational/config
     event FallbackSplitSet(uint16 lenderBonusBps, uint16 treasuryBps);
     // ── Range Orders Phase 1 master-flag setter events ──────────────────
+    /// @custom:event-category informational/config
     event RangeAmountEnabledSet(bool enabled);
+    /// @custom:event-category informational/config
     event RangeRateEnabledSet(bool enabled);
+    /// @custom:event-category informational/config
     event PartialFillEnabledSet(bool enabled);
 
     // ── T-044 — admin-configurable loan-default grace schedule ──────────
+    /// @custom:event-category informational/config
     event GraceBucketsUpdated(uint256 bucketCount);
 
     /// @notice Reverts when {setGraceBuckets} is called with an invalid
@@ -128,6 +139,7 @@ contract ConfigFacet is DiamondAccessControl {
     ///         rotated. Default 100 BPS (1%); the design allows up to
     ///         5–10% if community bot operators need a stronger
     ///         incentive.
+    /// @custom:event-category informational/config
     event LifMatcherFeeBpsSet(uint16 newBps);
 
     /**
@@ -155,6 +167,7 @@ contract ConfigFacet is DiamondAccessControl {
     }
 
     /// @notice Emitted on every change to the auto-pause window.
+    /// @custom:event-category informational/config
     event AutoPauseDurationSet(uint32 newSeconds);
     /// @notice Auto-pause duration outside the [MIN, MAX] bounds.
     error InvalidAutoPauseDuration(uint32 provided, uint256 minSec, uint256 maxSec);
@@ -198,6 +211,7 @@ contract ConfigFacet is DiamondAccessControl {
     }
 
     /// @notice Emitted on every change to the offer-creation duration cap.
+    /// @custom:event-category informational/config
     event MaxOfferDurationDaysSet(uint16 newDays);
     /// @notice Max-offer-duration outside the [floor, ceil] bounds.
     error InvalidMaxOfferDurationDays(uint16 provided, uint256 floorDays, uint256 ceilDays);
@@ -243,6 +257,7 @@ contract ConfigFacet is DiamondAccessControl {
     /// @notice T-032 / Numeraire generalization (Phase 1) — emitted on every change to
     ///         the per-loan-side notification fee. Value in numeraire-
     ///         units (1e18-scaled).
+    /// @custom:event-category informational/config
     event NotificationFeeSet(uint256 newFeeNumeraire1e18);
     /// @notice T-032 — passed fee outside the [floor, ceil] bounds.
     error InvalidNotificationFee(
@@ -982,6 +997,7 @@ contract ConfigFacet is DiamondAccessControl {
     /// @param newEthFeed New ETH/<numeraire> Chainlink feed.
     /// @param numeraireSymbol Lowercase ASCII symbol of the new
     ///        numeraire (e.g. `bytes32("eur")`).
+    /// @custom:event-category informational/config
     event NumeraireUpdated(
         address indexed oldEthFeed,
         address indexed newEthFeed,
@@ -990,18 +1006,22 @@ contract ConfigFacet is DiamondAccessControl {
 
     /// @notice Emitted when the principal threshold for finer cadences
     ///         is updated within the same numeraire.
+    /// @custom:event-category informational/config
     event MinPrincipalForFinerCadenceSet(uint256 newThreshold);
 
     /// @notice Emitted when the shared maturity / periodic-checkpoint
     ///         pre-notify lead time is updated.
+    /// @custom:event-category informational/config
     event PreNotifyDaysSet(uint8 newDays);
 
     /// @notice Emitted when the master kill-switch for the entire
     ///         Periodic Interest Payment mechanic is toggled.
+    /// @custom:event-category informational/config
     event PeriodicInterestEnabledSet(bool enabled);
 
     /// @notice Emitted when the cross-numeraire swap kill-switch is
     ///         toggled.
+    /// @custom:event-category informational/config
     event NumeraireSwapEnabledSet(bool enabled);
 
     /// @notice T-034 Numeraire generalization (B1) — atomic numeraire rotation.
@@ -1254,6 +1274,7 @@ contract ConfigFacet is DiamondAccessControl {
     ///         the old → new denominator transition for off-chain
     ///         monitoring; the symbol + feeds are non-indexed because
     ///         most chains will never rotate (PAD stays at USD).
+    /// @custom:event-category informational/config
     event PredominantDenominatorUpdated(
         address indexed oldDenominator,
         address indexed newDenominator,
@@ -1264,6 +1285,7 @@ contract ConfigFacet is DiamondAccessControl {
 
     /// @notice Emitted when governance sets / clears a per-asset
     ///         numeraire-direct feed override.
+    /// @custom:event-category informational/config
     event AssetNumeraireDirectFeedOverrideSet(
         address indexed asset,
         address indexed previous,
