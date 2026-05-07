@@ -326,26 +326,138 @@ Three new contract tests for the skinny ranking view:
 
 Brings the MetricsFacetTest suite to 28 + 3 = 31 passing.
 
+## OfferBook sort UI on single-side tabs
+
+Follow-up to the 2-filter UX. The lender-only and borrower-only
+tabs now expose a sort selector with eight choices: most-recent /
+oldest first, rate highest / lowest first, principal largest /
+smallest first, duration longest / shortest first. The both-tab
+deliberately does NOT show the sort UI — that tab uses the
+closest-to-anchor depth-chart layout where a user-chosen sort
+would bias which offers get hydrated and could leave the
+anchor-closest ones un-fetched.
+
+Sort applies across the entire pair bucket end-to-end: the
+skinny ranking call already carries every sort key, the
+comparator selects the true top-N globally, and the existing
+hydration multicall fetches only the page-N slice the user is
+viewing. Toggling sort choices burns zero RPC — the contract is
+called once per pair, sort flips happen in JavaScript memory.
+
+Range Orders sort uses the legacy single-value fields (rate min,
+principal min, duration); for non-range offers these auto-collapse
+with their max counterparts. Range-aware sort variants ("show me
+offers whose max-rate exceeds X") can ship later if range offers
+become common enough to warrant the additional surface.
+
+User-visible effect: a pill-style picker appears alongside the
+existing liquidity / duration filters when the user lands on the
+lender or borrower tab. Default is "most recent first" which
+matches the previous landing state.
+
+## Source-tree refactor — apps/ + packages/ workspace layout
+
+The Cloudflare staging Workers provisioned earlier were named
+against a monorepo layout the codebase hadn't actually adopted
+yet. Today's refactor shifts the file system to that layout and
+sets up a pnpm workspace that future apps can plug into without
+copy-pasting code. Four staged commits, each independently
+verified:
+
+- **Stage 1a — workspace root + frontend → apps/defi.** The
+  top-level `frontend/` directory becomes `apps/defi/`. Git
+  tracks every file as a rename, so the diff is mechanical and
+  history is preserved. The repo root gains a workspace-
+  coordinator `package.json` (with a `dev` / `build` /
+  `typecheck` fan-out via pnpm) and a `pnpm-workspace.yaml`
+  that lists `apps/*` and `packages/*`. Operational scripts
+  (the contract-side ABI export, deployment-export, mainnet
+  deploy, admin-knobs sync) had their hard-coded `frontend/`
+  paths updated to `apps/defi/`. CLAUDE.md was updated for the
+  same paths so future contributor sessions land on the right
+  layout.
+
+- **Stage 1b — packages/contracts/ extraction.** The framework-
+  agnostic contract artifacts (per-facet ABI JSONs, the
+  consolidated per-chain deployments JSON, the typed loader
+  over deployments, the provenance stamps) lift out of
+  apps/defi/src/contracts/ into a shared `packages/contracts/`
+  workspace package named `@vaipakam/contracts`. Future Workers
+  (agent / indexer / keeper) and the future labs marketing
+  surface consume the same package instead of mirroring per
+  app. 32 import sites across apps/defi flipped over via a sed
+  sweep. The two contract-side export scripts now write
+  directly into the new package, so the existing post-deploy
+  workflow continues to work — operators still run the same
+  scripts after a redeploy, the ABIs and deployment JSON just
+  land at a different path.
+
+- **Stage 2a — packages/lib/ extraction.** Four
+  truly-shared utilities (multicall helpers built on viem,
+  the contract-error normaliser, the chainId → CoinGecko
+  platform-slug map, the per-chain canonical token list)
+  move from apps/defi/src/lib/ into a new `@vaipakam/lib`
+  workspace package. Two other lib modules (number formatter
+  with i18n locale awareness; user-journey diagnostics buffer)
+  are deferred — they couple to the Vite-bundled i18n runtime
+  and to the chain registry which still lives in apps/defi.
+  Those move in a follow-up after their dependencies are
+  also extracted.
+
+- **Stage 2b — packages/ui/ initial scope.** A new
+  `@vaipakam/ui` workspace package gets created with two
+  components: an info-tooltip primitive used across forms and
+  tables, plus a token-icon component that renders an asset
+  symbol with a graceful fallback. Eleven other candidate
+  components were inspected and deferred — each couples to
+  app-specific hooks (wallet context, ENS lookup, CoinGecko
+  metadata, react-router) or to lib modules that haven't been
+  extracted yet. The deferred set is documented in the
+  Stage 2b commit message with the exact dep blocking each,
+  so a follow-up Stage 2c sweep has a clear roadmap.
+
+What's left of the source-tree thread: Stage 2c (promote more
+ui components after their dep chains are also extracted),
+Stage 3 (decompose the today-monolithic hf-watcher Worker into
+three workers — read/index `agent`, chain → archive `indexer`,
+autonomous `keeper`), Stage 4 (carve the marketing pages out of
+apps/defi into apps/labs). Each is independent and non-blocking;
+nothing on-chain depends on this thread.
+
+User-visible effect today: none. Every commit in the thread is a
+rename + path rewrite + workspace plumbing change; the running
+application is bit-for-bit identical to the pre-refactor build.
+The dev server, the Vite build, the wrangler deploy, the
+production build pipeline all work from the new locations after
+a one-time `pnpm install` at the new repo root.
+
+## Local toolchain note
+
+The repo now uses pnpm workspaces (`pnpm@10.4.1` declared via
+the root `packageManager` field). Operators on a fresh clone
+need to install pnpm via `npm install -g pnpm@10.4.1` (or via
+corepack if the system node has it set up) before running the
+usual install. Documented inline in the workspace setup so a
+future contributor doesn't lose time to the same gotcha.
+
 ## What's queued behind today
 
-Four things, in priority order:
+Five things, in priority order:
 
-1. **OfferBook sort UI** on the lender-only and borrower-only
-   tabs: dropdown or pill-row for rate ASC / DESC, principal
-   ASC / DESC, duration ASC / DESC, recency. The skinny call
-   already carries every sort key — this is a UI-only
-   addition with zero RPC pressure.
-2. **Source-tree refactor** to the monorepo apps/ + packages/
-   layout the Cloudflare staging Workers were provisioned
-   against. Each Worker becomes its own app folder; shared
-   utilities move into packages.
-3. **Cancelled-offer capture in the archive database**: a
+1. **Source-tree refactor — Stage 2c, 3, 4.** Stage 2c
+   promotes more shared React components into the ui package
+   after their dep chains land. Stage 3 splits the
+   today-monolithic hf-watcher Worker into three concern-
+   separated Workers (read/index agent, chain-to-D1 indexer,
+   autonomous keeper). Stage 4 carves the marketing surfaces
+   out of apps/defi into apps/labs.
+2. **Cancelled-offer capture in the archive database**: a
    schema migration adds a cancellation timestamp column, the
    chain indexer updates rows on cancel rather than dropping
    them, and a weekly retention cron prunes the long tail.
    Frontend gets a "view activity" link to surface cancelled
    offers without storing them on chain.
-4. **GitHub Actions matrix deploy** for the five Workers, so
+3. **GitHub Actions matrix deploy** for the five Workers, so
    each app's commit-to-Cloudflare path is wired and parallel.
 
 ## Documentation discipline
