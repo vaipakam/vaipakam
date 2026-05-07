@@ -240,15 +240,101 @@ walking-list sweep, with the test mutator scaffold updated so
 every future analytic getter that reads a user-keyed index is
 automatically exercised.
 
+## OfferBook 2-filter UX — required-pair shape with sort across the entire bucket
+
+The OfferBook page now requires the user to pick BOTH a lending
+asset and a collateral asset before showing any rows — no more
+"all assets" sentinel. Each supported chain ships a sensible
+default pair so the page lands non-empty without user input:
+USDC × WETH on Base / Ethereum / Arbitrum / Optimism / Sepolia /
+Base Sepolia, USDC.e × WETH on Polygon zkEVM, USDT × WBNB on
+BNB. Testnets without canonical addresses fold to "user must
+pick" rather than show a broken default.
+
+Three architecturally interesting pieces ship behind this UX:
+
+- **Skinny ranking getter on-chain.** A new view function returns
+  every active offer in the (lending, collateral) bucket as a
+  thin row of the rank-relevant fields only — id, side
+  (lender/borrower), principal min/max, rate min/max, duration,
+  creation timestamp. Roughly 256 bytes per offer in the encoded
+  payload, returned in one round trip. The contract avoids the
+  alternative of maintaining sorted indices on-chain (which would
+  cost extra gas on every offer create / accept / cancel for what
+  is purely a read-side optimisation), instead handing a thin
+  fan-out array to the client and letting JavaScript do the
+  sorting.
+
+- **Sort across the entire bucket.** Because the skinny call
+  surfaces every active offer in the pair without per-offer
+  hydration, the frontend can sort by any direction (rate ASC /
+  DESC, principal ASC / DESC, duration ASC / DESC, recency) on
+  the full data set in JavaScript memory. The user toggling sort
+  directions burns zero RPC calls — only the page slice that's
+  actually being rendered ever gets hydrated to its full Offer
+  shape via a multicall. The both-tab (depth-chart layout that
+  shows both lender and borrower offers around the market
+  anchor) keeps its existing "top-N per side" rendering and does
+  NOT expose a sort UI; sort applies on the lender-only and
+  borrower-only tabs where the user is browsing a single side
+  sequentially.
+
+- **Configurable hydration cap, env-tunable.** The hydration
+  multicall (the per-page-load batch that fetches full Offer
+  structs) is now env-tunable via `VITE_OFFER_BOOK_PAGE_SIZE`
+  (default 200, clamped to a sane range). Going from 200 to 500
+  is NOT an RPC-quota concern — both are exactly one multicall,
+  request-priced by every public RPC provider — but bandwidth
+  and first-paint latency on slow connections motivate keeping
+  the default low. Operators on chains with consistently large
+  pair buckets can dial it up without a code change. Documented
+  in the frontend env-template alongside the existing knobs.
+
+- **Near-real-time updates across the whole protocol.** When ANY
+  user globally creates / accepts / cancels an offer matching
+  the current pair, the existing log-index event stream catches
+  it within seconds and the OfferBook invalidates the skinny-
+  ranking cache so the new row appears on the next render. Same
+  near-real-time behaviour the page had before, just now bound
+  to the pair filter rather than the global active set.
+
+- **AssetPicker clear behaviour adjusted for the required-pair
+  invariant.** The X button on the lending / collateral filter
+  pickers used to clear the field to empty; it now resets to the
+  chain default. Picking a different non-empty asset still works
+  the same way. This keeps the required-pair shape without
+  breaking the AssetPicker primitive, which is shared across
+  many other surfaces (offer creation, allowance management,
+  etc.) where clear-to-empty is the right behaviour.
+
+User-visible effect today: the page lands on a meaningful
+default pair on every supported mainnet, sorts across the full
+bucket without RPC pressure, and surfaces new offers
+near-instantly as they appear. The user-chosen sort UI plumbing
+on the single-side tabs is the next chunk; the skinny call
+already carries every sort key, so it's a UI-only addition.
+
+## Test coverage delta (additions today)
+
+Three new contract tests for the skinny ranking view:
+
+- Returns the right shape with mixed lender / borrower / range
+  offers in one bucket.
+- Empty pair returns empty array + zero total.
+- Range Orders min/max fields round-trip correctly when an
+  offer's max diverges from its min.
+
+Brings the MetricsFacetTest suite to 28 + 3 = 31 passing.
+
 ## What's queued behind today
 
-Four things, in priority order (the previously-listed quote-
-service repacking is now done):
+Four things, in priority order:
 
-1. **OfferBook two-filter UI**: surface the new asset-pair
-   getter behind a UX that requires both legs to be chosen
-   explicitly, with a per-chain default. No more "all assets"
-   sentinel for either filter.
+1. **OfferBook sort UI** on the lender-only and borrower-only
+   tabs: dropdown or pill-row for rate ASC / DESC, principal
+   ASC / DESC, duration ASC / DESC, recency. The skinny call
+   already carries every sort key — this is a UI-only
+   addition with zero RPC pressure.
 2. **Source-tree refactor** to the monorepo apps/ + packages/
    layout the Cloudflare staging Workers were provisioned
    against. Each Worker becomes its own app folder; shared

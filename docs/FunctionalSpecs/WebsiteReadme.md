@@ -123,6 +123,8 @@ Current connected-app surface expectations:
 
 - `Dashboard` is the user's "your stuff" surface: it should include active loans with Role / Status filters, pagination, sortable columns, a most-recent-first default sort, the user's offers across active / filled / cancelled states, the shared VPFI fee-discount consent, a VPFI rewards summary, and a green `Claim` CTA for terminal loans with unclaimed funds
 - Dashboard should not include a shallow `Your Escrow` / `Your Vault address` card when it only repeats the redacted vault address and explorer link; the dedicated `Your Vaipakam Vault` page is the canonical surface for vault address, asset balances, deposits, withdrawals, dust filtering, and protocol-tracked balance display
+- Dashboard's `Your Loans` table should prefer a single bundled read that returns all rows for the connected wallet already tagged by lender / borrower side, so the table first-paints as one complete payload rather than stair-stepping through one call per loan
+- Dashboard copy that summarizes lender versus borrower exposure should describe the side where the connected user has more capital, not always frame the headline as lender stake
 - Dashboard's active-loans section should expose a manual refresh action for connected wallets that refreshes indexed loans, wallet loan rows, claimability hints, and the user's offers together, while showing a `Last refreshed` indicator and the shared adaptive rescan cooldown chrome
 - `Offer Book` should be wallet-gated inside `/app`; after connection it should keep market browsing filterable by side, asset, status, liquidity, duration, and per-side count; market-rate annotations should use a filter-scoped recent-acceptance anchor with signed deltas and a mobile-friendly explanatory tooltip
 - closed / filled offer rows should link to the loan they created when an `OfferAccepted(offerId, acceptor, loanId)` event is available
@@ -172,6 +174,8 @@ Liquidation quote orchestration:
 - successful quotes should be sorted by expected output, with the best route and fallback order shown before the user submits liquidation
 - if one quote source is unavailable, the UI should still submit a ranked try-list from the remaining sources where possible
 - the quote-proxy routes should use per-upstream rate limits, such as separate 0x and 1inch per-IP budgets, so one upstream cannot exhaust the other
+- quote services that target keeper / liquidation swap adapters must carry both the approved swap-call destination and calldata, because venues such as 0x separate the ERC-20 allowance target from the rotating execution target
+- frontend, worker, and reference-bot quote packers should validate destination addresses from 0x / 1inch responses and share one wire format for adapter calls so a malformed quote cannot become a half-formed liquidation transaction
 
 Keeper-bot reference UX / ops requirements:
 
@@ -727,15 +731,20 @@ Data-fetching strategy:
 - active-loan and active-offer worker fetches should paginate through the returned cursor rather than reading only the first page; frontend hard caps may bound defensive fetches, but the UI must not silently truncate ordinary active sets at a single default page
 - `Offer Book` should consume indexed active offers first, while keeping the existing browser event watcher so newly created global offers appear within seconds according to the existing non-user-customizable sort
 - OfferBook's displayed totals and tab badges should come from the same indexed list that renders rows when in indexer mode, and `Showing X of Y` copy should reflect post-filter visible rows with an explicit hidden-by-filters suffix where applicable
+- OfferBook's lending-asset plus collateral-asset filter should use a contract-side active-offers-by-asset-pair primitive when both legs are selected; the UI should require explicit values for both legs, seeded from a per-chain default, instead of using an `all assets` sentinel for either side
 - the `Hide my offers` setting should default on and persist across navigation / reloads under a Vaipakam-namespaced localStorage key
 - dashboard loan lists may consume indexed loan origination data, but current lender / borrower NFT-holder views should be live-filtered through `ownerOf(tokenId)` reads so transferred loan NFTs are reflected accurately
-- Dashboard's `Your Offers` card should be indexer-first through the creator endpoint, paginate rows locally, reset pagination on status-filter changes, and fall back to direct reads only when the worker is unavailable
+- Dashboard's `Your Offers` card should be indexer-first through the creator endpoint, paginate rows locally, reset pagination on status-filter changes, and fall back to direct reads only when the worker is unavailable; when reading directly from chain, it should prefer the struct-returning per-user offers getter over an id-list plus per-row detail fan-out
 - the dashboard `Your Loans` card may render directly from indexed wallet-loan endpoints after the worker has live-filtered current NFT ownership; if the worker is unavailable, it should fall back to the existing direct chain / browser-index path
+- user-keyed dashboard and analytics views should scale with the connected user's result count by consuming per-user indexes where available rather than walking global active loan / offer sets and filtering client-side
 - Claim Center money-relevant claim payloads should continue to read directly from chain; indexed claimability is only a discovery hint
 - periodic-interest checkpoint state may be mirrored by the indexer for fast display and reminders, but `previewPeriodicSettle` and transaction review amounts should read the current Diamond state before signing
 - VPFI token-panel scans may remain direct filtered log reads while volume stays low
 - ERC-721 `Transfer` events for Vaipakam position NFTs should enter the shared `activity_events` ledger so ownership history is queryable without maintaining a separate mutable `nft_positions` table
+- frontend live-tail scanning should converge toward one AppLayout-level provider with topic-routed dispatch, page-aware cadence, and cache-invalidation semantics rather than each hook maintaining an independent scanner
+- IndexedDB should be the browser cache layer for user-owned offers / loans and top-N global offers, with versioned schemas, eviction rules, and lazy `getOfferDetails` / `getLoanDetails` fallback only on cache misses
 - the app footer should expose one active-chain `Verify on-chain` affordance that opens the current Diamond on the relevant explorer; repeated per-row verify links are not required
+- the frontend should be capable of an IPFS / static-hosted no-server fallback where critical app reads can go directly to chain RPC when the centralized API / indexer is unreachable; this fallback should use Multicall3 batching, IndexedDB caching, RPC failover, and optional user-supplied RPC URLs where practical
 - Durable Objects, WebSocket, SSE, or webhook push are not required for this cache layer while browser event watchers already refresh visible pages after relevant on-chain events. A future push channel may be layered on for lower-latency client updates, but polling / live-tail reads must remain the canonical fallback for disconnects and unsupported clients.
 - for aggregates that are too expensive to reconstruct repeatedly on the client, the protocol may expose lightweight read-only helper functions such as `getProtocolTVL`, `getUserCount`, `getActiveLoansCountAndValue`, and `getTotalInterestEarned`
 - direct contract reads and browser log indexing remain the fallback path whenever the worker is unavailable, times out, or has no configured origin; the cache must never become an oracle for money-moving actions

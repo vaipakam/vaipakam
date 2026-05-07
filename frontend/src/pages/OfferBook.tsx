@@ -23,6 +23,8 @@ import { beginStep, emit } from '../lib/journeyLog';
 import { decodeContractError, extractRevertSelector } from '../lib/decodeContractError';
 import { useLogIndex } from '../hooks/useLogIndex';
 import { useIndexedActiveOffers } from '../hooks/useIndexedActiveOffers';
+import { useActiveOffersByAssetPairRanked } from '../hooks/useActiveOffersByAssetPairRanked';
+import { OFFER_BOOK_PAGE_SIZE } from '../lib/offerBookConfig';
 import { useRescanCooldown } from '../hooks/useRescanCooldown';
 import { Check, RefreshCw } from 'lucide-react';
 import { indexedToRawOffer } from '../lib/indexerClient';
@@ -50,7 +52,13 @@ import './OfferBook.css';
 export const OFFER_TYPE_LABELS = ['Lender', 'Borrower'] as const;
 export const LIQUIDITY_LABELS = ['Liquid', 'Illiquid'] as const;
 export const ASSET_TYPE_LABELS = ['ERC-20', 'ERC-721', 'ERC-1155'] as const;
-const WINDOW_SIZE = 200;
+// Page-size cap for `fetchBatch` hydration. Tuned via the
+// VITE_OFFER_BOOK_PAGE_SIZE env var (default 200, clamped [50, 1000]).
+// Pre-Phase 7d this was a hard-coded 200; the env knob lets operators
+// dial up bandwidth on chains with deep pair buckets without a code
+// change. The skinny ranking call is independent of this cap — sort
+// across the entire (lending, collateral) bucket stays free.
+const WINDOW_SIZE = OFFER_BOOK_PAGE_SIZE;
 /** Upper bound on the per-side row count the user can dial in, scoped to the
  *  active tab. `both` sees two columns so each side caps at 50 rows; on a
  *  single-side tab all vertical space is one list, so the cap rises to 100. */
@@ -225,12 +233,11 @@ export default function OfferBook() {
 
   const [statusView, setStatusView] = useState<StatusView>('open');
 
-  // Sort ids descending so we fetch the newest offers first. The cursor
-  // then walks backward in id space when the user expands the window.
-  const sortedIds = useMemo(() => {
-    const src = statusView === 'open' ? openOfferIds : closedOfferIds;
-    return [...src].sort((a, b) => (a < b ? 1 : a > b ? -1 : 0));
-  }, [openOfferIds, closedOfferIds, statusView]);
+  // `sortedIds` definition is hoisted further down — past the filter
+  // state declarations — because the pair-path branch reads
+  // `lendingAssetFilter` / `collateralAssetFilter`. The closed-tab
+  // path still ranks by id descending; the open-tab pair path ranks
+  // by createdAt descending and is fed by the skinny-ranking hook.
 
   const [offers, setOffers] = useState<OfferData[]>([]);
   const [cursor, setCursor] = useState(0);
@@ -251,9 +258,39 @@ export default function OfferBook() {
   const [txHash, setTxHash] = useState<string | null>(null);
   const [discountPreview, setDiscountPreview] = useState<DiscountPreview | null>(null);
 
-  // Market filters.
-  const [lendingAssetFilter, setLendingAssetFilter] = useState('');
-  const [collateralAssetFilter, setCollateralAssetFilter] = useState('');
+  // Market filters. Initialised from the chain's per-chain default
+  // pair (predominant stablecoin × wrapped-native) so the OfferBook
+  // lands on the most-relevant market without user input. Both legs
+  // are required — the AssetPicker's clear button resets to the
+  // chain default rather than a free-text empty (see the wrapper
+  // setters below).
+  const defaultLendingAsset = activeReadChain.predominantStableAddress ?? '';
+  const defaultCollateralAsset = activeReadChain.wrappedNativeAddress ?? '';
+  const [lendingAssetFilter, setLendingAssetFilterRaw] = useState<string>(defaultLendingAsset);
+  const [collateralAssetFilter, setCollateralAssetFilterRaw] = useState<string>(defaultCollateralAsset);
+  // Wrap the setters so AssetPicker's "clear" (passes empty string)
+  // resets to the chain default — keeps the required-pair invariant
+  // without changing AssetPicker itself. Updates also flow when the
+  // user picks a different non-empty asset.
+  const setLendingAssetFilter = useCallback(
+    (next: string) => {
+      setLendingAssetFilterRaw(next === '' ? defaultLendingAsset : next);
+    },
+    [defaultLendingAsset],
+  );
+  const setCollateralAssetFilter = useCallback(
+    (next: string) => {
+      setCollateralAssetFilterRaw(next === '' ? defaultCollateralAsset : next);
+    },
+    [defaultCollateralAsset],
+  );
+  // Re-pre-fill on chain switch — defaults differ across chains
+  // (e.g. USDT/WBNB on BNB, USDC/WETH on Base), so a chain change
+  // resets both filters to the new chain's pair.
+  useEffect(() => {
+    setLendingAssetFilterRaw(defaultLendingAsset);
+    setCollateralAssetFilterRaw(defaultCollateralAsset);
+  }, [defaultLendingAsset, defaultCollateralAsset]);
   const [minDuration, setMinDuration] = useState('');
   const [maxDuration, setMaxDuration] = useState('');
   const [liquidityFilter, setLiquidityFilter] = useState<LiquidityFilter>('any');
@@ -309,6 +346,54 @@ export default function OfferBook() {
   const publicClient = useDiamondPublicClient();
   const loadedIdsRef = useRef<Set<string>>(new Set());
 
+  // ── 2-filter pair path ───────────────────────────────────────────
+  //
+  // Active on the OPEN tab whenever both filters resolve to a
+  // non-empty address — which is the default state on every chain
+  // that has its wrappedNativeAddress + predominantStableAddress
+  // populated in ChainConfig. On chains without those defaults the
+  // hook arguments fold to null, the call doesn't fire, and the
+  // OfferBook falls back to the legacy log-index / worker-indexer
+  // path that ranks by id.
+  //
+  // The skinny-ranking hook fetches the entire (lending, collateral)
+  // bucket in one round trip — sort across the full bucket happens
+  // in JS without re-hitting the chain. The page-N hydration that
+  // populates the actually-rendered rows still goes through the
+  // existing `fetchBatch` multicall below, which means the
+  // `offers` / `cursor` state machine, "Load more" UI, and
+  // anchor-driven ranking all keep working with no further changes.
+  const usePairPath =
+    statusView === 'open' &&
+    lendingAssetFilter !== '' &&
+    collateralAssetFilter !== '';
+  const {
+    rankings: pairRankings,
+    refresh: refreshPairRankings,
+  } = useActiveOffersByAssetPairRanked(
+    usePairPath ? (lendingAssetFilter as Address) : null,
+    usePairPath ? (collateralAssetFilter as Address) : null,
+  );
+
+  // Sort ids descending so we fetch the newest offers first. The cursor
+  // then walks backward in id space when the user expands the window.
+  // Pair path: derive ids from the skinny ranking rows, ordered by
+  // createdAt DESC (recency) by default — sort UI plumbed in a future
+  // commit will plug a user-chosen comparator in here. The skinny
+  // payload covers every active offer in the bucket so the cursor
+  // can walk all the way to the end without re-hitting the chain.
+  const sortedIds = useMemo(() => {
+    if (usePairPath) {
+      return [...pairRankings]
+        .sort((a, b) =>
+          a.createdAt < b.createdAt ? 1 : a.createdAt > b.createdAt ? -1 : 0,
+        )
+        .map((r) => r.id);
+    }
+    const src = statusView === 'open' ? openOfferIds : closedOfferIds;
+    return [...src].sort((a, b) => (a < b ? 1 : a > b ? -1 : 0));
+  }, [usePairPath, pairRankings, openOfferIds, closedOfferIds, statusView]);
+
   // Verified tab counts — the log index lists IDs by event (OfferCreated
   // minus OfferAccepted/Canceled), but RPC lag or missed events can leave
   // canceled/accepted IDs in the wrong bucket. We validate by reading each
@@ -324,8 +409,48 @@ export default function OfferBook() {
   // the legacy on-chain log-scan pagination below. Hoisted up here
   // so the reset-on-`sortedIds` effect can guard on it (see comment
   // on that effect).
+  // The legacy worker-indexer path is suppressed on the pair-keyed
+  // OPEN view: the new skinny-ranking call already covers the full
+  // (lending, collateral) bucket and routes the ids through the same
+  // `loadWindow` → `fetchBatch` pipeline below. Letting both paths
+  // run would double-write `offers` from two sources with diverging
+  // ranking semantics.
   const indexerServingOpen =
-    statusView === 'open' && indexedSource === 'indexer' && indexedOffers !== null;
+    statusView === 'open' &&
+    !usePairPath &&
+    indexedSource === 'indexer' &&
+    indexedOffers !== null;
+
+  // Near-real-time updates on the pair path: when the global log
+  // index sees an OfferCreated / OfferAccepted / OfferCanceled event
+  // for the current (lending, collateral) pair, invalidate the
+  // skinny-ranking cache so the next render reflects it. The legacy
+  // path doesn't need this — `useLogIndex` already updates
+  // `openOfferIds` directly. Without this wire, new offers would
+  // appear within the hook's 30 s staleness window; with it, they
+  // appear within seconds of the event landing at the user's RPC.
+  useEffect(() => {
+    if (!usePairPath) return;
+    if (indexEvents.length === 0) return;
+    const lendingLower = lendingAssetFilter.toLowerCase();
+    const collateralLower = collateralAssetFilter.toLowerCase();
+    const matchesPair = indexEvents.some((ev) => {
+      if (
+        ev.kind !== 'OfferCreated' &&
+        ev.kind !== 'OfferAccepted' &&
+        ev.kind !== 'OfferCanceled'
+      ) {
+        return false;
+      }
+      const lending = (ev.args.lendingAsset ?? '').toString().toLowerCase();
+      const collateral = (ev.args.collateralAsset ?? '').toString().toLowerCase();
+      return lending === lendingLower && collateral === collateralLower;
+    });
+    if (matchesPair) void refreshPairRankings();
+    // We deliberately depend on `indexEvents` (the array reference) —
+    // useLogIndex re-creates it on every batch flush, so this fires
+    // once per flush rather than once per event.
+  }, [indexEvents, usePairPath, lendingAssetFilter, collateralAssetFilter, refreshPairRankings]);
 
   // Reset cumulative state whenever the open set changes so we don't
   // carry stale rows across reloads.

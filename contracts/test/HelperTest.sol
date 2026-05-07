@@ -548,7 +548,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](37);
+        selectors = new bytes4[](38);
         selectors[0] = MetricsFacet.getProtocolTVL.selector;
         selectors[1] = MetricsFacet.getProtocolStats.selector;
         selectors[2] = MetricsFacet.getUserCount.selector;
@@ -598,6 +598,7 @@ contract HelperTest {
         selectors[34] = bytes4(keccak256("getRevenueStats(address,uint16)"));
         selectors[35] = MetricsFacet.getActiveOffersByAssetPair.selector;
         selectors[36] = MetricsFacet.getUserAllOffersWithDetails.selector;
+        selectors[37] = MetricsFacet.getActiveOffersByAssetPairRanked.selector;
         return selectors;
     }
 

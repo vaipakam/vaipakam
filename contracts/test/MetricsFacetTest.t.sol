@@ -574,4 +574,125 @@ contract MetricsFacetTest is SetupTest {
         assertEq(total, 0);
         assertEq(rows.length, 0);
     }
+
+    // ── getActiveOffersByAssetPairRanked ────────────────────────────────────
+
+    /// @dev Helper: seed an active offer in the
+    ///      (mockERC20, mockCollateralERC20) pair with custom rank
+    ///      fields so the tests can drive distinct sort scenarios.
+    function _seedRankedOffer(
+        uint256 offerId,
+        LibVaipakam.OfferType offerType_,
+        uint256 amount_,
+        uint256 rateBps_,
+        uint256 durationDays_,
+        uint64 createdAt_
+    ) internal {
+        LibVaipakam.Offer memory o;
+        o.id = offerId;
+        o.creator = lender;
+        o.lendingAsset = mockERC20;
+        o.collateralAsset = mockCollateralERC20;
+        o.offerType = offerType_;
+        o.amount = amount_;
+        o.amountMax = amount_;
+        o.interestRateBps = rateBps_;
+        o.interestRateBpsMax = rateBps_;
+        o.durationDays = durationDays_;
+        o.createdAt = createdAt_;
+        o.accepted = false;
+        o.assetType = LibVaipakam.AssetType.ERC20;
+        o.collateralAssetType = LibVaipakam.AssetType.ERC20;
+        TestMutatorFacet(address(diamond)).scaffoldOpenOffer(offerId, o);
+    }
+
+    /// @dev Skinny getter returns every active offer in the pair
+    ///      bucket with the rank-relevant fields populated. The
+    ///      frontend sorts and slices client-side from this payload.
+    function testGetActiveOffersByAssetPairRanked_returnsSortableFields() public {
+        _seedRankedOffer(1, LibVaipakam.OfferType.Lender, 1000 ether, 500, 30, 1_700_000_000);
+        _seedRankedOffer(2, LibVaipakam.OfferType.Borrower, 2000 ether, 800, 60, 1_700_000_500);
+        _seedRankedOffer(3, LibVaipakam.OfferType.Lender, 1500 ether, 650, 14, 1_700_000_900);
+        TestMutatorFacet(address(diamond)).setNextOfferId(4);
+
+        (MetricsFacet.OfferRanking[] memory rows, uint256 total) =
+            MetricsFacet(address(diamond)).getActiveOffersByAssetPairRanked(
+                mockERC20,
+                mockCollateralERC20
+            );
+
+        assertEq(total, 3);
+        assertEq(rows.length, 3);
+        // Push order is creation order — bucket walk starts at index 0.
+        assertEq(rows[0].id, 1);
+        assertEq(uint8(rows[0].offerType), uint8(LibVaipakam.OfferType.Lender));
+        assertEq(rows[0].amount, 1000 ether);
+        assertEq(rows[0].interestRateBps, 500);
+        assertEq(rows[0].durationDays, 30);
+        assertEq(rows[0].createdAt, 1_700_000_000);
+
+        assertEq(rows[1].id, 2);
+        assertEq(uint8(rows[1].offerType), uint8(LibVaipakam.OfferType.Borrower));
+        assertEq(rows[1].amount, 2000 ether);
+        assertEq(rows[1].interestRateBps, 800);
+        assertEq(rows[1].durationDays, 60);
+
+        assertEq(rows[2].id, 3);
+        assertEq(rows[2].amount, 1500 ether);
+        assertEq(rows[2].interestRateBps, 650);
+        assertEq(rows[2].durationDays, 14);
+    }
+
+    /// @dev Empty pair returns empty array + zero total — the
+    ///      frontend probes safely on chain start-up before any
+    ///      offers exist.
+    function testGetActiveOffersByAssetPairRanked_emptyPair() public view {
+        (MetricsFacet.OfferRanking[] memory rows, uint256 total) =
+            MetricsFacet(address(diamond)).getActiveOffersByAssetPairRanked(
+                mockERC20,
+                mockCollateralERC20
+            );
+        assertEq(total, 0);
+        assertEq(rows.length, 0);
+    }
+
+    /// @dev Range Orders min/max fields surface correctly for
+    ///      Phase-1 single-value offers (max == min auto-collapse).
+    ///      The frontend's sort layer reads either depending on
+    ///      whether the user wants min-rate / min-amount or
+    ///      max-rate / max-amount semantics.
+    function testGetActiveOffersByAssetPairRanked_rangeFieldsSurface() public {
+        // Manually seed an offer with distinct min/max — bypassing
+        // the helper because Range Orders auto-collapse zero max
+        // back to min at create time, but the storage shape supports
+        // distinct values so the getter must round-trip them.
+        LibVaipakam.Offer memory o;
+        o.id = 1;
+        o.creator = lender;
+        o.lendingAsset = mockERC20;
+        o.collateralAsset = mockCollateralERC20;
+        o.offerType = LibVaipakam.OfferType.Lender;
+        o.amount = 1000 ether;
+        o.amountMax = 5000 ether;
+        o.interestRateBps = 400;
+        o.interestRateBpsMax = 600;
+        o.durationDays = 30;
+        o.createdAt = 1_700_000_000;
+        o.assetType = LibVaipakam.AssetType.ERC20;
+        o.collateralAssetType = LibVaipakam.AssetType.ERC20;
+        TestMutatorFacet(address(diamond)).scaffoldOpenOffer(1, o);
+        TestMutatorFacet(address(diamond)).setNextOfferId(2);
+
+        (MetricsFacet.OfferRanking[] memory rows,) =
+            MetricsFacet(address(diamond)).getActiveOffersByAssetPairRanked(
+                mockERC20,
+                mockCollateralERC20
+            );
+
+        assertEq(rows.length, 1);
+        assertEq(rows[0].amount, 1000 ether);
+        assertEq(rows[0].amountMax, 5000 ether);
+        assertEq(rows[0].interestRateBps, 400);
+        assertEq(rows[0].interestRateBpsMax, 600);
+    }
 }

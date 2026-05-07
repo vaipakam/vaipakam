@@ -1,5 +1,5 @@
-import { getAddress, isAddress } from 'viem';
-import { getDeployment, type Deployment } from './deployments';
+import { getAddress, isAddress } from "viem";
+import { getDeployment, type Deployment } from "./deployments";
 
 const env = import.meta.env;
 
@@ -23,7 +23,7 @@ function normalizeAddress(addr: string | null): string | null {
  *  means "pay in native gas (ETH / BNB)". The TS layer prefers `null`
  *  for that case to keep JS-truthiness checks honest, so map at the
  *  deployments-JSON boundary. */
-const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
+const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
 function nullIfZero(addr: string | undefined): string | null {
   if (addr == null) return null;
   if (addr.toLowerCase() === ZERO_ADDRESS) return null;
@@ -119,6 +119,21 @@ export interface ChainConfig {
    *  adapter is in native-gas mode (no WETH user-facing) or where
    *  no canonical CoinGecko page tracks the bridged WETH. */
   bridgedWethCoinGeckoSlug: string | null;
+  /** Canonical wrapped-native ERC20 address on this chain (WETH on
+   *  ETH-side chains, WBNB on BNB, etc.). Used as the default
+   *  COLLATERAL pre-fill for the OfferBook's required
+   *  (lending, collateral) filter — the most-likely collateral asset
+   *  a user wants to browse on this chain. Null when no canonical
+   *  wrapped-native ERC20 is published yet (testnets where mocks
+   *  shift per deploy, or local Anvil). When null, the OfferBook
+   *  requires the user to pick a collateral asset manually. */
+  wrappedNativeAddress: string | null;
+  /** Predominantly-used stablecoin ERC20 address on this chain
+   *  (USDC on most EVMs, USDT on BNB). Used as the default LENDING
+   *  asset pre-fill for the OfferBook's required
+   *  (lending, collateral) filter. Same null-fallback semantics as
+   *  {wrappedNativeAddress}. */
+  predominantStableAddress: string | null;
 }
 
 function str(key: string, fallback: string): string {
@@ -143,6 +158,12 @@ interface ChainMeta {
   nativeGasSymbol: string;
   nativeGasCoinGeckoSlug: string | null;
   bridgedWethCoinGeckoSlug: string | null;
+  /** OfferBook default-pair pre-fills — see ChainConfig docstrings.
+   *  Optional on the meta input so chains without sensible defaults
+   *  (testnets with deploy-shifting mocks, local Anvil) can omit them
+   *  and the {@link buildChainConfig} pass folds null. */
+  wrappedNativeAddress?: string | null;
+  predominantStableAddress?: string | null;
 }
 
 /** Folds a `ChainMeta` + the matching deployments-JSON record into a
@@ -171,6 +192,8 @@ function buildChainConfig(meta: ChainMeta): ChainConfig {
     nativeGasSymbol: meta.nativeGasSymbol,
     nativeGasCoinGeckoSlug: meta.nativeGasCoinGeckoSlug,
     bridgedWethCoinGeckoSlug: meta.bridgedWethCoinGeckoSlug,
+    wrappedNativeAddress: meta.wrappedNativeAddress ?? null,
+    predominantStableAddress: meta.predominantStableAddress ?? null,
   };
 }
 
@@ -178,34 +201,42 @@ function buildChainConfig(meta: ChainMeta): ChainConfig {
 
 const ETHEREUM = buildChainConfig({
   chainId: 1,
-  chainIdHex: '0x1',
-  name: 'Ethereum',
-  shortName: 'eth',
-  rpcUrlEnvKey: 'VITE_ETHEREUM_RPC_URL',
-  rpcUrlDefault: 'https://eth.llamarpc.com',
-  blockExplorer: 'https://etherscan.io',
+  chainIdHex: "0x1",
+  name: "Ethereum",
+  shortName: "eth",
+  rpcUrlEnvKey: "VITE_ETHEREUM_RPC_URL",
+  rpcUrlDefault: "https://eth.llamarpc.com",
+  blockExplorer: "https://etherscan.io",
   isCanonicalVPFI: false,
   lzEid: 30101,
   testnet: false,
-  nativeGasSymbol: 'ETH',
-  nativeGasCoinGeckoSlug: 'ethereum',
+  nativeGasSymbol: "ETH",
+  nativeGasCoinGeckoSlug: "ethereum",
   bridgedWethCoinGeckoSlug: null,
+  // WETH9
+  wrappedNativeAddress: "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+  // USDC (Circle)
+  predominantStableAddress: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
 });
 
 const BASE = buildChainConfig({
   chainId: 8453,
-  chainIdHex: '0x2105',
-  name: 'Base',
-  shortName: 'base',
-  rpcUrlEnvKey: 'VITE_BASE_RPC_URL',
-  rpcUrlDefault: 'https://mainnet.base.org',
-  blockExplorer: 'https://basescan.org',
+  chainIdHex: "0x2105",
+  name: "Base",
+  shortName: "base",
+  rpcUrlEnvKey: "VITE_BASE_RPC_URL",
+  rpcUrlDefault: "https://mainnet.base.org",
+  blockExplorer: "https://basescan.org",
   isCanonicalVPFI: true,
   lzEid: 30184,
   testnet: false,
-  nativeGasSymbol: 'ETH',
-  nativeGasCoinGeckoSlug: 'ethereum',
+  nativeGasSymbol: "ETH",
+  nativeGasCoinGeckoSlug: "ethereum",
   bridgedWethCoinGeckoSlug: null,
+  // WETH (Base canonical)
+  wrappedNativeAddress: "0x4200000000000000000000000000000000000006",
+  // USDC (Circle native)
+  predominantStableAddress: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
 });
 
 // Polygon PoS was dropped from Phase 1 (weaker multi-sig bridge trust +
@@ -214,12 +245,12 @@ const BASE = buildChainConfig({
 // Optimism. Re-evaluate PoS for Phase 2 once AggLayer matures.
 const POLYGON_ZKEVM = buildChainConfig({
   chainId: 1101,
-  chainIdHex: '0x44d',
-  name: 'Polygon zkEVM',
-  shortName: 'zkevm',
-  rpcUrlEnvKey: 'VITE_POLYGON_ZKEVM_RPC_URL',
-  rpcUrlDefault: 'https://zkevm-rpc.com',
-  blockExplorer: 'https://zkevm.polygonscan.com',
+  chainIdHex: "0x44d",
+  name: "Polygon zkEVM",
+  shortName: "zkevm",
+  rpcUrlEnvKey: "VITE_POLYGON_ZKEVM_RPC_URL",
+  rpcUrlDefault: "https://zkevm-rpc.com",
+  blockExplorer: "https://zkevm.polygonscan.com",
   isCanonicalVPFI: false,
   // LZ V2 endpoint ID. **Verify against
   // https://docs.layerzero.network/v2/deployments/deployed-contracts**
@@ -228,19 +259,23 @@ const POLYGON_ZKEVM = buildChainConfig({
   testnet: false,
   // Polygon zkEVM uses ETH for gas (not POL/MATIC) — it's a zk-rollup
   // settling on Ethereum, so native gas mirrors mainnet.
-  nativeGasSymbol: 'ETH',
-  nativeGasCoinGeckoSlug: 'ethereum',
+  nativeGasSymbol: "ETH",
+  nativeGasCoinGeckoSlug: "ethereum",
   bridgedWethCoinGeckoSlug: null,
+  // WETH (bridged via the LXLY bridge)
+  wrappedNativeAddress: "0x4F9A0e7FD2Bf6067db6994CF12E4495Df938E6e9",
+  // USDC.e (bridged Circle USDC; native USDC not deployed on zkEVM yet)
+  predominantStableAddress: "0xA8CE8aee21bC2A48a5EF670afCc9274C7bbbC035",
 });
 
 const BNB = buildChainConfig({
   chainId: 56,
-  chainIdHex: '0x38',
-  name: 'BNB Chain',
-  shortName: 'bnb',
-  rpcUrlEnvKey: 'VITE_BNB_RPC_URL',
-  rpcUrlDefault: 'https://bsc-dataseed.binance.org',
-  blockExplorer: 'https://bscscan.com',
+  chainIdHex: "0x38",
+  name: "BNB Chain",
+  shortName: "bnb",
+  rpcUrlEnvKey: "VITE_BNB_RPC_URL",
+  rpcUrlDefault: "https://bsc-dataseed.binance.org",
+  blockExplorer: "https://bscscan.com",
   isCanonicalVPFI: false,
   lzEid: 30102,
   testnet: false,
@@ -250,104 +285,125 @@ const BNB = buildChainConfig({
   // WETH9 ERC20 (`0x2170Ed0880ac9A755fd29B2688956BD959F933F8` per
   // CLAUDE.md) as the actual asset users pay in. Linking BNB
   // separately for users who land here in native-gas testnet mode.
-  nativeGasSymbol: 'BNB',
-  nativeGasCoinGeckoSlug: 'binancecoin',
-  bridgedWethCoinGeckoSlug: 'weth',
+  nativeGasSymbol: "BNB",
+  nativeGasCoinGeckoSlug: "binancecoin",
+  bridgedWethCoinGeckoSlug: "weth",
+  // WBNB — chain's wrapped-native, the natural collateral on BNB.
+  wrappedNativeAddress: "0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c",
+  // USDT — dominant BNB stablecoin (USDC is also widely used but USDT
+  // historically wins volume on BSC).
+  predominantStableAddress: "0x55d398326f99059fF775485246999027B3197955",
 });
 
 const ARBITRUM = buildChainConfig({
   chainId: 42161,
-  chainIdHex: '0xa4b1',
-  name: 'Arbitrum One',
-  shortName: 'arb',
-  rpcUrlEnvKey: 'VITE_ARBITRUM_RPC_URL',
-  rpcUrlDefault: 'https://arb1.arbitrum.io/rpc',
-  blockExplorer: 'https://arbiscan.io',
+  chainIdHex: "0xa4b1",
+  name: "Arbitrum One",
+  shortName: "arb",
+  rpcUrlEnvKey: "VITE_ARBITRUM_RPC_URL",
+  rpcUrlDefault: "https://arb1.arbitrum.io/rpc",
+  blockExplorer: "https://arbiscan.io",
   isCanonicalVPFI: false,
   lzEid: 30110,
   testnet: false,
-  nativeGasSymbol: 'ETH',
-  nativeGasCoinGeckoSlug: 'ethereum',
+  nativeGasSymbol: "ETH",
+  nativeGasCoinGeckoSlug: "ethereum",
   bridgedWethCoinGeckoSlug: null,
+  // WETH (Arbitrum canonical)
+  wrappedNativeAddress: "0x82aF49447D8a07e3bd95BD0d56f35241523fBab1",
+  // USDC (Circle native, not the legacy USDC.e)
+  predominantStableAddress: "0xaf88d065e77c8cC2239327C5EDb3A432268e5831",
 });
 
 const OPTIMISM = buildChainConfig({
   chainId: 10,
-  chainIdHex: '0xa',
-  name: 'Optimism',
-  shortName: 'op',
-  rpcUrlEnvKey: 'VITE_OPTIMISM_RPC_URL',
-  rpcUrlDefault: 'https://mainnet.optimism.io',
-  blockExplorer: 'https://optimistic.etherscan.io',
+  chainIdHex: "0xa",
+  name: "Optimism",
+  shortName: "op",
+  rpcUrlEnvKey: "VITE_OPTIMISM_RPC_URL",
+  rpcUrlDefault: "https://mainnet.optimism.io",
+  blockExplorer: "https://optimistic.etherscan.io",
   isCanonicalVPFI: false,
   lzEid: 30111,
   testnet: false,
-  nativeGasSymbol: 'ETH',
-  nativeGasCoinGeckoSlug: 'ethereum',
+  nativeGasSymbol: "ETH",
+  nativeGasCoinGeckoSlug: "ethereum",
   bridgedWethCoinGeckoSlug: null,
+  // WETH (OP Stack canonical pre-deploy)
+  wrappedNativeAddress: "0x4200000000000000000000000000000000000006",
+  // USDC (Circle native, not the legacy USDC.e)
+  predominantStableAddress: "0x0b2C639c533813f4Aa9D7837CAf62653d097Ff85",
 });
 
 // ── Testnet ──────────────────────────────────────────────────────────────
 
 const SEPOLIA = buildChainConfig({
   chainId: 11155111,
-  chainIdHex: '0xaa36a7',
-  name: 'Sepolia',
-  shortName: 'sep',
-  rpcUrlEnvKey: 'VITE_SEPOLIA_RPC_URL',
-  rpcUrlDefault: 'https://rpc.sepolia.org',
-  blockExplorer: 'https://sepolia.etherscan.io',
+  chainIdHex: "0xaa36a7",
+  name: "Sepolia",
+  shortName: "sep",
+  rpcUrlEnvKey: "VITE_SEPOLIA_RPC_URL",
+  rpcUrlDefault: "https://rpc.sepolia.org",
+  blockExplorer: "https://sepolia.etherscan.io",
   isCanonicalVPFI: false,
   lzEid: 40161,
   testnet: true,
-  nativeGasSymbol: 'ETH',
-  nativeGasCoinGeckoSlug: 'ethereum',
+  nativeGasSymbol: "ETH",
+  nativeGasCoinGeckoSlug: "ethereum",
   bridgedWethCoinGeckoSlug: null,
+  // WETH9 — Sepolia canonical published in canonicalAssets.ts.
+  wrappedNativeAddress: "0xfFf9976782d46CC05630D1f6eBAb18b2324d6B14",
+  // USDC (Circle testnet)
+  predominantStableAddress: "0x94a9D9AC8a22534E3FaCa9F4e7F2E2cf85d5E4C8",
 });
 
 const BASE_SEPOLIA = buildChainConfig({
   chainId: 84532,
-  chainIdHex: '0x14a34',
-  name: 'Base Sepolia',
-  shortName: 'base-sep',
-  rpcUrlEnvKey: 'VITE_BASE_SEPOLIA_RPC_URL',
-  rpcUrlDefault: 'https://sepolia.base.org',
-  blockExplorer: 'https://sepolia.basescan.org',
+  chainIdHex: "0x14a34",
+  name: "Base Sepolia",
+  shortName: "base-sep",
+  rpcUrlEnvKey: "VITE_BASE_SEPOLIA_RPC_URL",
+  rpcUrlDefault: "https://sepolia.base.org",
+  blockExplorer: "https://sepolia.basescan.org",
   isCanonicalVPFI: true,
   lzEid: 40245,
   testnet: true,
-  nativeGasSymbol: 'ETH',
-  nativeGasCoinGeckoSlug: 'ethereum',
+  nativeGasSymbol: "ETH",
+  nativeGasCoinGeckoSlug: "ethereum",
   bridgedWethCoinGeckoSlug: null,
+  // WETH (Base Sepolia canonical pre-deploy)
+  wrappedNativeAddress: "0x4200000000000000000000000000000000000006",
+  // USDC (Circle Base Sepolia testnet)
+  predominantStableAddress: "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
 });
 
 // Cardona is the Polygon zkEVM public testnet. Replaces Polygon Amoy from
 // Phase 1 — see the POLYGON_ZKEVM comment above for rationale.
 const POLYGON_ZKEVM_CARDONA = buildChainConfig({
   chainId: 2442,
-  chainIdHex: '0x98a',
-  name: 'Polygon zkEVM Cardona',
-  shortName: 'cardona',
-  rpcUrlEnvKey: 'VITE_POLYGON_ZKEVM_CARDONA_RPC_URL',
-  rpcUrlDefault: 'https://rpc.cardona.zkevm-rpc.com',
-  blockExplorer: 'https://cardona-zkevm.polygonscan.com',
+  chainIdHex: "0x98a",
+  name: "Polygon zkEVM Cardona",
+  shortName: "cardona",
+  rpcUrlEnvKey: "VITE_POLYGON_ZKEVM_CARDONA_RPC_URL",
+  rpcUrlDefault: "https://rpc.cardona.zkevm-rpc.com",
+  blockExplorer: "https://cardona-zkevm.polygonscan.com",
   isCanonicalVPFI: false,
   lzEid: 40271,
   testnet: true,
   // Polygon zkEVM uses ETH for gas (mirror of mainnet zkEVM).
-  nativeGasSymbol: 'ETH',
-  nativeGasCoinGeckoSlug: 'ethereum',
+  nativeGasSymbol: "ETH",
+  nativeGasCoinGeckoSlug: "ethereum",
   bridgedWethCoinGeckoSlug: null,
 });
 
 const BNB_TESTNET = buildChainConfig({
   chainId: 97,
-  chainIdHex: '0x61',
-  name: 'BNB Testnet',
-  shortName: 'bnb-test',
-  rpcUrlEnvKey: 'VITE_BNB_TESTNET_RPC_URL',
-  rpcUrlDefault: 'https://data-seed-prebsc-1-s1.binance.org:8545',
-  blockExplorer: 'https://testnet.bscscan.com',
+  chainIdHex: "0x61",
+  name: "BNB Testnet",
+  shortName: "bnb-test",
+  rpcUrlEnvKey: "VITE_BNB_TESTNET_RPC_URL",
+  rpcUrlDefault: "https://data-seed-prebsc-1-s1.binance.org:8545",
+  blockExplorer: "https://testnet.bscscan.com",
   isCanonicalVPFI: false,
   lzEid: 40102,
   testnet: true,
@@ -356,40 +412,40 @@ const BNB_TESTNET = buildChainConfig({
   // Mainnet flips to WETH-pull. We populate both slugs so the
   // BuyVPFI card shows the right asset for whichever mode the
   // adapter actually reports at runtime.
-  nativeGasSymbol: 'tBNB',
-  nativeGasCoinGeckoSlug: 'binancecoin',
-  bridgedWethCoinGeckoSlug: 'weth',
+  nativeGasSymbol: "tBNB",
+  nativeGasCoinGeckoSlug: "binancecoin",
+  bridgedWethCoinGeckoSlug: "weth",
 });
 
 const ARBITRUM_SEPOLIA = buildChainConfig({
   chainId: 421614,
-  chainIdHex: '0x66eee',
-  name: 'Arbitrum Sepolia',
-  shortName: 'arb-sep',
-  rpcUrlEnvKey: 'VITE_ARBITRUM_SEPOLIA_RPC_URL',
-  rpcUrlDefault: 'https://sepolia-rollup.arbitrum.io/rpc',
-  blockExplorer: 'https://sepolia.arbiscan.io',
+  chainIdHex: "0x66eee",
+  name: "Arbitrum Sepolia",
+  shortName: "arb-sep",
+  rpcUrlEnvKey: "VITE_ARBITRUM_SEPOLIA_RPC_URL",
+  rpcUrlDefault: "https://sepolia-rollup.arbitrum.io/rpc",
+  blockExplorer: "https://sepolia.arbiscan.io",
   isCanonicalVPFI: false,
   lzEid: 40231,
   testnet: true,
-  nativeGasSymbol: 'ETH',
-  nativeGasCoinGeckoSlug: 'ethereum',
+  nativeGasSymbol: "ETH",
+  nativeGasCoinGeckoSlug: "ethereum",
   bridgedWethCoinGeckoSlug: null,
 });
 
 const OPTIMISM_SEPOLIA = buildChainConfig({
   chainId: 11155420,
-  chainIdHex: '0xaa37dc',
-  name: 'Optimism Sepolia',
-  shortName: 'op-sep',
-  rpcUrlEnvKey: 'VITE_OPTIMISM_SEPOLIA_RPC_URL',
-  rpcUrlDefault: 'https://sepolia.optimism.io',
-  blockExplorer: 'https://sepolia-optimistic.etherscan.io',
+  chainIdHex: "0xaa37dc",
+  name: "Optimism Sepolia",
+  shortName: "op-sep",
+  rpcUrlEnvKey: "VITE_OPTIMISM_SEPOLIA_RPC_URL",
+  rpcUrlDefault: "https://sepolia.optimism.io",
+  blockExplorer: "https://sepolia-optimistic.etherscan.io",
   isCanonicalVPFI: false,
   lzEid: 40232,
   testnet: true,
-  nativeGasSymbol: 'ETH',
-  nativeGasCoinGeckoSlug: 'ethereum',
+  nativeGasSymbol: "ETH",
+  nativeGasCoinGeckoSlug: "ethereum",
   bridgedWethCoinGeckoSlug: null,
 });
 
@@ -399,17 +455,17 @@ const OPTIMISM_SEPOLIA = buildChainConfig({
 // from the anvil deployments JSON written by the bootstrap script.
 const ANVIL = buildChainConfig({
   chainId: 31337,
-  chainIdHex: '0x7a69',
-  name: 'Anvil Local',
-  shortName: 'anvil',
-  rpcUrlEnvKey: 'VITE_ANVIL_RPC_URL',
-  rpcUrlDefault: 'http://localhost:8545',
-  blockExplorer: '',
+  chainIdHex: "0x7a69",
+  name: "Anvil Local",
+  shortName: "anvil",
+  rpcUrlEnvKey: "VITE_ANVIL_RPC_URL",
+  rpcUrlDefault: "http://localhost:8545",
+  blockExplorer: "",
   isCanonicalVPFI: false,
   lzEid: 31337,
   testnet: true,
-  nativeGasSymbol: 'ETH',
-  nativeGasCoinGeckoSlug: 'ethereum',
+  nativeGasSymbol: "ETH",
+  nativeGasCoinGeckoSlug: "ethereum",
   bridgedWethCoinGeckoSlug: null,
 });
 
@@ -507,7 +563,9 @@ export const DEFAULT_CHAIN: DeployedChain = (() => {
     return envChain as DeployedChain;
   }
   if (SEPOLIA.diamondAddress === null) {
-    throw new Error('DEFAULT_CHAIN resolution failed — Sepolia has no diamondAddress');
+    throw new Error(
+      "DEFAULT_CHAIN resolution failed — Sepolia has no diamondAddress",
+    );
   }
   return SEPOLIA as DeployedChain;
 })();
@@ -518,10 +576,12 @@ export const DEFAULT_CHAIN: DeployedChain = (() => {
  * adapter lives.
  */
 export function getCanonicalVPFIChain(
-  preference: 'mainnet' | 'testnet' = DEFAULT_CHAIN.testnet ? 'testnet' : 'mainnet',
+  preference: "mainnet" | "testnet" = DEFAULT_CHAIN.testnet
+    ? "testnet"
+    : "mainnet",
 ): ChainConfig {
   const pool = Object.values(CHAIN_REGISTRY).filter(
-    (c) => c.isCanonicalVPFI && c.testnet === (preference === 'testnet'),
+    (c) => c.isCanonicalVPFI && c.testnet === (preference === "testnet"),
   );
   return pool[0] ?? BASE_SEPOLIA;
 }

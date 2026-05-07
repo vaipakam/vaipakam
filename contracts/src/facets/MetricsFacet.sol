@@ -382,6 +382,80 @@ contract MetricsFacet {
         offerIds = _slice(src, offset, limit);
     }
 
+    /// @notice Skinny ranking row returned by
+    ///         {getActiveOffersByAssetPairRanked}. Holds only the
+    ///         fields the OfferBook needs for client-side sorting +
+    ///         anchor-distance ranking — NOT the full Offer struct.
+    /// @dev   ABI-encoded width: 8 × 32 bytes = 256 bytes per row.
+    ///        The full Offer struct is ~17 slots; surfacing only the
+    ///        rank-relevant subset keeps the payload manageable even
+    ///        for buckets in the hundreds.
+    struct OfferRanking {
+        uint256 id;
+        LibVaipakam.OfferType offerType; // 0 = Lender, 1 = Borrower
+        uint256 amount;                  // Range Orders: amountMin
+        uint256 amountMax;
+        uint256 interestRateBps;         // Range Orders: rateBpsMin
+        uint256 interestRateBpsMax;
+        uint256 durationDays;
+        uint64 createdAt;
+    }
+
+    /// @notice Skinny ranking view of every active offer in the
+    ///         (lendingAsset, collateralAsset) bucket, returned in
+    ///         one round trip. Pairs with {getActiveOffersByAssetPair}
+    ///         (id-only, paged) and {getOffer} (full struct, single-id).
+    ///
+    /// @dev    Designed for the frontend OfferBook 2-filter UX:
+    ///         - One call returns the full bucket's sortable shape
+    ///           (~256 bytes per offer × bucket size).
+    ///         - Frontend sorts / slices client-side across the entire
+    ///           bucket without paying a per-offer hydration cost.
+    ///         - Only the page-N slice the user is viewing then gets
+    ///           hydrated via per-id `getOffer` multicalls.
+    ///         The on-chain alternative (maintaining sorted indices
+    ///         per sort-key × direction) was rejected — it adds a
+    ///         per-edge gas tax to every offer create / accept /
+    ///         cancel for a feature that's purely a read-side
+    ///         optimisation.
+    ///
+    /// @dev    No offset / limit — the whole bucket is returned. The
+    ///         pair-keyed index keeps buckets bounded by the number
+    ///         of currently-active offers in a given pair (typically
+    ///         tens, even at protocol scale only the few canonical
+    ///         pairs reach the low hundreds). For pathologically
+    ///         large buckets the frontend is expected to fall back
+    ///         to {getActiveOffersByAssetPair}'s paged id list.
+    ///
+    /// @param  lendingAsset    Required filter (no wildcard).
+    /// @param  collateralAsset Required filter (no wildcard).
+    /// @return rankings        Skinny ranking row per active offer.
+    /// @return total           `rankings.length`; surfaced for UI
+    ///                         total-count rendering without a
+    ///                         second `.length` round trip.
+    function getActiveOffersByAssetPairRanked(
+        address lendingAsset,
+        address collateralAsset
+    ) external view returns (OfferRanking[] memory rankings, uint256 total) {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        uint256[] storage src = s.assetPairActiveOfferIds[lendingAsset][collateralAsset];
+        total = src.length;
+        rankings = new OfferRanking[](total);
+        for (uint256 i = 0; i < total; i++) {
+            LibVaipakam.Offer storage o = s.offers[src[i]];
+            rankings[i] = OfferRanking({
+                id: o.id,
+                offerType: o.offerType,
+                amount: o.amount,
+                amountMax: o.amountMax,
+                interestRateBps: o.interestRateBps,
+                interestRateBpsMax: o.interestRateBpsMax,
+                durationDays: o.durationDays,
+                createdAt: o.createdAt
+            });
+        }
+    }
+
     /**
      * @notice Aggregate summary across active loans.
      * @return totalActiveLoanValueNumeraire Sum of priced principal across ERC-20 loans.

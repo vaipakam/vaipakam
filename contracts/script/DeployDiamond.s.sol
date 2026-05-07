@@ -1048,7 +1048,7 @@ contract DeployDiamond is Script {
     }
 
     function _getMetricsSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](37);
+        s = new bytes4[](38);
         s[0] = MetricsFacet.getProtocolTVL.selector;
         s[1] = MetricsFacet.getProtocolStats.selector;
         s[2] = MetricsFacet.getUserCount.selector;
@@ -1104,6 +1104,13 @@ contract DeployDiamond is Script {
         // trip returns full Offer rows so the frontend skips the
         // multicall fan-out for per-user offer detail tables.
         s[36] = MetricsFacet.getUserAllOffersWithDetails.selector;
+        // OfferBook 2-filter UX skinny-ranking view — surfaces the
+        // sort-relevant subset of every active offer in a
+        // (lending, collateral) pair so the frontend can sort across
+        // the entire bucket without per-offer hydration. Pairs with
+        // {getActiveOffersByAssetPair} (id-only) and {getOffer}
+        // (full struct, single id).
+        s[37] = MetricsFacet.getActiveOffersByAssetPairRanked.selector;
     }
 
     /// AnalyticalGettersDesign §3.1 — per-user dashboard surface. One
