@@ -40,7 +40,7 @@ import { SanctionsBanner } from '../components/app/SanctionsBanner';
 import { Pager } from '../components/app/Pager';
 import { CardInfo } from '../components/CardInfo';
 import { HoverTip } from '../components/HoverTip';
-import { Picker } from '../components/Picker';
+import { Picker } from '@vaipakam/ui/Picker';
 import { Users, Activity as ActivityIcon, ListOrdered } from 'lucide-react';
 import './Dashboard.css';
 

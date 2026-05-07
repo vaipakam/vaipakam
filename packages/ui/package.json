@@ -22,6 +22,10 @@
       "types": "./src/InfoTip.tsx",
       "default": "./src/InfoTip.tsx"
     },
+    "./Picker": {
+      "types": "./src/Picker.tsx",
+      "default": "./src/Picker.tsx"
+    },
     "./TokenIcon": {
       "types": "./src/TokenIcon.tsx",
       "default": "./src/TokenIcon.tsx"

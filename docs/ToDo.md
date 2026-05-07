@@ -11,6 +11,10 @@
 
 ---
 
+- [ ] **T-067**: provide create offer in offer book where the market ancor is displayed, with `I wan to Lend` / `I want to Borrow` button,
+
+---
+
 - [ ] **T-066**: Dont allow sorting in offer book with both the lender and borrower open offer view, but allow sorting on lender only and borrower only views of open offers. the sort should be on the entire list of offers not just only on paginated offers. closed or filled offer should also not allow custom sorting, it should show the most recently closed / filled offers with paginated views
 
 ---

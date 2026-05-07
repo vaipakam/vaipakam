@@ -14,7 +14,7 @@ import { buildErc20Proxy } from '../contracts/useERC20';
 import { DIAMOND_ABI_VIEM as DIAMOND_ABI } from '@vaipakam/contracts/abis';
 import { L as Link } from '../components/L';
 import { BookOpen, PlusCircle, AlertTriangle, ShieldCheck, Droplet, ListOrdered, Wallet } from 'lucide-react';
-import { Picker } from '../components/Picker';
+import { Picker } from '@vaipakam/ui/Picker';
 import { ErrorAlert } from '../components/app/ErrorAlert';
 import { SanctionsBanner } from '../components/app/SanctionsBanner';
 import { RiskDisclosures } from '../components/app/RiskDisclosures';

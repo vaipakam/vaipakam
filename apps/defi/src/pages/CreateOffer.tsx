@@ -36,7 +36,7 @@ import { usePermit2Signing } from "../hooks/usePermit2Signing";
 import { DIAMOND_ABI_VIEM as DIAMOND_ABI } from "@vaipakam/contracts/abis";
 import { L as Link } from "../components/L";
 import { AssetPicker } from "../components/app/AssetPicker";
-import { Picker } from "../components/Picker";
+import { Picker } from "@vaipakam/ui/Picker";
 import { TokenInfoTag } from "../components/app/TokenInfoTag";
 import { useAssetType, type DetectedAssetType } from "../hooks/useAssetType";
 import { CardInfo } from "../components/CardInfo";

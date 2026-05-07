@@ -8,4 +8,5 @@
 export { ChainPicker } from './ChainPicker.js';
 export { CopyableAddress } from './CopyableAddress.js';
 export { InfoTip } from './InfoTip.js';
+export { Picker } from './Picker.js';
 export { TokenIcon } from './TokenIcon.js';
