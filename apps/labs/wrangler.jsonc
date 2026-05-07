@@ -1,0 +1,27 @@
+{
+  // Vaipakam Labs marketing site — Cloudflare Workers Static
+  // Assets deploy of a Vite SPA build.
+  //
+  // STUB — see apps/agent/wrangler.jsonc et al for context.
+  // Stage 4 of the source-tree refactor populates src/pages/
+  // from apps/defi/'s marketing surfaces. Until then `wrangler
+  // deploy` from this directory pushes only the placeholder
+  // app shell.
+  //
+  // Custom domain bound at provision: labs.vaipakam.com (today).
+  // www.vaipakam.com + vaipakam.com bind here on cutover (per the
+  // user's stated migration plan); both add as additional
+  // custom-domain bindings on the same Worker without a code
+  // change.
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "vaipakam-labs",
+  "compatibility_date": "2026-04-23",
+  "compatibility_flags": ["nodejs_compat"],
+  "assets": {
+    "directory": "./dist",
+    "not_found_handling": "single-page-application",
+  },
+  "observability": {
+    "enabled": true,
+  },
+}
