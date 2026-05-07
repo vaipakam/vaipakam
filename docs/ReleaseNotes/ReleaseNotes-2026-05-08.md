@@ -440,25 +440,137 @@ corepack if the system node has it set up) before running the
 usual install. Documented inline in the workspace setup so a
 future contributor doesn't lose time to the same gotcha.
 
+## Source-tree Stage 2c — more shared components extracted
+
+Two preparatory dep extractions unlocked two additional
+component moves into the shared UI package:
+
+- The pure address-shortener (the "0xC02a...6Cc2" ellipsis
+  helper used everywhere an EVM address renders) lifted out of
+  the i18n-coupled formatter module into a new pure-helper
+  module at the lib package. The formatter module re-exports it
+  so existing callers don't break.
+- The chain-config TYPE plus the pure ordering comparator (the
+  "mainnets first, Ethereum-family pinned at top, alphabetical
+  within each tier" rule) lifted out of the Vite-coupled chain
+  registry into the contracts package. The original registry
+  re-exports both so existing imports don't break.
+
+With those landed, two more components became unblocked and
+moved to the shared UI package:
+
+- **CopyableAddress** — renders an address with a copy-to-
+  clipboard affordance.
+- **ChainPicker + its CSS** — the dropdown that lists supported
+  chains, used in the footer's explorer-link picker and in the
+  upcoming labs marketing surface.
+
+The shared CSS file moves with ChainPicker; the still-in-defi
+generic Picker primitive (which co-uses the same stylesheet)
+imports it via the package's exports map for the duration of
+Stage 2c — Stage 2d below resolves that.
+
+## Source-tree Stage 2d — Picker promoted
+
+After Stage 2c put the shared stylesheet inside the UI package,
+the generic Picker primitive's last remaining dep blocker (the
+cross-package CSS import) reduced to a sibling-relative import.
+Picker moved into the UI package, the stylesheet co-located with
+both consumers (Picker + ChainPicker) again, and the generic
+dropdown is now usable from any future app surface — labs in
+particular needs it for the public-read transparency stats UX.
+
+## Cancelled-offer capture in the archive database
+
+The Dashboard's "Cancelled" filter needs a row to render against
+— but cancelling an offer on chain deletes its storage slot, so
+a fresh on-chain re-read can't disambiguate "cancelled" from
+"never existed". The only way to back the filter without re-
+implementing client-side log scanning across deployment history
+is to keep the cancelled row in the archive database under a
+stable retention window.
+
+What landed:
+
+- A schema migration on the offers table adds a nullable
+  cancellation-timestamp column plus a partial index covering
+  only cancelled rows (so the index stays small even as
+  cancellations accumulate over time).
+- The chain indexer's two cancel-event handlers (the bare
+  cancel event, and the "OfferClosed reason=2 / Cancelled"
+  shape) now stamp the cancellation timestamp alongside the
+  status flip. Active and accepted rows leave the column
+  untouched.
+- A new retention prune runs alongside the existing diagnostics
+  prune in the watcher's 5-minute scheduled tick: drops rows
+  past the operator-chosen window, defaulting to 30 days,
+  configurable via a new env knob.
+
+User-visible effect today: none. The schema is in place and the
+write path stamps the timestamp; what's still missing is the
+read route on the agent and the wired-in "Cancelled" filter on
+the Dashboard. Those land in a follow-up.
+
+Operator action required: run the new migration against the live
+D1 instance after merge (the migration directory is the source
+of truth for the wrangler migration command).
+
+## CI deploy plumbing — GitHub Actions matrix workflow
+
+Set up the workflow that lets every commit on main fan out to
+the right Cloudflare Worker without a manual deploy step. The
+workflow:
+
+- Triggers on push to main + a manual force-deploy entry.
+- Runs a path-filter pass first to figure out which Workers
+  actually need redeploying for a given commit. Editing only
+  the in-app source skips the watcher build, and editing only
+  the watcher skips the Vite SPA build. Editing any of the
+  shared workspace packages flags both because both consume
+  them.
+- Builds and deploys each Worker in parallel via wrangler.
+- Serialises per-branch with a cancel-in-progress concurrency
+  group so two pushes in quick succession don't race.
+
+Today (Stage 1 / 2 of the source-tree refactor) only the
+in-app surface and the watcher have real source — those two
+deploy jobs are active. The four placeholder Workers
+(marketing site, agent, indexer, keeper) have their job
+templates ready but commented out; they activate once the
+Stage 3 / Stage 4 refactor populates their respective source
+trees.
+
+Two GitHub repo secrets needed for the workflow to run:
+the Cloudflare API token and the account ID. Other secrets
+(per-chain RPC URLs, push-channel keys, alert keys, etc.)
+stay set per-Worker via the wrangler secret put flow,
+out-of-band of the CI workflow on purpose so a CI compromise
+can't exfiltrate them.
+
 ## What's queued behind today
 
-Five things, in priority order:
+Three things, in priority order. Each is its own design call:
 
-1. **Source-tree refactor — Stage 2c, 3, 4.** Stage 2c
-   promotes more shared React components into the ui package
-   after their dep chains land. Stage 3 splits the
-   today-monolithic hf-watcher Worker into three concern-
-   separated Workers (read/index agent, chain-to-D1 indexer,
-   autonomous keeper). Stage 4 carves the marketing surfaces
-   out of apps/defi into apps/labs.
-2. **Cancelled-offer capture in the archive database**: a
-   schema migration adds a cancellation timestamp column, the
-   chain indexer updates rows on cancel rather than dropping
-   them, and a weekly retention cron prunes the long tail.
-   Frontend gets a "view activity" link to surface cancelled
-   offers without storing them on chain.
-3. **GitHub Actions matrix deploy** for the five Workers, so
-   each app's commit-to-Cloudflare path is wired and parallel.
+1. **Source-tree Stage 2e — promote 7 remaining shared
+   components** (the address display, token amount + symbol
+   primitives, the asset-picker / asset-link, the card-info
+   shell, the error alert). Each requires a prop-injection
+   refactor: today they fetch their data via React hooks
+   internally; the move requires accepting the data via props
+   so the components become pure render primitives consumable
+   from any app without dragging the wallet / coingecko / route
+   tree along.
+2. **Source-tree Stage 3 — decompose the watcher into three
+   concern-separated Workers** (read/index agent, chain-to-
+   archive indexer, autonomous keeper). Today the watcher is
+   a single 6,750-line surface; splitting requires file-by-
+   file classification, three separate wrangler configs, and
+   independent boot verification of each Worker. Genuinely
+   multi-session work.
+3. **Source-tree Stage 4 — carve the marketing surfaces out
+   of the in-app source** into the labs site. Depends on
+   Stage 3 because the chain-picker primitive needs to be
+   available without dragging in the wallet runtime.
 
 ## Documentation discipline
 
