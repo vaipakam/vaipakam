@@ -5,7 +5,7 @@ import { useWallet } from '../../context/WalletContext';
 import { useDiamondContract } from '../../contracts/useDiamond';
 import { useLiquidationQuotes } from '../../hooks/useLiquidationQuotes';
 import type { OrchestratedQuotes } from '../../lib/swapQuoteService';
-import { decodeContractError } from '../../lib/decodeContractError';
+import { decodeContractError } from '@vaipakam/lib/decodeContractError';
 import { beginStep } from '../../lib/journeyLog';
 
 interface LiquidateButtonProps {

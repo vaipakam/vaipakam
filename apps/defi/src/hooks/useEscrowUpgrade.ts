@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useDiamondRead, useDiamondContract } from '../contracts/useDiamond';
-import { decodeContractError } from '../lib/decodeContractError';
+import { decodeContractError } from '@vaipakam/lib/decodeContractError';
 import { beginStep } from '../lib/journeyLog';
 
 /**

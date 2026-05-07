@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useWallet } from '../../context/WalletContext';
 import { useDiamondContract, useDiamondRead } from '../../contracts/useDiamond';
-import { decodeContractError } from '../../lib/decodeContractError';
+import { decodeContractError } from '@vaipakam/lib/decodeContractError';
 import { AddressDisplay } from './AddressDisplay';
 import { KEEPER_ACTION } from '../../pages/KeeperSettings';
 

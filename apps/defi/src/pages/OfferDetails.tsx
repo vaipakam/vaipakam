@@ -25,7 +25,7 @@ import { AssetLink } from '../components/app/AssetLink';
 import { TokenAmount } from '../components/app/TokenAmount';
 import { TokenIcon } from '../components/app/TokenIcon';
 import { ErrorAlert } from '../components/app/ErrorAlert';
-import { decodeContractError } from '../lib/decodeContractError';
+import { decodeContractError } from '@vaipakam/lib/decodeContractError';
 import { PerThingKeeperToggles } from '../components/app/PerThingKeeperToggles';
 
 const ZERO_ADDR = '0x0000000000000000000000000000000000000000';

@@ -4,7 +4,7 @@ import { useTranslation } from "react-i18next";
 import { useWallet } from "../../context/WalletContext";
 import { useDiamondContract } from "../../contracts/useDiamond";
 import { useProtocolConfig } from "../../hooks/useProtocolConfig";
-import { decodeContractError } from "../../lib/decodeContractError";
+import { decodeContractError } from "@vaipakam/lib/decodeContractError";
 import { beginStep } from "../../lib/journeyLog";
 import { CardInfo } from "../CardInfo";
 

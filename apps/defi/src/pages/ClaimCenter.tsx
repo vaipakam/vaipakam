@@ -4,7 +4,7 @@ import { useWallet } from '../context/WalletContext';
 import { useDiamondContract } from '../contracts/useDiamond';
 import { useClaimables } from '../hooks/useClaimables';
 import { AssetType, LOAN_STATUS_LABELS, type ClaimableEntry, type LoanRole } from '../types/loan';
-import { decodeContractError } from '../lib/decodeContractError';
+import { decodeContractError } from '@vaipakam/lib/decodeContractError';
 import { beginStep } from '../lib/journeyLog';
 import { DEFAULT_CHAIN } from '../contracts/config';
 import { HandCoins, Wallet, CheckCircle, ExternalLink } from 'lucide-react';

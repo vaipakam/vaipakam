@@ -10,7 +10,7 @@ import { useDiamondContract } from '../contracts/useDiamond';
 import { useLoan } from '../hooks/useLoan';
 import { usePositionLock, LockReason } from '../hooks/usePositionLock';
 import { AssetType, LoanStatus } from '../types/loan';
-import { decodeContractError } from '../lib/decodeContractError';
+import { decodeContractError } from '@vaipakam/lib/decodeContractError';
 import { beginStep } from '../lib/journeyLog';
 import { DEFAULT_CHAIN } from '../contracts/config';
 import { TransferLockWarning } from '../components/app/TransferLockWarning';

@@ -4,7 +4,7 @@ import { Coins, CheckCircle, ExternalLink } from 'lucide-react';
 import { useDiamondContract } from '../../contracts/useDiamond';
 import { useStakingRewards } from '../../hooks/useStakingRewards';
 import { useRewardsClaimedHistory } from '../../hooks/useRewardsClaimedHistory';
-import { decodeContractError } from '../../lib/decodeContractError';
+import { decodeContractError } from '@vaipakam/lib/decodeContractError';
 import { beginStep } from '../../lib/journeyLog';
 import { TokenAmount } from './TokenAmount';
 import { ErrorAlert } from './ErrorAlert';

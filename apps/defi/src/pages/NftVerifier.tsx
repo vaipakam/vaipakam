@@ -16,7 +16,7 @@ import {
   decodeContractError,
   extractRevertData,
   extractRevertSelector,
-} from "../lib/decodeContractError";
+} from "@vaipakam/lib/decodeContractError";
 import { beginStep } from "../lib/journeyLog";
 import { loadLoanIndex } from "../lib/logIndex";
 import type { NFTMetadata } from "../types/nft";

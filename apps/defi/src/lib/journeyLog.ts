@@ -13,7 +13,7 @@
  * truncates addresses to `0x…abcd` form so support tickets don't leak a
  * full wallet unless the user re-types it.
  */
-import { decodeContractError, extractRevertData, extractRevertSelector, namedRevertSelector } from './decodeContractError';
+import { decodeContractError, extractRevertData, extractRevertSelector, namedRevertSelector } from '@vaipakam/lib/decodeContractError';
 import { getChainByChainId } from '../contracts/config';
 
 export type JourneyArea =

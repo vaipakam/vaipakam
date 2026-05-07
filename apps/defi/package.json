@@ -21,6 +21,7 @@
   "dependencies": {
     "@tanstack/react-query": "^5.100.1",
     "@vaipakam/contracts": "workspace:*",
+    "@vaipakam/lib": "workspace:*",
     "connectkit": "^1.9.2",
     "i18next": "^26.0.8",
     "i18next-browser-languagedetector": "^8.2.1",

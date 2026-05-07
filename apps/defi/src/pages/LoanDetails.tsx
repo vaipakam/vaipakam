@@ -16,7 +16,7 @@ import {
   ASSET_TYPE_LABELS,
   LIQUIDITY_LABELS,
 } from "../types/loan";
-import { decodeContractError } from "../lib/decodeContractError";
+import { decodeContractError } from "@vaipakam/lib/decodeContractError";
 import { beginStep } from "../lib/journeyLog";
 import { getLoanActionAvailability } from "../lib/loanActions";
 import { DEFAULT_CHAIN } from "../contracts/config";

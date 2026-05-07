@@ -1,4 +1,4 @@
-import { platformForChain } from './chainPlatforms';
+import { platformForChain } from '@vaipakam/lib/chainPlatforms';
 
 /**
  * Lightweight CoinGecko client with localStorage caching.

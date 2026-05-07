@@ -45,7 +45,7 @@ import {
 import { useVPFIBuyBridge } from "../hooks/useVPFIBuyBridge";
 import { usePermit2Signing } from "../hooks/usePermit2Signing";
 import { getCanonicalVPFIChain, type ChainConfig } from "../contracts/config";
-import { decodeContractError } from "../lib/decodeContractError";
+import { decodeContractError } from "@vaipakam/lib/decodeContractError";
 import { formatNumber } from "../lib/format";
 import { beginStep } from "../lib/journeyLog";
 import { ReportIssueLink } from "../components/app/ReportIssueLink";

@@ -3,7 +3,7 @@ import { AlertTriangle, Info, Search, X } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import type { TFunction } from 'i18next';
 import { useTopTokens, useStablecoins, useVerifyContract } from '../../hooks/useCoinGecko';
-import { platformForChain } from '../../lib/chainPlatforms';
+import { platformForChain } from '@vaipakam/lib/chainPlatforms';
 import type { CoinGeckoToken } from '../../lib/coingecko';
 import './AssetPicker.css';
 

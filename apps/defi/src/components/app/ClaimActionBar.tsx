@@ -5,7 +5,7 @@ import { useDiamondContract, useDiamondPublicClient, useReadChain } from '../../
 import { DEFAULT_CHAIN } from '../../contracts/config';
 import { DIAMOND_ABI_VIEM as DIAMOND_ABI } from '@vaipakam/contracts/abis';
 import { AssetType, LoanStatus, type LoanDetails } from '../../types/loan';
-import { decodeContractError } from '../../lib/decodeContractError';
+import { decodeContractError } from '@vaipakam/lib/decodeContractError';
 import { beginStep } from '../../lib/journeyLog';
 import { TokenAmount } from './TokenAmount';
 import { ErrorAlert } from './ErrorAlert';

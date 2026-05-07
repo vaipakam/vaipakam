@@ -7,7 +7,7 @@ import {
 } from '../contracts/useDiamond';
 import { DEFAULT_CHAIN } from '../contracts/config';
 import { DIAMOND_ABI_VIEM as DIAMOND_ABI } from '@vaipakam/contracts/abis';
-import { batchCalls, encodeBatchCalls } from '../lib/multicall';
+import { batchCalls, encodeBatchCalls } from '@vaipakam/lib/multicall';
 import { useLogIndex } from './useLogIndex';
 import { useLiveWatermark } from './useLiveWatermark';
 import { watermarkPolicy } from './watermarkPolicy';

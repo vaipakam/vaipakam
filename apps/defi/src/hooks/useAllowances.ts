@@ -3,7 +3,7 @@ import { useWallet } from '../context/WalletContext';
 import { useDiamondPublicClient, useReadChain } from '../contracts/useDiamond';
 import { DEFAULT_CHAIN } from '../contracts/config';
 import { useUserLoans } from './useUserLoans';
-import { getCanonicalAssetsForChain } from '../lib/canonicalAssets';
+import { getCanonicalAssetsForChain } from '@vaipakam/lib/canonicalAssets';
 import type { Address } from 'viem';
 
 const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';

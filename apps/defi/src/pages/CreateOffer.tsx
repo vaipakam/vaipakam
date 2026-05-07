@@ -21,7 +21,7 @@ import {
   type OfferAssetKind,
   type OfferSide,
 } from "../lib/offerSchema";
-import { decodeContractError } from "../lib/decodeContractError";
+import { decodeContractError } from "@vaipakam/lib/decodeContractError";
 import { beginStep, emit } from "../lib/journeyLog";
 import { DEFAULT_CHAIN } from "../contracts/config";
 import { AlertTriangle, Info, CheckCircle, Wallet, Coins } from "lucide-react";

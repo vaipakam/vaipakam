@@ -16,6 +16,9 @@ importers:
       '@vaipakam/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
+      '@vaipakam/lib':
+        specifier: workspace:*
+        version: link:../../packages/lib
       connectkit:
         specifier: ^1.9.2
         version: 1.9.2(@babel/core@7.29.0)(@tanstack/react-query@5.100.9(react@19.2.6))(react-dom@19.2.6(react@19.2.6))(react-is@19.2.6)(react@19.2.6)(viem@2.48.11(bufferutil@4.1.0)(typescript@6.0.3)(utf-8-validate@5.0.10)(zod@4.4.3))(wagmi@2.19.5(@tanstack/query-core@5.100.9)(@tanstack/react-query@5.100.9(react@19.2.6))(@types/react@19.2.14)(bufferutil@4.1.0)(react@19.2.6)(typescript@6.0.3)(utf-8-validate@5.0.10)(viem@2.48.11(bufferutil@4.1.0)(typescript@6.0.3)(utf-8-validate@5.0.10)(zod@4.4.3))(zod@4.4.3))
@@ -127,6 +130,12 @@ importers:
         version: 4.90.0(bufferutil@4.1.0)(utf-8-validate@5.0.10)
 
   packages/contracts:
+    devDependencies:
+      viem:
+        specifier: ^2.48.4
+        version: 2.48.11(bufferutil@4.1.0)(typescript@6.0.3)(utf-8-validate@5.0.10)(zod@4.4.3)
+
+  packages/lib:
     devDependencies:
       viem:
         specifier: ^2.48.4

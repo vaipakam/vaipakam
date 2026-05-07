@@ -1,0 +1,35 @@
+{
+  "name": "@vaipakam/lib",
+  "private": true,
+  "version": "0.0.1",
+  "type": "module",
+  "description": "Framework-agnostic shared utilities consumed by every app in the monorepo (apps/defi today; apps/labs / apps/agent / apps/indexer / apps/keeper in later stages). Stage 2a scope: multicall (viem helpers), decodeContractError (error normaliser), chainPlatforms (chainId → CoinGecko platform slug), canonicalAssets (per-chain ERC-20 lists). format + journeyLog are deferred until their Vite-coupled deps (i18n, contracts/config) are extracted.",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    },
+    "./multicall": {
+      "types": "./src/multicall.ts",
+      "default": "./src/multicall.ts"
+    },
+    "./decodeContractError": {
+      "types": "./src/decodeContractError.ts",
+      "default": "./src/decodeContractError.ts"
+    },
+    "./chainPlatforms": {
+      "types": "./src/chainPlatforms.ts",
+      "default": "./src/chainPlatforms.ts"
+    },
+    "./canonicalAssets": {
+      "types": "./src/canonicalAssets.ts",
+      "default": "./src/canonicalAssets.ts"
+    }
+  },
+  "peerDependencies": {
+    "viem": "^2.0.0"
+  },
+  "devDependencies": {
+    "viem": "^2.48.4"
+  }
+}

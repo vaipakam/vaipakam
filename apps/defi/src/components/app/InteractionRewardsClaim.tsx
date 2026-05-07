@@ -9,7 +9,7 @@ import {
   type InteractionRewardEntry,
 } from '../../hooks/useInteractionRewardEntries';
 import { useRewardsClaimedHistory } from '../../hooks/useRewardsClaimedHistory';
-import { decodeContractError } from '../../lib/decodeContractError';
+import { decodeContractError } from '@vaipakam/lib/decodeContractError';
 import { beginStep } from '../../lib/journeyLog';
 import { TokenAmount } from './TokenAmount';
 import { ErrorAlert } from './ErrorAlert';
