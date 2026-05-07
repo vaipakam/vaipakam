@@ -3,7 +3,7 @@ import { L as Link } from './L';
 import { useTranslation } from 'react-i18next';
 import { useTheme } from '../context/ThemeContext';
 import { CHAIN_REGISTRY, compareChainsForDisplay } from '../contracts/config';
-import { ChainPicker } from './ChainPicker';
+import { ChainPicker } from '@vaipakam/ui/ChainPicker';
 import { openConsentBanner } from '../lib/consent';
 import './Footer.css';
 

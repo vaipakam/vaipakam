@@ -56,85 +56,15 @@ function nullIfZero(addr: string | undefined): string | null {
  * from the consolidated deployments JSON.
  */
 
-export interface ChainConfig {
-  chainId: number;
-  chainIdHex: string;
-  name: string;
-  shortName: string;
-  rpcUrl: string;
-  blockExplorer: string;
-  /** Diamond proxy address on this chain, or null if Phase 1 hasn't deployed
-   *  here yet. Callers must gate protocol calls on non-null. */
-  diamondAddress: string | null;
-  /** Block containing the Diamond creation tx. 0 when diamondAddress is null. */
-  deployBlock: number;
-  /** True on the chain that hosts the canonical VPFIToken + OFT Adapter
-   *  (lock/release). False on mirror chains (burn/mint). Exactly one
-   *  mainnet entry and one testnet entry should be true. */
-  isCanonicalVPFI: boolean;
-  /** LayerZero V2 endpoint id, or null when no OFT endpoint is wired here. */
-  lzEid: number | null;
-  /** Testnet vs mainnet — used only for UI grouping. */
-  testnet: boolean;
-  /** VPFIBuyAdapter address on this chain, or null when buys here route
-   *  directly through the Diamond (canonical) or the adapter hasn't been
-   *  deployed yet. Mirror chains with a null adapter cannot originate
-   *  cross-chain buys. */
-  vpfiBuyAdapter: string | null;
-  /** When set, the adapter pulls this ERC20 for `amountIn` (WETH mode) so
-   *  the user only has to send the LayerZero native fee as `msg.value`.
-   *  Null = native ETH mode (default). Ignored when `vpfiBuyAdapter` is null. */
-  vpfiBuyPaymentToken: string | null;
-  /** Standalone MetricsFacet implementation address (not the Diamond) on
-   *  this chain. Surfaces on the Analytics page's Transparency & Source
-   *  card so users can land directly on the facet's `#readContract` tab
-   *  on the block explorer. Null falls back to the Diamond proxy. */
-  metricsFacetAddress: string | null;
-  /** UUPS escrow implementation deployed by `EscrowFactoryFacet`. Null
-   *  falls back to the Diamond proxy in the Security card. */
-  escrowImplAddress: string | null;
-  /** Standalone RiskFacet implementation address. Null falls back to
-   *  the Diamond proxy. */
-  riskFacetAddress: string | null;
-  /** Standalone ProfileFacet implementation address. Null falls back
-   *  to the Diamond proxy. */
-  profileFacetAddress: string | null;
-  /** Symbol of this chain's native gas token — used in the BuyVPFI
-   *  card and balance displays so the UI says "ETH" / "BNB" / "POL"
-   *  appropriately rather than always "ETH". On native-gas-mode buy
-   *  adapter chains this is also what the user actually pays in. */
-  nativeGasSymbol: string;
-  /** CoinGecko coin slug for this chain's native gas token. Used to
-   *  render a deep-link from the BuyVPFI asset symbol so users can
-   *  cross-reference exactly which asset they need to acquire (and
-   *  on which chain, since WETH on BNB ≠ WETH on Polygon — different
-   *  bridged contracts even though both use the symbol "WETH").
-   *  Null when no canonical CoinGecko page exists. */
-  nativeGasCoinGeckoSlug: string | null;
-  /** CoinGecko slug for the chain's canonical bridged WETH9 ERC20.
-   *  Only meaningful when the BuyAdapter is in WETH-pull mode
-   *  (`vpfiBuyPaymentToken != null`); the BuyVPFI card uses this
-   *  to link the "WETH" label to the right CoinGecko page for the
-   *  chain's specific bridged variant. Null on chains where the
-   *  adapter is in native-gas mode (no WETH user-facing) or where
-   *  no canonical CoinGecko page tracks the bridged WETH. */
-  bridgedWethCoinGeckoSlug: string | null;
-  /** Canonical wrapped-native ERC20 address on this chain (WETH on
-   *  ETH-side chains, WBNB on BNB, etc.). Used as the default
-   *  COLLATERAL pre-fill for the OfferBook's required
-   *  (lending, collateral) filter — the most-likely collateral asset
-   *  a user wants to browse on this chain. Null when no canonical
-   *  wrapped-native ERC20 is published yet (testnets where mocks
-   *  shift per deploy, or local Anvil). When null, the OfferBook
-   *  requires the user to pick a collateral asset manually. */
-  wrappedNativeAddress: string | null;
-  /** Predominantly-used stablecoin ERC20 address on this chain
-   *  (USDC on most EVMs, USDT on BNB). Used as the default LENDING
-   *  asset pre-fill for the OfferBook's required
-   *  (lending, collateral) filter. Same null-fallback semantics as
-   *  {wrappedNativeAddress}. */
-  predominantStableAddress: string | null;
-}
+// ChainConfig type + the pure compareChainsForDisplay comparator
+// were extracted to @vaipakam/contracts in Stage 2c so apps/labs
+// (no Vite-bundled runtime registry) can import them without
+// pulling this file's import.meta.env-coupled tree. Re-exported
+// here so existing callers that import ChainConfig from
+// '../contracts/config' (or wagmi-shaped neighbours) keep working.
+export type { ChainConfig } from "@vaipakam/contracts/chain-config";
+export { compareChainsForDisplay } from "@vaipakam/contracts/chain-config";
+import type { ChainConfig } from "@vaipakam/contracts/chain-config";
 
 function str(key: string, fallback: string): string {
   return (env[key] as string | undefined) ?? fallback;
@@ -514,35 +444,9 @@ export const CHAIN_REGISTRY: Record<number, ChainConfig> = {
   [ANVIL.chainId]: ANVIL,
 };
 
-// Ethereum family (L1 + its canonical testnet) — pinned to the top of every
-// chain list so "Ethereum" always reads first. Add new L1/testnet pairs here
-// if future chainIds deserve the same placement.
-const ETHEREUM_FAMILY_CHAIN_IDS: ReadonlySet<number> = new Set([
-  ETHEREUM.chainId, // 1
-  SEPOLIA.chainId, // 11155111
-]);
-
-/**
- * Canonical display order for any list of ChainConfig:
- *   1. Mainnets before testnets.
- *   2. Within each tier, Ethereum family (mainnet + Sepolia) pinned first.
- *   3. Rest alphabetical by display name.
- *
- * Import and use this wherever chains are surfaced to the user — selectors,
- * badges, analytics tables — so the ordering stays consistent across every
- * surface and the user always sees Ethereum at the top of its tier.
- */
-export function compareChainsForDisplay(
-  a: ChainConfig,
-  b: ChainConfig,
-): number {
-  const tierDiff = Number(a.testnet) - Number(b.testnet);
-  if (tierDiff !== 0) return tierDiff;
-  const aEth = ETHEREUM_FAMILY_CHAIN_IDS.has(a.chainId);
-  const bEth = ETHEREUM_FAMILY_CHAIN_IDS.has(b.chainId);
-  if (aEth !== bEth) return aEth ? -1 : 1;
-  return a.name.localeCompare(b.name);
-}
+// ETHEREUM_FAMILY_CHAIN_IDS + compareChainsForDisplay both moved
+// to @vaipakam/contracts/chain-config in Stage 2c; the comparator
+// is re-exported at the top of this file.
 
 const ENV_DEFAULT_CHAIN_ID = Number(
   (env.VITE_DEFAULT_CHAIN_ID as string | undefined) ?? SEPOLIA.chainId,

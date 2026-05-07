@@ -6,6 +6,7 @@
  * etc.) are also exposed via the package.json `exports` map for
  * consumers that prefer narrow imports.
  */
+export * from './address.js';
 export * from './multicall.js';
 export * from './decodeContractError.js';
 export * from './chainPlatforms.js';

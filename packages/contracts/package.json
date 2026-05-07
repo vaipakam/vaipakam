@@ -19,6 +19,10 @@
       "types": "./src/abis/index.ts",
       "default": "./src/abis/index.ts"
     },
+    "./chain-config": {
+      "types": "./src/chain-config.ts",
+      "default": "./src/chain-config.ts"
+    },
     "./abis/*.json": "./src/abis/*.json",
     "./deployments": {
       "types": "./src/deployments.ts",

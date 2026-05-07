@@ -3,7 +3,7 @@ import { ChevronDown, Check, Globe } from 'lucide-react';
 import {
   compareChainsForDisplay,
   type ChainConfig,
-} from '../contracts/config';
+} from '@vaipakam/contracts/chain-config';
 import './ChainPicker.css';
 
 interface ChainPickerProps {

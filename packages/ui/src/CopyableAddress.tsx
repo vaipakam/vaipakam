@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Copy, Check } from 'lucide-react';
-import { shortenAddr } from '../../lib/format';
+import { shortenAddr } from '@vaipakam/lib/address';
 
 /**
  * Inline shortened-address renderer with a one-click copy affordance.

@@ -1,7 +1,11 @@
 import { formatUnits } from 'viem';
 import i18n from '../i18n';
-
-const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
+// Pure address helpers live in @vaipakam/lib/address so shared
+// components in @vaipakam/ui can use them without pulling the
+// i18n-coupled rest of this module. Re-exported here so existing
+// callers that grab `shortenAddr` alongside other formatters in a
+// single import keep working.
+export { shortenAddr, ZERO_ADDRESS } from '@vaipakam/lib/address';
 
 /**
  * Active locale snapshot at call time. Falls back to `'en'` when
@@ -17,12 +21,6 @@ const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
  */
 function activeLocale(): string {
   return i18n.resolvedLanguage ?? 'en';
-}
-
-export function shortenAddr(addr: string): string {
-  if (!addr) return '';
-  if (addr.toLowerCase() === ZERO_ADDRESS) return 'Native';
-  return `${addr.slice(0, 6)}...${addr.slice(-4)}`;
 }
 
 /**

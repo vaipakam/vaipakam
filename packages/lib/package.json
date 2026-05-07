@@ -9,6 +9,10 @@
       "types": "./src/index.ts",
       "default": "./src/index.ts"
     },
+    "./address": {
+      "types": "./src/address.ts",
+      "default": "./src/address.ts"
+    },
     "./multicall": {
       "types": "./src/multicall.ts",
       "default": "./src/multicall.ts"

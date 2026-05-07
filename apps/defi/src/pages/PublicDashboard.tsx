@@ -22,7 +22,7 @@ import {
 import Navbar from '../components/Navbar';
 import Footer from '../components/Footer';
 import DiagnosticsDrawer from '../components/app/DiagnosticsDrawer';
-import { ChainPicker } from '../components/ChainPicker';
+import { ChainPicker } from '@vaipakam/ui/ChainPicker';
 import { ErrorAlert } from '../components/app/ErrorAlert';
 import { CardInfo } from '../components/CardInfo';
 import { useMode } from '../context/ModeContext';
@@ -48,7 +48,7 @@ import {
 import { useReadChain } from '../contracts/useDiamond';
 import { useChainOverride } from '../context/ChainContext';
 import { shortenAddr, bpsToPercent, formatUnitsPretty } from '../lib/format';
-import { CopyableAddress } from '../components/app/CopyableAddress';
+import { CopyableAddress } from '@vaipakam/ui/CopyableAddress';
 import { AssetLink } from '../components/app/AssetLink';
 import { AssetType, LoanStatus, LOAN_STATUS_LABELS } from '../types/loan';
 import { Pager } from '../components/app/Pager';

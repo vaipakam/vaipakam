@@ -12,4 +12,5 @@
  * are also exposed via the package.json `exports` map.
  */
 export * from './abis/index.js';
+export * from './chain-config.js';
 export * from './deployments.js';

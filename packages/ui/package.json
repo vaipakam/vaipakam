@@ -9,6 +9,15 @@
       "types": "./src/index.ts",
       "default": "./src/index.ts"
     },
+    "./ChainPicker": {
+      "types": "./src/ChainPicker.tsx",
+      "default": "./src/ChainPicker.tsx"
+    },
+    "./ChainPicker.css": "./src/ChainPicker.css",
+    "./CopyableAddress": {
+      "types": "./src/CopyableAddress.tsx",
+      "default": "./src/CopyableAddress.tsx"
+    },
     "./InfoTip": {
       "types": "./src/InfoTip.tsx",
       "default": "./src/InfoTip.tsx"
@@ -19,7 +28,8 @@
     }
   },
   "dependencies": {
-    "@vaipakam/contracts": "workspace:*"
+    "@vaipakam/contracts": "workspace:*",
+    "@vaipakam/lib": "workspace:*"
   },
   "peerDependencies": {
     "react": "^18.0.0 || ^19.0.0",

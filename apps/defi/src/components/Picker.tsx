@@ -1,6 +1,11 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { ChevronDown, Check } from 'lucide-react';
-import './ChainPicker.css';
+// Picker shares the dropdown / pill stylesheet with ChainPicker
+// (originally co-located in apps/defi/src/components/). Stage 2c
+// moved both ChainPicker.tsx and the CSS into @vaipakam/ui; Picker
+// itself stays here for now (not yet extracted) and continues to
+// pull the same stylesheet through the package's exports map.
+import '@vaipakam/ui/ChainPicker.css';
 
 export interface PickerItem<V extends string | number> {
   value: V;
