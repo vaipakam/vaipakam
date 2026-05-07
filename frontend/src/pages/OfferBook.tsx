@@ -59,6 +59,74 @@ export const ASSET_TYPE_LABELS = ['ERC-20', 'ERC-721', 'ERC-1155'] as const;
 // change. The skinny ranking call is independent of this cap — sort
 // across the entire (lending, collateral) bucket stays free.
 const WINDOW_SIZE = OFFER_BOOK_PAGE_SIZE;
+
+/**
+ * User-chosen sort applied across the ENTIRE pair bucket on the
+ * lender-only / borrower-only tabs. Surfaced only on those tabs; the
+ * both-tab keeps its existing closest-to-anchor ranking because that
+ * one is what makes the depth-chart layout meaningful.
+ *
+ * The skinny ranking call carries every sort key, so toggling sort
+ * choices is purely client-side — zero RPC pressure. The hydration
+ * multicall picks up the new top-N per choice on the next render.
+ */
+type SortChoice =
+  | 'recency-desc'
+  | 'recency-asc'
+  | 'rate-desc'
+  | 'rate-asc'
+  | 'principal-desc'
+  | 'principal-asc'
+  | 'duration-desc'
+  | 'duration-asc';
+
+const SORT_OPTIONS: ReadonlyArray<{ value: SortChoice; label: string }> = [
+  { value: 'recency-desc', label: 'Most recent first' },
+  { value: 'recency-asc', label: 'Oldest first' },
+  { value: 'rate-desc', label: 'Rate: highest first' },
+  { value: 'rate-asc', label: 'Rate: lowest first' },
+  { value: 'principal-desc', label: 'Principal: largest first' },
+  { value: 'principal-asc', label: 'Principal: smallest first' },
+  { value: 'duration-desc', label: 'Duration: longest first' },
+  { value: 'duration-asc', label: 'Duration: shortest first' },
+];
+
+/**
+ * Builds a comparator over `OfferRanking` rows for the given choice.
+ * Tiebreaker: id descending (newer ids first) so re-renders are
+ * stable across pair-bucket re-fetches.
+ *
+ * Range Orders note: rate / principal sort uses the MIN field
+ * (`interestRateBps` / `amount`) — the legacy single-value field
+ * that auto-collapses with the max for non-range offers. Sorting by
+ * the min is the directionally-correct UX for both sides (the lender
+ * minimum-rate is what a borrower screens against; the
+ * lender-supplied principal floor is what borrowers see). A future
+ * commit can add range-aware sort variants if range offers become
+ * common enough to warrant the surface.
+ */
+function buildPairSortComparator(
+  choice: SortChoice,
+): (a: import('../hooks/useActiveOffersByAssetPairRanked').OfferRanking,
+    b: import('../hooks/useActiveOffersByAssetPairRanked').OfferRanking) => number {
+  const desc = choice.endsWith('-desc');
+  type R = import('../hooks/useActiveOffersByAssetPairRanked').OfferRanking;
+  const fieldFor = (r: R): bigint => {
+    if (choice.startsWith('rate')) return r.interestRateBps;
+    if (choice.startsWith('principal')) return r.amount;
+    if (choice.startsWith('duration')) return r.durationDays;
+    return r.createdAt;
+  };
+  return (a: R, b: R) => {
+    const va = fieldFor(a);
+    const vb = fieldFor(b);
+    let cmp: number;
+    if (va < vb) cmp = -1;
+    else if (va > vb) cmp = 1;
+    else cmp = a.id < b.id ? 1 : a.id > b.id ? -1 : 0;
+    return desc ? -cmp : cmp;
+  };
+}
 /** Upper bound on the per-side row count the user can dial in, scoped to the
  *  active tab. `both` sees two columns so each side caps at 50 rows; on a
  *  single-side tab all vertical space is one list, so the cap rises to 100. */
@@ -294,6 +362,13 @@ export default function OfferBook() {
   const [minDuration, setMinDuration] = useState('');
   const [maxDuration, setMaxDuration] = useState('');
   const [liquidityFilter, setLiquidityFilter] = useState<LiquidityFilter>('any');
+  // User-chosen sort for the lender / borrower tabs. Default
+  // 'recency-desc' matches the previous "newest first" behaviour and
+  // is the most intuitive landing state. Sort applies across the
+  // entire pair bucket (skinny call carries every key); only the
+  // page-N slice that's actually rendered is hydrated, so toggling
+  // sort choices burns zero RPC.
+  const [sortChoice, setSortChoice] = useState<SortChoice>('recency-desc');
   // Default ON — the OfferBook is a market-discovery surface; the
   // user's own offers are noise on the lender / borrower side they
   // sit on (the "Your Offer" badge can't be acted on here, only on
@@ -377,22 +452,31 @@ export default function OfferBook() {
 
   // Sort ids descending so we fetch the newest offers first. The cursor
   // then walks backward in id space when the user expands the window.
-  // Pair path: derive ids from the skinny ranking rows, ordered by
-  // createdAt DESC (recency) by default — sort UI plumbed in a future
-  // commit will plug a user-chosen comparator in here. The skinny
-  // payload covers every active offer in the bucket so the cursor
-  // can walk all the way to the end without re-hitting the chain.
+  //
+  // Pair path: derive ids from the skinny ranking rows. The sort key
+  // diverges by tab:
+  //   - both-tab keeps recency-DESC because the downstream
+  //     `rankByDistance` step picks closest-to-anchor offers from the
+  //     loaded slice; a representative recent slice is what makes the
+  //     anchor calculation meaningful for the depth-chart layout. A
+  //     user-chosen sort here would bias which offers get hydrated
+  //     and could leave the anchor-closest offers un-fetched.
+  //   - lender-only / borrower-only tabs honour the user-chosen sort
+  //     (`sortChoice`) end-to-end. The skinny payload covers every
+  //     active offer in the bucket so the comparator selects the true
+  //     top-N globally, then the page-N hydration multicall fetches
+  //     only those.
   const sortedIds = useMemo(() => {
     if (usePairPath) {
-      return [...pairRankings]
-        .sort((a, b) =>
-          a.createdAt < b.createdAt ? 1 : a.createdAt > b.createdAt ? -1 : 0,
-        )
-        .map((r) => r.id);
+      const cmp =
+        tab === 'both'
+          ? buildPairSortComparator('recency-desc')
+          : buildPairSortComparator(sortChoice);
+      return [...pairRankings].sort(cmp).map((r) => r.id);
     }
     const src = statusView === 'open' ? openOfferIds : closedOfferIds;
     return [...src].sort((a, b) => (a < b ? 1 : a > b ? -1 : 0));
-  }, [usePairPath, pairRankings, openOfferIds, closedOfferIds, statusView]);
+  }, [usePairPath, pairRankings, openOfferIds, closedOfferIds, statusView, tab, sortChoice]);
 
   // Verified tab counts — the log index lists IDs by event (OfferCreated
   // minus OfferAccepted/Canceled), but RPC lag or missed events can leave
@@ -1291,6 +1375,23 @@ export default function OfferBook() {
               ]}
             />
           </div>
+          {/* Sort selector — only on lender / borrower tabs. The
+              both-tab uses closest-to-anchor ranking (depth-chart
+              layout) where a user-chosen sort would bias which
+              offers get hydrated, so the control is hidden there. */}
+          {tab !== 'both' && (
+            <div className="offer-book-filter-cell">
+              <span className="form-label">Sort by</span>
+              <Picker<SortChoice>
+                icon={<ListOrdered size={14} />}
+                ariaLabel="Sort offers"
+                value={sortChoice}
+                onSelect={setSortChoice}
+                minWidth={220}
+                items={SORT_OPTIONS.map((o) => ({ value: o.value, label: o.label }))}
+              />
+            </div>
+          )}
         </div>
       </div>
 
