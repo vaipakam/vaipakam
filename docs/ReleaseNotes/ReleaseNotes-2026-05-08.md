@@ -572,6 +572,63 @@ Three things, in priority order. Each is its own design call:
    Stage 3 because the chain-picker primitive needs to be
    available without dragging in the wallet runtime.
 
+## Source-tree Stage 3 + Stage 4 scaffolds
+
+Late-session push committed the directory + tooling
+scaffolding for both remaining Stage 3 and Stage 4 work, ahead
+of the actual file migrations:
+
+- **Stage 3 scaffold** — three new stub Workers under apps/:
+  agent (read/index — agent.vaipakam.com), indexer (chain →
+  archive D1 ingester — indexer.vaipakam.com), keeper
+  (autonomous keeper — keeper.vaipakam.com). Each ships with a
+  package.json declaring workspace deps on the shared contracts
+  and lib packages, a wrangler.jsonc with the right Worker name
+  and observability flags, a tsconfig matching the standard
+  Cloudflare-Worker shape, and a placeholder src/index.ts that
+  returns 503 with a clear "stub — Stage 3 will populate this
+  from ops/hf-watcher/" message naming the specific source
+  files that migrate in. ZERO files moved from the watcher in
+  this commit; that population is the next phase of Stage 3.
+
+- **Stage 4 scaffold** — apps/labs as a stub Vite SPA. Mirrors
+  the apps/defi shape but with a tighter dependency surface
+  (no connectkit, no wagmi, no router-protected paths) since
+  the marketing site has no wallet connect — at most a chain
+  picker for public-read transparency stats. Cloudflare
+  Workers Static Assets binding configured with SPA
+  not-found-handling so the placeholder app shell deploys
+  cleanly today and the real pages drop in via a subsequent
+  migration commit. Custom-domain layout: labs.vaipakam.com
+  today; the cutover to www.vaipakam.com + vaipakam.com adds
+  additional bindings on the same Worker without a code
+  change.
+
+- **GitHub Actions matrix workflow** committed earlier in the
+  day already has the deploy-agent / deploy-indexer /
+  deploy-keeper / deploy-labs job templates ready, just
+  commented out behind `if: ...` guards. Each one activates by
+  uncommenting that guard the moment its respective stub gets
+  populated.
+
+What's still queued (each is its own discrete next-session
+piece):
+
+- Population PRs for Stage 3: classify each file in the
+  watcher's src/ by responsibility, git mv into the right
+  per-Worker apps/*/src/, update imports, verify each Worker
+  boots independently via `wrangler dev`. Likely 3-5 commits.
+- Population PRs for Stage 4: lift the marketing pages
+  (Landing, BuyVPFI marketing, Overview, basic User Guide,
+  Whitepaper) plus their supporting components from
+  apps/defi/src/ into apps/labs/src/. Set up the labs
+  router. Wire i18n. 2-3 commits.
+- Stage 2e component refactors: each of the seven deferred
+  components needs a prop-injection refactor (accept hook-
+  derived data via props rather than calling the hook
+  internally) plus an update to every call site — about 42
+  call sites combined. 5-7 commits, one per component.
+
 ## Documentation discipline
 
 Per the user-declared "Document every completed task functionally
