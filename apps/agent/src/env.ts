@@ -42,13 +42,13 @@ import { getDeployment } from '@vaipakam/contracts/deployments';
  *                            server-side liquidation quoting.
  *   - `BLOCKAID_API_KEY`   — Blockaid Transaction Scanner API key
  *                            for the `/scan/blockaid` proxy.
- *   - `KEEPER_PRIVATE_KEY` — daily oracle snapshot signer.
- *                            Operator may share this with the
- *                            apps/keeper Worker's signing key OR
- *                            mint a separate "snapshot operator"
- *                            EOA — same env-key name keeps the
- *                            wrangler `wrangler secret put`
- *                            workflow uniform.
+ *   - (no signing-key consumer here any more — `KEEPER_PRIVATE_KEY`
+ *      moved to apps/keeper alongside `runDailyOracleSnapshot`
+ *      in the Stage 3 architectural-rebalance commit. The
+ *      least-privilege contract from staging plan §2: agent
+ *      holds NEITHER `KEEPER_PRIVATE_KEY` NOR per-chain on-chain
+ *      write access. A compromised agent produces stale
+ *      notifications but can't move funds.)
  *   - `QUOTE_0X_RATELIMIT`,
  *     `QUOTE_1INCH_RATELIMIT`,
  *     `SCAN_BLOCKAID_RATELIMIT`,
@@ -103,10 +103,9 @@ export interface Env {
   // Blockaid scan proxy.
   BLOCKAID_API_KEY?: string;
 
-  // Daily oracle snapshot signer. Operator may reuse the keeper's
-  // EOA OR mint a separate snapshot operator EOA — same env-key
-  // name keeps the secret workflow uniform.
-  KEEPER_PRIVATE_KEY?: string;
+  // (No signing-key field — Stage 3 architectural-rebalance moved
+  // `KEEPER_PRIVATE_KEY` + `runDailyOracleSnapshot` to apps/keeper
+  // so the only Worker that holds the signer is the keeper.)
 
   // Cloudflare built-in rate-limit bindings — one per upstream
   // service so a noisy caller on /quote/0x can't drain the

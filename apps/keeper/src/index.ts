@@ -1,6 +1,10 @@
 /**
  * apps/keeper Worker entry — Vaipakam's first-party autonomous
- * keeper.
+ * keeper. The single Worker that holds `KEEPER_PRIVATE_KEY` (and
+ * therefore the only Worker that signs on-chain transactions) per
+ * the staging plan's least-privilege contract
+ * (`docs/DesignsAndPlans/CloudflareStagingDeployPlan.md` §2):
+ * "A buggy agent produces stale data; a buggy keeper loses funds."
  *
  * Cron-driven only (`scheduled()` handler — NO `fetch()`). Each
  * tick:
@@ -14,6 +18,16 @@
  *           when HF crosses 1.0 — gated by `KEEPER_ENABLED == 'true'`
  *           AND `KEEPER_PRIVATE_KEY` set (keeper.ts +
  *           serverQuotes.ts).
+ *
+ *   2. `runDailyOracleSnapshot(env)` (moved from agent in the
+ *      Stage 3 architectural-rebalance commit) — once per UTC
+ *      day per chain calls `OracleFacet.captureDailyPriceSnapshot`
+ *      so the historical-TVL chart can be reconstructed from
+ *      current-state reads alone. The pass internally pre-checks
+ *      the 00:00–00:09 UTC window + a D1 last-day guard, so most
+ *      ticks exit immediately. Co-located here because it's the
+ *      second `KEEPER_PRIVATE_KEY` consumer — putting it on the
+ *      keeper means the signing key lives on exactly one Worker.
  *
  * Future scope (see Stage 3 plan §7): the off-chain offer matcher
  * for the Phase 1 Range Orders + Lender Partial Fills + Bot
@@ -33,6 +47,7 @@
 
 import type { Env } from './env';
 import { runWatcher } from './watcher';
+import { runDailyOracleSnapshot } from './dailyOracleSnapshot';
 
 export default {
   async scheduled(
@@ -40,14 +55,20 @@ export default {
     env: Env,
     ctx: ExecutionContext,
   ): Promise<void> {
-    // Wrap in catch so a transient RPC / D1 hiccup on one chain
-    // can't wedge the next tick. Each chain inside `runWatcher`
-    // already has its own try/catch boundary; this outer guard is
-    // a final safety net.
+    // Each pass wrapped so a transient RPC / D1 hiccup on one
+    // can't wedge the next. Each pass also has its own per-chain
+    // try/catch boundary inside; these outer guards are a final
+    // safety net.
     ctx.waitUntil(
       runWatcher(env).catch((err) => {
         // eslint-disable-next-line no-console
         console.error('[keeper] runWatcher pass failed:', err);
+      }),
+    );
+    ctx.waitUntil(
+      runDailyOracleSnapshot(env).catch((err) => {
+        // eslint-disable-next-line no-console
+        console.error('[keeper] runDailyOracleSnapshot pass failed:', err);
       }),
     );
   },

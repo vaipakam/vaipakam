@@ -6,7 +6,11 @@
   // for the full classification and migration sequencing.
   //
   // Owns: HF watcher loop + autonomous liquidation submission +
-  // HF-band-downgrade Telegram / Push alerts. Future scope (per
+  // HF-band-downgrade Telegram / Push alerts + daily oracle
+  // snapshot signer (moved from agent in the Stage 3 architectural-
+  // rebalance commit; co-located with the existing
+  // KEEPER_PRIVATE_KEY consumer so the signing key lives on
+  // exactly one Worker, per staging plan §2). Future scope (per
   // §7 of the Stage 3 plan): off-chain offer matcher.
   //
   // Distinct from the public reference keeper-bot at the sibling

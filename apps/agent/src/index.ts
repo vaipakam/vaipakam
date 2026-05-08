@@ -13,14 +13,17 @@
  *   - `runPeriodicPreNotify`     — push borrowers (priority) and
  *                                  lenders (courtesy) before the
  *                                  next interest-payment checkpoint.
- *   - `runDailyOracleSnapshot`   — once per UTC day per chain, call
- *                                  `OracleFacet.captureDailyPriceSnapshot`
- *                                  so the historical-TVL chart can
- *                                  be reconstructed from current-
- *                                  state reads alone.
  *   - `runBuyWatchdog`           — cross-chain VPFI buy
  *                                  reconciliation watchdog.
  *   - `pruneOldDiagErrors`       — diagnostics retention prune.
+ *
+ * `runDailyOracleSnapshot` USED to live here but moved to
+ * `apps/keeper` in the Stage 3 architectural-rebalance commit
+ * (matches the staging plan §2 least-privilege contract:
+ * `KEEPER_PRIVATE_KEY` lives on exactly one Worker — the keeper).
+ * Agent therefore no longer signs ANY on-chain transaction; a
+ * compromised agent can produce stale notifications but can't
+ * move funds.
  *
  * `fetch()`:
  *   POST /tg/webhook                        — Telegram bot handshake
@@ -44,7 +47,6 @@
 
 import type { Env } from './env';
 import { runPeriodicPreNotify } from './periodicPreNotify';
-import { runDailyOracleSnapshot } from './dailyOracleSnapshot';
 import { runBuyWatchdog } from './buyWatchdog';
 import { handle0xQuote, handle1inchQuote } from './quoteProxy';
 import { handleBlockaidScan } from './scanProxy';
@@ -76,12 +78,6 @@ export default {
       runPeriodicPreNotify(env).catch((err) => {
         // eslint-disable-next-line no-console
         console.error('[agent] runPeriodicPreNotify pass failed:', err);
-      }),
-    );
-    ctx.waitUntil(
-      runDailyOracleSnapshot(env).catch((err) => {
-        // eslint-disable-next-line no-console
-        console.error('[agent] runDailyOracleSnapshot pass failed:', err);
       }),
     );
     ctx.waitUntil(

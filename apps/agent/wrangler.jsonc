@@ -94,11 +94,10 @@
   //   - ZEROEX_API_KEY,
   //     ONEINCH_API_KEY          — public quote-proxy aggregator keys.
   //   - BLOCKAID_API_KEY         — public scan-proxy key.
-  //   - KEEPER_PRIVATE_KEY       — daily oracle snapshot signer.
-  //                                Operator may share with apps/keeper
-  //                                OR mint a separate snapshot operator
-  //                                EOA — same env-key name keeps the
-  //                                wrangler workflow uniform.
+  //   - (no signing-key secret here. Stage 3 architectural-rebalance
+  //     moved KEEPER_PRIVATE_KEY + runDailyOracleSnapshot to
+  //     apps/keeper so the only Worker that holds a signing key is
+  //     the keeper. Staging plan §2 least-privilege contract.)
   //
   // Operator-managed vars (in `vars` below):
   //   - TG_BOT_USERNAME          — public bot handle.

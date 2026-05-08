@@ -1,7 +1,12 @@
 # Cloudflare Staging Deploy Plan
 
-**Status:** Draft, awaiting Cloudflare resource IDs
-**Date:** 2026-05-07
+**Status:** Active — refreshed 2026-05-08 to match the **3-Worker
+split** that actually shipped (Stage 3 PR2-5 + the
+architectural-rebalance commit). The original 2026-05-07 draft
+proposed a 2-Worker shape (`agent` + `keeper`); the implemented
+shape is a 3-Worker split (`keeper` + `indexer` + `agent`) with
+the read-API + chain-event scan carved into a dedicated Worker
+for resource isolation.
 **Owner:** Vaipakam protocol team
 
 ## 1. Goal
@@ -10,168 +15,204 @@ Stand up parallel Worker deployments alongside the existing
 production set so this branch's changes can be validated end-to-
 end (frontend + indexer + keeper actions) **without touching prod
 data**. If the validation goes well, the new workers replace the
-existing ones via DNS swap; if not, prod stays unaffected.
+existing ones via DNS / env-var swap; if not, prod stays
+unaffected.
 
-## 2. Final naming + responsibility split
+## 2. Worker / domain split — final 3-Worker shape
 
-| Worker | Domain | What it does |
-|---|---|---|
-| **vaipakam-labs** (existing or new) | `labs.vaipakam.com` | Marketing site, docs, "Launch App" button |
-| **vaipakam-defi** (NEW staging — this branch) | `defi.vaipakam.com` | The dApp itself — wallet connect, offer book, dashboard, etc. |
-| **vaipakam-agent** (NEW staging — replaces hf-watcher's read lanes) | `agent.vaipakam.com` | Indexer (chainIndexer.ts), HF alerts, pre-notify, frame rendering, public status page, quote proxy, buy watchdog |
-| **vaipakam-keeper** (NEW staging — splits the action lanes) | (no public domain — internal Worker) | Active write-to-chain — HF auto-liquidation, offer auto-matching, daily oracle snapshot, future periodic-interest-settle |
+| Worker | Domain | What it does | Holds signing key? |
+|---|---|---|---|
+| **vaipakam-labs** | `labs.vaipakam.com` (today); `vaipakam.com` + `www.vaipakam.com` after cutover | Marketing site, docs, "Launch Vaipakam" button → `defi.vaipakam.com/`. Static, wallet-free. | No |
+| **vaipakam-defi** | `defi.vaipakam.com` | The connected app — wallet connect, Dashboard at root, Offer Book, loan flows, Buy-VPFI, Claim Center, plus three wallet-free public-read tools (`/analytics`, `/nft-verifier`, `/protocol-console`). | No |
+| **vaipakam-indexer** | `indexer.vaipakam.com` | Chain → D1 sync (chainIndexer.ts), cancelled-offer retention prune, public read-API: `/offers/*`, `/loans/*`, `/activity`, `/claimables/*`. Open-CORS reads. | No |
+| **vaipakam-agent** | `agent.vaipakam.com` | Proactive notifications (periodic interest pre-notify, push + Telegram), cross-chain monitoring (buy-watchdog), public Farcaster Frame at `/frames/active-loans`, operator services (`/quote/0x`, `/quote/1inch`, `/scan/blockaid`), Telegram bot webhook (`/tg/webhook`), diagnostics record (`/diag/record`), frontend-facing settings (`/thresholds`, `/link/telegram`). | **NO** (intentional — staging plan §2 contract) |
+| **vaipakam-keeper** | (no public domain — internal Worker, cron-only) | Active write-to-chain — HF watcher loop + autonomous liquidation, daily oracle snapshot signer, future offer matcher. | **YES** — single signing-key holder |
 
-The split between `vaipakam-agent` and `vaipakam-keeper` follows
-the **read/index vs write/act** axis. Strict least-privilege:
-keeper carries `KEEPER_PRIVATE_KEY` + per-chain RPC URLs; agent
-holds NEITHER. A buggy agent produces stale data; a buggy keeper
-loses funds — different blast radius justifies different deploy
-cadence + reviewer sign-off.
+The split follows the **read/index vs write/act** axis. Strict
+least-privilege:
 
-## 3. Cloudflare provisioning (manual — operator action)
+- `vaipakam-keeper` carries `KEEPER_PRIVATE_KEY` and is the
+  ONLY Worker that signs on-chain transactions. Three
+  signing tasks co-located there: HF liquidation, daily
+  oracle snapshot, future offer matching.
+- `vaipakam-agent` holds no signing key. Notification tokens
+  (`TG_BOT_TOKEN`, `PUSH_CHANNEL_PK`) and aggregator API
+  keys (`ZEROEX_API_KEY`, `ONEINCH_API_KEY`,
+  `BLOCKAID_API_KEY`) are operational secrets but not
+  fund-moving capability.
+- `vaipakam-indexer` is read-only — RPC reads, D1 writes, no
+  HTTP-level secrets.
 
-### 3.1 Vaipakam-DeFi (frontend)
-1. Create Worker: `vaipakam-defi` (Cloudflare dashboard → Workers
-   & Pages → Create).
-2. Bind static assets: enable **Workers Static Assets**, point at
-   `frontend/dist/`.
-3. Custom domain: `defi.vaipakam.com` (DNS A/AAAA → Workers
-   route in Cloudflare zone).
-4. Env vars (Settings → Variables and Secrets):
-   - `VITE_DEFAULT_CHAIN_ID=84532` (Base Sepolia testnet)
-   - `VITE_BASE_SEPOLIA_RPC_URL=<your provider key>`
-   - `VITE_<CHAIN>_RPC_URL=...` for each tracked chain
-   - `VITE_WALLETCONNECT_PROJECT_ID=...`
-   - `VITE_HF_WATCHER_ORIGIN=https://agent.vaipakam.com`
-     (NOTE — points at the new agent worker, NOT the prod
-     hf-watcher. Validates the full agent path.)
-   - `VITE_BUILD_HASH=<commit hash>` stamped at deploy time.
-5. NO secrets here — the frontend bundle is static.
+A buggy agent produces stale data; a buggy keeper loses funds.
+Different blast radius justifies different deploy cadence +
+reviewer sign-off.
 
-### 3.2 Vaipakam-Agent (read/index lane)
-1. Create Worker: `vaipakam-agent`.
-2. Custom domain: `agent.vaipakam.com`.
-3. Create new D1 database: `vaipakam-alerts-db-v2`. Capture the
-   D1 database ID — needed for `wrangler.jsonc` below.
-4. Run all schema migrations against the new D1:
-   `wrangler d1 migrations apply vaipakam-alerts-db-v2 --remote`
-   (with the new wrangler config — see §4 below).
-5. Set Worker secrets (Settings → Variables and Secrets →
-   Encrypted):
-   - `RPC_BASE_SEPOLIA=<provider URL with API key>`
-   - `RPC_OP_SEPOLIA=...`
-   - `RPC_ARB_SEPOLIA=...`
-   - (etc. for every chain)
-   - `TG_BOT_TOKEN=<staging bot token, NOT prod>`
-   - `PUSH_CHANNEL_PK=<staging key, NOT prod>`
-   - `ZEROEX_API_KEY=...`
-   - `ONEINCH_API_KEY=...`
-   - `BLOCKAID_API_KEY=...`
-   - `KEEPER_PRIVATE_KEY` — **NOT SET** (agent doesn't write).
-6. Cron triggers: same `* * * * *` schedule as prod hf-watcher
-   for the indexer + alerts (the keeper has its own worker).
+## 3. Cloudflare provisioning state (as-deployed)
 
-### 3.3 Vaipakam-Keeper (write/act lane)
-1. Create Worker: `vaipakam-keeper`.
-2. NO public domain (internal Worker, accessible only via the
-   prod operator's deploy/log surface).
-3. Reuse the same D1 database bound from `vaipakam-agent` (the
-   keeper reads loans/offers/etc. populated by the agent's
-   indexer; both workers SHARE the read state but only one
-   writes to chain).
-4. Set Worker secrets:
-   - `KEEPER_PRIVATE_KEY=<staging keeper key, NOT prod>`
-   - `KEEPER_ENABLED=false` (initially — flip to `true` after
-     validation; flipping is a separate manual step gated on
-     trust).
-   - `RPC_*` per chain (same shape as agent).
-5. Cron triggers: `*/5 * * * *` (every 5 min for HF watch) +
-   `0 0 * * *` (00:00 UTC daily for oracle snapshot). Less
-   frequent than the agent because keeper actions are the
-   write path.
+Operator has provisioned (verified via Cloudflare API
+2026-05-08):
 
-## 4. Wrangler config changes (in-repo — author action)
+- `vaipakam-defi`        — `defi.vaipakam.com` ✓ bound
+- `vaipakam-labs`        — `labs.vaipakam.com` ✓ bound
+- `vaipakam-indexer`     — Worker exists; **`indexer.vaipakam.com` not yet bound**
+- `vaipakam-agent`       — `agent.vaipakam.com` ✓ bound
+- `vaipakam-keeper`      — Worker exists; no public domain (by design)
 
-The current monorepo has ONE `ops/hf-watcher/wrangler.jsonc`. The
-split needs:
+D1 databases:
+
+- `vaipakam-alerts-db` (`50850eab-…`) — **PRODUCTION D1, untouched**
+- `vaipakam-archive`   (`3cffebf5-…`) — staging D1 for the new
+  Workers. Migrations not yet applied (one-time step).
+
+Pre-existing primary infra (untouched until staging is proven):
+
+- `vaipakam-hf-watcher`  — primary Worker on `api.vaipakam.com`,
+  cron `* * * * *`, reads/writes `vaipakam-alerts-db`.
+- `vaipakam`             — primary marketing Worker on
+  `vaipakam.com` + `www.vaipakam.com`.
+
+## 4. Per-Worker configuration
+
+### 4.1 `vaipakam-defi` (frontend)
+
+Static-asset deploy, build-time env vars (Vite injects at
+`pnpm build`, baked into the JS bundle):
 
 ```
-ops/
-  agent/
-    wrangler.jsonc                # the new agent worker
-    src/                          # carved out — read/index lanes
-  keeper/
-    wrangler.jsonc                # the new keeper worker
-    src/                          # carved out — write lanes
-  hf-watcher/                     # unchanged — keeps prod alive
-    wrangler.jsonc
-    src/
+VITE_DEFAULT_CHAIN_ID=84532
+VITE_BASE_SEPOLIA_RPC_URL=<provider URL>
+VITE_<CHAIN>_RPC_URL=...
+VITE_WALLETCONNECT_PROJECT_ID=...
+VITE_INDEXER_ORIGIN=https://indexer.vaipakam.com   # NEW (staging) — replaces VITE_API_ORIGIN
+VITE_AGENT_ORIGIN=https://agent.vaipakam.com       # NEW (staging) — replaces VITE_API_ORIGIN
 ```
 
-Splitting the source tree happens in a follow-up PR; for the
-INITIAL staging deploy we can use ENV-VAR-gated mode flags inside
-the existing `hf-watcher` codebase:
+NO secrets — the frontend bundle is static.
+
+### 4.2 `vaipakam-indexer`
+
+- **Custom domain:** `indexer.vaipakam.com` (binding pending —
+  add to wrangler.jsonc `routes`).
+- **D1:** `vaipakam-archive`, `migrations_dir: "migrations"`.
+- **Cron:** `* * * * *` — chain-event scan + cancelled-offer
+  retention prune.
+- **Secrets** (all `RPC_*`):
+  ```
+  RPC_BASE_SEPOLIA, RPC_OP_SEPOLIA, RPC_ARB_SEPOLIA
+  ```
+  Add others as new chains come online.
+
+### 4.3 `vaipakam-agent`
+
+- **Custom domain:** `agent.vaipakam.com` ✓
+- **D1:** `vaipakam-archive` (read-mostly: link_codes,
+  thresholds, diag_errors, cross-Worker reads of indexer's
+  loan tables).
+- **Cron:** `* * * * *` — periodic-interest pre-notify,
+  buy-watchdog, diag retention.
+- **Secrets:**
+  ```
+  RPC_*           — same chains as indexer
+  TG_BOT_TOKEN    — STAGING bot token (NOT prod)
+  PUSH_CHANNEL_PK — STAGING channel signer (NOT prod)
+  ZEROEX_API_KEY  — for /quote/0x proxy
+  ONEINCH_API_KEY — for /quote/1inch proxy
+  BLOCKAID_API_KEY — for /scan/blockaid proxy (currently missing — fail-soft 503 until set)
+  ```
+- **Vars (non-secret):**
+  ```
+  TG_BOT_USERNAME=<staging bot @-handle>
+  FRONTEND_ORIGIN=https://defi.vaipakam.com,https://labs.vaipakam.com
+  DIAG_SAMPLE_RATE=1.0
+  DIAG_RETENTION_DAYS=90
+  ```
+- **Holds NO signing key.** This is the staging plan §2 contract.
+
+### 4.4 `vaipakam-keeper`
+
+- No public domain (cron-only, no fetch handler).
+- **D1:** `vaipakam-archive` (reads notify_state + thresholds,
+  cross-Worker reads of indexer's loan + offer tables).
+- **Cron:** `* * * * *` — HF watcher loop. The daily oracle
+  snapshot pass internally pre-checks the 00:00–00:09 UTC
+  window + a D1 last-day guard, so most ticks exit
+  immediately.
+- **Secrets:**
+  ```
+  KEEPER_PRIVATE_KEY  — single signing key, gas-funded on every
+                        chain with an RPC_* set
+  RPC_*               — same chains as indexer + agent
+  TG_BOT_TOKEN        — for HF-band-downgrade alerts (currently missing — sendMessage fail-soft)
+  PUSH_CHANNEL_PK     — same (currently missing — sendPush fail-soft)
+  ZEROEX_API_KEY      — for serverQuotes liquidation orchestration (currently missing — DEX-only fallback)
+  ONEINCH_API_KEY     — same (currently missing)
+  ```
+- **Vars (non-secret):**
+  ```
+  KEEPER_ENABLED=false  — initial. Flip to "true" only after the
+                          validation window in §6.
+  ```
+
+## 5. Wrangler config layout
+
+Single source-tree per Worker; no environment-flag gymnastics:
 
 ```
-ops/hf-watcher/
-  wrangler.jsonc          # prod (existing)
-  wrangler.staging.jsonc  # NEW — points at vaipakam-agent + new D1
-  wrangler.keeper.jsonc   # NEW — points at vaipakam-keeper
+apps/
+  defi/wrangler.jsonc           # vaipakam-defi
+  labs/wrangler.jsonc           # vaipakam-labs
+  indexer/wrangler.jsonc        # vaipakam-indexer
+    migrations/                  # D1 schema migrations (moved from ops/hf-watcher)
+  agent/wrangler.jsonc           # vaipakam-agent
+  keeper/wrangler.jsonc          # vaipakam-keeper
 ```
 
-Each staging config:
-- Points at the new D1 ID
-- Sets a `WORKER_LANE` env var: `'agent'` or `'keeper'`
-- Source-side: `index.ts:scheduled` checks `WORKER_LANE` and skips
-  passes that don't belong to the lane (e.g. agent skips
-  `runHFKeeper`, keeper skips `runChainIndexer`).
+Each `wrangler.jsonc` declares the right cron, D1 binding, vars,
+and (for indexer + agent) custom-domain `routes`. The previous
+`ops/hf-watcher/` monolith is decommissioned in source as part of
+Stage 3 PR5.
 
-This lane-flag approach is cheap (~30 LoC) and lets us ship the
-staging deploy on the existing source tree before the source
-split lands.
-
-## 5. Rollout sequence
+## 6. Rollout sequence
 
 | Step | Owner | What happens |
 |---|---|---|
-| 1 | Operator | Provision Cloudflare resources per §3.1–3.3 |
-| 2 | Operator | Send Worker IDs + D1 ID + custom-domain status |
-| 3 | Author | Land `wrangler.staging.jsonc` + `wrangler.keeper.jsonc` + `WORKER_LANE` gating in source |
-| 4 | Operator | `wrangler deploy --config wrangler.staging.jsonc` (agent) and `wrangler.keeper.jsonc` (keeper) |
-| 5 | Author | Build + deploy `frontend` to `vaipakam-defi` (`npm run build && wrangler deploy`) |
-| 6 | Both | Validate `defi.vaipakam.com` end-to-end against `agent.vaipakam.com`'s D1 + RPC, with `KEEPER_ENABLED=false` |
-| 7 | Operator | Flip `KEEPER_ENABLED=true` on `vaipakam-keeper` after the validation window |
-| 8 | Both | Run for N days observing for divergence vs prod |
-| 9 | Both | If green: DNS-swap `app.vaipakam.com → vaipakam-defi`; rename `hf-watcher` Cloudflare worker to retiree status; promote `vaipakam-agent`+`vaipakam-keeper` to prod |
-| | | If issues: revert, no prod impact |
+| 1 | Operator | Provision Cloudflare resources per §3 (DONE 2026-05-07) |
+| 2 | Author | Patch wrangler.jsonc with `vaipakam-archive` D1 ID + `indexer.vaipakam.com` route (Stage 3 follow-up commit) |
+| 3 | Operator | `cd apps/indexer && wrangler d1 migrations apply vaipakam-archive --remote` (one-time schema apply) |
+| 4 | Operator | `wrangler secret put` for the missing secrets per §4.3 + §4.4 (BLOCKAID, ZEROEX, ONEINCH on keeper, etc.) |
+| 5 | Operator | `wrangler deploy` for each of `apps/{keeper,indexer,agent}`. This activates crons + binds `indexer.vaipakam.com`. |
+| 6 | Operator | Update `apps/defi/.env.local` with `VITE_INDEXER_ORIGIN` + `VITE_AGENT_ORIGIN`; `pnpm build && wrangler deploy` `vaipakam-defi`. |
+| 7 | Both | Smoke-test `defi.vaipakam.com` end-to-end against `agent.vaipakam.com` + `indexer.vaipakam.com`, with `KEEPER_ENABLED=false` (alert-only, no autonomous liquidation). |
+| 8 | Operator | Flip `KEEPER_ENABLED=true` on `vaipakam-keeper` after the validation window. |
+| 9 | Both | Run for N days observing for divergence vs prod. |
+| 10 | Both | If green: bind `vaipakam.com` + `www.vaipakam.com` to `vaipakam-labs` (replacing the older `vaipakam` Worker); decommission `vaipakam-hf-watcher` + unbind `api.vaipakam.com`. |
+|   |   | If issues: revert (env-var rollback on `vaipakam-defi`); no prod impact. |
 
-## 6. Open questions for sign-off
+## 7. Open questions / known gaps
 
-1. **`labs.vaipakam.com` already exists?** If yes, no Worker
-   change needed for §3.1 — the "Launch App" button just gets a
-   target update. If no, separate provisioning step.
-2. **Frontend ENV target** — staging points at testnet diamonds
-   (Base Sepolia / OP Sepolia / Arb Sepolia) or at mainnet?
-   Recommend testnet to keep validation cheap; mainnet target
-   reserved for the cutover commit.
-3. **Bot/push-channel secrets** — fresh staging tokens or share
-   prod? Recommend FRESH staging — a dev-time Push send to prod
-   subscribers would be embarrassing.
-4. **D1 cost** — running two D1 instances (`-prod` + `-v2`) doubles
-   the Workers Free Tier rows quota. If the budget is tight,
-   schedule a prune of the `-v2` DB once a week or limit retention
-   on the agent's `activity_events` table.
+1. **`indexer.vaipakam.com`** — not yet bound in Cloudflare.
+   Goes in alongside the wrangler config patch (§6 step 2).
 
-## 7. Estimated effort
+2. **Bot/push-channel secrets on `vaipakam-agent`** — confirmed
+   STAGING tokens (operator verified 2026-05-08).
+
+3. **D1 cost** — running two D1 instances (`vaipakam-alerts-db`
+   for prod + `vaipakam-archive` for staging) doubles the
+   Workers Free Tier rows quota. Both have retention prunes
+   (`CANCELLED_OFFER_RETENTION_DAYS=30`, `DIAG_RETENTION_DAYS=90`)
+   so growth is bounded. If quota tightens, lower retention
+   on the staging instance further.
+
+4. **`KEEPER_ENABLED`** — set as a non-secret var on
+   `vaipakam-keeper` with initial value `"false"`. Flip to
+   `"true"` only after §6 step 7's validation window passes.
+
+## 8. Effort
 
 | Stage | Effort |
 |---|---|
-| §3 Cloudflare provisioning | 1–2 hr operator |
-| §4 wrangler-config split + lane gating | 2–3 hr author |
-| §5 staged validation | 1–N days observation |
-| Source-tree split (follow-up PR) | 1 day author |
-
----
-
-**Awaiting:** §3 provisioning IDs from operator, then §4 author
-work.
+| §3 Cloudflare provisioning | DONE |
+| §6 step 2 (config patch) | 30 min author |
+| §6 steps 3-6 (apply + deploy + frontend env flip) | 1 hr operator |
+| §6 steps 7-9 (validation window) | N days observation |
+| §6 step 10 (cutover) | 30 min operator |

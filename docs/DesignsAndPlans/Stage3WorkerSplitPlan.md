@@ -85,12 +85,12 @@ Each Worker gets its own:
 | --- | --- | --- |
 | `watcher.ts` | `apps/keeper` | HF check loop |
 | `keeper.ts` | `apps/keeper` | Liquidation trigger |
+| `dailyOracleSnapshot.ts` | `apps/keeper` | Signs `OracleFacet.captureDailyPriceSnapshot`. Co-located with `keeper.ts` because it's the second `KEEPER_PRIVATE_KEY` consumer — staging plan §2 says the signing key lives on exactly one Worker. (Initially planned for agent; moved in the architectural-rebalance commit before Stage 3 cutover.) |
 | `chainIndexer.ts` | `apps/indexer` | Big, well-isolated |
 | `cancelledOfferRetention.ts` | `apps/indexer` | D1 cleanup pass |
 | `loanRoutes.ts` | `apps/indexer` | `GET /loans/*` HTTP |
 | `offerRoutes.ts` | `apps/indexer` | `GET /offers/*` HTTP |
 | `periodicPreNotify.ts` | `apps/agent` | Push before interest payment |
-| `dailyOracleSnapshot.ts` | `apps/agent` | Daily price snapshot cron |
 | `buyWatchdog.ts` | `apps/agent` | Cross-chain VPFI reconciliation |
 | `push.ts` | `apps/agent` | Push channel client |
 | `telegram.ts` | `apps/agent` | Telegram bot client |
@@ -203,9 +203,19 @@ satisfy the matching matrix in Range design §4 and submits
 `matchOffers(lenderId, borrowerId)` on-chain, earning the 1%
 matcher fee from the LIF flow.
 
+The matcher is the **third** `KEEPER_PRIVATE_KEY` consumer (after
+HF liquidation and the daily oracle snapshot). All three are
+co-located on `apps/keeper` per the staging plan §2 contract:
+"keeper carries `KEEPER_PRIVATE_KEY` + per-chain RPC URLs; agent
+holds NEITHER. A buggy agent produces stale data; a buggy keeper
+loses funds — different blast radius justifies different deploy
+cadence + reviewer sign-off." Putting all three signing tasks
+under one signing-key holder shrinks the attack surface to one
+Worker.
+
 Implication for this Stage 3 plan: **`apps/keeper` is sized for
-"HF watch + liquidate" today but architected for "HF watch +
-liquidate + offer match" tomorrow.** Practical consequences:
+"HF watch + liquidate + daily snapshot" today, architected for
+"+ offer match" tomorrow.** Practical consequences:
 
 - Wrangler cron triggers should be loose enough to add a matcher
   pass alongside the HF check (`*/5 * * * *` already covers it;
