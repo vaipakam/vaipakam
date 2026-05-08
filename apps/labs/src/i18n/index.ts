@@ -37,6 +37,11 @@
 import i18n from 'i18next';
 import { initReactI18next } from 'react-i18next';
 import LanguageDetector from 'i18next-browser-languagedetector';
+import {
+  readCookie,
+  writeCookie,
+  LANG_COOKIE,
+} from '@vaipakam/lib/crossDomainPref';
 
 import { SUPPORTED_LOCALES } from './glossary';
 
@@ -74,6 +79,38 @@ const LAZY_LOCALE_LOADERS: Record<
   ta: () => import('./locales/ta.json'),
   ko: () => import('./locales/ko.json'),
 };
+
+/**
+ * Cross-subdomain seed: if a `vaipakam_lang` cookie exists at the
+ * `.vaipakam.com` parent scope but this origin's localStorage is
+ * empty (fresh visit to a sibling subdomain), copy the cookie value
+ * into localStorage BEFORE i18next initialises so its built-in
+ * `localStorage` detector picks it up.
+ *
+ * Why we don't add a `cookie` entry to the detector chain: the
+ * version of `i18next-browser-languagedetector` in use writes
+ * cookies as same-origin by default; getting it to scope to the
+ * parent domain requires `cookieDomain` plumbing that varies by
+ * version. Seeding-then-detecting is one well-understood line of
+ * code; a `languageChanged` listener handles the write-back.
+ *
+ * Same-origin users with a pre-existing localStorage entry are
+ * left alone — the cookie's a parent-scope FALLBACK, not an
+ * override.
+ */
+function seedLanguageFromCookie() {
+  if (typeof window === 'undefined') return;
+  const cookie = readCookie(LANG_COOKIE);
+  if (!cookie) return;
+  if (window.localStorage.getItem(STORAGE_KEY)) return;
+  // Defensive: only honour cookie values that match a supported
+  // locale. Stops a tampered cookie from forcing i18next into
+  // a missing-bundle state.
+  if ((SUPPORTED_LOCALES as readonly string[]).includes(cookie)) {
+    window.localStorage.setItem(STORAGE_KEY, cookie);
+  }
+}
+seedLanguageFromCookie();
 
 async function loadLocaleBundle(lng: string): Promise<void> {
   if (lng === 'en') return; // already eager-loaded
@@ -128,6 +165,16 @@ if (initialLng !== 'en') void loadLocaleBundle(initialLng);
 // new bundle on demand.
 i18n.on('languageChanged', (lng) => {
   void loadLocaleBundle(lng);
+});
+
+// Mirror every user-initiated language change to the parent-domain
+// cookie so sibling subdomains under `.vaipakam.com` pick the new
+// value up on their next visit. Fires for both the picker (explicit
+// choice) and the detector chain's first resolve (implicit) — the
+// latter is fine because writing the same value the user already has
+// is idempotent.
+i18n.on('languageChanged', (lng) => {
+  writeCookie(LANG_COOKIE, lng);
 });
 
 // Keep the document direction in sync with the active language so RTL

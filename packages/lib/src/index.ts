@@ -11,3 +11,4 @@ export * from './multicall.js';
 export * from './decodeContractError.js';
 export * from './chainPlatforms.js';
 export * from './canonicalAssets.js';
+export * from './crossDomainPref.js';

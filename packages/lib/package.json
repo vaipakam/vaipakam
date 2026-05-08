@@ -28,6 +28,10 @@
     "./canonicalAssets": {
       "types": "./src/canonicalAssets.ts",
       "default": "./src/canonicalAssets.ts"
+    },
+    "./crossDomainPref": {
+      "types": "./src/crossDomainPref.ts",
+      "default": "./src/crossDomainPref.ts"
     }
   },
   "peerDependencies": {

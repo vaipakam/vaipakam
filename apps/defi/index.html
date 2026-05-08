@@ -1,31 +1,88 @@
 <!doctype html>
 <html lang="en">
   <head>
-    <!-- Theme bootstrap. Runs before any CSS or React loads so the
-         `data-theme` attribute is set during the very first paint —
-         no flash of wrong-theme. The order matches ThemeContext:
-         (1) honour an explicit user choice in localStorage; otherwise
-         (2) follow `prefers-color-scheme`. Wrapped in try/catch so a
-         disabled-storage privacy mode falls back gracefully to the
-         system preference instead of breaking the page. -->
+    <!-- Theme + language bootstrap. Runs before any CSS or React
+         loads so the `data-theme` / `lang` / `dir` attributes are
+         set during the very first paint — no flash of wrong theme,
+         no flash of LTR layout for an RTL user.
+
+         Read order (mirrors ThemeContext + i18n bootstrap):
+           (1) `vaipakam_theme` / `vaipakam_lang` cookie at the
+               `.vaipakam.com` parent scope — cross-subdomain truth
+               so a choice on labs.vaipakam.com is honoured here.
+           (2) localStorage `vaipakam-theme` / `vaipakam:language` —
+               same-origin fallback for cookie-disabled clients.
+           (3) System / browser preference (`prefers-color-scheme`,
+               `navigator.language`).
+
+         Wrapped in try/catch so disabled-storage / private mode
+         falls back gracefully to system defaults instead of
+         breaking the page. -->
     <script>
       (function () {
-        try {
-          var stored = localStorage.getItem('vaipakam-theme');
-          var theme;
-          if (stored === 'light' || stored === 'dark') {
-            theme = stored;
-          } else {
-            theme = window.matchMedia('(prefers-color-scheme: dark)').matches
-              ? 'dark'
-              : 'light';
+        function readCookie(name) {
+          var prefix = name + '=';
+          var parts = document.cookie ? document.cookie.split(';') : [];
+          for (var i = 0; i < parts.length; i++) {
+            var seg = parts[i].replace(/^\s+/, '');
+            if (seg.indexOf(prefix) === 0) {
+              try { return decodeURIComponent(seg.slice(prefix.length)); } catch (_) { return null; }
+            }
           }
-          document.documentElement.setAttribute('data-theme', theme);
+          return null;
+        }
+
+        // ── Theme ──────────────────────────────────────────────
+        var theme;
+        try {
+          var cookieTheme = readCookie('vaipakam_theme');
+          if (cookieTheme === 'light' || cookieTheme === 'dark') {
+            theme = cookieTheme;
+          } else {
+            var stored = localStorage.getItem('vaipakam-theme');
+            if (stored === 'light' || stored === 'dark') {
+              theme = stored;
+            } else {
+              theme = window.matchMedia('(prefers-color-scheme: dark)').matches
+                ? 'dark'
+                : 'light';
+            }
+          }
         } catch (_) {
-          var fallback = window.matchMedia('(prefers-color-scheme: dark)').matches
+          theme = window.matchMedia('(prefers-color-scheme: dark)').matches
             ? 'dark'
             : 'light';
-          document.documentElement.setAttribute('data-theme', fallback);
+        }
+        document.documentElement.setAttribute('data-theme', theme);
+
+        // ── Language + direction ───────────────────────────────
+        // We don't change visible text here (i18next does that
+        // on mount), but setting `lang` and `dir` early lets RTL
+        // layout (Arabic, Hebrew, Farsi, Urdu) paint correctly on
+        // first frame instead of flashing LTR.
+        var SUPPORTED = ['en','ar','de','es','fr','hi','ja','ko','ta','zh'];
+        var RTL = ['ar','he','fa','ur'];
+        var lang = null;
+        try {
+          var cookieLang = readCookie('vaipakam_lang');
+          if (cookieLang && SUPPORTED.indexOf(cookieLang) !== -1) {
+            lang = cookieLang;
+          } else {
+            var storedLang = localStorage.getItem('vaipakam:language');
+            if (storedLang && SUPPORTED.indexOf(storedLang) !== -1) {
+              lang = storedLang;
+            } else if (navigator.language) {
+              var nav = navigator.language.toLowerCase().split('-')[0];
+              if (SUPPORTED.indexOf(nav) !== -1) lang = nav;
+            }
+          }
+        } catch (_) { /* keep lang === null */ }
+        if (lang) {
+          document.documentElement.setAttribute('lang', lang);
+          document.documentElement.setAttribute(
+            'dir',
+            RTL.indexOf(lang) !== -1 ? 'rtl' : 'ltr'
+          );
         }
       })();
     </script>

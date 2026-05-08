@@ -1,4 +1,10 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
+import {
+  readCookie,
+  writeCookie,
+  clearCookie,
+  THEME_COOKIE,
+} from '@vaipakam/lib/crossDomainPref';
 
 /**
  * Theme model:
@@ -7,17 +13,24 @@ import { createContext, useContext, useEffect, useState, type ReactNode } from '
  *   - The **default is the OS / browser preference** via
  *     `prefers-color-scheme`, and stays system-following until the user
  *     explicitly toggles.
- *   - The first toggle is treated as a user choice: from that moment on,
- *     the value is persisted to localStorage and the system listener is
- *     ignored. Subsequent OS theme switches don't override what the user
- *     picked.
+ *   - The first toggle is treated as a user choice. From that moment
+ *     on, the value is persisted to BOTH a parent-domain cookie
+ *     (`vaipakam_theme`, scoped to `.vaipakam.com` so the choice
+ *     follows the user across labs.vaipakam.com ↔ defi.vaipakam.com)
+ *     AND localStorage (belt-and-suspenders for cookie-disabled
+ *     clients), and the system listener is ignored. Subsequent OS
+ *     theme switches don't override what the user picked.
  *
  * This is the same shape as macOS / iOS / GNOME / Windows app theming —
  * apps default to "system", and only break out into manual mode after
  * the user opens the menu and picks light or dark explicitly.
  *
- * The localStorage key (`vaipakam-theme`) doubles as the "user has
- * chosen" signal: presence ⇒ user-locked, absence ⇒ system-following.
+ * Boot-time read order: cookie (cross-domain truth) → localStorage
+ * (same-origin fallback) → `prefers-color-scheme`. Presence of EITHER
+ * the cookie or the localStorage entry counts as "user has chosen"
+ * and disables the OS-listener. The localStorage key
+ * (`vaipakam-theme`) is preserved verbatim so existing same-origin
+ * users don't lose their preference on the migration to cookies.
  */
 
 type Theme = 'light' | 'dark';
@@ -68,6 +81,12 @@ function readSystemTheme(): Theme {
 
 function readStoredTheme(): Theme | null {
   if (typeof window === 'undefined') return null;
+  // Cookie (cross-domain) wins over localStorage — a fresh subdomain
+  // visit may have an empty localStorage but inherit the cookie set
+  // on a sibling subdomain, and we want that to count as the user's
+  // choice without re-prompting them via system preference.
+  const fromCookie = readCookie(THEME_COOKIE);
+  if (fromCookie === 'light' || fromCookie === 'dark') return fromCookie;
   const stored = window.localStorage.getItem(STORAGE_KEY);
   return stored === 'light' || stored === 'dark' ? stored : null;
 }
@@ -110,8 +129,17 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   // The override is intentionally non-persistent: closing the
   // browser mid-mission-control should NOT save dark as the user's
   // permanent choice.
+  //
+  // Dual-write to cookie + localStorage:
+  //   - Cookie (`Domain=.vaipakam.com`) is the cross-domain source
+  //     of truth — picking dark on labs.vaipakam.com makes
+  //     defi.vaipakam.com also dark on the next navigation.
+  //   - localStorage is the belt-and-suspenders fallback for
+  //     cookie-disabled clients (private mode, strict cookie
+  //     blockers) and pre-existing same-origin users.
   useEffect(() => {
     if (!followingSystem) {
+      writeCookie(THEME_COOKIE, theme);
       window.localStorage.setItem(STORAGE_KEY, theme);
     }
   }, [theme, followingSystem]);
@@ -150,6 +178,10 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   };
 
   const resetToSystem = () => {
+    // Clear BOTH stores so the next subdomain visit also drops back
+    // to system-following (otherwise the cookie would override any
+    // sibling subdomain's fresh-OS read).
+    clearCookie(THEME_COOKIE);
     window.localStorage.removeItem(STORAGE_KEY);
     setFollowingSystem(true);
     setThemeState(readSystemTheme());
