@@ -1,18 +1,18 @@
 {
-  // Vaipakam Labs marketing site — Cloudflare Workers Static
-  // Assets deploy of a Vite SPA build.
-  //
-  // STUB — see apps/agent/wrangler.jsonc et al for context.
-  // Stage 4 of the source-tree refactor populates src/pages/
-  // from apps/defi/'s marketing surfaces. Until then `wrangler
-  // deploy` from this directory pushes only the placeholder
-  // app shell.
+  // Vaipakam marketing site — Cloudflare Workers Static Assets
+  // deploy of a Vite SPA build. Hosts the public-facing surface:
+  // Landing, Buy-VPFI explainer, Whitepaper, Overview, User Guide
+  // (basic + advanced), Terms, Privacy, Data Rights, Discord, Help
+  // Search. Wallet-free; cross-domain link-outs to the connected-
+  // app surface via the `defiUrl(...)` helper (env-driven by
+  // `VITE_DEFI_URL`, defaults `https://defi.vaipakam.com`).
   //
   // Custom domain bound at provision: labs.vaipakam.com (today).
-  // www.vaipakam.com + vaipakam.com bind here on cutover (per the
-  // user's stated migration plan); both add as additional
-  // custom-domain bindings on the same Worker without a code
-  // change.
+  // www.vaipakam.com + vaipakam.com bind here on cutover; both add
+  // as additional custom-domain bindings on the same Worker
+  // without a code change. The Worker name `vaipakam-labs` stays
+  // post-cutover (it's a deploy-switch identifier, not a
+  // user-visible brand label).
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "vaipakam-labs",
   "compatibility_date": "2026-04-23",
