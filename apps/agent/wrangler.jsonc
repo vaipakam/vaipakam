@@ -39,11 +39,15 @@
   // Cross-Worker D1 sharing is the deliberate coupling that lets
   // the three Workers stay independent without a message-bus
   // layer (Stage 3 plan §5).
+  // D1 binding — `vaipakam-archive` is the STAGING database for
+  // the new 3-Worker split. Distinct from `vaipakam-alerts-db`
+  // (primary, untouched). See
+  // docs/DesignsAndPlans/CloudflareStagingDeployPlan.md §3.
   "d1_databases": [
     {
       "binding": "DB",
-      "database_name": "vaipakam-alerts-db",
-      "database_id": "REPLACE_WITH_OPERATOR_D1_ID",
+      "database_name": "vaipakam-archive",
+      "database_id": "3cffebf5-b652-4da7-953c-9e1d143ad2fe",
     },
   ],
 

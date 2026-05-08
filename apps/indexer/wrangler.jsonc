@@ -32,19 +32,33 @@
   // others are readers. Cross-Worker D1 sharing is the deliberate
   // coupling that lets the three Workers stay independent without
   // a message-bus layer (Stage 3 plan §5).
+  // D1 binding — `vaipakam-archive` is the STAGING database for
+  // the new 3-Worker split. Distinct from `vaipakam-alerts-db`
+  // (primary, untouched). See
+  // docs/DesignsAndPlans/CloudflareStagingDeployPlan.md §3.
+  //
+  // Stage 3 PR5 moved the D1 schema migrations from
+  // `ops/hf-watcher/migrations/` into this Worker's tree
+  // (apps/indexer is the primary writer of offers / loans /
+  // activity / claimables; keeper + agent Workers read them
+  // via the same shared D1 binding). Apply with:
+  //   cd apps/indexer && wrangler d1 migrations apply vaipakam-archive --remote
   "d1_databases": [
     {
       "binding": "DB",
-      "database_name": "vaipakam-alerts-db",
-      "database_id": "REPLACE_WITH_OPERATOR_D1_ID",
-      // Stage 3 PR5 of the Worker split moved the D1 schema
-      // migrations from `ops/hf-watcher/migrations/` into this
-      // Worker's tree (apps/indexer is the primary writer of the
-      // offers / loans / activity tables defined here; the keeper
-      // + agent Workers read them via the same shared D1 binding).
-      // Apply with `cd apps/indexer && wrangler d1 migrations apply
-      // vaipakam-alerts-db [--remote]`.
+      "database_name": "vaipakam-archive",
+      "database_id": "3cffebf5-b652-4da7-953c-9e1d143ad2fe",
       "migrations_dir": "migrations",
+    },
+  ],
+
+  // Custom-domain binding for the public read-API. Cloudflare
+  // routes `indexer.vaipakam.com` traffic directly to this
+  // Worker on `wrangler deploy` — no separate dashboard step.
+  "routes": [
+    {
+      "pattern": "indexer.vaipakam.com",
+      "custom_domain": true,
     },
   ],
 
