@@ -6,10 +6,12 @@
   "description": "Vaipakam marketing + docs Vite SPA — labs.vaipakam.com (and www.vaipakam.com / vaipakam.com on cutover). NO wallet connect, NO wagmi, NO on-chain reads — pure marketing surface populated by a literal copy of the marketing-side files from apps/defi (Landing, BuyVPFIMarketing, Whitepaper, Overview, UserGuide, Terms, Privacy, DataRights, Discord, HelpSearch). Public-read tools that live on the connected-app domain by industry convention (analytics, NFT verifier, protocol console) are linked out via `defiUrl()` rather than duplicated here. Hosted as a Cloudflare Workers Static Assets deploy on the same shape apps/defi uses, but with a tighter dependency surface (no connectkit, no wagmi, no react-query, no per-action permissioning).",
   "scripts": {
     "dev": "vite",
+    "prebuild": "node scripts/generate-sitemap.mjs",
     "build": "tsc -b && vite build",
     "preview": "vite preview",
     "typecheck": "tsc -b --noEmit",
-    "deploy": "npm run build && wrangler deploy"
+    "deploy": "npm run build && wrangler deploy",
+    "sitemap": "node scripts/generate-sitemap.mjs"
   },
   "dependencies": {
     "@vaipakam/contracts": "workspace:*",

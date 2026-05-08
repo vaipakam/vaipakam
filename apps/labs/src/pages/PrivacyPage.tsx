@@ -3,6 +3,7 @@ import Navbar from '../components/Navbar';
 import Footer from '../components/Footer';
 import { EnglishOnlyNotice } from '../components/EnglishOnlyNotice';
 import { openConsentBanner } from '../lib/consent';
+import { usePageMeta } from '../lib/usePageMeta';
 import './LegalPage.css';
 
 /**
@@ -12,6 +13,10 @@ import './LegalPage.css';
  * is tracked in the `.md` file's header, not on-chain.
  */
 export default function PrivacyPage() {
+  usePageMeta({
+    titleKey: 'pageMeta.privacy.title',
+    descriptionKey: 'pageMeta.privacy.description',
+  });
   return (
     <>
       <Navbar />

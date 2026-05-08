@@ -27,6 +27,7 @@ import {
   type DocKind,
   type SearchHit,
 } from '../lib/docSearch';
+import { usePageMeta } from '../lib/usePageMeta';
 import './UserGuide.css';
 
 const DOC_KIND_ORDER: DocKind[] = [
@@ -38,6 +39,10 @@ const DOC_KIND_ORDER: DocKind[] = [
 
 export default function HelpSearch() {
   const { t, i18n } = useTranslation();
+  usePageMeta({
+    titleKey: 'pageMeta.helpSearch.title',
+    descriptionKey: 'pageMeta.helpSearch.description',
+  });
   const [params, setParams] = useSearchParams();
   const location = useLocation();
   const inputRef = useRef<HTMLInputElement>(null);

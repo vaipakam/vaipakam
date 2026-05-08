@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { FileDown, ShieldAlert, AlertTriangle, CheckCircle } from 'lucide-react';
 import { downloadMyData, deleteMyData } from '../lib/gdpr';
+import { usePageMeta } from '../lib/usePageMeta';
 
 /**
  * Data rights (GDPR / UK GDPR / CCPA) page.
@@ -28,6 +29,10 @@ import { downloadMyData, deleteMyData } from '../lib/gdpr';
  */
 export default function DataRights() {
   const { t } = useTranslation();
+  usePageMeta({
+    titleKey: 'pageMeta.dataRights.title',
+    descriptionKey: 'pageMeta.dataRights.description',
+  });
   const [downloaded, setDownloaded] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
 

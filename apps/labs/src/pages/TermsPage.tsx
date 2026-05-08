@@ -1,6 +1,7 @@
 import Navbar from "../components/Navbar";
 import Footer from "../components/Footer";
 import { EnglishOnlyNotice } from "../components/EnglishOnlyNotice";
+import { usePageMeta } from "../lib/usePageMeta";
 import "./LegalPage.css";
 
 /**
@@ -14,6 +15,10 @@ import "./LegalPage.css";
  * on-chain acceptance hash will not match what the UI is rendering).
  */
 export default function TermsPage() {
+  usePageMeta({
+    titleKey: 'pageMeta.terms.title',
+    descriptionKey: 'pageMeta.terms.description',
+  });
   return (
     <>
       <Navbar />

@@ -2,6 +2,7 @@ import { MessageCircle, ExternalLink } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import Navbar from "../components/Navbar";
 import Footer from "../components/Footer";
+import { usePageMeta } from "../lib/usePageMeta";
 import "./Discord.css";
 
 // Canonical Vaipakam Discord invite. Keep in sync with any CHANGELOG
@@ -18,6 +19,10 @@ const DISCORD_INVITE_URL = "https://discord.gg/5dTYbQKm69";
  */
 export default function DiscordPage() {
   const { t } = useTranslation();
+  usePageMeta({
+    titleKey: 'pageMeta.discord.title',
+    descriptionKey: 'pageMeta.discord.description',
+  });
   return (
     <>
       <Navbar />

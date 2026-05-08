@@ -6,8 +6,13 @@ import Security from '../components/Security';
 import FAQ from '../components/FAQ';
 import CTA from '../components/CTA';
 import Footer from '../components/Footer';
+import { usePageMeta } from '../lib/usePageMeta';
 
 export default function LandingPage() {
+  usePageMeta({
+    titleKey: 'pageMeta.landing.title',
+    descriptionKey: 'pageMeta.landing.description',
+  });
   return (
     <>
       <Navbar />

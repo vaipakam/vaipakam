@@ -7,6 +7,7 @@ import {
   Coins,
 } from 'lucide-react';
 import { defiUrl } from '../lib/defiUrl';
+import { usePageMeta } from '../lib/usePageMeta';
 
 /**
  * Public-route marketing page for VPFI (mounted at `/buy-vpfi`).
@@ -28,6 +29,10 @@ import { defiUrl } from '../lib/defiUrl';
  */
 export default function BuyVPFIMarketing() {
   const { t } = useTranslation();
+  usePageMeta({
+    titleKey: 'pageMeta.buyVpfi.title',
+    descriptionKey: 'pageMeta.buyVpfi.description',
+  });
   return (
     <div className="buy-vpfi-marketing" style={{ maxWidth: 760, margin: '0 auto' }}>
       <div className="page-header">

@@ -74,6 +74,7 @@ import { EnglishOnlyNotice } from '../components/EnglishOnlyNotice';
 import { HelpTabs } from '../components/HelpTabs';
 import { isSupportedLocale, withLocalePrefix } from '../components/LocaleResolver';
 import type { SupportedLocale } from '../i18n/glossary';
+import { usePageMeta } from '../lib/usePageMeta';
 import './UserGuide.css';
 
 /**
@@ -499,6 +500,17 @@ function parseFragment(hash: string): { baseId: string | null; role: Role | null
 export default function UserGuide({ variant }: UserGuideProps) {
   const location = useLocation();
   const { i18n } = useTranslation();
+  // Per-variant SEO meta — `/help/basic` and `/help/advanced` share
+  // the component but need distinct titles + descriptions for the
+  // crawler to index them as separate pages.
+  usePageMeta({
+    titleKey: variant === 'basic'
+      ? 'pageMeta.userGuideBasic.title'
+      : 'pageMeta.userGuideAdvanced.title',
+    descriptionKey: variant === 'basic'
+      ? 'pageMeta.userGuideBasic.description'
+      : 'pageMeta.userGuideAdvanced.description',
+  });
   const mode: 'Basic' | 'Advanced' = variant === 'advanced' ? 'Advanced' : 'Basic';
   const lang = i18n.resolvedLanguage ?? 'en';
   const { text: raw, fellBackToEnglish } = useMemo(

@@ -1756,5 +1756,51 @@
     "liveTailInSync": "In sync",
     "liveTailCatchingUp": "Catching up · ~{{n}} blocks remaining",
     "liveTailDeepBacklog": "Deep backlog · ~{{n}} blocks remaining (catch-up will take many cron ticks)"
+  },
+  "pageMeta": {
+    "landing": {
+      "title": "Vaipakam — Decentralized P2P Lending, Borrowing & NFT Rental",
+      "description": "Lend, borrow, and rent NFTs on Vaipakam — a non-custodial peer-to-peer protocol. Set your own terms. No pools, no middlemen. Built on the EIP-2535 Diamond standard."
+    },
+    "buyVpfi": {
+      "title": "Buy & Stake VPFI — Vaipakam's Native Token",
+      "description": "Buy VPFI on Vaipakam to unlock up to 24% protocol-fee discounts, stake for treasury yield, and shape governance over time."
+    },
+    "discord": {
+      "title": "Join the Vaipakam Discord — Community & Support",
+      "description": "Join the Vaipakam Discord to ask questions, share strategies, get protocol updates, and chat with lenders, borrowers, and developers."
+    },
+    "terms": {
+      "title": "Terms of Service — Vaipakam",
+      "description": "The terms governing your use of Vaipakam, a decentralized P2P lending and borrowing protocol. Read before connecting a wallet."
+    },
+    "privacy": {
+      "title": "Privacy Policy — Vaipakam",
+      "description": "How Vaipakam handles your wallet address, on-chain activity, and client-side analytics — and how to exercise your data-rights options."
+    },
+    "dataRights": {
+      "title": "Your Data Rights — Vaipakam",
+      "description": "Download, delete, or revoke consent for the client-side data Vaipakam stores in your browser. GDPR / UK GDPR / CCPA compliant."
+    },
+    "overview": {
+      "title": "Vaipakam Overview — How P2P Lending Works",
+      "description": "A plain-English walkthrough of Vaipakam: lend, borrow, rent NFTs, protocol fees, VPFI tier discounts, and the safety guarantees behind every position."
+    },
+    "userGuideBasic": {
+      "title": "User Guide (Basic) — Vaipakam",
+      "description": "Step-by-step guide to creating your first lender or borrower offer, accepting matching offers, and managing active loans on Vaipakam."
+    },
+    "userGuideAdvanced": {
+      "title": "User Guide (Advanced) — Vaipakam",
+      "description": "Advanced flows on Vaipakam: health-factor management, partial repayment, refinance, preclose, NFT rentals, liquidations, and keeper authorization."
+    },
+    "whitepaper": {
+      "title": "Vaipakam Whitepaper — Technical Specification",
+      "description": "Vaipakam's technical specification: Diamond proxy architecture, oracle quorum, liquidation engine, VPFI tokenomics, and cross-chain security."
+    },
+    "helpSearch": {
+      "title": "Search — Vaipakam Documentation",
+      "description": "Search across the Vaipakam Overview, User Guide, and Whitepaper for any concept, function, or feature."
+    }
   }
 }

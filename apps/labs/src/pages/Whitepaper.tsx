@@ -29,6 +29,7 @@ import {
   extractMarkdownToc,
   markdownComponents,
 } from '../lib/markdownToc';
+import { usePageMeta } from '../lib/usePageMeta';
 import './UserGuide.css';
 
 const WHITEPAPER_FILES = import.meta.glob('../content/whitepaper/*.md', {
@@ -44,6 +45,10 @@ function resolveWhitepaper(): string {
 export default function Whitepaper() {
   const { i18n } = useTranslation();
   const location = useLocation();
+  usePageMeta({
+    titleKey: 'pageMeta.whitepaper.title',
+    descriptionKey: 'pageMeta.whitepaper.description',
+  });
   const text = useMemo(() => resolveWhitepaper(), []);
   const toc = useMemo(() => extractMarkdownToc(text), [text]);
   const basePath = location.pathname.replace(/\/$/, '');
