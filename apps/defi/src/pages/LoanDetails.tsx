@@ -401,7 +401,7 @@ export default function LoanDetails() {
         </div>
         <h3>{t('loanDetails.loanNotFound')}</h3>
         <p>{error || t('loanDetails.loanNotFoundBody', { id: loanId })}</p>
-        <Link to="/app" className="btn btn-secondary btn-sm">
+        <Link to="" className="btn btn-secondary btn-sm">
           <ArrowLeft size={16} /> {t('loanDetails.backToDashboard')}
         </Link>
       </div>
@@ -410,7 +410,7 @@ export default function LoanDetails() {
 
   return (
     <div className="loan-details">
-      <Link to="/app" className="back-link">
+      <Link to="" className="back-link">
         <ArrowLeft size={16} /> {t('loanDetails.backToDashboard')}
       </Link>
 
@@ -495,12 +495,12 @@ export default function LoanDetails() {
                 platform-level VPFI consent once on your Dashboard. Future
                 liquid loans will auto-settle the tier-discounted fee in VPFI.
                 Need VPFI?{" "}
-                <a href="/app/buy-vpfi" target="_blank" rel="noopener noreferrer">
+                <a href="/buy-vpfi" target="_blank" rel="noopener noreferrer">
                   Buy VPFI
                 </a>{" "}
                 (buy from your preferred chain — routing is handled for you).
               </p>
-              <Link to="/app" className="btn btn-secondary btn-sm">
+              <Link to="" className="btn btn-secondary btn-sm">
                 Enable consent on Dashboard
               </Link>
             </div>
@@ -802,7 +802,7 @@ export default function LoanDetails() {
           <div className="data-row">
             <span className="data-label">{t('loanDetails.originalOffer')}</span>
             <span className="data-value">
-              <Link to={`/app/offers/${loan.offerId.toString()}`}>
+              <Link to={`/offers/${loan.offerId.toString()}`}>
                 #{loan.offerId.toString()}
               </Link>
             </span>
@@ -992,7 +992,7 @@ export default function LoanDetails() {
               <p className="action-desc">{t('loanDetails.earlyWithdrawalDesc')}</p>
               <div className="action-row">
                 <Link
-                  to={`/app/loans/${loan.id.toString()}/early-withdrawal`}
+                  to={`/loans/${loan.id.toString()}/early-withdrawal`}
                   className="btn btn-primary btn-sm"
                 >
                   {t('loanDetails.initiateEarlyWithdrawal')}
@@ -1008,7 +1008,7 @@ export default function LoanDetails() {
                 <p className="action-desc">{t('loanDetails.precloseDesc')}</p>
                 <div className="action-row">
                   <Link
-                    to={`/app/loans/${loan.id.toString()}/preclose`}
+                    to={`/loans/${loan.id.toString()}/preclose`}
                     className="btn btn-primary btn-sm"
                   >
                     {t('loanDetails.openPrecloseFlow')}
@@ -1020,7 +1020,7 @@ export default function LoanDetails() {
                 <p className="action-desc">{t('loanDetails.refinanceDesc')}</p>
                 <div className="action-row">
                   <Link
-                    to={`/app/loans/${loan.id.toString()}/refinance`}
+                    to={`/loans/${loan.id.toString()}/refinance`}
                     className="btn btn-primary btn-sm"
                   >
                     {t('loanDetails.openRefinanceFlow')}
@@ -1144,7 +1144,7 @@ function LoanKeeperPicker({ loanId, actionLoading, onToggle }: LoanKeeperPickerP
       ) : keepers.length === 0 ? (
         <div style={{ fontSize: "0.82rem", opacity: 0.8 }}>
           {t('loanDetails.noKeepersWhitelistPrefix')}{' '}
-          <Link to="/app/keepers" style={{ color: "var(--brand)" }}>
+          <Link to="/keepers" style={{ color: "var(--brand)" }}>
             {t('loanDetails.noKeepersWhitelistLink')}
           </Link>{' '}
           {t('loanDetails.noKeepersWhitelistSuffix')}
@@ -1175,7 +1175,7 @@ function LoanKeeperPicker({ loanId, actionLoading, onToggle }: LoanKeeperPickerP
           })}
           <div style={{ fontSize: "0.72rem", opacity: 0.65 }}>
             {t('loanDetails.keeperHintPrefixA')}{' '}
-            <Link to="/app/keepers" style={{ color: "var(--brand)" }}>
+            <Link to="/keepers" style={{ color: "var(--brand)" }}>
               {t('loanDetails.keeperHintGlobalWhitelist')}
             </Link>{' '}
             {t('loanDetails.keeperHintSuffix')}

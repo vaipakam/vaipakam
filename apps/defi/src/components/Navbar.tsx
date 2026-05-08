@@ -14,13 +14,14 @@ import {
 } from 'lucide-react';
 import './Navbar.css';
 import { LanguagePicker } from './LanguagePicker';
+import { marketingUrl } from '../lib/marketingUrl';
 
 type NavLink = {
   labelKey: string;
   href: string;
   /** Open in a new browser tab. Used for VPFI dropdown's action items
    *  (Buy / Stake-Unstake) which jump from the public marketing site
-   *  into the wallet-gated app at `/app/buy-vpfi`. */
+   *  into the wallet-gated app at `/buy-vpfi`. */
   newTab?: boolean;
 };
 
@@ -52,27 +53,32 @@ const NAV_GROUPS: NavGroup[] = [
   {
     id: 'learn',
     labelKey: 'nav.learn',
+    // Learn dropdown points at the marketing site (Landing-page
+    // anchors + Overview docs) which lives on the labs / marketing
+    // domain post-PR3. Cross-domain links open in a new tab via
+    // `newTab: true` so the connected-app session stays open behind.
     links: [
-      { labelKey: 'nav.features', href: '/#features' },
-      { labelKey: 'nav.howItWorks', href: '/#how-it-works' },
-      { labelKey: 'nav.documentation', href: '/help/overview' },
-      { labelKey: 'nav.faq', href: '/#faq' },
+      { labelKey: 'nav.features', href: marketingUrl('/#features'), newTab: true },
+      { labelKey: 'nav.howItWorks', href: marketingUrl('/#how-it-works'), newTab: true },
+      { labelKey: 'nav.documentation', href: marketingUrl('/help/overview'), newTab: true },
+      { labelKey: 'nav.faq', href: marketingUrl('/#faq'), newTab: true },
     ],
   },
   {
     id: 'verify',
     labelKey: 'nav.verify',
+    // Verify dropdown stays LOCAL to the connected-app domain —
+    // public-read tools (analytics, NFT verifier, protocol console)
+    // sit on the connected-app subdomain by industry convention
+    // (Uniswap, Aave, Morpho, Pendle all keep their /markets / /explore
+    // / governance dashboards on the app subdomain alongside the
+    // wallet-bearing write flows). Security anchor links to the
+    // marketing-side Landing-page #security section.
     links: [
       { labelKey: 'nav.analytics', href: '/analytics' },
       { labelKey: 'nav.nftVerifier', href: '/nft-verifier' },
-      // Public read-only governance dashboard. Same surface as
-      // Aave's "Governance" / Compound's "Governance" — public visit
-      // shows current values + ranges + pending timelock changes;
-      // admin-wallet visit unlocks the propose flow. Footer carries
-      // the same link too; the dropdown entry meaningfully improves
-      // discoverability for a transparency-first audience.
       { labelKey: 'nav.protocolConsole', href: '/protocol-console' },
-      { labelKey: 'nav.security', href: '/#security' },
+      { labelKey: 'nav.security', href: marketingUrl('/#security'), newTab: true },
     ],
   },
 ];
@@ -325,7 +331,7 @@ export default function Navbar() {
               Present only here (on Navbar) because AppLayout has its own
               internal nav and shouldn't show this CTA. */}
           <a
-            href="/app"
+            href=""
             target="_blank"
             rel="noopener noreferrer"
             className="btn btn-primary navbar-launch-mobile"
@@ -343,7 +349,7 @@ export default function Navbar() {
               marketing page stays open behind — same pattern as the
               VPFI dropdown's Buy / Stake-Unstake action items. */}
           <a
-            href="/app"
+            href=""
             target="_blank"
             rel="noopener noreferrer"
             className="btn btn-primary navbar-cta navbar-launch"

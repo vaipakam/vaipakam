@@ -1179,7 +1179,7 @@ export default function PublicDashboard() {
                   the {metricsFacetAddress ? 'MetricsFacet' : 'Diamond proxy'}{' '}
                   Read Contract tab, where every getter that powers a card on
                   this page is callable directly. See{' '}
-                  <Link to="/app">connected app</Link> for wallet-scoped views.
+                  <Link to="">connected app</Link> for wallet-scoped views.
                 </p>
               </section>
             </>

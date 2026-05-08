@@ -64,61 +64,61 @@ import "./AppLayout.css";
 // label localises in lockstep with the rest of the app.
 const BASIC_NAV = [
   {
-    to: "/app",
+    to: "",
     icon: <LayoutDashboard size={20} />,
     labelKey: "appNav.dashboard",
     end: true,
   },
   {
-    to: "/app/offers",
+    to: "/offers",
     icon: <BookOpen size={20} />,
     labelKey: "appNav.offerBook",
     end: false,
   },
   {
-    to: "/app/create-offer",
+    to: "/create-offer",
     icon: <PlusCircle size={20} />,
     labelKey: "appNav.createOffer",
     end: false,
   },
   {
-    to: "/app/claims",
+    to: "/claims",
     icon: <HandCoins size={20} />,
     labelKey: "appNav.claimCenter",
     end: false,
   },
   {
-    to: "/app/buy-vpfi",
+    to: "/buy-vpfi",
     icon: <Coins size={20} />,
     labelKey: "appNav.buyVpfi",
     end: false,
   },
   {
-    to: "/app/activity",
+    to: "/activity",
     icon: <Activity size={20} />,
     labelKey: "appNav.activity",
     end: false,
   },
   {
-    to: "/app/alerts",
+    to: "/alerts",
     icon: <Bell size={20} />,
     labelKey: "appNav.alerts",
     end: false,
   },
   {
-    to: "/app/allowances",
+    to: "/allowances",
     icon: <ShieldOff size={20} />,
     labelKey: "appNav.allowances",
     end: false,
   },
   {
-    to: "/app/escrow",
+    to: "/escrow",
     icon: <Vault size={20} />,
     labelKey: "appNav.escrow",
     end: false,
   },
   {
-    to: "/app/data-rights",
+    to: "/data-rights",
     icon: <Lock size={20} />,
     labelKey: "appNav.dataRights",
     end: false,
@@ -127,7 +127,7 @@ const BASIC_NAV = [
 
 const ADVANCED_NAV = [
   {
-    to: "/app/keepers",
+    to: "/keepers",
     icon: <ShieldCheck size={20} />,
     labelKey: "appNav.keepers",
     end: false,
@@ -144,8 +144,8 @@ export default function AppLayout() {
   // not English) — staying inside the app shell rather than dropping
   // back out to the marketing landing page, which surprised users
   // returning to the dashboard from a deep route like
-  // /app/loans/:id.
-  const homePath = withLocalePrefix("/app", activeLocale);
+  // /loans/:id.
+  const homePath = withLocalePrefix("", activeLocale);
   const { theme, toggleTheme } = useTheme();
   const { mode, setMode } = useMode();
   const { address, isCorrectChain, switchToDefaultChain, error, warning } =
@@ -353,7 +353,7 @@ export default function AppLayout() {
                 {t("appNav.governanceGroupLabel", "Governance")}
               </div>
               <NavLink
-                to={withLocalePrefix("/app/protocol-console", activeLocale)}
+                to={withLocalePrefix("/protocol-console", activeLocale)}
                 className={({ isActive }) =>
                   `sidebar-link sidebar-link-nested ${isActive ? "active" : ""}`
                 }

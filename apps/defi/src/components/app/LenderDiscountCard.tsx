@@ -124,7 +124,7 @@ export function LenderDiscountCard({ loanId, lender }: Props) {
               treasuryFee: treasuryFeePct,
             })}{' '}
             <Link
-              to="/app"
+              to=""
               style={{ color: 'var(--brand)', textDecoration: 'underline' }}
             >
               {t('lenderDiscountCard.consentMissingCta')}

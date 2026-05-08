@@ -226,7 +226,7 @@ export function PerThingKeeperToggles(props: PerThingKeeperTogglesProps) {
             })}
           </p>
           <a
-            href="/app/keepers"
+            href="/keepers"
             className="btn btn-secondary btn-sm"
             style={{ display: 'inline-block' }}
           >

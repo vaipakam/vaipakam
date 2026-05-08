@@ -279,7 +279,7 @@ export default function BorrowerPreclose() {
         </div>
         <h3>{t('loanDetails.loanNotFound')}</h3>
         <p>{error || t('loanDetails.loanNotFoundBody', { id: loanId })}</p>
-        <Link to="/app" className="btn btn-secondary btn-sm">
+        <Link to="" className="btn btn-secondary btn-sm">
           <ArrowLeft size={16} /> {t('loanDetails.backToDashboard')}
         </Link>
       </div>
@@ -301,7 +301,7 @@ export default function BorrowerPreclose() {
         <h3>{t('loanFlow.borrowerOnly')}</h3>
         <p>{t('loanFlow.borrowerOnlyPreclose')}</p>
         <Link
-          to={`/app/loans/${loan.id.toString()}`}
+          to={`/loans/${loan.id.toString()}`}
           className="btn btn-secondary btn-sm"
         >
           <ArrowLeft size={16} /> {t('loanFlow.backToLoan')}
@@ -312,7 +312,7 @@ export default function BorrowerPreclose() {
 
   return (
     <div className="loan-details">
-      <Link to={`/app/loans/${loan.id.toString()}`} className="back-link">
+      <Link to={`/loans/${loan.id.toString()}`} className="back-link">
         <ArrowLeft size={16} /> {t('loanFlow.backToLoan')} #{loan.id.toString()}
       </Link>
 
@@ -417,7 +417,7 @@ export default function BorrowerPreclose() {
                 ? t('loanDetails.processing')
                 : t('preclose.completeOffsetRecovery')}
             </button>
-            <Link to="/app/offers" className="btn btn-secondary btn-sm">
+            <Link to="/offers" className="btn btn-secondary btn-sm">
               {t('preclose.viewOfferBook')}
             </Link>
           </div>
@@ -501,7 +501,7 @@ export default function BorrowerPreclose() {
                   <div className="data-row" style={{ marginTop: 12 }}>
                     <span className="data-label">{t('preclose.borrowerOfferIdLabel')}</span>
                     <span className="data-value">
-                      <Link to={`/app/offers/${transferOfferId}`}>
+                      <Link to={`/offers/${transferOfferId}`}>
                         #{transferOfferId}
                       </Link>
                     </span>
@@ -556,7 +556,7 @@ export default function BorrowerPreclose() {
                         onChange={(e) => setTransferOfferId(e.target.value)}
                       />
                     </div>
-                    <Link to="/app/offers" className="btn btn-secondary btn-sm">
+                    <Link to="/offers" className="btn btn-secondary btn-sm">
                       {t('preclose.browseOfferBook')}
                     </Link>
                   </div>

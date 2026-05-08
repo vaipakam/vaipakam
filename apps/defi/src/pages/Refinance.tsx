@@ -143,7 +143,7 @@ export default function Refinance() {
         </div>
         <h3>{t('loanDetails.loanNotFound')}</h3>
         <p>{error || t('loanDetails.loanNotFoundBody', { id: loanId })}</p>
-        <Link to="/app" className="btn btn-secondary btn-sm">
+        <Link to="" className="btn btn-secondary btn-sm">
           <ArrowLeft size={16} /> {t('loanDetails.backToDashboard')}
         </Link>
       </div>
@@ -158,7 +158,7 @@ export default function Refinance() {
         </div>
         <h3>{t('loanFlow.borrowerOnly')}</h3>
         <p>{t('loanFlow.borrowerOnlyRefinance')}</p>
-        <Link to={`/app/loans/${loan.id.toString()}`} className="btn btn-secondary btn-sm">
+        <Link to={`/loans/${loan.id.toString()}`} className="btn btn-secondary btn-sm">
           <ArrowLeft size={16} /> {t('loanFlow.backToLoan')}
         </Link>
       </div>
@@ -167,7 +167,7 @@ export default function Refinance() {
 
   return (
     <div className="loan-details">
-      <Link to={`/app/loans/${loan.id.toString()}`} className="back-link">
+      <Link to={`/loans/${loan.id.toString()}`} className="back-link">
         <ArrowLeft size={16} /> {t('loanFlow.backToLoan')} #{loan.id.toString()}
       </Link>
 
@@ -257,7 +257,7 @@ export default function Refinance() {
           </p>
           <div className="action-row">
             <Link
-              to={`/app/create-offer?${new URLSearchParams({
+              to={`/create-offer?${new URLSearchParams({
                 from: 'refinance',
                 loanId: loan.id.toString(),
                 offerType: 'borrower',
@@ -286,7 +286,7 @@ export default function Refinance() {
               <div className="data-row" style={{ marginTop: 12 }}>
                 <span className="data-label">{t('refinance.acceptedOfferIdLabel')}</span>
                 <span className="data-value">
-                  <Link to={`/app/offers/${offerIdStr}`}>#{offerIdStr}</Link>
+                  <Link to={`/offers/${offerIdStr}`}>#{offerIdStr}</Link>
                 </span>
               </div>
               <p className="action-desc" style={{ marginTop: 12 }}>

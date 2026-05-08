@@ -125,7 +125,7 @@ export function RewardsSummaryCard({ address }: Props) {
         pending={stakingStale ? 0n : stakingPending}
         lifetime={stakingLifetimeClaimed}
         total={stakingTotal}
-        linkTo="/app/buy-vpfi#staking-rewards"
+        linkTo="/buy-vpfi#staking-rewards"
         linkLabel={t('rewardsSummary.manageOnBuyVpfi')}
       />
 
@@ -137,7 +137,7 @@ export function RewardsSummaryCard({ address }: Props) {
         pending={interactionStale ? 0n : interactionPending}
         lifetime={interactionLifetimeClaimed}
         total={interactionTotal}
-        linkTo="/app/claims#interaction-rewards"
+        linkTo="/claims#interaction-rewards"
         linkLabel={t('rewardsSummary.openClaimCenter')}
       />
     </div>

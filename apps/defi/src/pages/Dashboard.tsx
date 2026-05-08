@@ -441,7 +441,7 @@ export default function Dashboard() {
                     { value: 'all', label: t('common.all') },
                   ]}
                 />
-                <Link to="/app/create-offer" className="btn btn-primary btn-sm">
+                <Link to="/create-offer" className="btn btn-primary btn-sm">
                   <PlusCircle size={16} /> {t('dashboard.newOffer')}
                 </Link>
               </>
@@ -506,7 +506,7 @@ export default function Dashboard() {
                 loans-scoped. The current cell now hosts only the
                 disconnected-user "New Offer" CTA below. */}
             {!address && (
-              <Link to="/app/create-offer" className="btn btn-primary btn-sm">
+              <Link to="/create-offer" className="btn btn-primary btn-sm">
                 <PlusCircle size={16} /> {t('dashboard.newOffer')}
               </Link>
             )}
@@ -525,10 +525,10 @@ export default function Dashboard() {
             <h3>{t('dashboard.noLoansYet')}</h3>
             <p>{t('dashboard.noLoansBody')}</p>
             <div style={{ display: 'flex', gap: 8 }}>
-              <Link to="/app/create-offer" className="btn btn-primary btn-sm">
+              <Link to="/create-offer" className="btn btn-primary btn-sm">
                 {t('appNav.createOffer')}
               </Link>
-              <Link to="/app/offers" className="btn btn-secondary btn-sm">
+              <Link to="/offers" className="btn btn-secondary btn-sm">
                 {t('dashboard.browseOffers')}
               </Link>
             </div>
@@ -573,7 +573,7 @@ export default function Dashboard() {
                           read first; making it the click target removes
                           the hidden-action problem on narrow viewports. */}
                       <Link
-                        to={`/app/loans/${loan.id.toString()}`}
+                        to={`/loans/${loan.id.toString()}`}
                         style={{ color: 'var(--brand)', textDecoration: 'none' }}
                       >
                         #{loan.id.toString()}
@@ -656,7 +656,7 @@ export default function Dashboard() {
                       {unclaimedLoanIds.has(loan.id.toString()) && (
                         <HoverTip text={t('dashboard.claimReadyTooltip')}>
                           <Link
-                            to={`/app/loans/${loan.id.toString()}`}
+                            to={`/loans/${loan.id.toString()}`}
                             className="btn btn-primary btn-sm"
                           >
                             {t('dashboard.claim')}

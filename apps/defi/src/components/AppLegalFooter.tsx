@@ -1,6 +1,6 @@
 import { useTranslation } from 'react-i18next';
-import { L as Link } from './L';
 import { openConsentBanner } from '../lib/consent';
+import { marketingUrl } from '../lib/marketingUrl';
 import { useReadChain } from '../contracts/useDiamond';
 import { ExternalLink } from 'lucide-react';
 import './AppLegalFooter.css';
@@ -55,26 +55,26 @@ export function AppLegalFooter() {
             <ExternalLink size={11} style={{ verticalAlign: 'middle' }} />
           </a>
         )}
-        {/* Terms / Privacy live on the public marketing site. Opening
-         *  them in a new tab keeps the in-app shell intact — closing
-         *  the tab returns the user to the page they were on. Same
-         *  rationale as the "Verify on-chain" link above. */}
-        <Link
-          to="/terms"
+        {/* Terms / Privacy live on the marketing site post-PR3 —
+         *  cross-domain via `marketingUrl(...)`. Opening them in a
+         *  new tab keeps the in-app shell intact; closing the tab
+         *  returns the user to the page they were on. */}
+        <a
+          href={marketingUrl('/terms')}
           className="app-legal-footer-link"
           target="_blank"
           rel="noopener noreferrer"
         >
           {t('footer.terms')}
-        </Link>
-        <Link
-          to="/privacy"
+        </a>
+        <a
+          href={marketingUrl('/privacy')}
           className="app-legal-footer-link"
           target="_blank"
           rel="noopener noreferrer"
         >
           {t('footer.privacy')}
-        </Link>
+        </a>
         <button
           type="button"
           className="app-legal-footer-link"

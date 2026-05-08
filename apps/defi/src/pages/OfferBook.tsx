@@ -1221,7 +1221,7 @@ export default function OfferBook() {
   // post-batch UX direction is "all in-app pages are wallet-gated; the
   // public Analytics page is the read-only surface". This avoids two
   // sources of truth for chain selection (read chain vs wallet chain)
-  // inside /app/* and matches the rest of the in-app empty-state
+  // inside /* and matches the rest of the in-app empty-state
   // pattern (Dashboard, ClaimCenter, etc.).
   if (!address) {
     return (
@@ -1257,7 +1257,7 @@ export default function OfferBook() {
             )}
           </p>
         </div>
-        <Link to="/app/create-offer" className="btn btn-primary btn-sm">
+        <Link to="/create-offer" className="btn btn-primary btn-sm">
           <PlusCircle size={16} /> {t('appNav.createOffer')}
         </Link>
       </div>
@@ -1477,7 +1477,7 @@ export default function OfferBook() {
                   : t('offerBookPage.noClosedFiltered')}
             </p>
             {statusView === 'open' && (
-              <Link to="/app/create-offer" className="btn btn-primary btn-sm">{t('appNav.createOffer')}</Link>
+              <Link to="/create-offer" className="btn btn-primary btn-sm">{t('appNav.createOffer')}</Link>
             )}
           </div>
         </div>
@@ -1881,7 +1881,7 @@ function AcceptReviewModal({ offer, illiquid, consent, onConsentChange, submitti
                 <>
                   <strong>Borrower VPFI rebate available.</strong>{' '}
                   Enable platform consent on your{' '}
-                  <Link to="/app" style={{ textDecoration: 'underline' }}>
+                  <Link to="" style={{ textDecoration: 'underline' }}>
                     Dashboard
                   </Link>{' '}
                   to pay the {formatBpsPct(protocolConfig?.loanInitiationFeeBps ?? 10)} LIF up front in VPFI and earn a tier-based rebate (up to {protocolConfig ? protocolConfig.tierDiscountBps.map((b) => formatBpsPct(b)).join(' / ') : '10% / 15% / 20% / 24%'} by vault balance held across the loan). Without consent this acceptance uses
@@ -1902,7 +1902,7 @@ function AcceptReviewModal({ offer, illiquid, consent, onConsentChange, submitti
                   <span className="mono">{Number(discountPreview.vpfiRequired) / 1e18}</span> VPFI.
                   Top up on{' '}
                   <a
-                    href="/app/buy-vpfi"
+                    href="/buy-vpfi"
                     target="_blank"
                     rel="noopener noreferrer"
                     style={{ textDecoration: 'underline' }}
@@ -2234,7 +2234,7 @@ export function OfferTable({ title, subtitle, offers, anchorRateBps, address, ac
                 return (
                   <tr key={offer.id.toString()}>
                     <td>
-                      <Link to={`/app/offers/${offer.id.toString()}`}>
+                      <Link to={`/offers/${offer.id.toString()}`}>
                         #{offer.id.toString()}
                       </Link>
                     </td>
@@ -2319,7 +2319,7 @@ export function OfferTable({ title, subtitle, offers, anchorRateBps, address, ac
                               <span className="status-badge settled">{t('offerTable.filled')}</span>
                               {loanIdStr && (
                                 <Link
-                                  to={`/app/loans/${loanIdStr}`}
+                                  to={`/loans/${loanIdStr}`}
                                   style={{ fontSize: '0.78rem', color: 'var(--brand)' }}
                                 >
                                   {t('offerTable.linkedLoan', { id: loanIdStr })}

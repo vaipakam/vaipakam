@@ -1461,7 +1461,7 @@ export function DiscountStatusCard({
                 components={{
                   dashboardLink: (
                     <Link
-                      to="/app"
+                      to=""
                       style={{ color: 'var(--brand)', textDecoration: 'underline' }}
                     />
                   ),

@@ -125,7 +125,7 @@ export default function LenderEarlyWithdrawal() {
         </div>
         <h3>{t('loanDetails.loanNotFound')}</h3>
         <p>{error || t('loanDetails.loanNotFoundBody', { id: loanId })}</p>
-        <Link to="/app" className="btn btn-secondary btn-sm">
+        <Link to="" className="btn btn-secondary btn-sm">
           <ArrowLeft size={16} /> {t('loanDetails.backToDashboard')}
         </Link>
       </div>
@@ -140,7 +140,7 @@ export default function LenderEarlyWithdrawal() {
         </div>
         <h3>{t('loanFlow.lenderOnly')}</h3>
         <p>{t('loanFlow.lenderOnlyEarlyWithdrawal')}</p>
-        <Link to={`/app/loans/${loan.id.toString()}`} className="btn btn-secondary btn-sm">
+        <Link to={`/loans/${loan.id.toString()}`} className="btn btn-secondary btn-sm">
           <ArrowLeft size={16} /> {t('loanFlow.backToLoan')}
         </Link>
       </div>
@@ -149,7 +149,7 @@ export default function LenderEarlyWithdrawal() {
 
   return (
     <div className="loan-details">
-      <Link to={`/app/loans/${loan.id.toString()}`} className="back-link">
+      <Link to={`/loans/${loan.id.toString()}`} className="back-link">
         <ArrowLeft size={16} /> {t('loanFlow.backToLoan')} #{loan.id.toString()}
       </Link>
 
@@ -242,7 +242,7 @@ export default function LenderEarlyWithdrawal() {
                 >
                   {step === 'submitting' ? t('earlyWithdrawal.processingDots') : t('earlyWithdrawal.completeSaleRecovery')}
                 </button>
-                <Link to="/app/offers" className="btn btn-secondary btn-sm">
+                <Link to="/offers" className="btn btn-secondary btn-sm">
                   {t('preclose.viewOfferBook')}
                 </Link>
               </div>

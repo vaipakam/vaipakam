@@ -1,5 +1,4 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
-import LandingPage from './pages/LandingPage';
 import PublicDashboard from './pages/PublicDashboard';
 import AppLayout from './pages/AppLayout';
 import Dashboard from './pages/Dashboard';
@@ -19,15 +18,7 @@ import EscrowAssets from './pages/EscrowAssets';
 import EscrowRecover from './pages/EscrowRecover';
 import DataRights from './pages/DataRights';
 import BuyVPFI from './pages/BuyVPFI';
-import BuyVPFIMarketing from './pages/BuyVPFIMarketing';
 import Activity from './pages/Activity';
-import DiscordPage from './pages/Discord';
-import TermsPage from './pages/TermsPage';
-import PrivacyPage from './pages/PrivacyPage';
-import UserGuide from './pages/UserGuide';
-import Overview from './pages/Overview';
-import Whitepaper from './pages/Whitepaper';
-import HelpSearch from './pages/HelpSearch';
 import AdminDashboard from './pages/AdminDashboard';
 import AdminKnobsDocs from './pages/AdminKnobsDocs';
 import Navbar from './components/Navbar';
@@ -40,19 +31,21 @@ import { HreflangAlternates } from './components/HreflangAlternates';
 import { DefaultLocaleRedirect } from './components/DefaultLocaleRedirect';
 import type { ReactElement } from 'react';
 
-// Public NFT Verifier shell — verification is a pre-purchase due-diligence
-// tool aimed at strangers evaluating a Vaipakam position NFT offered on a
-// secondary marketplace. No wallet required (reads hit a per-chain RPC
-// picked by matching the pasted contract address), and no Advanced-mode
-// gate — anyone should be able to confirm authenticity. Mounted inside
-// the same Navbar + Footer chrome used by the landing / analytics pages.
+/**
+ * Public NFT Verifier shell — NftVerifier is a wallet-free
+ * pre-purchase due-diligence tool aimed at strangers evaluating a
+ * Vaipakam position NFT offered on a secondary marketplace. It
+ * lives on the connected-app domain alongside the wallet-bearing
+ * write flows (industry pattern: Aave /markets, Uniswap /explore,
+ * Morpho /markets — public-read tools sit on the app subdomain).
+ * Wrapped in the public Navbar + Footer chrome.
+ */
 function PublicNftVerifier() {
   return (
     <>
       <Navbar />
-      {/* The Navbar is `position: fixed` at 72 px height. paddingTop = 72
-          (Navbar) + 32 (breathing room) so the page heading isn't hidden
-          behind the bar on first paint. */}
+      {/* Navbar is `position: fixed` at 72 px — paddingTop = 72 + 32
+          breathing room so the heading isn't hidden under the bar. */}
       <main className="container public-page-glow" style={{ paddingTop: 104, paddingBottom: 32 }}>
         <NftVerifier />
       </main>
@@ -62,64 +55,49 @@ function PublicNftVerifier() {
   );
 }
 
-// Public Buy VPFI shell — buying VPFI is permissionless (anyone with ETH on
-// a supported chain can swap), and so is the staking program (the deposit
-// flow auto-creates an escrow on first call, so non-lenders / non-borrowers
-// can earn the staking reward yield without ever opening a loan). Mounted
-// outside the AppLayout so a fresh visitor lands here directly from the
-// landing page's VPFI dropdown without going through the in-app sidebar.
-function PublicBuyVPFI() {
-  // Public route is now marketing-only — the actual buy / stake /
-  // unstake form lives at /app/buy-vpfi (wallet-gated like every other
-  // in-app page). Marketing component CTA opens /app/buy-vpfi in a
-  // new tab so the visitor's marketing tab stays open behind.
-  return (
-    <>
-      <Navbar />
-      {/* See PublicNftVerifier above — paddingTop accounts for the fixed
-          72 px Navbar plus a 32 px breathing-room buffer. */}
-      <main className="container public-page-glow" style={{ paddingTop: 104, paddingBottom: 32 }}>
-        <BuyVPFIMarketing />
-      </main>
-      <Footer />
-      <DiagnosticsDrawer />
-    </>
-  );
-}
-
 /**
- * Renders the full route subtree using v6 *relative* nested-route
- * paths so the same JSX block can mount under either the unprefixed
- * root (English default) or the `:locale` prefix without
- * duplication. v6 nested `<Route>` resolves child paths relative to
- * the parent — which is the property we lean on here.
+ * Renders the route subtree using v6 *relative* nested-route paths
+ * so the same JSX block can mount under either the unprefixed root
+ * (English default) or the `:locale` prefix without duplication.
+ *
+ * Public marketing routes (LandingPage, BuyVPFIMarketing,
+ * Whitepaper, Overview, UserGuide-{Basic,Advanced}, Terms, Privacy,
+ * Discord, HelpSearch) have moved to apps/labs and are NOT served
+ * here any more. Visitors hitting those paths on the connected-app
+ * domain get the SPA's natural 404 (industry pattern: cross-surface
+ * paths 404, no path-preserving redirect). Navbar/Footer link out
+ * to the marketing site via `marketingUrl(...)` so the user-facing
+ * navigation continues to work.
+ *
+ * Connected-app routes mount at the root with NO `/app` or `/apps`
+ * prefix — matches every major DeFi platform (Aave / Uniswap /
+ * Morpho / Pendle / dYdX all root-mount). The user only ever sees
+ * `defi.vaipakam.com/<route>`, never `defi.vaipakam.com/app/...`.
  */
 function pageRoutes(): ReactElement {
   return (
     <>
-      <Route index element={<LandingPage />} />
+      {/* Public-read tools — wallet-free reads of on-chain state.
+          Wrapped in their own public chrome (Navbar + Footer)
+          rather than the connected-app shell, so a stranger can
+          land here from the marketing site without seeing the
+          in-app sidebar / topbar. */}
       <Route path="analytics" element={<PublicDashboard />} />
       <Route path="nft-verifier" element={<PublicNftVerifier />} />
-      <Route path="buy-vpfi" element={<PublicBuyVPFI />} />
-      <Route path="discord" element={<DiscordPage />} />
-      <Route path="terms" element={<TermsPage />} />
-      <Route path="privacy" element={<PrivacyPage />} />
-      <Route path="help/overview" element={<Overview />} />
-      <Route path="help/basic" element={<UserGuide variant="basic" />} />
-      <Route path="help/advanced" element={<UserGuide variant="advanced" />} />
-      <Route path="help/technical" element={<Whitepaper />} />
-      <Route path="help/search" element={<HelpSearch />} />
-      {/* Protocol Console — canonical routes. Path renamed from
-       *  /admin → /protocol-console (2026-05-02) so the URL bar
-       *  matches the page label. The `/admin` and `/admin/docs`
-       *  paths below are kept as backward-compat redirects so
-       *  existing external links / bookmarks / footer references
-       *  on stale-cached deploys keep working. */}
       <Route path="protocol-console" element={<AdminDashboard />} />
       <Route path="protocol-console/docs" element={<AdminKnobsDocs />} />
+      {/* Backward-compat redirects from the pre-rename /admin paths.
+          Kept so existing external bookmarks / footer links on
+          stale-cached deploys keep working. */}
       <Route path="admin" element={<Navigate to="/protocol-console" replace />} />
       <Route path="admin/docs" element={<Navigate to="/protocol-console/docs" replace />} />
-      <Route path="app" element={<AppLayout />}>
+
+      {/* Connected-app shell mounted at root — `/` is Dashboard,
+          `/offers` is OfferBook, etc. AppLayout provides the
+          connected-app chrome (sidebar + topbar). Wallet-bearing.
+          Pre-PR3 these routes were nested under `<Route path="app">`;
+          flattening to root matches the industry standard URL shape. */}
+      <Route element={<AppLayout />}>
         <Route index element={<Dashboard />} />
         <Route path="offers" element={<OfferBook />} />
         <Route path="offers/:offerId" element={<OfferDetails />} />
@@ -142,14 +120,6 @@ function pageRoutes(): ReactElement {
         <Route path="recover" element={<EscrowRecover />} />
         <Route path="data-rights" element={<DataRights />} />
         <Route path="buy-vpfi" element={<BuyVPFI />} />
-        {/* Admin-only Protocol Console mounted INSIDE the app shell.
-         *  Same component as the public /protocol-console route, but
-         *  rendered without its own Navbar / Footer since AppLayout
-         *  provides the chrome. The visibility check on the sidebar
-         *  link (`useIsProtocolAdmin`) gates entry; non-admins
-         *  navigating directly hit the same env-flag gate inside
-         *  the page and get redirected when public view is off. */}
-        <Route path="protocol-console" element={<AdminDashboard inApp />} />
       </Route>
     </>
   );
@@ -168,14 +138,7 @@ export default function App() {
           {pageRoutes()}
         </Route>
 
-        {/* Locale-prefixed tree. The `:locale` segment is captured by
-         *  LocaleResolver via useParams(); if the segment isn't one of
-         *  the supported locales, LocaleResolver falls back to English
-         *  silently — the route still matches, so a stray `/foo`-shaped
-         *  URL where `foo` happens to look like a locale code doesn't
-         *  404. (The default-tree above also mounts at `/foo`, so React
-         *  Router picks whichever is more specific. Real locales hit
-         *  the prefixed tree; fakes hit the default tree.) */}
+        {/* Locale-prefixed tree — same shape as labs for SEO consistency. */}
         <Route path=":locale" element={<LocaleResolver />}>
           {pageRoutes()}
         </Route>

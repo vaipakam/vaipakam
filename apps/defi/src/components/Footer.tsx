@@ -5,6 +5,7 @@ import { useTheme } from '../context/ThemeContext';
 import { CHAIN_REGISTRY, compareChainsForDisplay } from '../contracts/config';
 import { ChainPicker } from '@vaipakam/ui/ChainPicker';
 import { openConsentBanner } from '../lib/consent';
+import { marketingUrl } from '../lib/marketingUrl';
 import './Footer.css';
 
 const GITHUB_URL = 'https://github.com/vaipakam';
@@ -72,24 +73,47 @@ export default function Footer() {
 
           <div className="footer-col">
             <h4>{t('footer.colProtocol')}</h4>
-            <Link to="/#features">{t('nav.features')}</Link>
-            <Link to="/#how-it-works">{t('nav.howItWorks')}</Link>
-            <Link to="/#security">{t('nav.security')}</Link>
-            <Link to="/#faq">{t('nav.faq')}</Link>
+            {/* Landing-page section anchors live on the marketing
+                site post-PR3. Cross-domain via `marketingUrl(...)`,
+                opened in a new tab so the connected-app session
+                stays open behind. */}
+            <a href={marketingUrl('/#features')} target="_blank" rel="noopener noreferrer">
+              {t('nav.features')}
+            </a>
+            <a href={marketingUrl('/#how-it-works')} target="_blank" rel="noopener noreferrer">
+              {t('nav.howItWorks')}
+            </a>
+            <a href={marketingUrl('/#security')} target="_blank" rel="noopener noreferrer">
+              {t('nav.security')}
+            </a>
+            <a href={marketingUrl('/#faq')} target="_blank" rel="noopener noreferrer">
+              {t('nav.faq')}
+            </a>
           </div>
 
           <div className="footer-col">
             <h4>{t('footer.colResources')}</h4>
-            <Link to="/help/overview">{t('footer.documentation')}</Link>
+            {/* `/help/overview` and `/buy-vpfi` are marketing pages
+                — cross-domain. `/analytics#transparency`,
+                `/protocol-console`, `/nft-verifier` are public-read
+                tools that live on this connected-app domain, so
+                they stay as in-app `<L>` links. */}
+            <a href={marketingUrl('/help/overview')} target="_blank" rel="noopener noreferrer">
+              {t('footer.documentation')}
+            </a>
             <Link to="/analytics#transparency">{t('footer.smartContracts')}</Link>
             <Link to="/protocol-console">{t('footer.protocolConsole', 'Protocol Console')}</Link>
             <Link to="/nft-verifier">{t('nav.nftVerifier')}</Link>
-            <Link to="/buy-vpfi">{t('appNav.buyVpfi')}</Link>
+            <a href={marketingUrl('/buy-vpfi')} target="_blank" rel="noopener noreferrer">
+              {t('appNav.buyVpfi')}
+            </a>
           </div>
 
           <div className="footer-col">
             <h4>{t('footer.colCommunity')}</h4>
-            <Link to="/discord">{t('footer.discord')}</Link>
+            <a href={marketingUrl('/discord')} target="_blank" rel="noopener noreferrer">
+              {t('footer.discord')}
+            </a>
             <a href={X_URL} target="_blank" rel="noreferrer">X</a>
             <a href={GITHUB_URL} target="_blank" rel="noreferrer">GitHub</a>
             <a href={REDDIT_URL} target="_blank" rel="noreferrer">Reddit</a>
@@ -103,12 +127,23 @@ export default function Footer() {
             &copy; {new Date().getFullYear()} Vaipakam.{' '}
             {t('footer.rightsReserved')}
           </p>
-          <Link to="/terms" className="footer-cookie-link">
+          {/* Terms / Privacy live on the marketing site post-PR3. */}
+          <a
+            href={marketingUrl('/terms')}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="footer-cookie-link"
+          >
             {t('footer.terms')}
-          </Link>
-          <Link to="/privacy" className="footer-cookie-link">
+          </a>
+          <a
+            href={marketingUrl('/privacy')}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="footer-cookie-link"
+          >
             {t('footer.privacy')}
-          </Link>
+          </a>
           <button
             type="button"
             className="footer-cookie-link"

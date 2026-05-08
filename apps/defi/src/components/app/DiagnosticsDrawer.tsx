@@ -152,7 +152,7 @@ export default function DiagnosticsDrawer() {
             </div>
 
             <Link
-              to="/app/data-rights"
+              to="/data-rights"
               onClick={() => setOpen(false)}
               style={{
                 marginTop: 8,
