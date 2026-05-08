@@ -631,6 +631,34 @@ else
   mark_done "lz-config"
 fi
 
+# ── 5cb. Phase 7a swap-adapter chain ──────────────────────────────────
+# Deploys the ZeroExAggregatorAdapter + OneInchAggregatorAdapter and
+# registers both with the Diamond's swap-adapter chain via
+# `AdminFacet.addSwapAdapter`. Skipped (with a clear log line) when
+# `INITIAL_SETTLERS` env var is unset — it's optional for chains
+# where 0x doesn't yet have a Settler deployed (some testnets), and
+# the keeper-bot's quote orchestrator gracefully degrades to the
+# subset of adapters that DID register. See
+# `script/DeploySwapAdapters.s.sol` for the env-var contract and
+# the rotation flow.
+if [ "${INITIAL_SETTLERS:-}" = "" ]; then
+  echo
+  echo "[5cb] Skipping DeploySwapAdapters — INITIAL_SETTLERS env var not set."
+  echo "      (Set INITIAL_SETTLERS=0xSettlerA,0xSettlerB,... to deploy."
+  echo "       Pull current Settler addresses by reading transaction.to from"
+  echo "       a fresh \`https://api.0x.org/swap/allowance-holder/quote\` call"
+  echo "       on this chain, or via the 0x deployer's ownerOf(...) on"
+  echo "       0x00000000000004533Fe15556B1E086BB1A72cEae.)"
+elif [ -f "$MARKERS_DIR/swap-adapters.done" ] && [ "$RESUME" = "1" ]; then
+  echo
+  echo "[5cb] DeploySwapAdapters (skipped — marker exists)"
+else
+  echo
+  echo "[5cb] DeploySwapAdapters.s.sol  (Phase 7a aggregator adapters + register in diamond)"
+  forge script script/DeploySwapAdapters.s.sol --rpc-url "$RPC" --broadcast --slow
+  mark_done "swap-adapters"
+fi
+
 # ── 5d. Post-deploy health check ──────────────────────────────────────
 # Reads sentinel state from the deployed Diamond + (where applicable)
 # the BuyAdapter rate limits. Logs a clear PASS/FAIL line per check

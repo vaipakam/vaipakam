@@ -32,6 +32,20 @@
 #       (3-required + 2-optional, threshold 1-of-2, operator
 #       diversity).
 #
+#   bash contracts/script/deploy-mainnet.sh <chain-slug> --phase swap-adapters
+#       Runs DeploySwapAdapters.s.sol — deploys the Phase 7a
+#       ZeroExAggregatorAdapter + OneInchAggregatorAdapter and
+#       registers both in the diamond's swap-adapter chain via
+#       AdminFacet.addSwapAdapter. Requires INITIAL_SETTLERS env
+#       var (comma-separated 0x Settler addresses). Pull current
+#       Settler set via the 0x deployer's ownerOf(...) at
+#       0x00000000000004533Fe15556B1E086BB1A72cEae or by reading
+#       transaction.to from a fresh /swap/allowance-holder/quote
+#       call on this chain. Mantle operators ALSO set
+#       ALLOWANCE_HOLDER_OVERRIDE — Mantle's AllowanceHolder
+#       lives at 0x0000000000005E88410CcDFaDe4a5EfaE4b49562
+#       instead of the Cancun-fork canonical 0x0000…2734.
+#
 #   bash contracts/script/deploy-mainnet.sh <chain-slug> --phase abi-sync
 #       Runs the three export scripts. No on-chain effect — safe to
 #       re-run. Usually run after `--phase contracts` lands.
@@ -128,6 +142,9 @@ Phases:
                     Requires --confirm-i-have-multisig-ready
   lz-config       — DVN policy via ConfigureLZConfig.s.sol.
                     Requires --confirm-dvn-policy-reviewed
+  swap-adapters   — Phase 7a aggregator adapters via
+                    DeploySwapAdapters.s.sol. Requires
+                    INITIAL_SETTLERS env var.
   abi-sync        — Frontend + watcher + keeper-bot ABI/JSON sync.
   cf-frontend     — Build + wrangler deploy frontend.
   cf-watcher      — wrangler deploy watcher.
@@ -462,6 +479,68 @@ EOF
   mark_phase_done "lz-config"
 }
 
+# ── Phase: swap-adapters ──────────────────────────────────────────────
+
+phase_swap_adapters() {
+  if [ -z "${INITIAL_SETTLERS:-}" ]; then
+    cat >&2 <<EOF
+Refusing --phase swap-adapters: INITIAL_SETTLERS env var unset.
+
+This phase calls DeploySwapAdapters.s.sol which deploys the
+ZeroExAggregatorAdapter + OneInchAggregatorAdapter and registers
+both with the diamond's swap-adapter chain via
+AdminFacet.addSwapAdapter.
+
+The 0x adapter constructor requires a non-empty seed allowlist of
+permitted Settler call destinations — Settler addresses rotate
+per 0x release and vary by route type, so they MUST be supplied
+explicitly. Pull current Settlers via:
+
+  (a) The 0x deployer's ownerOf(...) at
+      0x00000000000004533Fe15556B1E086BB1A72cEae, OR
+  (b) Reading transaction.to from a fresh
+      \`https://api.0x.org/swap/allowance-holder/quote\` call on
+      this chain.
+
+Then re-run with:
+  INITIAL_SETTLERS=0xSettlerA,0xSettlerB,... \\
+    bash contracts/script/deploy-mainnet.sh $CHAIN_SLUG --phase swap-adapters
+
+Optional overrides (defaults shown):
+  ALLOWANCE_HOLDER_OVERRIDE  default 0x0000000000001fF3684f28c67538d4D072C22734
+                             Set to 0x0000000000005E88410CcDFaDe4a5EfaE4b49562 on Mantle.
+  ONEINCH_ROUTER_OVERRIDE    default 0x111111125421cA6dc452d289314280a0f8842A65
+                             Same address on every chain we deploy to.
+EOF
+    exit 1
+  fi
+
+  if phase_already_done "swap-adapters"; then
+    cat >&2 <<EOF
+Refusing --phase swap-adapters: marker file exists at
+$MARKERS_DIR/phase-swap-adapters.done
+
+If you genuinely need to re-run (e.g. a previous deploy failed
+mid-broadcast and the adapters are NOT registered with the
+diamond), delete the marker file manually and rerun. Do NOT
+re-run after a successful deploy — you'll deploy a second pair
+of adapters and register both in the chain, doubling the
+slot count.
+EOF
+    exit 1
+  fi
+
+  echo "═══════════════════════════════════════════════════════════════"
+  echo "deploy-mainnet.sh — swap-adapters  ($CHAIN_SLUG)"
+  echo "═══════════════════════════════════════════════════════════════"
+  echo "  INITIAL_SETTLERS:           $INITIAL_SETTLERS"
+  echo "  ALLOWANCE_HOLDER_OVERRIDE:  ${ALLOWANCE_HOLDER_OVERRIDE:-(default 0x…2734)}"
+  echo "  ONEINCH_ROUTER_OVERRIDE:    ${ONEINCH_ROUTER_OVERRIDE:-(default 0x…2A65)}"
+  echo
+  forge script script/DeploySwapAdapters.s.sol --rpc-url "$RPC" --broadcast --slow
+  mark_phase_done "swap-adapters"
+}
+
 # ── Phase: abi-sync ───────────────────────────────────────────────────
 
 phase_abi_sync() {
@@ -718,6 +797,7 @@ case "$PHASE" in
   preflight)    phase_preflight ;;
   contracts)    phase_contracts ;;
   lz-config)    phase_lz_config ;;
+  swap-adapters) phase_swap_adapters ;;
   abi-sync)     phase_abi_sync ;;
   cf-frontend)  phase_cf_frontend ;;
   cf-watcher)   phase_cf_watcher ;;
