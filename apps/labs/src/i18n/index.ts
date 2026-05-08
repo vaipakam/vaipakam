@@ -151,6 +151,33 @@ void i18n
       // matches the LanguagePicker's read.
       caches: ['localStorage'],
     },
+    react: {
+      // Crucial for the lazy-load flow.
+      //
+      // `bindI18n` (default `'languageChanged'`) is what react-i18next
+      // subscribes to on the i18n INSTANCE. We add `'loaded'` so a
+      // freshly-loaded resource bundle (via `i18next-http-backend` or
+      // any other async resource loader) also triggers re-renders.
+      //
+      // `bindI18nStore` (default `''` — empty) is what react-i18next
+      // subscribes to on the resource STORE. Setting `'added removed'`
+      // is what makes `useTranslation()` re-render when our own
+      // `loadLocaleBundle()` calls `addResourceBundle()` after a
+      // dynamic-import resolves.
+      //
+      // Without this config, picking Spanish from the LanguagePicker
+      // visibly does nothing on the first click: i18n.changeLanguage
+      // fires `languageChanged`, React re-renders, but the Spanish
+      // bundle hasn't downloaded yet so `t(key)` falls back to
+      // English. When `addResourceBundle('es', ...)` lands ~100 ms
+      // later, react-i18next has nothing wired to it and the page
+      // stays in English. A second picker click fires `languageChanged`
+      // again, the bundle is now in memory, and the page finally
+      // renders in Spanish — which manifests as "language only changes
+      // on the second click."
+      bindI18n: 'languageChanged loaded',
+      bindI18nStore: 'added removed',
+    },
   });
 
 // Kick off the detected locale's bundle if it's not English. Done
