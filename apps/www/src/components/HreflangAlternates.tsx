@@ -25,7 +25,13 @@ export function HreflangAlternates() {
   useEffect(() => {
     if (typeof document === 'undefined') return;
     const head = document.head;
-    const origin = window.location.origin;
+    // Pinned to the apex hostname — see usePageMeta.ts for the
+    // duplicate-content rationale. The Worker also accepts requests
+    // on www.vaipakam.com (which 301s to apex), so emitting hreflang
+    // tags rooted at `window.location.origin` would advertise www
+    // URLs to crawlers — splitting ranking signal between the two
+    // hostnames serving identical content. Apex is canonical.
+    const origin = 'https://vaipakam.com';
     const stripped = stripLocalePrefix(location.pathname);
 
     // Drop any previously-injected alternate tags. We mark our own

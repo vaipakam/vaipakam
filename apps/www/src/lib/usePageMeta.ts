@@ -22,11 +22,14 @@ import { useLocation } from 'react-router-dom';
  * the existing `<HreflangAlternates>` component already uses this
  * exact pattern — keeping the SEO machinery one-shape.
  *
- * The canonical origin is derived from `window.location.origin`,
- * which auto-tracks every domain bound to the labs Worker
- * (labs.vaipakam.com today; vaipakam.com / www.vaipakam.com after
- * cutover). No env var needed; the canonical always matches the
- * domain the user is actually on.
+ * Canonical origin is HARDCODED to the apex (`https://vaipakam.com`),
+ * not `window.location.origin`. The `vaipakam-www` Worker also
+ * accepts requests on `www.vaipakam.com` (which 301s to apex via a
+ * Cloudflare Bulk Redirect rule), so a visitor who hits the www host
+ * before the redirect fires would otherwise emit a www-rooted
+ * canonical — splitting Google's ranking between two hostnames
+ * serving identical content. Forcing the canonical to apex collapses
+ * any accidental hostname variant into one indexable URL group.
  *
  * Usage:
  *
@@ -42,6 +45,14 @@ import { useLocation } from 'react-router-dom';
  * incrementally."
  */
 import { useTranslation } from 'react-i18next';
+
+/** The canonical hostname every page on this site declares. Apex,
+ *  not www; see file header comment for the duplicate-content
+ *  rationale. Hardcoded — a build-time env-var override is not
+ *  meaningful here because the canonical is what crawlers index,
+ *  and that has to be the production hostname even on staging
+ *  builds (otherwise staging URLs leak into Google's index). */
+const CANONICAL_ORIGIN = 'https://vaipakam.com';
 
 interface UsePageMetaInput {
   /** i18n key for the page title. Resolved via `t()` so each locale
@@ -80,16 +91,16 @@ export function usePageMeta({ titleKey, descriptionKey }: UsePageMetaInput) {
     }
     descTag.content = description;
 
-    // <link rel="canonical"> — self-referential to the current URL.
-    // Strip trailing slashes so `/whitepaper` and `/whitepaper/`
-    // both resolve to a single canonical (the trailing-slash form
-    // never has different content). Query strings are dropped from
-    // the canonical because none of the marketing routes have
-    // canonical query parameters; if a future route does, it can
-    // override via a route-specific `usePageMeta` extension.
-    const origin = window.location.origin;
+    // <link rel="canonical"> — pinned to the apex hostname regardless
+    // of which host actually served the request. See the file header
+    // comment for the duplicate-content rationale. Strip trailing
+    // slashes so `/whitepaper` and `/whitepaper/` both resolve to a
+    // single canonical. Query strings are dropped from the canonical
+    // because none of the marketing routes have canonical query
+    // parameters; if a future route does, it can override via a
+    // route-specific `usePageMeta` extension.
     const path = location.pathname.replace(/\/+$/, '') || '/';
-    const canonicalHref = `${origin}${path}`;
+    const canonicalHref = `${CANONICAL_ORIGIN}${path}`;
 
     let canonicalTag = document.querySelector(
       'link[rel="canonical"][data-page-meta="1"]',

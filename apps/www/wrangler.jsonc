@@ -7,18 +7,24 @@
   // app surface via the `defiUrl(...)` helper (env-driven by
   // `VITE_DEFI_URL`, defaults `https://defi.vaipakam.com`).
   //
-  // Custom-domain bindings (labs → www cutover):
-  //   - www.vaipakam.com   canonical user-facing URL
-  //   - vaipakam.com       apex; 301 → www via a Cloudflare Bulk
-  //                          Redirect rule, NOT a Worker binding,
-  //                          so the apex is a redirect-only host
-  //   - labs.vaipakam.com  LEGACY — Cloudflare Bulk Redirect rule
-  //                          `labs.vaipakam.com/* →
-  //                          https://www.vaipakam.com/$1` (301)
-  //                          so old backlinks and indexed URLs
-  //                          hand their PageRank to the new
-  //                          canonical. Keep alive ≥ 6 months
-  //                          post-cutover.
+  // Custom-domain bindings (apex-canonical setup):
+  //   - vaipakam.com       CANONICAL user-facing URL. Apex is the
+  //                          indexable hostname; the sitemap, robots
+  //                          target, every page's `<link
+  //                          rel="canonical">`, and every hreflang
+  //                          tag are all rooted here.
+  //   - www.vaipakam.com   Cloudflare Bulk Redirect rule
+  //                          `www.vaipakam.com/* →
+  //                          https://vaipakam.com/$1` (301). NOT
+  //                          bound to the Worker — the redirect
+  //                          rule fires before any Worker route.
+  //   - labs.vaipakam.com  LEGACY — still bound to this Worker
+  //                          (no redirect rule today since Google
+  //                          had not indexed it before cutover).
+  //                          Harmless duplicate; the apex-pinned
+  //                          `<link rel="canonical">` on every
+  //                          page collapses any accidental crawler
+  //                          visit into the apex's index entry.
   //
   // Worker name `vaipakam-www` — renamed from the legacy
   // `vaipakam-labs` at the same time as the labs → www cutover so

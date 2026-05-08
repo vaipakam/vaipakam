@@ -22,12 +22,14 @@
  * verbatim into `dist/` so Cloudflare Workers Static Assets serves
  * them at the site root (`/sitemap.xml` and `/robots.txt`).
  *
- * Site origin: defaults to `https://www.vaipakam.com` — the canonical
- * post-cutover URL. The legacy `labs.vaipakam.com` host is served by
- * a Cloudflare Bulk Redirect rule that 301s every path to the
- * matching www URL, so both backlinks and crawler-cached entries
- * recover. Override the origin via `VITE_WWW_PUBLIC_ORIGIN` at build
- * time for staging deploys.
+ * Site origin: defaults to `https://vaipakam.com` — the apex is
+ * the canonical hostname; `www.vaipakam.com` 301-redirects to the
+ * apex via a Cloudflare Bulk Redirect rule so every page in the
+ * sitemap and every crawler hit has exactly one indexable URL.
+ * Override the origin via `VITE_WWW_PUBLIC_ORIGIN` at build time
+ * for staging deploys (the env-var name retains the `_WWW_` infix
+ * for continuity with the apps/www folder name; the value is the
+ * apex URL).
  *
  * Locale list: must match `TRANSLATED_LOCALES` in
  * `apps/www/src/i18n/glossary.ts`. Listing a placeholder locale
@@ -54,7 +56,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
 const ORIGIN = (
-  process.env.VITE_WWW_PUBLIC_ORIGIN ?? 'https://www.vaipakam.com'
+  process.env.VITE_WWW_PUBLIC_ORIGIN ?? 'https://vaipakam.com'
 ).replace(/\/+$/, '');
 
 // Locales with shipping translation bundles — mirrors
