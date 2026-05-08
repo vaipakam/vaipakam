@@ -1,31 +1,37 @@
 /**
  * i18n bootstrap.
  *
- * Loads all hand-curated locale bundles eagerly at startup. The total
- * payload is small (chrome strings only, ~10 locales × <1 KB each) so
- * lazy / on-demand loading would add complexity without saving bytes.
- * When the corpus grows past ~50 KB per locale (Phase 2: card-help
- * summaries; Phase 3: per-page UI strings), switch to
- * `i18next-http-backend` and lazy-load on `changeLanguage`.
+ * English is loaded eagerly (it's the fallback target — needs to
+ * be available synchronously for the first paint). Every other
+ * locale loads lazily via Vite dynamic imports on first use, so
+ * the initial bundle ships ~134 KB of English copy instead of all
+ * ~1.8 MB of the 10-locale corpus.
  *
  * Detection chain (priority order):
  *   1. URL path prefix —  e.g. `/es/...` overrides everything below.
- *      Not used today; reserved for SEO-friendly per-locale routes.
+ *      Handled by the LocaleResolver router wrapper, not the
+ *      detector here.
  *   2. localStorage key `vaipakam:language` — the LanguagePicker
  *      writes here. We deliberately reuse the key the picker has
  *      always used so existing user preferences carry forward.
  *   3. `navigator.languages` — first match against `supportedLngs`.
- *   4. Cloudflare `cf-ipcountry` cookie hint — populated by an edge
- *      worker for users who don't have a matching browser locale set.
- *      Not used today; reserved.
+ *   4. `<html lang>` — populated by an edge worker for users who
+ *      don't have a matching browser locale set.
  *   5. Fallback to English.
  *
  * Pending locales (te, ml, kn) are listed in `supportedLngs` so the
- * picker can offer them, but no resource bundle is registered. When
- * a user picks one, i18next's `fallbackLng: 'en'` chain renders the
- * English string with no error. Once `npm run translate` populates
- * those JSONs, future builds pick them up via the `import` glob below
- * and the locale starts resolving to its own strings instead.
+ * picker can offer them, but no resource bundle is registered yet.
+ * When a user picks one, i18next's `fallbackLng: 'en'` chain
+ * renders the English string with no error.
+ *
+ * Lazy-load mechanics: i18n.init runs synchronously with English
+ * pre-registered as the only resource. Detected non-English locales
+ * are kicked off via `loadLocaleBundle()` immediately after init
+ * and again on every `changeLanguage` event. While the bundle is
+ * in flight, components calling `useTranslation()` render English
+ * (the fallback chain hits) — so the visible swap is "page renders
+ * in English for ~50-200 ms, then re-renders in the user's locale"
+ * rather than "page renders in keys then re-renders in the locale."
  */
 
 import i18n from 'i18next';
@@ -34,18 +40,56 @@ import LanguageDetector from 'i18next-browser-languagedetector';
 
 import { SUPPORTED_LOCALES } from './glossary';
 
+// English — eager. Always available so the fallback chain renders
+// readable copy instead of raw keys while a non-English bundle is
+// in flight on first paint.
 import en from './locales/en.json';
-import es from './locales/es.json';
-import fr from './locales/fr.json';
-import de from './locales/de.json';
-import ja from './locales/ja.json';
-import zh from './locales/zh.json';
-import hi from './locales/hi.json';
-import ar from './locales/ar.json';
-import ta from './locales/ta.json';
-import ko from './locales/ko.json';
 
 const STORAGE_KEY = 'vaipakam:language';
+
+/**
+ * Map of locale code → dynamic-import loader. Vite recognises the
+ * `import('./locales/${...}.json')` pattern at build time and
+ * splits each JSON into its own chunk; the chunk is fetched only
+ * when the loader is called.
+ *
+ * Listing each loader explicitly (rather than `import.meta.glob`)
+ * gives Vite the best static-analysis signal so the chunks are
+ * named after the locale and tree-shaking is precise. The trade-
+ * off is that adding a new locale also needs an entry here — but
+ * that pairs with adding the locale to `SUPPORTED_LOCALES` and
+ * the LanguagePicker, so it's one obvious place per locale.
+ */
+const LAZY_LOCALE_LOADERS: Record<
+  string,
+  () => Promise<{ default: Record<string, unknown> }>
+> = {
+  es: () => import('./locales/es.json'),
+  fr: () => import('./locales/fr.json'),
+  de: () => import('./locales/de.json'),
+  ja: () => import('./locales/ja.json'),
+  zh: () => import('./locales/zh.json'),
+  hi: () => import('./locales/hi.json'),
+  ar: () => import('./locales/ar.json'),
+  ta: () => import('./locales/ta.json'),
+  ko: () => import('./locales/ko.json'),
+};
+
+async function loadLocaleBundle(lng: string): Promise<void> {
+  if (lng === 'en') return; // already eager-loaded
+  if (i18n.hasResourceBundle(lng, 'translation')) return;
+  const loader = LAZY_LOCALE_LOADERS[lng];
+  if (!loader) return;
+  try {
+    const mod = await loader();
+    i18n.addResourceBundle(lng, 'translation', mod.default, true, true);
+  } catch (err) {
+    // Loader failed — i18next falls back to English silently. Log
+    // for diagnostics but don't break the page.
+    // eslint-disable-next-line no-console
+    console.warn(`[i18n] Failed to load locale bundle "${lng}":`, err);
+  }
+}
 
 void i18n
   .use(LanguageDetector)
@@ -53,15 +97,6 @@ void i18n
   .init({
     resources: {
       en: { translation: en },
-      es: { translation: es },
-      fr: { translation: fr },
-      de: { translation: de },
-      ja: { translation: ja },
-      zh: { translation: zh },
-      hi: { translation: hi },
-      ar: { translation: ar },
-      ta: { translation: ta },
-      ko: { translation: ko },
     },
     supportedLngs: [...SUPPORTED_LOCALES],
     fallbackLng: 'en',
@@ -81,6 +116,20 @@ void i18n
     },
   });
 
+// Kick off the detected locale's bundle if it's not English. Done
+// after init so `i18n.resolvedLanguage` is populated by the
+// detector chain. Awaiting isn't necessary — `useTranslation()`
+// re-renders when `addResourceBundle()` fires, and the English
+// fallback covers the in-flight window.
+const initialLng = i18n.resolvedLanguage ?? 'en';
+if (initialLng !== 'en') void loadLocaleBundle(initialLng);
+
+// Future language changes (LanguagePicker click, etc.) load the
+// new bundle on demand.
+i18n.on('languageChanged', (lng) => {
+  void loadLocaleBundle(lng);
+});
+
 // Keep the document direction in sync with the active language so RTL
 // scripts (Arabic) flip layout. The HTML element gets `dir="rtl"`;
 // CSS that uses logical properties (margin-inline-start, etc.) reacts
@@ -95,7 +144,7 @@ function applyDir(lng: string) {
   );
   document.documentElement.setAttribute('lang', lng);
 }
-applyDir(i18n.resolvedLanguage ?? 'en');
+applyDir(initialLng);
 i18n.on('languageChanged', applyDir);
 
 export default i18n;
