@@ -20,15 +20,15 @@
   //                          canonical. Keep alive ≥ 6 months
   //                          post-cutover.
   //
-  // Worker name STAYS `vaipakam-labs` — it's a deploy-switch
-  // identifier (metrics history, secret bindings, custom-domain
-  // mappings all keyed on it), not a user-visible brand label.
-  // The source folder was renamed `apps/labs` → `apps/www` to
-  // match the canonical URL for developer ergonomics; the deploy
-  // identifier intentionally stays put. The mismatch is also
-  // documented in the package.json description.
+  // Worker name `vaipakam-www` — renamed from the legacy
+  // `vaipakam-labs` at the same time as the labs → www cutover so
+  // the source folder, package name, deploy target, and canonical
+  // URL all share one identifier. Operator-side this required a
+  // new Worker deployment + custom-domain re-binding (metrics
+  // history under the old name was accepted as the cost of full
+  // naming consistency).
   "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "vaipakam-labs",
+  "name": "vaipakam-www",
   "compatibility_date": "2026-04-23",
   "compatibility_flags": ["nodejs_compat"],
   "assets": {

@@ -18,14 +18,14 @@ source-tree split lands.
 
 | Worker | Domain | Lane | Cron | D1 binding |
 |---|---|---|---|---|
-| `vaipakam-labs` | `labs.vaipakam.com` ✅ | Marketing static site | none | none |
+| `vaipakam-www` | `www.vaipakam.com` ✅ + `vaipakam.com` (apex) ✅ | Marketing static site (renamed from `vaipakam-labs` at the labs → www cutover; `labs.vaipakam.com` now serves a 301 Bulk Redirect to www) | none | none |
 | `vaipakam-defi` | `defi.vaipakam.com` (cert provisioning) | dApp frontend | none | none |
 | `vaipakam-agent` | `agent.vaipakam.com` (cert provisioning) | D1 → users (REST, Telegram, Push, frames) | every minute | yes |
 | `vaipakam-indexer` | (no public domain — cron only) | Chain → D1 | every minute | yes |
 | `vaipakam-keeper` | (no public domain — cron only) | Chain writes | 5-min HF + 00:05 UTC daily oracle | yes |
 
 Workers default URLs (for direct reachability before custom-domain SSL is fully live):
-- https://vaipakam-labs.dawn-fire-139e.workers.dev
+- https://vaipakam-www.dawn-fire-139e.workers.dev
 - https://vaipakam-defi.dawn-fire-139e.workers.dev
 - https://vaipakam-agent.dawn-fire-139e.workers.dev
 - https://vaipakam-indexer.dawn-fire-139e.workers.dev
