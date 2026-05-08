@@ -1,21 +1,62 @@
 {
-  // Vaipakam chain → archive D1 ingester Worker.
+  // Vaipakam chain → D1 indexer + public read-API Worker.
   //
-  // STUB — see apps/agent/wrangler.jsonc for context. Stage 3
-  // populates `src/` from `ops/hf-watcher/`'s indexer-side
-  // surface (chainIndexer + db + dailyOracleSnapshot).
-  // Until populated, deploying from here pushes the placeholder
-  // index.ts which returns 503 to every request and registers
-  // no cron triggers.
+  // Stage 3 PR3 of the Worker split — see
+  // docs/DesignsAndPlans/Stage3WorkerSplitPlan.md for the full
+  // classification and migration sequencing.
+  //
+  // Owns: chainIndexer event scan + cancelled-offer retention prune
+  // (cron) + the open-CORS public read API for /offers/* /loans/*
+  // /activity /claimables/* (HTTP). Read-only. No signing keys.
+  //
+  // Custom domain (suggested): indexer.vaipakam.com — operator
+  // provisions the binding at first deploy. Worker name
+  // `vaipakam-indexer` stays post-cutover (deploy-switch identifier).
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "vaipakam-indexer",
   "main": "src/index.ts",
   "compatibility_date": "2026-04-23",
   "compatibility_flags": ["nodejs_compat"],
+
+  // Cron — every minute. The chain-event scan rate-limits itself
+  // internally (per-chain round-robin + max-blocks-per-tick), so
+  // tighter schedules don't help. Matches the existing
+  // ops/hf-watcher cadence the indexer used to ride.
+  "triggers": {
+    "crons": ["* * * * *"],
+  },
+
+  // D1 binding — the same `vaipakam-alerts-db` database that
+  // apps/keeper + apps/agent also bind. This Worker is the WRITER
+  // of the offers / loans / activity / claimables tables; the
+  // others are readers. Cross-Worker D1 sharing is the deliberate
+  // coupling that lets the three Workers stay independent without
+  // a message-bus layer (Stage 3 plan §5).
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "vaipakam-alerts-db",
+      "database_id": "REPLACE_WITH_OPERATOR_D1_ID",
+    },
+  ],
+
+  // Operator-managed secrets (set via `wrangler secret put`):
+  //   - RPC_*                          — per-chain RPC URLs (Alchemy /
+  //                                      Infura / etc.; carry API keys).
+  //                                      Includes RPC_POLYGON_AMOY since
+  //                                      loanRoutes consults it for the
+  //                                      chain-id → RPC mapping in
+  //                                      /loans/by-lender etc.
+  //
+  // Operator-managed vars (in `vars` below if any):
+  //   - CANCELLED_OFFER_RETENTION_DAYS — int days (default 30 inside
+  //                                      the prune helper). Coerced
+  //                                      from string + clamped >= 1.
+  "vars": {
+    "CANCELLED_OFFER_RETENTION_DAYS": "30",
+  },
+
   "observability": {
     "enabled": true,
   },
-  // Cron triggers will move here from the watcher's wrangler
-  // config when Stage 3 populates the indexer source.
-  // "triggers": { "crons": ["* * * * *"] },
 }
