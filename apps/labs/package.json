@@ -3,7 +3,7 @@
   "private": true,
   "version": "0.0.0",
   "type": "module",
-  "description": "Vaipakam marketing + docs Vite SPA — labs.vaipakam.com (and www.vaipakam.com / vaipakam.com on cutover). NO wallet connect, NO wagmi — just a chain picker for public-read transparency stats. Hosted as a Cloudflare Workers Static Assets deploy on the same shape apps/defi uses, but with a tighter dependency surface (no connectkit, no react-router protected routes, no per-action permissioning). STUB — Stage 4 of the source-tree refactor will populate src/pages/ from apps/defi/'s marketing surfaces (Landing, BuyVPFI marketing, Overview, UserGuide-Basic, Whitepaper).",
+  "description": "Vaipakam marketing + docs Vite SPA — labs.vaipakam.com (and www.vaipakam.com / vaipakam.com on cutover). NO wallet connect, NO wagmi, NO on-chain reads — pure marketing surface populated by a literal copy of the marketing-side files from apps/defi (Landing, BuyVPFIMarketing, Whitepaper, Overview, UserGuide, Terms, Privacy, DataRights, Discord, HelpSearch). Public-read tools that live on the connected-app domain by industry convention (analytics, NFT verifier, protocol console) are linked out via `defiUrl()` rather than duplicated here. Hosted as a Cloudflare Workers Static Assets deploy on the same shape apps/defi uses, but with a tighter dependency surface (no connectkit, no wagmi, no react-query, no per-action permissioning).",
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
@@ -15,8 +15,15 @@
     "@vaipakam/contracts": "workspace:*",
     "@vaipakam/lib": "workspace:*",
     "@vaipakam/ui": "workspace:*",
+    "i18next": "^26.0.8",
+    "i18next-browser-languagedetector": "^8.2.1",
+    "lucide-react": "^1.8.0",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
+    "react-i18next": "^17.0.4",
+    "react-markdown": "^10.1.0",
+    "react-router-dom": "^7.14.0",
+    "remark-gfm": "^4.0.1",
     "viem": "^2.48.4"
   },
   "devDependencies": {

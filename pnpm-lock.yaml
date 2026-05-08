@@ -209,12 +209,33 @@ importers:
       '@vaipakam/ui':
         specifier: workspace:*
         version: link:../../packages/ui
+      i18next:
+        specifier: ^26.0.8
+        version: 26.0.10(typescript@6.0.3)
+      i18next-browser-languagedetector:
+        specifier: ^8.2.1
+        version: 8.2.1
+      lucide-react:
+        specifier: ^1.8.0
+        version: 1.14.0(react@19.2.6)
       react:
         specifier: ^19.2.4
         version: 19.2.6
       react-dom:
         specifier: ^19.2.4
         version: 19.2.6(react@19.2.6)
+      react-i18next:
+        specifier: ^17.0.4
+        version: 17.0.7(i18next@26.0.10(typescript@6.0.3))(react-dom@19.2.6(react@19.2.6))(react@19.2.6)(typescript@6.0.3)
+      react-markdown:
+        specifier: ^10.1.0
+        version: 10.1.0(@types/react@19.2.14)(react@19.2.6)
+      react-router-dom:
+        specifier: ^7.14.0
+        version: 7.15.0(react-dom@19.2.6(react@19.2.6))(react@19.2.6)
+      remark-gfm:
+        specifier: ^4.0.1
+        version: 4.0.1
       viem:
         specifier: ^2.48.4
         version: 2.48.11(bufferutil@4.1.0)(typescript@6.0.3)(utf-8-validate@5.0.10)(zod@4.4.3)
