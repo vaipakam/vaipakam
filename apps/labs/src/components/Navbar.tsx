@@ -74,7 +74,6 @@ const NAV_GROUPS: NavGroup[] = [
       { labelKey: 'nav.analytics', href: defiUrl('/analytics'), newTab: true },
       { labelKey: 'nav.nftVerifier', href: defiUrl('/nft-verifier'), newTab: true },
       { labelKey: 'nav.protocolConsole', href: defiUrl('/protocol-console'), newTab: true },
-      { labelKey: 'nav.security', href: '/#security' },
     ],
   },
 ];

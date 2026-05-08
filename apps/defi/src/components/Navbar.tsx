@@ -36,34 +36,30 @@ interface NavGroup {
   links: NavLink[];
 }
 
-/** Two grouped dropdowns replacing the previous 6-flat-link row.
+/** Connected-app top-bar — Pattern C (single Docs link + one
+ *  in-domain dropdown). Industry-standard split for public-read
+ *  shells on a connected-app subdomain — see Compound's `app.*` /
+ *  GMX's `app.*` for the same shape. The earlier "Learn" dropdown
+ *  (Features / How it works / Documentation / FAQ pointing back
+ *  to labs.vaipakam.com) was Pattern A, which the survey of
+ *  Uniswap / Aave / Morpho / Pendle / dYdX / Compound / 1inch /
+ *  GMX showed none of those platforms use — visitors on a public-
+ *  read app page are past the conversion funnel and don't need a
+ *  Features / FAQ menu in the top-bar. Marketing-adjacent links
+ *  (Discord, Terms, Privacy, FAQ, social) live in the Footer
+ *  instead, matching every surveyed connected-app footer.
  *
- *   - "Learn"  — explainer / about-us anchors on the landing page.
  *   - "Verify" — transparency tooling: Analytics dashboard, NFT
- *                Verifier, and the Security section (whose cards
- *                each link to on-chain verification artifacts).
+ *                Verifier, Protocol Console. All in-domain (defi).
  *
- * Hash-anchor entries rely on the app-level ScrollToHash helper to
- * jump to the matching section after the home page mounts on cross-
- * route navigation. Labels carry translation keys (resolved against
- * the `nav.*` namespace in `src/i18n/locales/*.json`) rather than
- * raw English strings so a language change re-renders them in place.
+ * The single flat "Documentation" top-bar link sits next to the
+ * Verify dropdown — it's the one external link that earns its
+ * top-bar slot because users actually need it while operating
+ * the app. Opens in a new tab so the connected-app session stays
+ * open behind. Labels carry translation keys (resolved against
+ * the `nav.*` namespace) so a language change re-renders in place.
  */
 const NAV_GROUPS: NavGroup[] = [
-  {
-    id: 'learn',
-    labelKey: 'nav.learn',
-    // Learn dropdown points at the marketing site (Landing-page
-    // anchors + Overview docs) which lives on the labs / marketing
-    // domain post-PR3. Cross-domain links open in a new tab via
-    // `newTab: true` so the connected-app session stays open behind.
-    links: [
-      { labelKey: 'nav.features', href: marketingUrl('/#features'), newTab: true },
-      { labelKey: 'nav.howItWorks', href: marketingUrl('/#how-it-works'), newTab: true },
-      { labelKey: 'nav.documentation', href: marketingUrl('/help/overview'), newTab: true },
-      { labelKey: 'nav.faq', href: marketingUrl('/#faq'), newTab: true },
-    ],
-  },
   {
     id: 'verify',
     labelKey: 'nav.verify',
@@ -72,13 +68,11 @@ const NAV_GROUPS: NavGroup[] = [
     // sit on the connected-app subdomain by industry convention
     // (Uniswap, Aave, Morpho, Pendle all keep their /markets / /explore
     // / governance dashboards on the app subdomain alongside the
-    // wallet-bearing write flows). Security anchor links to the
-    // marketing-side Landing-page #security section.
+    // wallet-bearing write flows).
     links: [
       { labelKey: 'nav.analytics', href: '/analytics' },
       { labelKey: 'nav.nftVerifier', href: '/nft-verifier' },
       { labelKey: 'nav.protocolConsole', href: '/protocol-console' },
-      { labelKey: 'nav.security', href: marketingUrl('/#security'), newTab: true },
     ],
   },
 ];
@@ -326,6 +320,21 @@ export default function Navbar() {
               </div>
             </div>
           ))}
+
+          {/* Flat Docs link — sits next to the Verify dropdown on
+              desktop and inline above the Launch button on mobile.
+              The one cross-domain link that earns a top-bar slot per
+              Pattern C (Compound / GMX). Opens in a new tab so the
+              connected-app session stays open behind. */}
+          <a
+            href={marketingUrl('/help/overview')}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="navbar-link"
+            onClick={() => setMobileOpen(false)}
+          >
+            {t('nav.documentation')}
+          </a>
 
           {/* Mobile Launch Vaipakam button — routes to the connected-app
               Dashboard. The defi-side Navbar only renders on the public-
