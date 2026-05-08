@@ -568,7 +568,7 @@
     "vpfiStakeUnstake": "Stake / Unstake",
     "vpfiStake": "Stake",
     "vpfiUnstake": "Unstake",
-    "launchApp": "Launch App",
+    "launchApp": "Launch Vaipakam",
     "toggleMenu": "Toggle menu",
     "switchNetwork": "Switch Network",
     "switchNetworkAria": "Switch network",
@@ -1322,7 +1322,7 @@
     "titleLine2": "Fully On-Chain",
     "subtitlePrefix": "Vaipakam",
     "subtitleBody": "lets you lend and borrow a wide range of tokens, rent NFTs, and set your own terms. Every position is tracked by a unique NFT — transparent, traceable and trustless from offer to settlement.",
-    "launchApp": "Launch App",
+    "launchApp": "Launch Vaipakam",
     "buyVpfi": "Buy VPFI",
     "howItWorks": "How It Works",
     "statP2pValue": "P2P",
@@ -1418,7 +1418,7 @@
     "sectionLabel": "Get Started",
     "title": "Ready to start lending?",
     "subtitle": "Connect a wallet, create an offer, and start earning. Set custom terms — no pool, no middleman.",
-    "launchApp": "Launch App",
+    "launchApp": "Launch Vaipakam",
     "readDocs": "Read Documentation"
   },
   "faq": {

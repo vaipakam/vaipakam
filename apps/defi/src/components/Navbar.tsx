@@ -327,35 +327,39 @@ export default function Navbar() {
             </div>
           ))}
 
-          {/* Mobile Launch App button — routes to the authenticated app shell.
-              Present only here (on Navbar) because AppLayout has its own
-              internal nav and shouldn't show this CTA. */}
-          <a
-            href=""
-            target="_blank"
-            rel="noopener noreferrer"
+          {/* Mobile Launch Vaipakam button — routes to the connected-app
+              Dashboard. The defi-side Navbar only renders on the public-
+              read shell pages (Analytics / NFT Verifier / Protocol
+              Console); AppLayout has its own internal nav and doesn't
+              mount this CTA. Same-tab nav via react-router `<Link>` —
+              this button stays inside the defi origin so a new tab
+              would just duplicate the session. */}
+          <Link
+            to="/"
             className="btn btn-primary navbar-launch-mobile"
             onClick={() => setMobileOpen(false)}
           >
             {t('nav.launchApp')} <ArrowRight size={16} />
-          </a>
+          </Link>
 
         </div>
 
         <div className="navbar-actions">
-          {/* Desktop Launch App button — visible on every public page (landing,
-              analytics, public Buy VPFI marketing) because this Navbar
-              only renders outside /app. Opens in a new tab so the
-              marketing page stays open behind — same pattern as the
-              VPFI dropdown's Buy / Stake-Unstake action items. */}
-          <a
-            href=""
-            target="_blank"
-            rel="noopener noreferrer"
+          {/* Desktop Launch Vaipakam button — visible on the public-read
+              shell pages (Analytics / NFT Verifier / Protocol Console)
+              because the defi Navbar only renders outside AppLayout.
+              Same-tab `<Link>` — the destination is the connected-app
+              Dashboard at `/` on the same defi origin, so opening a new
+              tab would just duplicate the session. The cross-domain
+              "Launch Vaipakam" CTA on the labs marketing site keeps
+              `target="_blank"` (different origin, marketing tab stays
+              open behind). */}
+          <Link
+            to="/"
             className="btn btn-primary navbar-cta navbar-launch"
           >
             {t('nav.launchApp')} <ArrowRight size={14} />
-          </a>
+          </Link>
 
           {/* Wallet UI removed from the public Navbar — every public
               route is read-only / marketing after the Buy-VPFI split,
