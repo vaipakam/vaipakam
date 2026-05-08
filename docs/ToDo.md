@@ -11,6 +11,10 @@
 
 ---
 
+Change LayerZero to Chainlink CCIP
+
+---
+
 - [ ] **T-067**: provide create offer in offer book where the market ancor is displayed, with `I wan to Lend` / `I want to Borrow` button,
 
 ---
@@ -339,3 +343,4 @@ agent.vaipakam.com
 vaipakam-archive
 vaipakam-record --> not used as of now
 vaipakam-labs
+`Launch Vaipakam`

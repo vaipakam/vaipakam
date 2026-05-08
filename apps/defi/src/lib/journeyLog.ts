@@ -211,7 +211,7 @@ export function emit(input: EmitInput): JourneyEvent {
 
 // ─── Server-side error capture (2026-05-01) ───────────────────────────
 //
-// Every `failure` event is fired-and-forgotten to the hf-watcher
+// Every `failure` event is fired-and-forgotten to the apps/agent
 // Worker's `/diag/record` endpoint. The Worker writes a row to D1
 // (`diag_errors` table) with a UUIDv4 PK matching `ev.id`. That id
 // also surfaces in the GitHub-issue prefill as the report id, so a
@@ -228,7 +228,7 @@ export function emit(input: EmitInput): JourneyEvent {
 //      loop or a stuck retry path. The Worker has a secondary cap as
 //      belt-and-suspenders.
 //   2. **No-op when origin not configured.** If
-//      `VITE_API_ORIGIN` is unset (local dev without the
+//      `VITE_AGENT_ORIGIN` is unset (local dev without the
 //      worker), capture silently disabled.
 //   3. **`navigator.sendBeacon` first, fetch fallback.** Beacon
 //      survives page-unload and is non-blocking by definition;
@@ -258,7 +258,7 @@ function recordFailureToServer(ev: JourneyEvent): void {
   let origin: string;
   let enabled: string;
   try {
-    origin = (import.meta.env.VITE_API_ORIGIN as string | undefined) ?? '';
+    origin = (import.meta.env.VITE_AGENT_ORIGIN as string | undefined) ?? '';
     enabled = (import.meta.env.VITE_DIAG_RECORD_ENABLED as string | undefined) ?? '';
   } catch {
     return;

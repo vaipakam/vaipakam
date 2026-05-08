@@ -1,33 +1,25 @@
 #!/usr/bin/env bash
 #
-# exportFrontendDeployments.sh — multi-target deployment-artifact sync.
+# exportFrontendDeployments.sh — single-target deployment-artifact sync.
 #
-# Despite the historical name, this script writes the consolidated
-# `deployments.json` to BOTH the frontend AND the hf-watcher Worker
-# when both directories are present. They consume the same merged
-# shape — every per-chain `contracts/deployments/<chain-slug>/addresses.json`
-# folded into a single object keyed by `chainId`. Companion to
-# `exportFrontendAbis.sh`: that script syncs per-facet *interfaces*
-# (function selectors, struct shapes); this one syncs the per-chain
-# *deployed addresses* needed to talk to those interfaces.
+# Writes the consolidated `deployments.json` (every per-chain
+# `contracts/deployments/<chain-slug>/addresses.json` folded into one
+# object keyed by `chainId`) into the `@vaipakam/contracts` workspace
+# package. Every consumer in the monorepo — apps/{defi,labs} for
+# the React surfaces, apps/{keeper,indexer,agent} for the Cloudflare
+# Workers — imports from `@vaipakam/contracts/deployments`, so this
+# single write reaches everything.
 #
-# Why one script for two consumers:
-#   - The merge step is identical for both. Duplicating it across two
-#     scripts means a divergent fix later. One source-of-truth merge,
-#     two writes.
-#   - Operators run a single command after every redeploy; the script
-#     auto-detects which targets to write to based on which sibling
-#     directories exist.
+# (Pre-Stage-3 this script also wrote a duplicate copy into
+# `ops/hf-watcher/src/deployments.json`. After the Stage 3 Worker
+# split — see `docs/DesignsAndPlans/Stage3WorkerSplitPlan.md` —
+# the three new Workers all import the same `@vaipakam/contracts`
+# bundle the frontend reads, so the dual-write target is gone.)
 #
-# Targets:
-#   - **Contracts package** (always required):
-#     `<CONTRACTS_PKG_DIR>/src/deployments.json` plus a
-#     `_deployments_source.json` provenance stamp. Consumed by every
-#     app in the monorepo via the `@vaipakam/contracts/deployments`
-#     re-export.
-#   - **hf-watcher** (optional, written when present):
-#     `<WATCHER_DIR>/src/deployments.json`. The Worker's tsconfig has
-#     `resolveJsonModule: true` so this imports natively.
+# Companion to `exportFrontendAbis.sh`: that script syncs per-facet
+# *interfaces* (function selectors, struct shapes); this one syncs
+# the per-chain *deployed addresses* needed to talk to those
+# interfaces.
 #
 # Why a consolidated single file (not per-chain imports):
 #   - One JSON import per consumer, one typed lookup, one provenance stamp.
@@ -41,14 +33,10 @@
 #
 # Usage:
 #   bash contracts/script/exportFrontendDeployments.sh
-#       # auto-detects CONTRACTS_PKG_DIR=../packages/contracts,
-#       # WATCHER_DIR=../ops/hf-watcher
+#       # auto-detects CONTRACTS_PKG_DIR=../packages/contracts
 #
-#   CONTRACTS_PKG_DIR=/abs/path WATCHER_DIR=/abs/path \
+#   CONTRACTS_PKG_DIR=/abs/path \
 #     bash contracts/script/exportFrontendDeployments.sh
-#
-#   # Skip the watcher target explicitly:
-#   WATCHER_DIR= bash contracts/script/exportFrontendDeployments.sh
 #
 # When to run:
 #   - After every contract deploy / redeploy on any chain.
@@ -57,8 +45,8 @@
 #
 # What it does NOT do:
 #   - Doesn't commit anything. Review with
-#     `git diff frontend/src/contracts/ ops/hf-watcher/src/`
-#     and commit alongside the deploy artifacts.
+#     `git diff packages/contracts/src/deployments.json` and commit
+#     alongside the deploy artifacts.
 #   - Doesn't run any deploy script. It only reads what the deploy
 #     scripts already wrote.
 #   - Doesn't synthesize zero-address sentinels for missing fields.
@@ -76,26 +64,6 @@ CONTRACTS_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 # package so every app shares one copy). Operators with custom
 # layouts override CONTRACTS_PKG_DIR.
 CONTRACTS_PKG_DIR="${CONTRACTS_PKG_DIR:-$CONTRACTS_DIR/../packages/contracts}"
-
-# Watcher target is optional. Auto-detected from the sibling layout
-# at `vaipakam/ops/hf-watcher`. Pass `WATCHER_DIR=` (empty) to skip
-# explicitly; pass an absolute path to override.
-if [ -z "${WATCHER_DIR+set}" ]; then
-  # WATCHER_DIR unset — auto-detect.
-  CANDIDATE="$CONTRACTS_DIR/../ops/hf-watcher"
-  if [ -d "$CANDIDATE" ]; then
-    WATCHER_DIR="$(cd "$CANDIDATE" && pwd)"
-  else
-    WATCHER_DIR=""
-  fi
-elif [ -n "$WATCHER_DIR" ]; then
-  # Explicit path — resolve to absolute.
-  if [ ! -d "$WATCHER_DIR" ]; then
-    echo "Error: WATCHER_DIR set but not a directory: $WATCHER_DIR" >&2
-    exit 1
-  fi
-  WATCHER_DIR="$(cd "$WATCHER_DIR" && pwd)"
-fi
 
 if [ ! -d "$CONTRACTS_PKG_DIR" ]; then
   echo "Error: contracts package dir not found at: $CONTRACTS_PKG_DIR" >&2
@@ -162,7 +130,7 @@ out_file = Path(sys.argv[2])
 #
 # Folders for chains NOT in the list stay on disk for forensic
 # value (audit trail of what was deployed when), but stop being
-# crawled by the watcher and stop appearing in the frontend's
+# crawled by the workers and stop appearing in the frontend's
 # chain picker.
 allow_list_path = deployments_dir / ".active-chains"
 allow_list: set[str] | None = None
@@ -233,21 +201,7 @@ if warnings:
         print(w, file=sys.stderr)
 PYEOF
 
-echo "  → frontend: $FRONTEND_OUT_FILE"
-
-# If the watcher target is present, mirror the same merged JSON into
-# the watcher's src/ tree. Same byte content — both consumers share
-# the type definition; only the import path differs.
-if [ -n "$WATCHER_DIR" ]; then
-  WATCHER_OUT_DIR="$WATCHER_DIR/src"
-  WATCHER_OUT_FILE="$WATCHER_OUT_DIR/deployments.json"
-  if [ ! -d "$WATCHER_OUT_DIR" ]; then
-    echo "  ⚠ watcher: src/ not found at $WATCHER_OUT_DIR — skipped" >&2
-  else
-    cp "$FRONTEND_OUT_FILE" "$WATCHER_OUT_FILE"
-    echo "  → watcher:  $WATCHER_OUT_FILE"
-  fi
-fi
+echo "  → $FRONTEND_OUT_FILE"
 
 # Provenance stamp — same shape as `_source.json` written by
 # exportFrontendAbis.sh so a frontend bundle can be correlated to a
@@ -275,27 +229,8 @@ cat > "$FRONTEND_SOURCE_FILE" <<EOF
 EOF
 echo "  source stamp -> $FRONTEND_SOURCE_FILE"
 
-# Same stamp for the watcher when present.
-if [ -n "$WATCHER_DIR" ] && [ -d "$WATCHER_DIR/src" ]; then
-  WATCHER_SOURCE_FILE="$WATCHER_DIR/src/_deployments_source.json"
-  cat > "$WATCHER_SOURCE_FILE" <<EOF
-{
-  "monorepoCommit": "$COMMIT$DIRTY",
-  "exportedAt": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
-  "chainIds": $CHAIN_IDS_JSON
-}
-EOF
-  echo "  source stamp -> $WATCHER_SOURCE_FILE"
-fi
-
 echo ""
 echo "Done. Next steps:"
-echo "  git diff packages/contracts/src/deployments.json   # review the change"
-if [ -n "$WATCHER_DIR" ] && [ -d "$WATCHER_DIR/src" ]; then
-  echo "  git diff ops/hf-watcher/src/deployments.json     # review the watcher change"
-fi
-echo "  pnpm --filter @vaipakam/defi exec tsc -b --noEmit   # confirm consumers still typecheck"
-if [ -n "$WATCHER_DIR" ] && [ -d "$WATCHER_DIR/src" ]; then
-  echo "  cd $WATCHER_DIR && npx tsc -p . --noEmit          # confirm watcher still typechecks"
-fi
+echo "  git diff packages/contracts/src/deployments.json     # review the change"
+echo "  pnpm --filter @vaipakam/defi exec tsc -b --noEmit    # confirm consumers still typecheck"
 echo "  git commit -am 'Sync deployments with contracts@${COMMIT:0:7}'"

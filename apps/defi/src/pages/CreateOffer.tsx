@@ -1603,7 +1603,7 @@ function CreateOfferSimulationPreview({
 
 const PREFLIGHT_WORKER_ORIGIN =
   (import.meta as unknown as { env: Record<string, string | undefined> }).env
-    .VITE_API_ORIGIN ?? null;
+    .VITE_AGENT_ORIGIN ?? null;
 
 /**
  * Phase 7b.1 — wraps {useLiquidityPreflight} for CreateOffer's form

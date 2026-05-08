@@ -76,7 +76,7 @@ export interface RankedQuote {
 }
 
 export interface QuoteOrchestratorArgs extends QuoteRequest {
-  /** Base URL of the hf-watcher worker (without trailing slash). Used
+  /** Base URL of the apps/agent Worker (`/quote/*`) (without trailing slash). Used
    *  for `/quote/0x` and `/quote/1inch`. Null disables aggregator
    *  fetches — only on-chain venues contribute to the try-list. */
   workerOrigin: string | null;

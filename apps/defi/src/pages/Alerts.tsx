@@ -8,14 +8,14 @@ import { beginStep, enrichFetchError } from "../lib/journeyLog";
 
 // Read the off-chain watcher's origin from env. NO production-URL
 // fallback by design — a build that forgets to set
-// `VITE_API_ORIGIN` should fail closed (alert features
+// `VITE_AGENT_ORIGIN` should fail closed (alert features
 // disabled with a clear message) rather than silently aim every
 // staging / preview / local build at the production worker. That
 // silent-fallback bug was what showed up as
 // `…placeholder.workers.dev/thresholds net::ERR_FAILED` in a stale
 // production bundle.
 const HF_WATCHER_ORIGIN: string | null =
-  (import.meta.env.VITE_API_ORIGIN as string | undefined) ?? null;
+  (import.meta.env.VITE_AGENT_ORIGIN as string | undefined) ?? null;
 
 // Public Push Protocol channel owner address. Used only for the
 // "Subscribe on Push" deep link — `https://app.push.org/channels/<addr>`
@@ -101,7 +101,7 @@ export default function Alerts() {
     );
   }
   if (!HF_WATCHER_ORIGIN) {
-    // Build-time misconfiguration: VITE_API_ORIGIN was not
+    // Build-time misconfiguration: VITE_AGENT_ORIGIN was not
     // baked into the bundle. Refusing to fire requests against a
     // null URL prevents the silent fail-open that previously sent
     // every staging / preview build at the production worker (and
@@ -112,7 +112,7 @@ export default function Alerts() {
         <h1>{t('appNav.alerts')}</h1>
         <p>
           The off-chain alert watcher origin is not configured in this build
-          (<code>VITE_API_ORIGIN</code>). Alert features (HF threshold
+          (<code>VITE_AGENT_ORIGIN</code>). Alert features (HF threshold
           subscriptions, Telegram link, Push rail) are disabled until the
           deployment env is corrected and the frontend is rebuilt. Reach
           out to your operator if you're seeing this on a production URL.

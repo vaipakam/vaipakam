@@ -169,7 +169,7 @@ export function ChainDiagnosticsPanel() {
     }
   }
   const apiOrigin =
-    (import.meta.env.VITE_API_ORIGIN as string | undefined) ?? null;
+    (import.meta.env.VITE_AGENT_ORIGIN as string | undefined) ?? null;
 
   const chainLabel = chain.name
     ? `${chain.name} (${chain.chainId})`

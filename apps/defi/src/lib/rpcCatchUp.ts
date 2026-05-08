@@ -1,7 +1,7 @@
 /**
  * RPC catch-up primitives for the live-tail data flow.
  *
- * The hf-watcher worker runs on a cron (1 minute minimum on Cloudflare)
+ * The Vaipakam Workers (apps/{keeper,indexer,agent}) run on a cron (1 minute minimum on Cloudflare)
  * which means the indexer's `lastBlock` can lag chain head by up to 60 s
  * in the worst case. The data hooks that subscribe to the live-tail
  * pattern bridge that gap by:

@@ -37,6 +37,14 @@
       "binding": "DB",
       "database_name": "vaipakam-alerts-db",
       "database_id": "REPLACE_WITH_OPERATOR_D1_ID",
+      // Stage 3 PR5 of the Worker split moved the D1 schema
+      // migrations from `ops/hf-watcher/migrations/` into this
+      // Worker's tree (apps/indexer is the primary writer of the
+      // offers / loans / activity tables defined here; the keeper
+      // + agent Workers read them via the same shared D1 binding).
+      // Apply with `cd apps/indexer && wrangler d1 migrations apply
+      // vaipakam-alerts-db [--remote]`.
+      "migrations_dir": "migrations",
     },
   ],
 

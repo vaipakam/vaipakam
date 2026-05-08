@@ -16,7 +16,7 @@ interface UseLiquidationQuotesInput {
   sellAmount: bigint;
   /** Typically the diamond address — the `taker` 0x / 1inch quote for. */
   taker: Address;
-  /** Base URL of the hf-watcher worker. Pulled from env in the caller. */
+  /** Base URL of the apps/agent Worker. Pulled from env in the caller. */
   workerOrigin: string | null;
 }
 

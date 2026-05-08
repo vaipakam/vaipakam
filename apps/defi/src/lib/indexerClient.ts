@@ -1,5 +1,5 @@
 /**
- * T-041 Phase 1+2 — typed REST consumer for the hf-watcher offer
+ * T-041 Phase 1+2 — typed REST consumer for the apps/indexer offer
  * indexer (`/offers/...` endpoints). Treats the worker as a CACHE,
  * not an oracle: every method returns `null` on any error / timeout
  * / non-2xx, and the caller is expected to fall back to the in-
@@ -7,7 +7,7 @@
  * the worker can be down or compromised, and the offer book still
  * loads from on-chain logs.
  *
- * Base URL is read from `VITE_API_ORIGIN` (the same env var
+ * Base URL is read from `VITE_INDEXER_ORIGIN` (the same env var
  * the alerts settings page uses). When unset, every method short-
  * circuits to `null` so dev / preview builds without a worker
  * configured fall through to the log-scan path cleanly.
@@ -16,7 +16,7 @@
 const TIMEOUT_MS = 4_000;
 
 function baseUrl(): string | null {
-  const url = import.meta.env.VITE_API_ORIGIN as string | undefined;
+  const url = import.meta.env.VITE_INDEXER_ORIGIN as string | undefined;
   if (!url) return null;
   return url.replace(/\/$/, '');
 }

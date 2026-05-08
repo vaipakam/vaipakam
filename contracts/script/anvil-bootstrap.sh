@@ -128,8 +128,10 @@ echo "[5/6] SeedAnvilOffers (one matchable lender + borrower pair)"
 forge script script/SeedAnvilOffers.s.sol --rpc-url "$RPC" --broadcast --slow
 
 # [6/6] Sync ABI bundles + consolidated deployments JSON to dependent
-# repos so frontend / hf-watcher / keeper-bot pick up the freshly-
-# deployed anvil diamond on next reload. All three exports are
+# repos so the frontend (apps/{defi,labs}) + Workers (apps/{keeper,
+# indexer,agent}, all reading via @vaipakam/contracts) + the
+# public reference keeper-bot pick up the freshly-deployed anvil
+# diamond on next reload. All three exports are
 # idempotent and fast (forge inspect reads cached artifacts; jq
 # merges per-chain addresses.json into a single keyed object).
 # The keeper-bot export is gated on the sibling repo being present
