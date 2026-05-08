@@ -3,20 +3,22 @@
   "private": true,
   "version": "0.0.0",
   "type": "module",
-  "description": "Vaipakam read/index Cloudflare Worker — agent.vaipakam.com. Hosts diagnostics-drawer endpoints, indexer-status snapshot, cursor-advance heartbeat, plus per-user offers / loans / activity reads paginating over the archive D1 database. Read-only RPC keys + read-only D1 binding; no signing keys, no swap-aggregator credentials. STUB — Stage 3 of the source-tree refactor will populate this from ops/hf-watcher.",
+  "description": "Vaipakam agent Cloudflare Worker (Stage 3 PR4 of the Worker split — see docs/DesignsAndPlans/Stage3WorkerSplitPlan.md). Broadest of the three Workers — owns proactive notifications (periodic interest pre-notify, push + telegram dispatchers), cross-chain monitoring (buy-watchdog reconciliation, daily oracle snapshot), public Farcaster Frame at /frames/active-loans, operator services (server-side aggregator quote proxies at /quote/{0x,1inch} and Blockaid scan proxy at /scan/blockaid), the Telegram bot webhook (/tg/webhook), the diagnostics record capture endpoint (/diag/record), and the frontend-facing settings endpoints (/thresholds PUT + /link/telegram POST). Holds aggregator API keys + Push channel signer + Telegram bot token + KEEPER_PRIVATE_KEY (used by daily oracle snapshot signing); no autonomous liquidation (apps/keeper) and no chain → D1 indexing (apps/indexer).",
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
     "typecheck": "tsc -p . --noEmit"
   },
   "dependencies": {
+    "@pushprotocol/restapi": "^0.0.1",
     "@vaipakam/contracts": "workspace:*",
-    "@vaipakam/lib": "workspace:*"
+    "@vaipakam/lib": "workspace:*",
+    "ethers": "^6.13.0",
+    "viem": "^2.48.4"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.0.0",
     "typescript": "^6.0.0",
-    "wrangler": "^4.0.0",
-    "viem": "^2.48.4"
+    "wrangler": "^4.0.0"
   }
 }

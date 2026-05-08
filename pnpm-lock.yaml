@@ -10,12 +10,21 @@ importers:
 
   apps/agent:
     dependencies:
+      '@pushprotocol/restapi':
+        specifier: ^0.0.1
+        version: 0.0.1(ethers@6.16.0(bufferutil@4.1.0)(utf-8-validate@5.0.10))
       '@vaipakam/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
       '@vaipakam/lib':
         specifier: workspace:*
         version: link:../../packages/lib
+      ethers:
+        specifier: ^6.13.0
+        version: 6.16.0(bufferutil@4.1.0)(utf-8-validate@5.0.10)
+      viem:
+        specifier: ^2.48.4
+        version: 2.48.11(bufferutil@4.1.0)(typescript@6.0.3)(utf-8-validate@5.0.10)(zod@4.4.3)
     devDependencies:
       '@cloudflare/workers-types':
         specifier: ^4.0.0
@@ -23,9 +32,6 @@ importers:
       typescript:
         specifier: ^6.0.0
         version: 6.0.3
-      viem:
-        specifier: ^2.48.4
-        version: 2.48.11(bufferutil@4.1.0)(typescript@6.0.3)(utf-8-validate@5.0.10)(zod@4.4.3)
       wrangler:
         specifier: ^4.0.0
         version: 4.90.0(@cloudflare/workers-types@4.20260507.1)(bufferutil@4.1.0)(utf-8-validate@5.0.10)

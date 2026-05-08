@@ -1,20 +1,118 @@
 {
-  // Vaipakam read/index Cloudflare Worker.
+  // Vaipakam agent Worker — proactive notifications + cross-chain
+  // monitoring + operator services + public Frames + Telegram bot
+  // + diagnostics record + frontend-facing settings.
   //
-  // STUB — this Worker is structurally provisioned in Cloudflare
-  // (custom domain bound to `agent.vaipakam.com`) and the
-  // wrangler.jsonc + package.json scaffolding live here for the
-  // source-tree decomposition. Stage 3 of the refactor will
-  // populate `src/` from `ops/hf-watcher/`'s read-side surface
-  // (offer routes, loan routes, frames, scan/quote proxies).
-  // Until then `wrangler deploy` from this directory pushes only
-  // the placeholder index.ts — DO NOT deploy on production
-  // chains unless you intend the placeholder.
+  // Stage 3 PR4 of the Worker split — see
+  // docs/DesignsAndPlans/Stage3WorkerSplitPlan.md for the full
+  // classification and migration sequencing.
+  //
+  // Custom domain (suggested): agent.vaipakam.com — operator
+  // provisions the binding at first deploy. Worker name
+  // `vaipakam-agent` stays post-cutover (deploy-switch identifier).
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "vaipakam-agent",
   "main": "src/index.ts",
   "compatibility_date": "2026-04-23",
   "compatibility_flags": ["nodejs_compat"],
+
+  // Cron — every minute. Internal pass-level guards (e.g. the
+  // dailyOracleSnapshot's 00:00–00:09 UTC window check + last-day
+  // D1 dedupe) make most ticks no-ops. Matches the existing
+  // ops/hf-watcher cadence the agent's passes used to ride.
+  "triggers": {
+    "crons": ["* * * * *"],
+  },
+
+  // D1 binding — the same `vaipakam-alerts-db` database that
+  // apps/keeper + apps/indexer also bind. Tables this Worker
+  // touches:
+  //   - `link_codes`        (issue + consume during the Telegram
+  //                          handshake — POST /link/telegram +
+  //                          POST /tg/webhook)
+  //   - `thresholds`        (PUT /thresholds upserts)
+  //   - `diag_errors`       (POST /diag/record + cron retention)
+  //   - `loan_index_*`      (cross-Worker read of indexer's loan
+  //                          tables for periodic-pre-notify scans)
+  //   - `vpfi_buy_*`        (buy-watchdog reconciliation reads)
+  //   - `oracle_snapshot_*` (daily snapshot dedupe)
+  // Cross-Worker D1 sharing is the deliberate coupling that lets
+  // the three Workers stay independent without a message-bus
+  // layer (Stage 3 plan §5).
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "vaipakam-alerts-db",
+      "database_id": "REPLACE_WITH_OPERATOR_D1_ID",
+    },
+  ],
+
+  // Cloudflare built-in rate-limit bindings — one per upstream
+  // service so a noisy /quote/0x caller can't drain the
+  // /scan/blockaid budget. 60 reqs / 60 seconds per IP each.
+  // namespace_id values are arbitrary unique integers per Worker;
+  // operator may renumber to match their account-level scheme.
+  "unsafe": {
+    "bindings": [
+      {
+        "name": "QUOTE_0X_RATELIMIT",
+        "type": "ratelimit",
+        "namespace_id": "1001",
+        "simple": { "limit": 60, "period": 60 },
+      },
+      {
+        "name": "QUOTE_1INCH_RATELIMIT",
+        "type": "ratelimit",
+        "namespace_id": "1002",
+        "simple": { "limit": 60, "period": 60 },
+      },
+      {
+        "name": "SCAN_BLOCKAID_RATELIMIT",
+        "type": "ratelimit",
+        "namespace_id": "1003",
+        "simple": { "limit": 60, "period": 60 },
+      },
+      {
+        "name": "DIAG_RECORD_RATELIMIT",
+        "type": "ratelimit",
+        "namespace_id": "1004",
+        "simple": { "limit": 60, "period": 60 },
+      },
+    ],
+  },
+
+  // Operator-managed secrets (set via `wrangler secret put`):
+  //   - RPC_*                    — per-chain RPC URLs (Alchemy /
+  //                                Infura / etc.; carry API keys).
+  //                                Buy-watchdog needs every chain
+  //                                with a VPFIBuyAdapter (mainnet +
+  //                                testnet) — broadest RPC set of
+  //                                the three Workers.
+  //   - TG_BOT_TOKEN             — Telegram bot (handshake +
+  //                                outbound notifications).
+  //   - PUSH_CHANNEL_PK          — Push channel signer.
+  //   - ZEROEX_API_KEY,
+  //     ONEINCH_API_KEY          — public quote-proxy aggregator keys.
+  //   - BLOCKAID_API_KEY         — public scan-proxy key.
+  //   - KEEPER_PRIVATE_KEY       — daily oracle snapshot signer.
+  //                                Operator may share with apps/keeper
+  //                                OR mint a separate snapshot operator
+  //                                EOA — same env-key name keeps the
+  //                                wrangler workflow uniform.
+  //
+  // Operator-managed vars (in `vars` below):
+  //   - TG_BOT_USERNAME          — public bot handle.
+  //   - FRONTEND_ORIGIN          — CSV of allowed CORS origins for
+  //                                the frontend-facing endpoints.
+  //   - DIAG_SAMPLE_RATE         — 0.0–1.0; default 1.0.
+  //   - DIAG_RETENTION_DAYS      — int days; default 90.
+  "vars": {
+    "TG_BOT_USERNAME": "",
+    "FRONTEND_ORIGIN": "https://defi.vaipakam.com,https://labs.vaipakam.com,https://www.vaipakam.com,https://vaipakam.com",
+    "DIAG_SAMPLE_RATE": "1.0",
+    "DIAG_RETENTION_DAYS": "90",
+  },
+
   "observability": {
     "enabled": true,
   },
