@@ -82,10 +82,23 @@ const LAZY_LOCALE_LOADERS: Record<
 
 /**
  * Cross-subdomain seed: if a `vaipakam_lang` cookie exists at the
- * `.vaipakam.com` parent scope but this origin's localStorage is
- * empty (fresh visit to a sibling subdomain), copy the cookie value
- * into localStorage BEFORE i18next initialises so its built-in
+ * `.vaipakam.com` parent scope, write its value into THIS origin's
+ * localStorage BEFORE i18next initialises so its built-in
  * `localStorage` detector picks it up.
+ *
+ * Why the cookie is authoritative (not a fallback): every Vaipakam
+ * subdomain runs its own copy of i18next, and i18next's
+ * `caches: ['localStorage']` writes the navigator-detected language
+ * to localStorage on the very first init — even before the user
+ * touches a picker. So a user who lands on defi.vaipakam.com first
+ * gets `es` cached locally, then switches their explicit choice to
+ * `ja` via the picker on labs.vaipakam.com (which writes the
+ * cookie). Without this seed overwriting defi's stale localStorage,
+ * the next defi visit reads `es` from defi's own localStorage and
+ * ignores the `ja` cookie — manifesting as "language doesn't
+ * sync." Theme handling has the same shape (cookie wins over
+ * localStorage in `readStoredTheme`); language gets the same
+ * precedence here.
  *
  * Why we don't add a `cookie` entry to the detector chain: the
  * version of `i18next-browser-languagedetector` in use writes
@@ -93,20 +106,19 @@ const LAZY_LOCALE_LOADERS: Record<
  * parent domain requires `cookieDomain` plumbing that varies by
  * version. Seeding-then-detecting is one well-understood line of
  * code; a `languageChanged` listener handles the write-back.
- *
- * Same-origin users with a pre-existing localStorage entry are
- * left alone — the cookie's a parent-scope FALLBACK, not an
- * override.
  */
 function seedLanguageFromCookie() {
   if (typeof window === 'undefined') return;
   const cookie = readCookie(LANG_COOKIE);
   if (!cookie) return;
-  if (window.localStorage.getItem(STORAGE_KEY)) return;
   // Defensive: only honour cookie values that match a supported
   // locale. Stops a tampered cookie from forcing i18next into
   // a missing-bundle state.
-  if ((SUPPORTED_LOCALES as readonly string[]).includes(cookie)) {
+  if (!(SUPPORTED_LOCALES as readonly string[]).includes(cookie)) return;
+  // Overwrite localStorage when it disagrees so the detector picks
+  // the cookie value. No-op when they already agree.
+  const stored = window.localStorage.getItem(STORAGE_KEY);
+  if (stored !== cookie) {
     window.localStorage.setItem(STORAGE_KEY, cookie);
   }
 }
@@ -188,6 +200,26 @@ void i18n
 const initialLng = i18n.resolvedLanguage ?? 'en';
 if (initialLng !== 'en') void loadLocaleBundle(initialLng);
 
+// Init-time cookie write so the FIRST-visit navigator-detected
+// language propagates across `.vaipakam.com` immediately, even
+// before the user touches the picker. Without this, a user landing
+// on labs first (navigator → es) and then visiting defi would have
+// defi's own first-init pick up `navigator → es` independently —
+// fine in this case because they agree, but as soon as the user
+// flips one subdomain via the picker, the OTHER subdomain's
+// localStorage is stale and the cross-domain seed has nothing to
+// do with locking the choice in. Writing the cookie at init means
+// every first picker click LATER on any subdomain just rewrites
+// the same cookie key — there's no "before-cookie-existed" window.
+//
+// The init-time write is in source-order BEFORE the
+// `languageChanged` listener registration because i18next may emit
+// `languageChanged` synchronously during init (when resources are
+// inline + LanguageDetector is sync). Capturing `initialLng` from
+// `i18n.resolvedLanguage` and writing it directly side-steps the
+// listener-registration race.
+writeCookie(LANG_COOKIE, initialLng);
+
 // Future language changes (LanguagePicker click, etc.) load the
 // new bundle on demand.
 i18n.on('languageChanged', (lng) => {
@@ -196,10 +228,8 @@ i18n.on('languageChanged', (lng) => {
 
 // Mirror every user-initiated language change to the parent-domain
 // cookie so sibling subdomains under `.vaipakam.com` pick the new
-// value up on their next visit. Fires for both the picker (explicit
-// choice) and the detector chain's first resolve (implicit) — the
-// latter is fine because writing the same value the user already has
-// is idempotent.
+// value up on their next visit. Idempotent — writing the same
+// value the user already has is a no-op.
 i18n.on('languageChanged', (lng) => {
   writeCookie(LANG_COOKIE, lng);
 });
