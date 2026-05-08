@@ -1,8 +1,7 @@
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { FileDown, ShieldAlert, AlertTriangle, CheckCircle, Activity } from 'lucide-react';
+import { FileDown, ShieldAlert, AlertTriangle, CheckCircle } from 'lucide-react';
 import { downloadMyData, deleteMyData } from '../lib/gdpr';
-import { exportDiagnostics } from '../lib/journeyLog';
 
 /**
  * Data rights (GDPR / UK GDPR / CCPA) page.
@@ -82,43 +81,13 @@ export default function DataRights() {
         </button>
       </div>
 
-      {/* Narrower scope: just this session's in-memory journey log
-          (the events list the Diagnostics drawer used to surface).
-          Useful for users sharing diagnostics in a Discord DM or 1:1
-          support thread without exporting their whole client-side
-          namespace. Independent of the broader Download / Delete
-          pair above — neither one touches the in-memory journey
-          buffer. Lives here so users still have access even when
-          the Diagnostics drawer is hidden via the master flag. */}
-      <div className="card" style={{ marginTop: 16 }}>
-        <div
-          className="card-title"
-          style={{ display: 'flex', alignItems: 'center', gap: 8 }}
-        >
-          <Activity size={16} />
-          {t('dataRights.journeyTitle')}
-        </div>
-        <p>{t('dataRights.journeyBody')}</p>
-        <button
-          type="button"
-          className="btn btn-secondary btn-sm"
-          onClick={() => {
-            const blob = new Blob([exportDiagnostics()], {
-              type: 'application/json',
-            });
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = `vaipakam-journey-${Date.now()}.json`;
-            a.click();
-            URL.revokeObjectURL(url);
-          }}
-          style={{ marginTop: 12 }}
-        >
-          <FileDown size={14} />
-          {t('dataRights.journeyCta')}
-        </button>
-      </div>
+      {/* The Diagnostics drawer's "export journey log" affordance lived
+          here on the connected app — every chain-write step emits a
+          journey event that surfaces in support exports. The marketing
+          surface (labs.vaipakam.com) has no on-chain interactions and
+          therefore no journey buffer, so the card is intentionally
+          absent here. The connected-app DataRights page on
+          defi.vaipakam.com keeps the journey-log export. */}
 
       <div
         className="card"

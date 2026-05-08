@@ -1,9 +1,6 @@
-import { useMemo } from 'react';
 import { L as Link } from './L';
 import { useTranslation } from 'react-i18next';
 import { useTheme } from '../context/ThemeContext';
-import { CHAIN_REGISTRY, compareChainsForDisplay } from '../contracts/config';
-import { ChainPicker } from '@vaipakam/ui/ChainPicker';
 import { openConsentBanner } from '../lib/consent';
 import { defiUrl } from '../lib/defiUrl';
 import './Footer.css';
@@ -15,18 +12,6 @@ const REDDIT_URL = 'https://www.reddit.com/user/Vaipakam/';
 export default function Footer() {
   const { theme } = useTheme();
   const { t } = useTranslation();
-
-  // Derive the "supported networks" badges directly from CHAIN_REGISTRY so
-  // this block reflects what's actually deployed (diamondAddress non-null)
-  // rather than the old hard-coded "Ethereum / Polygon / Arbitrum" list.
-  // Mainnet first, then testnets; within each tier alphabetical by name.
-  const deployedNetworks = useMemo(
-    () =>
-      Object.values(CHAIN_REGISTRY)
-        .filter((c) => c.diamondAddress !== null)
-        .sort(compareChainsForDisplay),
-    [],
-  );
 
   return (
     <footer className="footer">
@@ -42,33 +27,11 @@ export default function Footer() {
               }}
             />
             <p className="footer-tagline">{t('footer.tagline')}</p>
-            <div className="footer-networks">
-              {deployedNetworks.length === 0 ? (
-                <span className="network-badge">{t('footer.comingSoon')}</span>
-              ) : (
-                <div className="footer-network-select">
-                  <span className="footer-network-label">
-                    {t('footer.supportedNetworks')}
-                  </span>
-                  {/* No persistent value — the picker is a menu; selecting a
-                      chain opens its Diamond on the chain's block explorer in
-                      a fresh tab. */}
-                  <ChainPicker
-                    chains={deployedNetworks}
-                    placeholder={t('footer.viewDiamondOnExplorer')}
-                    ariaLabel={t('footer.viewDiamondAria')}
-                    onSelect={(chainId) => {
-                      const chain = deployedNetworks.find(
-                        (c) => c.chainId === chainId,
-                      );
-                      if (!chain || !chain.diamondAddress) return;
-                      const url = `${chain.blockExplorer}/address/${chain.diamondAddress}`;
-                      window.open(url, '_blank', 'noopener,noreferrer');
-                    }}
-                  />
-                </div>
-              )}
-            </div>
+            {/* Per-chain Diamond verify links live on the connected-app
+                surface (defi.vaipakam.com/analytics#transparency) — see
+                the "Smart Contracts" link in the Resources column. The
+                marketing footer is intentionally chain-agnostic so the
+                deployed-network set can change without a labs build. */}
           </div>
 
           <div className="footer-col">
