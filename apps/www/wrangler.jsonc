@@ -1,0 +1,41 @@
+{
+  // Vaipakam marketing site — Cloudflare Workers Static Assets
+  // deploy of a Vite SPA build. Hosts the public-facing surface:
+  // Landing, Buy-VPFI explainer, Whitepaper, Overview, User Guide
+  // (basic + advanced), Terms, Privacy, Data Rights, Discord, Help
+  // Search. Wallet-free; cross-domain link-outs to the connected-
+  // app surface via the `defiUrl(...)` helper (env-driven by
+  // `VITE_DEFI_URL`, defaults `https://defi.vaipakam.com`).
+  //
+  // Custom-domain bindings (labs → www cutover):
+  //   - www.vaipakam.com   canonical user-facing URL
+  //   - vaipakam.com       apex; 301 → www via a Cloudflare Bulk
+  //                          Redirect rule, NOT a Worker binding,
+  //                          so the apex is a redirect-only host
+  //   - labs.vaipakam.com  LEGACY — Cloudflare Bulk Redirect rule
+  //                          `labs.vaipakam.com/* →
+  //                          https://www.vaipakam.com/$1` (301)
+  //                          so old backlinks and indexed URLs
+  //                          hand their PageRank to the new
+  //                          canonical. Keep alive ≥ 6 months
+  //                          post-cutover.
+  //
+  // Worker name STAYS `vaipakam-labs` — it's a deploy-switch
+  // identifier (metrics history, secret bindings, custom-domain
+  // mappings all keyed on it), not a user-visible brand label.
+  // The source folder was renamed `apps/labs` → `apps/www` to
+  // match the canonical URL for developer ergonomics; the deploy
+  // identifier intentionally stays put. The mismatch is also
+  // documented in the package.json description.
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "vaipakam-labs",
+  "compatibility_date": "2026-04-23",
+  "compatibility_flags": ["nodejs_compat"],
+  "assets": {
+    "directory": "./dist",
+    "not_found_handling": "single-page-application",
+  },
+  "observability": {
+    "enabled": true,
+  },
+}

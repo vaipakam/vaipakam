@@ -3,10 +3,10 @@
 # Today (Stage 1 / 2 of the source-tree refactor): only apps/defi
 # (the Vite SPA → defi.vaipakam.com) and ops/hf-watcher (the
 # monolithic indexer + watcher, served at hf-watcher's domain) have
-# real source. apps/labs, apps/agent, apps/indexer, apps/keeper are
+# real source. apps/www, apps/agent, apps/indexer, apps/keeper are
 # placeholder Workers in Cloudflare that serve a 503 — their entries
 # below are commented out and activate once Stage 3 (hf-watcher
-# decomposition) and Stage 4 (apps/labs carve-out) land.
+# decomposition) and Stage 4 (apps/www carve-out) land.
 #
 # Deploy strategy:
 #   - Push to main triggers the workflow.
@@ -128,9 +128,11 @@ jobs:
   #
   # apps/agent (read/index Worker → agent.vaipakam.com), apps/indexer
   # (chain → D1 ingester → indexer.vaipakam.com), apps/keeper
-  # (autonomous Worker → keeper.vaipakam.com), and apps/labs (marketing
-  # site → labs.vaipakam.com) are all provisioned in Cloudflare today
-  # but serve a 503 placeholder. Once the decomposition / carve-out
+  # (autonomous Worker → keeper.vaipakam.com), and apps/www (marketing
+  # site → www.vaipakam.com / vaipakam.com; Worker name still
+  # `vaipakam-labs` for deploy-history continuity) are all
+  # provisioned in Cloudflare today but serve a 503 placeholder.
+  # Once the decomposition / carve-out
   # commits land their real source under those paths, uncomment the
   # corresponding job below. Each follows the same shape as
   # deploy-defi / deploy-hf-watcher: detect-changes path filter →
@@ -156,4 +158,5 @@ jobs:
   #
   # deploy-indexer: # same shape, working-directory apps/indexer
   # deploy-keeper:  # same shape, working-directory apps/keeper
-  # deploy-labs:    # same shape, working-directory apps/labs
+  # deploy-www:     # same shape, working-directory apps/www
+  #                   (Worker name still `vaipakam-labs`)

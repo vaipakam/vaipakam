@@ -4,10 +4,13 @@
 # (Vite SPA, Cloudflare Worker, etc.):
 #   - apps/defi    in-app surface served at defi.vaipakam.com
 #                   (formerly the top-level frontend/)
-#   - apps/labs    marketing + docs site → labs.vaipakam.com
-#                   (and www.vaipakam.com / vaipakam.com on cutover).
-#                   No wallet connect, just a chain picker for
-#                   public-read transparency stats.
+#   - apps/www     marketing + docs site → www.vaipakam.com
+#                   (canonical) + vaipakam.com (apex 301 → www).
+#                   Folder renamed from `apps/labs` in the labs →
+#                   www cutover; labs.vaipakam.com now serves a
+#                   Cloudflare Bulk Redirect to the new canonical
+#                   for ≥6 months so old indexed URLs hand their
+#                   PageRank forward. Wallet-free.
 #   - apps/agent   read/index Cloudflare Worker → agent.vaipakam.com
 #   - apps/indexer chain → D1 ingester        → indexer.vaipakam.com
 #   - apps/keeper  autonomous keeper Worker   → keeper.vaipakam.com

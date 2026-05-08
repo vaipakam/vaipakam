@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
- * Build-time sitemap.xml + robots.txt generator for the labs
- * marketing site.
+ * Build-time sitemap.xml + robots.txt generator for the
+ * www.vaipakam.com marketing site.
  *
  * Why both files in one script: they are tightly coupled — robots.txt
  * names the sitemap URL, and a stale combination is the most common
@@ -9,27 +9,28 @@
  * the same pass guarantees they agree.
  *
  * Output:
- *   - apps/labs/public/sitemap.xml — every (route × translated-locale)
+ *   - apps/www/public/sitemap.xml — every (route × translated-locale)
  *     pair, with `<xhtml:link rel="alternate" hreflang>` siblings so
  *     Google indexes each locale variant as part of one page-group
  *     instead of treating them as duplicates.
- *   - apps/labs/public/robots.txt — opens crawling for every UA and
+ *   - apps/www/public/robots.txt — opens crawling for every UA and
  *     points at the sitemap.
  *
- * Wired to `prebuild` in apps/labs/package.json so a clean
- * `pnpm --filter ./apps/labs build` regenerates both before Vite
+ * Wired to `prebuild` in apps/www/package.json so a clean
+ * `pnpm --filter ./apps/www build` regenerates both before Vite
  * runs. The generated files land in `public/`, which Vite copies
  * verbatim into `dist/` so Cloudflare Workers Static Assets serves
  * them at the site root (`/sitemap.xml` and `/robots.txt`).
  *
- * Site origin: defaults to `https://labs.vaipakam.com`. Override via
- * the `VITE_LABS_PUBLIC_ORIGIN` env var at build time so a staging
- * deploy or a post-cutover rebrand to `https://www.vaipakam.com`
- * doesn't need a code change. The same value is what Google indexes
- * — every URL in the sitemap is rooted here.
+ * Site origin: defaults to `https://www.vaipakam.com` — the canonical
+ * post-cutover URL. The legacy `labs.vaipakam.com` host is served by
+ * a Cloudflare Bulk Redirect rule that 301s every path to the
+ * matching www URL, so both backlinks and crawler-cached entries
+ * recover. Override the origin via `VITE_WWW_PUBLIC_ORIGIN` at build
+ * time for staging deploys.
  *
  * Locale list: must match `TRANSLATED_LOCALES` in
- * `apps/labs/src/i18n/glossary.ts`. Listing a placeholder locale
+ * `apps/www/src/i18n/glossary.ts`. Listing a placeholder locale
  * here would advertise non-existent translated pages to crawlers,
  * which is a self-inflicted ranking penalty. The list is duplicated
  * here (rather than imported) because this script runs as a Node
@@ -38,7 +39,7 @@
  * if drift becomes a problem.
  *
  * Route list: must match the marketing routes in
- * `apps/labs/src/App.tsx`. Same duplication justification. Adding
+ * `apps/www/src/App.tsx`. Same duplication justification. Adding
  * a new marketing route is "edit two files" and that's by design —
  * an in-app route that shouldn't be indexed (e.g. a per-user page)
  * just doesn't get added here, and the absence is the indexing
@@ -53,7 +54,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
 const ORIGIN = (
-  process.env.VITE_LABS_PUBLIC_ORIGIN ?? 'https://labs.vaipakam.com'
+  process.env.VITE_WWW_PUBLIC_ORIGIN ?? 'https://www.vaipakam.com'
 ).replace(/\/+$/, '');
 
 // Locales with shipping translation bundles — mirrors

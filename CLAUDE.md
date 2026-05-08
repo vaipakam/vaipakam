@@ -221,7 +221,7 @@ events).
 
 ## Deployments sync (Stage 3 split — single target)
 
-Every consumer in the monorepo — apps/{defi,labs} for the React
+Every consumer in the monorepo — apps/{defi,www} for the React
 surfaces, apps/{keeper,indexer,agent} for the Cloudflare Workers —
 imports the consolidated `deployments.json` from
 `@vaipakam/contracts/deployments`. One typed lookup

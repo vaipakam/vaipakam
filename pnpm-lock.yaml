@@ -210,7 +210,7 @@ importers:
         specifier: ^4.0.0
         version: 4.90.0(@cloudflare/workers-types@4.20260507.1)(bufferutil@4.1.0)(utf-8-validate@5.0.10)
 
-  apps/labs:
+  apps/www:
     dependencies:
       '@vaipakam/contracts':
         specifier: workspace:*

@@ -2,9 +2,9 @@
  * Chain-config TYPE + pure helpers.
  *
  * Lives in @vaipakam/contracts (alongside the ABI bundle and
- * deployments JSON) so consumers in any app — apps/defi today,
- * apps/labs / apps/agent / apps/keeper later — can describe a
- * chain config without pulling apps/defi's Vite-bundled runtime
+ * deployments JSON) so consumers in any app — apps/defi,
+ * apps/www, apps/agent, apps/keeper, apps/indexer — can describe
+ * a chain config without pulling apps/defi's Vite-bundled runtime
  * registry.
  *
  * The runtime instantiation (CHAIN_REGISTRY, DEFAULT_CHAIN, etc.)

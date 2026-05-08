@@ -3,7 +3,7 @@
   "private": true,
   "version": "0.0.1",
   "type": "module",
-  "description": "Per-facet ABI JSONs + per-chain deployments + typed loaders. Single source of truth consumed by every app in the monorepo (apps/defi today; apps/labs / apps/agent / apps/keeper / apps/indexer in later stages). Mirrored from contracts/ via the export scripts in contracts/script/.",
+  "description": "Per-facet ABI JSONs + per-chain deployments + typed loaders. Single source of truth consumed by every app in the monorepo (apps/defi, apps/www, apps/agent, apps/keeper, apps/indexer). Mirrored from contracts/ via the export scripts in contracts/script/.",
   "peerDependencies": {
     "viem": "^2.0.0"
   },

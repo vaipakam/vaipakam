@@ -3,7 +3,7 @@
   "private": true,
   "version": "0.0.1",
   "type": "module",
-  "description": "Framework-agnostic shared utilities consumed by every app in the monorepo (apps/defi today; apps/labs / apps/agent / apps/indexer / apps/keeper in later stages). Stage 2a scope: multicall (viem helpers), decodeContractError (error normaliser), chainPlatforms (chainId → CoinGecko platform slug), canonicalAssets (per-chain ERC-20 lists). format + journeyLog are deferred until their Vite-coupled deps (i18n, contracts/config) are extracted.",
+  "description": "Framework-agnostic shared utilities consumed by every app in the monorepo (apps/defi, apps/www, apps/agent, apps/indexer, apps/keeper). Stage 2a scope: multicall (viem helpers), decodeContractError (error normaliser), chainPlatforms (chainId → CoinGecko platform slug), canonicalAssets (per-chain ERC-20 lists), crossDomainPref (parent-domain cookie helper for theme + language sync between defi.vaipakam.com and www.vaipakam.com). format + journeyLog are deferred until their Vite-coupled deps (i18n, contracts/config) are extracted.",
   "exports": {
     ".": {
       "types": "./src/index.ts",
