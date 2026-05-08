@@ -13,24 +13,35 @@ import { useWallet } from '../context/WalletContext';
 import { useChainOverride } from '../context/ChainContext';
 import { CHAIN_REGISTRY, DEFAULT_CHAIN, type ChainConfig } from './config';
 import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
+import { ZERO_ADDRESS } from '@vaipakam/lib/address';
 
 /**
  * Resolves the chain that reads should target, in priority order:
  *   1. Explicit view-chain override (set by wallet-less UIs like the public
- *      dashboard's per-chain selector).
- *   2. The wallet's active chain, if it's a supported Diamond-deployed chain.
- *   3. DEFAULT_CHAIN — so read-only flows always work.
+ *      dashboard's per-chain selector). Only fires when the chosen chain
+ *      actually has a deployed Diamond.
+ *   2. The wallet's active chain — when a wallet is connected to a chain
+ *      our registry recognises, reads ALWAYS target that chain. Even if
+ *      its `diamondAddress` is null (e.g. local Anvil before bootstrap
+ *      ran, or a stale Vite bundle that loaded before the export script
+ *      finished). Silent fallback to a different chain misleads the user
+ *      about which chain they're inspecting AND hides real chain-state /
+ *      bundle-staleness bugs from operators. The downstream read site
+ *      surfaces a "no contract on this chain" revert when the address is
+ *      null — that error lands in the diagnostics drawer per the
+ *      project's error-visibility tier rule.
+ *   3. DEFAULT_CHAIN — only fires when there is NO wallet connected
+ *      (public read-only mode, e.g. the public dashboard before connect).
  */
 function resolveReadChain(
   viewChainId: number | null,
   activeChain: ChainConfig | null,
-  isCorrectChain: boolean,
 ): ChainConfig {
   if (viewChainId != null) {
     const override = CHAIN_REGISTRY[viewChainId];
     if (override && override.diamondAddress) return override;
   }
-  if (activeChain && isCorrectChain && activeChain.diamondAddress) {
+  if (activeChain) {
     return activeChain;
   }
   return DEFAULT_CHAIN;
@@ -186,7 +197,7 @@ function buildDiamondProxy({
 export function useDiamondContract(): DiamondHandle {
   const { isCorrectChain, activeChain } = useWallet();
   const { viewChainId } = useChainOverride();
-  const chain = resolveReadChain(viewChainId, activeChain, isCorrectChain);
+  const chain = resolveReadChain(viewChainId, activeChain);
   const wagmiPublic = usePublicClient({ chainId: chain.chainId });
   const { data: wagmiWallet } = useWalletClient();
 
@@ -198,7 +209,14 @@ export function useDiamondContract(): DiamondHandle {
     (viewChainId == null || viewChainId === activeChain?.chainId);
 
   return useMemo(() => {
-    const address = (chain.diamondAddress ?? DEFAULT_CHAIN.diamondAddress!) as Address;
+    // No silent fallback to DEFAULT_CHAIN.diamondAddress here. If the
+    // resolved chain has no deployed Diamond (e.g. wallet is on Anvil
+    // before bootstrap ran), the read uses the zero-address sentinel
+    // and reads fail with a chain-correct "no contract at 0x0…0"
+    // revert that lands in the diagnostics drawer. Far better than
+    // silently calling a different chain's Diamond and producing
+    // confusing chain-mismatch results.
+    const address = (chain.diamondAddress ?? ZERO_ADDRESS) as Address;
     const publicClient = (wagmiPublic ??
       createPublicClient({ transport: http(chain.rpcUrl) })) as PublicClient;
     const walletClient =
@@ -219,13 +237,18 @@ export function useDiamondContract(): DiamondHandle {
  * function on this handle throws because no wallet client is bound.
  */
 export function useDiamondRead(): DiamondHandle {
-  const { activeChain, isCorrectChain } = useWallet();
+  const { activeChain } = useWallet();
   const { viewChainId } = useChainOverride();
-  const chain = resolveReadChain(viewChainId, activeChain, isCorrectChain);
+  const chain = resolveReadChain(viewChainId, activeChain);
   const wagmiPublic = usePublicClient({ chainId: chain.chainId });
 
   return useMemo(() => {
-    const address = (chain.diamondAddress ?? DEFAULT_CHAIN.diamondAddress!) as Address;
+    // See useDiamondContract for why we DON'T fall back to
+    // DEFAULT_CHAIN.diamondAddress on null. Reads target the wallet's
+    // chain even when its Diamond isn't deployed (yet); the resulting
+    // "no contract at address" revert is captured in the diagnostics
+    // drawer.
+    const address = (chain.diamondAddress ?? ZERO_ADDRESS) as Address;
     const publicClient = (wagmiPublic ??
       createPublicClient({ transport: http(chain.rpcUrl) })) as PublicClient;
     return buildDiamondProxy({
@@ -240,9 +263,9 @@ export function useDiamondRead(): DiamondHandle {
  *  drive raw multicalls, `getLogs` scans, or other viem-native actions
  *  against the same chain as `useDiamondRead()` should use this. */
 export function useDiamondPublicClient(): PublicClient {
-  const { activeChain, isCorrectChain } = useWallet();
+  const { activeChain } = useWallet();
   const { viewChainId } = useChainOverride();
-  const chain = resolveReadChain(viewChainId, activeChain, isCorrectChain);
+  const chain = resolveReadChain(viewChainId, activeChain);
   const wagmiClient = usePublicClient({ chainId: chain.chainId });
   return useMemo(
     () =>
@@ -256,9 +279,9 @@ export function useDiamondPublicClient(): PublicClient {
  *  also need to know the deploy block, explorer URL, or chainId that goes
  *  with the Diamond they just read. */
 export function useReadChain(): ChainConfig {
-  const { activeChain, isCorrectChain } = useWallet();
+  const { activeChain } = useWallet();
   const { viewChainId } = useChainOverride();
-  return resolveReadChain(viewChainId, activeChain, isCorrectChain);
+  return resolveReadChain(viewChainId, activeChain);
 }
 
 /**
