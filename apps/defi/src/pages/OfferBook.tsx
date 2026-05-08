@@ -444,11 +444,50 @@ export default function OfferBook() {
     collateralAssetFilter !== '';
   const {
     rankings: pairRankings,
+    error: pairRankingsError,
     refresh: refreshPairRankings,
   } = useActiveOffersByAssetPairRanked(
     usePairPath ? (lendingAssetFilter as Address) : null,
     usePairPath ? (collateralAssetFilter as Address) : null,
   );
+
+  // Surface pair-ranking-call failures inline so an operator
+  // landing on a chain whose Diamond predates the
+  // `getActiveOffersByAssetPairRanked` cut sees a clear, actionable
+  // message instead of an empty list and silent state. The two
+  // diagnostics categories that matter:
+  //
+  //   • FunctionDoesNotExist (selector 0xa9ad62f8) — the deployed
+  //     Diamond doesn't have the new MetricsFacet selector cut in
+  //     yet. Almost always a chain whose `deploy-chain.sh` last ran
+  //     before 2026-05-08, OR a stale Vite dev bundle that's
+  //     pointed at a previous bootstrap's diamond. Either way the
+  //     fix is on the operator side, not a frontend mask.
+  //
+  //   • Anything else — generic RPC / decode failure. Surface the
+  //     decoded message so the user can copy it into a bug report.
+  //
+  // Deliberately NOT silent-falling-back to the legacy log-index
+  // path on this revert — that would hide a real chain-state /
+  // ABI-drift bug from operators. The user sees the alert AND the
+  // empty list (or whatever loaded); they decide whether to switch
+  // chains or fix the deploy.
+  const pairRankingsErrorMessage = useMemo<string | null>(() => {
+    if (!pairRankingsError) return null;
+    const sel = extractRevertSelector(pairRankingsError);
+    if (sel === '0xa9ad62f8') {
+      return (
+        "This chain's Diamond doesn't have the OfferBook 2-filter " +
+        'getter (`getActiveOffersByAssetPairRanked`) cut in yet — ' +
+        'the deployed MetricsFacet predates the 2026-05-08 upgrade. ' +
+        'Operator: re-run `bash contracts/script/deploy-chain.sh ' +
+        '<chain-slug> --resume` to issue the diamondCut. Local-dev: ' +
+        'if you just restarted anvil, hard-reload this page (the ' +
+        'dev bundle may have cached a stale Diamond address).'
+      );
+    }
+    return decodeContractError(pairRankingsError, 'Failed to load offer rankings for this pair.');
+  }, [pairRankingsError]);
 
   // Sort ids descending so we fetch the newest offers first. The cursor
   // then walks backward in id space when the user expands the window.
@@ -1282,6 +1321,9 @@ export default function OfferBook() {
 
       {error && (
         <ErrorAlert message={error} />
+      )}
+      {pairRankingsErrorMessage && (
+        <ErrorAlert message={pairRankingsErrorMessage} />
       )}
 
       {txHash && (
