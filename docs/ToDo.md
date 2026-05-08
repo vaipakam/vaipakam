@@ -334,6 +334,7 @@ one more feature addition: users need to have na option to ask for mandatory mon
 defi.vaipakam.com
 labs.vaipakam.com
 www.vaipakam.com --> redirect to --> vaipakam.com
+vaipakam-www
 keeper.vaipakam.com
 vaipakam-keeper
 indexer.vaipakam.com
@@ -344,3 +345,9 @@ vaipakam-archive
 vaipakam-record --> not used as of now
 vaipakam-labs
 `Launch Vaipakam`
+vaipakam-alpha
+alpha.vaipakam.com
+vaipakam-elite
+elite.vaipakam.com
+vaipakam-deprecated
+deprecated.vaipakam.com
