@@ -629,6 +629,101 @@ piece):
   internally) plus an update to every call site — about 42
   call sites combined. 5-7 commits, one per component.
 
+## Stage 3 Worker decomposition — actual file migrations
+
+The earlier commit landed empty stub Workers; today's later
+commits populated them by carving the historical hf-watcher
+monolith into three single-purpose Workers, then decommissioning
+the monolith.
+
+- **apps/keeper** — picked up the per-minute health-factor
+  watcher loop, the autonomous-liquidation submission path,
+  health-factor-band Telegram + Push alerts, and (after the
+  later architectural rebalance — see below) the daily
+  oracle-snapshot signer. The keeper is the only Worker in the
+  three-way split that holds a signing key, matching the
+  least-privilege contract from the staging plan.
+
+- **apps/indexer** — picked up the chain → archive-database
+  ingestion loop plus the open-CORS public read API at
+  `indexer.vaipakam.com` (the `/offers/*`, `/loans/*`,
+  `/activity`, `/claimables/*` endpoints the connected app
+  reads from). The indexer is the writer of every shared table;
+  the keeper and agent are pure readers.
+
+- **apps/agent** — picked up the proactive-notification
+  pipeline, cross-chain monitoring, operator services
+  (Frames, Telegram bot, diagnostics record), and the
+  frontend-facing settings endpoints. After the architectural
+  rebalance below, the agent holds NEITHER a signing key nor
+  any cron-triggered chain-write capability.
+
+- **ops/hf-watcher → decommissioned.** With the three Workers
+  carrying real source, the historical monolith is removed.
+  The frontend's worker-pointer environment variables flip
+  from a single `VITE_API_ORIGIN` (the watcher) to two:
+  `VITE_INDEXER_ORIGIN` for read-API traffic and
+  `VITE_AGENT_ORIGIN` for diagnostics and operator-facing
+  endpoints.
+
+## Stage 3 architectural rebalance — oracle snapshot moves to keeper
+
+A late refinement to the three-way split: the daily
+oracle-snapshot signer originally lived in apps/agent. That
+made the agent the second Worker holding a signing key — a
+weak spot for the least-privilege contract. The signer was
+moved into apps/keeper (which already holds the keeper EOA's
+private key for autonomous liquidations), so the project now
+has a single Worker that ever holds a signing key. Same
+behaviour, tighter blast radius if any one Worker is breached.
+
+## Stage 3 operator config — archive-database binding + indexer custom domain
+
+The three new Workers were bound to the shared
+`vaipakam-archive` D1 database (the indexer is the writer; the
+keeper and agent are readers). The indexer was given a custom
+domain at `indexer.vaipakam.com` so the connected app can
+reach its public read API without going through workers.dev.
+
+## Stage 4 bundle-size pass — route + locale code-splitting
+
+The freshly-cloned apps/labs marketing surface initially
+shipped its full English copy plus every locale's translation
+bundle in one main JavaScript file. Two changes cut the
+critical-path payload roughly in half:
+
+- Each marketing route (Landing, Whitepaper, Overview,
+  user-guide variants, Buy-VPFI, legal pages) now lazy-loads
+  on first navigation. The first paint only ships the route
+  the visitor actually opened.
+
+- Only the English translation bundle is eagerly imported
+  (English is the fallback target). Every other locale loads
+  via a dynamic import on first language change. Visitors
+  who stay in English never download the other bundles.
+
+## Stage 4 polish — real index title + STUB-comment removal
+
+Cleanup pass once apps/labs's actual marketing surface was
+populated: the stub `<title>` was replaced with the real
+"Vaipakam — Decentralized P2P Lending, Borrowing & NFT Rental"
+copy, and every "STUB — Stage 4 will populate this" comment
+left over from the scaffold step was removed.
+
+## Connected-app deploy fix — Worker name mismatch
+
+A misdirected deploy earlier in the day (caught + rolled
+back) revealed that `apps/defi/wrangler.jsonc` still
+identified its Worker as `vaipakam` (the original primary
+marketing Worker name) rather than `vaipakam-defi`. A
+`wrangler deploy` from the apps/defi directory had pushed the
+staging connected-app build to the primary marketing Worker
+and overwritten it. The Worker-name field was corrected to
+`vaipakam-defi` so future deploys land on the right target.
+The legacy `vaipakam` Worker remains the primary marketing
+Worker until the production cutover, which the next-day
+release notes cover.
+
 ## Documentation discipline
 
 Per the user-declared "Document every completed task functionally
