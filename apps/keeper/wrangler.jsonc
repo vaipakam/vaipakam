@@ -1,19 +1,75 @@
 {
-  // Vaipakam autonomous keeper Worker.
+  // Vaipakam first-party autonomous keeper Worker.
   //
-  // STUB — see apps/agent/wrangler.jsonc for context. Stage 3
-  // populates `src/` from `ops/hf-watcher/`'s keeper-side
-  // surface (keeper, watcher, buyWatchdog, periodicPreNotify,
-  // serverQuotes, push, telegram). The crons + secrets that
-  // currently live on the watcher's wrangler.jsonc move here
-  // as part of that population.
+  // Cron-driven only (no fetch handler). Stage 3 PR2 of the
+  // Worker split — see docs/DesignsAndPlans/Stage3WorkerSplitPlan.md
+  // for the full classification and migration sequencing.
+  //
+  // Owns: HF watcher loop + autonomous liquidation submission +
+  // HF-band-downgrade Telegram / Push alerts. Future scope (per
+  // §7 of the Stage 3 plan): off-chain offer matcher.
+  //
+  // Distinct from the public reference keeper-bot at the sibling
+  // `vaipakam-keeper-bot` repo (different deploy target, different
+  // trust assumptions). That repo follows its own ABI sync + CI
+  // workflow per the Phase 9.A docs in CLAUDE.md.
+  //
+  // Custom domain: not user-facing. Worker name `vaipakam-keeper`
+  // is the deploy-switch identifier and stays post-cutover.
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "vaipakam-keeper",
   "main": "src/index.ts",
   "compatibility_date": "2026-04-23",
   "compatibility_flags": ["nodejs_compat"],
+
+  // Cron — every minute. The watcher is internally tick-rate-aware:
+  // each tick sweeps `getChainConfigs(env)` round-robin and bails
+  // early on chains that already have notify_state at the same band
+  // since the previous tick. A "* * * * *" schedule matches the
+  // existing ops/hf-watcher cadence; tighter schedules don't help
+  // (HF reads are per-tick rate-limited inside the watcher).
+  "triggers": {
+    "crons": ["* * * * *"],
+  },
+
+  // D1 binding — the same `vaipakam-alerts-db` database the
+  // indexer + agent Workers also bind. Tables this Worker reads:
+  //   - `thresholds`        (per-user-loan HF bands; written by frontend)
+  //   - `link_codes`        (Telegram handshake codes; agent writes)
+  //   - `notify_state`      (per-user notify dedupe; this Worker writes)
+  //   - `loan_index_*`      (active-loan rows; written by indexer; this
+  //                          Worker reads to enumerate live loans)
+  // Cross-Worker D1 sharing is the deliberate coupling that lets the
+  // three Workers stay independent without a message-bus layer
+  // (Stage 3 plan §5).
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "vaipakam-alerts-db",
+      "database_id": "REPLACE_WITH_OPERATOR_D1_ID",
+    },
+  ],
+
+  // Operator-managed secrets (set via `wrangler secret put`):
+  //   - KEEPER_PRIVATE_KEY       — keeper EOA. Must be gas-funded
+  //                                on every chain with an RPC_* set.
+  //   - KEEPER_ENABLED           — 'true' to arm the autonomous
+  //                                liquidation path; absence / 'false'
+  //                                makes the keeper alert-only.
+  //   - RPC_*                    — per-chain RPC URLs (Alchemy /
+  //                                Infura / etc.; carry API keys).
+  //   - TG_BOT_TOKEN             — HF-band Telegram alerts.
+  //   - PUSH_CHANNEL_PK          — HF-band Push channel signer.
+  //   - ZEROEX_API_KEY,
+  //     ONEINCH_API_KEY          — server-side liquidation quoting.
+  "vars": {
+    // Public Telegram bot handle (the @-name from BotFather). Filled
+    // post-provision; the worker accepts an empty string and returns
+    // bot_url: null in the handshake response when not configured.
+    "TG_BOT_USERNAME": "",
+  },
+
   "observability": {
     "enabled": true,
   },
-  // "triggers": { "crons": ["* * * * *"] },
 }
