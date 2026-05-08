@@ -1,6 +1,18 @@
 {
+  // Vaipakam connected-app Worker — Cloudflare Workers Static Assets
+  // deploy of the apps/defi Vite SPA build. Bound to
+  // `defi.vaipakam.com` (staging today; primary post-cutover).
+  //
+  // Worker name is `vaipakam-defi`, NOT `vaipakam`. The unsuffixed
+  // `vaipakam` Worker is the older PRIMARY marketing Worker
+  // (created 2026-04-23) bound to `vaipakam.com` + `www.vaipakam.com`,
+  // and is intentionally untouched until staging is fully validated
+  // — see docs/DesignsAndPlans/CloudflareStagingDeployPlan.md §3.
+  // Pre-this-fix the source said `"name": "vaipakam"` which caused
+  // `wrangler deploy` to push the staging connected-app build to the
+  // primary marketing Worker (incident 2026-05-08T18:04).
   "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "vaipakam",
+  "name": "vaipakam-defi",
   "compatibility_date": "2026-04-23",
   "observability": {
     "enabled": true
