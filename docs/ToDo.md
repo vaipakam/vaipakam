@@ -355,3 +355,13 @@ vaipakam-elite
 elite.vaipakam.com
 vaipakam-deprecated
 deprecated.vaipakam.com
+
+---
+
+## Extra Checks
+
+- [ ] **EC-001**: exportTenderlyAlerts.sh NEW envsubst's ${DIAMOND_ADDRESS} + ${TIMELOCK_ADDRESS} into per-chain ops/tenderly/alerts.<chain>.yaml from deployments.json
+
+Tenderly is usig TIMELOCK_ADDRESS, need to see why and if TIMELOCK_ADDRESS changes how it need to be reflected in Tenderly
+
+---
