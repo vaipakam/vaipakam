@@ -1,6 +1,6 @@
 # 欢迎来到 Vaipakam
 
-Vaipakam 是一个 peer-to-peer lending 平台。你可以 lend assets 并赚取 interest，也可以 borrow assets 并提供 collateral。你还可以 rent NFTs，让 owner 获得 daily fees。所有操作都直接发生在两个 wallets 之间；在 loan 或 rental 结束前，smart contracts 会把 assets 保管在 vault 中。
+Vaipakam 是一个 vault-to-vault lending 平台。你可以 lend assets 并赚取 interest，也可以 borrow assets 并提供 collateral。你还可以 rent NFTs，让 owner 获得 daily fees。所有操作都直接发生在两个 wallets 之间；在 loan 或 rental 结束前，smart contracts 会把 assets 保管在 vault 中。
 
 这一页是一份**友好的导览**。如果你想深入了解技术细节，可以打开 **User Guide** 标签查看每个 screen 的帮助，或打开 **Technical** 标签阅读完整 whitepaper。如果你只是想知道“这是什么、该怎么用”，继续往下看就好。
 

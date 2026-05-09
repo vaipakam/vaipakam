@@ -1,6 +1,6 @@
 # Welcome to Vaipakam
 
-Vaipakam is a peer-to-peer lending platform. You lend assets and earn
+Vaipakam is a vault-to-vault lending platform. You lend assets and earn
 interest. You borrow assets and post collateral. You rent NFTs and the
 owner gets daily fees. Everything happens directly between two
 wallets, with the smart contracts holding the assets in the vault until

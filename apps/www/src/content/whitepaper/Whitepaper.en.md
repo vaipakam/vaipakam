@@ -8,7 +8,7 @@
 
 ## Abstract
 
-Vaipakam is a non-custodial peer-to-peer credit protocol for over-collateralized
+Vaipakam is a non-custodial vault-to-vault credit protocol for over-collateralized
 ERC-20 lending and vault-mediated ERC-721 / ERC-1155 rentals across
 Ethereum-compatible networks. Each supported network — `Ethereum mainnet`,
 `Base`, `Polygon zkEVM`, `Arbitrum`, `Optimism`, and `BNB Chain` — runs an

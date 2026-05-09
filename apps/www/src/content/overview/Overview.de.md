@@ -1,6 +1,6 @@
 # Willkommen bei Vaipakam
 
-Vaipakam ist eine Peer-to-Peer-Kreditplattform. Sie verleihen
+Vaipakam ist eine Vault-to-Vault-Kreditplattform. Sie verleihen
 Vermögenswerte und verdienen Zinsen. Sie leihen sich Vermögenswerte
 und hinterlegen Sicherheiten. Sie mieten NFTs, und der Eigentümer
 erhält tägliche Mietzahlungen. Alles geschieht direkt zwischen zwei

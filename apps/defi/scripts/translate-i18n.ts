@@ -106,7 +106,7 @@ const MODEL = 'claude-opus-4-7';
 
 function buildPrompt(sourceJson: object, targetCode: LocaleCode): string {
   const glossaryList = GLOSSARY_KEEP_VERBATIM.join(', ');
-  return `You are translating the UI string bundle for Vaipakam, a non-custodial DeFi peer-to-peer lending protocol. Your output will be committed verbatim into the application's locale file for ${LOCALE_NAMES[targetCode]}.
+  return `You are translating the UI string bundle for Vaipakam, a non-custodial DeFi vault-to-vault lending protocol. Your output will be committed verbatim into the application's locale file for ${LOCALE_NAMES[targetCode]}.
 
 GLOSSARY — keep these terms VERBATIM (do not translate, do not transliterate, do not localise):
 ${glossaryList}

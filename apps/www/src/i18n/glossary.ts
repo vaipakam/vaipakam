@@ -107,7 +107,7 @@ export const GLOSSARY_KEEP_VERBATIM = [
  *  source JSON. Keep this concise — Claude follows it well in <500
  *  tokens. */
 export const GLOSSARY_STYLE_NOTES = `
-- Vaipakam is a non-custodial, peer-to-peer DeFi lending protocol where
+- Vaipakam is a non-custodial, vault-to-vault DeFi lending protocol where
   one user lends an ERC-20 asset and another posts collateral.
 - Translate UI strings into natural, conversational tone. Do not be
   overly formal. Match the register a popular consumer crypto wallet

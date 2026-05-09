@@ -307,7 +307,7 @@ export default function Dashboard() {
             icons + the same brand-tinted background. The previous
             TrendingUp (green) / TrendingDown (amber) pair carried an
             unintended emotional skew — "lender = good / borrowing =
-            bad" — that's wrong on a peer-to-peer lending app where
+            bad" — that's wrong on a vault-to-vault lending app where
             both sides are equally valid market participants. Coins
             (lender funds) / HandCoins (borrower receives) keeps the
             domain semantics without the colour bias. */}

@@ -27,6 +27,6 @@ describe('App router', () => {
       </ThemeProvider>,
     );
     // Landing page root
-    expect(screen.getByRole('heading', { name: /Peer-to-Peer Lending/i })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: /Vault-to-Vault Lending/i })).toBeInTheDocument();
   });
 });

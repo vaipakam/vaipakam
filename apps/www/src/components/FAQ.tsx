@@ -46,7 +46,7 @@ const FAQS: FaqEntry[] = [
     id: "basics-what-is-vaipakam",
     category: "basics",
     searchText:
-      "intro overview plain english simple beginner lending borrowing p2p peer-to-peer marketplace what is defi",
+      "intro overview plain english simple beginner lending borrowing p2p vault-to-vault marketplace what is defi",
     renderA: () => (
       <>
         <p>

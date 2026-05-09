@@ -1,6 +1,6 @@
 # Vaipakam में आपका स्वागत है
 
-Vaipakam एक peer-to-peer lending प्लेटफ़ॉर्म है। आप assets lend करके
+Vaipakam एक vault-to-vault lending प्लेटफ़ॉर्म है। आप assets lend करके
 interest कमा सकते हैं। आप assets borrow करके collateral जमा कर सकते
 हैं। आप NFTs rent पर दे सकते हैं, और owner को daily fees मिलती हैं।
 हर चीज़ सीधे दो wallets के बीच होती है; smart contracts loan या

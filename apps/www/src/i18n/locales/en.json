@@ -38,7 +38,7 @@
     "privacy": "Privacy",
     "cookieSettings": "Cookie settings",
     "license": "BUSL 1.1 License",
-    "tagline": "Decentralized peer-to-peer lending and NFT rentals. Trustless, transparent, on-chain.",
+    "tagline": "Decentralized vault-to-vault lending and NFT rentals. Trustless, transparent, on-chain.",
     "comingSoon": "Coming soon",
     "supportedNetworks": "Supported networks",
     "viewDiamondOnExplorer": "View Diamond on explorer…",
@@ -1318,7 +1318,7 @@
   },
   "hero": {
     "brand": "Vaipakam",
-    "titleLine1": "Vault-to-Vault Lending",
+    "titleLine1": "Vault-to-Vault",
     "titleLine2": "Secure On-Chain",
     "subtitlePrefix": "Vaipakam",
     "subtitleBody": "lets you lend and borrow a wide range of tokens, rent NFTs, and set your own terms. Every position is tracked by a unique NFT — transparent, traceable and trustless from offer to settlement.",
@@ -1433,7 +1433,7 @@
     "entries": {
       "basics-what-is-vaipakam": {
         "q": "What is Vaipakam, in plain English?",
-        "a1": "Vaipakam is a peer-to-peer marketplace for lending crypto and renting digital items (NFTs). One person posts an offer with the terms they're comfortable with — amount, interest, duration — and another person accepts it. No bank, no fund manager, no intermediary sitting between the two counterparties.",
+        "a1": "Vaipakam is a vault-to-vault marketplace for lending crypto and renting digital items (NFTs). One person posts an offer with the terms they're comfortable with — amount, interest, duration — and another person accepts it. No bank, no fund manager, no intermediary sitting between the two counterparties.",
         "a2": "What keeps everyone honest is a set of smart contracts on a blockchain. They hold the assets in individual vault during the loan and release them automatically when the terms are met. Each user remains in control of their own funds; the protocol simply enforces the deal that was agreed."
       },
       "basics-wallet": {
@@ -1760,7 +1760,7 @@
   "pageMeta": {
     "landing": {
       "title": "Vaipakam — Decentralized P2P Lending, Borrowing & NFT Rental",
-      "description": "Lend, borrow, and rent NFTs on Vaipakam — a non-custodial peer-to-peer protocol. Set your own terms. No pools, no middlemen. Built on the EIP-2535 Diamond standard."
+      "description": "Lend, borrow, and rent NFTs on Vaipakam — a non-custodial vault-to-vault protocol. Set your own terms. No pools, no middlemen. Built on the EIP-2535 Diamond standard."
     },
     "buyVpfi": {
       "title": "Buy & Stake VPFI — Vaipakam's Native Token",

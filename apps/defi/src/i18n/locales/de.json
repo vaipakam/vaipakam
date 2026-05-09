@@ -38,7 +38,7 @@
     "privacy": "Datenschutz",
     "cookieSettings": "Cookie-Einstellungen",
     "license": "BUSL 1.1 Lizenz",
-    "tagline": "Dezentrale Peer-to-Peer-Kredite und NFT-Vermietung. Ohne Vertrauensannahmen, transparent und vollständig on-chain.",
+    "tagline": "Dezentrale Vault-to-Vault-Kredite und NFT-Vermietung. Ohne Vertrauensannahmen, transparent und vollständig on-chain.",
     "comingSoon": "Demnächst verfügbar",
     "supportedNetworks": "Unterstützte Netzwerke",
     "viewDiamondOnExplorer": "Diamond im Explorer anzeigen…",
@@ -808,7 +808,7 @@
   },
   "hero": {
     "brand": "Vaipakam",
-    "titleLine1": "Peer-to-Peer-Kreditvergabe",
+    "titleLine1": "Vault-to-Vault-Kreditvergabe",
     "titleLine2": "Vollständig on-chain",
     "subtitlePrefix": "Vaipakam",
     "subtitleBody": "lässt Sie eine breite Palette von Token verleihen und ausleihen, NFTs vermieten und Ihre eigenen Bedingungen festlegen. Jede Position wird durch ein einzigartiges NFT verfolgt — transparent, nachvollziehbar und vertrauenslos vom Angebot bis zur Abwicklung.",
@@ -923,7 +923,7 @@
     "entries": {
       "basics-what-is-vaipakam": {
         "q": "Was ist Vaipakam in einfachen Worten?",
-        "a1": "Vaipakam ist ein Peer-to-Peer-Marktplatz für das Verleihen von Kryptowährungen und das Vermieten digitaler Objekte (NFT). Eine Person veröffentlicht ein Angebot mit den für sie passenden Konditionen — Betrag, Zinsen, Laufzeit — und eine andere Person nimmt es an. Keine Bank, kein Fondsmanager, kein Vermittler zwischen den beiden Parteien.",
+        "a1": "Vaipakam ist ein Vault-to-Vault-Marktplatz für das Verleihen von Kryptowährungen und das Vermieten digitaler Objekte (NFT). Eine Person veröffentlicht ein Angebot mit den für sie passenden Konditionen — Betrag, Zinsen, Laufzeit — und eine andere Person nimmt es an. Keine Bank, kein Fondsmanager, kein Vermittler zwischen den beiden Parteien.",
         "a2": "Was alle ehrlich hält, ist eine Reihe von Smart Contracts auf einer Blockchain. Sie verwahren die Vermögenswerte während der Laufzeit in individueller Treuhand und geben sie automatisch frei, sobald die Bedingungen erfüllt sind. Jede Nutzerin und jeder Nutzer behält die Kontrolle über die eigenen Mittel; das Protokoll erzwingt lediglich die getroffene Vereinbarung."
       },
       "basics-wallet": {

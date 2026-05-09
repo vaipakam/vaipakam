@@ -22,7 +22,7 @@ import LandingPage from '../../src/pages/LandingPage';
 describe('Landing components', () => {
   it('Hero renders title + sample cards', () => {
     renderWithProviders(<Hero />);
-    expect(screen.getByRole('heading', { name: /Peer-to-Peer Lending/i })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: /Vault-to-Vault Lending/i })).toBeInTheDocument();
     expect(screen.getByText(/Lend 1,000 USDC/i)).toBeInTheDocument();
     expect(screen.getByText(/Launch App/i)).toBeInTheDocument();
   });
@@ -59,7 +59,7 @@ describe('Landing components', () => {
   it('Footer renders', () => {
     renderWithProviders(<Footer />);
     expect(
-      screen.getByText(/Decentralized peer-to-peer lending/i),
+      screen.getByText(/Decentralized vault-to-vault lending/i),
     ).toBeInTheDocument();
     expect(screen.getByText(/BUSL 1\.1 License/i)).toBeInTheDocument();
   });
@@ -101,7 +101,7 @@ describe('Landing components', () => {
 
   it('LandingPage composes all sections', () => {
     renderWithProviders(<LandingPage />);
-    expect(screen.getByRole('heading', { name: /Peer-to-Peer Lending/i })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: /Vault-to-Vault Lending/i })).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: /Ready to start lending/i })).toBeInTheDocument();
   });
 });

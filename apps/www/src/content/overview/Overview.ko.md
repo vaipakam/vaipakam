@@ -1,6 +1,6 @@
 # Vaipakam에 오신 것을 환영합니다
 
-Vaipakam은 peer-to-peer lending 플랫폼입니다. 자산을 lend하고 interest를
+Vaipakam은 vault-to-vault lending 플랫폼입니다. 자산을 lend하고 interest를
 얻을 수 있습니다. 자산을 borrow하려면 collateral을 제공합니다. NFTs를
 rent하면 owner가 daily fees를 받습니다. 모든 과정은 두 wallet 사이에서
 직접 이루어지며, loan이나 rental이 끝날 때까지 smart contracts가 assets를

@@ -5,7 +5,9 @@
 }
 
 @media (min-width: 768px) {
-  .hero { padding: 140px 0 100px; }
+  .hero {
+    padding: 140px 0 100px;
+  }
 }
 
 .hero-bg-glow {
@@ -15,12 +17,20 @@
   transform: translateX(-50%);
   width: 800px;
   height: 600px;
-  background: radial-gradient(ellipse, rgba(79, 70, 229, 0.12) 0%, transparent 70%);
+  background: radial-gradient(
+    ellipse,
+    rgba(79, 70, 229, 0.12) 0%,
+    transparent 70%
+  );
   pointer-events: none;
 }
 
-[data-theme='dark'] .hero-bg-glow {
-  background: radial-gradient(ellipse, rgba(129, 140, 248, 0.1) 0%, transparent 70%);
+[data-theme="dark"] .hero-bg-glow {
+  background: radial-gradient(
+    ellipse,
+    rgba(129, 140, 248, 0.1) 0%,
+    transparent 70%
+  );
 }
 
 .hero-container {
@@ -87,7 +97,7 @@
    * `text-wrap: balance` distributes any wrapping evenly across
    * the visible lines on supporting browsers (Chrome 114+,
    * Safari 17.5+, Firefox 121+) — graceful no-op elsewhere. */
-  font-size: clamp(2rem, 4.2vw, 3.2rem);
+  font-size: clamp(2.2rem, 5vw, 3.5rem);
   font-weight: 800;
   line-height: 1.1;
   letter-spacing: -0.02em;
@@ -179,12 +189,24 @@
 }
 
 @media (min-width: 1024px) {
-  .hero-card-1 { transform: translateX(0); }
-  .hero-card-2 { transform: translateX(24px); }
-  .hero-card-3 { transform: translateX(12px); }
-  .hero-card-1:hover { transform: translateX(6px); }
-  .hero-card-2:hover { transform: translateX(30px); }
-  .hero-card-3:hover { transform: translateX(18px); }
+  .hero-card-1 {
+    transform: translateX(0);
+  }
+  .hero-card-2 {
+    transform: translateX(24px);
+  }
+  .hero-card-3 {
+    transform: translateX(12px);
+  }
+  .hero-card-1:hover {
+    transform: translateX(6px);
+  }
+  .hero-card-2:hover {
+    transform: translateX(30px);
+  }
+  .hero-card-3:hover {
+    transform: translateX(18px);
+  }
 }
 
 .hero-card-icon {
