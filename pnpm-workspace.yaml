@@ -14,20 +14,6 @@
 #   - apps/agent   read/index Cloudflare Worker → agent.vaipakam.com
 #   - apps/indexer chain → D1 ingester        → indexer.vaipakam.com
 #   - apps/keeper  autonomous keeper Worker   → keeper.vaipakam.com
-#   - apps/alpha   FROZEN ARCHIVE → alpha.vaipakam.com.
-#                   Pre-Stage-3/4 monolithic frontend snapshot from
-#                   main@f48c99fa, kept as a reference deploy for the
-#                   refactor cutover window. Do NOT patch — see the
-#                   archive header in apps/alpha/wrangler.jsonc.
-#                   Scheduled for full removal a few weeks after
-#                   the new surfaces stabilise. The pnpm `apps/*`
-#                   glob picks it up so `pnpm install` resolves
-#                   its dependencies, but workspace-wide
-#                   typecheck / build commands should filter it
-#                   out (`pnpm --filter '!@vaipakam/alpha' …`)
-#                   because the archive carries its own pinned
-#                   dependency tree that may not satisfy the
-#                   newer apps' invariants.
 #
 # `packages/` holds shared internal libraries — no deploy of their
 # own, consumed by the apps via workspace `:` protocol:
@@ -39,14 +25,23 @@
 # it's a Solidity project, not a JS package. Its build tooling
 # (`forge`) operates on its own root.
 #
-# `ops/hf-watcher` was the historical monolithic Worker; its source
-# was carved into apps/{keeper,indexer,agent} in the Stage 3 split
-# on 2026-05-08. The pre-split snapshot is now archived under
-# `ops/alpha/hf-watcher/` (frozen, do NOT patch — see the
-# DECOMMISSIONED.md tombstone in that folder). The Cloudflare
-# Worker `vaipakam-hf-watcher` is still bound while the new
-# Workers stabilise; operator-side decommission is scheduled a
-# few weeks out.
+# `alpha/` is the FROZEN ARCHIVE root — also intentionally NOT
+# in this workspace. Holds:
+#   - alpha/frontend      pre-Stage-4 monolithic frontend snapshot,
+#                          bound to alpha.vaipakam.com via the
+#                          `vaipakam-alpha` Cloudflare Worker.
+#   - alpha/hf-watcher    pre-Stage-3 monolithic ops Worker
+#                          snapshot, source for the still-running
+#                          `vaipakam-hf-watcher` Cloudflare Worker.
+# Both restored from main@f48c99fa. Do NOT patch — see
+# `alpha/README.md`. Living outside the workspace means
+# `pnpm install` doesn't resolve the archive's pinned dependency
+# tree (which differs from the live workspace's versions and
+# would surface peer-dep warnings on every install) and
+# workspace-wide commands skip the archive automatically.
+# Scheduled for full removal once the new architecture has been
+# live for a few weeks without a fallback being needed
+# (single `rm -rf alpha/` commit).
 #
 # `ops/{lz-watcher,subgraph,tenderly}` are ACTIVE production
 # tooling (LayerZero security monitor, drift subgraph, Tenderly

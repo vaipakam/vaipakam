@@ -5,9 +5,12 @@ This folder is a **frozen snapshot** of the historical
 `main@f48c99fa5db2ff718344b929b62c5b7720590ae2` (the last main-
 branch commit before the Stage 3 Worker decomposition landed).
 The source was deleted from `ops/hf-watcher/` on 2026-05-08 in
-commit `f29b31d` and re-introduced here under `ops/alpha/`
+commit `f29b31d` and re-introduced here under `alpha/hf-watcher/`
 on 2026-05-09 to provide a code-side reference during the
-Stage 3 / Stage 4 refactor cutover window.
+Stage 3 / Stage 4 refactor cutover window. The archive lives
+outside the pnpm workspace (top-level `alpha/`, sibling of
+`apps/`, `ops/`, `contracts/`) so workspace-wide commands skip
+it automatically.
 
 ## What replaced it
 
@@ -43,8 +46,8 @@ Emergency hotfixes go via redeploy from the new
 will NOT propagate to the live `vaipakam-hf-watcher` Worker
 because the build pipeline that fed that Worker no longer
 exists in the workspace (the `apps/` workspace defines the
-new Workers; this `ops/alpha/hf-watcher/` folder is outside
-the `apps/*` glob and has no CI hookup).
+new Workers; this `alpha/hf-watcher/` folder is outside
+the workspace entirely and has no CI hookup).
 
 If you find yourself wanting to edit a file here, stop and
 ask: is the change actually needed against the new
@@ -56,9 +59,10 @@ than scheduled, not to revive this folder's build pipeline.
 
 ## Removal schedule
 
-This entire `ops/alpha/` tree (and the `apps/alpha/` archive
-that holds the old monolithic frontend) is scheduled for
-full deletion from the repo once the new architecture has
-been live for a few weeks without a fallback being needed.
+The entire `alpha/` tree (this folder + `alpha/frontend/`)
+is scheduled for full deletion from the repo once the new
+architecture has been live for a few weeks without a
+fallback being needed. Cleanup is a single `rm -rf alpha/`
+commit on `main` once the operator gives the go-ahead.
 The deletion will be a single mechanical commit when the
 operator gives the go-ahead.

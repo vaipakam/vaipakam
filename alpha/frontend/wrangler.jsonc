@@ -22,8 +22,9 @@
   // apps/{www,defi,keeper,indexer,agent} surfaces, not via patching
   // the archive. The few-week reference window exists to ease
   // user-side and operator-side comparison during the transition;
-  // after that the entire apps/alpha + ops/alpha tree is scheduled
-  // for full removal.
+  // after that the entire `alpha/` tree (this folder +
+  // alpha/hf-watcher) is scheduled for full removal in a single
+  // `rm -rf alpha/` commit on main.
   //
   // Crawler policy: a `public/robots.txt` shipped alongside this
   // Worker disallows every crawler from indexing alpha.vaipakam.com
