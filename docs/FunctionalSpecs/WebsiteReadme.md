@@ -51,11 +51,25 @@ Public-navigation requirements:
 - the public `Buy VPFI` link from the home page and footer must resolve to `/buy-vpfi`, which is a no-wallet marketing / education route for VPFI
 - the actual buy, deposit / stake, withdraw / unstake, and staking-reward claim controls live inside the connected app at `/app/buy-vpfi`; public CTAs should open that app route when the user chooses to transact
 - public navigation should stay informational and should not carry wallet UI, wallet-connected banners, or a VPFI action dropdown unless a later design intentionally restores it
+- the public marketing surface should remain chain-free and wallet-free: no wallet context, active-chain state, per-user escrow lookups, on-chain diagnostics, or address-book helpers should be loaded by marketing pages
+- any marketing-page `Verify on chain` affordance should route users to the connected app's public transparency surface instead of performing chain reads inside the marketing app
+- the canonical marketing source package is `apps/www`, and the canonical public hostname is `https://vaipakam.com`; `https://www.vaipakam.com` should redirect to the apex while preserving path and query string
+- legacy hostnames such as `labs.vaipakam.com` should not be emitted as canonical, sitemap, hreflang, or app-back-link origins
+- public CTAs that open the connected app should use the label `Launch Vaipakam`, localized for every supported language, rather than the generic `Launch App`
 - app-shell links to public-only experiences such as `NFT Verifier` should open in a new tab and use an external-link affordance so users understand they are leaving the connected-app shell
 - public-shell pages that sit below the fixed Navbar, including `Analytics`, `NFT Verifier`, `Buy VPFI`, `Terms`, and `Privacy`, must include enough top clearance that their headings never render under the Navbar
 - public navigation must preserve the Vaipakam brand mark at its natural size across desktop widths; link spacing and right-cluster spacing should compress before the logo is allowed to shrink
 - the footer should expose `Terms`, `Privacy`, `Cookie settings`, and, once published, the public bug bounty program link
 - footer resource links that describe deployed contracts should land directly on the Analytics transparency section (`/analytics#transparency`) rather than a generic dashboard top
+- landing-page security / trust cards should make high-level claims without repeating per-card `Verify on chain` links; the footer or transparency route remains the single verification path for contract artefacts
+
+SEO and discoverability requirements:
+
+- the marketing build should generate `robots.txt` and `sitemap.xml`
+- the sitemap should include every public marketing route in every supported locale and should declare the matching `hreflang` alternates
+- every public marketing route should set a unique localized title, meta description, canonical URL, and locale alternate metadata on page mount
+- canonical and `hreflang` URLs should be rooted at `https://vaipakam.com`, even if a visitor briefly arrives through `www` or a legacy hostname before redirect / routing settles
+- social-preview and prerendering work may be staged separately; JavaScript-rendered metadata plus sitemap discovery is the baseline requirement unless search-console measurements show a remaining indexing gap
 
 PWA requirements:
 
@@ -431,6 +445,10 @@ The frontend should support:
 - a selectable dark theme
 - consistent usability, contrast, and readability in both themes
 - persistent theme preference across sessions where possible
+- theme preference should sync across Vaipakam subdomains through a parent-domain functionality cookie, falling back to the user's OS preference until they choose explicitly
+- language preference should sync across Vaipakam subdomains through a parent-domain functionality cookie, with that cookie treated as the cross-domain source of truth over origin-scoped localStorage when the two disagree
+- first-visit language detection should write the shared language cookie during initialization so the connected app and marketing site start from the same locale
+- the React i18n binding should re-render when a lazy-loaded locale bundle is added, so the first language-picker click visibly changes language after the dynamic import resolves
 - all states and components designed intentionally for both themes, not just color-inverted afterthoughts
 - public Analytics, Buy VPFI marketing, and NFT Verifier pages may use the shared page-level ambient glow used by the app shell, but cards should remain flat unless a page-specific sparse analytics layout benefits from a subtle card gradient
 
@@ -456,6 +474,8 @@ Chrome-level layout behavior:
 - fixed or floating layout affordances must not create accidental horizontal overflow
 - status severity should match user impact; for example, `No wallet detected` should be a warning rather than a blocking error
 - public navigation should remain wallet-free and focused on informational routes, footer links, cookie settings, and core public CTAs; connected-app navigation should keep wallet, network, issue-reporting / support-details, and core app route controls reachable on mobile and desktop
+- public-read connected-app shells such as Analytics, NFT Verifier, and Protocol Console should keep their top bar focused on in-app navigation. They should not mirror the marketing site's `Learn` dropdown; a single `Docs` link back to the public overview / whitepaper index is sufficient.
+- same-origin connected-app CTAs should navigate in the current tab, while marketing-to-app cross-origin CTAs may open a new tab where that is the clearer user expectation
 - layout fixes should preserve the existing design language in both light and dark themes
 - the settings popover should group global preferences such as Basic / Advanced mode, language, and theme in one predictable place
 
