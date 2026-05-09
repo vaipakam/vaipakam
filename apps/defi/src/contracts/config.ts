@@ -454,24 +454,47 @@ const ENV_DEFAULT_CHAIN_ID = Number(
 
 /**
  * Read-only fallback chain — used when no wallet is connected, or the wallet
- * is on an unsupported chain. Resolves to the env-chosen chainId if that chain
- * has a Diamond, else falls back to Sepolia (the only always-live Phase-1
- * testnet today). Type is narrowed: `diamondAddress` is guaranteed non-null
- * so call sites that dereference it don't need a null check.
+ * is on an unsupported chain. Resolution order, each step gated on the chain
+ * actually having a deployed Diamond:
+ *
+ *   1. The env-chosen chain (`VITE_DEFAULT_CHAIN_ID`).
+ *   2. **Base Sepolia** — Phase-1 canonical testnet for the Stage-3 deploy
+ *      tree (84532). The first chain we deploy contracts to per
+ *      `packages/contracts/src/deployments.json`.
+ *   3. **Any** chain in the registry that has a non-null `diamondAddress`
+ *      — robust last-line-of-defence so a misconfigured testnet rotation
+ *      never crashes the page on module load.
+ *
+ * Pre-fix, this IIFE hard-coded `SEPOLIA` as step 2, which threw at module
+ * load on production builds where (a) `VITE_DEFAULT_CHAIN_ID` wasn't set
+ * AND (b) Sepolia had no Diamond on the new deploy tree (the contracts
+ * are on Base Sepolia / Arb Sepolia / OP Sepolia, not vanilla Ethereum
+ * Sepolia). Symptom: `defi.vaipakam.com` 404 / blank page with the
+ * "DEFAULT_CHAIN resolution failed — Sepolia has no diamondAddress" error
+ * in the browser console.
+ *
+ * Type is narrowed: `diamondAddress` is guaranteed non-null so call sites
+ * that dereference it don't need a null check.
  */
 export type DeployedChain = ChainConfig & { diamondAddress: string };
 
 export const DEFAULT_CHAIN: DeployedChain = (() => {
+  // 1. env-chosen chain
   const envChain = CHAIN_REGISTRY[ENV_DEFAULT_CHAIN_ID];
   if (envChain && envChain.diamondAddress !== null) {
     return envChain as DeployedChain;
   }
-  if (SEPOLIA.diamondAddress === null) {
-    throw new Error(
-      "DEFAULT_CHAIN resolution failed — Sepolia has no diamondAddress",
-    );
+  // 2. Base Sepolia (canonical Phase-1 testnet)
+  if (BASE_SEPOLIA.diamondAddress !== null) {
+    return BASE_SEPOLIA as DeployedChain;
   }
-  return SEPOLIA as DeployedChain;
+  // 3. ANY chain in the registry with a Diamond — fail-soft last resort.
+  for (const c of Object.values(CHAIN_REGISTRY)) {
+    if (c.diamondAddress !== null) return c as DeployedChain;
+  }
+  throw new Error(
+    "DEFAULT_CHAIN resolution failed — no chain in CHAIN_REGISTRY has a deployed Diamond",
+  );
 })();
 
 /**
