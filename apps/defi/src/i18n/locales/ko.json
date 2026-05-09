@@ -38,7 +38,7 @@
     "privacy": "개인정보 처리방침",
     "cookieSettings": "쿠키 설정",
     "license": "BUSL 1.1 라이선스",
-    "tagline": "탈중앙화 P2P 대출과 NFT 임대. 신뢰 가정 없이, 투명하게, 온체인에서.",
+    "tagline": "탈중앙화 Vault-to-Vault 대출과 NFT 임대. 신뢰 가정 없이, 투명하게, 온체인에서.",
     "comingSoon": "출시 예정",
     "supportedNetworks": "지원 네트워크",
     "viewDiamondOnExplorer": "익스플로러에서 Diamond 보기…",
@@ -809,7 +809,7 @@
   "hero": {
     "brand": "Vaipakam",
     "titleLine1": "P2P 대출",
-    "titleLine2": "완전 온체인",
+    "titleLine2": "안전한 온체인",
     "subtitlePrefix": "Vaipakam",
     "subtitleBody": "광범위한 토큰을 대출하고 차용하고, NFT를 임대하고, 자체 조건을 설정할 수 있도록 합니다. 모든 포지션은 고유한 NFT로 추적됩니다 — 제안에서 정산까지 투명하고 추적 가능하며 신뢰가 필요 없습니다.",
     "launchApp": "Vaipakam 실행",

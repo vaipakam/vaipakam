@@ -292,7 +292,7 @@ function _initialSvg(): string {
     { y: 280, size: 20, weight: 400, text: 'Paste any wallet address.', color: '#e5e7eb' },
     { y: 320, size: 20, weight: 400, text: 'See active Vaipakam loans across every chain', color: '#e5e7eb' },
     { y: 350, size: 20, weight: 400, text: 'plus the lowest Health Factor.', color: '#e5e7eb' },
-    { y: 530, size: 16, weight: 400, text: 'P2P lending fully on-chain.', color: '#9ca3af' },
+    { y: 530, size: 16, weight: 400, text: 'P2P lending secure on-chain.', color: '#9ca3af' },
   ]);
 }
 
@@ -372,7 +372,7 @@ function _resultSvg(input: ResultSvgInput): string {
     y: 565,
     size: 14,
     weight: 400,
-    text: 'vaipakam.com — P2P lending fully on-chain',
+    text: 'vaipakam.com — P2P lending secure on-chain',
     color: '#6b7280',
   });
   return _svgFrame(lines);

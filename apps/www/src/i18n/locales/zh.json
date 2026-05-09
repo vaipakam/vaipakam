@@ -38,7 +38,7 @@
     "privacy": "隐私",
     "cookieSettings": "Cookie 设置",
     "license": "BUSL 1.1 许可证",
-    "tagline": "去中心化点对点借贷与 NFT 租赁。无需信任、透明、全程链上。",
+    "tagline": "去中心化vault-to-vault借贷与 NFT 租赁。无需信任、透明、安全链上。",
     "comingSoon": "即将推出",
     "supportedNetworks": "支持的网络",
     "viewDiamondOnExplorer": "在浏览器中查看 Diamond…",
@@ -808,8 +808,8 @@
   },
   "hero": {
     "brand": "Vaipakam",
-    "titleLine1": "点对点借贷",
-    "titleLine2": "完全链上",
+    "titleLine1": "vault-to-vault借贷",
+    "titleLine2": "安全链上",
     "subtitlePrefix": "Vaipakam",
     "subtitleBody": "让您可以借出和借入广泛的代币、租赁 NFT 并设置自己的条款。每个仓位都通过独特的 NFT 进行跟踪 — 从报价到结算都是透明、可追溯和无需信任的。",
     "launchApp": "启动 Vaipakam",
@@ -923,7 +923,7 @@
     "entries": {
       "basics-what-is-vaipakam": {
         "q": "用通俗的话说，Vaipakam 是什么？",
-        "a1": "Vaipakam 是一个面向加密货币出借和数字物品（NFT）租赁的点对点市场。一方按照自己接受的条件——金额、利率、期限——发布一份报价，另一方接受它。没有银行，没有基金经理，也没有任何中介夹在双方之间。",
+        "a1": "Vaipakam 是一个面向加密货币出借和数字物品（NFT）租赁的vault-to-vault市场。一方按照自己接受的条件——金额、利率、期限——发布一份报价，另一方接受它。没有银行，没有基金经理，也没有任何中介夹在双方之间。",
         "a2": "维持各方诚信的，是部署在区块链上的一组智能合约。它们在贷款期间将资产存入个人专属的保管中，并在条件满足时自动释放。每位用户始终掌控自己的资金；协议只是在执行已经达成的协议而已。"
       },
       "basics-wallet": {

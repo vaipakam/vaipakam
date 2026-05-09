@@ -1,6 +1,6 @@
 # Bienvenido a Vaipakam
 
-Vaipakam es una plataforma de préstamos entre pares. Prestas activos
+Vaipakam es una plataforma de préstamos vault-to-vault. Prestas activos
 y ganas intereses. Tomas activos prestados y aportas garantía.
 Alquilas NFTs y el propietario cobra renta diaria. Todo ocurre
 directamente entre dos billeteras, con los contratos inteligentes

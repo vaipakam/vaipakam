@@ -38,7 +38,7 @@
     "privacy": "Datenschutz",
     "cookieSettings": "Cookie-Einstellungen",
     "license": "BUSL 1.1 Lizenz",
-    "tagline": "Dezentrale Vault-to-Vault-Kredite und NFT-Vermietung. Ohne Vertrauensannahmen, transparent und vollständig on-chain.",
+    "tagline": "Dezentrale Vault-to-Vault-Kredite und NFT-Vermietung. Ohne Vertrauensannahmen, transparent und sicher on-chain.",
     "comingSoon": "Demnächst verfügbar",
     "supportedNetworks": "Unterstützte Netzwerke",
     "viewDiamondOnExplorer": "Diamond im Explorer anzeigen…",
@@ -809,7 +809,7 @@
   "hero": {
     "brand": "Vaipakam",
     "titleLine1": "Vault-to-Vault-Kreditvergabe",
-    "titleLine2": "Vollständig on-chain",
+    "titleLine2": "Sicher on-chain",
     "subtitlePrefix": "Vaipakam",
     "subtitleBody": "lässt Sie eine breite Palette von Token verleihen und ausleihen, NFTs vermieten und Ihre eigenen Bedingungen festlegen. Jede Position wird durch ein einzigartiges NFT verfolgt — transparent, nachvollziehbar und vertrauenslos vom Angebot bis zur Abwicklung.",
     "launchApp": "Vaipakam öffnen",

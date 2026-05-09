@@ -70,61 +70,61 @@ const META: Record<string, LocaleMeta> = {
     htmlLang: 'en',
     title: 'Vaipakam | Decentralized P2P Lending & NFT Rentals',
     description:
-      'Lend and borrow ERC-20 tokens. Rent NFTs. Set your own terms. Trustless, transparent, fully on-chain.',
+      'Lend and borrow ERC-20 tokens. Rent NFTs. Set your own terms. Trustless, transparent, secure on-chain.',
   },
   es: {
     htmlLang: 'es',
     title: 'Vaipakam | Préstamos P2P descentralizados y alquiler de NFT',
     description:
-      'Presta y pide prestados tokens ERC-20. Alquila NFT. Define tus propios términos. Sin custodia, transparente, totalmente on-chain.',
+      'Presta y pide prestados tokens ERC-20. Alquila NFT. Define tus propios términos. Sin custodia, transparente, seguro on-chain.',
   },
   fr: {
     htmlLang: 'fr',
     title: 'Vaipakam | Prêts P2P décentralisés et location de NFT',
     description:
-      'Prêtez et empruntez des tokens ERC-20. Louez des NFT. Définissez vos propres conditions. Sans confiance, transparent, entièrement on-chain.',
+      'Prêtez et empruntez des tokens ERC-20. Louez des NFT. Définissez vos propres conditions. Sans confiance, transparent, sécurisé on-chain.',
   },
   de: {
     htmlLang: 'de',
     title: 'Vaipakam | Dezentralisiertes P2P-Lending & NFT-Vermietung',
     description:
-      'Verleihen und leihen Sie ERC-20-Token. Mieten Sie NFTs. Setzen Sie Ihre eigenen Bedingungen. Vertrauenslos, transparent, vollständig on-chain.',
+      'Verleihen und leihen Sie ERC-20-Token. Mieten Sie NFTs. Setzen Sie Ihre eigenen Bedingungen. Vertrauenslos, transparent, sicher on-chain.',
   },
   ja: {
     htmlLang: 'ja',
     title: 'Vaipakam | 分散型P2P貸付・NFTレンタル',
     description:
-      'ERC-20トークンの貸付・借入、NFTのレンタル。条件は自分で設定。トラストレス・透明・完全オンチェーン。',
+      'ERC-20トークンの貸付・借入、NFTのレンタル。条件は自分で設定。トラストレス・透明・安全なオンチェーン。',
   },
   zh: {
     htmlLang: 'zh',
-    title: 'Vaipakam | 去中心化点对点借贷与NFT租赁',
+    title: 'Vaipakam | 去中心化 vault-to-vault 借贷与NFT租赁',
     description:
-      '借出与借入 ERC-20 代币,租赁 NFT。自定义条款。无需信任、透明、完全链上运行。',
+      '借出与借入 ERC-20 代币,租赁 NFT。自定义条款。无需信任、透明、安全链上运行。',
   },
   ko: {
     htmlLang: 'ko',
     title: 'Vaipakam | 탈중앙화 P2P 대출 및 NFT 임대',
     description:
-      'ERC-20 토큰 대출과 차입, NFT 임대. 직접 조건을 설정하세요. 트러스트리스, 투명, 완전 온체인.',
+      'ERC-20 토큰 대출과 차입, NFT 임대. 직접 조건을 설정하세요. 트러스트리스, 투명, 안전한 온체인.',
   },
   hi: {
     htmlLang: 'hi',
     title: 'Vaipakam | विकेन्द्रीकृत P2P ऋण और NFT किराया',
     description:
-      'ERC-20 टोकन उधार दें और लें। NFT किराए पर लें। अपनी शर्तें खुद तय करें। ट्रस्टलेस, पारदर्शी, पूरी तरह ऑन-चेन।',
+      'ERC-20 टोकन उधार दें और लें। NFT किराए पर लें। अपनी शर्तें खुद तय करें। ट्रस्टलेस, पारदर्शी, सुरक्षित ऑन-चेन।',
   },
   ta: {
     htmlLang: 'ta',
     title: 'Vaipakam | பரவலாக்கப்பட்ட P2P கடன் வழங்கல் & NFT வாடகை',
     description:
-      'ERC-20 டோக்கன்களை கடன் வழங்கி/பெறுங்கள். NFT-களை வாடகைக்கு எடுங்கள். உங்கள் விதிமுறைகளை அமைக்கவும். நம்பிக்கையற்ற, வெளிப்படையான, முழுமையாக ஆன்-செயின்.',
+      'ERC-20 டோக்கன்களை கடன் வழங்கி/பெறுங்கள். NFT-களை வாடகைக்கு எடுங்கள். உங்கள் விதிமுறைகளை அமைக்கவும். நம்பிக்கையற்ற, வெளிப்படையான, பாதுகாப்பான ஆன்-செயின்.',
   },
   ar: {
     htmlLang: 'ar',
     title: 'Vaipakam | إقراض P2P لامركزي وتأجير NFT',
     description:
-      'أقرض واقترض رموز ERC-20. استأجر NFTs. حدد شروطك الخاصة. بلا حفظ مركزي، شفاف، بالكامل على السلسلة.',
+      'أقرض واقترض رموز ERC-20. استأجر NFTs. حدد شروطك الخاصة. بلا حفظ مركزي، شفاف، آمن على السلسلة.',
   },
 };
 

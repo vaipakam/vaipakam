@@ -38,7 +38,7 @@
     "privacy": "Privacidad",
     "cookieSettings": "Configuración de cookies",
     "license": "Licencia BUSL 1.1",
-    "tagline": "Préstamos vault-to-vault y alquiler de NFT descentralizados. Sin custodia, transparentes y completamente on-chain.",
+    "tagline": "Préstamos vault-to-vault y alquiler de NFT descentralizados. Sin custodia, transparentes y seguros on-chain.",
     "comingSoon": "Próximamente",
     "supportedNetworks": "Redes compatibles",
     "viewDiamondOnExplorer": "Ver Diamond en el explorador…",
@@ -809,7 +809,7 @@
   "hero": {
     "brand": "Vaipakam",
     "titleLine1": "Préstamos entre pares",
-    "titleLine2": "Totalmente on-chain",
+    "titleLine2": "Seguro on-chain",
     "subtitlePrefix": "Vaipakam",
     "subtitleBody": "te permite prestar y pedir prestado una amplia variedad de tokens, alquilar NFTs y establecer tus propios términos. Cada posición se rastrea mediante un NFT único — transparente, rastreable y sin confianza desde la oferta hasta la liquidación.",
     "launchApp": "Abrir Vaipakam",

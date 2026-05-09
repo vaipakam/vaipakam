@@ -1,6 +1,6 @@
 # Bienvenue sur Vaipakam
 
-Vaipakam est une plateforme de prêt entre pairs. Vous prêtez des
+Vaipakam est une plateforme de prêt vault-to-vault. Vous prêtez des
 actifs et touchez des intérêts. Vous empruntez des actifs et apportez
 une garantie. Vous louez des NFT et le propriétaire perçoit des
 loyers journaliers. Tout se passe directement entre deux portefeuilles,

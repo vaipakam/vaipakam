@@ -38,7 +38,7 @@
     "privacy": "プライバシー",
     "cookieSettings": "Cookie設定",
     "license": "BUSL 1.1 ライセンス",
-    "tagline": "分散型 vault-to-vault 貸付と NFT レンタル。信頼を前提にせず、透明で、すべてオンチェーン。",
+    "tagline": "分散型 vault-to-vault 貸付と NFT レンタル。信頼を前提にせず、透明で、安全なオンチェーン。",
     "comingSoon": "近日公開",
     "supportedNetworks": "対応ネットワーク",
     "viewDiamondOnExplorer": "エクスプローラーでDiamondを表示…",
@@ -809,7 +809,7 @@
   "hero": {
     "brand": "Vaipakam",
     "titleLine1": "ピアツーピア・レンディング",
-    "titleLine2": "完全オンチェーン",
+    "titleLine2": "安全なオンチェーン",
     "subtitlePrefix": "Vaipakam",
     "subtitleBody": "は幅広いトークンの貸し借り、NFT のレンタル、独自の条件設定を可能にします。すべてのポジションはユニークな NFT によって追跡されます — 提供から決済まで、透明で追跡可能、信頼不要です。",
     "launchApp": "Vaipakamを開く",
