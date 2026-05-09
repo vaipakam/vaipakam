@@ -616,9 +616,28 @@ phase_abi_sync() {
     echo "    (skipping keeper-bot ABI export — sibling repo not at $KEEPER_BOT_DIR_DEFAULT)"
   fi
 
+  # ops/{subgraph,tenderly,lz-watcher} exports — best-effort, scoped
+  # to THIS chain. Each is a no-op for chains its target system can't
+  # name. The lz-watcher emitter writes to a gitignored sidecar; it
+  # never auto-applies (secrets-bearing wrangler-secret-put commands
+  # stay a deliberate operator action).
+  if [ -d "$REPO_ROOT/ops/subgraph" ]; then
+    bash "$SCRIPT_DIR/exportSubgraphAbis.sh" "$CHAIN_SLUG"
+  fi
+  if [ -d "$REPO_ROOT/ops/tenderly" ]; then
+    bash "$SCRIPT_DIR/exportTenderlyAlerts.sh" "$CHAIN_SLUG"
+  fi
+  if [ -d "$REPO_ROOT/ops/lz-watcher" ]; then
+    mkdir -p "$REPO_ROOT/ops/lz-watcher/generated"
+    bash "$SCRIPT_DIR/exportLzWatcherVars.sh" "$CHAIN_SLUG" \
+      > "$REPO_ROOT/ops/lz-watcher/generated/secrets-$CHAIN_SLUG.sh"
+    echo "    ops/lz-watcher/generated/secrets-$CHAIN_SLUG.sh — review + apply manually."
+  fi
+
   echo
   echo "Review and commit:"
   echo "  git diff packages/contracts/src/abis/ packages/contracts/src/deployments.json"
+  echo "  git diff ops/subgraph/abis/ ops/subgraph/generated/ ops/tenderly/generated/"
   if [ -d "$KEEPER_BOT_DIR_DEFAULT" ]; then
     echo "  cd $KEEPER_BOT_DIR_DEFAULT && git diff src/abis/"
   fi
