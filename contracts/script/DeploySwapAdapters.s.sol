@@ -111,10 +111,10 @@ contract DeploySwapAdapters is Script {
         );
         require(
             diamond != address(0),
-            "DeploySwapAdapters: Diamond address resolved to zero — run DeployDiamond.s.sol first or set DIAMOND_ADDRESS"
+            "DeploySwapAdapters: Diamond address resolved to zero - run DeployDiamond.s.sol first or set DIAMOND_ADDRESS"
         );
 
-        console.log("DeploySwapAdapters — chain", block.chainid);
+        console.log("DeploySwapAdapters - chain", block.chainid);
         console.log("  Diamond:           ", diamond);
         console.log("  AllowanceHolder:   ", allowanceHolder);
         console.log("  1inch router:      ", oneInchRouter);

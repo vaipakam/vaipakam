@@ -64,6 +64,15 @@
 #       lives at 0x0000000000005E88410CcDFaDe4a5EfaE4b49562
 #       instead of the Cancun-fork canonical 0x0000…2734.
 #
+#   bash contracts/script/deploy-testnet.sh <chain-slug> --phase handover \
+#                                           --confirm-i-have-multisig-ready
+#       Runs Handover.s.sol — same role / ownership rotation as
+#       mainnet (DEFAULT_ADMIN_ROLE → governance Safe direct, five
+#       Timelock-bound roles → Timelock, PAUSER_ROLE → Pauser Safe
+#       direct, ERC-173 + every OApp's Ownable2Step → governance
+#       Safe). Practising this on testnet is the whole point of the
+#       rehearsal.
+#
 #   bash contracts/script/deploy-testnet.sh <chain-slug> --phase abi-sync
 #       Runs the three export scripts. No on-chain effect — safe to
 #       re-run. Usually run after `--phase contracts` lands.
@@ -207,6 +216,8 @@ Phases (mirror mainnet phase-for-phase except pause-rehearsal):
   swap-adapters    — Phase 7a aggregator adapters via
                      DeploySwapAdapters.s.sol. Requires
                      INITIAL_SETTLERS env var.
+  handover         — Rotate roles + ownership to governance topology.
+                     Requires --confirm-i-have-multisig-ready
   abi-sync         — packages/contracts ABI + deployments.json sync
                      + sibling keeper-bot repo (when present).
   cf-defi          — Build + wrangler deploy apps/defi (the dApp).
@@ -633,6 +644,62 @@ EOF
   echo
   forge script script/DeploySwapAdapters.s.sol --rpc-url "$RPC" --broadcast --slow
   mark_phase_done "swap-adapters"
+}
+
+# ── Phase: handover ───────────────────────────────────────────────────
+# Same shape as deploy-mainnet.sh's handover phase (see Handover.s.sol
+# for the full rationale). Practising it on testnet under the same
+# confirm-flag friction is the whole point of the rehearsal: any
+# misconfig in DEFAULT_ADMIN_ADDRESS / PAUSER_ADDRESS / Timelock
+# gets caught here, where the only cost is faucet ETH.
+
+phase_handover() {
+  if [ "$CONFIRM_MULTISIG" != "1" ]; then
+    cat >&2 <<EOF
+Refusing --phase handover without --confirm-i-have-multisig-ready.
+
+This phase rotates DEFAULT_ADMIN_ROLE / Timelock-bound roles /
+PAUSER_ROLE / ERC-173 ownership / OApp ownership off ADMIN. The
+multi-party Safe ceremony that follows (acceptOwnership on each
+OApp + DeployerZeroRolesTest as exit gate) MUST run within the
+Ownable2Step pending-owner window — i.e. the multisig signers
+need to be reachable.
+
+Re-run with --confirm-i-have-multisig-ready once they are.
+EOF
+    exit 1
+  fi
+
+  if phase_already_done "handover"; then
+    cat >&2 <<EOF
+Refusing --phase handover: marker file exists at
+  $MARKERS_DIR/phase-handover.done
+indicating roles + ownership were already rotated. If the marker
+is stale (script aborted mid-flight), inspect addresses.json +
+on-chain state, then either remove the marker manually or run a
+corrective script.
+EOF
+    exit 1
+  fi
+
+  echo "═══════════════════════════════════════════════════════════════"
+  echo "deploy-testnet.sh — handover  ($CHAIN_SLUG)"
+  echo "═══════════════════════════════════════════════════════════════"
+
+  CHAIN_SLUG="$CHAIN_SLUG" forge script script/Handover.s.sol \
+    --rpc-url "$RPC" --broadcast --slow
+
+  snapshot_addresses "post-handover"
+  mark_phase_done "handover"
+
+  echo
+  echo "✓ handover phase done. Multi-sig follow-up:"
+  echo "  1. acceptOwnership() on each OApp via the governance Safe UI"
+  echo "     — calldata + addresses are printed above."
+  echo "  2. Run DeployerZeroRolesTest as the hard exit gate:"
+  echo "       forge test --match-path test/DeployerZeroRolesTest.t.sol \\"
+  echo "         --fork-url \$$RPC_VAR"
+  echo "     The test must pass before this chain is considered handed-off."
 }
 
 # ── Phase: abi-sync ───────────────────────────────────────────────────
@@ -1154,6 +1221,7 @@ case "$PHASE" in
   contracts)        phase_contracts ;;
   lz-config)        phase_lz_config ;;
   swap-adapters)    phase_swap_adapters ;;
+  handover)         phase_handover ;;
   abi-sync)         phase_abi_sync ;;
   cf-defi)          phase_cf_defi ;;
   cf-www)           phase_cf_www ;;

@@ -46,6 +46,21 @@
 #       lives at 0x0000000000005E88410CcDFaDe4a5EfaE4b49562
 #       instead of the Cancun-fork canonical 0x0000…2734.
 #
+#   bash contracts/script/deploy-mainnet.sh <chain-slug> --phase handover \
+#                                           --confirm-i-have-multisig-ready
+#       Runs Handover.s.sol — rotates DEFAULT_ADMIN_ROLE → governance
+#       Safe (direct, no Timelock delay), the five Timelock-bound
+#       roles → Timelock, PAUSER_ROLE → Pauser Safe (direct, fast
+#       incident lever), ERC-173 Diamond ownership → Timelock, and
+#       every LZ OApp's Ownable2Step ownership → governance Safe
+#       (first leg only — the Safe must call acceptOwnership() on
+#       each before the transfer takes effect; the script prints the
+#       calldata to paste into the Safe UI). Then ADMIN renounces
+#       every role it held except WATCHER + NOTIF_BILLER (those get
+#       rotated to per-bot EOAs separately via the keeper-auth flow).
+#       The DeployerZeroRolesTest hard exit gate runs after the
+#       multisig accepts every OApp's pending ownership.
+#
 #   bash contracts/script/deploy-mainnet.sh <chain-slug> --phase abi-sync
 #       Runs the three export scripts. No on-chain effect — safe to
 #       re-run. Usually run after `--phase contracts` lands.
@@ -182,6 +197,8 @@ Phases:
   swap-adapters   — Phase 7a aggregator adapters via
                     DeploySwapAdapters.s.sol. Requires
                     INITIAL_SETTLERS env var.
+  handover        — Rotate roles + ownership to governance topology.
+                    Requires --confirm-i-have-multisig-ready
   abi-sync        — packages/contracts ABI + deployments.json sync
                     + sibling keeper-bot repo (when present).
   cf-defi         — Build + wrangler deploy apps/defi (the dApp).
@@ -585,6 +602,66 @@ EOF
   mark_phase_done "swap-adapters"
 }
 
+# ── Phase: handover ───────────────────────────────────────────────────
+# Rotates DEFAULT_ADMIN_ROLE / Timelock-bound roles / PAUSER_ROLE /
+# ERC-173 Diamond ownership / OApp Ownable2Step ownership off ADMIN.
+# See script/Handover.s.sol for the full rationale + ordering. After
+# this lands, the governance Safe must call `acceptOwnership()` on
+# every OApp printed in the script's tail before the
+# DeployerZeroRolesTest hard exit gate can pass.
+
+phase_handover() {
+  if [ "$CONFIRM_MULTISIG" != "1" ]; then
+    cat >&2 <<EOF
+Refusing --phase handover without --confirm-i-have-multisig-ready.
+
+This phase rotates DEFAULT_ADMIN_ROLE / Timelock-bound roles /
+PAUSER_ROLE / ERC-173 ownership / OApp ownership off ADMIN. The
+multi-party Safe ceremony that follows (acceptOwnership on each
+OApp + DeployerZeroRolesTest as exit gate) MUST run within the
+Ownable2Step pending-owner window — i.e. the multisig signers
+need to be reachable.
+
+Re-run with --confirm-i-have-multisig-ready once they are.
+EOF
+    exit 1
+  fi
+
+  if phase_already_done "handover"; then
+    cat >&2 <<EOF
+Refusing --phase handover: marker file exists at
+  $MARKERS_DIR/phase-handover.done
+indicating roles + ownership were already rotated. Re-running would
+attempt grantRole on a Safe that already holds the role (idempotent
+no-op) AND renounceRole from ADMIN (which would revert
+NotARoleHolder). If the marker is stale (script aborted mid-flight,
+on-chain effect incomplete), inspect addresses.json + on-chain
+state, then either remove the marker manually or run a corrective
+script.
+EOF
+    exit 1
+  fi
+
+  echo "═══════════════════════════════════════════════════════════════"
+  echo "deploy-mainnet.sh — handover  ($CHAIN_SLUG)"
+  echo "═══════════════════════════════════════════════════════════════"
+
+  CHAIN_SLUG="$CHAIN_SLUG" forge script script/Handover.s.sol \
+    --rpc-url "$RPC" --broadcast --slow
+
+  snapshot_addresses "post-handover"
+  mark_phase_done "handover"
+
+  echo
+  echo "✓ handover phase done. Multi-sig follow-up:"
+  echo "  1. acceptOwnership() on each OApp via the governance Safe UI"
+  echo "     — calldata + addresses are printed above."
+  echo "  2. Run DeployerZeroRolesTest as the hard exit gate:"
+  echo "       forge test --match-path test/DeployerZeroRolesTest.t.sol \\"
+  echo "         --fork-url \$$RPC_VAR"
+  echo "     The test must pass before this chain is considered handed-off."
+}
+
 # ── Phase: abi-sync ───────────────────────────────────────────────────
 
 phase_abi_sync() {
@@ -940,6 +1017,7 @@ case "$PHASE" in
   contracts)     phase_contracts ;;
   lz-config)     phase_lz_config ;;
   swap-adapters) phase_swap_adapters ;;
+  handover)      phase_handover ;;
   abi-sync)      phase_abi_sync ;;
   cf-defi)       phase_cf_defi ;;
   cf-www)        phase_cf_www ;;
