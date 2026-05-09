@@ -1071,7 +1071,7 @@ phase_verify() {
 #
 # Contracts pauseable on this chain (resolved from addresses.json):
 #   - diamond            (Diamond — PausableFacet.pause())
-#   - vaipakamReward     (RewardOApp — Pausable inherited)
+#   - rewardOApp         (RewardOApp — Pausable inherited)
 #   - vpfiOftAdapter     (canonical VPFI lane only)  OR
 #     vpfiMirror         (mirror VPFI lane only)
 #   - vpfiBuyReceiver    (canonical VPFI buy receiver only)  OR
@@ -1090,7 +1090,7 @@ phase_pause_rehearsal() {
   # with the known-pauseable set. Skip null / missing entries cleanly
   # so canonical chains skip the mirror keys and vice versa.
   local PAUSE_TARGETS=()
-  for KEY in diamond vaipakamReward vpfiOftAdapter vpfiMirror vpfiBuyReceiver vpfiBuyAdapter; do
+  for KEY in diamond rewardOApp vpfiOftAdapter vpfiMirror vpfiBuyReceiver vpfiBuyAdapter; do
     local ADDR=$(jq -r --arg k "$KEY" '.[$k] // empty' "$DEPLOY_DIR/addresses.json" 2>/dev/null)
     if [ -n "$ADDR" ] && [ "$ADDR" != "null" ]; then
       PAUSE_TARGETS+=("$KEY:$ADDR")

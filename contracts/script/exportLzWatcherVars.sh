@@ -113,7 +113,7 @@ for slug in "${CHAINS[@]}"; do
   fi
 
   DIAMOND=$(jq -r '.diamond // empty'         "$ADDR_FILE")
-  REWARD=$(jq -r  '.vaipakamReward // empty'  "$ADDR_FILE")
+  REWARD=$(jq -r  '.rewardOApp // empty'      "$ADDR_FILE")
   OFT=$(jq -r     '.vpfiOftAdapter // empty'  "$ADDR_FILE")
   MIR=$(jq -r     '.vpfiMirror // empty'      "$ADDR_FILE")
   BREC=$(jq -r    '.vpfiBuyReceiver // empty' "$ADDR_FILE")

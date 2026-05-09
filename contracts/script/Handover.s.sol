@@ -88,7 +88,7 @@ import {LibAccessControl} from "../src/libraries/LibAccessControl.sol";
  *
  *      Reads from addresses.json:
  *        diamond, timelock, vpfiOftAdapter | vpfiMirror,
- *        vpfiBuyAdapter | vpfiBuyReceiver, vaipakamReward
+ *        vpfiBuyAdapter | vpfiBuyReceiver, rewardOApp
  *
  *      Per CLAUDE.md "Deployments sync — Omit-keys policy", canonical
  *      and mirror keys are mutually exclusive on any single chain;
@@ -130,7 +130,13 @@ contract Handover is Script {
         address mirror = _readAddrOptional(addrJson, "vpfiMirror");
         address buyAdapter = _readAddrOptional(addrJson, "vpfiBuyAdapter");
         address buyReceiver = _readAddrOptional(addrJson, "vpfiBuyReceiver");
-        address rewardOApp = _readAddrOptional(addrJson, "vaipakamReward");
+        // The Reward OApp lands at addresses.json key `.rewardOApp`
+        // (per Deployments.writeRewardOApp / Deployments.readRewardOApp
+        // — script/lib/Deployments.sol). Earlier drafts of this file
+        // used `.vaipakamReward` which is NOT what the deploy script
+        // writes; that key always returned address(0) and silently
+        // skipped the rewardOApp transfer.
+        address rewardOApp = _readAddrOptional(addrJson, "rewardOApp");
 
         // ── 2. Sanity — the three Safes must be distinct ────────────
         // The .env.example ships with three different addresses; if
@@ -192,33 +198,37 @@ contract Handover is Script {
         IAccessControl(diamond).renounceRole(DEFAULT_ADMIN_ROLE, admin);
         console.log("Admin renounced PAUSER + Timelock-bound + DEFAULT_ADMIN");
 
-        // 3f. OApp ownership → governance Safe (Ownable2Step first
-        //     leg). Each call sets the Safe as the PENDING owner; the
-        //     Safe must call `acceptOwnership()` on each contract
-        //     before the transfer takes effect. That second leg is
-        //     printed below as the post-script multi-sig calldata.
-        if (oft != address(0)) {
-            IOwnable2Step(oft).transferOwnership(governanceSafe);
-            console.log("OApp transferOwnership pending: vpfiOftAdapter @", oft);
-        }
-        if (mirror != address(0)) {
-            IOwnable2Step(mirror).transferOwnership(governanceSafe);
-            console.log("OApp transferOwnership pending: vpfiMirror @", mirror);
-        }
-        if (buyAdapter != address(0)) {
-            IOwnable2Step(buyAdapter).transferOwnership(governanceSafe);
-            console.log("OApp transferOwnership pending: vpfiBuyAdapter @", buyAdapter);
-        }
-        if (buyReceiver != address(0)) {
-            IOwnable2Step(buyReceiver).transferOwnership(governanceSafe);
-            console.log("OApp transferOwnership pending: vpfiBuyReceiver @", buyReceiver);
-        }
-        if (rewardOApp != address(0)) {
-            IOwnable2Step(rewardOApp).transferOwnership(governanceSafe);
-            console.log("OApp transferOwnership pending: vaipakamReward @", rewardOApp);
-        }
-
         vm.stopBroadcast();
+
+        // ── 3f. OApp ownership transfers (separate broadcast windows) ──
+        // Each LZ OApp deployed by Deploy{VPFICanonical,VPFIMirror,
+        // VPFIBuyAdapter,VPFIBuyReceiver,RewardOAppCreate2}.s.sol is
+        // initialized with an owner read from a different env var:
+        //   - vpfiOftAdapter / vpfiMirror / vpfiBuyAdapter /
+        //     vpfiBuyReceiver  → owner = VPFI_OWNER
+        //   - rewardOApp                  → owner = REWARD_OWNER
+        // Neither env var is necessarily ADMIN_ADDRESS — the operator
+        // chooses at deploy time. So the OApp transfers can NOT
+        // broadcast as ADMIN; they have to broadcast as the EOA
+        // matching each contract's on-chain owner.
+        //
+        // Resolution: read VPFI_OWNER_PRIVATE_KEY and REWARD_OWNER_
+        // PRIVATE_KEY from env if present; fall back to ADMIN_PRIVATE_
+        // KEY (the common case where VPFI_OWNER == ADMIN_ADDRESS).
+        // Then per OApp, compare the signing key's EOA against the
+        // on-chain owner and skip with a clear warning on mismatch
+        // — the operator runs the transfer manually for that OApp.
+        // This keeps the happy path (one EOA = ADMIN = VPFI_OWNER =
+        // REWARD_OWNER) frictionless while making the mismatch case
+        // recoverable instead of a confusing revert.
+        uint256 vpfiOwnerKey = _envOptionalKey("VPFI_OWNER_PRIVATE_KEY", adminKey);
+        uint256 rewardOwnerKey = _envOptionalKey("REWARD_OWNER_PRIVATE_KEY", adminKey);
+
+        _transferOAppOwnership(vpfiOwnerKey,   oft,         "vpfiOftAdapter",  governanceSafe);
+        _transferOAppOwnership(vpfiOwnerKey,   mirror,      "vpfiMirror",      governanceSafe);
+        _transferOAppOwnership(vpfiOwnerKey,   buyAdapter,  "vpfiBuyAdapter",  governanceSafe);
+        _transferOAppOwnership(vpfiOwnerKey,   buyReceiver, "vpfiBuyReceiver", governanceSafe);
+        _transferOAppOwnership(rewardOwnerKey, rewardOApp,  "rewardOApp",      governanceSafe);
 
         // ── 4. Print the multisig-side calldata for acceptOwnership ──
         // The governance Safe must accept on each OApp before the
@@ -236,7 +246,7 @@ contract Handover is Script {
         if (mirror != address(0)) console.log("    target: vpfiMirror       @", mirror);
         if (buyAdapter != address(0)) console.log("    target: vpfiBuyAdapter   @", buyAdapter);
         if (buyReceiver != address(0)) console.log("    target: vpfiBuyReceiver  @", buyReceiver);
-        if (rewardOApp != address(0)) console.log("    target: vaipakamReward   @", rewardOApp);
+        if (rewardOApp != address(0)) console.log("    target: rewardOApp       @", rewardOApp);
         console.log("");
         console.log("After all are accepted, run DeployerZeroRolesTest as the");
         console.log("hard exit gate to assert deployer + admin hold no authority.");
@@ -257,21 +267,73 @@ contract Handover is Script {
         string memory json,
         string memory key,
         string memory pathHint
-    ) internal pure returns (address) {
-        bytes memory raw = vm.parseJson(json, string.concat(".", key));
-        require(raw.length >= 32, string.concat("Missing key '", key, "' in ", pathHint));
-        return abi.decode(raw, (address));
+    ) internal view returns (address) {
+        // Mirrors Deployments.sol's _readAddr pattern. parseJsonAddress
+        // reverts on a missing key; we catch and surface a friendlier
+        // diagnostic that names the addresses.json path the operator
+        // is missing.
+        try vm.parseJsonAddress(json, string.concat(".", key)) returns (address a) {
+            return a;
+        } catch {
+            revert(string.concat("Missing key '", key, "' in ", pathHint));
+        }
     }
 
-    function _readAddrOptional(string memory json, string memory key) internal pure returns (address) {
-        bytes memory raw;
-        try vm.parseJson(json, string.concat(".", key)) returns (bytes memory r) {
-            raw = r;
+    function _readAddrOptional(string memory json, string memory key) internal view returns (address) {
+        try vm.parseJsonAddress(json, string.concat(".", key)) returns (address a) {
+            return a;
         } catch {
             return address(0);
         }
-        if (raw.length < 32) return address(0);
-        return abi.decode(raw, (address));
+    }
+
+    /// @dev Read an optional uint env (a private key, here). Returns
+    ///      `fallbackKey` if the env var is unset or doesn't parse as
+    ///      a 256-bit unsigned int. Used so VPFI_OWNER_PRIVATE_KEY /
+    ///      REWARD_OWNER_PRIVATE_KEY can be omitted in the
+    ///      single-EOA case where ADMIN_PRIVATE_KEY signs everything.
+    function _envOptionalKey(string memory name, uint256 fallbackKey) internal returns (uint256) {
+        try vm.envUint(name) returns (uint256 k) {
+            if (k != 0) return k;
+        } catch {}
+        return fallbackKey;
+    }
+
+    /// @dev Transfer OApp ownership to `newOwner` if (and only if) the
+    ///      EOA matching `signingKey` is currently the on-chain owner.
+    ///      On mismatch, log a clear skip + the operator's recovery
+    ///      path. Each successful transfer broadcasts in its own
+    ///      single-tx window — Foundry sequences the broadcasts as
+    ///      separate transactions, which is the only correct way to
+    ///      hit `onlyOwner`-gated `transferOwnership` (Multicall3 batching
+    ///      would set msg.sender = Multicall3 and revert).
+    function _transferOAppOwnership(
+        uint256 signingKey,
+        address oapp,
+        string memory label,
+        address newOwner
+    ) internal {
+        if (oapp == address(0)) {
+            // Not deployed on this chain (e.g. canonical-only key on
+            // a mirror chain) — silently skip.
+            return;
+        }
+        address signer = vm.addr(signingKey);
+        address currentOwner = IOwnable2Step(oapp).owner();
+        if (currentOwner != signer) {
+            console.log("  SKIP OApp transfer:", label);
+            console.log("    address:        ", oapp);
+            console.log("    on-chain owner: ", currentOwner);
+            console.log("    signing key EOA:", signer);
+            console.log("    Set the matching *_OWNER_PRIVATE_KEY env var, or run");
+            console.log("    transferOwnership manually from a wallet that owns this OApp.");
+            return;
+        }
+        vm.broadcast(signingKey);
+        IOwnable2Step(oapp).transferOwnership(newOwner);
+        console.log("  OApp transferOwnership pending:", label);
+        console.log("    address:    ", oapp);
+        console.log("    pending to: ", newOwner);
     }
 }
 
@@ -289,5 +351,6 @@ interface IOwnership {
 }
 
 interface IOwnable2Step {
+    function owner() external view returns (address);
     function transferOwnership(address newOwner) external;
 }
