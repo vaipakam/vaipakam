@@ -144,7 +144,7 @@ export default function Navbar() {
             }}
           />
           <img
-            src={theme === 'dark' ? '/icon-dark.png' : '/icon-light.png'}
+            src={theme === 'dark' ? '/icon-dark.svg' : '/icon-light.svg'}
             alt="Vaipakam"
             className="navbar-logo navbar-logo--icon"
             aria-hidden="true"

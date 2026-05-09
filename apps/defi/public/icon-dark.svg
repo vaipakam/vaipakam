@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512" role="img" aria-label="Vaipakam logo">
+  <title>Vaipakam</title>
+  <desc>A shield-shaped vault forming the letter V with a split peer-to-peer accent, for dark backgrounds.</desc>
+
+  <!-- Outer shield/vault in white -->
+  <path d="M 96 112 L 256 80 L 416 112 L 416 256 Q 416 360 256 440 Q 96 360 96 256 Z" fill="#FFFFFF"/>
+
+  <!-- Left arm of V in deep blue -->
+  <path d="M 168 168 L 256 360 L 256 280 L 208 168 Z" fill="#0A2540"/>
+
+  <!-- Right arm of V in vibrant green -->
+  <path d="M 344 168 L 256 360 L 256 280 L 304 168 Z" fill="#00C853"/>
+</svg>

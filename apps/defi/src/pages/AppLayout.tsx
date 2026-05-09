@@ -253,7 +253,7 @@ export default function AppLayout() {
               }}
             />
             <img
-              src={theme === "dark" ? "/icon-dark.png" : "/icon-light.png"}
+              src={theme === "dark" ? "/icon-dark.svg" : "/icon-light.svg"}
               alt="Vaipakam"
               className="sidebar-logo sidebar-logo--icon"
               aria-hidden="true"
