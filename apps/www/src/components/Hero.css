@@ -78,12 +78,22 @@
 }
 
 .hero-title {
-  font-size: clamp(2.2rem, 5vw, 3.5rem);
+  /* Clamp tightened (was 2.2rem / 5vw / 3.5rem) so the longer
+   * "Vault-to-Vault Lending" headline still fits on one line at
+   * the 1024px+ two-column breakpoint where the text column is
+   * ~465px. With the prior 5vw scaling at 1024px the headline
+   * needed ~510px and broke at the space between
+   * "Vault-to-Vault" and "Lending".
+   * `text-wrap: balance` distributes any wrapping evenly across
+   * the visible lines on supporting browsers (Chrome 114+,
+   * Safari 17.5+, Firefox 121+) — graceful no-op elsewhere. */
+  font-size: clamp(2rem, 4.2vw, 3.2rem);
   font-weight: 800;
   line-height: 1.1;
   letter-spacing: -0.02em;
   color: var(--text-primary);
   margin-bottom: 20px;
+  text-wrap: balance;
 }
 
 .hero-gradient {
