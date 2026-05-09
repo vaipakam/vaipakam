@@ -1,29 +1,58 @@
 # Active chain IDs for the current rehearsal cycle.
+
 #
+
 # The export script (`exportFrontendDeployments.sh`) filters the
+
 # consolidated `deployments.json` by this list:
+
 #
-#   - Per-chain folders whose chainId is listed → included in the
-#     consolidated `deployments.json` and crawled by the hf-watcher.
-#   - Folders for retired chains stay on disk for forensic value
-#     (audit trail of what was deployed when) but stop being
-#     crawled and stop appearing in the frontend's chain picker.
+
+# - Per-chain folders whose chainId is listed → included in the
+
+# consolidated `deployments.json` and crawled by the hf-watcher.
+
+# - Folders for retired chains stay on disk for forensic value
+
+# (audit trail of what was deployed when) but stop being
+
+# crawled and stop appearing in the frontend's chain picker.
+
 #
+
 # To retire a chain: remove its line from this file, run
+
 # `bash contracts/script/exportFrontendDeployments.sh`, redeploy
+
 # the watcher with `cd ops/hf-watcher && npx wrangler deploy`, then
+
 # purge stale rows with
+
 # `FORCE=1 bash ops/hf-watcher/scripts/purge-chain.sh <chainId>`.
+
 #
+
 # Format: one chainId per line, integer; `#` starts a comment;
+
 # blank lines ignored. The allow-list is intentionally explicit —
+
 # adding a new chain folder to disk does NOT auto-include it.
+
 #
+
 # Phase 1 testnet trio (Base canonical, Arb + OP mirrors). Diamond
+
 # addresses are NOT listed here — the canonical source is each chain's
+
 # `contracts/deployments/<slug>/addresses.json`, auto-rewritten by
+
 # `deploy-chain.sh` on every redeploy. Duplicating addresses here was
+
 # drift-prone (stale after every fresh redeploy).
-84532       # base-sepolia
-421614      # arb-sepolia
-11155420    # op-sepolia
+
+31337 # anvil (local devnet — included so flow scripts and the consolidated registry pick up the local deploy)
+84532 # base-sepolia
+421614 # arb-sepolia
+11155111 # Sepolia
+
+# 11155420 # op-sepolia

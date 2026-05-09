@@ -1,0 +1,10 @@
+{
+  "monorepoCommit": "28575d890c6c71ea71cdbf894d4bdf8a880243aa",
+  "generatedAt": "2026-05-10T04:29:33+0530",
+  "facets": [
+  "LoanFacet",
+  "RepayFacet",
+  "DefaultedFacet",
+  "RiskFacet"
+]
+}

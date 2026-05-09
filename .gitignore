@@ -68,3 +68,21 @@ contracts/deployments/*/addresses.prior-rehearsal.*.json
 # site root (/sitemap.xml, /robots.txt).
 apps/www/public/sitemap.xml
 apps/www/public/robots.txt
+
+# ops/{subgraph,tenderly,lz-watcher} per-chain generated artifacts.
+#
+# These are deploy-time outputs of contracts/script/export*.sh.
+# Each carries a `monorepoCommit` provenance header in its body
+# (subgraph) or as a sibling sidecar (tenderly), so the source of
+# truth is the commit hash + the export script — committing the
+# rendered file is redundant and creates a merge conflict on every
+# redeploy (address + startBlock change).
+#
+# What STAYS committed for these surfaces:
+#   - ops/subgraph/subgraph.yaml         the per-chain template
+#   - ops/subgraph/abis/Diamond.json     event-ABI bundle
+#   - ops/subgraph/abis/_source.json     ABI bundle's commit stamp
+#   - ops/tenderly/alerts.yaml           the alert template
+ops/subgraph/generated/
+ops/tenderly/generated/
+ops/lz-watcher/generated/
