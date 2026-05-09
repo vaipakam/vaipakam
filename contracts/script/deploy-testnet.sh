@@ -1,19 +1,37 @@
 #!/usr/bin/env bash
 #
-# deploy-mainnet.sh — mainnet tiered deploy.
+# deploy-testnet.sh — testnet rehearsal-grade tiered deploy.
 #
-# Mainnet routes real value. Every irreversible step is one phase
-# behind a confirm gate. This script does NOT chain phases together;
-# the operator runs each phase explicitly, eyeballs the diff, then
-# moves to the next.
+# Mirrors deploy-mainnet.sh phase-for-phase so a testnet rehearsal
+# exercises the SAME ceremony, the SAME confirm-flag friction, and
+# the SAME operator muscle memory as the eventual mainnet day. The
+# only deltas:
+#   1. Testnet chain registry (Anvil + Sepolias + BNB testnet + Amoy)
+#      instead of mainnet slugs.
+#   2. `--phase pause-rehearsal` is ENABLED — Penpie-style sub-5-minute
+#      N-chain simultaneous-pause drill. Refused on the mainnet script
+#      (where pause is a real incident lever, not a drill).
+#   3. The dirty-tree refusal in `--phase contracts` is LIFTED —
+#      testnet rehearsals routinely iterate on uncommitted local
+#      changes, and the reproducibility property mainnet needs
+#      (commit→bytecode equivalence for post-incident forensics)
+#      doesn't apply.
+#
+# Everything else — phase ordering, confirm flags, multisig-ready
+# gate, DVN-policy-reviewed gate, swap-adapter Settler env-var
+# requirement, RPC-secret hard-fail — is identical to mainnet.
+# Practising the friction is the whole point.
+#
+# This script does NOT chain phases together; the operator runs each
+# phase explicitly, eyeballs the diff, then moves to the next.
 #
 # Tiered flow:
 #
-#   bash contracts/script/deploy-mainnet.sh <chain-slug> --phase preflight
+#   bash contracts/script/deploy-testnet.sh <chain-slug> --phase preflight
 #       Reads .env, verifies RPC chainId, balance, expected env vars.
 #       Read-only — no broadcasts. Run before any other phase.
 #
-#   bash contracts/script/deploy-mainnet.sh <chain-slug> --phase contracts \
+#   bash contracts/script/deploy-testnet.sh <chain-slug> --phase contracts \
 #                                           --confirm-i-have-multisig-ready
 #       Deploys Diamond + Timelock + VPFI lane + Reward OApp.
 #       The confirm flag is a deliberate friction — without it, the
@@ -22,7 +40,7 @@
 #       deploy day, and the operator has eyeballed the .env one more
 #       time.
 #
-#   bash contracts/script/deploy-mainnet.sh <chain-slug> --phase lz-config \
+#   bash contracts/script/deploy-testnet.sh <chain-slug> --phase lz-config \
 #                                           --confirm-dvn-policy-reviewed
 #       Runs ConfigureLZConfig.s.sol — the DVN set + confirmations
 #       must already be set in .env (DVN_REQUIRED_1/2/3,
@@ -32,7 +50,7 @@
 #       (3-required + 2-optional, threshold 1-of-2, operator
 #       diversity).
 #
-#   bash contracts/script/deploy-mainnet.sh <chain-slug> --phase swap-adapters
+#   bash contracts/script/deploy-testnet.sh <chain-slug> --phase swap-adapters
 #       Runs DeploySwapAdapters.s.sol — deploys the Phase 7a
 #       ZeroExAggregatorAdapter + OneInchAggregatorAdapter and
 #       registers both in the diamond's swap-adapter chain via
@@ -46,26 +64,26 @@
 #       lives at 0x0000000000005E88410CcDFaDe4a5EfaE4b49562
 #       instead of the Cancun-fork canonical 0x0000…2734.
 #
-#   bash contracts/script/deploy-mainnet.sh <chain-slug> --phase abi-sync
+#   bash contracts/script/deploy-testnet.sh <chain-slug> --phase abi-sync
 #       Runs the three export scripts. No on-chain effect — safe to
 #       re-run. Usually run after `--phase contracts` lands.
 #
-#   bash contracts/script/deploy-mainnet.sh <chain-slug> --phase cf-defi
+#   bash contracts/script/deploy-testnet.sh <chain-slug> --phase cf-defi
 #       Builds apps/defi (the dApp) and deploys to Cloudflare Workers
 #       Static Assets via wrangler. Requires the monorepo's `pnpm
 #       install` to have populated `apps/defi/node_modules`.
 #
-#   bash contracts/script/deploy-mainnet.sh <chain-slug> --phase cf-www
+#   bash contracts/script/deploy-testnet.sh <chain-slug> --phase cf-www
 #       Builds apps/www (the marketing site) and deploys via wrangler.
 #       Same install prerequisite as cf-defi.
 #
-#   bash contracts/script/deploy-mainnet.sh <chain-slug> --phase cf-keeper
+#   bash contracts/script/deploy-testnet.sh <chain-slug> --phase cf-keeper
 #       Deploys apps/keeper (autonomous HF-liquidation Worker) via
 #       wrangler. Stateless — reads RPC + signing key from per-Worker
 #       wrangler secrets. The phase verifies the chain-specific RPC
 #       secret is present on the Worker before claiming success.
 #
-#   bash contracts/script/deploy-mainnet.sh <chain-slug> --phase cf-indexer
+#   bash contracts/script/deploy-testnet.sh <chain-slug> --phase cf-indexer
 #       Deploys apps/indexer (D1 indexer + read-only API) via
 #       wrangler, then applies any pending D1 migrations to the shared
 #       `vaipakam-archive` database. The indexer is the only Worker
@@ -74,20 +92,26 @@
 #       alongside this phase (skipped by default — mainnet redeploys
 #       almost always preserve the diamond and its prior cursor).
 #
-#   bash contracts/script/deploy-mainnet.sh <chain-slug> --phase cf-agent
+#   bash contracts/script/deploy-testnet.sh <chain-slug> --phase cf-agent
 #       Deploys apps/agent (notifications + frames + agent surfaces)
 #       via wrangler. Stateless; same per-Worker RPC-secret check as
 #       cf-keeper.
 #
-#   bash contracts/script/deploy-mainnet.sh <chain-slug> --phase verify
+#   bash contracts/script/deploy-testnet.sh <chain-slug> --phase verify
 #       Read-only smoke checks against the deployed Diamond.
 #
-#   --phase pause-rehearsal is REFUSED on mainnet — that phase is
-#       testnet-only, where it exists in deploy-testnet.sh as a
-#       sub-5-minute N-chain simultaneous-pause drill (Penpie-style
-#       defense rehearsal). On mainnet a pause is a real incident
-#       lever and runs from `pause-all-chains.sh`, not from a deploy
-#       script.
+#   bash contracts/script/deploy-testnet.sh <chain-slug> --phase pause-rehearsal
+#       Penpie-style sub-5-minute N-chain simultaneous-pause drill.
+#       Reads addresses.json on this chain, prints the `pause()`
+#       calldata for the Diamond + every LZ OApp/OFT (VPFIOFTAdapter,
+#       VPFIMirror, VPFIBuyAdapter, VPFIBuyReceiver, VaipakamRewardOApp)
+#       so the operator can sign through the Pauser Safe UI on this
+#       chain and the same set across every other chain in parallel.
+#       After the drill, re-run with `--mode check` to read paused()
+#       on every contract and report elapsed time vs the 5-minute
+#       budget. `--mode unpause-calldata` prints the inverse calldata.
+#       Mainnet refuses this phase outright — pause there is an
+#       incident lever, not a drill.
 #
 # What this script does NOT do (and never should):
 #   - Role rotation to multisig + timelock — multi-party ceremony.
@@ -168,32 +192,34 @@ cd "$CONTRACTS_DIR"
 if [ $# -lt 3 ]; then
   cat >&2 <<EOF
 Usage:
-  bash contracts/script/deploy-mainnet.sh <chain-slug> --phase <phase> [confirm-flags]
+  bash contracts/script/deploy-testnet.sh <chain-slug> --phase <phase> [confirm-flags]
 
-Mainnet chain-slugs:
-  ethereum  base  arbitrum  optimism  polygon-zkevm  bnb  polygon
+Testnet chain-slugs:
+  base-sepolia  sepolia  arb-sepolia  op-sepolia  bnb-testnet  polygon-amoy
+  (anvil delegates to deploy-chain.sh / anvil-bootstrap.sh)
 
-Phases:
-  preflight       — Read-only, run first. No broadcasts.
-  contracts       — Diamond + Timelock + VPFI lane + Reward OApp.
-                    Requires --confirm-i-have-multisig-ready
-  lz-config       — DVN policy via ConfigureLZConfig.s.sol.
-                    Requires --confirm-dvn-policy-reviewed
-  swap-adapters   — Phase 7a aggregator adapters via
-                    DeploySwapAdapters.s.sol. Requires
-                    INITIAL_SETTLERS env var.
-  abi-sync        — packages/contracts ABI + deployments.json sync
-                    + sibling keeper-bot repo (when present).
-  cf-defi         — Build + wrangler deploy apps/defi (the dApp).
-  cf-www          — Build + wrangler deploy apps/www (marketing).
-  cf-keeper       — wrangler deploy apps/keeper (autonomous keeper).
-  cf-indexer      — wrangler deploy apps/indexer + D1 migrations
-                    on the shared `vaipakam-archive` database.
-  cf-agent        — wrangler deploy apps/agent (notifications, frames).
-  verify          — Read-only smoke checks.
+Phases (mirror mainnet phase-for-phase except pause-rehearsal):
+  preflight        — Read-only, run first. No broadcasts.
+  contracts        — Diamond + Timelock + VPFI lane + Reward OApp.
+                     Requires --confirm-i-have-multisig-ready
+  lz-config        — DVN policy via ConfigureLZConfig.s.sol.
+                     Requires --confirm-dvn-policy-reviewed
+  swap-adapters    — Phase 7a aggregator adapters via
+                     DeploySwapAdapters.s.sol. Requires
+                     INITIAL_SETTLERS env var.
+  abi-sync         — packages/contracts ABI + deployments.json sync
+                     + sibling keeper-bot repo (when present).
+  cf-defi          — Build + wrangler deploy apps/defi (the dApp).
+  cf-www           — Build + wrangler deploy apps/www (marketing).
+  cf-keeper        — wrangler deploy apps/keeper (autonomous keeper).
+  cf-indexer       — wrangler deploy apps/indexer + D1 migrations
+                     on the shared \`vaipakam-archive\` database.
+  cf-agent         — wrangler deploy apps/agent (notifications, frames).
+  verify           — Read-only smoke checks.
+  pause-rehearsal  — TESTNET-ONLY Penpie-style sub-5-min pause drill.
+                     --mode {calldata|check|unpause-calldata}
 
-For testnet rehearsals (mirrors this tiered phase model + adds a
-pause-rehearsal phase), use deploy-testnet.sh.
+For mainnet, use deploy-mainnet.sh (refuses pause-rehearsal).
 For Anvil + dev quick-iteration, use deploy-chain.sh.
 EOF
   exit 1
@@ -204,6 +230,12 @@ CHAIN_SLUG="$1"; shift
 PHASE=""
 CONFIRM_MULTISIG=0
 CONFIRM_DVN=0
+# --mode is only consulted by --phase pause-rehearsal. Defaults to
+# "calldata" (print pause() calldata for the operator to sign through
+# the Pauser Safe UI). "check" reads paused() on every contract and
+# reports elapsed time vs the 5-min budget. "unpause-calldata" prints
+# the inverse calldata for the rehearsal cleanup.
+PAUSE_MODE="calldata"
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -213,6 +245,10 @@ while [ $# -gt 0 ]; do
       ;;
     --confirm-i-have-multisig-ready) CONFIRM_MULTISIG=1 ;;
     --confirm-dvn-policy-reviewed)   CONFIRM_DVN=1 ;;
+    --mode)
+      shift
+      PAUSE_MODE="$1"
+      ;;
     *)
       echo "Unknown flag: $1" >&2
       exit 1
@@ -226,32 +262,52 @@ if [ -z "$PHASE" ]; then
   exit 1
 fi
 
-# ── Mainnet chain registry ────────────────────────────────────────────
-# WETH-pull mode is required on bnb / polygon (both have non-ETH-priced
-# native gas). The DeployVPFIBuyAdapter pre-flight already enforces
-# this via `_chainRequiresWethPaymentToken(chainId)`, so the script
-# only needs to surface the env-var name the operator must populate
-# before the contracts phase.
+# ── Testnet chain registry ────────────────────────────────────────────
+# Mirrors deploy-mainnet.sh's registry shape (CHAIN_ID + RPC_VAR +
+# IS_CANONICAL + LZ_EID + LZ_ENDPOINT_VAR + WETH_PULL_VAR) so every
+# downstream phase can stay phase-for-phase identical to mainnet.
+#
+# WETH-pull policy on testnets: per CLAUDE.md "VPFIBuyAdapter — payment-
+# token mode by chain", BNB Smart Chain Testnet (97) and Polygon Amoy
+# (80002) are exempt from the strict-WETH-pull requirement that applies
+# to their mainnets. Native-gas mode is acceptable here (the testnet
+# rate is symbolic; gas tokens have no real value). The mainnet
+# equivalents WILL require WETH-pull — that's exercised in
+# deploy-mainnet.sh.
 
 case "$CHAIN_SLUG" in
-  ethereum)
-    CHAIN_ID=1;       RPC_VAR="ETHEREUM_RPC_URL";      IS_CANONICAL=0; LZ_EID=30101; WETH_PULL_VAR="" ;;
-  base)
-    CHAIN_ID=8453;    RPC_VAR="BASE_RPC_URL";          IS_CANONICAL=1; LZ_EID=30184; WETH_PULL_VAR="" ;;
-  arbitrum)
-    CHAIN_ID=42161;   RPC_VAR="ARBITRUM_RPC_URL";      IS_CANONICAL=0; LZ_EID=30110; WETH_PULL_VAR="" ;;
-  optimism)
-    CHAIN_ID=10;      RPC_VAR="OPTIMISM_RPC_URL";      IS_CANONICAL=0; LZ_EID=30111; WETH_PULL_VAR="" ;;
-  polygon-zkevm)
-    CHAIN_ID=1101;    RPC_VAR="POLYGON_ZKEVM_RPC_URL"; IS_CANONICAL=0; LZ_EID=30158; WETH_PULL_VAR="" ;;
-  bnb)
-    CHAIN_ID=56;      RPC_VAR="BNB_RPC_URL";           IS_CANONICAL=0; LZ_EID=30102; WETH_PULL_VAR="BNB_VPFI_BUY_PAYMENT_TOKEN" ;;
-  polygon)
-    CHAIN_ID=137;     RPC_VAR="POLYGON_RPC_URL";       IS_CANONICAL=0; LZ_EID=30109; WETH_PULL_VAR="POLYGON_VPFI_BUY_PAYMENT_TOKEN" ;;
-  anvil|sepolia|base-sepolia|arb-sepolia|op-sepolia|bnb-testnet|polygon-amoy)
+  base-sepolia)
+    CHAIN_ID=84532;     RPC_VAR="BASE_SEPOLIA_RPC_URL";   IS_CANONICAL=1; LZ_EID=40245
+    LZ_ENDPOINT_VAR="LZ_ENDPOINT_BASE_SEPOLIA";  WETH_PULL_VAR="" ;;
+  sepolia)
+    CHAIN_ID=11155111;  RPC_VAR="SEPOLIA_RPC_URL";        IS_CANONICAL=0; LZ_EID=40161
+    LZ_ENDPOINT_VAR="LZ_ENDPOINT_SEPOLIA";       WETH_PULL_VAR="" ;;
+  arb-sepolia)
+    CHAIN_ID=421614;    RPC_VAR="ARB_SEPOLIA_RPC_URL";    IS_CANONICAL=0; LZ_EID=40231
+    LZ_ENDPOINT_VAR="LZ_ENDPOINT_ARB_SEPOLIA";   WETH_PULL_VAR="" ;;
+  op-sepolia)
+    CHAIN_ID=11155420;  RPC_VAR="OP_SEPOLIA_RPC_URL";     IS_CANONICAL=0; LZ_EID=40232
+    LZ_ENDPOINT_VAR="LZ_ENDPOINT_OP_SEPOLIA";    WETH_PULL_VAR="" ;;
+  bnb-testnet)
+    CHAIN_ID=97;        RPC_VAR="BNB_TESTNET_RPC_URL";    IS_CANONICAL=0; LZ_EID=40102
+    LZ_ENDPOINT_VAR="LZ_ENDPOINT_BNB_TESTNET";   WETH_PULL_VAR="" ;;
+  polygon-amoy)
+    CHAIN_ID=80002;     RPC_VAR="POLYGON_AMOY_RPC_URL";   IS_CANONICAL=0; LZ_EID=40267
+    LZ_ENDPOINT_VAR="LZ_ENDPOINT_POLYGON_AMOY";  WETH_PULL_VAR="" ;;
+  anvil)
     cat >&2 <<EOF
-Refusing to run testnet chain '$CHAIN_SLUG' from deploy-mainnet.sh.
-Use deploy-chain.sh — it's the testnet one-shot.
+Refusing to run anvil from deploy-testnet.sh — the tiered phase model
+makes no sense against a local devnet that gets wiped between runs.
+Use deploy-chain.sh anvil — it delegates to anvil-bootstrap.sh which
+mocks + flag-flips + seeds offers in one shot.
+EOF
+    exit 1
+    ;;
+  ethereum|base|arbitrum|optimism|polygon-zkevm|bnb|polygon)
+    cat >&2 <<EOF
+Refusing to run mainnet chain '$CHAIN_SLUG' from deploy-testnet.sh.
+Use deploy-mainnet.sh — same tiered phase model, but with mainnet
+chain slugs and dirty-tree refusal active.
 EOF
     exit 1
     ;;
@@ -274,6 +330,16 @@ RPC="${!RPC_VAR:-}"
 if [ -z "$RPC" ]; then
   echo "Error: \$$RPC_VAR not set in .env." >&2
   exit 1
+fi
+
+# Per-chain LZ_ENDPOINT dispatch — same shape as deploy-chain.sh. The
+# RewardOApp / VPFI deploy scripts read a single `LZ_ENDPOINT` env
+# var, but the V2 endpoint differs per chain on mainnet AND on
+# testnets that lift past the legacy LZ V1 single-endpoint shape.
+# Override LZ_ENDPOINT here from LZ_ENDPOINT_<SLUG> so the same .env
+# works on every chain without manual editing.
+if [ -n "${!LZ_ENDPOINT_VAR:-}" ]; then
+  export LZ_ENDPOINT="${!LZ_ENDPOINT_VAR}"
 fi
 
 # ── Phase markers + history sidecar ───────────────────────────────────
@@ -310,7 +376,7 @@ snapshot_addresses() {
 
 phase_preflight() {
   echo "═══════════════════════════════════════════════════════════════"
-  echo "deploy-mainnet.sh — preflight  ($CHAIN_SLUG / $CHAIN_ID)"
+  echo "deploy-testnet.sh — preflight  ($CHAIN_SLUG / $CHAIN_ID)"
   echo "═══════════════════════════════════════════════════════════════"
 
   # 1. RPC chainId
@@ -394,34 +460,18 @@ EOF
     exit 1
   fi
 
-  # Refuse a dirty working tree on mainnet. The deployment_source.json
-  # is the load-bearing "which monorepo commit produced this bytecode"
-  # record; with a dirty tree the recorded commit is a lie (the actual
-  # bytecode includes uncommitted changes that no commit captures).
-  # For testnet rehearsal the (dirty) flag is acceptable because the
-  # whole rehearsal can be re-run; for mainnet it's a hard NO since
-  # post-incident forensics depend on commit→bytecode equivalence.
-  if ! git -C "$REPO_ROOT" diff --quiet 2>/dev/null || \
-     ! git -C "$REPO_ROOT" diff --cached --quiet 2>/dev/null; then
-    cat >&2 <<EOF
-Refusing --phase contracts: working tree is dirty (uncommitted changes).
-Mainnet deploys must be reproducible from a commit hash; a dirty deploy
-makes post-incident forensics ambiguous. Either commit / stash the
-changes, or run from a clean checkout.
-
-  git status --short
-
-  # then either commit:
-  git add -A && git commit -m "..."
-
-  # or stash:
-  git stash
-EOF
-    exit 1
-  fi
+  # Dirty-tree check is INTENTIONALLY LIFTED on testnet (deploy-mainnet.sh
+  # keeps it). Testnet rehearsals routinely iterate on uncommitted
+  # local changes — refusing each iteration would make the rehearsal
+  # cycle unbearable. The deployment_source.json still records the
+  # commit hash with a "(dirty)" suffix when the tree has uncommitted
+  # changes, so post-rehearsal forensics still see the right shape;
+  # the difference is that on mainnet a dirty record is unacceptable
+  # (commit→bytecode equivalence is load-bearing for incident
+  # response), where on testnet it's just informational.
 
   echo "═══════════════════════════════════════════════════════════════"
-  echo "deploy-mainnet.sh — contracts  ($CHAIN_SLUG)"
+  echo "deploy-testnet.sh — contracts  ($CHAIN_SLUG)"
   echo "═══════════════════════════════════════════════════════════════"
 
   echo "[1] forge build"
@@ -517,7 +567,7 @@ EOF
   fi
 
   echo "═══════════════════════════════════════════════════════════════"
-  echo "deploy-mainnet.sh — lz-config  ($CHAIN_SLUG)"
+  echo "deploy-testnet.sh — lz-config  ($CHAIN_SLUG)"
   echo "═══════════════════════════════════════════════════════════════"
   forge script script/ConfigureLZConfig.s.sol --rpc-url "$RPC" --broadcast --slow
   mark_phase_done "lz-config"
@@ -548,7 +598,7 @@ explicitly. Pull current Settlers via:
 
 Then re-run with:
   INITIAL_SETTLERS=0xSettlerA,0xSettlerB,... \\
-    bash contracts/script/deploy-mainnet.sh $CHAIN_SLUG --phase swap-adapters
+    bash contracts/script/deploy-testnet.sh $CHAIN_SLUG --phase swap-adapters
 
 Optional overrides (defaults shown):
   ALLOWANCE_HOLDER_OVERRIDE  default 0x0000000000001fF3684f28c67538d4D072C22734
@@ -575,7 +625,7 @@ EOF
   fi
 
   echo "═══════════════════════════════════════════════════════════════"
-  echo "deploy-mainnet.sh — swap-adapters  ($CHAIN_SLUG)"
+  echo "deploy-testnet.sh — swap-adapters  ($CHAIN_SLUG)"
   echo "═══════════════════════════════════════════════════════════════"
   echo "  INITIAL_SETTLERS:           $INITIAL_SETTLERS"
   echo "  ALLOWANCE_HOLDER_OVERRIDE:  ${ALLOWANCE_HOLDER_OVERRIDE:-(default 0x…2734)}"
@@ -589,7 +639,7 @@ EOF
 
 phase_abi_sync() {
   echo "═══════════════════════════════════════════════════════════════"
-  echo "deploy-mainnet.sh — abi-sync"
+  echo "deploy-testnet.sh — abi-sync"
   echo "═══════════════════════════════════════════════════════════════"
   # Single canonical export target after the Stage 3 split:
   # `packages/contracts/src/{abis,deployments.json}`. Every consumer in
@@ -638,7 +688,7 @@ phase_cf_defi() {
     exit 1
   fi
   echo "═══════════════════════════════════════════════════════════════"
-  echo "deploy-mainnet.sh — cf-defi"
+  echo "deploy-testnet.sh — cf-defi"
   echo "═══════════════════════════════════════════════════════════════"
   ( cd "$DEFI_DIR" && pnpm run build && pnpm exec wrangler deploy )
   mark_phase_done "cf-defi"
@@ -656,7 +706,7 @@ phase_cf_www() {
     exit 1
   fi
   echo "═══════════════════════════════════════════════════════════════"
-  echo "deploy-mainnet.sh — cf-www"
+  echo "deploy-testnet.sh — cf-www"
   echo "═══════════════════════════════════════════════════════════════"
   ( cd "$WWW_DIR" && pnpm run build && pnpm exec wrangler deploy )
   mark_phase_done "cf-www"
@@ -691,26 +741,28 @@ verify_rpc_secret_on_worker() {
     echo "    cd $worker_dir"
     echo "    echo -n '<your-paid-rpc-url>' | pnpm exec wrangler secret put $secret_name"
     echo
-    echo "  Per CLAUDE.md mainnet hot-key policy, the RPC URL must carry"
-    echo "  an API key from a paid tier (Alchemy / Infura / QuickNode /"
-    echo "  DRPC) and live ONLY as a wrangler secret — never in the repo."
+    echo "  RPC secrets are operator-curated wrangler secrets, never in the repo."
+    echo "  For testnet rehearsals a free-tier RPC URL is acceptable (Alchemy /"
+    echo "  Infura free tier work fine); on mainnet, paid-tier API keys are"
+    echo "  required per CLAUDE.md so the cron isn't throttled mid-broadcast."
     return 1
   fi
   echo "  ✓ $secret_name is set on $worker_name"
   return 0
 }
 
-# Map mainnet chain-slug → expected RPC secret name. Same secret name
+# Map testnet chain-slug → expected RPC secret name. Same secret name
 # on each Worker (each Worker has its own copy in its own Cloudflare
 # secret store; the name is shared but the values are scoped per Worker).
+# Mirrors deploy-chain.sh's mapping so a Worker's secret store is the
+# same shape no matter which deploy script populates it.
 case "$CHAIN_SLUG" in
-  ethereum)      EXPECTED_RPC_SECRET="RPC_ETH" ;;
-  base)          EXPECTED_RPC_SECRET="RPC_BASE" ;;
-  arbitrum)      EXPECTED_RPC_SECRET="RPC_ARB" ;;
-  optimism)      EXPECTED_RPC_SECRET="RPC_OP" ;;
-  polygon-zkevm) EXPECTED_RPC_SECRET="RPC_ZKEVM" ;;
-  bnb)           EXPECTED_RPC_SECRET="RPC_BNB" ;;
-  polygon)       EXPECTED_RPC_SECRET="RPC_POLYGON" ;;
+  base-sepolia)  EXPECTED_RPC_SECRET="RPC_BASE_SEPOLIA" ;;
+  sepolia)       EXPECTED_RPC_SECRET="RPC_SEPOLIA" ;;
+  arb-sepolia)   EXPECTED_RPC_SECRET="RPC_ARB_SEPOLIA" ;;
+  op-sepolia)    EXPECTED_RPC_SECRET="RPC_OP_SEPOLIA" ;;
+  bnb-testnet)   EXPECTED_RPC_SECRET="RPC_BNB_TESTNET" ;;
+  polygon-amoy)  EXPECTED_RPC_SECRET="RPC_POLYGON_AMOY" ;;
   *)             EXPECTED_RPC_SECRET="" ;;
 esac
 
@@ -730,7 +782,7 @@ phase_cf_keeper() {
     exit 1
   fi
   echo "═══════════════════════════════════════════════════════════════"
-  echo "deploy-mainnet.sh — cf-keeper"
+  echo "deploy-testnet.sh — cf-keeper"
   echo "═══════════════════════════════════════════════════════════════"
 
   echo "[a] wrangler deploy"
@@ -775,7 +827,7 @@ phase_cf_indexer() {
     exit 1
   fi
   echo "═══════════════════════════════════════════════════════════════"
-  echo "deploy-mainnet.sh — cf-indexer"
+  echo "deploy-testnet.sh — cf-indexer"
   echo "═══════════════════════════════════════════════════════════════"
 
   echo "[a] wrangler deploy"
@@ -814,7 +866,7 @@ phase_cf_agent() {
     exit 1
   fi
   echo "═══════════════════════════════════════════════════════════════"
-  echo "deploy-mainnet.sh — cf-agent"
+  echo "deploy-testnet.sh — cf-agent"
   echo "═══════════════════════════════════════════════════════════════"
 
   echo "[a] wrangler deploy"
@@ -834,7 +886,7 @@ phase_cf_agent() {
 
 phase_verify() {
   echo "═══════════════════════════════════════════════════════════════"
-  echo "deploy-mainnet.sh — verify  ($CHAIN_SLUG)"
+  echo "deploy-testnet.sh — verify  ($CHAIN_SLUG)"
   echo "═══════════════════════════════════════════════════════════════"
 
   DIAMOND=$(jq -r '.diamond // empty' "$CONTRACTS_DIR/deployments/$CHAIN_SLUG/addresses.json" 2>/dev/null || echo "")
@@ -914,35 +966,181 @@ phase_verify() {
   mark_phase_done "verify"
 }
 
+# ── Phase: pause-rehearsal (testnet-only) ─────────────────────────────
+# Penpie-style sub-5-minute simultaneous-pause drill. Reads
+# addresses.json on this chain, picks out every Vaipakam-controlled
+# contract that exposes `pause()` (Diamond + every LZ OApp/OFT), and
+# either prints calldata for the operator's Pauser Safe to sign, or
+# reads paused() across all of them to verify the drill landed in
+# under 5 minutes, or prints the inverse calldata for the rehearsal
+# cleanup.
+#
+# This is intentionally a "print + read" surface, not "broadcast":
+#   - The Pauser Safe is the on-chain authority. The script never has
+#     a private key for it; it just supplies the calldata.
+#   - Practising the calldata-paste path on testnet is exactly what
+#     the operator will do on mainnet during a real incident.
+#
+# Contracts pauseable on this chain (resolved from addresses.json):
+#   - diamond            (Diamond — PausableFacet.pause())
+#   - vaipakamReward     (RewardOApp — Pausable inherited)
+#   - vpfiOftAdapter     (canonical VPFI lane only)  OR
+#     vpfiMirror         (mirror VPFI lane only)
+#   - vpfiBuyReceiver    (canonical VPFI buy receiver only)  OR
+#     vpfiBuyAdapter     (mirror VPFI buy adapter only)
+#
+# Sentinel file (records drill start time):
+#   $DEPLOY_DIR/.markers/pause-rehearsal-$slug-started.epoch
+
+phase_pause_rehearsal() {
+  if [ ! -f "$DEPLOY_DIR/addresses.json" ]; then
+    echo "Error: $DEPLOY_DIR/addresses.json not found — was --phase contracts run?" >&2
+    exit 1
+  fi
+
+  # Discover pauseable contracts by intersecting addresses.json keys
+  # with the known-pauseable set. Skip null / missing entries cleanly
+  # so canonical chains skip the mirror keys and vice versa.
+  local PAUSE_TARGETS=()
+  for KEY in diamond vaipakamReward vpfiOftAdapter vpfiMirror vpfiBuyReceiver vpfiBuyAdapter; do
+    local ADDR=$(jq -r --arg k "$KEY" '.[$k] // empty' "$DEPLOY_DIR/addresses.json" 2>/dev/null)
+    if [ -n "$ADDR" ] && [ "$ADDR" != "null" ]; then
+      PAUSE_TARGETS+=("$KEY:$ADDR")
+    fi
+  done
+
+  if [ ${#PAUSE_TARGETS[@]} -eq 0 ]; then
+    echo "Error: no pauseable contracts found in $DEPLOY_DIR/addresses.json." >&2
+    echo "       Run --phase contracts first."
+    exit 1
+  fi
+
+  local SENTINEL="$MARKERS_DIR/pause-rehearsal-$CHAIN_SLUG-started.epoch"
+  local PAUSE_BUDGET_S=300   # 5-minute hard budget (Penpie post-mortem)
+
+  case "$PAUSE_MODE" in
+    calldata)
+      echo "═══════════════════════════════════════════════════════════════"
+      echo "deploy-testnet.sh — pause-rehearsal  ($CHAIN_SLUG / $CHAIN_ID)"
+      echo "  THIS IS A DRILL. Practising the Pauser-Safe sign path."
+      echo "  Hard budget: ${PAUSE_BUDGET_S}s wall-clock from this banner"
+      echo "  to all contracts paused on this chain."
+      echo "═══════════════════════════════════════════════════════════════"
+      echo
+      # `pause()` selector = 0x8456cb59 (keccak256("pause()") truncated).
+      # No args, so calldata is the bare 4-byte selector.
+      local PAUSE_SELECTOR
+      PAUSE_SELECTOR=$(cast sig 'pause()' 2>/dev/null || echo "0x8456cb59")
+      echo "Sign these via Pauser Safe (UI → New Transaction → Contract Interaction):"
+      echo
+      printf "  %-22s %s\n" "Contract" "to / data"
+      printf "  %-22s %s\n" "----------------------" "-------------------------------------------"
+      for ENTRY in "${PAUSE_TARGETS[@]}"; do
+        local KEY="${ENTRY%%:*}"
+        local ADDR="${ENTRY#*:}"
+        printf "  %-22s to=%s\n" "$KEY" "$ADDR"
+        printf "  %-22s data=%s\n" "" "$PAUSE_SELECTOR"
+        echo
+      done
+      date +%s > "$SENTINEL"
+      echo "Drill started at $(date -d "@$(cat "$SENTINEL")" '+%Y-%m-%d %H:%M:%S %Z')"
+      echo "When the Safe-signed pause txs land, re-run with:"
+      echo "  bash contracts/script/deploy-testnet.sh $CHAIN_SLUG --phase pause-rehearsal --mode check"
+      ;;
+
+    check)
+      if [ ! -f "$SENTINEL" ]; then
+        echo "Error: no drill-start sentinel at $SENTINEL." >&2
+        echo "       Run --phase pause-rehearsal --mode calldata first." >&2
+        exit 1
+      fi
+      local STARTED_AT
+      STARTED_AT=$(cat "$SENTINEL")
+      local NOW=$(date +%s)
+      local ELAPSED=$((NOW - STARTED_AT))
+
+      echo "═══════════════════════════════════════════════════════════════"
+      echo "deploy-testnet.sh — pause-rehearsal CHECK  ($CHAIN_SLUG)"
+      echo "  Drill started:   $(date -d "@$STARTED_AT" '+%Y-%m-%d %H:%M:%S %Z')"
+      echo "  Elapsed:         ${ELAPSED}s   (budget: ${PAUSE_BUDGET_S}s)"
+      echo "═══════════════════════════════════════════════════════════════"
+
+      local ALL_PAUSED=1
+      for ENTRY in "${PAUSE_TARGETS[@]}"; do
+        local KEY="${ENTRY%%:*}"
+        local ADDR="${ENTRY#*:}"
+        local PAUSED
+        PAUSED=$(cast call "$ADDR" 'paused()(bool)' --rpc-url "$RPC" 2>/dev/null || echo "?")
+        if [ "$PAUSED" = "true" ]; then
+          printf "  ✓ %-22s paused=true   ($ADDR)\n" "$KEY"
+        else
+          printf "  ✗ %-22s paused=%s  ($ADDR)\n" "$KEY" "$PAUSED"
+          ALL_PAUSED=0
+        fi
+      done
+
+      echo
+      if [ "$ALL_PAUSED" = "1" ] && [ "$ELAPSED" -le "$PAUSE_BUDGET_S" ]; then
+        echo "✓ DRILL PASS — every contract paused, ${ELAPSED}s ≤ ${PAUSE_BUDGET_S}s budget."
+        echo "  Next: --mode unpause-calldata to clean up."
+      elif [ "$ALL_PAUSED" = "1" ]; then
+        echo "⚠ DRILL OVER-BUDGET — every contract paused, but ${ELAPSED}s > ${PAUSE_BUDGET_S}s."
+        echo "  On mainnet this would mean drainable contracts during the gap."
+        echo "  Investigate: Pauser Safe quorum, signer availability, Safe UI"
+        echo "  latency, RPC latency. Re-rehearse until under budget."
+      else
+        echo "✗ DRILL FAIL — at least one contract is NOT paused."
+        echo "  Investigate the unpaused contract above. Did the Safe tx revert?"
+        echo "  Did the Pauser Safe lack PAUSER_ROLE on this chain? Did the"
+        echo "  operator paste the wrong calldata?"
+        exit 1
+      fi
+      ;;
+
+    unpause-calldata)
+      echo "═══════════════════════════════════════════════════════════════"
+      echo "deploy-testnet.sh — pause-rehearsal UNPAUSE-CALLDATA  ($CHAIN_SLUG)"
+      echo "  Cleanup phase. Sign these via Pauser Safe to unpause."
+      echo "═══════════════════════════════════════════════════════════════"
+      echo
+      local UNPAUSE_SELECTOR
+      UNPAUSE_SELECTOR=$(cast sig 'unpause()' 2>/dev/null || echo "0x3f4ba83a")
+      printf "  %-22s %s\n" "Contract" "to / data"
+      printf "  %-22s %s\n" "----------------------" "-------------------------------------------"
+      for ENTRY in "${PAUSE_TARGETS[@]}"; do
+        local KEY="${ENTRY%%:*}"
+        local ADDR="${ENTRY#*:}"
+        printf "  %-22s to=%s\n" "$KEY" "$ADDR"
+        printf "  %-22s data=%s\n" "" "$UNPAUSE_SELECTOR"
+        echo
+      done
+      # Clear the sentinel so a future drill starts fresh.
+      rm -f "$SENTINEL"
+      ;;
+
+    *)
+      echo "Error: --mode '$PAUSE_MODE' not recognized." >&2
+      echo "       Valid modes: calldata (default), check, unpause-calldata" >&2
+      exit 1
+      ;;
+  esac
+}
+
 # ── Dispatch ──────────────────────────────────────────────────────────
 
 case "$PHASE" in
-  preflight)     phase_preflight ;;
-  contracts)     phase_contracts ;;
-  lz-config)     phase_lz_config ;;
-  swap-adapters) phase_swap_adapters ;;
-  abi-sync)      phase_abi_sync ;;
-  cf-defi)       phase_cf_defi ;;
-  cf-www)        phase_cf_www ;;
-  cf-keeper)     phase_cf_keeper ;;
-  cf-indexer)    phase_cf_indexer ;;
-  cf-agent)      phase_cf_agent ;;
-  verify)        phase_verify ;;
-  pause-rehearsal)
-    cat >&2 <<EOF
-Refusing --phase pause-rehearsal on mainnet.
-
-This phase is testnet-only — it lives in deploy-testnet.sh as a
-sub-5-minute N-chain simultaneous-pause drill (Penpie-style defense
-rehearsal). On MAINNET a pause is a real incident lever: never a
-drill, never a deploy-script step. If you genuinely need to pause
-production, run pause-all-chains.sh from the operator runbook.
-
-  bash contracts/script/deploy-testnet.sh <slug> --phase pause-rehearsal   # rehearsal
-  bash contracts/script/pause-all-chains.sh                                # real incident
-EOF
-    exit 1
-    ;;
+  preflight)        phase_preflight ;;
+  contracts)        phase_contracts ;;
+  lz-config)        phase_lz_config ;;
+  swap-adapters)    phase_swap_adapters ;;
+  abi-sync)         phase_abi_sync ;;
+  cf-defi)          phase_cf_defi ;;
+  cf-www)           phase_cf_www ;;
+  cf-keeper)        phase_cf_keeper ;;
+  cf-indexer)       phase_cf_indexer ;;
+  cf-agent)         phase_cf_agent ;;
+  verify)           phase_verify ;;
+  pause-rehearsal)  phase_pause_rehearsal ;;
   cf-frontend|cf-watcher)
     cat >&2 <<EOF
 Phase '$PHASE' was retired in the Stage 3/4 source-tree split.

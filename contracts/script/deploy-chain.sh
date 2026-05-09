@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# deploy-chain.sh — testnet one-shot deployment.
+# deploy-chain.sh — testnet one-shot deployment / quick-iteration script.
 #
 # A single command that:
 #   1. forge build
@@ -9,15 +9,32 @@
 #   4. Deploys the VPFI lane (canonical on Base / Base Sepolia,
 #      mirror on every other chain — branched on chain-slug)
 #   5. Deploys the Reward OApp (also canonical-vs-mirror branched)
-#   6. Syncs ABIs + consolidated deployments JSON to the frontend
-#      and the hf-watcher (via the existing export scripts)
-#   7. Builds the frontend and deploys to Cloudflare Workers
-#      Static Assets via wrangler
-#   8. Deploys the hf-watcher Cloudflare Worker via wrangler
+#   6. Syncs per-facet ABIs + the consolidated deployments JSON via
+#      `packages/contracts/` — the single-source-of-truth bundle every
+#      consumer in the monorepo (apps/{defi,www,keeper,indexer,agent})
+#      reads. No more dual-write to a Worker-side ABI directory; the
+#      Stage 3 split made `@vaipakam/contracts/abis` the only target.
+#   7. Builds + deploys the two SPAs to Cloudflare Workers Static Assets:
+#        apps/defi  → vaipakam-defi  (the dApp)
+#        apps/www   → vaipakam-www   (marketing site)
+#   8. Deploys the three Cloudflare Workers via wrangler:
+#        apps/keeper  → vaipakam-keeper   (HF watcher autonomous keeper)
+#        apps/indexer → vaipakam-indexer  (D1 indexer + read-only API,
+#                       owns the `vaipakam-archive` D1 + its migrations)
+#        apps/agent   → vaipakam-agent    (notifications, frames, agent)
+#
+# Stage 3 split (May 2026): the historical `ops/hf-watcher` monolith
+# was decomposed into three focused Workers under apps/{keeper,indexer,
+# agent}. All three bind the same D1 database (`vaipakam-archive`); only
+# the indexer owns migrations. The legacy `ops/hf-watcher` tree is
+# archived under `alpha/hf-watcher/` and is not deployed by this script.
 #
 # Scope: TESTNETS ONLY. Refuses any mainnet chain-slug. Mainnet is
 # tiered via `deploy-mainnet.sh` so the operator sees + confirms each
-# stage before any irreversible action.
+# stage before any irreversible action. A separate rehearsal-grade
+# `deploy-testnet.sh` (mirroring mainnet's tiered phase model) is the
+# right script for end-to-end testnet rehearsals; this script stays as
+# the one-shot dev quick-loop.
 #
 # Out of scope (stays manual on every chain):
 #   - Role rotation to governance multisig + timelock — multi-party
@@ -32,7 +49,9 @@
 #     addresses + thresholds that are operator-curated per chain.
 #     Run separately (instructions in DeploymentRunbook).
 #   - Wrangler secrets (`wrangler secret put TG_BOT_TOKEN` etc.) —
-#     operator-specific, never in any repo.
+#     operator-specific, never in any repo. Pre-provisioned per
+#     Worker; this script verifies presence (read-only) but never
+#     prompts for values.
 #
 # Usage:
 #   bash contracts/script/deploy-chain.sh <chain-slug> [flags]
@@ -50,9 +69,14 @@
 #     polygon-amoy   — mirror testnet (80002 — native-gas mode acceptable)
 #
 #   flags:
-#     --skip-frontend  — don't build / wrangler-deploy the frontend
-#     --skip-watcher   — don't wrangler-deploy the hf-watcher
-#     --skip-cf        — alias for both --skip-frontend --skip-watcher
+#     --skip-defi      — don't build / wrangler-deploy apps/defi
+#     --skip-www       — don't build / wrangler-deploy apps/www
+#     --skip-keeper    — don't wrangler-deploy apps/keeper
+#     --skip-indexer   — don't wrangler-deploy apps/indexer (NB: also
+#                        skips D1 migrations + cursor seed for this run)
+#     --skip-agent     — don't wrangler-deploy apps/agent
+#     --skip-cf        — alias for ALL FIVE Cloudflare-deploy flags
+#                        (defi + www + keeper + indexer + agent)
 #     --skip-vpfi      — skip the VPFI lane + reward OApp (handy when
 #                        re-running after a partial failure that already
 #                        landed those)
@@ -61,13 +85,14 @@
 #                        DVN_REQUIRED_1 isn't set in .env, but the
 #                        explicit flag also suppresses the warning)
 #     --fresh          — wipe contracts/deployments/<chain>/addresses.json
-#                        AND the watcher's D1 rows for this chainId
 #                        before deploying. Use when rehearsing — old
 #                        state from a prior deploy can't bleed into the
 #                        new one. NEVER pass on a chain whose existing
 #                        deploy you want to preserve; this is destructive.
 #                        Also wipes step-marker files so every step
 #                        runs even if a prior partial deploy left them.
+#                        (Indexer D1 retention is handled by the Worker's
+#                        own pruning logic, not by this script.)
 #     --resume         — re-run after a partial-fail. Skips any step
 #                        whose marker file (`.markers/<step>-done`)
 #                        exists in the deployments dir, so a script
@@ -94,11 +119,16 @@
 #     <CHAIN>_RPC_URL for the target chain, and the LZ_ENDPOINT_*
 #     entry for the target chain). The script `set -a` sources `.env`
 #     before any forge call so per-chain env vars surface.
-#   - Frontend + watcher: `npm install` already run inside each so
-#     `wrangler` resolves locally (the script does NOT auto-install
-#     to keep the deploy step deterministic).
+#   - Workspace install: `pnpm install` at the monorepo root has been
+#     run, so apps/{defi,www,keeper,indexer,agent} all have their
+#     `node_modules` symlink chains in place. The script does NOT
+#     auto-install (deterministic deploy step).
 #   - Wrangler authentication: `npx wrangler whoami` works without
 #     prompting (i.e., the operator has logged in or set a token).
+#   - Per-Worker secrets pre-provisioned via `wrangler secret put`
+#     against each of vaipakam-{keeper,indexer,agent}. The script
+#     verifies presence read-only (RPC_<CHAIN> per chain on every
+#     Worker that signs RPC calls) but never asks for values.
 
 set -euo pipefail
 
@@ -148,8 +178,15 @@ fi
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONTRACTS_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 REPO_ROOT="$(cd "$CONTRACTS_DIR/.." && pwd)"
-FRONTEND_DIR="$REPO_ROOT/frontend"
-WATCHER_DIR="$REPO_ROOT/ops/hf-watcher"
+# Stage 3 / Stage 4 source-tree split: SPAs and Workers each live under
+# `apps/<name>` with a wrangler.jsonc, and three Workers replace the
+# old monolithic `ops/hf-watcher`. Every Cloudflare deploy step in this
+# script `cd`s into one of these dirs.
+DEFI_DIR="$REPO_ROOT/apps/defi"
+WWW_DIR="$REPO_ROOT/apps/www"
+KEEPER_DIR="$REPO_ROOT/apps/keeper"
+INDEXER_DIR="$REPO_ROOT/apps/indexer"
+AGENT_DIR="$REPO_ROOT/apps/agent"
 
 cd "$CONTRACTS_DIR"
 
@@ -162,18 +199,28 @@ Usage: bash contracts/script/deploy-chain.sh <chain-slug> [flags]
 Supported chain-slugs:
   anvil  base-sepolia  sepolia  arb-sepolia  op-sepolia  bnb-testnet  polygon-amoy
 
-Flags:
-  --skip-frontend  --skip-watcher  --skip-cf  --skip-vpfi
+Per-app skip flags (Cloudflare deploys):
+  --skip-defi      --skip-www       --skip-keeper
+  --skip-indexer   --skip-agent     --skip-cf  (alias for all five)
+
+Other flags:
+  --skip-vpfi      --skip-lz-config
+  --fresh          --resume         --verify-contracts
 
 For mainnet, use deploy-mainnet.sh — refuses to land mainnet here.
+For end-to-end testnet rehearsals (mirrors mainnet's tiered phase
+model), use deploy-testnet.sh.
 EOF
   exit 1
 fi
 
 CHAIN_SLUG="$1"; shift
 
-SKIP_FRONTEND=0
-SKIP_WATCHER=0
+SKIP_DEFI=0
+SKIP_WWW=0
+SKIP_KEEPER=0
+SKIP_INDEXER=0
+SKIP_AGENT=0
 SKIP_VPFI=0
 SKIP_LZ_CONFIG=0
 FRESH=0
@@ -182,9 +229,18 @@ VERIFY_CONTRACTS=0
 
 while [ $# -gt 0 ]; do
   case "$1" in
-    --skip-frontend)    SKIP_FRONTEND=1 ;;
-    --skip-watcher)     SKIP_WATCHER=1 ;;
-    --skip-cf)          SKIP_FRONTEND=1; SKIP_WATCHER=1 ;;
+    --skip-defi)        SKIP_DEFI=1 ;;
+    --skip-www)         SKIP_WWW=1 ;;
+    --skip-keeper)      SKIP_KEEPER=1 ;;
+    --skip-indexer)     SKIP_INDEXER=1 ;;
+    --skip-agent)       SKIP_AGENT=1 ;;
+    --skip-cf)
+      # Single switch for "no Cloudflare deploys at all" — common
+      # when iterating purely on contracts and you don't want to wait
+      # for five wrangler invocations.
+      SKIP_DEFI=1; SKIP_WWW=1
+      SKIP_KEEPER=1; SKIP_INDEXER=1; SKIP_AGENT=1
+      ;;
     --skip-vpfi)        SKIP_VPFI=1 ;;
     --skip-lz-config)   SKIP_LZ_CONFIG=1 ;;
     --fresh)            FRESH=1 ;;
@@ -323,8 +379,8 @@ echo "  skip-lz-config:$SKIP_LZ_CONFIG"
 echo "  fresh:         $FRESH"
 echo "  resume:        $RESUME"
 echo "  verify-cts:    $VERIFY_CONTRACTS"
-echo "  skip-frontend: $SKIP_FRONTEND"
-echo "  skip-watcher:  $SKIP_WATCHER"
+echo "  skip-defi:     $SKIP_DEFI    skip-www:     $SKIP_WWW"
+echo "  skip-keeper:   $SKIP_KEEPER    skip-indexer: $SKIP_INDEXER    skip-agent: $SKIP_AGENT"
 echo "═══════════════════════════════════════════════════════════════"
 echo
 
@@ -372,17 +428,27 @@ snapshot_addresses() {
 }
 
 # ── 0. --fresh cleanup (rehearsal hygiene) ────────────────────────────
-# Wipes prior deploy artefacts + indexer rows for THIS chain so the
-# rehearsal starts from a known-empty state. Without this:
-#   - DeployDiamond reuses the existing addresses.json's diamond, so
-#     storage from the prior rehearsal persists. Old offers/loans
-#     written under a previous struct shape silently poison reads
-#     (the May-2026 garbage-values bug we hit).
-#   - The watcher's D1 keeps rows decoded against the prior bytecode,
-#     surfacing them in /offers/recent etc. with garbage amount /
-#     rate / duration values.
+# Wipes prior deploy artefacts so the rehearsal starts from a known-
+# empty state. Without this, DeployDiamond reuses the existing
+# addresses.json's diamond, and storage from the prior rehearsal
+# persists — old offers/loans written under a previous struct shape
+# silently poison reads (the May-2026 garbage-values bug we hit).
 # Mainnet slugs are refused by the chain registry above, so this
 # block can only fire on testnets.
+#
+# Stage 3 split note: the historical `WATCHER_DIR/scripts/purge-chain.sh`
+# block lived here to wipe the hf-watcher's D1 rows for THIS chainId so
+# stale rows decoded against the prior bytecode wouldn't surface in
+# OfferBook/LoanList. After the apps/{keeper,indexer,agent} split:
+#   - indexer is the only D1 consumer; its `0010_oracle_snapshot_state`
+#     and prune logic handle stale-row retention without an external
+#     purge script.
+#   - the cf-indexer step below also re-seeds `indexer_cursor` to the
+#     current safe head whenever --fresh is set, so the next cron tick
+#     starts indexing fresh-block data instead of replaying old blocks.
+# So D1 hygiene under --fresh is now handled where it belongs — inside
+# the indexer Worker's deploy block — instead of via a now-deleted
+# external script.
 
 if [ "$FRESH" = "1" ]; then
   echo "[0] --fresh cleanup"
@@ -396,18 +462,7 @@ if [ "$FRESH" = "1" ]; then
   # Wipe step markers so every step re-runs.
   rm -f "$MARKERS_DIR"/*.done 2>/dev/null || true
   echo "  ✓ cleared step markers in $MARKERS_DIR"
-  if [ -d "$WATCHER_DIR" ] && [ -f "$WATCHER_DIR/scripts/purge-chain.sh" ]; then
-    echo "  purging watcher D1 rows for chainId=$CHAIN_ID"
-    # FORCE=1 skips the interactive y/N prompt — purge-chain.sh's
-    # default flow is operator-confirmation-gated, but inside an
-    # automated --fresh sweep that's noise. The destructive scope
-    # (D1 rows scoped to ONE chainId, never user_locales) is
-    # already conservative.
-    ( cd "$WATCHER_DIR" && FORCE=1 bash scripts/purge-chain.sh "$CHAIN_ID" ) || \
-      echo "    (purge-chain returned non-zero — check watcher logs)"
-  else
-    echo "  (no watcher purge-chain.sh — skipping D1 cleanup)"
-  fi
+  echo "  (indexer D1 cursor will be re-seeded in step [8d] for chainId=$CHAIN_ID)"
   echo
 fi
 
@@ -845,15 +900,21 @@ elif [ "$VERIFY_CONTRACTS" = "1" ]; then
 fi
 
 # ── 6. Sync ABIs + consolidated deployments JSON ──────────────────────
-# ABIs auto-exported from compiled bytecode → frontend + watcher +
-# (if sibling repo present) keeper-bot. Consolidated deployments.json
-# (addresses + facet addrs) is also written to BOTH frontend and
-# watcher targets — `exportFrontendDeployments.sh` auto-detects the
-# watcher's directory at `vaipakam/ops/hf-watcher` and writes to it
-# whenever the sibling layout exists. So this single step keeps the
-# entire downstream surface (frontend reads, watcher decode, keeper-
-# bot reads) on the same `89b551e`-style commit stamp — no manual
-# follow-up needed before the cf-frontend / cf-watcher steps below.
+# Single canonical export target after the Stage 3 split:
+# `packages/contracts/src/{abis,deployments.json}`. Every consumer in
+# the monorepo — apps/{defi,www} (the SPAs) and apps/{keeper,indexer,
+# agent} (the Workers) — imports from `@vaipakam/contracts`. So this
+# one step keeps the entire downstream surface (SPA reads, Worker
+# event decode, sibling keeper-bot repo reads) on the same compiled-
+# bytecode shape — no manual follow-up before the cf-* deploy steps.
+#
+# The historical `exportWatcherAbis.sh` was deleted alongside
+# `ops/hf-watcher` itself in the Stage 3 cleanup; positional-decode
+# drift of the kind captured in ReleaseNotes-2026-05-05.md
+# (`periodicInterestCadence` shifting `getOfferDetails` tuple
+# positions) can't recur because every Worker now imports the
+# Solidity-compiler-emitted JSON instead of hand-typed `as const`
+# arrays.
 
 if step_done "abi-sync"; then
   echo
@@ -862,16 +923,6 @@ else
 echo
 echo "[6] Sync ABIs + consolidated deployments JSON"
 bash "$SCRIPT_DIR/exportFrontendAbis.sh"
-# Watcher's `getOfferDetails` / `getLoanDetails` tuples used to live as
-# hand-typed `as const` arrays in `ops/hf-watcher/src/diamondAbi.ts`.
-# A struct-shape change in `LibVaipakam.Offer` (added
-# `periodicInterestCadence`) silently misaligned the worker's
-# positional decoder and produced the OfferBook display bug captured
-# in ReleaseNotes-2026-05-05.md. Auto-exporting the watcher's ABIs
-# from the compiled bytecode on every deploy makes that drift
-# structurally impossible — the Solidity compiler is now the single
-# source of truth for the worker's read-decode shape.
-bash "$SCRIPT_DIR/exportWatcherAbis.sh"
 bash "$SCRIPT_DIR/exportFrontendDeployments.sh"
 
 KEEPER_BOT_DIR_DEFAULT="$REPO_ROOT/../vaipakam-keeper-bot"
@@ -883,194 +934,286 @@ fi
 mark_done "abi-sync"
 fi  # close step_done "abi-sync" else branch
 
-# ── 7. Frontend Cloudflare deploy ─────────────────────────────────────
+# ── 7. SPA Cloudflare deploys (defi + www) ────────────────────────────
+# Stage 4 split (May 2026): the historical `frontend/` directory is
+# now two distinct apps:
+#   apps/defi → vaipakam-defi  (the dApp — connected wallet, OfferBook,
+#                               LoanList, vault management)
+#   apps/www  → vaipakam-www   (marketing site — landing, docs, blog,
+#                               brand surfaces)
+# Each is its own Vite SPA with its own wrangler.jsonc, deployed as
+# Cloudflare Workers Static Assets. Per-app skip flags
+# (`--skip-defi` / `--skip-www`) gate them independently because
+# operators often iterate on one without touching the other.
 
-if [ "$SKIP_FRONTEND" = "0" ] && step_done "frontend"; then
+# 7a. apps/defi — the dApp.
+if [ "$SKIP_DEFI" = "0" ] && step_done "defi"; then
   echo
-  echo "[7] Frontend deploy (skipped — marker exists)"
-elif [ "$SKIP_FRONTEND" = "0" ]; then
+  echo "[7a] apps/defi deploy (skipped — marker exists)"
+elif [ "$SKIP_DEFI" = "0" ]; then
   echo
-  echo "[7] Frontend build + Cloudflare Workers Static Assets deploy"
-  if [ ! -d "$FRONTEND_DIR/node_modules" ]; then
-    echo "Error: $FRONTEND_DIR/node_modules missing — run \`cd frontend && npm install\` first." >&2
+  echo "[7a] apps/defi build + Cloudflare Workers Static Assets deploy"
+  if [ ! -d "$DEFI_DIR/node_modules" ]; then
+    echo "Error: $DEFI_DIR/node_modules missing — run \`pnpm install\` at the monorepo root first." >&2
     exit 1
   fi
-  ( cd "$FRONTEND_DIR" && npm run build && npx wrangler deploy )
-  mark_done "frontend"
+  ( cd "$DEFI_DIR" && pnpm run build && pnpm exec wrangler deploy )
+  mark_done "defi"
 else
   echo
-  echo "[7] Skipping frontend deploy (--skip-frontend)"
+  echo "[7a] Skipping apps/defi deploy (--skip-defi)"
 fi
 
-# ── 8. hf-watcher Cloudflare deploy ───────────────────────────────────
-#
-# Three sub-steps:
-#   8a. wrangler deploy — push the Worker bundle (idempotent on
-#       unchanged source).
-#   8b. D1 migrations — apply any pending schema migrations to the
-#       remote `vaipakam-alerts-db` database. Idempotent — wrangler
-#       skips already-applied entries. Without this step the Worker
-#       returns 500 `byParticipant-failed` (D1_ERROR no such table)
-#       on every loan/offer query.
-#   8c. RPC-secret check — warn (don't fail) if the per-chain
-#       `RPC_<CHAIN>` Cloudflare secret is unset. The Worker returns
-#       503 `chain-not-configured` for any chainId whose RPC secret
-#       isn't set. Operators set these via
-#       `wrangler secret put RPC_<CHAIN>` from inside ops/hf-watcher.
-#       The script does NOT auto-set them — the values carry API keys
-#       and are operator-curated per CLAUDE.md.
-
-if [ "$SKIP_WATCHER" = "0" ] && step_done "watcher"; then
+# 7b. apps/www — the marketing site.
+if [ "$SKIP_WWW" = "0" ] && step_done "www"; then
   echo
-  echo "[8] Watcher deploy (skipped — marker exists)"
-elif [ "$SKIP_WATCHER" = "0" ]; then
+  echo "[7b] apps/www deploy (skipped — marker exists)"
+elif [ "$SKIP_WWW" = "0" ]; then
   echo
-  echo "[8] hf-watcher Cloudflare Worker deploy"
-  if [ ! -d "$WATCHER_DIR" ]; then
-    echo "    (no $WATCHER_DIR — skipping)"
-  elif [ ! -d "$WATCHER_DIR/node_modules" ]; then
-    echo "Error: $WATCHER_DIR/node_modules missing — run \`cd ops/hf-watcher && npm install\` first." >&2
+  echo "[7b] apps/www build + Cloudflare Workers Static Assets deploy"
+  if [ ! -d "$WWW_DIR/node_modules" ]; then
+    echo "Error: $WWW_DIR/node_modules missing — run \`pnpm install\` at the monorepo root first." >&2
     exit 1
-  else
-    # Pre-deploy D1 purge — fires only with --fresh, before the new
-    # worker bundle goes live. Why HERE and not just at step [0]:
-    # the cron tick fires every 5 min. If a redeploy takes longer
-    # than that (slow chain, retries, whatever), the OLD worker
-    # could re-populate D1 with rows decoded against the OLD
-    # bytecode between step [0] and step [8]. Purging again right
-    # before the new worker takes over guarantees the new cron tick
-    # starts with clean state. With --fresh OFF this block is a
-    # no-op so non-rehearsal redeploys keep their indexed history.
-    if [ "$FRESH" = "1" ] && [ -f "$WATCHER_DIR/scripts/purge-chain.sh" ]; then
-      echo "  [8a-pre] watcher D1 purge for chainId=$CHAIN_ID  (--fresh)"
-      ( cd "$WATCHER_DIR" && FORCE=1 bash scripts/purge-chain.sh "$CHAIN_ID" ) || \
-        echo "    (purge-chain returned non-zero — check watcher logs)"
-    fi
-
-    echo "  [8a] wrangler deploy"
-    ( cd "$WATCHER_DIR" && npx wrangler deploy )
-
-    echo
-    echo "  [8b] D1 migrations (vaipakam-alerts-db)"
-    ( cd "$WATCHER_DIR" && npm run db:migrate )
-
-    echo
-    echo "  [8c] RPC-secret check for chainId=$CHAIN_ID"
-    # Map chain-slug → expected secret name (mirrors loanRoutes.ts/offerRoutes.ts).
-    case "$CHAIN_SLUG" in
-      base-sepolia)  EXPECTED_RPC_SECRET="RPC_BASE_SEPOLIA" ;;
-      sepolia)       EXPECTED_RPC_SECRET="RPC_SEPOLIA" ;;
-      arb-sepolia)   EXPECTED_RPC_SECRET="RPC_ARB_SEPOLIA" ;;
-      op-sepolia)    EXPECTED_RPC_SECRET="RPC_OP_SEPOLIA" ;;
-      bnb-testnet)   EXPECTED_RPC_SECRET="RPC_BNB_TESTNET" ;;
-      polygon-amoy)  EXPECTED_RPC_SECRET="RPC_POLYGON_AMOY" ;;
-      *)             EXPECTED_RPC_SECRET="" ;;
-    esac
-    if [ -n "$EXPECTED_RPC_SECRET" ]; then
-      SECRET_PRESENT=$(
-        cd "$WATCHER_DIR" && npx wrangler secret list 2>/dev/null \
-          | grep -c "\"$EXPECTED_RPC_SECRET\"" \
-          || echo 0
-      )
-      if [ "$SECRET_PRESENT" = "0" ]; then
-        # Hard-fail (was warn-only pre-2026-05-06). Today's rehearsal
-        # showed that silent-skipping a missing RPC secret leaves the
-        # watcher's `getChainConfigs(env)` filter dropping the chain
-        # entirely (env.ts:151 — `if (!m.rpc) continue;`). The cron
-        # then round-robins through only the chains that DO have a
-        # secret, never visiting this one — D1 stays empty for ~50 min
-        # before the operator notices via missing OfferBook rows. The
-        # fix is to refuse to proceed past `cf-watcher` until the
-        # secret is in place; operator can re-run the script after
-        # `wrangler secret put` and the deploy resumes from this step
-        # via the `mark_done`/`step_done` checkpoint.
-        echo "  ✗ FAIL: $EXPECTED_RPC_SECRET is NOT set on the watcher Worker."
-        echo
-        echo "  The watcher's getChainConfigs() filter (env.ts:151) drops any"
-        echo "  chain whose RPC env binding is empty, so chainId=$CHAIN_ID will"
-        echo "  silently never enter the round-robin. Set the secret before"
-        echo "  re-running this script:"
-        echo
-        echo "    cd $WATCHER_DIR"
-        echo "    echo -n '<your-paid-rpc-url>' | npx wrangler secret put $EXPECTED_RPC_SECRET"
-        echo
-        echo "  (Per CLAUDE.md, RPC secrets are operator-curated and live as"
-        echo "   wrangler secrets, never in the repo. Use a paid-tier provider —"
-        echo "   Alchemy / Infura / QuickNode / DRPC — so the cron isn't"
-        echo "   throttled mid-broadcast.)"
-        exit 1
-      fi
-      echo "  ✓ $EXPECTED_RPC_SECRET is set"
-    fi
-
-    # ── 8d. Seed indexer_cursor to current safe head (FRESH only) ─────
-    #
-    # Reason for existence: after a `--fresh` deploy, D1 has been
-    # purged for this chainId, so the watcher's `indexer_cursor` row
-    # is gone too. The next cron tick reads the missing row, falls
-    # back to `deployBlock - 1`, and starts a multi-tick backfill of
-    # the empty pre-deploy block range. With `len(chains)` × 1-min
-    # round-robin cadence + 2000-block-per-tick scan budget, that
-    # backfill can take 5-10 minutes during which the operator can't
-    # see freshly-broadcast PositiveFlows / smoke-test events on the
-    # frontend's indexer-backed tables.
-    #
-    # Seeding the cursor at current `safe` head closes that gap —
-    # the very next cron tick for this chain starts indexing AT
-    # head, picking up smoke-test events immediately. Misses any
-    # events emitted between deployBlock and seed-time (which on a
-    # fresh deploy is just the deploy script's own role-grant /
-    # init calls — not OfferCreated/LoanInitiated, which only fire
-    # via user-facing flows). The activity_events table loses those
-    # diagnostic admin events on free tier; acceptable trade for
-    # the catch-up latency win.
-    #
-    # No-op when --fresh is OFF: keeping the existing cursor is the
-    # right call for incremental redeploys (a facet swap that
-    # preserves the diamond address).
-    if [ "$FRESH" = "1" ]; then
-      echo
-      echo "  [8d] Seed indexer_cursor for chainId=$CHAIN_ID at safe head"
-      # Map chain-slug → env var holding the RPC URL. Mirrors the
-      # naming convention every env (.env / .env.example / wrangler
-      # secrets) already uses.
-      case "$CHAIN_SLUG" in
-        base-sepolia)  RPC_VAR="BASE_SEPOLIA_RPC_URL" ;;
-        sepolia)       RPC_VAR="SEPOLIA_RPC_URL" ;;
-        arb-sepolia)   RPC_VAR="ARB_SEPOLIA_RPC_URL" ;;
-        op-sepolia)    RPC_VAR="OP_SEPOLIA_RPC_URL" ;;
-        bnb-testnet)   RPC_VAR="BNB_TESTNET_RPC_URL" ;;
-        polygon-amoy)  RPC_VAR="POLYGON_AMOY_RPC_URL" ;;
-        *)             RPC_VAR="" ;;
-      esac
-      RPC_URL="${!RPC_VAR:-}"
-      if [ -z "$RPC_URL" ]; then
-        echo "    ⚠ $RPC_VAR not set in env — skipping cursor seed"
-      else
-        SAFE_HEAD="$(cast block-number --rpc-url "$RPC_URL" --tag safe 2>/dev/null \
-          || cast block-number --rpc-url "$RPC_URL" 2>/dev/null \
-          || echo "")"
-        if [ -z "$SAFE_HEAD" ]; then
-          echo "    ⚠ cast block-number failed against $RPC_VAR — skipping cursor seed"
-        else
-          NOW_TS=$(date +%s)
-          ( cd "$WATCHER_DIR" && npx wrangler d1 execute vaipakam-alerts-db --remote --command \
-            "INSERT INTO indexer_cursor (chain_id, kind, last_block, updated_at)
-             VALUES ($CHAIN_ID, 'diamond', $SAFE_HEAD, $NOW_TS)
-             ON CONFLICT(chain_id, kind) DO UPDATE SET
-               last_block = excluded.last_block,
-               updated_at = excluded.updated_at;" >/dev/null 2>&1 ) \
-            && echo "    ✓ cursor seeded at block $SAFE_HEAD" \
-            || echo "    ⚠ wrangler d1 execute failed — cron will fall through to deployBlock-1"
-        fi
-      fi
-    fi
-
-    mark_done "watcher"
   fi
+  ( cd "$WWW_DIR" && pnpm run build && pnpm exec wrangler deploy )
+  mark_done "www"
 else
   echo
-  echo "[8] Skipping watcher deploy (--skip-watcher)"
+  echo "[7b] Skipping apps/www deploy (--skip-www)"
+fi
+
+# ── 8. Worker Cloudflare deploys (keeper + indexer + agent) ───────────
+#
+# Stage 3 split (May 2026): the historical `ops/hf-watcher` monolith
+# is now three focused Workers under apps/{keeper,indexer,agent}, all
+# bound to the same D1 database (`vaipakam-archive`). Only the indexer
+# owns migrations + the indexer_cursor row; the keeper and agent are
+# stateless RPC-call surfaces.
+#
+# Per-Worker skip flags gate each independently. Each Worker has its
+# own RPC-secret store (Cloudflare scopes secrets per Worker), so the
+# `wrangler secret list` verification fans out across all three.
+# Secrets themselves are pre-provisioned; this script never prompts.
+
+# Helper — verify the chain-specific RPC secret is set on a given
+# Worker. Hard-fails the deploy if missing, with operator-friendly
+# guidance on how to set it. Behaviour mirrors the May-2026 rehearsal
+# fix: silently-missing RPC secrets cause the Worker's
+# `getChainConfigs()` filter to drop the chain from its round-robin,
+# leaving D1 / RPC state silently incomplete for ~50 min before the
+# operator notices via missing OfferBook rows. Refusing to advance
+# past this gate forces the operator to fix the secret first.
+verify_rpc_secret_on_worker() {
+  local worker_dir="$1"
+  local worker_name="$2"
+  local secret_name="$3"
+  local chain_id="$4"
+
+  local present=$(
+    cd "$worker_dir" && pnpm exec wrangler secret list 2>/dev/null \
+      | grep -c "\"$secret_name\"" \
+      || echo 0
+  )
+  if [ "$present" = "0" ]; then
+    echo "  ✗ FAIL: $secret_name is NOT set on $worker_name."
+    echo
+    echo "  The Worker's chain-config filter drops any chain whose RPC binding"
+    echo "  is empty, so chainId=$chain_id will silently never be queried."
+    echo "  Set the secret before re-running this script:"
+    echo
+    echo "    cd $worker_dir"
+    echo "    echo -n '<your-paid-rpc-url>' | pnpm exec wrangler secret put $secret_name"
+    echo
+    echo "  (Per CLAUDE.md, RPC secrets are operator-curated wrangler secrets,"
+    echo "   never in the repo. Use a paid-tier provider — Alchemy / Infura /"
+    echo "   QuickNode / DRPC — so the Worker isn't throttled mid-broadcast.)"
+    return 1
+  fi
+  echo "  ✓ $secret_name is set on $worker_name"
+  return 0
+}
+
+# Map chain-slug → expected RPC secret name. Shared by every Worker
+# verification step below — same secret name on each Worker (each
+# Worker has its own copy in its own Cloudflare secret store).
+case "$CHAIN_SLUG" in
+  base-sepolia)  EXPECTED_RPC_SECRET="RPC_BASE_SEPOLIA" ;;
+  sepolia)       EXPECTED_RPC_SECRET="RPC_SEPOLIA" ;;
+  arb-sepolia)   EXPECTED_RPC_SECRET="RPC_ARB_SEPOLIA" ;;
+  op-sepolia)    EXPECTED_RPC_SECRET="RPC_OP_SEPOLIA" ;;
+  bnb-testnet)   EXPECTED_RPC_SECRET="RPC_BNB_TESTNET" ;;
+  polygon-amoy)  EXPECTED_RPC_SECRET="RPC_POLYGON_AMOY" ;;
+  *)             EXPECTED_RPC_SECRET="" ;;
+esac
+
+# ── 8a. apps/keeper — autonomous HF-liquidation Worker ────────────────
+# Stateless: signs `triggerLiquidation` on-chain when an active loan's
+# HF drops below 1e18. Reads RPC + signing key from wrangler secrets;
+# no D1 writes (it consumes indexer reads via internal fetch). Skipped
+# under --skip-keeper.
+
+if [ "$SKIP_KEEPER" = "0" ] && step_done "keeper"; then
+  echo
+  echo "[8a] apps/keeper deploy (skipped — marker exists)"
+elif [ "$SKIP_KEEPER" = "0" ]; then
+  echo
+  echo "[8a] apps/keeper Cloudflare Worker deploy"
+  if [ ! -d "$KEEPER_DIR/node_modules" ]; then
+    echo "Error: $KEEPER_DIR/node_modules missing — run \`pnpm install\` at the monorepo root first." >&2
+    exit 1
+  fi
+  ( cd "$KEEPER_DIR" && pnpm exec wrangler deploy )
+
+  if [ -n "$EXPECTED_RPC_SECRET" ]; then
+    echo
+    echo "  RPC-secret check for chainId=$CHAIN_ID"
+    verify_rpc_secret_on_worker "$KEEPER_DIR" "vaipakam-keeper" \
+      "$EXPECTED_RPC_SECRET" "$CHAIN_ID" || exit 1
+  fi
+
+  mark_done "keeper"
+else
+  echo
+  echo "[8a] Skipping apps/keeper deploy (--skip-keeper)"
+fi
+
+# ── 8b. apps/indexer — D1 indexer + read-only API ─────────────────────
+# Owns the `vaipakam-archive` D1 database + its migrations. Indexes
+# Diamond events to D1 on every cron tick; serves /offers/recent,
+# /loans/byParticipant, etc. Three sub-steps:
+#   8b.1 wrangler deploy
+#   8b.2 D1 migrations apply  (only the indexer runs them)
+#   8b.3 RPC-secret check for this chain
+#   8b.4 Cursor seed at safe head, --fresh only
+
+if [ "$SKIP_INDEXER" = "0" ] && step_done "indexer"; then
+  echo
+  echo "[8b] apps/indexer deploy (skipped — marker exists)"
+elif [ "$SKIP_INDEXER" = "0" ]; then
+  echo
+  echo "[8b] apps/indexer Cloudflare Worker deploy"
+  if [ ! -d "$INDEXER_DIR/node_modules" ]; then
+    echo "Error: $INDEXER_DIR/node_modules missing — run \`pnpm install\` at the monorepo root first." >&2
+    exit 1
+  fi
+
+  echo "  [8b.1] wrangler deploy"
+  ( cd "$INDEXER_DIR" && pnpm exec wrangler deploy )
+
+  echo
+  echo "  [8b.2] D1 migrations apply (vaipakam-archive)"
+  # Wrangler's `d1 migrations apply` is idempotent — already-applied
+  # entries are skipped. Without this step the indexer returns 500
+  # `D1_ERROR no such table` on every loan/offer query after a fresh
+  # database creation or a schema-bumping deploy.
+  ( cd "$INDEXER_DIR" && pnpm exec wrangler d1 migrations apply vaipakam-archive --remote )
+
+  if [ -n "$EXPECTED_RPC_SECRET" ]; then
+    echo
+    echo "  [8b.3] RPC-secret check for chainId=$CHAIN_ID"
+    verify_rpc_secret_on_worker "$INDEXER_DIR" "vaipakam-indexer" \
+      "$EXPECTED_RPC_SECRET" "$CHAIN_ID" || exit 1
+  fi
+
+  # ── 8b.4. Seed indexer_cursor to current safe head (FRESH only) ─────
+  #
+  # Reason for existence: after a `--fresh` deploy, the prior
+  # rehearsal's addresses.json was rotated out so the indexer is
+  # consuming a freshly-deployed Diamond. The cron tick reads the
+  # `indexer_cursor` row for `(chain_id, 'diamond')` and starts at
+  # `last_block` — which without seeding either replays the prior
+  # Diamond's events (decoded against the new ABI = garbage) or
+  # falls back to `deployBlock - 1` and burns 5-10 min of cron ticks
+  # backfilling the empty pre-deploy block range. Either way the
+  # operator can't see freshly-broadcast PositiveFlows / smoke-test
+  # events on indexer-backed surfaces for several minutes.
+  #
+  # Seeding the cursor at current `safe` head closes that gap —
+  # the very next cron tick for this chain starts indexing AT
+  # head, picking up smoke-test events immediately. Misses any
+  # events emitted between deployBlock and seed-time (which on a
+  # fresh deploy is just the deploy script's own role-grant /
+  # init calls — not OfferCreated/LoanInitiated, which only fire
+  # via user-facing flows). The activity_events table loses those
+  # diagnostic admin events on free tier; acceptable trade for
+  # the catch-up latency win.
+  #
+  # No-op when --fresh is OFF: keeping the existing cursor is the
+  # right call for incremental redeploys (a facet swap that
+  # preserves the diamond address).
+  if [ "$FRESH" = "1" ]; then
+    echo
+    echo "  [8b.4] Seed indexer_cursor for chainId=$CHAIN_ID at safe head"
+    # Map chain-slug → env var holding the RPC URL. Mirrors the
+    # naming convention every env (.env / .env.example / wrangler
+    # secrets) already uses.
+    case "$CHAIN_SLUG" in
+      base-sepolia)  CURSOR_RPC_VAR="BASE_SEPOLIA_RPC_URL" ;;
+      sepolia)       CURSOR_RPC_VAR="SEPOLIA_RPC_URL" ;;
+      arb-sepolia)   CURSOR_RPC_VAR="ARB_SEPOLIA_RPC_URL" ;;
+      op-sepolia)    CURSOR_RPC_VAR="OP_SEPOLIA_RPC_URL" ;;
+      bnb-testnet)   CURSOR_RPC_VAR="BNB_TESTNET_RPC_URL" ;;
+      polygon-amoy)  CURSOR_RPC_VAR="POLYGON_AMOY_RPC_URL" ;;
+      *)             CURSOR_RPC_VAR="" ;;
+    esac
+    CURSOR_RPC_URL="${!CURSOR_RPC_VAR:-}"
+    if [ -z "$CURSOR_RPC_URL" ]; then
+      echo "    ⚠ $CURSOR_RPC_VAR not set in env — skipping cursor seed"
+    else
+      SAFE_HEAD="$(cast block-number --rpc-url "$CURSOR_RPC_URL" --tag safe 2>/dev/null \
+        || cast block-number --rpc-url "$CURSOR_RPC_URL" 2>/dev/null \
+        || echo "")"
+      if [ -z "$SAFE_HEAD" ]; then
+        echo "    ⚠ cast block-number failed against $CURSOR_RPC_VAR — skipping cursor seed"
+      else
+        NOW_TS=$(date +%s)
+        ( cd "$INDEXER_DIR" && pnpm exec wrangler d1 execute vaipakam-archive --remote --command \
+          "INSERT INTO indexer_cursor (chain_id, kind, last_block, updated_at)
+           VALUES ($CHAIN_ID, 'diamond', $SAFE_HEAD, $NOW_TS)
+           ON CONFLICT(chain_id, kind) DO UPDATE SET
+             last_block = excluded.last_block,
+             updated_at = excluded.updated_at;" >/dev/null 2>&1 ) \
+          && echo "    ✓ cursor seeded at block $SAFE_HEAD" \
+          || echo "    ⚠ wrangler d1 execute failed — cron will fall through to deployBlock-1"
+      fi
+    fi
+  fi
+
+  mark_done "indexer"
+else
+  echo
+  echo "[8b] Skipping apps/indexer deploy (--skip-indexer)"
+fi
+
+# ── 8c. apps/agent — notifications + frames + agent surfaces ──────────
+# Stateless: signs Telegram + Push notification dispatches, serves
+# Farcaster frames, hosts the natural-language agent endpoints. Reads
+# RPC + signing keys from wrangler secrets; no D1 writes. Skipped
+# under --skip-agent.
+
+if [ "$SKIP_AGENT" = "0" ] && step_done "agent"; then
+  echo
+  echo "[8c] apps/agent deploy (skipped — marker exists)"
+elif [ "$SKIP_AGENT" = "0" ]; then
+  echo
+  echo "[8c] apps/agent Cloudflare Worker deploy"
+  if [ ! -d "$AGENT_DIR/node_modules" ]; then
+    echo "Error: $AGENT_DIR/node_modules missing — run \`pnpm install\` at the monorepo root first." >&2
+    exit 1
+  fi
+  ( cd "$AGENT_DIR" && pnpm exec wrangler deploy )
+
+  if [ -n "$EXPECTED_RPC_SECRET" ]; then
+    echo
+    echo "  RPC-secret check for chainId=$CHAIN_ID"
+    verify_rpc_secret_on_worker "$AGENT_DIR" "vaipakam-agent" \
+      "$EXPECTED_RPC_SECRET" "$CHAIN_ID" || exit 1
+  fi
+
+  mark_done "agent"
+else
+  echo
+  echo "[8c] Skipping apps/agent deploy (--skip-agent)"
 fi
 
 # ── Summary ───────────────────────────────────────────────────────────
