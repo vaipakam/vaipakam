@@ -1,0 +1,96 @@
+/* WalletAddressPill — connected-wallet badge with inline copy
+ * affordance. Visual sibling to the existing wallet badges that
+ * lived in Navbar.css (`.wallet-address-badge` etc.) but with a
+ * small Copy icon button glued to the trailing edge so the user
+ * can copy without opening any menu.
+ *
+ * The pill itself is a `<span>` (not a button) so the embedded
+ * copy `<button>` doesn't violate "button-inside-button" HTML.
+ * Status dot + address text are plain content; only the copy
+ * affordance is interactive. */
+
+.wallet-address-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  height: 36px;
+  border-radius: var(--radius-full);
+  border: 1px solid var(--border);
+  background: var(--bg-card);
+  color: var(--text-primary);
+  font-size: 0.85rem;
+  font-weight: 600;
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  cursor: pointer;
+  /* The whole pill is now the copy affordance — clicking anywhere
+   * inside fires the copy handler. Resetting button defaults to
+   * inherit the wrapper's font / colour and leaving the explicit
+   * `cursor: pointer` so users see the click target on hover. */
+  transition:
+    background 0.15s ease,
+    border-color 0.15s ease,
+    color 0.15s ease;
+  text-align: left;
+}
+
+@media (hover: hover) {
+  .wallet-address-pill:hover {
+    border-color: var(--brand);
+    color: var(--brand);
+  }
+  .wallet-address-pill:hover .wallet-address-pill-copy-icon {
+    color: var(--brand);
+  }
+}
+
+.wallet-address-pill:focus-visible {
+  outline: none;
+  border-color: var(--brand);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand) 25%, transparent);
+}
+
+.wallet-address-pill-text {
+  display: inline-flex;
+  align-items: center;
+  /* Cap width on very narrow screens so a long ENS doesn't push
+   * the copy button off the row. */
+  max-width: 16ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.wallet-address-pill-copy-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  color: var(--text-tertiary);
+  transition: color 0.15s ease;
+}
+
+/* Copied flash — tints the entire pill brand for the 1.2s the
+ * `<Check>` icon sits in place of `<Copy>`. The
+ * `wallet-address-pill-copied-pop` keyframe gives the swap a
+ * tiny scale-in pulse so it reads as feedback rather than a
+ * static state change. */
+.wallet-address-pill--copied {
+  background: var(--brand-bg);
+  border-color: var(--brand);
+  color: var(--brand);
+}
+
+.wallet-address-pill--copied .wallet-address-pill-copy-icon {
+  color: var(--brand);
+  animation: wallet-address-pill-copied-pop 0.18s ease-out;
+}
+
+@keyframes wallet-address-pill-copied-pop {
+  from {
+    transform: scale(0.85);
+  }
+  to {
+    transform: scale(1);
+  }
+}

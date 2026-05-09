@@ -1,0 +1,5 @@
+{
+  "monorepoCommit": "618f4e87c047ca544cb65eb0d19d32b3f3185ae3 (dirty)",
+  "exportedAt": "2026-05-06T14:43:27Z",
+  "facets": ["AddCollateralFacet","AdminFacet","ClaimFacet","ConfigFacet","DefaultedFacet","DiamondLoupeFacet","EarlyWithdrawalFacet","EscrowFactoryFacet","InteractionRewardsFacet","LegalFacet","LoanFacet","MetricsFacet","OfferCancelFacet","OfferFacet","OracleAdminFacet","OracleFacet","PartialWithdrawalFacet","PrecloseFacet","ProfileFacet","RefinanceFacet","RepayFacet","RewardReporterFacet","RiskFacet","StakingRewardsFacet","TreasuryFacet","VaipakamNFTFacet","VPFIBuyAdapter","VPFIBuyReceiver","VPFIDiscountFacet","VPFITokenFacet"]
+}

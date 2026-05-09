@@ -1,0 +1,718 @@
+.navbar {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 1000;
+  background: var(--bg-nav);
+  backdrop-filter: blur(16px);
+  border-bottom: 1px solid var(--border);
+  transition: background 0.3s ease;
+}
+
+.navbar-inner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 72px;
+}
+
+.navbar-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 1.3rem;
+  font-weight: 700;
+  color: var(--text-primary);
+  /* Without `flex-shrink: 0` the brand cell shrinks first when the
+   * right-side actions cluster (Launch App + wallet) competes for
+   * width on narrow viewports — the logo's `height: 36px; width: auto`
+   * means the image dimensions change as the flex item shrinks.
+   * Pinning the brand fixes the logo at its intended size; if room
+   * gets tight, the nav-links cluster wraps into the hamburger
+   * (already handled at the 768 px breakpoint below). */
+  flex-shrink: 0;
+}
+
+.navbar-logo {
+  height: 36px;
+  width: auto;
+  flex-shrink: 0;
+}
+
+.navbar-logo--icon {
+  display: none;
+}
+
+/* Public Navbar (outside /app) always shows the full logo — the icon-only
+ * variant is kept in the DOM for the AppLayout sidebar's own responsive
+ * rules. Instead of shrinking the logo when space gets tight, we fold the
+ * nav links into the hamburger at the 768px breakpoint below. */
+
+.navbar-brand-text {
+  display: none;
+}
+.navbar-logo[style*="display: none"] ~ .navbar-brand-text,
+.navbar-brand-text.show {
+  display: inline;
+}
+
+.navbar-links {
+  display: none;
+  /* Bumped from 8px → 16px for more breathing room between the
+   * Learn / Verify / Launch App slots. Equal gap between every
+   * pair (it's a single flexbox row), no per-slot adjustment
+   * needed. */
+  gap: 16px;
+}
+
+.navbar-link {
+  font-size: 0.9rem;
+  font-weight: 500;
+  color: var(--text-secondary);
+  /* Tightened from `8px 16px` so the four nav slots (Learn / Verify /
+   * VPFI / Launch App) fit in less horizontal room and don't squeeze
+   * the brand logo. The four pills now have equal visual breathing
+   * room (10 px each side + the 8 px parent gap) without bunching. */
+  padding: 8px 10px;
+  border-radius: var(--radius-full);
+  transition: all 0.2s ease;
+  /* Individual link text must never break across lines — the row should
+   * overflow toward the hamburger breakpoint rather than wrap mid-link. */
+  white-space: nowrap;
+}
+.navbar-link:hover {
+  color: var(--brand);
+  background: var(--brand-bg);
+}
+
+/* ── Nav-group dropdowns ──
+ *
+ * Two grouped dropdowns ("Learn", "Verify") replace the previous
+ * 6-flat-link row. Each `.navbar-group` is the relative anchor for
+ * its own `.navbar-group-panel` (desktop popover) and contains an
+ * inline `.navbar-group-mobile-list` that's hidden on desktop and
+ * shown inside the mobile flyout. Only one popover open at a time —
+ * `openGroup` state in Navbar.tsx enforces this; the click-outside
+ * handler closes whichever is open. */
+.navbar-group {
+  position: relative;
+}
+
+.navbar-group-trigger {
+  display: inline-flex;
+  align-items: center;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  font-family: inherit;
+  /* Browsers' user-agent stylesheet pins <button> font-size to
+   * ~13px regardless of the parent's `.navbar-link` rule, which
+   * made the dropdown triggers look noticeably smaller than the
+   * other nav links and the Launch App pill. Explicit overrides
+   * keep "Learn" / "Verify" at parity with the rest of the row.
+   *
+   * Weight 700 (Bold) is intentional — the dropdown triggers are
+   * higher-traffic than individual flat links, so bumping them
+   * above the row's 500 baseline gives them appropriate emphasis. */
+  font-size: 0.9rem;
+  font-weight: 700;
+  letter-spacing: -0.005em;
+}
+
+.navbar-group-trigger--open {
+  color: var(--brand);
+  background: var(--brand-bg);
+}
+
+/* Chevron lives on the trigger purely for the mobile flyout —
+ * hidden on desktop (the desktop trigger is a bare text label
+ * by user preference). The mobile @media block below un-hides it
+ * and rotates 180° when the section is expanded. */
+.navbar-group-trigger-chevron {
+  display: none;
+  flex-shrink: 0;
+  transition: transform 0.2s ease;
+}
+
+.navbar-group-panel {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 0;
+  min-width: 200px;
+  padding: 6px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-lg);
+  z-index: 1100;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  /* Closed state — invisible, inert, slid up + slightly scaled down
+   * so the open transition has somewhere to ease from. The panel
+   * stays mounted in the DOM so the same `transition` rule below
+   * can animate BOTH the open and close directions; conditional
+   * rendering would skip the close transition entirely. */
+  transform-origin: top left;
+  opacity: 0;
+  transform: translateY(-6px) scale(0.97);
+  visibility: hidden;
+  pointer-events: none;
+  /* `cubic-bezier(0.16, 1, 0.3, 1)` is the "ease-out-expo"-ish curve
+   * Apple / Linear / Vercel use for menu reveals — fast start, slow
+   * settle. 280ms is at the upper edge of "snappy menu" before it
+   * starts feeling sluggish. Visibility's transition uses a 0s
+   * duration with a delay matching the opacity duration: that flips
+   * `visibility: hidden` AFTER the fade-out finishes (so we don't
+   * blink the panel out of existence mid-transition) and flips it
+   * to `visible` BEFORE the fade-in starts (delay overridden by the
+   * `--open` rule below). */
+  transition:
+    opacity 0.28s cubic-bezier(0.16, 1, 0.3, 1),
+    transform 0.28s cubic-bezier(0.16, 1, 0.3, 1),
+    visibility 0s 0.28s;
+}
+
+.navbar-group-panel--open {
+  opacity: 1;
+  transform: translateY(0) scale(1);
+  visibility: visible;
+  pointer-events: auto;
+  /* On open, visibility flips immediately (delay 0s) so the fade-in
+   * happens against a visible panel; on close, the rule above
+   * delays the flip until after the fade is done. */
+  transition:
+    opacity 0.28s cubic-bezier(0.16, 1, 0.3, 1),
+    transform 0.28s cubic-bezier(0.16, 1, 0.3, 1),
+    visibility 0s 0s;
+}
+
+/* Invisible hover-bridge that spans the visual gap between the
+ * trigger and the panel. Without it, the cursor crossing that gap
+ * exits `.navbar-group`'s subtree (the trigger and the panel are
+ * siblings with empty space between them), `pointerleave` fires
+ * on the wrapper, and the menu closes mid-traverse — the classic
+ * dropdown-disappears-when-you-try-to-click-it bug.
+ *
+ * Two design choices that make the bridge robust:
+ *
+ *   1. **`pointer-events: auto` set explicitly** so the bridge stays
+ *      hit-testable even when the panel itself carries
+ *      `pointer-events: none` (the closed state). Combined with the
+ *      panel's `visibility: hidden` only firing AFTER the close
+ *      transition, the bridge keeps catching pointer transit during
+ *      the entire 280 ms fade-out — re-entering reverses the
+ *      animation cleanly.
+ *
+ *   2. **Wider than the visual gap** (16 px tall, the gap is 8 px) +
+ *      negative left/right offsets so the bridge extends a few
+ *      pixels under the trigger AND beyond the panel's left/right
+ *      edges. Forgiving for diagonal cursor transit (e.g. moving
+ *      from the trigger to the second item in the panel) — the
+ *      8 px exact-match bridge was technically correct but caught
+ *      only straight-down trajectories. */
+.navbar-group-panel::before {
+  content: '';
+  position: absolute;
+  top: -16px;
+  left: -8px;
+  right: -8px;
+  height: 16px;
+  pointer-events: auto;
+}
+
+.navbar-group-item {
+  display: block;
+  padding: 8px 12px;
+  border-radius: var(--radius-sm);
+  font-size: 0.88rem;
+  font-weight: 500;
+  color: var(--text-primary);
+  transition: background-color 0.15s ease, color 0.15s ease;
+  white-space: nowrap;
+}
+
+.navbar-group-item:hover {
+  background: var(--bg-card-hover);
+  color: var(--brand);
+}
+
+/* Mobile inline list lives in the DOM unconditionally; visibility is
+ * paired with the existing desktop / mobile breakpoint rules below
+ * so desktop hides it (popover wins) and mobile flyout shows it
+ * (popover hidden). */
+.navbar-group-mobile-list {
+  display: none;
+}
+
+.navbar-group-mobile-label {
+  display: block;
+  padding: 8px 16px 4px;
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+}
+
+.navbar-link--mobile-nested {
+  /* Slight indent so nested items read as part of the section above
+   * them. Mirrors the indent the AppLayout sidebar uses for nested
+   * sub-items. */
+  padding-left: 28px !important;
+}
+
+.navbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.theme-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border-radius: var(--radius-full);
+  border: 1px solid var(--border);
+  background: var(--bg-card);
+  color: var(--text-secondary);
+  transition: all 0.2s ease;
+}
+.theme-toggle:hover {
+  border-color: var(--brand);
+  color: var(--brand);
+}
+
+/* ── Settings gear popover ──
+ *
+ * Mirrors the in-app `.topbar-settings` pattern from AppLayout.css.
+ * The styles are duplicated here (rather than shared via a global
+ * stylesheet) because the public Navbar.tsx imports only Navbar.css
+ * — moving the shared rules into a third file would be a larger
+ * refactor for ~30 lines of CSS. Keep the two in sync if either
+ * gets visual tweaks. */
+.navbar-settings {
+  position: relative;
+  flex-shrink: 0;
+}
+
+.navbar-settings-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: var(--radius-full);
+  border: 1px solid var(--border);
+  background: var(--bg-card);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.navbar-settings-btn:hover,
+.navbar-settings[aria-expanded="true"] .navbar-settings-btn {
+  border-color: var(--brand);
+  color: var(--brand);
+}
+
+.navbar-settings-panel {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  min-width: 260px;
+  max-width: min(320px, calc(100vw - 32px));
+  padding: 14px 16px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-lg);
+  z-index: 1200;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.navbar-settings-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.navbar-settings-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+}
+
+.navbar-settings-hint {
+  margin: -4px 0 0;
+  font-size: 0.72rem;
+  line-height: 1.4;
+  color: var(--text-tertiary);
+}
+
+/* Inside the settings panel, the theme toggle widens with a label
+ * ("Light" / "Dark") so the affordance reads as a menu item rather
+ * than a stray icon. */
+.navbar-settings-panel .theme-toggle {
+  width: auto;
+  height: 32px;
+  padding: 0 12px;
+  gap: 8px;
+}
+
+.navbar-settings-theme-label {
+  font-size: 0.82rem;
+  font-weight: 600;
+}
+
+.navbar-cta {
+  display: none;
+  /* Desktop CTAs (Launch App, Connect Wallet, Wrong Network, wallet badge)
+   * must stay on one line — otherwise labels like "Launch App" or
+   * "Wrong Network" can break at narrow desktop widths, which looks
+   * broken next to the single-line nav links. */
+  white-space: nowrap;
+}
+
+/* Tight sizing shared by every .btn-based desktop CTA in the top bar
+ * (Launch App, Connect Wallet, Wrong Network). Overrides the default
+ * .btn 12/28 padding + 0.95rem font so these three buttons render at
+ * identical heights (≈32 px outer). The `.wallet-connected` wrapper is
+ * INTENTIONALLY excluded from this rule — it lays out its own inner
+ * badge + disconnect icon and must not inherit these paddings. */
+.btn.navbar-cta {
+  padding: 7px 16px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  gap: 6px;
+  letter-spacing: 0.01em;
+  line-height: 1.4;
+}
+.btn.navbar-cta svg {
+  width: 14px;
+  height: 14px;
+}
+
+/* Keep the connected-wallet pill's outer height aligned with Launch App
+ * so the top bar doesn't jump when the wallet connects. The inner
+ * disconnect icon stays square at 32 px to match. */
+.wallet-connected.navbar-cta .wallet-address-badge {
+  padding: 6px 12px;
+  height: 32px;
+  line-height: 1.4;
+}
+.wallet-connected.navbar-cta .wallet-disconnect-btn {
+  width: 32px;
+  height: 32px;
+}
+
+/* Launch App keeps a dedicated class for any future launch-specific
+ * tweaks (hover, focus ring, analytics attr hooks) without reopening
+ * the shared .btn.navbar-cta rule. */
+.navbar-launch {
+  letter-spacing: 0.01em;
+  /* The parent `.navbar-inner` uses `justify-content: space-between`,
+   * so the visible gap between the right edge of `.navbar-links`
+   * (last entry: "Verify" dropdown) and the Launch App button is
+   * leftover-space-driven and shrinks below the 16 px we use INSIDE
+   * `.navbar-links` between Learn ↔ Verify. A fixed left margin
+   * here pegs the minimum gap so Verify ↔ Launch App matches the
+   * Learn ↔ Verify rhythm. */
+  margin-left: 16px;
+}
+
+.navbar-cta-mobile {
+  display: block;
+  text-align: center;
+  margin-top: 8px;
+}
+
+.mobile-menu-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border-radius: var(--radius-md);
+  border: none;
+  background: transparent;
+  color: var(--text-primary);
+}
+
+/* Desktop breakpoint — 768px is the industry-standard tablet/mobile
+ * threshold (Tailwind `md`, Bootstrap `md`, iPad portrait, Material
+ * small/medium boundary). The previous 1200px was set when the row
+ * carried 6 flat nav links; consolidating those into the Learn /
+ * Verify dropdowns roughly halved the row's horizontal budget, so
+ * the hamburger no longer needs to engage that early. Below 768px
+ * we fold the links + Launch App + wallet into the flyout rather
+ * than shrinking the brand mark. `flex-wrap: nowrap` is belt-and-
+ * suspenders: even at an in-between width the row cannot break
+ * across lines. */
+@media (min-width: 768px) {
+  .navbar-links {
+    display: flex;
+    position: static;
+    flex-direction: row;
+    flex-wrap: nowrap;
+    background: none;
+    padding: 0;
+    border: none;
+    /* Push the Learn / Verify group to the right edge of the
+     * navbar-inner row so it sits flush against navbar-actions
+     * (Launch App + wallet + theme). Without this, `space-between`
+     * on `.navbar-inner` strands the dropdowns mid-row, far from
+     * the actions cluster they belong with. */
+    margin-left: auto;
+    /* Small visual seam between the rightmost dropdown trigger
+     * (VPFI) and the Launch App pill — without it, the dropdown
+     * text reads as touching the brand-coloured Launch pill,
+     * which felt cramped. Tightened from 24 px to 12 px so the
+     * Learn / Verify / VPFI / Launch App row consumes less
+     * horizontal space and the brand logo never has to shrink. */
+    margin-right: 12px;
+  }
+  .navbar-cta {
+    display: inline-flex;
+  }
+  .navbar-cta-mobile,
+  .mobile-menu-btn {
+    display: none;
+  }
+  /* Desktop uses the popover; the inline mobile list is hidden. */
+  .navbar-group-mobile-list {
+    display: none;
+  }
+}
+
+/* Mobile / tablet open state — paired max-width boundary with the desktop
+ * breakpoint above. */
+@media (max-width: 767px) {
+  .navbar-links.open {
+    display: flex;
+    flex-direction: column;
+    position: absolute;
+    top: 72px;
+    left: 0;
+    right: 0;
+    background: var(--bg-primary);
+    border-bottom: 1px solid var(--border);
+    padding: 16px 24px;
+    gap: 4px;
+  }
+  .navbar-links.open .navbar-link {
+    padding: 12px 16px;
+    font-size: 1rem;
+  }
+  /* Mobile flyout: the dropdown trigger now ALSO renders here as
+   * a full-width collapse/expand row. Clicking it flips
+   * `openGroup` (same state the desktop popover uses), and the
+   * inline mobile list below gates its visibility on the
+   * `--open` modifier. This way users see "Learn" + "Verify" as
+   * collapsed section headers by default and choose which one to
+   * expand, instead of a wall of all 6 links unfolded.
+   *
+   * The desktop popover panel is still hidden on mobile — the
+   * inline list takes over as the actual expansion surface. */
+  .navbar-links.open .navbar-group-trigger {
+    display: flex;
+    width: 100%;
+    justify-content: space-between;
+    padding: 12px 16px;
+    font-size: 1rem;
+    border-radius: var(--radius-full);
+  }
+  .navbar-links.open .navbar-group-trigger-chevron {
+    display: inline-flex;
+    color: var(--text-tertiary);
+  }
+  .navbar-links.open .navbar-group-trigger--open .navbar-group-trigger-chevron {
+    color: var(--brand);
+    transform: rotate(180deg);
+  }
+  .navbar-links.open .navbar-group-panel {
+    display: none;
+  }
+  /* Inline mobile list — collapsed by default, shown only when
+   * the trigger flips `openGroup` and the `--open` modifier is
+   * applied to this group's list. The redundant section label
+   * inside the list is hidden because the trigger button above
+   * is the visible heading. */
+  .navbar-links.open .navbar-group-mobile-list {
+    display: none;
+  }
+  .navbar-links.open .navbar-group-mobile-list--open {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 4px 0 8px;
+  }
+  .navbar-links.open .navbar-group-mobile-label {
+    display: none;
+  }
+}
+
+/* Wallet styles */
+.wallet-address-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  color: var(--text-primary);
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  padding: 8px 14px;
+  border-radius: var(--radius-full);
+}
+
+.wallet-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent-green);
+  flex-shrink: 0;
+}
+
+.wallet-connected {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.wallet-disconnect-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: var(--radius-full);
+  border: 1px solid var(--border);
+  background: var(--bg-card);
+  color: var(--text-tertiary);
+  transition: all 0.2s ease;
+}
+.wallet-disconnect-btn:hover {
+  border-color: var(--accent-red);
+  color: var(--accent-red);
+}
+
+.btn-warning {
+  background: rgba(245, 158, 11, 0.12);
+  color: var(--accent-orange);
+  border: 1px solid var(--accent-orange);
+}
+.btn-warning:hover {
+  background: rgba(245, 158, 11, 0.2);
+}
+
+.wallet-error {
+  background: rgba(239, 68, 68, 0.1);
+  color: var(--accent-red);
+  font-size: 0.82rem;
+  padding: 8px 0;
+  text-align: center;
+  border-bottom: 1px solid var(--accent-red);
+}
+
+.navbar-wallet-mobile {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+
+.wallet-connected-mobile {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* Inside the mobile flyout, the three connected-state controls
+ * (wallet pill → chain picker → disconnect) stretch to fill the
+ * column AND centre their inner content so they read as equal-
+ * weight rows alongside the centred Launch App + Disconnect
+ * buttons. Without these overrides:
+ *   - `<WalletAddressPill>` would render at its intrinsic
+ *     `inline-flex` width with content left-aligned (default).
+ *   - `<ChainPicker>` button uses `justify-content: space-between`
+ *     globally so the chevron pins to the right edge — fine in a
+ *     compact desktop pill, mismatched against the centred siblings
+ *     in the flyout column.
+ *   - `.btn-ghost` (Disconnect) sits at intrinsic content width.
+ *
+ * Stretching to 100% + centring the inner cluster makes all three
+ * read as a tidy stack of equal-width, equal-aligned rows. */
+.wallet-connected-mobile .wallet-address-pill {
+  display: flex;
+  width: 100%;
+  justify-content: center;
+}
+.wallet-connected-mobile .chain-picker,
+.wallet-connected-mobile .chain-picker-btn {
+  display: flex;
+  width: 100%;
+}
+.wallet-connected-mobile .chain-picker-btn {
+  justify-content: center;
+}
+/* `.chain-picker-label` is `flex: 1` globally so the chevron pins
+ * to the right edge in the desktop pill. Inside the flyout we
+ * want the icon + label + chevron to form a tight centred cluster
+ * (matching the Launch App / Disconnect content centring), so the
+ * label needs to shrink to its content width. `text-overflow:
+ * ellipsis` still kicks in for very long network names because
+ * the parent flex row has `min-width: 0` semantics — the label
+ * will shrink past content size if a wider chain name pushes the
+ * row beyond the available width. */
+.wallet-connected-mobile .chain-picker-label {
+  flex: 0 1 auto;
+  text-align: center;
+}
+/* Stretch the chain-picker dropdown to match the trigger
+ * button's full width inside the flyout. The global
+ * `.chain-picker-menu` enforces `min-width: 240px` (sized for
+ * compact desktop pills); inside the flyout we want the menu
+ * to span the same width as its full-width trigger so the
+ * dropdown sits flush rather than as a narrower floating card.
+ * `left: 0; right: 0` anchors both edges to the relative parent;
+ * `min-width: 0` lifts the global floor so the menu doesn't
+ * bulge past the row width on narrow viewports. */
+.wallet-connected-mobile .chain-picker-menu {
+  left: 0;
+  right: 0;
+  width: auto;
+  min-width: 0;
+}
+.wallet-connected-mobile > .btn {
+  width: 100%;
+  justify-content: center;
+}
+
+/* Mobile-only Launch App button inside the open nav flyout. Hidden on
+ * desktop because the desktop Navbar already renders its own .navbar-launch
+ * alongside the wallet button. */
+.navbar-launch-mobile {
+  margin-top: 12px;
+  text-align: center;
+  width: 100%;
+  justify-content: center;
+}
+
+@media (min-width: 768px) {
+  .navbar-wallet-mobile,
+  .navbar-launch-mobile {
+    display: none;
+  }
+}

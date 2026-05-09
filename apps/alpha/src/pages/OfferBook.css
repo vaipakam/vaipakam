@@ -1,0 +1,70 @@
+.sort-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-tertiary);
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0;
+}
+
+.sort-btn:hover {
+  color: var(--brand);
+}
+
+.offer-book-filter-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 12px;
+  align-items: start;
+}
+
+.offer-book-filter-cell {
+  display: flex;
+  flex-direction: column;
+  font-size: 0.85rem;
+  min-width: 0;
+}
+
+.offer-book-filter-cell > .form-label {
+  margin-bottom: 6px;
+}
+
+/* Pill-shaped free-form inputs inside the filters card.
+ * Mirrors `.chain-picker-btn` chrome (radius-full, bg-card, brand focus
+ * ring) so text/number inputs sit visually next to the discrete <Picker>
+ * pills (Liquidity, Per side) without a chrome mismatch. The input
+ * stays free-form — only the appearance changes. */
+.offer-book-filter-cell .form-input,
+.offer-book-filter-cell .asset-picker-selected {
+  padding: 7px 14px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  background: var(--bg-card);
+  border-radius: var(--radius-full);
+}
+
+/* Stretch the Liquidity Picker pill to fill its grid cell so it lines up
+ * width-wise with the surrounding text/number inputs (which are
+ * `width: 100%`). Without this the pill stays at its own `min-width`
+ * and looks conspicuously narrow at the right edge of the row. */
+.offer-book-filter-cell .chain-picker,
+.offer-book-filter-cell .chain-picker-btn {
+  width: 100%;
+}
+
+.offer-book-filter-cell .form-input:hover {
+  background: var(--bg-card-hover);
+  border-color: var(--border-hover);
+}
+
+.offer-book-filter-cell .form-input:focus {
+  background: var(--bg-card);
+  border-color: var(--brand);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand) 25%, transparent);
+}

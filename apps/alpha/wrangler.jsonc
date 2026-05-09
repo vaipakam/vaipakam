@@ -1,0 +1,44 @@
+{
+  // Vaipakam alpha — FROZEN ARCHIVE of the pre-refactor monolithic
+  // frontend, bound to alpha.vaipakam.com as a reference deploy
+  // for the Stage 3 / Stage 4 refactor cutover window.
+  //
+  // Source snapshot: taken from main@f48c99fa5db2ff718344b929b62c5b7720590ae2
+  // (the last main-branch commit before the apps/ + packages/
+  // workspace split landed). Combines marketing + connected-app
+  // surfaces that were later carved into apps/www and apps/defi.
+  //
+  // Worker name `vaipakam-alpha` — distinct from the new-architecture
+  // Workers (vaipakam-www, vaipakam-defi, vaipakam-keeper,
+  // vaipakam-indexer, vaipakam-agent) so a stale `wrangler deploy`
+  // run from this folder cannot accidentally overwrite a live
+  // production Worker. (Pre-rename this folder's wrangler.jsonc
+  // identified the Worker as `vaipakam` — the legacy primary
+  // marketing identifier — which is exactly the misdirected-deploy
+  // failure mode the apps/defi rename to `vaipakam-defi` already
+  // fixed for that surface.)
+  //
+  // DO NOT PATCH this Worker. Emergency hotfixes go via the new
+  // apps/{www,defi,keeper,indexer,agent} surfaces, not via patching
+  // the archive. The few-week reference window exists to ease
+  // user-side and operator-side comparison during the transition;
+  // after that the entire apps/alpha + ops/alpha tree is scheduled
+  // for full removal.
+  //
+  // Crawler policy: a `public/robots.txt` shipped alongside this
+  // Worker disallows every crawler from indexing alpha.vaipakam.com
+  // so the archive doesn't compete with the canonical vaipakam.com
+  // for SEO ranking.
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "vaipakam-alpha",
+  "compatibility_date": "2026-04-23",
+  "observability": {
+    "enabled": true
+  },
+  "assets": {
+    "not_found_handling": "single-page-application"
+  },
+  "compatibility_flags": [
+    "nodejs_compat"
+  ]
+}

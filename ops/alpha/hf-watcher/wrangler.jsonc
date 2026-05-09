@@ -1,0 +1,148 @@
+{
+  // ╔══════════════════════════════════════════════════════════╗
+  // ║  ARCHIVED — see DECOMMISSIONED.md in this folder.        ║
+  // ║                                                          ║
+  // ║  Frozen snapshot from main@f48c99fa. The Worker named    ║
+  // ║  `vaipakam-hf-watcher` IS still bound on Cloudflare      ║
+  // ║  (running in parallel with the new apps/{keeper,         ║
+  // ║  indexer,agent} until operator decommission schedule).   ║
+  // ║  A `wrangler deploy` from THIS folder will OVERWRITE     ║
+  // ║  the live Worker with this frozen code.                  ║
+  // ║                                                          ║
+  // ║  Emergency hotfixes: edit apps/{keeper,indexer,agent}    ║
+  // ║  source, NOT this folder. See DECOMMISSIONED.md.         ║
+  // ╚══════════════════════════════════════════════════════════╝
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "vaipakam-hf-watcher",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-04-23",
+  "compatibility_flags": ["nodejs_compat"],
+  "observability": {
+    "enabled": true,
+  },
+  // Cron triggers — fire every minute. The chainIndexer round-robins
+  // across active chains (one chain per cron tick), so the per-chain
+  // refresh cadence is `len(chains) * 1min` ≈ 3 min today. The 1-min
+  // tick keeps backfill catch-up fast: at the prior 5-min cadence,
+  // a fresh purge took ~20 min to repopulate; at 1-min round-robin,
+  // ~3-5 min. The free-tier Workers 50-subrequest cap binds per
+  // invocation, so giving each chain its own dedicated invocation
+  // keeps the budget far below the cap (~12 subs / chain / tick).
+  // HF moves slowly enough that 3-min polling still catches every
+  // band crossing well before it becomes actionable; users who need
+  // sub-minute alerts rely on the Push Protocol event-driven path
+  // below rather than this cron.
+  "triggers": {
+    "crons": ["* * * * *"],
+  },
+  // D1 — user thresholds + last-notified state. Single DB across all
+  // watched chains; per-chain rows in the tables.
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "vaipakam-alerts-db",
+      "database_id": "50850eab-e959-4d6b-8752-dfbdf0530343",
+      "remote": false,
+    },
+  ],
+  // Phase 7a polish — per-IP rate limit on the /quote/* aggregator
+  // proxy routes. Each binding is keyed independently so 0x and
+  // 1inch limits don't share a counter. 60 requests / 60 seconds is
+  // generous for legitimate frontend usage (one liquidation review
+  // = ~4 quote requests across venues; UI debounce keeps this well
+  // under the cap) but throttles abusive scripted clients before
+  // they exhaust the upstream API key budget.
+  "unsafe": {
+    "bindings": [
+      {
+        "type": "ratelimit",
+        "name": "QUOTE_0X_RATELIMIT",
+        "namespace_id": "1001",
+        "simple": {
+          "limit": 60,
+          "period": 60,
+        },
+      },
+      {
+        "type": "ratelimit",
+        "name": "QUOTE_1INCH_RATELIMIT",
+        "namespace_id": "1002",
+        "simple": {
+          "limit": 60,
+          "period": 60,
+        },
+      },
+      // Phase 8b.2 — Blockaid scan proxy on its own bucket so a noisy
+      // /scan/* caller can't drain the /quote/* budget.
+      {
+        "type": "ratelimit",
+        "name": "SCAN_BLOCKAID_RATELIMIT",
+        "namespace_id": "1003",
+        "simple": {
+          "limit": 60,
+          "period": 60,
+        },
+      },
+      // 2026-05-01 — diagnostics error capture (POST /diag/record).
+      // Per-IP budget of 60 requests / 60 seconds — generous for a
+      // single user (a normal session emits a handful of failures at
+      // most), restrictive for an abusive flooder. Tune via the
+      // `limit` / `period` values below if real-world volume needs
+      // it; this is the master per-IP knob the user asked for.
+      {
+        "type": "ratelimit",
+        "name": "DIAG_RECORD_RATELIMIT",
+        "namespace_id": "1004",
+        "simple": {
+          "limit": 60,
+          "period": 60,
+        },
+      },
+    ],
+  },
+  // Env-scoped secrets (set via `wrangler secret put`):
+  //   TG_BOT_TOKEN          — Telegram bot token from BotFather.
+  //   PUSH_CHANNEL_PK       — Vaipakam Push channel signer privkey
+  //                           (keep in secret store; never commit).
+  //   RPC_BASE / RPC_ETH    — dedicated RPC endpoints per chain
+  //                           (public RPC rate-limits will fail the
+  //                           watcher; use Alchemy/Infura/QuickNode).
+  //   BLOCKAID_API_KEY      — Phase 8b.2 Transaction Scanner key,
+  //                           injected by /scan/blockaid; the
+  //                           frontend never sees it.
+  //
+  // Plain vars (set via `vars` here or `wrangler secret put` if the
+  // value is sensitive — bot username is public-facing):
+  //   TG_BOT_USERNAME       — Telegram bot @-handle used to build
+  //                           the user-facing deep link
+  //                           `https://t.me/<TG_BOT_USERNAME>?start=...`.
+  //                           Issued by @BotFather alongside
+  //                           TG_BOT_TOKEN. Distinct from any
+  //                           operator's personal Telegram handle —
+  //                           Telegram bots are their own accounts.
+  // Diamond addresses per chain are NO LONGER set here. They live in
+  // `src/deployments.json`, generated from
+  // `contracts/deployments/<chain-slug>/addresses.json` by
+  // `contracts/script/exportFrontendDeployments.sh`. The Worker
+  // imports the merged JSON at build time; no `DIAMOND_ADDR_*` env
+  // vars are read.
+  "vars": {
+    "FRONTEND_ORIGIN": "https://vaipakam.com",
+    // "FRONTEND_ORIGIN": "https://vaipakam.com",
+
+    // 2026-05-01 — diagnostics error capture knobs (POST /diag/record).
+    // DIAG_SAMPLE_RATE in [0, 1]; 1.0 writes every accepted POST.
+    // Drop to e.g. "0.1" to write 10% (random sampling) when error
+    // volume spikes and storage matters. DIAG_RETENTION_DAYS drives
+    // the cron-prune; rows older than this many days are deleted.
+    "DIAG_SAMPLE_RATE": "1.0",
+    "DIAG_RETENTION_DAYS": "90",
+
+    // Public Telegram bot handle (the @-name from BotFather). The
+    // worker uses this to build `https://t.me/<TG_BOT_USERNAME>?start=…`
+    // deep links in the alert-link issuer. NOT a secret — anyone can
+    // see the bot's username on Telegram. The bot's API token lives
+    // in `TG_BOT_TOKEN` as an encrypted secret instead.
+    "TG_BOT_USERNAME": "VaipakamBot",
+  },
+}

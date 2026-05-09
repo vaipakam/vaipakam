@@ -1,0 +1,113 @@
+/* Shared theme-tracking dropdown. Pairs with the topbar .chain-switcher so
+ * every filter/area selector across the authenticated app reads as the
+ * same control family: pill-shaped trigger, floating themed menu, hover
+ * and selected states driven by the same tokens.
+ */
+.themed-dropdown {
+  position: relative;
+  display: inline-block;
+}
+
+.themed-dropdown-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 140px;
+  padding: 8px 12px 8px 14px;
+  border-radius: var(--radius-full);
+  border: 1px solid var(--border);
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  font-size: 0.82rem;
+  font-weight: 600;
+  line-height: 1.4;
+  cursor: pointer;
+  transition: border-color 0.15s ease, background-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.themed-dropdown-btn:hover:not(:disabled) {
+  border-color: var(--border-hover);
+  background: var(--bg-card-hover);
+}
+
+.themed-dropdown-btn:focus-visible {
+  outline: none;
+  border-color: var(--brand);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand) 25%, transparent);
+}
+
+.themed-dropdown-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.themed-dropdown-label {
+  flex: 1;
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.themed-dropdown-chevron {
+  color: var(--text-tertiary);
+  flex-shrink: 0;
+}
+
+.themed-dropdown-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  min-width: 100%;
+  max-width: 280px;
+  max-height: 60vh;
+  overflow-y: auto;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-lg);
+  padding: 6px;
+  z-index: 1200;
+}
+
+.themed-dropdown-menu.align-start {
+  left: 0;
+}
+
+.themed-dropdown-menu.align-end {
+  right: 0;
+}
+
+.themed-dropdown-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 12px;
+  font-size: 0.85rem;
+  font-weight: 500;
+  color: var(--text-primary);
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+
+.themed-dropdown-item:hover {
+  background: var(--bg-card-hover);
+}
+
+.themed-dropdown-item.selected {
+  background: var(--brand-bg);
+  color: var(--brand);
+  font-weight: 600;
+}
+
+.themed-dropdown-item.selected:hover {
+  /* Keep the brand tint on hover — just darken slightly via the same token
+   * the nav "active" state uses elsewhere. */
+  background: var(--brand-bg);
+  filter: brightness(0.97);
+}

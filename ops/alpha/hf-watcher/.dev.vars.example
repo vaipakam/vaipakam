@@ -1,0 +1,51 @@
+# Cloudflare Worker local-dev secrets template.
+#
+# Copy to `.dev.vars` (gitignored) and fill in real values for
+# `wrangler dev`. Each KEY=VALUE line here is exposed on the `env`
+# object the same way `wrangler secret put KEY` works in production —
+# the difference is that `.dev.vars` is local-only and never deployed.
+#
+# Plaintext (public-info) values like `TG_BOT_USERNAME` belong in
+# `wrangler.jsonc` under `vars` instead. Use this file ONLY for
+# secrets that should never appear in the deployed config or in the
+# git history.
+
+# ── Telegram (production: `wrangler secret put TG_BOT_TOKEN`) ───────────
+# Issued by @BotFather alongside the @VaipakamBot handle. Anyone with
+# this token can send messages as the bot, read replies, and update
+# bot metadata — treat as a high-sensitivity secret.
+TG_BOT_TOKEN=
+
+# ── Push Protocol (production: `wrangler secret put PUSH_CHANNEL_PK`) ───
+# 0x-prefixed hex private key of the push.org channel signer. Loss =
+# anyone can impersonate the Vaipakam channel and push notifications
+# to subscribers. Do NOT put the production key here; use the secret
+# store and keep this file's value scoped to a dev channel.
+PUSH_CHANNEL_PK=
+
+# ── RPC endpoints (production: `wrangler secret put RPC_*`) ─────────────
+# Dedicated provider URLs (Alchemy / Infura / QuickNode). Public RPCs
+# rate-limit the cron tick.
+RPC_BASE=
+RPC_ETH=
+RPC_ARB=
+RPC_OP=
+RPC_ZKEVM=
+RPC_BNB=
+
+# ── Aggregator API keys (production: `wrangler secret put …`) ───────────
+# Server-side injection for the /quote/* + /scan/blockaid proxies. The
+# frontend never sees these — that's the whole point of the proxy.
+ZEROEX_API_KEY=
+ONEINCH_API_KEY=
+BLOCKAID_API_KEY=
+
+# ── Autonomous keeper (optional, off by default) ────────────────────────
+# When `KEEPER_ENABLED == 'true'` and `KEEPER_PRIVATE_KEY` is set, the
+# watcher submits permissionless `triggerLiquidation` from this EOA
+# whenever a subscribed-user loan crosses HF 1.0. The key needs gas
+# pre-funded on every chain it operates against. Liquidation is
+# permissionless — losing the race to another keeper is fine; the
+# Diamond reverts the second tx.
+KEEPER_ENABLED=false
+KEEPER_PRIVATE_KEY=

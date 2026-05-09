@@ -1,0 +1,172 @@
+import { ExternalLink } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
+import { InfoTip } from './InfoTip';
+import { getCardHelp } from '../lib/cardHelp';
+import { useMode } from '../context/ModeContext';
+import { useProtocolConfig } from '../hooks/useProtocolConfig';
+import { isSupportedLocale, withLocalePrefix } from './LocaleResolver';
+import type { SupportedLocale } from '../i18n/glossary';
+
+/** Format basis points as a percentage string (100 → "1", 575 → "5.75"). */
+function bpsAsPctStr(bps: number | bigint): string {
+  const b = typeof bps === 'bigint' ? Number(bps) : bps;
+  if (b % 100 === 0) return (b / 100).toString();
+  return (b / 100).toFixed(2).replace(/\.?0+$/, '');
+}
+
+/**
+ * `<CardInfo id="…">` — drop-in (i) icon next to a card title that
+ * opens an InfoTip with a brief blurb and a "Learn more →" link out
+ * to the canonical user guide.
+ *
+ * Looks the entry up in `lib/cardHelp.ts` by id. Returns `null` when
+ * the id has no registered entry, so adding `<CardInfo />` to a card
+ * before its copy has been drafted is safe — no broken render, just
+ * a missing icon you can fill in later.
+ *
+ * The "Learn more →" link is computed from the active UI mode:
+ * basic → `docs/UserGuide-Basic.md#<id>`, advanced →
+ * `docs/UserGuide-Advanced.md#<id>`. Each id is registered as an HTML
+ * anchor (`<a id="…"></a>`) in both guides so the fragment resolves
+ * deterministically on GitHub's renderer. When the in-app `/help/<id>`
+ * route lands (Phase 3), only this component changes — the per-card
+ * registry stays untouched.
+ *
+ * Pairs with the existing `.card-title` styles — `<InfoTip>`'s
+ * trigger is `inline-flex` with `vertical-align: middle`, so it
+ * sits cleanly on the title's baseline without further CSS.
+ */
+export interface CardInfoProps {
+  /** Registry key — `<page>.<card-slug>`. See lib/cardHelp.ts. */
+  id: string;
+  /** Optional viewer role. When set AND the registry entry carries a
+   *  role-keyed summary, the tooltip shows the role-specific copy and
+   *  the "Learn more →" anchor gets a `:lender` / `:borrower` suffix
+   *  so the user lands on the matching subsection of the user guide.
+   *  Pass `form.offerType` from the Create Offer flow; omit elsewhere. */
+  role?: 'lender' | 'borrower';
+  /** Optional interpolation params forwarded to i18next's `t()`. Use
+   *  when a registered help key contains `{{placeholder}}` segments
+   *  that need live values — e.g. the on-chain staking APR fetched
+   *  via {useStakingApr}. */
+  params?: Record<string, unknown>;
+}
+
+/**
+ * Build the in-app help URL for a given (mode, card id, role suffix)
+ * triple. The /help routes (`/help/basic`, `/help/advanced`) are
+ * publicly accessible — no wallet required, same chrome as the
+ * landing / analytics pages — so the link works from any context
+ * including the Public Dashboard.
+ *
+ * The fragment carries the registry id and (for role-keyed cards)
+ * a `:lender` / `:borrower` suffix. The UserGuide page reads the
+ * suffix on first load to set the page-wide tab and reads the
+ * base id to scroll to the right section.
+ */
+function buildLearnMoreHref(
+  mode: 'basic' | 'advanced',
+  id: string,
+  roleSuffix: string,
+  locale: SupportedLocale,
+): string {
+  // Locale-aware: a user reading the app in Spanish on /es/...
+  // should open the Spanish user guide at /es/help/<mode>, not the
+  // English one at /help/<mode>. `withLocalePrefix` returns the
+  // unprefixed path on English (the default) and the
+  // /<locale>-prefixed path otherwise.
+  const path = withLocalePrefix(`/help/${mode}`, locale);
+  return `${path}#${id}${roleSuffix}`;
+}
+
+export function CardInfo({ id, role, params }: CardInfoProps) {
+  const { t, i18n } = useTranslation();
+  const entry = getCardHelp(id);
+  const { mode } = useMode();
+  // Live protocol-config snapshot — auto-injected into every cardHelp
+  // tooltip so summary strings can use `{{treasuryFee}}` /
+  // `{{tier1Min}}` / `{{maxSlippage}}` / etc. without per-call-site
+  // wiring. Per-call `params` (passed by the caller) override these
+  // auto-injected values when there's a name collision, so callers
+  // can still customise per-context values like `{{apr}}` if needed.
+  const { config } = useProtocolConfig();
+  const autoParams = config
+    ? {
+        treasuryFee: bpsAsPctStr(config.treasuryFeeBps),
+        loanInitiationFee: bpsAsPctStr(config.loanInitiationFeeBps),
+        liquidationHandlingFee: bpsAsPctStr(config.liquidationHandlingFeeBps),
+        maxSlippage: bpsAsPctStr(config.maxLiquidationSlippageBps),
+        maxLiquidatorIncentive: bpsAsPctStr(config.maxLiquidatorIncentiveBps),
+        volatilityLtv: bpsAsPctStr(config.volatilityLtvThresholdBps),
+        rentalBuffer: bpsAsPctStr(config.rentalBufferBps),
+        apr: bpsAsPctStr(config.vpfiStakingAprBps),
+        // Use the pre-divided `tierThresholdsTokens` so a wei value of
+        // `100_000_000_000_000_000_000_000` renders as "100,000" not
+        // "100,000,000,000,000,000,000". See useProtocolConfig.
+        tier1Min: config.tierThresholdsTokens[0].toLocaleString(),
+        tier2Min: config.tierThresholdsTokens[1].toLocaleString(),
+        tier3Min: config.tierThresholdsTokens[2].toLocaleString(),
+        tier4Min: config.tierThresholdsTokens[3].toLocaleString(),
+        tier1Discount: bpsAsPctStr(config.tierDiscountBps[0]),
+        tier2Discount: bpsAsPctStr(config.tierDiscountBps[1]),
+        tier3Discount: bpsAsPctStr(config.tierDiscountBps[2]),
+        tier4Discount: bpsAsPctStr(config.tierDiscountBps[3]),
+        maxDiscount: bpsAsPctStr(
+          Math.max(
+            config.tierDiscountBps[0],
+            config.tierDiscountBps[1],
+            config.tierDiscountBps[2],
+            config.tierDiscountBps[3],
+          ),
+        ),
+        minHealthFactor: config.minHealthFactorDisplay,
+        vpfiStakingPoolCap: config.vpfiStakingPoolCapCompact,
+        vpfiInteractionPoolCap: config.vpfiInteractionPoolCapCompact,
+      }
+    : {};
+  const locale: SupportedLocale = isSupportedLocale(i18n.resolvedLanguage)
+    ? i18n.resolvedLanguage
+    : 'en';
+  if (!entry) return null;
+
+  // Role-keyed entry: pick the variant matching the viewer's role and
+  // suffix the docs anchor so the link lands on the right subsection.
+  // Fallback to the lender variant when role wasn't supplied — keeps
+  // the tooltip readable even if the call site forgot the prop.
+  //
+  // The typeof check is inlined into each consumer rather than hoisted
+  // into an `isRoleKeyed` boolean: TypeScript's narrowing only flows
+  // across a `typeof` check when it's on the operand directly, not via
+  // an intermediate variable. Hoisting compiles in dev but Cloudflare's
+  // stricter build rejects it as "expression of type '…' can't be used
+  // to index type 'string | RoleKeyedI18nKey'".
+  const summaryKey =
+    typeof entry.summary === 'string'
+      ? entry.summary
+      : entry.summary[role ?? 'lender'];
+  // Merge auto-injected protocol params with caller-provided params;
+  // caller wins on name collisions so per-call overrides still work.
+  const mergedParams = { ...autoParams, ...(params ?? {}) };
+  const summary = t(summaryKey, mergedParams);
+  const roleSuffix =
+    typeof entry.summary !== 'string' && role ? `:${role}` : '';
+  const learnMoreHref = buildLearnMoreHref(mode, id, roleSuffix, locale);
+
+  return (
+    <InfoTip ariaLabel={t('cardInfo.ariaLabel')}>
+      <span>{summary}</span>
+      {' '}
+      <a
+        href={learnMoreHref}
+        target="_blank"
+        rel="noreferrer noopener"
+        className="card-info-learn-more"
+      >
+        {t('cardInfo.learnMore')}
+        <ExternalLink size={11} aria-hidden="true" />
+      </a>
+    </InfoTip>
+  );
+}
+
+export default CardInfo;

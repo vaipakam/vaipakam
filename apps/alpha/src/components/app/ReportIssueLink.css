@@ -1,0 +1,26 @@
+/* ReportIssueLink — inline variant next to error text. Button variant
+ * uses the shared .btn styles. */
+
+.report-issue-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--brand);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  text-decoration-thickness: 1px;
+  padding: 0 2px;
+  border-radius: 4px;
+  transition: color 0.15s, background 0.15s;
+}
+.report-issue-link:hover {
+  color: var(--brand-dark);
+  background: var(--brand-bg);
+  text-decoration: none;
+}
+.report-issue-link:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: 2px;
+}

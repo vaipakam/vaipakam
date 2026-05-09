@@ -1,0 +1,57 @@
+.risk-disclosures {
+  border: 1px solid var(--accent-orange, #f59e0b);
+  background: rgba(245, 158, 11, 0.06);
+  border-radius: 10px;
+  padding: 14px 16px;
+  margin: 12px 0;
+  font-size: 0.84rem;
+  line-height: 1.5;
+}
+
+[data-theme='dark'] .risk-disclosures {
+  background: rgba(245, 158, 11, 0.08);
+}
+
+.risk-disclosures-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+  font-size: 0.9rem;
+  color: var(--text-primary);
+  margin-bottom: 10px;
+}
+
+.risk-disclosures-head svg {
+  color: var(--accent-orange, #f59e0b);
+  flex: 0 0 auto;
+}
+
+.risk-disclosures-section {
+  margin-top: 10px;
+}
+
+.risk-disclosures-section:first-of-type {
+  margin-top: 0;
+}
+
+.risk-disclosures-heading {
+  font-size: 0.82rem;
+  font-weight: 600;
+  margin: 0 0 4px;
+  color: var(--text-primary);
+}
+
+.risk-disclosures-points {
+  margin: 0;
+  padding-left: 20px;
+  color: var(--text-secondary);
+}
+
+.risk-disclosures-points li {
+  margin-bottom: 4px;
+}
+
+.risk-disclosures-points li:last-child {
+  margin-bottom: 0;
+}

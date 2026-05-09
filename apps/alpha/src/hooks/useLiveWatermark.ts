@@ -1,0 +1,354 @@
+/**
+ * Live-tail watermark probe.
+ *
+ * One cheap `eth_call` per tick (`MetricsFacet.getGlobalCounts()`)
+ * fingerprints the lifetime offer + loan id sequences. Both numbers are
+ * strictly increasing on create events, so a tick where neither moves
+ * means no new offers / loans landed since the previous tick — and the
+ * subscriber data hooks can skip the heavier indexer + RPC catch-up
+ * refetch entirely. That gates the 5s cadence so it stays cheap on RPC.
+ *
+ * Reads with `blockTag: 'safe'` to avoid reorg flicker — a head-of-chain
+ * read could see a counter advance briefly during a one-block reorg and
+ * trigger a refetch that's then immediately stale.
+ *
+ * Pauses on `document.hidden` — when the user switches tabs we stop
+ * polling entirely. On re-focus we fire one immediate probe so freshly-
+ * focused tabs hydrate without waiting up to 5 s.
+ *
+ * Cancels / partial-fills are NOT caught by this watermark (lifetime
+ * counters don't move on those state transitions). They're covered by:
+ *   - the user's own action: the post-tx `useWaitForTransactionReceipt`
+ *     hook's success callback fires `refetch()` on the relevant data
+ *     query, picking up the change immediately;
+ *   - other users' actions: the tab-focus probe forces a fresh indexer
+ *     hit, and the indexer's own cron loop catches it within ~60 s;
+ *   - shared state truth-up: every tick where the watermark DID move
+ *     also re-pulls the active set, which naturally drops cancelled /
+ *     filled rows.
+ *
+ * Returns a monotonically-increasing `version` integer that bumps every
+ * time either counter advances — that's the dependency subscribers list
+ * in their useEffect to drive their own refetch logic.
+ */
+
+import { useEffect, useRef, useState } from 'react';
+import { usePublicClient } from 'wagmi';
+import { type Abi, type Address, type PublicClient } from 'viem';
+import { useReadChain } from '../contracts/useDiamond';
+
+/** Default poll interval for OfferBook-class active surfaces. Other
+ *  consumers pass `pollIntervalMs: null` to disable the timer entirely
+ *  while keeping the focus-refetch listener alive (so coming back to
+ *  the tab still surfaces fresh data via a single probe). */
+const TICK_MS = 5_000;
+
+/** Minimal ABI surface for the watermark probe. Inlined so the hook
+ *  doesn't have to import the full MetricsFacet bundle just to call one
+ *  function. The signature must match the on-chain selector exactly:
+ *  `getGlobalCounts() returns (uint256 totalLoansCreated, uint256 totalOffersCreated)`. */
+const WATERMARK_ABI = [
+  {
+    type: 'function',
+    name: 'getGlobalCounts',
+    stateMutability: 'view',
+    inputs: [],
+    outputs: [
+      { name: 'totalLoansCreated', type: 'uint256' },
+      { name: 'totalOffersCreated', type: 'uint256' },
+    ],
+  },
+] as const satisfies Abi;
+
+export interface WatermarkSnapshot {
+  /** Lifetime offer count — `s.nextOfferId` on-chain. */
+  nextOfferId: bigint;
+  /** Lifetime loan count — `s.nextLoanId` on-chain. */
+  nextLoanId: bigint;
+  /** Last `safe`-tag block at which the probe last succeeded. Subscribers
+   *  use this as the upper bound of their RPC catch-up windows so the
+   *  catch-up doesn't read past the tip and pick up a soon-to-reorg log. */
+  safeBlock: bigint;
+  /** UNIX seconds — when the probe completed. */
+  fetchedAt: number;
+}
+
+export type WatermarkStatus = 'idle' | 'live' | 'unreachable';
+
+export interface UseLiveWatermarkResult {
+  /** Bumps every time the probe sees either counter advance. Subscribers
+   *  list this in their useEffect deps to refetch their data set. Also
+   *  bumps once on initial mount so first-paint subscribers fire. */
+  version: number;
+  /** Latest watermark observation, or `null` while we haven't completed
+   *  a successful probe yet. */
+  snapshot: WatermarkSnapshot | null;
+  /** Probe health. `unreachable` means the diamond / RPC isn't responding
+   *  — subscribers should fall back to whatever they did pre-watermark
+   *  (e.g. plain indexer poll without RPC catch-up). */
+  status: WatermarkStatus;
+}
+
+export interface UseLiveWatermarkOptions {
+  /**
+   * Active-state poll cadence in ms. Pass `null` to disable the timer
+   * entirely — useful on quieter surfaces (Dashboard, Vault, Activity,
+   * Loan Details) where the page is already authoritative on mount and
+   * the user's own actions are caught by the post-tx receipt path.
+   * The visibilitychange listener still fires one probe when the tab
+   * returns to focus regardless of this value, so coming-back-to-tab
+   * UX is preserved even with the timer off.
+   *
+   * Defaults to 5_000 ms (the OfferBook cadence), so callers that don't
+   * pass anything keep the previous behaviour.
+   */
+  pollIntervalMs?: number | null;
+  /**
+   * Slower poll cadence used while the user is "idle" — tab is
+   * focused but no mouse / keyboard / scroll / touch input has been
+   * observed for `idleAfterMs`. Set to `null` to skip the idle tier
+   * (cadence stays at `pollIntervalMs` until paused).
+   */
+  idlePollIntervalMs?: number | null;
+  /**
+   * Inactivity threshold (ms) after which we drop from `pollIntervalMs`
+   * to `idlePollIntervalMs`. Default 5 minutes. Set to `null` to
+   * disable the activity-aware backoff entirely; the hook then runs
+   * at `pollIntervalMs` regardless of user attention.
+   */
+  idleAfterMs?: number | null;
+  /**
+   * Inactivity threshold (ms) after which we pause polling entirely
+   * — the schedule loop stops scheduling further ticks until the next
+   * activity event resets the timer. Catches the
+   * tab-focused-but-user-walked-away case so an OfferBook left open
+   * for hours doesn't quietly burn 720 RPC probes per hour. Default
+   * 15 minutes. Set to `null` to never pause from idleness alone
+   * (visibility-pause still applies).
+   */
+  pausedAfterMs?: number | null;
+}
+
+/**
+ * Reads the public client + chain config from context so any number of
+ * subscribers can call it from anywhere in the tree without prop
+ * drilling. The probe is per-call rather than via a singleton — at a
+ * 5 s cadence the cost is negligible and per-instance state simplifies
+ * cleanup on unmount / chain switch.
+ */
+export function useLiveWatermark(
+  options: UseLiveWatermarkOptions = {},
+): UseLiveWatermarkResult {
+  const {
+    pollIntervalMs = TICK_MS,
+    idlePollIntervalMs = null,
+    idleAfterMs = null,
+    pausedAfterMs = null,
+  } = options;
+  const publicClient = usePublicClient();
+  const chain = useReadChain();
+  const diamond = chain.diamondAddress;
+
+  const [version, setVersion] = useState(0);
+  const [snapshot, setSnapshot] = useState<WatermarkSnapshot | null>(null);
+  const [status, setStatus] = useState<WatermarkStatus>('idle');
+  const lastProbeRef = useRef<{ nextOfferId: bigint; nextLoanId: bigint } | null>(null);
+
+  useEffect(() => {
+    if (!publicClient || !diamond) {
+      setSnapshot(null);
+      setStatus('idle');
+      return;
+    }
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+
+    async function probe(): Promise<void> {
+      try {
+        const result = (await publicClient!.readContract({
+          address: diamond as Address,
+          abi: WATERMARK_ABI,
+          functionName: 'getGlobalCounts',
+          blockTag: 'safe',
+        })) as readonly [bigint, bigint];
+        if (cancelled) return;
+        const [nextLoanId, nextOfferId] = result;
+        // Read the safe block separately so subscribers know the upper
+        // bound of the just-observed counters. A head-tag read here would
+        // be racy with the watermark (counters at `safe`, block at
+        // `latest`) and the subscribers' RPC catch-ups could miss events
+        // sitting in the head→safe gap.
+        const safeBlock = await publicClient!.getBlock({ blockTag: 'safe' });
+        if (cancelled) return;
+        const last = lastProbeRef.current;
+        const advanced =
+          last === null ||
+          nextOfferId !== last.nextOfferId ||
+          nextLoanId !== last.nextLoanId;
+        lastProbeRef.current = { nextOfferId, nextLoanId };
+        // Only push a new snapshot reference when something subscribers
+        // actually use changed. Without this, the safeBlock advancing
+        // every block (~12 s on Sepolia) churned the snapshot ref every
+        // probe, which propagated through any consumer using `snapshot`
+        // in a useEffect / useCallback dep list — even when neither
+        // counter advanced. Subscribers that need the freshest
+        // safeBlock at refetch time should read it via a ref pattern;
+        // this state is for components that want React-reactive
+        // updates only when the values they observe meaningfully
+        // changed.
+        setSnapshot((prev) => {
+          if (
+            prev &&
+            prev.nextOfferId === nextOfferId &&
+            prev.nextLoanId === nextLoanId &&
+            prev.safeBlock === safeBlock.number
+          ) {
+            return prev;
+          }
+          return {
+            nextOfferId,
+            nextLoanId,
+            safeBlock: safeBlock.number,
+            fetchedAt: Math.floor(Date.now() / 1000),
+          };
+        });
+        setStatus('live');
+        if (advanced) setVersion((v) => v + 1);
+      } catch {
+        // Diamond unreachable / RPC erroring out — flag and let the
+        // tick loop retry. We intentionally do NOT bump `version` here;
+        // subscribers stay on whatever data they last hydrated.
+        if (!cancelled) setStatus('unreachable');
+      }
+    }
+
+    // Track when the user last did anything on the page. Updated by
+    // the activity listeners below. Polling cadence is then computed
+    // off `now - lastActivityAt` (active tier / idle tier / paused).
+    let lastActivityAt = Date.now();
+    // Throttle activity-update writes to once per second so a flood of
+    // mousemove events isn't itself a perf cost — the precise
+    // millisecond doesn't matter for the 5 s-vs-30 s tier check.
+    let lastActivityWriteAt = 0;
+
+    function chooseInterval(): number | null {
+      if (pollIntervalMs === null) return null;
+      const idle = Date.now() - lastActivityAt;
+      if (pausedAfterMs !== null && idle >= pausedAfterMs) {
+        // Walked-away tier — no timer at all. Resume on next activity.
+        return null;
+      }
+      if (idleAfterMs !== null && idle >= idleAfterMs && idlePollIntervalMs !== null) {
+        return idlePollIntervalMs;
+      }
+      return pollIntervalMs;
+    }
+
+    function schedule(): void {
+      if (cancelled) return;
+      if (document.hidden) return; // paused while tab is hidden
+      const interval = chooseInterval();
+      // null → no further scheduling for now. The next probe fires on
+      // tab-focus or activity event.
+      if (interval === null) return;
+      timer = setTimeout(async () => {
+        await probe();
+        schedule();
+      }, interval);
+    }
+
+    function onVisibility(): void {
+      if (document.hidden) {
+        if (timer) {
+          clearTimeout(timer);
+          timer = null;
+        }
+        return;
+      }
+      // Re-focused: count it as activity (the user just clicked the
+      // tab) and fire an immediate probe. Scheduling resumes against
+      // the active-tier cadence regardless of how long the tab was
+      // hidden, since a focused-now tab IS active by definition.
+      lastActivityAt = Date.now();
+      void probe().then(() => {
+        if (!cancelled) schedule();
+      });
+    }
+
+    function onActivity(): void {
+      const now = Date.now();
+      // 1 Hz throttle on the activity-timestamp write.
+      if (now - lastActivityWriteAt < 1_000) return;
+      lastActivityWriteAt = now;
+      const wasIdle = pausedAfterMs !== null && now - lastActivityAt >= pausedAfterMs;
+      lastActivityAt = now;
+      // If we were in the paused tier, the schedule loop has stopped
+      // — fire an immediate probe + restart it. Catches the user up
+      // to whatever drift accumulated while they were away. If we
+      // were merely in the slower idle tier, the next scheduled tick
+      // already covers us; no need to restart.
+      if (wasIdle && !cancelled && !document.hidden) {
+        void probe().then(() => {
+          if (!cancelled && !timer) schedule();
+        });
+      }
+    }
+
+    void probe().then(() => {
+      if (!cancelled) schedule();
+    });
+    document.addEventListener('visibilitychange', onVisibility);
+    // Document-level activity listeners. `passive: true` keeps them
+    // off the scroll/touch perf hot path. We don't listen for every
+    // possible event — mousemove + keydown + scroll + touchstart
+    // covers the common "user is interacting with the page" cases
+    // without producing noise from mouseenter/mouseleave on every
+    // small element on the page.
+    const activityOpts = { passive: true } as const;
+    document.addEventListener('mousemove', onActivity, activityOpts);
+    document.addEventListener('keydown', onActivity, activityOpts);
+    document.addEventListener('scroll', onActivity, activityOpts);
+    document.addEventListener('touchstart', onActivity, activityOpts);
+
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+      document.removeEventListener('visibilitychange', onVisibility);
+      document.removeEventListener('mousemove', onActivity);
+      document.removeEventListener('keydown', onActivity);
+      document.removeEventListener('scroll', onActivity);
+      document.removeEventListener('touchstart', onActivity);
+    };
+  }, [publicClient, diamond, pollIntervalMs, idlePollIntervalMs, idleAfterMs, pausedAfterMs]);
+
+  return { version, snapshot, status };
+}
+
+/** Imperative one-shot watermark fetch. Useful inside event handlers
+ *  (e.g. post-tx callbacks) where the caller wants to advance the
+ *  watermark immediately rather than wait for the next 5 s tick. */
+export async function probeWatermarkOnce(
+  publicClient: PublicClient,
+  diamond: Address,
+): Promise<WatermarkSnapshot | null> {
+  try {
+    const [counts, block] = await Promise.all([
+      publicClient.readContract({
+        address: diamond,
+        abi: WATERMARK_ABI,
+        functionName: 'getGlobalCounts',
+        blockTag: 'safe',
+      }),
+      publicClient.getBlock({ blockTag: 'safe' }),
+    ]);
+    const [nextLoanId, nextOfferId] = counts as readonly [bigint, bigint];
+    return {
+      nextOfferId,
+      nextLoanId,
+      safeBlock: block.number,
+      fetchedAt: Math.floor(Date.now() / 1000),
+    };
+  } catch {
+    return null;
+  }
+}
