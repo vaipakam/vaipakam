@@ -484,13 +484,44 @@ export const DEFAULT_CHAIN: DeployedChain = (() => {
   if (envChain && envChain.diamondAddress !== null) {
     return envChain as DeployedChain;
   }
-  // 2. Base Sepolia (canonical Phase-1 testnet)
+  // 2. Base Sepolia (canonical Phase-1 testnet). Warns to console so an
+  //    operator opening DevTools immediately sees the env-var miss instead
+  //    of finding out via on-chain weirdness later — the resolution still
+  //    succeeded but the build is using a non-canonical default.
   if (BASE_SEPOLIA.diamondAddress !== null) {
+    if (typeof console !== "undefined") {
+      console.warn(
+        "[DEFAULT_CHAIN] env-chosen chain " +
+          ENV_DEFAULT_CHAIN_ID +
+          " is not deployed; falling back to Base Sepolia (84532). " +
+          "Set VITE_DEFAULT_CHAIN_ID at build time to silence this.",
+      );
+    }
     return BASE_SEPOLIA as DeployedChain;
   }
   // 3. ANY chain in the registry with a Diamond — fail-soft last resort.
+  //    Loud warn here because we've already missed the env-chosen AND the
+  //    canonical Phase-1 chain — likely indicates the registry was rotated
+  //    or the deployments JSON shrank. The page will boot but operator
+  //    should treat this as an incident-grade signal.
   for (const c of Object.values(CHAIN_REGISTRY)) {
-    if (c.diamondAddress !== null) return c as DeployedChain;
+    if (c.diamondAddress !== null) {
+      if (typeof console !== "undefined") {
+        console.warn(
+          "[DEFAULT_CHAIN] neither env-chosen chain (" +
+            ENV_DEFAULT_CHAIN_ID +
+            ") nor Base Sepolia (84532) has a deployed Diamond; " +
+            "falling through to first registry chain with a Diamond — " +
+            "chainId " +
+            c.chainId +
+            " (" +
+            c.name +
+            "). " +
+            "Investigate: deployments JSON or CHAIN_REGISTRY rotation likely.",
+        );
+      }
+      return c as DeployedChain;
+    }
   }
   throw new Error(
     "DEFAULT_CHAIN resolution failed — no chain in CHAIN_REGISTRY has a deployed Diamond",
