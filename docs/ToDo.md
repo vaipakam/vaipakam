@@ -11,7 +11,11 @@
 
 ---
 
-Change LayerZero to Chainlink CCIP
+- [ ] **T-069**: see how to setup for notifications from ops/subgraph and ops/tenderly
+
+---
+
+- [ ] **T-068**: Change LayerZero to Chainlink CCIP
 
 ---
 
