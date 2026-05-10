@@ -5,6 +5,7 @@ import { DEFAULT_CHAIN } from '../contracts/config';
 import { DIAMOND_ABI_VIEM as DIAMOND_ABI } from '@vaipakam/contracts/abis';
 import { batchCalls, encodeBatchCalls } from '@vaipakam/lib/multicall';
 import { useLogIndex } from './useLogIndex';
+import { fetchLoansByLender, fetchLoansByBorrower } from '../lib/indexerClient';
 import { type LoanStatus, type LoanSummary, type LoanDetails } from '../types/loan';
 import { beginStep } from '../lib/journeyLog';
 
@@ -41,12 +42,67 @@ export function useUserLoans(address: string | null) {
     try {
       const me = address.toLowerCase();
 
+      // Three-layer narrowing of `knownLoans` down to the user's
+      // loans BEFORE the getLoanDetails multicall fans out. Mirrors
+      // useClaimables's fix:
+      //
+      //   Layer 1 — indexer HTTP (fetchLoansByLender + by-borrower)
+      //   Layer 2 — on-chain user-filter view
+      //             (getUserDashboardLoans, server-side filtered)
+      //   Layer 3 — walk every knownLoan (legacy, last resort)
+      //
+      // Without this gate, the getLoanDetails multicall payload
+      // scaled with every loan in the protocol (a single round-trip
+      // but N-sized; ~30-50ms per 100 loans). With it, the payload
+      // shrinks to the user's loans (typically 1-5) — same
+      // LoanSummary shape, faster paint, less RPC load.
+      let walkSet = knownLoans;
+      let narrowedBy: 'indexer' | 'onchain-view' | 'none' = 'none';
+
+      // Layer 1: indexer
+      const [lenderPage, borrowerPage] = await Promise.all([
+        fetchLoansByLender(chain.chainId, address),
+        fetchLoansByBorrower(chain.chainId, address),
+      ]);
+      if (lenderPage || borrowerPage) {
+        const userLoanIds = new Set<string>();
+        if (lenderPage) for (const l of lenderPage.loans) userLoanIds.add(String(l.loanId));
+        if (borrowerPage) for (const l of borrowerPage.loans) userLoanIds.add(String(l.loanId));
+        walkSet = knownLoans.filter((e) => userLoanIds.has(String(e.loanId)));
+        narrowedBy = 'indexer';
+      } else {
+        // Layer 2: on-chain user-filter view
+        try {
+          const [lenderRes, borrowerRes] = await Promise.all([
+            publicClient.readContract({
+              address: diamondAddress,
+              abi: DIAMOND_ABI,
+              functionName: 'getUserDashboardLoans',
+              args: [address as Address, false, 0n, 200n],
+            }) as Promise<readonly [readonly bigint[], readonly unknown[]]>,
+            publicClient.readContract({
+              address: diamondAddress,
+              abi: DIAMOND_ABI,
+              functionName: 'getUserDashboardLoans',
+              args: [address as Address, true, 0n, 200n],
+            }) as Promise<readonly [readonly bigint[], readonly unknown[]]>,
+          ]);
+          const userLoanIds = new Set<string>();
+          for (const id of lenderRes[0]) userLoanIds.add(String(id));
+          for (const id of borrowerRes[0]) userLoanIds.add(String(id));
+          walkSet = knownLoans.filter((e) => userLoanIds.has(String(e.loanId)));
+          narrowedBy = 'onchain-view';
+        } catch {
+          narrowedBy = 'none';
+        }
+      }
+
       // 1. Batch all getLoanDetails calls in one Multicall3 round-trip.
       const detailCalls = encodeBatchCalls(
         diamondAddress,
         DIAMOND_ABI,
         'getLoanDetails',
-        knownLoans.map((e) => [e.loanId] as const),
+        walkSet.map((e) => [e.loanId] as const),
       );
       const details = await batchCalls<LoanDetails>(
         publicClient,
@@ -88,11 +144,14 @@ export function useUserLoans(address: string | null) {
       };
 
       // 3. Filter to the user's loans and shape the LoanSummary payload.
+      //    `details[i]` corresponds to `walkSet[i]` (the narrowed set),
+      //    not `knownLoans[i]`. The historical-fallback below reads
+      //    `entry.lender` / `entry.borrower` from the walkSet entry.
       const found: LoanSummary[] = [];
       for (let i = 0; i < details.length; i++) {
         const loan = details[i];
         if (!loan) continue;
-        const entry = knownLoans[i];
+        const entry = walkSet[i];
         const lenderHolder = resolveOwner(loan.lenderTokenId);
         const borrowerHolder = resolveOwner(loan.borrowerTokenId);
         const isCurrentLender = lenderHolder === me;
@@ -132,13 +191,13 @@ export function useUserLoans(address: string | null) {
         });
       }
       setLoans(found);
-      step.success({ note: `${found.length} loans for wallet` });
+      step.success({ note: `${found.length} loans for wallet (narrowed-by=${narrowedBy}, walked=${walkSet.length}/${knownLoans.length})` });
     } catch (err) {
       step.failure(err);
     } finally {
       setLoading(false);
     }
-  }, [address, publicClient, knownLoans, getOwner, diamondAddress]);
+  }, [address, publicClient, knownLoans, getOwner, diamondAddress, chain.chainId]);
 
   useEffect(() => { load(); }, [load]);
 

@@ -65,30 +65,80 @@ export function useClaimables(address: string | null) {
     try {
       const me = address.toLowerCase();
 
-      // Filter knownLoans (all loans system-wide) down to JUST the
-      // loans the user is involved in, via the indexer's `by-lender`
-      // / `by-borrower` endpoints. Without this gate, the per-loan
-      // RPC fan-out below scaled with the number of loans across the
-      // entire protocol — 14 active loans + however many closed ones
-      // = 40-80+ RPC roundtrips per ClaimCenter mount. With it, we
-      // walk only the user's loans (typically 1-5) — same data shape,
-      // ~10× faster on first paint.
+      // Three-layer fallback to narrow `knownLoans` (all loans
+      // system-wide) down to JUST the user's loans before the
+      // per-loan RPC fan-out below.
       //
-      // If the indexer is unreachable (both fetches return null), we
-      // fall through to the original "walk every knownLoan" path —
-      // ClaimCenter still works, just slow. The fallback preserves
-      // correctness on Workers downtime; the happy path is the cheap
-      // one.
+      //   Layer 1 — indexer HTTP: fetchLoansByLender +
+      //             fetchLoansByBorrower. Cheapest (single HTTP call
+      //             each, parallel; ~50-100ms total). Returns null
+      //             when the Worker is unreachable.
+      //   Layer 2 — on-chain `getUserDashboardClaimables`: the
+      //             MetricsDashboardFacet view that paginates the
+      //             user's claimable loan IDs server-side. One
+      //             multicall via readContract; cheap (~200ms) and
+      //             does NOT depend on the indexer. Returns the same
+      //             loan-ID set the indexer would, just via the
+      //             chain directly.
+      //   Layer 3 — walk every `knownLoan` (legacy, last resort):
+      //             only fires when both indexer AND on-chain user-
+      //             filter view fail. Preserves correctness on the
+      //             worst-case "indexer down + Diamond upgrade
+      //             dropped the view" path.
+      //
+      // The N×RPC fan-out below stays unchanged; we just gate it on
+      // a much smaller `walkSet` whenever Layer 1 or Layer 2
+      // succeeds — typically 1-5 loans for an active user vs.
+      // 40-80+ system-wide.
+      let walkSet = knownLoans;
+      let narrowedBy: 'indexer' | 'onchain-view' | 'none' = 'none';
+
+      // Layer 1: indexer
       const [lenderPage, borrowerPage] = await Promise.all([
         fetchLoansByLender(chain.chainId, address),
         fetchLoansByBorrower(chain.chainId, address),
       ]);
-      let walkSet = knownLoans;
       if (lenderPage || borrowerPage) {
         const userLoanIds = new Set<string>();
         if (lenderPage) for (const l of lenderPage.loans) userLoanIds.add(String(l.loanId));
         if (borrowerPage) for (const l of borrowerPage.loans) userLoanIds.add(String(l.loanId));
         walkSet = knownLoans.filter((e) => userLoanIds.has(String(e.loanId)));
+        narrowedBy = 'indexer';
+      } else {
+        // Layer 2: on-chain user-filter view. Same shape as Layer 1
+        // (returns the user's claimable loan IDs) but via the
+        // Diamond directly. `getUserDashboardClaimables` returns
+        // `(loanIds[], claims[])`; we just need the IDs here, then
+        // the per-loan fan-out below reads the full ClaimableEntry
+        // shape for each.
+        try {
+          const [lenderRes, borrowerRes] = await Promise.all([
+            publicClient.readContract({
+              address: diamondAddress,
+              abi: DIAMOND_ABI,
+              functionName: 'getUserDashboardClaimables',
+              args: [address as Address, false, 0n, 200n],
+            }) as Promise<readonly [readonly bigint[], readonly unknown[]]>,
+            publicClient.readContract({
+              address: diamondAddress,
+              abi: DIAMOND_ABI,
+              functionName: 'getUserDashboardClaimables',
+              args: [address as Address, true, 0n, 200n],
+            }) as Promise<readonly [readonly bigint[], readonly unknown[]]>,
+          ]);
+          const userLoanIds = new Set<string>();
+          for (const id of lenderRes[0]) userLoanIds.add(String(id));
+          for (const id of borrowerRes[0]) userLoanIds.add(String(id));
+          // Only narrow if we actually got data back. An empty result
+          // (user has no claimables) is still valid — walkSet becomes
+          // empty and the per-loan fan-out short-circuits.
+          walkSet = knownLoans.filter((e) => userLoanIds.has(String(e.loanId)));
+          narrowedBy = 'onchain-view';
+        } catch {
+          // Layer 2 failed (view missing on old ABI, or Diamond
+          // unreachable). Fall through to legacy walk-all (Layer 3).
+          narrowedBy = 'none';
+        }
       }
 
       const perLoan = await Promise.all(
@@ -199,7 +249,7 @@ export function useClaimables(address: string | null) {
       );
       const found = perLoan.flat();
       setClaims(found);
-      step.success({ note: `${found.length} claimable entries` });
+      step.success({ note: `${found.length} claimable entries (narrowed-by=${narrowedBy}, walked=${walkSet.length}/${knownLoans.length})` });
     } catch (err) {
       step.failure(err);
     } finally {
