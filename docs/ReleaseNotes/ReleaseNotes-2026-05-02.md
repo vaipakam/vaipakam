@@ -513,7 +513,7 @@ Etherscan's "Last block: 3s ago" pill.
 
 **Single verify-on-chain affordance.** The original spec called
 for a per-row "verify on-chain" button on every offer / loan
-card. After surveying what major DEXes do (Uniswap, Aave,
+card. After surveying what major DEXes do (Uniswap,
 OpenSea, Blur, dYdX v4, Aster), none of them ship per-row verify
 affordances — it's overkill. Replaced with a single
 "Verify on-chain" link in the in-app footer
@@ -642,12 +642,12 @@ isn't necessary because the browser is already event-driven via
 RPC subscriptions. Dropping push reduces the architecture to one
 moving part (cron) instead of two (cron + WebSocket subscribers).
 
-## Wallet picker — opted out of ConnectKit's Aave-account default
+## Wallet picker — opted out of ConnectKit's a major DeFi protocol-account default
 
 ConnectKit v1.9+ ships with `enableAaveAccount: true` as the
 default in `getDefaultConfig`. That silently bundles the
 `@aave/account` smart-wallet connector AND adds a "Continue with
-Aave" CTA at the top of every dapp's connect modal — a
+a major DeFi protocol" CTA at the top of every dapp's connect modal — a
 competing-protocol-branded promotion appearing on Vaipakam's
 modal without the operator's consent.
 
@@ -662,12 +662,12 @@ Trust, Rainbow, MetaMask Mobile, etc.) + Coinbase Wallet
 when Vaipakam is embedded as a Safe App).
 
 After surveying the wallet-picker stacks at the major DeFi
-platforms — Aave and Compound use the same ConnectKit + wagmi
+platforms — a major DeFi protocol and a major DeFi protocol use the same ConnectKit + wagmi
 stack as Vaipakam, Uniswap rolls a custom wagmi picker, dYdX v4
 is Cosmos-native, OP-stack apps tend toward RainbowKit, and
 Friend.tech / Pump.fun use Privy for email/social-to-wallet —
 the conclusion is that Vaipakam's stack is the modern DeFi
-default and worth keeping. The Aave-CTA was the one rough edge,
+default and worth keeping. The a major DeFi protocol-CTA was the one rough edge,
 and it's now gone.
 
 ## T-044 — admin-configurable loan-default grace schedule

@@ -20,7 +20,7 @@ library LibAccessControl {
     bytes32 internal constant DEFAULT_ADMIN_ROLE = 0x00;
     bytes32 internal constant ADMIN_ROLE = keccak256("ADMIN_ROLE");
     bytes32 internal constant PAUSER_ROLE = keccak256("PAUSER_ROLE");
-    /// @dev EigenLayer-style asymmetric pause split. PAUSER_ROLE is the
+    /// @dev asymmetric pause split. PAUSER_ROLE is the
     ///      fast incident lever — widely-distributed signers OK because
     ///      the worst case is a freeze that hurts protocol UX but never
     ///      drains funds. UNPAUSER_ROLE is the deliberate reset gate —
@@ -153,7 +153,7 @@ library LibAccessControl {
         grantRole(DEFAULT_ADMIN_ROLE, owner);
         grantRole(ADMIN_ROLE, owner);
         grantRole(PAUSER_ROLE, owner);
-        // EigenLayer-style asymmetric pause split — UNPAUSER_ROLE
+        // asymmetric pause split — UNPAUSER_ROLE
         // is granted at init alongside PAUSER so the deploy handover
         // can rotate it to the Timelock without an extra step.
         grantRole(UNPAUSER_ROLE, owner);

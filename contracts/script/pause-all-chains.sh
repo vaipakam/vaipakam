@@ -20,7 +20,7 @@
 # unpause-calldata}` so the operator practises THIS exact UX before
 # they ever need it on mainnet.
 #
-# Penpie (Sept 2024) lost ~$621k on Arbitrum in the gap between an
+# A September 2024 cross-chain incident lost ~$621k on Arbitrum in the gap between an
 # incident detection and a sequential Safe-pause across chains. The
 # 5-minute budget in the rehearsal phase encodes the learnings from
 # that post-mortem; this script makes it physically possible by

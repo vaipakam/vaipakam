@@ -962,7 +962,7 @@ together:
   flip off the user-facing "report issue" affordance
   once server capture is observed working — matches the
   pattern of every other major DeFi platform (Uniswap /
-  Aave / Compound / dYdX / Lido) which don't ask users
+  a major DeFi protocol / a major DeFi protocol / dYdX / a liquid-staking protocol) which don't ask users
   to file bug reports.
 - `pages/DataRights.tsx` — new "Download journey log
   (this session)" card. Saves the in-memory journey-log

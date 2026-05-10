@@ -38,11 +38,11 @@ interface NavGroup {
 
 /** Connected-app top-bar — Pattern C (single Docs link + one
  *  in-domain dropdown). Industry-standard split for public-read
- *  shells on a connected-app subdomain — see Compound's `app.*` /
+ *  shells on a connected-app subdomain — see major DeFi UIs (`app.*`) /
  *  GMX's `app.*` for the same shape. The earlier "Learn" dropdown
  *  (Features / How it works / Documentation / FAQ pointing back
  *  to labs.vaipakam.com) was Pattern A, which the survey of
- *  Uniswap / Aave / Morpho / Pendle / dYdX / Compound / 1inch /
+ *  Uniswap / Morpho / dYdX / 1inch /
  *  GMX showed none of those platforms use — visitors on a public-
  *  read app page are past the conversion funnel and don't need a
  *  Features / FAQ menu in the top-bar. Marketing-adjacent links
@@ -66,7 +66,7 @@ const NAV_GROUPS: NavGroup[] = [
     // Verify dropdown stays LOCAL to the connected-app domain —
     // public-read tools (analytics, NFT verifier, protocol console)
     // sit on the connected-app subdomain by industry convention
-    // (Uniswap, Aave, Morpho, Pendle all keep their /markets / /explore
+    // (Uniswap, Morpho all keep their /markets / /explore
     // / governance dashboards on the app subdomain alongside the
     // wallet-bearing write flows).
     links: [
@@ -324,7 +324,7 @@ export default function Navbar() {
           {/* Flat Docs link — sits next to the Verify dropdown on
               desktop and inline above the Launch button on mobile.
               The one cross-domain link that earns a top-bar slot per
-              Pattern C (Compound / GMX). Opens in a new tab so the
+              Pattern C (major DeFi UIs). Opens in a new tab so the
               connected-app session stays open behind. */}
           <a
             href={marketingUrl('/help/overview')}

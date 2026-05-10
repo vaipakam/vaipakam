@@ -11,7 +11,7 @@ import {ConfigureVPFIBuy} from "./ConfigureVPFIBuy.s.sol";
 
 /**
  * @title DiamondConfigSpell
- * @notice MakerDAO-spell-style atomic configure for the four
+ * @notice spell-style atomic configure for the four
  *         post-deploy Diamond-side configure scripts.
  *
  * @dev Background. After `--phase contracts` lands the Diamond +
@@ -62,7 +62,7 @@ import {ConfigureVPFIBuy} from "./ConfigureVPFIBuy.s.sol";
  *      For true on-chain atomicity (single tx covering all four), a
  *      future iteration could compose the four into a single
  *      contract that the Diamond delegate-calls or the Timelock
- *      executes. That's the proper MakerDAO spell shape but requires
+ *      executes. That's the proper single-tx spell shape but requires
  *      a Diamond-side `executeSpell(bytes calldata)` entry point we
  *      don't have today. The compositional approach here is the
  *      pragmatic step-1.

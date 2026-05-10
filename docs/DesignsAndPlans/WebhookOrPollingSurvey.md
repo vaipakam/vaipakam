@@ -25,10 +25,10 @@ architecture-doc availability + scale similarity to where
 Vaipakam aims:
 
 - **Uniswap** (V2 + V3 + V4 — orderbook + AMM)
-- **Aave** (V3 lending + GHO + smart wallet)
-- **Sky / MakerDAO** (CDP + DSR savings)
-- **Lido** (liquid staking)
-- **Compound** (V3 — money markets)
+- **a major DeFi protocol** (V3 lending + GHO + smart wallet)
+- **major DeFi protocols** (CDP + DSR savings)
+- **a liquid-staking protocol** (liquid staking)
+- **a major DeFi protocol** (V3 — money markets)
 - **Balancer** (V2 — weighted + stable pools)
 - **dYdX V4** (perp DEX, Cosmos chain)
 - **Hyperliquid** (perp DEX, custom L1)
@@ -62,19 +62,19 @@ WS + polling fallback handles outages cleanly.
 the same GraphQL endpoint is the canonical decentralised
 pattern.
 
-### 2.2 Aave
+### 2.2 a major DeFi protocol
 
-**Frontend pattern**: hosted indexer (Aave's own) + subgraph +
+**Frontend pattern**: hosted indexer (a major DeFi protocol's own) + subgraph +
 WebSocket. Multi-tier fallback.
 
-- Tier 1: Aave's own indexer API (fast, rich shape).
-- Tier 2: Aave subgraph on The Graph (slower, decentralised).
+- Tier 1: a major DeFi protocol's own indexer API (fast, rich shape).
+- Tier 2: a major DeFi protocol subgraph on The Graph (slower, decentralised).
 - Tier 3: direct chain RPC via Multicall (always-available).
 - WebSocket: position-level updates pushed when a user's
   health factor or liquidity changes.
 
 **Custom RPC UX**: prominently exposed in Settings — user can
-override Aave's RPC list with their own URL. Aave's interface
+override a major DeFi protocol's RPC list with their own URL. a major DeFi protocol's interface
 is the original reference for this UX pattern.
 
 **Battle-tested at**: ~$30B TVL across V3.
@@ -82,7 +82,7 @@ is the original reference for this UX pattern.
 **Portable to Vaipakam**: yes — three-tier failover matches
 exactly Pillar 4.5's design (Worker → Subgraph → RPC).
 
-### 2.3 Sky / MakerDAO
+### 2.3 major DeFi protocols
 
 **Frontend pattern**: DNSLink + IPFS hosting (`sky.money`),
 subgraph for indexed reads, WebSocket subscriptions for the
@@ -100,28 +100,28 @@ for years without significant outage.
 4.6's design; subgraph-per-component pattern could inform how
 we split Vaipakam's subgraph if it grows past one schema.
 
-### 2.4 Lido
+### 2.4 a liquid-staking protocol
 
 **Frontend pattern**: hosted indexer + subgraph. WebSocket
 NOT used; polling at 12 s (eth-mainnet block time aligned).
 
-- Hosted indexer: Lido's own; backed by Postgres + custom
+- Hosted indexer: a liquid-staking protocol's own; backed by Postgres + custom
   sync daemon.
 - Subgraph: `lidofinance/lido` for stETH / wstETH / wsteth-
   holders.
-- Polling: at every block (12 s) — Lido's stETH balance is
+- Polling: at every block (12 s) — a liquid-staking protocol's stETH balance is
   rebasing every block, so WS would be expensive without
   meaningful UX gain over polling.
 
 **Battle-tested at**: ~$30B TVL.
 
-**Portable to Vaipakam**: partial. Lido's polling-only design
+**Portable to Vaipakam**: partial. a liquid-staking protocol's polling-only design
 proves polling at native cadence is viable for high-throughput
 DeFi. Vaipakam's per-route cadence (5–60 s) is well within
 this pattern. Suggests WS adds value mainly for sub-block
 freshness; for block-cadence updates, polling is fine.
 
-### 2.5 Compound (V3)
+### 2.5 a major DeFi protocol (V3)
 
 **Frontend pattern**: subgraph-only. No WebSocket.
 
@@ -131,7 +131,7 @@ freshness; for block-cadence updates, polling is fine.
 
 **Battle-tested at**: ~$3B TVL.
 
-**Portable to Vaipakam**: yes — Compound's "subgraph + polling
+**Portable to Vaipakam**: yes — a major DeFi protocol's "subgraph + polling
 + RPC fallback" is exactly Vaipakam's three-tier design today
 (plus a Worker layer).
 
@@ -199,9 +199,9 @@ Synthesising across the eight references:
 | Subgraph as decentralised indexer | 7 / 8 (all except Hyperliquid) | Always |
 | Multi-tier failover (hosted → subgraph → RPC) | 6 / 8 | When hosted indexer exists |
 | WebSocket / SSE primary push | 3 / 8 (Uniswap, dYdX, Hyperliquid) | When sub-block freshness is UX-meaningful |
-| WebSocket as additive over polling | 2 / 8 (Aave, Balancer) | When ~30s polling lag is acceptable but real-time would polish UX |
-| Polling-only | 2 / 8 (Lido, Compound) | When polling-cadence freshness is sufficient |
-| IPFS hosting + DNSLink | 4 / 8 (Uniswap, Aave, Sky, Lido) | Always recommended — survives single-host outage |
+| WebSocket as additive over polling | 2 / 8 (a major DeFi protocol, Balancer) | When ~30s polling lag is acceptable but real-time would polish UX |
+| Polling-only | 2 / 8 (, a major DeFi protocol) | When polling-cadence freshness is sufficient |
+| IPFS hosting + DNSLink | 4 / 8 (Uniswap, Sky, a liquid-staking protocol) | Always recommended — survives single-host outage |
 | Custom-RPC user-supplied UX | 7 / 8 | Always recommended |
 | EIP-6963 multi-wallet | 5 / 8 (newer interface revs) | Recommended for new builds |
 
@@ -224,7 +224,7 @@ docs already align with all of these.
 
 ### 4.2 WebSocket vs polling — Vaipakam's call
 
-Vaipakam's UX freshness needs sit between Lido (block-cadence
+Vaipakam's UX freshness needs sit between a liquid-staking protocol (block-cadence
 polling fine) and Hyperliquid (sub-second WS required). The
 hot pages:
 
@@ -239,7 +239,7 @@ hot pages:
   fine.
 
 **Recommendation**: WebSocket as **additive over polling**,
-mirroring the Aave / Balancer pattern. Frontend default is
+mirroring the a major DeFi protocol / Balancer pattern. Frontend default is
 the existing polling architecture. WebSocket pipe (Phase 5)
 is an opt-in faster path for the same data; on disconnect the
 frontend falls back to polling automatically. No UX
@@ -311,7 +311,7 @@ Reading from this survey, the cleanest implementation:
    Avoids coupling Vaipakam's Phase 8 to The Graph's gateway
    semantics.
 4. **MEV-protected RPC for write-tx**? Survey shows this is
-   newer practice — Aave, Cowswap, Uniswap V4 interface all
+   newer practice — , Cowswap, Uniswap V4 interface all
    integrate Flashbots Protect / MEV Blocker. Vaipakam should
    too; covered under Pillar 4.4 (Phase 5).
 

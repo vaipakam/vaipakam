@@ -120,7 +120,7 @@ contract DeployerZeroRolesTest is Test {
         ac.grantRole(LibAccessControl.ADMIN_ROLE, adminTimelock);
         ac.grantRole(LibAccessControl.PAUSER_ROLE, pauserMultisig);
         // UNPAUSER_ROLE -> adminTimelock (NOT pauserMultisig). The
-        // EigenLayer asymmetric split means the fast-key Pauser cannot
+        // asymmetric split means the fast-key Pauser cannot
         // un-do its own mistaken pause; recovery has to wait the
         // Timelock's review window.
         ac.grantRole(LibAccessControl.UNPAUSER_ROLE, adminTimelock);

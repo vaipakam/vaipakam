@@ -846,7 +846,7 @@ window). Cache-merge logic gains a clean state-change /
 informational split — only state-change events trigger merges,
 informational events flow into the journey log only.
 
-The trade is industry-standard — Aave, Compound, Sky all pay
+The trade is industry-standard — , , Sky all pay
 this gas tax to enable clean event-sourced consumers.
 
 ---
@@ -862,7 +862,7 @@ resolved per the recommendations. Locked-in answers:
 | Q2 | Extend `RewardReporterFacet` cross-chain reward events | **Skip.** Operator daemon is the sole consumer and already re-fetches per-chain on each cron |
 | Q3 | Add `accruedInterest` to `LoanRepaid` despite being derivable | **Yes.** Emit AS-OF-EMIT-TIME value; consumer-side decoder must recompute for display freshness. Ensures the event-rendering matches what `getLoanDetails` returns at the same block |
 | Q4 | Audit-tag every cold-path event with explicit `event-sourcing` marker | **Yes** — superseded by the `@custom:event-category` natspec mechanism + lint script in §1.5 + §1.6. Phase 1 Day 1 sweep tags every remaining event |
-| Q5 | Indexer stability concern from doubled event volume from companion events | **No concern.** Aave alone emits 4–5 events per `borrow`; Vaipakam's volume is below stress thresholds |
+| Q5 | Indexer stability concern from doubled event volume from companion events | **No concern.** a major DeFi protocol alone emits 4–5 events per `borrow`; Vaipakam's volume is below stress thresholds |
 
 ### 6-historical (the original questions, kept for traceability)
 
@@ -894,7 +894,7 @@ resolved per the recommendations. Locked-in answers:
    logical change. Any concern about indexer stability under
    doubled event volume?**
    - Recommendation: no — every major DeFi indexer already
-     handles this volume (Aave alone emits 4–5 events per
+     handles this volume (a major DeFi protocol alone emits 4–5 events per
      `borrow`). Vaipakam's volume is well below stress
      thresholds.
 

@@ -21,7 +21,7 @@ before reviewing code.
 **Out of scope**
 
 - OpenZeppelin Contracts Upgradeable, Chainlink feed registry, the
-  three V3-clone factories (UniswapV3 / PancakeSwap V3 / SushiSwap V3),
+  three V3-clone factories (UniswapV3 / V3-fork DEX V3 / V3-fork DEX V3),
   Balancer V2 Vault, Tellor Oracle, API3 ServerV1, DIA Oracle V2,
   Uniswap Permit2 — treated as trusted external dependencies.
 - Frontend (`frontend/`) and deployment scripts (`contracts/script/`) —

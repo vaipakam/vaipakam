@@ -587,8 +587,8 @@ the loan-classification layer.
 
 ### Phase 7b.1 — three-venue OR-logic, zero per-asset config
 
-**The realisation that drove the design**: Uniswap V3, **PancakeSwap V3**,
-and **SushiSwap V3** are all forks of the same Uniswap V3 codebase at
+**The realisation that drove the design**: Uniswap V3, **V3-fork DEX V3**,
+and **V3-fork DEX V3** are all forks of the same Uniswap V3 codebase at
 the contract layer. They expose the identical `getPool(token0, token1,
 fee)` factory lookup and the identical `slot0()` / `liquidity()` pool
 views. The exact same depth-probe code runs against any of the three —
@@ -607,7 +607,7 @@ clone still meets the floor.
 **Per-chain coverage matrix** (which V3 forks we'll register on
 each chain at deploy time):
 
-| Chain         | Uniswap V3 | PancakeSwap V3 | SushiSwap V3 |
+| Chain         | Uniswap V3 | V3-fork DEX V3 | V3-fork DEX V3 |
 | ------------- | ---------- | -------------- | ------------ |
 | Ethereum      | ✓          | ✓              | ✓            |
 | Base          | ✓          | ✓              | (V2 only)    |
@@ -618,10 +618,10 @@ each chain at deploy time):
 
 The two chains where Uniswap V3 isn't deployed (BNB Chain and Polygon
 zkEVM) — previously stuck with no liquidity classification at all —
-now get coverage via PancakeSwap V3 + SushiSwap V3.
+now get coverage via V3-fork DEX V3 + V3-fork DEX V3.
 
 **Fee-tier set extended.** Pre-Phase-7b the depth probe only checked
-the 0.3% (3000 bps) tier. PancakeSwap V3 uses a 0.25% (2500 bps) tier
+the 0.3% (3000 bps) tier. V3-fork DEX V3 uses a 0.25% (2500 bps) tier
 in place of 0.3%, and several blue-chip pairs live on UniV3's 0.05%
 (500 bps) tier instead. The probe now iterates `[3000, 500, 2500,
 10000, 100]` against every configured factory and returns the first
@@ -645,7 +645,7 @@ Balancer V2 has no canonical on-chain `getPoolByTokens(token0, token1)`
 view — pool indexing is off-chain via subgraph, so Balancer's
 on-chain depth probe would have required a per-asset poolId mapping
 in governance storage. That conflicted with the no-per-asset-config
-constraint, and adding PancakeSwap V3 + SushiSwap V3 instead delivers
+constraint, and adding V3-fork DEX V3 + V3-fork DEX V3 instead delivers
 strictly better coverage for less ongoing ops effort. The prior
 storage slot for `balancerV2Vault` was removed before any production
 write was made; Balancer integration is deferred to a possible future
@@ -758,7 +758,7 @@ Chainlink AND every secondary that has data for the asset.
   `getValue(string)` view.
 
 The `IERC20.symbol()` helper accepts both string-returning tokens
-(modern ERC-20) and bytes32-returning tokens (legacy MakerDAO-style)
+(modern ERC-20) and bytes32-returning tokens (legacy a major DeFi protocol-style)
 and silently classifies non-decodable symbols as Unavailable.
 
 **Symbol-collision concern**: an attacker could deploy a malicious

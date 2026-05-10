@@ -88,8 +88,8 @@ The cron below reads this file, so any deploy must update it atomically with the
 | Check | Call | Expected |
 |---|---|---|
 | Uniswap V3 factory set | `OracleAdminFacet.getUniswapV3Factory()` | non-zero where Uni V3 is deployed; `address(0)` on BNB / Polygon zkEVM |
-| PancakeSwap V3 factory set | `AdminFacet.getPancakeswapV3Factory()` | non-zero where PancakeV3 is deployed |
-| SushiSwap V3 factory set | `AdminFacet.getSushiswapV3Factory()` | non-zero where SushiV3 is deployed |
+| V3-fork DEX V3 factory set | `AdminFacet.getPancakeswapV3Factory()` | non-zero where PancakeV3 is deployed |
+| V3-fork DEX V3 factory set | `AdminFacet.getSushiswapV3Factory()` | non-zero where SushiV3 is deployed |
 | At least 2 V3 factories configured | sum of non-zero | ≥ 2 (preserves OR-redundancy; falling to 1 collapses to single-venue dependency) |
 | For each supported liquid asset: at least 1 V3 factory exposes a deep pool | `checkLiquidity(asset)` | true |
 | At least one reference asset passes `checkLiquidityOnActiveNetwork` | | true |

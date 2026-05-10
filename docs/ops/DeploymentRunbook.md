@@ -1166,7 +1166,7 @@ the deploy-script pre-flight will refuse to proceed otherwise.
   takes ~30s instead of timing out.
 - **Wrapped-native is WBNB, not WETH.** `DeployTestnetLiquidityMocks`
   wires `OracleAdminFacet.setWethContract(...)` to the canonical
-  PancakeSwap WBNB at `0xae13d989daC2f0dEbFf460aC112a837C89BAa7cd`.
+  V3-fork DEX WBNB at `0xae13d989daC2f0dEbFf460aC112a837C89BAa7cd`.
   The Diamond's price-asset machinery doesn't care about the symbol —
   only that a Chainlink-backed feed exists and the v3-style depth
   check resolves to a non-zero pool.

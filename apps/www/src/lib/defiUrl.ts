@@ -5,7 +5,7 @@
  * handful of public-read tools that live on the connected-app
  * domain — analytics, NFT verifier, protocol console — plus the
  * "Launch App" CTA. None of those are co-located here because the
- * industry pattern (Uniswap, Aave, Morpho, Pendle, dYdX, ...) keeps
+ * industry pattern (Uniswap, Morpho, dYdX, ...) keeps
  * read-only public dashboards on the app subdomain alongside the
  * wallet-bearing write flows.
  *

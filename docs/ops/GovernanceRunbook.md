@@ -181,7 +181,7 @@ diamond.addSwapAdapter(balancerV2Adapter); // slot 3
 
 ```solidity
 // In addition to the existing setUniswapV3Factory call, register
-// PancakeSwap V3 and SushiSwap V3 factories per the chain matrix
+// V3-fork DEX V3 and V3-fork DEX V3 factories per the chain matrix
 // in OraclePolicy.md. Setting any to zero disables that leg.
 diamond.setPancakeswapV3Factory(panV3FactoryThisChain);
 diamond.setSushiswapV3Factory(sushiV3FactoryThisChain);
@@ -498,12 +498,12 @@ it:
    per year in many tokens creates a reporting nightmare. Aggregated
    periodic distributions = one event per cycle, clean treatment.
 
-3. **Operational fragility.** SushiSwap's 2020 "Chef Nomi" episode
+3. **Operational fragility.** V3-fork DEX's 2020 "Chef Nomi" episode
    is the textbook cautionary tale: the protocol had a hardcoded
    `developerFund` that auto-collected 10% of SUSHI emissions. The
    pseudonymous founder withdrew ~$14M to a personal address three
    weeks after launch. Community uproar; founder eventually
-   returned it; Sushi restructured to multisig / DAO control. The
+   returned it; V3-fork DEX restructured to multisig / DAO control. The
    pattern itself is fragile even with good actors.
 
 4. **Sanctions surface.** A hardcoded founder address creates a
@@ -522,20 +522,20 @@ genesis allocations vested over 3-5 years**, and operating fees
 | Protocol | Genesis founder/team allocation | Vesting | Per-tx auto-route to founders? |
 |---|---|---|---|
 | Uniswap | 21.5% team + 17.8% investors | 4 years | No |
-| Aave | Team allocation upfront | 4 years | No (fees → Ecosystem Collector → governance) |
-| MakerDAO | Founders received MKR at genesis | Multi-year | No (Foundation dissolved 2021) |
+| a major DeFi protocol | Team allocation upfront | 4 years | No (fees → Ecosystem Collector → governance) |
+| a major DeFi protocol | Founders received governance token at genesis | Multi-year | No (Foundation dissolved 2021) |
 | Curve | 30% shareholders + 3% employees + 2% early users | 2-5 years | No |
-| Compound | 24% founders + 22.25% investors | 4 years | No |
+| a major DeFi protocol | 24% founders + 22.25% investors | 4 years | No |
 | Synthetix | Team / advisors at genesis | Vested | No (SCCP-approved budget) |
-| Yearn | 0% founder originally; later 6,666 YFI for treasury+team via gov vote | n/a / multi-year | No |
+| a yield aggregator | 0% founder originally; later 6,666 YFI for treasury+team via gov vote | n/a / multi-year | No |
 | dYdX | Employees + investors + community | Multi-year | No (v4 fees → validators / stakers) |
 | 1inch | 18% team + 21% investors | 4 years | No |
-| Lido | Team + investors at genesis | Multi-year | No (10% fee → operators+DAO, never founders) |
+| a liquid-staking protocol | Team + investors at genesis | Multi-year | No (10% fee → operators+DAO, never founders) |
 | Balancer | Founders + devs + investors + advisors | Multi-year | No |
 | Convex | 3.3% team + 9.7% investors | 1-3 years | No |
 | GMX | 30% founders & team | Vested | No (fees → GMX stakers + GLP LPs) |
-| Pendle | 16% team + 7% advisors | Vested | No |
-| Frax | Founders at genesis | Vested | No |
+| a yield protocol | 16% team + 7% advisors | Vested | No |
+| a stablecoin protocol | Founders at genesis | Vested | No |
 
 What protocols **do** auto-route per-tx — but only to **token
 holders** (which includes founders proportional to their
@@ -543,10 +543,10 @@ holdings, not as a special insider class):
 
 - **Curve**: 50% of swap fees auto-distributed to veCRV stakers.
 - **GMX**: 30% of trading fees to GMX stakers, 70% to GLP LPs.
-- **SushiSwap xSUSHI**: 0.05% of every swap to xSUSHI stakers.
-- **Lido**: 10% of staking yield, half to node operators, half
+- **V3-fork DEX xSUSHI**: 0.05% of every swap to xSUSHI stakers.
+- **a liquid-staking protocol**: 10% of staking yield, half to node operators, half
   to DAO treasury.
-- **Maker**: surplus → MKR burn (deflationary; benefits all
+- **Maker**: surplus → governance token burn (deflationary; benefits all
   holders).
 
 The legal distinction is meaningful: distributing to **token
@@ -574,7 +574,7 @@ the second looks like an ongoing unregistered securities offering.
 - Founding team's ongoing work funded via per-quarter or
   per-milestone discretionary governance grants from the
   converted treasury.
-- Modeled on Aave Companies / Yearn yTeam / BGD Labs. Each grant
+- Modeled on a major DeFi protocol Companies / a yield aggregator yTeam / BGD Labs. Each grant
   proposal lists scope, deliverables, and budget; governance
   votes; payout flows from treasury.
 - This is the only ongoing revenue-coupled compensation route.

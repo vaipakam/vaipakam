@@ -138,9 +138,9 @@ const defaultConnectKitConfig = getDefaultConfig({
   appDescription: APP_DESCRIPTION,
   appUrl: APP_URL,
   appIcon: APP_ICON,
-  // ConnectKit v1.9+ ships with `enableAaveAccount: true` as the default —
+  // ConnectKit v1.9+ ships an opt-in third-party account integration as default —
   // adding the @aave/account smart-wallet connector and rendering a
-  // "Continue with Aave" CTA at the top of the picker. We do NOT want a
+  // the third-party CTA at the top of the picker. We do NOT want a
   // competing-protocol-branded button at the top of Vaipakam's connect
   // modal; opt out explicitly. Removes the connector AND the CTA.
   enableAaveAccount: false,

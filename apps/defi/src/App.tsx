@@ -36,7 +36,7 @@ import type { ReactElement } from 'react';
  * pre-purchase due-diligence tool aimed at strangers evaluating a
  * Vaipakam position NFT offered on a secondary marketplace. It
  * lives on the connected-app domain alongside the wallet-bearing
- * write flows (industry pattern: Aave /markets, Uniswap /explore,
+ * write flows (industry pattern used by major DeFi platforms,
  * Morpho /markets — public-read tools sit on the app subdomain).
  * Wrapped in the public Navbar + Footer chrome.
  */
@@ -70,8 +70,8 @@ function PublicNftVerifier() {
  * navigation continues to work.
  *
  * Connected-app routes mount at the root with NO `/app` or `/apps`
- * prefix — matches every major DeFi platform (Aave / Uniswap /
- * Morpho / Pendle / dYdX all root-mount). The user only ever sees
+ * prefix — matches every major DeFi platform (e.g. Uniswap /
+ * Morpho / dYdX all root-mount). The user only ever sees
  * `defi.vaipakam.com/<route>`, never `defi.vaipakam.com/app/...`.
  */
 function pageRoutes(): ReactElement {

@@ -68,8 +68,8 @@ proxy page:
 > [Vaipakam Vault Implementation]
 
 If the **implementation contract** is tagged, every Vaipakam Vault
-proxy automatically displays the relationship. Same mechanism Aave /
-Compound / Uniswap rely on for their proxy-based deployments.
+proxy automatically displays the relationship. Same mechanism a major DeFi protocol /
+a major DeFi protocol / Uniswap rely on for their proxy-based deployments.
 
 So our Etherscan strategy is:
 

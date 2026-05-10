@@ -13,7 +13,7 @@ import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
  * @notice Role-restricted admin functions for configuration, including setting treasury and pause controls.
  * @dev Part of Diamond Standard. Uses LibAccessControl for role-based access.
  *      ADMIN_ROLE for configuration, PAUSER_ROLE for pause,
- *      UNPAUSER_ROLE for unpause (EigenLayer-style asymmetric split — see
+ *      UNPAUSER_ROLE for unpause (asymmetric-asymmetric split — see
  *      LibAccessControl.UNPAUSER_ROLE rationale).
  */
 contract AdminFacet is DiamondAccessControl, IVaipakamErrors {
@@ -375,7 +375,7 @@ contract AdminFacet is DiamondAccessControl, IVaipakamErrors {
 
     /// @notice Lifts the pause, re-enabling all `whenNotPaused` entry points.
     /// @dev UNPAUSER_ROLE-only — split off PAUSER_ROLE to enforce the
-    ///      EigenLayer asymmetric pause pattern. PAUSER_ROLE is the
+    ///      asymmetric pause pattern. PAUSER_ROLE is the
     ///      fast incident lever; UNPAUSER_ROLE is the deliberate reset
     ///      gate, held by the Timelock at handover so a real-incident
     ///      unpause waits its `minDelay` review window. Emits

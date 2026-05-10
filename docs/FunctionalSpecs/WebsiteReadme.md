@@ -368,7 +368,7 @@ Wallet connection requirements:
 - startup should warn site operators loudly if the WalletConnect project ID is missing from the deployment environment
 - a missing WalletConnect project ID should be treated as a production misconfiguration because it can break mobile deep-linking and degrade users into a QR-only flow
 - the wallet picker should be powered by ConnectKit on top of wagmi v2 so extension wallets, WalletConnect mobile wallets, and wallet-app deep links appear through one curated picker
-- ConnectKit's Aave-account connector / `Continue with Aave` default should be explicitly disabled unless Vaipakam intentionally adopts that branded smart-wallet entry point later
+- ConnectKit's a major DeFi protocol-account connector / `Continue with a major DeFi protocol` default should be explicitly disabled unless Vaipakam intentionally adopts that branded smart-wallet entry point later
 
 Safe-app embed requirements:
 

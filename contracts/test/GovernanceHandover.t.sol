@@ -109,7 +109,7 @@ contract GovernanceHandoverTest is Test {
         AccessControlFacet ac = AccessControlFacet(address(diamond));
 
         // Timelock-gated roles: slow governance surfaces that move TO the
-        // timelock. Includes UNPAUSER_ROLE per the EigenLayer asymmetric
+        // timelock. Includes UNPAUSER_ROLE per the asymmetric
         // pause split — pause stays on the fast-key Pauser Safe, unpause
         // goes to the Timelock so a compromised Pauser cannot un-do its
         // own mistaken pause without the review-window delay.

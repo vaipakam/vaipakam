@@ -51,8 +51,8 @@ across **Tellor + API3 + DIA**. All three secondaries derive their
 lookup keys from `IERC20.symbol()` on-chain, so adding new collateral
 assets never requires a per-asset governance write. Phase 7b.1 adds
 parallel multi-venue depth classification at
-`OracleFacet.checkLiquidity`, OR-combining UniswapV3 + PancakeSwap V3
-+ SushiSwap V3 factory probes.
+`OracleFacet.checkLiquidity`, OR-combining UniswapV3 + V3-fork DEX V3
++ V3-fork DEX V3 factory probes.
 
 Together, these close the class of attacks where manipulating one
 price source — or paus­ing one DEX — lets an attacker artificially

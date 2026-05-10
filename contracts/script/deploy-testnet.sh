@@ -8,8 +8,8 @@
 # only deltas:
 #   1. Testnet chain registry (Anvil + Sepolias + BNB testnet + Amoy)
 #      instead of mainnet slugs.
-#   2. `--phase pause-rehearsal` is ENABLED — Penpie-style sub-5-minute
-#      N-chain simultaneous-pause drill. Refused on the mainnet script
+#   2. `--phase pause-rehearsal` is ENABLED — sub-5-minute N-chain
+#      simultaneous-pause drill. Refused on the mainnet script
 #      (where pause is a real incident lever, not a drill).
 #   3. The dirty-tree refusal in `--phase contracts` is LIFTED —
 #      testnet rehearsals routinely iterate on uncommitted local
@@ -117,7 +117,7 @@
 #       Read-only smoke checks against the deployed Diamond.
 #
 #   bash contracts/script/deploy-testnet.sh <chain-slug> --phase pause-rehearsal
-#       Penpie-style sub-5-minute N-chain simultaneous-pause drill.
+#       sub-5-minute N-chain simultaneous-pause drill.
 #       Reads addresses.json on this chain, prints the `pause()`
 #       calldata for the Diamond + every LZ OApp/OFT (VPFIOFTAdapter,
 #       VPFIMirror, VPFIBuyAdapter, VPFIBuyReceiver, VaipakamRewardOApp)
@@ -237,7 +237,7 @@ Phases (mirror mainnet phase-for-phase except pause-rehearsal):
                      on the shared \`vaipakam-archive\` database.
   cf-agent         — wrangler deploy apps/agent (notifications, frames).
   verify           — Read-only smoke checks.
-  pause-rehearsal  — TESTNET-ONLY Penpie-style sub-5-min pause drill.
+  pause-rehearsal  — TESTNET-ONLY sub-5-min pause drill.
                      --mode {calldata|check|unpause-calldata}
 
 For mainnet, use deploy-mainnet.sh (refuses pause-rehearsal).
@@ -1222,7 +1222,7 @@ phase_verify() {
 }
 
 # ── Phase: pause-rehearsal (testnet-only) ─────────────────────────────
-# Penpie-style sub-5-minute simultaneous-pause drill. Reads
+# sub-5-minute simultaneous-pause drill. Reads
 # addresses.json on this chain, picks out every Vaipakam-controlled
 # contract that exposes `pause()` (Diamond + every LZ OApp/OFT), and
 # either prints calldata for the operator's Pauser Safe to sign, or
@@ -1271,7 +1271,7 @@ phase_pause_rehearsal() {
   fi
 
   local SENTINEL="$MARKERS_DIR/pause-rehearsal-$CHAIN_SLUG-started.epoch"
-  local PAUSE_BUDGET_S=300   # 5-minute hard budget (Penpie post-mortem)
+  local PAUSE_BUDGET_S=300   # 5-minute hard budget (cross-chain incident post-mortem)
 
   case "$PAUSE_MODE" in
     calldata)

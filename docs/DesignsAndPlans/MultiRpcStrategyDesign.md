@@ -29,7 +29,7 @@ frontend talks directly to RPC. A single-provider single-point-
 of-failure undermines the whole "no centralised dependency"
 posture.
 
-Industry pattern: Aave, Uniswap, Compound, Sky all configure
+Industry pattern: , Uniswap, , Sky all configure
 3–5 fallback RPCs per chain in their public configs +
 prominently expose a "Custom RPC" setting + auto-detect the
 wallet's injected provider via EIP-6963 + use chainlist.org-
@@ -169,7 +169,7 @@ section:
   fallbacks.
 - One per chain.
 
-Industry parallel: Aave's app has this exact UX in their
+Industry parallel: a major DeFi protocol's app has this exact UX in their
 Settings page. Uniswap's interface accepts a `?rpc=...` URL
 query parameter for the same purpose.
 
@@ -188,7 +188,7 @@ multi-RPC provider checks if any announced wallet supports the
 active chain (via the `wallet_switchEthereumChain` capability)
 and uses it as endpoint #2.
 
-This is increasingly table stakes — Aave, Uniswap V4 interface,
+This is increasingly table stakes — , Uniswap V4 interface,
 and most newer DeFi already support it.
 
 ---
@@ -314,5 +314,5 @@ endpoint" without opening dev tools.
   uses the multi-rpc transport.
 - `DesignsAndPlans/IPFSHostingPipelineDesign.md` — bundled-fallback
   list discipline matters most for the IPFS-hosted path.
-- Industry refs: Uniswap interface multi-RPC config; Aave
+- Industry refs: Uniswap interface multi-RPC config; a major DeFi protocol
   Settings page custom-RPC UX; EIP-6963 spec.

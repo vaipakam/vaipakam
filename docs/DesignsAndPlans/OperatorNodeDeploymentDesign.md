@@ -386,7 +386,7 @@ mature DeFi / DEX platforms. Summary:
 - **Client-side WebSocket / SSE** is the right pattern, **additive
   over polling** — the WS pipe delivers sub-second freshness when
   the connection is healthy; the polling architecture stays as
-  the canonical fallback on disconnect. Matches the Aave /
+  the canonical fallback on disconnect. Matches the a major DeFi protocol /
   Balancer pattern; avoids the dYdX / Hyperliquid "WS-first"
   complexity that Vaipakam's UX freshness needs don't justify.
 - **The WS pipe has two deliverables** (Phase 8a + 8b): the

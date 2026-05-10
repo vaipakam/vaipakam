@@ -1053,9 +1053,9 @@ Uniswap-V3-fork DEX factories.
 
 | Setter | Purpose |
 |---|---|
-| `setPancakeswapV3Factory(address)` | PancakeSwap V3 factory (chain-specific). Zero disables the leg. |
+| `setPancakeswapV3Factory(address)` | V3-fork DEX V3 factory (chain-specific). Zero disables the leg. |
 | `getPancakeswapV3Factory() → address` | Read current value. |
-| `setSushiswapV3Factory(address)` | SushiSwap V3 factory (chain-specific). Zero disables the leg. |
+| `setSushiswapV3Factory(address)` | V3-fork DEX V3 factory (chain-specific). Zero disables the leg. |
 | `getSushiswapV3Factory() → address` | Read current value. |
 
 Combined with the pre-existing `setUniswapV3Factory` from

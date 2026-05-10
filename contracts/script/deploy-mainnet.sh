@@ -110,7 +110,7 @@
 #
 #   --phase pause-rehearsal is REFUSED on mainnet — that phase is
 #       testnet-only, where it exists in deploy-testnet.sh as a
-#       sub-5-minute N-chain simultaneous-pause drill (Penpie-style
+#       sub-5-minute N-chain simultaneous-pause drill (cross-chain-incident-style
 #       defense rehearsal). On mainnet a pause is a real incident
 #       lever and runs from `pause-all-chains.sh`, not from a deploy
 #       script.
@@ -1197,7 +1197,7 @@ case "$PHASE" in
 Refusing --phase pause-rehearsal on mainnet.
 
 This phase is testnet-only — it lives in deploy-testnet.sh as a
-sub-5-minute N-chain simultaneous-pause drill (Penpie-style defense
+sub-5-minute N-chain simultaneous-pause drill (cross-chain-incident-style defense
 rehearsal). On MAINNET a pause is a real incident lever: never a
 drill, never a deploy-script step. If you genuinely need to pause
 production, run pause-all-chains.sh from the operator runbook.

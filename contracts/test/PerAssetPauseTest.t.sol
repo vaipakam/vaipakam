@@ -103,7 +103,7 @@ contract PerAssetPauseTest is Test {
     /// @dev PAUSER_ROLE is the fast-key incident-response surface: a
     ///      multisig holding only PAUSER_ROLE must still be able to
     ///      ENGAGE a per-asset reserve pause without waiting on the
-    ///      timelocked ADMIN. After the EigenLayer asymmetric split it
+    ///      timelocked ADMIN. After the asymmetric split it
     ///      can NOT lift its own pause — see
     ///      `test_unpauseAsset_revertsWithPauserRoleAlone` below.
     function test_pauseAsset_worksWithPauserRoleAlone() public {

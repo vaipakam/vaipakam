@@ -42,7 +42,7 @@ storage migration + audit cycle later.
 
 - **Continuous bonding curves / market-making AMM.** Range offers are
   discrete — one offer = one resulting loan. We're not building an
-  Aave / Compound-style pool.
+  a major DeFi protocol / a major DeFi protocol-style pool.
 - **Range duration / range collateral.** Phase 2.
 - **In-protocol matcher.** The contract enforces the match constraints
   at execution; discovery happens off-chain. An on-chain matcher would
@@ -1407,7 +1407,7 @@ on `Storage`; pre-launch reorder is fine.
 
 ## Sources & prior art
 
-- Pendle's RFQ matching for yield tokens
+- a yield protocol's RFQ matching for yield tokens
 - 1inch Fusion (range-order intent matching)
 - LooksRare-style limit-order matching
 - The Vaipakam codebase's existing keeper-bot patterns

@@ -23,8 +23,8 @@ hostable without any single centralised dependency.
 A DeFi frontend that depends on a single corporate host
 (Cloudflare, Vercel, AWS) is one account-suspension or one
 DDoS-redirect away from being unreachable. Every mature
-decentralised protocol — Uniswap (`uniswap.eth`), Aave
-(`aave.eth`), Compound (`compoundfinance.eth`), Sky/MakerDAO
+decentralised protocol — Uniswap (`uniswap.eth`)
+(`aave.eth`), a major DeFi protocol-style governance UIs, major DeFi protocols
 (`sky.money` via DNSLink + IPFS) — has already executed this
 migration. The cost is moderate (a multi-pin pipeline +
 reproducible build); the survival benefit is categorical.
@@ -399,5 +399,5 @@ silent drift.
 - `frontend/wrangler.jsonc` — Cloudflare Pages config; stays
   as one of several edges, not canonical.
 - Industry refs: Uniswap's deployment workflow
-  (`uniswap.eth` IPFS pinning), Aave's IPFS deployment
+  (`uniswap.eth` IPFS pinning), a major DeFi protocol's IPFS deployment
   pattern, Sky's DNSLink-based hosting.

@@ -24,7 +24,7 @@ per page.
 
 The Graph (and equivalents — Goldsky, Envio, Substreams) is
 the de-facto standard for decentralised indexing in DeFi.
-Every major protocol — Uniswap, Aave, Compound, Lido,
+Every major protocol — Uniswap, , ,
 Balancer, Curve, Sky — has subgraphs. The infrastructure is
 mature, the GraphQL shape is familiar, and at least one
 deployment is hosted by The Graph's decentralised network so
@@ -399,5 +399,5 @@ The hooks try (1); on any error, try (2); on any error, try
 - `ops/hf-watcher/migrations/` — D1 schema the subgraph
   schema mirrors.
 - Industry refs: Uniswap V3 subgraph
-  (`/subgraphs/name/uniswap/uniswap-v3`), Aave V3 subgraph,
-  Compound subgraph; The Graph's docs on the AS mapping API.
+  (`/subgraphs/name/uniswap/uniswap-v3`), a major DeFi protocol V3 subgraph,
+  a major DeFi protocol subgraph; The Graph's docs on the AS mapping API.

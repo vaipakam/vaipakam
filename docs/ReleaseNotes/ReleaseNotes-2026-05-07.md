@@ -179,7 +179,7 @@ source for each rule.
 
 A new branch was checked out off `main` for the upcoming
 architectural survey of how major DeFi / DEX platforms — Uniswap,
-Aave, Sky/MakerDAO, Lido, Compound, Balancer, dYdX, Hyperliquid
+a major DeFi protocol, major DeFi protocols, , , Balancer, dYdX, Hyperliquid
 — push events to clients (WebSocket, SSE, subgraph subscriptions,
 webhook). The intended outcome is a reference doc that informs
 whether to layer a WebSocket / SSE pipe over the existing polling
@@ -234,7 +234,7 @@ beyond what was originally on the table:
   technically possible but actually pleasant to use — Multicall3
   batching, IndexedDB caching, event-sourced state, RPC failover.
 - Industry-standard, battle-tested patterns matching what
-  Uniswap / Aave / Sky / Lido / Hyperliquid do on hosted
+  Uniswap / a major DeFi protocol / Sky / a liquid-staking protocol / Hyperliquid do on hosted
   decentralised frontends.
 
 Plan-of-record (sequenced by dependency, not by calendar):

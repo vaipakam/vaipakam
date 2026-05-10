@@ -58,7 +58,7 @@ Three independent qualities, deliberately decoupled:
 ### 2.1 Industry-standard, battle-tested
 
 The platform's architecture matches what mature DeFi protocols
-(Uniswap, Aave, Sky/MakerDAO, Lido, Compound, Balancer, dYdX,
+(Uniswap, major DeFi protocols, , , Balancer, dYdX,
 Hyperliquid) actually run in production. Every architectural
 choice has at least one production reference at peer-protocol
 scale; no novel patterns where a battle-tested one exists.
@@ -168,9 +168,9 @@ seen this id before).
 
 **Effort:** 4–6 dev-days for audit + design + Solidity + tests.
 
-**Reference:** Aave's event surface (their `Borrow`,
+**Reference:** a major DeFi protocol's event surface (their `Borrow`,
 `Repay`, `LiquidationCall`, `ReserveUsedAsCollateralEnabled`
-events all carry the post-mutation reserve state). Compound's
+events all carry the post-mutation reserve state). a major DeFi protocol's
 `AccrueInterest` carries the new rate and total borrows — a
 consumer can rebuild market state from event stream alone.
 
@@ -252,7 +252,7 @@ fully-decoded rows. localStorage is sync-blocking and capped at
 
 **Effort:** 3–5 dev-days. Builds on pillars 4.1 and 4.2.
 
-**Reference:** Aave's frontend uses a similar IndexedDB-backed
+**Reference:** a major DeFi protocol's frontend uses a similar IndexedDB-backed
 cache via Apollo Client + persistent local state. Sky's SES
 project caches the DSR and savings positions in IndexedDB.
 
@@ -275,7 +275,7 @@ failover, no per-call retry on rate-limit.
 - Exponential backoff on a provider after rate-limit;
   short-circuits to the next one.
 - Allows the user to inject their own RPC URL via UI (industry
-  standard — Aave's settings panel, Uniswap's interface
+  standard — a major DeFi protocol's settings panel, Uniswap's interface
   preferences, etc.).
 - Prefers the wallet's injected provider (`window.ethereum` via
   EIP-6963) when the user has one and it covers the chain.
@@ -297,7 +297,7 @@ failover, no per-call retry on rate-limit.
 ship in parallel.
 
 **Reference:** Uniswap's interface uses a multi-provider pattern
-with at minimum 3 RPCs per chain plus the wallet provider. Aave
+with at minimum 3 RPCs per chain plus the wallet provider. a major DeFi protocol
 exposes the user-supplied-RPC setting prominently. Hyperliquid
 documents their public RPC URL list publicly.
 
@@ -341,7 +341,7 @@ worker error, fall back to direct chain RPC on subgraph error.
 **Effort:** 7–10 dev-days for schema + handlers + deployment +
 frontend integration.
 
-**Reference:** Uniswap, Aave, Compound, Lido, Balancer — every
+**Reference:** Uniswap, , , Balancer — every
 major DeFi has a subgraph as the canonical "decentralised
 indexer". The Graph + GraphQL is the de facto standard.
 
@@ -400,8 +400,8 @@ locally and `wrangler deploy`'d. No IPFS pin, no ENS contenthash.
 discipline + first-release ceremony.
 
 **Reference:** Uniswap (`uniswap.eth` resolves to an IPFS CID),
-Aave (`aave.eth`), Sky (`sky.money` via DNSLink + IPFS),
-Compound (`compoundfinance.eth`). The operational pattern is
+a major DeFi protocol (`aave.eth`), Sky (`sky.money` via DNSLink + IPFS),
+a major DeFi protocol-style governance UIs. The operational pattern is
 mature and well-documented.
 
 ### 4.7 WebSocket / SSE event push (optional, additive)
@@ -549,8 +549,8 @@ verified contracts on every supported explorer.
 **Effort:** 3–5 dev-days for the status page; Forta + Defender
 are operator-side ceremonies (~1 day each).
 
-**Reference:** Aave's `risk.aave.com`, Compound's `compound.finance/markets`,
-Lido's `dashboard.lido.fi`. Public health pages are table stakes.
+**Reference:** a major DeFi protocol's `risk.aave.com`, a major DeFi protocol's `compound.finance/markets`,
+a liquid-staking protocol's `dashboard.lido.fi`. Public health pages are table stakes.
 
 **Operator-node twin (Phase 0.5 #11).** The public status page
 (`status.vaipakam.com`) is hosted on the protocol team's
@@ -584,7 +584,7 @@ Coinbase, WalletConnect, Frame).
 **Effort:** 2–3 weeks for ERC-4337 if we adopt it. Defer until
 post-mainnet stable.
 
-**Reference:** Aave Smart Wallet (Biconomy-backed),
+**Reference:** a major DeFi protocol Smart Wallet (Biconomy-backed),
 Hyperliquid's session-key trading, Sky's smart-account
 support.
 

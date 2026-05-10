@@ -927,7 +927,7 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
                 return (s, true);
             }
         }
-        // Bytes32 return (legacy MakerDAO-style tokens). Strip
+        // Bytes32 return (legacy bytes32-symbol tokens). Strip
         // trailing zeros and convert.
         if (ret.length == 32) {
             bytes32 raw;

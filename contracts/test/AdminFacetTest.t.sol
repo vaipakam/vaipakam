@@ -155,7 +155,7 @@ contract AdminFacetTest is Test {
         AdminFacet(address(diamond)).pause();
     }
 
-    /// @dev Asymmetric pause split (EigenLayer pattern): unpause()
+    /// @dev Asymmetric pause split (asymmetric pause pattern): unpause()
     ///      now requires UNPAUSER_ROLE, not PAUSER_ROLE. The test
     ///      name is kept for git-blame continuity; the expected
     ///      revert role updates accordingly.

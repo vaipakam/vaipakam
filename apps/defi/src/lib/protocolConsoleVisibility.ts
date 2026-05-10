@@ -5,7 +5,7 @@
  * readable** so anyone visiting the site can see every governance-
  * tunable parameter's current value, hard bound, and recommended
  * operational zone. Transparency is good optics for DeFi — it's the
- * pattern Aave / Compound / Maker have all settled on.
+ * pattern major DeFi protocols have settled on.
  *
  * Operators who'd rather not surface the console publicly (e.g. on a
  * pre-launch deploy where tunables are still mid-tuning, or on the

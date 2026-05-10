@@ -106,7 +106,7 @@ contract Handover is Script {
     ///      governance Safe, before renouncing DEFAULT_ADMIN_ROLE
     ///      itself.
     ///
-    ///      UNPAUSER_ROLE is in this set deliberately — the EigenLayer
+    ///      UNPAUSER_ROLE is in this set deliberately — the asymmetric
     ///      asymmetric pause pattern keeps PAUSER_ROLE on the
     ///      fast-key Pauser Safe (direct, no Timelock delay) AND
     ///      restricts unpause to the Timelock so a compromised

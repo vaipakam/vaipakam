@@ -66,7 +66,7 @@ const NAV_GROUPS: NavGroup[] = [
     links: [
       // Analytics, NFT Verifier and Protocol Console are public-read
       // tools that live on the connected-app domain by industry
-      // convention (Uniswap / Aave / Morpho / Pendle / dYdX all keep
+      // convention (Uniswap / Morpho / dYdX all keep
       // their `/markets` / `/explore` / governance dashboards on the
       // app subdomain alongside the wallet-bearing write flows).
       // Linked out via `defiUrl(...)` and opened in a new tab so the

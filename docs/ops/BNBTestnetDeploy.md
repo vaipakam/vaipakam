@@ -20,7 +20,7 @@ All commands run from `contracts/`.
 | Quirk | Action |
 |---|---|
 | Alchemy BNB endpoint stalls under `forge --slow` | **Use `--legacy` instead** of `--slow` for every `forge script` invocation on BNB Testnet. `--slow` polls `eth_getTransactionReceipt` aggressively; on this RPC it hangs past 1h with 0 receipts confirmed even when the txs landed. `--legacy` sends pre-EIP-1559 txs at the gas-price returned by `eth_gasPrice` (1 gwei at this writing) and `forge` resumes its post-broadcast bookkeeping immediately. |
-| Wrapped-native is **WBNB**, not WETH | `DeployTestnetLiquidityMocks` wires `OracleAdminFacet.setWethContract(...)` to canonical PancakeSwap WBNB at `0xae13d989daC2f0dEbFf460aC112a837C89BAa7cd`. The protocol's price-asset machinery doesn't care about the symbol — only that a Chainlink-backed feed exists and the v3-style depth check resolves. |
+| Wrapped-native is **WBNB**, not WETH | `DeployTestnetLiquidityMocks` wires `OracleAdminFacet.setWethContract(...)` to canonical V3-fork DEX WBNB at `0xae13d989daC2f0dEbFf460aC112a837C89BAa7cd`. The protocol's price-asset machinery doesn't care about the symbol — only that a Chainlink-backed feed exists and the v3-style depth check resolves. |
 | Buy adapter is **native-BNB** mode | `vpfiBuyPaymentToken = 0x0`. Users pay in tBNB; the canonical Base receiver still quotes the rate in wei-per-VPFI on its side. |
 | Funding floor | Deployer EOA needs ≥0.3 tBNB before §1; admin EOA needs ≥0.05 tBNB for handover + config + peer-wire txs. Faucets: <https://www.bnbchain.org/en/testnet-faucet>, <https://testnet.bnbchain.org/faucet-smart>. |
 

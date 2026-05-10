@@ -95,7 +95,7 @@ function PublicDataRights() {
  * Footer link out to them via `defiUrl(...)`. Cross-domain
  * visitors hitting a marketing-only path on the connected app
  * (or vice versa) get the SPA's natural 404 — matching the
- * dominant industry posture (Aave, Morpho, Pendle, etc.) of
+ * dominant industry posture (Morpho, etc.) of
  * "each surface owns its own URL space."
  */
 function pageRoutes(): ReactElement {

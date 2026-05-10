@@ -11,7 +11,7 @@
  * The deep-link format used here is Safe's `tx-builder` /
  * `transactions/queue` flow: a query-string-encoded JSON payload
  * Safe parses on landing and pre-populates the proposal review.
- * This is the pattern Aave / Compound governance UIs already use.
+ * This is the pattern major DeFi governance UIs already use.
  *
  * Phase 4 explicitly does NOT wrap the call inside a TimelockController
  * `schedule` — the protocol's governance topology already routes

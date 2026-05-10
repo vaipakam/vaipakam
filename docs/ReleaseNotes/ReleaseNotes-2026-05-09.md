@@ -36,7 +36,7 @@ of the connected app:
   Documentation / FAQ — every link pointed back across the
   subdomain to the marketing site, opening in a new tab). A
   short survey of eight major DeFi/DEX platforms (Uniswap,
-  Aave, Morpho, Pendle, dYdX, Compound, 1inch, GMX) showed
+  , Morpho, , dYdX, , 1inch, GMX) showed
   that none of them mirror marketing sections in their
   connected-app top-bar. The dominant pattern is "in-app
   navigation only, with at most a single Docs link".
@@ -91,7 +91,7 @@ preference on one of them.
 
 A short survey of the same eight major DeFi platforms showed
 that none of them solve this problem (the four with a true
-marketing/app split — Aave, Morpho, Pendle, 1inch — sidestep
+marketing/app split — , Morpho, , 1inch — sidestep
 it by exposing theme/language pickers only on the app side,
 not the marketing site). Vaipakam already shipped both
 pickers on both surfaces, so the choice was: ship a sync

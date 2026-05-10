@@ -394,7 +394,7 @@ delete/export UI buttons (Phase 4.4). Both remain scheduled.
 Chainlink itself is manipulated" class of exploit by requiring a
 second, independent oracle source (Pyth) to agree with Chainlink
 within a configurable tolerance before a price is accepted. The
-pattern is the same one Aave v3, Morpho Blue, and Euler v2 use for
+pattern is the same one a major DeFi protocol v3, Morpho Blue, and Euler v2 use for
 high-value markets.
 
 **How it works.**
@@ -484,7 +484,7 @@ Pyth reading reverts. All green.
 
 **Address-level sanctions screening joins the country-filter and
 KYC-tier controls already in place.** A Chainalysis-style on-chain
-oracle (the same one Aave, Compound, Maker, and most regulated DeFi
+oracle (the same one , , Maker, and most regulated DeFi
 deployments use) is now queried at the two boundaries where Vaipakam
 enters a new business relationship: offer creation and offer
 acceptance. If the querying address is flagged — or if accepting an
@@ -902,7 +902,7 @@ that merged the two prior helpers.
 ## Security + Legal sprint — (A) and (B) audit confirmation
 
 Before planning the next sprints a full audit against the broader
-industry checklist (Aave/Compound/Maker/Morpho/Euler standards)
+industry checklist (a major DeFi protocol/a major DeFi protocol/Maker/Morpho/Euler standards)
 was run. Both the Security-first track (A) and the Legal/compliance
 track (B) are already complete in this release cycle — itemised
 confirmation here so future sprints can start from a settled
@@ -982,7 +982,7 @@ Curve doesn't carry.
 
 **No per-asset whitelist** — the platform is open for any ERC-20.
 This is a deliberate Morpho-Blue / Euler-v2 philosophy choice
-rather than the Aave/Compound governance-whitelist model. The
+rather than the a major DeFi protocol/a major DeFi protocol governance-whitelist model. The
 Liquid vs Illiquid classification is automatic from the three-
 venue depth check, so the protocol still picks the correct code
 path at liquidation time (swap vs full-collateral transfer) for

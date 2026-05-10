@@ -90,7 +90,7 @@ upstream symbol convention. Cases the policy accepts as silently
 unavailable rather than reverting:
 
 - The asset's `symbol()` reverts (non-standard token).
-- The asset returns `bytes32` instead of `string` (legacy MakerDAO-
+- The asset returns `bytes32` instead of `string` (legacy a major DeFi protocol-
   style tokens) — handled with a fallback path that strips trailing
   zeros and converts to string.
 - The derived key has no reporter on the upstream oracle (very
@@ -153,8 +153,8 @@ are required.
 ## Liquidity classification — 3-V3-clone OR-logic (Phase 7b.1)
 
 `OracleFacet.checkLiquidity` runs a parallel 1-of-N OR across three
-Uniswap-V3-fork DEX factories: **UniswapV3, PancakeSwap V3, and
-SushiSwap V3**. All three forks share the identical
+Uniswap-V3-fork DEX factories: **UniswapV3, V3-fork DEX V3, and
+V3-fork DEX V3**. All three forks share the identical
 `getPool(token0, token1, fee)` factory ABI and
 `slot0()` / `liquidity()` pool views, so the same depth-probe code
 runs against all three with only the factory address differing.
@@ -184,8 +184,8 @@ per-asset governance config** — pool discovery is on-chain via
 | Parameter | Setter | Type | Default |
 |---|---|---|---|
 | Uniswap V3 factory | `setUniswapV3Factory(address)` | per-chain | zero (disabled) |
-| PancakeSwap V3 factory | `setPancakeswapV3Factory(address)` | per-chain | zero (disabled) |
-| SushiSwap V3 factory | `setSushiswapV3Factory(address)` | per-chain | zero (disabled) |
+| V3-fork DEX V3 factory | `setPancakeswapV3Factory(address)` | per-chain | zero (disabled) |
+| V3-fork DEX V3 factory | `setSushiswapV3Factory(address)` | per-chain | zero (disabled) |
 | Min liquidity floor | `MIN_LIQUIDITY_USD` constant | global | 1_000_000 × 1e6 ($1M USDC-scaled) |
 
 Setting any factory to zero disables that leg of the OR; the check
