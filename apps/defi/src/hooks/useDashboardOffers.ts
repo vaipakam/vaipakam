@@ -58,6 +58,16 @@ export function useDashboardOffers(
       setLoading(false);
       return;
     }
+    // Short-circuit when the chain has no Diamond (useDiamondRead
+    // falls back to ZERO_ADDRESS). See useActiveOffersByAssetPairRanked
+    // for the same fix + the 2026-05-10 diagnostics-drawer report
+    // that surfaced this bug class.
+    if (!chain.diamondAddress) {
+      setRows([]);
+      setLoading(false);
+      setError(null);
+      return;
+    }
     const cached = cache.get(cacheKey);
     if (cached && Date.now() - cached.at < STALE_MS) {
       setRows(cached.data);
@@ -91,7 +101,7 @@ export function useDashboardOffers(
     } finally {
       setLoading(false);
     }
-  }, [diamond, user, filledOnly, offset, limit, cacheKey]);
+  }, [diamond, user, filledOnly, offset, limit, cacheKey, chain.diamondAddress]);
 
   useEffect(() => {
     load();

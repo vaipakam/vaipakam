@@ -98,6 +98,20 @@ export function useActiveOffersByAssetPairRanked(
         setLoading(false);
         return;
       }
+      // Short-circuit when the chain has no Diamond deployed (or the
+      // wallet hasn't connected to a chain yet). `useDiamondRead()`
+      // falls back to ZERO_ADDRESS when chain.diamondAddress is null
+      // (useDiamond.ts:251); firing getActiveOffersByAssetPairRanked
+      // against 0x000…000 throws AbiDecodingZeroDataError every render
+      // and pollutes the diagnostics drawer. Diagnostics-drawer error
+      // surfaced 2026-05-10 with chainId 421614 + wallet:not-connected.
+      if (!chain.diamondAddress) {
+        setRankings([]);
+        setTotal(0n);
+        setLoading(false);
+        setError(null);
+        return;
+      }
       if (!force) {
         const cached = cache.get(cacheKey);
         if (cached && Date.now() - cached.at < STALE_MS) {
@@ -143,7 +157,7 @@ export function useActiveOffersByAssetPairRanked(
         setLoading(false);
       }
     },
-    [diamond, lendingAsset, collateralAsset, cacheKey],
+    [diamond, lendingAsset, collateralAsset, cacheKey, chain.diamondAddress],
   );
 
   useEffect(() => {

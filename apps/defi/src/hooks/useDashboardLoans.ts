@@ -59,6 +59,14 @@ export function useDashboardLoans(
       setLoading(false);
       return;
     }
+    // Short-circuit when chain has no Diamond — see
+    // useActiveOffersByAssetPairRanked for the same null-guard fix.
+    if (!chain.diamondAddress) {
+      setRows([]);
+      setLoading(false);
+      setError(null);
+      return;
+    }
     const cached = cache.get(cacheKey);
     if (cached && Date.now() - cached.at < STALE_MS) {
       setRows(cached.data);
@@ -92,7 +100,7 @@ export function useDashboardLoans(
     } finally {
       setLoading(false);
     }
-  }, [diamond, user, borrowerSide, offset, limit, cacheKey]);
+  }, [diamond, user, borrowerSide, offset, limit, cacheKey, chain.diamondAddress]);
 
   useEffect(() => {
     load();
