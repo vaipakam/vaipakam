@@ -205,7 +205,55 @@ library Deployments {
     function writeChainSlug() internal { _writeString(".chainSlug", chainSlug()); }
     function writeLzEndpoint(address a) internal { _writeAddr(".lzEndpoint", a); }
     function writeLzEid(uint32 eid) internal { _writeUint(".lzEid", uint256(eid)); }
+
+    /// @notice Stamp the contract's deployment block, picking the correct
+    ///         "block number" per chain semantics.
+    ///
+    ///         **Arbitrum gotcha**: inside the EVM, `block.number` on
+    ///         Arbitrum chains returns the L1 block number (an "approximate"
+    ///         L1 block the sequencer acknowledged), NOT the L2 block where
+    ///         the transaction actually landed. The L2 block number must be
+    ///         read from `ArbSys(0x64).arbBlockNumber()`. This caused
+    ///         arb-sepolia's deployBlock to be stamped at L1 block ~10.8M
+    ///         (in sepolia's range) instead of L2 block ~266.9M during the
+    ///         2026-05-10 F2 rehearsal. The indexer relies on deployBlock
+    ///         for cold-start cursor seeding — a wrong value either makes
+    ///         the indexer scan ~256M irrelevant blocks (gas-budget
+    ///         exhaustion) or skip the deploy block entirely (zero offers
+    ///         visible).
+    ///
+    ///         Use this helper from every script that needs the chain's
+    ///         L2 deploy block. Direct `block.number` reads are NOT safe
+    ///         on Arbitrum.
+    function writeDeployBlock() internal { _writeUint(".deployBlock", currentL2Block()); }
+
+    /// @notice Backwards-compatible explicit-block variant. Prefer the
+    ///         no-arg form (`writeDeployBlock()`) which calls
+    ///         `currentL2Block()` internally — direct `block.number` from
+    ///         the caller is unsafe on Arbitrum.
     function writeDeployBlock(uint256 blockNum) internal { _writeUint(".deployBlock", blockNum); }
+
+    /// @notice Returns the current L2 block number for the active chain.
+    ///         On Arbitrum (One mainnet 42161, Sepolia 421614, Nova 42170)
+    ///         queries ArbSys precompile at 0x64. On every other chain
+    ///         (Ethereum L1, OP Stack, BNB, Polygon zkEVM, anvil) returns
+    ///         `block.number` directly — the EVM opcode there already maps
+    ///         to the chain's native block height.
+    function currentL2Block() internal view returns (uint256) {
+        uint256 cid = block.chainid;
+        if (cid == 42161 || cid == 421614 || cid == 42170) {
+            (bool ok, bytes memory data) = address(0x64).staticcall(
+                abi.encodeWithSignature("arbBlockNumber()")
+            );
+            require(
+                ok && data.length >= 32,
+                "Deployments: ArbSys.arbBlockNumber() unavailable on Arb chain"
+            );
+            return abi.decode(data, (uint256));
+        }
+        return block.number;
+    }
+
     function writeIsCanonicalVPFI(bool v) internal { _writeBool(".isCanonicalVPFI", v); }
     function writeIsCanonicalReward(bool v) internal { _writeBool(".isCanonicalReward", v); }
     function writeRewardLocalEid(uint32 eid) internal { _writeUint(".rewardLocalEid", uint256(eid)); }

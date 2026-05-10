@@ -317,9 +317,17 @@ contract DeployDiamond is Script {
         //   - chainSlug:   stable identifier matching the directory
         //   - lzEndpoint:  LayerZero V2 EndpointV2 for this chain
         //   - lzEid:       LayerZero V2 endpoint id
-        //   - deployBlock: block in which the Diamond proxy was created
+        //   - deployBlock: L2 block in which the Diamond proxy was created
         //                  (frontend uses this as the lower-bound for
-        //                  log scans — `eth_getLogs(fromBlock=deployBlock)`)
+        //                  log scans — `eth_getLogs(fromBlock=deployBlock)`).
+        //                  On Arbitrum chains the EVM `block.number` opcode
+        //                  returns the L1 block (sequencer-approximate),
+        //                  NOT the L2 block where the deploy actually
+        //                  landed. `Deployments.writeDeployBlock()` (no
+        //                  arg) reads ArbSys.arbBlockNumber() on Arb
+        //                  chains and falls through to block.number
+        //                  elsewhere. Do NOT pass block.number directly
+        //                  from this script.
         //   - escrowImpl:  per-user UUPS escrow template the factory
         //                  clones; surfaced via `getVaipakamEscrowImplementationAddress()`
         //   - weth/treasury/admin: shared addresses every operator UI
@@ -329,7 +337,7 @@ contract DeployDiamond is Script {
         // deploy; rewriting them on each run is idempotent.
         Deployments.writeChainSlug();
         Deployments.writeLzEid(Deployments.lzEidForChain());
-        Deployments.writeDeployBlock(block.number);
+        Deployments.writeDeployBlock();
         Deployments.writeEscrowImpl(
             EscrowFactoryFacet(diamond)
                 .getVaipakamEscrowImplementationAddress()

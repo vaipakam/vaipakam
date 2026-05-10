@@ -4,7 +4,7 @@
   "diamond": "0x17Fe0D808F8971D7A14994a1205ee6AFd949Be91",
   "chainSlug": "arb-sepolia",
   "lzEid": 40231,
-  "deployBlock": 10824269,
+  "deployBlock": 266947649,
   "escrowImpl": "0x6515932130d0F936f72Fc6102a8968FbccAc199f",
   "treasury": "0xca3E735C593088D2f5ea5AEAa553a6bDaa6E7413",
   "admin": "0xF718BaE5e0dc36140F16dAEF73289294c2372030",
@@ -67,5 +67,6 @@
   "mockUSDCFeed": "0x48c6E907E9811575a598C62d4E761e949AF8C24C",
   "mockWBTCFeed": "0x4CA61893BBebB3D3Da4DFCd65D0Df78C128962f0",
   "mockWETHFeed": "0x140398f920dA801fD7e8D8F99fCE29cE29871Ba1",
-  "weth": "0x980B62Da83eFf3D4576C647993b0c1D7faf17c73"
+  "weth": "0x980B62Da83eFf3D4576C647993b0c1D7faf17c73",
+  "rewardGraceSeconds": 14400
 }
