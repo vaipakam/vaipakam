@@ -837,6 +837,68 @@ EOF
     exit 1
   fi
 
+  # ── Multisig-bytecode preflight ─────────────────────────────────
+  # Refuse if any of the three Safe addresses (DEFAULT_ADMIN,
+  # PAUSER, TIMELOCK_PROPOSER) has no contract code on this chain.
+  # Granting a Diamond role to an EOA-shaped address that has no
+  # Safe behind it permanently bricks that role: the only entity
+  # that can call as that address is the Safe at that address, and
+  # it doesn't exist. Combined with ADMIN's renounce step that
+  # follows, the role surface becomes inaccessible.
+  #
+  # Safe support gap: as of 2026-05-10 Safe's testnet UI supports
+  # Ethereum Sepolia + Base Sepolia but NOT Arbitrum Sepolia. A
+  # handover on Arb Sepolia (without first deploying the Safe
+  # singletons there via the SDK to the same deterministic CREATE2
+  # address) would land roles on dead addresses. This gate catches
+  # that out of the box.
+  local missing=()
+  for label in DEFAULT_ADMIN_ADDRESS PAUSER_ADDRESS TIMELOCK_PROPOSER; do
+    local addr="${!label:-}"
+    if [ -z "$addr" ]; then
+      missing+=("$label (env var unset)")
+      continue
+    fi
+    # cast code returns "0x" for EOAs / addresses without bytecode.
+    local code
+    code=$(cast code "$addr" --rpc-url "$RPC" 2>/dev/null || echo "")
+    if [ -z "$code" ] || [ "$code" = "0x" ]; then
+      missing+=("$label=$addr (no contract on $CHAIN_SLUG)")
+    fi
+  done
+  if [ ${#missing[@]} -gt 0 ]; then
+    cat >&2 <<EOF
+Refusing --phase handover: multi-sig bytecode preflight failed.
+
+The following multi-sig addresses do NOT have a deployed Safe (or
+any contract) on $CHAIN_SLUG:
+
+$(for m in "${missing[@]}"; do echo "  - $m"; done)
+
+Granting a Diamond role to an address with no contract behind it
+permanently bricks that role — the only entity that can sign as
+that address is the Safe at that address, and it doesn't exist.
+ADMIN's renounce step at the end of handover would then make the
+role surface inaccessible.
+
+Recovery options:
+  1. Deploy the Safe singletons to the same deterministic CREATE2
+     address on $CHAIN_SLUG via the Safe SDK (works even on chains
+     where Safe's UI doesn't expose support — Safe contracts are
+     chain-agnostic).
+  2. Choose a different recipient for that role on this chain
+     (e.g. a chain-local custom multisig). Update .env's *_ADDRESS
+     for that role to the new recipient and re-run.
+  3. Skip --phase handover on this chain. The Diamond stays under
+     ADMIN's ownership; rotation can happen later.
+
+If option 3, the abi-sync + cf-* + verify phases can still run
+post-deploy. Operator-side note: the Diamond on this chain is NOT
+production-ready until the multi-sig governance topology is wired.
+EOF
+    exit 1
+  fi
+
   if phase_already_done "handover"; then
     cat >&2 <<EOF
 Refusing --phase handover: marker file exists at

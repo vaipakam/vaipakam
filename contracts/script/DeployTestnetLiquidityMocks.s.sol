@@ -16,7 +16,9 @@ import {Deployments} from "./lib/Deployments.sol";
  *         enough mock infrastructure to make TWO mock ERC-20s
  *         (`mUSDC`, `mWBTC`) come out as **liquid** under the
  *         protocol's `(price + depth)` classification rule. Supports
- *         Base Sepolia (84532) and Ethereum Sepolia (11155111).
+ *         Base Sepolia (84532), Ethereum Sepolia (11155111), BNB
+ *         Smart Chain Testnet (97), Arbitrum Sepolia (421614), OP
+ *         Sepolia (11155420), and Anvil (31337).
  *         After this script runs, both tokens satisfy:
  *
  *           1. Chainlink-led price path (mock Feed Registry +
@@ -39,7 +41,8 @@ import {Deployments} from "./lib/Deployments.sol";
  *         smoke tests can pick them up automatically.
  *
  * @dev   ⚠ This script ONLY runs on supported testnets (Base Sepolia
- *         84532 and Ethereum Sepolia 11155111). The mock
+ *         84532, Ethereum Sepolia 11155111, BNB Testnet 97, Arbitrum
+ *         Sepolia 421614, OP Sepolia 11155420, Anvil 31337). The mock
  *         infrastructure is testnet-only — production deploys must
  *         wire real Chainlink + real UniswapV3 (e.g. mainnet UniV3
  *         factory `0x1F98431c8aD98523631AE4a59f267346ea31F984`,
@@ -91,6 +94,21 @@ contract DeployTestnetLiquidityMocks is Script {
     ///      identical: quote-asset for v3-style depth checks.
     address constant BNB_TESTNET_WBNB_DEFAULT = 0xae13d989daC2f0dEbFf460aC112a837C89BAa7cd;
 
+    /// @dev Canonical Arbitrum Sepolia WETH9 — published by the
+    ///      Arbitrum bridge. Required so the testnet rehearsal mesh's
+    ///      mirror chain (arb-sepolia, chainId 421614) can deploy
+    ///      mock liquidity for the flow tests. Not a predeploy; the
+    ///      address is well-known + reused by the broader Arb-Sepolia
+    ///      ecosystem.
+    address constant ARB_SEPOLIA_WETH_DEFAULT = 0x980B62Da83eFf3D4576C647993b0c1D7faf17c73;
+
+    /// @dev OP Sepolia WETH9 (chainId 11155420). OP Sepolia is an
+    ///      OP-stack rollup, so the canonical wrapped-native sits at
+    ///      the same Bedrock predeploy address as Base — already
+    ///      `BASE_WETH_DEFAULT`. Aliased here for symmetry with the
+    ///      other testnets so the per-chain branch reads cleanly.
+    address constant OP_SEPOLIA_WETH_DEFAULT = 0x4200000000000000000000000000000000000006;
+
     /// @dev sqrtPriceX96 for price = 1.0 token0/token1. Cherry-picked
     ///      at 2^96 so the mock pool's slot0 returns a non-zero
     ///      price; the actual price doesn't drive liquidity
@@ -123,8 +141,8 @@ contract DeployTestnetLiquidityMocks is Script {
     function run() external {
         uint256 cid = block.chainid;
         require(
-            cid == 84532 || cid == 11155111 || cid == 97 || cid == 31337,
-            "DeployTestnetLiquidityMocks: chain not supported (need 84532, 11155111, 97, or 31337)"
+            cid == 84532 || cid == 11155111 || cid == 97 || cid == 421614 || cid == 11155420 || cid == 31337,
+            "DeployTestnetLiquidityMocks: chain not supported (need 84532, 11155111, 97, 421614, 11155420, or 31337)"
         );
 
         uint256 deployerKey = vm.envUint("PRIVATE_KEY");
@@ -138,6 +156,15 @@ contract DeployTestnetLiquidityMocks is Script {
             // BNB Smart Chain Testnet — chainid 97. WBNB plays the
             // WETH role in the Diamond's price-asset wiring.
             weth = vm.envOr("BNB_TESTNET_WBNB", BNB_TESTNET_WBNB_DEFAULT);
+        } else if (cid == 421614) {
+            // Arbitrum Sepolia — chainid 421614. Canonical WETH9
+            // published by the Arbitrum bridge. Required so the
+            // testnet mesh's mirror chains can run flow tests.
+            weth = vm.envOr("ARB_SEPOLIA_WETH", ARB_SEPOLIA_WETH_DEFAULT);
+        } else if (cid == 11155420) {
+            // OP Sepolia — chainid 11155420. OP-stack predeploy
+            // shares the canonical 0x4200…0006 address with Base.
+            weth = vm.envOr("OP_SEPOLIA_WETH", OP_SEPOLIA_WETH_DEFAULT);
         } else {
             // Anvil (31337): no canonical WETH contract — fall back to
             // an env-supplied address (when a prior step deployed a

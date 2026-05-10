@@ -793,6 +793,48 @@ EOF
     exit 1
   fi
 
+  # ── Multisig-bytecode preflight ─────────────────────────────────
+  # Refuse if any of the three Safe addresses has no contract code
+  # on this chain. Granting a Diamond role to a Safe address with
+  # no Safe behind it permanently bricks that role. On mainnet the
+  # blast radius is real value, so this gate is non-negotiable.
+  # See deploy-testnet.sh's identical helper for the rationale.
+  local missing=()
+  for label in DEFAULT_ADMIN_ADDRESS PAUSER_ADDRESS TIMELOCK_PROPOSER; do
+    local addr="${!label:-}"
+    if [ -z "$addr" ]; then
+      missing+=("$label (env var unset)")
+      continue
+    fi
+    local code
+    code=$(cast code "$addr" --rpc-url "$RPC" 2>/dev/null || echo "")
+    if [ -z "$code" ] || [ "$code" = "0x" ]; then
+      missing+=("$label=$addr (no contract on $CHAIN_SLUG)")
+    fi
+  done
+  if [ ${#missing[@]} -gt 0 ]; then
+    cat >&2 <<EOF
+Refusing --phase handover on MAINNET: multi-sig bytecode preflight failed.
+
+The following multi-sig addresses do NOT have a deployed Safe (or
+any contract) on $CHAIN_SLUG:
+
+$(for m in "${missing[@]}"; do echo "  - $m"; done)
+
+On mainnet this is a hard NO. Granting a Diamond role to an address
+with no contract behind it permanently bricks that role; combined
+with ADMIN's renounce, the role surface becomes inaccessible. There
+is no recovery path on mainnet — every signer who could sign the
+Safe transaction does not exist.
+
+Deploy the Safe to the matching deterministic CREATE2 address on
+$CHAIN_SLUG via the Safe SDK BEFORE running --phase handover. The
+Safe contract layer is chain-agnostic; the same (singleton + factory
++ initializer) tuple lands at the same address on every chain.
+EOF
+    exit 1
+  fi
+
   if phase_already_done "handover"; then
     cat >&2 <<EOF
 Refusing --phase handover: marker file exists at
