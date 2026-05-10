@@ -64,6 +64,13 @@
 #       lives at 0x0000000000005E88410CcDFaDe4a5EfaE4b49562
 #       instead of the Cancun-fork canonical 0x0000…2734.
 #
+#   bash contracts/script/deploy-testnet.sh <chain-slug> --phase configure
+#       Runs DiamondConfigSpell.s.sol — same composition as mainnet:
+#       ConfigureOracle + ConfigureRewardReporter + ConfigureVPFIBuy +
+#       ConfigureNFTImageURIs in one operator-action. Practising the
+#       spell on testnet under the same flow as mainnet is the whole
+#       point of the rehearsal.
+#
 #   bash contracts/script/deploy-testnet.sh <chain-slug> --phase handover \
 #                                           --confirm-i-have-multisig-ready
 #       Runs Handover.s.sol — same role / ownership rotation as
@@ -216,6 +223,9 @@ Phases (mirror mainnet phase-for-phase except pause-rehearsal):
   swap-adapters    — Phase 7a aggregator adapters via
                      DeploySwapAdapters.s.sol. Requires
                      INITIAL_SETTLERS env var.
+  configure        — DiamondConfigSpell: ConfigureOracle +
+                     ConfigureRewardReporter + ConfigureVPFIBuy +
+                     ConfigureNFTImageURIs in one operator-action.
   handover         — Rotate roles + ownership to governance topology.
                      Requires --confirm-i-have-multisig-ready
   abi-sync         — packages/contracts ABI + deployments.json sync
@@ -644,6 +654,36 @@ EOF
   echo
   forge script script/DeploySwapAdapters.s.sol --rpc-url "$RPC" --broadcast --slow
   mark_phase_done "swap-adapters"
+}
+
+# ── Phase: configure ──────────────────────────────────────────────────
+# Same shape as deploy-mainnet.sh's configure phase — composes the
+# four Diamond-side configure scripts via DiamondConfigSpell.s.sol.
+# Practising the spell on testnet exercises the same operator-action
+# count + the same ADMIN signer surface as mainnet day.
+
+phase_configure() {
+  if phase_already_done "configure"; then
+    cat >&2 <<EOF
+Refusing --phase configure: marker file exists at
+  $MARKERS_DIR/phase-configure.done
+The four configures already landed for $CHAIN_SLUG. Re-running would
+re-broadcast every set*-call against the Diamond. If a re-run is
+genuinely needed, remove the marker manually:
+  rm $MARKERS_DIR/phase-configure.done
+then re-run.
+EOF
+    exit 1
+  fi
+
+  echo "═══════════════════════════════════════════════════════════════"
+  echo "deploy-testnet.sh — configure  ($CHAIN_SLUG)"
+  echo "═══════════════════════════════════════════════════════════════"
+
+  forge script script/DiamondConfigSpell.s.sol \
+    --rpc-url "$RPC" --broadcast --slow
+
+  mark_phase_done "configure"
 }
 
 # ── Phase: handover ───────────────────────────────────────────────────
@@ -1221,6 +1261,7 @@ case "$PHASE" in
   contracts)        phase_contracts ;;
   lz-config)        phase_lz_config ;;
   swap-adapters)    phase_swap_adapters ;;
+  configure)        phase_configure ;;
   handover)         phase_handover ;;
   abi-sync)         phase_abi_sync ;;
   cf-defi)          phase_cf_defi ;;

@@ -46,6 +46,17 @@
 #       lives at 0x0000000000005E88410CcDFaDe4a5EfaE4b49562
 #       instead of the Cancun-fork canonical 0x0000…2734.
 #
+#   bash contracts/script/deploy-mainnet.sh <chain-slug> --phase configure
+#       Runs DiamondConfigSpell.s.sol — composes the four Diamond-side
+#       configure scripts (ConfigureOracle / ConfigureRewardReporter /
+#       ConfigureVPFIBuy / ConfigureNFTImageURIs) into a single
+#       operator-action that lands all four sequentially. Each child
+#       broadcasts as ADMIN_PRIVATE_KEY; if any reverts, Foundry stops
+#       the script so the operator can't accidentally skip the failed
+#       subset. Run AFTER --phase lz-config (which uses the OApp owner
+#       key, a separate signer) and BEFORE --phase handover (so configs
+#       land while ADMIN still holds every Diamond role).
+#
 #   bash contracts/script/deploy-mainnet.sh <chain-slug> --phase handover \
 #                                           --confirm-i-have-multisig-ready
 #       Runs Handover.s.sol — rotates DEFAULT_ADMIN_ROLE → governance
@@ -197,6 +208,9 @@ Phases:
   swap-adapters   — Phase 7a aggregator adapters via
                     DeploySwapAdapters.s.sol. Requires
                     INITIAL_SETTLERS env var.
+  configure       — DiamondConfigSpell: ConfigureOracle +
+                    ConfigureRewardReporter + ConfigureVPFIBuy +
+                    ConfigureNFTImageURIs in one operator-action.
   handover        — Rotate roles + ownership to governance topology.
                     Requires --confirm-i-have-multisig-ready
   abi-sync        — packages/contracts ABI + deployments.json sync
@@ -600,6 +614,41 @@ EOF
   echo
   forge script script/DeploySwapAdapters.s.sol --rpc-url "$RPC" --broadcast --slow
   mark_phase_done "swap-adapters"
+}
+
+# ── Phase: configure ──────────────────────────────────────────────────
+# Atomic composition of the four Diamond-side configure scripts via
+# DiamondConfigSpell.s.sol. See the spell's header doc for the full
+# rationale. Sequenced AFTER --phase lz-config (separate signer) and
+# BEFORE --phase handover (so the spell's ADMIN_PRIVATE_KEY broadcasts
+# still have the role surface they need).
+
+phase_configure() {
+  if phase_already_done "configure"; then
+    cat >&2 <<EOF
+Refusing --phase configure: marker file exists at
+  $MARKERS_DIR/phase-configure.done
+The four configures already landed for $CHAIN_SLUG. Re-running would
+re-broadcast every set*-call against the Diamond. Most are idempotent
+(same value -> same state), but ConfigureOracle's risk-param writes
+overwrite any in-flight tweaks the operator made via the multisig
+between the original spell run and now — undoing manual config.
+
+If a re-run is genuinely needed, remove the marker manually:
+  rm $MARKERS_DIR/phase-configure.done
+then re-run.
+EOF
+    exit 1
+  fi
+
+  echo "═══════════════════════════════════════════════════════════════"
+  echo "deploy-mainnet.sh — configure  ($CHAIN_SLUG)"
+  echo "═══════════════════════════════════════════════════════════════"
+
+  forge script script/DiamondConfigSpell.s.sol \
+    --rpc-url "$RPC" --broadcast --slow
+
+  mark_phase_done "configure"
 }
 
 # ── Phase: handover ───────────────────────────────────────────────────
@@ -1017,6 +1066,7 @@ case "$PHASE" in
   contracts)     phase_contracts ;;
   lz-config)     phase_lz_config ;;
   swap-adapters) phase_swap_adapters ;;
+  configure)     phase_configure ;;
   handover)      phase_handover ;;
   abi-sync)      phase_abi_sync ;;
   cf-defi)       phase_cf_defi ;;
