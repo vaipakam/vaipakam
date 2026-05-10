@@ -631,6 +631,37 @@ EOF
     echo "[4b] DeployVPFIBuyAdapter.s.sol  (T-036 WETH-pull pre-flight enforced)"
     forge script script/DeployVPFIBuyAdapter.s.sol --rpc-url "$RPC" --broadcast --slow
 
+    # ── 4c. Buy-VPFI rate limits (mirror only) ────────────────────
+    # VPFIBuyAdapter ships with both rate caps at type(uint256).max
+    # (effectively disabled) per the project's mainnet-deploy gate
+    # (CLAUDE.md "Cross-Chain Security Policy"). Without this
+    # post-deploy setRateLimits, a buy request carrying a malformed
+    # amount could mint unbounded VPFI on the canonical receiver —
+    # the same shape that rode the April-2026 cross-chain bridge
+    # incident. Setting these on every deploy makes mainnet
+    # readiness depend on the deploy artefact, not on a manual
+    # follow-up step that's easy to forget.
+    #   per-block:  50_000 × 1e18 VPFI   (override via VPFI_BUY_RATE_PER_BLOCK)
+    #   per-day:    500_000 × 1e18 VPFI  (override via VPFI_BUY_RATE_PER_DAY)
+    # Mirrors deploy-chain.sh's [4c]; the F2 arb-sepolia rehearsal
+    # caught the gap (verify-phase rate-limit gate refused with
+    # both caps still at uint256.max).
+    echo
+    echo "[4c] Buy-VPFI rate limits (mirror — VPFIBuyAdapter.setRateLimits)"
+    BUY_ADAPTER=$(jq -r '.vpfiBuyAdapter // empty' "$DEPLOY_DIR/addresses.json" 2>/dev/null || echo "")
+    if [ -z "$BUY_ADAPTER" ]; then
+      echo "  ⚠ no vpfiBuyAdapter in addresses.json — skipping rate-limit set."
+    else
+      RATE_PER_BLOCK="${VPFI_BUY_RATE_PER_BLOCK:-50000000000000000000000}"
+      RATE_PER_DAY="${VPFI_BUY_RATE_PER_DAY:-500000000000000000000000}"
+      echo "  cast send setRateLimits($RATE_PER_BLOCK, $RATE_PER_DAY) on $BUY_ADAPTER"
+      cast send "$BUY_ADAPTER" 'setRateLimits(uint256,uint256)' \
+        "$RATE_PER_BLOCK" "$RATE_PER_DAY" \
+        --private-key "$ADMIN_PRIVATE_KEY" \
+        --rpc-url "$RPC" \
+        2>&1 | grep -E "^status" | head -1 || true
+    fi
+
     export IS_CANONICAL_REWARD=false
     # Mirror chains: BASE_EID points at the canonical's lzEid. The
     # .env value (40245 for Base Sepolia rehearsal) is correct for

@@ -579,6 +579,34 @@ EOF
     echo "[4b] DeployVPFIBuyAdapter.s.sol  (T-036 WETH-pull pre-flight enforced)"
     forge script script/DeployVPFIBuyAdapter.s.sol --rpc-url "$RPC" --broadcast --slow
 
+    # ── 4c. Buy-VPFI rate limits (mirror only) ────────────────────
+    # The OApp ships with both rate caps at type(uint256).max
+    # (effectively disabled). Per CLAUDE.md "Cross-Chain Security
+    # Policy" + the project's mainnet-deploy gate, real rate limits
+    # MUST be set before any buy-vpfi traffic — leaving the default
+    # is the same shape that rode the April-2026 cross-chain bridge
+    # incident. The phase_verify rate-limit gate refuses to mark
+    # the deploy ready until these caps are finite. Setting them
+    # here makes that property a deploy-script invariant, not an
+    # operator follow-up.
+    #   per-block:  50_000 × 1e18 VPFI   (override via VPFI_BUY_RATE_PER_BLOCK)
+    #   per-day:    500_000 × 1e18 VPFI  (override via VPFI_BUY_RATE_PER_DAY)
+    echo
+    echo "[4c] Buy-VPFI rate limits (mirror — VPFIBuyAdapter.setRateLimits)"
+    BUY_ADAPTER=$(jq -r '.vpfiBuyAdapter // empty' "$DEPLOY_DIR/addresses.json" 2>/dev/null || echo "")
+    if [ -z "$BUY_ADAPTER" ]; then
+      echo "  ⚠ no vpfiBuyAdapter in addresses.json — skipping rate-limit set."
+    else
+      RATE_PER_BLOCK="${VPFI_BUY_RATE_PER_BLOCK:-50000000000000000000000}"
+      RATE_PER_DAY="${VPFI_BUY_RATE_PER_DAY:-500000000000000000000000}"
+      echo "  cast send setRateLimits($RATE_PER_BLOCK, $RATE_PER_DAY) on $BUY_ADAPTER"
+      cast send "$BUY_ADAPTER" 'setRateLimits(uint256,uint256)' \
+        "$RATE_PER_BLOCK" "$RATE_PER_DAY" \
+        --private-key "$ADMIN_PRIVATE_KEY" \
+        --rpc-url "$RPC" \
+        2>&1 | grep -E "^status" | head -1 || true
+    fi
+
     export IS_CANONICAL_REWARD=false
     # Mirror chains: BASE_EID must point at the canonical's lzEid (e.g.
     # 30184 for mainnet Base). Operator's .env is the authoritative
