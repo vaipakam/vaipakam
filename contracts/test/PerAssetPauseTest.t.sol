@@ -100,20 +100,28 @@ contract PerAssetPauseTest is Test {
         AdminFacet(address(diamond)).unpauseAsset(ASSET_A);
     }
 
-    /// @dev PAUSER_ROLE is the fast-key incident-response surface: once
-    ///      ADMIN_ROLE lives behind a timelock, a multisig holding only
-    ///      PAUSER_ROLE must still be able to both engage and lift a
-    ///      per-asset reserve pause.
+    /// @dev PAUSER_ROLE is the fast-key incident-response surface: a
+    ///      multisig holding only PAUSER_ROLE must still be able to
+    ///      ENGAGE a per-asset reserve pause without waiting on the
+    ///      timelocked ADMIN. After the EigenLayer asymmetric split it
+    ///      can NOT lift its own pause — see
+    ///      `test_unpauseAsset_revertsWithPauserRoleAlone` below.
     function test_pauseAsset_worksWithPauserRoleAlone() public {
         address pauser = address(0xBABE);
         AccessControlFacet(address(diamond)).grantRole(
             LibAccessControl.PAUSER_ROLE,
             pauser
         );
-        // Sanity: pauser does NOT hold ADMIN_ROLE.
+        // Sanity: pauser does NOT hold ADMIN_ROLE or UNPAUSER_ROLE.
         assertFalse(
             AccessControlFacet(address(diamond)).hasRole(
                 LibAccessControl.ADMIN_ROLE,
+                pauser
+            )
+        );
+        assertFalse(
+            AccessControlFacet(address(diamond)).hasRole(
+                LibAccessControl.UNPAUSER_ROLE,
                 pauser
             )
         );
@@ -122,7 +130,68 @@ contract PerAssetPauseTest is Test {
         AdminFacet(address(diamond)).pauseAsset(ASSET_A);
         assertTrue(AdminFacet(address(diamond)).isAssetPaused(ASSET_A));
 
+        // Cleanup uses the test contract's ADMIN_ROLE so this test
+        // doesn't pollute sibling tests that assume an unpaused asset.
+        AdminFacet(address(diamond)).unpauseAsset(ASSET_A);
+    }
+
+    /// @dev Asymmetric split: a holder of PAUSER_ROLE alone CANNOT lift
+    ///      a pause they themselves engaged. Recovery has to go through
+    ///      ADMIN_ROLE (timelocked) or UNPAUSER_ROLE — encoded directly
+    ///      in `onlyAdminOrUnpauser`. Pins the asymmetry so a future
+    ///      regression that re-merges the roles fails loudly.
+    function test_unpauseAsset_revertsWithPauserRoleAlone() public {
+        address pauser = address(0xBABE);
+        AccessControlFacet(address(diamond)).grantRole(
+            LibAccessControl.PAUSER_ROLE,
+            pauser
+        );
+
         vm.prank(pauser);
+        AdminFacet(address(diamond)).pauseAsset(ASSET_A);
+        assertTrue(AdminFacet(address(diamond)).isAssetPaused(ASSET_A));
+
+        vm.prank(pauser);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                LibAccessControl.AccessControlUnauthorizedAccount.selector,
+                pauser,
+                LibAccessControl.UNPAUSER_ROLE
+            )
+        );
+        AdminFacet(address(diamond)).unpauseAsset(ASSET_A);
+
+        // Cleanup via the test contract's ADMIN_ROLE.
+        AdminFacet(address(diamond)).unpauseAsset(ASSET_A);
+    }
+
+    /// @dev Asymmetric split positive case: UNPAUSER_ROLE alone (no
+    ///      ADMIN, no PAUSER) CAN lift a pause. Mirrors the Timelock
+    ///      recipient at handover — guards the recovery path's
+    ///      reachability.
+    function test_unpauseAsset_worksWithUnpauserRoleAlone() public {
+        AdminFacet(address(diamond)).pauseAsset(ASSET_A);
+        assertTrue(AdminFacet(address(diamond)).isAssetPaused(ASSET_A));
+
+        address unpauser = address(0xCAFE);
+        AccessControlFacet(address(diamond)).grantRole(
+            LibAccessControl.UNPAUSER_ROLE,
+            unpauser
+        );
+        assertFalse(
+            AccessControlFacet(address(diamond)).hasRole(
+                LibAccessControl.ADMIN_ROLE,
+                unpauser
+            )
+        );
+        assertFalse(
+            AccessControlFacet(address(diamond)).hasRole(
+                LibAccessControl.PAUSER_ROLE,
+                unpauser
+            )
+        );
+
+        vm.prank(unpauser);
         AdminFacet(address(diamond)).unpauseAsset(ASSET_A);
         assertFalse(AdminFacet(address(diamond)).isAssetPaused(ASSET_A));
     }

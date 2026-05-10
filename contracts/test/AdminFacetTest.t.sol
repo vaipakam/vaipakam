@@ -155,10 +155,14 @@ contract AdminFacetTest is Test {
         AdminFacet(address(diamond)).pause();
     }
 
+    /// @dev Asymmetric pause split (EigenLayer pattern): unpause()
+    ///      now requires UNPAUSER_ROLE, not PAUSER_ROLE. The test
+    ///      name is kept for git-blame continuity; the expected
+    ///      revert role updates accordingly.
     function testUnpauseRevertsNonPauser() public {
         AdminFacet(address(diamond)).pause();
         vm.prank(nonOwner);
-        vm.expectRevert(abi.encodeWithSelector(LibAccessControl.AccessControlUnauthorizedAccount.selector, nonOwner, LibAccessControl.PAUSER_ROLE));
+        vm.expectRevert(abi.encodeWithSelector(LibAccessControl.AccessControlUnauthorizedAccount.selector, nonOwner, LibAccessControl.UNPAUSER_ROLE));
         AdminFacet(address(diamond)).unpause();
     }
 
