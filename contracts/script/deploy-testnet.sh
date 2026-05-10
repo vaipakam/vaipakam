@@ -643,6 +643,34 @@ EOF
   echo "[5] DeployRewardOAppCreate2.s.sol"
   forge script script/DeployRewardOAppCreate2.s.sol --rpc-url "$RPC" --broadcast --slow
 
+  # ── Master-flag flip (testnet ergonomics) ───────────────────────
+  # Range Orders Phase 1 governance-gated kill switches default
+  # `false` on every fresh deploy (per docs/RangeOffersDesign.md §15
+  # staged-enablement rationale). Mainnet keeps them dormant —
+  # deploy-mainnet.sh does NOT call this block. On testnet, the
+  # PositiveFlows / PartialFlows scenarios assume the flags are ON
+  # (Anvil's BootstrapAnvil flips them; testnet deploy-chain.sh
+  # flips them at step [5b]). Flipping here mirrors that ergonomic.
+  # Idempotent: setRangeXxxEnabled(true) on an already-true flag is
+  # a successful no-op state write.
+  echo
+  echo "[5b] Master-flag flip (testnet ergonomics)"
+  DIAMOND_FOR_FLAGS=$(jq -r '.diamond // empty' "$DEPLOY_DIR/addresses.json" 2>/dev/null || echo "")
+  if [ -z "$DIAMOND_FOR_FLAGS" ]; then
+    echo "    (no diamond address yet — skipping master-flag flip)"
+  elif [ -z "${ADMIN_PRIVATE_KEY:-}" ]; then
+    echo "    (ADMIN_PRIVATE_KEY missing — skipping master-flag flip)"
+  else
+    for fn in setRangeAmountEnabled setRangeRateEnabled setPartialFillEnabled; do
+      echo "  cast send $fn(true) on $DIAMOND_FOR_FLAGS"
+      cast send "$DIAMOND_FOR_FLAGS" "$fn(bool)" true \
+        --private-key "$ADMIN_PRIVATE_KEY" \
+        --rpc-url "$RPC" \
+        2>&1 | grep -E "^status" | head -1 || true
+    done
+    echo "  Final master flags: $(cast call $DIAMOND_FOR_FLAGS 'getMasterFlags()(bool,bool,bool)' --rpc-url $RPC | tr '\n' ' ')"
+  fi
+
   echo
   echo "✓ contracts phase done."
   snapshot_addresses "post-contracts"
