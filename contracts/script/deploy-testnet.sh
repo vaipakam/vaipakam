@@ -791,6 +791,22 @@ EOF
   echo "deploy-testnet.sh — configure  ($CHAIN_SLUG)"
   echo "═══════════════════════════════════════════════════════════════"
 
+  # ConfigureRewardReporter (one of the four scripts the spell composes)
+  # reads LOCAL_EID + BASE_EID directly — values that live in the
+  # OApp contract as immutables, NOT in the .env. Derive them here
+  # so the operator's .env doesn't need per-chain LOCAL_EID/BASE_EID
+  # entries (the values match the chain registry above + the
+  # canonical-vs-mirror branch).
+  #   LOCAL_EID = THIS chain's lzEid (always)
+  #   BASE_EID  = 0 on canonical (the OApp invariant); the canonical's
+  #               lzEid (40245 for testnets) on mirror chains.
+  export LOCAL_EID="$LZ_EID"
+  if [ "$IS_CANONICAL" = "1" ]; then
+    export BASE_EID=0
+  else
+    export BASE_EID=40245
+  fi
+
   forge script script/DiamondConfigSpell.s.sol \
     --rpc-url "$RPC" --broadcast --slow
 

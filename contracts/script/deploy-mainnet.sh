@@ -748,6 +748,20 @@ EOF
   echo "deploy-mainnet.sh — configure  ($CHAIN_SLUG)"
   echo "═══════════════════════════════════════════════════════════════"
 
+  # ConfigureRewardReporter (one of the spell's four children) reads
+  # LOCAL_EID + BASE_EID directly. Derive from the chain registry so
+  # operator's .env doesn't need per-chain LOCAL_EID/BASE_EID entries.
+  #   LOCAL_EID = THIS chain's lzEid (always)
+  #   BASE_EID  = 0 on canonical (the OApp invariant); on mirrors,
+  #               left to the operator's .env value (mainnet's
+  #               canonical lzEid varies — Base mainnet is 30184).
+  export LOCAL_EID="$LZ_EID"
+  if [ "$IS_CANONICAL" = "1" ]; then
+    export BASE_EID=0
+  fi
+  # Mirror branch: do NOT override BASE_EID. .env's value (set by the
+  # operator to the canonical's lzEid) is authoritative on mainnet.
+
   forge script script/DiamondConfigSpell.s.sol \
     --rpc-url "$RPC" --broadcast --slow
 
