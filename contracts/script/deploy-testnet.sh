@@ -493,6 +493,69 @@ archive_chain_state() {
   mkdir -p "$deploy_dir/.markers" "$deploy_dir/.history"
 
   echo "  ✓ archived prior chain state -> $(realpath --relative-to="$CONTRACTS_DIR" "$archive")/"
+
+  # ── D1 purge for this chain ────────────────────────────────────
+  # The indexer Worker stores its rows (offers, loans, events,
+  # cursor) in `vaipakam-archive` D1 keyed by chain_id. A new
+  # Diamond on the same chain (CREATE-deployed each run, so always
+  # a new address) makes every prior-Diamond row stale: orphaned
+  # decode shapes that the cron will surface alongside new rows
+  # until the operator manually purges. Closing that loop here so
+  # `--fresh` means fresh on every surface, not just the chain-
+  # state files. Best-effort: skip silently when apps/indexer/
+  # isn't present (alternate trees) or when wrangler isn't
+  # authenticated (the operator's CI runner may not have CF auth).
+  local indexer_dir="$REPO_ROOT/apps/indexer"
+  if [ -d "$indexer_dir" ]; then
+    local cid="$CHAIN_ID"
+    if [ -n "$cid" ]; then
+      echo "  purging D1 rows for chainId=$cid in vaipakam-archive..."
+      local sql=""
+      for t in activity_events diag_errors indexer_cursor loans notify_state offers oracle_snapshot_state; do
+        sql="${sql}DELETE FROM \"$t\" WHERE chain_id = $cid; "
+      done
+      ( cd "$indexer_dir" && pnpm exec wrangler d1 execute vaipakam-archive \
+        --remote --command "$sql" 2>&1 | grep -E "Executed|Error" | head -2 ) || \
+        echo "    ⚠ D1 purge returned non-zero — wrangler not authenticated, or D1 unreachable. Re-run via the indexer dir if needed."
+    fi
+  fi
+}
+
+# Helper: re-seed indexer_cursor at the chain's safe head. Called
+# at the END of phase_contracts under --fresh so the indexer cron's
+# next tick starts at head instead of replaying the empty pre-deploy
+# block range. Misses any events emitted between deployBlock and
+# seed-time, which on a fresh deploy is just admin role-grant /
+# init calls — not user-facing offer/loan events. Trade-off
+# matches deploy-chain.sh's [8d] step.
+seed_indexer_cursor_safe_head() {
+  local chain_id="$1"
+  local rpc="$2"
+  local indexer_dir="$REPO_ROOT/apps/indexer"
+  if [ ! -d "$indexer_dir" ]; then
+    return 0
+  fi
+  if [ -z "$chain_id" ] || [ -z "$rpc" ]; then
+    return 0
+  fi
+  local head
+  head=$(cast block-number --rpc-url "$rpc" --tag safe 2>/dev/null \
+    || cast block-number --rpc-url "$rpc" 2>/dev/null \
+    || echo "")
+  if [ -z "$head" ]; then
+    echo "    ⚠ cast block-number failed for chainId=$chain_id — skipping cursor seed"
+    return 0
+  fi
+  local now_ts
+  now_ts=$(date +%s)
+  ( cd "$indexer_dir" && pnpm exec wrangler d1 execute vaipakam-archive --remote --command \
+    "INSERT INTO indexer_cursor (chain_id, kind, last_block, updated_at)
+     VALUES ($chain_id, 'diamond', $head, $now_ts)
+     ON CONFLICT(chain_id, kind) DO UPDATE SET
+       last_block = excluded.last_block,
+       updated_at = excluded.updated_at;" 2>&1 | grep -E "Executed|Error" | head -1 ) || \
+    echo "    ⚠ wrangler d1 execute failed — cursor not seeded for chainId=$chain_id"
+  echo "  ✓ indexer_cursor seeded at safe-head=$head for chainId=$chain_id"
 }
 
 # ── Phase: contracts ──────────────────────────────────────────────────
@@ -700,6 +763,20 @@ EOF
         2>&1 | grep -E "^status" | head -1 || true
     done
     echo "  Final master flags: $(cast call $DIAMOND_FOR_FLAGS 'getMasterFlags()(bool,bool,bool)' --rpc-url $RPC | tr '\n' ' ')"
+  fi
+
+  # ── Indexer-cursor reseed under --fresh ─────────────────────────
+  # archive_chain_state above wiped the prior `indexer_cursor` row
+  # for this chain. Without a re-seed, the indexer cron's next tick
+  # would fall back to `deployBlock - 1` and burn 5-10 minutes
+  # backfilling the empty pre-deploy block range. Seed at safe head
+  # so the very next cron tick picks up new user-facing events
+  # immediately. Mirrors deploy-chain.sh's [8d] step. No-op outside
+  # --fresh.
+  if [ "$FRESH" = "1" ]; then
+    echo
+    echo "[5c] Re-seed indexer_cursor at safe-head for chainId=$CHAIN_ID"
+    seed_indexer_cursor_safe_head "$CHAIN_ID" "$RPC"
   fi
 
   echo
