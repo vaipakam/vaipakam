@@ -57,43 +57,48 @@ export function useUserLoans(address: string | null) {
       // shrinks to the user's loans (typically 1-5) — same
       // LoanSummary shape, faster paint, less RPC load.
       let walkSet = knownLoans;
-      let narrowedBy: 'indexer' | 'onchain-view' | 'none' = 'none';
+      let narrowedBy: 'indexer' | 'onchain-view' | 'walk-all' = 'walk-all';
 
-      // Layer 1: indexer
+      // Layer 1: indexer. Empty page (truthy `{loans: []}`) does
+      // NOT short-circuit — a stale indexer would falsely report
+      // zero loans for the user. Trust the indexer only when its
+      // pages have >0 entries.
       const [lenderPage, borrowerPage] = await Promise.all([
         fetchLoansByLender(chain.chainId, address),
         fetchLoansByBorrower(chain.chainId, address),
       ]);
-      if (lenderPage || borrowerPage) {
-        const userLoanIds = new Set<string>();
-        if (lenderPage) for (const l of lenderPage.loans) userLoanIds.add(String(l.loanId));
-        if (borrowerPage) for (const l of borrowerPage.loans) userLoanIds.add(String(l.loanId));
-        walkSet = knownLoans.filter((e) => userLoanIds.has(String(e.loanId)));
+      const indexerIds = new Set<string>();
+      if (lenderPage) for (const l of lenderPage.loans) indexerIds.add(String(l.loanId));
+      if (borrowerPage) for (const l of borrowerPage.loans) indexerIds.add(String(l.loanId));
+      if (indexerIds.size > 0) {
+        walkSet = knownLoans.filter((e) => indexerIds.has(String(e.loanId)));
         narrowedBy = 'indexer';
       } else {
-        // Layer 2: on-chain user-filter view
+        // Layer 2: on-chain user-filter view. Authoritative — its
+        // result narrows walkSet whether non-empty or empty. Walk-
+        // all (Layer 3) only fires when this layer errors.
         try {
           const [lenderRes, borrowerRes] = await Promise.all([
             publicClient.readContract({
               address: diamondAddress,
               abi: DIAMOND_ABI,
               functionName: 'getUserDashboardLoans',
-              args: [address as Address, false, 0n, 200n],
+              args: [address as Address, false, 0, 200],
             }) as Promise<readonly [readonly bigint[], readonly unknown[]]>,
             publicClient.readContract({
               address: diamondAddress,
               abi: DIAMOND_ABI,
               functionName: 'getUserDashboardLoans',
-              args: [address as Address, true, 0n, 200n],
+              args: [address as Address, true, 0, 200],
             }) as Promise<readonly [readonly bigint[], readonly unknown[]]>,
           ]);
-          const userLoanIds = new Set<string>();
-          for (const id of lenderRes[0]) userLoanIds.add(String(id));
-          for (const id of borrowerRes[0]) userLoanIds.add(String(id));
-          walkSet = knownLoans.filter((e) => userLoanIds.has(String(e.loanId)));
+          const chainIds = new Set<string>();
+          for (const id of lenderRes[0]) chainIds.add(String(id));
+          for (const id of borrowerRes[0]) chainIds.add(String(id));
+          walkSet = knownLoans.filter((e) => chainIds.has(String(e.loanId)));
           narrowedBy = 'onchain-view';
         } catch {
-          narrowedBy = 'none';
+          // Layer 2 errored — fall through to walk-all.
         }
       }
 

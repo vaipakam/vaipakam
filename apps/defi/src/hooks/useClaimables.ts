@@ -91,53 +91,65 @@ export function useClaimables(address: string | null) {
       // succeeds — typically 1-5 loans for an active user vs.
       // 40-80+ system-wide.
       let walkSet = knownLoans;
-      let narrowedBy: 'indexer' | 'onchain-view' | 'none' = 'none';
+      let narrowedBy: 'indexer' | 'onchain-view' | 'walk-all' = 'walk-all';
 
-      // Layer 1: indexer
+      // Layer 1: indexer. Trust it ONLY when it returns >0 loans —
+      // an empty `{loans: []}` page can mean the user genuinely has
+      // none, OR the indexer is stale (the 2026-05-11 arb-sepolia
+      // cursor-skipped-range incident is the canonical example).
+      // Treating empty as authoritative would shadow the on-chain
+      // truth and re-create the bug. So: empty → fall through.
       const [lenderPage, borrowerPage] = await Promise.all([
         fetchLoansByLender(chain.chainId, address),
         fetchLoansByBorrower(chain.chainId, address),
       ]);
-      if (lenderPage || borrowerPage) {
-        const userLoanIds = new Set<string>();
-        if (lenderPage) for (const l of lenderPage.loans) userLoanIds.add(String(l.loanId));
-        if (borrowerPage) for (const l of borrowerPage.loans) userLoanIds.add(String(l.loanId));
-        walkSet = knownLoans.filter((e) => userLoanIds.has(String(e.loanId)));
+      const indexerIds = new Set<string>();
+      if (lenderPage) for (const l of lenderPage.loans) indexerIds.add(String(l.loanId));
+      if (borrowerPage) for (const l of borrowerPage.loans) indexerIds.add(String(l.loanId));
+      if (indexerIds.size > 0) {
+        walkSet = knownLoans.filter((e) => indexerIds.has(String(e.loanId)));
         narrowedBy = 'indexer';
       } else {
-        // Layer 2: on-chain user-filter view. Same shape as Layer 1
-        // (returns the user's claimable loan IDs) but via the
-        // Diamond directly. `getUserDashboardClaimables` returns
-        // `(loanIds[], claims[])`; we just need the IDs here, then
-        // the per-loan fan-out below reads the full ClaimableEntry
-        // shape for each.
+        // Layer 2: on-chain user-filter view. Treated as
+        // authoritative — if the chain itself says the user has 0
+        // claimable loans, trust it. The walk-all (Layer 3) only
+        // fires when this layer ERRORS (selector missing on the
+        // Diamond, RPC unreachable, etc.).
+        //
+        // Known limitation: `getUserDashboardClaimables` walks the
+        // `userLoanIds[user]` storage index which only includes
+        // loans where the user appeared at LoanInitiated time.
+        // Users who received a position NFT via secondary-market
+        // transfer are NOT in `userLoanIds`, so this view would
+        // miss their claims. Documented as a follow-up; the rare-
+        // case fix would be a per-NFT-holder index on-chain or a
+        // separate event scan, both out of scope for this hook.
         try {
           const [lenderRes, borrowerRes] = await Promise.all([
             publicClient.readContract({
               address: diamondAddress,
               abi: DIAMOND_ABI,
               functionName: 'getUserDashboardClaimables',
-              args: [address as Address, false, 0n, 200n],
+              args: [address as Address, false, 0, 200],
             }) as Promise<readonly [readonly bigint[], readonly unknown[]]>,
             publicClient.readContract({
               address: diamondAddress,
               abi: DIAMOND_ABI,
               functionName: 'getUserDashboardClaimables',
-              args: [address as Address, true, 0n, 200n],
+              args: [address as Address, true, 0, 200],
             }) as Promise<readonly [readonly bigint[], readonly unknown[]]>,
           ]);
-          const userLoanIds = new Set<string>();
-          for (const id of lenderRes[0]) userLoanIds.add(String(id));
-          for (const id of borrowerRes[0]) userLoanIds.add(String(id));
-          // Only narrow if we actually got data back. An empty result
-          // (user has no claimables) is still valid — walkSet becomes
-          // empty and the per-loan fan-out short-circuits.
-          walkSet = knownLoans.filter((e) => userLoanIds.has(String(e.loanId)));
+          const chainIds = new Set<string>();
+          for (const id of lenderRes[0]) chainIds.add(String(id));
+          for (const id of borrowerRes[0]) chainIds.add(String(id));
+          // Trust the on-chain view's answer — narrow to its IDs
+          // whether non-empty or empty. Empty here means the user
+          // has nothing per the chain's authoritative storage.
+          walkSet = knownLoans.filter((e) => chainIds.has(String(e.loanId)));
           narrowedBy = 'onchain-view';
         } catch {
-          // Layer 2 failed (view missing on old ABI, or Diamond
-          // unreachable). Fall through to legacy walk-all (Layer 3).
-          narrowedBy = 'none';
+          // Layer 2 errored — fall through to Layer 3 walk-all.
+          // walkSet stays as knownLoans (the default at the top).
         }
       }
 
