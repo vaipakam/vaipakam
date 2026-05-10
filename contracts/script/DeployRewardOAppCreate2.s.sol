@@ -139,12 +139,40 @@ contract DeployRewardOAppCreate2 is Script {
         }
 
         // ── Step 2: ERC1967 proxy pointed at bootstrap, via CREATE2 ──────
-        rewardOAppProxy = LibCreate2Deploy.deployExpecting(
-            proxySalt,
-            proxyInitCode,
-            expectedProxy
-        );
-        console.log("Deployed OApp proxy:     ", rewardOAppProxy);
+        //
+        // Idempotency guard mirrors Step 1's bootstrap-impl check. The
+        // F1 base-sepolia rehearsal hit a CreateCollision on a re-run
+        // because the proxy address — derived from
+        // `LibCreate2Deploy.protocolSalt(version, "RewardOAppProxy")` —
+        // is deterministic across runs at the same `REWARD_VERSION`,
+        // and the singleton factory reverts when the address already
+        // has code. With the guard:
+        //   - Fresh chain: proxy not yet deployed -> CREATE2 deploys
+        //     it and Step 3 + 4 wire it to the real impl.
+        //   - Recovery on a chain where Step 2 landed but Step 4
+        //     reverted: proxy is alive but still on the (permissionless)
+        //     bootstrap impl. Step 4's `upgradeToAndCall` succeeds
+        //     because the bootstrap's `_authorizeUpgrade` is
+        //     permissionless — the proxy gets re-initialized fresh
+        //     against the new (owner, diamond, isCanonical, ...) tuple.
+        //   - Already fully deployed (proxy on real impl from a prior
+        //     successful run on the SAME `REWARD_VERSION`): Step 4's
+        //     `upgradeToAndCall` reverts because the real impl's
+        //     `_authorizeUpgrade` is `onlyOwner` — operator must bump
+        //     `REWARD_VERSION` (.env) to get a fresh proxy address. The
+        //     deploy-{testnet,mainnet}.sh `--fresh` flag prints that
+        //     reminder.
+        if (expectedProxy.code.length == 0) {
+            rewardOAppProxy = LibCreate2Deploy.deployExpecting(
+                proxySalt,
+                proxyInitCode,
+                expectedProxy
+            );
+            console.log("Deployed OApp proxy:     ", rewardOAppProxy);
+        } else {
+            rewardOAppProxy = expectedProxy;
+            console.log("OApp proxy already live, reusing.");
+        }
 
         // ── Step 3: real impl (chain-specific, regular new) ──────────────
         // This IS chain-dependent — the LZ endpoint is an immutable of

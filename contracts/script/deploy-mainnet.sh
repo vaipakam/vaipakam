@@ -235,6 +235,8 @@ CHAIN_SLUG="$1"; shift
 PHASE=""
 CONFIRM_MULTISIG=0
 CONFIRM_DVN=0
+FRESH=0
+CONFIRM_PURGE_MAINNET=0
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -244,6 +246,12 @@ while [ $# -gt 0 ]; do
       ;;
     --confirm-i-have-multisig-ready) CONFIRM_MULTISIG=1 ;;
     --confirm-dvn-policy-reviewed)   CONFIRM_DVN=1 ;;
+    --fresh)                         FRESH=1 ;;
+    # MAINNET-only second gate. --fresh on mainnet wipes the
+    # canonical deploy from this chain's directory; this confirm
+    # asserts the operator has reviewed the archived state and
+    # genuinely intends to abandon the prior on-chain deploy.
+    --confirm-purging-prior-mainnet-deploy) CONFIRM_PURGE_MAINNET=1 ;;
     *)
       echo "Unknown flag: $1" >&2
       exit 1
@@ -393,6 +401,36 @@ phase_preflight() {
   echo "preflight OK. Next: --phase contracts --confirm-i-have-multisig-ready"
 }
 
+# ── Helper: archive existing chain state under .archive/<ISO-8601>/ ──
+# Same shape as deploy-testnet.sh's archive_chain_state — moves the
+# state surface (addresses.json + deployment_source.json + .markers
+# + .history + addresses.prior-rehearsal.* sidecars) into a single
+# timestamped subdirectory, then re-creates empty .markers + .history
+# scaffolding. On MAINNET this is a high-blast-radius action: it
+# logically abandons the prior on-chain deploy. Gated behind
+# --fresh + --confirm-purging-prior-mainnet-deploy so a typo on
+# mainnet day cannot rotate the diamond.
+archive_chain_state() {
+  local chain_slug="$1"
+  local deploy_dir="$CONTRACTS_DIR/deployments/$chain_slug"
+  local stamp
+  stamp=$(date -u +%Y-%m-%dT%H-%M-%SZ)
+  local archive="$deploy_dir/.archive/$stamp"
+
+  mkdir -p "$archive"
+  for entry in addresses.json deployment_source.json .markers .history; do
+    if [ -e "$deploy_dir/$entry" ]; then
+      mv "$deploy_dir/$entry" "$archive/" 2>/dev/null || true
+    fi
+  done
+  for prior in "$deploy_dir"/addresses.prior-rehearsal.*.json; do
+    [ -f "$prior" ] && mv "$prior" "$archive/" 2>/dev/null || true
+  done
+  mkdir -p "$deploy_dir/.markers" "$deploy_dir/.history"
+
+  echo "  ✓ archived prior chain state -> $(realpath --relative-to="$CONTRACTS_DIR" "$archive")/"
+}
+
 # ── Phase: contracts ──────────────────────────────────────────────────
 
 phase_contracts() {
@@ -407,6 +445,56 @@ the same day to renounce DEPLOYER_ROLE / DEFAULT_ADMIN_ROLE / etc.
 Re-run with the flag once the multisig signers are reachable.
 EOF
     exit 1
+  fi
+
+  # ── Detect-and-refuse on a chain dir with a deployed Diamond ─────
+  # Same shape as deploy-testnet.sh's gate but with a SECOND mainnet-
+  # only confirm flag (--confirm-purging-prior-mainnet-deploy) on top
+  # of --fresh. On mainnet, --fresh + the second confirm is the
+  # operator's affirmative "yes, I am abandoning the prior on-chain
+  # deploy and I have reviewed the archive". Without both, the
+  # script refuses.
+  local existing_diamond
+  existing_diamond=$(jq -r '.diamond // empty' "$DEPLOY_DIR/addresses.json" 2>/dev/null || echo "")
+  if [ -n "$existing_diamond" ] && [ "$existing_diamond" != "null" ]; then
+    if [ "$FRESH" != "1" ] || [ "$CONFIRM_PURGE_MAINNET" != "1" ]; then
+      cat >&2 <<EOF
+Refusing --phase contracts: $DEPLOY_DIR/addresses.json already has a
+deployed Diamond at $existing_diamond.
+
+A re-run without the --fresh dance would either:
+  - Collide on the deterministic Reward OApp proxy CREATE2 address
+    (same REWARD_VERSION -> same salt -> CreateCollision in
+    DeployRewardOAppCreate2).
+  - Silently overwrite the CREATE-deployed addresses.json keys
+    (Diamond, Timelock, VPFI lane impls) with new addresses while
+    keeping the CREATE2 keys, leaving a mixed-state set the
+    operator can't tell at a glance is internally consistent.
+
+To proceed (HIGH BLAST RADIUS — abandons the prior on-chain deploy):
+  bash contracts/script/deploy-mainnet.sh $CHAIN_SLUG --phase contracts \\
+    --confirm-i-have-multisig-ready \\
+    --fresh \\
+    --confirm-purging-prior-mainnet-deploy
+
+Both --fresh AND --confirm-purging-prior-mainnet-deploy are required
+on mainnet. --fresh archives the prior chain state under
+$DEPLOY_DIR/.archive/<ISO-8601>/. The second confirm asserts you
+have reviewed the archive and genuinely intend to walk away from the
+prior on-chain deploy.
+
+Bump REWARD_VERSION in .env before re-running so the new Reward OApp
+proxy lands at a fresh CREATE2 address. Current REWARD_VERSION:
+${REWARD_VERSION:-(unset)}
+EOF
+      exit 1
+    fi
+    echo "[0a] --fresh + --confirm-purging-prior-mainnet-deploy: archiving prior chain state for $CHAIN_SLUG"
+    archive_chain_state "$CHAIN_SLUG"
+    echo
+    echo "  ⚠ Bump REWARD_VERSION in .env before this re-deploy lands."
+    echo "    Current REWARD_VERSION: ${REWARD_VERSION:-(unset)}"
+    echo
   fi
 
   if phase_already_done "contracts"; then
@@ -476,6 +564,12 @@ EOF
     forge script script/DeployVPFIBuyReceiver.s.sol --rpc-url "$RPC" --broadcast --slow
 
     export IS_CANONICAL_REWARD=true
+    # The RewardOApp contract enforces BASE_EID=0 on the canonical
+    # chain (it IS the base, so there's no peer eid to point at).
+    # The .env carries BASE_EID set to the canonical's eid so mirror
+    # chains can target it; override here when running on the
+    # canonical itself. Mirrors deploy-chain.sh's pattern.
+    export BASE_EID=0
   else
     echo
     echo "[4a] DeployVPFIMirror.s.sol"
@@ -486,6 +580,15 @@ EOF
     forge script script/DeployVPFIBuyAdapter.s.sol --rpc-url "$RPC" --broadcast --slow
 
     export IS_CANONICAL_REWARD=false
+    # Mirror chains: BASE_EID must point at the canonical's lzEid (e.g.
+    # 30184 for mainnet Base). Operator's .env is the authoritative
+    # source on mainnet — DO NOT hardcode here, since the script can't
+    # know which canonical the operator's deploying mirrors of without
+    # bringing more knowledge into this file. .env validation happens
+    # in --phase preflight; the require() inside DeployRewardOAppCreate2
+    # is the secondary gate (it reverts if BASE_EID is unset/wrong on
+    # mirrors). NEVER `export BASE_EID=0` on a mirror — that breaks
+    # the OApp's eid invariant in the opposite direction.
   fi
 
   echo

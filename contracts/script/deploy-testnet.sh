@@ -251,6 +251,7 @@ CHAIN_SLUG="$1"; shift
 PHASE=""
 CONFIRM_MULTISIG=0
 CONFIRM_DVN=0
+FRESH=0
 # --mode is only consulted by --phase pause-rehearsal. Defaults to
 # "calldata" (print pause() calldata for the operator to sign through
 # the Pauser Safe UI). "check" reads paused() on every contract and
@@ -266,6 +267,7 @@ while [ $# -gt 0 ]; do
       ;;
     --confirm-i-have-multisig-ready) CONFIRM_MULTISIG=1 ;;
     --confirm-dvn-policy-reviewed)   CONFIRM_DVN=1 ;;
+    --fresh)                         FRESH=1 ;;
     --mode)
       shift
       PAUSE_MODE="$1"
@@ -449,6 +451,50 @@ phase_preflight() {
   echo "preflight OK. Next: --phase contracts --confirm-i-have-multisig-ready"
 }
 
+# ── Helper: archive existing chain state under .archive/<ISO-8601>/ ──
+# Moves addresses.json, deployment_source.json, .markers/, .history/,
+# and any prior addresses.prior-rehearsal.* sidecars into a single
+# timestamped subdirectory so the operator can inspect the prior
+# attempt forensically (mid-flight reverts, unexpected addresses,
+# etc.). Called by `phase_contracts` when --fresh is passed against
+# a chain dir that already has a deploy.
+#
+# Why a sibling .archive/<ISO>/ inside the chain dir (not a sibling
+# folder one level up): keeps related artefacts together, fits the
+# existing .markers/ + .history/ layout, and a single .gitignore
+# entry (`contracts/deployments/*/.archive/`) covers every chain.
+archive_chain_state() {
+  local chain_slug="$1"
+  local deploy_dir="$CONTRACTS_DIR/deployments/$chain_slug"
+  local stamp
+  stamp=$(date -u +%Y-%m-%dT%H-%M-%SZ)
+  local archive="$deploy_dir/.archive/$stamp"
+
+  mkdir -p "$archive"
+
+  # Move every chain-state file/dir we know about. The `2>/dev/null`
+  # tolerates missing entries (e.g. .history/ may not exist on a
+  # half-failed deploy).
+  for entry in addresses.json deployment_source.json .markers .history; do
+    if [ -e "$deploy_dir/$entry" ]; then
+      mv "$deploy_dir/$entry" "$archive/" 2>/dev/null || true
+    fi
+  done
+
+  # Sweep any addresses.prior-rehearsal.<unix-ts>.json sidecars from
+  # earlier `--fresh`-equivalent runs. They're already gitignored;
+  # moving them into the new archive consolidates the chronological
+  # record under one timestamp.
+  for prior in "$deploy_dir"/addresses.prior-rehearsal.*.json; do
+    [ -f "$prior" ] && mv "$prior" "$archive/" 2>/dev/null || true
+  done
+
+  # Re-create the empty top-level scaffolding that the deploy expects.
+  mkdir -p "$deploy_dir/.markers" "$deploy_dir/.history"
+
+  echo "  ✓ archived prior chain state -> $(realpath --relative-to="$CONTRACTS_DIR" "$archive")/"
+}
+
 # ── Phase: contracts ──────────────────────────────────────────────────
 
 phase_contracts() {
@@ -463,6 +509,58 @@ the same day to renounce DEPLOYER_ROLE / DEFAULT_ADMIN_ROLE / etc.
 Re-run with the flag once the multisig signers are reachable.
 EOF
     exit 1
+  fi
+
+  # ── Detect-and-refuse: a chain dir with a `diamond` key in
+  # addresses.json indicates a prior deploy. Re-running --phase
+  # contracts without --fresh would either (a) collide on a CREATE2
+  # address (Reward OApp proxy at the same REWARD_VERSION salt) or
+  # (b) silently overwrite the addresses.json's CREATE-deployed keys
+  # (Diamond, Timelock, VPFI lane impls) with NEW addresses while
+  # keeping the prior CREATE2 keys, leaving a mixed-state set the
+  # operator can't tell at a glance is internally consistent. Refuse
+  # with --fresh as the explicit opt-in; with --fresh, archive the
+  # prior state to .archive/<ISO-8601>/ before wiping.
+  local existing_diamond
+  existing_diamond=$(jq -r '.diamond // empty' "$DEPLOY_DIR/addresses.json" 2>/dev/null || echo "")
+  if [ -n "$existing_diamond" ] && [ "$existing_diamond" != "null" ]; then
+    if [ "$FRESH" != "1" ]; then
+      cat >&2 <<EOF
+Refusing --phase contracts: $DEPLOY_DIR/addresses.json already has a
+deployed Diamond at $existing_diamond.
+
+A re-run without --fresh would either:
+  - Collide on the deterministic Reward OApp proxy CREATE2 address
+    (same REWARD_VERSION -> same salt -> CreateCollision in
+    DeployRewardOAppCreate2). The F1 base-sepolia rehearsal hit
+    this exact failure on 2026-05-10.
+  - Silently overwrite the CREATE-deployed addresses.json keys
+    (Diamond, Timelock, VPFI lane impls) with new addresses while
+    keeping the CREATE2 keys, leaving a mixed-state set the
+    operator can't tell is internally consistent.
+
+To proceed, pass --fresh:
+  bash contracts/script/deploy-testnet.sh $CHAIN_SLUG --phase contracts \\
+    --confirm-i-have-multisig-ready --fresh
+
+--fresh archives the prior chain state under
+$DEPLOY_DIR/.archive/<ISO-8601>/ and reminds you to bump
+REWARD_VERSION in .env so the new Reward OApp proxy lands at a
+fresh CREATE2 address.
+EOF
+      exit 1
+    fi
+    # --fresh: archive + wipe.
+    echo "[0a] --fresh: archiving prior chain state for $CHAIN_SLUG"
+    archive_chain_state "$CHAIN_SLUG"
+    echo
+    echo "  ⚠ Bump REWARD_VERSION in .env before this re-deploy lands. The"
+    echo "    Reward OApp proxy is CREATE2-addressed off REWARD_VERSION;"
+    echo "    keeping the same value would either re-use the old (now-stale)"
+    echo "    proxy or hit a CreateCollision against the prior deploy's"
+    echo "    bytecode. Current REWARD_VERSION: ${REWARD_VERSION:-(unset)}"
+    echo "    Suggested next: v$(date -u +%Y%m%d)-rehearsal"
+    echo
   fi
 
   if phase_already_done "contracts"; then
@@ -516,6 +614,14 @@ EOF
     forge script script/DeployVPFIBuyReceiver.s.sol --rpc-url "$RPC" --broadcast --slow
 
     export IS_CANONICAL_REWARD=true
+    # The RewardOApp contract enforces BASE_EID=0 on the canonical
+    # chain (it IS the base, so there's no peer eid to point at).
+    # The .env carries BASE_EID=40245 (the canonical eid) so mirror
+    # chains can target it; override here when running on the
+    # canonical itself. Mirrors deploy-chain.sh's pattern — the
+    # F1 base-sepolia rehearsal hit this gap as a "Canonical chain
+    # must pass BASE_EID=0" revert in DeployRewardOAppCreate2.
+    export BASE_EID=0
   else
     echo
     echo "[4a] DeployVPFIMirror.s.sol"
@@ -526,6 +632,11 @@ EOF
     forge script script/DeployVPFIBuyAdapter.s.sol --rpc-url "$RPC" --broadcast --slow
 
     export IS_CANONICAL_REWARD=false
+    # Mirror chains: BASE_EID points at the canonical's lzEid. The
+    # .env value (40245 for Base Sepolia rehearsal) is correct for
+    # mirrors so no override is strictly needed — set explicitly
+    # for clarity rather than rely on .env being right.
+    export BASE_EID=40245
   fi
 
   echo

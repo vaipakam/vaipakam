@@ -57,6 +57,12 @@ graphify-out/
 contracts/deployments/*/.markers/
 contracts/deployments/*/.history/
 contracts/deployments/*/addresses.prior-rehearsal.*.json
+# `--fresh` (deploy-testnet.sh / deploy-mainnet.sh) archives the
+# prior chain state — addresses.json + deployment_source.json +
+# .markers + .history + addresses.prior-rehearsal.* — into a single
+# timestamped subdirectory under .archive/<ISO-8601>/ before wiping.
+# Forensic value only; rebuilds on every --fresh redeploy.
+contracts/deployments/*/.archive/
 
 .vscode/
 
