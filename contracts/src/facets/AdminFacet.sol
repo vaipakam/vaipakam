@@ -12,13 +12,16 @@ import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
  * @author Vaipakam Developer Team
  * @notice Role-restricted admin functions for configuration, including setting treasury and pause controls.
  * @dev Part of Diamond Standard. Uses LibAccessControl for role-based access.
- *      ADMIN_ROLE for configuration, PAUSER_ROLE for pause/unpause.
+ *      ADMIN_ROLE for configuration, PAUSER_ROLE for pause,
+ *      UNPAUSER_ROLE for unpause (EigenLayer-style asymmetric split — see
+ *      LibAccessControl.UNPAUSER_ROLE rationale).
  */
 contract AdminFacet is DiamondAccessControl, IVaipakamErrors {
     /// @dev Accepts either ADMIN_ROLE or PAUSER_ROLE. Used for per-asset
-    ///      pause/unpause so incident response stays actionable once
-    ///      ADMIN_ROLE is handed to a time-locked governance executor —
-    ///      PAUSER_ROLE can remain a fast-key multisig.
+    ///      PAUSE so incident response stays actionable once ADMIN_ROLE
+    ///      is handed to a time-locked governance executor — PAUSER_ROLE
+    ///      can remain a fast-key multisig. Mirror modifier
+    ///      {onlyAdminOrUnpauser} gates the inverse (asset unpause).
     modifier onlyAdminOrPauser() {
         if (
             !LibAccessControl.hasRole(LibAccessControl.ADMIN_ROLE, msg.sender) &&
@@ -27,6 +30,28 @@ contract AdminFacet is DiamondAccessControl, IVaipakamErrors {
             revert LibAccessControl.AccessControlUnauthorizedAccount(
                 msg.sender,
                 LibAccessControl.PAUSER_ROLE
+            );
+        }
+        _;
+    }
+
+    /// @dev Accepts either ADMIN_ROLE or UNPAUSER_ROLE. Mirrors
+    ///      {onlyAdminOrPauser} for the asymmetric inverse — admin's
+    ///      time-locked surface is the natural unpause-with-delay
+    ///      lever, and UNPAUSER_ROLE is the explicit deliberate-reset
+    ///      key. Splitting unpause off PAUSER_ROLE means a compromised
+    ///      Pauser cannot un-do its own mistaken pause without going
+    ///      through the slower UNPAUSER (Timelock) surface, giving
+    ///      on-call operators a review window to confirm the incident
+    ///      is genuinely resolved.
+    modifier onlyAdminOrUnpauser() {
+        if (
+            !LibAccessControl.hasRole(LibAccessControl.ADMIN_ROLE, msg.sender) &&
+            !LibAccessControl.hasRole(LibAccessControl.UNPAUSER_ROLE, msg.sender)
+        ) {
+            revert LibAccessControl.AccessControlUnauthorizedAccount(
+                msg.sender,
+                LibAccessControl.UNPAUSER_ROLE
             );
         }
         _;
@@ -349,8 +374,13 @@ contract AdminFacet is DiamondAccessControl, IVaipakamErrors {
     }
 
     /// @notice Lifts the pause, re-enabling all `whenNotPaused` entry points.
-    /// @dev PAUSER_ROLE-only. Emits LibPausable.Unpaused.
-    function unpause() external onlyRole(LibAccessControl.PAUSER_ROLE) {
+    /// @dev UNPAUSER_ROLE-only — split off PAUSER_ROLE to enforce the
+    ///      EigenLayer asymmetric pause pattern. PAUSER_ROLE is the
+    ///      fast incident lever; UNPAUSER_ROLE is the deliberate reset
+    ///      gate, held by the Timelock at handover so a real-incident
+    ///      unpause waits its `minDelay` review window. Emits
+    ///      LibPausable.Unpaused.
+    function unpause() external onlyRole(LibAccessControl.UNPAUSER_ROLE) {
         LibPausable.unpause();
     }
 
@@ -368,7 +398,7 @@ contract AdminFacet is DiamondAccessControl, IVaipakamErrors {
     ///         `block.timestamp + duration` without a manual
     ///         unpause tx. Admin can still short-circuit via
     ///         {unpause}.
-    /// @dev WATCHER_ROLE-only — write-only-pause; admin's PAUSER_ROLE
+    /// @dev WATCHER_ROLE-only — write-only-pause; UNPAUSER_ROLE
     ///      retains the unpause lever, so the worst case for a
     ///      compromised watcher is a max-window freeze (capped at
     ///      `MAX_AUTO_PAUSE_SECONDS = 7200`, 2 hours), not
@@ -427,12 +457,15 @@ contract AdminFacet is DiamondAccessControl, IVaipakamErrors {
     }
 
     /// @notice Unpauses a previously paused asset. Idempotent.
-    /// @dev ADMIN_ROLE *or* PAUSER_ROLE — mirrors {pauseAsset} so the same
-    ///      responder key can both engage and lift a reserve pause without
-    ///      waiting on the timelocked admin. Reverts with InvalidAddress
-    ///      on zero. Emits AssetPauseDisabled.
+    /// @dev ADMIN_ROLE *or* UNPAUSER_ROLE — the asymmetric inverse of
+    ///      {pauseAsset}. PAUSER_ROLE is intentionally NOT accepted
+    ///      here so a compromised fast-key multisig cannot un-do its
+    ///      own mistaken pause without going through ADMIN_ROLE
+    ///      (time-locked) or UNPAUSER_ROLE (also Timelock at
+    ///      handover). Reverts with InvalidAddress on zero. Emits
+    ///      AssetPauseDisabled.
     /// @param asset The asset to unpause.
-    function unpauseAsset(address asset) external onlyAdminOrPauser {
+    function unpauseAsset(address asset) external onlyAdminOrUnpauser {
         if (asset == address(0)) revert InvalidAddress();
         LibVaipakam.storageSlot().assetPaused[asset] = false;
         emit AssetPauseDisabled(asset);

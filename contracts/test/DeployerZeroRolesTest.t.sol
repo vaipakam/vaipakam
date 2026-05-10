@@ -78,6 +78,7 @@ contract DeployerZeroRolesTest is Test {
         ALL_ROLES.push(LibAccessControl.DEFAULT_ADMIN_ROLE);
         ALL_ROLES.push(LibAccessControl.ADMIN_ROLE);
         ALL_ROLES.push(LibAccessControl.PAUSER_ROLE);
+        ALL_ROLES.push(LibAccessControl.UNPAUSER_ROLE);
         ALL_ROLES.push(LibAccessControl.KYC_ADMIN_ROLE);
         ALL_ROLES.push(LibAccessControl.ORACLE_ADMIN_ROLE);
         ALL_ROLES.push(LibAccessControl.RISK_ADMIN_ROLE);
@@ -118,6 +119,11 @@ contract DeployerZeroRolesTest is Test {
         ac.grantRole(LibAccessControl.DEFAULT_ADMIN_ROLE, governanceMultisig);
         ac.grantRole(LibAccessControl.ADMIN_ROLE, adminTimelock);
         ac.grantRole(LibAccessControl.PAUSER_ROLE, pauserMultisig);
+        // UNPAUSER_ROLE -> adminTimelock (NOT pauserMultisig). The
+        // EigenLayer asymmetric split means the fast-key Pauser cannot
+        // un-do its own mistaken pause; recovery has to wait the
+        // Timelock's review window.
+        ac.grantRole(LibAccessControl.UNPAUSER_ROLE, adminTimelock);
         ac.grantRole(LibAccessControl.KYC_ADMIN_ROLE, adminTimelock);
         ac.grantRole(LibAccessControl.ORACLE_ADMIN_ROLE, adminTimelock);
         ac.grantRole(LibAccessControl.RISK_ADMIN_ROLE, adminTimelock);
@@ -131,6 +137,7 @@ contract DeployerZeroRolesTest is Test {
         ac.renounceRole(LibAccessControl.RISK_ADMIN_ROLE, deployer);
         ac.renounceRole(LibAccessControl.ORACLE_ADMIN_ROLE, deployer);
         ac.renounceRole(LibAccessControl.KYC_ADMIN_ROLE, deployer);
+        ac.renounceRole(LibAccessControl.UNPAUSER_ROLE, deployer);
         ac.renounceRole(LibAccessControl.PAUSER_ROLE, deployer);
         ac.renounceRole(LibAccessControl.ADMIN_ROLE, deployer);
         ac.renounceRole(LibAccessControl.DEFAULT_ADMIN_ROLE, deployer);
@@ -162,6 +169,7 @@ contract DeployerZeroRolesTest is Test {
         assertTrue(ac.hasRole(LibAccessControl.DEFAULT_ADMIN_ROLE, governanceMultisig));
         assertTrue(ac.hasRole(LibAccessControl.ADMIN_ROLE, adminTimelock));
         assertTrue(ac.hasRole(LibAccessControl.PAUSER_ROLE, pauserMultisig));
+        assertTrue(ac.hasRole(LibAccessControl.UNPAUSER_ROLE, adminTimelock));
         assertTrue(ac.hasRole(LibAccessControl.KYC_ADMIN_ROLE, adminTimelock));
         assertTrue(ac.hasRole(LibAccessControl.ORACLE_ADMIN_ROLE, adminTimelock));
         assertTrue(ac.hasRole(LibAccessControl.RISK_ADMIN_ROLE, adminTimelock));

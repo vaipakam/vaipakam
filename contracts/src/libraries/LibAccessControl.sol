@@ -20,6 +20,19 @@ library LibAccessControl {
     bytes32 internal constant DEFAULT_ADMIN_ROLE = 0x00;
     bytes32 internal constant ADMIN_ROLE = keccak256("ADMIN_ROLE");
     bytes32 internal constant PAUSER_ROLE = keccak256("PAUSER_ROLE");
+    /// @dev EigenLayer-style asymmetric pause split. PAUSER_ROLE is the
+    ///      fast incident lever — widely-distributed signers OK because
+    ///      the worst case is a freeze that hurts protocol UX but never
+    ///      drains funds. UNPAUSER_ROLE is the deliberate reset gate —
+    ///      held by the Timelock at handover so unpausing a real
+    ///      incident waits its `minDelay` review window. The split
+    ///      means a single compromised Pauser key cannot un-do its own
+    ///      mistaken pause; recovery requires the slower Timelock
+    ///      surface, which gives observers time to confirm the
+    ///      incident is genuinely resolved before traffic resumes.
+    ///      Granted to admin during DeployDiamond + renounced at
+    ///      handover (matches PAUSER's lifecycle).
+    bytes32 internal constant UNPAUSER_ROLE = keccak256("UNPAUSER_ROLE");
     bytes32 internal constant KYC_ADMIN_ROLE = keccak256("KYC_ADMIN_ROLE");
     bytes32 internal constant ORACLE_ADMIN_ROLE = keccak256("ORACLE_ADMIN_ROLE");
     bytes32 internal constant RISK_ADMIN_ROLE = keccak256("RISK_ADMIN_ROLE");
@@ -31,9 +44,9 @@ library LibAccessControl {
     ///      `AdminFacet.autoPause(...)` to freeze the protocol for
     ///      `cfgAutoPauseDurationSeconds()` while humans investigate.
     ///      Strictly write-only-pause: the role can call autoPause
-    ///      but NOT unpause — admin (PAUSER_ROLE) retains the
-    ///      unpause lever, so a compromised watcher's worst case is
-    ///      a max-window freeze (capped at 2h via the duration
+    ///      but NOT unpause — UNPAUSER_ROLE retains the unpause
+    ///      lever, so a compromised watcher's worst case is a
+    ///      max-window freeze (capped at 2h via the duration
     ///      ceiling), not indefinite lockup.
     bytes32 internal constant WATCHER_ROLE = keccak256("WATCHER_ROLE");
     /// @dev T-032 — Notification-bill writer role. Granted to the
@@ -140,6 +153,10 @@ library LibAccessControl {
         grantRole(DEFAULT_ADMIN_ROLE, owner);
         grantRole(ADMIN_ROLE, owner);
         grantRole(PAUSER_ROLE, owner);
+        // EigenLayer-style asymmetric pause split — UNPAUSER_ROLE
+        // is granted at init alongside PAUSER so the deploy handover
+        // can rotate it to the Timelock without an extra step.
+        grantRole(UNPAUSER_ROLE, owner);
         grantRole(KYC_ADMIN_ROLE, owner);
         grantRole(ORACLE_ADMIN_ROLE, owner);
         grantRole(RISK_ADMIN_ROLE, owner);
@@ -163,6 +180,7 @@ library LibAccessControl {
         // Set DEFAULT_ADMIN_ROLE as admin for all roles
         setRoleAdmin(ADMIN_ROLE, DEFAULT_ADMIN_ROLE);
         setRoleAdmin(PAUSER_ROLE, DEFAULT_ADMIN_ROLE);
+        setRoleAdmin(UNPAUSER_ROLE, DEFAULT_ADMIN_ROLE);
         setRoleAdmin(KYC_ADMIN_ROLE, DEFAULT_ADMIN_ROLE);
         setRoleAdmin(ORACLE_ADMIN_ROLE, DEFAULT_ADMIN_ROLE);
         setRoleAdmin(RISK_ADMIN_ROLE, DEFAULT_ADMIN_ROLE);
@@ -187,16 +205,17 @@ library LibAccessControl {
      *      earlier-step revert leaves the deployer recoverable.
      */
     function grantableRoles() internal pure returns (bytes32[] memory) {
-        bytes32[] memory roles = new bytes32[](9);
+        bytes32[] memory roles = new bytes32[](10);
         roles[0] = DEFAULT_ADMIN_ROLE;
         roles[1] = ADMIN_ROLE;
         roles[2] = PAUSER_ROLE;
-        roles[3] = KYC_ADMIN_ROLE;
-        roles[4] = ORACLE_ADMIN_ROLE;
-        roles[5] = RISK_ADMIN_ROLE;
-        roles[6] = ESCROW_ADMIN_ROLE;
-        roles[7] = WATCHER_ROLE;
-        roles[8] = NOTIF_BILLER_ROLE;
+        roles[3] = UNPAUSER_ROLE;
+        roles[4] = KYC_ADMIN_ROLE;
+        roles[5] = ORACLE_ADMIN_ROLE;
+        roles[6] = RISK_ADMIN_ROLE;
+        roles[7] = ESCROW_ADMIN_ROLE;
+        roles[8] = WATCHER_ROLE;
+        roles[9] = NOTIF_BILLER_ROLE;
         return roles;
     }
 }

@@ -105,13 +105,21 @@ contract Handover is Script {
     ///      after DEFAULT_ADMIN_ROLE has been granted to the
     ///      governance Safe, before renouncing DEFAULT_ADMIN_ROLE
     ///      itself.
+    ///
+    ///      UNPAUSER_ROLE is in this set deliberately — the EigenLayer
+    ///      asymmetric pause pattern keeps PAUSER_ROLE on the
+    ///      fast-key Pauser Safe (direct, no Timelock delay) AND
+    ///      restricts unpause to the Timelock so a compromised
+    ///      Pauser key cannot un-do its own pause without the
+    ///      review-window delay.
     function _timelockRoles() internal pure returns (bytes32[] memory r) {
-        r = new bytes32[](5);
+        r = new bytes32[](6);
         r[0] = LibAccessControl.ADMIN_ROLE;
-        r[1] = LibAccessControl.KYC_ADMIN_ROLE;
-        r[2] = LibAccessControl.ORACLE_ADMIN_ROLE;
-        r[3] = LibAccessControl.RISK_ADMIN_ROLE;
-        r[4] = LibAccessControl.ESCROW_ADMIN_ROLE;
+        r[1] = LibAccessControl.UNPAUSER_ROLE;
+        r[2] = LibAccessControl.KYC_ADMIN_ROLE;
+        r[3] = LibAccessControl.ORACLE_ADMIN_ROLE;
+        r[4] = LibAccessControl.RISK_ADMIN_ROLE;
+        r[5] = LibAccessControl.ESCROW_ADMIN_ROLE;
     }
 
     function run() external {
