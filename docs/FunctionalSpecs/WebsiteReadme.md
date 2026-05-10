@@ -53,6 +53,7 @@ Public-navigation requirements:
 - public navigation should stay informational and should not carry wallet UI, wallet-connected banners, or a VPFI action dropdown unless a later design intentionally restores it
 - the public marketing surface should remain chain-free and wallet-free: no wallet context, active-chain state, per-user escrow lookups, on-chain diagnostics, or address-book helpers should be loaded by marketing pages
 - any marketing-page `Verify on chain` affordance should route users to the connected app's public transparency surface instead of performing chain reads inside the marketing app
+- connected-app public-read shells such as `Analytics`, `NFT Verifier`, and `Protocol Console` should keep their top bar focused on app-context navigation. They should not mirror marketing-section dropdowns such as `Learn`; a single `Docs` / whitepaper-style link is acceptable when it points users back to canonical public documentation.
 - the canonical marketing source package is `apps/www`, and the canonical public hostname is `https://vaipakam.com`; `https://www.vaipakam.com` should redirect to the apex while preserving path and query string
 - legacy hostnames such as `labs.vaipakam.com` should not be emitted as canonical, sitemap, hreflang, or app-back-link origins
 - public CTAs that open the connected app should use the label `Launch Vaipakam`, localized for every supported language, rather than the generic `Launch App`
@@ -86,12 +87,15 @@ Farcaster Frame requirements:
 - the result should show total active-loan count, lowest Health Factor, and per-chain breakdown where data is available
 - the result should deep-link to the public NFT Verifier so users can inspect individual position NFTs after seeing the wallet summary
 - Frame image responses should be stateless, branded, and suitable for common Farcaster clients
+- Frame and worker reads must use generated Diamond ABI JSON from the monorepo contract bundle. The active-loan selector is `getUserActiveLoans(address)` on `MetricsFacet`; hand-written ABI strings or obsolete names such as `getActiveLoansByUser(address)` should not be used.
 
 Privacy and consent requirements:
 
 - the public website and connected app must include a cookie-consent banner that supports Google Consent Mode v2 and EU / GDPR expectations
 - on a first visit, the banner should slide up from the bottom and present three equally prominent choices: `Reject all`, `Customize`, and `Accept all`
 - essential cookies required for session handling and anti-abuse protections are always on
+- theme and language sync cookies (`vaipakam_theme`, `vaipakam_lang`) are functionality cookies scoped to `.vaipakam.com`, so the public marketing site and connected app honor the same user preference without requiring analytics, personalization, or advertising consent
+- when a sync cookie exists, it should be treated as the cross-subdomain source of truth and may overwrite stale origin-scoped localStorage on initialization; when no cookie exists, the first initialization should seed one from the browser / OS default so subsequent subdomain visits match
 - analytics, personalization, and advertising categories must be off by default until the user explicitly opts in
 - the `Customize` view must let users toggle analytics, personalization, and advertising independently
 - consent choices must persist across visits

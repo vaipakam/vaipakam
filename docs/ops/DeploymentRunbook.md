@@ -361,6 +361,40 @@ Verifies each peer with `cast call <oapp> 'peers(uint32)(bytes32)' <eid>`
 afterwards. `setPeer` is idempotent — safe to re-run on partial fail
 or to add a new chain to an existing topology.
 
+#### Mixed-authority case: when handover already happened on some chains
+
+`deploy-peers.sh` overrides `PRIVATE_KEY → ADMIN_PRIVATE_KEY` because
+`DeployVPFI*` / `DeployRewardOAppCreate2` transfer OApp ownership to
+`ADMIN_ADDRESS` at end-of-script. After the multi-party Safe acceptance
+ceremony, OApps on chains where the ceremony completed are owned by
+the **Safe**, and ADMIN-signed `setPeer` from those chains reverts
+`OwnableUnauthorizedAccount`.
+
+When the OApp ownership state differs across chains (typical during a
+phased handover), the peer-wiring matrix splits across two authority
+contexts:
+
+- **ADMIN-signable legs** (source chain still ADMIN-EOA-owned): broadcast
+  via `cast send` with `ADMIN_PRIVATE_KEY`, OR via
+  `deploy-peers.sh --only-chains <slug>` if the script can complete its
+  ≥2-chains preflight.
+- **Safe-signable legs** (source chain owned by the multisig): emit a
+  Safe Transaction-Builder JSON listing every `setPeer` with decoded
+  `_eid` + `_peer` arguments, then execute via `app.safe.global → Apps
+  → Transaction Builder`.
+
+Reference batch files for the 2026-05 testnet rehearsal:
+[`docs/ops/safe-batches/peer-wiring-base-sepolia.json`](safe-batches/peer-wiring-base-sepolia.json)
+(6 tx) and [`peer-wiring-sepolia.json`](safe-batches/peer-wiring-sepolia.json)
+(4 tx). The README in [`docs/ops/safe-batches/`](safe-batches/) covers
+the per-batch eyeball-check, Safe UI workflow, and the `cast call`
+verify-after-execute step.
+
+**Mainnet shape** assumes full Safe handover happened first, so the
+entire 14-leg matrix is Safe-signable — emit one batch JSON per chain
+and execute. The auth-mismatch case above only occurs during phased
+handovers (e.g. when one chain's Safe SDK lands earlier than another's).
+
 ### 3. Smoke tests (positive + partial flow sweeps)
 
 After peers are wired, sanity-check every chain via the
@@ -685,11 +719,87 @@ If any check fails → **do not broadcast**.
 - `EscrowFactoryFacet.getVaipakamEscrowImplementationAddress()` != `0x0`.
 - `RewardReporterFacet.getRewardReporterConfig()` returns zeros for `rewardOApp`/`localEid`/`baseEid` — wiring happens in §3.
 
+**Authority-state matrix after the deploy + handover sequence.** Different
+chains can land in different ownership states depending on whether the
+post-deploy multi-party Safe acceptance ceremony has fully completed.
+Verify at the start of any post-deploy admin work:
+
+```bash
+# Per-chain Diamond owner + ADMIN_ROLE holder
+for slug in base-sepolia arb-sepolia sepolia; do
+  diamond=$(jq -r .diamond contracts/deployments/$slug/addresses.json)
+  rpc_var=$(echo "$slug" | tr a-z- A-Z_)_RPC_URL
+  rpc=${!rpc_var}
+  cast call $diamond 'owner()(address)' --rpc-url "$rpc"
+  cast call $diamond 'hasRole(bytes32,address)(bool)' \
+    $(cast keccak ADMIN_ROLE) <admin-eoa-or-timelock> --rpc-url "$rpc"
+done
+```
+
+Three states to expect, with a different downstream impact on §2-§5:
+
+- **Pre-handover** (deploy just completed, no acceptOwnership yet) —
+  `owner()` returns the deployer EOA. Configure scripts run directly
+  via `PRIVATE_KEY` / `ADMIN_PRIVATE_KEY` (whichever the deploy script
+  intended).
+- **Partial handover** (OApp ownership transferred to the long-lived
+  admin EOA but Diamond ownership not yet transferred) —
+  `OwnershipFacet.owner()` is the deployer EOA, OApp `owner()` is the
+  admin EOA. `setPeer` runs as ADMIN; ConfigureOracle runs as deployer.
+- **Full handover** (Diamond + OApps transferred to the multisig +
+  Timelock) — `OwnershipFacet.owner()` is the Timelock contract;
+  `ADMIN_ROLE` is held only by the Timelock. Every Configure-script
+  setter must go through Safe → `Timelock.schedule(...)` → wait
+  `minDelay` → `Timelock.execute(...)`. Direct broadcasts revert
+  `OwnableUnauthorizedAccount` (owner check) or
+  `AccessControlUnauthorizedAccount` (role check).
+
+The 2026-05 testnet rehearsal landed in a heterogeneous state: arb-sepolia
+pre-handover-for-Diamond (Safe SDK isn't on Arb Sepolia testnet), while
+base-sepolia + sepolia were fully handed over. ConfigureOracle ran
+directly on arb-sepolia; base-sepolia + sepolia required Safe → Timelock
+proposals. Plan the configure phase against the actual on-chain state,
+not the intended end-state.
+
 ---
 
 ## 2. Oracle / asset wiring
 
-Automated: `script/ConfigureOracle.s.sol` writes the per-chain oracle config from env vars. For manual / multisig control, the underlying setters are:
+Automated: `script/ConfigureOracle.s.sol` writes the per-chain oracle config from env vars. The `--phase configure` step in `deploy-{testnet,mainnet}.sh` actually invokes [`DiamondConfigSpell.s.sol`](../../contracts/script/DiamondConfigSpell.s.sol) which composes four configures into one operator-action: `ConfigureOracle` → `ConfigureRewardReporter` → `ConfigureVPFIBuy` (canonical chain only — automatically skipped on non-canonical via the spell's chain-branch) → `ConfigureNFTImageURIs`. Single broadcast window, deterministic order, halt-on-first-failure.
+
+**Pre-handover broadcaster requirement.** ConfigureOracle's pre-flight
+asserts `vm.addr(ADMIN_PRIVATE_KEY) == OwnershipFacet.owner()` AND
+`hasRole(ADMIN_ROLE, broadcaster)`. The script docstring explicitly
+labels itself the "pre-handover bootstrap path" — direct broadcasts
+work only while the Diamond is owned by an EOA the operator controls
+plus that EOA holds `ADMIN_ROLE`. Post-handover, every setter listed
+below must be hand-encoded as a `Timelock.schedule(...)` call, batched
+into the multisig, executed after `minDelay`. The ConfigureOracle
+revert message points operators at this branch when the on-chain
+owner doesn't match.
+
+**0x infrastructure on testnets without canonical 0x deployment.** The
+`setZeroExProxy` / `setallowanceTarget` setters are strict — they
+revert on `address(0)`, so chains where 0x is not deployed (Base
+Sepolia + Arb Sepolia at time of writing) need a stand-in. Use the
+[`DeployZeroExMock.s.sol`](../../contracts/script/DeployZeroExMock.s.sol)
+helper:
+
+```bash
+forge script script/DeployZeroExMock.s.sol \
+  --rpc-url $BASE_SEPOLIA_RPC_URL --broadcast --slow
+# Mock proxy: 0x...                         <-- record this
+# Record as BOTH <CHAIN>_ZEROX_PROXY and <CHAIN>_ZEROX_ALLOWANCE_TARGET
+```
+
+The mock implements the v1 ExchangeProxy single-contract surface
+(allowanceTarget == proxy) so both env vars get the same address. The
+script refuses to deploy on production chains (chainId 1/8453/137/10/42161)
+via a hardcoded guard — testnet only. For tests to actually execute
+swaps against the mock, fund it with output-token balances ahead of
+each scenario.
+
+For manual / multisig control, the underlying setters are:
 
 On `OracleAdminFacet`:
 

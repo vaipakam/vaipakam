@@ -369,3 +369,27 @@ deprecated.vaipakam.com
 Tenderly is usig TIMELOCK_ADDRESS, need to see why and if TIMELOCK_ADDRESS changes how it need to be reflected in Tenderly
 
 ---
+
+## Check list
+
+- [ ] **CL-001**: Safe is live: 2/3 threshold, 3 owners, nonce 0 (never executed). Here's the ceremony to drive.
+
+### Multi-sig acceptOwnership ceremony — Base Sepolia
+
+Safe: 0x2C7B2328E2906c58F2cc6fa3920DB4fa1ecb1dd0 (Base Sepolia, v1.4.1, 2/3 threshold)
+Signers: 0xdAe937FA…77f8, 0x3E0b0094…6e6a, 0xD8512620…6470
+
+You need to execute 3 transactions through the Safe UI (app.safe.global → connect to Base Sepolia → load this Safe). Each is a Contract Interaction with the same 4-byte selector and no args:
+
+#### Target (to) Calldata (data) Operation
+
+1 0xdF7e6DA4a4e93e3646810C364d3E03150E1e6755 (vpfiOftAdapter) 0x79ba5097 Call
+2 0x61c817e24Ad6614C1FAaeC60d81354ED3d76036D (vpfiBuyReceiver) 0x79ba5097 Call
+3 0xB112C8b7832Ca3b3A8f1D586188424d72B79bDf9 (rewardOApp) 0x79ba5097 Call
+Per tx: New transaction → Contract interaction → paste target → ABI: pick "Custom data" → paste 0x79ba5097 → value=0 → propose → 2 of 3 signers approve → execute.
+
+Tip: queue all 3 in the Safe at once, then sign once per signer (each signer's signing screen lists all pending — one signature pass covers all 3 if the signer hits "approve all").
+
+Ping me when you've executed all 3 and I'll verify on-chain (Ownable.owner() == Safe) and then run DeployerZeroRolesTest against a Base Sepolia fork as the hard exit gate. PositiveFlows on arb-sepolia is still chugging in the background — independent.
+
+---

@@ -1,0 +1,83 @@
+{
+  "version": "1.0",
+  "chainId": "11155111",
+  "createdAt": 1762819200000,
+  "meta": {
+    "name": "Vaipakam testnet peer wiring — sepolia (mirror)",
+    "description": "4 setPeer calls on the Sepolia mirror's three OApps. Wires sepolia → base-sepolia (canonical) for VPFI lane + Buy lane + Reward lane, plus sepolia → arb-sepolia for Reward mesh. Authority: Safe 0x2C7B2328E2906c58F2cc6fa3920DB4fa1ecb1dd0 (verified on-chain owner of all three OApps)."
+  },
+  "transactions": [
+    {
+      "to": "0x1C837b53553D4134B00f474E04C904062CA69341",
+      "value": "0",
+      "data": "0x3400288b0000000000000000000000000000000000000000000000000000000000009d35000000000000000000000000df7e6da4a4e93e3646810c364d3e03150e1e6755",
+      "contractMethod": {
+        "name": "setPeer",
+        "type": "function",
+        "inputs": [
+          { "name": "_eid", "type": "uint32", "internalType": "uint32" },
+          { "name": "_peer", "type": "bytes32", "internalType": "bytes32" }
+        ],
+        "payable": false
+      },
+      "contractInputsValues": {
+        "_eid": "40245",
+        "_peer": "0x000000000000000000000000df7e6da4a4e93e3646810c364d3e03150e1e6755"
+      }
+    },
+    {
+      "to": "0x17d34C77f7c93De0514a1904AaDe3A6C5d579f27",
+      "value": "0",
+      "data": "0x3400288b0000000000000000000000000000000000000000000000000000000000009d3500000000000000000000000061c817e24ad6614c1faaec60d81354ed3d76036d",
+      "contractMethod": {
+        "name": "setPeer",
+        "type": "function",
+        "inputs": [
+          { "name": "_eid", "type": "uint32", "internalType": "uint32" },
+          { "name": "_peer", "type": "bytes32", "internalType": "bytes32" }
+        ],
+        "payable": false
+      },
+      "contractInputsValues": {
+        "_eid": "40245",
+        "_peer": "0x00000000000000000000000061c817e24ad6614c1faaec60d81354ed3d76036d"
+      }
+    },
+    {
+      "to": "0xB112C8b7832Ca3b3A8f1D586188424d72B79bDf9",
+      "value": "0",
+      "data": "0x3400288b0000000000000000000000000000000000000000000000000000000000009d35000000000000000000000000b112c8b7832ca3b3a8f1d586188424d72b79bdf9",
+      "contractMethod": {
+        "name": "setPeer",
+        "type": "function",
+        "inputs": [
+          { "name": "_eid", "type": "uint32", "internalType": "uint32" },
+          { "name": "_peer", "type": "bytes32", "internalType": "bytes32" }
+        ],
+        "payable": false
+      },
+      "contractInputsValues": {
+        "_eid": "40245",
+        "_peer": "0x000000000000000000000000b112c8b7832ca3b3a8f1d586188424d72b79bdf9"
+      }
+    },
+    {
+      "to": "0xB112C8b7832Ca3b3A8f1D586188424d72B79bDf9",
+      "value": "0",
+      "data": "0x3400288b0000000000000000000000000000000000000000000000000000000000009d27000000000000000000000000b112c8b7832ca3b3a8f1d586188424d72b79bdf9",
+      "contractMethod": {
+        "name": "setPeer",
+        "type": "function",
+        "inputs": [
+          { "name": "_eid", "type": "uint32", "internalType": "uint32" },
+          { "name": "_peer", "type": "bytes32", "internalType": "bytes32" }
+        ],
+        "payable": false
+      },
+      "contractInputsValues": {
+        "_eid": "40231",
+        "_peer": "0x000000000000000000000000b112c8b7832ca3b3a8f1d586188424d72b79bdf9"
+      }
+    }
+  ]
+}

@@ -33,7 +33,7 @@
 # To remove an action on one chain: delete its spec block and re-run
 # `tenderly actions deploy`.
 
-account_id: ""    # ← FILL: your Tenderly account slug (URL: dashboard.tenderly.co/<account_id>/...)
+account_id: Vaipakam    # Tenderly account slug — confirmed via REST API list at api.tenderly.co/api/v1/account/Vaipakam/project/vaipakam/contracts
 project_slug: vaipakam   # matches the `project:` field in alerts.yaml
 
 # ─── Action source — single TypeScript root, multiple specs below ───────

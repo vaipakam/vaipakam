@@ -588,6 +588,9 @@ Deployment flow:
 3. deploy connected peer contracts on the additional supported chains
 4. wire LayerZero peer configuration so omnichain transfers preserve one global supply model
 5. keep token symbol and metadata consistent as `VPFI` on every supported chain
+6. configure mirror-chain buy-adapter rate limits to finite caps before verification; adapters that remain at unlimited deployment defaults must be treated as not production-ready
+7. hand OApp ownership to the configured Governance Safe only from the current on-chain owner key, with scripts reading `owner()` first and skipping with operator guidance when the signer does not match
+8. wire OApp peers according to the current owner of each source OApp: direct owner broadcasts where the admin EOA still owns the source, and Safe Transaction Builder batches where the Governance Safe owns the source
 
 Architecture clarification:
 
@@ -600,11 +603,14 @@ Canonical-address rule:
 
 - the Base deployment is the documented source of truth
 - canonical addresses must be published in `docs/` and surfaced on the public dashboard / transparency UI
+- CREATE2 deployment salts and version strings are part of the token deployment artifact. Where shared deterministic addresses are intended, rehearsals should confirm address parity across chains; if a predicted address already has bytecode from a prior rehearsal, operators should either reuse the idempotent deployment state or bump the documented salt / version before resuming.
 
 LayerZero hardening requirements:
 
 - each reward OApp packet type must validate the exact expected encoded payload size before decoding; for the current report / broadcast tuple this is `128` bytes
 - malformed, undersized, or oversized reward packets must revert with a typed payload-size error carrying the observed and expected sizes
+- peer wiring is considered complete only after every expected `(source OApp, remote eid)` pair returns the right-padded peer address from `peers(uint32)`. Runbooks should preserve decoded batch review data for Safe-routed peer wiring.
+- mainnet DVN configuration defaults to a hardened `3 required + 2 optional, threshold 1-of-2` policy. Testnet rehearsals may use an explicit `1 required + 1 optional, threshold 1-of-1` mode for operator practice, but mainnet scripts must keep the hardened policy as the default.
 - fixed-rate buy reconciliation should be monitored off-chain: canonical-chain processed buy events should be cross-checked against source-chain `BuyRequested` events by request id, buyer, and amount
 - the buy-reconciliation watchdog should run from the operations Worker, read canonical-chain processed-buy events, resolve the originating LayerZero endpoint id to that source chain's RPC and adapter address, and verify that a matching source-chain `BuyRequested` event exists with the same request id, buyer, and amount
 - the buy-reconciliation watchdog should expose an on-chain kill switch for planned ceremonies; auto-pausing on mismatch is an operations decision for a later phase, not a Phase 1 requirement
