@@ -251,6 +251,7 @@ CHAIN_SLUG="$1"; shift
 PHASE=""
 CONFIRM_MULTISIG=0
 CONFIRM_DVN=0
+CONFIRM_ORPHANS=0
 FRESH=0
 # --mode is only consulted by --phase pause-rehearsal. Defaults to
 # "calldata" (print pause() calldata for the operator to sign through
@@ -267,6 +268,7 @@ while [ $# -gt 0 ]; do
       ;;
     --confirm-i-have-multisig-ready) CONFIRM_MULTISIG=1 ;;
     --confirm-dvn-policy-reviewed)   CONFIRM_DVN=1 ;;
+    --confirm-orphans-prior-onchain-state) CONFIRM_ORPHANS=1 ;;
     --fresh)                         FRESH=1 ;;
     --mode)
       shift
@@ -614,6 +616,58 @@ EOF
       exit 1
     fi
     # --fresh: archive + wipe.
+    # ── Pre-archive guard: refuse if the existing on-chain Diamond
+    #    has live offers / loans, unless the operator explicitly opts
+    #    in to orphaning them. This catches the "rehearse over a
+    #    chain that already has user-visible state" foot-gun (hit on
+    #    2026-05-11 with arb-sepolia: 8 active offers + 14 active
+    #    loans went invisible to the indexer after a --fresh). The
+    #    archive moves the OFF-chain artifacts out of the way, but
+    #    the ON-chain Diamond retains its storage — those offers
+    #    keep existing, the indexer just stops seeing them once the
+    #    cursor row is wiped + reseeded forward.
+    PRIOR_DIAMOND=""
+    if [ -f "$DEPLOY_DIR/addresses.json" ]; then
+      PRIOR_DIAMOND=$(jq -r '.diamond // empty' "$DEPLOY_DIR/addresses.json" 2>/dev/null)
+    fi
+    if [ -n "$PRIOR_DIAMOND" ] && [ "$PRIOR_DIAMOND" != "null" ]; then
+      ACTIVE_OFFERS=$(cast call "$PRIOR_DIAMOND" 'getActiveOffersCount()(uint256)' --rpc-url "$RPC" 2>/dev/null || echo "?")
+      ACTIVE_LOANS=$(cast call "$PRIOR_DIAMOND" 'getActiveLoansCount()(uint256)' --rpc-url "$RPC" 2>/dev/null || echo "?")
+      if [ "$ACTIVE_OFFERS" != "0" ] && [ "$ACTIVE_OFFERS" != "?" ] && [ -n "$ACTIVE_OFFERS" ] || \
+         [ "$ACTIVE_LOANS" != "0" ] && [ "$ACTIVE_LOANS" != "?" ] && [ -n "$ACTIVE_LOANS" ]; then
+        if [ "$CONFIRM_ORPHANS" != "1" ]; then
+          cat >&2 <<EOF
+Refusing --fresh for $CHAIN_SLUG: prior Diamond at $PRIOR_DIAMOND
+has live on-chain state.
+
+  Active offers: $ACTIVE_OFFERS
+  Active loans:  $ACTIVE_LOANS
+
+A --fresh archives the OFF-chain artifacts (addresses.json,
+.markers/, indexer rows) but cannot wipe ON-chain Diamond
+storage. After the new deploy lands, those offers/loans still
+exist on the prior Diamond, but every off-chain consumer
+(indexer, frontend, keeper) is now pointed at the NEW Diamond.
+The user-visible result is "my offer disappeared from the UI"
+plus an orphaned Diamond holding live state until manually
+cancelled / settled.
+
+Re-run with both flags if you genuinely intend this:
+  bash contracts/script/deploy-testnet.sh $CHAIN_SLUG --phase contracts \\
+    --confirm-i-have-multisig-ready --fresh \\
+    --confirm-orphans-prior-onchain-state
+
+The --confirm-orphans-prior-onchain-state flag exists so that
+"yes, I know I'm orphaning $ACTIVE_OFFERS offers + $ACTIVE_LOANS
+loans on the prior Diamond" is a deliberate operator action and
+not a typo on a chain where someone forgot to wind down state.
+EOF
+          exit 1
+        fi
+        echo "  ⚠ orphaning $ACTIVE_OFFERS active offer(s) + $ACTIVE_LOANS active loan(s)"
+        echo "    on prior Diamond $PRIOR_DIAMOND (operator confirmed via --confirm-orphans-prior-onchain-state)"
+      fi
+    fi
     echo "[0a] --fresh: archiving prior chain state for $CHAIN_SLUG"
     archive_chain_state "$CHAIN_SLUG"
     echo
@@ -765,19 +819,36 @@ EOF
     echo "  Final master flags: $(cast call $DIAMOND_FOR_FLAGS 'getMasterFlags()(bool,bool,bool)' --rpc-url $RPC | tr '\n' ' ')"
   fi
 
-  # ── Indexer-cursor reseed under --fresh ─────────────────────────
-  # archive_chain_state above wiped the prior `indexer_cursor` row
-  # for this chain. Without a re-seed, the indexer cron's next tick
-  # would fall back to `deployBlock - 1` and burn 5-10 minutes
-  # backfilling the empty pre-deploy block range. Seed at safe head
-  # so the very next cron tick picks up new user-facing events
-  # immediately. Mirrors deploy-chain.sh's [8d] step. No-op outside
-  # --fresh.
-  if [ "$FRESH" = "1" ]; then
-    echo
-    echo "[5c] Re-seed indexer_cursor at safe-head for chainId=$CHAIN_ID"
-    seed_indexer_cursor_safe_head "$CHAIN_ID" "$RPC"
-  fi
+  # ── Indexer-cursor: trust the natural fallback ──────────────────
+  # archive_chain_state above wiped the prior `indexer_cursor` row.
+  # The next indexer cron tick will see no cursor row and fall back
+  # to `lastBlock = deployBlock - 1n` (apps/indexer/src/chainIndexer.ts:242),
+  # then scan forward from deployBlock. Two reasons we no longer
+  # auto-seed at safe-head here:
+  #
+  #   1. The natural fallback is correct on a TRUE fresh deploy too:
+  #      deployBlock ≈ current safe-head (only the deploy txns sit
+  #      between them), so the cron's `scanFrom > head` short-circuit
+  #      fires and the chain is reported caught-up after one ~30-block
+  #      scan that picks up admin role-grants + init calls. Zero
+  #      wasted work; previously the seed-step's claim of "skipping
+  #      empty backfill" was over-stated.
+  #
+  #   2. Auto-seed-at-safe-head is ACTIVELY HARMFUL when --fresh runs
+  #      against a chain that has pre-existing on-chain state from a
+  #      previous deploy / flow-test session — the seed jumps the
+  #      cursor PAST any events emitted before now, orphaning them
+  #      to that indexer instance forever. Hit on 2026-05-11: 8
+  #      arb-sepolia offers + 14 loans from yesterday's F2 rehearsal
+  #      went invisible to the indexer after this step ran following
+  #      a manual D1 purge. Diagnosis in
+  #      docs/ReleaseNotes/ReleaseNotes-2026-05-11.md.
+  #
+  # If a future operator genuinely wants the seed-at-safe-head shape
+  # for a deploy where they're CERTAIN no orphan-able events exist,
+  # the `seed_indexer_cursor_safe_head` helper below is still in the
+  # script — call it manually. The default --fresh path no longer
+  # auto-invokes it.
 
   echo
   echo "✓ contracts phase done."
@@ -817,19 +888,31 @@ phase_lz_config() {
     cat >&2 <<EOF
 Refusing --phase lz-config without --confirm-dvn-policy-reviewed.
 
-Project policy (contracts/README.md "Cross-Chain Security"):
-  - 3 required DVNs + 2 optional, threshold 1-of-2.
-  - Required: LayerZero Labs + Google Cloud + (Polyhedra OR Nethermind).
-  - Optional: BWare Labs + (Stargate OR Horizen).
-  - Operator diversity is load-bearing — different corporate operators.
+This phase calls ConfigureLZConfig.s.sol which builds one of two
+policy shapes, selected via DVN_POLICY_MODE in .env:
 
-This phase calls ConfigureLZConfig.s.sol which reads:
-  DVN_REQUIRED_1, DVN_REQUIRED_2, DVN_REQUIRED_3,
-  DVN_OPTIONAL_1, DVN_OPTIONAL_2, CONFIRMATIONS,
-  OAPP, SEND_LIB, RECV_LIB, REMOTE_EIDS  (all from .env).
+  • mainnet (default — DVN_POLICY_MODE unset or empty):
+      3 required + 2 optional, threshold 1-of-2.
+      Required: LayerZero Labs + Google Cloud + (Polyhedra OR Nethermind).
+      Optional: BWare Labs + (Stargate OR Horizen).
+      Reads DVN_REQUIRED_1/2/3 + DVN_OPTIONAL_1/2.
+      Operator diversity is load-bearing per contracts/README.md
+      "Cross-Chain Security" — the April 2026 bridge exploit rode the
+      LZ default 1R+0O shape; this is the post-incident hardening.
 
-Eyeball every address against the LZ + DVN-operator docs, then
-re-run with --confirm-dvn-policy-reviewed.
+  • testnet1of1 (DVN_POLICY_MODE=testnet1of1):
+      1 required + 1 optional, threshold 1-of-1.
+      Reads DVN_REQUIRED_1 + DVN_OPTIONAL_1 only.
+      Minimum non-default exercise of the multi-DVN path; appropriate
+      for testnet rehearsals where there's no economic threat surface
+      and operator diversity isn't load-bearing.
+
+Common env vars (both modes):
+  OAPP, SEND_LIB, RECV_LIB, REMOTE_EIDS, CONFIRMATIONS (optional),
+  PRIVATE_KEY (the OApp owner / delegate on this chain).
+
+Eyeball every DVN address against the LZ DVN registry, then re-run
+with --confirm-dvn-policy-reviewed.
 EOF
     exit 1
   fi

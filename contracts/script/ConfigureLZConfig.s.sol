@@ -89,12 +89,21 @@ interface IOAppEndpoint {
  *        - RECV_LIB        : ReceiveUln302 address on this chain.
  *        - REMOTE_EIDS     : comma-separated list of peer eids to configure
  *                            (e.g. "30110,30111,30184" for Arb+OP+Base).
+ *        - DVN_POLICY_MODE : (optional) "testnet1of1" switches the policy
+ *                            shape to 1-required + 1-optional, threshold
+ *                            1-of-1 — the minimum non-default exercise of
+ *                            the multi-DVN verification path, used for
+ *                            testnet rehearsals where operator diversity
+ *                            isn't load-bearing. Empty / unset = mainnet
+ *                            policy (3R+2O, threshold 1-of-2).
  *        - DVN_REQUIRED_1  : first required DVN address (LZ Labs).
- *        - DVN_REQUIRED_2  : second required DVN address (Google Cloud).
- *        - DVN_REQUIRED_3  : third required DVN address (Polyhedra or
- *                            Nethermind).
+ *        - DVN_REQUIRED_2  : second required DVN (Google Cloud) — mainnet
+ *                            mode only.
+ *        - DVN_REQUIRED_3  : third required DVN (Polyhedra or Nethermind)
+ *                            — mainnet mode only.
  *        - DVN_OPTIONAL_1  : first optional DVN address (BWare Labs).
- *        - DVN_OPTIONAL_2  : second optional DVN address (Stargate / Horizen).
+ *        - DVN_OPTIONAL_2  : second optional DVN (Stargate / Horizen) —
+ *                            mainnet mode only.
  *        - CONFIRMATIONS   : (optional) override block-confirmation count
  *                            for this chain. Falls back to the built-in
  *                            default table documented in
@@ -222,58 +231,113 @@ contract ConfigureLZConfig is Script {
 
     // ─── Helpers ────────────────────────────────────────────────────────────
 
+    /// @dev Resolve the configured DVN policy mode. Empty / unset / any
+    ///      string other than "testnet1of1" = mainnet shape (3R+2O,
+    ///      threshold 1-of-2). The string-equality check via keccak hash
+    ///      avoids the gotcha where bytes-of-empty-string compares equal
+    ///      to bytes-of-anything-with-leading-null-byte.
+    function _isTestnetMode() internal view returns (bool) {
+        string memory mode = vm.envOr("DVN_POLICY_MODE", string(""));
+        return keccak256(bytes(mode)) == keccak256(bytes("testnet1of1"));
+    }
+
     /// @dev Build the UlnConfig for this chain using DVN operator addresses
     ///      pulled from env. DVN arrays must be sorted ascending by address
     ///      (LZ's UlnBase enforces that at `setConfig` time); we sort at
     ///      runtime since the env-supplied operator ordering isn't
     ///      guaranteed.
+    ///
+    ///      Two policy shapes:
+    ///        - mainnet (default): 3 required + 2 optional, threshold 1-of-2.
+    ///          Operator diversity is load-bearing — the April 2026
+    ///          cross-chain bridge incident rode the 1R+0O default and
+    ///          this shape is the post-incident hardening pinned in
+    ///          contracts/README.md / CLAUDE.md.
+    ///        - testnet1of1 (DVN_POLICY_MODE=testnet1of1): 1 required + 1
+    ///          optional, threshold 1-of-1. The minimum non-default
+    ///          exercise of the multi-DVN verification path — used during
+    ///          testnet rehearsals where operator diversity isn't
+    ///          load-bearing (no economic threat surface) but the
+    ///          configuration plumbing still needs to clear setConfig
+    ///          before mainnet cutover.
     function _policyForChain(uint256 chainId_) internal view returns (UlnConfig memory cfg) {
         (address[] memory req, address[] memory opt) = _loadDvnSet();
-        cfg = UlnConfig({
-            confirmations: _confirmationsFor(chainId_),
-            requiredDVNCount: 3,
-            optionalDVNCount: 2,
-            optionalDVNThreshold: 1,
-            requiredDVNs: req,
-            optionalDVNs: opt
-        });
+        if (_isTestnetMode()) {
+            cfg = UlnConfig({
+                confirmations: _confirmationsFor(chainId_),
+                requiredDVNCount: 1,
+                optionalDVNCount: 1,
+                optionalDVNThreshold: 1,
+                requiredDVNs: req,
+                optionalDVNs: opt
+            });
+        } else {
+            cfg = UlnConfig({
+                confirmations: _confirmationsFor(chainId_),
+                requiredDVNCount: 3,
+                optionalDVNCount: 2,
+                optionalDVNThreshold: 1,
+                requiredDVNs: req,
+                optionalDVNs: opt
+            });
+        }
     }
 
-    /// @dev Read the 3-required / 2-optional DVN operator set from env,
-    ///      sort ascending, and return. Reverts if any entry is zero or if
-    ///      any two addresses collide — diversification of operators is
-    ///      the whole point of the 3R+2O shape, so duplicates defeat the
-    ///      security goal and must never reach broadcast.
+    /// @dev Read the DVN operator set from env, sized per active policy
+    ///      mode, sort each array ascending, and return. Reverts if any
+    ///      entry is zero or if any two addresses collide — diversification
+    ///      of operators is the whole point of the multi-DVN shapes, so
+    ///      duplicates defeat the security goal and must never reach
+    ///      broadcast.
+    ///
+    ///      Mainnet mode reads 3R + 2O; testnet1of1 mode reads 1R + 1O.
     function _loadDvnSet() internal view returns (address[] memory req, address[] memory opt) {
-        req = new address[](3);
-        req[0] = vm.envAddress("DVN_REQUIRED_1");
-        req[1] = vm.envAddress("DVN_REQUIRED_2");
-        req[2] = vm.envAddress("DVN_REQUIRED_3");
+        if (_isTestnetMode()) {
+            req = new address[](1);
+            req[0] = vm.envAddress("DVN_REQUIRED_1");
+            opt = new address[](1);
+            opt[0] = vm.envAddress("DVN_OPTIONAL_1");
+        } else {
+            req = new address[](3);
+            req[0] = vm.envAddress("DVN_REQUIRED_1");
+            req[1] = vm.envAddress("DVN_REQUIRED_2");
+            req[2] = vm.envAddress("DVN_REQUIRED_3");
 
-        opt = new address[](2);
-        opt[0] = vm.envAddress("DVN_OPTIONAL_1");
-        opt[1] = vm.envAddress("DVN_OPTIONAL_2");
+            opt = new address[](2);
+            opt[0] = vm.envAddress("DVN_OPTIONAL_1");
+            opt[1] = vm.envAddress("DVN_OPTIONAL_2");
+        }
 
         _sortAscending(req);
         _sortAscending(opt);
     }
 
-    /// @dev Refuse to broadcast unless every DVN slot is populated with a
-    ///      unique non-zero address. Cheap pre-flight check that saves a
-    ///      failed on-chain tx (and the associated alarm) when an env var
-    ///      is missing.
+    /// @dev Refuse to broadcast unless every active DVN slot is populated
+    ///      with a unique non-zero address. Cheap pre-flight check that
+    ///      saves a failed on-chain tx (and the associated alarm) when an
+    ///      env var is missing.
+    ///
+    ///      Slot count is mode-dependent: mainnet asserts 3R+2O, testnet
+    ///      asserts 1R+1O. The mode-irrelevant slots (DVN_REQUIRED_2/3,
+    ///      DVN_OPTIONAL_2 in testnet mode) are not read and are not
+    ///      checked — operator can leave them unset.
     function _assertDvnsConfigured() internal view {
         (address[] memory req, address[] memory opt) = _loadDvnSet();
 
-        require(req[0] != address(0), "DVN_REQUIRED_1 not set");
-        require(req[1] != address(0), "DVN_REQUIRED_2 not set");
-        require(req[2] != address(0), "DVN_REQUIRED_3 not set");
-        require(opt[0] != address(0), "DVN_OPTIONAL_1 not set");
-        require(opt[1] != address(0), "DVN_OPTIONAL_2 not set");
+        for (uint256 i; i < req.length; ++i) {
+            require(req[i] != address(0), "DVN_REQUIRED_n not set (zero address)");
+        }
+        for (uint256 i; i < opt.length; ++i) {
+            require(opt[i] != address(0), "DVN_OPTIONAL_n not set (zero address)");
+        }
 
-        // Sorted, so duplicates become adjacent.
-        require(req[0] != req[1] && req[1] != req[2], "duplicate required DVN");
-        require(opt[0] != opt[1], "duplicate optional DVN");
+        // Sorted, so duplicates are always adjacent.
+        for (uint256 i; i + 1 < req.length; ++i) {
+            require(req[i] != req[i + 1], "duplicate required DVN");
+        }
+        for (uint256 i; i + 1 < opt.length; ++i) {
+            require(opt[i] != opt[i + 1], "duplicate optional DVN");
+        }
         // Cross-group dupes are also a diversification failure.
         for (uint256 i; i < req.length; ++i) {
             for (uint256 j; j < opt.length; ++j) {

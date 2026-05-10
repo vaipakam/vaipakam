@@ -100,7 +100,19 @@ import {ConfigureVPFIBuy} from "./ConfigureVPFIBuy.s.sol";
  *      ADMIN_PRIVATE_KEY) and runs at `--phase lz-config` separately.
  */
 contract DiamondConfigSpell is Script {
+    /// @dev Canonical-VPFI chains (Base Sepolia 84532 and Base mainnet 8453)
+    ///      are the only chains that run ConfigureVPFIBuy. The script's
+    ///      `_ethPriceAsset()` helper hard-reverts on any other chainid, so
+    ///      mirror-chain runs of the spell would abort at step 3 of 4
+    ///      without this gate. Mirror chains skip step 3 with a
+    ///      console-log marker so the operator sees the deliberate skip.
+    function _isCanonicalVPFIChain() internal view returns (bool) {
+        return block.chainid == 84532 || block.chainid == 8453;
+    }
+
     function run() external {
+        bool canonical = _isCanonicalVPFIChain();
+
         console.log("");
         console.log("[DiamondConfigSpell] ============================================");
         console.log("[DiamondConfigSpell] 1/4: ConfigureOracle");
@@ -117,10 +129,17 @@ contract DiamondConfigSpell is Script {
 
         console.log("");
         console.log("[DiamondConfigSpell] ============================================");
-        console.log("[DiamondConfigSpell] 3/4: ConfigureVPFIBuy");
-        console.log("[DiamondConfigSpell] ============================================");
-        ConfigureVPFIBuy buy = new ConfigureVPFIBuy();
-        buy.run();
+        if (canonical) {
+            console.log("[DiamondConfigSpell] 3/4: ConfigureVPFIBuy");
+            console.log("[DiamondConfigSpell] ============================================");
+            ConfigureVPFIBuy buy = new ConfigureVPFIBuy();
+            buy.run();
+        } else {
+            console.log("[DiamondConfigSpell] 3/4: ConfigureVPFIBuy (SKIPPED - non-canonical chain)");
+            console.log("[DiamondConfigSpell] ============================================");
+            console.log("[DiamondConfigSpell] chainid:", block.chainid);
+            console.log("[DiamondConfigSpell] VPFI buy is canonical-only; mirror chains have no buy receiver to configure.");
+        }
 
         console.log("");
         console.log("[DiamondConfigSpell] ============================================");
@@ -131,7 +150,11 @@ contract DiamondConfigSpell is Script {
 
         console.log("");
         console.log("[DiamondConfigSpell] ============================================");
-        console.log("[DiamondConfigSpell] All four configures landed.");
+        if (canonical) {
+            console.log("[DiamondConfigSpell] All four configures landed.");
+        } else {
+            console.log("[DiamondConfigSpell] Three configures landed (VPFIBuy skipped on non-canonical).");
+        }
         console.log("[DiamondConfigSpell] ============================================");
     }
 }

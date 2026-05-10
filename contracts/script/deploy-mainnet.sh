@@ -235,6 +235,7 @@ CHAIN_SLUG="$1"; shift
 PHASE=""
 CONFIRM_MULTISIG=0
 CONFIRM_DVN=0
+CONFIRM_ORPHANS=0
 FRESH=0
 CONFIRM_PURGE_MAINNET=0
 
@@ -252,6 +253,7 @@ while [ $# -gt 0 ]; do
     # asserts the operator has reviewed the archived state and
     # genuinely intends to abandon the prior on-chain deploy.
     --confirm-purging-prior-mainnet-deploy) CONFIRM_PURGE_MAINNET=1 ;;
+    --confirm-orphans-prior-onchain-state)  CONFIRM_ORPHANS=1 ;;
     *)
       echo "Unknown flag: $1" >&2
       exit 1
@@ -488,6 +490,54 @@ proxy lands at a fresh CREATE2 address. Current REWARD_VERSION:
 ${REWARD_VERSION:-(unset)}
 EOF
       exit 1
+    fi
+    # ── Orphan-state guard (mirror of deploy-testnet.sh:617) ────
+    # Mainnet: refuse --fresh if the existing on-chain Diamond has
+    # live offers/loans, unless the operator explicitly opts in.
+    # Same bug class as the 2026-05-11 arb-sepolia incident — but on
+    # mainnet the consequence is real-money offers/loans going
+    # invisible to every off-chain consumer.
+    PRIOR_DIAMOND=""
+    if [ -f "$DEPLOY_DIR/addresses.json" ]; then
+      PRIOR_DIAMOND=$(jq -r '.diamond // empty' "$DEPLOY_DIR/addresses.json" 2>/dev/null)
+    fi
+    if [ -n "$PRIOR_DIAMOND" ] && [ "$PRIOR_DIAMOND" != "null" ]; then
+      ACTIVE_OFFERS=$(cast call "$PRIOR_DIAMOND" 'getActiveOffersCount()(uint256)' --rpc-url "$RPC" 2>/dev/null || echo "?")
+      ACTIVE_LOANS=$(cast call "$PRIOR_DIAMOND" 'getActiveLoansCount()(uint256)' --rpc-url "$RPC" 2>/dev/null || echo "?")
+      if [ "$ACTIVE_OFFERS" != "0" ] && [ "$ACTIVE_OFFERS" != "?" ] && [ -n "$ACTIVE_OFFERS" ] || \
+         [ "$ACTIVE_LOANS" != "0" ] && [ "$ACTIVE_LOANS" != "?" ] && [ -n "$ACTIVE_LOANS" ]; then
+        if [ "$CONFIRM_ORPHANS" != "1" ]; then
+          cat >&2 <<EOF
+Refusing mainnet --fresh for $CHAIN_SLUG: prior Diamond at $PRIOR_DIAMOND
+has live on-chain state.
+
+  Active offers: $ACTIVE_OFFERS
+  Active loans:  $ACTIVE_LOANS
+
+THIS IS REAL-MONEY MAINNET STATE. A --fresh archives off-chain
+artifacts but cannot wipe Diamond storage. Post-deploy, those
+offers/loans still exist on the prior Diamond, but every off-chain
+consumer (indexer, frontend, keeper) is now pointed at the NEW
+Diamond. User-visible result: "my offer disappeared, my loan
+balance is gone" — followed by a support escalation.
+
+If this is a planned migration where users have been notified and
+the prior Diamond's state is being intentionally walked away from,
+re-run with all three flags:
+  --fresh
+  --confirm-purging-prior-mainnet-deploy
+  --confirm-orphans-prior-onchain-state
+
+The third flag exists so that "yes, I am orphaning $ACTIVE_OFFERS
+real offers and $ACTIVE_LOANS real loans on $CHAIN_SLUG mainnet" is
+a deliberate three-step operator action.
+EOF
+          exit 1
+        fi
+        echo "  ⚠ MAINNET orphan: $ACTIVE_OFFERS active offer(s) + $ACTIVE_LOANS active loan(s)"
+        echo "    on prior Diamond $PRIOR_DIAMOND will become invisible to off-chain consumers"
+        echo "    (operator confirmed via --confirm-orphans-prior-onchain-state)"
+      fi
     fi
     echo "[0a] --fresh + --confirm-purging-prior-mainnet-deploy: archiving prior chain state for $CHAIN_SLUG"
     archive_chain_state "$CHAIN_SLUG"
