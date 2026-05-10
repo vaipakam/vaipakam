@@ -8,32 +8,50 @@ Audience: release engineer + signing multisig.
 
 ## TL;DR — pick the right script
 
+Three deploy scripts after the 2026-05-10 modernization sweep
+(see ReleaseNotes-2026-05-10.md for the full story):
+
 | Target | Script | Notes |
 |---|---|---|
 | Local dev (anvil) | `bash contracts/script/anvil-bootstrap.sh` | Full local playground — diamond + mocks + Multicall3 etch + Range Orders flags ON + seed offers + ABI/JSON sync (one command). |
-| Testnet one-shot | `bash contracts/script/deploy-chain.sh <chain-slug> [--fresh] [--resume] [--verify-contracts] [--skip-lz-config] [--skip-vpfi] [--skip-frontend] [--skip-watcher] [--skip-cf]` | Auto-chains: build → diamond (post-cut facet-count assert inside the script) → timelock → VPFI lane (canonical / mirror branched on slug) → buy-VPFI rate-limit set (mirror only) → reward OApp → master-flag flip → LZ DVN policy (auto-skips when `DVN_REQUIRED_1` not in env) → ABI/JSON sync → frontend deploy → pre-watcher D1 purge (only with `--fresh`) → watcher deploy → D1 migrate. Refuses any mainnet slug. |
-| Cross-chain peer wiring | `bash contracts/script/deploy-peers.sh [--dry-run] [--only-chains slug1,slug2]` | Run ONCE after every chain's `deploy-chain.sh` lands. Walks `deployments/*/addresses.json`, auto-detects canonical, wires `setPeer` for the VPFI lane (canonical OFTAdapter ↔ each mirror VPFIMirror, bidirectional), the Buy lane (canonical BuyReceiver ↔ each mirror BuyAdapter, bidirectional), and the Reward OApp full mesh. Idempotent — safe to re-run after partial-fail. |
-| Mainnet | `bash contracts/script/deploy-mainnet.sh <chain-slug> --phase <phase>` | Tiered. Each phase (`preflight`, `contracts`, `lz-config`, `abi-sync`, `cf-frontend`, `cf-watcher`, `verify`) is a deliberate operator action. Confirm flags gate the irreversible phases (`--confirm-i-have-multisig-ready`, `--confirm-dvn-policy-reviewed`). Each successful phase writes a `.markers/phase-<phase>.done` sentinel; `--phase contracts` REFUSES to re-run if its marker exists (prevents duplicate-Diamond mistakes). Refuses testnet slugs. |
+| Testnet one-shot (anvil + dev quick-loop) | `bash contracts/script/deploy-chain.sh <chain-slug> [flags]` | Auto-chains every step. Stage 3/4-aware: deploys two SPAs (`apps/defi`, `apps/www`) + three Workers (`apps/keeper`, `apps/indexer`, `apps/agent`). Refuses mainnet slugs. |
+| Testnet rehearsal-grade (mirrors mainnet ceremony) | `bash contracts/script/deploy-testnet.sh <chain-slug> --phase <phase>` | Same tiered phase model as mainnet; lifted dirty-tree refusal; adds `--phase pause-rehearsal` (sub-5-min N-chain simultaneous-pause drill). Use this for the actual testnet rehearsal cycle, NOT deploy-chain.sh. |
+| Cross-chain peer wiring | `bash contracts/script/deploy-peers.sh [--dry-run] [--only-chains slug1,slug2]` | Run ONCE after every chain's contracts have landed. Walks `deployments/*/addresses.json`, auto-detects canonical, wires `setPeer` for the VPFI lane + Buy lane + Reward OApp full mesh. Idempotent. |
+| Mainnet | `bash contracts/script/deploy-mainnet.sh <chain-slug> --phase <phase>` | Tiered. Each phase is a deliberate operator action. Refuses `--phase pause-rehearsal` (testnet-only drill). Refuses testnet slugs. |
+| Production incident lever | `bash contracts/script/pause-all-chains.sh [--check\|--unpause-calldata]` | Standalone (not a deploy phase). Walks every chain's `deployments/<slug>/addresses.json`, prints `pause()` calldata for the operator to fan out across N Pauser-Safe UIs in parallel. 5-minute budget tracked via the run sentinel; `--check` reads `paused()` post-fact and reports elapsed vs budget. |
 
-**Flags on `deploy-chain.sh`** (testnet rehearsal hygiene):
+### Mainnet / testnet phases (deploy-{mainnet,testnet}.sh)
 
-- `--fresh` — backs up prior `addresses.json`, wipes step markers, AND
-  purges watcher D1 rows for the chainId (twice — once at step `[0]`
-  and again right before `wrangler deploy` so the cron tick can't
-  re-populate stale rows during a long deploy). Use on every fresh
-  rehearsal so old state doesn't bleed in.
-- `--resume` — re-run after a partial-fail. Skips any step whose
-  `.markers/<step>.done` exists, restarting from the failed step
-  instead of redoing the diamond + timelock. Mutually exclusive with
-  `--fresh`.
-- `--verify-contracts` — runs `forge verify-contract --watch` on
-  every contract written to `broadcast/<chainId>/run-latest.json`
-  after the deploy lands. Off by default; on for rehearsal so
-  block-explorer source verification is part of the dry-run. Needs
-  `ETHERSCAN_API_KEY` (or per-chain equivalent in `foundry.toml`).
-- `--skip-lz-config` — skip the per-chain `ConfigureLZConfig.s.sol`
-  step. Auto-skipped when `DVN_REQUIRED_1` isn't set, so this flag
-  is mostly there to suppress the warning during a deliberate skip.
+| Phase | Confirm flag | Description |
+|---|---|---|
+| `preflight` | — | Read-only. RPC chainId, deployer balance, env-var presence, WETH-pull validation on bnb/polygon. Always run first. |
+| `contracts` | `--confirm-i-have-multisig-ready` | Deploys Diamond + Timelock + VPFI lane + Reward OApp. Auto-steps: master-flag flip (testnet only), `setRateLimits` on mirror's `vpfiBuyAdapter`. Refuses to re-run if `addresses.json` already has a `diamond` key — pass `--fresh` (testnet) or `--fresh --confirm-purging-prior-mainnet-deploy` (mainnet) to archive prior state under `.archive/<ISO-8601>/` and redeploy. **Bump `REWARD_VERSION` in `.env` before `--fresh` re-runs** — the Reward OApp proxy is CREATE2-addressed off `REWARD_VERSION`. |
+| `lz-config` | `--confirm-dvn-policy-reviewed` | Runs `ConfigureLZConfig.s.sol`. Requires DVN policy env vars (DVN_REQUIRED_1/2/3 + DVN_OPTIONAL_1/2 + CONFIRMATIONS + REMOTE_EIDS + OAPP + SEND_LIB + RECV_LIB). |
+| `swap-adapters` | — | Phase 7a aggregator adapters via `DeploySwapAdapters.s.sol`. Requires `INITIAL_SETTLERS` env var (current 0x Settler set). |
+| `configure` | — | `DiamondConfigSpell.s.sol` — composes ConfigureOracle + ConfigureRewardReporter + ConfigureVPFIBuy + ConfigureNFTImageURIs into one operator-action. Requires per-chain Chainlink feed addresses + WETH. |
+| `handover` | `--confirm-i-have-multisig-ready` | `Handover.s.sol` — rotates DEFAULT_ADMIN_ROLE → governance Safe (direct), ADMIN/KYC/ORACLE/RISK/ESCROW/UNPAUSER → Timelock, PAUSER → Pauser Safe (direct), ERC-173 → Timelock, OApp ownership → governance Safe (Ownable2Step first leg). ADMIN renounces every role. **Multisig-bytecode preflight runs first**: refuses if any of the three Safe addresses has zero bytecode on the target chain. Operator must drive `acceptOwnership()` on each OApp via the Safe UI to complete the second leg. |
+| `abi-sync` | — | Runs the export scripts: `exportFrontendAbis.sh` + `exportFrontendDeployments.sh` + `exportSubgraphAbis.sh` + `exportTenderlyAlerts.sh` + `exportLzWatcherVars.sh` + (sibling repo present) `exportAbis.sh` for the keeper-bot. |
+| `cf-defi` / `cf-www` | — | Build + `wrangler deploy` apps/defi (the dApp) / apps/www (marketing). |
+| `cf-keeper` / `cf-indexer` / `cf-agent` | — | wrangler deploy of each Worker. The indexer phase also runs D1 migrations against `vaipakam-archive`. Each verifies the chain-specific `RPC_<CHAIN>` secret is set on the Worker (hard-fail if missing). |
+| `verify` | — | Read-only smoke checks: `paused()`, `getTreasury()`, facet count (≥ 32 expected), master flag state, BuyAdapter rate-limit caps (refuses to mark verify-done if either cap is `type(uint256).max`). |
+| `pause-rehearsal` (testnet only) | `--mode {calldata\|check\|unpause-calldata}` | Sub-5-min N-chain simultaneous-pause drill. `--mode calldata` (default) prints `pause()` calldata for the operator to sign through the Pauser Safe UI; `--mode check` reads `paused()` on every contract and reports elapsed wall-clock vs the 300s budget; `--mode unpause-calldata` prints the inverse for cleanup. Refused on mainnet. |
+
+### Flags
+
+`deploy-chain.sh` (testnet one-shot, all flags optional):
+- `--skip-defi / --skip-www / --skip-keeper / --skip-indexer / --skip-agent / --skip-cf` — per-app gating for the Cloudflare deploys. `--skip-cf` is the alias for "skip all five".
+- `--skip-vpfi` — skip the VPFI lane + Reward OApp.
+- `--skip-lz-config` — auto-skipped when `DVN_REQUIRED_1` isn't set.
+- `--fresh` — wipe `addresses.json` + step markers (testnet only; auto-archives prior state).
+- `--resume` — re-run after partial-fail; skips marker-completed steps.
+- `--verify-contracts` — `forge verify-contract --watch` on every deployed contract. Needs `ETHERSCAN_API_KEY`.
+
+`deploy-{testnet,mainnet}.sh`:
+- `--phase <phase>` (required) — see the phases table above.
+- `--confirm-i-have-multisig-ready` — gates `--phase contracts` and `--phase handover`.
+- `--confirm-dvn-policy-reviewed` — gates `--phase lz-config`.
+- `--fresh` — opt-in archive + wipe (testnet) or archive + wipe (mainnet — also requires `--confirm-purging-prior-mainnet-deploy`).
+- `--mode <mode>` — only for `--phase pause-rehearsal`.
 
 **Artifacts every deploy now writes** (under
 `contracts/deployments/<slug>/`):
@@ -1525,3 +1543,88 @@ It does **not** need a redeploy when contract code changes —
 the ABIs it uses are LZ V2 standard surface (`endpoint.getConfig`,
 `oapp.peers`, ERC20 `Transfer` / `balanceOf` / `totalSupply`),
 not Vaipakam Diamond selectors.
+
+
+---
+
+## Appendix: 2026-05-10 testnet rehearsal record (F1 / F2 / F3)
+
+The deploy-script modernization was validated by three end-to-end
+rehearsals on three chains with three distinct topologies. Each
+rehearsal caught real bugs the static analysis hadn't surfaced;
+those fixes are described in chronological order in
+[ReleaseNotes-2026-05-10.md](../ReleaseNotes/ReleaseNotes-2026-05-10.md).
+
+### F1 — base-sepolia (canonical)
+
+| Item | Value |
+|---|---|
+| Diamond | `0x804Bc3E9625548e50c1B589b25111783A632D964` |
+| Timelock | `0xcdDA70ebd44b4B44635847e2f1cAD232f7aB3216` |
+| vpfiToken | `0x75e60702fe3dD4F107596d1da28e89B88982E82a` |
+| vpfiOftAdapter (canonical) | `0xdF7e6DA4a4e93e3646810C364d3E03150E1e6755` |
+| vpfiBuyReceiver (canonical) | `0x61c817e24Ad6614C1FAaeC60d81354ED3d76036D` |
+| rewardOApp | `0xB112C8b7832Ca3b3A8f1D586188424d72B79bDf9` |
+| REWARD_VERSION | `v3-rehearsal-2026-05-10` |
+| Phases landed | preflight, contracts (`--fresh`), handover, abi-sync, verify |
+| Multi-sig ceremony | 3 OApps `acceptOwnership()` ✓ |
+| Exit gate | `DeployerZeroRolesTest` 10/10 ✓ (Base Sepolia fork) |
+
+### F2 — arb-sepolia (mirror, no Safe support yet)
+
+| Item | Value |
+|---|---|
+| Diamond | `0x17Fe0D808F8971D7A14994a1205ee6AFd949Be91` |
+| Timelock | `0x4805D6EbdCc98201e781Dd8e61d6D2e97c107633` |
+| vpfiToken / vpfiMirror (mirror) | `0x2f4E10F00bB7f8A5fEDB0b1EB171bb6dfEAF1246` |
+| vpfiBuyAdapter (mirror) | `0x90De6FF19aCe6833fE7EB57111DE149Ec55abc93` |
+| rewardOApp | `0xB112C8b7832Ca3b3A8f1D586188424d72B79bDf9` |
+| REWARD_VERSION | `v3-rehearsal-2026-05-10` |
+| Phases landed | preflight, contracts (`--fresh`), mocks, abi-sync, verify, **handover deliberately skipped** |
+| Flow tests | PositiveFlows (33 scenarios, 351 txs) + PartialFlows (13 midpoints, 143 txs) — same broadcast volume as Anvil + base-sepolia |
+| Handover gap | Safe singletons not deployed at the deterministic CREATE2 addresses on Arb Sepolia (Safe UI doesn't support that testnet). Multisig-bytecode preflight refused; operator must Safe-SDK deploy first. |
+
+### F3 — sepolia (mirror, full pipeline)
+
+| Item | Value |
+|---|---|
+| Diamond | `0xD2903cbb8Bb0f34fbb688a6E381Dc6c73056DB1c` |
+| Timelock | `0xA7b4c9b4083A6E344cb63af017FF0259DEF1cd48` |
+| vpfiToken / vpfiMirror (mirror) | `0x1C837b53553D4134B00f474E04C904062CA69341` |
+| vpfiBuyAdapter (mirror) | `0x17d34C77f7c93De0514a1904AaDe3A6C5d579f27` |
+| rewardOApp | `0xB112C8b7832Ca3b3A8f1D586188424d72B79bDf9` |
+| REWARD_VERSION | `v3-rehearsal-2026-05-10` |
+| Phases landed | preflight, contracts (`--fresh`), mocks, handover, abi-sync, verify |
+| Multi-sig ceremony | 3 OApps `acceptOwnership()` ✓ |
+| Exit gate | `DeployerZeroRolesTest` 10/10 ✓ (Sepolia fork) |
+
+### Cross-chain CREATE2 parity — confirmed
+
+The Reward OApp landed at the **same address**
+`0xB112C8b7832Ca3b3A8f1D586188424d72B79bDf9` on all three
+rehearsal chains. This is the property `LibCreate2Deploy.protocolSalt(version, "RewardOAppProxy")`
+is supposed to deliver: the proxy bytecode hash + salt
+combination is identical across chains, so the deterministic
+CREATE2 address is too. Cross-chain `setPeer` wiring (via
+`WireVPFIPeers.s.sol`) will key on this common address.
+
+### Bugs caught by the rehearsals
+
+1. **F1 caught**: `vaipakamReward` vs `rewardOApp` addresses.json
+   key drift (4 sites); `Handover.s.sol` broadcasting as ADMIN
+   while OApps are owned by VPFI_OWNER + REWARD_OWNER;
+   BASE_EID=0 missing on canonical chain in tiered scripts;
+   Reward OApp proxy CREATE2 idempotency guard missing; need
+   for `--fresh` + auto-archive + detect-and-refuse on
+   `phase_contracts`.
+
+2. **F2 caught**: `DeployTestnetLiquidityMocks` missing
+   chain support for arb-sepolia + op-sepolia; Range Orders
+   master flags don't auto-flip on `deploy-testnet.sh`;
+   VPFIBuyAdapter rate limits not auto-set on mirror branch;
+   Safe support gap on Arb Sepolia → multisig-bytecode
+   preflight gate added.
+
+3. **F3**: clean pass. The cumulative hardenings from F1 + F2
+   meant no new bugs surfaced.
+
