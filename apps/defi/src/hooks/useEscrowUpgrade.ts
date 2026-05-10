@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback } from 'react';
-import { useDiamondRead, useDiamondContract } from '../contracts/useDiamond';
+import { useReadyDiamond, useDiamondContract } from '../contracts/useDiamond';
 import { decodeContractError } from '@vaipakam/lib/decodeContractError';
 import { beginStep } from '../lib/journeyLog';
 
@@ -24,7 +24,7 @@ export interface EscrowVersionInfo {
 }
 
 export function useEscrowUpgrade(address: string | null | undefined) {
-  const diamondRead = useDiamondRead();
+  const diamondRead = useReadyDiamond();
   const diamond = useDiamondContract();
   const [info, setInfo] = useState<EscrowVersionInfo | null>(null);
   const [loading, setLoading] = useState(false);
@@ -34,6 +34,12 @@ export function useEscrowUpgrade(address: string | null | undefined) {
 
   const load = useCallback(async () => {
     if (!address) {
+      setInfo(null);
+      return;
+    }
+    if (!diamondRead) {
+      // No Diamond on this chain — leave info=null; the upgrade banner
+      // won't render and the upgrade button won't be reachable.
       setInfo(null);
       return;
     }

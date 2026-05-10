@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { useDiamondRead } from '../contracts/useDiamond';
+import { useReadyDiamond } from '../contracts/useDiamond';
 
 /**
  * Mirrors LibERC721.LockReason. Kept in sync with the on-chain enum so the
@@ -19,12 +19,17 @@ export type LockReason = typeof LockReason[keyof typeof LockReason];
  * completes or is cancelled.
  */
 export function usePositionLock(tokenId: bigint | null | undefined) {
-  const diamond = useDiamondRead();
+  const diamond = useReadyDiamond();
   const [lock, setLock] = useState<LockReason>(LockReason.None);
   const [loading, setLoading] = useState(false);
 
   const load = useCallback(async () => {
     if (tokenId === null || tokenId === undefined) {
+      setLock(LockReason.None);
+      return;
+    }
+    if (!diamond) {
+      // Chain has no Diamond — treat as unlocked (safer default for UI).
       setLock(LockReason.None);
       return;
     }

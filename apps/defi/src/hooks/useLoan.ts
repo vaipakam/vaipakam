@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback } from 'react';
-import { useDiamondRead } from '../contracts/useDiamond';
+import { useReadyDiamond } from '../contracts/useDiamond';
 import { type LoanDetails } from '../types/loan';
 import { beginStep } from '../lib/journeyLog';
 
@@ -13,7 +13,7 @@ import { beginStep } from '../lib/journeyLog';
  * `ownerOf` resolves directly to the initiating user throughout the flow.
  */
 export function useLoan(loanId: string | undefined) {
-  const diamond = useDiamondRead();
+  const diamond = useReadyDiamond();
   const [loan, setLoan] = useState<LoanDetails | null>(null);
   const [lenderHolder, setLenderHolder] = useState<string>('');
   const [borrowerHolder, setBorrowerHolder] = useState<string>('');
@@ -22,6 +22,14 @@ export function useLoan(loanId: string | undefined) {
 
   const load = useCallback(async () => {
     if (!loanId) return;
+    if (!diamond) {
+      // Chain has no Diamond — leave loan=null; the page renders the
+      // unsupported-chain banner. Without this gate the call against
+      // ZERO_ADDRESS throws AbiDecodingZeroDataError on every detail-page
+      // mount until the user connects/switches.
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     setError(null);
     const step = beginStep({ area: 'loan-view', flow: 'getLoanDetails', step: 'read', loanId });

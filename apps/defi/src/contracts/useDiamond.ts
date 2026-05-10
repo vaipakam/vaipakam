@@ -285,6 +285,78 @@ export function useReadChain(): ChainConfig {
 }
 
 /**
+ * Same shape as {@link useDiamondRead} but returns `null` when the current
+ * read chain has no Diamond deployed (`chain.diamondAddress === null`).
+ *
+ * **Use this in every read hook that auto-fires on mount.** It eliminates
+ * an entire bug class: without the null check, `useDiamondRead` falls back
+ * to `ZERO_ADDRESS` (see useDiamond.ts:251) and every contract call from
+ * the hook throws `AbiDecodingZeroDataError` / `ContractFunctionZeroDataError`
+ * every render, polluting the diagnostics drawer with the chain-switch /
+ * unsupported-chain noise that surfaced in the 2026-05-11 diagnostics
+ * report. The consumer pattern collapses to:
+ *
+ * ```ts
+ * const diamond = useReadyDiamond();
+ * useEffect(() => {
+ *   if (!diamond) return;          // no Diamond on this chain — bail
+ *   void (async () => {
+ *     const result = await diamond.someGetter();
+ *     setState(result);
+ *   })();
+ * }, [diamond]);
+ * ```
+ *
+ * Pair with {@link useReadyDiamondClient} when the hook needs raw multicall
+ * or `getLogs` against the same chain.
+ */
+export function useReadyDiamond(): DiamondHandle | null {
+  const diamond = useDiamondRead();
+  const { activeChain } = useWallet();
+  const { viewChainId } = useChainOverride();
+  const chain = resolveReadChain(viewChainId, activeChain);
+  return chain.diamondAddress ? diamond : null;
+}
+
+/**
+ * Public client + Diamond address bundled, OR `null` when the chain has
+ * no Diamond. Same pattern as {@link useReadyDiamond} but for hooks that
+ * drive multicalls or `getLogs` directly via viem rather than through the
+ * proxy. Consumer pattern:
+ *
+ * ```ts
+ * const ctx = useReadyDiamondClient();
+ * useEffect(() => {
+ *   if (!ctx) return;
+ *   void (async () => {
+ *     const result = await ctx.client.readContract({
+ *       address: ctx.diamond,
+ *       abi: DIAMOND_ABI,
+ *       functionName: 'someGetter',
+ *     });
+ *   })();
+ * }, [ctx]);
+ * ```
+ *
+ * Replaces the prior pattern of `useDiamondPublicClient() + useReadChain()`
+ * + manual `chain.diamondAddress ?? ZERO_ADDRESS` fallback at every call
+ * site. The `client` is identical to {@link useDiamondPublicClient}'s
+ * return; the `diamond` is the verified-non-null address.
+ */
+export function useReadyDiamondClient(): {
+  client: PublicClient;
+  diamond: Address;
+  chain: ChainConfig;
+} | null {
+  const client = useDiamondPublicClient();
+  const { activeChain } = useWallet();
+  const { viewChainId } = useChainOverride();
+  const chain = resolveReadChain(viewChainId, activeChain);
+  if (!chain.diamondAddress) return null;
+  return { client, diamond: chain.diamondAddress as Address, chain };
+}
+
+/**
  * Single source of truth for "can this page submit a write tx right now?".
  *
  * A write is safe iff all of these hold:

@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback } from 'react';
-import { useDiamondRead } from '../contracts/useDiamond';
+import { useReadyDiamond } from '../contracts/useDiamond';
 
 /**
  * Full keeper-execution status for both sides of a loan.
@@ -27,7 +27,7 @@ export function useKeeperStatus(
   lenderHolder: string | null | undefined,
   borrowerHolder: string | null | undefined,
 ) {
-  const diamond = useDiamondRead();
+  const diamond = useReadyDiamond();
   const [lenderStatus, setLenderStatus] = useState<SideKeeperStatus | null>(null);
   const [borrowerStatus, setBorrowerStatus] = useState<SideKeeperStatus | null>(null);
   const [loading, setLoading] = useState(false);
@@ -35,6 +35,7 @@ export function useKeeperStatus(
 
   const load = useCallback(async () => {
     if (!lenderHolder || !borrowerHolder) return;
+    if (!diamond) return;  // chain has no Diamond — bail before zero-address read
     setLoading(true);
     setError(null);
     try {
