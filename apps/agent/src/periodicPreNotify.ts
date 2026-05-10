@@ -23,7 +23,8 @@
  * `PERIODIC_PRE_NOTIFY_DAYS_DEFAULT` constant.
  */
 
-import { createPublicClient, http, parseAbi, type Address } from 'viem';
+import { createPublicClient, http, type Address } from 'viem';
+import { ConfigFacetABI } from '@vaipakam/contracts/abis';
 import type { Env } from './env';
 import { getChainConfigs } from './env';
 import { sendPush } from './push';
@@ -49,9 +50,10 @@ function intervalDays(cadence: number): number {
   }
 }
 
-const PRE_NOTIFY_DAYS_ABI = parseAbi([
-  'function getPreNotifyDays() view returns (uint8)',
-]);
+// `getPreNotifyDays` lives on ConfigFacet — sourced via the compiled
+// ABI bundle so a future config-getter rename lands as a TypeScript
+// error here instead of a silent runtime FunctionDoesNotExist.
+const PRE_NOTIFY_DAYS_ABI = ConfigFacetABI;
 
 interface LoanRow {
   loan_id: number;

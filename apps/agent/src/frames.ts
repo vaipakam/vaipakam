@@ -19,15 +19,21 @@
  * with a per-wallet aggregate view).
  */
 
-import { createPublicClient, http, parseAbi, type Address } from 'viem';
+import { createPublicClient, http, type Address } from 'viem';
+import { MetricsFacetABI, RiskFacetABI } from '@vaipakam/contracts/abis';
 import type { Env } from './env';
 import { getChainConfigs } from './env';
 
-// Minimal ABI — same selectors the watcher already uses.
-const DIAMOND_FRAME_ABI = parseAbi([
-  'function getActiveLoansByUser(address user) view returns (uint256[] memory)',
-  'function calculateHealthFactor(uint256 loanId) view returns (uint256)',
-]);
+// Diamond ABIs sourced from `@vaipakam/contracts/abis` — the same
+// per-facet JSONs the indexer Worker imports. Avoids the
+// hand-typed-string drift that bit the v1 of this file: it called
+// the function `getActiveLoansByUser` which doesn't exist on the
+// Diamond (the actual selector is `getUserActiveLoans` on
+// MetricsFacet — word-order swap silently reverted every Frame
+// hit). Importing the compiled ABI makes a typo a compile-time
+// failure instead of a runtime FunctionDoesNotExist.
+const DIAMOND_FRAME_LOANS_ABI = MetricsFacetABI;
+const DIAMOND_FRAME_RISK_ABI = RiskFacetABI;
 
 const HEX_ADDR = /^0x[0-9a-fA-F]{40}$/;
 
@@ -98,8 +104,8 @@ export async function handleActiveLoansFramePost(
       try {
         const loanIds = (await client.readContract({
           address: chain.diamond as Address,
-          abi: DIAMOND_FRAME_ABI,
-          functionName: 'getActiveLoansByUser',
+          abi: DIAMOND_FRAME_LOANS_ABI,
+          functionName: 'getUserActiveLoans',
           args: [wallet],
         })) as readonly bigint[];
         if (loanIds.length === 0) {
@@ -112,7 +118,7 @@ export async function handleActiveLoansFramePost(
           try {
             const hfRaw = (await client.readContract({
               address: chain.diamond as Address,
-              abi: DIAMOND_FRAME_ABI,
+              abi: DIAMOND_FRAME_RISK_ABI,
               functionName: 'calculateHealthFactor',
               args: [id],
             })) as bigint;

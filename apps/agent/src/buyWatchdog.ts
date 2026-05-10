@@ -28,19 +28,19 @@
  * here (gated to the single `pause()` function, not full owner).
  */
 
-import { createPublicClient, http, parseAbi, getAddress, type Address } from 'viem';
+import { createPublicClient, http, getAddress, type Address } from 'viem';
+import { VPFIBuyReceiverABI, VPFIBuyAdapterABI } from '@vaipakam/contracts/abis';
 import type { Env } from './env';
 import { getDeployment } from '@vaipakam/contracts/deployments';
 
-const RECEIVER_ABI = parseAbi([
-  'event BridgedBuyProcessed(uint64 indexed requestId, uint32 indexed originEid, address indexed buyer, uint256 ethAmountPaid, uint256 vpfiOut, bytes32 oftGuid)',
-  'event BridgedBuyFailed(uint64 indexed requestId, uint32 indexed originEid, address indexed buyer, uint8 reason)',
-  'function reconciliationWatchdogEnabled() view returns (bool)',
-]);
-
-const ADAPTER_ABI = parseAbi([
-  'event BuyRequested(uint64 indexed requestId, address indexed buyer, uint32 indexed dstEid, uint256 amountIn, uint256 minVpfiOut, bytes32 lzGuid)',
-]);
+// Compiled-bytecode ABIs for the two cross-chain buy contracts.
+// Both ABIs carry the full surface (events + functions); event log
+// parsing keys by topic-hash so extra entries are harmless, and the
+// `reconciliationWatchdogEnabled` view sits on VPFIBuyReceiver per
+// the on-chain shape. Drops the previous hand-typed parseAbi list
+// — same drift hazard the indexer's diamondAbi.ts file documents.
+const RECEIVER_ABI = VPFIBuyReceiverABI;
+const ADAPTER_ABI = VPFIBuyAdapterABI;
 
 /**
  * Map a LayerZero V2 endpoint id (the `originEid` carried in the
@@ -123,11 +123,16 @@ export async function runBuyWatchdog(env: Env): Promise<BuyWatchdogResult> {
   // BEFORE any other RPC work so a disabled watchdog is cheap.
   let enabled: boolean;
   try {
-    enabled = await baseClient.readContract({
+    // Cast: viem widens readContract's return to `unknown` when the
+    // ABI is the JSON-imported full-facet shape (vs a single-fn
+    // parseAbi). The actual selector returns bool — assert the
+    // shape rather than narrow the ABI, matching the indexer's
+    // pattern.
+    enabled = (await baseClient.readContract({
       address: getAddress(receiverAddr),
       abi: RECEIVER_ABI,
       functionName: 'reconciliationWatchdogEnabled',
-    });
+    })) as boolean;
   } catch (err) {
     console.error('[buyWatchdog] failed to read enable flag', err);
     return { scanned: 0, matched: 0, mismatches: [], skipped: true };
@@ -152,14 +157,21 @@ export async function runBuyWatchdog(env: Env): Promise<BuyWatchdogResult> {
   let matched = 0;
 
   for (const ev of events) {
-    const args = ev.args as {
-      requestId: bigint;
-      originEid: number;
-      buyer: Address;
-      ethAmountPaid: bigint;
-      vpfiOut: bigint;
-      oftGuid: `0x${string}`;
-    };
+    // Cast through `unknown`: viem's `Log<...>` type loses `args` when
+    // the ABI is the wide JSON shape (it discriminates on function vs
+    // event in narrower ABIs). The runtime shape is correct because
+    // we passed `eventName: 'BridgedBuyProcessed'` above; only the
+    // compile-time type needs the assertion.
+    const args = (ev as unknown as {
+      args: {
+        requestId: bigint;
+        originEid: number;
+        buyer: Address;
+        ethAmountPaid: bigint;
+        vpfiOut: bigint;
+        oftGuid: `0x${string}`;
+      };
+    }).args;
     const source = resolveSourceChain(env, Number(args.originEid));
     if (!source || !source.rpc) {
       // Source chain we can't reach (RPC unset). Log + skip — alert
@@ -215,13 +227,15 @@ export async function runBuyWatchdog(env: Env): Promise<BuyWatchdogResult> {
     // requestId but with different (buyer, amount) fields — surface
     // as mismatch even when an event for that id exists on source.
     const sourceEv = sourceEvents[0];
-    const sourceArgs = sourceEv.args as {
-      requestId: bigint;
-      buyer: Address;
-      dstEid: number;
-      amountIn: bigint;
-      minVpfiOut: bigint;
-    };
+    const sourceArgs = (sourceEv as unknown as {
+      args: {
+        requestId: bigint;
+        buyer: Address;
+        dstEid: number;
+        amountIn: bigint;
+        minVpfiOut: bigint;
+      };
+    }).args;
     if (
       sourceArgs.amountIn !== args.ethAmountPaid ||
       sourceArgs.buyer.toLowerCase() !== args.buyer.toLowerCase()

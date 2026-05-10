@@ -27,19 +27,24 @@ import {
   type Address,
   createWalletClient,
   http,
-  parseAbi,
   type PublicClient,
   type WalletClient,
 } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
+import { LoanFacetABI, RiskFacetABI } from '@vaipakam/contracts/abis';
 import type { ChainConfig, Env } from './env';
 import { orchestrateServerQuotes } from './serverQuotes';
 
-const TRIGGER_ABI = parseAbi([
-  // Phase 7a — adapter try-list signature.
-  'function triggerLiquidation(uint256 loanId, (uint256 adapterIdx, bytes data)[] calls)',
-  'function getLoanDetails(uint256 loanId) view returns ((uint256 offerId, address lender, address borrower, address principalAsset, uint256 principal, address collateralAsset, uint256 collateralAmount, address prepayAsset, uint256 prepayAmount, uint256 interestRateBps, uint256 startTime, uint256 durationDays, uint8 status, uint8 assetType, uint256 lenderTokenId, uint256 borrowerTokenId, uint256 tokenId, uint256 quantity, bool fallbackConsentFromBoth, uint8 collateralAssetType, uint256 collateralTokenId, uint256 collateralQuantity, uint256 lenderDiscountAccAtInit, uint256 borrowerDiscountAccAtInit) loan)',
-]);
+// Diamond ABIs sourced from `@vaipakam/contracts/abis`. The previous
+// inline `parseAbi` block hand-typed the full Loan-tuple components
+// of `getLoanDetails` — exactly the kind of positional-decode drift
+// hazard ReleaseNotes-2026-05-05.md flagged when the watcher's
+// `getOfferDetails` tuple silently misaligned after a struct-shape
+// change. Importing the compiled-bytecode ABI makes that drift
+// structurally impossible: the JSON regenerates from the contract
+// source on every deploy via `exportFrontendAbis.sh`.
+const TRIGGER_ABI = RiskFacetABI;       // hosts triggerLiquidation
+const LOAN_DETAILS_ABI = LoanFacetABI;  // hosts getLoanDetails
 
 interface KeeperContext {
   /** Wallet client for the keeper EOA on this chain. */
@@ -92,7 +97,7 @@ export async function maybeAutonomousLiquidate(
     // Read loan struct so we know the assets + amounts to swap.
     const loan = (await publicClient.readContract({
       address: ctx.diamond,
-      abi: TRIGGER_ABI,
+      abi: LOAN_DETAILS_ABI,
       functionName: 'getLoanDetails',
       args: [loanIdBig],
     })) as {

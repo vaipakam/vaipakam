@@ -9,7 +9,8 @@
  * they were last tick). Recovery transitions are no-ops by default.
  */
 
-import { createPublicClient, http, parseAbi, type Address } from 'viem';
+import { createPublicClient, http, type Address } from 'viem';
+import { MetricsFacetABI, RiskFacetABI } from '@vaipakam/contracts/abis';
 import type { ChainConfig } from './env';
 import type { Env } from './env';
 import { getChainConfigs } from './env';
@@ -26,12 +27,14 @@ import { sendPush } from './push';
 import { formatAlert, pushTitle } from './i18n';
 import { maybeAutonomousLiquidate, resetKeeperDedupe } from './keeper';
 
-// ABI stubs — just enough to read the loan list + HF. Narrow slice keeps
-// the worker bundle small.
-const DIAMOND_READ_ABI = parseAbi([
-  'function getActiveLoansByUser(address user) view returns (uint256[] memory)',
-  'function calculateHealthFactor(uint256 loanId) view returns (uint256)',
-]);
+// Diamond ABIs sourced from `@vaipakam/contracts/abis` — same per-facet
+// JSONs the indexer Worker imports. Drops the hand-typed parseAbi
+// strings whose `getActiveLoansByUser` typo (the actual selector is
+// `getUserActiveLoans` on MetricsFacet) silently reverted every
+// watcher tick before this sync. The compiled-bytecode ABI makes a
+// future typo a compile-time failure.
+const DIAMOND_LOANS_ABI = MetricsFacetABI;
+const DIAMOND_RISK_ABI = RiskFacetABI;
 
 function classifyBand(hf: number, t: UserThresholds): Band {
   if (hf <= t.critical_hf) return 'critical';
@@ -87,8 +90,8 @@ async function watchChain(env: Env, chain: ChainConfig): Promise<void> {
     try {
       const active = (await client.readContract({
         address: diamond,
-        abi: DIAMOND_READ_ABI,
-        functionName: 'getActiveLoansByUser',
+        abi: DIAMOND_LOANS_ABI,
+        functionName: 'getUserActiveLoans',
         args: [user.wallet as Address],
       })) as readonly bigint[];
 
@@ -97,7 +100,7 @@ async function watchChain(env: Env, chain: ChainConfig): Promise<void> {
         try {
           const hfRaw = (await client.readContract({
             address: diamond,
-            abi: DIAMOND_READ_ABI,
+            abi: DIAMOND_RISK_ABI,
             functionName: 'calculateHealthFactor',
             args: [loanIdBig],
           })) as bigint;
