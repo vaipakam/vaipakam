@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { Address } from 'viem';
-import { useDiamondRead } from '../contracts/useDiamond';
+import { useDiamondRead, useReadChain } from '../contracts/useDiamond';
 import { beginStep } from '../lib/journeyLog';
 
 const STALE_MS = 30_000;
@@ -24,14 +24,17 @@ export interface LoanWithRisk {
 }
 
 interface CacheKey {
+  chainId: number;
   user: string;
   borrowerSide: boolean;
   offset: number;
   limit: number;
 }
 const cache = new Map<string, { data: LoanWithRisk[]; at: number }>();
+// Cache key chain-prefixed — fixes the stale-cross-chain-data bug
+// reported 2026-05-11. See useDashboardOffers.ts for the same fix.
 const keyOf = (k: CacheKey) =>
-  `${k.user}:${k.borrowerSide ? 'b' : 'l'}:${k.offset}:${k.limit}`;
+  `${k.chainId}:${k.user}:${k.borrowerSide ? 'b' : 'l'}:${k.offset}:${k.limit}`;
 
 export function useDashboardLoans(
   user: Address | null,
@@ -40,8 +43,9 @@ export function useDashboardLoans(
   limit: number = DEFAULT_LIMIT,
 ) {
   const diamond = useDiamondRead();
+  const chain = useReadChain();
   const cacheKey = user
-    ? keyOf({ user: user.toLowerCase(), borrowerSide, offset, limit })
+    ? keyOf({ chainId: chain.chainId, user: user.toLowerCase(), borrowerSide, offset, limit })
     : '';
   const [rows, setRows] = useState<LoanWithRisk[]>(
     cache.get(cacheKey)?.data ?? [],

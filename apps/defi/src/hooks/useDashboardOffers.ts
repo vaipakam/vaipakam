@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { Address } from 'viem';
-import { useDiamondRead } from '../contracts/useDiamond';
+import { useDiamondRead, useReadChain } from '../contracts/useDiamond';
 import { beginStep } from '../lib/journeyLog';
 
 const STALE_MS = 30_000;
@@ -20,14 +20,20 @@ const DEFAULT_LIMIT = 20;
 export type DashboardOffer = Record<string, unknown>;
 
 interface CacheKey {
+  chainId: number;
   user: string;
   filledOnly: boolean;
   offset: number;
   limit: number;
 }
 const cache = new Map<string, { data: DashboardOffer[]; at: number }>();
+// Cache key prefixed with chainId so a switch from arb-sepolia to
+// base-sepolia doesn't serve the prior chain's rows from cache.
+// 2026-05-11 user report: "after chain change, only the refresh
+// button reloads offers/loans" — fixed by chain-prefixing every
+// dashboard hook's cache key.
 const keyOf = (k: CacheKey) =>
-  `${k.user}:${k.filledOnly ? 'filled' : 'open'}:${k.offset}:${k.limit}`;
+  `${k.chainId}:${k.user}:${k.filledOnly ? 'filled' : 'open'}:${k.offset}:${k.limit}`;
 
 export function useDashboardOffers(
   user: Address | null,
@@ -36,8 +42,9 @@ export function useDashboardOffers(
   limit: number = DEFAULT_LIMIT,
 ) {
   const diamond = useDiamondRead();
+  const chain = useReadChain();
   const cacheKey = user
-    ? keyOf({ user: user.toLowerCase(), filledOnly, offset, limit })
+    ? keyOf({ chainId: chain.chainId, user: user.toLowerCase(), filledOnly, offset, limit })
     : '';
   const [rows, setRows] = useState<DashboardOffer[]>(
     cache.get(cacheKey)?.data ?? [],

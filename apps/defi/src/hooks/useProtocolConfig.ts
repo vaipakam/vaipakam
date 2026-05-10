@@ -224,6 +224,23 @@ export function useProtocolConfig() {
       setLoading(false);
       return;
     }
+    // Short-circuit when the wallet is connected to a chain whose
+    // Diamond isn't deployed (yet). `useReadChain()` returns whatever
+    // chain the wallet is on (see useDiamond.ts:281), and that chain
+    // can have `diamondAddress = null` if `getDeployment(chainId)`
+    // didn't find an entry. Without this gate, `useDiamondRead` falls
+    // back to ZERO_ADDRESS at useDiamond.ts:251, viem throws "no
+    // contract at 0x000…000", and every page that depends on the
+    // protocol config (every page) logs the same noisy error every
+    // time the user switches to an unsupported chain. Returning
+    // `{ config: null, loading: false }` matches the contract of the
+    // hook's other null-data states; consumers already handle null.
+    if (!chain.diamondAddress) {
+      setConfig(null);
+      setLoading(false);
+      setError(null);
+      return;
+    }
     setLoading(true);
     setError(null);
     const step = beginStep({
@@ -375,7 +392,7 @@ export function useProtocolConfig() {
     } finally {
       setLoading(false);
     }
-  }, [diamond, cacheKey]);
+  }, [diamond, cacheKey, chain.diamondAddress]);
 
   useEffect(() => {
     load();

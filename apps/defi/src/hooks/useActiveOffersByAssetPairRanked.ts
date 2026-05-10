@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { Address } from 'viem';
-import { useDiamondRead } from '../contracts/useDiamond';
+import { useDiamondRead, useReadChain } from '../contracts/useDiamond';
 import { beginStep } from '../lib/journeyLog';
 
 /**
@@ -43,8 +43,17 @@ interface CacheEntry {
   at: number;
 }
 const cache = new Map<string, CacheEntry>();
-const keyOf = (lending: string, collateral: string) =>
-  `${lending.toLowerCase()}:${collateral.toLowerCase()}`;
+/**
+ * Cache key MUST include chainId. Without it, a user switching from
+ * arb-sepolia (rankings cached for USDC/WETH) to base-sepolia hits the
+ * same (lending, collateral) bucket and gets served arb-sepolia's
+ * rankings until they click the explicit refresh button. The user
+ * surfaced this on 2026-05-11 — "after chain change, only the refresh
+ * button reloads offers/loans". Same bug class repeated across the
+ * dashboard hooks; see the matching fixes in useDashboard*.ts.
+ */
+const keyOf = (chainId: number, lending: string, collateral: string) =>
+  `${chainId}:${lending.toLowerCase()}:${collateral.toLowerCase()}`;
 
 /**
  * Reads the entire active-offer bucket for a (lending, collateral)
@@ -66,9 +75,10 @@ export function useActiveOffersByAssetPairRanked(
   collateralAsset: Address | null,
 ): UseActiveOffersByAssetPairRankedResult {
   const diamond = useDiamondRead();
+  const chain = useReadChain();
   const cacheKey =
     lendingAsset && collateralAsset
-      ? keyOf(lendingAsset, collateralAsset)
+      ? keyOf(chain.chainId, lendingAsset, collateralAsset)
       : '';
 
   const [rankings, setRankings] = useState<OfferRanking[]>(() =>

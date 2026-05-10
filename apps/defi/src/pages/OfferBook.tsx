@@ -499,11 +499,29 @@ export default function OfferBook() {
   // `loadWindow` → `fetchBatch` pipeline below. Letting both paths
   // run would double-write `offers` from two sources with diverging
   // ranking semantics.
+  //
+  // Stale-indexer reconciliation (2026-05-11): the indexer can return
+  // an EMPTY array when its cursor has jumped past on-chain events
+  // (e.g. after a `deploy-testnet.sh --fresh` auto-reseed-at-safe-head,
+  // or after any other path that wrote `indexer_cursor` ahead of the
+  // canonical Diamond's actual deploy block — see the
+  // ReleaseNotes-2026-05-11.md "Auto-reseed-at-safe-head" entry for
+  // the full root cause). When that happens, `indexedOffers === []`
+  // BUT `useLogIndex` has scraped the on-chain `OfferCreated` events
+  // and `sortedIds` is non-empty. The original gate treated the
+  // indexer's empty response as authoritative, so the page rendered
+  // 0 offers + showed a Load More button (because hasMore = cursor <
+  // sortedIds.length). User clicks Load More → legacy path fetches
+  // the 8 on-chain offers → they finally show up. That's a UX bug
+  // — the user shouldn't need a manual click to recover from indexer
+  // staleness. Fall through to the legacy log-scan path when the
+  // indexer disagrees with the on-chain log index.
   const indexerServingOpen =
     statusView === 'open' &&
     !usePairPath &&
     indexedSource === 'indexer' &&
-    indexedOffers !== null;
+    indexedOffers !== null &&
+    !(indexedOffers.length === 0 && sortedIds.length > 0);
 
   // Near-real-time updates on the pair path: when the global log
   // index sees an OfferCreated / OfferAccepted / OfferCanceled event

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { Address } from 'viem';
-import { useDiamondRead } from '../contracts/useDiamond';
+import { useDiamondRead, useReadChain } from '../contracts/useDiamond';
 import { beginStep } from '../lib/journeyLog';
 
 const STALE_MS = 30_000;
@@ -28,14 +28,17 @@ export interface DashboardClaim {
 }
 
 interface CacheKey {
+  chainId: number;
   user: string;
   borrowerSide: boolean;
   offset: number;
   limit: number;
 }
 const cache = new Map<string, { data: DashboardClaim[]; at: number }>();
+// Cache key chain-prefixed — see useDashboardOffers.ts for the
+// 2026-05-11 chain-switch-stale-data fix.
 const keyOf = (k: CacheKey) =>
-  `${k.user}:${k.borrowerSide ? 'b' : 'l'}:${k.offset}:${k.limit}`;
+  `${k.chainId}:${k.user}:${k.borrowerSide ? 'b' : 'l'}:${k.offset}:${k.limit}`;
 
 export function useDashboardClaimables(
   user: Address | null,
@@ -44,8 +47,9 @@ export function useDashboardClaimables(
   limit: number = DEFAULT_LIMIT,
 ) {
   const diamond = useDiamondRead();
+  const chain = useReadChain();
   const cacheKey = user
-    ? keyOf({ user: user.toLowerCase(), borrowerSide, offset, limit })
+    ? keyOf({ chainId: chain.chainId, user: user.toLowerCase(), borrowerSide, offset, limit })
     : '';
   const [rows, setRows] = useState<DashboardClaim[]>(
     cache.get(cacheKey)?.data ?? [],

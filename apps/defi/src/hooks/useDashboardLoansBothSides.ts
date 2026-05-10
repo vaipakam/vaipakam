@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { Address } from 'viem';
-import { useDiamondRead } from '../contracts/useDiamond';
+import { useDiamondRead, useReadChain } from '../contracts/useDiamond';
 import { beginStep } from '../lib/journeyLog';
 
 const STALE_MS = 30_000;
@@ -28,12 +28,15 @@ export interface LoanWithRiskAndSide {
 }
 
 interface CacheKey {
+  chainId: number;
   user: string;
   offset: number;
   limit: number;
 }
 const cache = new Map<string, { data: LoanWithRiskAndSide[]; at: number }>();
-const keyOf = (k: CacheKey) => `${k.user}:${k.offset}:${k.limit}`;
+// Cache key chain-prefixed — see useDashboardOffers.ts for the
+// 2026-05-11 chain-switch-stale-data fix.
+const keyOf = (k: CacheKey) => `${k.chainId}:${k.user}:${k.offset}:${k.limit}`;
 
 export function useDashboardLoansBothSides(
   user: Address | null,
@@ -41,8 +44,9 @@ export function useDashboardLoansBothSides(
   limit: number = DEFAULT_LIMIT,
 ) {
   const diamond = useDiamondRead();
+  const chain = useReadChain();
   const cacheKey = user
-    ? keyOf({ user: user.toLowerCase(), offset, limit })
+    ? keyOf({ chainId: chain.chainId, user: user.toLowerCase(), offset, limit })
     : '';
   const [rows, setRows] = useState<LoanWithRiskAndSide[]>(
     cache.get(cacheKey)?.data ?? [],
