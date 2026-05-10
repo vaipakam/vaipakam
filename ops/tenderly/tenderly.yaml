@@ -1,0 +1,235 @@
+# tenderly.yaml — Tenderly Web3 Actions deploy manifest for Vaipakam.
+#
+# Usage:
+#
+#   cd ops/tenderly
+#   npm install -g @tenderly/cli
+#   tenderly login                                  # browser-OAuth → ~/.tenderly/config.yaml
+#   tenderly actions deploy                          # builds + uploads all actions in this file
+#
+# After deploy: head to https://dashboard.tenderly.co/<account-slug>/<project-slug>/actions
+# to bind each action's runtime secrets via the UI (per Step 6 of the
+# DeploymentRunbook's tenderly setup walkthrough).
+#
+# This file deploys 4 actions × 3 chains = 12 action specs. Each spec
+# carries its own chain-scoped trigger; the underlying TypeScript
+# module is shared (one source file → 3 deployed copies, one per
+# chain). Secret resolution is per-spec via Tenderly's
+# `secrets` block: each spec's DIAMOND_ADDRESS / RPC_URL /
+# SEQUENCER_UPTIME_FEED resolve to the chain-specific values you
+# set via the dashboard or `tenderly actions secrets set` per spec.
+#
+# Spec naming convention:  <action><Chain>
+# Examples:
+#   flagLargeLoanBaseSepolia
+#   watchHealthFactorArbSepolia
+#   watchL2SequencerSepolia    (sequencer feed is L2-only; not deployed
+#                                for L1 Sepolia — see comments inside)
+#
+# To add a chain: copy the three (or four — flagLargeLoan + the three
+# periodic ones) base-sepolia specs, change the suffix, change the
+# `network` filter, change the secret values via the dashboard.
+#
+# To remove an action on one chain: delete its spec block and re-run
+# `tenderly actions deploy`.
+
+account_id: ""    # ← FILL: your Tenderly account slug (URL: dashboard.tenderly.co/<account_id>/...)
+project_slug: vaipakam   # matches the `project:` field in alerts.yaml
+
+# ─── Action source — single TypeScript root, multiple specs below ───────
+
+actions:
+  vaipakam:                    # MUST match project_slug above
+    runtime: v2
+    sources: lib                # all .ts files under ops/tenderly/lib/
+
+    # ─── flagLargeLoan — per-tx, on every LoanInitiated event ─────────
+    # Slack-only (P2). Decodes the loan's USD notional, compares to the
+    # rolling p99 stored in action storage, alerts when above. Per-chain
+    # specs because the rolling p99 is chain-scoped (sepolia volume ≠
+    # base-sepolia volume).
+
+    specs:
+
+      flagLargeLoanBaseSepolia:
+        description: P2 Slack alert when a LoanInitiated lands above the chain's rolling p99 notional (Base Sepolia).
+        function: flag-large-loan:flagLargeLoan
+        trigger:
+          type: transaction
+          transaction:
+            status:
+              - mined
+            filters:
+              - network: 84532                                        # Base Sepolia
+                eventEmitted:
+                  contract:
+                    address: 0x804Bc3E9625548e50c1B589b25111783A632D964   # Diamond
+                  name: LoanInitiated
+        execution_type: parallel
+
+      flagLargeLoanArbSepolia:
+        description: P2 Slack alert when a LoanInitiated lands above the chain's rolling p99 notional (Arb Sepolia).
+        function: flag-large-loan:flagLargeLoan
+        trigger:
+          type: transaction
+          transaction:
+            status:
+              - mined
+            filters:
+              - network: 421614                                       # Arb Sepolia
+                eventEmitted:
+                  contract:
+                    address: 0x17Fe0D808F8971D7A14994a1205ee6AFd949Be91
+                  name: LoanInitiated
+        execution_type: parallel
+
+      flagLargeLoanSepolia:
+        description: P2 Slack alert when a LoanInitiated lands above the chain's rolling p99 notional (Sepolia).
+        function: flag-large-loan:flagLargeLoan
+        trigger:
+          type: transaction
+          transaction:
+            status:
+              - mined
+            filters:
+              - network: 11155111                                     # Sepolia
+                eventEmitted:
+                  contract:
+                    address: 0xD2903cbb8Bb0f34fbb688a6E381Dc6c73056DB1c
+                  name: LoanInitiated
+        execution_type: parallel
+
+      # ─── watchHealthFactor — periodic cron ─────────────────────────
+      # P0 page if any active loan's HF drops below 1.05e18 (the
+      # "about-to-liquidate" band). Tightened threshold gives the
+      # on-call a chance to investigate a bad oracle read vs. an
+      # organic price move before a liquidator fires.
+
+      watchHealthFactorBaseSepolia:
+        description: P0 page when any active loan's HF drops below 1.05e18 (Base Sepolia).
+        function: watch-health-factor:watchHealthFactor
+        trigger:
+          type: periodic
+          periodic:
+            interval: 5m
+        execution_type: sequential
+
+      watchHealthFactorArbSepolia:
+        description: P0 page when any active loan's HF drops below 1.05e18 (Arb Sepolia).
+        function: watch-health-factor:watchHealthFactor
+        trigger:
+          type: periodic
+          periodic:
+            interval: 5m
+        execution_type: sequential
+
+      watchHealthFactorSepolia:
+        description: P0 page when any active loan's HF drops below 1.05e18 (Sepolia).
+        function: watch-health-factor:watchHealthFactor
+        trigger:
+          type: periodic
+          periodic:
+            interval: 5m
+        execution_type: sequential
+
+      # ─── watchFeedHeartbeat — periodic cron ────────────────────────
+      # P1 page when any registered Chainlink feed's age exceeds
+      # warn_ratio_bps of its heartbeat. Lead-time warning before
+      # OracleFacet.StalePriceData starts hard-reverting reads.
+
+      watchFeedHeartbeatBaseSepolia:
+        description: P1 page when a Chainlink feed exceeds its heartbeat-warn ratio (Base Sepolia).
+        function: watch-feed-heartbeat:watchFeedHeartbeat
+        trigger:
+          type: periodic
+          periodic:
+            interval: 15m
+        execution_type: sequential
+
+      watchFeedHeartbeatArbSepolia:
+        description: P1 page when a Chainlink feed exceeds its heartbeat-warn ratio (Arb Sepolia).
+        function: watch-feed-heartbeat:watchFeedHeartbeat
+        trigger:
+          type: periodic
+          periodic:
+            interval: 15m
+        execution_type: sequential
+
+      watchFeedHeartbeatSepolia:
+        description: P1 page when a Chainlink feed exceeds its heartbeat-warn ratio (Sepolia).
+        function: watch-feed-heartbeat:watchFeedHeartbeat
+        trigger:
+          type: periodic
+          periodic:
+            interval: 15m
+        execution_type: sequential
+
+      # ─── watchL2Sequencer — periodic cron, L2-ONLY ─────────────────
+      # P1 page on L2 sequencer state transitions (up → down, or
+      # down → up). DefaultedFacet refuses default processing during
+      # the 1h grace window after a sequencer transition; this alert
+      # gives the on-call lead time to confirm the chain-side state
+      # before users start asking why their default is delayed.
+      #
+      # Sepolia is L1, so the L2 sequencer feed isn't applicable —
+      # no spec for it.
+
+      watchL2SequencerBaseSepolia:
+        description: P1 page on L2 sequencer up/down transitions (Base Sepolia).
+        function: watch-l2-sequencer:watchL2Sequencer
+        trigger:
+          type: periodic
+          periodic:
+            interval: 5m
+        execution_type: sequential
+
+      watchL2SequencerArbSepolia:
+        description: P1 page on L2 sequencer up/down transitions (Arb Sepolia).
+        function: watch-l2-sequencer:watchL2Sequencer
+        trigger:
+          type: periodic
+          periodic:
+            interval: 5m
+        execution_type: sequential
+
+# ─── Per-spec runtime secrets ────────────────────────────────────────
+#
+# After `tenderly actions deploy` lands every spec, set its three
+# secrets via the dashboard OR via the CLI:
+#
+#   tenderly actions secrets set <spec-name> DIAMOND_ADDRESS 0x...
+#   tenderly actions secrets set <spec-name> RPC_URL https://...
+#   tenderly actions secrets set <spec-name> SEQUENCER_UPTIME_FEED 0x... (L2 specs only)
+#
+# Concrete commands for the three rehearsal chains. Replace the
+# RPC_URL with your paid-tier provider URL (Alchemy / Infura / DRPC).
+#
+# Base Sepolia (canonical) ─────────────────────────────────────────
+#
+#   for spec in flagLargeLoanBaseSepolia watchHealthFactorBaseSepolia \
+#                watchFeedHeartbeatBaseSepolia watchL2SequencerBaseSepolia; do
+#     tenderly actions secrets set "$spec" DIAMOND_ADDRESS 0x804Bc3E9625548e50c1B589b25111783A632D964
+#     tenderly actions secrets set "$spec" RPC_URL "<base-sepolia-paid-rpc>"
+#   done
+#   tenderly actions secrets set watchL2SequencerBaseSepolia SEQUENCER_UPTIME_FEED 0xBCF85224fc0756B9Fa45aA7892530B47e10b6433
+#
+# Arb Sepolia (mirror) ─────────────────────────────────────────────
+#
+#   for spec in flagLargeLoanArbSepolia watchHealthFactorArbSepolia \
+#                watchFeedHeartbeatArbSepolia watchL2SequencerArbSepolia; do
+#     tenderly actions secrets set "$spec" DIAMOND_ADDRESS 0x17Fe0D808F8971D7A14994a1205ee6AFd949Be91
+#     tenderly actions secrets set "$spec" RPC_URL "<arb-sepolia-paid-rpc>"
+#   done
+#   tenderly actions secrets set watchL2SequencerArbSepolia SEQUENCER_UPTIME_FEED 0x0fd2A14dbF9B9D666e6F2a5F95b5D0E4f80a3c5a
+#
+# Sepolia (L1, no L2 sequencer spec) ─────────────────────────────
+#
+#   for spec in flagLargeLoanSepolia watchHealthFactorSepolia watchFeedHeartbeatSepolia; do
+#     tenderly actions secrets set "$spec" DIAMOND_ADDRESS 0xD2903cbb8Bb0f34fbb688a6E381Dc6c73056DB1c
+#     tenderly actions secrets set "$spec" RPC_URL "<sepolia-paid-rpc>"
+#   done
+#
+# Eyeball-confirm the SEQUENCER_UPTIME_FEED addresses against the
+# Chainlink docs for each L2 BEFORE setting them — they're not
+# bytecode-deployed at predictable addresses, and a wrong value
+# makes the alert silently no-op.
