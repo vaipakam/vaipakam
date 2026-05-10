@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { Address } from 'viem';
-import { useDiamondRead, useReadChain } from '../contracts/useDiamond';
+import { useReadyDiamond, useReadChain } from '../contracts/useDiamond';
 import { beginStep } from '../lib/journeyLog';
 
 const STALE_MS = 30_000;
@@ -43,7 +43,7 @@ export function useDashboardLoansBothSides(
   offset: number = 0,
   limit: number = DEFAULT_LIMIT,
 ) {
-  const diamond = useDiamondRead();
+  const diamond = useReadyDiamond();
   const chain = useReadChain();
   const cacheKey = user
     ? keyOf({ chainId: chain.chainId, user: user.toLowerCase(), offset, limit })
@@ -60,9 +60,8 @@ export function useDashboardLoansBothSides(
       setLoading(false);
       return;
     }
-    // Short-circuit when chain has no Diamond — see
-    // useActiveOffersByAssetPairRanked for the same null-guard fix.
-    if (!chain.diamondAddress) {
+    // useReadyDiamond returns null on chains without a Diamond.
+    if (!diamond) {
       setRows([]);
       setLoading(false);
       setError(null);
@@ -104,7 +103,7 @@ export function useDashboardLoansBothSides(
     } finally {
       setLoading(false);
     }
-  }, [diamond, user, offset, limit, cacheKey, chain.diamondAddress]);
+  }, [diamond, user, offset, limit, cacheKey]);
 
   useEffect(() => {
     load();

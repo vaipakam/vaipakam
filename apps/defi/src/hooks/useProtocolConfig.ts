@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { parseAbi, type Address } from 'viem';
-import { useDiamondPublicClient, useDiamondRead, useReadChain } from '../contracts/useDiamond';
+import { useDiamondPublicClient, useReadyDiamond, useReadChain } from '../contracts/useDiamond';
 import { beginStep } from '../lib/journeyLog';
 
 const STALE_MS = 60_000;
@@ -207,7 +207,7 @@ export function hfToDisplay(hf18: bigint): string {
  * roundtrip.
  */
 export function useProtocolConfig() {
-  const diamond = useDiamondRead();
+  const diamond = useReadyDiamond();
   const publicClient = useDiamondPublicClient();
   const chain = useReadChain();
   const cacheKey = `${chain.chainId}:${(chain.diamondAddress ?? 'none').toLowerCase()}`;
@@ -224,18 +224,9 @@ export function useProtocolConfig() {
       setLoading(false);
       return;
     }
-    // Short-circuit when the wallet is connected to a chain whose
-    // Diamond isn't deployed (yet). `useReadChain()` returns whatever
-    // chain the wallet is on (see useDiamond.ts:281), and that chain
-    // can have `diamondAddress = null` if `getDeployment(chainId)`
-    // didn't find an entry. Without this gate, `useDiamondRead` falls
-    // back to ZERO_ADDRESS at useDiamond.ts:251, viem throws "no
-    // contract at 0x000…000", and every page that depends on the
-    // protocol config (every page) logs the same noisy error every
-    // time the user switches to an unsupported chain. Returning
-    // `{ config: null, loading: false }` matches the contract of the
-    // hook's other null-data states; consumers already handle null.
-    if (!chain.diamondAddress) {
+    // useReadyDiamond returns null when chain.diamondAddress is null.
+    // Bail before firing the contract call against ZERO_ADDRESS.
+    if (!diamond) {
       setConfig(null);
       setLoading(false);
       setError(null);
@@ -392,7 +383,7 @@ export function useProtocolConfig() {
     } finally {
       setLoading(false);
     }
-  }, [diamond, cacheKey, chain.diamondAddress]);
+  }, [diamond, cacheKey]);
 
   useEffect(() => {
     load();

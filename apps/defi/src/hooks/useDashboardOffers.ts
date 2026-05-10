@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { Address } from 'viem';
-import { useDiamondRead, useReadChain } from '../contracts/useDiamond';
+import { useReadyDiamond, useReadChain } from '../contracts/useDiamond';
 import { beginStep } from '../lib/journeyLog';
 
 const STALE_MS = 30_000;
@@ -41,7 +41,7 @@ export function useDashboardOffers(
   offset: number = 0,
   limit: number = DEFAULT_LIMIT,
 ) {
-  const diamond = useDiamondRead();
+  const diamond = useReadyDiamond();
   const chain = useReadChain();
   const cacheKey = user
     ? keyOf({ chainId: chain.chainId, user: user.toLowerCase(), filledOnly, offset, limit })
@@ -58,11 +58,8 @@ export function useDashboardOffers(
       setLoading(false);
       return;
     }
-    // Short-circuit when the chain has no Diamond (useDiamondRead
-    // falls back to ZERO_ADDRESS). See useActiveOffersByAssetPairRanked
-    // for the same fix + the 2026-05-10 diagnostics-drawer report
-    // that surfaced this bug class.
-    if (!chain.diamondAddress) {
+    // useReadyDiamond returns null on chains without a Diamond.
+    if (!diamond) {
       setRows([]);
       setLoading(false);
       setError(null);
@@ -101,7 +98,7 @@ export function useDashboardOffers(
     } finally {
       setLoading(false);
     }
-  }, [diamond, user, filledOnly, offset, limit, cacheKey, chain.diamondAddress]);
+  }, [diamond, user, filledOnly, offset, limit, cacheKey]);
 
   useEffect(() => {
     load();

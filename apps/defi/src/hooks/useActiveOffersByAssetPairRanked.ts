@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { Address } from 'viem';
-import { useDiamondRead, useReadChain } from '../contracts/useDiamond';
+import { useReadyDiamond, useReadChain } from '../contracts/useDiamond';
 import { beginStep } from '../lib/journeyLog';
 
 /**
@@ -74,7 +74,7 @@ export function useActiveOffersByAssetPairRanked(
   lendingAsset: Address | null,
   collateralAsset: Address | null,
 ): UseActiveOffersByAssetPairRankedResult {
-  const diamond = useDiamondRead();
+  const diamond = useReadyDiamond();
   const chain = useReadChain();
   const cacheKey =
     lendingAsset && collateralAsset
@@ -98,14 +98,9 @@ export function useActiveOffersByAssetPairRanked(
         setLoading(false);
         return;
       }
-      // Short-circuit when the chain has no Diamond deployed (or the
-      // wallet hasn't connected to a chain yet). `useDiamondRead()`
-      // falls back to ZERO_ADDRESS when chain.diamondAddress is null
-      // (useDiamond.ts:251); firing getActiveOffersByAssetPairRanked
-      // against 0x000…000 throws AbiDecodingZeroDataError every render
-      // and pollutes the diagnostics drawer. Diagnostics-drawer error
-      // surfaced 2026-05-10 with chainId 421614 + wallet:not-connected.
-      if (!chain.diamondAddress) {
+      // useReadyDiamond returns null when chain has no Diamond — bail
+      // before firing against ZERO_ADDRESS.
+      if (!diamond) {
         setRankings([]);
         setTotal(0n);
         setLoading(false);
@@ -157,7 +152,7 @@ export function useActiveOffersByAssetPairRanked(
         setLoading(false);
       }
     },
-    [diamond, lendingAsset, collateralAsset, cacheKey, chain.diamondAddress],
+    [diamond, lendingAsset, collateralAsset, cacheKey],
   );
 
   useEffect(() => {
