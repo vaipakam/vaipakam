@@ -4,6 +4,7 @@ import { useDiamondPublicClient, useReadChain } from '../contracts/useDiamond';
 import { DEFAULT_CHAIN } from '../contracts/config';
 import { DIAMOND_ABI_VIEM as DIAMOND_ABI } from '@vaipakam/contracts/abis';
 import { useLogIndex } from './useLogIndex';
+import { fetchLoansByLender, fetchLoansByBorrower } from '../lib/indexerClient';
 import {
   AssetType,
   LoanStatus,
@@ -63,8 +64,35 @@ export function useClaimables(address: string | null) {
     const step = beginStep({ area: 'claim', flow: 'useClaimables', step: 'scan-claimables', wallet: address });
     try {
       const me = address.toLowerCase();
+
+      // Filter knownLoans (all loans system-wide) down to JUST the
+      // loans the user is involved in, via the indexer's `by-lender`
+      // / `by-borrower` endpoints. Without this gate, the per-loan
+      // RPC fan-out below scaled with the number of loans across the
+      // entire protocol — 14 active loans + however many closed ones
+      // = 40-80+ RPC roundtrips per ClaimCenter mount. With it, we
+      // walk only the user's loans (typically 1-5) — same data shape,
+      // ~10× faster on first paint.
+      //
+      // If the indexer is unreachable (both fetches return null), we
+      // fall through to the original "walk every knownLoan" path —
+      // ClaimCenter still works, just slow. The fallback preserves
+      // correctness on Workers downtime; the happy path is the cheap
+      // one.
+      const [lenderPage, borrowerPage] = await Promise.all([
+        fetchLoansByLender(chain.chainId, address),
+        fetchLoansByBorrower(chain.chainId, address),
+      ]);
+      let walkSet = knownLoans;
+      if (lenderPage || borrowerPage) {
+        const userLoanIds = new Set<string>();
+        if (lenderPage) for (const l of lenderPage.loans) userLoanIds.add(String(l.loanId));
+        if (borrowerPage) for (const l of borrowerPage.loans) userLoanIds.add(String(l.loanId));
+        walkSet = knownLoans.filter((e) => userLoanIds.has(String(e.loanId)));
+      }
+
       const perLoan = await Promise.all(
-        knownLoans.map(async (entry): Promise<ClaimableEntry[]> => {
+        walkSet.map(async (entry): Promise<ClaimableEntry[]> => {
           try {
             const loan = (await publicClient.readContract({
               address: diamondAddress,
@@ -177,7 +205,7 @@ export function useClaimables(address: string | null) {
     } finally {
       setLoading(false);
     }
-  }, [address, publicClient, diamondAddress, knownLoans, getOwner]);
+  }, [address, publicClient, diamondAddress, knownLoans, getOwner, chain.chainId]);
 
   useEffect(() => { load(); }, [load]);
 
