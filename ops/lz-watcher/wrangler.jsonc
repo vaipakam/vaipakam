@@ -26,9 +26,9 @@
     {
       "binding": "DB",
       "database_name": "vaipakam-lz-alerts-db",
-      // database_id will be filled in by `wrangler d1 create
-      // vaipakam-lz-alerts-db` on first deploy; replace this stub.
-      "database_id": "REPLACE_AFTER_d1_create",
+      // Created via `wrangler d1 create vaipakam-lz-alerts-db` on
+      // 2026-05-10 (APAC region) during the cf-deploy walkthrough.
+      "database_id": "edefa776-6832-46a0-84f7-e8e0cf157964",
       "remote": false,
     },
   ],
