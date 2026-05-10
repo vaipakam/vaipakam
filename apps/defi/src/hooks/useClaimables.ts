@@ -90,8 +90,18 @@ export function useClaimables(address: string | null) {
       // a much smaller `walkSet` whenever Layer 1 or Layer 2
       // succeeds — typically 1-5 loans for an active user vs.
       // 40-80+ system-wide.
-      let walkSet = knownLoans;
-      let narrowedBy: 'indexer' | 'onchain-view' | 'walk-all' = 'walk-all';
+      // Walk-all (knownLoans) is intentionally NOT the default
+      // anymore. `getUserDashboardClaimables` is authoritative for
+      // every loan tracked in `userLoanIds[user]` storage; the only
+      // gap is secondary-market NFT recipients, which is a tomorrow-
+      // PR concern (server-side `/loans/by-current-holder/{addr}`
+      // indexer endpoint). 2026-05-11 decision: drop the walk-all
+      // auto-fallback in hooks that HAVE an on-chain user-filter
+      // view. Layer 2 error → empty result + error in diagnostics
+      // drawer; operator's Rescan button (or page refresh) re-runs
+      // the same chain.
+      let walkSet: typeof knownLoans = [];
+      let narrowedBy: 'indexer' | 'onchain-view' | 'failed' = 'failed';
 
       // Layer 1: indexer. Trust it ONLY when it returns >0 loans —
       // an empty `{loans: []}` page can mean the user genuinely has

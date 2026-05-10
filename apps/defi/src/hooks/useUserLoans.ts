@@ -56,8 +56,16 @@ export function useUserLoans(address: string | null) {
       // but N-sized; ~30-50ms per 100 loans). With it, the payload
       // shrinks to the user's loans (typically 1-5) — same
       // LoanSummary shape, faster paint, less RPC load.
-      let walkSet = knownLoans;
-      let narrowedBy: 'indexer' | 'onchain-view' | 'walk-all' = 'walk-all';
+      // Walk-all (knownLoans) is intentionally NOT the default
+      // anymore. `getUserDashboardLoans` is authoritative for every
+      // loan tracked in `userLoanIds[user]` storage. The secondary-
+      // market NFT recipient gap will be closed by the planned
+      // `/loans/by-current-holder/{addr}` indexer endpoint; until
+      // then, NFT-transferred holders see their loans only after a
+      // manual operator rescan. Mirrors the 2026-05-11 decision in
+      // useClaimables.
+      let walkSet: typeof knownLoans = [];
+      let narrowedBy: 'indexer' | 'onchain-view' | 'failed' = 'failed';
 
       // Layer 1: indexer. Empty page (truthy `{loans: []}`) does
       // NOT short-circuit — a stale indexer would falsely report
