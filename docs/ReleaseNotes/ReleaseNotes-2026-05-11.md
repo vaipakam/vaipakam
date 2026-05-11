@@ -1381,6 +1381,30 @@ Build note: a `tsc -p . --noEmit` check passed but missed two leftover
 references file (no-op under `-p`); `tsc -b --noEmit` caught it. Use
 `tsc -b` for apps/defi typechecks.
 
+## RPC-tail freshness now credited on every data page, not just OfferBook/Dashboard
+
+The badge's "RPC tail-scan" frontier only populated on the OfferBook
+(hot cadence) and Dashboard/Risk-Watch (warm cadence) — the two pages
+with a dedicated `chunkedGetLogs` catch-up hook. On other data pages
+(Claims, Loan Details, Activity, the wallet-menu loan list) the badge
+read "Behind" whenever the central indexer lagged — even though those
+pages mount `useLogIndex`, whose `loadLoanIndex` IS an RPC tail-scan
+(chunked `eth_getLogs` over `[max(localCursor, indexer.lastBlock)+1,
+safeHead]`). `useLogIndex` reported `loading` to `DataFreshnessContext`
+but not a frontier, so the badge couldn't credit it.
+
+Fix (no new RPC — the scan already happens): `loadLoanIndex` /
+`LogIndexResult` now carry `lastBlock` (the chain `safe` head the scan
+reached), `useLogIndex` reports it as a frontier
+(`report('logIndex', { frontier: result.lastBlock })`), and `'logIndex'`
+is added to the badge + panel's `RPC_TAIL_FRONTIER_SOURCES` so it shows
+under the "RPC tail-scan" row. Net: any page mounting `useLogIndex`
+contributes the RPC-tail frontier → the badge shows "Live" once the
+scan has caught up, across the data pages. Pages with no data hook
+(FAQ, /help/*, settings) still show "Behind" if the indexer lags — by
+design: nothing on those pages is on-chain data, and a blanket
+always-on tail-scan in `AppLayout` would burn RPC for no benefit there.
+
 ## Release-notes mid-stream date roll
 
 The conversation that produced this release-notes file started on
