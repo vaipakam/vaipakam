@@ -19,6 +19,7 @@ import { useEffect, useState, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Trash2, ChevronDown, ChevronRight } from 'lucide-react';
 import { useOfferStats } from '../../hooks/useOfferStats';
+import { indexerOrigin } from '../../lib/indexerClient';
 import { useDiamondPublicClient, useReadChain } from '../../contracts/useDiamond';
 import { useLiveWatermark } from '../../hooks/useLiveWatermark';
 import { watermarkPolicy } from '../../hooks/watermarkPolicy';
@@ -232,8 +233,12 @@ export function ChainDiagnosticsPanel() {
       );
     }
   }
-  const apiOrigin =
-    (import.meta.env.VITE_AGENT_ORIGIN as string | undefined) ?? null;
+  // The configured central-indexer origin (`VITE_INDEXER_ORIGIN`,
+  // build-time operator config) — read via the indexerClient accessor
+  // so this label can't drift from the value the data calls actually
+  // hit. NOT `VITE_AGENT_ORIGIN`: that's the apps/agent worker
+  // (alerts / simulation / journey-log sink), a different service.
+  const indexerEndpoint = indexerOrigin();
 
   const chainLabel = chain.name
     ? `${chain.name} (${chain.chainId})`
@@ -564,12 +569,12 @@ export function ChainDiagnosticsPanel() {
                 })
           }
         />
-        {apiOrigin && !isLocalDev && (
+        {indexerEndpoint && !isLocalDev && (
           <Row
             label={t('chainDiagnostics.cacheOrigin', {
               defaultValue: 'Indexer endpoint',
             })}
-            value={apiOrigin}
+            value={indexerEndpoint}
           />
         )}
         <Row

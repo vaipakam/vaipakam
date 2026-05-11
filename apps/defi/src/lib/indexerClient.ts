@@ -21,6 +21,20 @@ function baseUrl(): string | null {
   return url.replace(/\/$/, '');
 }
 
+/**
+ * Public accessor for the configured indexer origin (trailing slash
+ * stripped), or `null` when `VITE_INDEXER_ORIGIN` is unset. Exists so
+ * UI surfaces that want to *display* the endpoint (e.g. the diagnostics
+ * drawer's "Indexer endpoint" row) read the exact same value the data
+ * calls use — never a second, drifting `import.meta.env` read. The
+ * value is build-time operator config, not anything fetched at runtime:
+ * the indexer is a cache the app must be told the address of, and there
+ * is no on-chain registry to discover it from.
+ */
+export function indexerOrigin(): string | null {
+  return baseUrl();
+}
+
 async function getJson<T>(path: string): Promise<T | null> {
   const root = baseUrl();
   if (!root) return null;

@@ -1434,6 +1434,27 @@ hooks / endpoints), consistent with the rest of the `chainDiagnostics.*`
 namespace; the value strings (`block N · fetching|idle`) go through
 i18n with English defaults.
 
+## Diagnostics drawer — "Indexer endpoint" row was naming the wrong worker
+
+The drawer's "Indexer endpoint" row was reading `VITE_AGENT_ORIGIN`
+(the apps/agent worker — `agent.vaipakam.com`, the alerts / Blockaid
+simulation / journey-log sink) instead of `VITE_INDEXER_ORIGIN` (the
+apps/indexer worker — `indexer.vaipakam.com`, the D1 offer/loan read
+API). The actual indexer data calls (`indexerClient.ts`, consumed by
+`useOfferStats` and friends) were always hitting the right origin —
+only the diagnostic label was wrong, a copy-paste leftover from when
+the indexer + agent lived in one `ops/hf-watcher` worker before the
+Stage 3 split.
+
+Fix: `indexerClient.ts` now exports `indexerOrigin()` (a public
+accessor over its existing private `baseUrl()`), and the panel reads
+the endpoint through that — so the displayed value can never drift
+from the URL the data calls actually use. The value is, and stays,
+build-time operator config (`VITE_INDEXER_ORIGIN`, set in
+`apps/defi/.env.local` for dev and the `apps/defi` build env for prod);
+it is not fetched at runtime and there's nothing to discover it from —
+the indexer is a cache the app must be told the address of.
+
 ## Release-notes mid-stream date roll
 
 The conversation that produced this release-notes file started on
