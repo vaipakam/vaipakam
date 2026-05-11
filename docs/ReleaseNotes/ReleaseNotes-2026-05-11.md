@@ -782,6 +782,110 @@ redeploy anyway, so cutting it on the next scheduled rehearsal
 is the natural delivery vehicle. anvil end-to-end smoke confirms
 the surface works.
 
+## Late-session frontend reliability — `PRIVATE_KEY` rename, watermark singleton, app-chain-pinned public client
+
+Three changes that all share one motif: cutting **fan-out** by moving
+the right primitive to a single canonical site.
+
+### `PRIVATE_KEY` → `DEPLOYER_PRIVATE_KEY` sweep (36 files)
+
+The bare `PRIVATE_KEY` env slot was ambiguous against the role-
+prefixed siblings (`ADMIN_PRIVATE_KEY`, `KEEPER_PRIVATE_KEY`,
+`LENDER_` / `BORROWER_` / `NEW_LENDER_` / `NEW_BORROWER_PRIVATE_KEY`,
+`REWARD_PRIVATE_KEY`). `DEPLOYER_PRIVATE_KEY` makes the role explicit
+and matches how the deploy scripts already read `DEPLOYER_ADDRESS` as
+the paired var. Sweep regex was
+`(?<![A-Za-z0-9_])PRIVATE_KEY(?![A-Za-z0-9_])` so every role-prefixed
+sibling is preserved verbatim and `deploy-peers.sh`'s
+`ORIGINAL_PRIVATE_KEY` trap (its restore mechanism) keeps working.
+`forge build --force --skip test` confirmed clean compile.
+
+### Watermark probe — per-instance fan-out → singleton
+
+`useLiveWatermark` grew to 16 call sites across hooks and components,
+several of them mounted on every page (`IndexerStatusBadge` in
+`AppLayout`, plus `useLogIndex` + `useOfferStats` + `useIndexedLoans`
++ `useIndexedActivity` from Dashboard, plus the OfferBook hot-tier
+subscriber). Each call site spawned its own `setTimeout` loop firing
+TWO `eth_call`s per tick (`getGlobalCounts` + `getBlock({safe})`). The
+timers drifted out of phase so they didn't fire together — visible
+in DevTools as a near-continuous trickle of RPC reads. Dashboard
+landed at ~12 reads per 30 s.
+
+Refactor hoists the probe loop into a Context-provided singleton:
+new `WatermarkProvider` in `apps/defi/src/context/WatermarkContext.tsx`
+runs ONE timer per `(chainId, diamondAddress)`. Subscribers register
+on mount via `useWatermarkContext`, deregister on unmount; the provider
+takes the **min** of all subscribers' currently-effective active
+intervals as the next probe cadence (so a `hot`-tier subscriber pulls
+everyone to 5 s, absent that `warm` 30 s wins, absent both `cool`
+180 s wins). Activity gating — `idleAfterMs` → `idlePollIntervalMs`,
+`pausedAfterMs` → no timer — is evaluated per-subscriber on every
+reschedule. Register / unregister calls clear the pending timer and
+reschedule so a brand-new fast subscriber doesn't wait on the previous
+slow tick. Tab-visibility + user-activity logic centralised in the
+provider, unchanged in semantics.
+
+API surface unchanged. Every existing `useLiveWatermark(opts)` call
+site keeps compiling without edits. Types (`UseLiveWatermarkOptions` /
+`WatermarkSnapshot` / `WatermarkStatus` / `UseLiveWatermarkResult`)
+re-exported from `useLiveWatermark.ts` so external imports compile
+clean. Dead `probeWatermarkOnce` export dropped (zero callers in tree).
+
+Expected effect: Dashboard 12 reads / 30 s → ~2 reads / 30 s (one
+batch per cadence tier from one timer). Network-tab trickle collapses
+to one batched probe per cadence step instead of drifting waves.
+
+### App-chain-pinned `useDiamondPublicClient` everywhere — chain-leakage class fix
+
+Bare `usePublicClient()` (no `chainId` arg) returns the **wallet's**
+current chain client in wagmi v2, which diverges from the
+**app-selected** chain (ChainContext via `useReadChain`) whenever
+the user changes the chain dropdown but their wallet hasn't followed
+yet (typical UX: in-app switch first, then a separate wallet prompt).
+The diamond address correctly tracks the app chain because every
+caller reads it from `useReadChain`, but the `publicClient` continues
+hitting the previous chain's RPC. Net effect:
+`eth_call(prevChainRPC, newChainDiamondAddress)` — silent failure on
+the read path, but the request hits the OLD chain's URL in the
+network tab. That's exactly what surfaced post-singleton-refactor:
+once the watermark stopped fanning out across 6 independent timers,
+the remaining single probe was easy to inspect, and the chain
+leakage became visible.
+
+Six call sites carried this bug, all preceding the watermark refactor
+— it just wasn't inspectable through the noise. Migrated each one to
+`useDiamondPublicClient()` (canonical wrapper in
+`contracts/useDiamond.ts` — `usePublicClient({ chainId: chain.chainId })`
+with a transport-only http fallback for chains wagmi hasn't bound):
+`WatermarkContext`, `useIndexedActiveOffers`, `useIndexedLoans`,
+`useERC20`, `CreateOffer`, `BuyVPFI`. `useLiquidationQuotes` was the
+one legit exception (caller-parameterised `chainId` for cross-chain
+liquidation quoting); kept with an inline `eslint-disable` carve-out
+and an explainer.
+
+Regression-prevention: ESLint `no-restricted-imports` rule banning
+direct `usePublicClient` import from `'wagmi'`, with an explanatory
+message pointing to `useDiamondPublicClient`. Carve-out for
+`useDiamond.ts` itself (it owns the wrapper and must import the
+underlying bare hook). Zero `no-restricted-imports` violations
+across the codebase after the migration.
+
+### What this unlocks
+
+End-state properties of the read path that didn't exist before today:
+
+1. **Chain switch is now structurally correct.** Dropdown change →
+   diamond AND publicClient both flip to the new chain in one effect
+   cycle. No mid-switch limbo where reads target the previous chain's
+   RPC.
+2. **Network-tab traffic is inspectable.** One probe timer instead of
+   six = clear cause-and-effect when investigating which surface
+   fires which call.
+3. **Future regressions caught at lint.** A new hook that
+   accidentally imports `usePublicClient` from `'wagmi'` fails the
+   build with a pointer to the right primitive.
+
 ## Release-notes mid-stream date roll
 
 The conversation that produced this release-notes file started on
