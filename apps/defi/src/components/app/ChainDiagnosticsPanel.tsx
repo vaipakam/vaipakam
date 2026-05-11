@@ -15,14 +15,15 @@
  * `chainDiagnostics.*` namespace for panel-specific labels.
  */
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Trash2, ChevronDown, ChevronRight } from 'lucide-react';
 import { useOfferStats } from '../../hooks/useOfferStats';
-import { useReadChain } from '../../contracts/useDiamond';
+import { useDiamondPublicClient, useReadChain } from '../../contracts/useDiamond';
 import { useLiveWatermark } from '../../hooks/useLiveWatermark';
 import { watermarkPolicy } from '../../hooks/watermarkPolicy';
 import { useMode } from '../../context/ModeContext';
+import { useDataFreshness } from '../../context/DataFreshnessContext';
 
 /** Mirror the badge's block-space thresholds — single source of truth
  *  in the badge file would be cleaner, but keeping the constants local
@@ -42,6 +43,17 @@ const SEVERE_GAP_BLOCKS = 5000;
  *  `LiveTailProvider lift`), this threshold will become the cap. */
 const LIVE_TAIL_BACKLOG_BLOCKS = 50_000;
 
+/** Cadence for the live safe-block poll — active only while the panel
+ *  is expanded. Mirrors the IndexerStatusBadge popover's poll; the
+ *  constant is duplicated here per the "local constants avoid a
+ *  circular import" note above. */
+const LIVE_SAFE_BLOCK_POLL_MS = 2_000;
+
+/** Frontier sources whose block is credited to the *indexer* rather
+ *  than the *RPC tail* in the "via X" annotation. Only `offerStats`
+ *  reports the central indexer's `lastBlock`. */
+const INDEXER_FRONTIER_SOURCES: ReadonlySet<string> = new Set(['offerStats']);
+
 interface StorageEstimate {
   usage?: number;
   quota?: number;
@@ -60,10 +72,10 @@ export function ChainDiagnosticsPanel() {
   const { t } = useTranslation();
   const { mode } = useMode();
   const chain = useReadChain();
+  const publicClient = useDiamondPublicClient();
   const { stats } = useOfferStats();
-  // Independent watermark probe — useLiveWatermark is per-call and cheap
-  // at the 'warm' (20 s) cadence. The badge runs its own probe in
-  // parallel; 2× the network cost on a non-critical path.
+  const { maxFrontier, anyLoading, bySource } = useDataFreshness();
+  // Watermark subscriber — the singleton serves it; no extra probe.
   const { snapshot: watermarkSnapshot } = useLiveWatermark(
     watermarkPolicy('warm'),
   );
@@ -73,6 +85,34 @@ export function ChainDiagnosticsPanel() {
   // failure events first; the chain panel is a "click to peek" affordance
   // so it doesn't push the events list below the fold on first open.
   const [expanded, setExpanded] = useState<boolean>(false);
+  // Live chain safe-head — polled directly only while the panel is
+  // expanded (one `getBlock({safe})` per tick). `null` until the first
+  // poll resolves; the row falls back to the watermark snapshot's
+  // safeBlock in the meantime so it's never blank.
+  const [liveSafeBlock, setLiveSafeBlock] = useState<number | null>(null);
+
+  useEffect(() => {
+    if (!expanded) {
+      setLiveSafeBlock(null);
+      return;
+    }
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    async function poll() {
+      try {
+        const blk = await publicClient.getBlock({ blockTag: 'safe' });
+        if (!cancelled) setLiveSafeBlock(Number(blk.number));
+      } catch {
+        // RPC hiccup — keep the last value, retry next tick.
+      }
+      if (!cancelled) timer = setTimeout(poll, LIVE_SAFE_BLOCK_POLL_MS);
+    }
+    void poll();
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+    };
+  }, [expanded, publicClient]);
   // Purge state — only used when `mode === 'advanced'` (the dev / debug
   // toggle on the user-mode picker). Tri-state UI:
   //   - 'idle': default, button enabled.
@@ -244,10 +284,28 @@ export function ChainDiagnosticsPanel() {
     }
   }
 
-  const safeHeadValue =
+  const safeHeadSnapshot =
     watermarkSnapshot && watermarkSnapshot.safeBlock > 0n
-      ? Number(watermarkSnapshot.safeBlock).toLocaleString()
-      : t('indexerBadge.statusChainSafeHeadUnknown');
+      ? Number(watermarkSnapshot.safeBlock)
+      : null;
+
+  // Which source produced the freshest block (for the "via X" label).
+  // RPC-tail wins the tie-break — it's the stronger claim.
+  let frontierOrigin: 'indexer' | 'rpcTail' | null = null;
+  if (maxFrontier !== null) {
+    for (const [key, slice] of Object.entries(bySource)) {
+      if (slice.frontier === maxFrontier) {
+        frontierOrigin = INDEXER_FRONTIER_SOURCES.has(key) ? 'indexer' : 'rpcTail';
+        if (frontierOrigin === 'rpcTail') break;
+      }
+    }
+  }
+  const frontierOriginLabel =
+    frontierOrigin === 'indexer'
+      ? t('indexerBadge.viaIndexer', { defaultValue: 'via indexer' })
+      : frontierOrigin === 'rpcTail'
+        ? t('indexerBadge.viaRpcTail', { defaultValue: 'via RPC tail-scan' })
+        : null;
 
   const cursorIso = indexer
     ? new Date(indexer.updatedAt * 1000).toISOString()
@@ -307,12 +365,53 @@ export function ChainDiagnosticsPanel() {
             value={indexer.lastBlock.toLocaleString()}
           />
         )}
+        {!isLocalDev && maxFrontier !== null && (
+          <Row
+            label={t('indexerBadge.statusFreshestBlock', {
+              defaultValue: 'Freshest data block',
+            })}
+            value={
+              frontierOriginLabel
+                ? `${maxFrontier.toLocaleString()} (${frontierOriginLabel})`
+                : maxFrontier.toLocaleString()
+            }
+          />
+        )}
         {!isLocalDev && (
           <Row
-            label={t('indexerBadge.statusChainSafeHead', {
-              defaultValue: 'Chain safe head',
-            })}
-            value={safeHeadValue}
+            label={
+              liveSafeBlock !== null
+                ? t('indexerBadge.statusChainSafeHeadLive', {
+                    defaultValue: 'Chain safe head (live)',
+                  })
+                : t('indexerBadge.statusChainSafeHead', {
+                    defaultValue: 'Chain safe head',
+                  })
+            }
+            value={
+              liveSafeBlock !== null ? (
+                <>
+                  {liveSafeBlock.toLocaleString()}
+                  <span
+                    className="indexer-badge-live-dot"
+                    title={t('indexerBadge.liveSafeBlockTooltip', {
+                      defaultValue:
+                        "Polling the chain's safe head every 2 s while this panel is open.",
+                    })}
+                    aria-label={t('indexerBadge.liveSafeBlockTooltip', {
+                      defaultValue:
+                        "Polling the chain's safe head every 2 s while this panel is open.",
+                    })}
+                  />
+                </>
+              ) : safeHeadSnapshot !== null ? (
+                safeHeadSnapshot.toLocaleString()
+              ) : (
+                t('indexerBadge.statusChainSafeHeadUnknown', {
+                  defaultValue: 'unknown',
+                })
+              )
+            }
           />
         )}
         {indexer && blockGap !== null && (
@@ -352,6 +451,16 @@ export function ChainDiagnosticsPanel() {
             }
           />
         )}
+        <Row
+          label={t('indexerBadge.statusFetchInProgress', {
+            defaultValue: 'Fetch in progress',
+          })}
+          value={
+            anyLoading
+              ? t('indexerBadge.statusFetchYes', { defaultValue: 'yes' })
+              : t('indexerBadge.statusFetchNo', { defaultValue: 'no' })
+          }
+        />
         {cursorIso && (
           <Row
             label={t('chainDiagnostics.cursorAdvancedAt', {
@@ -455,7 +564,7 @@ export function ChainDiagnosticsPanel() {
 
 interface RowProps {
   label: string;
-  value: string;
+  value: ReactNode;
 }
 
 function Row({ label, value }: RowProps) {
