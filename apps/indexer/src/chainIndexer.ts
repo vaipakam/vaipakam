@@ -33,13 +33,16 @@
 import {
   createPublicClient,
   http,
-  parseAbi,
+  toEventSignature,
+  type Abi,
+  type AbiEvent,
   type Address,
   type PublicClient,
 } from 'viem';
 import type { Env, ChainConfig } from './env';
 import { getChainConfigs } from './env';
 import { getDeployment } from '@vaipakam/contracts/deployments';
+import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
 import { DIAMOND_OFFER_DETAILS_ABI, DIAMOND_LOAN_DETAILS_ABI } from './diamondAbi';
 
 /** Resolve a chain's deployBlock from the consolidated deployments
@@ -48,65 +51,47 @@ function getDeployBlock(chainId: number): number | undefined {
   return getDeployment(chainId)?.deployBlock;
 }
 
-/** Combined event allow-list — all events any domain handler in this
- *  module wants to consume. ONE `getContractEvents` call covers the
- *  whole set per scan window so a new handler can be added without
- *  another RPC round trip per tick. Same shape as the frontend's
- *  `lib/logIndex.ts` allow-list. */
-const EVENT_ABI = parseAbi([
-  // Phase A — offers
-  'event OfferCreated(uint256 indexed offerId, address indexed creator, uint8 offerType)',
-  'event OfferAccepted(uint256 indexed offerId, address indexed acceptor, uint256 loanId)',
-  'event OfferCanceled(uint256 indexed offerId, address indexed creator)',
-  // Range-Orders Phase 1 — partial fills + terminal close.
-  // OfferMatched fires once per partial / full match; payload carries
-  // the post-match `remaining` so the watcher can compute the new
-  // amount_filled = amountMax - lenderRemainingPostMatch in a single
-  // event-driven UPDATE, no RPC round-trip.
-  'event OfferMatched(uint256 indexed lenderOfferId, uint256 indexed borrowerOfferId, uint256 indexed loanId, address matcher, uint256 matchAmount, uint256 matchRateBps, uint256 lenderRemainingPostMatch, uint256 lifMatcherFee)',
-  // OfferClosed fires once per offer reaching a terminal state.
-  // `reason` is the OfferCloseReason enum: 0=FullyFilled 1=Dust 2=Cancelled.
-  'event OfferClosed(uint256 indexed offerId, uint8 reason)',
-  // Phase B — loan lifecycle
-  'event LoanInitiated(uint256 indexed loanId, uint256 indexed offerId, address indexed lender, address borrower, uint256 principal, uint256 collateralAmount)',
-  'event LoanRepaid(uint256 indexed loanId, address indexed repayer, uint256 interestPaid, uint256 lateFeePaid)',
-  'event PartialRepaid(uint256 indexed loanId, uint256 amountRepaid, uint256 newPrincipal)',
-  'event LoanDefaulted(uint256 indexed loanId, bool fallbackConsentFromBoth)',
-  'event LoanLiquidated(uint256 indexed loanId, uint256 proceeds, uint256 treasuryFee)',
-  'event LoanSettlementBreakdown(uint256 indexed loanId, uint256 principal, uint256 interest, uint256 lateFee, uint256 treasuryShare, uint256 lenderShare)',
-  // Phase D — VPFI history. Captured into the unified activity
-  // ledger; no per-domain table. The frontend's VPFIPanel hits
-  // `/activity?actor=<wallet>&kind=VPFIDepositedToEscrow` etc.
-  'event VPFIDepositedToEscrow(address indexed user, uint256 amount)',
-  'event VPFIWithdrawnFromEscrow(address indexed user, uint256 amount)',
-  'event VPFIPurchasedWithETH(address indexed buyer, uint256 vpfiAmount, uint256 ethAmount)',
-  // Phase E — claim activity. `loans.status` already covers terminal
-  // state; what `claimables/:addr` needs is "did this wallet's claim
-  // event fire yet?" — answered by filtering activity_events.
-  'event LenderFundsClaimed(uint256 indexed loanId, address indexed claimant, address asset, uint256 amount)',
-  'event BorrowerFundsClaimed(uint256 indexed loanId, address indexed claimant, address asset, uint256 amount)',
-  'event LoanSettled(uint256 indexed loanId)',
-  'event BorrowerLifRebateClaimed(uint256 indexed loanId, address indexed claimant, uint256 amount)',
-  // T-034 PR2 — Periodic Interest Payment lifecycle. PeriodicInterestSettled
-  // (just-stamp + repay-fold inline advance) + AutoLiquidated (collateral
-  // sale) advance the on-chain `lastPeriodicInterestSettledAt`; the
-  // watcher mirrors that into the `loans` table so the pre-notify
-  // cron lane can compute the next checkpoint without re-reading the
-  // loan struct on every pass. SlippageOverBuffer is informational
-  // (off-chain monitors aggregate it). RepayPartialPeriodAdvanced
-  // pairs with PeriodicInterestSettled when the borrower's voluntary
-  // repayment crossed a period boundary inline.
-  'event PeriodicInterestSettled(uint256 indexed loanId, uint256 periodEndAt, uint256 expected, uint256 paidByBorrower, address indexed settler)',
-  'event PeriodicInterestAutoLiquidated(uint256 indexed loanId, uint256 periodEndAt, uint256 shortfall, uint256 collateralSold, uint256 lenderProceeds, uint256 settlerBonus, uint256 treasuryShare, address indexed settler)',
-  'event PeriodicSlippageOverBuffer(uint256 indexed loanId, uint256 expectedShortfall, uint256 actualLenderProceeds)',
-  'event RepayPartialPeriodAdvanced(uint256 indexed loanId, uint256 periodEndAt, uint256 expected, address indexed advancedBy)',
-  // Position-NFT lifecycle. Standard ERC-721 Transfer covers mint
-  // (from = 0x0), trade (between holders), and burn (to = 0x0).
-  // Captured into activity_events for the public audit trail of
-  // ownership changes — there's no separate nft_positions table, the
-  // current owner is queried live via ownerOf at /loans/by-lender etc.
-  'event Transfer(address indexed from, address indexed to, uint256 indexed tokenId)',
-]);
+/** Combined event allow-list — EVERY event the Diamond can emit,
+ *  derived from the compiled contract ABI bundle (`DIAMOND_ABI_VIEM`)
+ *  rather than hand-typed signatures.
+ *
+ *  Why derived, not hand-maintained: a hand-typed `parseAbi([...])`
+ *  list silently drifts. As of this rewrite it was wrong for SEVEN
+ *  events — `LoanRepaid` (4 args typed vs 7 emitted), `LoanDefaulted`
+ *  (2 vs 3), `PartialRepaid` (3 vs 4), `OfferAccepted` (3 vs 6),
+ *  `OfferMatched` (8 vs 10), `LenderFundsClaimed` / `BorrowerFundsClaimed`
+ *  (4 vs 5), `BorrowerLifRebateClaimed` (3 vs 4). A wrong arg count
+ *  changes the keccak event signature → different topic0 → the indexer
+ *  never matches the log → loans silently stay `active` forever. Same
+ *  drift class the CLAUDE.md "Watcher offer-decode" incident warns
+ *  about. Deriving from the compiler-emitted ABI makes it impossible.
+ *
+ *  Dedup: the bundle re-exports each facet verbatim from
+ *  `forge inspect <Facet> abi`, so some events appear in several facets
+ *  (`LoanSettlementBreakdown` in RepayFacet + PrecloseFacet, `OfferClosed`
+ *  in OfferCancelFacet + OfferMatchFacet, the `SwapAdapter*` trio across
+ *  three facets, `Transfer`/`Approval`/`ApprovalForAll` twice within
+ *  VaipakamNFTFacet). `decodeEventLog` throws on ambiguous selectors, so
+ *  dedupe by canonical event signature, keeping the first occurrence
+ *  (identical signature → identical selector → harmless to drop dupes). */
+const EVENT_ABI: readonly AbiEvent[] = (() => {
+  const seen = new Set<string>();
+  const out: AbiEvent[] = [];
+  for (const item of DIAMOND_ABI_VIEM as Abi) {
+    if (item.type !== 'event') continue;
+    const ev = item as AbiEvent;
+    let sig: string;
+    try {
+      sig = toEventSignature(ev);
+    } catch {
+      continue; // malformed entry — skip rather than crash the worker
+    }
+    if (seen.has(sig)) continue;
+    seen.add(sig);
+    out.push(ev);
+  }
+  return out;
+})();
 
 const SCAN_LOOKBACK_BLOCKS = 500n;
 const MAX_RANGE_PER_CALL = 5_000n;
@@ -1133,8 +1118,89 @@ async function processLoanLogs(
         .run();
       if ((result.meta?.changes ?? 0) > 0) newLoans++;
     } else if (log.eventName === 'LoanRepaid') {
+      // Full repay (or a FallbackPending-cure repay). On-chain this is
+      // a transition to Repaid; the indexer's `status = 'active'` guard
+      // in flipLoanStatus is fine — through any fallback episode the D1
+      // status stays 'active' (we don't mirror FallbackPending), so the
+      // terminal Repaid still applies.
       const r = await flipLoanStatus(env, chainId, a, log, 'repaid');
       if (r) statusUpdates++;
+    } else if (log.eventName === 'LoanPreclosedDirect') {
+      // Preclose Option 1 — borrower closes early. Transition Active→Repaid.
+      const r = await flipLoanStatus(env, chainId, a, log, 'repaid');
+      if (r) statusUpdates++;
+    } else if (log.eventName === 'OffsetCompleted') {
+      // Preclose Option 3 — offsetWithNewOffer + completeOffset. The
+      // *original* loan transitions Active→Repaid (the new loan emits
+      // its own LoanInitiated). Keyed by `originalLoanId`, not `loanId`.
+      const r = await flipLoanStatus(
+        env,
+        chainId,
+        a,
+        log,
+        'repaid',
+        Number(a.originalLoanId as bigint),
+      );
+      if (r) statusUpdates++;
+    } else if (log.eventName === 'LoanRefinanced') {
+      // Refinance — the *old* loan transitions Active→Repaid (the new
+      // loan emits its own LoanInitiated). Keyed by `oldLoanId`.
+      const r = await flipLoanStatus(
+        env,
+        chainId,
+        a,
+        log,
+        'repaid',
+        Number(a.oldLoanId as bigint),
+      );
+      if (r) statusUpdates++;
+    } else if (log.eventName === 'PartialRepaid') {
+      // Partial repayment — loan stays Active, but `principal` shrinks.
+      // The event carries the post-state `newPrincipal`, so mirror it.
+      await env.DB.prepare(
+        `UPDATE loans SET principal = ?, updated_at = ?
+         WHERE chain_id = ? AND loan_id = ?`,
+      )
+        .bind(
+          String(a.newPrincipal as bigint),
+          Math.floor(Date.now() / 1000),
+          chainId,
+          Number(a.loanId as bigint),
+        )
+        .run();
+    } else if (log.eventName === 'CollateralAdded') {
+      // Borrower topped up collateral — loan stays Active, but
+      // `collateral_amount` grows. The event carries `newCollateralAmount`.
+      await env.DB.prepare(
+        `UPDATE loans SET collateral_amount = ?, updated_at = ?
+         WHERE chain_id = ? AND loan_id = ?`,
+      )
+        .bind(
+          String(a.newCollateralAmount as bigint),
+          Math.floor(Date.now() / 1000),
+          chainId,
+          Number(a.loanId as bigint),
+        )
+        .run();
+    } else if (log.eventName === 'LoanObligationTransferred') {
+      // Preclose Option 2 — the borrower obligation moves to a new
+      // borrower; the loan stays Active. The position-NFT Transfer
+      // handler below already updates `borrower_current_owner`; mirror
+      // the canonical `borrower` column too so direct reads stay
+      // consistent. (Collateral / duration / rate also change on this
+      // path, but the event doesn't carry the new collateral amount —
+      // see the contract-side payload-completeness follow-up.)
+      await env.DB.prepare(
+        `UPDATE loans SET borrower = ?, updated_at = ?
+         WHERE chain_id = ? AND loan_id = ?`,
+      )
+        .bind(
+          String(a.newBorrower as string).toLowerCase(),
+          Math.floor(Date.now() / 1000),
+          chainId,
+          Number(a.loanId as bigint),
+        )
+        .run();
     } else if (log.eventName === 'LoanDefaulted') {
       const r = await flipLoanStatus(env, chainId, a, log, 'defaulted');
       if (r) statusUpdates++;
@@ -1188,13 +1254,24 @@ async function processLoanLogs(
       // status — the loan stays active across periodic checkpoints.
       // No statusUpdates increment.
     }
-    // PartialRepaid + LoanSettlementBreakdown don't flip terminal
-    // status — they're surfaced through activity_events for the
-    // LoanTimeline and not reflected in `loans.status`. Partial
-    // repayments leave the loan 'active'; the breakdown event is
-    // emitted alongside terminal events that DO flip status.
-    // PeriodicSlippageOverBuffer is informational-only (off-chain
-    // monitors aggregate it); no row update needed.
+    // Notes on events deliberately not state-mutating here:
+    //  - LoanSettlementBreakdown / PeriodicSlippageOverBuffer /
+    //    SwapAdapter* — informational only; surfaced via activity_events
+    //    for the LoanTimeline, no `loans` row change.
+    //  - LoanFallbackPending / LoanCuredFromFallback — the FallbackPending
+    //    state is transient (cured → Active, or lender-claim → Defaulted);
+    //    the indexer keeps `loans.status = 'active'` through the episode
+    //    and the eventual terminal event (LoanRepaid / LoanDefaulted)
+    //    still applies correctly.
+    //  - LoanSold / LoanSaleCompleted / LoanSaleOfferLinked
+    //    (EarlyWithdrawal) — the *original* loan stays Active with a new
+    //    lender (covered by the position-NFT Transfer handler below);
+    //    the internal "temp loan" the sale spins up transitions
+    //    Active→Repaid on-chain but does NOT currently emit a status
+    //    event, so the indexer can't mirror it — see the contract-side
+    //    payload-completeness follow-up.
+    //  - LoanKeeperEnabled / OfferKeeperEnabled / *Details companions /
+    //    OffsetOfferCreated — not modelled in the indexer schema.
     //
     // ─── Position-NFT Transfer: maintain current_owner columns ───
     // ERC721 Transfer events (mint = from 0x0, trade between holders,
@@ -1241,8 +1318,12 @@ async function flipLoanStatus(
   args: Record<string, unknown>,
   log: DecodedLog,
   status: 'repaid' | 'defaulted' | 'liquidated' | 'settled',
+  /** Some terminal events key the loan by a non-`loanId` arg —
+   *  `OffsetCompleted.originalLoanId`, `LoanRefinanced.oldLoanId`. Pass
+   *  that loanId here; defaults to `args.loanId` otherwise. */
+  loanIdOverride?: number,
 ): Promise<boolean> {
-  const loanId = Number(args.loanId as bigint);
+  const loanId = loanIdOverride ?? Number(args.loanId as bigint);
   const now = Math.floor(Date.now() / 1000);
   const r = await env.DB.prepare(
     `UPDATE loans SET status = ?, terminal_block = ?, terminal_at = ?, updated_at = ?
