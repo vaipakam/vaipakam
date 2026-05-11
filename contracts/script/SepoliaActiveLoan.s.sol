@@ -46,7 +46,7 @@ contract SepoliaActiveLoan is Script {
         diamond = Deployments.readDiamond();
         // Phase-1 2-EOA topology: deployerKey funds + deploys mocks,
         // adminKey signs role-gated Diamond calls.
-        deployerKey = vm.envUint("PRIVATE_KEY");
+        deployerKey = vm.envUint("DEPLOYER_PRIVATE_KEY");
         adminKey = vm.envUint("ADMIN_PRIVATE_KEY");
         lenderKey = vm.envUint("LENDER_PRIVATE_KEY");
         lender = vm.envAddress("LENDER_ADDRESS");

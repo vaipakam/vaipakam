@@ -22,7 +22,7 @@ import {Deployments} from "./lib/Deployments.sol";
  *         facets with freshly-compiled bytecode removes any pre-refactor copy
  *         left on chain.
  *
- * Env vars: PRIVATE_KEY, DIAMOND_ADDRESS
+ * Env vars: DEPLOYER_PRIVATE_KEY, DIAMOND_ADDRESS
  *
  * Usage:
  *   forge script script/ReplaceStaleFacets.s.sol \
@@ -30,7 +30,7 @@ import {Deployments} from "./lib/Deployments.sol";
  */
 contract ReplaceStaleFacets is Script {
     function run() external {
-        uint256 deployerKey = vm.envUint("PRIVATE_KEY");
+        uint256 deployerKey = vm.envUint("DEPLOYER_PRIVATE_KEY");
         // Same env-var-prefix normalisation as RedeployFacets — read
         // from deployments/<chain>/addresses.json with chain-prefixed
         // env fallback rather than the bare DIAMOND_ADDRESS.

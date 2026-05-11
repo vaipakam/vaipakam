@@ -25,7 +25,7 @@ import {ZeroExProxyMock} from "../test/mocks/ZeroExProxyMock.sol";
  *      funding is an operational step per liquidation scenario.
  *
  *      Required env vars:
- *        - PRIVATE_KEY : deployer key
+ *        - DEPLOYER_PRIVATE_KEY : deployer key
  */
 contract DeployZeroExMock is Script {
     function run() external returns (address mock) {
@@ -39,7 +39,7 @@ contract DeployZeroExMock is Script {
             "DeployZeroExMock: refusing to deploy mock on a production chain"
         );
 
-        uint256 deployerKey = vm.envUint("PRIVATE_KEY");
+        uint256 deployerKey = vm.envUint("DEPLOYER_PRIVATE_KEY");
 
         console.log("=== Deploy ZeroExProxyMock (testnet only) ===");
         console.log("Chain id:   ", chainId);

@@ -34,7 +34,7 @@ import {Deployments} from "./lib/Deployments.sol";
  *                                      `ConfigureVPFIBuy` scripts use.
  *                                      Post-handover the deployer EOA
  *                                      holds zero roles, so the legacy
- *                                      `PRIVATE_KEY` would revert here.
+ *                                      `DEPLOYER_PRIVATE_KEY` would revert here.
  *        - <CHAIN>_DIAMOND_ADDRESS  : Diamond proxy for this chain
  *        - REWARD_OAPP_PROXY        : VaipakamRewardOApp proxy address
  *                                      (deterministic across chains under

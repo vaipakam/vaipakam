@@ -66,7 +66,7 @@ interface IOAppEndpoint {
  *           (from https://docs.layerzero.network/v2/deployments/deployed-contracts).
  *        3. Verify the `CHAIN_CONFIRMATIONS` table lines up with your
  *           target network's finality budget.
- *        4. Execute with `PRIVATE_KEY` held by the OApp's owner/delegate
+ *        4. Execute with `DEPLOYER_PRIVATE_KEY` held by the OApp's owner/delegate
  *           (the timelock/multisig wired at deploy time).
  *        5. After the run, `LZConfig.t.sol` (Foundry test) must pass
  *           against a fork of the post-config state — enforces the policy
@@ -81,7 +81,7 @@ interface IOAppEndpoint {
  *      Phase 2 if we ever inherit `OAppOptionsType3Upgradeable`.
  *
  * @dev Env vars (per run):
- *        - PRIVATE_KEY     : owner / delegate key for the OApp on this
+ *        - DEPLOYER_PRIVATE_KEY     : owner / delegate key for the OApp on this
  *                            chain.
  *        - OAPP            : OApp proxy address (adapter / mirror / buy /
  *                            receiver / reward OApp).
@@ -165,7 +165,7 @@ contract ConfigureLZConfig is Script {
     // ─── Entry point ────────────────────────────────────────────────────────
 
     function run() external {
-        uint256 ownerKey = vm.envUint("PRIVATE_KEY");
+        uint256 ownerKey = vm.envUint("DEPLOYER_PRIVATE_KEY");
         address oapp = vm.envAddress("OAPP");
         address sendLib = vm.envAddress("SEND_LIB");
         address recvLib = vm.envAddress("RECV_LIB");

@@ -29,7 +29,7 @@ import {Deployments} from "./lib/Deployments.sol";
  *      balances to lender + borrower before they create offers.
  *
  *      Required env vars:
- *        - PRIVATE_KEY        : anvil account #0 (deployer; holds mocks supply)
+ *        - DEPLOYER_PRIVATE_KEY        : anvil account #0 (deployer; holds mocks supply)
  *        - ADMIN_PRIVATE_KEY  : anvil account #1 (admin; grants KYC tiers)
  *
  *      Hardcoded (Foundry's standard test keys):
@@ -81,7 +81,7 @@ contract SeedAnvilOffers is Script {
             "SeedAnvilOffers: refusing to run outside anvil (chainid != 31337)"
         );
 
-        uint256 deployerKey = vm.envUint("PRIVATE_KEY");
+        uint256 deployerKey = vm.envUint("DEPLOYER_PRIVATE_KEY");
         uint256 adminKey = vm.envUint("ADMIN_PRIVATE_KEY");
         address diamond = Deployments.readDiamond();
         address mUSDC = Deployments.readMockERC20A();

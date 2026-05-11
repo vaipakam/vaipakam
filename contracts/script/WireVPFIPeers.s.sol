@@ -17,7 +17,7 @@ interface IOAppSetPeer {
  *         rollout. Must be executed by the OApp owner (timelock / multisig).
  *
  * @dev Required env vars:
- *        - PRIVATE_KEY   : owner key (broadcaster — must match
+ *        - DEPLOYER_PRIVATE_KEY   : owner key (broadcaster — must match
  *                          adapter/mirror/receiver owner)
  *        - LOCAL_OAPP    : OApp proxy address on this chain
  *                          (VPFI adapter/mirror OR VPFIBuyAdapter/Receiver)
@@ -44,7 +44,7 @@ interface IOAppSetPeer {
  */
 contract WireVPFIPeers is Script {
     function run() external {
-        uint256 ownerKey = vm.envUint("PRIVATE_KEY");
+        uint256 ownerKey = vm.envUint("DEPLOYER_PRIVATE_KEY");
         address localOApp = vm.envAddress("LOCAL_OAPP");
         uint32 remoteEid = uint32(vm.envUint("REMOTE_EID"));
         address remotePeer = vm.envAddress("REMOTE_PEER");

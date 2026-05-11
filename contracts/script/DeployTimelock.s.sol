@@ -33,7 +33,7 @@ import {Deployments} from "./lib/Deployments.sol";
  *                          goes through the timelock
  *
  *      Required env vars:
- *        - PRIVATE_KEY           : deployer key (any funded EOA)
+ *        - DEPLOYER_PRIVATE_KEY           : deployer key (any funded EOA)
  *        - TIMELOCK_MIN_DELAY    : optional, defaults to 172800 (48h)
  *        - TIMELOCK_PROPOSER     : proposer/canceller (multi-sig address)
  *        - TIMELOCK_EXECUTOR     : optional, defaults to address(0) = open
@@ -42,7 +42,7 @@ contract DeployTimelock is Script {
     uint256 internal constant DEFAULT_MIN_DELAY = 48 hours;
 
     function run() external returns (address timelock) {
-        uint256 deployerKey = vm.envUint("PRIVATE_KEY");
+        uint256 deployerKey = vm.envUint("DEPLOYER_PRIVATE_KEY");
         uint256 minDelay = vm.envOr("TIMELOCK_MIN_DELAY", DEFAULT_MIN_DELAY);
         address proposer = vm.envAddress("TIMELOCK_PROPOSER");
         address executor = vm.envOr("TIMELOCK_EXECUTOR", address(0));

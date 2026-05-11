@@ -37,7 +37,7 @@ import {Deployments} from "./lib/Deployments.sol";
  *           beforehand keeps the handover atomic in effect.
  *
  *         Required env vars:
- *           - PRIVATE_KEY                            : current deployer (still the Ownable2Step owner)
+ *           - DEPLOYER_PRIVATE_KEY                            : current deployer (still the Ownable2Step owner)
  *           - <CHAIN>_TIMELOCK_ADDRESS               : Timelock from {DeployTimelock}
  *           - GOVERNANCE_GUARDIAN                    : Guardian Safe address
  *           - CONFIRM_HANDOVER                       : must equal "YES"
@@ -122,7 +122,7 @@ contract MigrateOAppGovernance is Script {
             "MigrateOAppGovernance: set CONFIRM_HANDOVER=YES to proceed"
         );
 
-        uint256 deployerKey = vm.envUint("PRIVATE_KEY");
+        uint256 deployerKey = vm.envUint("DEPLOYER_PRIVATE_KEY");
         address deployer = vm.addr(deployerKey);
         address guardian = vm.envAddress("GOVERNANCE_GUARDIAN");
         // Timelock + per-OApp target addresses both come from

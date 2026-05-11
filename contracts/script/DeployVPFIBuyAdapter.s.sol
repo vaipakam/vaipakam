@@ -18,7 +18,7 @@ import {Deployments} from "./lib/Deployments.sol";
  *      the encoded options couldn't be supplied via env at deploy time.
  *
  *      Required env vars:
- *        - PRIVATE_KEY             : deployer
+ *        - DEPLOYER_PRIVATE_KEY             : deployer
  *        - VPFI_OWNER              : OApp owner / LZ delegate
  *        - VPFI_BUY_RECEIVER_EID   : LayerZero eid of the Base receiver (40245 for Base Sepolia)
  *        - <CHAIN>_TREASURY_ADDRESS: local treasury that receives released amountIn
@@ -122,7 +122,7 @@ contract DeployVPFIBuyAdapter is Script {
     }
 
     function run() external {
-        uint256 deployerKey = vm.envUint("PRIVATE_KEY");
+        uint256 deployerKey = vm.envUint("DEPLOYER_PRIVATE_KEY");
         address lzEndpoint = _lzEndpoint();
         address owner = vm.envAddress("VPFI_OWNER");
         uint32 receiverEid = uint32(vm.envUint("VPFI_BUY_RECEIVER_EID"));

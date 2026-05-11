@@ -96,7 +96,7 @@ import {ConfigureVPFIBuy} from "./ConfigureVPFIBuy.s.sol";
  *          contract so all of these are optional).
  *
  *      ConfigureLZConfig is NOT in this spell — it's signed by the
- *      OApp owner key (PRIVATE_KEY in many setups, NOT
+ *      OApp owner key (DEPLOYER_PRIVATE_KEY in many setups, NOT
  *      ADMIN_PRIVATE_KEY) and runs at `--phase lz-config` separately.
  */
 contract DiamondConfigSpell is Script {

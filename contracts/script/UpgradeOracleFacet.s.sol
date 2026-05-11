@@ -21,7 +21,7 @@ import {Deployments} from "./lib/Deployments.sol";
  *      and can optionally top up admin gas in the same run.
  *
  * Env vars:
- *   - PRIVATE_KEY        (deployer — pays for the facet deploy)
+ *   - DEPLOYER_PRIVATE_KEY        (deployer — pays for the facet deploy)
  *   - ADMIN_PRIVATE_KEY  (admin — signs the diamond cut)
  *   - DIAMOND_ADDRESS    (Diamond to upgrade)
  *
@@ -31,7 +31,7 @@ import {Deployments} from "./lib/Deployments.sol";
  */
 contract UpgradeOracleFacet is Script {
     function run() external {
-        uint256 deployerKey = vm.envUint("PRIVATE_KEY");
+        uint256 deployerKey = vm.envUint("DEPLOYER_PRIVATE_KEY");
         uint256 adminKey = vm.envUint("ADMIN_PRIVATE_KEY");
         address admin = vm.addr(adminKey);
         address diamond = Deployments.readDiamond();

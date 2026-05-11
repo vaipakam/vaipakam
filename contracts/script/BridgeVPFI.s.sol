@@ -47,7 +47,7 @@ import {Deployments} from "./lib/Deployments.sol";
  *      both directions via {WireVPFIPeers}.
  *
  *      Required env vars:
- *        - PRIVATE_KEY               : sender key (broadcaster + token owner)
+ *        - DEPLOYER_PRIVATE_KEY               : sender key (broadcaster + token owner)
  *        - <CHAIN>_VPFI_OFT          : local OApp (adapter on Base Sepolia,
  *                                      mirror otherwise). One var per chain.
  *        - BASE_SEPOLIA_VPFI / BASE_VPFI : underlying VPFI ERC20 — required
@@ -105,7 +105,7 @@ contract BridgeVPFI is Script {
     }
 
     function run() external {
-        uint256 senderKey = vm.envUint("PRIVATE_KEY");
+        uint256 senderKey = vm.envUint("DEPLOYER_PRIVATE_KEY");
         address sender = vm.addr(senderKey);
 
         // Local OApp = canonical-chain OFT adapter, mirror-chain

@@ -112,7 +112,7 @@ contract AnvilNewPartialFlows is Script {
     // ─── Setup ────────────────────────────────────────────────────────────
 
     function _loadEnv() internal {
-        deployerKey = vm.envUint("PRIVATE_KEY");
+        deployerKey = vm.envUint("DEPLOYER_PRIVATE_KEY");
         adminKey = vm.envUint("ADMIN_PRIVATE_KEY");
         admin = vm.envAddress("ADMIN_ADDRESS");
         lenderKey = vm.envUint("LENDER_PRIVATE_KEY");

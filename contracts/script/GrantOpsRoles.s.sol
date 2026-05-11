@@ -32,7 +32,7 @@ import {Deployments} from "./lib/Deployments.sol";
  *      multi-sig tx).
  *
  *      Required env vars:
- *        - PRIVATE_KEY                 : current DEFAULT_ADMIN_ROLE holder
+ *        - DEPLOYER_PRIVATE_KEY                 : current DEFAULT_ADMIN_ROLE holder
  *        - <CHAIN>_DIAMOND_ADDRESS     : target Diamond
  *        - GOVERNANCE_GUARDIAN         : address that will hold PAUSER_ROLE
  *        - GOVERNANCE_KYC_OPS          : optional, defaults to GOVERNANCE_GUARDIAN
@@ -40,7 +40,7 @@ import {Deployments} from "./lib/Deployments.sol";
  */
 contract GrantOpsRoles is Script {
     function run() external {
-        uint256 deployerKey = vm.envUint("PRIVATE_KEY");
+        uint256 deployerKey = vm.envUint("DEPLOYER_PRIVATE_KEY");
         address diamond = Deployments.readDiamond();
         address guardian = vm.envAddress("GOVERNANCE_GUARDIAN");
         // Fall back to the guardian address for single-Safe deployments.

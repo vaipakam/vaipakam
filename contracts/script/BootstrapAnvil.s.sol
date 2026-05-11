@@ -16,8 +16,8 @@ import {Deployments} from "./lib/Deployments.sol";
  *         Sequence the operator runs when bringing up an anvil
  *         playground (see `script/anvil-bootstrap.sh`):
  *           1. anvil --chain-id 31337
- *           2. forge script DeployDiamond.s.sol            (PRIVATE_KEY)
- *           3. forge script DeployTestnetLiquidityMocks    (PRIVATE_KEY,
+ *           2. forge script DeployDiamond.s.sol            (DEPLOYER_PRIVATE_KEY)
+ *           3. forge script DeployTestnetLiquidityMocks    (DEPLOYER_PRIVATE_KEY,
  *                                                            ADMIN_PRIVATE_KEY)
  *           4. forge script BootstrapAnvil.s.sol  ←  this file
  *           5. forge script SeedAnvilOffers.s.sol         (test data)

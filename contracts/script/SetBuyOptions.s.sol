@@ -39,7 +39,7 @@ import {Deployments} from "./lib/Deployments.sol";
  *                                   `ConfigureVPFIBuy.s.sol` flow, so
  *                                   most operators don't need a new
  *                                   var.
- *        - PRIVATE_KEY            : last-resort fallback for the
+ *        - DEPLOYER_PRIVATE_KEY            : last-resort fallback for the
  *                                   "deployer == OApp owner" historical
  *                                   case (matches
  *                                   `ConfigureLZConfig.s.sol` /
@@ -69,14 +69,14 @@ contract SetBuyOptions is Script {
     /// @dev Resolve the OApp owner key from a fallback chain: explicit
     ///      `VPFI_OWNER_PRIVATE_KEY` first, then `ADMIN_PRIVATE_KEY`
     ///      (most retail deploys set `VPFI_OWNER == ADMIN_ADDRESS`), then
-    ///      `PRIVATE_KEY` as the last-resort historical default. Reverts
+    ///      `DEPLOYER_PRIVATE_KEY` as the last-resort historical default. Reverts
     ///      with a clear message if none of the three are populated.
     function _resolveOwnerKey() internal view returns (uint256) {
         try vm.envUint("VPFI_OWNER_PRIVATE_KEY") returns (uint256 k) { return k; } catch {}
         try vm.envUint("ADMIN_PRIVATE_KEY") returns (uint256 k) { return k; } catch {}
-        try vm.envUint("PRIVATE_KEY") returns (uint256 k) { return k; } catch {}
+        try vm.envUint("DEPLOYER_PRIVATE_KEY") returns (uint256 k) { return k; } catch {}
         revert(
-            "SetBuyOptions: no owner key in env (VPFI_OWNER_PRIVATE_KEY / ADMIN_PRIVATE_KEY / PRIVATE_KEY)"
+            "SetBuyOptions: no owner key in env (VPFI_OWNER_PRIVATE_KEY / ADMIN_PRIVATE_KEY / DEPLOYER_PRIVATE_KEY)"
         );
     }
 

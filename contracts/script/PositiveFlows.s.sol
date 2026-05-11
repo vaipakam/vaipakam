@@ -48,7 +48,7 @@ import {AnvilNewPositiveFlows} from "./AnvilNewPositiveFlows.s.sol";
  *           - sellLoanViaBuyOffer (lender early-withdrawal via buy
  *             offer).
  *
- *         Phase A and Phase B share env vars (`PRIVATE_KEY`,
+ *         Phase A and Phase B share env vars (`DEPLOYER_PRIVATE_KEY`,
  *         `ADMIN_PRIVATE_KEY`, `LENDER_PRIVATE_KEY`,
  *         `BORROWER_PRIVATE_KEY`, `NEW_LENDER_PRIVATE_KEY`,
  *         `NEW_BORROWER_PRIVATE_KEY`, plus the `*_ADDRESS` companion

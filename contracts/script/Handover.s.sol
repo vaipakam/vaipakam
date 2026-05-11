@@ -221,7 +221,7 @@ contract Handover is Script {
         // matching each contract's on-chain owner.
         //
         // Resolution: read VPFI_OWNER_PRIVATE_KEY and REWARD_OWNER_
-        // PRIVATE_KEY from env if present; fall back to ADMIN_PRIVATE_
+        // DEPLOYER_PRIVATE_KEY from env if present; fall back to ADMIN_PRIVATE_
         // KEY (the common case where VPFI_OWNER == ADMIN_ADDRESS).
         // Then per OApp, compare the signing key's EOA against the
         // on-chain owner and skip with a clear warning on mismatch

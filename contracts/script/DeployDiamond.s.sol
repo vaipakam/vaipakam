@@ -52,7 +52,7 @@ contract DeployDiamond is Script {
         // ── Configuration ───────────────────────────────────────────────
         address admin = vm.envAddress("ADMIN_ADDRESS");
         address treasury = vm.envAddress("TREASURY_ADDRESS");
-        uint256 deployerKey = vm.envUint("PRIVATE_KEY");
+        uint256 deployerKey = vm.envUint("DEPLOYER_PRIVATE_KEY");
         address deployerAddr = vm.addr(deployerKey);
 
         console.log("=== Vaipakam Diamond Deployment ===");

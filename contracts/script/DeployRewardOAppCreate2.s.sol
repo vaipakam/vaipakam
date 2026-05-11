@@ -31,7 +31,7 @@ import {Deployments} from "./lib/Deployments.sol";
 ///      half; do NOT leave the bootstrap-stage proxy live on-chain.
 ///
 ///      Required env vars:
-///        - PRIVATE_KEY          : deployer key (broadcaster)
+///        - DEPLOYER_PRIVATE_KEY          : deployer key (broadcaster)
 ///        - REWARD_VERSION       : version string baked into all three
 ///                                 CREATE2 salts. Bump on breaking
 ///                                 redeploys so new addresses don't
@@ -66,7 +66,7 @@ contract DeployRewardOAppCreate2 is Script {
     address public realImpl;
 
     function run() external {
-        uint256 deployerKey = vm.envUint("PRIVATE_KEY");
+        uint256 deployerKey = vm.envUint("DEPLOYER_PRIVATE_KEY");
         string memory version = vm.envString("REWARD_VERSION");
         address owner = vm.envAddress("REWARD_OWNER");
         // Read from addresses.json with legacy DIAMOND_ADDRESS env fallback.

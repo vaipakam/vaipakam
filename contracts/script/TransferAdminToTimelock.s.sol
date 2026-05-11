@@ -42,7 +42,7 @@ import {Deployments} from "./lib/Deployments.sol";
  *      either role.
  *
  *      Required env vars:
- *        - PRIVATE_KEY                 : current Diamond owner / DEFAULT_ADMIN
+ *        - DEPLOYER_PRIVATE_KEY                 : current Diamond owner / DEFAULT_ADMIN
  *        - <CHAIN>_DIAMOND_ADDRESS     : target Diamond
  *        - <CHAIN>_TIMELOCK_ADDRESS    : target timelock (from DeployTimelock)
  *        - CONFIRM_HANDOVER            : must equal "YES" — guard against
@@ -56,7 +56,7 @@ contract TransferAdminToTimelock is Script {
             "TransferAdminToTimelock: set CONFIRM_HANDOVER=YES to proceed"
         );
 
-        uint256 deployerKey = vm.envUint("PRIVATE_KEY");
+        uint256 deployerKey = vm.envUint("DEPLOYER_PRIVATE_KEY");
         address deployer = vm.addr(deployerKey);
         // Diamond + timelock both come from
         // deployments/<chain>/addresses.json with chain-prefixed env

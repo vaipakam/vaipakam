@@ -28,7 +28,7 @@
 #     - chainA.rewardOApp ←→ chainB.rewardOApp for every (A, B) pair
 #
 # Env requirements:
-#   - PRIVATE_KEY (signs setPeer txs — must be the OApp owner on each
+#   - DEPLOYER_PRIVATE_KEY (signs setPeer txs — must be the OApp owner on each
 #     chain, i.e. the deployer or the address you'll later renounce
 #     to a multisig)
 #   - <CHAIN>_RPC_URL for every chain present in deployments/
@@ -54,7 +54,7 @@
 #   `setPeer` is owner-gated on each OApp. The DeployVPFI* /
 #   DeployRewardOAppCreate2 scripts transfer ownership of the OApps
 #   to ADMIN_ADDRESS at the end. So this script overrides
-#   PRIVATE_KEY → ADMIN_PRIVATE_KEY for the duration of the run.
+#   DEPLOYER_PRIVATE_KEY → ADMIN_PRIVATE_KEY for the duration of the run.
 #   Without that override, every setPeer reverts with
 #   `OwnableUnauthorizedAccount(<deployer>)`.
 
@@ -93,24 +93,24 @@ else
   exit 1
 fi
 
-if [ -z "${PRIVATE_KEY:-}" ]; then
-  echo "Error: PRIVATE_KEY required in .env." >&2
+if [ -z "${DEPLOYER_PRIVATE_KEY:-}" ]; then
+  echo "Error: DEPLOYER_PRIVATE_KEY required in .env." >&2
   exit 1
 fi
 
 # OApp ownership transfers to ADMIN_ADDRESS at the end of each
 # DeployVPFI*/DeployRewardOAppCreate2 script. So `setPeer` calls
 # need to be signed by the admin key, not the deployer key. The
-# WireVPFIPeers.s.sol script reads `PRIVATE_KEY` from env, so we
+# WireVPFIPeers.s.sol script reads `DEPLOYER_PRIVATE_KEY` from env, so we
 # override it here for the duration of this script with the admin
 # key. The original deployer key is restored at the end.
 if [ -z "${ADMIN_PRIVATE_KEY:-}" ]; then
   echo "Error: ADMIN_PRIVATE_KEY required in .env (admin owns the OApps post-deploy)." >&2
   exit 1
 fi
-ORIGINAL_PRIVATE_KEY="$PRIVATE_KEY"
-export PRIVATE_KEY="$ADMIN_PRIVATE_KEY"
-trap 'export PRIVATE_KEY="$ORIGINAL_PRIVATE_KEY"' EXIT
+ORIGINAL_PRIVATE_KEY="$DEPLOYER_PRIVATE_KEY"
+export DEPLOYER_PRIVATE_KEY="$ADMIN_PRIVATE_KEY"
+trap 'export DEPLOYER_PRIVATE_KEY="$ORIGINAL_PRIVATE_KEY"' EXIT
 
 # ── Chain registry (slug → RPC env var) ───────────────────────────────
 # Keep in sync with deploy-chain.sh + deploy-mainnet.sh.

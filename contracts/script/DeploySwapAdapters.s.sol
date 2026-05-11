@@ -44,7 +44,7 @@ import {Deployments} from "./lib/Deployments.sol";
  *         seeds the singleton allowlist itself.
  *
  * @dev    Required env vars:
- *           - PRIVATE_KEY              : deployer (must hold
+ *           - DEPLOYER_PRIVATE_KEY              : deployer (must hold
  *                                        ADMIN_ROLE on the Diamond
  *                                        for the addSwapAdapter call;
  *                                        on testnets that's typically
@@ -85,7 +85,7 @@ contract DeploySwapAdapters is Script {
         0x111111125421cA6dc452d289314280a0f8842A65;
 
     function run() external {
-        uint256 deployerKey = vm.envUint("PRIVATE_KEY");
+        uint256 deployerKey = vm.envUint("DEPLOYER_PRIVATE_KEY");
 
         address allowanceHolder = vm.envOr(
             "ALLOWANCE_HOLDER_OVERRIDE",
@@ -163,7 +163,7 @@ contract DeploySwapAdapters is Script {
         console.log("    under `swapAdapters.zeroEx` + `swapAdapters.oneInch` keys (manual edit OK; ");
         console.log("    or extend lib/Deployments.sol with writer helpers for these in a follow-up).");
         console.log("  - When 0x ships a new Settler, run:");
-        console.log("    cast send <zeroExAdapter> 'addSwapTarget(address)' <newSettler> --rpc-url $RPC --private-key $PRIVATE_KEY");
+        console.log("    cast send <zeroExAdapter> 'addSwapTarget(address)' <newSettler> --rpc-url $RPC --private-key $DEPLOYER_PRIVATE_KEY");
     }
 
     /// @dev Parses `INITIAL_SETTLERS` env var (comma-separated 0x

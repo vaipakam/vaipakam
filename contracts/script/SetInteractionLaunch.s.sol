@@ -33,7 +33,7 @@ import {Deployments} from "./lib/Deployments.sol";
  *                                         `ConfigureNFTImageURIs` scripts
  *                                         use. Post-handover the deployer
  *                                         EOA holds zero roles, so the
- *                                         legacy `PRIVATE_KEY` would
+ *                                         legacy `DEPLOYER_PRIVATE_KEY` would
  *                                         revert here.
  *        - <CHAIN>_DIAMOND_ADDRESS     : Diamond proxy for this chain
  *        - INTERACTION_LAUNCH_TIMESTAMP: unix seconds of day 0, same on every chain

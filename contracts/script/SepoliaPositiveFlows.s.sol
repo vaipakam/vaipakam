@@ -68,10 +68,10 @@ contract SepoliaPositiveFlows is Script {
 
     function run() external {
         // ── Load env ────────────────────────────────────────────────────
-        // Phase-1 2-EOA topology: deployerKey (PRIVATE_KEY) funds accounts
+        // Phase-1 2-EOA topology: deployerKey (DEPLOYER_PRIVATE_KEY) funds accounts
         // and deploys mocks (gas-heavy, holds no roles post-handover);
         // adminKey (ADMIN_PRIVATE_KEY) signs role-gated calls on the Diamond.
-        deployerKey = vm.envUint("PRIVATE_KEY");
+        deployerKey = vm.envUint("DEPLOYER_PRIVATE_KEY");
         deployer = vm.addr(deployerKey);
         adminKey = vm.envUint("ADMIN_PRIVATE_KEY");
         admin = vm.envAddress("ADMIN_ADDRESS");

@@ -367,7 +367,7 @@ phase_preflight() {
 
   # 2. Required env vars
   MISSING=()
-  for v in PRIVATE_KEY ADMIN_PRIVATE_KEY ADMIN_ADDRESS TREASURY_ADDRESS \
+  for v in DEPLOYER_PRIVATE_KEY ADMIN_PRIVATE_KEY ADMIN_ADDRESS TREASURY_ADDRESS \
            VPFI_OWNER VPFI_TREASURY VPFI_INITIAL_MINTER \
            TIMELOCK_PROPOSER; do
     if [ -z "${!v:-}" ]; then MISSING+=("$v"); fi
@@ -385,7 +385,7 @@ phase_preflight() {
   echo "  ✓ Required env vars present"
 
   # 3. Deployer balance
-  DEPLOYER_ADDR=$(cast wallet address --private-key "$PRIVATE_KEY" 2>/dev/null || echo "?")
+  DEPLOYER_ADDR=$(cast wallet address --private-key "$DEPLOYER_PRIVATE_KEY" 2>/dev/null || echo "?")
   BAL=$(cast balance "$DEPLOYER_ADDR" --rpc-url "$RPC" 2>/dev/null || echo "?")
   echo "  ✓ Deployer:  $DEPLOYER_ADDR    balance: $BAL wei"
 
@@ -679,7 +679,7 @@ EOF
   # Write deployment_source.json (commit + deployer + timestamp) —
   # same shape as deploy-chain.sh writes, so the operator can see
   # at a glance which monorepo commit is live on this chain.
-  DEPLOYER_ADDR=$(cast wallet address --private-key "$PRIVATE_KEY" 2>/dev/null || echo "?")
+  DEPLOYER_ADDR=$(cast wallet address --private-key "$DEPLOYER_PRIVATE_KEY" 2>/dev/null || echo "?")
   COMMIT_HASH=$(git -C "$REPO_ROOT" rev-parse HEAD 2>/dev/null || echo "?")
   COMMIT_DIRTY=""
   if ! git -C "$REPO_ROOT" diff --quiet 2>/dev/null; then COMMIT_DIRTY=" (dirty)"; fi

@@ -61,7 +61,7 @@ contract BaseSepoliaPartialFlows is Script {
 
     function run() external {
         diamond = Deployments.readDiamond();
-        deployerKey = vm.envUint("PRIVATE_KEY");
+        deployerKey = vm.envUint("DEPLOYER_PRIVATE_KEY");
         deployer = vm.addr(deployerKey);
         adminKey = vm.envUint("ADMIN_PRIVATE_KEY");
         admin = vm.envAddress("ADMIN_ADDRESS");

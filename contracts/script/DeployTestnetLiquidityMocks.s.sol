@@ -50,7 +50,7 @@ import {Deployments} from "./lib/Deployments.sol";
  *         `0x33128a8fC17869897dcE68Ed026d694621f6FDfD`).
  *
  *         Required env vars:
- *           - PRIVATE_KEY        : deployer (pays for mock contract gas)
+ *           - DEPLOYER_PRIVATE_KEY        : deployer (pays for mock contract gas)
  *           - ADMIN_PRIVATE_KEY  : admin-role key (must hold
  *                                  `ORACLE_ADMIN_ROLE` on the
  *                                  Diamond so OracleAdminFacet
@@ -145,7 +145,7 @@ contract DeployTestnetLiquidityMocks is Script {
             "DeployTestnetLiquidityMocks: chain not supported (need 84532, 11155111, 97, 421614, 11155420, or 31337)"
         );
 
-        uint256 deployerKey = vm.envUint("PRIVATE_KEY");
+        uint256 deployerKey = vm.envUint("DEPLOYER_PRIVATE_KEY");
         uint256 adminKey = vm.envUint("ADMIN_PRIVATE_KEY");
         address weth;
         if (cid == 84532) {

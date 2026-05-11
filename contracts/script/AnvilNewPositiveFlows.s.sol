@@ -65,7 +65,7 @@ import {Deployments} from "./lib/Deployments.sol";
  *         WETH so it is independent of the bootstrap's mock set.
  *
  *         Env vars (same shape as SepoliaPositiveFlows):
- *           PRIVATE_KEY, ADMIN_PRIVATE_KEY, ADMIN_ADDRESS,
+ *           DEPLOYER_PRIVATE_KEY, ADMIN_PRIVATE_KEY, ADMIN_ADDRESS,
  *           LENDER_PRIVATE_KEY, LENDER_ADDRESS,
  *           BORROWER_PRIVATE_KEY, BORROWER_ADDRESS,
  *           NEW_LENDER_PRIVATE_KEY, NEW_LENDER_ADDRESS,
@@ -148,7 +148,7 @@ contract AnvilNewPositiveFlows is Script {
     // ─── Setup ────────────────────────────────────────────────────────────
 
     function _loadEnv() internal {
-        deployerKey = vm.envUint("PRIVATE_KEY");
+        deployerKey = vm.envUint("DEPLOYER_PRIVATE_KEY");
         adminKey = vm.envUint("ADMIN_PRIVATE_KEY");
         admin = vm.envAddress("ADMIN_ADDRESS");
         lenderKey = vm.envUint("LENDER_PRIVATE_KEY");

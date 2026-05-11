@@ -39,7 +39,7 @@ import {Deployments} from "./lib/Deployments.sol";
  *   ARB_SEPOLIA_DIAMOND_ADDRESS   (chainId 421614)
  *   POLYGON_AMOY_DIAMOND_ADDRESS  (chainId 80002)
  *   DIAMOND_ADDRESS               — optional fallback for unknown chains
- *   PRIVATE_KEY (deployer), ADMIN_PRIVATE_KEY, ADMIN_ADDRESS,
+ *   DEPLOYER_PRIVATE_KEY (deployer), ADMIN_PRIVATE_KEY, ADMIN_ADDRESS,
  *   LENDER_PRIVATE_KEY, LENDER_ADDRESS, BORROWER_PRIVATE_KEY, BORROWER_ADDRESS
  */
 contract SepoliaOpenOffers is Script {
@@ -68,7 +68,7 @@ contract SepoliaOpenOffers is Script {
 
     function run() external {
         diamond = _resolveDiamond();
-        deployerKey = vm.envUint("PRIVATE_KEY");
+        deployerKey = vm.envUint("DEPLOYER_PRIVATE_KEY");
         adminKey = vm.envUint("ADMIN_PRIVATE_KEY");
         admin = vm.envAddress("ADMIN_ADDRESS");
         lenderKey = vm.envUint("LENDER_PRIVATE_KEY");
