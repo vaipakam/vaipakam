@@ -283,6 +283,58 @@ export async function handleOffersByCreator(
 }
 
 /**
+ * GET /offers/by-current-holder/:addr?chainId=8453&limit=50&before=<offer_id>
+ *
+ * Returns offers where `addr` CURRENTLY holds the creator-position NFT.
+ * Pure D1 lookup on the `creator_current_owner` column maintained by
+ * chainIndexer.ts's ERC721 Transfer handler. Covers secondary-market
+ * recipients whose `creator` (LoanInitiated-time participant) wouldn't
+ * match the connected wallet — unlike `/offers/by-creator/:addr` which
+ * filters on the immutable `creator` column.
+ *
+ * Pairs with the on-chain authoritative fallback
+ * `MetricsFacet.getUserPositionOffers(user)` for the rare case where
+ * the indexer's cursor hasn't caught up to the latest Transfer.
+ */
+export async function handleOffersByCurrentHolder(
+  req: Request,
+  env: Env,
+  addrRaw: string,
+): Promise<Response> {
+  const url = new URL(req.url);
+  const chainId = parseChainId(url.searchParams.get('chainId')) ?? 8453;
+  const limit = parseLimit(url.searchParams.get('limit'));
+  const before = parseBefore(url.searchParams.get('before'));
+  const addr = addrRaw.toLowerCase();
+  if (!/^0x[0-9a-f]{40}$/.test(addr)) {
+    return jsonResponse({ error: 'bad-address' }, 400);
+  }
+  try {
+    const stmt = before
+      ? env.DB.prepare(
+          `SELECT * FROM offers
+           WHERE chain_id = ? AND creator_current_owner = ? AND offer_id < ?
+           ORDER BY offer_id DESC LIMIT ?`,
+        ).bind(chainId, addr, before, limit)
+      : env.DB.prepare(
+          `SELECT * FROM offers
+           WHERE chain_id = ? AND creator_current_owner = ?
+           ORDER BY offer_id DESC LIMIT ?`,
+        ).bind(chainId, addr, limit);
+    const rows = await stmt.all<OfferRow>();
+    const offers = (rows.results ?? []).map(toJson);
+    const next =
+      offers.length === limit && offers.length > 0
+        ? (offers[offers.length - 1] as { offerId: number }).offerId
+        : null;
+    return jsonResponse({ chainId, address: addr, offers, nextBefore: next });
+  } catch (err) {
+    console.error('[offerRoutes] byCurrentHolder failed', err);
+    return jsonResponse({ error: 'byCurrentHolder-failed' }, 500);
+  }
+}
+
+/**
  * GET /offers/recent?chainId=8453&limit=50&before=<offer_id>
  *
  * Cross-status recent feed: returns the most recent N offers

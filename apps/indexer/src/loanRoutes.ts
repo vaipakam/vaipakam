@@ -335,6 +335,66 @@ export async function handleLoansByParticipant(
   }
 }
 
+/**
+ * GET /loans/by-current-holder/:addr?chainId=8453&limit=50&before=<loan_id>
+ *
+ * Returns loans where `addr` is the CURRENT holder of either the
+ * lender- or borrower-position NFT. Same semantic surface as
+ * /loans/by-lender + /loans/by-borrower UNIONED, but answered via a
+ * pure D1 lookup on the `lender_current_owner` / `borrower_current_owner`
+ * columns maintained by chainIndexer.ts's ERC721 Transfer handler.
+ *
+ * Zero RPC cost per request — `getUserPositionLoans` on the Diamond is
+ * the on-chain authoritative fallback for the rare case where the
+ * indexer's cursor hasn't caught up to the latest Transfer.
+ *
+ * Each loan appears at most ONCE in the response even if `addr` holds
+ * both the lender and borrower NFT — downstream can compare against
+ * `lender_current_owner` / `borrower_current_owner` to infer role(s).
+ */
+export async function handleLoansByCurrentHolder(
+  req: Request,
+  env: Env,
+  addrRaw: string,
+): Promise<Response> {
+  const url = new URL(req.url);
+  const chainId = parseChainId(url.searchParams.get('chainId')) ?? 8453;
+  const limit = parseLimit(url.searchParams.get('limit'));
+  const before = parseBefore(url.searchParams.get('before'));
+  const addr = addrRaw.toLowerCase();
+  if (!/^0x[0-9a-f]{40}$/.test(addr)) {
+    return jsonResponse({ error: 'bad-address' }, 400);
+  }
+  try {
+    const stmt = before
+      ? env.DB.prepare(
+          `SELECT * FROM loans
+           WHERE chain_id = ?
+             AND (lender_current_owner = ? OR borrower_current_owner = ?)
+             AND loan_id < ?
+           ORDER BY loan_id DESC
+           LIMIT ?`,
+        ).bind(chainId, addr, addr, before, limit)
+      : env.DB.prepare(
+          `SELECT * FROM loans
+           WHERE chain_id = ?
+             AND (lender_current_owner = ? OR borrower_current_owner = ?)
+           ORDER BY loan_id DESC
+           LIMIT ?`,
+        ).bind(chainId, addr, addr, limit);
+    const rows = (await stmt.all<LoanRow>()).results ?? [];
+    const loans = rows.map(loanToJson);
+    const next =
+      rows.length === limit && rows.length > 0
+        ? (loans[loans.length - 1] as { loanId: number }).loanId
+        : null;
+    return jsonResponse({ chainId, address: addr, loans, nextBefore: next });
+  } catch (err) {
+    console.error('[loanRoutes] byCurrentHolder failed', err);
+    return jsonResponse({ error: 'byCurrentHolder-failed' }, 500);
+  }
+}
+
 /** GET /activity?chainId=8453&actor=0x...&loanId=N&offerId=N&kind=...&limit=50&before=<block:logIndex>
  *
  *  Cursor format: composite "block:logIndex" (e.g. `12345:6`) so a

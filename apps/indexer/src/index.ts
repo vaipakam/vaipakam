@@ -52,6 +52,7 @@ import {
   handleOffersRecent,
   handleOfferById,
   handleOffersByCreator,
+  handleOffersByCurrentHolder,
   handleOffersPreflight,
 } from './offerRoutes';
 import {
@@ -61,6 +62,7 @@ import {
   handleLoansTimeseries,
   handleLoanById,
   handleLoansByParticipant,
+  handleLoansByCurrentHolder,
   handleActivity,
   handleClaimables,
   handleLoansPreflight,
@@ -110,6 +112,10 @@ export default {
           /^\/offers\/by-creator\/(0x[0-9a-fA-F]{40})$/,
         );
         if (byCreator) return handleOffersByCreator(req, env, byCreator[1]);
+        const byHolder = url.pathname.match(
+          /^\/offers\/by-current-holder\/(0x[0-9a-fA-F]{40})$/,
+        );
+        if (byHolder) return handleOffersByCurrentHolder(req, env, byHolder[1]);
         const byId = url.pathname.match(/^\/offers\/(\d+)$/);
         if (byId) return handleOfferById(req, env, byId[1]);
       }
@@ -137,6 +143,12 @@ export default {
         );
         if (byBorrower) {
           return handleLoansByParticipant(req, env, byBorrower[1], 'borrower');
+        }
+        const byHolder = url.pathname.match(
+          /^\/loans\/by-current-holder\/(0x[0-9a-fA-F]{40})$/,
+        );
+        if (byHolder) {
+          return handleLoansByCurrentHolder(req, env, byHolder[1]);
         }
         const byId = url.pathname.match(/^\/loans\/(\d+)$/);
         if (byId) return handleLoanById(req, env, byId[1]);
