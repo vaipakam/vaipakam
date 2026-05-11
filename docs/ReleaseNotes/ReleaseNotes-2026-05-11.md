@@ -992,6 +992,101 @@ crawled).
 - Cross-chain reward-mesh peer wiring (`WireVPFIPeers.s.sol` /
   `oapp.setPeer`) — separate ceremony.
 
+## Watermark cold-chain backoff + the data-freshness badge
+
+Two follow-ups to the watermark singleton refactor, both in `apps/defi`.
+
+### Cold-chain backoff
+
+On a freshly-deployed chain (zero offers + zero loans — e.g. the
+empty Sepolia OfferBook right after a `--fresh` redeploy) the watermark
+probe was still firing at the hot-tier 5 s cadence
+(`getGlobalCounts` + `getBlock` per tick), burning RPC for a chain that
+has nothing for any data hook to display. `WatermarkContext`'s
+`chooseInterval()` now checks the last probe: if it observed
+`nextOfferId == 0n && nextLoanId == 0n`, the cadence stretches to 30 s
+regardless of subscriber tier. The first non-zero counter is itself an
+`advanced` event — it bumps `version` (subscribers refetch) AND
+restores the tier-driven min cadence, so the chain "wakes up" within
+~30 s of the first offer/loan landing. 30 s (not the 180 s `cool`
+tier) because a fresh chain is typically one you're actively testing —
+you want the first offer to surface promptly; it's still a 6× cut from
+the 5 s heartbeat. On mainnet the chain is never cold so this never
+fires. The offer's creator sees their own offer immediately anyway via
+the post-tx receipt refetch; only another user's *first* offer lags up
+to ~30 s.
+
+The watermark probe IS the "is there any offer?" direct-view check
+(`getGlobalCounts` is a one-call existence probe); the walk-all
+fallback was already a no-op on an empty chain. So the only real cost
+was the 5 s heartbeat itself.
+
+### Data-freshness badge — green ⟺ frontier fresh ∧ idle
+
+The top-bar `IndexerStatusBadge` answers "is what I'm looking at on
+this page near-real-time?". It previously measured staleness as
+`chainSafeHead − indexer.lastBlock`, which has two blind spots:
+
+1. **It ignored the client-side RPC tail scan.** When the central
+   indexer lags but the page's own chunked `eth_getLogs` catch-up
+   (`useIndexedActiveOffers` / `useIndexedActiveLoans`, scanning
+   `[indexer.lastBlock+1, watermark.safeBlock]` on top of the indexer
+   page) has reached head, the *displayed data* is fresh-to-head — but
+   the badge screamed "5000 blocks behind".
+2. **It said nothing about whether the page was still fetching.** A
+   fresh frontier doesn't mean the DOM is done painting — a
+   `getLoanDetails` multicall fan-out or an offer-page paginator can
+   still be running after the frontier is fresh.
+
+New model: a `DataFreshnessContext` registry that data hooks report
+into. Each source reports `{ frontier?, loading? }`:
+
+- `useOfferStats` → the central indexer's `lastBlock` + loading.
+- `useIndexedActiveOffers` / `useIndexedActiveLoans` → their RPC
+  tail-scan's upper bound (`watermark.safeBlock`) when the catch-up
+  actually ran + loading.
+- `useIndexedLoansForWallet` / `useUserLoans` / `useLogIndex` →
+  loading only (they read point-in-time / don't track a scanned range).
+
+The badge then derives two facts: `maxFrontier` (max scanned-through
+block over all sources — so the RPC tail that filled the indexer's gap
+gets credited) and `anyLoading` (OR of every reporter's loading flag).
+Gap = `chainSafeHead − maxFrontier`. **Live (green) ⟺ gap < 100 blocks
+AND nothing loading** — the trustworthy state. State machine:
+
+- **Live** (green, Wifi) — fresh frontier AND idle. What you see =
+  what's on chain right now.
+- **Live · updating** (green, spinning icon) — fresh frontier, but a
+  fetch is in flight (someone created an offer / a loan landed). Data
+  on screen is fresh; a row or two more may appear in a moment.
+- **Catching up** (amber) — gap below the severe threshold.
+- **Behind** (red) — gap ≥ 5000 blocks. Operator-actionable.
+- **Loading** (amber, spinning) — cold load, no frontier reported yet.
+- **Live (direct RPC)** (green) — indexer worker unreachable, but the
+  watermark probe is healthy and the log-scan path (always reaches
+  head) is serving the page.
+- **Live chain scan** (amber) — indexer AND watermark both unhealthy.
+- **Local dev** (blue) — wallet on Anvil/Hardhat.
+
+The colour is purely gap-driven; the spinning-icon decoration conveys
+"and a fetch is in flight" *without* a colour change, so the badge
+doesn't flicker green↔amber on every quick background refetch (which
+on a busy mainnet would be constant). The ⓘ popover gains a "Freshest
+data block" row (annotated "via indexer" / "via RPC tail-scan"
+depending on which source produced the max) and a "Fetch in progress:
+yes/no" row.
+
+The context resets on chainId change — a stale higher frontier from the
+prior chain would falsely claim freshness on the new chain. It returns
+inert defaults outside the provider, so the reporting hooks stay safe
+to mount without the wrapper (tests / storybook).
+
+### Not yet deployed
+
+Both changes are `apps/defi` only — they need a `--phase cf-defi`
+re-run to reach the live `vaipakam-defi` Worker. Contract / Worker
+state from the 2026-05-11 fresh redeploy is unaffected.
+
 ## Release-notes mid-stream date roll
 
 The conversation that produced this release-notes file started on
