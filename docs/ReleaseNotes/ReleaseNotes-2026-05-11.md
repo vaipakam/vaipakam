@@ -1148,6 +1148,134 @@ ta, ko, fr, de with proper translations (not en-fallback). The
 "Tête sûre de la chaîne" / "Safe-Head der Chain"). All 8 JSON files
 validated; tsc clean.
 
+## Indexer event-sourcing completeness — drift fix, missing handlers, payload completeness, guardrail
+
+Triggered by "no claims showing for wallet 0xE873… on base-sepolia".
+Root cause turned out to be deeper than the symptom: the indexer's
+`loans` table had every flow-test loan stuck `active` even though most
+had closed on-chain. Three interlocking problems, all now fixed.
+
+### The drift — and why claimables came back empty
+
+`apps/indexer/chainIndexer.ts` hand-maintained its event-decode
+allow-list as a `parseAbi([...])` of literal signature strings, and
+several had **drifted** from the deployed event shapes:
+
+| event | indexer's typed sig | actual on-chain sig |
+| --- | --- | --- |
+| `LoanRepaid` | 4 args | 7 args (`…, outstandingPrincipal, accruedInterest, newStatus`) |
+| `LoanDefaulted` | 2 args | 3 args (`…, newStatus`) |
+| `PartialRepaid` | 3 args | 4 args (`…, accruedInterest`) |
+| `OfferAccepted` | 3 args | 6 args (`…, matchAmount, newAmountFilled, newAccepted`) |
+| `OfferMatched` | 8 args | 10 args (`…, borrowerAmountFilled, borrowerAccepted`) |
+| `LenderFundsClaimed` / `BorrowerFundsClaimed` | 4 args | 5 args (`…, newBothClaimed`) |
+| `BorrowerLifRebateClaimed` | 3 args | 4 args (`…, newEscrowVpfiBalance`) |
+
+A wrong arg count changes the keccak event signature → different
+`topic0` → the indexer never matched the log. So **`LoanRepaid` and
+`LoanDefaulted` were never being decoded** — loans never flipped
+terminal — and `/claimables/:addr` (which is computed from terminal
+loans) returned empty for everyone. Same drift class as the May-2026
+"Watcher offer-decode" incident the CLAUDE.md warns about.
+
+On top of that, four terminal *paths* emitted events the indexer had
+no handler for at all: `LoanPreclosedDirect` (preclose option 1),
+`OffsetCompleted` (preclose option 3 — keyed by `originalLoanId`),
+`LoanRefinanced` (keyed by `oldLoanId`), and the loan-sale events.
+
+### Fix 1 — derive `EVENT_ABI` from the compiled bundle
+
+`EVENT_ABI` is now built from `DIAMOND_ABI_VIEM` (the compiler-emitted
+ABI bundle), filtering `type === 'event'` and deduping by canonical
+signature (the bundle re-exports each facet verbatim, so `OfferClosed`,
+`LoanSettlementBreakdown`, the `SwapAdapter*` trio, `Transfer`/`Approval`
+appear in several facets — `decodeEventLog` throws on ambiguous
+selectors, so dedupe keeping the first). The decode surface is now
+incapable of drifting. (`OfferMatchFacet` was also missing from the
+exported bundle entirely — added it to `exportFrontendAbis.sh`'s
+`FACETS=(...)` list and the `packages/contracts/src/abis/index.ts`
+barrel + `DIAMOND_ABI` spread, so its `OfferMatched`/`OfferClosed`
+events are in the bundle now.)
+
+### Fix 2 — handle the missing loan-state-change events
+
+New branches in the loan-event dispatch:
+`LoanPreclosedDirect` → flip Active→Repaid; `OffsetCompleted` → flip
+`originalLoanId` Active→Repaid; `LoanRefinanced` → flip `oldLoanId`
+Active→Repaid; `PartialRepaid` → `UPDATE loans.principal = newPrincipal`;
+`CollateralAdded` → `UPDATE loans.collateral_amount = newCollateralAmount`;
+`LoanObligationTransferred` → `UPDATE loans.borrower = newBorrower`.
+`flipLoanStatus` gained an optional `loanIdOverride` for the non-`loanId`-
+keyed terminal events. Deliberately not mirrored (documented inline):
+the fallback states (transient — D1 stays `active` through the episode),
+the loan-sale events (original loan stays Active with a new lender —
+covered by the Transfer handler; the sale's internal temp-loan
+Active→Repaid has no status event — contract-side follow-up), keeper /
+`*Details` companion / `OffsetOfferCreated` events (not in schema).
+
+Backfill: redeployed `vaipakam-indexer` with the fixed code, then
+purged D1 for chain 84532 so the cron re-crawls from `deployBlock`.
+Result: 33 base-sepolia loans, **22 now correctly terminal — was 0**.
+(The re-crawl's `getLoanDetails` read-backs were erroring during the
+catch-up, leaving rows `is_stub=1` with `token_ids='0'`; the
+`refreshStaleLoanTokenIds` cron lane heals those over the next few
+ticks. `/claimables/:addr` excludes stub rows, so it stays empty until
+the heal completes — but the Claims *page* doesn't depend on that
+endpoint: `useClaimables` reads each loan's details on-chain per-loan,
+so it surfaces claims as soon as the loan-status flip lands.)
+
+### Fix 3 — contract event payload completeness
+
+Audit follow-up: a `state-change/*` event should carry the **primary
+key + the post-state of every field it changes** so an indexer can
+`UPDATE` from the payload without a read-back. Four events were carrying
+deltas or implying state via the event name:
+
+- `PartialCollateralWithdrawn` — added `newCollateralAmount` (was only
+  carrying the `amount` delta; mirrors `CollateralAdded.newCollateralAmount`).
+- `LoanObligationTransferred` — added `newCollateralAmount` (carried the
+  new duration / rate / due-timestamp but not the new collateral).
+- `OffsetCompleted` — added `uint8 newStatus` (the original loan's
+  Active→Repaid transition was only implied by the event name).
+- `LoanRefinanced` — added `uint8 oldLoanNewStatus`, same rationale.
+
+`forge build` clean; the preclose / refinance / withdrawal / scenario8
+suites pass (the four `vm.expectEmit` topic-only test sites updated).
+The ABI re-export + the indexer's `PartialCollateralWithdrawn` handler
++ the facet redeploy land together in the next deploy cycle (changing
+an event signature changes its `topic0`, so a half-deploy would leave
+the indexer unable to decode in-flight events).
+
+### Fix 4 — the guardrail (so this can't recur)
+
+New `apps/indexer/scripts/check-event-coverage.mjs`: fails (exit 1) if
+any contract event tagged `@custom:event-category state-change/loan-mutation`
+or `state-change/offer-mutation` lacks a `log.eventName === '...'`
+handler in `chainIndexer.ts` AND isn't in the script's
+`DELIBERATELY_NOT_HANDLED` allowlist (each entry carries a one-line
+reason; it also warns about stale allowlist entries — events that no
+longer exist or have since been handled). Wired into
+`pnpm --filter @vaipakam/indexer typecheck` and exposed standalone as
+`pnpm --filter @vaipakam/indexer check-event-coverage`; documented in
+CLAUDE.md. Current state: 33 enforced state-change events — 19 handled,
+14 allowlisted. So a new loan/offer state-change event in the contracts
+must either be handled in the indexer or consciously allowlisted — "the
+indexer is a projection of on-chain state; keep it complete" is now
+enforced, not aspirational.
+
+### Also: the "no claims" immediate cause
+
+Separately from all the above, the user's browser was pinned to a
+months-old SPA bundle (`index-CfQ31b3L.js`) via the PWA service worker
+— that bundle, built without `.env.local`, resolved `deployBlock` to 0
+and tried to scan the chain from genesis in 10-block windows
+(`getLogs 0-9: rate-limited`). `useLogIndex` failing → `knownLoans`
+empty → `useClaimables` had nothing to walk. Fixed in earlier commits
+this session (`loadLoanIndex` genesis-scan guard; `DEFAULT_CHUNK`
+10→2000; the SW rewritten to network-first HTML so deploys propagate on
+the next load). One-time fix for already-stuck clients: DevTools →
+Application → Service Workers → Unregister → reload.
+
 ## Release-notes mid-stream date roll
 
 The conversation that produced this release-notes file started on
