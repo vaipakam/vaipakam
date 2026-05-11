@@ -49,6 +49,10 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
     /// @param oldLender The original lender's address.
     /// @param newLender The new lender's address.
     /// @param shortfallPaid Any shortfall amount paid by borrower.
+    /// @param oldLoanNewStatus The original loan's `LoanStatus` after the
+    ///        refinance — always `Repaid` (1). Carried explicitly so an
+    ///        indexer flips status from the payload rather than inferring
+    ///        it from the event name (uniform with `LoanRepaid.newStatus`).
     /// @custom:event-category state-change/loan-mutation
     event LoanRefinanced(
         uint256 indexed oldLoanId,
@@ -56,7 +60,8 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
         address indexed borrower,
         address oldLender,
         address newLender,
-        uint256 shortfallPaid
+        uint256 shortfallPaid,
+        uint8 oldLoanNewStatus
     );
 
     // Facet-specific errors (shared errors inherited from IVaipakamErrors)
@@ -353,7 +358,8 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
             msg.sender,
             oldLoan.lender,
             newLender,
-            shortfall
+            shortfall,
+            uint8(oldLoan.status)
         );
 
         // Passthrough event for lender yield-fee VPFI discount so indexers

@@ -85,6 +85,11 @@ contract PrecloseFacet is
     /// @param shortfallPaid Any shortfall paid by the original borrower
     ///        to clear the lender's accrued/principal owed.
     /// @param newBorrowerTokenId Position-NFT id minted for the new borrower.
+    /// @param newCollateralAmount Loan's collateral AFTER the transfer
+    ///        (= the offer's collateral amount). Carries the post-state
+    ///        so an indexer can `UPDATE loans SET collateral_amount = ?`
+    ///        without a read-back — the obligation-transfer path also
+    ///        resets collateral, duration, rate and startTime.
     /// @param newInterestRateBps Loan's interest rate AFTER the transfer
     ///        (= the offer's interest rate).
     /// @param newDurationDays Loan's duration AFTER the transfer
@@ -102,6 +107,7 @@ contract PrecloseFacet is
         address indexed newBorrower,
         uint256 shortfallPaid,
         uint256 newBorrowerTokenId,
+        uint256 newCollateralAmount,
         uint256 newInterestRateBps,
         uint256 newDurationDays,
         uint64 newDueTimestamp,
@@ -116,11 +122,17 @@ contract PrecloseFacet is
         uint256 shortfallPaid
     );
 
+    /// @param newStatus The original loan's `LoanStatus` after offset
+    ///        completion — always `Repaid` (1). Carried explicitly so an
+    ///        indexer flips status from the payload rather than inferring
+    ///        it from the event name (uniform with `LoanRepaid.newStatus`,
+    ///        `LoanDefaulted.newStatus`).
     /// @custom:event-category state-change/loan-mutation
     event OffsetCompleted(
         uint256 indexed originalLoanId,
         uint256 indexed newOfferId,
-        address indexed borrower
+        address indexed borrower,
+        uint8 newStatus
     );
 
     // ─── Errors ──────────────────────���─────────────────────────────────��────
@@ -616,6 +628,7 @@ contract PrecloseFacet is
             newBorrower,
             accruedInterest + shortfall,
             loan.borrowerTokenId,
+            loan.collateralAmount,
             loan.interestRateBps,
             loan.durationDays,
             uint64(loan.startTime + loan.durationDays * 1 days),
@@ -1026,7 +1039,12 @@ contract PrecloseFacet is
         delete s.offsetOfferToLoanId[newOfferId];
         delete s.loanToOffsetOfferId[originalLoanId];
 
-        emit OffsetCompleted(originalLoanId, newOfferId, loan.borrower);
+        emit OffsetCompleted(
+            originalLoanId,
+            newOfferId,
+            loan.borrower,
+            uint8(LibVaipakam.LoanStatus.Repaid)
+        );
     }
 
     // ─── Internal Helpers ─────────────────────────��─────────────────────────

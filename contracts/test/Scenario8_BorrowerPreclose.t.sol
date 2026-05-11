@@ -271,7 +271,10 @@ contract Scenario8_BorrowerPreclose is Test {
         // Expect LoanObligationTransferred event
         vm.expectEmit(true, true, true, false);
         // Topic-only check (data=false in expectEmit above); zero placeholders.
-        emit PrecloseFacet.LoanObligationTransferred(activeLoanId, borrower, newBorrower, 0, 0, 0, 0, 0, 0);
+        // (loanId, origBorrower, newBorrower, shortfall, newBorrowerTokenId,
+        //  newCollateralAmount, newInterestRateBps, newDurationDays,
+        //  newDueTimestamp, newHealthFactor)
+        emit PrecloseFacet.LoanObligationTransferred(activeLoanId, borrower, newBorrower, 0, 0, 0, 0, 0, 0, 0);
 
         // Original borrower transfers obligation
         vm.prank(borrower);
@@ -366,9 +369,10 @@ contract Scenario8_BorrowerPreclose is Test {
         // Mock cross-facet NFT calls for completeOffset
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector), "");
 
-        // Expect OffsetCompleted event
+        // Expect OffsetCompleted event — (originalLoanId, newOfferId,
+        // borrower, newStatus). data=false, so newStatus is a placeholder.
         vm.expectEmit(true, true, true, false);
-        emit PrecloseFacet.OffsetCompleted(activeLoanId, expectedNewOfferId, borrower);
+        emit PrecloseFacet.OffsetCompleted(activeLoanId, expectedNewOfferId, borrower, 0);
 
         // Complete the offset (permissionless)
         vm.prank(borrower);

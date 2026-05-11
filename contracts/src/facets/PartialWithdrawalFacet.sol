@@ -33,6 +33,11 @@ contract PartialWithdrawalFacet is DiamondReentrancyGuard, DiamondPausable, IVai
     /// @param loanId The loan ID.
     /// @param borrower The borrower's address.
     /// @param amount The withdrawn collateral amount.
+    /// @param newCollateralAmount The post-withdrawal `loan.collateralAmount`
+    ///        (carries the state, not just the `amount` delta — mirrors
+    ///        `AddCollateralFacet.CollateralAdded.newCollateralAmount` so
+    ///        an indexer can `UPDATE loans SET collateral_amount = ?`
+    ///        directly without a read-back or unsafe string arithmetic).
     /// @param newHF The post-withdrawal Health Factor (scaled to 1e18).
     /// @param newLTV The post-withdrawal LTV (in bps).
     /// @custom:event-category state-change/loan-mutation
@@ -40,6 +45,7 @@ contract PartialWithdrawalFacet is DiamondReentrancyGuard, DiamondPausable, IVai
         uint256 indexed loanId,
         address indexed borrower,
         uint256 amount,
+        uint256 newCollateralAmount,
         uint256 newHF,
         uint256 newLTV
     );
@@ -112,6 +118,7 @@ contract PartialWithdrawalFacet is DiamondReentrancyGuard, DiamondPausable, IVai
             loanId,
             msg.sender,
             amount,
+            loan.collateralAmount,
             simulatedHF,
             simulatedLTV
         );

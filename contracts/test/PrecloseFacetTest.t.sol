@@ -536,7 +536,10 @@ contract PrecloseFacetTest is Test {
 
         vm.expectEmit(true, true, true, false);
         // Topic-only check (data=false in expectEmit above); zero placeholders.
-        emit PrecloseFacet.LoanObligationTransferred(activeLoanId, borrower, newBorrower, 0, 0, 0, 0, 0, 0);
+        // (loanId, origBorrower, newBorrower, shortfall, newBorrowerTokenId,
+        //  newCollateralAmount, newInterestRateBps, newDurationDays,
+        //  newDueTimestamp, newHealthFactor)
+        emit PrecloseFacet.LoanObligationTransferred(activeLoanId, borrower, newBorrower, 0, 0, 0, 0, 0, 0, 0);
         vm.prank(borrower);
         PrecloseFacet(address(diamond)).transferObligationViaOffer(activeLoanId, validOffer);
 

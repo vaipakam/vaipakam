@@ -256,7 +256,9 @@ contract PartialWithdrawalFacetTest is Test {
         vm.mockCall(address(diamond), abi.encodeWithSelector(EscrowFactoryFacet.escrowWithdrawERC20.selector), abi.encode(true));
 
         vm.expectEmit(true, true, false, false);
-        emit PartialWithdrawalFacet.PartialCollateralWithdrawn(activeLoanId, borrower, 30 ether, 0, 0);
+        // (loanId, borrower, amount, newCollateralAmount, newHF, newLTV) —
+        // data=false in expectEmit, so the non-indexed args are placeholders.
+        emit PartialWithdrawalFacet.PartialCollateralWithdrawn(activeLoanId, borrower, 30 ether, 0, 0, 0);
         vm.prank(borrower);
         PartialWithdrawalFacet(address(diamond)).partialWithdrawCollateral(activeLoanId, 30 ether);
 
