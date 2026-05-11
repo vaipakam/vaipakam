@@ -89,6 +89,7 @@ FACETS=(
   "MetricsDashboardFacet"
   "OfferCancelFacet"
   "OfferFacet"
+  "OfferMatchFacet"
   "OracleAdminFacet"
   "OracleFacet"
   "PartialWithdrawalFacet"
