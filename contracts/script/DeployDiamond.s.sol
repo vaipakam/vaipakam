@@ -1056,7 +1056,7 @@ contract DeployDiamond is Script {
     }
 
     function _getMetricsSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](38);
+        s = new bytes4[](40);
         s[0] = MetricsFacet.getProtocolTVL.selector;
         s[1] = MetricsFacet.getProtocolStats.selector;
         s[2] = MetricsFacet.getUserCount.selector;
@@ -1119,6 +1119,13 @@ contract DeployDiamond is Script {
         // {getActiveOffersByAssetPair} (id-only) and {getOffer}
         // (full struct, single id).
         s[37] = MetricsFacet.getActiveOffersByAssetPairRanked.selector;
+
+        // §8b — NFT-holder-keyed enumeration (secondary-market-safe).
+        // Mirrors `userLoanIds`/`userOfferIds` views above but uses
+        // ERC721Enumerable + reverse maps so secondary-market recipients
+        // are included. See MetricsFacet:734-ish "§8b" block.
+        s[38] = MetricsFacet.getUserPositionLoans.selector;
+        s[39] = MetricsFacet.getUserPositionOffers.selector;
     }
 
     /// AnalyticalGettersDesign §3.1 — per-user dashboard surface. One
