@@ -70,6 +70,16 @@ library LibMetricsHooks {
         // Position NFT → loan id reverse mapping (O(1) NFT-rental lookup).
         if (loan.lenderTokenId != 0) s.loanIdByPositionTokenId[loan.lenderTokenId] = id;
         if (loan.borrowerTokenId != 0) s.loanIdByPositionTokenId[loan.borrowerTokenId] = id;
+
+        // The accepted-offer's tokenId carries over from offer-position to
+        // loan-position (LoanFacet._copyFinancialFields assigns it to
+        // lenderTokenId or borrowerTokenId depending on offerType). Clear
+        // the offer-side reverse mapping so `getUserPositionOffers` no
+        // longer returns this tokenId as an OPEN offer position — the
+        // loan-side mapping now owns it. Both slots clear is safe:
+        // whichever was set will be cleared; the other is a no-op delete.
+        if (loan.lenderTokenId != 0) delete s.offerIdByPositionTokenId[loan.lenderTokenId];
+        if (loan.borrowerTokenId != 0) delete s.offerIdByPositionTokenId[loan.borrowerTokenId];
     }
 
     /// @notice Updates counters and the active-set list for a loan status edge.

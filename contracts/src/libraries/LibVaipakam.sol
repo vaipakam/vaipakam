@@ -1717,6 +1717,16 @@ library LibVaipakam {
         ///      historical lookups still resolve; readers that require
         ///      liveness must check `loan.status` themselves.
         mapping(uint256 => uint256) loanIdByPositionTokenId;
+        /// @dev Reverse map from Vaipakam position NFT id → offer id.
+        ///      Populated at offer creation in OfferFacet._writeOfferFields;
+        ///      cleared when the offer transitions to a loan (accept) or
+        ///      gets cancelled. Pairs with `loanIdByPositionTokenId` to
+        ///      give MetricsFacet a complete tokenId → (offer | loan)
+        ///      reverse lookup in O(1). Used by `getUserPositionOffers`
+        ///      to enumerate the offers whose creator-NFT a given user
+        ///      currently holds (catches secondary-market recipients
+        ///      whose address is NOT in `userOfferIds[user]`).
+        mapping(uint256 => uint256) offerIdByPositionTokenId;
         /// @dev Append-with-swap-pop list of active loan ids. Enables
         ///      O(results) iteration for MetricsFacet.getActiveLoansPaginated.
         uint256[] activeLoanIdsList;

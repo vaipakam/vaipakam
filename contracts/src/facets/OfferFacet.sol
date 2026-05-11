@@ -841,6 +841,14 @@ contract OfferFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
         unchecked {
             offer.positionTokenId = ++s.nextTokenId;
         }
+        // Reverse map: tokenId → offerId. Mirrors the loan-side
+        // `loanIdByPositionTokenId` populated by LibMetricsHooks at
+        // LoanInitiated. Lets MetricsFacet's `getUserPositionOffers`
+        // view enumerate offers whose creator-NFT a given user holds
+        // (including secondary-market recipients). Cleared at offer
+        // cancel and at accept (when the tokenId transitions to a
+        // loan and `loanIdByPositionTokenId` takes over).
+        s.offerIdByPositionTokenId[offer.positionTokenId] = offerId;
         (bool success, ) = address(VaipakamNFTFacet(address(this))).call(
             abi.encodeWithSelector(
                 VaipakamNFTFacet.mintNFT.selector,

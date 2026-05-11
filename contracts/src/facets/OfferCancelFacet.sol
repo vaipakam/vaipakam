@@ -292,6 +292,13 @@ contract OfferCancelFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
         // `accepted = true` so the open-book queries skip it; the
         // storage slot stays intact. Zero-fill cancels (no matches)
         // delete normally — frees the slot for gas refund.
+        //
+        // Clear the offer-NFT reverse mapping in both branches: the
+        // offer is no longer "open" so `getUserPositionOffers` should
+        // not return it for the current NFT holder. The NFT itself
+        // stays around (the holder keeps it as a historical artifact
+        // or burns it via the existing burn path).
+        delete s.offerIdByPositionTokenId[offer.positionTokenId];
         if (offer.amountFilled > 0) {
             offer.accepted = true;
         } else {
