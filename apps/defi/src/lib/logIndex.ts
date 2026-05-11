@@ -285,9 +285,14 @@ interface CachedShape {
 
 // Block range per `eth_getLogs` call. Overridable via `VITE_LOG_INDEX_CHUNK`
 // because RPC providers disagree wildly: Alchemy free tier caps at 10 blocks,
-// Infura free at ~1k, publicnode at ~10k. Default to a conservative 10 so the
-// app works out-of-the-box on free Alchemy; bump it via env for real RPCs.
-const DEFAULT_CHUNK = 10;
+// Infura free at ~1k, publicnode at ~10k, most paid tiers ≥2k. Default to
+// 2000 — works on the vast majority of providers and keeps the scan to a
+// handful of requests for the typical "indexer-tail → head" window even if
+// the env var fails to bake in (the request count explodes if a tiny chunk
+// meets a long range — see the `deployBlock <= 0` guard in `runScan` for the
+// other half of that footgun). If you really are on free Alchemy's 10-block
+// cap, set `VITE_LOG_INDEX_CHUNK=10` explicitly.
+const DEFAULT_CHUNK = 2000;
 /** Max recent-accepted offers retained per chain. 20 is plenty for the
  *  Offer Book's filter-scoped anchor lookup — most filters will hit a
  *  match within the first 1–3 entries, and beyond ~20 the rates are
@@ -657,6 +662,27 @@ async function runScan(
   chainId: number,
   indexerLastBlockHint?: number,
 ): Promise<LogIndexResult> {
+  // Misconfiguration guard — runs before any cache read or RPC call.
+  // `deployBlock` must be the chain's actual Diamond-deploy block; a
+  // value ≤ 0 means the chain config didn't resolve (e.g.
+  // `VITE_DEFAULT_CHAIN_ID` failed to bake into the bundle, so
+  // `DEFAULT_CHAIN.deployBlock` came through as 0). Without this guard
+  // the scan would start at genesis and `eth_getLogs` its way up —
+  // millions of requests against the RPC, instant rate-limit (the
+  // `getLogs 0-9: rate-limited` failure mode). Likewise, a zero-address
+  // `diamondAddress` means no Diamond is deployed for the resolved
+  // chain (the sentinel `useDiamondRead` hands back). Either way:
+  // don't scan — throw a clear, operator-actionable error instead of
+  // hammering the node.
+  if (deployBlock <= 0 || diamondAddress.toLowerCase() === ZERO_ADDRESS) {
+    throw new Error(
+      `logIndex scan skipped: chain config not resolved ` +
+        `(deployBlock=${deployBlock}, diamond=${diamondAddress}). ` +
+        `Likely a missing VITE_DEFAULT_CHAIN_ID / deployments.json mismatch ` +
+        `in this build — reload to the latest bundle. Scanning from genesis ` +
+        `would rate-limit the RPC.`,
+    );
+  }
   const cached = readCache(chainId, diamondAddress) ?? emptyCache(deployBlock);
   // Upper bound is the safe-tag head, NOT latest. Caching events from
   // the unsafe tip would mean a 1- to 32-block reorg could remove a
