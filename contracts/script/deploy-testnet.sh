@@ -495,32 +495,42 @@ archive_chain_state() {
   mkdir -p "$deploy_dir/.markers" "$deploy_dir/.history"
 
   echo "  ✓ archived prior chain state -> $(realpath --relative-to="$CONTRACTS_DIR" "$archive")/"
+}
 
-  # ── D1 purge for this chain ────────────────────────────────────
-  # The indexer Worker stores its rows (offers, loans, events,
-  # cursor) in `vaipakam-archive` D1 keyed by chain_id. A new
-  # Diamond on the same chain (CREATE-deployed each run, so always
-  # a new address) makes every prior-Diamond row stale: orphaned
-  # decode shapes that the cron will surface alongside new rows
-  # until the operator manually purges. Closing that loop here so
-  # `--fresh` means fresh on every surface, not just the chain-
-  # state files. Best-effort: skip silently when apps/indexer/
-  # isn't present (alternate trees) or when wrangler isn't
-  # authenticated (the operator's CI runner may not have CF auth).
+# Helper: purge D1 indexer rows for THIS chain's chainId. Extracted from
+# archive_chain_state so it can fire under --fresh regardless of whether
+# the on-disk addresses.json is present. (The prior coupling let stale
+# D1 rows persist past a --fresh whenever the on-disk artifacts had
+# already been archived in an earlier half-failed run — the chain-state
+# files were gone, the script saw "nothing to archive", and silently
+# skipped the D1 purge too. New Diamond + stale rows = exactly the
+# pollution --fresh is supposed to prevent.)
+#
+# Chain-scoped: every DELETE has WHERE chain_id = $CHAIN_ID. Other
+# chains' rows are never touched.
+#
+# Best-effort: silent skip when apps/indexer/ isn't present (alternate
+# trees) or wrangler isn't authenticated (operator's CI runner may not
+# have CF auth).
+purge_chain_d1() {
   local indexer_dir="$REPO_ROOT/apps/indexer"
-  if [ -d "$indexer_dir" ]; then
-    local cid="$CHAIN_ID"
-    if [ -n "$cid" ]; then
-      echo "  purging D1 rows for chainId=$cid in vaipakam-archive..."
-      local sql=""
-      for t in activity_events diag_errors indexer_cursor loans notify_state offers oracle_snapshot_state; do
-        sql="${sql}DELETE FROM \"$t\" WHERE chain_id = $cid; "
-      done
-      ( cd "$indexer_dir" && pnpm exec wrangler d1 execute vaipakam-archive \
-        --remote --command "$sql" 2>&1 | grep -E "Executed|Error" | head -2 ) || \
-        echo "    ⚠ D1 purge returned non-zero — wrangler not authenticated, or D1 unreachable. Re-run via the indexer dir if needed."
-    fi
+  if [ ! -d "$indexer_dir" ]; then
+    echo "    (skipping D1 purge — apps/indexer/ not present)"
+    return 0
   fi
+  local cid="$CHAIN_ID"
+  if [ -z "$cid" ]; then
+    echo "    (skipping D1 purge — CHAIN_ID unset)"
+    return 0
+  fi
+  echo "  purging D1 rows for chainId=$cid in vaipakam-archive..."
+  local sql=""
+  for t in activity_events diag_errors indexer_cursor loans notify_state offers oracle_snapshot_state; do
+    sql="${sql}DELETE FROM \"$t\" WHERE chain_id = $cid; "
+  done
+  ( cd "$indexer_dir" && pnpm exec wrangler d1 execute vaipakam-archive \
+    --remote --command "$sql" 2>&1 | grep -E "Executed|Error" | head -2 ) || \
+    echo "    ⚠ D1 purge returned non-zero — wrangler not authenticated, or D1 unreachable. Re-run via the indexer dir if needed."
 }
 
 # Helper: re-seed indexer_cursor at the chain's safe head. Called
@@ -670,6 +680,8 @@ EOF
     fi
     echo "[0a] --fresh: archiving prior chain state for $CHAIN_SLUG"
     archive_chain_state "$CHAIN_SLUG"
+    echo "[0b] --fresh: purging D1 rows for chainId=$CHAIN_ID"
+    purge_chain_d1
     echo
     echo "  ⚠ Bump REWARD_VERSION in .env before this re-deploy lands. The"
     echo "    Reward OApp proxy is CREATE2-addressed off REWARD_VERSION;"
@@ -677,6 +689,18 @@ EOF
     echo "    proxy or hit a CreateCollision against the prior deploy's"
     echo "    bytecode. Current REWARD_VERSION: ${REWARD_VERSION:-(unset)}"
     echo "    Suggested next: v$(date -u +%Y%m%d)-rehearsal"
+    echo
+  elif [ "$FRESH" = "1" ]; then
+    # --fresh with no on-disk addresses.json. Could be a clean first
+    # deploy (no D1 rows either — no-op), OR a re-run after an earlier
+    # half-failed --fresh archived the artifacts but didn't manage to
+    # purge D1. Either way, calling purge_chain_d1 is safe (chain-scoped
+    # DELETE on rows that may not exist) and is the only reliable way
+    # to guarantee no stale rows survive into the new deploy. Without
+    # this branch, a stale-rows-with-no-addresses.json scenario would
+    # silently pollute the indexer with prior-Diamond decode shapes.
+    echo "[0] --fresh: no addresses.json present — purging D1 rows for chainId=$CHAIN_ID anyway"
+    purge_chain_d1
     echo
   fi
 

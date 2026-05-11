@@ -1,8 +1,8 @@
 {
   "chainSlug": "sepolia",
   "chainId": 11155111,
-  "deployedAt": "2026-05-10T18:55:50+0530",
-  "monorepoCommit": "7099aafa696b5fe1a16bab5c0c7f1f82e5ddcfcd (dirty)",
+  "deployedAt": "2026-05-11T10:05:26+0530",
+  "monorepoCommit": "ad15a4a0f9afe2b686a09ac5e5a3dddd168de350 (dirty)",
   "deployer": "0xb985F8987720C6d76f02909890AA21C11bC6EBCA",
-  "diamond": "0xD2903cbb8Bb0f34fbb688a6E381Dc6c73056DB1c"
+  "diamond": "0x492f83F2Ab99B7b13E1F8CAf6fbAeB7300B85302"
 }

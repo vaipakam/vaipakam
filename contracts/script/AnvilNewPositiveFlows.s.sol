@@ -773,6 +773,13 @@ contract AnvilNewPositiveFlows is Script {
         uint8 INIT_PRECLOSE = 1 << 3;
         vm.startBroadcast(AliceKey);
         ProfileFacet(diamond).setKeeperAccess(true);
+        // approveKeeper reverts KeeperAlreadyApproved if a prior scenario
+        // on the same chain (e.g. PartialFlows Phase B P-P) granted Bot
+        // an authorization that's still live. Revoke first so the
+        // scenario stays idempotent across multi-suite runs on persistent
+        // testnet state — try-style swallow keeps the first-run case
+        // (no prior auth) free of a useless revert.
+        try ProfileFacet(diamond).revokeKeeper(Bot) {} catch {}
         ProfileFacet(diamond).approveKeeper(Bot, INIT_PRECLOSE);
         ProfileFacet(diamond).setLoanKeeperEnabled(loanId, Bot, true);
         vm.stopBroadcast();
