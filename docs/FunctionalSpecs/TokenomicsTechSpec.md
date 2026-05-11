@@ -611,6 +611,7 @@ LayerZero hardening requirements:
 - malformed, undersized, or oversized reward packets must revert with a typed payload-size error carrying the observed and expected sizes
 - peer wiring is considered complete only after every expected `(source OApp, remote eid)` pair returns the right-padded peer address from `peers(uint32)`. Runbooks should preserve decoded batch review data for Safe-routed peer wiring.
 - mainnet DVN configuration defaults to a hardened `3 required + 2 optional, threshold 1-of-2` policy. Testnet rehearsals may use an explicit `1 required + 1 optional, threshold 1-of-1` mode for operator practice, but mainnet scripts must keep the hardened policy as the default.
+- testnet DVN broadcasts may be deliberately parked when the live endpoint defaults are functionally equivalent to the intended rehearsal posture and the ceremony would add many low-signal broadcasts. Mainnet hardening must still be explicit and verified before launch.
 - fixed-rate buy reconciliation should be monitored off-chain: canonical-chain processed buy events should be cross-checked against source-chain `BuyRequested` events by request id, buyer, and amount
 - the buy-reconciliation watchdog should run from the operations Worker, read canonical-chain processed-buy events, resolve the originating LayerZero endpoint id to that source chain's RPC and adapter address, and verify that a matching source-chain `BuyRequested` event exists with the same request id, buyer, and amount
 - the buy-reconciliation watchdog should expose an on-chain kill switch for planned ceremonies; auto-pausing on mismatch is an operations decision for a later phase, not a Phase 1 requirement
@@ -619,6 +620,7 @@ LayerZero hardening requirements:
 - off-chain monitoring should check OFT supply invariants by comparing Base canonical-adapter locked VPFI against the sum of mirror-chain `totalSupply()` values
 - off-chain monitoring should alert on oversized single-transaction VPFI flows above an operator-configured threshold
 - the LayerZero ops watcher should remain internal / private and separate from the public HF watcher / keeper reference implementation
+- LayerZero watcher secrets should remain chain-scope explicit. Mainnet-shaped `OAPP_*` environment keys must not be populated with testnet addresses just to make a rehearsal worker start; use testnet-specific configuration or leave the lane disabled.
 
 ---
 
