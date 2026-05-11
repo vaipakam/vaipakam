@@ -1750,7 +1750,8 @@
     "viaRpcTail": "via RPC tail-scan",
     "statusFetchInProgress": "Fetch in progress",
     "statusFetchYes": "yes",
-    "statusFetchNo": "no"
+    "statusFetchNo": "no",
+    "liveSafeBlockTooltip": "Polling the chain's safe head every 2 s while this popover is open — the number ticks up as blocks are finalised."
   },
   "chainDiagnostics": {
     "panelTitle": "Chain & Indexer",

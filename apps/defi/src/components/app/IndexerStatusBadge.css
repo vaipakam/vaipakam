@@ -104,6 +104,37 @@
   }
 }
 
+/* Live-poll indicator — small pulsing green dot next to the "Chain
+   safe head" value while the popover is open and the dedicated safe-
+   block poll is running. Signals "this number is ticking live", as
+   opposed to the watermark-snapshot value shown before the first poll
+   resolves. */
+.indexer-badge-live-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-left: 6px;
+  border-radius: 50%;
+  background: #2d8a2d;
+  vertical-align: middle;
+  animation: indexer-badge-pulse 1.6s ease-in-out infinite;
+}
+
+[data-theme='dark'] .indexer-badge-live-dot {
+  background: #6ed16e;
+}
+
+@keyframes indexer-badge-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.35; transform: scale(0.7); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .indexer-badge-live-dot {
+    animation: none;
+  }
+}
+
 /* Info button — small ⓘ next to the status pill. */
 .indexer-badge-info {
   display: inline-flex;

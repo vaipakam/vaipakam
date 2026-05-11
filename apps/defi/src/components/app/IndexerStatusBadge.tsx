@@ -42,11 +42,11 @@
  * full diagnostics drawer hosts the deeper rows.
  */
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Info, Wifi, WifiOff, Cpu, RefreshCw, AlertTriangle } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
-import { useReadChain } from '../../contracts/useDiamond';
+import { useDiamondPublicClient, useReadChain } from '../../contracts/useDiamond';
 import { useLiveWatermark } from '../../hooks/useLiveWatermark';
 import { watermarkPolicy } from '../../hooks/watermarkPolicy';
 import { useDataFreshness } from '../../context/DataFreshnessContext';
@@ -61,6 +61,14 @@ const SEVERE_GAP_BLOCKS = 5000;
  *  the RPC probe isn't returning fresh data, so "direct RPC" isn't a
  *  healthy fallback. */
 const WATERMARK_STALE_SEC = 90;
+
+/** Cadence for the popover's live safe-block poll. Only runs while the
+ *  popover is open, so the RPC cost is bounded by how long the user
+ *  keeps it open (seconds, not hours). 2 s is faster than every chain's
+ *  block time except Arbitrum's sub-second cadence, so the displayed
+ *  number visibly ticks up on rollups and snaps forward in jumps on L1
+ *  Sepolia (where `safe` only advances on epoch finality). */
+const LIVE_SAFE_BLOCK_POLL_MS = 2_000;
 
 const LOCAL_DEV_CHAIN_IDS: ReadonlySet<number> = new Set([31337, 1337]);
 
@@ -93,9 +101,17 @@ interface PopoverContent {
 export function IndexerStatusBadge({ compact }: Props) {
   const { t } = useTranslation();
   const chain = useReadChain();
+  const publicClient = useDiamondPublicClient();
   const { snapshot: watermarkSnapshot } = useLiveWatermark(watermarkPolicy('warm'));
   const { maxFrontier, anyLoading, bySource } = useDataFreshness();
   const [popoverOpen, setPopoverOpen] = useState(false);
+  // Live chain safe-head — polled directly only while the popover is
+  // open. `null` until the first poll resolves (the popover seeds the
+  // row with the watermark snapshot's safeBlock in the meantime, so
+  // it's never blank). This is the chain's *actual* safe head, distinct
+  // from `maxFrontier` (what the on-screen data covers — deliberately
+  // separate; the data lags the chain head by design).
+  const [liveSafeBlock, setLiveSafeBlock] = useState<number | null>(null);
   const wrapRef = useRef<HTMLSpanElement | null>(null);
 
   // Click-outside / Escape close.
@@ -115,6 +131,34 @@ export function IndexerStatusBadge({ compact }: Props) {
       document.removeEventListener('keydown', onKey);
     };
   }, [popoverOpen]);
+
+  // Live safe-block poll — active only while the popover is open. One
+  // `getBlock({safe})` per tick; stops the moment the popover closes
+  // (or the component unmounts / chain switches). On close, we drop the
+  // last value so the next open re-seeds from a fresh poll rather than
+  // showing a stale number from a previous session.
+  useEffect(() => {
+    if (!popoverOpen) {
+      setLiveSafeBlock(null);
+      return;
+    }
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    async function poll() {
+      try {
+        const blk = await publicClient.getBlock({ blockTag: 'safe' });
+        if (!cancelled) setLiveSafeBlock(Number(blk.number));
+      } catch {
+        // RPC hiccup — keep the last value, retry on the next tick.
+      }
+      if (!cancelled) timer = setTimeout(poll, LIVE_SAFE_BLOCK_POLL_MS);
+    }
+    void poll();
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+    };
+  }, [popoverOpen, publicClient]);
 
   const isLocalDev =
     chain.chainId !== undefined && LOCAL_DEV_CHAIN_IDS.has(chain.chainId);
@@ -342,9 +386,20 @@ export function IndexerStatusBadge({ compact }: Props) {
               <Row
                 label={t('indexerBadge.statusChainSafeHead')}
                 value={
-                  popover.safeHead !== null
-                    ? popover.safeHead.toLocaleString()
-                    : t('indexerBadge.statusChainSafeHeadUnknown')
+                  liveSafeBlock !== null ? (
+                    <>
+                      {liveSafeBlock.toLocaleString()}
+                      <span
+                        className="indexer-badge-live-dot"
+                        title={t('indexerBadge.liveSafeBlockTooltip')}
+                        aria-label={t('indexerBadge.liveSafeBlockTooltip')}
+                      />
+                    </>
+                  ) : popover.safeHead !== null ? (
+                    popover.safeHead.toLocaleString()
+                  ) : (
+                    t('indexerBadge.statusChainSafeHeadUnknown')
+                  )
                 }
               />
             )}
@@ -381,7 +436,7 @@ export function IndexerStatusBadge({ compact }: Props) {
 
 interface RowProps {
   label: string;
-  value: string;
+  value: ReactNode;
 }
 
 function Row({ label, value }: RowProps) {
