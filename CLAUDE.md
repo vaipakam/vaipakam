@@ -219,6 +219,22 @@ of truth for every Worker's read-decode shape, and event routing
 uses topic-hash matching (positional decode is never used for
 events).
 
+**Indexer event-coverage guardrail.** `apps/indexer`'s `EVENT_ABI` is
+DERIVED from the compiled `DIAMOND_ABI_VIEM` (never hand-typed) so the
+decode surface can't drift. On top of that,
+`apps/indexer/scripts/check-event-coverage.mjs` (wired into
+`pnpm --filter @vaipakam/indexer typecheck` and exposed as
+`pnpm --filter @vaipakam/indexer check-event-coverage`) fails CI if any
+contract event tagged `@custom:event-category state-change/loan-mutation`
+or `state-change/offer-mutation` lacks a `log.eventName === '...'`
+handler in `chainIndexer.ts` AND isn't in the script's
+`DELIBERATELY_NOT_HANDLED` allowlist (each entry carries a one-line
+reason). So when you add a new loan/offer state-change event to the
+contracts, you must either handle it in the indexer or consciously
+allowlist it — the May-2026 "every loan stuck active" bug (the indexer
+missing the preclose/offset/refinance terminal events, plus drifted
+arg counts on `LoanRepaid`/`LoanDefaulted`) can't recur silently.
+
 ## Deployments sync (Stage 3 split — single target)
 
 Every consumer in the monorepo — apps/{defi,www} for the React
