@@ -330,7 +330,7 @@ async function runChainIndexerForChain(
   const activityEvents = await recordActivityEvents(allLogs, env, chainId, blockTimestamps);
 
   // Per-domain detail refresh, batched per tick.
-  const detailRefreshes = await refreshStaleOfferDetails(
+  const detailRefreshes = await refreshStubOffers(
     client,
     diamond,
     chainId,
@@ -341,7 +341,7 @@ async function runChainIndexerForChain(
   // getLoanDetails call per loan, batched per tick. After bootstrap
   // the values are immutable for the loan's lifetime; the next tick
   // skips them via the `lender_token_id = '0'` predicate.
-  await refreshStaleLoanTokenIds(client, diamond, chainId, env);
+  await refreshStubLoans(client, diamond, chainId, env);
 
   // Advance cursor only after every step succeeded — atomic from the
   // cron's perspective.
@@ -440,7 +440,7 @@ async function processOfferLogs(
   let newOffers = 0;
   for (const o of created) {
     // Try to fetch the full Offer struct inline — saves a later
-    // UPDATE from `refreshStaleOfferDetails` and closes the
+    // UPDATE from `refreshStubOffers` and closes the
     // stub-row window so no downstream reader (loan handler,
     // loanRoutes API, frontend) ever sees `'0x'` placeholder
     // assets. Cost: same number of RPC calls (one per OfferCreated)
@@ -448,7 +448,7 @@ async function processOfferLogs(
     // offer (no follow-up UPDATE).
     //
     // Fail-soft: if the RPC reverts or times out, fall through to
-    // the placeholder INSERT — `refreshStaleOfferDetails` retries
+    // the placeholder INSERT — `refreshStubOffers` retries
     // on the next cron tick. No event is dropped on the floor.
     let detail: Record<string, unknown> | null = null;
     try {
@@ -554,7 +554,7 @@ async function processOfferLogs(
     }
 
     // Fallback: RPC failed during the inline fetch. Record the offer
-    // as a stub (`is_stub = 1`) so `refreshStaleOfferDetails` heals
+    // as a stub (`is_stub = 1`) so `refreshStubOffers` heals
     // it on a later tick. The targeted predicate selects on this
     // boolean, not on `lending_asset` content — once
     // `refreshOfferDetails` UPDATEs canonical data + flips `is_stub`
@@ -698,7 +698,7 @@ async function processOfferLogs(
  * a placeholder OR whose status flipped (in case a partial-fill
  * ratcheted `amountFilled`). Bound by DETAILS_REFRESH_BATCH per tick.
  */
-async function refreshStaleOfferDetails(
+async function refreshStubOffers(
   client: PublicClient,
   diamond: Address,
   chainId: number,
@@ -838,20 +838,27 @@ async function refreshOfferDetails(
 const LOAN_TOKEN_ID_BATCH = 50;
 
 /**
- * Pull `getLoanDetails(loanId).{lenderTokenId, borrowerTokenId}` for
- * any loan row currently flagged `is_stub = 1`. Bootstraps the
- * one-time mapping (loanId → lender NFT, borrower NFT) so the
- * by-lender / by-borrower / claimables endpoints can multicall
- * `ownerOf` against current chain state.
+ * Heal lane for stub loan rows. Any loan row flagged `is_stub = 1`
+ * (created by the `LoanInitiated` insert path's fail-soft fallback when
+ * a companion-event payload was unavailable / a read-back failed) gets
+ * its FULL canonical state re-fetched here via `getLoanDetails(loanId)`
+ * — asset metadata (asset_type, collateral_asset_type, lending_asset,
+ * collateral_asset, duration_days, token_id, collateral_token_id), the
+ * position-NFT IDs (lender_token_id, borrower_token_id — needed by the
+ * by-lender / by-borrower / claimables endpoints' `ownerOf` multicall
+ * and the Transfer handler's WHERE clause), principal, collateral, the
+ * periodic-interest fields — then `is_stub` flips to 0 and the row
+ * drops out of this predicate forever.
  *
- * `is_stub` mirrors the offers-side flag (migration 0008) and is
- * authoritative — `lender_token_id != '0'` could in principle be
- * legit (highly unlikely but possible) so the explicit boolean is
- * a less ambiguous staleness signal. Once `getLoanDetails` returns
- * canonical values and the UPDATE writes them, `is_stub` flips to 0
- * and the row drops out of this predicate forever.
+ * `is_stub` mirrors the offers-side flag (migration 0008) and is the
+ * authoritative staleness signal — `lender_token_id != '0'` could in
+ * principle be legit-but-incomplete, so the explicit boolean is less
+ * ambiguous. In steady state this lane rarely fires: the insert path
+ * builds the row from the `LoanInitiatedDetails` companion event, so a
+ * stub only happens if that event was somehow absent in the scan
+ * window — vanishingly rare belt-and-suspenders coverage.
  */
-async function refreshStaleLoanTokenIds(
+async function refreshStubLoans(
   client: PublicClient,
   diamond: Address,
   chainId: number,
@@ -979,7 +986,7 @@ async function processLoanLogs(
       // refresh pass.
       //
       // Fail-soft: RPC failure → INSERT a stub row (is_stub = 1,
-      // token_ids = '0') and let `refreshStaleLoanTokenIds` heal
+      // token_ids = '0') and let `refreshStubLoans` heal
       // it on a later tick via the `is_stub = 1` predicate.
       type LoanDetail = {
         id: bigint;
@@ -1083,7 +1090,7 @@ async function processLoanLogs(
       }
 
       // Fallback: getLoanDetails RPC failed. Stub-INSERT with
-      // is_stub = 1 — `refreshStaleLoanTokenIds` heals via the
+      // is_stub = 1 — `refreshStubLoans` heals via the
       // targeted is_stub predicate on a later tick. The event
       // payload (`a.lender`, `a.borrower`, `a.principal`,
       // `a.collateralAmount`) gives us enough to record the row

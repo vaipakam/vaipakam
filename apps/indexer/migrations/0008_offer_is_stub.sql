@@ -1,7 +1,7 @@
 -- 0008_offer_is_stub.sql — replace the active-offer churn predicate
 -- with a targeted is_stub flag.
 --
--- Background: `refreshStaleOfferDetails` previously selected stale
+-- Background: `refreshStubOffers` previously selected stale
 -- rows via `lending_asset = '0x' OR status = 'active'`. The
 -- second clause was a correctness-preserving sledgehammer for
 -- partial-fill `amountFilled` ratcheting on Range-Order offers,

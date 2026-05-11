@@ -11,10 +11,10 @@
 --    boolean. This migration brings loans to parity: explicit
 --    `is_stub`, identical lifecycle to offers (set to 0 on
 --    inline-fetch success, 1 on stub-fallback INSERT, flipped to 0
---    when `refreshStaleLoanTokenIds` writes canonical token IDs).
+--    when `refreshStubLoans` writes canonical token IDs).
 --
 -- 2. The token-id columns are queried in three hot paths:
---      - `refreshStaleLoanTokenIds`: `WHERE chain_id = ? AND lender_token_id = '0'`
+--      - `refreshStubLoans`: `WHERE chain_id = ? AND lender_token_id = '0'`
 --      - `/loans/by-lender/:addr`:    `WHERE chain_id = ? AND lender_token_id != '0' AND loan_id < ?`
 --      - `/loans/by-borrower/:addr`:  `WHERE chain_id = ? AND borrower_token_id != '0' AND loan_id < ?`
 --    Today none of these have a covering index — they fall through
@@ -28,7 +28,7 @@
 ALTER TABLE loans ADD COLUMN is_stub INTEGER NOT NULL DEFAULT 0;
 
 -- Backfill: any existing loan with lender_token_id = '0' is a stub.
--- Once `refreshStaleLoanTokenIds` heals such a row by writing real
+-- Once `refreshStubLoans` heals such a row by writing real
 -- token IDs, the chainIndexer flips is_stub to 0 alongside.
 UPDATE loans SET is_stub = 1 WHERE lender_token_id = '0';
 
