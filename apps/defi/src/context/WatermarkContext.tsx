@@ -76,6 +76,24 @@ const WatermarkContext = createContext<WatermarkContextValue | null>(null);
 // keeps growing the sequence; collisions are impossible.
 let nextSubscriberId = 1;
 
+// Cold-chain backoff cadence. When a probe shows the chain has zero
+// offers AND zero loans (a freshly-deployed chain, or one nobody has
+// touched), there is genuinely nothing for any data hook to display —
+// OfferBook is empty, dashboards are empty, claimables are empty. In
+// that state we ignore subscriber tiers and probe at this cadence
+// instead of burning the hot-tier 5 s heartbeat. The first non-zero
+// counter snaps the cadence back to the normal tier-driven min.
+//
+// 30 s (not the 180 s `cool` tier) because a freshly-deployed chain is
+// typically one you're actively testing — you want the first offer to
+// surface promptly. 30 s is a 6× cut from the 5 s heartbeat while still
+// detecting the cold→warm transition within half a minute. Trade-off:
+// another user's FIRST offer on a cold chain surfaces up to ~30 s late;
+// the offer's creator sees it immediately via the post-tx receipt
+// refetch, and the tab-focus probe still fires one immediate read
+// whenever the user comes back to the tab.
+const COLD_CHAIN_INTERVAL_MS = 30_000;
+
 export function WatermarkProvider({ children }: { children: ReactNode }) {
   const chain = useReadChain();
   // Canonical app-chain-pinned public client. `useDiamondPublicClient`
@@ -153,7 +171,18 @@ export function WatermarkProvider({ children }: { children: ReactNode }) {
         }
       }
       if (intervals.length === 0) return null;
-      return Math.min(...intervals);
+      const tierInterval = Math.min(...intervals);
+      // Cold-chain backoff: a probe that observed zero offers AND zero
+      // loans means there's nothing for any subscriber to display.
+      // Stretch the cadence to COLD_CHAIN_INTERVAL_MS regardless of
+      // tier until the first counter goes non-zero. lastProbe is null
+      // until the first probe completes — until then we use the tier
+      // cadence so the initial probe fires promptly.
+      const lp = lastProbe.current;
+      if (lp && lp.nextOfferId === 0n && lp.nextLoanId === 0n) {
+        return Math.max(tierInterval, COLD_CHAIN_INTERVAL_MS);
+      }
+      return tierInterval;
     }
 
     async function probe(): Promise<void> {
