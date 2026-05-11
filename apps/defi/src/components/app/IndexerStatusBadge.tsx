@@ -1,30 +1,55 @@
 /**
- * Top-bar indexer freshness signal — a colour-coded pill driven purely
- * by the gap between the watcher's last-indexed `safe` block and the
- * chain's current `safe` head, in block-space. Five states:
+ * Top-bar data-freshness signal — a colour-coded pill whose state
+ * answers "is what I'm looking at on this page near-real-time?".
  *
- *   - **Caught up (green)** — gap < CAUGHT_UP_GAP_BLOCKS.
+ * Two independent inputs:
+ *
+ *  1. **Frontier freshness** — `chainSafeHead - maxFrontier`, where
+ *     `maxFrontier` is the highest block any data source on the page
+ *     has confirmed it covers. That's NOT just the central indexer's
+ *     `lastBlock`: the client-side RPC tail-scans (`useIndexedActiveOffers`
+ *     / `useIndexedLoans`, which run a chunked `eth_getLogs` catch-up
+ *     over `[indexer.lastBlock+1, watermark.safeBlock]` on top of the
+ *     indexer page) routinely push the effective frontier to the chain
+ *     head even when the central indexer is thousands of blocks behind.
+ *     Both flow through `DataFreshnessContext`; the badge reads the max.
+ *
+ *  2. **Idle** — `anyLoading` from the same context: true while any
+ *     registered data fetch is in flight. A fresh frontier doesn't mean
+ *     the DOM is done painting (a `getLoanDetails` multicall fan-out or
+ *     an offer-page paginator can still be running). "Live" — the
+ *     trustworthy state — means fresh frontier AND idle.
+ *
+ * States:
+ *
+ *   - **Live (green, Wifi)** — gap < CAUGHT_UP_GAP_BLOCKS AND idle.
+ *     What you see = what's on chain right now.
+ *   - **Live · updating (green, spinning)** — gap < CAUGHT_UP_GAP_BLOCKS
+ *     but a fetch is in flight. Data on screen is fresh; a refresh may
+ *     surface a row or two more in a moment.
  *   - **Catching up (amber)** — gap below SEVERE_GAP_BLOCKS.
  *   - **Behind (red)** — gap ≥ SEVERE_GAP_BLOCKS. Operator-actionable.
- *   - **Live chain scan (amber)** — indexer cache unreachable.
+ *   - **Loading (amber, spinning)** — cold load in progress, no frontier
+ *     reported yet.
+ *   - **Live (direct RPC) (green)** — indexer worker unreachable, but
+ *     the watermark probe is healthy and the page is reading live from
+ *     chain via the log-scan path (which always catches up to head).
+ *   - **Live chain scan (amber)** — indexer AND watermark both unhealthy.
  *   - **Local dev (blue)** — wallet on Anvil/Hardhat.
  *
- * Clicking the small ⓘ icon opens a concise popover anchored to the
- * pill — heading + plain-language body + the three block-space rows
- * (state, last safe block, gap) + a footnote explaining "safe block".
- * The popover is the at-a-glance answer; the full diagnostics drawer
- * (independent FAB) hosts deeper rows like browser-storage usage,
- * frontend build hash, and the dev-only purge affordance.
+ * The ⓘ popover anchors the at-a-glance detail (state · chain · freshest
+ * data block + source · chain safe head · gap · fetch-in-progress); the
+ * full diagnostics drawer hosts the deeper rows.
  */
 
 import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Info, Wifi, WifiOff, Cpu, RefreshCw, AlertTriangle } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
-import { useOfferStats } from '../../hooks/useOfferStats';
 import { useReadChain } from '../../contracts/useDiamond';
 import { useLiveWatermark } from '../../hooks/useLiveWatermark';
 import { watermarkPolicy } from '../../hooks/watermarkPolicy';
+import { useDataFreshness } from '../../context/DataFreshnessContext';
 import './IndexerStatusBadge.css';
 
 /** Block-space thresholds — single source of truth here AND mirrored
@@ -32,31 +57,44 @@ import './IndexerStatusBadge.css';
 const CAUGHT_UP_GAP_BLOCKS = 100;
 const SEVERE_GAP_BLOCKS = 5000;
 
+/** A watermark snapshot older than this (seconds) is treated as stale —
+ *  the RPC probe isn't returning fresh data, so "direct RPC" isn't a
+ *  healthy fallback. */
+const WATERMARK_STALE_SEC = 90;
+
 const LOCAL_DEV_CHAIN_IDS: ReadonlySet<number> = new Set([31337, 1337]);
+
+/** Frontier sources whose block we want to credit to the *indexer*
+ *  rather than the *RPC tail* when explaining where the freshest block
+ *  came from. (Only `offerStats` reports the indexer's `lastBlock`.) */
+const INDEXER_FRONTIER_SOURCES: ReadonlySet<string> = new Set(['offerStats']);
 
 interface Props {
   /** Hide the descriptive text on narrow viewports. */
   compact?: boolean;
 }
 
+type FrontierOrigin = 'indexer' | 'rpcTail' | null;
+
 interface PopoverContent {
   heading: string;
   body: string;
   stateLabel: string;
-  /** Optional rows shown only when the indexer cache is reachable. */
+  /** When false, the block-detail rows are hidden (local-dev, or no
+   *  block data available at all). */
   showBlockRows: boolean;
-  lastIndexedBlock: number | null;
+  freshestBlock: number | null;
+  frontierOrigin: FrontierOrigin;
   safeHead: number | null;
   blockGap: number | null;
+  fetchInProgress: boolean;
 }
 
 export function IndexerStatusBadge({ compact }: Props) {
   const { t } = useTranslation();
-  const { stats } = useOfferStats();
   const chain = useReadChain();
-  const { snapshot: watermarkSnapshot } = useLiveWatermark(
-    watermarkPolicy('warm'),
-  );
+  const { snapshot: watermarkSnapshot } = useLiveWatermark(watermarkPolicy('warm'));
+  const { maxFrontier, anyLoading, bySource } = useDataFreshness();
   const [popoverOpen, setPopoverOpen] = useState(false);
   const wrapRef = useRef<HTMLSpanElement | null>(null);
 
@@ -84,9 +122,38 @@ export function IndexerStatusBadge({ compact }: Props) {
     ? `${chain.name} (${chain.chainId})`
     : `chainId ${chain.chainId ?? '?'}`;
 
-  // Resolve all visual + popover content in one pass to keep the JSX flat.
+  const safeHead =
+    watermarkSnapshot && watermarkSnapshot.safeBlock > 0n
+      ? Number(watermarkSnapshot.safeBlock)
+      : null;
+  const watermarkAgeSec = watermarkSnapshot
+    ? Math.floor(Date.now() / 1000) - watermarkSnapshot.fetchedAt
+    : null;
+  const watermarkHealthy =
+    safeHead !== null && watermarkAgeSec !== null && watermarkAgeSec < WATERMARK_STALE_SEC;
+
+  // Which source produced the freshest block? Used only for the popover
+  // "via X" annotation — pick the source whose frontier equals the max.
+  const frontierOrigin: FrontierOrigin = (() => {
+    if (maxFrontier === null) return null;
+    let origin: FrontierOrigin = null;
+    for (const [key, slice] of Object.entries(bySource)) {
+      if (slice.frontier === maxFrontier) {
+        origin = INDEXER_FRONTIER_SOURCES.has(key) ? 'indexer' : 'rpcTail';
+        // RPC-tail wins the tie-break for the label — it's the more
+        // impressive claim (we scanned all the way to head ourselves).
+        if (origin === 'rpcTail') break;
+      }
+    }
+    return origin;
+  })();
+
+  const blockGap =
+    maxFrontier !== null && safeHead !== null ? Math.max(0, safeHead - maxFrontier) : null;
+
   let variantClass: string;
   let Icon: LucideIcon;
+  let iconSpinning = false;
   let label: string;
   let popover: PopoverContent;
 
@@ -99,50 +166,51 @@ export function IndexerStatusBadge({ compact }: Props) {
       body: t('indexerBadge.localDevBody'),
       stateLabel: t('indexerBadge.localDev'),
       showBlockRows: false,
-      lastIndexedBlock: null,
+      freshestBlock: null,
+      frontierOrigin: null,
       safeHead: null,
       blockGap: null,
+      fetchInProgress: anyLoading,
     };
-  } else if (!stats || !stats.indexer) {
-    // Indexer cache unreachable (worker down, env mis-configured,
-    // hosted-domain retired, etc.). Sub-state on whether the live RPC
-    // tail is healthy: if the watermark probe has succeeded recently
-    // AND we have a non-zero safeBlock, the page IS reading live from
-    // chain successfully — this is a "synced via direct RPC" green
-    // state, not a degraded state. Falls back to the legacy amber
-    // "live chain scan" only when the watermark is stale or missing,
-    // which means RPC itself is also unhealthy.
-    const watermarkAgeSec = watermarkSnapshot
-      ? Math.floor(Date.now() / 1000) - watermarkSnapshot.fetchedAt
-      : null;
-    const liveRpcHealthy =
-      watermarkSnapshot &&
-      watermarkSnapshot.safeBlock > 0n &&
-      watermarkAgeSec !== null &&
-      watermarkAgeSec < 90;
-
-    if (liveRpcHealthy) {
-      // Green — direct-from-chain reads are working; page renders
-      // up to the chain `safe` head via the live RPC tail.
-      const safeBlockNum = Number(watermarkSnapshot.safeBlock);
+  } else if (maxFrontier === null && anyLoading) {
+    // Cold load — nothing reported a frontier yet, fetches in flight.
+    variantClass = 'indexer-badge--catching-up';
+    Icon = RefreshCw;
+    iconSpinning = true;
+    label = t('indexerBadge.loading');
+    popover = {
+      heading: t('indexerBadge.loadingHeading'),
+      body: t('indexerBadge.loadingBody'),
+      stateLabel: t('indexerBadge.loadingState'),
+      showBlockRows: true,
+      freshestBlock: null,
+      frontierOrigin: null,
+      safeHead,
+      blockGap: null,
+      fetchInProgress: true,
+    };
+  } else if (maxFrontier === null) {
+    // Cold load done, but no frontier — the indexer worker and the
+    // RPC-tail hooks didn't report a block. Either the worker is
+    // unreachable (page being served by the legacy log-scan path,
+    // which always reaches head), or the page just has no data hooks
+    // mounted that report a frontier. Sub-state on watermark health.
+    if (watermarkHealthy) {
       variantClass = 'indexer-badge--cached';
       Icon = Wifi;
-      label = `${t('indexerBadge.lastSafeBlock')}: ${safeBlockNum.toLocaleString()}`;
+      label = `${t('indexerBadge.lastSafeBlock')}: ${safeHead!.toLocaleString()}`;
       popover = {
         heading: t('indexerBadge.liveRpcInSyncHeading'),
         body: t('indexerBadge.liveRpcInSyncBody'),
         stateLabel: t('indexerBadge.liveRpcInSync'),
         showBlockRows: true,
-        // No indexer to compare against — skip the indexed-block row
-        // and the gap row; show only the chain safe head.
-        lastIndexedBlock: null,
-        safeHead: safeBlockNum,
+        freshestBlock: null,
+        frontierOrigin: null,
+        safeHead,
         blockGap: null,
+        fetchInProgress: anyLoading,
       };
     } else {
-      // Amber — legacy "live chain scan" state, kept for the case
-      // where neither the indexer nor the watermark probe is
-      // returning fresh data (RPC degraded or unreachable).
       variantClass = 'indexer-badge--live';
       Icon = WifiOff;
       label = t('indexerBadge.live');
@@ -151,67 +219,95 @@ export function IndexerStatusBadge({ compact }: Props) {
         body: t('indexerBadge.liveBody'),
         stateLabel: t('indexerBadge.live'),
         showBlockRows: false,
-        lastIndexedBlock: null,
+        freshestBlock: null,
+        frontierOrigin: null,
         safeHead: null,
         blockGap: null,
+        fetchInProgress: anyLoading,
       };
     }
   } else {
-    const lastIndexedBlock = stats.indexer.lastBlock;
-    const safeBlockNum =
-      watermarkSnapshot && watermarkSnapshot.safeBlock > 0n
-        ? Number(watermarkSnapshot.safeBlock)
-        : null;
-    const blockGap =
-      safeBlockNum !== null
-        ? Math.max(0, safeBlockNum - lastIndexedBlock)
-        : 0;
-
-    if (blockGap >= SEVERE_GAP_BLOCKS) {
+    // We have a frontier. Colour purely on the gap; the spinner conveys
+    // "and a fetch is in flight" without a colour change.
+    const gap = blockGap ?? 0;
+    if (gap >= SEVERE_GAP_BLOCKS) {
       variantClass = 'indexer-badge--behind';
       Icon = AlertTriangle;
-      label = t('indexerBadge.behind', { n: blockGap.toLocaleString() });
+      label = t('indexerBadge.behind', { n: gap.toLocaleString() });
       popover = {
         heading: t('indexerBadge.behindHeading'),
         body: t('indexerBadge.behindBody'),
         stateLabel: t('indexerBadge.behindState'),
         showBlockRows: true,
-        lastIndexedBlock,
-        safeHead: safeBlockNum,
-        blockGap,
+        freshestBlock: maxFrontier,
+        frontierOrigin,
+        safeHead,
+        blockGap: gap,
+        fetchInProgress: anyLoading,
       };
-    } else if (blockGap >= CAUGHT_UP_GAP_BLOCKS) {
+    } else if (gap >= CAUGHT_UP_GAP_BLOCKS) {
       variantClass = 'indexer-badge--catching-up';
       Icon = RefreshCw;
-      label = t('indexerBadge.catchingUp', { n: blockGap.toLocaleString() });
+      iconSpinning = anyLoading;
+      label = t('indexerBadge.catchingUp', { n: gap.toLocaleString() });
       popover = {
         heading: t('indexerBadge.catchingUpHeading'),
         body: t('indexerBadge.catchingUpBody'),
         stateLabel: t('indexerBadge.catchingUpState'),
         showBlockRows: true,
-        lastIndexedBlock,
-        safeHead: safeBlockNum,
-        blockGap,
+        freshestBlock: maxFrontier,
+        frontierOrigin,
+        safeHead,
+        blockGap: gap,
+        fetchInProgress: anyLoading,
+      };
+    } else if (anyLoading) {
+      // Fresh frontier, but a fetch is still running — "Live · updating".
+      // Green colour (the data on screen IS fresh) + spinning icon.
+      variantClass = 'indexer-badge--cached';
+      Icon = RefreshCw;
+      iconSpinning = true;
+      label = t('indexerBadge.liveUpdating', { n: maxFrontier.toLocaleString() });
+      popover = {
+        heading: t('indexerBadge.liveUpdatingHeading'),
+        body: t('indexerBadge.liveUpdatingBody'),
+        stateLabel: t('indexerBadge.liveUpdatingState'),
+        showBlockRows: true,
+        freshestBlock: maxFrontier,
+        frontierOrigin,
+        safeHead,
+        blockGap: gap,
+        fetchInProgress: true,
       };
     } else {
+      // Fresh AND idle — the trustworthy "Live" state.
       variantClass = 'indexer-badge--cached';
       Icon = Wifi;
-      label = `${t('indexerBadge.lastSafeBlock')}: ${lastIndexedBlock.toLocaleString()}`;
+      label = `${t('indexerBadge.lastSafeBlock')}: ${maxFrontier.toLocaleString()}`;
       popover = {
         heading: t('indexerBadge.caughtUpHeading'),
         body: t('indexerBadge.caughtUpBody'),
         stateLabel: t('indexerBadge.caughtUp'),
         showBlockRows: true,
-        lastIndexedBlock,
-        safeHead: safeBlockNum,
-        blockGap,
+        freshestBlock: maxFrontier,
+        frontierOrigin,
+        safeHead,
+        blockGap: gap,
+        fetchInProgress: false,
       };
     }
   }
 
+  const originLabel =
+    popover.frontierOrigin === 'indexer'
+      ? t('indexerBadge.viaIndexer')
+      : popover.frontierOrigin === 'rpcTail'
+        ? t('indexerBadge.viaRpcTail')
+        : null;
+
   return (
     <span className={`indexer-badge ${variantClass}`} ref={wrapRef}>
-      <Icon size={12} />
+      <Icon size={12} className={iconSpinning ? 'indexer-badge-icon--spinning' : undefined} />
       {!compact && <span>{label}</span>}
       <button
         type="button"
@@ -230,18 +326,16 @@ export function IndexerStatusBadge({ compact }: Props) {
         <div className="indexer-badge-popover" role="dialog">
           <div className="indexer-badge-popover-heading">{popover.heading}</div>
           <dl className="indexer-badge-popover-status">
-            <Row
-              label={t('indexerBadge.statusState')}
-              value={popover.stateLabel}
-            />
-            <Row
-              label={t('indexerBadge.statusChain')}
-              value={chainLabel}
-            />
-            {popover.showBlockRows && popover.lastIndexedBlock !== null && (
+            <Row label={t('indexerBadge.statusState')} value={popover.stateLabel} />
+            <Row label={t('indexerBadge.statusChain')} value={chainLabel} />
+            {popover.showBlockRows && popover.freshestBlock !== null && (
               <Row
-                label={t('indexerBadge.statusLastSafeBlock')}
-                value={popover.lastIndexedBlock.toLocaleString()}
+                label={t('indexerBadge.statusFreshestBlock')}
+                value={
+                  originLabel
+                    ? `${popover.freshestBlock.toLocaleString()} (${originLabel})`
+                    : popover.freshestBlock.toLocaleString()
+                }
               />
             )}
             {popover.showBlockRows && (
@@ -261,6 +355,16 @@ export function IndexerStatusBadge({ compact }: Props) {
                   popover.blockGap < CAUGHT_UP_GAP_BLOCKS
                     ? t('indexerBadge.statusBlockGapCaughtUp')
                     : popover.blockGap.toLocaleString()
+                }
+              />
+            )}
+            {popover.showBlockRows && (
+              <Row
+                label={t('indexerBadge.statusFetchInProgress')}
+                value={
+                  popover.fetchInProgress
+                    ? t('indexerBadge.statusFetchYes')
+                    : t('indexerBadge.statusFetchNo')
                 }
               />
             )}

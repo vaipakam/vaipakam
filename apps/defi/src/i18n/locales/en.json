@@ -1736,7 +1736,21 @@
     "openDiagnosticsTitle": "Open diagnostics",
     "liveRpcInSync": "Live (in sync)",
     "liveRpcInSyncHeading": "Reading live from the chain — in sync",
-    "liveRpcInSyncBody": "The indexer cache is unreachable, so the page is fetching every offer / loan / activity row directly from the chain via RPC. The latest finalised (safe) block has been read recently, so the page is up-to-date. Submitting transactions while green is safe — what the page shows is what's on chain."
+    "liveRpcInSyncBody": "The indexer cache is unreachable, so the page is fetching every offer / loan / activity row directly from the chain via RPC. The latest finalised (safe) block has been read recently, so the page is up-to-date. Submitting transactions while green is safe — what the page shows is what's on chain.",
+    "loading": "Loading…",
+    "loadingState": "Loading",
+    "loadingHeading": "Loading page data",
+    "loadingBody": "The page is fetching its initial data — offers, loans, activity. Wait for this to settle before submitting a transaction; a tx that depends on data still being fetched might act on a partial view. When it finishes you'll see the freshness state (Live / Catching up / Behind).",
+    "liveUpdating": "Live · block {{n}} (updating)",
+    "liveUpdatingState": "Live (refreshing)",
+    "liveUpdatingHeading": "Data is fresh — refreshing",
+    "liveUpdatingBody": "Everything on this page is fresh to the latest finalised block. A refresh is in flight right now (someone created an offer or a loan landed on chain), so a row or two more may appear in a moment. Safe to act on what's shown — the refresh only adds, it doesn't invalidate.",
+    "statusFreshestBlock": "Freshest data block",
+    "viaIndexer": "via indexer",
+    "viaRpcTail": "via RPC tail-scan",
+    "statusFetchInProgress": "Fetch in progress",
+    "statusFetchYes": "yes",
+    "statusFetchNo": "no"
   },
   "chainDiagnostics": {
     "panelTitle": "Chain & Indexer",

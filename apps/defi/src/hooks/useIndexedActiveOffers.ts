@@ -38,6 +38,7 @@ import { useDiamondPublicClient, useReadChain } from '../contracts/useDiamond';
 import { DEFAULT_CHAIN } from '../contracts/config';
 import { useLiveWatermark } from './useLiveWatermark';
 import { watermarkPolicy } from './watermarkPolicy';
+import { useDataFreshness } from '../context/DataFreshnessContext';
 import {
   chunkedGetLogs,
   decodeOfferDelta,
@@ -78,6 +79,7 @@ export function useIndexedActiveOffers(): UseIndexedActiveOffersResult {
   // keypress / scroll / touch fires an immediate catch-up probe.
   // Tab-focus events count as activity and reset the timer to 0.
   const { version, snapshot } = useLiveWatermark(watermarkPolicy('hot'));
+  const { report } = useDataFreshness();
   const [offers, setOffers] = useState<IndexedOffer[] | null>(null);
   const [source, setSource] = useState<'indexer' | 'fallback' | null>(null);
   const [loading, setLoading] = useState(true);
@@ -99,6 +101,7 @@ export function useIndexedActiveOffers(): UseIndexedActiveOffersResult {
 
   const tick = useCallback(
     async (signal?: { cancelled: boolean }) => {
+      report('activeOffers', { loading: true });
       // Paginate through every page of `/offers/active` until the
       // worker says "no more pages" (`nextBefore === null`). Hard-
       // capped at 25 pages × 200 = 5000 active offers — plenty of
@@ -119,6 +122,7 @@ export function useIndexedActiveOffers(): UseIndexedActiveOffersResult {
           setOffers(null);
           setSource('fallback');
           setLoading(false);
+          report('activeOffers', { loading: false });
           return;
         }
         allOffers.push(...page.offers);
@@ -138,6 +142,7 @@ export function useIndexedActiveOffers(): UseIndexedActiveOffersResult {
 
       let terminalIds = new Set<string>();
       let createdIds: bigint[] = [];
+      let catchUpFrontier: bigint | undefined;
       const liveSnapshot = snapshotRef.current;
       if (publicClient && diamond && liveSnapshot && liveSnapshot.safeBlock > fromBlock) {
         const logs = await chunkedGetLogs(publicClient, {
@@ -152,6 +157,11 @@ export function useIndexedActiveOffers(): UseIndexedActiveOffersResult {
         const delta = decodeOfferDelta(logs);
         terminalIds = new Set(delta.terminal.map((id) => id.toString()));
         createdIds = delta.created;
+        // The RPC tail scan covered [fromBlock+1, liveSnapshot.safeBlock],
+        // so the merged set below is fresh through that block — report it
+        // to the data-freshness registry so the badge can credit the
+        // tail scan even when the central indexer lags.
+        catchUpFrontier = liveSnapshot.safeBlock;
       }
 
       const merged = allOffers.filter(
@@ -167,8 +177,12 @@ export function useIndexedActiveOffers(): UseIndexedActiveOffersResult {
       setOffers(merged);
       setSource('indexer');
       setLoading(false);
+      report('activeOffers', {
+        loading: false,
+        frontier: catchUpFrontier !== undefined ? Number(catchUpFrontier) : undefined,
+      });
     },
-    [chainId, publicClient, diamond],
+    [chainId, publicClient, diamond, report],
   );
 
   useEffect(() => {

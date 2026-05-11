@@ -8,6 +8,7 @@ import { useLogIndex } from './useLogIndex';
 import { fetchLoansByCurrentHolder } from '../lib/indexerClient';
 import { type LoanStatus, type LoanSummary, type LoanDetails } from '../types/loan';
 import { beginStep } from '../lib/journeyLog';
+import { useDataFreshness } from '../context/DataFreshnessContext';
 
 const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
 
@@ -27,6 +28,7 @@ export function useUserLoans(address: string | null) {
   const publicClient = useDiamondPublicClient();
   const chain = useReadChain();
   const { loans: knownLoans, getOwner, loading: indexLoading, reload: reloadIndex } = useLogIndex();
+  const { report } = useDataFreshness();
   const [loans, setLoans] = useState<LoanSummary[]>([]);
   const [loading, setLoading] = useState(false);
 
@@ -35,9 +37,11 @@ export function useUserLoans(address: string | null) {
   const load = useCallback(async () => {
     if (!address) {
       setLoans([]);
+      report('userLoans', { loading: false });
       return;
     }
     setLoading(true);
+    report('userLoans', { loading: true });
     const step = beginStep({ area: 'dashboard', flow: 'useUserLoans', step: 'scan-known-loans', wallet: address });
     try {
       const me = address.toLowerCase();
@@ -199,8 +203,9 @@ export function useUserLoans(address: string | null) {
       step.failure(err);
     } finally {
       setLoading(false);
+      report('userLoans', { loading: false });
     }
-  }, [address, publicClient, knownLoans, getOwner, diamondAddress, chain.chainId]);
+  }, [address, publicClient, knownLoans, getOwner, diamondAddress, chain.chainId, report]);
 
   useEffect(() => { load(); }, [load]);
 

@@ -84,6 +84,26 @@
   border-color: rgba(255, 184, 77, 0.4);
 }
 
+/* Spinning state for the badge's leading icon — used while a data
+   fetch is in flight (cold load, or a background refresh on top of an
+   already-fresh frontier). Conveys "still working" without a colour
+   change, so the badge doesn't flicker green↔amber on every quick
+   background refetch. */
+.indexer-badge-icon--spinning {
+  animation: indexer-badge-spin 0.9s linear infinite;
+}
+
+@keyframes indexer-badge-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .indexer-badge-icon--spinning {
+    animation: none;
+  }
+}
+
 /* Info button — small ⓘ next to the status pill. */
 .indexer-badge-info {
   display: inline-flex;

@@ -22,6 +22,7 @@ import { useReadChain } from '../contracts/useDiamond';
 import { DEFAULT_CHAIN } from '../contracts/config';
 import { useLiveWatermark } from './useLiveWatermark';
 import { watermarkPolicy } from './watermarkPolicy';
+import { useDataFreshness } from '../context/DataFreshnessContext';
 
 interface UseOfferStatsResult {
   stats: OfferStats | null;
@@ -43,16 +44,25 @@ export function useOfferStats(): UseOfferStatsResult {
   // homepage hero / dashboard cards. Saves 60 % of the RPC budget vs
   // the OfferBook's 5 s cadence.
   const { version } = useLiveWatermark(watermarkPolicy('warm'));
+  const { report } = useDataFreshness();
   const [stats, setStats] = useState<OfferStats | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     let cancelled = false;
     async function tick() {
+      report('offerStats', { loading: true });
       const next = await fetchOfferStats(chainId);
       if (!cancelled) {
         setStats(next);
         setLoading(false);
+        // Fold the central indexer's scanned-through block into the
+        // freshness registry. If the worker is unreachable, `next` is
+        // null — report only that we're idle (no frontier update).
+        report('offerStats', {
+          loading: false,
+          frontier: next?.indexer?.lastBlock,
+        });
       }
     }
     void tick();
@@ -73,7 +83,7 @@ export function useOfferStats(): UseOfferStatsResult {
       cancelled = true;
       clearInterval(id);
     };
-  }, [chainId, version]);
+  }, [chainId, version, report]);
 
   return { stats, loading };
 }

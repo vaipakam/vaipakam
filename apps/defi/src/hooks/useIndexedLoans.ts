@@ -27,6 +27,7 @@ import { useDiamondPublicClient, useReadChain } from '../contracts/useDiamond';
 import { DEFAULT_CHAIN } from '../contracts/config';
 import { useLiveWatermark } from './useLiveWatermark';
 import { watermarkPolicy } from './watermarkPolicy';
+import { useDataFreshness } from '../context/DataFreshnessContext';
 import {
   chunkedGetLogs,
   decodeLoanDelta,
@@ -68,6 +69,7 @@ export function useIndexedActiveLoans(): UseIndexedLoansResult {
   // probe is enough to keep counter-driven changes visible without
   // the OfferBook's 5 s cadence. ~3 probes/min on idle.
   const { version, snapshot } = useLiveWatermark(watermarkPolicy('warm'));
+  const { report } = useDataFreshness();
   const [loans, setLoans] = useState<IndexedLoan[] | null>(null);
   const [source, setSource] = useState<'indexer' | 'fallback' | null>(null);
   const [loading, setLoading] = useState(true);
@@ -82,12 +84,14 @@ export function useIndexedActiveLoans(): UseIndexedLoansResult {
   useEffect(() => {
     let cancelled = false;
     async function tick() {
+      report('activeLoans', { loading: true });
       const page = await fetchActiveLoans(chainId, { limit: PAGE_LIMIT });
       if (cancelled) return;
       if (!page) {
         setLoans(null);
         setSource('fallback');
         setLoading(false);
+        report('activeLoans', { loading: false });
         return;
       }
       // RPC catch-up over the indexer-tail → safe-head gap. Drops
@@ -95,6 +99,7 @@ export function useIndexedActiveLoans(): UseIndexedLoansResult {
       // Watch + Analytics don't show a stale "active" row that's
       // actually been settled in the last 60 seconds.
       let terminalIds = new Set<string>();
+      let catchUpFrontier: bigint | undefined;
       const fromBlock =
         page.loans.length > 0
           ? BigInt(page.loans.reduce((m, l) => (l.startBlock > m ? l.startBlock : m), 0))
@@ -112,16 +117,21 @@ export function useIndexedActiveLoans(): UseIndexedLoansResult {
         if (cancelled) return;
         const delta = decodeLoanDelta(logs);
         terminalIds = new Set(delta.terminal.map((id) => id.toString()));
+        catchUpFrontier = liveSnapshot.safeBlock;
       }
       setLoans(page.loans.filter((l) => !terminalIds.has(l.loanId.toString())));
       setSource('indexer');
       setLoading(false);
+      report('activeLoans', {
+        loading: false,
+        frontier: catchUpFrontier !== undefined ? Number(catchUpFrontier) : undefined,
+      });
     }
     void tick();
     return () => {
       cancelled = true;
     };
-  }, [chainId, version, publicClient, diamond]);
+  }, [chainId, version, publicClient, diamond, report]);
 
   return { loans, source, loading };
 }
@@ -134,6 +144,7 @@ export function useIndexedLoansForWallet(
   // Same rationale as `useIndexedActiveLoans` — Dashboard's "Your
   // Loans" card uses the 20 s slower-page cadence.
   const { version } = useLiveWatermark(watermarkPolicy('warm'));
+  const { report } = useDataFreshness();
   const [loans, setLoans] = useState<IndexedLoanWithRole[] | null>(null);
   const [source, setSource] = useState<'indexer' | 'fallback' | null>(null);
   const [loading, setLoading] = useState(Boolean(address));
@@ -144,8 +155,10 @@ export function useIndexedLoansForWallet(
         setLoans(null);
         setSource(null);
         setLoading(false);
+        report('roleLoans', { loading: false });
         return;
       }
+      report('roleLoans', { loading: true });
       const wallet = address;
       // Run both sides in parallel — typical wallet has loans on
       // ≤1 side, so the second call usually returns an empty list.
@@ -161,6 +174,7 @@ export function useIndexedLoansForWallet(
         setLoans(null);
         setSource('fallback');
         setLoading(false);
+        report('roleLoans', { loading: false });
         return;
       }
       const seen = new Set<number>();
@@ -185,8 +199,13 @@ export function useIndexedLoansForWallet(
       setLoans(merged);
       setSource('indexer');
       setLoading(false);
+      // No RPC tail-scan here — the by-lender / by-borrower endpoints
+      // are server-side ownerOf-filtered and return current state as of
+      // the indexer's lastBlock (already folded into the registry by
+      // useOfferStats). So this hook reports only its loading flag.
+      report('roleLoans', { loading: false });
     },
-    [chainId, address],
+    [chainId, address, report],
   );
 
   useEffect(() => {

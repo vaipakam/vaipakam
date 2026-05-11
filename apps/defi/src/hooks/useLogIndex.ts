@@ -10,6 +10,7 @@ import {
 import { useOfferStats } from './useOfferStats';
 import { useLiveWatermark } from './useLiveWatermark';
 import { watermarkPolicy } from './watermarkPolicy';
+import { useDataFreshness } from '../context/DataFreshnessContext';
 
 type LoanInitiatedForToken = {
   loanId: string;
@@ -97,8 +98,10 @@ export function useLogIndex() {
   // background scan refresh state silently.
   const [loading, setLoading] = useState(initial === null);
   const [error, setError] = useState<Error | null>(null);
+  const { report } = useDataFreshness();
 
   const load = useCallback(async () => {
+    report('logIndex', { loading: true });
     const peeked = peekLoanIndex(chainId, diamondAddress);
     if (peeked === null) {
       setLoading(true);
@@ -145,8 +148,9 @@ export function useLogIndex() {
       step.failure(e);
     } finally {
       setLoading(false);
+      report('logIndex', { loading: false });
     }
-  }, [rpcUrl, diamondAddress, chain.deployBlock, chainId, indexerLastBlock]);
+  }, [rpcUrl, diamondAddress, chain.deployBlock, chainId, indexerLastBlock, report]);
 
   useEffect(() => {
     // Wait for the indexer-stats fetch to resolve (success or
