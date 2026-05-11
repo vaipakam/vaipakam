@@ -8,7 +8,7 @@ import {
   type Address,
   type Hex,
 } from "viem";
-import { usePublicClient, useWalletClient } from "wagmi";
+import { useWalletClient } from "wagmi";
 import { parseEther, formatEther } from "viem";
 import {
   DIAMOND_ABI_VIEM as DIAMOND_ABI,
@@ -29,6 +29,7 @@ import {
 import { useWallet } from "../context/WalletContext";
 import {
   useDiamondContract,
+  useDiamondPublicClient,
   useReadChain,
   useCanWrite,
 } from "../contracts/useDiamond";
@@ -310,7 +311,7 @@ export default function BuyVPFI() {
     switchToDefaultChain,
   } = useWallet();
   const { data: walletClient } = useWalletClient();
-  const publicClient = usePublicClient();
+  const publicClient = useDiamondPublicClient();
 
   const readChain = useReadChain();
   const diamond = useDiamondContract();

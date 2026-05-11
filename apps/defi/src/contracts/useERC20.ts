@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import { usePublicClient, useWalletClient } from 'wagmi';
+import { useWalletClient } from 'wagmi';
 import {
   parseAbi,
   type Abi,
@@ -9,6 +9,7 @@ import {
   type WalletClient,
 } from 'viem';
 import { useWallet } from '../context/WalletContext';
+import { useDiamondPublicClient } from './useDiamond';
 
 /** Minimal ERC20 surface used by the app's approve + allowance flows.
  *  Expanded-beyond-spec variants aren't needed — USDT's non-standard
@@ -107,13 +108,16 @@ export function buildErc20Proxy(
 }
 
 export function useERC20(tokenAddress: string | null): Erc20Handle | null {
-  const publicClient = usePublicClient();
+  // App-selected-chain-pinned client (with http fallback). Bare wagmi
+  // usePublicClient() would track the WALLET's chain instead — so an
+  // in-app chain switch ahead of the wallet's chain switch would have
+  // balanceOf/allowance reads hit the wrong RPC.
+  const publicClient = useDiamondPublicClient();
   const { data: walletClient } = useWalletClient();
   const { isCorrectChain } = useWallet();
 
   return useMemo(() => {
     if (!tokenAddress) return null;
-    if (!publicClient) return null;
     // Without a wallet we still expose a read-only handle — lets `balanceOf`
     // / `allowance` fire even before the user clicks Connect.
     const wc = walletClient && isCorrectChain

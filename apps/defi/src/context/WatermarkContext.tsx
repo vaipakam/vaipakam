@@ -48,9 +48,8 @@ import {
   useState,
   type ReactNode,
 } from 'react';
-import { usePublicClient } from 'wagmi';
 import { type Address } from 'viem';
-import { useReadChain } from '../contracts/useDiamond';
+import { useDiamondPublicClient, useReadChain } from '../contracts/useDiamond';
 import {
   WATERMARK_ABI,
   type UseLiveWatermarkOptions,
@@ -78,8 +77,15 @@ const WatermarkContext = createContext<WatermarkContextValue | null>(null);
 let nextSubscriberId = 1;
 
 export function WatermarkProvider({ children }: { children: ReactNode }) {
-  const publicClient = usePublicClient();
   const chain = useReadChain();
+  // Canonical app-chain-pinned public client. `useDiamondPublicClient`
+  // wraps `usePublicClient({chainId: chain.chainId})` (NOT the bare
+  // wagmi hook, which returns the wallet-current client and diverges
+  // from the app-selected chain whenever the dropdown is changed
+  // without a follow-up wallet prompt) AND ships a transport-only
+  // fallback so probes still work before wagmi has a client wired
+  // for this chain.
+  const publicClient = useDiamondPublicClient();
   const diamond = chain.diamondAddress;
 
   const subscribersRef = useRef<Map<number, UseLiveWatermarkOptions>>(new Map());
@@ -106,7 +112,10 @@ export function WatermarkProvider({ children }: { children: ReactNode }) {
   }, []);
 
   useEffect(() => {
-    if (!publicClient || !diamond) {
+    // useDiamondPublicClient always returns a non-null client (wagmi
+    // client OR a transport-only http fallback), so we only need to
+    // gate on the diamond address being known for this chain.
+    if (!diamond) {
       setSnapshot(null);
       setStatus('idle');
       rescheduleRef.current = () => {};
@@ -149,7 +158,7 @@ export function WatermarkProvider({ children }: { children: ReactNode }) {
 
     async function probe(): Promise<void> {
       try {
-        const result = (await publicClient!.readContract({
+        const result = (await publicClient.readContract({
           address: diamond as Address,
           abi: WATERMARK_ABI,
           functionName: 'getGlobalCounts',
@@ -160,7 +169,7 @@ export function WatermarkProvider({ children }: { children: ReactNode }) {
         // Pair the counters with the safe-block they were read at, so
         // subscribers that compute RPC catch-up windows (`safeBlock` as
         // upper bound) don't race against `latest`-tag chain head.
-        const safeBlock = await publicClient!.getBlock({ blockTag: 'safe' });
+        const safeBlock = await publicClient.getBlock({ blockTag: 'safe' });
         if (cancelled) return;
         const prevCounts = lastProbe.current;
         const advanced =

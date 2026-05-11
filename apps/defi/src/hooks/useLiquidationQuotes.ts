@@ -1,4 +1,9 @@
 import { useEffect, useState } from 'react';
+// eslint-disable-next-line no-restricted-imports -- caller-parameterised
+// chainId, not bound to the app-selected ChainContext. The lint rule
+// guards against bare app-chain reads sneaking off to the wallet
+// chain; this hook's contract is "quote against THIS chainId", so the
+// scoped wagmi form is exactly right.
 import { usePublicClient } from 'wagmi';
 import type { Address } from 'viem';
 import {

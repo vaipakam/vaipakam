@@ -29,13 +29,12 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { usePublicClient } from 'wagmi';
 import { type Address } from 'viem';
 import {
   fetchActiveOffers,
   type IndexedOffer,
 } from '../lib/indexerClient';
-import { useReadChain } from '../contracts/useDiamond';
+import { useDiamondPublicClient, useReadChain } from '../contracts/useDiamond';
 import { DEFAULT_CHAIN } from '../contracts/config';
 import { useLiveWatermark } from './useLiveWatermark';
 import { watermarkPolicy } from './watermarkPolicy';
@@ -63,7 +62,7 @@ export function useIndexedActiveOffers(): UseIndexedActiveOffersResult {
   const chain = useReadChain();
   const chainId = chain.chainId ?? DEFAULT_CHAIN.chainId;
   const diamond = chain.diamondAddress;
-  const publicClient = usePublicClient();
+  const publicClient = useDiamondPublicClient();
   // OfferBook is the one surface where the 5 s polling cadence is
   // load-bearing — users actively watch for new offers landing. Other
   // hooks pass `pollIntervalMs: null` to skip the timer; this hook

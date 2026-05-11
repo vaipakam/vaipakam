@@ -16,7 +16,6 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { usePublicClient } from 'wagmi';
 import { type Address } from 'viem';
 import {
   fetchActiveLoans,
@@ -24,7 +23,7 @@ import {
   fetchLoansByLender,
   type IndexedLoan,
 } from '../lib/indexerClient';
-import { useReadChain } from '../contracts/useDiamond';
+import { useDiamondPublicClient, useReadChain } from '../contracts/useDiamond';
 import { DEFAULT_CHAIN } from '../contracts/config';
 import { useLiveWatermark } from './useLiveWatermark';
 import { watermarkPolicy } from './watermarkPolicy';
@@ -64,7 +63,7 @@ export function useIndexedActiveLoans(): UseIndexedLoansResult {
   const chain = useReadChain();
   const chainId = chain.chainId ?? DEFAULT_CHAIN.chainId;
   const diamond = chain.diamondAddress;
-  const publicClient = usePublicClient();
+  const publicClient = useDiamondPublicClient();
   // Slower-moving surface (Risk Watch, Analytics, Dashboard) — 20 s
   // probe is enough to keep counter-driven changes visible without
   // the OfferBook's 5 s cadence. ~3 probes/min on idle.

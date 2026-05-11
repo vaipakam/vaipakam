@@ -2,10 +2,10 @@ import { useState, useEffect, useMemo } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { parseAbi, parseUnits, formatUnits, type Abi, type Address, type Hex, encodeFunctionData } from "viem";
-import { usePublicClient, useWalletClient } from "wagmi";
+import { useWalletClient } from "wagmi";
 import { useWallet } from "../context/WalletContext";
 import { useMode } from "../context/ModeContext";
-import { useDiamondContract } from "../contracts/useDiamond";
+import { useDiamondContract, useDiamondPublicClient } from "../contracts/useDiamond";
 import { useERC20 } from "../contracts/useERC20";
 import { useOfferForm } from "../hooks/useOfferForm";
 import { useProtocolConfig } from "../hooks/useProtocolConfig";
@@ -63,7 +63,7 @@ const ERC20_APPROVE_ABI = parseAbi([
 export default function CreateOffer() {
   const { t } = useTranslation();
   const { address, chainId, activeChain, isCorrectChain } = useWallet();
-  const publicClient = usePublicClient();
+  const publicClient = useDiamondPublicClient();
   const { data: walletClient } = useWalletClient();
   const { mode } = useMode();
   const showAdvanced = mode === "advanced";
