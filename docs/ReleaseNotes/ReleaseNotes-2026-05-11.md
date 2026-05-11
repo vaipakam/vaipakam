@@ -1455,6 +1455,30 @@ build-time operator config (`VITE_INDEXER_ORIGIN`, set in
 it is not fetched at runtime and there's nothing to discover it from —
 the indexer is a cache the app must be told the address of.
 
+## Diagnostics drawer — single scroll region (chain panel no longer crushes the journey log)
+
+The drawer used to have only one scrollable child — the journey-events
+list (`flex: 1; overflow-y: auto`) — with the hint text, support
+action buttons, data-rights link, the Chain & Indexer panel, and the
+filter tabs all fixed-height above it. Expanding the (now noticeably
+taller, with the per-source freshness breakdown) Chain & Indexer panel
+made it run past the viewport, which squeezed the events list toward
+zero height and pushed the filter tabs + the top of the journey log
+off the bottom of the screen with no way to scroll to them.
+
+Restructured: the `<header>` (title + close button) stays pinned —
+it's a slide-over, the close affordance must always be reachable — and
+everything below it now lives in one `.diag-scroll` region
+(`flex: 1; min-height: 0; overflow-y: auto`). An expanded Chain panel
+just makes that region scroll instead of crushing the list. The
+events list lost its own nested `overflow-y: auto` (the parent owns
+scrolling now), and the filter tabs are `position: sticky; top: 0`
+within the scroll region with an opaque background, so you can
+re-filter the journey log without scrolling back up past the chain
+panel. `min-height: 0` on `.diag-scroll` is the load-bearing rule —
+without it the flex child refuses to shrink below its content height
+and the overflow never engages.
+
 ## Release-notes mid-stream date roll
 
 The conversation that produced this release-notes file started on

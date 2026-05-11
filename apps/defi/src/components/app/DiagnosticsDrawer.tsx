@@ -109,6 +109,15 @@ export default function DiagnosticsDrawer() {
               </button>
             </header>
 
+            {/* Everything below the header lives in one scroll region.
+                Previously only `.diag-events` scrolled and the chain
+                panel / actions / filters were fixed-height — expanding
+                the (potentially viewport-taller) Chain & Indexer panel
+                squeezed the events list to ~zero height and pushed the
+                filter tabs off-screen with no way to reach them. Now an
+                expanded panel just scrolls. The header stays pinned so
+                the close button is always reachable on a slide-over. */}
+            <div className="diag-scroll">
             <p className="diag-hint">{t('diagnostics.hint')}</p>
 
             {/* Single row of journey-buffer-scoped support actions.
@@ -231,6 +240,7 @@ export default function DiagnosticsDrawer() {
                   </div>
                 ))
               )}
+            </div>
             </div>
           </aside>
         </>
