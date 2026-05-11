@@ -1529,6 +1529,48 @@ the `bySource` destructuring from `useDataFreshness`. The diagnostics
 panel still computes its own `rpcTailFrontier` from the same shared
 helpers — single owner of that computation now, not duplicated.
 
+## Indexer-fallback trigger — tail-scan re-fires when the indexer goes stale
+
+The watermark `version` counter (what makes the per-page RPC tail-scans
+refetch) only bumps on **creates** — `nextOfferId++` / `nextLoanId++`.
+State-change events on existing rows (`OfferAccepted`,
+`OfferCancelled`, `LoanRepaid`, `PartialRepaid`, `CollateralAdded`,
+`LoanRefinanced`, `LoanPreclosed*`, `OffsetCompleted`,
+`LoanDefaulted`) and NFT position `Transfer`s don't bump it. In the
+steady state that's fine — the central indexer cron catches those
+every ~minute and the `offerStats` lane polls it every 30 s. The gap
+is the indexer-unreachable case: the tail-scan would stay frozen until
+someone happens to create a new offer/loan, so a repayment / cancel /
+secondary-market transfer could go invisible on the client
+indefinitely.
+
+`DataFreshnessContext` now carries a `fallbackVersion` counter that
+bumps when **both** (a) the indexer's reported `lastBlock` hasn't
+advanced in > 120 s, and (b) chain safe-head has run > 200 blocks past
+the freshest RPC tail-scan frontier. A 30 s wall-clock tick evaluates
+those conditions against state we already track — **no extra RPC**. The
+three tail-scan hooks (`useIndexedActiveOffers`, `useIndexedActiveLoans`,
+`useLogIndex`) add `fallbackVersion` to their effect dep array, so a
+bump re-fires the tail-scan. A safe-block gate (`lastFallbackSafeBlock`)
+requires another full 200-block advance before firing again, so the
+trigger can't degrade into "tail-scan every 30 s" while the indexer is
+down — worst case is one re-fire per ~200-block window per hook (on
+Base ~2 s/block, ≈ 6.6 min).
+
+To make condition (a) honest, `SourceSlice` gained `frontierAt`
+(unix-seconds, stamped only when `frontier` actually advances — not on
+a re-report of the same value), so "indexer is alive and steady" is
+distinguishable from "indexer is dead but its last value is still
+cached". `DataFreshnessProvider` now consumes `useWatermarkContext`
+(it already sits under `WatermarkProvider` in `main.tsx`).
+
+Net: steady state is unchanged and spends zero extra RPC; the
+indexer-down edge case now self-heals instead of needing the manual
+Rescan button. Hooks that have no RPC tail-scan (`useIndexedLoansForWallet`,
+`useUserLoans`, `useOfferStats`) are deliberately *not* wired to
+`fallbackVersion` — re-firing an indexer-only fetch while the indexer
+is unreachable just retries a failing request.
+
 ## Release-notes mid-stream date roll
 
 The conversation that produced this release-notes file started on

@@ -69,7 +69,12 @@ export function useIndexedActiveLoans(): UseIndexedLoansResult {
   // probe is enough to keep counter-driven changes visible without
   // the OfferBook's 5 s cadence. ~3 probes/min on idle.
   const { version, snapshot } = useLiveWatermark(watermarkPolicy('warm'));
-  const { report } = useDataFreshness();
+  // `fallbackVersion` covers the indexer-unreachable edge case — see
+  // `DataFreshnessContext` for the trigger logic. Without it, a loan
+  // repayment or default (events that DON'T bump `nextLoanId`) would
+  // stay invisible on Risk Watch / Analytics until someone initiates a
+  // new loan.
+  const { report, fallbackVersion } = useDataFreshness();
   const [loans, setLoans] = useState<IndexedLoan[] | null>(null);
   const [source, setSource] = useState<'indexer' | 'fallback' | null>(null);
   const [loading, setLoading] = useState(true);
@@ -131,7 +136,7 @@ export function useIndexedActiveLoans(): UseIndexedLoansResult {
     return () => {
       cancelled = true;
     };
-  }, [chainId, version, publicClient, diamond, report]);
+  }, [chainId, version, publicClient, diamond, report, fallbackVersion]);
 
   return { loans, source, loading };
 }

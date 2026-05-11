@@ -98,7 +98,15 @@ export function useLogIndex() {
   // background scan refresh state silently.
   const [loading, setLoading] = useState(initial === null);
   const [error, setError] = useState<Error | null>(null);
-  const { report } = useDataFreshness();
+  // `fallbackVersion` bumps when the central indexer has been stale
+  // > 120 s AND chain safe-head has run > 200 blocks past our last
+  // tail-scan frontier. Covers the indexer-unreachable edge case —
+  // state-change events on existing offers/loans (accept / cancel /
+  // repay / refinance / preclose / default / Transfer) don't bump
+  // `watermarkVersion` and would otherwise stay invisible to this
+  // hook until a new offer or loan is created. See
+  // `DataFreshnessContext` for the trigger logic.
+  const { report, fallbackVersion } = useDataFreshness();
 
   const load = useCallback(async () => {
     report('logIndex', { loading: true });
@@ -176,7 +184,7 @@ export function useLogIndex() {
     // avoid duplicating the polling channel.
     if (!statsResolved) return;
     void load();
-  }, [load, statsResolved, watermarkVersion]);
+  }, [load, statsResolved, watermarkVersion, fallbackVersion]);
 
   return {
     loans,

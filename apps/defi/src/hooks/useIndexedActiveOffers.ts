@@ -79,7 +79,13 @@ export function useIndexedActiveOffers(): UseIndexedActiveOffersResult {
   // keypress / scroll / touch fires an immediate catch-up probe.
   // Tab-focus events count as activity and reset the timer to 0.
   const { version, snapshot } = useLiveWatermark(watermarkPolicy('hot'));
-  const { report } = useDataFreshness();
+  // `fallbackVersion` bumps when the central indexer has been stale
+  // > 120 s AND safe-head has run > 200 blocks past our last
+  // tail-scan frontier. Covers the indexer-unreachable edge case
+  // where state-change events (Accept / Cancel) would otherwise stay
+  // invisible until someone creates a new offer (= a `version` bump).
+  // See `DataFreshnessContext` for the trigger logic.
+  const { report, fallbackVersion } = useDataFreshness();
   const [offers, setOffers] = useState<IndexedOffer[] | null>(null);
   const [source, setSource] = useState<'indexer' | 'fallback' | null>(null);
   const [loading, setLoading] = useState(true);
@@ -191,7 +197,7 @@ export function useIndexedActiveOffers(): UseIndexedActiveOffersResult {
     return () => {
       signal.cancelled = true;
     };
-  }, [version, tick]);
+  }, [version, tick, fallbackVersion]);
 
   const refetch = useCallback(async () => {
     await tick();
