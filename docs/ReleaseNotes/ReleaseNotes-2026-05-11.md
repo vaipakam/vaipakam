@@ -886,6 +886,112 @@ End-state properties of the read path that didn't exist before today:
    accidentally imports `usePublicClient` from `'wagmi'` fails the
    build with a pointer to the right primitive.
 
+## Fresh testnet redeploy — base-sepolia + sepolia (2026-05-11)
+
+Both Phase-1 testnets fresh-deployed off the current contracts tree
+(`REWARD_VERSION=v4-rehearsal-2026-05-11`), then the consumer surface
+(indexer, keeper, agent Workers + the two SPAs) redeployed against the
+new addresses + ABIs. Deployer/admin EOAs retained — handover to the
+governance Safe deliberately skipped per the rehearsal policy (testnet
+flow-test scripts broadcast against ADMIN-gated functions; a handover
+would break them).
+
+### Live addresses
+
+| Chain | Diamond | RewardOApp proxy (CREATE2 cross-chain identical) |
+| --- | --- | --- |
+| base-sepolia (84532, canonical-VPFI) | `0x725C7912956b254030A2DBF152B2F739C46C07c0` | `0x8CA436fae773b058851F364a1ea77588889E53f4` |
+| sepolia (11155111, mirror) | `0x492f83F2Ab99B7b13E1F8CAf6fbAeB7300B85302` | `0x8CA436fae773b058851F364a1ea77588889E53f4` |
+
+Both RewardOApp proxies landed at the same address — confirms the
+CREATE2 salt (derived from `REWARD_VERSION`) was seeded identically on
+both deploys, so cross-chain reward-mesh parity holds.
+
+Master kill-switch flags on both chains: `rangeAmountEnabled=true`,
+`rangeRateEnabled=true`, `partialFillEnabled=true` (testnet ergonomics
+— mainnet ships these dormant). On base-sepolia the deploy script's
+`partialFillEnabled` cast-send silently failed (RPC-side timing — no
+status echo), so it was flipped manually post-deploy; sepolia's set
+cleanly.
+
+### Phases run
+
+- **base-sepolia**: `preflight → contracts --fresh → configure → verify`,
+  plus the full flow-test suite (PartialFlows Phase A+B = 13 UI-midpoint
+  scenarios; PositiveFlows = 31/31 — 15 legacy lifecycle + 16
+  new-features incl. range-match, partial-fill, preclose options 2/3,
+  refinance, keeper-per-action, sanctions Tier-1/2, stuck-token
+  recovery).
+- **sepolia**: `preflight → contracts --fresh → configure → verify`.
+  No flow tests (mirror chain — single-chain flows would just duplicate
+  base-sepolia's coverage).
+- **lz-config + swap-adapters skipped on both**: those phases need
+  operator-supplied env vars (DVN set, LZ libraries, REMOTE_EIDS for
+  lz-config; INITIAL_SETTLERS for swap-adapters) that aren't load-
+  bearing for single-chain flow tests. Cross-chain reward routing +
+  DEX swap failover stay un-rehearsed on this cycle.
+
+### Consumer surface redeployed
+
+| Surface | URL | Notes |
+| --- | --- | --- |
+| Indexer Worker | `indexer.vaipakam.com` | D1 migration `0012_current_holder` applied — adds `lender_current_owner` / `borrower_current_owner` to `loans`, `creator_current_owner` to `offers`, 3 indexes. Cron `* * * * *`. |
+| Keeper Worker | `vaipakam-keeper.dawn-fire-139e.workers.dev` | HF-liquidation autonomous keeper. Cron `* * * * *`. |
+| Agent Worker | `vaipakam-agent.dawn-fire-139e.workers.dev` | Notifications + frames + quote/scan proxies (4 rate-limiters). Cron `* * * * *`. |
+| defi SPA | `vaipakam-defi.dawn-fire-139e.workers.dev` | 8-locale vite build, static-assets Worker. |
+| www site | `vaipakam-www.dawn-fire-139e.workers.dev` | Static-assets Worker. |
+
+Every Worker passed the per-Worker `RPC_BASE_SEPOLIA` secret-presence
+check. The consolidated `packages/contracts/src/deployments.json`
+(read by all five) was refreshed; **arb-sepolia retired** from the
+bundle (commented out in `contracts/deployments/.active-chains` for
+this rehearsal cycle — the on-disk artifact stays for forensic value
+but it stops appearing in the frontend chain picker and stops being
+crawled).
+
+### Two bugs fixed in-flight
+
+1. **`BASE_SEPOLIA_SEQUENCER_UPTIME_FEED` pointed at a Base MAINNET
+   address with zero bytecode on Base Sepolia.** `ConfigureOracle`
+   wrote it to storage; `checkLiquidity` then reverted with "call to
+   non-contract address" (forge's pre-call code probe fails before the
+   on-chain `try/catch` can swallow it). Set to `address(0)` —
+   `OracleFacet._requireSequencerHealthy` / `_sequencerHealthy` both
+   short-circuit on zero, which is the right behaviour for testnet
+   (the sequencer-down scenario isn't a meaningful failure mode there).
+   Fixed on-chain (`OracleAdminFacet.setSequencerUptimeFeed(0x0)`) +
+   in `.env` so the next rehearsal doesn't re-trip it.
+
+2. **`deploy-testnet.sh` `--fresh` D1-purge skipped when addresses.json
+   was already archived.** The archive step and the D1 purge were both
+   gated on `existing_diamond = jq .diamond addresses.json`. After a
+   prior half-failed `--fresh` moved the artifacts into `.archive/<ts>/`,
+   a re-run saw "nothing to archive" and silently skipped the D1 purge
+   too — stale rows from the prior Diamond would then pollute the new
+   deploy. Extracted `purge_chain_d1()` out of `archive_chain_state` and
+   fire it unconditionally under `--fresh`, regardless of whether the
+   on-disk addresses.json is present. Chain-scoping (`WHERE chain_id =
+   $CID`) preserved unchanged. `deploy-mainnet.sh` intentionally NOT
+   touched — its `archive_chain_state` is archive-only by design
+   (mainnet never auto-purges D1; the orphaned-position audit trail
+   stays operator-driven).
+
+3. **`AnvilNewPositiveFlows.s.sol` N12 (Keeper Per-Action
+   Authorization) wasn't idempotent.** It called `approveKeeper(Bot,
+   INIT_PRECLOSE)` without revoking first; on persistent-state testnets
+   where `PartialFlows` Phase B's P-P scenario already granted Bot the
+   same authorization, N12 reverted `KeeperAlreadyApproved()`. Added a
+   `try revokeKeeper(Bot) {} catch {}` before the approve so multi-suite
+   reruns work while the first-run case stays revert-free.
+
+### Outstanding (deliberately not done this cycle)
+
+- `--phase handover` — testnets stay deployer/admin-owned (policy).
+- `--phase lz-config` + `--phase swap-adapters` — need operator env
+  vars; not load-bearing for single-chain flow tests.
+- Cross-chain reward-mesh peer wiring (`WireVPFIPeers.s.sol` /
+  `oapp.setPeer`) — separate ceremony.
+
 ## Release-notes mid-stream date roll
 
 The conversation that produced this release-notes file started on
