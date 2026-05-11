@@ -49,10 +49,10 @@ const LIVE_TAIL_BACKLOG_BLOCKS = 50_000;
  *  circular import" note above. */
 const LIVE_SAFE_BLOCK_POLL_MS = 2_000;
 
-/** Frontier sources whose block is credited to the *indexer* rather
- *  than the *RPC tail* in the "via X" annotation. Only `offerStats`
- *  reports the central indexer's `lastBlock`. */
-const INDEXER_FRONTIER_SOURCES: ReadonlySet<string> = new Set(['offerStats']);
+/** DataFreshnessContext source keys for the client-side RPC tail-scans.
+ *  `offerStats` reports the central indexer's `lastBlock`; these report
+ *  how far the page's own chunked-getLogs catch-up has reached. */
+const RPC_TAIL_FRONTIER_SOURCES = ['activeOffers', 'activeLoans'] as const;
 
 interface StorageEstimate {
   usage?: number;
@@ -289,23 +289,19 @@ export function ChainDiagnosticsPanel() {
       ? Number(watermarkSnapshot.safeBlock)
       : null;
 
-  // Which source produced the freshest block (for the "via X" label).
-  // RPC-tail wins the tie-break — it's the stronger claim.
-  let frontierOrigin: 'indexer' | 'rpcTail' | null = null;
-  if (maxFrontier !== null) {
-    for (const [key, slice] of Object.entries(bySource)) {
-      if (slice.frontier === maxFrontier) {
-        frontierOrigin = INDEXER_FRONTIER_SOURCES.has(key) ? 'indexer' : 'rpcTail';
-        if (frontierOrigin === 'rpcTail') break;
-      }
+  // How far the page's own client-side RPC tail-scan has reached (the
+  // chunked-getLogs catch-up over [indexer.lastBlock+1, safeHead] run by
+  // useIndexedActiveOffers / useIndexedActiveLoans). `null` on pages
+  // that don't mount one of those hooks — in which case the page IS as
+  // stale as the central indexer, and the "Behind" state is honest.
+  const rpcTailFrontier = (() => {
+    const vals: number[] = [];
+    for (const key of RPC_TAIL_FRONTIER_SOURCES) {
+      const f = bySource[key]?.frontier;
+      if (f !== undefined) vals.push(f);
     }
-  }
-  const frontierOriginLabel =
-    frontierOrigin === 'indexer'
-      ? t('indexerBadge.viaIndexer', { defaultValue: 'via indexer' })
-      : frontierOrigin === 'rpcTail'
-        ? t('indexerBadge.viaRpcTail', { defaultValue: 'via RPC tail-scan' })
-        : null;
+    return vals.length > 0 ? Math.max(...vals) : null;
+  })();
 
   const cursorIso = indexer
     ? new Date(indexer.updatedAt * 1000).toISOString()
@@ -365,16 +361,26 @@ export function ChainDiagnosticsPanel() {
             value={indexer.lastBlock.toLocaleString()}
           />
         )}
+        {!isLocalDev && (
+          <Row
+            label={t('indexerBadge.statusRpcTailFrontier', {
+              defaultValue: 'RPC tail-scan',
+            })}
+            value={
+              rpcTailFrontier !== null
+                ? rpcTailFrontier.toLocaleString()
+                : t('indexerBadge.statusRpcTailIdle', {
+                    defaultValue: '— (not running on this page)',
+                  })
+            }
+          />
+        )}
         {!isLocalDev && maxFrontier !== null && (
           <Row
             label={t('indexerBadge.statusFreshestBlock', {
               defaultValue: 'Freshest data block',
             })}
-            value={
-              frontierOriginLabel
-                ? `${maxFrontier.toLocaleString()} (${frontierOriginLabel})`
-                : maxFrontier.toLocaleString()
-            }
+            value={maxFrontier.toLocaleString()}
           />
         )}
         {!isLocalDev && (

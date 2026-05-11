@@ -72,17 +72,17 @@ const LIVE_SAFE_BLOCK_POLL_MS = 2_000;
 
 const LOCAL_DEV_CHAIN_IDS: ReadonlySet<number> = new Set([31337, 1337]);
 
-/** Frontier sources whose block we want to credit to the *indexer*
- *  rather than the *RPC tail* when explaining where the freshest block
- *  came from. (Only `offerStats` reports the indexer's `lastBlock`.) */
-const INDEXER_FRONTIER_SOURCES: ReadonlySet<string> = new Set(['offerStats']);
+/** DataFreshnessContext source keys for the client-side RPC tail-scans
+ *  (the chunked `eth_getLogs` catch-up over `[indexer.lastBlock+1,
+ *  safeHead]` that `useIndexedActiveOffers` / `useIndexedActiveLoans`
+ *  run). `offerStats` reports the central indexer's `lastBlock`; these
+ *  report how far the page's own RPC scan has reached. */
+const RPC_TAIL_FRONTIER_SOURCES = ['activeOffers', 'activeLoans'] as const;
 
 interface Props {
   /** Hide the descriptive text on narrow viewports. */
   compact?: boolean;
 }
-
-type FrontierOrigin = 'indexer' | 'rpcTail' | null;
 
 interface PopoverContent {
   heading: string;
@@ -91,8 +91,10 @@ interface PopoverContent {
   /** When false, the block-detail rows are hidden (local-dev, or no
    *  block data available at all). */
   showBlockRows: boolean;
+  /** = `maxFrontier` (max of the indexer frontier and the RPC-tail
+   *  frontier) — what the on-screen data actually covers. `null` in
+   *  local-dev / "no frontier reported" states. */
   freshestBlock: number | null;
-  frontierOrigin: FrontierOrigin;
   safeHead: number | null;
   blockGap: number | null;
   fetchInProgress: boolean;
@@ -176,20 +178,20 @@ export function IndexerStatusBadge({ compact }: Props) {
   const watermarkHealthy =
     safeHead !== null && watermarkAgeSec !== null && watermarkAgeSec < WATERMARK_STALE_SEC;
 
-  // Which source produced the freshest block? Used only for the popover
-  // "via X" annotation — pick the source whose frontier equals the max.
-  const frontierOrigin: FrontierOrigin = (() => {
-    if (maxFrontier === null) return null;
-    let origin: FrontierOrigin = null;
-    for (const [key, slice] of Object.entries(bySource)) {
-      if (slice.frontier === maxFrontier) {
-        origin = INDEXER_FRONTIER_SOURCES.has(key) ? 'indexer' : 'rpcTail';
-        // RPC-tail wins the tie-break for the label — it's the more
-        // impressive claim (we scanned all the way to head ourselves).
-        if (origin === 'rpcTail') break;
-      }
+  // Per-source frontier breakdown for the popover. `indexerFrontier` is
+  // the central indexer's `lastBlock`; `rpcTailFrontier` is how far the
+  // page's own client-side RPC tail-scan has reached (only contributed
+  // when an OfferBook / Dashboard hook is mounted — so it's `null` on
+  // pages that don't run one). `freshestBlock` / `maxFrontier` is the
+  // max of the two — what the on-screen data actually covers.
+  const indexerFrontier = bySource['offerStats']?.frontier ?? null;
+  const rpcTailFrontier = (() => {
+    const vals: number[] = [];
+    for (const key of RPC_TAIL_FRONTIER_SOURCES) {
+      const f = bySource[key]?.frontier;
+      if (f !== undefined) vals.push(f);
     }
-    return origin;
+    return vals.length > 0 ? Math.max(...vals) : null;
   })();
 
   const blockGap =
@@ -211,7 +213,6 @@ export function IndexerStatusBadge({ compact }: Props) {
       stateLabel: t('indexerBadge.localDev'),
       showBlockRows: false,
       freshestBlock: null,
-      frontierOrigin: null,
       safeHead: null,
       blockGap: null,
       fetchInProgress: anyLoading,
@@ -228,7 +229,6 @@ export function IndexerStatusBadge({ compact }: Props) {
       stateLabel: t('indexerBadge.loadingState'),
       showBlockRows: true,
       freshestBlock: null,
-      frontierOrigin: null,
       safeHead,
       blockGap: null,
       fetchInProgress: true,
@@ -284,7 +284,6 @@ export function IndexerStatusBadge({ compact }: Props) {
         stateLabel: t('indexerBadge.behindState'),
         showBlockRows: true,
         freshestBlock: maxFrontier,
-        frontierOrigin,
         safeHead,
         blockGap: gap,
         fetchInProgress: anyLoading,
@@ -300,7 +299,6 @@ export function IndexerStatusBadge({ compact }: Props) {
         stateLabel: t('indexerBadge.catchingUpState'),
         showBlockRows: true,
         freshestBlock: maxFrontier,
-        frontierOrigin,
         safeHead,
         blockGap: gap,
         fetchInProgress: anyLoading,
@@ -318,7 +316,6 @@ export function IndexerStatusBadge({ compact }: Props) {
         stateLabel: t('indexerBadge.liveUpdatingState'),
         showBlockRows: true,
         freshestBlock: maxFrontier,
-        frontierOrigin,
         safeHead,
         blockGap: gap,
         fetchInProgress: true,
@@ -334,20 +331,12 @@ export function IndexerStatusBadge({ compact }: Props) {
         stateLabel: t('indexerBadge.caughtUp'),
         showBlockRows: true,
         freshestBlock: maxFrontier,
-        frontierOrigin,
         safeHead,
         blockGap: gap,
         fetchInProgress: false,
       };
     }
   }
-
-  const originLabel =
-    popover.frontierOrigin === 'indexer'
-      ? t('indexerBadge.viaIndexer')
-      : popover.frontierOrigin === 'rpcTail'
-        ? t('indexerBadge.viaRpcTail')
-        : null;
 
   return (
     <span className={`indexer-badge ${variantClass}`} ref={wrapRef}>
@@ -373,14 +362,28 @@ export function IndexerStatusBadge({ compact }: Props) {
             <Row label={t('indexerBadge.statusState')} value={popover.stateLabel} />
             <Row label={t('indexerBadge.statusChain')} value={chainLabel} />
             {popover.showBlockRows && popover.freshestBlock !== null && (
-              <Row
-                label={t('indexerBadge.statusFreshestBlock')}
-                value={
-                  originLabel
-                    ? `${popover.freshestBlock.toLocaleString()} (${originLabel})`
-                    : popover.freshestBlock.toLocaleString()
-                }
-              />
+              <>
+                <Row
+                  label={t('indexerBadge.statusIndexerFrontier')}
+                  value={
+                    indexerFrontier !== null
+                      ? indexerFrontier.toLocaleString()
+                      : t('indexerBadge.statusFrontierIdle')
+                  }
+                />
+                <Row
+                  label={t('indexerBadge.statusRpcTailFrontier')}
+                  value={
+                    rpcTailFrontier !== null
+                      ? rpcTailFrontier.toLocaleString()
+                      : t('indexerBadge.statusRpcTailIdle')
+                  }
+                />
+                <Row
+                  label={t('indexerBadge.statusFreshestBlock')}
+                  value={popover.freshestBlock.toLocaleString()}
+                />
+              </>
             )}
             {popover.showBlockRows && (
               <Row
