@@ -142,6 +142,13 @@ export function useLogIndex() {
       setGetOwner(() => result.getOwner);
       setGetLastOwner(() => result.getLastOwner);
       setGetLoanInitiatedForToken(() => result.getLoanInitiatedForToken);
+      // Report the scanned-through block as a freshness frontier. The
+      // legacy log scan IS an RPC tail-scan ([indexerTail+1, safeHead]),
+      // and useLogIndex is mounted on most data pages — so this is what
+      // makes the status badge's "RPC tail-scan" row populate (and the
+      // "Behind" state clear) on pages that don't run the OfferBook /
+      // Dashboard catch-up hooks.
+      report('logIndex', { frontier: result.lastBlock });
       step.success({ note: `${result.loans.length} loans indexed` });
     } catch (e) {
       setError(e as Error);

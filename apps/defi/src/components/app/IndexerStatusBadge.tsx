@@ -77,7 +77,7 @@ const LOCAL_DEV_CHAIN_IDS: ReadonlySet<number> = new Set([31337, 1337]);
  *  safeHead]` that `useIndexedActiveOffers` / `useIndexedActiveLoans`
  *  run). `offerStats` reports the central indexer's `lastBlock`; these
  *  report how far the page's own RPC scan has reached. */
-const RPC_TAIL_FRONTIER_SOURCES = ['activeOffers', 'activeLoans'] as const;
+const RPC_TAIL_FRONTIER_SOURCES = ['activeOffers', 'activeLoans', 'logIndex'] as const;
 
 interface Props {
   /** Hide the descriptive text on narrow viewports. */

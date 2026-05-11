@@ -52,7 +52,7 @@ const LIVE_SAFE_BLOCK_POLL_MS = 2_000;
 /** DataFreshnessContext source keys for the client-side RPC tail-scans.
  *  `offerStats` reports the central indexer's `lastBlock`; these report
  *  how far the page's own chunked-getLogs catch-up has reached. */
-const RPC_TAIL_FRONTIER_SOURCES = ['activeOffers', 'activeLoans'] as const;
+const RPC_TAIL_FRONTIER_SOURCES = ['activeOffers', 'activeLoans', 'logIndex'] as const;
 
 interface StorageEstimate {
   usage?: number;

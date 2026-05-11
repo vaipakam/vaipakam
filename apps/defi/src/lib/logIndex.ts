@@ -255,6 +255,14 @@ export interface LogIndexResult {
         event: ActivityEvent;
       }
     | null;
+  /** Highest block this scan covered (= the chain `safe` head it
+   *  reached, or the cached cursor if already past head). Consumers
+   *  report this into `DataFreshnessContext` as a frontier so the
+   *  status badge credits the legacy log-scan's catch-up — `useLogIndex`
+   *  is mounted on most data pages (Dashboard, OfferBook, Claims, Loan
+   *  Details, Activity, …), so this is what makes the "RPC tail-scan"
+   *  freshness row populate outside the OfferBook/Dashboard hooks. */
+  lastBlock: number;
 }
 
 interface CachedShape {
@@ -1545,6 +1553,7 @@ function hydrate(cached: CachedShape): LogIndexResult {
     lastAcceptedOfferId,
     recentAcceptedOfferIds,
     events,
+    lastBlock: cached.lastBlock,
     getOwner: (tokenId: bigint) => {
       const hit = owners[tokenId.toString()];
       if (!hit) return null;
