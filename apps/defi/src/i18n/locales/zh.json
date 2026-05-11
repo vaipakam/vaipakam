@@ -1772,6 +1772,12 @@
     "liveTailStatus": "Live-tail 状态",
     "liveTailInSync": "已同步",
     "liveTailCatchingUp": "同步中 · 剩余 ~{{n}} 个区块",
-    "liveTailDeepBacklog": "深度滞后 · 剩余 ~{{n}} 个区块 (追赶将需要多个 cron 周期)"
+    "liveTailDeepBacklog": "深度滞后 · 剩余 ~{{n}} 个区块 (追赶将需要多个 cron 周期)",
+    "sourceBreakdownHeading": "Per-source freshness",
+    "sourceBreakdownCount": "{{n}} active on this page",
+    "sourceReachedBlock": "block {{n}}",
+    "sourceNoFrontier": "no block reported",
+    "sourceFetching": "fetching",
+    "sourceIdle": "idle"
   }
 }

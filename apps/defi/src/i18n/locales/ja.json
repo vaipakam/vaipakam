@@ -1772,6 +1772,12 @@
     "liveTailStatus": "Live-tail の状態",
     "liveTailInSync": "同期済み",
     "liveTailCatchingUp": "追従中 · 残り ~{{n}} ブロック",
-    "liveTailDeepBacklog": "深い遅延 · 残り ~{{n}} ブロック (追従には複数の cron 周期が必要)"
+    "liveTailDeepBacklog": "深い遅延 · 残り ~{{n}} ブロック (追従には複数の cron 周期が必要)",
+    "sourceBreakdownHeading": "Per-source freshness",
+    "sourceBreakdownCount": "{{n}} active on this page",
+    "sourceReachedBlock": "block {{n}}",
+    "sourceNoFrontier": "no block reported",
+    "sourceFetching": "fetching",
+    "sourceIdle": "idle"
   }
 }

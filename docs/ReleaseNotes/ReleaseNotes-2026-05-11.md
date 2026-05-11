@@ -1405,6 +1405,35 @@ scan has caught up, across the data pages. Pages with no data hook
 design: nothing on those pages is on-chain data, and a blanket
 always-on tail-scan in `AppLayout` would burn RPC for no benefit there.
 
+## Diagnostics drawer — per-source freshness breakdown
+
+The top-bar badge popover now shows the indexer frontier and the
+RPC-tail frontier separately, but it only ever shows the *aggregate*
+of the RPC tail-scans. The diagnostics drawer's "Chain & Indexer" card
+(the operator-facing expand panel) now also lists each data lane
+individually: one row per source currently mounted on the page, showing
+the human-readable lane name, the block it has reached, and whether a
+fetch is in flight right now.
+
+The lanes come straight from `DataFreshnessContext`'s `bySource`
+registry — `offerStats` (the central indexer's `lastBlock`),
+`activeOffers` / `activeLoans` (the OfferBook / Dashboard chunked-
+getLogs catch-ups), `logIndex` (the legacy log scan that runs on most
+data pages), and `userLoans` / `roleLoans` (loading-only lanes that
+don't report a frontier). Only the lanes the current page actually
+mounts appear; on a page with nothing on-chain (FAQ, settings) the
+breakdown is empty.
+
+This is what tells an operator *which* lane is behind when the badge
+goes amber — "the central indexer is at block X but this page's own
+RPC tail-scan is already at X+4000, so the data on screen is fresher
+than the badge's pessimistic aggregate suggests", or conversely "every
+lane is stuck at the same block, the page really is behind". The lane
+labels are kept in English on purpose (operator detail naming internal
+hooks / endpoints), consistent with the rest of the `chainDiagnostics.*`
+namespace; the value strings (`block N · fetching|idle`) go through
+i18n with English defaults.
+
 ## Release-notes mid-stream date roll
 
 The conversation that produced this release-notes file started on

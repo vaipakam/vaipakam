@@ -1752,6 +1752,12 @@
     "liveTailStatus": "Live-tail की स्थिति",
     "liveTailInSync": "सिंक में",
     "liveTailCatchingUp": "अपडेट हो रहा है · ~{{n}} ब्लॉक शेष",
-    "liveTailDeepBacklog": "गहरा बैकलॉग · ~{{n}} ब्लॉक शेष (catch-up में कई cron चक्र लगेंगे)"
+    "liveTailDeepBacklog": "गहरा बैकलॉग · ~{{n}} ब्लॉक शेष (catch-up में कई cron चक्र लगेंगे)",
+    "sourceBreakdownHeading": "Per-source freshness",
+    "sourceBreakdownCount": "{{n}} active on this page",
+    "sourceReachedBlock": "block {{n}}",
+    "sourceNoFrontier": "no block reported",
+    "sourceFetching": "fetching",
+    "sourceIdle": "idle"
   }
 }

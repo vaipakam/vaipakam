@@ -1772,6 +1772,12 @@
     "liveTailStatus": "Live-tail நிலை",
     "liveTailInSync": "ஒத்திசைவில்",
     "liveTailCatchingUp": "பின்தொடர்கிறது · ~{{n}} பிளாக் மீதம்",
-    "liveTailDeepBacklog": "ஆழமான பின்னேறம் · ~{{n}} பிளாக் மீதம் (catch-up பல cron சுழற்சிகள் எடுக்கும்)"
+    "liveTailDeepBacklog": "ஆழமான பின்னேறம் · ~{{n}} பிளாக் மீதம் (catch-up பல cron சுழற்சிகள் எடுக்கும்)",
+    "sourceBreakdownHeading": "Per-source freshness",
+    "sourceBreakdownCount": "{{n}} active on this page",
+    "sourceReachedBlock": "block {{n}}",
+    "sourceNoFrontier": "no block reported",
+    "sourceFetching": "fetching",
+    "sourceIdle": "idle"
   }
 }

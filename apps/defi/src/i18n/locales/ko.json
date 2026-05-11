@@ -1772,6 +1772,12 @@
     "liveTailStatus": "Live-tail 상태",
     "liveTailInSync": "동기화됨",
     "liveTailCatchingUp": "따라잡는 중 · ~{{n}} 블록 남음",
-    "liveTailDeepBacklog": "심한 지연 · ~{{n}} 블록 남음 (따라잡기에 여러 cron 주기 소요)"
+    "liveTailDeepBacklog": "심한 지연 · ~{{n}} 블록 남음 (따라잡기에 여러 cron 주기 소요)",
+    "sourceBreakdownHeading": "Per-source freshness",
+    "sourceBreakdownCount": "{{n}} active on this page",
+    "sourceReachedBlock": "block {{n}}",
+    "sourceNoFrontier": "no block reported",
+    "sourceFetching": "fetching",
+    "sourceIdle": "idle"
   }
 }

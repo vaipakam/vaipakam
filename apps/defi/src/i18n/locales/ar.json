@@ -1772,6 +1772,12 @@
     "liveTailStatus": "حالة Live-tail",
     "liveTailInSync": "متزامن",
     "liveTailCatchingUp": "يلحق · ~{{n}} كتلة متبقية",
-    "liveTailDeepBacklog": "تراكم عميق · ~{{n}} كتلة متبقية (سيستغرق اللحاق دورات cron عديدة)"
+    "liveTailDeepBacklog": "تراكم عميق · ~{{n}} كتلة متبقية (سيستغرق اللحاق دورات cron عديدة)",
+    "sourceBreakdownHeading": "Per-source freshness",
+    "sourceBreakdownCount": "{{n}} active on this page",
+    "sourceReachedBlock": "block {{n}}",
+    "sourceNoFrontier": "no block reported",
+    "sourceFetching": "fetching",
+    "sourceIdle": "idle"
   }
 }

@@ -1772,6 +1772,12 @@
     "liveTailStatus": "Live-Tail-Status",
     "liveTailInSync": "Synchron",
     "liveTailCatchingUp": "Holt auf · ~{{n}} Blöcke verbleibend",
-    "liveTailDeepBacklog": "Großer Rückstand · ~{{n}} Blöcke verbleibend (Aufholen dauert mehrere Cron-Zyklen)"
+    "liveTailDeepBacklog": "Großer Rückstand · ~{{n}} Blöcke verbleibend (Aufholen dauert mehrere Cron-Zyklen)",
+    "sourceBreakdownHeading": "Per-source freshness",
+    "sourceBreakdownCount": "{{n}} active on this page",
+    "sourceReachedBlock": "block {{n}}",
+    "sourceNoFrontier": "no block reported",
+    "sourceFetching": "fetching",
+    "sourceIdle": "idle"
   }
 }

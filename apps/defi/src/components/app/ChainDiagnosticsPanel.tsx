@@ -54,6 +54,30 @@ const LIVE_SAFE_BLOCK_POLL_MS = 2_000;
  *  how far the page's own chunked-getLogs catch-up has reached. */
 const RPC_TAIL_FRONTIER_SOURCES = ['activeOffers', 'activeLoans', 'logIndex'] as const;
 
+/** Human-readable labels for the DataFreshnessContext source keys —
+ *  for the per-source breakdown rows below. Operator-detail (internal
+ *  hook / endpoint names), kept in English on purpose. Unknown keys
+ *  fall back to the raw key. */
+const FRESHNESS_SOURCE_LABELS: Record<string, string> = {
+  offerStats: 'Central indexer (/offers/stats)',
+  activeOffers: 'RPC tail — active offers (OfferBook)',
+  activeLoans: 'RPC tail — active loans (Dashboard / Risk Watch)',
+  logIndex: 'RPC tail — log scan (most data pages)',
+  userLoans: 'User loans (on-chain views)',
+  roleLoans: 'Wallet loans (indexer by-holder)',
+};
+/** Stable display order for the per-source breakdown. Sources not on
+ *  the current page simply don't appear (the registry only holds the
+ *  ones currently mounted). */
+const FRESHNESS_SOURCE_ORDER = [
+  'offerStats',
+  'activeOffers',
+  'activeLoans',
+  'logIndex',
+  'userLoans',
+  'roleLoans',
+] as const;
+
 interface StorageEstimate {
   usage?: number;
   quota?: number;
@@ -467,6 +491,55 @@ export function ChainDiagnosticsPanel() {
               : t('indexerBadge.statusFetchNo', { defaultValue: 'no' })
           }
         />
+        {/* Per-source freshness breakdown. The DataFreshnessContext
+            registry holds one slice per data hook currently mounted on
+            this page; we surface each one's reached-block + in-flight
+            flag so an operator can see WHICH lane is behind (the central
+            indexer vs. a specific client-side RPC tail-scan), not just
+            the aggregate. Labels stay English — operator detail naming
+            internal hooks / endpoints. Sources absent from this page
+            simply don't render (the registry only knows the mounted
+            ones). */}
+        {FRESHNESS_SOURCE_ORDER.filter((key) => bySource[key]).length > 0 && (
+          <Row
+            label={t('chainDiagnostics.sourceBreakdownHeading', {
+              defaultValue: 'Per-source freshness',
+            })}
+            value={
+              <span className="chain-diag-source-count">
+                {t('chainDiagnostics.sourceBreakdownCount', {
+                  defaultValue: '{{n}} active on this page',
+                  n: FRESHNESS_SOURCE_ORDER.filter((key) => bySource[key])
+                    .length,
+                })}
+              </span>
+            }
+          />
+        )}
+        {FRESHNESS_SOURCE_ORDER.filter((key) => bySource[key]).map((key) => {
+          const slice = bySource[key]!;
+          const frontierPart =
+            slice.frontier !== undefined
+              ? t('chainDiagnostics.sourceReachedBlock', {
+                  defaultValue: 'block {{n}}',
+                  n: slice.frontier.toLocaleString(),
+                })
+              : t('chainDiagnostics.sourceNoFrontier', {
+                  defaultValue: 'no block reported',
+                });
+          const statePart = slice.loading
+            ? t('chainDiagnostics.sourceFetching', {
+                defaultValue: 'fetching',
+              })
+            : t('chainDiagnostics.sourceIdle', { defaultValue: 'idle' });
+          return (
+            <Row
+              key={key}
+              label={`· ${FRESHNESS_SOURCE_LABELS[key] ?? key}`}
+              value={`${frontierPart} · ${statePart}`}
+            />
+          );
+        })}
         {cursorIso && (
           <Row
             label={t('chainDiagnostics.cursorAdvancedAt', {

@@ -1752,6 +1752,12 @@
     "liveTailStatus": "Estado del live-tail",
     "liveTailInSync": "Sincronizado",
     "liveTailCatchingUp": "Poniéndose al día · ~{{n}} bloques restantes",
-    "liveTailDeepBacklog": "Backlog profundo · ~{{n}} bloques restantes (el catch-up tomará muchos ciclos de cron)"
+    "liveTailDeepBacklog": "Backlog profundo · ~{{n}} bloques restantes (el catch-up tomará muchos ciclos de cron)",
+    "sourceBreakdownHeading": "Per-source freshness",
+    "sourceBreakdownCount": "{{n}} active on this page",
+    "sourceReachedBlock": "block {{n}}",
+    "sourceNoFrontier": "no block reported",
+    "sourceFetching": "fetching",
+    "sourceIdle": "idle"
   }
 }

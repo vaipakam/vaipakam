@@ -1775,6 +1775,12 @@
     "liveTailStatus": "Live-tail status",
     "liveTailInSync": "In sync",
     "liveTailCatchingUp": "Catching up · ~{{n}} blocks remaining",
-    "liveTailDeepBacklog": "Deep backlog · ~{{n}} blocks remaining (catch-up will take many cron ticks)"
+    "liveTailDeepBacklog": "Deep backlog · ~{{n}} blocks remaining (catch-up will take many cron ticks)",
+    "sourceBreakdownHeading": "Per-source freshness",
+    "sourceBreakdownCount": "{{n}} active on this page",
+    "sourceReachedBlock": "block {{n}}",
+    "sourceNoFrontier": "no block reported",
+    "sourceFetching": "fetching",
+    "sourceIdle": "idle"
   }
 }
