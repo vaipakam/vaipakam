@@ -1479,6 +1479,28 @@ panel. `min-height: 0` on `.diag-scroll` is the load-bearing rule —
 without it the flex child refuses to shrink below its content height
 and the overflow never engages.
 
+## Diagnostics drawer — Chain & Indexer rows: label column no longer hogs the row
+
+The Chain & Indexer table used `grid-template-columns: minmax(120px,
+auto) 1fr`. The `auto` label track sized toward the longest i18n label
+on one line — fine in English, but the Tamil (and other RTL/CJK)
+strings run long, so on a phone the label column took ~75% of the row
+and the `1fr` value column was squeezed so tight that `word-break:
+break-word` chopped values a glyph at a time ("4 1 , 3 / 8 3 , / 4 8
+6", "Base / Sepo / lia / (845 / 32)").
+
+Fix: both tracks are now `minmax(0, …)` (so neither sizes to its
+content's max-content width — `minmax(0, …)` lets a track shrink below
+min-content so the text wraps instead of forcing the other to zero),
+ratio ~1.3 : 1 label-to-value. `min-width: 0` on the `dt`/`dd` so the
+grid items don't re-impose their min-content width over the track
+ratio, and the value `dd` switched from `word-break: break-word` to
+`overflow-wrap: anywhere` (same break-when-needed behaviour but it
+also lowers min-content size, so the indexer URL / ISO timestamps fit
+a narrow track cleanly). Below 480px (drawer is full-width there) the
+two columns stack — value indented under label — since even a good
+ratio is cramped at phone width.
+
 ## Release-notes mid-stream date roll
 
 The conversation that produced this release-notes file started on
