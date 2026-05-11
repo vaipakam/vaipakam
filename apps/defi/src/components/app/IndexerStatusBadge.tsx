@@ -384,7 +384,11 @@ export function IndexerStatusBadge({ compact }: Props) {
             )}
             {popover.showBlockRows && (
               <Row
-                label={t('indexerBadge.statusChainSafeHead')}
+                label={
+                  liveSafeBlock !== null
+                    ? t('indexerBadge.statusChainSafeHeadLive')
+                    : t('indexerBadge.statusChainSafeHead')
+                }
                 value={
                   liveSafeBlock !== null ? (
                     <>
