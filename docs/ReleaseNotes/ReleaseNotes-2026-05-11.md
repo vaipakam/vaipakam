@@ -1087,6 +1087,67 @@ Both changes are `apps/defi` only — they need a `--phase cf-defi`
 re-run to reach the live `vaipakam-defi` Worker. Contract / Worker
 state from the 2026-05-11 fresh redeploy is unaffected.
 
+## Live chain-safe-head readout + diagnostics-drawer mirror + i18n sweep
+
+Follow-ups to the data-freshness badge, all `apps/defi`.
+
+### Live "Chain safe head" in the badge popover
+
+The popover's safe-head row showed the watermark snapshot's `safeBlock`
+— only as fresh as the last probe (5–30 s). Added a dedicated
+`getBlock({safe})` poll that runs ONLY while the popover is open (2 s
+cadence; popovers are open for seconds, so the RPC cost is bounded).
+The row seeds from the watermark snapshot, then refines to the true
+safe head and ticks up as blocks finalise — a small pulsing green dot
+marks the value as live-polled. On close the poll stops and the last
+value is dropped so the next open re-seeds fresh. This is the chain's
+*actual* safe head, deliberately distinct from `maxFrontier` (what the
+on-screen data covers — the data lags the chain head by design;
+conflating the two would hide real staleness). On rollups
+(Base/Arbitrum, where `safe ≈ latest`) the number visibly ticks every
+~2 s; on L1 Sepolia it snaps forward in jumps when an epoch finalises.
+`publicClient` comes from `useDiamondPublicClient()` so it follows the
+chain dropdown like the rest of the read layer.
+
+The row label was renamed from "Last safe block (available)" to "Chain
+safe head" (with a "(live)" suffix while the poll is active) — clearer,
+and the rename flows through to the ChainDiagnosticsPanel mirror too.
+
+### Diagnostics drawer — "Chain & Indexer" card now carries the freshness rows
+
+The diagnostics drawer's `ChainDiagnosticsPanel` (the operator-grade
+deep view, above the journey-events feed) gained the same three
+signals the badge popover surfaces:
+
+- **Freshest data block** — `maxFrontier` from `DataFreshnessContext`,
+  annotated "(via indexer)" or "(via RPC tail-scan)" by which source
+  produced the max. Distinct from the existing "Last safe block
+  (indexed)" row, which is the central indexer's frontier only —
+  `maxFrontier` also folds in every client-side RPC tail-scan's
+  scanned-through block.
+- **Chain safe head (live)** — the same 2 s `getBlock({safe})` poll as
+  the badge popover, but gated on the panel being *expanded* rather
+  than the popover being open. Pulsing-dot indicator; falls back to
+  the watermark snapshot until the first poll resolves.
+- **Fetch in progress** — `anyLoading` (yes/no).
+
+`Row` in both the badge popover and the diagnostics panel was widened
+from `value: string` to `value: ReactNode` so the live-dot can render
+inline.
+
+### i18n — new keys translated across all 8 locales
+
+`statusChainSafeHeadLive`, `statusFreshestBlock`, `viaIndexer`,
+`viaRpcTail`, `statusFetchInProgress`, `statusFetchYes`,
+`statusFetchNo`, `liveSafeBlockTooltip`, plus the `loading*` and
+`liveUpdating*` popover heading/body strings — added to en, zh, ja, ar,
+ta, ko, fr, de with proper translations (not en-fallback). The
+`statusChainSafeHead` value was also retranslated in every locale
+("Chain safe head" / "链上安全区块" / "チェーンの確定ヘッド" / "رأس
+السلسلة الآمن" / "சங்கிலியின் பாதுகாப்பான ஹெட்" / "체인 안전 헤드" /
+"Tête sûre de la chaîne" / "Safe-Head der Chain"). All 8 JSON files
+validated; tsc clean.
+
 ## Release-notes mid-stream date roll
 
 The conversation that produced this release-notes file started on
