@@ -1743,7 +1743,7 @@
     "liveUpdatingState": "En direct (actualisation)",
     "liveUpdatingHeading": "Données à jour — actualisation en cours",
     "liveUpdatingBody": "Tout sur cette page est à jour jusqu'au dernier bloc finalisé. Une actualisation est en cours (quelqu'un a créé une offre ou un prêt vient d'arriver sur la chaîne), donc une ou deux lignes supplémentaires pourraient apparaître dans un instant. Vous pouvez agir en toute sécurité sur ce qui est affiché — l'actualisation ne fait qu'ajouter, elle n'invalide pas.",
-    "statusFreshestBlock": "Bloc de données le plus récent",
+    "statusFreshestBlock": "Données de la page jusqu’au bloc",
     "statusIndexerFrontier": "Frontière de l’indexeur",
     "statusRpcTailFrontier": "Balayage de queue RPC",
     "statusFrontierIdle": "—",

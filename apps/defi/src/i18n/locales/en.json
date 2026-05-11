@@ -1746,7 +1746,7 @@
     "liveUpdatingState": "Live (refreshing)",
     "liveUpdatingHeading": "Data is fresh — refreshing",
     "liveUpdatingBody": "Everything on this page is fresh to the latest finalised block. A refresh is in flight right now (someone created an offer or a loan landed on chain), so a row or two more may appear in a moment. Safe to act on what's shown — the refresh only adds, it doesn't invalidate.",
-    "statusFreshestBlock": "Freshest data block",
+    "statusFreshestBlock": "Page data up to block",
     "statusIndexerFrontier": "Indexer frontier",
     "statusRpcTailFrontier": "RPC tail-scan",
     "statusFrontierIdle": "—",

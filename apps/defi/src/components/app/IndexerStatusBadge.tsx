@@ -72,13 +72,6 @@ const LIVE_SAFE_BLOCK_POLL_MS = 2_000;
 
 const LOCAL_DEV_CHAIN_IDS: ReadonlySet<number> = new Set([31337, 1337]);
 
-/** DataFreshnessContext source keys for the client-side RPC tail-scans
- *  (the chunked `eth_getLogs` catch-up over `[indexer.lastBlock+1,
- *  safeHead]` that `useIndexedActiveOffers` / `useIndexedActiveLoans`
- *  run). `offerStats` reports the central indexer's `lastBlock`; these
- *  report how far the page's own RPC scan has reached. */
-const RPC_TAIL_FRONTIER_SOURCES = ['activeOffers', 'activeLoans', 'logIndex'] as const;
-
 interface Props {
   /** Hide the descriptive text on narrow viewports. */
   compact?: boolean;
@@ -105,7 +98,7 @@ export function IndexerStatusBadge({ compact }: Props) {
   const chain = useReadChain();
   const publicClient = useDiamondPublicClient();
   const { snapshot: watermarkSnapshot } = useLiveWatermark(watermarkPolicy('warm'));
-  const { maxFrontier, anyLoading, bySource } = useDataFreshness();
+  const { maxFrontier, anyLoading } = useDataFreshness();
   const [popoverOpen, setPopoverOpen] = useState(false);
   // Live chain safe-head — polled directly only while the popover is
   // open. `null` until the first poll resolves (the popover seeds the
@@ -178,22 +171,12 @@ export function IndexerStatusBadge({ compact }: Props) {
   const watermarkHealthy =
     safeHead !== null && watermarkAgeSec !== null && watermarkAgeSec < WATERMARK_STALE_SEC;
 
-  // Per-source frontier breakdown for the popover. `indexerFrontier` is
-  // the central indexer's `lastBlock`; `rpcTailFrontier` is how far the
-  // page's own client-side RPC tail-scan has reached (only contributed
-  // when an OfferBook / Dashboard hook is mounted — so it's `null` on
-  // pages that don't run one). `freshestBlock` / `maxFrontier` is the
-  // max of the two — what the on-screen data actually covers.
-  const indexerFrontier = bySource['offerStats']?.frontier ?? null;
-  const rpcTailFrontier = (() => {
-    const vals: number[] = [];
-    for (const key of RPC_TAIL_FRONTIER_SOURCES) {
-      const f = bySource[key]?.frontier;
-      if (f !== undefined) vals.push(f);
-    }
-    return vals.length > 0 ? Math.max(...vals) : null;
-  })();
-
+  // `maxFrontier` is the freshest block any of this page's data sources
+  // (central indexer OR client-side RPC tail-scans) has reached — what
+  // the data on screen actually covers. The popover surfaces just this
+  // aggregate; the per-lane breakdown (indexer vs. each RPC tail-scan
+  // source) lives in the diagnostics drawer where the operator-detail
+  // belongs.
   const blockGap =
     maxFrontier !== null && safeHead !== null ? Math.max(0, safeHead - maxFrontier) : null;
 
@@ -359,29 +342,17 @@ export function IndexerStatusBadge({ compact }: Props) {
           <dl className="indexer-badge-popover-status">
             <Row label={t('indexerBadge.statusState')} value={popover.stateLabel} />
             <Row label={t('indexerBadge.statusChain')} value={chainLabel} />
+            {/* Popover is the glance surface — only the "what block is
+                the page current to?" summary lives here. The per-lane
+                breakdown (indexer frontier vs. each RPC tail-scan
+                source) lives in the diagnostics drawer's Chain &
+                Indexer panel; duplicating it here just turned the
+                popover into a tiny mirror of the drawer. */}
             {popover.showBlockRows && popover.freshestBlock !== null && (
-              <>
-                <Row
-                  label={t('indexerBadge.statusIndexerFrontier')}
-                  value={
-                    indexerFrontier !== null
-                      ? indexerFrontier.toLocaleString()
-                      : t('indexerBadge.statusFrontierIdle')
-                  }
-                />
-                <Row
-                  label={t('indexerBadge.statusRpcTailFrontier')}
-                  value={
-                    rpcTailFrontier !== null
-                      ? rpcTailFrontier.toLocaleString()
-                      : t('indexerBadge.statusRpcTailIdle')
-                  }
-                />
-                <Row
-                  label={t('indexerBadge.statusFreshestBlock')}
-                  value={popover.freshestBlock.toLocaleString()}
-                />
-              </>
+              <Row
+                label={t('indexerBadge.statusFreshestBlock')}
+                value={popover.freshestBlock.toLocaleString()}
+              />
             )}
             {popover.showBlockRows && (
               <Row

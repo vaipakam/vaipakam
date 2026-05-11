@@ -1501,6 +1501,34 @@ a narrow track cleanly). Below 480px (drawer is full-width there) the
 two columns stack — value indented under label — since even a good
 ratio is cramped at phone width.
 
+## Status-badge popover trimmed to the glance summary + "Freshest data block" → "Page data up to block"
+
+After the previous pass landed the per-lane freshness breakdown in the
+diagnostics drawer's Chain & Indexer panel, the badge popover's
+indexer-frontier + RPC-tail-frontier rows became a tiny mirror of the
+drawer — three rows where one would do. Trimmed: the popover now shows
+just **state · chain · page-data-block · chain-safe-head · gap ·
+fetch-in-progress**, the user-level "is what I'm seeing current?"
+summary. The operator-level "*which* lane is behind" detail stays in
+the drawer's per-source breakdown (`offerStats` / `activeOffers` /
+`activeLoans` / `logIndex` / `userLoans` / `roleLoans`).
+
+The freshest-block label is also renamed: **"Freshest data block" →
+"Page data up to block"** in both the popover and the drawer.
+"Freshest" was jargon; "Page data up to block X" reads as plain English
+and pairs cleanly with the "Chain safe head: Y" row below it
+(`X ≤ Y` by construction, so the gap is obvious at a glance).
+Translated to all 10 locales (hi + es had been missing the key
+entirely; both now have the new value). The i18n key
+(`indexerBadge.statusFreshestBlock`) is kept as the internal id so the
+rename is a value-only change — no consumer needs updating.
+
+The badge file also lost the now-unused `RPC_TAIL_FRONTIER_SOURCES`
+constant, the `indexerFrontier` / `rpcTailFrontier` derivations, and
+the `bySource` destructuring from `useDataFreshness`. The diagnostics
+panel still computes its own `rpcTailFrontier` from the same shared
+helpers — single owner of that computation now, not duplicated.
+
 ## Release-notes mid-stream date roll
 
 The conversation that produced this release-notes file started on

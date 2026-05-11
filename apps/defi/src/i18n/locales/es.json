@@ -1733,7 +1733,8 @@
     "openDiagnosticsTitle": "Abrir diagnósticos",
     "liveRpcInSync": "En vivo (sincronizado)",
     "liveRpcInSyncHeading": "Lectura en vivo desde la cadena — sincronizado",
-    "liveRpcInSyncBody": "El caché del indexador no está accesible, así que la página obtiene cada fila de oferta / préstamo / actividad directamente desde la cadena vía RPC. El último bloque finalizado (seguro) se leyó recientemente, así que la página está al día. Enviar transacciones mientras esté en verde es seguro — lo que muestra la página es lo que hay en la cadena."
+    "liveRpcInSyncBody": "El caché del indexador no está accesible, así que la página obtiene cada fila de oferta / préstamo / actividad directamente desde la cadena vía RPC. El último bloque finalizado (seguro) se leyó recientemente, así que la página está al día. Enviar transacciones mientras esté en verde es seguro — lo que muestra la página es lo que hay en la cadena.",
+    "statusFreshestBlock": "Datos de página hasta el bloque"
   },
   "chainDiagnostics": {
     "panelTitle": "Cadena e indexador",

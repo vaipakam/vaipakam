@@ -407,7 +407,7 @@ export function ChainDiagnosticsPanel() {
         {!isLocalDev && maxFrontier !== null && (
           <Row
             label={t('indexerBadge.statusFreshestBlock', {
-              defaultValue: 'Freshest data block',
+              defaultValue: 'Page data up to block',
             })}
             value={maxFrontier.toLocaleString()}
           />

@@ -1743,7 +1743,7 @@
     "liveUpdatingState": "مباشر (يتم التحديث)",
     "liveUpdatingHeading": "البيانات محدّثة — جارٍ التحديث",
     "liveUpdatingBody": "كل شيء في هذه الصفحة محدّث حتى آخر كتلة منتهية. هناك تحديث جارٍ الآن (أنشأ أحدهم عرضًا أو وصل قرض إلى السلسلة)، لذا قد يظهر صف أو صفان إضافيان بعد لحظات. آمن التصرف بناءً على ما هو معروض — التحديث يضيف فقط ولا يبطل.",
-    "statusFreshestBlock": "أحدث كتلة بيانات",
+    "statusFreshestBlock": "بيانات الصفحة حتى الكتلة",
     "statusIndexerFrontier": "حدّ المُفهرس",
     "statusRpcTailFrontier": "مسح ذيل RPC",
     "statusFrontierIdle": "—",

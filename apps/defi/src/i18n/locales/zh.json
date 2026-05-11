@@ -1743,7 +1743,7 @@
     "liveUpdatingState": "实时 (刷新中)",
     "liveUpdatingHeading": "数据是最新的 — 正在刷新",
     "liveUpdatingBody": "此页面上的所有内容都已更新到最新的确定区块。当前正在进行刷新 (有人创建了报价或贷款已上链),因此片刻后可能会出现一两行新内容。可以放心操作所显示的内容 — 刷新只会增加,不会使其失效。",
-    "statusFreshestBlock": "最新数据区块",
+    "statusFreshestBlock": "本页数据已更新至区块",
     "statusIndexerFrontier": "索引器边界",
     "statusRpcTailFrontier": "RPC 尾部扫描",
     "statusFrontierIdle": "—",

@@ -1743,7 +1743,7 @@
     "liveUpdatingState": "실시간 (새로고침 중)",
     "liveUpdatingHeading": "데이터는 최신 — 새로고침 중",
     "liveUpdatingBody": "이 페이지의 모든 내용은 가장 최근의 확정 블록까지 최신입니다. 지금 새로고침이 진행 중입니다 (누군가 오퍼를 만들었거나 대출이 체인에 도달했습니다). 따라서 잠시 후 한두 행이 더 나타날 수 있습니다. 표시된 내용을 기준으로 작업해도 안전합니다 — 새로고침은 추가만 하며 무효화하지 않습니다.",
-    "statusFreshestBlock": "최신 데이터 블록",
+    "statusFreshestBlock": "페이지 데이터 반영 블록",
     "statusIndexerFrontier": "인덱서 경계",
     "statusRpcTailFrontier": "RPC 테일 스캔",
     "statusFrontierIdle": "—",
