@@ -4,7 +4,7 @@ import { useDiamondPublicClient, useReadChain } from '../contracts/useDiamond';
 import { DEFAULT_CHAIN } from '../contracts/config';
 import { DIAMOND_ABI_VIEM as DIAMOND_ABI } from '@vaipakam/contracts/abis';
 import { useLogIndex } from './useLogIndex';
-import { fetchLoansByLender, fetchLoansByBorrower } from '../lib/indexerClient';
+import { fetchLoansByCurrentHolder } from '../lib/indexerClient';
 import {
   AssetType,
   LoanStatus,
@@ -103,19 +103,17 @@ export function useClaimables(address: string | null) {
       let walkSet: typeof knownLoans = [];
       let narrowedBy: 'indexer' | 'onchain-view' | 'failed' = 'failed';
 
-      // Layer 1: indexer. Trust it ONLY when it returns >0 loans —
-      // an empty `{loans: []}` page can mean the user genuinely has
-      // none, OR the indexer is stale (the 2026-05-11 arb-sepolia
-      // cursor-skipped-range incident is the canonical example).
-      // Treating empty as authoritative would shadow the on-chain
-      // truth and re-create the bug. So: empty → fall through.
-      const [lenderPage, borrowerPage] = await Promise.all([
-        fetchLoansByLender(chain.chainId, address),
-        fetchLoansByBorrower(chain.chainId, address),
-      ]);
+      // Layer 1: indexer `/loans/by-current-holder/:addr` — one HTTP
+      // call, NFT-holder-keyed (covers secondary-market recipients
+      // out-of-the-box via the lender_current_owner /
+      // borrower_current_owner columns). Replaces the previous
+      // by-lender + by-borrower parallel pair which (a) needed two
+      // RPCs, and (b) couldn't see secondary-market holders.
+      // Trust ONLY when >0 loans returned; empty falls through to
+      // Layer 2 — a stale indexer would falsely report zero.
+      const holderPage = await fetchLoansByCurrentHolder(chain.chainId, address);
       const indexerIds = new Set<string>();
-      if (lenderPage) for (const l of lenderPage.loans) indexerIds.add(String(l.loanId));
-      if (borrowerPage) for (const l of borrowerPage.loans) indexerIds.add(String(l.loanId));
+      if (holderPage) for (const l of holderPage.loans) indexerIds.add(String(l.loanId));
       if (indexerIds.size > 0) {
         walkSet = knownLoans.filter((e) => indexerIds.has(String(e.loanId)));
         narrowedBy = 'indexer';

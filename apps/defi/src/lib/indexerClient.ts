@@ -286,6 +286,67 @@ export function fetchLoansByBorrower(
   );
 }
 
+/** Page returned by /loans/by-current-holder/:addr. Same shape as
+ *  ParticipantLoansPage minus `side` — the response is the UNION of
+ *  lender + borrower side holdings, and downstream can compare each
+ *  loan's `lenderCurrentOwner` / `borrowerCurrentOwner` columns to
+ *  infer which side(s) apply. */
+export interface HolderLoansPage {
+  chainId: number;
+  address: string;
+  loans: IndexedLoan[];
+  nextBefore: number | null;
+}
+
+/**
+ * GET /loans/by-current-holder/:addr — returns loans where `addr`
+ * is the CURRENT holder of either the lender- or borrower-position
+ * NFT. Backed by the lender_current_owner / borrower_current_owner
+ * D1 columns maintained by the indexer's Transfer event handler.
+ * Zero RPC cost; trade-off is staleness up to one cron tick
+ * (~minutes) on a fresh Transfer.
+ */
+export function fetchLoansByCurrentHolder(
+  chainId: number,
+  holder: string,
+  opts: { limit?: number; before?: number } = {},
+): Promise<HolderLoansPage | null> {
+  const params = new URLSearchParams({ chainId: String(chainId) });
+  if (opts.limit) params.set('limit', String(opts.limit));
+  if (opts.before) params.set('before', String(opts.before));
+  return getJson<HolderLoansPage>(
+    `/loans/by-current-holder/${holder.toLowerCase()}?${params}`,
+  );
+}
+
+/** Page returned by /offers/by-current-holder/:addr. */
+export interface HolderOffersPage {
+  chainId: number;
+  address: string;
+  offers: IndexedOffer[];
+  nextBefore: number | null;
+}
+
+/**
+ * GET /offers/by-current-holder/:addr — returns offers where `addr`
+ * CURRENTLY holds the creator-position NFT (via the
+ * creator_current_owner D1 column). Covers secondary-market
+ * recipients whose `creator` (LoanInitiated-time participant)
+ * wouldn't match.
+ */
+export function fetchOffersByCurrentHolder(
+  chainId: number,
+  holder: string,
+  opts: { limit?: number; before?: number } = {},
+): Promise<HolderOffersPage | null> {
+  const params = new URLSearchParams({ chainId: String(chainId) });
+  if (opts.limit) params.set('limit', String(opts.limit));
+  if (opts.before) params.set('before', String(opts.before));
+  return getJson<HolderOffersPage>(
+    `/offers/by-current-holder/${holder.toLowerCase()}?${params}`,
+  );
+}
+
 export interface RecentLoansPage {
   chainId: number;
   loans: IndexedLoan[];

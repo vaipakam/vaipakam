@@ -5,7 +5,7 @@ import { DEFAULT_CHAIN } from '../contracts/config';
 import { DIAMOND_ABI_VIEM as DIAMOND_ABI } from '@vaipakam/contracts/abis';
 import { batchCalls, encodeBatchCalls } from '@vaipakam/lib/multicall';
 import { useLogIndex } from './useLogIndex';
-import { fetchLoansByLender, fetchLoansByBorrower } from '../lib/indexerClient';
+import { fetchLoansByCurrentHolder } from '../lib/indexerClient';
 import { type LoanStatus, type LoanSummary, type LoanDetails } from '../types/loan';
 import { beginStep } from '../lib/journeyLog';
 
@@ -67,17 +67,12 @@ export function useUserLoans(address: string | null) {
       let walkSet: typeof knownLoans = [];
       let narrowedBy: 'indexer' | 'onchain-view' | 'failed' = 'failed';
 
-      // Layer 1: indexer. Empty page (truthy `{loans: []}`) does
-      // NOT short-circuit — a stale indexer would falsely report
-      // zero loans for the user. Trust the indexer only when its
-      // pages have >0 entries.
-      const [lenderPage, borrowerPage] = await Promise.all([
-        fetchLoansByLender(chain.chainId, address),
-        fetchLoansByBorrower(chain.chainId, address),
-      ]);
+      // Layer 1: indexer `/loans/by-current-holder/:addr` — one HTTP
+      // call, NFT-holder-keyed (covers secondary-market recipients).
+      // See useClaimables for the same migration rationale.
+      const holderPage = await fetchLoansByCurrentHolder(chain.chainId, address);
       const indexerIds = new Set<string>();
-      if (lenderPage) for (const l of lenderPage.loans) indexerIds.add(String(l.loanId));
-      if (borrowerPage) for (const l of borrowerPage.loans) indexerIds.add(String(l.loanId));
+      if (holderPage) for (const l of holderPage.loans) indexerIds.add(String(l.loanId));
       if (indexerIds.size > 0) {
         walkSet = knownLoans.filter((e) => indexerIds.has(String(e.loanId)));
         narrowedBy = 'indexer';
