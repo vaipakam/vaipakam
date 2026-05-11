@@ -603,6 +603,185 @@ All 14 setPeer legs landed. Cross-chain LayerZero packets can flow
 in every direction across the three-chain testnet mesh. WireVPFIPeers
 phase is **complete** for the testnet rehearsal.
 
+## Late-session frontend reliability + indexer-first migration wave
+
+The OfferBook empty-data report opened a long thread that ended
+up closing **every cross-cutting frontend reliability gap** the
+codebase carried. Twelve commits landed, in roughly three groups:
+
+### Group 1 — chain-switch reactivity (`fdb6ebe`, `9eed21e`)
+
+Six hooks had module-scope caches keyed without `chainId`
+(`useActiveOffersByAssetPairRanked`, `useDashboard{Offers,Loans,
+LoansBothSides,Claimables}`, `useProtocolConfig`). Switching the
+wallet from arb-sepolia to base-sepolia served the previous
+chain's rows from cache until the user clicked the manual refresh
+button — the bug the user reported with "after the chain change
+the offers and loans only load after clicking the refresh
+button." Cache keys now chain-prefixed; the lookup naturally
+misses on chain switch and refetches.
+
+Six hooks gained `if (!chain.diamondAddress) return` short-
+circuits to stop firing `readContract` calls against
+`ZERO_ADDRESS` (the `useDiamondRead` fallback when no Diamond
+exists on the connected chain). Surfaced 2026-05-10 in the
+diagnostics drawer as a `getProtocolConfigBundle` + 4 sibling
+errors from chainId 421614 + wallet-not-connected.
+
+The OfferBook surface also got a separate fix: the `indexerServingOpen`
+gate at `OfferBook.tsx:502-524` now also requires the indexer's
+result to agree with the on-chain log index. When the indexer
+returns empty `[]` but `useLogIndex` has scraped real
+`OfferCreated` events from the chain (the stale-indexer scenario
+from the 2026-05-11 cursor-skipped-range bug earlier today), the
+gate flips to false → falls through to the legacy log-scan path
+→ auto-load fires at mount. No more "click Load More to see your
+offers" UX bug.
+
+### Group 2 — source-level `useReadyDiamond` helper (`048d14a`, `e1d017d`)
+
+Diagnostics audit revealed the null-diamondAddress bug class was
+broader than 6 hooks — ~30 more hooks read from the Diamond
+without per-hook guards. Manual per-hook patches don't scale and
+future hooks would need a reviewer to remember the pattern.
+
+Added two helpers to `apps/defi/src/contracts/useDiamond.ts`:
+- `useReadyDiamond()` returns `DiamondHandle | null` (null when
+  `chain.diamondAddress` is null)
+- `useReadyDiamondClient()` returns
+  `{ client, diamond, chain } | null` for hooks that drive
+  multicalls directly
+
+Migrated 10 hooks: `useLoan`, `useKeeperStatus`, `usePositionLock`,
+`useEscrowUpgrade` (newly fixed), and the 6 already-guarded hooks
+consolidated to the helper. Net code change: −20 lines, codebase
+uniformly safe. Future hooks adopt the helper naturally; the null
+check is impossible to forget at the call site.
+
+### Group 3 — RPC-quota-reduction refactors (`8432aaa`, `7e24172`, `e4e83a5`, `b283d85`)
+
+`useClaimables` and `useUserLoans` were walking every loan in the
+protocol per dashboard mount (3-6 sequential RPCs per loan × 40+
+loans on a populated chain). Replaced with a 3-layer narrowing:
+
+1. **Indexer HTTP** — `fetchLoansByLender` + `fetchLoansByBorrower`
+   (parallel, ~50-100ms total).
+2. **On-chain user-filter view** — `getUserDashboardClaimables` /
+   `getUserDashboardLoans` server-side filtered, one multicall
+   (~200ms).
+3. **Walk-all knownLoans** — legacy, originally Layer 3 fallback;
+   later dropped when the user observed that Layer 2 is
+   authoritative for everything the storage index tracks.
+
+Mid-wave regression caught (`e4e83a5`): the original 3-layer
+treated an indexer `{loans: []}` empty page as authoritative,
+short-circuiting before Layer 2 ever ran. On arb-sepolia (where
+the indexer cursor was reseeded past historical events earlier
+today), every user appeared to have zero claims even when the
+chain held them. Fix: trust Layer 1 only when its pages return
+>0 entries; empty → fall through.
+
+Then walk-all dropped entirely (`b283d85`): with on-chain Layer 2
+authoritative for `userLoanIds`-tracked loans, the legacy walk-all
+just burned RPC quota for nothing on chains where the view exists.
+Trade-off: secondary-market NFT recipients (users who received a
+position NFT via Transfer rather than as the LoanInitiated party)
+become invisible until the planned by-current-holder support
+lands. That work followed immediately.
+
+## Secondary-market NFT recipient support (full feature, 8 commits)
+
+The walk-all drop intentionally regressed the secondary-market
+NFT-recipient case — users who hold a position NFT they didn't
+mint (received via ERC721 Transfer) couldn't see their claims.
+Closed via full layered support across contracts + indexer +
+frontend.
+
+### Contracts (`bf6a3ef`, `f7032f8`, `a457bd1`)
+
+Storage: new `offerIdByPositionTokenId` reverse map in
+`LibVaipakam.Storage` mirroring the existing `loanIdByPositionTokenId`.
+Populated in `OfferFacet._writeOfferFields` at offer creation;
+cleared in `OfferCancelFacet.cancelOffer` and in
+`LibMetricsHooks.onLoanInitiated` (when the offer's position NFT
+transitions to a loan position).
+
+Two new views on MetricsFacet:
+- `getUserPositionLoans(user) → (loanIds[], tokenIds[])`
+- `getUserPositionOffers(user) → (offerIds[], tokenIds[])`
+
+Both walk `ERC721Enumerable` (`balanceOf(user)` +
+`tokenOfOwnerByIndex(user, i)` over `[0, balance)`) and resolve
+each tokenId via the existing/new reverse map. O(user's NFT
+count) — typical user holds 1-20 position NFTs; constant-time
+enumeration vs. the O(all loans) walk the legacy views did.
+
+DeployDiamond.s.sol hand-maintained `_getMetricsSelectors()`
+array bumped from 38 → 40 to register the two new selectors.
+Caught by a `0xa9ad62f8` (FunctionNotFound) revert on first
+anvil smoke test — the selector array is the second hand-
+maintained spot after the new view itself; both have to be in
+sync. End-to-end verified on anvil after PartialFlows populate:
+every test wallet's `balanceOf` exactly equals
+`loans.length + offers.length` from the new views.
+
+### Indexer (`a7308da`, `41ac564`)
+
+D1 migration 0012 adds three columns + indexes:
+- `loans.lender_current_owner`
+- `loans.borrower_current_owner`
+- `offers.creator_current_owner`
+
+`chainIndexer.ts` gains an ERC721 Transfer event handler that
+fires batched UPDATEs on every non-burn transfer: token-id keyed
+against `loans.lender_token_id` / `loans.borrower_token_id` /
+`offers.position_token_id`. Plus initial seeding at LoanInitiated
++ OfferCreated time so the no-transfer case is correct out-of-
+the-box. The migration backfills existing rows.
+
+Two new GET endpoints:
+- `/loans/by-current-holder/:addr` — union of lender+borrower-
+  side holdings via the new columns
+- `/offers/by-current-holder/:addr` — creator-NFT holdings
+
+Both are pure D1 lookups — zero RPC cost per request. Unlike the
+existing `/loans/by-lender` route which multicalls `ownerOf` per
+loan at query time.
+
+### Frontend Layer wires (`4d65f06`, `86b65ba`)
+
+`useClaimables` + `useUserLoans` Layer 1 switched from
+`(fetchLoansByLender + fetchLoansByBorrower)` parallel pair to a
+single `fetchLoansByCurrentHolder` call — one HTTP call instead
+of two, NFT-holder-keyed (covers secondary-market). Layer 2
+switched from `(getUserDashboardClaimables + getUserDashboardLoans)`
+parallel pair to a single `getUserPositionLoans` call — one
+on-chain read instead of two, also NFT-holder-keyed.
+
+`indexerClient` exports `fetchLoansByCurrentHolder` and
+`fetchOffersByCurrentHolder` with `HolderLoansPage` /
+`HolderOffersPage` response types.
+
+### What this unlocks
+
+Three end-state properties of the read path that didn't exist
+before today:
+1. **Secondary-market NFT recipients are visible** at both layers
+   without per-hook event scanning or walk-all fan-out.
+2. **One HTTP / one on-chain call** per ClaimCenter or Dashboard
+   mount (was two of each prior).
+3. **Zero RPC quota on the happy path** — indexer Layer 1 serves
+   the answer; Layer 2 only fires when the indexer is unreachable
+   AND the user has on-chain data the indexer hasn't seen yet.
+
+The prelive arb-sepolia + sepolia + base-sepolia deploys don't
+yet carry the new MetricsFacet selectors / `offerIdByPositionTokenId`
+storage / `0012_current_holder` D1 migration. That ships in the
+next coordinated deploy cycle — testnets are scheduled for
+redeploy anyway, so cutting it on the next scheduled rehearsal
+is the natural delivery vehicle. anvil end-to-end smoke confirms
+the surface works.
+
 ## Release-notes mid-stream date roll
 
 The conversation that produced this release-notes file started on
