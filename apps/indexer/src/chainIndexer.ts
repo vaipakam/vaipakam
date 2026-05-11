@@ -32,6 +32,7 @@
 
 import {
   createPublicClient,
+  decodeEventLog,
   http,
   toEventSignature,
   type Abi,
@@ -255,18 +256,43 @@ async function runChainIndexerForChain(
         ? scanTo
         : cursor + MAX_RANGE_PER_CALL - 1n;
     try {
-      const logs = await client.getContractEvents({
+      // Plain address-filtered `eth_getLogs` (no topic filter), then
+      // decode each log against EVENT_ABI ourselves. NOT
+      // `getContractEvents({ abi: EVENT_ABI })` — that builds a topic0
+      // OR-filter of every event in the ABI (~80 of them now that
+      // EVENT_ABI is derived from the full Diamond ABI), and several
+      // RPC providers reject `eth_getLogs` filters with that many
+      // OR'd topics → the call errors → the cron bails on the same
+      // window forever → Cloudflare backs the cron off entirely. An
+      // unfiltered address query has no such limit; we decode + filter
+      // client-side instead. Logs whose topic0 isn't in EVENT_ABI
+      // (config-facet events, ERC-721 Approval, etc.) throw on decode
+      // and are skipped.
+      const rawLogs = await client.getLogs({
         address: diamond,
-        abi: EVENT_ABI,
         fromBlock: cursor,
         toBlock: chunkEnd,
       });
-      for (const log of logs) {
-        allLogs.push(log as unknown as DecodedLog);
+      for (const raw of rawLogs) {
+        let decoded: { eventName: string; args: Record<string, unknown> };
+        try {
+          decoded = decodeEventLog({
+            abi: EVENT_ABI,
+            topics: raw.topics,
+            data: raw.data,
+          }) as { eventName: string; args: Record<string, unknown> };
+        } catch {
+          continue; // event not in EVENT_ABI — not ours, skip
+        }
+        allLogs.push({
+          ...raw,
+          eventName: decoded.eventName,
+          args: decoded.args,
+        } as unknown as DecodedLog);
       }
     } catch (err) {
       console.error(
-        `[chainIndexer] getContractEvents ${cursor}-${chunkEnd} failed`,
+        `[chainIndexer] getLogs ${cursor}-${chunkEnd} failed`,
         err,
       );
       // Don't advance the cursor on partial failure — the next tick
