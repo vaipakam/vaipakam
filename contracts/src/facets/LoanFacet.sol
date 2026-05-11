@@ -97,6 +97,13 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
         LibVaipakam.PeriodicInterestCadence periodicInterestCadence;
         address matcher;
         uint256 healthFactorAtInit;
+        // Position-NFT ids minted at loan creation — the lender NFT and
+        // the borrower NFT. Carried here so cache-merge consumers can
+        // build the loanId → (lender NFT, borrower NFT) mapping straight
+        // from the event, without a `getLoanDetails` read-back. The
+        // current NFT holder is then tracked via ERC-721 Transfer.
+        uint256 lenderTokenId;
+        uint256 borrowerTokenId;
     }
 
     /// @notice Companion to {LoanInitiated} — full self-sufficient
@@ -257,7 +264,7 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
 
     /// @dev Emits the {LoanInitiatedDetails} companion. Factored out of
     ///      `initiateLoan` to keep the calling frame's stack-depth
-    ///      manageable. The 20-field payload travels as a single
+    ///      manageable. The 22-field payload travels as a single
     ///      memory-allocated struct, populated field-by-field — the
     ///      `LoanInitDetails({...})` constructor form pushes every
     ///      field onto the stack simultaneously and trips viaIR's
@@ -285,6 +292,12 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
         d.allowsPartialRepay = loan.allowsPartialRepay;
         d.periodicInterestCadence = loan.periodicInterestCadence;
         d.matcher = loan.matcher;
+        // Position-NFT ids — set by `_finalizeLoanCreation` (which runs
+        // before this emit): the creator's NFT was flipped to
+        // LoanInitiated, the acceptor's NFT freshly minted, both ids
+        // written onto the loan struct.
+        d.lenderTokenId = loan.lenderTokenId;
+        d.borrowerTokenId = loan.borrowerTokenId;
 
         // Best-effort HF — staticcall returns 0 on illiquid (no oracle).
         (bool ok, bytes memory ret) = address(this).staticcall(
