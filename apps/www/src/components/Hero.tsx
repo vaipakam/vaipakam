@@ -1,6 +1,7 @@
 import { L as Link } from "./L";
 import { ArrowRight, Coins } from "lucide-react";
 import { useTranslation } from "react-i18next";
+import { defiUrl } from "../lib/defiUrl";
 import "./Hero.css";
 
 export default function Hero() {
@@ -29,7 +30,7 @@ export default function Hero() {
                 to Buy / Stake / Unstake" CTA opens the wallet-gated
                 in-app surface in a new tab. */}
             <a
-              href="/app"
+              href={defiUrl('/')}
               target="_blank"
               rel="noopener noreferrer"
               className="btn btn-primary btn-lg"
