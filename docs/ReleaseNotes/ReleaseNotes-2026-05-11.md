@@ -1276,6 +1276,80 @@ this session (`loadLoanIndex` genesis-scan guard; `DEFAULT_CHUNK`
 the next load). One-time fix for already-stuck clients: DevTools →
 Application → Service Workers → Unregister → reload.
 
+## Indexer: companion-event-driven inserts, stub-heal rename, and a cron-stall fix
+
+Follow-up to the event-coverage work, prompted by the stub rows the
+base-sepolia re-crawl left behind (`is_stub=1`, `token_ids='0'`).
+
+### Why stubs happen, and how to stop them
+
+The `LoanInitiated` handler did a `getLoanDetails(loanId)` RPC read-back
+on every loan creation to fill the row's asset metadata / rates / token
+ids. When that RPC rate-limits → fall back to a stub row → the heal lane
+fixes it on a later cron tick. That read-back is the *only* cause of
+stubs.
+
+But the contracts already emit a self-sufficient companion event,
+`LoanInitiatedDetails(loanId, lender, borrower, LoanInitDetails details)`
+— its natspec literally says "construct the entire loan row from this
+event without a follow-up `getLoanDetails`". It was missing only two
+fields the loans table needs: `lenderTokenId` / `borrowerTokenId`, the
+position NFTs minted at loan creation. Added those to the `LoanInitDetails`
+struct (loan creation is a storage write to `loan.lenderTokenId` /
+`loan.borrowerTokenId`, so per "every state change → event with the
+changed fields" they belong there). 22-field payload now.
+
+The indexer's `LoanInitiated` handler now pre-indexes the
+`LoanInitiatedDetails` companions (always in the same tx, so always in
+the same scan window) and builds the whole row from `details` + the
+bare event's `(offerId, lender, borrower, principal, collateralAmount)`
+— no RPC at insert time → no stub-on-rate-limit. Three-tier fallback:
+companion → `getLoanDetails` read-back (companion somehow absent, ~never)
+→ stub. `startTime` / `lastPeriodicInterestSettledAt` aren't in the
+event (block.timestamp is in the log envelope) — both equal
+block.timestamp at creation, so `blockAt` is used. Net immediately: one
+fewer RPC per loan creation; fully stub-free once the `LoanInitDetails`
+struct change is on-chain. (Offer side still uses the `getOfferDetails`
+read-back — switching it to consume `OfferCreatedDetails` is a
+follow-up; offers heal via `refreshStubOffers`, no visible bug.)
+
+### Rename: `refreshStubLoans` / `refreshStubOffers`
+
+`refreshStaleLoanTokenIds` was a legacy name — it had grown to re-fetch
+the FULL stub loan row, not just token ids. Renamed to `refreshStubLoans`
+to match; `refreshStaleOfferDetails` → `refreshStubOffers` for symmetry.
+Pure rename. (`is_stub` itself is not new — it's the existing fail-soft
+flag from migrations 0008/0009; the stub state is transient and
+self-healing, it just got exercised heavily by the re-crawl burst.)
+
+### Cron-stall fix — `getLogs` + manual decode
+
+Deriving `EVENT_ABI` from the full Diamond ABI (~80 events) had a sting:
+`getContractEvents({ abi: EVENT_ABI })` with no `eventName` builds an
+`eth_getLogs` filter whose `topics[0]` is an OR-array of *every* event
+selector — and several RPC providers reject a filter with that many
+OR'd topics. The call errored, the cron bailed on the same scan window,
+retried forever from the same block, and Cloudflare backed the cron off
+entirely — the base-sepolia cursor froze at block 41352522 and
+`wrangler tail` showed no scheduled invocations. Fix: a plain
+address-filtered `client.getLogs({ address, fromBlock, toBlock })` (no
+topic filter — no provider limit), then `decodeEventLog` each log
+against `EVENT_ABI` ourselves; logs whose topic0 isn't in our ABI
+(config-facet events, ERC-721 Approval, …) throw on decode and are
+skipped. After redeploy the cron resumed (cursor advancing, stubs
+healing), and `/claimables/0xE873…` now returns loan 30 (a repaid
+lender position the wallet still holds) — so the wallet's claim shows.
+
+### Net result for "no claims showing"
+
+End-to-end: indexer loan statuses correct (terminal events decoded),
+stubs healed (0 loan stubs / 0 offer stubs on base-sepolia), cron
+healthy, `/claimables` returns the wallet's claims. On the frontend the
+Claims page reads each loan on-chain per-loan anyway, so it surfaces
+the claim as soon as the loan-status flip lands — once the user is off
+the stale SW bundle (DevTools → Application → Service Workers →
+Unregister → reload).
+
 ## Release-notes mid-stream date roll
 
 The conversation that produced this release-notes file started on
