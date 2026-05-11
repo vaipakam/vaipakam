@@ -887,6 +887,116 @@ contract MetricsFacet {
         for (uint256 k = 0; k < filled; k++) offerIds[k] = buf[k];
     }
 
+    // ─── 8b. NFT-Holder Enumeration (secondary-market-safe) ────────────────
+    //
+    // The §8 views above (getUserLoansPaginated / getUserOffersPaginated)
+    // walk the `userLoanIds[user]` / `userOfferIds[user]` storage indexes,
+    // which are populated at LoanInitiated / OfferCreated time. They do NOT
+    // track ownership AFTER the position NFT changes hands on the
+    // secondary market. The views below close that gap: they enumerate
+    // loans/offers whose position NFT the user CURRENTLY holds via
+    // ERC721Enumerable, regardless of who originally created the loan or
+    // posted the offer.
+    //
+    // Performance: O(user's NFT count) — bounded by `balanceOf(user)`.
+    // For a typical participant who holds 1-20 position NFTs, each call
+    // is a constant-time enumeration vs. an O(all loans) scan. Pairs
+    // with the indexer's `/loans/by-current-holder/{addr}` /
+    // `/offers/by-current-holder/{addr}` endpoints (cached projection
+    // of the same data) for the indexer-first → on-chain-fallback
+    // layered pattern in the frontend hooks.
+    //
+    // Naming convention: `getUserPosition*` — distinguishes from
+    // `getUser*` views above which are LoanInitiated/OfferCreated-keyed.
+
+    /**
+     * @notice Loans whose lender- or borrower-position NFT `user` currently
+     *         holds (resolved via ERC721Enumerable + the
+     *         `loanIdByPositionTokenId` reverse map).
+     * @dev    Catches secondary-market NFT recipients that
+     *         `getUserLoansPaginated` misses. Each tokenId resolves to
+     *         exactly one loan; if the NFT was minted but no loan exists
+     *         for it (e.g. an open offer's creator-NFT), the slot is
+     *         skipped — see {getUserPositionOffers} for that surface.
+     * @return loanIds  Loan IDs whose position NFT `user` currently holds.
+     *                  Each entry is unique (one entry per tokenId, but a
+     *                  user holding both lender+borrower NFTs of the same
+     *                  loan appears twice — once per role; downstream can
+     *                  dedupe via the loanIds set if it wants the loan
+     *                  count rather than the role-tally).
+     * @return tokenIds The position NFT id corresponding to each loanId
+     *                  entry, aligned 1:1. Lets callers infer the role
+     *                  by comparing against `loan.lenderTokenId` /
+     *                  `loan.borrowerTokenId`.
+     */
+    function getUserPositionLoans(address user)
+        external
+        view
+        returns (uint256[] memory loanIds, uint256[] memory tokenIds)
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        uint256 balance = LibERC721.balanceOf(user);
+        uint256[] memory loanBuf = new uint256[](balance);
+        uint256[] memory tokenBuf = new uint256[](balance);
+        uint256 filled;
+        for (uint256 i = 0; i < balance; i++) {
+            uint256 tokenId = LibERC721.tokenOfOwnerByIndex(user, i);
+            uint256 lid = s.loanIdByPositionTokenId[tokenId];
+            if (lid != 0) {
+                loanBuf[filled] = lid;
+                tokenBuf[filled] = tokenId;
+                filled += 1;
+            }
+        }
+        loanIds = new uint256[](filled);
+        tokenIds = new uint256[](filled);
+        for (uint256 k = 0; k < filled; k++) {
+            loanIds[k] = loanBuf[k];
+            tokenIds[k] = tokenBuf[k];
+        }
+    }
+
+    /**
+     * @notice Offers whose creator-position NFT `user` currently holds
+     *         (resolved via ERC721Enumerable + the
+     *         `offerIdByPositionTokenId` reverse map).
+     * @dev    Catches secondary-market offer NFT recipients that
+     *         `getUserOffersPaginated` misses. Only OPEN offers are
+     *         returned — `offerIdByPositionTokenId` is cleared at
+     *         cancel time and at offer-acceptance (when the tokenId
+     *         transitions to a loan position; `getUserPositionLoans`
+     *         surfaces it from then on).
+     * @return offerIds Offer IDs whose creator-NFT `user` currently
+     *                  holds.
+     * @return tokenIds Position NFT id per offerId entry, aligned 1:1.
+     */
+    function getUserPositionOffers(address user)
+        external
+        view
+        returns (uint256[] memory offerIds, uint256[] memory tokenIds)
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        uint256 balance = LibERC721.balanceOf(user);
+        uint256[] memory offerBuf = new uint256[](balance);
+        uint256[] memory tokenBuf = new uint256[](balance);
+        uint256 filled;
+        for (uint256 i = 0; i < balance; i++) {
+            uint256 tokenId = LibERC721.tokenOfOwnerByIndex(user, i);
+            uint256 oid = s.offerIdByPositionTokenId[tokenId];
+            if (oid != 0) {
+                offerBuf[filled] = oid;
+                tokenBuf[filled] = tokenId;
+                filled += 1;
+            }
+        }
+        offerIds = new uint256[](filled);
+        tokenIds = new uint256[](filled);
+        for (uint256 k = 0; k < filled; k++) {
+            offerIds[k] = offerBuf[k];
+            tokenIds[k] = tokenBuf[k];
+        }
+    }
+
     /**
      * @notice Paginated slice of every loan ever created, regardless of status.
      * @dev Sequential ID scan bounded by `limit`. Loans with `id == 0`
