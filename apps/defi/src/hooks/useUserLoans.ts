@@ -82,31 +82,26 @@ export function useUserLoans(address: string | null) {
         walkSet = knownLoans.filter((e) => indexerIds.has(String(e.loanId)));
         narrowedBy = 'indexer';
       } else {
-        // Layer 2: on-chain user-filter view. Authoritative — its
-        // result narrows walkSet whether non-empty or empty. Walk-
-        // all (Layer 3) only fires when this layer errors.
+        // Layer 2: on-chain `getUserPositionLoans` view. Same
+        // rationale as in useClaimables — NFT-holder-keyed
+        // (ERC721Enumerable + `loanIdByPositionTokenId` reverse
+        // map), so secondary-market recipients are included. The
+        // older `getUserDashboardLoans` (keyed by
+        // `userLoanIds[user]` storage, populated at LoanInitiated)
+        // would miss them.
         try {
-          const [lenderRes, borrowerRes] = await Promise.all([
-            publicClient.readContract({
-              address: diamondAddress,
-              abi: DIAMOND_ABI,
-              functionName: 'getUserDashboardLoans',
-              args: [address as Address, false, 0, 200],
-            }) as Promise<readonly [readonly bigint[], readonly unknown[]]>,
-            publicClient.readContract({
-              address: diamondAddress,
-              abi: DIAMOND_ABI,
-              functionName: 'getUserDashboardLoans',
-              args: [address as Address, true, 0, 200],
-            }) as Promise<readonly [readonly bigint[], readonly unknown[]]>,
-          ]);
+          const result = await publicClient.readContract({
+            address: diamondAddress,
+            abi: DIAMOND_ABI,
+            functionName: 'getUserPositionLoans',
+            args: [address as Address],
+          }) as readonly [readonly bigint[], readonly bigint[]];
           const chainIds = new Set<string>();
-          for (const id of lenderRes[0]) chainIds.add(String(id));
-          for (const id of borrowerRes[0]) chainIds.add(String(id));
+          for (const id of result[0]) chainIds.add(String(id));
           walkSet = knownLoans.filter((e) => chainIds.has(String(e.loanId)));
           narrowedBy = 'onchain-view';
         } catch {
-          // Layer 2 errored — fall through to walk-all.
+          // Layer 2 errored — walkSet stays empty (walk-all dropped).
         }
       }
 

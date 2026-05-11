@@ -120,46 +120,36 @@ export function useClaimables(address: string | null) {
         walkSet = knownLoans.filter((e) => indexerIds.has(String(e.loanId)));
         narrowedBy = 'indexer';
       } else {
-        // Layer 2: on-chain user-filter view. Treated as
-        // authoritative — if the chain itself says the user has 0
-        // claimable loans, trust it. The walk-all (Layer 3) only
-        // fires when this layer ERRORS (selector missing on the
-        // Diamond, RPC unreachable, etc.).
-        //
-        // Known limitation: `getUserDashboardClaimables` walks the
-        // `userLoanIds[user]` storage index which only includes
-        // loans where the user appeared at LoanInitiated time.
-        // Users who received a position NFT via secondary-market
-        // transfer are NOT in `userLoanIds`, so this view would
-        // miss their claims. Documented as a follow-up; the rare-
-        // case fix would be a per-NFT-holder index on-chain or a
-        // separate event scan, both out of scope for this hook.
+        // Layer 2: on-chain `getUserPositionLoans` view. Returns
+        // loan IDs whose position NFT the user CURRENTLY holds
+        // (via ERC721Enumerable + the `loanIdByPositionTokenId`
+        // reverse map maintained by LibMetricsHooks). This is
+        // secondary-market-safe — unlike the older
+        // `getUserDashboardClaimables` view that's keyed by
+        // `userLoanIds[user]` storage (populated at LoanInitiated
+        // time, never updated on transfer), this view catches
+        // users who received a position NFT via secondary-market
+        // ERC721 transfer. Trusted authoritative: if it says
+        // empty, the user genuinely has no position-NFT claims.
         try {
-          const [lenderRes, borrowerRes] = await Promise.all([
-            publicClient.readContract({
-              address: diamondAddress,
-              abi: DIAMOND_ABI,
-              functionName: 'getUserDashboardClaimables',
-              args: [address as Address, false, 0, 200],
-            }) as Promise<readonly [readonly bigint[], readonly unknown[]]>,
-            publicClient.readContract({
-              address: diamondAddress,
-              abi: DIAMOND_ABI,
-              functionName: 'getUserDashboardClaimables',
-              args: [address as Address, true, 0, 200],
-            }) as Promise<readonly [readonly bigint[], readonly unknown[]]>,
-          ]);
+          const result = await publicClient.readContract({
+            address: diamondAddress,
+            abi: DIAMOND_ABI,
+            functionName: 'getUserPositionLoans',
+            args: [address as Address],
+          }) as readonly [readonly bigint[], readonly bigint[]];
+          // result[0] = loanIds, result[1] = tokenIds (aligned).
+          // We just need the loan-id set for narrowing the
+          // per-loan fan-out below.
           const chainIds = new Set<string>();
-          for (const id of lenderRes[0]) chainIds.add(String(id));
-          for (const id of borrowerRes[0]) chainIds.add(String(id));
-          // Trust the on-chain view's answer — narrow to its IDs
-          // whether non-empty or empty. Empty here means the user
-          // has nothing per the chain's authoritative storage.
+          for (const id of result[0]) chainIds.add(String(id));
           walkSet = knownLoans.filter((e) => chainIds.has(String(e.loanId)));
           narrowedBy = 'onchain-view';
         } catch {
-          // Layer 2 errored — fall through to Layer 3 walk-all.
-          // walkSet stays as knownLoans (the default at the top).
+          // Layer 2 errored — walkSet stays empty (walk-all has
+          // been intentionally dropped; only the rare on-old-ABI
+          // diamond case lands here, and the diagnostics drawer
+          // captures the error for ops).
         }
       }
 
