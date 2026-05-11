@@ -521,10 +521,11 @@ async function processOfferLogs(
            quantity, collateral_quantity, position_token_id,
            prepay_asset,
            use_full_term_interest, creator_fallback_consent, allows_partial_repay,
+           creator_current_owner,
            is_stub,
            first_seen_block, first_seen_at, updated_at)
          VALUES
-          (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)`,
+          (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)`,
       )
         .bind(
           chainId,
@@ -554,6 +555,10 @@ async function processOfferLogs(
           od.useFullTermInterest ? 1 : 0,
           od.creatorFallbackConsent ? 1 : 0,
           od.allowsPartialRepay ? 1 : 0,
+          // Seed current-owner to the creator (any later Transfer
+          // for this position-token overwrites via the loan-block
+          // Transfer handler).
+          od.creator.toLowerCase(),
           Number(o.blockNumber),
           now,
           now,
@@ -575,16 +580,20 @@ async function processOfferLogs(
          collateral_asset, asset_type, collateral_asset_type,
          principal_liquidity, collateral_liquidity,
          amount, interest_rate_bps, collateral_amount, duration_days,
+         creator_current_owner,
          is_stub,
          first_seen_block, first_seen_at, updated_at)
        VALUES
-        (?, ?, 'active', ?, ?, '0x', '0x', 0, 0, 1, 1, '0', 0, '0', 0, 1, ?, ?, ?)`,
+        (?, ?, 'active', ?, ?, '0x', '0x', 0, 0, 1, 1, '0', 0, '0', 0, ?, 1, ?, ?, ?)`,
     )
       .bind(
         chainId,
         Number(o.offerId),
         o.creator.toLowerCase(),
         o.offerType,
+        // Seed current-owner = creator. Heal path doesn't touch this
+        // column; subsequent Transfer events overwrite as needed.
+        o.creator.toLowerCase(),
         Number(o.blockNumber),
         now,
         now,
@@ -1046,9 +1055,10 @@ async function processLoanLogs(
              lender_token_id, borrower_token_id,
              interest_rate_bps, start_time, allows_partial_repay,
              periodic_interest_cadence, last_period_settled_at,
+             lender_current_owner, borrower_current_owner,
              is_stub,
              start_block, start_at, updated_at)
-           VALUES (?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)`,
+           VALUES (?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)`,
         )
           .bind(
             chainId,
@@ -1072,6 +1082,12 @@ async function processLoanLogs(
             loanDetail.allowsPartialRepay ? 1 : 0,
             Number(loanDetail.periodicInterestCadence ?? 0),
             Number(loanDetail.lastPeriodicInterestSettledAt ?? 0n),
+            // Seed current-owner columns to the LoanInitiated participants.
+            // Any later Transfer event for these tokenIds will overwrite.
+            // Makes the no-transfer case (most loans) correct without
+            // waiting for a Transfer to fire.
+            loanDetail.lender.toLowerCase(),
+            loanDetail.borrower.toLowerCase(),
             Number(log.blockNumber),
             blockAt,
             now,
@@ -1093,9 +1109,10 @@ async function processLoanLogs(
            principal, collateral_amount,
            asset_type, collateral_asset_type, lending_asset, collateral_asset,
            duration_days, token_id, collateral_token_id,
+           lender_current_owner, borrower_current_owner,
            is_stub,
            start_block, start_at, updated_at)
-         VALUES (?, ?, ?, 'active', ?, ?, ?, ?, 0, 0, '0x', '0x', 0, '0', '0', 1, ?, ?, ?)`,
+         VALUES (?, ?, ?, 'active', ?, ?, ?, ?, 0, 0, '0x', '0x', 0, '0', '0', ?, ?, 1, ?, ?, ?)`,
       )
         .bind(
           chainId,
@@ -1105,6 +1122,10 @@ async function processLoanLogs(
           (a.borrower as string).toLowerCase(),
           (a.principal as bigint).toString(),
           (a.collateralAmount as bigint).toString(),
+          // Seed current-owner from the event payload (same as the
+          // non-stub path above).
+          (a.lender as string).toLowerCase(),
+          (a.borrower as string).toLowerCase(),
           Number(log.blockNumber),
           blockAt,
           now,
@@ -1174,6 +1195,42 @@ async function processLoanLogs(
     // emitted alongside terminal events that DO flip status.
     // PeriodicSlippageOverBuffer is informational-only (off-chain
     // monitors aggregate it); no row update needed.
+    //
+    // ─── Position-NFT Transfer: maintain current_owner columns ───
+    // ERC721 Transfer events (mint = from 0x0, trade between holders,
+    // burn = to 0x0) are projected into the loans/offers tables'
+    // `*_current_owner` columns so the by-current-holder routes
+    // can resolve in O(log N) without a per-request `ownerOf` RPC.
+    //
+    // The same tokenId can sit on either a loan position or an
+    // offer position at any moment (not both — the offer's tokenId
+    // transitions to a loan's lender/borrower-tokenId at offer
+    // accept). We fire all 3 UPDATEs blindly; only the matching
+    // row gets touched, the others no-op.
+    else if (log.eventName === 'Transfer') {
+      const tokenId = String(a.tokenId as bigint);
+      const to = String(a.to as string).toLowerCase();
+      // Skip burns (to=0x0) — current_owner stays as whatever the last
+      // non-zero holder was. The position is "burned" but the row
+      // remains for history; null'ing current_owner would falsely
+      // signal an active holder of address(0).
+      if (to !== '0x0000000000000000000000000000000000000000') {
+        await env.DB.batch([
+          env.DB.prepare(
+            `UPDATE loans SET lender_current_owner = ?, updated_at = ?
+             WHERE chain_id = ? AND lender_token_id = ?`,
+          ).bind(to, now, chainId, tokenId),
+          env.DB.prepare(
+            `UPDATE loans SET borrower_current_owner = ?, updated_at = ?
+             WHERE chain_id = ? AND borrower_token_id = ?`,
+          ).bind(to, now, chainId, tokenId),
+          env.DB.prepare(
+            `UPDATE offers SET creator_current_owner = ?, updated_at = ?
+             WHERE chain_id = ? AND position_token_id = ?`,
+          ).bind(to, now, chainId, tokenId),
+        ]);
+      }
+    }
   }
   return { newLoans, statusUpdates };
 }
