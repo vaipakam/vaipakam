@@ -55,9 +55,8 @@ const DELIBERATELY_NOT_HANDLED = {
     'intermediate "sale offer linked to live loan" marker — no loans/offers row change',
   LoanKeeperEnabled: 'per-loan keeper authorization — not modelled in the indexer schema',
   OfferKeeperEnabled: 'per-offer keeper authorization — not modelled',
-  LoanInitiatedDetails:
-    'companion to LoanInitiated; the indexer gets the full Loan struct via a getLoanDetails read-back, not this event',
-  OfferCreatedDetails: 'companion to OfferCreated — full offer struct via getOfferDetails read-back',
+  OfferCreatedDetails:
+    'companion to OfferCreated — the offer row is still built via a getOfferDetails read-back; switching the offer side to consume this companion event (the loan side already consumes LoanInitiatedDetails) is a follow-up',
   OfferCanceledDetails: 'companion to OfferCanceled — extra fields not needed beyond the status flip',
   OffsetOfferCreated:
     'internal offset offer for preclose-option-3 — not surfaced in the public /offers list',

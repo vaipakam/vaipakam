@@ -969,55 +969,130 @@ async function processLoanLogs(
   let newLoans = 0;
   let statusUpdates = 0;
   const now = Math.floor(Date.now() / 1000);
+
+  // Pre-index the `LoanInitiatedDetails` companions by loanId. Every
+  // `LoanInitiated` is emitted alongside a `LoanInitiatedDetails` in
+  // the same tx (so always in the same scan window) — its `details`
+  // tuple is the self-sufficient row payload (asset metadata, rates,
+  // token ids, …), so the `LoanInitiated` handler can build the whole
+  // row from the event without a `getLoanDetails` RPC read-back (which
+  // is what produces stub rows when it rate-limits). Pre-computing the
+  // map here means the lookup works regardless of the relative log
+  // order of the two events within the tx.
+  const loanDetailsByLoanId = new Map<number, Record<string, unknown>>();
+  for (const log of logs) {
+    if (log.eventName === 'LoanInitiatedDetails') {
+      const la = log.args as Record<string, unknown>;
+      const det = la.details as Record<string, unknown> | undefined;
+      if (det) loanDetailsByLoanId.set(Number(la.loanId as bigint), det);
+    }
+  }
+
   for (const log of logs) {
     const a = log.args;
     if (log.eventName === 'LoanInitiated') {
       const loanId = Number(a.loanId as bigint);
       const offerId = Number(a.offerId as bigint);
       const blockAt = blockTimestamps.get(log.blockNumber) ?? now;
+      const lender = (a.lender as string).toLowerCase();
+      const borrower = (a.borrower as string).toLowerCase();
+      // Bare LoanInitiated carries (loanId, offerId, lender, borrower,
+      // principal, collateralAmount); the LoanInitiatedDetails companion
+      // (pre-indexed above) carries the rest of the row.
+      const principal = (a.principal as bigint).toString();
+      const collateralAmount = (a.collateralAmount as bigint).toString();
 
-      // Inline-fetch `getLoanDetails` for the full Loan struct.
-      // Returns 40+ fields including all the asset metadata that
-      // used to require a cross-domain JOIN with the offer row —
-      // assetType, collateralAssetType, principalAsset (the lending
-      // asset), collateralAsset, durationDays, tokenId,
-      // collateralTokenId, etc. Self-contained: no offer-row
-      // dependency, no cold-start race against the offer-side
-      // refresh pass.
-      //
-      // Fail-soft: RPC failure → INSERT a stub row (is_stub = 1,
-      // token_ids = '0') and let `refreshStubLoans` heal
-      // it on a later tick via the `is_stub = 1` predicate.
+      // ── Primary path: build the whole row from the companion event ──
+      // No `getLoanDetails` RPC at insert time → no stub-on-rate-limit.
+      // `lenderTokenId` / `borrowerTokenId` are present once the contract
+      // change carrying them (commit 8376a69) is deployed; until then
+      // they're undefined → insert '0' + is_stub=1 and let
+      // `refreshStubLoans` backfill just those two fields on a later
+      // tick. `startTime` / `lastPeriodicInterestSettledAt` aren't in the
+      // event (block.timestamp lives in the log envelope) — at loan
+      // creation both equal block.timestamp, so use `blockAt`.
+      const det = loanDetailsByLoanId.get(loanId);
+      if (det) {
+        const lenderTok =
+          det.lenderTokenId !== undefined ? String(det.lenderTokenId as bigint) : '0';
+        const borrowerTok =
+          det.borrowerTokenId !== undefined ? String(det.borrowerTokenId as bigint) : '0';
+        const isStub =
+          det.lenderTokenId !== undefined && det.borrowerTokenId !== undefined ? 0 : 1;
+        const result = await env.DB.prepare(
+          `INSERT OR IGNORE INTO loans
+            (chain_id, loan_id, offer_id, status, lender, borrower,
+             principal, collateral_amount,
+             asset_type, collateral_asset_type, lending_asset, collateral_asset,
+             duration_days, token_id, collateral_token_id,
+             lender_token_id, borrower_token_id,
+             interest_rate_bps, start_time, allows_partial_repay,
+             periodic_interest_cadence, last_period_settled_at,
+             lender_current_owner, borrower_current_owner,
+             is_stub,
+             start_block, start_at, updated_at)
+           VALUES (?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+          .bind(
+            chainId,
+            loanId,
+            offerId,
+            lender,
+            borrower,
+            principal,
+            collateralAmount,
+            Number(det.assetType ?? 0),
+            Number(det.collateralAssetType ?? 0),
+            String((det.principalAsset as string | undefined) ?? '0x0000000000000000000000000000000000000000').toLowerCase(),
+            String((det.collateralAsset as string | undefined) ?? '0x0000000000000000000000000000000000000000').toLowerCase(),
+            Number(det.durationDays ?? 0n),
+            String((det.tokenId as bigint | undefined) ?? 0n),
+            String((det.collateralTokenId as bigint | undefined) ?? 0n),
+            lenderTok,
+            borrowerTok,
+            Number(det.interestRateBps ?? 0n),
+            blockAt,
+            det.allowsPartialRepay ? 1 : 0,
+            Number(det.periodicInterestCadence ?? 0),
+            blockAt,
+            // Seed current-owner to the LoanInitiated participants; a
+            // later Transfer for these tokenIds overwrites. Correct for
+            // the no-transfer case (most loans) without waiting on a
+            // Transfer to fire.
+            lender,
+            borrower,
+            isStub,
+            Number(log.blockNumber),
+            blockAt,
+            now,
+          )
+          .run();
+        if ((result.meta?.changes ?? 0) > 0) newLoans++;
+        continue;
+      }
+
+      // ── Fallback A: companion event absent (shouldn't happen — it's
+      //    emitted in the same tx) — fall back to the getLoanDetails
+      //    read-back. ──
       type LoanDetail = {
-        id: bigint;
-        offerId: bigint;
         lender: Address;
-        principalLiquidity: number;
-        collateralLiquidity: number;
-        status: number;
-        assetType: number;
-        useFullTermInterest: boolean;
-        fallbackConsentFromBoth: boolean;
-        collateralAssetType: number;
-        fallbackLenderBonusBpsAtInit: number;
-        fallbackTreasuryBpsAtInit: number;
         borrower: Address;
-        allowsPartialRepay: boolean;
-        periodicInterestCadence: number;
-        lastPeriodicInterestSettledAt: bigint;
+        assetType: number;
+        collateralAssetType: number;
+        principalAsset: Address;
+        collateralAsset: Address;
+        durationDays: bigint;
+        tokenId: bigint;
+        collateralTokenId: bigint;
         lenderTokenId: bigint;
         borrowerTokenId: bigint;
         principal: bigint;
-        principalAsset: Address;
+        collateralAmount: bigint;
         interestRateBps: bigint;
         startTime: bigint;
-        durationDays: bigint;
-        collateralAsset: Address;
-        collateralAmount: bigint;
-        tokenId: bigint;
-        quantity: bigint;
-        collateralTokenId: bigint;
-        collateralQuantity: bigint;
+        allowsPartialRepay: boolean;
+        periodicInterestCadence: number;
+        lastPeriodicInterestSettledAt: bigint;
       };
       let loanDetail: LoanDetail | null = null;
       try {
@@ -1029,15 +1104,11 @@ async function processLoanLogs(
         })) as LoanDetail;
       } catch (err) {
         console.error(
-          `[chainIndexer] inline getLoanDetails(${loanId}) failed; falling back to stub INSERT`,
+          `[chainIndexer] LoanInitiatedDetails missing for loan ${loanId} AND getLoanDetails read-back failed; stub INSERT`,
           err,
         );
       }
-
       if (loanDetail) {
-        // Self-contained INSERT — every field sourced from the
-        // single `getLoanDetails` call. No offer-row JOIN, no
-        // cross-domain dependency, no placeholder-detection pass.
         const result = await env.DB.prepare(
           `INSERT OR IGNORE INTO loans
             (chain_id, loan_id, offer_id, status, lender, borrower,
@@ -1074,10 +1145,6 @@ async function processLoanLogs(
             loanDetail.allowsPartialRepay ? 1 : 0,
             Number(loanDetail.periodicInterestCadence ?? 0),
             Number(loanDetail.lastPeriodicInterestSettledAt ?? 0n),
-            // Seed current-owner columns to the LoanInitiated participants.
-            // Any later Transfer event for these tokenIds will overwrite.
-            // Makes the no-transfer case (most loans) correct without
-            // waiting for a Transfer to fire.
             loanDetail.lender.toLowerCase(),
             loanDetail.borrower.toLowerCase(),
             Number(log.blockNumber),
@@ -1089,12 +1156,7 @@ async function processLoanLogs(
         continue;
       }
 
-      // Fallback: getLoanDetails RPC failed. Stub-INSERT with
-      // is_stub = 1 — `refreshStubLoans` heals via the
-      // targeted is_stub predicate on a later tick. The event
-      // payload (`a.lender`, `a.borrower`, `a.principal`,
-      // `a.collateralAmount`) gives us enough to record the row
-      // exists; asset metadata stays at 0 / '0x' until the heal.
+      // ── Fallback B: stub INSERT (is_stub=1) — refreshStubLoans heals. ──
       const result = await env.DB.prepare(
         `INSERT OR IGNORE INTO loans
           (chain_id, loan_id, offer_id, status, lender, borrower,
@@ -1110,14 +1172,12 @@ async function processLoanLogs(
           chainId,
           loanId,
           offerId,
-          (a.lender as string).toLowerCase(),
-          (a.borrower as string).toLowerCase(),
-          (a.principal as bigint).toString(),
-          (a.collateralAmount as bigint).toString(),
-          // Seed current-owner from the event payload (same as the
-          // non-stub path above).
-          (a.lender as string).toLowerCase(),
-          (a.borrower as string).toLowerCase(),
+          lender,
+          borrower,
+          principal,
+          collateralAmount,
+          lender,
+          borrower,
           Number(log.blockNumber),
           blockAt,
           now,
