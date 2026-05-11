@@ -1350,6 +1350,37 @@ the claim as soon as the loan-status flip lands — once the user is off
 the stale SW bundle (DevTools → Application → Service Workers →
 Unregister → reload).
 
+## Freshness popover — show the indexer frontier AND the RPC-tail frontier separately
+
+The badge popover collapsed two distinct freshness signals into one
+`Freshest data block N (via indexer | via RPC tail-scan)` row — you saw
+which source produced the max, not the other one's value. That hides the
+case that matters: the central indexer is N blocks behind, but the
+page's own RPC tail-scan (the chunked-getLogs catch-up over
+`[indexer.lastBlock+1, safeHead]` run by `useIndexedActiveOffers` /
+`useIndexedActiveLoans`) has reached the chain head — so the on-screen
+data is fresh-to-head even though the badge says "Behind" — or,
+conversely, the indexer is behind AND no tail-scan is running on this
+page (so the page genuinely IS stale, "Behind" is honest).
+
+The popover now shows three rows: **Indexer frontier** (the central
+indexer's `lastBlock`), **RPC tail-scan** (how far the page's own
+chunked-getLogs catch-up reached — `— (not running on this page)` when
+no OfferBook/Dashboard hook is mounted), and **Freshest data block** (=
+max of the two — what the on-screen data actually covers). The `(via X)`
+annotation is dropped (redundant once both components are visible).
+`blockGap` is unchanged — still `safeHead − maxFrontier`, so "Behind"
+only fires when *neither* the indexer nor the tail has covered the gap.
+The ChainDiagnosticsPanel mirror gains the "RPC tail-scan" row beside
+its existing "Last safe block (indexed)" (= the indexer frontier). New
+i18n keys (`statusIndexerFrontier` / `statusRpcTailFrontier` /
+`statusFrontierIdle` / `statusRpcTailIdle`) added to all 8 locales.
+
+Build note: a `tsc -p . --noEmit` check passed but missed two leftover
+`frontierOrigin: null` lines because `apps/defi/tsconfig.json` is a
+references file (no-op under `-p`); `tsc -b --noEmit` caught it. Use
+`tsc -b` for apps/defi typechecks.
+
 ## Release-notes mid-stream date roll
 
 The conversation that produced this release-notes file started on
