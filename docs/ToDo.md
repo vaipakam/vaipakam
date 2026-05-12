@@ -359,6 +359,8 @@ vaipakam-elite
 elite.vaipakam.com
 vaipakam-deprecated
 deprecated.vaipakam.com
+dev.vaipakam.com
+admin.vaipakam.com
 
 ---
 

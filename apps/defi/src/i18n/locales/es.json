@@ -1760,5 +1760,10 @@
     "sourceNoFrontier": "no block reported",
     "sourceFetching": "fetching",
     "sourceIdle": "idle"
+  },
+  "walletConnecting": {
+    "pick": "Selecciona arriba la app de tu billetera para conectar.",
+    "active": "Aún conectando… confirma la solicitud en tu billetera. En el móvil esto puede tardar unos segundos.",
+    "slow": "Aún conectando… si no pasó nada, vuelve a abrir tu billetera, o cierra la lista de billeteras e inténtalo de nuevo."
   }
 }

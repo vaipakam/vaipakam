@@ -10,6 +10,7 @@ import { ChainProvider } from './context/ChainContext'
 import { ModeProvider } from './context/ModeContext'
 import { WatermarkProvider } from './context/WatermarkContext'
 import { DataFreshnessProvider } from './context/DataFreshnessContext'
+import { WalletConnectingOverlay } from './components/app/WalletConnectingOverlay'
 import './i18n' // initialise i18next before any component renders
 import './styles/global.css'
 import './styles/rtl.css' // Phase-5 RTL polish (Arabic + future RTL locales)
@@ -94,6 +95,13 @@ createRoot(document.getElementById('root')!).render(
               enforceSupportedChains: false,
             }}
           >
+            {/* "Wallet connect" status banner — "Select your wallet app
+                above to connect" while the modal is open, "Still
+                connecting…" after a wallet is picked and the user is
+                deep-linked into the wallet app, persisting until
+                connected. Sits above ConnectKit's modal, bottom-
+                anchored. */}
+            <WalletConnectingOverlay />
             <WalletProvider>
               <ChainProvider>
                 {/* WatermarkProvider sits inside ChainProvider (so it can

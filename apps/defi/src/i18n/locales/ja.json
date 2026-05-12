@@ -1779,5 +1779,10 @@
     "sourceNoFrontier": "no block reported",
     "sourceFetching": "fetching",
     "sourceIdle": "idle"
+  },
+  "walletConnecting": {
+    "pick": "接続するには、上からウォレットアプリを選択してください。",
+    "active": "まだ接続しています… ウォレットでリクエストを承認してください。モバイルでは数秒かかることがあります。",
+    "slow": "まだ接続しています… 何も起きなかった場合は、ウォレットを開き直すか、ウォレット一覧を閉じてもう一度お試しください。"
   }
 }

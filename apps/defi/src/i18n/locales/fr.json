@@ -1779,5 +1779,10 @@
     "sourceNoFrontier": "no block reported",
     "sourceFetching": "fetching",
     "sourceIdle": "idle"
+  },
+  "walletConnecting": {
+    "pick": "Sélectionnez votre application de portefeuille ci-dessus pour vous connecter.",
+    "active": "Connexion toujours en cours… confirmez la demande dans votre portefeuille. Cela peut prendre quelques secondes sur mobile.",
+    "slow": "Connexion toujours en cours… si rien ne s'est passé, rouvrez votre portefeuille, ou fermez la liste des portefeuilles et réessayez."
   }
 }

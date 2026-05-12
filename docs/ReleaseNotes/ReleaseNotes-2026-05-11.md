@@ -1571,6 +1571,379 @@ Rescan button. Hooks that have no RPC tail-scan (`useIndexedLoansForWallet`,
 `fallbackVersion` — re-firing an indexer-only fetch while the indexer
 is unreachable just retries a failing request.
 
+## Mobile wallet-connect bundle — featured-MetaMask deep-link, WC `redirect`, persistent "connecting…" banner
+
+Three coupled fixes for the mobile connect flow.
+
+**1. Featured "MetaMask" tile now deep-links into the app on mobile.**
+ConnectKit's `getDefaultConfig` backs that featured tile with
+`injected({ target: 'metaMask' })`. On a phone *browser* (Safari /
+Chrome, not MetaMask's in-app browser) there's no injected MetaMask
+provider, so tapping it rendered ConnectKit's QR-scan screen instead
+of firing `metamask://wc?uri=…` — while the *same wallet* picked from
+the "All Wallets" list opened the app fine (that path has no dedicated
+connector, so it falls through to the WalletConnect connector + the
+registry deep-link). Fix: `wagmiConfig.ts` now builds the connector
+list itself — `coinbaseWallet` + `walletConnect` + `safe`, **no
+MetaMask-specific injected connector** — so the featured MetaMask tile
+takes the same working WalletConnect path on mobile. Desktop is
+unchanged: the MetaMask *extension* announces via EIP-6963,
+`multiInjectedProviderDiscovery` (wagmi default) picks it up, and the
+featured tile connects through the extension directly as before;
+no-extension desktop still shows the QR (unchanged, and fine). Chains,
+transports and app metadata still come from ConnectKit's
+`getDefaultConfig` — only the connectors are ours now.
+
+**2. WalletConnect `metadata.redirect`.** The `walletConnect` connector
+is built explicitly (it had to be, for #1) so it now carries
+`redirect: { native: '', universal: <origin> }`. WC-v2 wallets honour
+it and send the user back to the dApp automatically after they approve,
+instead of leaving them to remember to app-switch back. `getDefaultConfig`'s
+metadata omitted it.
+
+**3. Persistent "Connecting to your wallet…" banner.** New
+`WalletConnectingOverlay` component, mounted just inside
+`ConnectKitProvider`. It renders a bottom-anchored banner (z-index one
+above ConnectKit's modal) whenever `useAccount().status === 'connecting'`,
+with copy that softens after 25 s ("still connecting… reopen your
+wallet or try again"). This fixes the mobile dead-air problem: tapping
+a wallet deep-links into the wallet app → backgrounds the browser tab →
+mobile browsers suspend the tab and drop the WalletConnect relay
+WebSocket → on return after approving, the relay has to reconnect +
+replay the queued approval (several seconds on a mobile network) → and
+ConnectKit's own modal often shows no visible pending state after the
+app-switch, so the page looks frozen and users assume it failed,
+refresh (nuking the pairing), and start over. The banner is plain React
+state, so it's still mounted when the suspended tab resumes — the user
+sees "still working, hang on" the whole time. Only `'connecting'`, not
+`'reconnecting'` (the silent page-load session restore). New i18n
+namespace `walletConnecting.{active,slow}`, translated to all 10
+locales.
+
+The three reinforce each other on mobile: #1 gets you *into* the
+wallet, #2 brings you *back*, #3 makes the wait *visible*.
+
+## Mobile wallet-connect, round 2 — MetaMask back in the featured list, Coinbase EOA-only
+
+Follow-up to the mobile bundle above, addressing what the first pass
+left rough.
+
+**MetaMask is featured again — and still deep-links on mobile.** The
+first pass dropped `injected({ target: 'metaMask' })` to stop the
+featured tile rendering a QR on a phone browser, but that also dropped
+MetaMask off the featured list (it stayed reachable only via "All
+Wallets"). Now `wagmiConfig.ts` wires the official `metaMask()`
+connector (wagmi's wrapper around `@metamask/sdk`, already present as a
+transitive dep — no new package). ConnectKit features it; on a phone
+browser the SDK handles the deep-link itself → opens the app, no QR.
+Desktop is unchanged: when the MetaMask *extension* is installed it
+announces via EIP-6963 (`multiInjectedProviderDiscovery`), ConnectKit's
+wallet-list dedup keeps that `io.metamask` connector over `metaMaskSDK`,
+and the featured tile connects through the extension directly as
+before; no-extension desktop falls to the SDK's own QR/install prompt
+(cosmetic). Side benefit for the "slow Confirm screen in MetaMask"
+complaint: the SDK path uses MetaMask's own comms channel rather than
+the WalletConnect relay, which tends to surface the approval prompt in
+the app a bit quicker — the residual delay (MetaMask app cold-start +
+the proposal hop) is inherent and not something the dApp can remove.
+
+**Coinbase Wallet — `preference: 'eoaOnly'`.** Connecting via the
+Coinbase Wallet tile opened the app but never showed an approve button.
+Cause: the connector's default `preference: 'all'` routes through
+Coinbase's Smart Wallet flow (a passkey popup), which on a mobile
+browser tab is exactly that symptom. `'eoaOnly'` forces the classic
+Coinbase Wallet extension / mobile-app flow, which deep-links and
+approves normally. Trade-off: the new Coinbase Smart Wallet isn't
+selectable here — acceptable for a DeFi app where users already run the
+Coinbase Wallet app.
+
+`@metamask/sdk` does add weight to the bundle (it was deliberately
+avoided by ConnectKit's `getDefaultConfig`, which is why the
+`injected`-only path existed) — the cost of having MetaMask both
+featured and working on mobile.
+
+## Coinbase Wallet — drop the SDK connector, route via WalletConnect
+
+`preference: 'eoaOnly'` (round 2) didn't fix the Coinbase Wallet
+mobile flow: tapping the tile opened a web handshake page
+(`keys.coinbase.com` / `go.cb-w.com`) in a new browser tab with a
+link to tap, which universal-linked to the Base app — but the
+connection-approval screen never appeared. That's the Coinbase Wallet
+SDK v4 behaviour: v4 replaced the old direct `cbwallet://` deep-link
+with a web-relay handshake, and on mobile it's flaky regardless of
+`preference` (the web handshake is v4's design either way).
+
+Fix — same shape as the MetaMask one: **don't wire the `coinbaseWallet()`
+SDK connector at all.** Coinbase Wallet / the Base app supports
+WalletConnect v2; without a dedicated connector ConnectKit routes its
+tile through the WalletConnect connector + the registry's
+`cbwallet://wc?uri=…` deep-link, which opens straight into the app's
+pairing screen and shows a real approve prompt — exactly the path
+MetaMask's mobile tile uses. Desktop is unaffected: the Coinbase
+Wallet *extension* announces via EIP-6963 (`com.coinbase.wallet`) and
+`multiInjectedProviderDiscovery` still surfaces it for a direct
+connect. Trade-offs: on mobile Coinbase Wallet may sit in "All Wallets"
+rather than the featured row, and the Coinbase Smart Wallet (passkey)
+isn't selectable from the modal — but `preference: 'eoaOnly'` had
+already excluded Smart Wallet, and "in the list and working" beats
+"featured and broken".
+
+## Wallet-connecting banner — state machine + dismiss-on-close + touch-only
+
+The banner from the mobile bundle was bound straight to
+`useAccount().status === 'connecting'`, which goes true the moment
+ConnectKit opens the modal (it pre-generates the WalletConnect
+session) — so it showed "Connecting to your wallet… approve in your
+wallet app" before the user had picked anything, and it lingered after
+the X was clicked (closing the modal doesn't abort that pre-generated
+session instantly).
+
+Rewritten as a small state machine:
+
+- **pick** — modal open, no deep-link seen yet → "Select your wallet
+  app above to connect."
+- **connecting** — a deep-link happened (detected by the tab going
+  `hidden` while connecting — tapping a deep-link backgrounds the tab;
+  clicking X / clicking away doesn't) → "Still connecting… approve in
+  your wallet app, then switch back here."
+- **slow** — same, but > 25 s → adds a recovery hint ("reopen your
+  wallet app, or close the wallet picker and try again").
+- **hidden** — not connecting / connected, OR the modal was closed via
+  X / click-away without ever deep-linking → the user backed out, no
+  banner.
+
+So: opening the modal shows the "pick a wallet" prompt (not the
+premature "approve" copy); the X (or clicking away, which dismisses the
+list) hides the banner; tapping a wallet does *not* hide it — it
+transitions to "Still connecting…" and survives the app-switch as
+before.
+
+Also gated to coarse-pointer (touch) devices — the dead-air problem is
+mobile-only, and on desktop ConnectKit's modal stays on screen during
+connect, so a banner there would just contradict it ("pick a wallet"
+vs the modal's "confirm in MetaMask"). New i18n key
+`walletConnecting.pick`; `active` / `slow` copy updated; all 10
+locales. (`useModal()` from ConnectKit is read for the modal-open
+state — the component is already mounted inside `<ConnectKitProvider>`.)
+
+## Coinbase Wallet — reverted to the standard SDK connector
+
+Reverted the two Coinbase-specific tweaks (`preference: 'eoaOnly'`, and
+then routing it through WalletConnect instead of the SDK connector).
+Coinbase Wallet is back to ConnectKit's default wiring — `coinbaseWallet()`,
+no `preference`. Rationale: the "new tab on `keys.coinbase.com` →
+universal-link → Base app → no approval screen" symptom was observed
+only on the testnet rehearsals, and the Base app may simply not have
+those testnet networks enabled — i.e. it could be an app-config issue,
+not the SDK flow. Re-evaluate on mainnet (where the app *is*
+configured); if the no-approval-screen behaviour persists there, the
+WalletConnect-route version (commit history) is the fallback. The
+MetaMask SDK connector, the WalletConnect `metadata.redirect`, and the
+connecting-banner state machine all stay.
+
+## Background RPC trim (no-wallet) + mainnet-first default chain
+
+**Audit of "is it fetching with no wallet connected?"** Yes, but the
+wallet-scoped hooks are already gated — `useUserLoans` and
+`useIndexedClaimables` early-return on `!address`, so "your loans / your
+claims" fetch nothing when disconnected. What *does* run regardless of
+wallet: (a) indexer HTTP polls (`/offers/stats` etc. — Cloudflare D1
+reads, **not chain RPC**); (b) the watermark probe (`getGlobalCounts` +
+`getBlock('safe')`) via the top-bar `IndexerStatusBadge`, which is in
+`AppLayout` on every connected-app page; (c) the log scans
+(`loadLoanIndex` + the catch-up `getLogs` in `useIndexedActiveOffers/Loans`)
+on data pages. (b) and (c) are chain RPC.
+
+Trim: the badge subscribed to the watermark at the `warm` tier (30 s
+probe on every page). It's a glance indicator — switched to the `cool`
+tier (180 s). On data pages the OfferBook (hot, 5 s) / Dashboard (warm,
+30 s) subscribers still pull the *shared* probe up to their cadence, so
+the badge stays just as fresh there; on the quiet pages (`/keepers`,
+`/alerts`, `/allowances`, `/buy-vpfi`, `/data-rights`, `/claims` with no
+wallet) where the badge is the only subscriber, the background probe
+drops from 30 s to 180 s — 6× less RPC for no UX cost. The data-page
+log scans stay (they're load-bearing for the public on-chain data those
+pages render — disconnected stranger-visitors are exactly that
+audience) and already re-fire only on watermark `version` bumps + the
+`fallbackVersion` trigger.
+
+**`DEFAULT_CHAIN` — mainnet always outranks testnet.** New resolution:
+(1) `VITE_DEFAULT_CHAIN_ID` if it's a deployed *mainnet*; (2) else first
+deployed mainnet by priority Ethereum → Base → other mainnets; (3) else
+`VITE_DEFAULT_CHAIN_ID` if it's a deployed *testnet*; (4) else first
+deployed testnet by priority Base Sepolia → other testnets → Anvil; (5)
+else any deployed chain. So today (no mainnet deployed, env points at a
+testnet) it stays Base Sepolia; after the mainnet cutover it becomes
+Ethereum even if `.env.local` still points at a testnet — a stale env
+var can't strand the production build on a testnet. A loud `console.warn`
+fires if the env override is a testnet while mainnet is live. Unset /
+blank / non-numeric `VITE_DEFAULT_CHAIN_ID` now resolves to `NaN` (no
+fake "Sepolia default") and falls straight through to the priority
+order.
+
+## Wallet-connecting banner — un-gate it (show on all devices, "pick" reachable)
+
+The previous pass gated the whole banner to coarse-pointer (touch)
+devices, and made the "Select your wallet app above to connect" state
+additionally depend on `status === 'connecting'` — which on the
+wallet-list screen isn't reliably true, so that state was effectively
+unreachable. Net effect: on desktop the banner never appeared, and on
+mobile the "pick a wallet" prompt often didn't either.
+
+Both restrictions removed. The banner now shows on all devices, and the
+"pick" state shows whenever the connect modal is open and nothing's
+been picked / connected (no `connecting` precondition). The other
+states are unchanged: a deep-link (tab goes `hidden` while connecting)
+→ "Still connecting…", → recovery hint after 25 s; modal closed via X /
+click-away with no deep-link → hidden. (The MetaMask SDK connector in
+`wagmiConfig.ts` and the WalletConnect `metadata.redirect` were never
+touched here — only the earlier Coinbase tweaks were reverted.)
+
+## MetaMask — revert to ConnectKit's default connector (the `metaMask()` SDK broke desktop)
+
+`wagmiConfig.ts` had been wiring wagmi's `metaMask()` connector (the
+`@metamask/sdk` wrapper) so the *featured* MetaMask tile would
+deep-link into the app on a mobile browser. It did — but the bundled
+`@metamask/sdk` (0.33.1, a transitive dep of `@wagmi/connectors`)
+failed to detect the installed MetaMask *extension* on desktop and fell
+back to its own QR modal there. A desktop user with the extension
+installed getting a QR is a worse regression than the
+mobile-featured-tile QR (it hits the majority), so reverted: MetaMask
+is back to ConnectKit's default `injected({ target: 'metaMask' })` —
+direct extension connect on desktop, no QR. On a mobile browser the
+featured tile still shows ConnectKit's QR-scan screen (the original
+ConnectKit limitation); the workaround there is the "All Wallets" →
+MetaMask entry, which has no dedicated connector and so falls through
+to the WalletConnect connector + MetaMask's registry deep-link
+(`metamask://wc?uri=…`) and opens the app. The extension is also picked
+up via EIP-6963 (`multiInjectedProviderDiscovery`, kept on), giving
+desktop a second redundant path to the extension. Don't re-add
+`metaMask()` until the SDK's extension detection is reliable. (The
+WalletConnect `metadata.redirect` and the `coinbaseWallet()` default
+stay; the wallet-connecting banner is unaffected.)
+
+## wagmiConfig — full revert to ConnectKit's stock connector set
+
+The hand-rolled connector list (introduced for the mobile bundle) had,
+even after the MetaMask and Coinbase reverts, kept one custom bit on
+the WalletConnect connector: `metadata.redirect: { native: "", universal: … }`.
+An empty `native` in WC v2's redirect metadata makes the
+`EthereumProvider` fail to produce a pairing URI — so on mobile the QR
+screen opened but never rendered the QR ("stuck loading"), and the
+"All Wallets" list (which also leans on the WC connector) hung the same
+way. Desktop was unaffected because it uses the injected / EIP-6963 path,
+not the WC QR flow.
+
+So `wagmiConfig.ts` is now fully back to ConnectKit's `getDefaultConfig`
+connector set (`injected({ target: 'metaMask' })` + `coinbaseWallet()` +
+`walletConnect({ showQrModal: false, metadata: {name,desc,url,icons} })`)
+plus the `safe()` connector — i.e. the exact pre-mobile-bundle config,
+which is known-good. The `WalletConnectingOverlay` banner is untouched.
+
+Net state: desktop MetaMask = direct extension connect (no QR); mobile
+MetaMask featured tile = ConnectKit's QR-scan screen (the workaround is
+"All Wallets" → MetaMask, which falls through to WalletConnect +
+`metamask://wc?uri=…` and opens the app); Coinbase = stock SDK
+connector. The deep-link-the-featured-MetaMask-tile-on-mobile goal is
+parked until the bundled `@metamask/sdk` has reliable extension
+detection — re-test on a real device before re-attempting either the
+`metaMask()` SDK connector or the WC `redirect` metadata.
+
+## Wallet-connecting banner — "Still connecting…" now persists until connected
+
+The banner had a `useEffect(() => { if (modalOpen) setDeepLinked(false) })`
+to clear the deep-link marker when the modal re-opened for a fresh
+attempt — but it fired on *every* render where the modal was open, not
+just on the open-edge. On mobile, after the user approves the
+connection in the wallet app and returns, ConnectKit's modal often
+re-opens / stays open while the WalletConnect relay reconnects and
+replays the approval — so that effect kept resetting `deepLinked`,
+flipping the banner from "Still connecting…" back to "Select your
+wallet app above to connect" during exactly the window where the user
+needs the "hang on, still working" reassurance.
+
+Removed that reset. `deepLinked` (→ "Still connecting…", → recovery
+hint after 25 s) now clears only when the attempt actually finishes —
+`isConnected` (banner hidden) or `status === 'disconnected'` (failed /
+cancelled-via-X, banner hidden). So after you confirm in the wallet,
+the banner stays "Still connecting…" through the relay-reconnect lull
+and disappears the instant the wallet is connected. The "Select your
+wallet app above to connect" state is unchanged.
+
+(Note: whether the wallet app *itself* returns you to the browser after
+you approve is the wallet's behaviour — MetaMask backgrounds itself —
+not something the dApp controls; the WC `metadata.redirect` hint that
+would have nudged it was removed because its empty-`native` value broke
+the WalletConnect pairing-URI generation.)
+
+## Wallet-connect — clean slate: banner removed, config at ConnectKit stock
+
+Per the iteration above, the MetaMask / Coinbase connector experiments
+(the `metaMask()` SDK connector, `coinbaseWallet` `preference`,
+routing-Coinbase-via-WalletConnect, the WC `metadata.redirect`) had
+already been fully reverted — `wagmiConfig.ts` is back to ConnectKit's
+stock connector set (`getDefaultConfig`'s `injected({ target: 'metaMask' })`
++ `coinbaseWallet()` + `walletConnect({ showQrModal: false, metadata:
+{name,desc,url,icons} })` plus `safe()`), i.e. the pre-mobile-bundle
+config. The file header carries a short history note of the dead-ends
+(SDK extension-detection on desktop, empty-`native` breaking the WC
+pairing URI) so they aren't re-tread.
+
+This change removes the remaining piece — the `WalletConnectingOverlay`
+banner ("Select your wallet app above to connect" / "Still connecting…"):
+component + CSS deleted, the mount and import pulled from `main.tsx`,
+and the `walletConnecting.*` i18n keys removed from all 10 locales. The
+banner concept was useful and will be rebuilt deliberately later
+(alongside re-introducing `metadata.redirect: { universal: <origin> }`
+— the empty-`native`-free variant — which is what auto-returned the
+wallet app to the browser after confirmation), with a real-device test
+each step.
+
+## Wallet-connect banner v2 + WalletConnect `redirect: { universal }`
+
+Rebuilt the connect-status banner (clean slate from the earlier
+removal) and re-introduced the auto-return-to-dApp hint.
+
+**Banner** (`WalletConnectingOverlay`, shown on desktop and mobile,
+bottom-anchored above ConnectKit's modal):
+
+- **pick** — connect modal open, no deep-link yet → "Select your wallet
+  app above to connect." Disappears when the modal closes (X /
+  click-away). On desktop with an extension, ConnectKit's "Connecting
+  to <wallet>" screen keeps the modal open without a deep-link, so this
+  state also briefly covers the few seconds before you click Approve in
+  the extension popup — a minor wart; the modal's own "confirm in the
+  extension" text is the real instruction there and it self-corrects on
+  connect. (Making it precise would mean reading ConnectKit's internal
+  modal-route — a private API; not worth the coupling.)
+- **connecting** — a wallet was picked and the user got deep-linked into
+  a wallet app (detected by the tab going `hidden` while a connect
+  attempt is live) → "Still connecting… confirm the request in your
+  wallet." **Persists until `isConnected`** — survives the wallet app
+  returning the user to the browser, ConnectKit's modal re-opening, and
+  the silent WalletConnect-relay reconnect + approval replay on return.
+- **slow** — same, but > 25 s → "…if nothing happened, reopen your
+  wallet, or close the wallet picker and try again."
+- **hidden** — connected, or modal closed with no deep-link in flight.
+
+New i18n namespace `walletConnecting.{pick,active,slow}`, all 10
+locales.
+
+**`metadata.redirect`** — the WalletConnect connector now carries
+`redirect: { universal: <origin> }` (just `universal`, no `native` — an
+empty `native` was what broke pairing-URI generation last time). WC-v2
+wallets honour it and navigate back to the dApp after the user
+approves, so the wallet app returns the user to the browser instead of
+leaving them to app-switch back. This is the one reason `wagmiConfig.ts`
+now hand-rolls the connector list (otherwise ConnectKit's stock set:
+`injected({ target: 'metaMask' })` + `coinbaseWallet()` +
+`walletConnect({ showQrModal: false })` + `safe()`).
+
+Still parked (needs a fixed `@metamask/sdk` + a real-device test):
+deep-linking the *featured* MetaMask tile on a mobile browser — that
+tile still shows ConnectKit's QR-scan screen; the deep-link path on
+mobile is "All Wallets" → MetaMask.
+
 ## Release-notes mid-stream date roll
 
 The conversation that produced this release-notes file started on

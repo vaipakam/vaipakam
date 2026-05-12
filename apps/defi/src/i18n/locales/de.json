@@ -1779,5 +1779,10 @@
     "sourceNoFrontier": "no block reported",
     "sourceFetching": "fetching",
     "sourceIdle": "idle"
+  },
+  "walletConnecting": {
+    "pick": "Wähle oben deine Wallet-App, um dich zu verbinden.",
+    "active": "Verbindung wird noch hergestellt… bestätige die Anfrage in deiner Wallet. Auf dem Handy kann das ein paar Sekunden dauern.",
+    "slow": "Verbindung wird noch hergestellt… wenn nichts passiert ist, öffne deine Wallet erneut oder schließe die Wallet-Liste und versuche es noch einmal."
   }
 }

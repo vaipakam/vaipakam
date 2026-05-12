@@ -1779,5 +1779,10 @@
     "sourceNoFrontier": "no block reported",
     "sourceFetching": "fetching",
     "sourceIdle": "idle"
+  },
+  "walletConnecting": {
+    "pick": "请在上方选择您的钱包应用以连接。",
+    "active": "仍在连接… 请在钱包中确认请求。在手机上这可能需要几秒钟。",
+    "slow": "仍在连接… 如果没有反应，请重新打开钱包，或关闭钱包列表后重试。"
   }
 }

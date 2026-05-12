@@ -1,0 +1,59 @@
+/* Bottom-anchored "wallet connect" status banner. z-index sits one
+   above ConnectKit's modal (its `--ck-z-index` defaults to 2147483646)
+   so the hint is visible while ConnectKit's connect UI is open without
+   obscuring it. */
+.wallet-connecting-banner {
+  position: fixed;
+  left: 50%;
+  bottom: 1rem;
+  transform: translateX(-50%);
+  z-index: 2147483647;
+  display: flex;
+  align-items: flex-start;
+  gap: 0.55rem;
+  max-width: min(92vw, 420px);
+  padding: 0.7rem 1rem;
+  border-radius: 12px;
+  background: var(--bg-secondary, #1a1a1a);
+  color: var(--text-primary, #fff);
+  border: 1px solid var(--border-color, #333);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  font-size: 0.82rem;
+  line-height: 1.4;
+}
+
+.wallet-connecting-icon {
+  flex-shrink: 0;
+  margin-top: 0.1rem;
+}
+
+/* Only the loader icon spins; the "pick a wallet" state uses a static
+   wallet glyph. */
+.wallet-connecting-spinner {
+  animation: wallet-connecting-spin 0.9s linear infinite;
+}
+
+@keyframes wallet-connecting-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* Reduced-motion: drop the spin, keep the icon. */
+@media (prefers-reduced-motion: reduce) {
+  .wallet-connecting-spinner {
+    animation: none;
+  }
+}
+
+/* Phone: full-width edge-to-edge so the copy doesn't wrap into a tall
+   narrow column. */
+@media (max-width: 640px) {
+  .wallet-connecting-banner {
+    left: 0.6rem;
+    right: 0.6rem;
+    bottom: 0.6rem;
+    transform: none;
+    max-width: none;
+  }
+}

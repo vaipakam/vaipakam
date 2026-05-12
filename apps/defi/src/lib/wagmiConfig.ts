@@ -15,9 +15,37 @@
  *     it wires the injected + WalletConnect + Coinbase Wallet paths with
  *     ConnectKit's branded metadata so the picker shows wallet icons and
  *     names, and (on mobile) the curated deep-link list.
+ *
+ * Connector set: ConnectKit's stock connectors — `injected({ target:
+ * 'metaMask' })`, `coinbaseWallet()`, `walletConnect({ showQrModal:
+ * false })`, plus the `safe()` App connector. The list is hand-rolled
+ * (rather than taken from `getDefaultConfig`'s `.connectors`) for ONE
+ * reason: to set `metadata.redirect: { universal: <origin> }` on the
+ * WalletConnect connector — WC-v2 wallets honour it and navigate back
+ * to the dApp after the user approves, so the wallet app returns the
+ * user to the browser instead of leaving them to app-switch back.
+ *
+ * History note (May 2026), so the next person doesn't re-tread it:
+ *   - We briefly swapped MetaMask's injected connector for wagmi's
+ *     `metaMask()` (`@metamask/sdk` wrapper) to deep-link the featured
+ *     tile on a mobile browser. It regressed desktop — the bundled
+ *     `@metamask/sdk` failed to detect the installed extension and
+ *     showed its own QR. Reverted. Known limitation that brings back:
+ *     on a mobile browser the featured "MetaMask" tile shows
+ *     ConnectKit's QR-scan screen rather than deep-linking; the
+ *     "All Wallets" → MetaMask entry (no dedicated connector → falls
+ *     through to WalletConnect + `metamask://wc?uri=…`) does open the
+ *     app. Don't re-add `metaMask()` until its extension detection is
+ *     reliable.
+ *   - The WalletConnect `metadata.redirect` had `native: ""` — an
+ *     empty `native` makes WC v2's `EthereumProvider` fail to produce a
+ *     pairing URI, so the QR screen / "All Wallets" list hung
+ *     "loading". Fixed by passing ONLY `universal` (below). Don't add a
+ *     `native` value unless the web app actually registers a custom URL
+ *     scheme.
  */
 import { createConfig, http } from "wagmi";
-import { safe } from "wagmi/connectors";
+import { coinbaseWallet, injected, safe, walletConnect } from "wagmi/connectors";
 import {
   mainnet,
   base,
@@ -57,7 +85,7 @@ const WC_PROJECT_ID =
 
 const APP_NAME = "Vaipakam";
 const APP_DESCRIPTION =
-  "Peer-to-peer lending fully on-chain. Lend and borrow tokens, rent NFTs, " +
+  "Vault-to-Vault lending fully on-chain. Lend and borrow tokens, rent NFTs, " +
   "set your own terms — every position tracked by a unique NFT.";
 const APP_URL =
   typeof window !== "undefined"
@@ -151,13 +179,43 @@ const defaultConnectKitConfig = getDefaultConfig({
 
 export const wagmiConfig = createConfig({
   ...defaultConnectKitConfig,
+  // Hand-rolled connector list = ConnectKit's stock set, but with
+  // `metadata.redirect: { universal }` on the WalletConnect connector
+  // (see the file header). Chains / transports / app metadata still
+  // come from `getDefaultConfig` above; only `connectors` is ours.
   connectors: [
-    ...(defaultConnectKitConfig.connectors ?? []),
+    // MetaMask — injected-target connector (ConnectKit's default).
+    // Direct extension connect on desktop; QR-scan screen on a mobile
+    // browser (the deep-link path on mobile is the "All Wallets" →
+    // MetaMask entry, which uses the WalletConnect connector below).
+    injected({ target: "metaMask" }),
+    // Coinbase Wallet — stock SDK connector.
+    coinbaseWallet({ appName: APP_NAME, appLogoUrl: APP_ICON }),
+    // WalletConnect — only wired when a project id is configured.
+    // `showQrModal: false` keeps ConnectKit rendering its own QR /
+    // redirect UI. `metadata.redirect` carries ONLY `universal` (a web
+    // dApp has no native URL scheme; an empty `native` breaks pairing-
+    // URI generation, see header) so WC-v2 wallets bring the user back
+    // to the dApp after they approve.
+    ...(WC_PROJECT_ID
+      ? [
+          walletConnect({
+            projectId: WC_PROJECT_ID,
+            showQrModal: false,
+            metadata: {
+              name: APP_NAME,
+              description: APP_DESCRIPTION,
+              url: APP_URL,
+              icons: [APP_ICON],
+              redirect: { universal: APP_URL },
+            },
+          }),
+        ]
+      : []),
+    // Safe-App connector — no-op outside a Safe iframe. Trust only
+    // Safe's first-party domains for the handshake; wider matches would
+    // let arbitrary sites impersonate a Safe context.
     safe({
-      // Trust only Safe's first-party domains for the iframe handshake.
-      // Wider matches would let arbitrary sites impersonate a Safe
-      // context. Re-review this list if Safe publishes new surface
-      // domains.
       allowedDomains: [/app\.safe\.global$/, /safe\.global$/],
       debug: false,
     }),
