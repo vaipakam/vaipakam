@@ -105,12 +105,35 @@ The widget's own job is therefore just:
    this pair yet — you're posting the first offer. Set the rate
    below."* when it isn't.
 
-**Illiquid asset** (`checkLiquidity → Illiquid` for either leg): button
-disabled, info-tip *"This asset isn't liquid enough for instant
-market-rate matching — use Create Offer to post a custom offer."*
-("Market rate" is meaningless for an asset that can't be matched at
-market; the tip points to Create Offer, where a custom offer is still
-possible.)
+**The button is never disabled — every click deep-links.** For an
+**illiquid** leg (`checkLiquidity → Illiquid`, i.e. no fresh feed
+and/or no deep-enough pool) the protocol has no oracle price, so the
+widget can't compute a minimum collateral, can't run the HF/LTV
+preview, and there is no "market rate". In that case the widget:
+- shows the lending-amount input + a note next to the buttons —
+  *"This asset isn't on a liquid market — set collateral terms on the
+  offer page"* (the rate hint reads *"no liquid market"* instead of a
+  mid rate); the collateral input is hidden (there's no min to anchor
+  it to);
+- on click → `navigate("/create-offer?side=lend|borrow
+  &lendingAsset=…&lendingAmount=…&collateralAsset=<if-known-from-the-
+  book-filter>&source=market-widget")` — note **no `collateralAmount`,
+  no `rate`, no auto-min** (those need a price the asset doesn't have).
+  The collateral asset/amount are required fields on Create Offer, so
+  the user fills them there.
+- Create Offer shows a cautionary banner: *"⚠ This offer involves an
+  asset without a liquid market (no oracle price). The protocol can't
+  compute a minimum collateral or run the standard health-factor / LTV
+  checks — you and your counterparty are pricing this directly, and
+  both sides must consent. Set all terms below."*
+
+Rationale for routing illiquid through the same page rather than
+blocking it: posting an offer for an illiquid asset is a legitimate
+action (illiquid offers exist — they require explicit both-parties
+consent and full collateral transfer on default); the only thing the
+widget *can't* do for them is the auto-fill, so it deep-links with
+whatever it knows and the banner sets expectations. One code path, no
+special-cased disabled state.
 
 ### Why this needs no contract change
 
@@ -150,6 +173,43 @@ the deepest asset/WETH V3 pool across fee tiers {0.01%, 0.05%, 0.3%,
 | PEPE | 0.3% | 2.44e25 | 5.5e28 | **$4.7 M** |
 | cbBTC | 0.3% | 6.49e14 | 1.5e18 | **$1.7 M** (most cbBTC depth lives on Base, not Ethereum) |
 | SHIB | 0.3% | 2.87e24 | 6.5e27 | **$0.69 M** (direct SHIB/WETH pool only — SHIB routes mostly through SHIB/stable pairs) |
+
+### 3.b — same census against asset/USDT pools
+
+(USDT is "the predominant denominator" Tier-1 was framed around, so the
+asset/**USDT** pool depth matters too. `2 × USDT-leg-virtual-reserve ×
+$1`; USDT is token1 in all of these.)
+
+| Asset | Best fee | tiers found (raw `liquidity()`) | **≈ USD depth** (proper) |
+|---|---|---|---|
+| WETH | 0.3% | 0.3% deepest (`9.0e18`) | **$854 M** |
+| WBTC | 0.05% | `5.1e12` | **$290 M** |
+| AAVE | 0.3% | `2.3e18` | **$44.8 M** (deeper than AAVE/WETH's $23.5 M!) |
+| LINK | 0.3% | `8.2e17` | **$5.2 M** (much thinner than LINK/WETH's $362 M) |
+| UNI | 0.3% | `9.0e17` | **$3.5 M** (vs UNI/WETH $19.8 M) |
+| PEPE | 0.3% | `6.3e18` | **$0.026 M** (vs PEPE/WETH $4.7 M) |
+| SHIB | 0.3% | `4.3e17` | **$0.0022 M** (vs SHIB/WETH $0.69 M) |
+| USDC | 0.01% | `9.1e16` | **$183 B** ⚠️ stable-stable, wildly over-stated |
+| DAI | 0.01% | `6.0e21` | **$12.0 B** ⚠️ stable-stable, wildly over-stated |
+| wstETH | 0.05% | `8.9e11` | **$95** (the wstETH/USDT pool is effectively dead — wstETH liquidity lives vs WETH) |
+| cbBTC | — | (no direct asset/USDT V3 pool) | — |
+| weETH | — | (no direct asset/USDT V3 pool) | — |
+
+Takeaway from comparing the two: **which single pool is deepest varies
+per asset** — WETH-pool for WBTC/LINK/UNI/PEPE/SHIB, USDT-pool for
+AAVE, *neither USDT pool exists* for cbBTC/weETH — and **stable-stable /
+price-correlated pools (USDC/USDT, DAI/USDT, the LST/WETH pools)
+massively over-state the proper-depth metric** (the "virtual reserve"
+formula assumes liquidity straddles the price symmetrically; for a 1:1
+pair almost all `L` sits in a ±0.05% band, so `L × sqrtP` over-states
+tradeable depth by 2–4 orders of magnitude). So a robust on-chain depth
+check should take the **max over {asset/WETH, asset/USDC, asset/USDT}**
+pools AND apply a correlated-pair guard (e.g. ignore a pool whose price
+sits within ~1% of a stable/peg unless it's the asset being priced, or
+simply exclude stable-stable + LST-correlated pools from the tier
+signal). Even then it stays blind to multi-hop liquidity (the SHIB
+case). All of which is a strong vote for the **hybrid** approach in §4
+— the on-chain signal is too noisy to be the sole authority.
 
 ### What the census tells us
 
@@ -226,8 +286,13 @@ hybrid. I lean (c).
 
 - `OracleFacet` gains a `getLiquidityTier(asset) → uint8 {0,1,2,3}`
   view: 0 = illiquid (below the floor / no fresh feed), else the
-  highest tier whose USD-depth threshold the deepest asset/WETH pool
-  clears (max over the 3 V3 venues, same as `_checkLiquidity`).
+  highest tier whose proper-USD-depth threshold the asset's deepest
+  pool clears — **max over {asset/WETH, asset/USDC, asset/USDT} ×
+  the 3 V3 venues**, with a correlated-pair guard (skip a pool whose
+  spot sits within ~1% of a peg unless it *is* the asset being priced;
+  i.e. don't let a stable-stable or LST/WETH pool's wildly-over-stated
+  `L × sqrtP` count — see §3.b). The same `MIN_LIQUIDITY_USD` becomes
+  Tier 1's floor, re-expressed as a real USD figure.
 - `ProtocolConfig` gains (all `onlyRole(ADMIN_ROLE)`, bounded, with
   `0 ⇒ default` sentinels):
   - `tier2DepthUsd`, `tier3DepthUsd` — alongside the existing
