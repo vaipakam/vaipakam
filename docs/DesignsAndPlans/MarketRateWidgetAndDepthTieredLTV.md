@@ -480,6 +480,29 @@ allowlist, both permissionless-compatible:
      checks over D days — globals), the keeper raises `keeperTier` one
      step. So Tier 2 / Tier 3 require **both** the on-chain check *and*
      the aggregator-confirmed history.
+   - **Plus, for the *top* tier, a "battle-tested elsewhere" advisory**
+     (user 2026-05-13). Before promoting an asset to Tier 3 the keeper
+     additionally checks whether it's **listed as collateral on ≥ 1
+     major, long-lived lending protocol on this chain** — Aave v3,
+     Compound v3, Morpho-curated vaults — with a non-trivial collateral
+     factor *and* non-trivial TVL there (each readable on-chain:
+     Aave `PoolDataProvider.getReserveConfigurationData` + `getReserveData`,
+     Compound `Comet.getAssetInfoByAddress`, Morpho market params; or
+     off-chain via their APIs / DeFiLlama). The signal it gives: "a
+     battle-tested risk team has vetted this asset and it has survived
+     real liquidations in production" — a *track-record* signal that
+     complements the *direct* "can a liquidator dump it now" signal from
+     0x/1inch. **Important:** we use their *listing + TVL* as a
+     **classification input** ("Aave has WBTC supported with $500 M
+     supplied → that's Tier-3 material for us"), **not** their *LTV
+     numbers* as a parameter source — Aave's 73% WBTC LTV is tuned to
+     Aave's per-second-bot liquidation machinery, not ours; our tier
+     LTVs (50 / 60 / 65) stay our own conservative numbers. An asset not
+     listed on any of them can still reach Tier 2 on the slippage check
+     alone (Tier 2's 60% LTV isn't as demanding) but Tier 3 wants the
+     extra corroboration. This is purely an off-chain heuristic in the
+     keeper's promotion logic — no contract impact; a compromised keeper
+     ignoring it still can't promote past the on-chain ceiling.
    - **The keeper *demotes* immediately** the moment a check shows
      degradation (drops `keeperTier` toward 1) — fail-safe direction,
      no window.
