@@ -533,12 +533,16 @@ contract OracleFacetTest is Test {
             abi.encodeWithSignature("getPool(address,address,uint24)", t0, t1, uint24(3000)),
             abi.encode(pool)
         );
+        // Initialized pool (non-zero sqrtPriceX96) with sufficient depth.
+        // sqrtPriceX96 = 2^96 ⇒ price 1.0 ⇒ `_v3DepthLiquid`'s WETH-leg
+        // virtual reserve == liquidity; liquidity = 1e21 ⇒ usdDepthScaled
+        // = 1e21 / 2.5e8 = 4e12 ≫ MIN_LIQUIDITY_USD (1e12).
         vm.mockCall(
             pool,
             abi.encodeWithSignature("slot0()"),
-            abi.encode(uint160(2e18), int24(0), uint16(0), uint16(0), uint16(0), uint8(0), false)
+            abi.encode(uint160(uint256(1) << 96), int24(0), uint16(0), uint16(0), uint16(0), uint8(0), false)
         );
-        vm.mockCall(pool, abi.encodeWithSignature("liquidity()"), abi.encode(uint128(5e18)));
+        vm.mockCall(pool, abi.encodeWithSignature("liquidity()"), abi.encode(uint128(1e21)));
 
         LibVaipakam.LiquidityStatus status = OracleFacet(address(diamond)).checkLiquidity(mockAsset);
         assertEq(uint8(status), uint8(LibVaipakam.LiquidityStatus.Liquid));
@@ -554,7 +558,9 @@ contract OracleFacetTest is Test {
     function testCheckLiquidityOnActiveNetworkLiquid() public {
         _mockRegistryFeed(mockAsset, mockFeed);
         _mockFeedFull(mockFeed, int256(1e8), 8);
-        _mockLiquidPool(mockAsset, uint128(1e18));
+        // 1e21 ⇒ usdDepthScaled = 1e21 / 2.5e8 = 4e12 ≫ MIN_LIQUIDITY_USD;
+        // see {testCheckLiquidityReturnsLiquidWhenAllConditionsMet}.
+        _mockLiquidPool(mockAsset, uint128(1e21));
         LibVaipakam.LiquidityStatus status =
             OracleFacet(address(diamond)).checkLiquidityOnActiveNetwork(mockAsset);
         assertEq(uint8(status), uint8(LibVaipakam.LiquidityStatus.Liquid));
