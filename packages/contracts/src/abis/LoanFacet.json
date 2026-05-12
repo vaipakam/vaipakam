@@ -451,6 +451,16 @@
             "name": "healthFactorAtInit",
             "type": "uint256",
             "internalType": "uint256"
+          },
+          {
+            "name": "lenderTokenId",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "borrowerTokenId",
+            "type": "uint256",
+            "internalType": "uint256"
           }
         ]
       }

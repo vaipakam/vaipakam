@@ -3,8 +3,10 @@
 pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
+import {LibSlippage} from "../libraries/LibSlippage.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
+import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 import {FeedRegistryInterface} from "@chainlink/contracts/src/v0.8/interfaces/FeedRegistryInterface.sol";
 import {AggregatorV3Interface} from "@chainlink/contracts/src/v0.8/shared/interfaces/AggregatorV3Interface.sol";
 import {AggregatorV2V3Interface} from "@chainlink/contracts/src/v0.8/shared/interfaces/AggregatorV2V3Interface.sol";
@@ -1062,6 +1064,75 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
         isSupported = status == LibVaipakam.LiquidityStatus.Liquid;
     }
 
+    // ─── Depth-tiered LTV (Piece B) — liquidity-tier views ──────────────
+
+    /**
+     * @notice The on-chain liquidity tier of `asset` — `0` if it doesn't
+     *         classify `Liquid` (or can't clear the `floorSizePad`
+     *         simulated swap at the configured slippage bound), else `1`,
+     *         `2`, or `3` per the highest `tierNSizePad` whose simulated
+     *         sell it absorbs at ≤ `liquiditySlippageBps`.
+     * @dev    Permissionless tiering: this function *is* the on-chain tier
+     *         authority — no governance per-asset allowlist (the only
+     *         per-asset lever is the existing `AdminFacet.pauseAsset` /
+     *         blacklist, which makes `_checkLiquidity` fail). See
+     *         docs/DesignsAndPlans/MarketRateWidgetAndDepthTieredLTV.md
+     *         §4.1-§4.2.
+     *
+     *         The simulated swap is the cheap in-tick constant-product
+     *         approximation on a Uni-V3-clone pool's virtual reserves
+     *         ({LibSlippage}). Route search: best (lowest-impact) route
+     *         over `{asset/q : q ∈ effectivePaaAssets()} × {UniswapV3,
+     *         PancakeSwap V3, SushiSwap V3 factories} × {fee tiers ≤ 0.3%
+     *         (100/500/2500/3000)}`. Two manipulation guards exclude a
+     *         pool from the route search: (i) the pool's two legs must be
+     *         value-balanced within `twapConsistencyBps` when priced at
+     *         the assets' Chainlink feeds (= the pool's spot price agrees
+     *         with the trusted feed), and (ii) if the pool's on-chain
+     *         TWAP oracle is initialised, its `twapWindowSec`-mean tick
+     *         must be within `twapConsistencyBps` of the current tick
+     *         (catches a recently-manipulated pool). If `observe` reverts
+     *         (un-bumped observation cardinality) only guard (ii) is
+     *         skipped — guard (i) still applies — so a manipulator can't
+     *         dodge the price check by routing through a low-cardinality
+     *         pool.
+     *
+     *         Always returns the *real* tier — `depthTieredLtvEnabled`
+     *         gates whether the loan-init LTV cap *consults* it, not what
+     *         this view reports (so the keeper / frontend can read tiers
+     *         even while the feature is dormant). Cost: a `view`; on-chain
+     *         it's hit once per `initiateLoan` (collateral asset only)
+     *         while the kill-switch is on.
+     * @param asset The collateral / lending asset to classify.
+     * @return tier  `0`..`3` (`0` = illiquid / untierable).
+     */
+    function getLiquidityTier(address asset) external view returns (uint8 tier) {
+        if (asset == address(0)) return 0;
+        return _liquidityTier(asset, LibVaipakam.storageSlot());
+    }
+
+    /**
+     * @notice The *effective* liquidity tier — `min(getLiquidityTier(asset),
+     *         keeperTier(asset))`, where `keeperTier` defaults to `1`
+     *         (today's `HF ≥ 1.5` baseline) until the off-chain
+     *         liquidity-confidence relay (`KEEPER_ROLE`, §4.4 step 5)
+     *         promotes the asset. This is what the loan-init LTV cap
+     *         consults when `depthTieredLtvEnabled`.
+     * @dev    The `min` means: a new asset opens at Tier 1 until the
+     *         keeper confirms; a compromised keeper can only *lower* an
+     *         asset's tier toward the no-keeper baseline, never raise it
+     *         above the on-chain ceiling; and an illiquid asset
+     *         (`getLiquidityTier == 0`) stays Tier 0 regardless of the
+     *         keeper default.
+     */
+    function getEffectiveLiquidityTier(address asset) external view returns (uint8 tier) {
+        if (asset == address(0)) return 0;
+        uint8 onChain = _liquidityTier(asset, LibVaipakam.storageSlot());
+        if (onChain == 0) return 0;
+        uint8 keeper = LibVaipakam.effectiveKeeperTier(asset);
+        return onChain < keeper ? onChain : keeper;
+    }
+
     /**
      * @notice List of asset addresses that appear as an active-loan leg and
      *         currently classify Illiquid on the active network.
@@ -1153,6 +1224,250 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
         );
         if (!ok || data.length < 32) return address(0);
         return abi.decode(data, (address));
+    }
+
+    // ─── Depth-tiered LTV (Piece B) — internal tier machinery ──────────
+
+    /// @dev ≤0.3%-fee tiers iterated by the depth-tier route search —
+    ///      `{100, 500, 2500 (PancakeV3 mid), 3000}`. Deliberately
+    ///      excludes the 1% (`10000`) tier: per the §3 census every deep
+    ///      pool sits in a ≤0.3% tier, the 1% tier is where dust pairs
+    ///      live, so requiring depth in a ≤0.3% pool is the conservative
+    ///      choice (and it slightly tightens the base `Liquid` gate vs
+    ///      `_lookupPool`, which still probes 1% — fail-safe direction).
+    function _le03FeeTiers() private pure returns (uint24[4] memory) {
+        return [V3_TIER_LOW, V3_TIER_LOW_MID, V3_TIER_PANCAKE, V3_TIER_STANDARD];
+    }
+
+    /// @dev Best-effort `IERC20Metadata.decimals()` — falls back to 18 on
+    ///      a non-conforming token. A wrong fallback is self-correcting:
+    ///      the value-balance guard in {_accumulatePoolImpacts} skips a
+    ///      pool whose legs don't balance, which is exactly what a
+    ///      decimals mismatch produces.
+    function _tryTokenDecimals(address token) private view returns (uint8) {
+        try IERC20Metadata(token).decimals() returns (uint8 d) {
+            return d;
+        } catch {
+            return 18;
+        }
+    }
+
+    /// @dev Read a Uni-V3-clone pool's state for the depth-tier route
+    ///      search. `ok == false` on any malformed/failed read or a
+    ///      degenerate (zero-reserve / un-initialised) pool. `observeOk`
+    ///      is independent: `false` when the pool's TWAP oracle isn't
+    ///      initialised deep enough (`observe` reverts `OLD`) — then
+    ///      {_accumulatePoolImpacts} applies only the value-balance guard,
+    ///      so a manipulator can't dodge the price check via a
+    ///      low-cardinality pool (the value-balance guard still requires
+    ///      the spot to match the Chainlink feed).
+    function _readV3PoolState(address pool, uint32 twapWindow)
+        private
+        view
+        returns (
+            bool ok,
+            uint256 reserve0,
+            uint256 reserve1,
+            int24 currentTick,
+            bool observeOk,
+            int24 meanTick
+        )
+    {
+        if (pool == address(0) || pool.code.length == 0) return (false, 0, 0, 0, false, 0);
+        (bool slotOk, bytes memory slotData) = pool.staticcall(abi.encodeWithSignature("slot0()"));
+        if (!slotOk || slotData.length < 224) return (false, 0, 0, 0, false, 0);
+        uint160 sqrtPriceX96;
+        (sqrtPriceX96, currentTick, , , , , ) = abi.decode(
+            slotData,
+            (uint160, int24, uint16, uint16, uint16, uint8, bool)
+        );
+        if (sqrtPriceX96 == 0) return (false, 0, 0, 0, false, 0);
+        (bool liqOk, bytes memory liqData) = pool.staticcall(abi.encodeWithSignature("liquidity()"));
+        if (!liqOk || liqData.length < 32) return (false, 0, 0, 0, false, 0);
+        uint128 liquidity = abi.decode(liqData, (uint128));
+        if (liquidity == 0) return (false, 0, 0, 0, false, 0);
+        (reserve0, reserve1) = LibSlippage.v3VirtualReserves(liquidity, sqrtPriceX96);
+        if (reserve0 == 0 || reserve1 == 0) return (false, 0, 0, 0, false, 0);
+        ok = true;
+        // Best-effort TWAP read — never reverts the route search.
+        uint32[] memory secondsAgos = new uint32[](2);
+        secondsAgos[0] = twapWindow;
+        secondsAgos[1] = 0;
+        (bool obsOk, bytes memory obsData) = pool.staticcall(
+            abi.encodeWithSignature("observe(uint32[])", secondsAgos)
+        );
+        // observe returns (int56[] tickCumulatives, uint160[] secondsPerLiquidity…);
+        // a well-formed 2-element pair encodes to exactly 256 bytes
+        // (2 head offsets + 2× [len + 2 words]). We only need [0]. The
+        // length floor keeps the unconditional `abi.decode` from
+        // reverting the (never-reverting) classification view on a short
+        // return — a real V3 pool always answers with the full layout.
+        if (obsOk && obsData.length >= 256) {
+            (int56[] memory tickCumulatives, ) = abi.decode(obsData, (int56[], uint160[]));
+            if (tickCumulatives.length >= 2 && twapWindow > 0) {
+                int56 delta = tickCumulatives[1] - tickCumulatives[0];
+                meanTick = int24(delta / int56(int256(uint256(twapWindow))));
+                observeOk = true;
+            }
+        }
+    }
+
+    /// @dev Asset-side parameters shared across the whole route search,
+    ///      bundled to keep {_liquidityTier} / {_routeOverQuote} /
+    ///      {_accumulatePoolImpacts} clear of the viaIR stack ceiling.
+    ///      `pA` = the classified asset's Chainlink price (feed-scaled);
+    ///      `scaleA` = `10**(feedDecimals + tokenDecimals)` so a
+    ///      PAD↔base-unit conversion is one `mulDiv`; `band` =
+    ///      `twapConsistencyBps`; `twapWindow` = `twapWindowSec`.
+    struct _TierCtx {
+        uint256 pA;
+        uint256 scaleA;
+        uint256 band;
+        uint32 twapWindow;
+    }
+
+    /// @dev For one resolved Uni-V3-clone pool, fold its best-route
+    ///      contribution into `best[i]` = the lowest price-impact seen at
+    ///      `sizes[i]` (PAD × 1e6) across every pool — *after* the two
+    ///      manipulation guards (value-balance / spot≈feed, and the
+    ///      best-effort TWAP-consistency tick check). `best` and `sizes`
+    ///      are mutated-in-place memory arrays of length 4
+    ///      `{floor, tier1, tier2, tier3}`. `pQ`/`scaleQ` are the quote
+    ///      token's Chainlink price and `10**(feedDec + tokenDec)`
+    ///      composite; the asset side comes from `ctx`.
+    function _accumulatePoolImpacts(
+        address pool,
+        uint24 fee,
+        _TierCtx memory ctx,
+        bool assetIsToken0,
+        uint256 pQ,
+        uint256 scaleQ,
+        uint256[4] memory sizes,
+        uint256[4] memory best
+    ) private view {
+        (
+            bool stOk,
+            uint256 r0,
+            uint256 r1,
+            int24 curTick,
+            bool obsOk,
+            int24 meanTick
+        ) = _readV3PoolState(pool, ctx.twapWindow);
+        if (!stOk) return;
+        (uint256 reserveAsset, uint256 reserveQ) = assetIsToken0 ? (r0, r1) : (r1, r0);
+        // Guard 1 — the two legs' Chainlink-priced values must be
+        // balanced within `band` bps (⇔ the pool's spot price agrees
+        // with the trusted feed): `legValueRatio = feedMid / poolMid`,
+        // so balanced legs ⇔ poolMid ≈ feedMid.
+        {
+            uint256 vAsset = Math.mulDiv(reserveAsset, ctx.pA * 1e6, ctx.scaleA); // PAD × 1e6
+            uint256 vQ = Math.mulDiv(reserveQ, pQ * 1e6, scaleQ); // PAD × 1e6
+            if (vAsset == 0 || vQ == 0) return;
+            (uint256 lo, uint256 hi) = vAsset < vQ ? (vAsset, vQ) : (vQ, vAsset);
+            uint256 bp = LibVaipakam.BASIS_POINTS;
+            if (ctx.band < bp && lo * bp < hi * (bp - ctx.band)) return;
+        }
+        // Guard 2 — best-effort: if the pool's TWAP oracle answered, the
+        // `twapWindow`-mean tick must be within `band` ticks of the
+        // current tick (1 tick ≈ 1 bp of price for small `band`), which
+        // catches a *recently*-manipulated pool that guard 1 alone would
+        // miss if the price has since reverted.
+        if (obsOk) {
+            int256 d = int256(curTick) - int256(meanTick);
+            if (d < 0) d = -d;
+            if (uint256(d) > ctx.band) return;
+        }
+        // Fold the price-impact at each test size into the running best.
+        // `priceImpactBps` is monotone in `amountIn`, so for one pool
+        // best[0] ≤ best[1] ≤ best[2] ≤ best[3]; taking the min over
+        // pools preserves that order.
+        for (uint256 si; si < 4; ++si) {
+            if (best[si] == 0 || sizes[si] == 0) continue;
+            uint256 amountIn = Math.mulDiv(sizes[si], ctx.scaleA, ctx.pA * 1e6); // asset base units
+            if (amountIn == 0) continue;
+            uint256 imp = LibSlippage.priceImpactBps(amountIn, reserveAsset, uint256(fee));
+            if (imp < best[si]) best[si] = imp;
+        }
+    }
+
+    /// @dev Route the `asset/q` pair over every configured Uni-V3-clone
+    ///      factory at every fee tier ≤ 0.3%, folding each found pool's
+    ///      contribution into `best`. Skips `q` entirely when its
+    ///      Chainlink price is unavailable (can't value its leg).
+    function _routeOverQuote(
+        address asset,
+        address q,
+        LibVaipakam.Storage storage s,
+        _TierCtx memory ctx,
+        uint256[4] memory sizes,
+        uint256[4] memory best
+    ) private view {
+        (bool okQ, uint256 pQ, uint8 dQ) = _tryGetAssetPriceView(q);
+        if (!okQ || pQ == 0) return;
+        uint256 scaleQ = 10 ** (uint256(dQ) + uint256(_tryTokenDecimals(q)));
+        bool assetIsToken0 = asset < q;
+        (address token0, address token1) = assetIsToken0 ? (asset, q) : (q, asset);
+        uint24[4] memory feeTiers = _le03FeeTiers();
+        address[3] memory factories = [
+            s.uniswapV3Factory,
+            s.pancakeswapV3Factory,
+            s.sushiswapV3Factory
+        ];
+        for (uint256 fi; fi < 3; ++fi) {
+            if (factories[fi] == address(0)) continue;
+            for (uint256 ti; ti < 4; ++ti) {
+                address pool = _tryGetPool(factories[fi], token0, token1, feeTiers[ti]);
+                if (pool == address(0)) continue;
+                _accumulatePoolImpacts(pool, feeTiers[ti], ctx, assetIsToken0, pQ, scaleQ, sizes, best);
+            }
+        }
+    }
+
+    /// @dev The on-chain liquidity tier of `asset` (0..3) — see
+    ///      {getLiquidityTier} for the full semantics. `0` iff the asset
+    ///      doesn't classify `Liquid` (covers sequencer-down / no feed /
+    ///      no $1M WETH pool / `pauseAsset`-blacklisted), or it can't
+    ///      clear the `floorSizePad` simulated swap at
+    ///      `liquiditySlippageBps` on any valid {effectivePaaAssets} ×
+    ///      {Uni/Pancake/Sushi V3} × {fee ≤ 0.3%} route.
+    function _liquidityTier(address asset, LibVaipakam.Storage storage s)
+        internal
+        view
+        returns (uint8)
+    {
+        if (_checkLiquidity(asset) != LibVaipakam.LiquidityStatus.Liquid) return 0;
+        (bool okA, uint256 pA, uint8 dA) = _tryGetAssetPriceView(asset);
+        if (!okA || pA == 0) return 0;
+        _TierCtx memory ctx = _TierCtx({
+            pA: pA,
+            scaleA: 10 ** (uint256(dA) + uint256(_tryTokenDecimals(asset))),
+            band: LibVaipakam.cfgTwapConsistencyBps(),
+            twapWindow: uint32(LibVaipakam.cfgTwapWindowSec())
+        });
+        uint256[4] memory sizes = [
+            LibVaipakam.cfgFloorSizePad(),
+            LibVaipakam.cfgTier1SizePad(),
+            LibVaipakam.cfgTier2SizePad(),
+            LibVaipakam.cfgTier3SizePad()
+        ];
+        uint256[4] memory best = [
+            type(uint256).max,
+            type(uint256).max,
+            type(uint256).max,
+            type(uint256).max
+        ];
+        address[] memory paa = LibVaipakam.effectivePaaAssets();
+        for (uint256 qi; qi < paa.length; ++qi) {
+            address q = paa[qi];
+            if (q != address(0) && q != asset) {
+                _routeOverQuote(asset, q, s, ctx, sizes, best);
+            }
+        }
+        uint256 slipBound = LibVaipakam.cfgLiquiditySlippageBps();
+        if (best[0] > slipBound) return 0; // can't clear `floorSizePad` ⇒ untierable
+        if (best[3] <= slipBound) return 3;
+        if (best[2] <= slipBound) return 2;
+        return 1; // cleared the floor ⇒ at least Tier 1
     }
 
     /// @dev `getAssetPrice` look-alike but try/catch wrapped so callers
