@@ -357,6 +357,43 @@ treat a large-FDV / thin-pool-depth discrepancy as a reason to demote,
 and the widget can flag it — but that's heuristic judgment, not an
 on-chain rule.
 
+**On "add more DEXs" — and specifically *not* dYdX / AsterDEX.** dYdX
+(v4 — its own Cosmos appchain, not even EVM-readable) and AsterDEX are
+**perpetual-futures** DEXs: orderbooks for *perps*, no spot liquidity
+pools. A liquidator sells the collateral *spot* — there is nothing on a
+perps venue to sell into. Perp open-interest / orderbook depth is
+*derivative* liquidity, unrelated to "can the spot token be dumped".
+So perps DEXs are simply the wrong place to look — don't include them.
+The right universe is **spot AMMs**, and it's chain-specific and
+ABI-heterogeneous: Uni-V3 forks (Uni/Sushi/Pancake V3 — the current
+set), Uni-V2 forks (lots of long-tail + Sushi/Pancake V2), **Curve
+StableSwap** (the deepest venue for stables + LSTs — wstETH/weETH/
+USDC/USDT — and present on every chain), Balancer V2 (weighted +
+stable pools, `Vault.queryBatchSwap` is on-chain-callable),
+Solidly/ve(3,3) pools (**Aerodrome** on Base, **Velodrome** on
+Optimism, THENA on BNB), Camelot/Algebra on Arbitrum, Maverick, …
+Each new *family* is new audited read-math; you can't realistically
+enumerate them all on-chain. **Highest-value additions if we add any:
+Uni-V2 forks and Curve StableSwap.** Beyond that it's a per-chain
+integration treadmill with diminishing returns — which is precisely
+why the §4.1.b answer is *use the aggregators off-chain*: 0x / 1inch
+already integrate *every* spot DEX per chain (Uni, Sushi, Curve,
+Balancer, Aerodrome, Velodrome, Camelot, Pancake, Maverick, …) plus
+private market makers plus multi-hop. So treat the on-chain check as a
+**conservative subset** — it under-counts an asset whose depth lives
+*only* on a chain-native DEX we don't integrate (Aerodrome-only on
+Base, say) → that asset gets a lower tier or `Illiquid` here, which is
+**fail-safe** (the *actual* liquidation still works — 0x/1inch *do*
+route to Aerodrome — so the under-count is a false negative in the
+pre-screen, not in the liquidation itself; the only cost is a
+missed-opportunity, not a safety hole). Correcting under-counts upward
+would need a *promotion* relay, which has a worse trust model than the
+demotion-only relay (a compromised keeper could over-promote a junk
+asset) — so if/when we want it, gate it behind the existing N-of-M
+oracle quorum; or just integrate Uni-V2 + Curve on-chain, which closes
+most of the gap. v1: Uni-V3-clone family only, accept the conservative
+under-count.
+
 **The tier = which size the asset clears at ≤ the slippage bound** (all
 governance globals):
 
@@ -575,10 +612,17 @@ liquidation behaviour is observed.
    now (independent of Piece B — today's `liquidity() × ethPrice` floor
    is mislabeled: "$1 M" ≈ "pool isn't empty"), or only as part of
    Piece B?
-8. Add Uniswap-V2-style venues to the liquidity/slippage check, or stay
-   V3-only (current)? (V2 gives exact constant-product math + catches
-   assets whose depth lives in a V2 pool — a few do — at the cost of one
-   more venue type.) And/or Balancer V2 via `Vault.queryBatchSwap`?
+8. **Which spot-DEX families on-chain?** v1 = Uni-V3 clones only
+   (current). Add Uni-V2 forks and/or Curve StableSwap (the two
+   highest-value additions — V2 covers long-tail, Curve covers
+   stables/LSTs)? Balancer V2 via `Vault.queryBatchSwap`? (Each is new
+   audited read-math.) Note: **perps DEXs — dYdX / AsterDEX — are out**
+   (perp orderbook depth ≠ spot liquidity; nothing for a liquidator to
+   sell into; dYdX isn't EVM). Chain-native AMMs we *don't* integrate
+   (Aerodrome/Base, Velodrome/OP, Camelot/Arb, …) → assets that live
+   only there are conservatively under-tiered on-chain (fail-safe —
+   0x/1inch still route there at liquidation); closing that gap = add
+   more on-chain families *or* a quorum-gated promotion relay (Phase 3).
 9. **Aggregator usage** (§4.1.b): (i) widget pre-check via the existing
    0x/1inch Worker proxy — yes? (recommended); (ii) the keeper-fed
    *demotion* relay (`assetTierCeiling`, keeper can only lower) — in
