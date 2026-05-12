@@ -35,6 +35,7 @@ import { useProtocolConfig, type ProtocolConfig } from '../hooks/useProtocolConf
 import { AssetSymbol } from '../components/app/AssetSymbol';
 import { AssetLink } from '../components/app/AssetLink';
 import { AssetPicker } from '../components/app/AssetPicker';
+import { MarketRateWidget } from '../components/app/MarketRateWidget';
 import { TokenAmount } from '../components/app/TokenAmount';
 import { PrincipalCell } from '../components/app/PrincipalCell';
 import { bpsToPercent } from '../lib/format';
@@ -1236,6 +1237,20 @@ export default function OfferBook() {
           </div>
         </div>
       </div>
+
+      {/* "Lend / Borrow at market rate" shortcut — shown for the pair the
+          filters select (both asset filters set + valid). Pure prefilled
+          deep-link to Create Offer; never disabled. Sits between the
+          filter card and the Market anchor / side tabs. */}
+      {/^0x[0-9a-fA-F]{40}$/.test(lendingAssetFilter) &&
+        /^0x[0-9a-fA-F]{40}$/.test(collateralAssetFilter) && (
+          <MarketRateWidget
+            lendingAsset={lendingAssetFilter}
+            collateralAsset={collateralAssetFilter}
+            durationDays={durationFilter}
+            anchorRateBps={anchorRateBps}
+          />
+        )}
 
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 12, marginTop: 12 }}>
         <div className="tabs">

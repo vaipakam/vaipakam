@@ -119,18 +119,45 @@ export default function CreateOffer() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
 
-  // Deep-link prefill from the Refinance / Offset flows. When `from=refinance`
-  // (or `from=offset`), the query string encodes the original loan's asset
-  // continuity fields — principal, collateral, and prepay asset types must
-  // match or the on-chain settlement reverts. We prefill the form and show a
-  // banner so the user doesn't discover the mismatch via a failed tx.
+  // Deep-link prefill. Two sources:
+  //  - `from=refinance|offset` — the Refinance / Offset flows; the query
+  //    string encodes the original loan's asset-continuity fields
+  //    (principal, collateral, prepay asset types must match or the
+  //    on-chain settlement reverts). We prefill + lock those fields and
+  //    show a banner so the user doesn't discover the mismatch via a
+  //    failed tx.
+  //  - `from=market-widget` — the OfferBook's "Lend / Borrow at market
+  //    rate" widget. Prefills side, the asset pair, lending amount, the
+  //    auto-computed minimum collateral, the duration bucket, and (when
+  //    a prior match exists) the market mid rate. Nothing is locked —
+  //    the user reviews/adjusts everything here, and the min-collateral
+  //    floor is re-enforced by the form's HF≥1.5 validation, not by
+  //    disabling the field.
   const prefill = useMemo<Partial<OfferFormState> | undefined>(() => {
     const from = searchParams.get("from");
-    if (from !== "refinance" && from !== "offset") return undefined;
+    if (from !== "refinance" && from !== "offset" && from !== "market-widget")
+      return undefined;
     const get = (k: string) => searchParams.get(k) ?? undefined;
+    const out: Partial<OfferFormState> = {};
+    if (from === "market-widget") {
+      const side = get("side");
+      if (side === "lender" || side === "borrower") out.offerType = side as OfferSide;
+      const la = get("lendingAsset");
+      if (la) out.lendingAsset = la;
+      const ca = get("collateralAsset");
+      if (ca) out.collateralAsset = ca;
+      const amt = get("amount");
+      if (amt) out.amount = amt;
+      const collAmt = get("collateralAmount");
+      if (collAmt) out.collateralAmount = collAmt;
+      const dur = get("durationDays");
+      if (dur && /^\d+$/.test(dur)) out.durationDays = dur;
+      const rate = get("interestRate");
+      if (rate) out.interestRate = rate;
+      return out;
+    }
     const ot = get("offerType");
     const at = get("collateralAssetType") as OfferAssetKind | undefined;
-    const out: Partial<OfferFormState> = {};
     if (ot === "lender" || ot === "borrower") out.offerType = ot as OfferSide;
     const la = get("lendingAsset");
     if (la) out.lendingAsset = la;
@@ -719,6 +746,31 @@ export default function CreateOffer() {
           </span>
         </div>
       )}
+      {/* Came in via the OfferBook "Lend / Borrow at market rate"
+          widget. One of three banners: illiquid collateral (the widget
+          couldn't auto-compute a minimum — no `collateralAmount` was
+          passed), posting at the current market rate (an `interestRate`
+          was passed), or the first offer for this pair (neither). */}
+      {deepLinkFrom === "market-widget" &&
+        (!searchParams.get("collateralAmount") ? (
+          <div className="alert alert-warning" role="alert">
+            <AlertTriangle size={18} />
+            <span>{t('createOffer.marketWidgetIlliquidBanner')}</span>
+          </div>
+        ) : searchParams.get("interestRate") ? (
+          <div className="alert alert-info" role="status">
+            <span>
+              {t('createOffer.marketWidgetBanner', {
+                rate: searchParams.get("interestRate"),
+              })}
+            </span>
+          </div>
+        ) : (
+          <div className="alert alert-warning" role="alert">
+            <AlertTriangle size={18} />
+            <span>{t('createOffer.firstOfferBanner')}</span>
+          </div>
+        ))}
 
       {error && <ErrorAlert message={error} />}
 

@@ -76,3 +76,46 @@
   border-color: var(--brand);
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand) 25%, transparent);
 }
+
+/* "Lend / Borrow at market rate" widget — sits below the filter card,
+ * for the pair the filters select. A horizontal row on wide screens
+ * (amount input | hints | action buttons), stacking on narrow ones. */
+.market-rate-widget-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+.market-rate-widget-amount {
+  display: flex;
+  flex-direction: column;
+  min-width: 160px;
+  flex: 0 0 auto;
+}
+.market-rate-widget-amount > .form-label {
+  margin-bottom: 6px;
+}
+.market-rate-widget-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 220px;
+  flex: 1 1 220px;
+  padding-bottom: 8px;
+}
+.market-rate-widget-hint {
+  font-size: 0.8rem;
+  color: var(--text-secondary, #aab2bd);
+}
+.market-rate-widget-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  flex: 0 0 auto;
+  padding-bottom: 4px;
+}
+.market-rate-widget-footnote {
+  font-size: 0.72rem;
+  color: var(--text-tertiary, #7d8694);
+  margin: 10px 0 0;
+}
