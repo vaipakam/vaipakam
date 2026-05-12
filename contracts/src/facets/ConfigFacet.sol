@@ -40,6 +40,13 @@ contract ConfigFacet is DiamondAccessControl {
     error DiscountBpsTooHigh(uint256 bps, uint256 maxAllowed);
     error FallbackSplitTooHigh(uint256 lenderBonusBps, uint256 treasuryBps, uint256 maxPerPartyBps);
     error FallbackSplitCombinedTooHigh(uint256 combinedBps, uint256 maxCombinedBps);
+    // ── Depth-tiered LTV (Piece B) ──────────────────────────────────────
+    error NonMonotoneTierSizes(uint256 floorPad, uint256 t1Pad, uint256 t2Pad, uint256 t3Pad);
+    error TierSizeTooSmall(uint256 provided, uint256 minPad);
+    error NonMonotoneTierLtvBps(uint256 t1, uint256 t2, uint256 t3);
+    error TierLtvBpsTooHigh(uint256 provided, uint256 maxAllowed);
+    error InvalidLiquidityTier(uint8 provided);
+    error PaaListInvalid(string reason);
 
     /// ─── Events ─────────────────────────────────────────────────────
     /// @custom:event-category informational/config
@@ -113,6 +120,10 @@ contract ConfigFacet is DiamondAccessControl {
     // of hostile-governance scenario the timelock + cap combo is for.
     uint16 private constant MAX_FALLBACK_BPS = 1_000;       // 10% per party
     uint16 private constant MAX_FALLBACK_COMBINED_BPS = 1_500; // 15% combined
+    // Cap on the PAA list length — every entry adds a `getPool` probe ×
+    // the ≤0.3% fee tiers to the depth-tier route search's hot path, so
+    // keep it small (2–4 in practice). 8 is generous headroom.
+    uint256 private constant MAX_PAA_ASSETS = 8;
 
     /// ─── Setters ────────────────────────────────────────────────────
 
@@ -568,6 +579,232 @@ contract ConfigFacet is DiamondAccessControl {
         emit PartialFillEnabledSet(enabled);
     }
 
+    /// ─── Depth-tiered LTV (Piece B) — governance globals ────────────
+    /// See docs/DesignsAndPlans/MarketRateWidgetAndDepthTieredLTV.md
+    /// §4.2-§4.3. All ADMIN_ROLE-gated (→ Timelock post-handover),
+    /// `0 ⇒ library default`, bounded so a hostile / fat-fingered vote
+    /// can't push a value to a degenerate setting. The on-chain
+    /// `getLiquidityTier` *is* the per-asset authority — there is no
+    /// per-asset allowlist here; the only per-asset lever stays
+    /// `AdminFacet.pauseAsset` / blacklist.
+
+    /// @custom:event-category informational/config
+    event DepthTieredLtvEnabledSet(bool enabled);
+    /// @custom:event-category informational/config
+    event LiquiditySlippageBpsSet(uint16 newBps);
+    /// @custom:event-category informational/config
+    event TwapGuardSet(uint32 windowSec, uint16 consistencyBps);
+    /// @custom:event-category informational/config
+    event LiquidityTierSizesSet(uint64 floorPad, uint64 tier1Pad, uint64 tier2Pad, uint64 tier3Pad);
+    /// @custom:event-category informational/config
+    event TierMaxInitLtvBpsSet(uint16 tier1, uint16 tier2, uint16 tier3);
+    /// @custom:event-category informational/config
+    event PaaAssetsSet(uint256 count);
+    /// @notice Emitted when the off-chain liquidity-confidence relay
+    ///         (`KEEPER_ROLE`) re-rates an asset. `tier` is 1..3.
+    /// @custom:event-category informational/config
+    event KeeperTierSet(address indexed asset, uint8 tier);
+
+    /// @notice Master kill-switch for the depth-tiered init-LTV cap.
+    ///         Default `false` — the loan-init gate stays exactly
+    ///         today's `HF ≥ 1.5` (everyone effectively Tier 1 ≈ 53%);
+    ///         `getLiquidityTier` still computes the real tier for the
+    ///         keeper / UI. Flip on per chain *only after* that chain's
+    ///         slippage census + the audit (§4.4 step 6).
+    function setDepthTieredLtvEnabled(bool enabled)
+        external
+        onlyRole(LibAccessControl.ADMIN_ROLE)
+    {
+        LibVaipakam.storageSlot().protocolCfg.depthTieredLtvEnabled = enabled;
+        emit DepthTieredLtvEnabledSet(enabled);
+    }
+
+    /// @notice Set the slippage bound (bps) a simulated fixed-size swap
+    ///         must clear to count toward a tier. Pass `0` to reset to
+    ///         the library default (`LIQUIDITY_SLIPPAGE_BPS_DEFAULT` =
+    ///         200 ≡ 2%); non-zero values must fall inside
+    ///         `[MIN_LIQUIDITY_SLIPPAGE_BPS, MAX_LIQUIDITY_SLIPPAGE_BPS]`
+    ///         (0.25% – 10%).
+    function setLiquiditySlippageBps(uint16 newBps)
+        external
+        onlyRole(LibAccessControl.ADMIN_ROLE)
+    {
+        if (
+            newBps != 0 &&
+            (
+                uint256(newBps) < LibVaipakam.MIN_LIQUIDITY_SLIPPAGE_BPS ||
+                uint256(newBps) > LibVaipakam.MAX_LIQUIDITY_SLIPPAGE_BPS
+            )
+        ) {
+            revert IVaipakamErrors.ParameterOutOfRange(
+                "liquiditySlippageBps",
+                uint256(newBps),
+                LibVaipakam.MIN_LIQUIDITY_SLIPPAGE_BPS,
+                LibVaipakam.MAX_LIQUIDITY_SLIPPAGE_BPS
+            );
+        }
+        LibVaipakam.storageSlot().protocolCfg.liquiditySlippageBps = newBps;
+        emit LiquiditySlippageBpsSet(newBps);
+    }
+
+    /// @notice Set the pool spot-vs-own-TWAP manipulation guard — the
+    ///         observation `windowSec` and the agreement `consistencyBps`
+    ///         band — in one atomic call. Either field `0` ⇒ its library
+    ///         default (`TWAP_WINDOW_SEC_DEFAULT` = 30 min /
+    ///         `TWAP_CONSISTENCY_BPS_DEFAULT` = 300 ≡ 3%); non-zero must
+    ///         fall inside `[MIN_TWAP_WINDOW_SEC, MAX_TWAP_WINDOW_SEC]`
+    ///         (5 min – 1 day) and `[MIN_TWAP_CONSISTENCY_BPS,
+    ///         MAX_TWAP_CONSISTENCY_BPS]` (0.5% – 10%) respectively.
+    function setTwapGuard(uint32 windowSec, uint16 consistencyBps)
+        external
+        onlyRole(LibAccessControl.ADMIN_ROLE)
+    {
+        if (
+            windowSec != 0 &&
+            (
+                uint256(windowSec) < LibVaipakam.MIN_TWAP_WINDOW_SEC ||
+                uint256(windowSec) > LibVaipakam.MAX_TWAP_WINDOW_SEC
+            )
+        ) {
+            revert IVaipakamErrors.ParameterOutOfRange(
+                "twapWindowSec",
+                uint256(windowSec),
+                LibVaipakam.MIN_TWAP_WINDOW_SEC,
+                LibVaipakam.MAX_TWAP_WINDOW_SEC
+            );
+        }
+        if (
+            consistencyBps != 0 &&
+            (
+                uint256(consistencyBps) < LibVaipakam.MIN_TWAP_CONSISTENCY_BPS ||
+                uint256(consistencyBps) > LibVaipakam.MAX_TWAP_CONSISTENCY_BPS
+            )
+        ) {
+            revert IVaipakamErrors.ParameterOutOfRange(
+                "twapConsistencyBps",
+                uint256(consistencyBps),
+                LibVaipakam.MIN_TWAP_CONSISTENCY_BPS,
+                LibVaipakam.MAX_TWAP_CONSISTENCY_BPS
+            );
+        }
+        LibVaipakam.ProtocolConfig storage c = LibVaipakam.storageSlot().protocolCfg;
+        c.twapWindowSec = windowSec;
+        c.twapConsistencyBps = consistencyBps;
+        emit TwapGuardSet(windowSec, consistencyBps);
+    }
+
+    /// @notice Set the simulated-swap test sizes for the binary `Liquid`
+    ///         floor and the three graded tiers, each in PAD × 1e6 units
+    ///         (so `5_000e6` ≡ "5,000 PAD" — USD on the retail deploy;
+    ///         see {LibVaipakam.effectivePadSymbol}). Any field `0` ⇒ its
+    ///         library default (5k / 50k / 500k / 5M PAD). On the
+    ///         *effective* (post-default) values the setter enforces
+    ///         `floor ≤ tier1 ≤ tier2 ≤ tier3` and each ≥
+    ///         `MIN_TIER_SIZE_PAD` (1,000 PAD) — so an all-zero call is
+    ///         a clean "reset to defaults".
+    function setLiquidityTierSizes(
+        uint64 floorPad,
+        uint64 tier1Pad,
+        uint64 tier2Pad,
+        uint64 tier3Pad
+    ) external onlyRole(LibAccessControl.ADMIN_ROLE) {
+        uint256 f = floorPad == 0 ? LibVaipakam.FLOOR_SIZE_PAD_DEFAULT : uint256(floorPad);
+        uint256 t1 = tier1Pad == 0 ? LibVaipakam.TIER1_SIZE_PAD_DEFAULT : uint256(tier1Pad);
+        uint256 t2 = tier2Pad == 0 ? LibVaipakam.TIER2_SIZE_PAD_DEFAULT : uint256(tier2Pad);
+        uint256 t3 = tier3Pad == 0 ? LibVaipakam.TIER3_SIZE_PAD_DEFAULT : uint256(tier3Pad);
+        uint256 minPad = LibVaipakam.MIN_TIER_SIZE_PAD;
+        if (f < minPad) revert TierSizeTooSmall(f, minPad);
+        if (!(f <= t1 && t1 <= t2 && t2 <= t3)) revert NonMonotoneTierSizes(f, t1, t2, t3);
+        LibVaipakam.ProtocolConfig storage c = LibVaipakam.storageSlot().protocolCfg;
+        c.floorSizePad = floorPad;
+        c.tier1SizePad = tier1Pad;
+        c.tier2SizePad = tier2Pad;
+        c.tier3SizePad = tier3Pad;
+        emit LiquidityTierSizesSet(floorPad, tier1Pad, tier2Pad, tier3Pad);
+    }
+
+    /// @notice Set the per-tier max init-LTV caps (bps). Any field `0`
+    ///         ⇒ its library default (5000 / 6000 / 6500). On the
+    ///         *effective* values: `tier1 ≤ tier2 ≤ tier3` and each ≤
+    ///         `MAX_TIER_INIT_LTV_BPS_CEIL` (8000 ≡ 80%). When
+    ///         `depthTieredLtvEnabled`, loan-init caps the LTV at
+    ///         `min(assetRiskParams.maxLtvBps, tierMaxInitLtvBps[
+    ///         effectiveTier])`.
+    function setTierMaxInitLtvBps(uint16 tier1, uint16 tier2, uint16 tier3)
+        external
+        onlyRole(LibAccessControl.ADMIN_ROLE)
+    {
+        uint256 t1 = tier1 == 0 ? LibVaipakam.TIER1_MAX_INIT_LTV_BPS_DEFAULT : uint256(tier1);
+        uint256 t2 = tier2 == 0 ? LibVaipakam.TIER2_MAX_INIT_LTV_BPS_DEFAULT : uint256(tier2);
+        uint256 t3 = tier3 == 0 ? LibVaipakam.TIER3_MAX_INIT_LTV_BPS_DEFAULT : uint256(tier3);
+        uint256 ceil = LibVaipakam.MAX_TIER_INIT_LTV_BPS_CEIL;
+        if (t1 > ceil) revert TierLtvBpsTooHigh(t1, ceil);
+        if (t2 > ceil) revert TierLtvBpsTooHigh(t2, ceil);
+        if (t3 > ceil) revert TierLtvBpsTooHigh(t3, ceil);
+        if (!(t1 <= t2 && t2 <= t3)) revert NonMonotoneTierLtvBps(t1, t2, t3);
+        LibVaipakam.ProtocolConfig storage c = LibVaipakam.storageSlot().protocolCfg;
+        c.tier1MaxInitLtvBps = tier1;
+        c.tier2MaxInitLtvBps = tier2;
+        c.tier3MaxInitLtvBps = tier3;
+        emit TierMaxInitLtvBpsSet(tier1, tier2, tier3);
+    }
+
+    /// @notice Replace the PAA list — the per-chain "predominantly
+    ///         available" quote tokens the depth-tier route search probes
+    ///         an asset's pools against (e.g. `[WETH, USDC, USDT, DAI]`
+    ///         by their addresses on this chain). Pass an empty array to
+    ///         reset to the implicit `[wethContract]` fallback. Validates:
+    ///         no zero address, no duplicates, length ≤ {MAX_PAA_ASSETS}.
+    ///         (A member without a Chainlink feed is harmless — the route
+    ///         search skips it; this is *not* a per-asset *tiering*
+    ///         allowlist.)
+    function setPaaAssets(address[] calldata assets)
+        external
+        onlyRole(LibAccessControl.ADMIN_ROLE)
+    {
+        uint256 n = assets.length;
+        if (n > MAX_PAA_ASSETS) revert PaaListInvalid("over MAX_PAA_ASSETS");
+        for (uint256 i; i < n; ++i) {
+            if (assets[i] == address(0)) revert PaaListInvalid("zero address");
+            for (uint256 j = i + 1; j < n; ++j) {
+                if (assets[i] == assets[j]) revert PaaListInvalid("duplicate");
+            }
+        }
+        address[] storage list = LibVaipakam.storageSlot().paaAssets;
+        // Solidity has no array-assign-from-calldata; rebuild in place.
+        uint256 oldLen = list.length;
+        for (uint256 i; i < n; ++i) {
+            if (i < oldLen) list[i] = assets[i];
+            else list.push(assets[i]);
+        }
+        for (uint256 k = oldLen; k > n; --k) list.pop();
+        emit PaaAssetsSet(n);
+    }
+
+    /// @notice Off-chain liquidity-confidence relay write (§4.1.b item 2)
+    ///         — re-rate `asset` to `tier` (1..3). `effectiveTier(asset)
+    ///         = min(getLiquidityTier(asset), tier)`, so this can only
+    ///         ever *lower* an asset's effective tier toward the
+    ///         no-keeper Tier-1 baseline, never raise it above the
+    ///         on-chain ceiling; a compromised `KEEPER_ROLE` key is
+    ///         bounded accordingly. The relay promotes one step at a time
+    ///         on accumulated 0x/1inch confidence and demotes immediately
+    ///         on observed degradation (the process is §4.4 step 5).
+    /// @dev    KEEPER_ROLE-only (admin = DEFAULT_ADMIN_ROLE → governance
+    ///         can rotate the keeper EOA). `tier == 0` is rejected — the
+    ///         stored-zero default already reads as Tier 1, and demoting
+    ///         *below* the no-keeper baseline isn't a thing (use
+    ///         `AdminFacet.pauseAsset` to take an asset out entirely).
+    function setKeeperTier(address asset, uint8 tier)
+        external
+        onlyRole(LibAccessControl.KEEPER_ROLE)
+    {
+        if (asset == address(0)) revert IVaipakamErrors.InvalidAsset();
+        if (tier == 0 || tier > LibVaipakam.MAX_LIQUIDITY_TIER) revert InvalidLiquidityTier(tier);
+        LibVaipakam.storageSlot().keeperTier[asset] = tier;
+        emit KeeperTierSet(asset, tier);
+    }
+
     /// ─── Getters (effective values: override OR default) ────────────
 
     /// @notice Two-fee getter used by the frontend fee hints and pricing previews.
@@ -687,6 +924,68 @@ contract ConfigFacet is DiamondAccessControl {
         rangeAmount = c.rangeAmountEnabled;
         rangeRate = c.rangeRateEnabled;
         partialFill = c.partialFillEnabled;
+    }
+
+    /// ─── Depth-tiered LTV (Piece B) — getters ───────────────────────
+
+    /// @notice Single-field getter for the depth-tiered-LTV master flag.
+    ///         Mirrors {getRangeAmountEnabled} & co. for the
+    ///         protocol-console knob schema.
+    function getDepthTieredLtvEnabled() external view returns (bool) {
+        return LibVaipakam.storageSlot().protocolCfg.depthTieredLtvEnabled;
+    }
+
+    /// @notice The PAA list — the per-chain quote tokens the depth-tier
+    ///         route search probes. Empty config resolves to
+    ///         `[wethContract]` (the {LibVaipakam.effectivePaaAssets}
+    ///         fallback) — this getter returns that *resolved* list, so
+    ///         the frontend never sees a misleading empty array.
+    function getPaaAssets() external view returns (address[] memory) {
+        return LibVaipakam.effectivePaaAssets();
+    }
+
+    /// @notice The *effective* keeper-confidence tier for `asset`
+    ///         (1..3) — stored-zero reads as Tier 1, matching how
+    ///         `OracleFacet.getEffectiveLiquidityTier` resolves it.
+    function getKeeperTier(address asset) external view returns (uint8) {
+        if (asset == address(0)) return 0;
+        return LibVaipakam.effectiveKeeperTier(asset);
+    }
+
+    /// @notice One-call bundle of the depth-tier governance globals for
+    ///         the frontend (`useProtocolConfig` reads this alongside
+    ///         {getProtocolConfigBundle} + {getPaaAssets}). Kept separate
+    ///         from {getProtocolConfigBundle} so neither tuple grows
+    ///         unwieldy. Every value is the *effective* one
+    ///         (override-OR-default); sizes are PAD × 1e6 units.
+    function getDepthTierConfigBundle()
+        external
+        view
+        returns (
+            bool depthTieredLtvEnabled,
+            uint256 liquiditySlippageBps,
+            uint256 twapWindowSec,
+            uint256 twapConsistencyBps,
+            uint256 floorSizePad,
+            uint256 tier1SizePad,
+            uint256 tier2SizePad,
+            uint256 tier3SizePad,
+            uint256 tier1MaxInitLtvBps,
+            uint256 tier2MaxInitLtvBps,
+            uint256 tier3MaxInitLtvBps
+        )
+    {
+        depthTieredLtvEnabled = LibVaipakam.cfgDepthTieredLtvEnabled();
+        liquiditySlippageBps = LibVaipakam.cfgLiquiditySlippageBps();
+        twapWindowSec = LibVaipakam.cfgTwapWindowSec();
+        twapConsistencyBps = LibVaipakam.cfgTwapConsistencyBps();
+        floorSizePad = LibVaipakam.cfgFloorSizePad();
+        tier1SizePad = LibVaipakam.cfgTier1SizePad();
+        tier2SizePad = LibVaipakam.cfgTier2SizePad();
+        tier3SizePad = LibVaipakam.cfgTier3SizePad();
+        tier1MaxInitLtvBps = LibVaipakam.cfgTier1MaxInitLtvBps();
+        tier2MaxInitLtvBps = LibVaipakam.cfgTier2MaxInitLtvBps();
+        tier3MaxInitLtvBps = LibVaipakam.cfgTier3MaxInitLtvBps();
     }
 
     /// @notice Single-call bundle for the frontend — returns every
