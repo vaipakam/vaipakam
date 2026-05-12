@@ -29,12 +29,20 @@
  *      second `KEEPER_PRIVATE_KEY` consumer — putting it on the
  *      keeper means the signing key lives on exactly one Worker.
  *
- * Future scope (see Stage 3 plan §7): the off-chain offer matcher
- * for the Phase 1 Range Orders + Lender Partial Fills + Bot
- * Matching system lands here as a sibling cron pass. The matcher
- * will share the keeper's D1 binding (cross-Worker read of the
- * indexer's `offers` table) and submit `matchOffers(lenderId,
- * borrowerId)` to earn the 1% LIF matcher fee.
+ *   3. `runMatcher(env)` — Range Orders Phase 1 offer matcher
+ *      (matcher.ts). Per chain: scan the order book, evaluate
+ *      (lender × borrower) pairs via the on-chain `previewMatch`
+ *      view, and submit `matchOffers(lenderId, borrowerId)` for
+ *      every pair the preview accepts — earning the 1% LIF matcher
+ *      kickback. Gated by the same `KEEPER_ENABLED == 'true'` +
+ *      `KEEPER_PRIVATE_KEY` set as the liquidator (it's the third
+ *      consumer of the signing key — keeping it here means the key
+ *      lives on exactly one Worker). Reverts when the
+ *      `partialFillEnabled` master flag is off are no-ops; the
+ *      matcher keeps polling until governance flips it. Discovery is
+ *      on-chain for now (count + paginate + `getOffer`); a future
+ *      optimisation could read candidate pairs from the indexer's
+ *      `offers` table via the shared D1 binding.
  *
  * NO HTTP routes. The connected app's read-API surface
  * (`/loans/*`, `/offers/*`), the operator services
@@ -48,6 +56,7 @@
 import type { Env } from './env';
 import { runWatcher } from './watcher';
 import { runDailyOracleSnapshot } from './dailyOracleSnapshot';
+import { runMatcher } from './matcher';
 
 export default {
   async scheduled(
@@ -69,6 +78,12 @@ export default {
       runDailyOracleSnapshot(env).catch((err) => {
         // eslint-disable-next-line no-console
         console.error('[keeper] runDailyOracleSnapshot pass failed:', err);
+      }),
+    );
+    ctx.waitUntil(
+      runMatcher(env).catch((err) => {
+        // eslint-disable-next-line no-console
+        console.error('[keeper] runMatcher pass failed:', err);
       }),
     );
   },

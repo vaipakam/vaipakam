@@ -46,7 +46,7 @@ import { orchestrateServerQuotes } from './serverQuotes';
 const TRIGGER_ABI = RiskFacetABI;       // hosts triggerLiquidation
 const LOAN_DETAILS_ABI = LoanFacetABI;  // hosts getLoanDetails
 
-interface KeeperContext {
+export interface KeeperContext {
   /** Wallet client for the keeper EOA on this chain. */
   wallet: WalletClient;
   /** Public client (read-only) on this chain — same RPC as watcher. */
@@ -157,14 +157,14 @@ export async function maybeAutonomousLiquidate(
   }
 }
 
-function isKeeperEnabled(env: Env): boolean {
+export function isKeeperEnabled(env: Env): boolean {
   if (!env.KEEPER_ENABLED) return false;
   const v = env.KEEPER_ENABLED.toLowerCase();
   if (v !== 'true' && v !== '1') return false;
   return !!env.KEEPER_PRIVATE_KEY;
 }
 
-function buildKeeperContext(
+export function buildKeeperContext(
   env: Env,
   chain: ChainConfig,
   publicClient: PublicClient,
