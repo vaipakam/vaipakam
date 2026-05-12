@@ -68,10 +68,26 @@ export function InfoTip({
   const triggerRef = useRef<HTMLButtonElement | null>(null);
   const bubbleRef = useRef<HTMLDivElement | null>(null);
 
-  // Compute viewport-aware coordinates whenever the bubble opens
-  // (or its size changes via children). useLayoutEffect so the
-  // bubble is placed before the next paint — useEffect causes a
-  // 1-frame jump from (0,0) to the final spot.
+  // Compute viewport-aware coordinates when the bubble opens (and on a
+  // `placement` prop change). useLayoutEffect so the bubble is placed
+  // before the next paint — useEffect causes a 1-frame jump from (0,0)
+  // to the final spot.
+  //
+  // `children` is deliberately NOT a dependency. It's a ReactNode, i.e.
+  // a fresh element/array reference on every render of the parent — so
+  // listing it would re-fire this effect on every parent render, and
+  // since the effect calls `setCoords`, that's an infinite
+  // render→setState→render loop (React #185 "Maximum update depth
+  // exceeded"). It blew up here when the parent (`CardInfo` inside the
+  // Analytics page header, whose siblings re-render on every data-hook
+  // tick) re-rendered rapidly while a tip was open. The re-measure on
+  // open + the DOM-read of the bubble's actual size below is enough;
+  // a content swap *while the tip stays open* (rare — e.g. a locale
+  // change) leaves the bubble slightly mis-centred until the next open,
+  // which is a fine trade for not crashing the page. The `setCoords`
+  // updater is also identity-stable (returns the prior object when the
+  // position is unchanged) so a stray re-fire can't loop even if a
+  // future dep is added carelessly.
   useLayoutEffect(() => {
     if (!open) {
       setCoords(null);
@@ -103,8 +119,12 @@ export function InfoTip({
     const maxLeft = window.innerWidth - VIEWPORT_PAD - halfBubble;
     const left = Math.min(Math.max(triggerCenterX, minLeft), maxLeft);
 
-    setCoords({ top, left, placement: place });
-  }, [open, placement, children]);
+    setCoords((prev) =>
+      prev && prev.top === top && prev.left === left && prev.placement === place
+        ? prev
+        : { top, left, placement: place },
+    );
+  }, [open, placement]);
 
   // Close on outside click / Escape / scroll / resize. The handler
   // checks `e.target` against the trigger and bubble refs, so a

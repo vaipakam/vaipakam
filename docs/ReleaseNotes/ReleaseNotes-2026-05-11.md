@@ -2230,6 +2230,36 @@ the new chain's probe lands. `version` is deliberately *not* reset — it
 is a monotonic change-counter and the data hooks keyed on it are
 already re-keyed on chain/diamond.
 
+## InfoTip infinite-render-loop fix + ErrorBoundary #185 gloss
+
+Root cause of the Analytics-page-goes-blank crash (React error #185,
+"Maximum update depth exceeded"): `<InfoTip>` (the `@vaipakam/ui` (i)
+tooltip, used via `<CardInfo>` in the Analytics page header) listed
+`children` in the dependency array of the `useLayoutEffect` that
+positions the tooltip bubble — and `children` is a `ReactNode`, i.e. a
+fresh element/array reference on every render of the parent. So the
+effect re-fired on every parent render, and since it calls `setCoords`,
+that's an infinite render→setState→render loop whenever the parent
+re-renders rapidly (the Analytics header's siblings re-render on every
+data-hook tick, and the chain-switch kicks off a refetch burst — if a
+tip was open during it, instant lock-up). Fix: drop `children` from the
+deps (the re-measure on open + the DOM read of the bubble's actual size
+is enough; a content swap *while the tip stays open* — rare, e.g. a
+locale change — leaves it slightly mis-centred until next open, a fine
+trade for not crashing). The `setCoords` updater is also now
+identity-stable (returns the prior object when the position is
+unchanged) so a stray re-fire can't loop even if a dep is added
+carelessly later.
+
+Also hardened the `ErrorBoundary`: it now decodes React's minified
+error codes (`#185`, `#300`, `#310`, `#321`, `#418`, …) to a plain-
+English gloss shown on the error card AND written to the `app-crash`
+journey-log entry, and surfaces the trimmed component stack on the card
+itself (it's what names the offending component — InfoTip here). A
+support bundle that says "infinite render loop" beats one that says
+"#185", and the on-card component stack means the next crash is triaged
+without even opening the drawer.
+
 ## Release-notes mid-stream date roll
 
 The conversation that produced this release-notes file started on
