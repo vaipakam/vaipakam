@@ -202,14 +202,18 @@ price-correlated pools (USDC/USDT, DAI/USDT, the LST/WETH pools)
 massively over-state the proper-depth metric** (the "virtual reserve"
 formula assumes liquidity straddles the price symmetrically; for a 1:1
 pair almost all `L` sits in a ±0.05% band, so `L × sqrtP` over-states
-tradeable depth by 2–4 orders of magnitude). So a robust on-chain depth
-check should take the **max over {asset/WETH, asset/USDC, asset/USDT}**
-pools AND apply a correlated-pair guard (e.g. ignore a pool whose price
-sits within ~1% of a stable/peg unless it's the asset being priced, or
-simply exclude stable-stable + LST-correlated pools from the tier
-signal). Even then it stays blind to multi-hop liquidity (the SHIB
-case). All of which is a strong vote for the **hybrid** approach in §4
-— the on-chain signal is too noisy to be the sole authority.
+tradeable depth by 2–4 orders of magnitude). So whatever on-chain check
+we use should evaluate the asset's **{asset/WETH, asset/USDC,
+asset/USDT}** pools and take the **best route**, with a correlated-pair
+guard (ignore a pool whose spot sits within ~1% of a stable/peg unless
+it's the asset being priced) and a spot-vs-Chainlink-feed guard — and
+even then it stays blind to multi-hop routes (the SHIB case). This is
+exactly why §4.1 moves from a *raw-depth read* to a *simulated-swap
+slippage* check (which directly answers the trade question and is far
+less sensitive to concentration / decimals), and accepts the residual
+noise (single-hop; large-trade approximation) bounded by conservative
+tier LTVs + the manipulation guards rather than by a governance
+override.
 
 ### What the census tells us
 
@@ -244,125 +248,216 @@ init-LTV than the flat ~53% the `HF ≥ 1.5` gate gives everything today,
 graded by liquidity depth, with the cut-offs and the per-tier LTVs as
 governance knobs.
 
-### 4.1 "Is there a better on-chain liquidity check?" — and why the answer is *governance sets the tier*
+### 4.1 The on-chain liquidity check — slippage-at-a-fixed-size (permissionless)
 
-Short answer: **no cheap on-chain read reliably measures an asset's
-liquidity.** The §3 census makes this concrete — `pool.liquidity()`
-isn't a USD figure at all; the "proper" `L × sqrtP × price` reconstruction
-*is* USD but over-states correlated/stable pools by 2–4 orders of
-magnitude and only sees one pool at a time, missing multi-hop routes
-(SHIB looked sub-$1 M; cbBTC's real depth is on Base). You can patch
-some of that (max over {WETH, USDC, USDT} pools, a correlated-pair
-guard) and it gets *less* wrong, but it never gets *right*. The options
-to do better, in increasing accuracy and cost:
+**Constraint (user, 2026-05-12):** the tier must be **permissionless** —
+no governance allowlist / per-asset tier-list (that would gate
+"numerous tokens" the way the project deliberately avoids). The only
+per-asset lever stays the existing **remove** lever (`AdminFacet.pauseAsset`
+/ asset blacklist) — used to *exclude* a bad actor, never to *admit*.
+Governance owns only the **global** knobs (test sizes, slippage
+thresholds, per-tier LTVs, kill-switch). So the on-chain check has to
+*be* the tier authority. Good news: a useful one is cheap.
 
-- **(A) Quote-based check** — instead of reading reserves, `staticcall`
-  a V3 Quoter (`QuoterV2.quoteExactInputSingle` / a multi-hop quote, and
-  optionally a 1inch/0x off-chain quote surfaced on-chain) for a fixed
-  trade size and compare the realized price to the oracle price. This is
-  *the* correct measure of liquidity — it's literally "can a liquidator
-  dump $X of this without crushing the price?", which is what
-  liquidation needs — and it naturally handles concentrated liquidity,
-  multi-hop, and correctly *values* stable pairs (a USDC→USDT quote is
-  great, so it reports high liquidity, not fiction). **Killer downside:**
-  a Quoter call that crosses many ticks is ~100k–500k gas, and a graded
-  check needs three of them ($1 M / $10 M / $50 M) — that's 0.3–1.5 M
-  gas added to *every* `createOffer` / `initiateLoan`, in a hot path.
-  Caching the result (compute once per N blocks, store the tier) brings
-  the gas down but reintroduces staleness + cross-block manipulability.
-  Not viable hot; only as a cached/keeper-fed value — which is just (B).
-- **(B) Off-chain depth oracle pushed on-chain** — a keeper periodically
-  reads aggregated cross-DEX/CEX depth (CoinGecko / DeFiLlama /
-  1inch-API "liquidity at ±2%") and pushes a per-asset depth (or tier)
-  on-chain, with a freshness/staleness model — directly analogous to the
-  secondary-price-oracle quorum (Tellor / API3 / DIA) already in the
-  codebase. Most accurate; most infrastructure (a new feed, a keeper, a
-  trust/quorum model). Reasonable Phase-3+ if graded automation turns
-  out to matter.
-- **(C) Per-asset tier set by governance, with a coarse on-chain *floor*
-  — recommended.** The on-chain check stays a simple binary "is this
-  asset liquid *at all*?" gate: a fresh Chainlink feed AND at least one
-  asset/{WETH,USDC,USDT} pool clearing a real ~$1 M floor (max over the
-  3 V3 venues, correlated-pair guard so a stable-stable pool can't be
-  the thing that clears it). If that passes the asset is at least
-  **Tier 1**; **governance promotes to Tier 2 / Tier 3** per asset, set
-  from an off-chain depth census (like §3) + market-cap/volume data.
-  This is exactly how Aave / Compound / Morpho do it — nobody derives an
-  LTV cap from an on-chain liquidity formula; risk tiers are governance
-  parameters informed by Gauntlet/Chaos-Labs-style off-chain analysis.
-  Pros: honest about what's measurable on-chain; handles every §3 edge
-  case (SHIB, cbBTC, the stable pools) the obvious way — a human looks;
-  minimal new audited code (no graded-depth math, no `mulDiv` curve
-  reconstruction in the oracle); the on-chain floor still keeps the
-  obviously-illiquid stuff off the high-LTV path even if governance is
-  asleep. Con: not "automatic via Uniswap" — but the census proves
-  "automatic via Uniswap" can't be done safely on-chain anyway.
+**The metric: simulated-swap slippage.** Instead of `pool.liquidity()`
+(not a USD figure — see §3) or its `L × sqrtP × price` reconstruction
+(over-states correlated/stable pools by 2–4 orders of magnitude),
+**simulate a fixed-size swap and measure the slippage** — "if I sold
+$X of this asset right now, how far would the executed price fall below
+the spot/oracle price?" That is *the* question liquidation actually
+cares about ("can a liquidator dump the collateral without crushing the
+price?"), it's decimal-independent, it correctly values stable pairs
+(a $5 k USDC→USDT swap has ~0 slippage → correctly "deep"), and it can
+be computed cheaply:
 
-(There is also the earlier "hybrid": on-chain *proper-depth* computes a
-ceiling tier, governance caps it lower. It's strictly more code than (C)
-for the same practical outcome — the on-chain ceiling would mostly just
-agree with governance, and where it disagrees governance wins anyway —
-so (C) supersedes it.)
+- **Uniswap-V2-style pools** (`getReserves()`): exact. `dy = r_out −
+  (r_out · r_in) / (r_in + dx · (1 − fee))`; slippage =
+  `1 − (dy/dx) / (r_out/r_in)`. Pure arithmetic on one read.
+- **Uniswap-V3-style pools** (what we use today — `slot0().sqrtPriceX96`
+  + `liquidity()`): take the **virtual reserves at the current tick**
+  (`x_v = L · 2^96 / sqrtPriceX96`, `y_v = L · sqrtPriceX96 / 2^96`, in
+  base units; net `1 − feePips/1e6` on the input), then the same
+  constant-product swap math. This is an **approximation** — exact while
+  the trade stays inside the current tick, which a small trade against a
+  pool with millions in `L` does (and which the *bigger* test trades do
+  iff the pool is deep enough to be in that tier anyway), but it can
+  under-state slippage for a large trade against a pool whose *adjacent*
+  ticks are thin. Walking the ticks for an exact answer is the
+  Quoter (`QuoterV2.quoteExactInputSingle`) — ~100k–500k gas per call,
+  ~3 calls for a graded check → 0.3–1.5 M gas added to every
+  `createOffer` / `initiateLoan`. Too heavy for the hot path; the
+  virtual-reserve approximation is ~3 SLOADs + arithmetic per pool —
+  roughly free relative to what `_checkLiquidity` already does (it
+  already `getPool`s × fee tiers × 3 venues and reads `slot0` /
+  `liquidity`). So: **use the virtual-reserve constant-product
+  approximation, accept the large-trade-on-a-thin-adjacent-tick caveat,
+  and bound the consequences (below).**
 
-**Recommendation: (C).** Also worth doing independently of the tier
-work: fix the *base* `checkLiquidity` floor to a real USD figure
-(replace `_v3DepthLiquid`'s `liquidity() × ethPrice` with
-`2 × stableLegVirtualReserve × stablePrice` — `L × sqrtPriceX96 / 2^96`
-or `L × 2^96 / sqrtPriceX96` depending on token order, `mulDiv` for
-overflow — max over the 3 denominators, correlated-pair guard) so the
-"$1 M" label stops being fiction. That's a Phase-7b-area change, not
-blocking, but it makes both the floor and any future Tier-1 cut-off
-mean what they say.
+Run the simulation against the asset's **{asset/WETH, asset/USDC,
+asset/USDT}** pools across the configured V3 (and, if added, V2)
+venues, and take the **best route** (lowest slippage) — that's still
+single-hop (a SHIB→USDC→WETH route isn't covered without a Quoter path
+or composing two single-hop slippages — a possible refinement). The
+spot price used in the slippage ratio must agree with the **Chainlink
+feed** the asset already needs to be `Liquid` — if the pool's spot
+deviates from the trusted price by more than a small bound, the pool is
+manipulated/stale → `Illiquid` (this is the manipulation guard, and
+the project already requires a fresh feed here).
 
-### 4.2 Mechanics (approach (C))
+**The tier = which size the asset clears at ≤ the slippage bound** (all
+governance globals):
 
-- **On-chain (`OracleFacet`):** `checkLiquidity(asset)` keeps its
-  binary `Liquid` / `Illiquid` shape (ideally with the floor metric
-  fixed per §4.1) — this gates the *widget* and is the Tier-1 floor.
-  No new graded-depth view.
-- **Governance tier (`ProtocolConfig` / `ConfigFacet`):**
-  - `mapping(address ⇒ uint8) assetLiquidityTier` — `0` = "not set"
-    (→ treated as Tier 1 when the asset is `Liquid`), `1`/`2`/`3` =
-    governance-assigned. Setter `setAssetLiquidityTier(asset, tier)`
-    under `onlyRole(ADMIN_ROLE)` (later governance), bounded `tier ≤ 3`.
-  - `tier1MaxInitLtvBps`, `tier2MaxInitLtvBps`, `tier3MaxInitLtvBps`
-    (each `0 ⇒ default`, bounded; `tier1 ≤ tier2 ≤ tier3` enforced).
-  - `bool depthTieredLtvEnabled` master kill-switch, default `false`.
-    While `false`, the init gate is exactly today's `HF ≥ 1.5`
-    (i.e. everyone is effectively Tier 1 @ ~53%); flip per chain after
-    its depth census.
-  - Effective tier at init = `!depthTieredLtvEnabled ? 1 :
-    !isLiquid(asset) ? 0 : max(1, assetLiquidityTier[asset])`.
+| | clears `≤ slippageBps` at a trade of… | → tier |
+|---|---|---|
+| floor | `floorSizeUsd` (e.g. **$5 k**) — fails this → `Illiquid` | gate for the widget; below this = Tier 0 |
+| Tier 1 | `tier1SizeUsd` (e.g. **$50 k**) | 50% init-LTV |
+| Tier 2 | `tier2SizeUsd` (e.g. **$500 k**) | 60% init-LTV |
+| Tier 3 | `tier3SizeUsd` (e.g. **$5 M**) | 69% init-LTV |
+
+(`slippageBps` default 200 = 2%. If a token clears $5 k but not $50 k it
+is `Liquid` but only ever Tier 1 at ~53%; if it doesn't clear $5 k it is
+`Illiquid` — the widget routes it to manual Create Offer per §2.)
+
+**Manipulation / approximation-error budget** (since there's no
+governance override to catch a mis-tier):
+- The top tier's 69% init-LTV against an ~82% liq-threshold still leaves
+  a ~13-point cushion — even if a flash-loan-deepened pool over-tiers an
+  asset, the loan is materially over-collateralized and the cushion
+  absorbs a chunk of the gap before the (already-degraded) liquidity
+  becomes a problem at liquidation.
+- The spot-vs-Chainlink-feed bound catches a manipulated *price*;
+  add a cheap **TWAP-consistency** check (pool spot vs its own
+  N-minute TWAP within X%) to also catch a pool that's been
+  *recently* manipulated. A flash-loan that *adds liquidity* without
+  moving the price is the residual vector — bounded by the cushion
+  above, and the same vector exists for any on-chain liquidity check
+  (incl. today's). A future hardening if needed: a per-asset
+  *outstanding-debt cap per tier* (Aave's isolated-mode analog) — a
+  global-shaped knob, still permissionless.
+- Re-evaluated **on-chain per-tx**, fail-safe direction: a pool that
+  thins out drops the asset a tier and blocks *new* high-LTV loans;
+  open positions are untouched.
+
+### 4.1.b — Aggregators (0x / 1inch / Balancer): great signal, can't gate on-chain — so use them off-chain
+
+The most accurate "how much would a liquidator actually get for $X of
+this asset" answer is an **aggregator quote** — 0x / 1inch route across
+*every* DEX + private market makers + multi-hop paths. But those are
+**off-chain HTTP APIs** — a smart contract can't call `api.0x.org`. So
+they cannot back the on-chain `checkLiquidity` / init gate directly.
+What you *can* do on-chain is read individual venues yourself (Uni-V3
+`liquidity`/`slot0`, V2 `getReserves`, **Balancer V2's
+`Vault.queryBatchSwap`** — the one aggregator-ish primitive that *is*
+`staticcall`-able) and take the best route — i.e. exactly the §4.1
+slippage check, optionally over more venues. Adding Balancer's
+`queryBatchSwap` as a venue is doable (it's heavier than reading
+`liquidity()`, lighter than the Uni Quoter) but probably overkill for
+v1 — the V3 clones cover the bulk of depth; revisit if a meaningful
+asset's liquidity lives mainly in Balancer.
+
+So aggregators slot in **off-chain**, in two places — neither an
+allowlist, both permissionless-compatible:
+
+1. **Widget pre-check (UX).** Before the user leaves for Create Offer,
+   the widget calls 0x / 1inch (via the existing `apps/keeper` /
+   `apps/agent` `/quote/0x` + `/quote/1inch` Worker proxy — already
+   built for liquidation quoting in `swapQuoteService`) and shows the
+   *realistic* slippage at the user's actual size: *"At your size,
+   selling this collateral on a liquidation would cost ~X% — within /
+   above the protocol's Y% comfort band."* This is the best possible
+   user-facing liquidity signal; it doesn't gate anything on-chain (it
+   can't), it just informs.
+2. **Keeper-fed *demotion* relay (optional, the "better approach").** A
+   keeper periodically queries 0x / 1inch for the realistic slippage at
+   the tier sizes ($50k/$500k/$5M) and, when the aggregator says the
+   asset is *worse* than the on-chain check would conclude, pushes a
+   per-asset **ceiling tier** on-chain — `s.assetTierCeiling[asset]`,
+   settable only by a `KEEPER_ROLE`, **only able to lower** the tier
+   (`effectiveTier = min(onChainSlippageTier(asset), assetTierCeiling[asset])`;
+   default ceiling = 3 = no effect; a stale/down keeper → no ceiling →
+   the on-chain check governs). This (a) corrects the on-chain
+   approximation's *one* real weakness — a thin-adjacent-tick pool the
+   single-tick math over-tiers — using the most accurate available data;
+   (b) is fail-safe by construction — a compromised keeper can only make
+   assets *more* conservative, never less, so no user funds are at risk
+   from it, at worst some high-LTV loans get blocked; (c) is *not* an
+   allowlist — every asset is still auto-tiered by the on-chain check;
+   the keeper only ever *trims*; (d) is structurally identical to the
+   secondary-price-oracle quorum (Tellor/API3/DIA) the project already
+   runs, and can be put behind the same N-of-M quorum if single-keeper
+   trust is a concern. Recommended as a Phase-2-or-2.5 addition;
+   the on-chain check stands on its own without it.
+3. **Liquidation already is aggregator-backed.** Worth keeping in mind:
+   the *actual* sale of collateral at liquidation routes through 0x /
+   1inch (the swap adapters), with the adapter's own slippage floor. So
+   the ultimate safety is already aggregator-quality regardless; the
+   on-chain `checkLiquidity` / tier check is a *pre-screen* — "is this
+   asset the kind of thing that's liquid enough that we expect the
+   liquidation swap to work?" — which is exactly why a cheap
+   approximate on-chain check (bounded by conservative LTVs) is the
+   right tool there, not a heavyweight on-chain Quoter.
+
+### 4.2 Mechanics
+
+- **On-chain (`OracleFacet`):**
+  - `checkLiquidity(asset)` — keep its binary `Liquid` / `Illiquid`
+    shape, but back it with the slippage-at-`floorSizeUsd` check
+    (best route over {WETH,USDC,USDT} × venues, spot≈feed guard)
+    instead of `liquidity() × ethPrice`. Gates the widget.
+  - new `getLiquidityTier(asset) → uint8 {0,1,2,3}` view — `0` if not
+    `Liquid`, else the highest tier whose `tierNSizeUsd` the asset
+    clears at `≤ slippageBps`. Pure derivation from the same simulated
+    swaps; no per-asset storage.
+- **Governance globals (`ProtocolConfig` / `ConfigFacet`, all
+  `onlyRole(ADMIN_ROLE)` → later governance, bounded, `0 ⇒ default`):**
+  `liquiditySlippageBps`, `floorSizeUsd`, `tier1SizeUsd`,
+  `tier2SizeUsd`, `tier3SizeUsd`, `tier1MaxInitLtvBps`,
+  `tier2MaxInitLtvBps`, `tier3MaxInitLtvBps`
+  (`tier1 ≤ tier2 ≤ tier3` enforced on both the sizes and the LTVs),
+  `twapConsistencyBps` + `twapWindowSec`, and `bool depthTieredLtvEnabled`
+  master kill-switch (default `false`; while `false` the init gate is
+  exactly today's `HF ≥ 1.5`, i.e. everyone effectively Tier 1 @ ~53% —
+  flip per chain after that chain's slippage census). **No per-asset
+  tier mapping, no allowlist.** Bad actors are removed via the existing
+  `AdminFacet.pauseAsset` / blacklist path, not via this.
+- **Keeper-fed demotion (optional, §4.1.b):** `mapping(address ⇒ uint8)
+  assetTierCeiling`, default `3` (no effect), settable only by
+  `KEEPER_ROLE` and **only able to lower** an asset's tier; effective
+  tier = `min(getLiquidityTier(asset), assetTierCeiling[asset])`. Fed by
+  a keeper that queries 0x/1inch — corrects the on-chain approximation
+  downward, never upward; fail-safe if the keeper is down/compromised;
+  optionally behind an N-of-M quorum. Can ship after the base check.
 - **Init gate (`LoanFacet._runInitGates` + `LibOfferMatch`'s synthetic
   HF check on the `matchOffers` path):** when `depthTieredLtvEnabled`,
-  cap init-LTV at `min(assetRiskParams.maxLtvBps, tierMaxInitLtvBps[tier])`
-  **instead of** relying purely on `HF ≥ 1.5`. Per-asset
-  `liqThresholdBps` (the liquidation trigger) is untouched. A loan that
-  fails the tier cap reverts `InitLtvAboveTier`.
-- **Existing loans untouched** — the tier only gates *init*, never
-  re-liquidation. A governance tier downgrade (or an asset flipping
-  `Illiquid`) blocks *new* high-LTV loans on that asset; open positions
-  are unaffected.
+  cap init-LTV at `min(assetRiskParams.maxLtvBps, tierMaxInitLtvBps[
+  effectiveTier(collateralAsset)])` **instead of** relying purely on
+  `HF ≥ 1.5`. Per-asset `liqThresholdBps` (the liquidation trigger) is
+  untouched. A loan that fails the tier cap reverts `InitLtvAboveTier`.
 
-### 4.3 Proposed launch defaults
+### 4.3 Proposed launch defaults (all governance globals)
 
-Under approach (C): the on-chain floor decides `Liquid` / `Illiquid`
-(real ~$1 M floor, max over the 3 denominators, correlated-pair guard);
-**governance assigns the 1/2/3 tier per asset** from an off-chain depth
-census (§3) + market data. The "≈ depth" column below is the §3-census
-figure governance would weigh; the "members" column is where these
-assets would *plausibly* land — but governance has the final call (it
-can promote SHIB despite its thin direct WETH pool, hold DAI at Tier 2
-despite the over-stated DAI/USDT stable pool, etc.). All LTVs are
-`ProtocolConfig` knobs; flip `depthTieredLtvEnabled` per chain only
-after that chain's census + risk review:
+| Knob | Default | Meaning |
+|---|---|---|
+| `liquiditySlippageBps` | 200 (2%) | the slippage bound a test trade must clear |
+| `floorSizeUsd` | $5 k | clear at this → `Liquid`; fail → `Illiquid` (widget routes it to manual Create Offer) |
+| `tier1SizeUsd` / `tier2SizeUsd` / `tier3SizeUsd` | $50 k / $500 k / $5 M | clear at the largest of these you can → that tier |
+| `tier1MaxInitLtvBps` / `tier2` / `tier3` | 5000 / 6000 / **6900** (50% / 60% / 69%) | the init-LTV cap at that tier |
+| `twapWindowSec` / `twapConsistencyBps` | ~30 min / ~300 (3%) | pool spot vs its own TWAP must agree within this (manipulation guard) |
+| `depthTieredLtvEnabled` | `false` | master kill-switch; while off, init gate = today's `HF ≥ 1.5` |
 
-| Tier | ≈ depth governance would weigh (best non-correlated pool) | Max **init**-LTV | Init HF vs an ~82% liq-threshold | Plausible members (governance decides) |
-|---|---|---|---|---|
-| illiquid (Tier 0) | no fresh feed, or all {WETH,USDC,USDT} pools < ~$1 M | — | — | (none in the census; SHIB's *direct* pools fall here but its real liquidity is via SHIB/stable → governance would not leave it Illiquid) |
-| **Tier 1** | ≥ ~$1 M | **50%** (≈ today's `liqThreshold/1.5`) | ~1.6 (= unchanged behaviour) | cbBTC, PEPE |
-| **Tier 2** | ≥ ~$10 M | **60%** | ~1.37 | DAI, UNI, AAVE |
-| **Tier 3** | ≥ ~$50 M | **69%** | ~1.19 | USDC, WBTC, USDT, LINK, wstETH, weETH |
+Sanity-check against the §3 depth census (an asset's deepest
+non-correlated pool roughly maps to "can it clear an $X test trade at
+≤2%" — a $5 M trade at ≤2% needs ≳$250 M of depth, $500 k needs
+≳$25 M, $50 k needs ≳$2.5 M): WBTC/USDC/USDT/LINK/wstETH/weETH would
+land **Tier 3** (69%); AAVE/UNI/DAI **Tier 2** (60%); PEPE/cbBTC
+**Tier 1** (50%); SHIB's *direct* {WETH,USDC,USDT} pools are thin
+enough that on a strict single-hop check it'd be **Tier 1 at best**
+(possibly fail $5 k → `Illiquid`) — that's the single-hop limitation
+biting, and the honest answer is "it's then a manual Create-Offer
+asset until a multi-hop-aware check exists". These are starting numbers
+to be **re-validated by a per-chain slippage census before
+`depthTieredLtvEnabled` is flipped** (testnet mock pools won't reflect
+mainnet).
 
 Note on the 69% top tier (was 73%, reduced 2026-05-12): at 69%
 init-LTV against an ~82% liq-threshold the init HF is ≈ 1.19 — a ~16%
@@ -399,21 +494,35 @@ behaviour is observed.
    tiers), as a pure prefilled deep-link to Create Offer (no one-click
    post, button never disabled)? (Recommended yes — it's the UX you
    asked for, contract-change-free, one submit path with full review.)
-2. **Piece B discovery model**: approach (C) — governance sets the
-   per-asset 1/2/3 tier, on-chain check is just the `Liquid`/`Illiquid`
-   floor — confirmed? (Recommended; the §3 census shows no cheap
-   on-chain read can reliably grade liquidity. (A) quote-based is the
-   only "correct" on-chain metric and it's too gas-heavy for the hot
-   path; (B) an off-chain depth oracle is the accurate-but-infra-heavy
-   alternative for later.)
-3. **Tier-3 init-LTV**: **69%** (current) — or open lower (65%) and
-   ramp? (Risk-committee call; 69% → init HF ≈ 1.19 vs an ~82%
-   liq-threshold.) Tier-2 60% / Tier-1 50% — confirm.
-4. **Census thresholds governance weighs** (~$1 M / ~$10 M / ~$50 M
-   best-non-correlated-pool depth) — confirm as the rough bands, pending
-   per-chain re-census.
-5. Fix the *base* `checkLiquidity` floor to a real USD figure now
-   (independent of Piece B — it's mislabeled today: "$1 M" ≈ "non-empty
-   pool"), or only as part of Piece B?
-6. Master kill-switch name/shape: `depthTieredLtvEnabled` in
+2. **Piece B model — confirmed?** Permissionless: the on-chain
+   simulated-swap-slippage check (§4.1) *is* the tier authority — no
+   governance per-asset allowlist/tier-list; the only per-asset lever is
+   the existing `pauseAsset` / blacklist (a *remove*, never an *admit*);
+   governance owns only the global knobs. V3 uses the cheap virtual-
+   reserve constant-product approximation (not the gas-heavy Quoter),
+   accepting the large-trade-on-a-thin-adjacent-tick caveat, bounded by
+   the conservative top-tier LTV + the spot≈feed + TWAP-consistency
+   guards. (Trade-off acknowledged: single-hop only, so an asset like
+   SHIB with deep liquidity *via* SHIB/stable pairs but a thin direct
+   pool stays low-tier / manual until a multi-hop-aware check exists.)
+3. **Tier LTVs**: Tier 1 50% / Tier 2 60% / Tier 3 **69%** — or open
+   Tier 3 lower (65%) and ramp? (Risk-committee call; 69% → init HF
+   ≈ 1.19 vs an ~82% liq-threshold.)
+4. **Test sizes + slippage bound**: $5 k floor / $50 k / $500 k / $5 M
+   tiers at ≤2% slippage — confirm as the launch defaults, pending the
+   per-chain census re-validation.
+5. Fix the *base* `checkLiquidity` floor to the slippage-at-$5 k check
+   now (independent of Piece B — today's `liquidity() × ethPrice` floor
+   is mislabeled: "$1 M" ≈ "pool isn't empty"), or only as part of
+   Piece B?
+6. Add Uniswap-V2-style venues to the liquidity/slippage check, or stay
+   V3-only (current)? (V2 gives exact constant-product math + catches
+   assets whose depth lives in a V2 pool — a few do — at the cost of one
+   more venue type.) And/or Balancer V2 via `Vault.queryBatchSwap`?
+7. **Aggregator usage** (§4.1.b): (i) widget pre-check via the existing
+   0x/1inch Worker proxy — yes? (recommended); (ii) the keeper-fed
+   *demotion* relay (`assetTierCeiling`, keeper can only lower) — in
+   Phase 2, deferred to 2.5, or skip? If yes, single keeper or behind
+   the existing N-of-M oracle quorum?
+8. Master kill-switch name/shape: `depthTieredLtvEnabled` in
    `ProtocolConfig`, default `false`, à la the Range-Orders flags — OK?
