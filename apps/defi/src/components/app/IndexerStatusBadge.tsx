@@ -97,7 +97,16 @@ export function IndexerStatusBadge({ compact }: Props) {
   const { t } = useTranslation();
   const chain = useReadChain();
   const publicClient = useDiamondPublicClient();
-  const { snapshot: watermarkSnapshot } = useLiveWatermark(watermarkPolicy('warm'));
+  // The badge is mounted in AppLayout — on EVERY connected-app page,
+  // wallet or not. It only needs a glance-level signal, so it subscribes
+  // to the watermark at the slow `cool` tier (180 s). On data pages
+  // (OfferBook = hot 5 s, Dashboard = warm 30 s, …) those subscribers
+  // pull the SHARED probe up to their faster cadence, so the badge
+  // rides along just as fresh there; on the quiet pages (keepers,
+  // alerts, allowances, buy-vpfi, data-rights, claims-without-wallet)
+  // where the badge is the only subscriber, the probe runs at 180 s
+  // instead of 30 s — 6× less background RPC for no UX cost.
+  const { snapshot: watermarkSnapshot } = useLiveWatermark(watermarkPolicy('cool'));
   const { maxFrontier, anyLoading } = useDataFreshness();
   const [popoverOpen, setPopoverOpen] = useState(false);
   // Live chain safe-head — polled directly only while the popover is

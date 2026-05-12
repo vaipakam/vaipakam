@@ -448,79 +448,132 @@ export const CHAIN_REGISTRY: Record<number, ChainConfig> = {
 // to @vaipakam/contracts/chain-config in Stage 2c; the comparator
 // is re-exported at the top of this file.
 
-const ENV_DEFAULT_CHAIN_ID = Number(
-  (env.VITE_DEFAULT_CHAIN_ID as string | undefined) ?? SEPOLIA.chainId,
-);
+// Explicit operator override. Unset / blank / non-numeric → `NaN`, which
+// is never a registry key, so the resolution below falls through to the
+// priority order cleanly (no "fake Sepolia default" any more).
+const ENV_DEFAULT_CHAIN_ID = (() => {
+  const raw = (env.VITE_DEFAULT_CHAIN_ID as string | undefined)?.trim();
+  if (!raw) return NaN;
+  const n = Number(raw);
+  return Number.isFinite(n) ? n : NaN;
+})();
 
 /**
- * Read-only fallback chain — used when no wallet is connected, or the wallet
- * is on an unsupported chain. Resolution order, each step gated on the chain
- * actually having a deployed Diamond:
+ * Read-only fallback chain — used when no wallet is connected, or the
+ * wallet is on an unsupported chain.
  *
- *   1. The env-chosen chain (`VITE_DEFAULT_CHAIN_ID`).
- *   2. **Base Sepolia** — Phase-1 canonical testnet for the Stage-3 deploy
- *      tree (84532). The first chain we deploy contracts to per
- *      `packages/contracts/src/deployments.json`.
- *   3. **Any** chain in the registry that has a non-null `diamondAddress`
- *      — robust last-line-of-defence so a misconfigured testnet rotation
- *      never crashes the page on module load.
+ * **A deployed mainnet always outranks a deployed testnet.** Resolution
+ * order, each step gated on the chain actually having a deployed Diamond:
  *
- * Pre-fix, this IIFE hard-coded `SEPOLIA` as step 2, which threw at module
- * load on production builds where (a) `VITE_DEFAULT_CHAIN_ID` wasn't set
- * AND (b) Sepolia had no Diamond on the new deploy tree (the contracts
- * are on Base Sepolia / Arb Sepolia / OP Sepolia, not vanilla Ethereum
- * Sepolia). Symptom: `defi.vaipakam.com` 404 / blank page with the
- * "DEFAULT_CHAIN resolution failed — Sepolia has no diamondAddress" error
- * in the browser console.
+ *   1. `VITE_DEFAULT_CHAIN_ID` — but honoured *immediately* only if it
+ *      points at a deployed **mainnet** chain (operator's explicit pick
+ *      among mainnets).
+ *   2. First deployed **mainnet** by priority: Ethereum → Base → any
+ *      other mainnet (registry order). So once mainnet is live the app
+ *      defaults to Ethereum even if `.env.local` still points at a
+ *      testnet — a stale env var can't strand the production build on a
+ *      testnet after cutover.
+ *   3. `VITE_DEFAULT_CHAIN_ID` again — now that no mainnet is live, a
+ *      deployed **testnet** env override is honoured (e.g. a build
+ *      pinned to a specific testnet rehearsal chain).
+ *   4. First deployed **testnet** by priority: Base Sepolia → any other
+ *      testnet → Anvil (registry order). Base Sepolia is the Phase-1
+ *      canonical testnet for the Stage-3 deploy tree (84532).
+ *   5. **Any** chain in the registry with a non-null `diamondAddress` —
+ *      fail-soft last resort so a misconfigured rotation never crashes
+ *      the page on module load.
  *
- * Type is narrowed: `diamondAddress` is guaranteed non-null so call sites
- * that dereference it don't need a null check.
+ * Type is narrowed: `diamondAddress` is guaranteed non-null so call
+ * sites that dereference it don't need a null check.
  */
 export type DeployedChain = ChainConfig & { diamondAddress: string };
 
+const isDeployedChain = (c: ChainConfig | undefined): c is DeployedChain =>
+  !!c && c.diamondAddress !== null;
+
+/** Deployed chains of the requested tier, in priority order: the named
+ *  "heads" first (Ethereum/Base for mainnet; Base Sepolia for testnet),
+ *  then everything else of that tier in registry order. */
+function deployedChainsByPriority(wantTestnet: boolean): DeployedChain[] {
+  const heads: ChainConfig[] = wantTestnet ? [BASE_SEPOLIA] : [ETHEREUM, BASE];
+  const headIds = new Set(heads.map((c) => c.chainId));
+  const rest = Object.values(CHAIN_REGISTRY).filter(
+    (c) => c.testnet === wantTestnet && !headIds.has(c.chainId),
+  );
+  return [...heads, ...rest].filter(isDeployedChain);
+}
+
 export const DEFAULT_CHAIN: DeployedChain = (() => {
-  // 1. env-chosen chain
   const envChain = CHAIN_REGISTRY[ENV_DEFAULT_CHAIN_ID];
-  if (envChain && envChain.diamondAddress !== null) {
-    return envChain as DeployedChain;
+
+  // 1. explicit env override, if it points at a deployed mainnet.
+  if (isDeployedChain(envChain) && !envChain.testnet) return envChain;
+
+  // 2. any deployed mainnet — Ethereum → Base → other mainnets.
+  const mainnet = deployedChainsByPriority(false)[0];
+  if (mainnet) {
+    // Loud nudge if the operator pinned a testnet but mainnet is live —
+    // the build is shipping a testnet default into production.
+    if (
+      isDeployedChain(envChain) &&
+      envChain.testnet &&
+      typeof console !== "undefined"
+    ) {
+      console.warn(
+        "[DEFAULT_CHAIN] VITE_DEFAULT_CHAIN_ID=" +
+          ENV_DEFAULT_CHAIN_ID +
+          " is a testnet, but mainnet chain " +
+          mainnet.chainId +
+          " (" +
+          mainnet.name +
+          ") is deployed — defaulting to it. Set VITE_DEFAULT_CHAIN_ID " +
+          "to a mainnet id (or unset it) to silence this.",
+      );
+    }
+    return mainnet;
   }
-  // 2. Base Sepolia (canonical Phase-1 testnet). Warns to console so an
-  //    operator opening DevTools immediately sees the env-var miss instead
-  //    of finding out via on-chain weirdness later — the resolution still
-  //    succeeded but the build is using a non-canonical default.
-  if (BASE_SEPOLIA.diamondAddress !== null) {
-    if (typeof console !== "undefined") {
+
+  // 3. no mainnet live — honour a deployed testnet env override now.
+  if (isDeployedChain(envChain)) return envChain;
+
+  // 4. any deployed testnet — Base Sepolia → other testnets → Anvil.
+  const testnet = deployedChainsByPriority(true)[0];
+  if (testnet) {
+    if (
+      !Number.isNaN(ENV_DEFAULT_CHAIN_ID) &&
+      typeof console !== "undefined"
+    ) {
       console.warn(
         "[DEFAULT_CHAIN] env-chosen chain " +
           ENV_DEFAULT_CHAIN_ID +
-          " is not deployed; falling back to Base Sepolia (84532). " +
-          "Set VITE_DEFAULT_CHAIN_ID at build time to silence this.",
+          " is not deployed; falling back to " +
+          testnet.name +
+          " (" +
+          testnet.chainId +
+          "). Set VITE_DEFAULT_CHAIN_ID at build time to silence this.",
       );
     }
-    return BASE_SEPOLIA as DeployedChain;
+    return testnet;
   }
-  // 3. ANY chain in the registry with a Diamond — fail-soft last resort.
-  //    Loud warn here because we've already missed the env-chosen AND the
-  //    canonical Phase-1 chain — likely indicates the registry was rotated
-  //    or the deployments JSON shrank. The page will boot but operator
-  //    should treat this as an incident-grade signal.
+
+  // 5. ANY deployed chain — fail-soft last resort. Loud warn: we've
+  //    missed the env override AND every mainnet AND every testnet head,
+  //    which usually means the deployments JSON shrank or the registry
+  //    was rotated. The page boots but treat this as incident-grade.
   for (const c of Object.values(CHAIN_REGISTRY)) {
-    if (c.diamondAddress !== null) {
+    if (isDeployedChain(c)) {
       if (typeof console !== "undefined") {
         console.warn(
-          "[DEFAULT_CHAIN] neither env-chosen chain (" +
-            ENV_DEFAULT_CHAIN_ID +
-            ") nor Base Sepolia (84532) has a deployed Diamond; " +
-            "falling through to first registry chain with a Diamond — " +
-            "chainId " +
+          "[DEFAULT_CHAIN] no env-chosen, mainnet, or canonical-testnet " +
+            "chain has a deployed Diamond; falling through to first " +
+            "registry chain with a Diamond — chainId " +
             c.chainId +
             " (" +
             c.name +
-            "). " +
-            "Investigate: deployments JSON or CHAIN_REGISTRY rotation likely.",
+            "). Investigate: deployments JSON or CHAIN_REGISTRY rotation likely.",
         );
       }
-      return c as DeployedChain;
+      return c;
     }
   }
   throw new Error(
