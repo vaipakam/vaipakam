@@ -49,13 +49,21 @@
   border-radius: var(--radius-full);
 }
 
-/* Stretch the Liquidity Picker pill to fill its grid cell so it lines up
- * width-wise with the surrounding text/number inputs (which are
- * `width: 100%`). Without this the pill stays at its own `min-width`
- * and looks conspicuously narrow at the right edge of the row. */
+/* Make the discrete <Picker> pills (Duration, Liquidity) match the
+ * free-form inputs (Lending asset / Collateral asset) on BOTH axes so
+ * the four filter cells read as one uniform row: `width: 100%` to fill
+ * the grid cell width, and the same vertical padding + font-weight so
+ * the box heights line up (without this the pills sit a couple of px
+ * shorter and looked like they were on a different "level"). */
 .offer-book-filter-cell .chain-picker,
 .offer-book-filter-cell .chain-picker-btn {
   width: 100%;
+}
+.offer-book-filter-cell .chain-picker-btn {
+  box-sizing: border-box;
+  padding: 7px 14px;
+  font-size: 0.8rem;
+  font-weight: 600;
 }
 
 .offer-book-filter-cell .form-input:hover {

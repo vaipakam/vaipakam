@@ -2155,6 +2155,32 @@ locale keys themselves are left in place, unused). The
 that isn't part of the `.rescan-btn` family — left as-is; could be
 brought in later.
 
+## OfferBook — drop the tab row-counts, align the filter pickers; ClaimCenter refresh moves to a footer
+
+- **OfferBook tab labels** — dropped the `(N)` after "Open" / "Closed":
+  the "Closed" bucket count needed an on-chain validation pass over
+  *every* offer (a multicall of `getOffer(id)` for the full id list) to
+  bucket open vs closed correctly, which doesn't scale on mainnet; the
+  "Open" count was only ever approximate too. Removed that whole
+  `countByStatus` / `fetchValidCount` machinery — the "Scanned X of Y"
+  line below now takes the *cheap* totals (the indexer's page count, or
+  the active-offer-id list length, or the closed-id list length), and
+  the `(N hidden)` suffix still explains any gap to what renders.
+- **Filter row alignment** — the discrete `<Picker>` pills (Duration,
+  Liquidity) now match the free-form inputs (Lending asset / Collateral
+  asset) on the *vertical* axis too (same `padding` / `font-weight`),
+  not just width — they were a couple of px shorter and read as if on a
+  different "level".
+- **ClaimCenter refresh** — moved the (newly-added) `<RescanButton>` +
+  `<DataSyncStatus>` from under the page header to a footer row, to
+  match Dashboard / EscrowAssets where the refresh control sits at the
+  bottom.
+
+(Still to do: OfferBook & Activity have their refresh control near the
+top of the page, and the `/analytics` page's refresh is still a
+hand-rolled button rather than the shared `<RescanButton>` — those
+relocations / the conversion are a follow-up.)
+
 ## Release-notes mid-stream date roll
 
 The conversation that produced this release-notes file started on

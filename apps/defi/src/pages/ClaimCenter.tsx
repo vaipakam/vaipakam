@@ -85,31 +85,6 @@ export default function ClaimCenter() {
         <p className="page-subtitle">{t('claimCenter.pageSubtitle')}</p>
       </div>
 
-      {/* Page refresh — status (is the claim list current with the
-          chain?) on the left, the Refresh action on the right. Shared
-          <RescanButton> / <DataSyncStatus> — same as Dashboard / Vault
-          / OfferBook / Activity. */}
-      {address && (
-        <div
-          style={{
-            display: 'flex',
-            justifyContent: 'space-between',
-            alignItems: 'center',
-            flexWrap: 'wrap',
-            gap: 8,
-            marginBottom: 12,
-          }}
-        >
-          <DataSyncStatus />
-          <RescanButton
-            cooldown={claimsRescanCooldown}
-            onRescan={() => {
-              reload();
-            }}
-          />
-        </div>
-      )}
-
       {address && (
         <SanctionsBanner
           address={address as `0x${string}`}
@@ -220,6 +195,31 @@ export default function ClaimCenter() {
           </div>
         )}
       </div>
+
+      {/* Page refresh — footer row (status on the left: is the claim
+          list current with the chain?; Refresh on the right). Same
+          placement + shared <RescanButton> / <DataSyncStatus> as
+          Dashboard / Vault / OfferBook / Activity. */}
+      {address && (
+        <div
+          style={{
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            flexWrap: 'wrap',
+            gap: 8,
+            marginTop: 16,
+          }}
+        >
+          <DataSyncStatus />
+          <RescanButton
+            cooldown={claimsRescanCooldown}
+            onRescan={() => {
+              reload();
+            }}
+          />
+        </div>
+      )}
     </div>
   );
 }

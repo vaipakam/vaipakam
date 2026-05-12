@@ -396,16 +396,6 @@ export default function OfferBook() {
     return [...src].sort((a, b) => (a < b ? 1 : a > b ? -1 : 0));
   }, [usePairPath, pairRankings, legacyOpenIds, closedOfferIds, statusView]);
 
-  // Verified tab counts — the log index lists IDs by event (OfferCreated
-  // minus OfferAccepted/Canceled), but RPC lag or missed events can leave
-  // canceled/accepted IDs in the wrong bucket. We validate by reading each
-  // offer on-chain and filtering the same way fetchBatch does below, so the
-  // tab header matches what users actually see after clicking through.
-  const [countByStatus, setCountByStatus] = useState<{
-    open: number | null;
-    closed: number | null;
-  }>({ open: null, closed: null });
-
   // True when the worker indexer returned a fresh OPEN-tab page. The
   // OfferBook then renders directly from `indexedOffers` and skips
   // the legacy on-chain log-scan pagination below. Hoisted up here
@@ -612,56 +602,6 @@ export default function OfferBook() {
     loadWindow(0, WINDOW_SIZE);
   }, [indexerServingOpen, indexLoading, sortedIds, loadWindow]);
 
-  // Count-only validator: multicall `getOffer` across the given ID set and
-  // apply the same filters as `fetchBatch` (skip zero-creator / accepted-
-  // status mismatch). Returns the raw ID length on multicall failure so
-  // the tab label never goes blank.
-  const fetchValidCount = useCallback(
-    async (ids: bigint[], status: StatusView): Promise<number> => {
-      if (ids.length === 0) return 0;
-      const target = (activeReadChain.diamondAddress ?? DEFAULT_CHAIN.diamondAddress) as Address;
-      try {
-        const calls = encodeBatchCalls(
-          target,
-          DIAMOND_ABI,
-          'getOffer',
-          ids.map((id) => [id] as const),
-        );
-        const decoded = await batchCalls<RawOffer>(publicClient, DIAMOND_ABI, 'getOffer', calls);
-        let count = 0;
-        for (const raw of decoded) {
-          if (!raw) continue;
-          if (raw.creator === ZERO_ADDR) continue;
-          if (status === 'open' && raw.accepted) continue;
-          if (status === 'closed' && !raw.accepted) continue;
-          count++;
-        }
-        return count;
-      } catch {
-        return ids.length;
-      }
-    },
-    [publicClient, activeReadChain.diamondAddress],
-  );
-
-  // Validate both tabs' counts in parallel whenever the log index updates.
-  // Runs alongside (not instead of) the active-view load so users see an
-  // accurate number on the tab they're NOT viewing as well.
-  useEffect(() => {
-    if (indexLoading) return;
-    let cancelled = false;
-    setCountByStatus({ open: null, closed: null });
-    (async () => {
-      const [openCount, closedCount] = await Promise.all([
-        fetchValidCount([...legacyOpenIds], 'open'),
-        fetchValidCount([...closedOfferIds], 'closed'),
-      ]);
-      if (!cancelled) setCountByStatus({ open: openCount, closed: closedCount });
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [indexLoading, legacyOpenIds, closedOfferIds, fetchValidCount]);
 
   // Fetch the rolling list of recent accepted offers in NEWEST-FIRST order
   // so `anchorRateBps` can pick the freshest one matching the current
@@ -1108,20 +1048,20 @@ export default function OfferBook() {
   const showBorrower = tab !== 'lender';
 
   const hasMore = cursor < sortedIds.length;
-  // Indexer-first total: when the worker is serving the OPEN view
-  // (`indexerServingOpen`), the rendered list comes from
-  // `indexedOffers` and the legacy `openOfferIds` log-scan is laggy
-  // — historically that mismatch produced the "Showing 7 of 3 open
-  // offers" bug where the rendered count outran the laggy validated
-  // count. Anchor the total to the same source the rows came from.
-  // Closed view always takes the on-chain path today (no indexer
-  // serving), so it keeps the existing validated-count fallback.
+  // "Scanned X of Y" total — cheap counts only (no per-offer on-chain
+  // validation pass): when the worker serves the OPEN view, the count
+  // of the indexer's page; otherwise the length of the active-offer-id
+  // list (the on-chain `getActiveOffersPaginated` set, or the
+  // log-scanned set). Closed view = the log-scanned closed-id list
+  // length. These can be a touch optimistic (an id may have flipped
+  // status since the scan), but the `(N hidden)` suffix below explains
+  // any gap between this and what actually renders.
   const validatedTotal =
     statusView === 'open'
       ? indexerServingOpen
         ? indexedOffers?.length ?? sortedIds.length
-        : (countByStatus.open ?? legacyOpenIds.length)
-      : (countByStatus.closed ?? closedOfferIds.length);
+        : legacyOpenIds.length
+      : closedOfferIds.length;
   // `shown` is the count AFTER the full render pipeline: dedup +
   // matchesFilter (asset / collateral / duration / liquidity). Status
   // bar used to read pre-dedup `offers.length`, which made the X of Y
@@ -1189,6 +1129,11 @@ export default function OfferBook() {
         </Link>
       </div>
 
+      {/* No row counts in the tab labels — the "Closed" bucket count
+          needs an on-chain validation pass over every offer (doesn't
+          scale on mainnet), and even the "Open" count is only ever an
+          approximation. The "Scanned X of Y" line below carries the
+          (cheap) totals. */}
       <div className="tabs" style={{ marginTop: 12 }}>
         {(['open', 'closed'] as StatusView[]).map((v) => (
           <button
@@ -1196,13 +1141,7 @@ export default function OfferBook() {
             className={`tab ${statusView === v ? 'active' : ''}`}
             onClick={() => setStatusView(v)}
           >
-            {v === 'open'
-              ? `${t('offerBook.tabOpen')} (${
-                  indexerServingOpen
-                    ? indexedOffers?.length ?? sortedIds.length
-                    : (countByStatus.open ?? legacyOpenIds.length)
-                })`
-              : `${t('offerBook.tabClosed')} (${countByStatus.closed ?? closedOfferIds.length})`}
+            {v === 'open' ? t('offerBook.tabOpen') : t('offerBook.tabClosed')}
           </button>
         ))}
       </div>
