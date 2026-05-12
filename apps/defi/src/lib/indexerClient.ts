@@ -192,7 +192,7 @@ export interface IndexedLoan {
  * Status mapping: indexer's string status ('active', 'repaid', etc.)
  * → numeric LoanStatus enum used by the rendering pipeline.
  */
-const INDEXER_STATUS_TO_ENUM: Record<string, number> = {
+export const INDEXER_STATUS_TO_ENUM: Record<string, number> = {
   active: 0,
   repaid: 1,
   defaulted: 2,

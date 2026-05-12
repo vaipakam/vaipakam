@@ -21,7 +21,6 @@ import Navbar from '../components/Navbar';
 import Footer from '../components/Footer';
 import DiagnosticsDrawer from '../components/app/DiagnosticsDrawer';
 import { ChainPicker } from '@vaipakam/ui/ChainPicker';
-import { ErrorAlert } from '../components/app/ErrorAlert';
 import { CardInfo } from '../components/CardInfo';
 import { useMode } from '../context/ModeContext';
 import { useProtocolStats } from '../hooks/useProtocolStats';
@@ -32,9 +31,11 @@ import { useTVL } from '../hooks/useTVL';
 import { useUserStats } from '../hooks/useUserStats';
 import { useTreasuryMetrics } from '../hooks/useTreasuryMetrics';
 import { useRecentOffers } from '../hooks/useRecentOffers';
+import { useRecentLoans } from '../hooks/useRecentLoans';
 import { useVPFIToken } from '../hooks/useVPFIToken';
 import { useHistoricalData, type TimeRange } from '../hooks/useHistoricalData';
 import { useCombinedChainsStats } from '../hooks/useCombinedChainsStats';
+import { INDEXER_STATUS_TO_ENUM } from '../lib/indexerClient';
 import { DataSyncStatus } from '../components/app/DataSyncStatus';
 import { useLiveWatermark } from '../hooks/useLiveWatermark';
 import { watermarkPolicy } from '../hooks/watermarkPolicy';
@@ -83,6 +84,17 @@ function formatCompact(n: number): string {
   return new Intl.NumberFormat(lng, { notation: 'compact', maximumFractionDigits: 1 }).format(n);
 }
 
+/** Parse an indexer decimal-string into a bigint, never throwing —
+ *  D1 stores uint256s as TEXT, so a malformed row would otherwise
+ *  crash the table render. */
+function safeBigInt(s: string): bigint {
+  try {
+    return BigInt(s);
+  } catch {
+    return 0n;
+  }
+}
+
 function formatPct(pct: number | null): string {
   if (pct == null) return '—';
   // `signDisplay: 'exceptZero'` gives `+5%`, `0%`, `-5%` per locale —
@@ -119,37 +131,54 @@ export default function PublicDashboard() {
   const transparencyHref = metricsFacetAddress
     ? `${blockExplorer}/address/${metricsFacetAddress}#readContract`
     : `${blockExplorer}/address/${diamondAddress}#readProxyContract`;
-  // Indexer-first aggregate counts. Used as the primary source for
-  // the count cards (active / completed / defaulted / volume / APR /
-  // NFT rentals) so first paint isn't gated on the chain-side
-  // multicall storm. Falls through to `stats` from useProtocolStats
-  // when the worker is unreachable so the cards still render
-  // correctly on a worker outage.
+  // Indexer-first aggregate counts — the primary (and on this page, the
+  // ONLY) source for the count cards (active / completed / defaulted /
+  // APR / NFT rentals). `/analytics` is a public, wallet-less surface;
+  // we deliberately do NOT fall back to the chain-side `getLoanDetails`
+  // multicall storm here (a worker outage just shows "—" placeholders —
+  // these aggregates aren't load-bearing for any user-funds flow).
+  // That's also why `useProtocolStats` below is pinned `enabled: false`:
+  // pre-fix it was gated on `!loanStatsLoading && !loanStats`, which
+  // toggled true↔false during chain switches (and stayed true on a
+  // not-indexed chain like a local Anvil), so `stats` populated then
+  // cleared and every `stats?.… ?? loanStats?.…` card flickered.
   const { stats: loanStats, loading: loanStatsLoading } = useLoanStats();
-  // useProtocolStats is the FALLBACK source — only fire the
-  // multicall storm when the indexer is confirmed-offline. While
-  // loanStats is still loading we can't tell yet, so wait. Once
-  // it's loaded, treat null-stats as "worker offline → enable
-  // fallback". Common-case (worker up): zero multicall on this
-  // page. Outage case: fallback re-engages automatically.
-  const indexerOffline = !loanStatsLoading && !loanStats;
-  const { stats, loading: statsLoading, error: statsError, reload } = useProtocolStats({
-    enabled: indexerOffline,
-  });
-  // Indexer-first asset breakdown for the "Asset distribution"
-  // section. When the worker is unreachable, falls back to
-  // `stats.assetBreakdown` from useProtocolStats below.
+  const { stats } = useProtocolStats({ enabled: false });
+  // Indexer-first asset breakdown for the "Asset distribution" section,
+  // and the source of per-asset symbol + decimals for the Recent Offers
+  // / Recent Loans tables below (the indexer's offer/loan rows carry the
+  // asset address but not its decimals — without this lookup an amount
+  // in a 6-decimal token renders as `0` against the 18-decimal default).
   const { rows: indexerAssetBreakdown } = useAssetBreakdown();
-  // Indexer-first offer counts. Drives the "Offers Posted" card so
-  // first paint doesn't wait on the chain-side `getOffer` multicall
-  // path that `useProtocolStats` would otherwise need to populate
-  // `totalOffers` / `activeOffers`.
+  const assetMetaByAddr = useMemo(() => {
+    const m = new Map<string, { symbol: string; decimals: number }>();
+    for (const r of indexerAssetBreakdown ?? []) {
+      m.set(r.asset.toLowerCase(), { symbol: r.symbol, decimals: r.decimals });
+    }
+    return m;
+  }, [indexerAssetBreakdown]);
+  // Indexer-first offer counts (drives "Offers Posted") + its
+  // `indexer.{lastBlock,updatedAt}` powers the Transparency block's
+  // "Snapshot block" / "Data freshness" rows.
   const { stats: offerStats } = useOfferStats();
   const { snapshot: tvl, loading: tvlLoading } = useTVL();
   const { stats: userStats } = useUserStats();
   const { metrics: treasuryMetrics } = useTreasuryMetrics();
   const { offers: recentOffers } = useRecentOffers(50);
+  // Recent Activity (latest loans) — indexer-backed (`/loans/recent`).
+  // Was sourced from `useProtocolStats.loans`, which is now disabled.
+  const { loans: recentLoans } = useRecentLoans(50);
   const { snapshot: vpfi } = useVPFIToken();
+  // Lifetime interest earned by lenders (USD), derived from the
+  // all-time loan timeseries: the last cumulative point's `secondary`
+  // is the running sum of per-day, per-asset interest priced via the
+  // oracle. Null while loading / worker-down → card shows "—".
+  const { series: allTimeSeries } = useHistoricalData('All');
+  const interestEarnedUsd = useMemo(() => {
+    if (!allTimeSeries) return null;
+    const last = allTimeSeries.tvl[allTimeSeries.tvl.length - 1];
+    return last?.secondary ?? 0;
+  }, [allTimeSeries]);
   const {
     snapshot: combined,
     loading: combinedLoading,
@@ -167,14 +196,16 @@ export default function PublicDashboard() {
     watermarkPolicy('cool'),
   );
   useEffect(() => {
-    // Skip the initial-mount fire — both `reload()` and
-    // `reloadCombined()` already run on first mount via their hooks'
-    // own effects. We only want subsequent watermark advances to
-    // trigger a refresh; otherwise we'd double-fetch on page load.
+    // Skip the initial-mount fire — `reloadCombined()` already runs on
+    // first mount via its hook's own effect. We only want subsequent
+    // watermark advances to refresh the cross-chain roll-up (which has
+    // no watermark subscription of its own). The per-chain indexer
+    // hooks (loanStats / offerStats / recentOffers / recentLoans /
+    // historical / assetBreakdown) each subscribe to `useLiveWatermark`
+    // and refetch themselves on a bump — no need to poke them here.
     if (analyticsWatermark <= 1) return;
-    void reload();
     void reloadCombined();
-  }, [analyticsWatermark, reload, reloadCombined]);
+  }, [analyticsWatermark, reloadCombined]);
   const [range, setRange] = useState<TimeRange>('30d');
   const { series } = useHistoricalData(range);
   const isAdvanced = mode === 'advanced';
@@ -231,19 +262,32 @@ export default function PublicDashboard() {
     [setViewChainId],
   );
 
-  const freshness = stats?.fetchedAt
-    ? new Intl.DateTimeFormat(i18n.resolvedLanguage ?? 'en', { dateStyle: 'medium', timeStyle: 'medium' }).format(new Date(stats.fetchedAt))
-    : null;
+  // Transparency block sourcing: prefer the central indexer's
+  // scanned-through block + last-write timestamp (always available when
+  // the worker is up), fall back to the chain-multicall snapshot only on
+  // a worker outage (when `stats` is non-null because something else
+  // re-enabled it — not on this page, where it's pinned off).
+  const indexedBlockNumber =
+    loanStats?.indexer?.lastBlock ??
+    offerStats?.indexer?.lastBlock ??
+    stats?.blockNumber ??
+    null;
+  const freshnessMs =
+    loanStats?.indexer?.updatedAt != null
+      ? loanStats.indexer.updatedAt * 1000
+      : offerStats?.indexer?.updatedAt != null
+        ? offerStats.indexer.updatedAt * 1000
+        : (stats?.fetchedAt ?? null);
+  const freshness =
+    freshnessMs != null
+      ? new Intl.DateTimeFormat(i18n.resolvedLanguage ?? 'en', {
+          dateStyle: 'medium',
+          timeStyle: 'medium',
+        }).format(new Date(freshnessMs))
+      : null;
 
-  const loading = statsLoading || tvlLoading;
-  const error = statsError;
+  const loading = loanStatsLoading || tvlLoading;
 
-  const recentLoans = useMemo(() => {
-    if (!stats) return [];
-    return [...stats.loans]
-      .sort((a, b) => Number(b.startTime - a.startTime))
-      .slice(0, 50);
-  }, [stats]);
   const recentLoansPageCount = Math.max(
     1,
     Math.ceil(recentLoans.length / RECENT_PAGE_SIZE),
@@ -255,37 +299,48 @@ export default function PublicDashboard() {
   }, [recentLoans, recentLoansCurrentPage]);
 
   const handleExport = (fmt: 'csv' | 'json') => {
-    if (!stats) return;
+    // Built from the indexer-backed sources (the chain-multicall
+    // `useProtocolStats` is disabled on this page). Two fields the
+    // multicall path used to provide aren't carried by the indexer
+    // payloads: `collateralBreakdown` (the indexer tracks principal
+    // volume only) — omitted — and `activeLoansValueUsd`, for which
+    // `tvl.principalUsd` (principal locked across active loans) is a
+    // faithful proxy.
+    if (!loanStats) return;
+    const breakdown = indexerAssetBreakdown ?? [];
+    const completed =
+      loanStats.repaid + loanStats.settled + loanStats.defaulted + loanStats.liquidated;
+    const defaultedTotal = loanStats.defaulted + loanStats.liquidated;
     const snapshot = {
-      fetchedAt: new Date(stats.fetchedAt).toISOString(),
-      blockNumber: stats.blockNumber,
+      fetchedAt: new Date(freshnessMs ?? Date.now()).toISOString(),
+      blockNumber: indexedBlockNumber,
       chainId,
       diamondAddress,
       metrics: {
-        totalLoans: stats.totalLoans,
-        activeLoans: stats.activeLoans,
-        completedLoans: stats.completedLoans,
-        defaultedLoans: stats.defaultedLoans,
-        totalOffers: stats.totalOffers,
-        activeOffers: stats.activeOffers,
-        nftRentalsActive: stats.nftRentalsActive,
-        averageAprPercent: stats.averageAprBps / 100,
-        liquidationRatePercent: stats.liquidationRate,
+        totalLoans: loanStats.total,
+        activeLoans: loanStats.active,
+        completedLoans: completed,
+        defaultedLoans: defaultedTotal,
+        totalOffers: offerStats?.total ?? 0,
+        activeOffers: offerStats?.active ?? 0,
+        nftRentalsActive: loanStats.nftRentalsActive,
+        averageAprPercent: (loanStats.averageInterestRateBps ?? 0) / 100,
+        liquidationRatePercent:
+          loanStats.total === 0 ? 0 : (defaultedTotal / loanStats.total) * 100,
         totalValueLockedUsd: tvl?.totalUsd ?? 0,
         principalUsd: tvl?.principalUsd ?? 0,
         erc20CollateralUsd: tvl?.erc20CollateralUsd ?? 0,
         nftCollateralCount: tvl?.nftCollateralCount ?? 0,
         uniqueWallets: userStats?.uniqueWallets ?? 0,
-        totalVolumeLentUsd: stats.totalVolumeLentUsd,
-        totalInterestEarnedUsd: stats.totalInterestEarnedUsd,
-        activeLoansValueUsd: stats.activeLoansValueUsd,
+        totalVolumeLentUsd: breakdown.reduce((a, r) => a + r.volumeUsd, 0),
+        totalInterestEarnedUsd: interestEarnedUsd ?? 0,
+        activeLoansValueUsd: tvl?.principalUsd ?? 0,
         treasuryBalanceUsd: treasuryMetrics?.treasuryBalanceNumeraire ?? 0,
         treasuryFeesLifetimeUsd: treasuryMetrics?.totalFeesCollectedNumeraire ?? 0,
         treasuryFees24hUsd: treasuryMetrics?.feesLast24hNumeraire ?? 0,
         treasuryFees7dUsd: treasuryMetrics?.feesLast7dNumeraire ?? 0,
       },
-      assetBreakdown: stats.assetBreakdown,
-      collateralBreakdown: stats.collateralBreakdown,
+      assetBreakdown: breakdown,
       tvlByAsset: tvl?.byAsset ?? [],
     };
 
@@ -369,10 +424,6 @@ export default function PublicDashboard() {
               </button>
             </div>
           </header>
-
-          {error && (
-            <ErrorAlert message={`${t('publicDashboard.errorLoading')} ${error.message}`} />
-          )}
 
           <section className="pd-section" aria-label={t('publicDashboard.combinedAria')}>
             <div className="pd-section-head">
@@ -516,16 +567,11 @@ export default function PublicDashboard() {
                   icon={<TrendingUp size={18} />}
                   label="Total Volume Lent"
                   value={
-                    stats
-                      ? formatUsd(stats.totalVolumeLentUsd)
-                      : indexerAssetBreakdown
-                        ? formatUsd(
-                            indexerAssetBreakdown.reduce(
-                              (a, r) => a + r.volumeUsd,
-                              0,
-                            ),
-                          )
-                        : '—'
+                    indexerAssetBreakdown
+                      ? formatUsd(
+                          indexerAssetBreakdown.reduce((a, r) => a + r.volumeUsd, 0),
+                        )
+                      : '—'
                   }
                   hint="Lifetime ERC-20 principal, priced at current oracle"
                   onchainFn="getProtocolStats"
@@ -533,7 +579,7 @@ export default function PublicDashboard() {
                 <MetricCard
                   icon={<PiggyBank size={18} />}
                   label="Interest Earned by Lenders"
-                  value={stats ? formatUsd(stats.totalInterestEarnedUsd) : '—'}
+                  value={interestEarnedUsd != null ? formatUsd(interestEarnedUsd) : '—'}
                   hint="Lifetime, completed loans only"
                   onchainFn="getTotalInterestEarnedNumeraire"
                 />
@@ -973,33 +1019,39 @@ export default function PublicDashboard() {
                             </thead>
                             <tbody>
                               {recentLoansPageSlice.map((l) => {
-                                const status = Number(l.status) as LoanStatus;
-                                const info = stats?.assetInfo?.[l.principalAsset.toLowerCase()];
-                                const decimals = info?.tokenDecimals ?? 18;
-                                const symbol = info?.symbol ?? '';
+                                // `IndexedLoan` carries a string status
+                                // ('active'/'repaid'/…); map to the numeric
+                                // LoanStatus the label table is keyed by.
+                                const statusEnum = (INDEXER_STATUS_TO_ENUM[l.status] ??
+                                  0) as LoanStatus;
+                                const meta = assetMetaByAddr.get(
+                                  l.lendingAsset.toLowerCase(),
+                                );
+                                const decimals = meta?.decimals ?? 18;
+                                const symbol = meta?.symbol ?? '';
                                 return (
-                                  <tr key={l.id.toString()}>
-                                    <td className="mono">#{l.id.toString()}</td>
+                                  <tr key={l.loanId}>
+                                    <td className="mono">#{l.loanId}</td>
                                     <td className="mono">
-                                      {formatUnitsPretty(l.principal, decimals)}
+                                      {formatUnitsPretty(safeBigInt(l.principal), decimals)}
                                       {symbol && (
                                         <span className="pd-table-symbol"> {symbol}</span>
                                       )}
                                     </td>
                                     <td>{bpsToPercent(l.interestRateBps)}</td>
-                                    <td>{l.durationDays.toString()}d</td>
+                                    <td>{l.durationDays}d</td>
                                     <td>
-                                      {Number(l.assetType) === AssetType.ERC20
+                                      {l.assetType === AssetType.ERC20
                                         ? 'ERC-20'
-                                        : Number(l.assetType) === AssetType.ERC721
+                                        : l.assetType === AssetType.ERC721
                                           ? 'ERC-721'
                                           : 'ERC-1155'}
                                     </td>
                                     <td>
                                       <span
-                                        className={`status-badge ${LOAN_STATUS_LABELS[status].toLowerCase()}`}
+                                        className={`status-badge ${LOAN_STATUS_LABELS[statusEnum].toLowerCase()}`}
                                       >
-                                        {LOAN_STATUS_LABELS[status]}
+                                        {LOAN_STATUS_LABELS[statusEnum]}
                                       </span>
                                     </td>
                                   </tr>
@@ -1044,9 +1096,11 @@ export default function PublicDashboard() {
                             </thead>
                             <tbody>
                               {recentOffersPageSlice.map((o) => {
-                                const info = stats?.assetInfo?.[o.lendingAsset.toLowerCase()];
-                                const decimals = info?.tokenDecimals ?? 18;
-                                const symbol = info?.symbol ?? '';
+                                const meta = assetMetaByAddr.get(
+                                  o.lendingAsset.toLowerCase(),
+                                );
+                                const decimals = meta?.decimals ?? 18;
+                                const symbol = meta?.symbol ?? '';
                                 return (
                                 <tr key={o.id.toString()}>
                                   <td className="mono">#{o.id.toString()}</td>
@@ -1099,7 +1153,7 @@ export default function PublicDashboard() {
                 <div className="pd-transparency-grid">
                   <div>
                     <div className="pd-sub">Snapshot block</div>
-                    <div className="pd-big">{stats?.blockNumber ?? '—'}</div>
+                    <div className="pd-big">{indexedBlockNumber ?? '—'}</div>
                   </div>
                   <div>
                     <div className="pd-sub">Data freshness</div>

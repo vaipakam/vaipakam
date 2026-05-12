@@ -2260,6 +2260,52 @@ support bundle that says "infinite render loop" beats one that says
 "#185", and the on-card component stack means the next crash is triaged
 without even opening the drawer.
 
+## Analytics — source the page from the indexer, not the disabled chain-multicall
+
+The Analytics page leaned on `useProtocolStats` (the per-loan
+`getLoanDetails` multicall) for a handful of fields, and that hook was
+later lazy-disabled on the happy path to kill the multicall storm —
+leaving those fields permanently empty/wrong, and causing a flicker
+whenever its `enabled` gate (`!loanStatsLoading && !loanStats`) toggled
+during a chain switch (it stayed true on a not-indexed chain like a
+local Anvil, so visiting Anvil and coming back made `stats` populate
+then clear, and every `stats?.… ?? loanStats?.…` card blinked). Fixed:
+
+- **`useProtocolStats` on `/analytics` is now `enabled: false`** — full
+  stop. It's a public, wallet-less surface; a worker outage just shows
+  "—" placeholders rather than burning RPC on a multicall fan-out.
+  Removed the `indexerOffline` gate (the flicker source) and the dead
+  `?? stats?.…` worker-outage branches it fed.
+- **Recent Activity (recent loans)** now reads `/loans/recent` via a new
+  `useRecentLoans` hook (mirrors `useLoanStats`; clears on chain switch
+  but keeps the last-good list on a transient indexer hiccup so the
+  table doesn't flicker empty↔populated under a refetch burst).
+- **Snapshot block / Data freshness** in the Transparency block now read
+  `loanStats.indexer.{lastBlock,updatedAt}` (falling back to
+  `offerStats.indexer`), which are always present when the worker is up
+  — no more `—`.
+- **Recent Offers / Recent Loans "Amount" columns** look up the
+  lending-asset's decimals + symbol from the `useAssetBreakdown` rows
+  (which carry per-asset metadata) instead of `stats.assetInfo` — fixes
+  6-decimal-token amounts that rendered as `0` against the 18-decimal
+  default. (Assets not in the breakdown fall back to 18 + short-addr,
+  as before.)
+- **Interest Earned by Lenders** is derived from the all-time loan
+  timeseries (`useHistoricalData('All')` — last cumulative point's
+  `secondary` is the running sum of per-day, per-asset, oracle-priced
+  interest); shows "—" while loading / worker-down.
+- **CSV/JSON export** is rebuilt from the indexer-backed sources (it
+  used to read `stats`). Two fields the multicall carried aren't in the
+  indexer payloads: `collateralBreakdown` (the indexer tracks principal
+  volume only) is omitted, and `activeLoansValueUsd` uses
+  `tvl.principalUsd` (principal locked across active loans) as a
+  faithful proxy.
+
+Net effect: the per-chain section, the Recent Activity / Recent Offers
+tables, and the Transparency rows all populate correctly on the happy
+path, and switching chains (including to/from a local Anvil) no longer
+flickers them through `0`/empty.
+
 ## Release-notes mid-stream date roll
 
 The conversation that produced this release-notes file started on
