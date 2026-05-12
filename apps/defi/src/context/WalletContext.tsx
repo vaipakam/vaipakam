@@ -93,7 +93,21 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     isReconnecting,
     status,
   } = useAccount();
-  const chainId = useChainId();
+  const wagmiChainId = useChainId();
+  // In read-only mode (no connected wallet) wagmi's `useChainId()`
+  // reports the wagmi config's *first* chain — Ethereum (chainId 1),
+  // since CHAIN_REGISTRY is Ethereum-first — whose registry entry has
+  // `diamondAddress: null` and `deployBlock: 0` (no Phase-1 deploy
+  // there). Pushing those placeholders downstream made `activeChain` →
+  // `useReadChain()` → every read hook see a chain with no Diamond /
+  // start block; in `useLogIndex` that surfaced as "chain config not
+  // resolved (deployBlock=0)". The app's effective chain when
+  // disconnected is `DEFAULT_CHAIN`, so report that until a wallet is
+  // actually connected.
+  const chainId =
+    status === 'connected' || status === 'reconnecting'
+      ? wagmiChainId
+      : DEFAULT_CHAIN.chainId;
   const { disconnectAsync } = useWagmiDisconnect();
   const { switchChainAsync } = useSwitchChain();
   const { setOpen: setConnectKitOpen } = useModal();

@@ -26,10 +26,21 @@ import { beginStep } from '../lib/journeyLog';
  * loans whose NFTs haven't moved since the last scan.
  */
 export function useLogIndex() {
-  const chain = useReadChain();
-  const chainId = chain.chainId ?? DEFAULT_CHAIN.chainId;
+  const activeChain = useReadChain();
+  // If the active chain has no deployed Diamond — no wallet connected
+  // (wagmi reports its config-default chain, Ethereum, whose registry
+  // entry has `diamondAddress: null` and `deployBlock: 0`), or a wallet
+  // connected to a chain we don't deploy on — fall back to DEFAULT_CHAIN
+  // *wholesale*, not per-field. A per-field `chain.X ?? DEFAULT_CHAIN.X`
+  // mix produced a Frankenstein: `diamondAddress` fell through (`null`
+  // is nullish under `??`) to DEFAULT_CHAIN's, but `deployBlock` did NOT
+  // (`0` isn't nullish under `??`), so `loadLoanIndex` got DEFAULT_CHAIN's
+  // diamond paired with `deployBlock = 0` and bailed ("chain config not
+  // resolved (deployBlock=0)").
+  const chain = activeChain.diamondAddress ? activeChain : DEFAULT_CHAIN;
+  const chainId = chain.chainId;
   const diamondAddress = chain.diamondAddress ?? DEFAULT_CHAIN.diamondAddress;
-  const rpcUrl = chain.rpcUrl ?? DEFAULT_CHAIN.rpcUrl;
+  const rpcUrl = chain.rpcUrl;
   // The worker stats endpoint exposes `indexer.lastBlock` — when set,
   // we hand it to `loadLoanIndex` so the local log scan fast-forwards
   // past everything the indexer already covered. When the worker is
@@ -134,7 +145,7 @@ export function useLogIndex() {
       const result = await loadLoanIndex(
         rpcUrl,
         diamondAddress,
-        chain.deployBlock ?? DEFAULT_CHAIN.deployBlock,
+        chain.deployBlock,
         chainId,
         indexerLastBlock,
       );

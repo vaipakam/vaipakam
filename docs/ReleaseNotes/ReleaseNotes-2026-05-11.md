@@ -1973,6 +1973,48 @@ i18n `appUpdate.{message,reload,reloading}`, all 10 locales.
 bundle predates the banner — so a one-time "clear site data + reload"
 is still needed to escape; after that, future deploys self-flag.)
 
+## Read-only-mode chain resolution — fix `loadLoanIndex` "deployBlock=0" bail
+
+Root cause of the recurring `log-index/loadLoanIndex` failure ("chain
+config not resolved (deployBlock=0, diamond=0x725C…)"), reproducible in
+a fresh/incognito browser with no wallet ever connected:
+
+- `WalletContext` derived `chainId` straight from wagmi's `useChainId()`.
+  With no connected wallet that returns the wagmi config's *first* chain
+  — Ethereum (chainId 1), since `CHAIN_REGISTRY` is Ethereum-first —
+  whose registry entry has `diamondAddress: null` and `deployBlock: 0`
+  (no Phase-1 deploy on Ethereum).
+- `activeChain = getChainByChainId(1)` was therefore that Ethereum
+  placeholder config. `resolveReadChain` returns `activeChain` whenever
+  it's truthy (its `DEFAULT_CHAIN` branch only fires when `activeChain`
+  is `null`), so `useReadChain()` handed `useLogIndex` the Ethereum
+  placeholder.
+- `useLogIndex` then did per-field `??` fallbacks: `diamondAddress =
+  chain.diamondAddress ?? DEFAULT_CHAIN.diamondAddress` → `null` is
+  nullish → fell through to base-sepolia's `0x725C…`; `deployBlock =
+  chain.deployBlock ?? DEFAULT_CHAIN.deployBlock` → `0` is NOT nullish
+  under `??` → stayed `0`. Frankenstein chain → `loadLoanIndex` got
+  base-sepolia's diamond + `deployBlock = 0` → the genesis-scan guard
+  fired.
+
+Two fixes:
+
+1. **`WalletContext`** — when no wallet is connected (`status` not
+   `'connected'`/`'reconnecting'`), `chainId` reflects
+   `DEFAULT_CHAIN.chainId` instead of wagmi's Ethereum default. So
+   `activeChain` becomes the *complete* `DEFAULT_CHAIN` config (base-
+   sepolia, with its real diamond + deploy block) in read-only mode,
+   and every read hook downstream sees a deployed chain.
+2. **`useLogIndex`** — defense-in-depth: pick `DEFAULT_CHAIN`
+   *wholesale* (chainId + diamond + rpcUrl + deployBlock together) when
+   the active chain has no diamond, rather than a per-field `??` mix —
+   so it can never assemble a half-DEFAULT_CHAIN / half-other-chain
+   pair again (also covers "wallet connected to a chain with no
+   deployment"). This also fixes the cached-loan-index `peekLoanIndex`
+   key being a mismatched `(chainId=1, diamond=base-sepolia)` in
+   read-only mode, so the localStorage snapshot now renders on a
+   wallet-less load instead of coming up empty.
+
 ## Release-notes mid-stream date roll
 
 The conversation that produced this release-notes file started on
