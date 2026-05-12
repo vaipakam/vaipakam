@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { ArrowUpRight, HandCoins, Coins } from 'lucide-react';
 import { useMarketRateMinCollateral } from '../../hooks/useMarketRateMinCollateral';
+import { useAssetLiquidity } from '../../hooks/useAssetLiquidity';
 import { AssetSymbol } from './AssetSymbol';
 
 /**
@@ -68,6 +69,18 @@ export function MarketRateWidget({
     lendingAmount,
   });
 
+  // Coarse on-chain liquidity check on the collateral for *this* chain
+  // (`OracleFacet.checkLiquidity`). `collateralUnsupported` (no oracle /
+  // risk-profile) is the stronger "can't compute a min" case; this
+  // catches the "has a profile but the pool depth is below the floor"
+  // case too. Either ⇒ the "thin here" hint. The *precise* 0x/1inch
+  // slippage-at-your-size preflight runs on the Create Offer page the
+  // buttons land on (`<LiquidityPreflightBanner>`), so we keep the
+  // widget's check cheap and on-chain.
+  const collateralChainLiquidity = useAssetLiquidity(collateralAsset);
+  const thinOnThisChain =
+    collateralUnsupported || collateralChainLiquidity === 'illiquid';
+
   const anchorPct = useMemo(
     () => (anchorRateBps !== null ? Number(anchorRateBps) / 100 : null),
     [anchorRateBps],
@@ -121,9 +134,10 @@ export function MarketRateWidget({
                 })
               : t('marketRateWidget.noMarketRateHint')}
           </div>
-          {/* Auto-min-collateral hint */}
+          {/* Auto-min-collateral hint (or the "thin on this chain"
+              hint, which covers both no-oracle and pool-below-floor). */}
           <div className="market-rate-widget-hint">
-            {collateralUnsupported ? (
+            {thinOnThisChain ? (
               t('marketRateWidget.illiquidCollateralHint')
             ) : amountValid && minCollateral ? (
               <>
