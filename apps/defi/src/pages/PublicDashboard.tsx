@@ -327,22 +327,30 @@ export default function PublicDashboard() {
         <div className="container">
           <header className="pd-header">
             <div>
-              <h1 className="page-title" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <h1
+                className="page-title"
+                style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}
+              >
                 <BarChart3 size={28} style={{ verticalAlign: 'middle', marginRight: 8 }} />
                 {t('publicDashboard.pageTitle')}
                 <CardInfo id="public-dashboard.overview" />
+                {/* Sync-status chip lives in the heading row (after the
+                    info (i)), NOT in the actions cluster on the right:
+                    when it widens to "~N blocks behind" it would push
+                    CSV/JSON onto a second line and stop sitting flush-
+                    right. Here it just trails the title and the row
+                    wraps the chip below on a narrow viewport. There's
+                    no manual Refresh on this page by design — it's a
+                    public, wallet-less surface, so a spam-clicked
+                    Refresh would burn RPC with no wallet to trace it
+                    to; the page auto-refreshes on the watermark bump
+                    and this chip just says whether what's on screen is
+                    current with the chain. */}
+                <DataSyncStatus />
               </h1>
               <p className="page-subtitle">{t('publicDashboard.pageSubtitle')}</p>
             </div>
             <div className="pd-header-actions">
-              {/* No manual Refresh button on this page: it's a public,
-                  wallet-less surface, so an abused (spam-clicked) Refresh
-                  would burn RPC quota with no wallet to trace it to. The
-                  page already auto-refreshes on the watermark bump
-                  (which detects on-chain change); this status chip just
-                  shows whether the data on screen is current with the
-                  chain. */}
-              <DataSyncStatus />
               <button
                 type="button"
                 className="btn btn-secondary btn-sm"
