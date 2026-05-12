@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type CSSProperties } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { L as Link } from '../components/L';
 import { useTranslation } from 'react-i18next';
 import i18n from '../i18n';
@@ -12,8 +12,6 @@ import {
   Activity,
   Gauge,
   Coins,
-  RefreshCw,
-  Check,
   TrendingUp,
   PiggyBank,
   Landmark,
@@ -37,7 +35,7 @@ import { useRecentOffers } from '../hooks/useRecentOffers';
 import { useVPFIToken } from '../hooks/useVPFIToken';
 import { useHistoricalData, type TimeRange } from '../hooks/useHistoricalData';
 import { useCombinedChainsStats } from '../hooks/useCombinedChainsStats';
-import { useRescanCooldown } from '../hooks/useRescanCooldown';
+import { DataSyncStatus } from '../components/app/DataSyncStatus';
 import { useLiveWatermark } from '../hooks/useLiveWatermark';
 import { watermarkPolicy } from '../hooks/watermarkPolicy';
 import {
@@ -240,17 +238,6 @@ export default function PublicDashboard() {
   const loading = statsLoading || tvlLoading;
   const error = statsError;
 
-  // Same cooldown + sync-status state-machine the Vault / OfferBook /
-  // Activity / Dashboard rescan buttons use. Watches the union of all
-  // three data-source loadings so the 'syncing' → 'synced' transition
-  // only fires once every refresh source has actually returned.
-  // Adaptive growth (30 s → 60 → 120 → 240 → 300, reset after 2 min
-  // idle) is inherited from `useRescanCooldown` defaults; spam
-  // protection comes for free.
-  const analyticsRescanCooldown = useRescanCooldown({
-    loading: statsLoading || tvlLoading || combinedLoading,
-  });
-
   const recentLoans = useMemo(() => {
     if (!stats) return [];
     return [...stats.loans]
@@ -348,48 +335,14 @@ export default function PublicDashboard() {
               <p className="page-subtitle">{t('publicDashboard.pageSubtitle')}</p>
             </div>
             <div className="pd-header-actions">
-              <button
-                type="button"
-                className="btn btn-secondary btn-sm rescan-btn"
-                onClick={() => {
-                  analyticsRescanCooldown.trigger();
-                  void reload();
-                  void reloadCombined();
-                }}
-                disabled={analyticsRescanCooldown.disabled}
-                data-rescan-status={analyticsRescanCooldown.status}
-                style={
-                  {
-                    '--rescan-progress': `${analyticsRescanCooldown.remaining * 100}%`,
-                  } as CSSProperties
-                }
-                aria-label={t('publicDashboard.refreshAria')}
-              >
-                {analyticsRescanCooldown.status === 'syncing' ? (
-                  <>
-                    <RefreshCw size={14} className="spin" style={{ marginRight: 4 }} />
-                    {t('publicDashboard.refreshing', { defaultValue: 'Refreshing… ' })}
-                    <span className="rescan-btn-secs">
-                      {analyticsRescanCooldown.secondsRemaining}
-                    </span>
-                    {t('publicDashboard.secondsSuffix', { defaultValue: 's' })}
-                  </>
-                ) : analyticsRescanCooldown.status === 'synced' ? (
-                  <>
-                    <Check size={14} style={{ marginRight: 4 }} />
-                    {t('publicDashboard.synced', { defaultValue: 'Synced — ' })}
-                    <span className="rescan-btn-secs">
-                      {analyticsRescanCooldown.secondsRemaining}
-                    </span>
-                    {t('publicDashboard.secondsSuffix', { defaultValue: 's' })}
-                  </>
-                ) : (
-                  <>
-                    <RefreshCw size={14} style={{ marginRight: 4 }} />
-                    {t('publicDashboard.refresh')}
-                  </>
-                )}
-              </button>
+              {/* No manual Refresh button on this page: it's a public,
+                  wallet-less surface, so an abused (spam-clicked) Refresh
+                  would burn RPC quota with no wallet to trace it to. The
+                  page already auto-refreshes on the watermark bump
+                  (which detects on-chain change); this status chip just
+                  shows whether the data on screen is current with the
+                  chain. */}
+              <DataSyncStatus />
               <button
                 type="button"
                 className="btn btn-secondary btn-sm"

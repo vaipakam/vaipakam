@@ -2181,6 +2181,20 @@ top of the page, and the `/analytics` page's refresh is still a
 hand-rolled button rather than the shared `<RescanButton>` — those
 relocations / the conversion are a follow-up.)
 
+## Analytics page — drop the manual Refresh button, keep just the sync-status chip
+
+The `/analytics` (PublicDashboard) page is a public, wallet-less
+surface, so an abused (spam-clicked) Refresh would burn RPC quota with
+no connected wallet to attribute it to. Removed the manual `<button>`
+Refresh entirely; in its place sits the `<DataSyncStatus>` chip
+("✓ Synced" / "~N blocks behind"). The page still auto-refreshes on the
+shared watermark bump (which detects on-chain change), so the data
+stays current without a user-pressable button. Dropped the now-unused
+`useRescanCooldown` / `RefreshCw` / `Check` / `CSSProperties` imports
+and the `analyticsRescanCooldown` state; the `publicDashboard.refresh*`
+i18n keys are left in place (unused). The other pages' Refresh buttons
+are unchanged for now.
+
 ## Release-notes mid-stream date roll
 
 The conversation that produced this release-notes file started on
