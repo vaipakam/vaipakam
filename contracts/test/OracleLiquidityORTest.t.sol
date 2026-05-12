@@ -57,9 +57,12 @@ contract OracleLiquidityORTest is Test {
     // means "no pool"; non-zero means "pool exists at this slot".
     address constant POOL_NONE = address(0);
 
-    // Min liquidity threshold the contract expects (1_000_000 * 1e6).
-    // Mocks need to clear this to be classified Liquid.
-    // Value chosen large enough that 1e30 * 2000e8 / 1e8 = 2e33 ≫ 1e12.
+    // Mocks set the pool's `sqrtPriceX96 = 2^96` (price 1.0), so
+    // `_v3DepthLiquid`'s WETH-leg virtual reserve == `liquidity`, and the
+    // USD depth it compares to `MIN_LIQUIDITY_USD (1_000_000 * 1e6 = 1e12)`
+    // works out to `liquidity / 2.5e8` (with the mocked $2000 ETH price).
+    // `type(uint128).max/4 ≈ 8.5e37` ⇒ depth ≈ 3.4e29 ≫ 1e12 (Liquid by
+    // orders of magnitude); `1` integer-divides to 0 (far below the floor).
     uint128 constant LIQUIDITY_PASSING = type(uint128).max / 4;
     uint128 constant LIQUIDITY_FAILING = 1; // way below MIN_LIQUIDITY_USD
 
@@ -205,7 +208,11 @@ contract OracleLiquidityORTest is Test {
         vm.mockCall(
             pool,
             abi.encodeWithSignature("slot0()"),
-            abi.encode(uint160(1e18), int24(0), uint16(0), uint16(0), uint16(0), uint8(0), false)
+            // sqrtPriceX96 = 2^96 ⇒ price 1.0 ⇒ `_v3DepthLiquid`'s WETH-leg
+            // virtual reserve equals `liquidity` exactly (regardless of the
+            // asset-vs-WETH address ordering). See the LIQUIDITY_PASSING
+            // / LIQUIDITY_FALLING constants for the resulting USD depths.
+            abi.encode(uint160(uint256(1) << 96), int24(0), uint16(0), uint16(0), uint16(0), uint8(0), false)
         );
         vm.mockCall(pool, abi.encodeWithSignature("liquidity()"), abi.encode(liquidity));
     }

@@ -163,6 +163,11 @@ contract OracleFacetTest is Test {
     ///      units. Wires `factory.getPool(...)` to return our deterministic
     ///      stub address and then mocks that address's `slot0` + `liquidity`
     ///      views so `OracleFacet._checkLiquidity` sees a real-looking pool.
+    ///      `sqrtPriceX96 = 2^96` ⇒ pool price 1.0 ⇒ the WETH-leg virtual
+    ///      reserve `_v3DepthLiquid` computes equals `liquidity` exactly
+    ///      (and is independent of the asset-vs-WETH address ordering), so
+    ///      the resulting USD depth is `2 × liquidity × ethPrice × 1e6 /
+    ///      (1e18 × 10**ethDec)` — see {testCheckLiquidityReturnsLiquidWhenAllConditionsMet}.
     function _mockLiquidPool(address asset, uint128 liquidity) internal {
         address pool = _computePoolAddress(asset, mockWeth);
         (address t0, address t1) = asset < mockWeth ? (asset, mockWeth) : (mockWeth, asset);
@@ -174,7 +179,7 @@ contract OracleFacetTest is Test {
         vm.mockCall(
             pool,
             abi.encodeWithSignature("slot0()"),
-            abi.encode(uint160(1e18), int24(0), uint16(0), uint16(0), uint16(0), uint8(0), false)
+            abi.encode(uint160(uint256(1) << 96), int24(0), uint16(0), uint16(0), uint16(0), uint8(0), false)
         );
         vm.mockCall(pool, abi.encodeWithSignature("liquidity()"), abi.encode(liquidity));
     }
@@ -292,9 +297,10 @@ contract OracleFacetTest is Test {
     function testCheckLiquidityReturnsIlliquidWhenInsufficientLiquidity() public {
         _mockRegistryFeed(mockAsset, mockFeed);
         _mockFeedFull(mockFeed, int256(1e8), 8);
-        // Trivially tiny WETH depth. MIN_LIQUIDITY_USD = 1e6 * 1e6 (1M with 6-dec
-        // scaling). Pool depth = liquidity * ethPrice / 10**ethDec
-        //                       = 1 * 2000e8 / 1e8 = 2000 → far below 1M * 1e6.
+        // Trivially tiny WETH-leg depth: with sqrtPriceX96 = 2^96 the
+        // WETH-leg virtual reserve == liquidity, and liquidity = 1 makes
+        // the USD depth integer-divide to 0 — far below MIN_LIQUIDITY_USD
+        // (1_000_000 * 1e6 = 1e12). See the Liquid test for the metric.
         _mockLiquidPool(mockAsset, 1);
         LibVaipakam.LiquidityStatus status = OracleFacet(address(diamond)).checkLiquidity(mockAsset);
         assertEq(uint8(status), uint8(LibVaipakam.LiquidityStatus.Illiquid));
@@ -303,10 +309,14 @@ contract OracleFacetTest is Test {
     function testCheckLiquidityReturnsLiquidWhenAllConditionsMet() public {
         _mockRegistryFeed(mockAsset, mockFeed);
         _mockFeedFull(mockFeed, int256(1e8), 8);
-        // Pool depth = liquidity * 2000e8 / 1e8 = liquidity * 2000.
-        // MIN_LIQUIDITY_USD = 1_000_000 * 1e6 = 1e12. Need liquidity * 2000 > 1e12.
-        // liquidity = 1e18 → depth = 2e21 ≫ 1e12. Comfortably liquid.
-        _mockLiquidPool(mockAsset, uint128(1e18));
+        // With sqrtPriceX96 = 2^96 (price 1.0) the WETH-leg virtual
+        // reserve == liquidity, so
+        //   usdDepthScaled = 2 × liquidity × ethPrice × 1e6 / (1e18 × 10**ethDec)
+        //                  = 2 × liquidity × 2000e8 × 1e6 / (1e18 × 1e8)
+        //                  = liquidity / 2.5e8.
+        // MIN_LIQUIDITY_USD = 1_000_000 * 1e6 = 1e12 ⇒ need liquidity ≥ 2.5e20.
+        // liquidity = 1e21 → usdDepthScaled = 4e12 ≫ 1e12. Comfortably liquid.
+        _mockLiquidPool(mockAsset, uint128(1e21));
         LibVaipakam.LiquidityStatus status = OracleFacet(address(diamond)).checkLiquidity(mockAsset);
         assertEq(uint8(status), uint8(LibVaipakam.LiquidityStatus.Liquid));
     }
