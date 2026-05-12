@@ -353,9 +353,10 @@ tokens (a junk token has no ≤0.3% pool deep enough to clear $5 k at
 ≤2%). So **don't gate on market cap on-chain.** If you want more Tier-3
 conservatism, a tighter `slippageBps` for the top tier (or a larger
 `tier3SizeUsd`) is a far better lever. Market cap *is* useful as an
-**off-chain advisory input** — the keeper-demotion relay (§4.1.b) can
-treat a large-FDV / thin-pool-depth discrepancy as a reason to demote,
-and the widget can flag it — but that's heuristic judgment, not an
+**off-chain advisory input** — the keeper liquidity-confidence relay
+(§4.1.b item 2) can treat a large-FDV / thin-pool-depth discrepancy as
+a reason *not* to promote (or to demote), and the widget can flag it —
+but that's heuristic judgment, not an
 on-chain rule.
 
 **On "add more DEXs" — and specifically *not* dYdX / AsterDEX.** dYdX
@@ -387,13 +388,15 @@ Base, say) → that asset gets a lower tier or `Illiquid` here, which is
 **fail-safe** (the *actual* liquidation still works — 0x/1inch *do*
 route to Aerodrome — so the under-count is a false negative in the
 pre-screen, not in the liquidation itself; the only cost is a
-missed-opportunity, not a safety hole). Correcting under-counts upward
-would need a *promotion* relay, which has a worse trust model than the
-demotion-only relay (a compromised keeper could over-promote a junk
-asset) — so if/when we want it, gate it behind the existing N-of-M
-oracle quorum; or just integrate Uni-V2 + Curve on-chain, which closes
-most of the gap. v1: Uni-V3-clone family only, accept the conservative
-under-count.
+missed-opportunity, not a safety hole). Note the §4.1.b keeper relay
+*can't* fix this kind of under-count — it can only ever promote an
+asset *up to* the on-chain ceiling, and here the ceiling itself is too
+low (the on-chain check missed the chain-native DEX). Fixing it would
+need either (a) integrating those DEX families on-chain (Uni-V2 +
+Curve closes most of the gap — decision 8), or (b) an *override*
+relay that can promote *above* the on-chain ceiling — which is the
+dangerous unbounded-up variant and would require a quorum + time-lock.
+v1: Uni-V3-clone family only, accept the conservative under-count.
 
 **The tier = which size the asset clears at ≤ the slippage bound** (all
 governance globals):
@@ -458,26 +461,57 @@ allowlist, both permissionless-compatible:
    above the protocol's Y% comfort band."* This is the best possible
    user-facing liquidity signal; it doesn't gate anything on-chain (it
    can't), it just informs.
-2. **Keeper-fed *demotion* relay (optional, the "better approach").** A
-   keeper periodically queries 0x / 1inch for the realistic slippage at
-   the tier sizes ($50k/$500k/$5M) and, when the aggregator says the
-   asset is *worse* than the on-chain check would conclude, pushes a
-   per-asset **ceiling tier** on-chain — `s.assetTierCeiling[asset]`,
-   settable only by a `KEEPER_ROLE`, **only able to lower** the tier
-   (`effectiveTier = min(onChainSlippageTier(asset), assetTierCeiling[asset])`;
-   default ceiling = 3 = no effect; a stale/down keeper → no ceiling →
-   the on-chain check governs). This (a) corrects the on-chain
-   approximation's *one* real weakness — a thin-adjacent-tick pool the
-   single-tick math over-tiers — using the most accurate available data;
-   (b) is fail-safe by construction — a compromised keeper can only make
-   assets *more* conservative, never less, so no user funds are at risk
-   from it, at worst some high-LTV loans get blocked; (c) is *not* an
-   allowlist — every asset is still auto-tiered by the on-chain check;
-   the keeper only ever *trims*; (d) is structurally identical to the
-   secondary-price-oracle quorum (Tellor/API3/DIA) the project already
-   runs, and can be put behind the same N-of-M quorum if single-keeper
-   trust is a concern. Recommended as a Phase-2-or-2.5 addition;
-   the on-chain check stands on its own without it.
+2. **Keeper "liquidity-confidence tier" relay — `effectiveTier =
+   min(onChainSlippageTier, keeperTier)`** (refined model, user
+   2026-05-13; supersedes the earlier demotion-only relay). On-chain we
+   store `mapping(address ⇒ uint8) keeperTier`, **default `1`**,
+   settable by a `KEEPER_ROLE`. The effective tier a loan-init sees is
+   `min(getLiquidityTier(asset), keeperTier(asset))`. Consequences:
+   - **Every new asset starts at Tier 1 (today's `HF ≥ 1.5`)** — even
+     one the on-chain slippage check immediately reads as deep (WBTC,
+     say) has `keeperTier = 1` until promoted, so `effectiveTier =
+     min(3, 1) = 1`. Brand-new assets are conservative by default; the
+     widget / Create Offer at `HF ≥ 1.5` always works for them in the
+     meantime.
+   - **The keeper *promotes* on accumulated confidence.** A pass in
+     `apps/keeper` periodically queries 0x / 1inch for the realized
+     slippage of selling the next tier's size of the asset; once that's
+     stayed `≤ slippageBps` across a confidence window (N consecutive
+     checks over D days — globals), the keeper raises `keeperTier` one
+     step. So Tier 2 / Tier 3 require **both** the on-chain check *and*
+     the aggregator-confirmed history.
+   - **The keeper *demotes* immediately** the moment a check shows
+     degradation (drops `keeperTier` toward 1) — fail-safe direction,
+     no window.
+   - **Trust model — bounded.** A compromised keeper can shove
+     `keeperTier` to 3 for anything, but `effectiveTier =
+     min(onChainSlippageTier, keeperTier)` — for a junk asset the
+     on-chain check already says Tier 0/1, so the compromise has *no
+     effect*; for a genuinely-deep asset it can only *prematurely*
+     promote within what the (approximate) on-chain check already
+     vetted — worst case "we relied on the on-chain approximation
+     alone", i.e. the no-keeper baseline. So a compromised keeper
+     degrades *to baseline*, never below. **Fail-open** — keeper down /
+     never ran → `keeperTier` stuck at `1` everywhere → effectively
+     `HF ≥ 1.5` for all assets → today's behaviour, fully safe, just no
+     high-LTV. **Not an allowlist** — the on-chain check still tiers
+     every asset; the keeper's *demotions* are unbounded-down
+     (fail-safe), its *promotions* are capped by the on-chain ceiling.
+     **Recoverable** — governance can reset `keeperTier`.
+   - **Optional hardenings:** a *time-lock on promotions* (a posted
+     promotion takes effect D′ hours later; demotions immediate) and/or
+     an N-of-M keeper quorum on promotions (the existing
+     Tellor/API3/DIA-style quorum machinery). Single keeper, no
+     time-lock is fine for v1 given the bound above; quorum/time-lock
+     are later hardenings.
+   - **Simpler alternative considered (rejected for now):** make the
+     on-chain check *binary only* (`Liquid`/`Illiquid` at the $5 k
+     floor) and let `keeperTier` be the *sole* tier authority. Smaller
+     on-chain footprint (no graded virtual-reserve `mulDiv` math) — but
+     then the keeper is unbounded-up, so a compromised keeper *could*
+     promote a junk asset to Tier 3 → bad-debt risk → would *require* a
+     quorum + time-lock. Keeping the on-chain graded check as the
+     ceiling is the safer call and worth the extra read-math.
 3. **Liquidation already is aggregator-backed.** Worth keeping in mind:
    the *actual* sale of collateral at liquidation routes through 0x /
    1inch (the swap adapters), with the adapter's own slippage floor. So
@@ -511,19 +545,25 @@ allowlist, both permissionless-compatible:
   flip per chain after that chain's slippage census). **No per-asset
   tier mapping, no allowlist.** Bad actors are removed via the existing
   `AdminFacet.pauseAsset` / blacklist path, not via this.
-- **Keeper-fed demotion (optional, §4.1.b):** `mapping(address ⇒ uint8)
-  assetTierCeiling`, default `3` (no effect), settable only by
-  `KEEPER_ROLE` and **only able to lower** an asset's tier; effective
-  tier = `min(getLiquidityTier(asset), assetTierCeiling[asset])`. Fed by
-  a keeper that queries 0x/1inch — corrects the on-chain approximation
-  downward, never upward; fail-safe if the keeper is down/compromised;
-  optionally behind an N-of-M quorum. Can ship after the base check.
+- **Keeper liquidity-confidence tier (§4.1.b item 2):**
+  `mapping(address ⇒ uint8) keeperTier`, **default `1`**, settable by
+  `KEEPER_ROLE` (raises one step on accumulated 0x/1inch confidence,
+  drops immediately on degradation; optional promotion time-lock /
+  quorum). `effectiveTier(asset) = min(getLiquidityTier(asset),
+  keeperTier(asset))` — so a new asset opens at Tier 1 (`HF ≥ 1.5`)
+  until the keeper confirms; a compromised keeper is bounded by the
+  on-chain ceiling (degrades to the no-keeper baseline, never below);
+  keeper down ⇒ everyone effectively Tier 1 (fail-open). The on-chain
+  *storage + role* land with the rest of Piece B (§4.4 step 4); the
+  keeper *process* is §4.4 step 5 (Phase 2.5).
 - **Init gate (`LoanFacet._runInitGates` + `LibOfferMatch`'s synthetic
   HF check on the `matchOffers` path):** when `depthTieredLtvEnabled`,
   cap init-LTV at `min(assetRiskParams.maxLtvBps, tierMaxInitLtvBps[
   effectiveTier(collateralAsset)])` **instead of** relying purely on
   `HF ≥ 1.5`. Per-asset `liqThresholdBps` (the liquidation trigger) is
   untouched. A loan that fails the tier cap reverts `InitLtvAboveTier`.
+  (Lender-sale vehicles / both-legs-illiquid loans keep their existing
+  LTV/HF skip.)
 
 ### 4.3 Proposed launch defaults (all governance globals)
 
@@ -577,16 +617,20 @@ liquidation behaviour is observed.
    ahead of the rest of Piece B.
 4. **Implement the rest of Piece B** behind `depthTieredLtvEnabled`
    (`ProtocolConfig`, default `false`, à la the Range-Orders flags):
-   `getLiquidityTier` view + the tier-size / tier-LTV / TWAP-guard
-   globals + the `LoanFacet._runInitGates` cap + the `assetTierCeiling`
-   mapping & `KEEPER_ROLE` (relay storage; the keeper process itself is
+   `getLiquidityTier` view + `effectiveTier()` + the tier-size /
+   tier-LTV / TWAP-guard / confidence-window globals + the
+   `LoanFacet._runInitGates` cap + the `keeperTier` mapping (default
+   `1`) & `KEEPER_ROLE` (relay storage; the keeper process itself is
    step 5).
-5. **Keeper-fed demotion relay (Phase 2.5)** — the `apps/keeper` process
-   that queries 0x/1inch and writes `assetTierCeiling` (see §4.1.b /
-   decision 9.ii). Lands *before* `depthTieredLtvEnabled` is flipped on
-   any chain, so tiered-LTV never goes live without the safety net.
-   Single keeper to start; the N-of-M oracle-quorum form is a later
-   hardening.
+5. **Keeper liquidity-confidence relay (Phase 2.5)** — the `apps/keeper`
+   process that periodically queries 0x/1inch for realized slippage at
+   the tier sizes and `setKeeperTier(asset, tier)`s (promotes one step
+   on an accumulated-confidence window, demotes immediately on
+   degradation — see §4.1.b item 2 / §9.ii). Lands *before*
+   `depthTieredLtvEnabled` is flipped on any chain, so high-LTV tiers
+   never go live without the aggregator-confirmed confidence having
+   accumulated. Single keeper to start; optional promotion time-lock /
+   N-of-M oracle-quorum are later hardenings.
 6. **Per-chain slippage census + audit + risk sign-off**, then flip
    `depthTieredLtvEnabled` chain-by-chain. The audit covers steps 3–5
    (a direct loosening of the init safety buffer) — bundle with the
@@ -619,9 +663,13 @@ liquidator bot has been hardened for it.
    reserve constant-product approximation (not the gas-heavy Quoter),
    accepting the large-trade-on-a-thin-adjacent-tick caveat, bounded by
    the conservative top-tier LTV + the spot≈feed + TWAP-consistency
-   guards + the keeper demotion relay. Acknowledged trade-off: single-hop
-   only — SHIB-likes (deep *via* a stable pair, thin *against* one) stay
-   low-tier / manual until a multi-hop-aware check exists.
+   guards + the keeper liquidity-confidence relay (§4.1.b item 2 — every
+   asset opens at Tier 1 / `HF ≥ 1.5` and is promoted only on
+   accumulated 0x/1inch confidence, demoted immediately on degradation;
+   `effectiveTier = min(onChainSlippageTier, keeperTier)`). Acknowledged
+   trade-off: single-hop only — SHIB-likes (deep *via* a stable pair,
+   thin *against* one) stay low-tier / manual until a multi-hop-aware
+   check exists.
 3. **Tier LTVs — Tier 1 50% / Tier 2 60% / Tier 3 65%. ✅** (Init HF ≈
    1.26 vs an ~82% liq-threshold.) Risk committee may open Tier 3 lower
    and ramp; ramp gated on the liquidator-bot hardening (§4.4 deferred).
@@ -635,8 +683,8 @@ liquidator bot has been hardened for it.
 6. **Market cap — NOT an on-chain criterion. ✅** `totalSupply() × price`
    measures FDV not liquidity, is manipulable (`totalSupply()` is
    whatever the token returns), and is redundant with the $5 k slippage
-   floor. Advisory-only off-chain (keeper demotion-relay heuristic /
-   widget flag).
+   floor. Advisory-only off-chain (keeper-relay heuristic — a big-FDV /
+   thin-pool discrepancy is a reason to *not* promote — / widget flag).
 7. **Base `checkLiquidity` floor — fix it now. ✅** Replace
    `liquidity() × ethPrice` ("$1 M" ≈ "pool isn't empty") with the
    slippage-at-`floorSizeUsd` check. Standalone Phase-7b-area change,
@@ -651,9 +699,15 @@ liquidator bot has been hardened for it.
    depth ≠ spot liquidity; nothing for a liquidator to sell into; dYdX
    isn't EVM-readable.
 9. **Aggregators (§4.1.b):** (i) **widget pre-check via the existing
-   0x/1inch Worker proxy — yes, ships with Piece A. ✅** (ii) **keeper-fed
-   demotion relay — Phase 2.5, single keeper to start, quorum form
-   later. ✅** (rationale: see the note below.)
+   0x/1inch Worker proxy — yes, ships with Piece A. ✅** (ii) **keeper
+   liquidity-confidence relay — Phase 2.5, single keeper to start,
+   promotion time-lock / quorum as later hardenings. ✅** Model (user
+   2026-05-13): a new asset always starts at Tier 1 (`HF ≥ 1.5`); the
+   keeper promotes it one step at a time only after its periodic
+   0x/1inch slippage checks have stayed within the bound across a
+   confidence window, and demotes immediately on degradation;
+   `effectiveTier = min(onChainSlippageTier, keeperTier)` so the keeper
+   can never promote past the on-chain ceiling. (rationale: see §9.ii.)
 10. **Cross-chain "thin here" warning — ship the generic version with
     Piece A. ✅** "Which chain is deeper" hint is a Phase 2.5/3 follow-up
     (needs a cross-(asset, chain) depth index).
@@ -662,51 +716,70 @@ liquidator bot has been hardened for it.
     `HF ≥ 1.5`; flip per chain after that chain's census + the relay
     being live.
 
-### 9.ii — the keeper-fed demotion relay, in detail
+### 9.ii — the keeper liquidity-confidence relay, in detail
 
-*What it is.* The on-chain slippage check (§4.1) has one dangerous
-weakness: for V3 it uses the virtual-reserve constant-product
-approximation, which is exact only while the test trade stays inside
-the current tick — for a $5 M test trade against a pool that's deep at
-the current tick but thin in the *adjacent* ticks, it can *under-state*
-the slippage → the asset is **over-tiered** → opened at a higher LTV
-than is actually safe. (The other directions — single-hop, Uni-V3-only —
-*under*-count, which is fail-safe.) The relay corrects the over-tier:
-an off-chain keeper (a pass in `apps/keeper`, next to the liquidator)
-periodically queries 0x / 1inch for the *real* slippage of selling each
-active collateral asset at the tier sizes; when the aggregator says an
-asset is worse than the on-chain check concluded, the keeper calls
-`setAssetTierCeiling(asset, lowerTier)`; `effectiveTier(asset) =
-min(getLiquidityTier(asset), assetTierCeiling[asset])`.
+*The model* (user 2026-05-13): a brand-new asset always opens at **Tier
+1** (`HF ≥ 1.5` — today's behaviour) regardless of what the on-chain
+slippage check reads, and the keeper *earns it up* from there.
+On-chain: `mapping(address ⇒ uint8) keeperTier`, **default `1`**,
+settable by `KEEPER_ROLE` via `setKeeperTier(asset, tier)`. The
+loan-init gate uses `effectiveTier(asset) = min(getLiquidityTier(asset),
+keeperTier(asset))`. An `apps/keeper` pass (next to the liquidator)
+periodically queries 0x / 1inch for the realized slippage of selling
+the *next* tier's test size of each in-scope collateral asset; once
+that's stayed `≤ slippageBps` across a confidence window (N consecutive
+checks over D days — globals), it `setKeeperTier(asset, currentTier+1)`.
+If a check shows the slippage has degraded past the bound, it demotes
+**immediately** (one or more steps, toward `1`) — no window for
+demotions.
 
-*Why it's safe by construction.* (1) **Demotion-only** — `assetTierCeiling`
-defaults to `3` (no effect); the `KEEPER_ROLE` setter can only *lower*
-an asset's effective tier (clamped to `≥ 1` — it cannot make an asset
-`Illiquid`, that stays the separate binary `checkLiquidity` gate). So a
-*compromised* keeper can only make assets *more* conservative — at
-worst it caps everything at Tier 1 (~53% LTV), i.e. it can grief the
-high-LTV path; it cannot create an under-collateralised loan. No user
-funds at risk; existing loans untouched (the tier gates *init* only).
-(2) **Fail-open** — if the keeper is down or never ran, the ceiling is
-`3` everywhere → the on-chain check governs alone → the system still
-works. The relay is additive hardening, not a dependency. (3) **Not an
-allowlist** — every asset is still auto-tiered by the on-chain check;
-the keeper only ever *trims* the on-chain conclusion → fully compatible
-with the permissionless requirement. (4) **Recoverable** — governance
-can clear a bogus ceiling / rotate the keeper key.
+*Why it's safe by construction.* (1) **Bounded promotions** — a
+*compromised* keeper can `setKeeperTier(asset, 3)` for anything, but
+`effectiveTier = min(getLiquidityTier(asset), keeperTier(asset))`: for a
+junk asset the on-chain slippage check already returns Tier 0/1, so the
+forced promotion has *no effect*; for a genuinely-deep asset the
+compromise can only grant the tier the (approximate) on-chain check
+already vetted, *prematurely* — i.e. the worst case is "we relied on
+the on-chain approximation alone for this asset", which is the
+no-keeper baseline. A compromised keeper degrades *to baseline*, never
+below it. (2) **Unbounded demotions = fail-safe** — the keeper can
+always pull `keeperTier` down to `1`; that just makes things more
+conservative. (3) **Fail-open** — keeper down / never ran ⇒ `keeperTier`
+stuck at `1` everywhere ⇒ every asset effectively Tier 1 ⇒ exactly
+today's `HF ≥ 1.5` for everything. The relay is what *enables* the
+higher tiers; without it the system is just today's protocol. (4) **Not
+an allowlist** — the on-chain check still tiers every asset (it's the
+ceiling); the keeper only adds a confidence delay before that ceiling is
+granted, and can drop it any time. (5) **Recoverable** — governance can
+reset `keeperTier` for any asset / rotate the keeper key.
 
-*Single keeper vs quorum.* Single keeper is fine to start: the worst
-case (DoS-on-some-asset's-high-LTV-path) is bounded and recoverable.
-If even that bounded power is unwanted, put the ceiling behind the
-existing N-of-M oracle quorum (Tellor/API3/DIA-style) — the ceiling
-for an asset becomes the most-conservative value M-of-N keepers agree
-on, so one compromised keeper can't even grief. Trade-off: N keeper
-processes + more on-chain writes. **Recommendation: single keeper for
-v1 (Phase 2.5), quorum as a later hardening.**
+*The one residual risk* — and its mitigations: a compromised keeper that
+*prematurely promotes* a genuinely-deep asset to Tier 3 removes exactly
+the confidence delay the relay exists to provide. The asset is still
+gated by the (approximate) on-chain check, and the Tier-3 LTV (65%
+default) keeps a ~17-point cushion to the ~82% liq-threshold, so the
+loss is "the confidence window, not real over-collateralisation". If
+that's still too much, the **optional hardenings**: a *promotion
+time-lock* (a `setKeeperTier`-up takes effect D′ hours later, demotions
+immediate — governance can veto in the window); and/or an *N-of-M
+keeper quorum on promotions* (reuse the Tellor/API3/DIA-style quorum
+machinery — a promotion needs M of N keepers to agree; demotions from
+any one are honoured). Single keeper, no time-lock is acceptable for
+v1; quorum + time-lock are tracked hardenings.
 
-*Timing.* Phase 2.5 — lands between Piece B's contract change (which
-includes the `assetTierCeiling` *storage* + `KEEPER_ROLE`, step 4) and
-flipping `depthTieredLtvEnabled` on any chain (step 6), so tiered-LTV
-never goes live on mainnet without the safety net up. From your side
-the effect is the same as "Phase 2"; it's just sequenced so Piece B's
-audit doesn't have to wait on the keeper process being written.
+*The simpler alternative (rejected for now):* drop the *graded* on-chain
+slippage check and keep only the binary `Liquid`/`Illiquid` floor —
+then `keeperTier` is the *sole* tier authority. Less on-chain math (no
+graded virtual-reserve `mulDiv`), but the keeper is then unbounded-up:
+a compromised keeper could promote a junk asset to Tier 3 → real
+bad-debt risk → would *require* the quorum + time-lock. Keeping the
+graded on-chain check as the ceiling is the safer call.
+
+*Timing.* Phase 2.5 — the `keeperTier` *storage* + `KEEPER_ROLE` +
+`setKeeperTier` setter land with the rest of Piece B (§4.4 step 4); the
+keeper *process* (the 0x/1inch polling + confidence accumulation) is
+step 5, and lands *before* `depthTieredLtvEnabled` is flipped on any
+chain — so a high-LTV tier never goes live without the aggregator-
+confirmed confidence having actually accumulated. From your side the
+effect is the same as "Phase 2"; the split just lets Piece B's audit
+not wait on the keeper process being written.
