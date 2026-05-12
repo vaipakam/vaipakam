@@ -63,71 +63,22 @@ export const ASSET_TYPE_LABELS = ['ERC-20', 'ERC-721', 'ERC-1155'] as const;
 const WINDOW_SIZE = OFFER_BOOK_PAGE_SIZE;
 
 /**
- * User-chosen sort applied across the ENTIRE pair bucket on the
- * lender-only / borrower-only tabs. Surfaced only on those tabs; the
- * both-tab keeps its existing closest-to-anchor ranking because that
- * one is what makes the depth-chart layout meaningful.
- *
- * The skinny ranking call carries every sort key, so toggling sort
- * choices is purely client-side — zero RPC pressure. The hydration
- * multicall picks up the new top-N per choice on the next render.
+ * Recency-desc comparator over `OfferRanking` rows for the pair-filtered
+ * lender / borrower views — newest `createdAt` first, id-descending
+ * tiebreaker so the order is stable across pair-bucket re-fetches. (This
+ * used to be a user-selectable `SortChoice` dropdown — removed: the
+ * OfferBook's open view already has a sensible default ordering and the
+ * closed view's natural order is recency, so a manual sort was a
+ * redundant power feature. The `both` tab keeps its own
+ * closest-to-anchor ranking elsewhere.)
  */
-type SortChoice =
-  | 'recency-desc'
-  | 'recency-asc'
-  | 'rate-desc'
-  | 'rate-asc'
-  | 'principal-desc'
-  | 'principal-asc'
-  | 'duration-desc'
-  | 'duration-asc';
-
-const SORT_OPTIONS: ReadonlyArray<{ value: SortChoice; label: string }> = [
-  { value: 'recency-desc', label: 'Most recent first' },
-  { value: 'recency-asc', label: 'Oldest first' },
-  { value: 'rate-desc', label: 'Rate: highest first' },
-  { value: 'rate-asc', label: 'Rate: lowest first' },
-  { value: 'principal-desc', label: 'Principal: largest first' },
-  { value: 'principal-asc', label: 'Principal: smallest first' },
-  { value: 'duration-desc', label: 'Duration: longest first' },
-  { value: 'duration-asc', label: 'Duration: shortest first' },
-];
-
-/**
- * Builds a comparator over `OfferRanking` rows for the given choice.
- * Tiebreaker: id descending (newer ids first) so re-renders are
- * stable across pair-bucket re-fetches.
- *
- * Range Orders note: rate / principal sort uses the MIN field
- * (`interestRateBps` / `amount`) — the legacy single-value field
- * that auto-collapses with the max for non-range offers. Sorting by
- * the min is the directionally-correct UX for both sides (the lender
- * minimum-rate is what a borrower screens against; the
- * lender-supplied principal floor is what borrowers see). A future
- * commit can add range-aware sort variants if range offers become
- * common enough to warrant the surface.
- */
-function buildPairSortComparator(
-  choice: SortChoice,
-): (a: import('../hooks/useActiveOffersByAssetPairRanked').OfferRanking,
-    b: import('../hooks/useActiveOffersByAssetPairRanked').OfferRanking) => number {
-  const desc = choice.endsWith('-desc');
-  type R = import('../hooks/useActiveOffersByAssetPairRanked').OfferRanking;
-  const fieldFor = (r: R): bigint => {
-    if (choice.startsWith('rate')) return r.interestRateBps;
-    if (choice.startsWith('principal')) return r.amount;
-    if (choice.startsWith('duration')) return r.durationDays;
-    return r.createdAt;
-  };
-  return (a: R, b: R) => {
-    const va = fieldFor(a);
-    const vb = fieldFor(b);
-    let cmp: number;
-    if (va < vb) cmp = -1;
-    else if (va > vb) cmp = 1;
-    else cmp = a.id < b.id ? 1 : a.id > b.id ? -1 : 0;
-    return desc ? -cmp : cmp;
-  };
+function compareOfferRankingByRecencyDesc(
+  a: import('../hooks/useActiveOffersByAssetPairRanked').OfferRanking,
+  b: import('../hooks/useActiveOffersByAssetPairRanked').OfferRanking,
+): number {
+  if (a.createdAt > b.createdAt) return -1;
+  if (a.createdAt < b.createdAt) return 1;
+  return a.id < b.id ? 1 : a.id > b.id ? -1 : 0;
 }
 /** Upper bound on the per-side row count the user can dial in, scoped to the
  *  active tab. `both` sees two columns so each side caps at 50 rows; on a
@@ -380,50 +331,6 @@ export default function OfferBook() {
   // exact-match-on-bucket filter fits the data.
   const [durationFilter, setDurationFilter] = useState('');
   const [liquidityFilter, setLiquidityFilter] = useState<LiquidityFilter>('any');
-  // User-chosen sort for the lender / borrower tabs. Default
-  // 'recency-desc' matches the previous "newest first" behaviour and
-  // is the most intuitive landing state. Sort applies across the
-  // entire pair bucket (skinny call carries every key); only the
-  // page-N slice that's actually rendered is hydrated, so toggling
-  // sort choices burns zero RPC.
-  const [sortChoice, setSortChoice] = useState<SortChoice>('recency-desc');
-  // Default ON — the OfferBook is a market-discovery surface; the
-  // user's own offers are noise on the lender / borrower side they
-  // sit on (the "Your Offer" badge can't be acted on here, only on
-  // Dashboard). Filter applies BEFORE the per-side split + pagination
-  // so the per-page slice fills with actually-actionable offers
-  // instead of leaving gaps where the user's own offers sat. Toggle
-  // OFF to verify your own offer lands on the market with the
-  // expected ranking.
-  // Persisted to localStorage so the toggle survives page navigations
-  // (returning to OfferBook from Dashboard / Loan Details shouldn't
-  // reset). Read synchronously inside the useState initializer so first
-  // paint already reflects the saved choice — no flicker between the
-  // default and persisted value. Default-true when no key exists yet
-  // (the on-by-default rationale that the existing comment captures
-  // below: a market browser usually wants to see counterparties' offers,
-  // not their own).
-  const [hideMyOffers, setHideMyOffers] = useState<boolean>(() => {
-    try {
-      const raw = localStorage.getItem('vaipakam:offerBook:hideMyOffers');
-      if (raw === null) return true;
-      return raw === 'true';
-    } catch {
-      // localStorage disabled / private mode — fall through to the
-      // default. Toggle still works in-session; just won't persist.
-      return true;
-    }
-  });
-  useEffect(() => {
-    try {
-      localStorage.setItem(
-        'vaipakam:offerBook:hideMyOffers',
-        String(hideMyOffers),
-      );
-    } catch {
-      // Ignore quota / disabled — same fallback as the read path.
-    }
-  }, [hideMyOffers]);
 
   // Anchor for the currently-filtered market. We pull the last N accepted
   // offers from the log index and pick the freshest one that passes the
@@ -471,30 +378,22 @@ export default function OfferBook() {
   // Sort ids descending so we fetch the newest offers first. The cursor
   // then walks backward in id space when the user expands the window.
   //
-  // Pair path: derive ids from the skinny ranking rows. The sort key
-  // diverges by tab:
-  //   - both-tab keeps recency-DESC because the downstream
-  //     `rankByDistance` step picks closest-to-anchor offers from the
-  //     loaded slice; a representative recent slice is what makes the
-  //     anchor calculation meaningful for the depth-chart layout. A
-  //     user-chosen sort here would bias which offers get hydrated
-  //     and could leave the anchor-closest offers un-fetched.
-  //   - lender-only / borrower-only tabs honour the user-chosen sort
-  //     (`sortChoice`) end-to-end. The skinny payload covers every
-  //     active offer in the bucket so the comparator selects the true
-  //     top-N globally, then the page-N hydration multicall fetches
-  //     only those.
+  // Pair path: derive ids from the skinny ranking rows, recency-DESC.
+  // This is also what the both-tab needs — the downstream
+  // `rankByDistance` step picks closest-to-anchor offers from the loaded
+  // slice, so a representative recent slice is what makes the anchor
+  // calculation meaningful for the depth-chart layout. (Pre-this-change
+  // the lender/borrower tabs ran a user-chosen `sortChoice` here; the
+  // sort dropdown was removed, so all tabs use recency-DESC now.)
   const sortedIds = useMemo(() => {
     if (usePairPath) {
-      const cmp =
-        tab === 'both'
-          ? buildPairSortComparator('recency-desc')
-          : buildPairSortComparator(sortChoice);
-      return [...pairRankings].sort(cmp).map((r) => r.id);
+      return [...pairRankings]
+        .sort(compareOfferRankingByRecencyDesc)
+        .map((r) => r.id);
     }
     const src = statusView === 'open' ? legacyOpenIds : closedOfferIds;
     return [...src].sort((a, b) => (a < b ? 1 : a > b ? -1 : 0));
-  }, [usePairPath, pairRankings, legacyOpenIds, closedOfferIds, statusView, tab, sortChoice]);
+  }, [usePairPath, pairRankings, legacyOpenIds, closedOfferIds, statusView]);
 
   // Verified tab counts — the log index lists IDs by event (OfferCreated
   // minus OfferAccepted/Canceled), but RPC lag or missed events can leave
@@ -1103,21 +1002,14 @@ export default function OfferBook() {
     return out;
   }, [offers]);
 
-  // Two-stage filter: market criteria first, then optionally drop
-  // the connected wallet's own offers. The hide-my-offers gate runs
-  // BEFORE the per-side split + pagination so pagination naturally
-  // fills the per-page slot count with non-my offers instead of
-  // leaving page-position gaps where the user's own offers sat.
-  const filtered = useMemo(() => {
-    const lower = address?.toLowerCase() ?? '';
-    return dedupedOffers.filter((o) => {
-      if (!matchesFilter(o)) return false;
-      if (hideMyOffers && lower && o.creator.toLowerCase() === lower) {
-        return false;
-      }
-      return true;
-    });
-  }, [dedupedOffers, matchesFilter, hideMyOffers, address]);
+  // Market-criteria filter (asset / collateral / duration / liquidity).
+  // Note: the user's own offers are NOT hidden — the prior "Hide my
+  // offers" toggle was removed; "My Offers" (wallet menu) is where you
+  // see your own listings.
+  const filtered = useMemo(
+    () => dedupedOffers.filter((o) => matchesFilter(o)),
+    [dedupedOffers, matchesFilter],
+  );
 
   // Market-scoped anchor: walk the rolling recent-accepted list (newest
   // first) and pick the freshest entry that passes the current filter.
@@ -1171,7 +1063,7 @@ export default function OfferBook() {
   const [page, setPage] = useState(1);
   useEffect(() => {
     setPage(1);
-  }, [tab, lendingAssetFilter, collateralAssetFilter, durationFilter, liquidityFilter, perSide, statusView, hideMyOffers]);
+  }, [tab, lendingAssetFilter, collateralAssetFilter, durationFilter, liquidityFilter, perSide, statusView]);
   const activeSideList = tab === 'lender' ? lenderAll : tab === 'borrower' ? borrowerAll : null;
   const totalPages = activeSideList ? Math.max(1, Math.ceil(activeSideList.length / perSide)) : 1;
   const safePage = Math.min(page, totalPages);
@@ -1230,15 +1122,14 @@ export default function OfferBook() {
         : (countByStatus.open ?? legacyOpenIds.length)
       : (countByStatus.closed ?? closedOfferIds.length);
   // `shown` is the count AFTER the full render pipeline: dedup +
-  // matchesFilter (asset / duration / liquidity) + hide-my-offers.
-  // Status bar used to read pre-dedup `offers.length`, which made the
-  // X of Y look aligned even when the filter pipeline was hiding rows
-  // — the user saw "Scanned 3 of 3 open" while only 2 rows rendered
-  // (one of theirs hidden by `hideMyOffers`). Pinning to `filtered`
-  // keeps the X tied to "what's visible right now"; the gap is
-  // explicitly named via the `hidden` suffix below so users can
-  // attribute the missing rows to their active filters instead of
-  // suspecting a bug.
+  // matchesFilter (asset / collateral / duration / liquidity). Status
+  // bar used to read pre-dedup `offers.length`, which made the X of Y
+  // look aligned even when the filter pipeline was hiding rows — the
+  // user saw "Scanned 3 of 3 open" while only 2 rows rendered (one
+  // filtered out). Pinning to `filtered` keeps the X tied to "what's
+  // visible right now"; the gap is explicitly named via the `hidden`
+  // suffix below so users can attribute the missing rows to their
+  // active filters instead of suspecting a bug.
   const shown = filtered.length;
   // Capped at zero so the brief render where `validatedTotal` resolves
   // before `filtered` does (the validation pass hits before the first
@@ -1403,23 +1294,6 @@ export default function OfferBook() {
               ]}
             />
           </div>
-          {/* Sort selector — only on lender / borrower tabs. The
-              both-tab uses closest-to-anchor ranking (depth-chart
-              layout) where a user-chosen sort would bias which
-              offers get hydrated, so the control is hidden there. */}
-          {tab !== 'both' && (
-            <div className="offer-book-filter-cell">
-              <span className="form-label">Sort by</span>
-              <Picker<SortChoice>
-                icon={<ListOrdered size={14} />}
-                ariaLabel="Sort offers"
-                value={sortChoice}
-                onSelect={setSortChoice}
-                minWidth={220}
-                items={SORT_OPTIONS.map((o) => ({ value: o.value, label: o.label }))}
-              />
-            </div>
-          )}
         </div>
       </div>
 
@@ -1436,39 +1310,6 @@ export default function OfferBook() {
           ))}
         </div>
         <div style={{ display: 'inline-flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-          {/* Hide-my-offers toggle. Only shown when a wallet is
-              connected (otherwise there are no "my" offers to hide).
-              Default ON — OfferBook is a market-discovery surface and
-              the user's own listings can't be acted on here anyway
-              (the "Your Offer" badge has no Accept button). Clicking
-              flips the filter; the per-side pagination automatically
-              fills the per-page count from non-my offers because the
-              filter runs BEFORE the per-side split. */}
-          {address && (
-            <button
-              type="button"
-              className="btn btn-ghost btn-sm"
-              onClick={() => setHideMyOffers((v) => !v)}
-              title={
-                hideMyOffers
-                  ? t('offerBookPage.hideMineShowAll', {
-                      defaultValue: 'Show all offers including your own',
-                    })
-                  : t('offerBookPage.hideMineHide', {
-                      defaultValue:
-                        "Hide your own offers from the market list (they're still visible on the Dashboard)",
-                    })
-              }
-            >
-              {hideMyOffers
-                ? t('offerBookPage.hideMineToggleShow', {
-                    defaultValue: 'Show my offers',
-                  })
-                : t('offerBookPage.hideMineToggleHide', {
-                    defaultValue: 'Hide my offers',
-                  })}
-            </button>
-          )}
           <Picker<number>
             icon={<ListOrdered size={14} />}
             ariaLabel={t('offerBookPage.perSide')}

@@ -2064,6 +2064,32 @@ all 10 locales; the bucket labels reuse `createOffer.durationBucket`;
 the now-unused `offerBookPage.{minDuration, maxDuration, *Placeholder}`
 keys were removed. `offerBookRanking.test.ts` updated for the new shape.
 
+## OfferBook — removed the sort dropdown + the "Hide my offers" toggle
+
+Both were low-value controls on a page that already has sensible
+defaults, so they're gone:
+
+- **Sort dropdown** (`SortChoice` / `SORT_OPTIONS`, shown on the
+  lender / borrower tabs) — removed. The open view already orders by a
+  meaningful default (closest-to-market-rate anchor ranking on `both`;
+  recency-DESC elsewhere) and the closed view's natural order is
+  recency, so a user-selectable sort across rate / principal / duration
+  / recency was a redundant power feature. The pair-filtered lender /
+  borrower views now use recency-DESC (newest first) — the same default
+  the rest of the page already used. `buildPairSortComparator(choice)`
+  collapsed to a fixed `compareOfferRankingByRecencyDesc`.
+- **"Hide my offers" toggle** — removed (along with its
+  `vaipakam:offerBook:hideMyOffers` localStorage persistence). The
+  connected wallet's own offers now stay in the market list; "My
+  Offers" (wallet menu) is where you see your own listings. The
+  per-side count / pagination logic that worked around hidden rows is
+  simplified accordingly.
+
+Net: the OfferBook's filter row is now Lending asset · Collateral asset
+· Duration · Liquidity, with no sort/hide controls. Removed the
+`offerBookPage.hideMine*` i18n keys (all 10 locales); `OfferBook.test.tsx`
+needed no change (it never exercised either control).
+
 ## Release-notes mid-stream date roll
 
 The conversation that produced this release-notes file started on
