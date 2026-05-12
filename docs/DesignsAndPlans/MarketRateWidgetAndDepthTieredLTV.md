@@ -1,11 +1,12 @@
 # "Lend / Borrow at market rate" widget + depth-tiered LTV
 
-Status: **design — not yet implemented.** Two related but separable
-pieces. Piece A (the widget) is a frontend-only change on top of the
-already-shipped Range Orders Phase 1 and the existing `HF ≥ 1.5e18`
-init gate. Piece B (depth-tiered LTV) is a contract risk-parameter
-change that **requires an audit + risk sign-off** and is queued behind
-the Range-Orders + matcher-bot testnet bake.
+Status: **design locked 2026-05-13 (§5) — implementation not started.**
+Two related but separable pieces. Piece A (the widget) is a
+frontend-only change on top of the already-shipped Range Orders Phase 1
+and the existing `HF ≥ 1.5e18` init gate — cleared to build. Piece B
+(depth-tiered LTV) is a contract risk-parameter change that **requires
+an audit + risk sign-off** and is queued behind the Range-Orders +
+matcher-bot testnet bake (§4.4).
 
 Author note: this doc records a real-pool depth census (§3) that
 changed the recommendation for Piece B — read §3 and §4 before
@@ -563,74 +564,149 @@ liquidation behaviour is observed.
 
 ### 4.4 Sequencing & gates
 
-1. Ship Piece A (the widget) — frontend-only, no dependency on Piece B;
-   can land with / just after the matcher-bot work.
+1. **Ship Piece A** — the widget + the §2.b cross-chain "thin here"
+   warning + the §4.1.b 0x/1inch widget pre-check. Frontend-only, no
+   contract dependency; can land with / just after the matcher-bot work.
 2. Port the matcher bot into `apps/keeper` (see `KeeperBotTopology`
    memory / Range Orders plan) and bake the matching + liquidation path
    on testnet for ~2 weeks.
-3. Implement Piece B contracts behind a master kill-switch
-   (`depthTieredLtvEnabled` in `ProtocolConfig`, default `false`, à la
-   the Range-Orders flags) so it can be flipped on chain-by-chain after
-   a per-chain depth census.
-4. **Audit + risk sign-off on Piece B before mainnet enable** — it is a
-   direct loosening of the init safety buffer; bundle with the
+3. **Fix the base `checkLiquidity` floor** to the slippage-at-`floorSizeUsd`
+   check (best route over {WETH,USDC,USDT} × Uni-V3 clones × fee ≤0.3%,
+   spot≈feed guard) — replaces the mislabeled `liquidity() × ethPrice`
+   floor. Standalone Phase-7b-area change; can land independently of /
+   ahead of the rest of Piece B.
+4. **Implement the rest of Piece B** behind `depthTieredLtvEnabled`
+   (`ProtocolConfig`, default `false`, à la the Range-Orders flags):
+   `getLiquidityTier` view + the tier-size / tier-LTV / TWAP-guard
+   globals + the `LoanFacet._runInitGates` cap + the `assetTierCeiling`
+   mapping & `KEEPER_ROLE` (relay storage; the keeper process itself is
+   step 5).
+5. **Keeper-fed demotion relay (Phase 2.5)** — the `apps/keeper` process
+   that queries 0x/1inch and writes `assetTierCeiling` (see §4.1.b /
+   decision 9.ii). Lands *before* `depthTieredLtvEnabled` is flipped on
+   any chain, so tiered-LTV never goes live without the safety net.
+   Single keeper to start; the N-of-M oracle-quorum form is a later
+   hardening.
+6. **Per-chain slippage census + audit + risk sign-off**, then flip
+   `depthTieredLtvEnabled` chain-by-chain. The audit covers steps 3–5
+   (a direct loosening of the init safety buffer) — bundle with the
    Range-Orders audit or run as a follow-up.
+
+**Deferred / parallel — improve the liquidator keeper bot for higher
+LTV.** A higher init-LTV means a thinner cushion at liquidation (HF
+crosses 1.0 with less margin), so the liquidator must be *faster*
+(tighter HF monitoring) and *smarter about execution* (best-route /
+split-route swaps via the aggregators, partial liquidations,
+possibly flash-loan-funded so the bot needs no working capital). This
+is a `apps/keeper` (+ public reference `vaipakam-keeper-bot`)
+improvement, tracked separately — flagged here because the Tier-3 LTV
+shouldn't ramp past its conservative opening figure until the
+liquidator bot has been hardened for it.
 
 ---
 
-## 5. Open decisions
+## 5. Decisions (locked 2026-05-13)
 
-1. **Piece A**: ship the widget now on the existing `HF ≥ 1.5` math (no
-   tiers), as a pure prefilled deep-link to Create Offer (no one-click
-   post, button never disabled)? (Recommended yes — it's the UX you
-   asked for, contract-change-free, one submit path with full review.)
-2. **Piece B model — confirmed?** Permissionless: the on-chain
+1. **Piece A — ship now. ✅** The widget on the existing `HF ≥ 1.5`
+   math (no tiers), a pure prefilled deep-link to Create Offer — no
+   one-click post, button never disabled. Includes the §2.b cross-chain
+   warning and the §4.1.b 0x/1inch widget pre-check (decision 9.i).
+2. **Piece B model — confirmed. ✅** Permissionless: the on-chain
    simulated-swap-slippage check (§4.1) *is* the tier authority — no
    governance per-asset allowlist/tier-list; the only per-asset lever is
-   the existing `pauseAsset` / blacklist (a *remove*, never an *admit*);
+   the existing `pauseAsset` / blacklist (remove-only, never admit);
    governance owns only the global knobs. V3 uses the cheap virtual-
    reserve constant-product approximation (not the gas-heavy Quoter),
    accepting the large-trade-on-a-thin-adjacent-tick caveat, bounded by
    the conservative top-tier LTV + the spot≈feed + TWAP-consistency
-   guards. (Trade-off acknowledged: single-hop only, so an asset like
-   SHIB with deep liquidity *via* SHIB/stable pairs but a thin direct
-   pool stays low-tier / manual until a multi-hop-aware check exists.)
-3. **Tier LTVs**: Tier 1 50% / Tier 2 60% / Tier 3 **65%** (set
-   2026-05-12; init HF ≈ 1.26 vs an ~82% liq-threshold) — confirm, or
-   open Tier 3 even lower and ramp? (Risk-committee call.)
-4. **Route-search scope** (§4.1): {asset/WETH, asset/USDC, asset/USDT}
-   × {Uni/Sushi/Pancake V3, by availability} × fee tiers ≤ 0.3% (drops
-   the 1% tier — also slightly tightens the base `Liquid` gate) — confirm.
-5. **Test sizes + slippage bound**: $5 k floor / $50 k / $500 k / $5 M
-   tiers at ≤2% slippage — confirm as the launch defaults, pending the
-   per-chain census re-validation.
-6. **Market cap as a criterion?** Recommendation: **no** on-chain gate
-   (`totalSupply() × price` measures FDV not liquidity, is manipulable,
-   and is redundant with the $5 k slippage floor) — use it advisory-only
-   off-chain (keeper demotion relay / widget flag). Agree?
-7. Fix the *base* `checkLiquidity` floor to the slippage-at-$5 k check
-   now (independent of Piece B — today's `liquidity() × ethPrice` floor
-   is mislabeled: "$1 M" ≈ "pool isn't empty"), or only as part of
-   Piece B?
-8. **Which spot-DEX families on-chain?** v1 = Uni-V3 clones only
-   (current). Add Uni-V2 forks and/or Curve StableSwap (the two
-   highest-value additions — V2 covers long-tail, Curve covers
-   stables/LSTs)? Balancer V2 via `Vault.queryBatchSwap`? (Each is new
-   audited read-math.) Note: **perps DEXs — dYdX / AsterDEX — are out**
-   (perp orderbook depth ≠ spot liquidity; nothing for a liquidator to
-   sell into; dYdX isn't EVM). Chain-native AMMs we *don't* integrate
-   (Aerodrome/Base, Velodrome/OP, Camelot/Arb, …) → assets that live
-   only there are conservatively under-tiered on-chain (fail-safe —
-   0x/1inch still route there at liquidation); closing that gap = add
-   more on-chain families *or* a quorum-gated promotion relay (Phase 3).
-9. **Aggregator usage** (§4.1.b): (i) widget pre-check via the existing
-   0x/1inch Worker proxy — yes? (recommended); (ii) the keeper-fed
-   *demotion* relay (`assetTierCeiling`, keeper can only lower) — in
-   Phase 2, deferred to 2.5, or skip? If yes, single keeper or behind
-   the existing N-of-M oracle quorum?
-10. **Cross-chain "thin here" warning** (§2.b) on Create Offer + Accept
-    Offer — ship the generic version with Piece A; "which chain is
-    deeper" hint is a Phase 2.5/3 follow-up (needs a cross-(asset,chain)
-    depth index). OK?
-11. Master kill-switch name/shape: `depthTieredLtvEnabled` in
-    `ProtocolConfig`, default `false`, à la the Range-Orders flags — OK?
+   guards + the keeper demotion relay. Acknowledged trade-off: single-hop
+   only — SHIB-likes (deep *via* a stable pair, thin *against* one) stay
+   low-tier / manual until a multi-hop-aware check exists.
+3. **Tier LTVs — Tier 1 50% / Tier 2 60% / Tier 3 65%. ✅** (Init HF ≈
+   1.26 vs an ~82% liq-threshold.) Risk committee may open Tier 3 lower
+   and ramp; ramp gated on the liquidator-bot hardening (§4.4 deferred).
+4. **Route-search scope — confirmed. ✅** {asset/WETH, asset/USDC,
+   asset/USDT} × {Uniswap / SushiSwap / PancakeSwap V3, whichever's
+   configured on the chain} × fee tiers ≤ 0.3% (drops the 1% tier — also
+   slightly tightens the base `Liquid` gate; fail-safe).
+5. **Test sizes + slippage bound — confirmed as launch defaults. ✅**
+   $5 k floor / $50 k → T1 / $500 k → T2 / $5 M → T3, all at ≤ 2%
+   slippage; re-validated per chain before `depthTieredLtvEnabled` flips.
+6. **Market cap — NOT an on-chain criterion. ✅** `totalSupply() × price`
+   measures FDV not liquidity, is manipulable (`totalSupply()` is
+   whatever the token returns), and is redundant with the $5 k slippage
+   floor. Advisory-only off-chain (keeper demotion-relay heuristic /
+   widget flag).
+7. **Base `checkLiquidity` floor — fix it now. ✅** Replace
+   `liquidity() × ethPrice` ("$1 M" ≈ "pool isn't empty") with the
+   slippage-at-`floorSizeUsd` check. Standalone Phase-7b-area change,
+   ahead of the rest of Piece B (§4.4 step 3).
+8. **Spot-DEX families on-chain — v1 = Uniswap-V3 clones only. ✅**
+   Accept the conservative under-count for assets that live only on a
+   chain-native AMM we don't integrate (Aerodrome/Base, Velodrome/OP,
+   Camelot/Arb, …) — fail-safe (0x/1inch still route there at
+   liquidation). Adding Uni-V2 forks + Curve StableSwap is the
+   highest-value later addition; Balancer V2 via `Vault.queryBatchSwap`
+   optional. **Perps DEXs (dYdX / AsterDEX) are out** — perp orderbook
+   depth ≠ spot liquidity; nothing for a liquidator to sell into; dYdX
+   isn't EVM-readable.
+9. **Aggregators (§4.1.b):** (i) **widget pre-check via the existing
+   0x/1inch Worker proxy — yes, ships with Piece A. ✅** (ii) **keeper-fed
+   demotion relay — Phase 2.5, single keeper to start, quorum form
+   later. ✅** (rationale: see the note below.)
+10. **Cross-chain "thin here" warning — ship the generic version with
+    Piece A. ✅** "Which chain is deeper" hint is a Phase 2.5/3 follow-up
+    (needs a cross-(asset, chain) depth index).
+11. **Master kill-switch — `depthTieredLtvEnabled` in `ProtocolConfig`,
+    default `false`. ✅** While off, the init gate is exactly today's
+    `HF ≥ 1.5`; flip per chain after that chain's census + the relay
+    being live.
+
+### 9.ii — the keeper-fed demotion relay, in detail
+
+*What it is.* The on-chain slippage check (§4.1) has one dangerous
+weakness: for V3 it uses the virtual-reserve constant-product
+approximation, which is exact only while the test trade stays inside
+the current tick — for a $5 M test trade against a pool that's deep at
+the current tick but thin in the *adjacent* ticks, it can *under-state*
+the slippage → the asset is **over-tiered** → opened at a higher LTV
+than is actually safe. (The other directions — single-hop, Uni-V3-only —
+*under*-count, which is fail-safe.) The relay corrects the over-tier:
+an off-chain keeper (a pass in `apps/keeper`, next to the liquidator)
+periodically queries 0x / 1inch for the *real* slippage of selling each
+active collateral asset at the tier sizes; when the aggregator says an
+asset is worse than the on-chain check concluded, the keeper calls
+`setAssetTierCeiling(asset, lowerTier)`; `effectiveTier(asset) =
+min(getLiquidityTier(asset), assetTierCeiling[asset])`.
+
+*Why it's safe by construction.* (1) **Demotion-only** — `assetTierCeiling`
+defaults to `3` (no effect); the `KEEPER_ROLE` setter can only *lower*
+an asset's effective tier (clamped to `≥ 1` — it cannot make an asset
+`Illiquid`, that stays the separate binary `checkLiquidity` gate). So a
+*compromised* keeper can only make assets *more* conservative — at
+worst it caps everything at Tier 1 (~53% LTV), i.e. it can grief the
+high-LTV path; it cannot create an under-collateralised loan. No user
+funds at risk; existing loans untouched (the tier gates *init* only).
+(2) **Fail-open** — if the keeper is down or never ran, the ceiling is
+`3` everywhere → the on-chain check governs alone → the system still
+works. The relay is additive hardening, not a dependency. (3) **Not an
+allowlist** — every asset is still auto-tiered by the on-chain check;
+the keeper only ever *trims* the on-chain conclusion → fully compatible
+with the permissionless requirement. (4) **Recoverable** — governance
+can clear a bogus ceiling / rotate the keeper key.
+
+*Single keeper vs quorum.* Single keeper is fine to start: the worst
+case (DoS-on-some-asset's-high-LTV-path) is bounded and recoverable.
+If even that bounded power is unwanted, put the ceiling behind the
+existing N-of-M oracle quorum (Tellor/API3/DIA-style) — the ceiling
+for an asset becomes the most-conservative value M-of-N keepers agree
+on, so one compromised keeper can't even grief. Trade-off: N keeper
+processes + more on-chain writes. **Recommendation: single keeper for
+v1 (Phase 2.5), quorum as a later hardening.**
+
+*Timing.* Phase 2.5 — lands between Piece B's contract change (which
+includes the `assetTierCeiling` *storage* + `KEEPER_ROLE`, step 4) and
+flipping `depthTieredLtvEnabled` on any chain (step 6), so tiered-LTV
+never goes live on mainnet without the safety net up. From your side
+the effect is the same as "Phase 2"; it's just sequenced so Piece B's
+audit doesn't have to wait on the keeper process being written.
