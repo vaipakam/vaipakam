@@ -22,6 +22,7 @@ import { DEFAULT_CHAIN } from '../contracts/config';
 import { beginStep, emit } from '../lib/journeyLog';
 import { decodeContractError, extractRevertSelector } from '@vaipakam/lib/decodeContractError';
 import { useLogIndex } from '../hooks/useLogIndex';
+import { useOnchainActiveOfferIds } from '../hooks/useOnchainActiveOfferIds';
 import { useIndexedActiveOffers } from '../hooks/useIndexedActiveOffers';
 import { useActiveOffersByAssetPairRanked } from '../hooks/useActiveOffersByAssetPairRanked';
 import { OFFER_BOOK_PAGE_SIZE } from '../lib/offerBookConfig';
@@ -280,6 +281,18 @@ export default function OfferBook() {
     source: indexedSource,
     refetch: refetchIndexedOffers,
   } = useIndexedActiveOffers();
+  // When the central indexer (D1) is confirmed down (`source ===
+  // 'fallback'`), pull the authoritative active-offer-id list straight
+  // from the Diamond (`getActiveOffersPaginated`) instead of relying on
+  // `useLogIndex`'s `eth_getLogs`-scanned `openOfferIds`. `legacyOpenIds`
+  // prefers the on-chain getter when it's resolved, otherwise falls to
+  // the log scan (which is also the path for a stale-but-up indexer that
+  // returns 0). When the indexer is healthy this hook is disabled and
+  // `legacyOpenIds === openOfferIds`, so nothing changes.
+  const { ids: onchainActiveOfferIds } = useOnchainActiveOfferIds(
+    indexedSource === 'fallback',
+  );
+  const legacyOpenIds = onchainActiveOfferIds ?? openOfferIds;
   const rescanCooldown = useRescanCooldown({ loading: indexLoading });
   // Map<offerId, loanId> derived from `OfferAccepted` events in the
   // log-index. Each accepted offer's event carries its resulting loanId,
@@ -474,9 +487,9 @@ export default function OfferBook() {
           : buildPairSortComparator(sortChoice);
       return [...pairRankings].sort(cmp).map((r) => r.id);
     }
-    const src = statusView === 'open' ? openOfferIds : closedOfferIds;
+    const src = statusView === 'open' ? legacyOpenIds : closedOfferIds;
     return [...src].sort((a, b) => (a < b ? 1 : a > b ? -1 : 0));
-  }, [usePairPath, pairRankings, openOfferIds, closedOfferIds, statusView, tab, sortChoice]);
+  }, [usePairPath, pairRankings, legacyOpenIds, closedOfferIds, statusView, tab, sortChoice]);
 
   // Verified tab counts — the log index lists IDs by event (OfferCreated
   // minus OfferAccepted/Canceled), but RPC lag or missed events can leave
@@ -735,7 +748,7 @@ export default function OfferBook() {
     setCountByStatus({ open: null, closed: null });
     (async () => {
       const [openCount, closedCount] = await Promise.all([
-        fetchValidCount([...openOfferIds], 'open'),
+        fetchValidCount([...legacyOpenIds], 'open'),
         fetchValidCount([...closedOfferIds], 'closed'),
       ]);
       if (!cancelled) setCountByStatus({ open: openCount, closed: closedCount });
@@ -743,7 +756,7 @@ export default function OfferBook() {
     return () => {
       cancelled = true;
     };
-  }, [indexLoading, openOfferIds, closedOfferIds, fetchValidCount]);
+  }, [indexLoading, legacyOpenIds, closedOfferIds, fetchValidCount]);
 
   // Fetch the rolling list of recent accepted offers in NEWEST-FIRST order
   // so `anchorRateBps` can pick the freshest one matching the current
@@ -1210,7 +1223,7 @@ export default function OfferBook() {
     statusView === 'open'
       ? indexerServingOpen
         ? indexedOffers?.length ?? sortedIds.length
-        : (countByStatus.open ?? openOfferIds.length)
+        : (countByStatus.open ?? legacyOpenIds.length)
       : (countByStatus.closed ?? closedOfferIds.length);
   // `shown` is the count AFTER the full render pipeline: dedup +
   // matchesFilter (asset / duration / liquidity) + hide-my-offers.
@@ -1291,7 +1304,7 @@ export default function OfferBook() {
               ? `${t('offerBook.tabOpen')} (${
                   indexerServingOpen
                     ? indexedOffers?.length ?? sortedIds.length
-                    : (countByStatus.open ?? openOfferIds.length)
+                    : (countByStatus.open ?? legacyOpenIds.length)
                 })`
               : `${t('offerBook.tabClosed')} (${countByStatus.closed ?? closedOfferIds.length})`}
           </button>

@@ -2015,6 +2015,33 @@ Two fixes:
    read-only mode, so the localStorage snapshot now renders on a
    wallet-less load instead of coming up empty.
 
+## OfferBook fallback — use the on-chain `getActiveOffersPaginated` getter, not the log scan
+
+When the central indexer (D1) is unreachable the OfferBook's open view
+fell through to `useLogIndex`'s `openOfferIds` — i.e. an in-browser
+`eth_getLogs` scan of `OfferCreated/Accepted/Canceled` events, which on
+public RPCs is slow and a genesis-scan footgun. New `useOnchainActiveOfferIds`
+hook reads `MetricsFacet.getActiveOffersCount` + pages
+`getActiveOffersPaginated(offset, 200)` to get the *authoritative*
+active-offer-id list straight from the Diamond's `s.activeOfferIdsList`
+— one `eth_call` for the count + ⌈count/200⌉ for the slices, no log
+scan. The OfferBook now sources the open view's id list from
+`onchainActiveOfferIds ?? openOfferIds` (`legacyOpenIds`): the on-chain
+getter when it's resolved, the log scan otherwise. The hook is gated to
+fire only once the indexer has *confirmed* failed
+(`indexedSource === 'fallback'`), so a healthy-indexer page spends no
+extra RPC and `legacyOpenIds === openOfferIds` (no behaviour change). It
+re-reads on the shared `warm` watermark bump + tab-focus.
+
+Net: with no D1 (e.g. a static / IPFS deploy) the OfferBook's open view
+runs purely on contract getters — `getActiveOffersPaginated` for the
+ids → `getOffer` per id (the existing `fetchBatch` pipeline) — instead
+of the `eth_getLogs` scan. (The CLOSED view still uses `useLogIndex` —
+there's no clean on-chain "all closed offers" getter and it's a minor
+surface. The `useIndexedActiveLoans` half of "wire the getters" was
+skipped — no page currently consumes it; there's no protocol-wide
+active-loans list view.)
+
 ## Release-notes mid-stream date roll
 
 The conversation that produced this release-notes file started on
