@@ -70,13 +70,18 @@ library LibVaipakam {
     uint256 constant SECONDS_PER_YEAR = 365 days;
     uint256 constant DAYS_PER_YEAR = 365;
     uint256 constant ONE_DAY = 1 days;
-    // $1M pool-depth floor for classifying an asset as Liquid. Expressed
-    // in the units produced by the WETH-referenced heuristic in
-    // {OracleFacet._checkLiquidityWithConfig}: `poolLiquidity * ethPrice /
-    // 10**ethFeedDecimals`, where `ethPrice` is the 8-decimal Chainlink
-    // ETH/USD answer. The constant is an empirical floor, not a strict
-    // dollar unit — it is calibrated against asset/WETH 0.3% v3-style AMM
-    // pools on target deployments and tuned via ops if coverage shifts.
+    // $1M USD pool-depth floor for classifying an asset as Liquid.
+    // Expressed in $ × 1e6 units, i.e. `1_000_000 * 1e6` literally means
+    // "$1,000,000". {OracleFacet._v3DepthLiquid} computes a *real* USD
+    // depth-at-tick from the asset/WETH v3-style pool (the WETH-leg
+    // virtual reserve `L·√P/2⁹⁶` — or `L·2⁹⁶/√P` when WETH is token0 —
+    // valued at the spot ETH/USD feed, doubled, then × 1e6) and compares
+    // it to this. (Pre-2026-05: the metric was `poolLiquidity × ethPrice`
+    // whose magnitude was dominated by the paired token's decimals + unit
+    // price, so this threshold was effectively "the pool isn't empty";
+    // the metric was rewritten to a true dollar figure — see that
+    // function's natspec.) Tunable via ops if coverage shifts; the graded
+    // tiers on top of this floor (Piece B) carry their own knobs.
     uint256 constant MIN_LIQUIDITY_USD = 1_000_000 * 1e6;
     uint256 constant LTV_SCALE = 10000; // Basis points (e.g., 7500 = 75%)
     uint256 constant RENTAL_BUFFER_BPS = 500; // 5% buffer for NFT rentals

@@ -4,6 +4,7 @@ pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
+import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {FeedRegistryInterface} from "@chainlink/contracts/src/v0.8/interfaces/FeedRegistryInterface.sol";
 import {AggregatorV3Interface} from "@chainlink/contracts/src/v0.8/shared/interfaces/AggregatorV3Interface.sol";
 import {AggregatorV2V3Interface} from "@chainlink/contracts/src/v0.8/shared/interfaces/AggregatorV2V3Interface.sol";
@@ -108,6 +109,11 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
     uint24 private constant V3_TIER_STANDARD  = 3000;
     uint24 private constant V3_TIER_HIGH      = 10000;
 
+    /// @dev `2**96` — the fixed-point base for a Uniswap-V3-style pool's
+    ///      `sqrtPriceX96`. Used in {_v3DepthLiquid} to reconstruct the
+    ///      pool's virtual reserves from `(liquidity, sqrtPriceX96)`.
+    uint256 private constant Q96 = 1 << 96;
+
     /**
      * @notice Classification entry point for "is this asset liquid on the
      *         active network?" used at transaction-authorization boundaries.
@@ -187,10 +193,32 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
     ///      any UniswapV3-fork factory address (UniswapV3 itself,
     ///      PancakeSwap V3, SushiSwap V3, or any other ABI-compatible
     ///      mock). Returns true iff `factory` exposes an asset/WETH
-    ///      pool whose `liquidity()` value, multiplied by the spot
-    ///      ETH/USD price, meets {LibVaipakam.MIN_LIQUIDITY_USD}.
-    ///      Pool selection iterates the standard fee tiers + 2500
-    ///      (PancakeV3) via {_lookupPool}.
+    ///      pool whose **USD depth-at-tick** meets
+    ///      {LibVaipakam.MIN_LIQUIDITY_USD} (= $1M, expressed in
+    ///      $ × 1e6 units).
+    ///
+    ///      Depth metric — a real dollar figure, not the old
+    ///      `liquidity() × ethPrice` heuristic (whose magnitude was
+    ///      dominated by the paired token's decimals + unit price, so a
+    ///      single global threshold against it meant little more than
+    ///      "the pool isn't empty"). At the current tick a V3 pool's
+    ///      virtual reserves are `x_v = L · 2⁹⁶ / √P_X96` and
+    ///      `y_v = L · √P_X96 / 2⁹⁶` (token0 / token1 base units), and
+    ///      the pool is value-balanced there — so the USD value of the
+    ///      WETH leg, doubled, is the depth a liquidator could trade
+    ///      against without crossing ticks. We take the WETH leg (token1
+    ///      when `asset < weth`, else token0), value it at the spot
+    ///      ETH/USD feed, and double it. `Math.mulDiv` keeps the 512-bit
+    ///      intermediate from overflowing.
+    ///
+    ///      Still an approximation (the virtual-reserve interpretation
+    ///      assumes liquidity straddles the tick symmetrically, so it
+    ///      over-states tightly-concentrated correlated pairs), and
+    ///      single-hop (asset/WETH only) — the graded tiering on top of
+    ///      this floor (Piece B, behind `depthTieredLtvEnabled`) is the
+    ///      place where multi-denominator + a correlated-pair guard go;
+    ///      this floor stays the cheap "is there obvious spot depth"
+    ///      gate.
     ///
     ///      A zero `factory` short-circuits to false so the parent
     ///      OR-combine in {_checkLiquidity} can transparently skip
@@ -227,9 +255,26 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
         );
         if (!liqOk || liqData.length < 32) return false;
         uint128 poolLiquidity = abi.decode(liqData, (uint128));
+        if (poolLiquidity == 0) return false;
 
-        uint256 approxUsdLiquidity = (uint256(poolLiquidity) * ethPrice) / (10 ** ethDec);
-        return approxUsdLiquidity >= LibVaipakam.MIN_LIQUIDITY_USD;
+        // WETH-leg virtual reserve at the current tick, in WETH base
+        // units (18 dec). `asset < weth` ⇒ token0 = asset, token1 =
+        // WETH ⇒ leg = `L · √P / 2⁹⁶`. Otherwise token0 = WETH ⇒ leg
+        // = `L · 2⁹⁶ / √P`.
+        uint256 wethLeg = asset < weth
+            ? Math.mulDiv(uint256(poolLiquidity), uint256(sqrtPriceX96), Q96)
+            : Math.mulDiv(uint256(poolLiquidity), Q96, uint256(sqrtPriceX96));
+
+        // usdDepthScaled (= depth_in_USD × 1e6, to compare directly
+        // against `MIN_LIQUIDITY_USD = 1_000_000 * 1e6`):
+        //   wethLeg × ethPrice / 10**ethDec      = USD value of the leg × 1e18
+        //   × 2 (both legs)  × 1e6 (the scale)   / 1e18 (undo the WETH scale)
+        uint256 usdDepthScaled = Math.mulDiv(
+            Math.mulDiv(wethLeg, ethPrice, 10 ** ethDec),
+            2_000_000,
+            1e18
+        );
+        return usdDepthScaled >= LibVaipakam.MIN_LIQUIDITY_USD;
     }
 
 
