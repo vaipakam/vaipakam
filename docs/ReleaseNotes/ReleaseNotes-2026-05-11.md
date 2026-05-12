@@ -1944,6 +1944,35 @@ deep-linking the *featured* MetaMask tile on a mobile browser — that
 tile still shows ConnectKit's QR-scan screen; the deep-link path on
 mobile is "All Wallets" → MetaMask.
 
+## "New version available — Reload" banner (stale-bundle protection)
+
+A SPA tab left open across a deploy keeps running the old JS, and even
+a plain reload can serve a cached `index.html` referencing the old
+content-hashed chunks (browser HTTP cache + the service-worker Cache
+Storage, which "unregister" does NOT delete). The downstream symptom
+seen in the wild: `loadLoanIndex`'s "chain config not resolved
+(deployBlock=0)" guard firing because the stale bundle predates a
+`deployments.json` update.
+
+New `AppUpdateBanner` (mounted in `AppLayout`, every connected-app
+page): on load, every 5 min, and on tab-focus it does ONE
+`fetch('/index.html', { cache: 'no-store' })` (no chain RPC), pulls the
+deployed entry-chunk name (`/assets/index-<hash>.js`) and compares it
+with the chunk this page actually loaded (read off the module
+`<script>` tag). Vite content-hashes that filename, so a different hash
+⇒ a newer build is live → a small bottom-left pill appears: "A new
+version of Vaipakam is available." + a **Reload** button (which nudges
+any controlling service worker to `update()` first, then
+`location.reload()` — the deployed `index.html` is
+`Cache-Control: max-age=0, must-revalidate` per `public/_headers`, so
+the reload then picks up the fresh chunks). If the loaded chunk can't
+be determined the feature disables itself (no false positives). New
+i18n `appUpdate.{message,reload,reloading}`, all 10 locales.
+
+(This can't rescue a session that's *already* on a stale bundle — that
+bundle predates the banner — so a one-time "clear site data + reload"
+is still needed to escape; after that, future deploys self-flag.)
+
 ## Release-notes mid-stream date roll
 
 The conversation that produced this release-notes file started on

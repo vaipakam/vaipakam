@@ -1,0 +1,49 @@
+/* "New version available — Reload" pill. Bottom-LEFT so it doesn't
+   collide with the WalletConnectingOverlay (bottom-centre) or the
+   diagnostics FAB (bottom-right). z-index above page chrome but below
+   the wallet-connect banner / ConnectKit modal. */
+.app-update-banner {
+  position: fixed;
+  left: 1rem;
+  bottom: 1rem;
+  z-index: 950;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.55rem 0.85rem;
+  border-radius: 999px;
+  background: var(--bg-secondary, #1a1a1a);
+  color: var(--text-primary, #fff);
+  border: 1px solid var(--brand, #4f46e5);
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.3);
+  font-size: 0.8rem;
+}
+
+.app-update-reload {
+  border: none;
+  border-radius: 999px;
+  padding: 0.3rem 0.7rem;
+  background: var(--brand, #4f46e5);
+  color: #fff;
+  font-size: 0.78rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.app-update-reload:hover:not(:disabled) {
+  filter: brightness(1.1);
+}
+
+.app-update-reload:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+@media (max-width: 640px) {
+  .app-update-banner {
+    left: 0.6rem;
+    right: 0.6rem;
+    bottom: 0.6rem;
+    justify-content: center;
+  }
+}

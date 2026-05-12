@@ -1784,5 +1784,10 @@
     "pick": "Sélectionnez votre application de portefeuille ci-dessus pour vous connecter.",
     "active": "Connexion toujours en cours… confirmez la demande dans votre portefeuille. Cela peut prendre quelques secondes sur mobile.",
     "slow": "Connexion toujours en cours… si rien ne s'est passé, rouvrez votre portefeuille, ou fermez la liste des portefeuilles et réessayez."
+  },
+  "appUpdate": {
+    "message": "Une nouvelle version de Vaipakam est disponible.",
+    "reload": "Recharger",
+    "reloading": "Rechargement…"
   }
 }

@@ -47,6 +47,7 @@ function readInitialCollapsed(): boolean {
   }
 }
 import DiagnosticsDrawer from "../components/app/DiagnosticsDrawer";
+import { AppUpdateBanner } from "../components/app/AppUpdateBanner";
 import { AppLegalFooter } from "../components/AppLegalFooter";
 import { EscrowUpgradeBanner } from "../components/app/EscrowUpgradeBanner";
 import { UnsupportedChainBanner } from "../components/app/UnsupportedChainBanner";
@@ -565,6 +566,7 @@ export default function AppLayout() {
       </div>
 
       <DiagnosticsDrawer />
+      <AppUpdateBanner />
     </div>
   );
 }

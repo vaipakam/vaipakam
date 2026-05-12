@@ -1787,5 +1787,10 @@
     "pick": "Select your wallet app above to connect.",
     "active": "Still connecting… confirm the request in your wallet. This can take a few seconds on mobile.",
     "slow": "Still connecting… if nothing happened, reopen your wallet, or close the wallet picker and try again."
+  },
+  "appUpdate": {
+    "message": "A new version of Vaipakam is available.",
+    "reload": "Reload",
+    "reloading": "Reloading…"
   }
 }
