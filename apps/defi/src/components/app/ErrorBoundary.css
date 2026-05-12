@@ -1,0 +1,77 @@
+/* Full-viewport recovery surface shown when a render error is caught.
+ * Deliberately self-contained (no app chrome / sidebar) — the chrome
+ * itself may be what crashed. */
+.error-boundary-fallback {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: var(--bg, #0b0d10);
+}
+
+.error-boundary-card {
+  max-width: 560px;
+  width: 100%;
+  background: var(--bg-card, #15181d);
+  border: 1px solid var(--border, #2a2f37);
+  border-radius: 16px;
+  padding: 28px 28px 24px;
+  text-align: center;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.35);
+}
+
+.error-boundary-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--warning, #d9a23a) 16%, transparent);
+  color: var(--warning, #d9a23a);
+  margin-bottom: 14px;
+}
+
+.error-boundary-title {
+  font-size: 1.15rem;
+  font-weight: 700;
+  margin: 0 0 8px;
+  color: var(--text-primary, #e8eaed);
+}
+
+.error-boundary-body {
+  font-size: 0.92rem;
+  line-height: 1.5;
+  color: var(--text-secondary, #aab2bd);
+  margin: 0 0 14px;
+}
+
+.error-boundary-detail {
+  text-align: left;
+  font-size: 0.78rem;
+  line-height: 1.4;
+  background: var(--bg, #0b0d10);
+  border: 1px solid var(--border, #2a2f37);
+  border-radius: 8px;
+  padding: 10px 12px;
+  margin: 0 0 12px;
+  color: var(--text-tertiary, #7d8694);
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 160px;
+  overflow: auto;
+}
+
+.error-boundary-hint {
+  font-size: 0.78rem;
+  color: var(--text-tertiary, #7d8694);
+  margin: 0 0 18px;
+}
+
+.error-boundary-actions {
+  display: flex;
+  gap: 10px;
+  justify-content: center;
+  flex-wrap: wrap;
+}

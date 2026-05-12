@@ -2195,6 +2195,41 @@ and the `analyticsRescanCooldown` state; the `publicDashboard.refresh*`
 i18n keys are left in place (unused). The other pages' Refresh buttons
 are unchanged for now.
 
+## App-wide render-error boundary + watermark snapshot reset on chain switch
+
+Two fixes prompted by the Analytics page going blank — and showing a
+nonsense "blocks behind" number — right after switching the in-page
+view-chain (e.g. Base Sepolia → Sepolia).
+
+**1. App-wide error boundary.** Until now the connected app had no React
+error boundary anywhere, so any exception thrown during render
+(a `.toLowerCase()` on an undefined field, a viem ABI-decode mismatch
+surfaced inside a `useMemo`, a context consumed outside its provider, …)
+unmounted the entire React tree and left a blank white page — nothing
+for the user to act on, nothing logged. The new `ErrorBoundary`
+(wrapping the routed surface, resetting on route navigation) turns that
+into a recoverable error card ("Reload page" / "Back to Dashboard") and
+records an `app-crash` entry in the journey-log buffer with the message
++ stack + truncated component stack, so the Diagnostics drawer (and an
+exported support bundle) shows what actually threw. The next occurrence
+is diagnosable instead of a dead end. The error card is intentionally
+chrome-free (the chrome itself may be what crashed) and uses fixed
+English copy (the crash could be in i18n init).
+
+**2. Watermark snapshot reset on chain switch.** The shared
+`WatermarkProvider` only cleared its `{snapshot}` (the `safe`-block +
+lifetime counters) when the new chain had *no* Diamond — switching
+*between* two deployed chains left the prior chain's `safeBlock` in
+place until the first probe on the new chain landed. In that window the
+`<DataSyncStatus>` chip computed `safeHead − maxFrontier` across two
+different chains (Base Sepolia ≈ 41M vs Sepolia ≈ 11M) and flashed
+"~30,000,000 blocks behind". Now the snapshot + status are cleared up
+front whenever the probe target (chain/diamond) changes, so the chip
+renders nothing during the transition and shows the correct gap once
+the new chain's probe lands. `version` is deliberately *not* reset — it
+is a monotonic change-counter and the data hooks keyed on it are
+already re-keyed on chain/diamond.
+
 ## Release-notes mid-stream date roll
 
 The conversation that produced this release-notes file started on

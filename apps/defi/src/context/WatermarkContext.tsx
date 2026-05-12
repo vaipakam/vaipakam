@@ -130,12 +130,24 @@ export function WatermarkProvider({ children }: { children: ReactNode }) {
   }, []);
 
   useEffect(() => {
+    // Chain / diamond switch (or first mount): the prior chain's
+    // `safeBlock` + lifetime counters are meaningless on the new chain.
+    // Clear them up front so consumers that read `snapshot.safeBlock`
+    // — `DataSyncStatus`'s "N blocks behind" gap, the tail-scan upper
+    // bounds in `useLogIndex` etc. — don't compute nonsense against a
+    // stale cross-chain block height during the window before this
+    // chain's first probe lands. (Pre-fix, switching from a high-block
+    // chain like Base Sepolia (~41M) to a lower one like Sepolia
+    // (~11M) flashed "~30,000,000 blocks behind" until the first
+    // probe replaced the snapshot.) `version` is intentionally NOT
+    // reset — it's a monotonic change-counter, and the data hooks that
+    // key effects on it are already re-keyed on chain/diamond too.
+    setSnapshot(null);
+    setStatus('idle');
     // useDiamondPublicClient always returns a non-null client (wagmi
     // client OR a transport-only http fallback), so we only need to
     // gate on the diamond address being known for this chain.
     if (!diamond) {
-      setSnapshot(null);
-      setStatus('idle');
       rescheduleRef.current = () => {};
       return;
     }

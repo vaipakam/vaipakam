@@ -42,7 +42,8 @@ export type JourneyArea =
   | 'staking'
   | 'escrow-upgrade'
   | 'allowance'
-  | 'alerts';
+  | 'alerts'
+  | 'app-crash'; // ErrorBoundary — uncaught render-time exception
 
 export type JourneyStatus = 'start' | 'success' | 'failure' | 'info';
 

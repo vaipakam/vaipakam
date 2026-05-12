@@ -1,4 +1,5 @@
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
+import { ErrorBoundary } from './components/app/ErrorBoundary';
 import PublicDashboard from './pages/PublicDashboard';
 import AppLayout from './pages/AppLayout';
 import Dashboard from './pages/Dashboard';
@@ -125,13 +126,16 @@ function pageRoutes(): ReactElement {
   );
 }
 
-export default function App() {
+/**
+ * The routed surface, wrapped in the app-wide render-error boundary.
+ * The boundary resets on `location.pathname` change so navigating away
+ * from a crashed route recovers without a full reload. Kept as its own
+ * component so `useLocation()` runs inside `<BrowserRouter>`.
+ */
+function RoutedSurface() {
+  const location = useLocation();
   return (
-    <BrowserRouter>
-      <ScrollToHash />
-      <ConsentBanner />
-      <HreflangAlternates />
-      <DefaultLocaleRedirect />
+    <ErrorBoundary resetKey={location.pathname}>
       <Routes>
         {/* Default English tree at the unprefixed root. */}
         <Route element={<LocaleResolver locale="en" />}>
@@ -143,6 +147,18 @@ export default function App() {
           {pageRoutes()}
         </Route>
       </Routes>
+    </ErrorBoundary>
+  );
+}
+
+export default function App() {
+  return (
+    <BrowserRouter>
+      <ScrollToHash />
+      <ConsentBanner />
+      <HreflangAlternates />
+      <DefaultLocaleRedirect />
+      <RoutedSurface />
     </BrowserRouter>
   );
 }
