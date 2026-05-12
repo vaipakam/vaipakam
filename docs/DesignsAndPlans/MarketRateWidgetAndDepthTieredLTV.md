@@ -143,6 +143,27 @@ through `initiateLoan`, which enforces `HF ≥ 1.5`. The auto-filled
 that passes today's gate. Nothing on-chain changes — it's a "smart
 prefilled Create Offer" shortcut, end to end.
 
+### 2.b — Cross-chain "thin here" warning (Create Offer + Accept Offer)
+
+`checkLiquidity` (and the §4 tier) are evaluated **per chain** — they
+read this chain's pools. So an asset can be deep on chain A and thin on
+chain B (a token whose primary liquidity lives on its home chain). When
+an offer involves a **collateral** asset that is `Illiquid` — or only
+Tier 0/1 — on the *current* chain, both **Create Offer** and the
+**Accept Offer** review steps show a warning alongside the existing risk
+copy: *"⚠ This collateral asset has thin liquidity on \<chain\>. If it
+gets liquidated here, the swap may be costly or fail — and this asset
+may be much deeper on another chain. Consider creating/taking this offer
+on the chain where it has more liquidity."* (Frontend-only — both pages
+already know the asset + chain and can read `checkLiquidity` /
+`getLiquidityTier`.) This fires regardless of whether the offer came via
+the widget. **Better-approach refinement (Phase 2.5/3):** also tell the
+user *which* chain is deeper — needs a cross-(asset, chain) depth index
+the keeper/indexer maintains (or the frontend queries the aggregator API
+per chain) — then the warning links straight to the chain picker
+("switch to Base — 5× the depth there"). v1 ships the generic warning;
+the "which chain" hint is a follow-up.
+
 ---
 
 ## 3. Real-pool depth census (Ethereum mainnet, ETH ≈ $2,264)
@@ -293,16 +314,48 @@ be computed cheaply:
   approximation, accept the large-trade-on-a-thin-adjacent-tick caveat,
   and bound the consequences (below).**
 
-Run the simulation against the asset's **{asset/WETH, asset/USDC,
-asset/USDT}** pools across the configured V3 (and, if added, V2)
-venues, and take the **best route** (lowest slippage) — that's still
-single-hop (a SHIB→USDC→WETH route isn't covered without a Quoter path
-or composing two single-hop slippages — a possible refinement). The
-spot price used in the slippage ratio must agree with the **Chainlink
-feed** the asset already needs to be `Liquid` — if the pool's spot
-deviates from the trusted price by more than a small bound, the pool is
-manipulated/stale → `Illiquid` (this is the manipulation guard, and
-the project already requires a fresh feed here).
+**Scope of the route search** (a deliberate narrowing — these are the
+"predominantly-available" denominators / venues / fee tiers; anything
+outside this is enough of a signal that the asset isn't blue-chip that
+we don't bother): the asset's **{asset/WETH, asset/USDC, asset/USDT}**
+pools, across whichever of **{Uniswap V3, SushiSwap V3, PancakeSwap V3}**
+is configured on this chain (a zero factory is skipped — same as
+`_checkLiquidity` today), at fee tiers **≤ 0.3% only** (`100` / `500` /
+`2500` PancakeV3 / `3000` — *not* the `10000` 1%-tier; from the §3
+census every deep pool is in a ≤0.3% tier, the 1% tier is where dust
+pairs live, so requiring depth in a ≤0.3% pool is the conservative
+choice — and it's one fewer probe). Take the **best route** (lowest
+slippage). Two acknowledged narrownesses: (i) **single-hop only** — a
+SHIB→USDC→WETH route isn't covered without a Quoter path or composing
+two single-hop slippages (a possible later refinement), so an asset
+whose liquidity is mainly *via* a stable pair, not *against* one,
+under-scores here; (ii) restricting to ≤0.3% pools also slightly
+**tightens the base `Liquid`/`Illiquid` gate** vs today (which probes
+the 1% tier too) — fail-safe direction. The spot price used in the
+slippage ratio must agree with the **Chainlink feed** the asset already
+needs to be `Liquid` — if the pool's spot deviates from the trusted
+price by more than a small bound, the pool is manipulated/stale →
+`Illiquid` (this is the manipulation guard, and the project already
+requires a fresh feed here).
+
+**Why not market cap (`totalSupply() × price`)?** It's trivially
+readable on-chain, but it's the *wrong* signal and a weak one: it
+measures *fully-diluted* notional (`totalSupply()` includes locked /
+vested / treasury supply — a token with a $5 B FDV and a 1 M circulating
+float and a $2 M pool is the classic thin-float-pump pattern), not "can
+a liquidator dump $X without crushing the price" — which is the only
+thing that matters at liquidation, and which the slippage check
+*directly* measures. It's also **manipulable** — `totalSupply()` is
+whatever the token contract returns (rebasing, mintable, malicious).
+And it's redundant: the $5 k slippage floor already filters out junk
+tokens (a junk token has no ≤0.3% pool deep enough to clear $5 k at
+≤2%). So **don't gate on market cap on-chain.** If you want more Tier-3
+conservatism, a tighter `slippageBps` for the top tier (or a larger
+`tier3SizeUsd`) is a far better lever. Market cap *is* useful as an
+**off-chain advisory input** — the keeper-demotion relay (§4.1.b) can
+treat a large-FDV / thin-pool-depth discrepancy as a reason to demote,
+and the widget can flag it — but that's heuristic judgment, not an
+on-chain rule.
 
 **The tier = which size the asset clears at ≤ the slippage bound** (all
 governance globals):
@@ -312,7 +365,7 @@ governance globals):
 | floor | `floorSizeUsd` (e.g. **$5 k**) — fails this → `Illiquid` | gate for the widget; below this = Tier 0 |
 | Tier 1 | `tier1SizeUsd` (e.g. **$50 k**) | 50% init-LTV |
 | Tier 2 | `tier2SizeUsd` (e.g. **$500 k**) | 60% init-LTV |
-| Tier 3 | `tier3SizeUsd` (e.g. **$5 M**) | 69% init-LTV |
+| Tier 3 | `tier3SizeUsd` (e.g. **$5 M**) | 65% init-LTV |
 
 (`slippageBps` default 200 = 2%. If a token clears $5 k but not $50 k it
 is `Liquid` but only ever Tier 1 at ~53%; if it doesn't clear $5 k it is
@@ -320,8 +373,8 @@ is `Liquid` but only ever Tier 1 at ~53%; if it doesn't clear $5 k it is
 
 **Manipulation / approximation-error budget** (since there's no
 governance override to catch a mis-tier):
-- The top tier's 69% init-LTV against an ~82% liq-threshold still leaves
-  a ~13-point cushion — even if a flash-loan-deepened pool over-tiers an
+- The top tier's 65% init-LTV against an ~82% liq-threshold still leaves
+  a ~17-point cushion — even if a flash-loan-deepened pool over-tiers an
   asset, the loan is materially over-collateralized and the cushion
   absorbs a chunk of the gap before the (already-degraded) liquidity
   becomes a problem at liquidation.
@@ -441,35 +494,35 @@ allowlist, both permissionless-compatible:
 | `liquiditySlippageBps` | 200 (2%) | the slippage bound a test trade must clear |
 | `floorSizeUsd` | $5 k | clear at this → `Liquid`; fail → `Illiquid` (widget routes it to manual Create Offer) |
 | `tier1SizeUsd` / `tier2SizeUsd` / `tier3SizeUsd` | $50 k / $500 k / $5 M | clear at the largest of these you can → that tier |
-| `tier1MaxInitLtvBps` / `tier2` / `tier3` | 5000 / 6000 / **6900** (50% / 60% / 69%) | the init-LTV cap at that tier |
+| `tier1MaxInitLtvBps` / `tier2` / `tier3` | 5000 / 6000 / **6500** (50% / 60% / 65%) | the init-LTV cap at that tier |
 | `twapWindowSec` / `twapConsistencyBps` | ~30 min / ~300 (3%) | pool spot vs its own TWAP must agree within this (manipulation guard) |
 | `depthTieredLtvEnabled` | `false` | master kill-switch; while off, init gate = today's `HF ≥ 1.5` |
 
 Sanity-check against the §3 depth census (an asset's deepest
 non-correlated pool roughly maps to "can it clear an $X test trade at
 ≤2%" — a $5 M trade at ≤2% needs ≳$250 M of depth, $500 k needs
-≳$25 M, $50 k needs ≳$2.5 M): WBTC/USDC/USDT/LINK/wstETH/weETH would
-land **Tier 3** (69%); AAVE/UNI/DAI **Tier 2** (60%); PEPE/cbBTC
-**Tier 1** (50%); SHIB's *direct* {WETH,USDC,USDT} pools are thin
-enough that on a strict single-hop check it'd be **Tier 1 at best**
-(possibly fail $5 k → `Illiquid`) — that's the single-hop limitation
-biting, and the honest answer is "it's then a manual Create-Offer
-asset until a multi-hop-aware check exists". These are starting numbers
-to be **re-validated by a per-chain slippage census before
-`depthTieredLtvEnabled` is flipped** (testnet mock pools won't reflect
-mainnet).
+≳$25 M, $50 k needs ≳$2.5 M; **only ≤0.3%-fee-tier pools count** —
+see §4.1): WBTC/USDC/USDT/LINK/wstETH/weETH would land **Tier 3**
+(65%); AAVE/UNI/DAI **Tier 2** (60%); PEPE/cbBTC **Tier 1** (50%);
+SHIB's *direct* {WETH,USDC,USDT} pools are thin enough that on a strict
+single-hop check it'd be **Tier 1 at best** (possibly fail $5 k →
+`Illiquid`) — that's the single-hop limitation biting, and the honest
+answer is "it's then a manual Create-Offer asset until a multi-hop-aware
+check exists". These are starting numbers to be **re-validated by a
+per-chain slippage census before `depthTieredLtvEnabled` is flipped**
+(testnet mock pools won't reflect mainnet).
 
-Note on the 69% top tier (was 73%, reduced 2026-05-12): at 69%
-init-LTV against an ~82% liq-threshold the init HF is ≈ 1.19 — a ~16%
-adverse price move before the position hits the liquidation line. Still
-well below the current 1.5 buffer, but a meaningful cushion above the
-~1.05 a 78%/82% pair would give, and conservative-leaning vs Aave v3's
+Note on the 65% top tier (was 73% → 69% → 65%, reduced over
+2026-05-12): at 65% init-LTV against an ~82% liq-threshold the init HF
+is ≈ 1.26 — a ~26% adverse price move before the position hits the
+liquidation line. Comfortably more conservative than Aave v3's
 core-market LTVs (WETH ~80.5%/83%) — appropriate given Vaipakam's
 liquidation is permissionless-but-not-instant + 0x-swap-dependent (no
-per-second bots). **Still shouldn't ship until the matcher + liquidator
-bots are proven on testnet**, and the number stays a risk-committee
-call — it can ramp up from a lower opening figure once liquidation
-behaviour is observed.
+per-second bots), and there's no governance per-asset override to catch
+a mis-tier (§4.1). **Still shouldn't ship until the matcher +
+liquidator bots are proven on testnet**, and the number stays a
+risk-committee call — it can ramp up from a lower opening figure once
+liquidation behaviour is observed.
 
 ### 4.4 Sequencing & gates
 
@@ -505,24 +558,35 @@ behaviour is observed.
    guards. (Trade-off acknowledged: single-hop only, so an asset like
    SHIB with deep liquidity *via* SHIB/stable pairs but a thin direct
    pool stays low-tier / manual until a multi-hop-aware check exists.)
-3. **Tier LTVs**: Tier 1 50% / Tier 2 60% / Tier 3 **69%** — or open
-   Tier 3 lower (65%) and ramp? (Risk-committee call; 69% → init HF
-   ≈ 1.19 vs an ~82% liq-threshold.)
-4. **Test sizes + slippage bound**: $5 k floor / $50 k / $500 k / $5 M
+3. **Tier LTVs**: Tier 1 50% / Tier 2 60% / Tier 3 **65%** (set
+   2026-05-12; init HF ≈ 1.26 vs an ~82% liq-threshold) — confirm, or
+   open Tier 3 even lower and ramp? (Risk-committee call.)
+4. **Route-search scope** (§4.1): {asset/WETH, asset/USDC, asset/USDT}
+   × {Uni/Sushi/Pancake V3, by availability} × fee tiers ≤ 0.3% (drops
+   the 1% tier — also slightly tightens the base `Liquid` gate) — confirm.
+5. **Test sizes + slippage bound**: $5 k floor / $50 k / $500 k / $5 M
    tiers at ≤2% slippage — confirm as the launch defaults, pending the
    per-chain census re-validation.
-5. Fix the *base* `checkLiquidity` floor to the slippage-at-$5 k check
+6. **Market cap as a criterion?** Recommendation: **no** on-chain gate
+   (`totalSupply() × price` measures FDV not liquidity, is manipulable,
+   and is redundant with the $5 k slippage floor) — use it advisory-only
+   off-chain (keeper demotion relay / widget flag). Agree?
+7. Fix the *base* `checkLiquidity` floor to the slippage-at-$5 k check
    now (independent of Piece B — today's `liquidity() × ethPrice` floor
    is mislabeled: "$1 M" ≈ "pool isn't empty"), or only as part of
    Piece B?
-6. Add Uniswap-V2-style venues to the liquidity/slippage check, or stay
+8. Add Uniswap-V2-style venues to the liquidity/slippage check, or stay
    V3-only (current)? (V2 gives exact constant-product math + catches
    assets whose depth lives in a V2 pool — a few do — at the cost of one
    more venue type.) And/or Balancer V2 via `Vault.queryBatchSwap`?
-7. **Aggregator usage** (§4.1.b): (i) widget pre-check via the existing
+9. **Aggregator usage** (§4.1.b): (i) widget pre-check via the existing
    0x/1inch Worker proxy — yes? (recommended); (ii) the keeper-fed
    *demotion* relay (`assetTierCeiling`, keeper can only lower) — in
    Phase 2, deferred to 2.5, or skip? If yes, single keeper or behind
    the existing N-of-M oracle quorum?
-8. Master kill-switch name/shape: `depthTieredLtvEnabled` in
-   `ProtocolConfig`, default `false`, à la the Range-Orders flags — OK?
+10. **Cross-chain "thin here" warning** (§2.b) on Create Offer + Accept
+    Offer — ship the generic version with Piece A; "which chain is
+    deeper" hint is a Phase 2.5/3 follow-up (needs a cross-(asset,chain)
+    depth index). OK?
+11. Master kill-switch name/shape: `depthTieredLtvEnabled` in
+    `ProtocolConfig`, default `false`, à la the Range-Orders flags — OK?
