@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, useCallback, useRef, type ReactNode, type CSSProperties } from 'react';
+import { useEffect, useMemo, useState, useCallback, useRef, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import i18n from '../i18n';
 import type { Address, Hex } from 'viem';
@@ -28,7 +28,8 @@ import { useActiveOffersByAssetPairRanked } from '../hooks/useActiveOffersByAsse
 import { OFFER_BOOK_PAGE_SIZE } from '../lib/offerBookConfig';
 import { OFFER_DURATION_BUCKETS_DAYS } from '../lib/offerSchema';
 import { useRescanCooldown } from '../hooks/useRescanCooldown';
-import { Check, RefreshCw } from 'lucide-react';
+import { RescanButton } from '../components/app/RescanButton';
+import { DataSyncStatus } from '../components/app/DataSyncStatus';
 import { indexedToRawOffer } from '../lib/indexerClient';
 import { useProtocolConfig, type ProtocolConfig } from '../hooks/useProtocolConfig';
 import { AssetSymbol } from '../components/app/AssetSymbol';
@@ -1436,40 +1437,27 @@ export default function OfferBook() {
             </>
           )}
         </span>
-        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-          <button
-            className="btn btn-secondary btn-sm rescan-btn"
-            disabled={loading || rescanCooldown.disabled}
-            data-rescan-status={rescanCooldown.status}
-            style={
-              {
-                '--rescan-progress': `${rescanCooldown.remaining * 100}%`,
-              } as CSSProperties
-            }
-            onClick={() => {
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+          <DataSyncStatus />
+          <RescanButton
+            cooldown={rescanCooldown}
+            disabled={loading}
+            tooltip={t('offerBookPage.rescanTooltip')}
+            onRescan={() => {
               // Two-target refresh:
               //   1. `refetchIndexedOffers()` re-pulls the worker's
               //      indexer page + RPC catch-up over the indexer-tail
-              //      → safe-head gap (the same flow the auto-tail
-              //      uses, just triggered explicitly). This is what
-              //      drives the OfferBook list when the indexer is
-              //      reachable.
-              //   2. `reloadIndex()` re-runs the legacy local log
-              //      scan, which starts at
-              //      `max(localCacheCursor, indexer.lastBlock)` and
-              //      refreshes the per-row events stream the legacy
-              //      rendering pipeline still consumes (also covers
-              //      the case where the indexer is unreachable and
-              //      the OfferBook falls back to RPC pagination off
-              //      `sortedIds`).
-              //
-              // Cumulative state (`offers`, `cursor`, `loadedIdsRef`)
-              // is reset only when the indexer ISN'T serving — the
-              // indexer-served path manages its own `offers` array
-              // through the `indexerServingOpen` effect, and a manual
-              // wipe here would leave the page blank between the wipe
-              // and the next indexer refetch landing.
-              rescanCooldown.trigger();
+              //      → safe-head gap (the same flow the auto-tail uses,
+              //      just triggered explicitly) — drives the list when
+              //      the indexer is reachable.
+              //   2. `reloadIndex()` re-runs the legacy local log scan
+              //      (per-row events stream + the RPC-pagination
+              //      fallback when the indexer is unreachable).
+              // Cumulative state (`offers`/`cursor`/`loadedIdsRef`) is
+              // wiped only when the indexer ISN'T serving — the
+              // indexer-served path owns its own `offers` array via the
+              // `indexerServingOpen` effect, so a manual wipe there
+              // would blank the page until the next refetch lands.
               if (!indexerServingOpen) {
                 loadedIdsRef.current = new Set();
                 setOffers([]);
@@ -1478,33 +1466,7 @@ export default function OfferBook() {
               void refetchIndexedOffers();
               void reloadIndex();
             }}
-            title={t('offerBookPage.rescanTooltip')}
-          >
-            {rescanCooldown.status === 'syncing' ? (
-              <>
-                <RefreshCw size={14} className="spin" style={{ marginRight: 4 }} />
-                {t('offerBookPage.refreshing', { defaultValue: 'Refreshing… ' })}
-                <span className="rescan-btn-secs">
-                  {rescanCooldown.secondsRemaining}
-                </span>
-                {t('offerBookPage.secondsSuffix', { defaultValue: 's' })}
-              </>
-            ) : rescanCooldown.status === 'synced' ? (
-              <>
-                <Check size={14} style={{ marginRight: 4 }} />
-                {t('offerBookPage.synced', { defaultValue: 'Synced — ' })}
-                <span className="rescan-btn-secs">
-                  {rescanCooldown.secondsRemaining}
-                </span>
-                {t('offerBookPage.secondsSuffix', { defaultValue: 's' })}
-              </>
-            ) : (
-              <>
-                <RefreshCw size={14} style={{ marginRight: 4 }} />
-                {t('offerBookPage.rescanChain')}
-              </>
-            )}
-          </button>
+          />
           {hasMore && (
             <button
               className="btn btn-secondary btn-sm"

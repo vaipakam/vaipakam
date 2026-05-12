@@ -30,7 +30,14 @@
     "all": "Tous",
     "noMatches": "Aucun prêt ne correspond aux filtres actuels.",
     "clearFilters": "Effacer les filtres",
-    "perPage": "Par page"
+    "perPage": "Par page",
+    "refresh": "Actualiser",
+    "refreshing": "Actualisation… ",
+    "secondsSuffix": "s",
+    "synced": "Synchronisé",
+    "syncedTooltip": "Les données affichées sont à jour avec la chaîne.",
+    "blocksBehind": "~{{n}} blocs de retard",
+    "blocksBehindTooltip": "Les données affichées ont environ {{n}} blocs de retard sur la chaîne — elles se mettent à jour automatiquement ; Actualiser pour récupérer maintenant."
   },
   "footer": {
     "rightsReserved": "Tous droits réservés.",

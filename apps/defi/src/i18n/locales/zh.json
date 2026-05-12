@@ -30,7 +30,14 @@
     "all": "全部",
     "noMatches": "没有 loan 与当前筛选条件匹配。",
     "clearFilters": "清除筛选",
-    "perPage": "每页"
+    "perPage": "每页",
+    "refresh": "刷新",
+    "refreshing": "正在刷新… ",
+    "secondsSuffix": "s",
+    "synced": "已同步",
+    "syncedTooltip": "页面数据与链同步。",
+    "blocksBehind": "落后约 {{n}} 个区块",
+    "blocksBehindTooltip": "页面数据比链落后约 {{n}} 个区块 — 会自动追上；点击刷新可立即拉取。"
   },
   "footer": {
     "rightsReserved": "保留所有权利。",

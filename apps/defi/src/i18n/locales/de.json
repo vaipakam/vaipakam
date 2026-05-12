@@ -30,7 +30,14 @@
     "all": "Alle",
     "noMatches": "Keine Kredite entsprechen den aktuellen Filtern.",
     "clearFilters": "Filter zurücksetzen",
-    "perPage": "Pro Seite"
+    "perPage": "Pro Seite",
+    "refresh": "Aktualisieren",
+    "refreshing": "Wird aktualisiert… ",
+    "secondsSuffix": "s",
+    "synced": "Synchron",
+    "syncedTooltip": "Die angezeigten Daten sind aktuell mit der Chain.",
+    "blocksBehind": "~{{n}} Blöcke im Rückstand",
+    "blocksBehindTooltip": "Die angezeigten Daten hinken der Chain um etwa {{n}} Blöcke hinterher — sie holen automatisch auf; zum sofortigen Abruf Aktualisieren."
   },
   "footer": {
     "rightsReserved": "Alle Rechte vorbehalten.",

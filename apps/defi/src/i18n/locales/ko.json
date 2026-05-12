@@ -30,7 +30,14 @@
     "all": "전체",
     "noMatches": "현재 필터와 일치하는 대출이 없습니다.",
     "clearFilters": "필터 초기화",
-    "perPage": "페이지당"
+    "perPage": "페이지당",
+    "refresh": "새로고침",
+    "refreshing": "새로고침 중… ",
+    "secondsSuffix": "s",
+    "synced": "동기화됨",
+    "syncedTooltip": "화면 데이터가 체인과 동기화되어 있습니다.",
+    "blocksBehind": "약 {{n}} 블록 지연",
+    "blocksBehindTooltip": "화면 데이터가 체인보다 약 {{n}} 블록 뒤처져 있습니다 — 자동으로 따라잡습니다. 지금 가져오려면 새로고침하세요."
   },
   "footer": {
     "rightsReserved": "모든 권리 보유.",

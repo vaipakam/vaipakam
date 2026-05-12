@@ -30,7 +30,14 @@
     "all": "الكل",
     "noMatches": "لا توجد قروض تطابق المرشحات الحالية.",
     "clearFilters": "مسح المرشحات",
-    "perPage": "لكل صفحة"
+    "perPage": "لكل صفحة",
+    "refresh": "تحديث",
+    "refreshing": "جارٍ التحديث… ",
+    "secondsSuffix": "s",
+    "synced": "متزامن",
+    "syncedTooltip": "بيانات الشاشة محدّثة مع السلسلة.",
+    "blocksBehind": "متأخر بنحو {{n}} كتلة",
+    "blocksBehindTooltip": "تتأخر بيانات الشاشة عن السلسلة بنحو {{n}} كتلة — تلحق تلقائياً؛ اضغط تحديث للسحب الآن."
   },
   "footer": {
     "rightsReserved": "جميع الحقوق محفوظة.",

@@ -1,0 +1,19 @@
+/* Compact data-freshness chip next to a page's Rescan button. Small,
+   muted, with a status colour: green when caught up, amber when the
+   page's data is trailing the chain head. */
+.data-sync-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  font-size: 0.72rem;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
+.data-sync-status--ok {
+  color: var(--success, #4f9d69);
+}
+
+.data-sync-status--behind {
+  color: var(--warning, #d9a23a);
+}

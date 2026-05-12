@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useMemo, useState, type CSSProperties } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { Address } from 'viem';
-import { Check, RefreshCw } from 'lucide-react';
 import { useRescanCooldown } from '../hooks/useRescanCooldown';
+import { RescanButton } from '../components/app/RescanButton';
+import { DataSyncStatus } from '../components/app/DataSyncStatus';
 import { L as Link } from '../components/L';
 import { useTranslation } from 'react-i18next';
 import { useWallet } from '../context/WalletContext';
@@ -32,7 +33,7 @@ import {
 } from 'lucide-react';
 import { DEFAULT_CHAIN } from '../contracts/config';
 import { PrincipalCell } from '../components/app/PrincipalCell';
-import { bpsToPercent, formatRelativeTime } from '../lib/format';
+import { bpsToPercent } from '../lib/format';
 import { HealthFactorChip, LTVChip } from '../components/app/RiskGauge';
 import VPFIDiscountConsentCard from '../components/app/VPFIDiscountConsentCard';
 import { RewardsSummaryCard } from '../components/app/RewardsSummaryCard';
@@ -86,11 +87,6 @@ export default function Dashboard() {
     [bothSidesRows],
   );
   const inlineRisks = useMemo(() => loansToRiskMap(bothSidesRows), [bothSidesRows]);
-  // Kept as a `lastRefreshedAt` trigger for the "Last refreshed
-  // N min ago" status — re-renders whenever the bundled fetch
-  // returns a new array reference.
-  const indexedLoans = bothSidesRows;
-  const refetchIndexedLoans = reloadUserLoans;
   const loading = clientLoading;
 
   // Pre-warm the ERC-20 symbol/decimals cache for every asset that
@@ -118,38 +114,6 @@ export default function Dashboard() {
   // doubles each consecutive trigger up to 5 min, resets to base after
   // 2 min of quiet.
   const dashboardRescanCooldown = useRescanCooldown({ loading });
-
-  // "Last refreshed N min ago" status — paired with the right-side
-  // rescan button. Updated whenever the underlying data sources tick
-  // (indexed loans array reference change, claimables reload).
-  //
-  // Adaptive ticker cadence: 1 Hz while the elapsed delta is under
-  // 60 s (so the visible count moves smoothly from "1 second ago"
-  // through "59 seconds ago"), then 30 s once we cross the minute
-  // boundary (relative-time only changes once per minute past that
-  // point, so a faster tick burns CPU for nothing). The effect
-  // re-runs whenever `lastRefreshedAt` advances, which restarts the
-  // sub-minute fast tick on every fresh refresh. Without the
-  // sub-minute fast tick the user saw a stale string for up to 30 s
-  // — "6 seconds ago" frozen until the next 30 s tick fired and
-  // jumped to "36 seconds ago".
-  const [lastRefreshedAt, setLastRefreshedAt] = useState<number>(() => Date.now());
-  const [now, setNow] = useState<number>(() => Date.now());
-  useEffect(() => {
-    setLastRefreshedAt(Date.now());
-  }, [indexedLoans, unclaimed]);
-  useEffect(() => {
-    let id: ReturnType<typeof setTimeout>;
-    const schedule = () => {
-      const t = Date.now();
-      setNow(t);
-      const elapsed = t - lastRefreshedAt;
-      id = setTimeout(schedule, elapsed < 60_000 ? 1_000 : 30_000);
-    };
-    const elapsed = Date.now() - lastRefreshedAt;
-    id = setTimeout(schedule, elapsed < 60_000 ? 1_000 : 30_000);
-    return () => clearTimeout(id);
-  }, [lastRefreshedAt]);
   const [cancellingOfferId, setCancellingOfferId] = useState<bigint | null>(null);
   // Set of loanIds (decimal string) where the connected wallet has at least
   // one actionable claim (lender or borrower side). Drives the inline
@@ -679,84 +643,33 @@ export default function Dashboard() {
         )}
       </div>
 
-      {/* Page-level rescan button — moved out of the Your Loans card
-          header so its scope reads as "refresh everything on this
-          page" (offers + loans + claimables) instead of looking
-          loans-scoped. Only renders when a wallet is connected;
-          otherwise there's no per-wallet data to refresh.
-          Same chrome + adaptive cooldown as Activity / OfferBook /
-          Vault / Analytics — see useRescanCooldown for the state
-          machine details. */}
+      {/* Page-level refresh — "refresh everything on this page" (offers
+          + loans + claimables). Only when a wallet is connected.
+          Status on the left (is the on-screen data current with the
+          chain?), action on the right. Shared <RescanButton> /
+          <DataSyncStatus> — same on Activity / OfferBook / Vault /
+          Claims. */}
       {address && (
         <div
           style={{
             display: 'flex',
-            // Left side carries a "last refreshed" status; right side
-            // carries the rescan action. The pairing answers two
-            // questions in one row: "is this stale?" (left) and "what
-            // can I do about it?" (right). Refresh stays on the right
-            // edge for consistency with OfferBook / Activity / Vault.
             justifyContent: 'space-between',
             alignItems: 'center',
+            flexWrap: 'wrap',
+            gap: 8,
             marginTop: 24,
             marginBottom: 12,
           }}
         >
-          <span
-            style={{
-              fontSize: 12,
-              color: 'var(--text-secondary)',
-            }}
-          >
-            {t('dashboard.lastRefreshed', {
-              defaultValue: 'Last refreshed {{when}}',
-              when: formatRelativeTime(lastRefreshedAt, now),
-            })}
-          </span>
-          <button
-            type="button"
-            className="btn btn-secondary btn-sm rescan-btn"
-            onClick={() => {
-              dashboardRescanCooldown.trigger();
-              void refetchIndexedLoans();
+          <DataSyncStatus />
+          <RescanButton
+            cooldown={dashboardRescanCooldown}
+            onRescan={() => {
               void reloadUserLoans();
               void reloadClaimables();
               void refetchMyOffers();
             }}
-            disabled={dashboardRescanCooldown.disabled}
-            data-rescan-status={dashboardRescanCooldown.status}
-            style={
-              {
-                '--rescan-progress': `${dashboardRescanCooldown.remaining * 100}%`,
-              } as CSSProperties
-            }
-            aria-label={t('dashboard.refresh', { defaultValue: 'Refresh' })}
-          >
-            {dashboardRescanCooldown.status === 'syncing' ? (
-              <>
-                <RefreshCw size={14} className="spin" style={{ marginRight: 4 }} />
-                {t('dashboard.refreshing', { defaultValue: 'Refreshing… ' })}
-                <span className="rescan-btn-secs">
-                  {dashboardRescanCooldown.secondsRemaining}
-                </span>
-                {t('dashboard.secondsSuffix', { defaultValue: 's' })}
-              </>
-            ) : dashboardRescanCooldown.status === 'synced' ? (
-              <>
-                <Check size={14} style={{ marginRight: 4 }} />
-                {t('dashboard.synced', { defaultValue: 'Synced — ' })}
-                <span className="rescan-btn-secs">
-                  {dashboardRescanCooldown.secondsRemaining}
-                </span>
-                {t('dashboard.secondsSuffix', { defaultValue: 's' })}
-              </>
-            ) : (
-              <>
-                <RefreshCw size={14} style={{ marginRight: 4 }} />
-                {t('dashboard.refresh', { defaultValue: 'Refresh' })}
-              </>
-            )}
-          </button>
+          />
         </div>
       )}
     </div>

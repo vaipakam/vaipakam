@@ -30,7 +30,14 @@
     "all": "All",
     "noMatches": "No loans match the current filters.",
     "clearFilters": "Clear filters",
-    "perPage": "Per page"
+    "perPage": "Per page",
+    "refresh": "Refresh",
+    "refreshing": "Refreshing… ",
+    "secondsSuffix": "s",
+    "synced": "Synced",
+    "syncedTooltip": "On-screen data is current with the chain.",
+    "blocksBehind": "~{{n}} blocks behind",
+    "blocksBehindTooltip": "On-screen data trails the chain by about {{n}} blocks — it catches up automatically; Refresh to pull now."
   },
   "footer": {
     "rightsReserved": "All rights reserved.",

@@ -3,6 +3,9 @@ import { useTranslation } from 'react-i18next';
 import { useWallet } from '../context/WalletContext';
 import { useDiamondContract } from '../contracts/useDiamond';
 import { useClaimables } from '../hooks/useClaimables';
+import { useRescanCooldown } from '../hooks/useRescanCooldown';
+import { RescanButton } from '../components/app/RescanButton';
+import { DataSyncStatus } from '../components/app/DataSyncStatus';
 import { AssetType, LOAN_STATUS_LABELS, type ClaimableEntry, type LoanRole } from '../types/loan';
 import { decodeContractError } from '@vaipakam/lib/decodeContractError';
 import { beginStep } from '../lib/journeyLog';
@@ -25,6 +28,7 @@ export default function ClaimCenter() {
     DEFAULT_CHAIN.blockExplorer;
   const diamond = useDiamondContract();
   const { claims, loading, reload } = useClaimables(address);
+  const claimsRescanCooldown = useRescanCooldown({ loading });
   const [claimingId, setClaimingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [txHash, setTxHash] = useState<string | null>(null);
@@ -80,6 +84,31 @@ export default function ClaimCenter() {
         </h1>
         <p className="page-subtitle">{t('claimCenter.pageSubtitle')}</p>
       </div>
+
+      {/* Page refresh — status (is the claim list current with the
+          chain?) on the left, the Refresh action on the right. Shared
+          <RescanButton> / <DataSyncStatus> — same as Dashboard / Vault
+          / OfferBook / Activity. */}
+      {address && (
+        <div
+          style={{
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            flexWrap: 'wrap',
+            gap: 8,
+            marginBottom: 12,
+          }}
+        >
+          <DataSyncStatus />
+          <RescanButton
+            cooldown={claimsRescanCooldown}
+            onRescan={() => {
+              reload();
+            }}
+          />
+        </div>
+      )}
 
       {address && (
         <SanctionsBanner

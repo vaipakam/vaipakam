@@ -1,18 +1,18 @@
-import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { createPublicClient, http } from 'viem';
 import { L as Link } from '../components/L';
 import {
   Activity as ActivityIcon,
-  Check,
   ChevronDown,
   ChevronRight,
   ExternalLink,
-  RefreshCw,
 } from 'lucide-react';
 import { useLogIndex } from '../hooks/useLogIndex';
 import { useIndexedActivity } from '../hooks/useIndexedActivity';
 import { useRescanCooldown } from '../hooks/useRescanCooldown';
+import { RescanButton } from '../components/app/RescanButton';
+import { DataSyncStatus } from '../components/app/DataSyncStatus';
 import { indexedToActivityEvent } from '../lib/indexerClient';
 import { useUserLoans } from '../hooks/useUserLoans';
 import { useWallet } from '../context/WalletContext';
@@ -400,48 +400,14 @@ export default function Activity() {
         </div>
 
         <div className="activity-toolbar-right">
-          <button
-            type="button"
-            className="btn btn-ghost btn-sm rescan-btn"
-            onClick={() => {
-              rescanCooldown.trigger();
+          <DataSyncStatus />
+          <RescanButton
+            cooldown={rescanCooldown}
+            onRescan={() => {
               void reload();
             }}
-            disabled={rescanCooldown.disabled}
-            data-rescan-status={rescanCooldown.status}
-            style={
-              {
-                '--rescan-progress': `${rescanCooldown.remaining * 100}%`,
-              } as CSSProperties
-            }
-            data-tooltip={t('activity.rescanTooltip')}
-            data-tooltip-placement="below"
-          >
-            {rescanCooldown.status === 'syncing' ? (
-              <>
-                <RefreshCw size={14} className="spin" style={{ marginRight: 4 }} />
-                {t('activity.refreshing', { defaultValue: 'Refreshing… ' })}
-                <span className="rescan-btn-secs">
-                  {rescanCooldown.secondsRemaining}
-                </span>
-                {t('activity.secondsSuffix', { defaultValue: 's' })}
-              </>
-            ) : rescanCooldown.status === 'synced' ? (
-              <>
-                <Check size={14} style={{ marginRight: 4 }} />
-                {t('activity.synced', { defaultValue: 'Synced — ' })}
-                <span className="rescan-btn-secs">
-                  {rescanCooldown.secondsRemaining}
-                </span>
-                {t('activity.secondsSuffix', { defaultValue: 's' })}
-              </>
-            ) : (
-              <>
-                <RefreshCw size={14} style={{ marginRight: 4 }} />
-                {t('activity.refresh')}
-              </>
-            )}
-          </button>
+            tooltip={t('activity.rescanTooltip')}
+          />
         </div>
       </div>
 

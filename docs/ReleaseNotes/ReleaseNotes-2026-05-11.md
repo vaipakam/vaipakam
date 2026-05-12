@@ -2109,6 +2109,52 @@ the message when the row is genuinely too tight. Below 640 px (sidebar
 collapsed) the card stretches edge-to-edge, still above the FAB.
 CSS-only.
 
+## Refresh buttons unified + "Synced / N blocks behind" replaces "Last refreshed N ago"
+
+The "Refresh / Rescan" affordance was a hand-rolled, slightly-drifting
+copy on Dashboard, EscrowAssets ("Your Vaipakam Vault"), OfferBook and
+Activity (different `btn-ghost` vs `btn-secondary`, different idle
+labels, different i18n keys), and Claims had none. Consolidated:
+
+- **New `<RescanButton>`** — one component, wraps a `useRescanCooldown`
+  result: clicking calls `cooldown.trigger()` then the page-supplied
+  `onRescan` (the only thing that legitimately differs — *which* data
+  the page re-fetches). States: `<RefreshCw/> Refresh` →
+  `<RefreshCw spin/> Refreshing… {N}s` → `<Check/> {N}s` (cooldown
+  ticking) → back. Always `btn btn-secondary btn-sm rescan-btn` with the
+  `--rescan-progress` bar. Generic `common.refresh/refreshing/secondsSuffix`
+  i18n. `disabled` prop = an extra condition ANDed with the cooldown's.
+  - Wired on **Dashboard, EscrowAssets, OfferBook, Activity, and newly
+    on ClaimCenter** (the Claims page now has a refresh — wired to
+    `useClaimables.reload`). Activity's button changes `btn-ghost` →
+    `btn-secondary` for consistency. *(The OfferBook "Rescan" was never
+    functionally a different button — same `useRescanCooldown` state
+    machine, just re-fetching the OfferBook's data; only the chrome had
+    drifted.)*
+
+- **New `<DataSyncStatus>`** — compact freshness chip next to the
+  Refresh button, replacing "Last refreshed N ago" (which told you
+  *when you pulled*, not whether the data is *current*). Reads the
+  freshest block any data source on the page has reached
+  (`DataFreshnessContext.maxFrontier`) vs the chain's safe head
+  (`WatermarkContext`): gap ≤ 100 blocks → "✓ Synced" (green); larger
+  → "~N blocks behind" (amber); nothing on local dev or before either
+  number is known. Same threshold the top-bar `IndexerStatusBadge` uses
+  (the badge stays the detailed/popover version; this is the
+  at-a-glance one). Tooltips explain the auto-catch-up. New i18n
+  `common.synced/syncedTooltip/blocksBehind/blocksBehindTooltip`,
+  10 locales.
+
+Net: every page's refresh control is now literally the same component,
+paired with a freshness signal that actually answers "is this fresh?".
+Removed the now-dead `lastRefreshedAt`/`now` timer state + the
+`formatRelativeTime` import + the per-page `*.lastRefreshed`/`*.refresh`
+i18n uses from Dashboard / EscrowAssets / OfferBook / Activity (the
+locale keys themselves are left in place, unused). The
+`/analytics` (PublicDashboard) page has its own plain "Refresh" button
+that isn't part of the `.rescan-btn` family — left as-is; could be
+brought in later.
+
 ## Release-notes mid-stream date roll
 
 The conversation that produced this release-notes file started on

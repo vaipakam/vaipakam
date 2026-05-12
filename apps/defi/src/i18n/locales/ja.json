@@ -30,7 +30,14 @@
     "all": "すべて",
     "noMatches": "現在のフィルターに一致するローンはありません。",
     "clearFilters": "フィルターをクリア",
-    "perPage": "ページあたり"
+    "perPage": "ページあたり",
+    "refresh": "更新",
+    "refreshing": "更新中… ",
+    "secondsSuffix": "s",
+    "synced": "同期済み",
+    "syncedTooltip": "画面のデータはチェーンと同期しています。",
+    "blocksBehind": "約 {{n}} ブロック遅延",
+    "blocksBehindTooltip": "画面のデータはチェーンより約 {{n}} ブロック遅れています — 自動的に追いつきます。今すぐ取得するには更新してください。"
   },
   "footer": {
     "rightsReserved": "すべての権利を保有します。",

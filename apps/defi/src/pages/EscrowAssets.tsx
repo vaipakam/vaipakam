@@ -1,7 +1,9 @@
-import { useEffect, useMemo, useState, type CSSProperties } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Vault, ExternalLink, RefreshCw, AlertCircle, Check } from 'lucide-react';
+import { Vault, ExternalLink, AlertCircle } from 'lucide-react';
 import { useRescanCooldown } from '../hooks/useRescanCooldown';
+import { RescanButton } from '../components/app/RescanButton';
+import { DataSyncStatus } from '../components/app/DataSyncStatus';
 import { parseAbi, type Address } from 'viem';
 import { useWallet } from '../context/WalletContext';
 import { useDiamondPublicClient, useReadChain } from '../contracts/useDiamond';
@@ -11,7 +13,6 @@ import { fetchOffersByCreator, type IndexedOffer } from '../lib/indexerClient';
 import { useLiveWatermark } from '../hooks/useLiveWatermark';
 import { watermarkPolicy } from '../hooks/watermarkPolicy';
 import { peekTokenMeta, prewarmTokenMeta } from '../lib/tokenMeta';
-import { formatRelativeTime } from '../lib/format';
 import { ChevronDown, ChevronUp, ChevronsUpDown } from 'lucide-react';
 import { CardInfo } from '../components/CardInfo';
 import { AssetLink } from '../components/app/AssetLink';
@@ -300,40 +301,10 @@ export default function EscrowAssets() {
       setSortDir(col === 'balance' ? 'desc' : 'asc');
     }
   };
-  // Same cooldown + sync-status state-machine the Activity / OfferBook
-  // rescan buttons use. Drives the button label transitions
-  // (`Refresh` → `Refreshing… 28s` → `Synced — 5s` → `Refresh`),
-  // the inline progress bar, and the 30 s spam-click guard.
+  // Same cooldown + sync-status state-machine the other rescan buttons
+  // use (drives the shared <RescanButton>'s label transitions, the
+  // inline progress bar, and the adaptive spam-click guard).
   const rescanCooldown = useRescanCooldown({ loading });
-
-  // "Last refreshed N min ago" status — paired with the bottom-row
-  // rescan button. Updated whenever the rows array's reference
-  // changes (i.e., the async balance fetch completed).
-  //
-  // Adaptive ticker cadence: 1 Hz under 60 s elapsed so the count
-  // moves smoothly from "1 second ago" through "59 seconds ago",
-  // then 30 s once we cross the minute boundary (relative-time only
-  // changes once per minute past that, so a faster tick burns CPU
-  // for nothing). The effect re-runs whenever `lastRefreshedAt`
-  // advances, restarting the sub-minute fast tick on every refresh.
-  // Same shape as the Dashboard pairing.
-  const [lastRefreshedAt, setLastRefreshedAt] = useState<number>(() => Date.now());
-  const [now, setNow] = useState<number>(() => Date.now());
-  useEffect(() => {
-    setLastRefreshedAt(Date.now());
-  }, [rows]);
-  useEffect(() => {
-    let id: ReturnType<typeof setTimeout>;
-    const schedule = () => {
-      const t = Date.now();
-      setNow(t);
-      const elapsed = t - lastRefreshedAt;
-      id = setTimeout(schedule, elapsed < 60_000 ? 1_000 : 30_000);
-    };
-    const elapsed = Date.now() - lastRefreshedAt;
-    id = setTimeout(schedule, elapsed < 60_000 ? 1_000 : 30_000);
-    return () => clearTimeout(id);
-  }, [lastRefreshedAt]);
 
   // Initial seed — show one row per token in a "loading" state so the
   // table doesn't reflow when balances arrive.
@@ -834,58 +805,12 @@ export default function EscrowAssets() {
               gap: 8,
             }}
           >
-            <span
-              style={{
-                fontSize: 12,
-                color: 'var(--text-secondary)',
-              }}
-            >
-              {t('escrowAssets.lastRefreshed', {
-                defaultValue: 'Last refreshed {{when}}',
-                when: formatRelativeTime(lastRefreshedAt, now),
-              })}
-            </span>
-            <button
-              type="button"
-              className="btn btn-secondary btn-sm rescan-btn"
-              onClick={() => {
-                rescanCooldown.trigger();
-                setReloadCounter((n) => n + 1);
-              }}
-              disabled={rescanCooldown.disabled || !escrow}
-              data-rescan-status={rescanCooldown.status}
-              style={
-                {
-                  '--rescan-progress': `${rescanCooldown.remaining * 100}%`,
-                } as CSSProperties
-              }
-              aria-label={t('escrowAssets.refresh')}
-            >
-              {rescanCooldown.status === 'syncing' ? (
-                <>
-                  <RefreshCw size={14} className="spin" style={{ marginRight: 4 }} />
-                  {t('escrowAssets.refreshing', { defaultValue: 'Refreshing… ' })}
-                  <span className="rescan-btn-secs">
-                    {rescanCooldown.secondsRemaining}
-                  </span>
-                  {t('escrowAssets.secondsSuffix', { defaultValue: 's' })}
-                </>
-              ) : rescanCooldown.status === 'synced' ? (
-                <>
-                  <Check size={14} style={{ marginRight: 4 }} />
-                  {t('escrowAssets.synced', { defaultValue: 'Synced — ' })}
-                  <span className="rescan-btn-secs">
-                    {rescanCooldown.secondsRemaining}
-                  </span>
-                  {t('escrowAssets.secondsSuffix', { defaultValue: 's' })}
-                </>
-              ) : (
-                <>
-                  <RefreshCw size={14} style={{ marginRight: 4 }} />
-                  {t('escrowAssets.refresh')}
-                </>
-              )}
-            </button>
+            <DataSyncStatus />
+            <RescanButton
+              cooldown={rescanCooldown}
+              onRescan={() => setReloadCounter((n) => n + 1)}
+              disabled={!escrow}
+            />
           </div>
         )}
       </div>
