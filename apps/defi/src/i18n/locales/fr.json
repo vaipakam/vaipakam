@@ -1397,10 +1397,6 @@
     "subtitleOpenSuffix": ".",
     "subtitleClosed": "Vue historique des offres exécutées — liquidité acceptée déjà appariée à un prêt. Permet de consulter les taux de marché passés même après que le carnet en direct se soit vidé.",
     "filtersHeader": "Filtres",
-    "minDuration": "Durée min. (jours)",
-    "maxDuration": "Durée max. (jours)",
-    "minDurationPlaceholder": "p. ex., 7",
-    "maxDurationPlaceholder": "p. ex., 365",
     "liquidity": "Liquidité",
     "liquidityAny": "Toute",
     "liquidityLiquid": "Liquides uniquement",
@@ -1433,7 +1429,10 @@
     "marketAnchor": "Ancre de marché",
     "lendersAboveBorrowersBelow": "Prêteurs ↑ au-dessus · Emprunteurs ↓ en dessous",
     "showing": "Affichage de {{shown}} sur {{total}}",
-    "pageOfTotal": "Page {{current}} sur {{pages}} · {{shown}} sur {{total}}"
+    "pageOfTotal": "Page {{current}} sur {{pages}} · {{shown}} sur {{total}}",
+    "durationLabel": "Durée",
+    "durationAny": "Toute durée",
+    "durationFilterAria": "Filtrer les offres par durée"
   },
   "keeperPicker": {
     "addKeeper": "Ajouter un keeper",

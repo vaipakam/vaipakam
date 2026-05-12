@@ -1397,10 +1397,6 @@
     "subtitleOpenSuffix": ".",
     "subtitleClosed": "Vista histórica de ofertas completadas — liquidez aceptada que ya ha sido emparejada con un préstamo. Útil para ver tasas de mercado pasadas incluso después de que el libro en vivo se vacíe.",
     "filtersHeader": "Filtros",
-    "minDuration": "Duración mínima (días)",
-    "maxDuration": "Duración máxima (días)",
-    "minDurationPlaceholder": "p. ej., 7",
-    "maxDurationPlaceholder": "p. ej., 365",
     "liquidity": "Liquidez",
     "liquidityAny": "Cualquiera",
     "liquidityLiquid": "Solo líquido",
@@ -1433,7 +1429,10 @@
     "marketAnchor": "Ancla del mercado",
     "lendersAboveBorrowersBelow": "Prestamistas ↑ arriba · Prestatarios ↓ abajo",
     "showing": "Mostrando {{shown}} de {{total}}",
-    "pageOfTotal": "Página {{current}} de {{pages}} · {{shown}} de {{total}}"
+    "pageOfTotal": "Página {{current}} de {{pages}} · {{shown}} de {{total}}",
+    "durationLabel": "Duración",
+    "durationAny": "Cualquier duración",
+    "durationFilterAria": "Filtrar ofertas por duración"
   },
   "keeperPicker": {
     "addKeeper": "Añadir keeper",

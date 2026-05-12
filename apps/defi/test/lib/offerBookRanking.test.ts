@@ -28,8 +28,7 @@ function mkOffer(over: Partial<any> = {}) {
 const NO_FILTERS: OfferFilters = {
   lendingAsset: '',
   collateralAsset: '',
-  minDuration: '',
-  maxDuration: '',
+  duration: '',
   liquidity: 'any',
 };
 
@@ -76,19 +75,20 @@ describe('matchesFilter', () => {
     ).toBe(false);
   });
 
-  it('enforces minDuration / maxDuration inclusively', () => {
+  it('matches a selected duration bucket exactly; empty = any', () => {
     expect(
-      matchesFilter(mkOffer({ durationDays: 30n }), { ...NO_FILTERS, minDuration: '30' }),
+      matchesFilter(mkOffer({ durationDays: 30n }), { ...NO_FILTERS, duration: '30' }),
     ).toBe(true);
     expect(
-      matchesFilter(mkOffer({ durationDays: 29n }), { ...NO_FILTERS, minDuration: '30' }),
+      matchesFilter(mkOffer({ durationDays: 60n }), { ...NO_FILTERS, duration: '30' }),
+    ).toBe(false);
+    // Non-bucketed durations only match the "any" option.
+    expect(
+      matchesFilter(mkOffer({ durationDays: 45n }), { ...NO_FILTERS, duration: '30' }),
     ).toBe(false);
     expect(
-      matchesFilter(mkOffer({ durationDays: 60n }), { ...NO_FILTERS, maxDuration: '60' }),
+      matchesFilter(mkOffer({ durationDays: 45n }), { ...NO_FILTERS, duration: '' }),
     ).toBe(true);
-    expect(
-      matchesFilter(mkOffer({ durationDays: 61n }), { ...NO_FILTERS, maxDuration: '60' }),
-    ).toBe(false);
   });
 
   it('filters by liquidity category (0 liquid / 1 illiquid)', () => {
@@ -110,13 +110,12 @@ describe('matchesFilter', () => {
     const f: OfferFilters = {
       lendingAsset: USDC,
       collateralAsset: WETH,
-      minDuration: '10',
-      maxDuration: '90',
+      duration: '30',
       liquidity: 'liquid',
     };
     expect(matchesFilter(mkOffer(), f)).toBe(true);
     expect(matchesFilter(mkOffer({ lendingAsset: WETH }), f)).toBe(false);
-    expect(matchesFilter(mkOffer({ durationDays: 5n }), f)).toBe(false);
+    expect(matchesFilter(mkOffer({ durationDays: 60n }), f)).toBe(false);
   });
 });
 

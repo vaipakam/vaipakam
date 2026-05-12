@@ -2042,6 +2042,28 @@ surface. The `useIndexedActiveLoans` half of "wire the getters" was
 skipped — no page currently consumes it; there's no protocol-wide
 active-loans list view.)
 
+## OfferBook duration filter — single bucket picker (matches CreateOffer)
+
+Replaced the OfferBook's two free-text "Min duration" / "Max duration"
+numeric inputs with one single-select duration-bucket `Picker`, mirroring
+the CreateOffer duration picker — same `OFFER_DURATION_BUCKETS_DAYS`
+([7, 14, 30, 60, 90, 180, 365]). The picker has an "Any duration"
+default (no filter); selecting a bucket is an *exact match* on
+`offer.durationDays` (not a min/max range — every UI-created offer
+carries a bucketed duration, so a range was overkill). Offers with a
+non-bucketed `durationDays` (legacy / direct-contract) only match the
+"Any" option.
+
+Mechanics: `OfferFilters.{minDuration,maxDuration}` (two strings) →
+`duration` (one string — `''` = any, else a bucket day-count); the
+`matchesFilter` predicate's min/max comparison → `f.duration &&
+BigInt(f.duration) !== o.durationDays → reject`. OfferBook state
+`minDuration`/`maxDuration` → `durationFilter`. New i18n
+`offerBookPage.{durationLabel, durationAny, durationFilterAria}`,
+all 10 locales; the bucket labels reuse `createOffer.durationBucket`;
+the now-unused `offerBookPage.{minDuration, maxDuration, *Placeholder}`
+keys were removed. `offerBookRanking.test.ts` updated for the new shape.
+
 ## Release-notes mid-stream date roll
 
 The conversation that produced this release-notes file started on

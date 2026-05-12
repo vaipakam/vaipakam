@@ -12,8 +12,14 @@ export type LiquidityFilter = 'any' | 'liquid' | 'illiquid';
 export interface OfferFilters {
   lendingAsset: string;
   collateralAsset: string;
-  minDuration: string;
-  maxDuration: string;
+  /** Selected duration bucket as a day-count string (e.g. `'30'`), or
+   *  the empty string for "any duration". The OfferBook's filter UI is
+   *  a single-select bucket picker over `OFFER_DURATION_BUCKETS_DAYS`
+   *  (matching the CreateOffer duration picker), so the predicate is an
+   *  exact match rather than a min/max range. Offers with a non-bucketed
+   *  `durationDays` (legacy / direct-contract) only match the "any"
+   *  option. */
+  duration: string;
   liquidity: LiquidityFilter;
 }
 
@@ -32,10 +38,7 @@ export interface RankableOffer {
 export function matchesFilter(o: FilterableOffer, f: OfferFilters): boolean {
   if (f.lendingAsset && o.lendingAsset.toLowerCase() !== f.lendingAsset.toLowerCase()) return false;
   if (f.collateralAsset && o.collateralAsset.toLowerCase() !== f.collateralAsset.toLowerCase()) return false;
-  const minD = f.minDuration ? BigInt(f.minDuration) : null;
-  const maxD = f.maxDuration ? BigInt(f.maxDuration) : null;
-  if (minD !== null && o.durationDays < minD) return false;
-  if (maxD !== null && o.durationDays > maxD) return false;
+  if (f.duration && BigInt(f.duration) !== o.durationDays) return false;
   // principalLiquidity is the LiquidityCategory enum: 0 = Liquid, 1 = Illiquid.
   if (f.liquidity === 'liquid' && o.principalLiquidity !== 0) return false;
   if (f.liquidity === 'illiquid' && o.principalLiquidity !== 1) return false;

@@ -1397,10 +1397,6 @@
     "subtitleOpenSuffix": ".",
     "subtitleClosed": "عرض تاريخي للعروض المُنفَّذة — السيولة المقبولة التي طُوبقت بالفعل بقرض. يُستخدم لمعرفة معدلات السوق السابقة حتى بعد أن يخلو السجل المباشر.",
     "filtersHeader": "الفلاتر",
-    "minDuration": "أدنى مدة (أيام)",
-    "maxDuration": "أعلى مدة (أيام)",
-    "minDurationPlaceholder": "مثال: 7",
-    "maxDurationPlaceholder": "مثال: 365",
     "liquidity": "السيولة",
     "liquidityAny": "أيّ سيولة",
     "liquidityLiquid": "السائلة فقط",
@@ -1433,7 +1429,10 @@
     "marketAnchor": "المرساة السوقية",
     "lendersAboveBorrowersBelow": "المُقرضون ↑ في الأعلى · المقترضون ↓ في الأسفل",
     "showing": "عرض {{shown}} من {{total}}",
-    "pageOfTotal": "صفحة {{current}} من {{pages}} · {{shown}} من {{total}}"
+    "pageOfTotal": "صفحة {{current}} من {{pages}} · {{shown}} من {{total}}",
+    "durationLabel": "المدة",
+    "durationAny": "أي مدة",
+    "durationFilterAria": "تصفية العروض حسب المدة"
   },
   "keeperPicker": {
     "addKeeper": "إضافة keeper",

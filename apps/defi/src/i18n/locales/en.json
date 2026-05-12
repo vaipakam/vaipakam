@@ -416,10 +416,6 @@
     "subtitleOpenSuffix": ".",
     "subtitleClosed": "Historical view of filled offers — accepted liquidity that's already been matched to a loan. Use this to see past market rates even after the live book clears.",
     "filtersHeader": "Filters",
-    "minDuration": "Min duration (days)",
-    "maxDuration": "Max duration (days)",
-    "minDurationPlaceholder": "e.g., 7",
-    "maxDurationPlaceholder": "e.g., 365",
     "liquidity": "Liquidity",
     "liquidityAny": "Any",
     "liquidityLiquid": "Liquid only",
@@ -452,7 +448,10 @@
     "marketAnchor": "Market Anchor",
     "lendersAboveBorrowersBelow": "Lenders ↑ above · Borrowers ↓ below",
     "showing": "Showing {{shown}} of {{total}}",
-    "pageOfTotal": "Page {{current}} of {{pages}} · {{shown}} of {{total}}"
+    "pageOfTotal": "Page {{current}} of {{pages}} · {{shown}} of {{total}}",
+    "durationLabel": "Duration",
+    "durationAny": "Any duration",
+    "durationFilterAria": "Filter offers by duration"
   },
   "keeperPicker": {
     "addKeeper": "Add keeper",

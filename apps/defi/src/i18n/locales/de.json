@@ -1397,10 +1397,6 @@
     "subtitleOpenSuffix": ".",
     "subtitleClosed": "Historische Ansicht ausgeführter Angebote — akzeptierte Liquidität, die bereits einem Kredit zugeordnet wurde. Damit lassen sich frühere Marktraten einsehen, auch nachdem das Live-Buch leer ist.",
     "filtersHeader": "Filter",
-    "minDuration": "Min. Laufzeit (Tage)",
-    "maxDuration": "Max. Laufzeit (Tage)",
-    "minDurationPlaceholder": "z. B. 7",
-    "maxDurationPlaceholder": "z. B. 365",
     "liquidity": "Liquidität",
     "liquidityAny": "Beliebig",
     "liquidityLiquid": "Nur liquide",
@@ -1433,7 +1429,10 @@
     "marketAnchor": "Marktanker",
     "lendersAboveBorrowersBelow": "Kreditgeber ↑ oben · Kreditnehmer ↓ unten",
     "showing": "Anzeige von {{shown}} von {{total}}",
-    "pageOfTotal": "Seite {{current}} von {{pages}} · {{shown}} von {{total}}"
+    "pageOfTotal": "Seite {{current}} von {{pages}} · {{shown}} von {{total}}",
+    "durationLabel": "Laufzeit",
+    "durationAny": "Beliebige Laufzeit",
+    "durationFilterAria": "Angebote nach Laufzeit filtern"
   },
   "keeperPicker": {
     "addKeeper": "Keeper hinzufügen",

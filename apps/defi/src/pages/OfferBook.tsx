@@ -26,6 +26,7 @@ import { useOnchainActiveOfferIds } from '../hooks/useOnchainActiveOfferIds';
 import { useIndexedActiveOffers } from '../hooks/useIndexedActiveOffers';
 import { useActiveOffersByAssetPairRanked } from '../hooks/useActiveOffersByAssetPairRanked';
 import { OFFER_BOOK_PAGE_SIZE } from '../lib/offerBookConfig';
+import { OFFER_DURATION_BUCKETS_DAYS } from '../lib/offerSchema';
 import { useRescanCooldown } from '../hooks/useRescanCooldown';
 import { Check, RefreshCw } from 'lucide-react';
 import { indexedToRawOffer } from '../lib/indexerClient';
@@ -372,8 +373,12 @@ export default function OfferBook() {
     setLendingAssetFilterRaw(defaultLendingAsset);
     setCollateralAssetFilterRaw(defaultCollateralAsset);
   }, [defaultLendingAsset, defaultCollateralAsset]);
-  const [minDuration, setMinDuration] = useState('');
-  const [maxDuration, setMaxDuration] = useState('');
+  // Single-select duration bucket filter — `''` = any, otherwise a
+  // day-count string from `OFFER_DURATION_BUCKETS_DAYS` (matching the
+  // CreateOffer duration picker). Replaced the prior min/max numeric
+  // inputs: every UI-created offer carries a bucketed duration, so an
+  // exact-match-on-bucket filter fits the data.
+  const [durationFilter, setDurationFilter] = useState('');
   const [liquidityFilter, setLiquidityFilter] = useState<LiquidityFilter>('any');
   // User-chosen sort for the lender / borrower tabs. Default
   // 'recency-desc' matches the previous "newest first" behaviour and
@@ -1071,11 +1076,10 @@ export default function OfferBook() {
     matchesFilterPure(o, {
       lendingAsset: lendingAssetFilter,
       collateralAsset: collateralAssetFilter,
-      minDuration,
-      maxDuration,
+      duration: durationFilter,
       liquidity: liquidityFilter,
     }),
-  [lendingAssetFilter, collateralAssetFilter, minDuration, maxDuration, liquidityFilter]);
+  [lendingAssetFilter, collateralAssetFilter, durationFilter, liquidityFilter]);
 
   // Defensive dedup-by-id pass. The `offers` state can transiently
   // hold duplicates during the indexer-serving ↔ legacy-log-scan race
@@ -1167,7 +1171,7 @@ export default function OfferBook() {
   const [page, setPage] = useState(1);
   useEffect(() => {
     setPage(1);
-  }, [tab, lendingAssetFilter, collateralAssetFilter, minDuration, maxDuration, liquidityFilter, perSide, statusView, hideMyOffers]);
+  }, [tab, lendingAssetFilter, collateralAssetFilter, durationFilter, liquidityFilter, perSide, statusView, hideMyOffers]);
   const activeSideList = tab === 'lender' ? lenderAll : tab === 'borrower' ? borrowerAll : null;
   const totalPages = activeSideList ? Math.max(1, Math.ceil(activeSideList.length / perSide)) : 1;
   const safePage = Math.min(page, totalPages);
@@ -1357,31 +1361,24 @@ export default function OfferBook() {
             />
           </div>
           <div className="offer-book-filter-cell">
-            <label className="form-label" htmlFor="offer-book-min-duration">
-              {t('offerBookPage.minDuration')}
-            </label>
-            <input
-              id="offer-book-min-duration"
-              type="number"
-              min="0"
-              placeholder={t('offerBookPage.minDurationPlaceholder')}
-              value={minDuration}
-              onChange={(e) => setMinDuration(e.target.value)}
-              className="form-input"
-            />
-          </div>
-          <div className="offer-book-filter-cell">
-            <label className="form-label" htmlFor="offer-book-max-duration">
-              {t('offerBookPage.maxDuration')}
-            </label>
-            <input
-              id="offer-book-max-duration"
-              type="number"
-              min="0"
-              placeholder={t('offerBookPage.maxDurationPlaceholder')}
-              value={maxDuration}
-              onChange={(e) => setMaxDuration(e.target.value)}
-              className="form-input"
+            <span className="form-label">{t('offerBookPage.durationLabel')}</span>
+            {/* Single-select bucket picker over OFFER_DURATION_BUCKETS_DAYS
+                — same set the CreateOffer duration picker uses. `''` =
+                "Any duration" (no filter); otherwise an exact match on
+                the chosen bucket (see `matchesFilter` in
+                offerBookRanking.ts). */}
+            <Picker
+              items={[
+                { value: '', label: t('offerBookPage.durationAny') },
+                ...OFFER_DURATION_BUCKETS_DAYS.map((d) => ({
+                  value: String(d),
+                  label: t('createOffer.durationBucket', { count: d }),
+                })),
+              ]}
+              value={durationFilter}
+              onSelect={setDurationFilter}
+              ariaLabel={t('offerBookPage.durationFilterAria')}
+              minWidth={150}
             />
           </div>
           <div className="offer-book-filter-cell">

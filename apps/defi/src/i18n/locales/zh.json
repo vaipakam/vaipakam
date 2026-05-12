@@ -1397,10 +1397,6 @@
     "subtitleOpenSuffix": "。",
     "subtitleClosed": "已成交报价的历史视图 — 已与贷款匹配的已接受流动性。即使实时簿清空后也可查看过去的市场利率。",
     "filtersHeader": "筛选器",
-    "minDuration": "最短期限（天）",
-    "maxDuration": "最长期限（天）",
-    "minDurationPlaceholder": "例如：7",
-    "maxDurationPlaceholder": "例如：365",
     "liquidity": "流动性",
     "liquidityAny": "Any",
     "liquidityLiquid": "Liquid only",
@@ -1433,7 +1429,10 @@
     "marketAnchor": "市场锚点",
     "lendersAboveBorrowersBelow": "出借方 ↑ 上方 · 借款人 ↓ 下方",
     "showing": "显示{{shown}}/{{total}}",
-    "pageOfTotal": "第{{current}}页/共{{pages}}页 · {{shown}}/{{total}}"
+    "pageOfTotal": "第{{current}}页/共{{pages}}页 · {{shown}}/{{total}}",
+    "durationLabel": "期限",
+    "durationAny": "任意期限",
+    "durationFilterAria": "按期限筛选报价"
   },
   "keeperPicker": {
     "addKeeper": "添加keeper",

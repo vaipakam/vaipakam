@@ -1397,10 +1397,6 @@
     "subtitleOpenSuffix": "।",
     "subtitleClosed": "भरे हुए ऑफरों का ऐतिहासिक दृश्य — स्वीकृत तरलता जिसे पहले ही ऋण से मिलान किया गया है। लाइव बुक खाली होने के बाद भी पिछली बाजार दरें देखने के लिए इसका उपयोग करें।",
     "filtersHeader": "फ़िल्टर",
-    "minDuration": "न्यूनतम अवधि (दिन)",
-    "maxDuration": "अधिकतम अवधि (दिन)",
-    "minDurationPlaceholder": "उदा. 7",
-    "maxDurationPlaceholder": "उदा. 365",
     "liquidity": "तरलता",
     "liquidityAny": "Any",
     "liquidityLiquid": "Liquid only",
@@ -1433,7 +1429,10 @@
     "marketAnchor": "बाजार एंकर",
     "lendersAboveBorrowersBelow": "ऋणदाता ↑ ऊपर · ऋणकर्ता ↓ नीचे",
     "showing": "{{total}} में से {{shown}} दिखा रहे हैं",
-    "pageOfTotal": "पृष्ठ {{current}} / {{pages}} · {{shown}} / {{total}}"
+    "pageOfTotal": "पृष्ठ {{current}} / {{pages}} · {{shown}} / {{total}}",
+    "durationLabel": "अवधि",
+    "durationAny": "कोई भी अवधि",
+    "durationFilterAria": "अवधि के अनुसार ऑफ़र फ़िल्टर करें"
   },
   "keeperPicker": {
     "addKeeper": "Keeper जोड़ें",

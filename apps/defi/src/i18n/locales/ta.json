@@ -1397,10 +1397,6 @@
     "subtitleOpenSuffix": ".",
     "subtitleClosed": "நிரப்பப்பட்ட வாய்ப்புகளின் வரலாற்றுக் காட்சி — ஏற்றுக்கொள்ளப்பட்ட திரவம் ஏற்கனவே ஒரு கடனுடன் பொருந்தியுள்ளது. நேரடி புத்தகம் காலியான பிறகும் கடந்த சந்தை விகிதங்களைக் காண இதைப் பயன்படுத்தவும்.",
     "filtersHeader": "வடிகட்டிகள்",
-    "minDuration": "குறைந்தபட்ச காலம் (நாட்கள்)",
-    "maxDuration": "அதிகபட்ச காலம் (நாட்கள்)",
-    "minDurationPlaceholder": "எ.கா. 7",
-    "maxDurationPlaceholder": "எ.கா. 365",
     "liquidity": "லிக்விடிட்டி",
     "liquidityAny": "Any",
     "liquidityLiquid": "Liquid only",
@@ -1433,7 +1429,10 @@
     "marketAnchor": "சந்தை நங்கூரம்",
     "lendersAboveBorrowersBelow": "கடன் வழங்குபவர்கள் ↑ மேலே · கடன் வாங்குபவர்கள் ↓ கீழே",
     "showing": "{{total}} இல் {{shown}} காட்டுகிறது",
-    "pageOfTotal": "{{pages}} இல் {{current}} ஆம் பக்கம் · {{total}} இல் {{shown}}"
+    "pageOfTotal": "{{pages}} இல் {{current}} ஆம் பக்கம் · {{total}} இல் {{shown}}",
+    "durationLabel": "காலம்",
+    "durationAny": "எந்தக் காலமும்",
+    "durationFilterAria": "காலத்தின்படி சலுகைகளை வடிகட்டு"
   },
   "keeperPicker": {
     "addKeeper": "Keeper ஐச் சேர்",
