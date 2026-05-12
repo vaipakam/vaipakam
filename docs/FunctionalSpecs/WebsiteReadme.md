@@ -77,6 +77,7 @@ PWA requirements:
 - the dApp should be installable on supported mobile browsers through the native `Add to Home Screen` / install prompt
 - the web app manifest should include Vaipakam branding, app icons, theme color, and shortcuts for high-frequency destinations such as Offer Book, My Loans, Buy VPFI, and Alerts
 - the production service worker may cache only the static app shell with a stale-while-revalidate strategy
+- navigational HTML should prefer a network-first strategy so newly deployed app bundles replace stale PWA-controlled pages on the next load
 - dynamic data including RPC responses, subgraph reads, `/quote/*` worker responses, and transaction-preview responses must bypass service-worker caching so on-chain state is never stale
 - the service worker should register only in production builds and should fail safely on browsers that do not support service workers
 
@@ -143,8 +144,13 @@ Current connected-app surface expectations:
 - Dashboard should not include a shallow `Your Escrow` / `Your Vault address` card when it only repeats the redacted vault address and explorer link; the dedicated `Your Vaipakam Vault` page is the canonical surface for vault address, asset balances, deposits, withdrawals, dust filtering, and protocol-tracked balance display
 - Dashboard's `Your Loans` table should prefer a single bundled read that returns all rows for the connected wallet already tagged by lender / borrower side, so the table first-paints as one complete payload rather than stair-stepping through one call per loan
 - Dashboard copy that summarizes lender versus borrower exposure should describe the side where the connected user has more capital, not always frame the headline as lender stake
-- Dashboard's active-loans section should expose a manual refresh action for connected wallets that refreshes indexed loans, wallet loan rows, claimability hints, and the user's offers together, while showing a `Last refreshed` indicator and the shared adaptive rescan cooldown chrome
+- Dashboard's active-loans section should expose a manual refresh action for connected wallets that refreshes indexed loans, wallet loan rows, claimability hints, and the user's offers together, while showing shared adaptive rescan cooldown chrome
+- Dashboard, Offer Book, Activity, Claim Center, and Vaipakam Vault surfaces should share one refresh / rescan button component and one data-sync chip instead of per-page copy and state machines; the chip should say `Synced` when page data has reached the chain safe head within the accepted gap and `N blocks behind` when the page is still catching up
+- public Analytics should not expose a spam-clickable manual refresh button; it should auto-refresh from the shared watermark / indexer signals and show only the data-sync chip
+- the top-bar freshness badge should answer whether the current page data is live by comparing the chain safe head with the freshest block reached by either the central indexer or the page's own RPC tail scan, and it should distinguish `Live`, `Live updating`, `Catching up`, `Behind`, direct-RPC fallback, and local-dev states
+- the freshness popover should stay user-facing and compact, while the issue / diagnostics drawer should carry the operator breakdown by mounted data lane, including indexer frontier, RPC tail-scan frontier, fetch-in-progress state, and the live-polled chain safe head
 - `Offer Book` should be wallet-gated inside `/app`; after connection it should keep market browsing filterable by side, asset, status, liquidity, duration, and per-side count; market-rate annotations should use a filter-scoped recent-acceptance anchor with signed deltas and a mobile-friendly explanatory tooltip
+- `Offer Book` status tabs should avoid row-count promises that require validating every offer on-chain; scalable scanned / hidden summaries are preferred over tab counts that would force full-market multicalls
 - closed / filled offer rows should link to the loan they created when an `OfferAccepted(offerId, acceptor, loanId)` event is available
 - `Offer Book` and Dashboard offer tables should link offer IDs to `/app/offers/:offerId`; Activity, Loan Details, borrower preclose, refinance, and NFT Verifier surfaces should use the same offer-detail deep link wherever they render a concrete offer ID
 - `/app/offers/:offerId` should mirror Loan Details' read discipline: indexer-first offer lookup, single direct `getOffer` fallback only when the worker is unavailable, creation transaction lookup from the indexed first-seen block, status/type/asset/rate/duration/creator display, contextual creator-only actions, and a `View loan #N` link for accepted offers
@@ -169,7 +175,9 @@ Current connected-app surface expectations:
 - in the connected-app sidebar, `Claim Center` should sit with the core lending actions before `Buy VPFI`, while token-purchase and advanced utility destinations remain secondary to loan management
 - the in-app logo should route to `/app` so connected users return to the dashboard shell; the public navbar logo should continue to route to `/`
 - the app's issue drawer should be labelled as `Report Issue` / `Issue Details`, not `Diagnostics`, and should generate a redacted report suitable for GitHub issue filing
+- the issue drawer should use one scroll region below its fixed header so expanded chain / indexer details do not crush or hide the journey log; localized labels and long URLs must wrap cleanly on phone-width drawers
 - bridged `Buy VPFI` quote failures should be written into the in-memory journey log with enough chain, adapter, and decoded-error context for the issue drawer to produce an actionable support report, rather than leaving the failure only as inline page state
+- the connected app should have a route-level render error boundary that turns crashes into a recoverable card with `Reload page` and `Back to Dashboard`, records a redacted app-crash entry in the journey log, and decodes common minified React error codes into plain-language support context where possible
 
 Transaction-safety and single-signature flows:
 
@@ -181,6 +189,14 @@ Transaction-safety and single-signature flows:
 - Blockaid unavailability must fail soft: it may collapse to a subtle preview-unavailable state, but it must not block the on-chain transaction path by itself
 - API keys for transaction scanning and swap quotes must stay server-side; the browser should call only worker-internal proxy routes
 - review modals should continue to treat the wallet transaction and smart contract call as the source of truth; scanner output is informational safety context
+
+Wallet connection UX:
+
+- ConnectKit remains the wallet picker, but mobile wallet choices should prefer working deep-link paths rather than QR-only flows when the user is already on a phone browser
+- the MetaMask featured wallet path should work on mobile through MetaMask SDK / equivalent mobile-aware connector behavior while preserving direct extension connection on desktop
+- Coinbase Wallet should follow the standard connector path unless mainnet testing proves the SDK flow cannot approve reliably, in which case the documented WalletConnect fallback path may be restored
+- WalletConnect metadata should include redirect information so mobile wallets can return users to the dApp after approval where supported
+- touch devices should show a persistent wallet-connecting banner during wallet picker and deep-link flows: first prompting the user to select a wallet, then indicating that approval is still in progress after the tab backgrounds, and hiding cleanly when the user closes the picker without deep-linking
 
 Liquidation quote orchestration:
 
