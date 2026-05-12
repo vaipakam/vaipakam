@@ -1,27 +1,58 @@
-/* "New version available — Reload" pill. Bottom-LEFT so it doesn't
-   collide with the WalletConnectingOverlay (bottom-centre) or the
-   diagnostics FAB (bottom-right). z-index above page chrome but below
-   the wallet-connect banner / ConnectKit modal. */
+/* "New version available — Reload" card.
+
+   Anchored bottom-RIGHT, stacked above the diagnostics FAB
+   (`right: 1rem; bottom: 1rem`, ~2.5rem tall → sit at `bottom: 4rem`).
+   NOT bottom-left: the AppLayout left sidebar lives at the viewport's
+   left edge, and `position: fixed; left: …` is viewport-relative, so a
+   left-anchored banner is partially covered by the sidebar. Bottom-
+   right is clear of both the sidebar and the WalletConnectingOverlay
+   (bottom-centre). z-index above page chrome but below the
+   wallet-connect banner / ConnectKit modal.
+
+   A card, not a pill: the message wraps (longer locale strings, narrow
+   viewports), and wrapped text in a pill looks broken. `max-width` so a
+   wide string can't push the card off the left edge on desktop;
+   `flex-wrap` so the Reload button drops below the message only when
+   the row is truly too tight. */
 .app-update-banner {
   position: fixed;
-  left: 1rem;
-  bottom: 1rem;
+  right: 1rem;
+  bottom: 4rem;
   z-index: 950;
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 0.5rem;
-  padding: 0.55rem 0.85rem;
-  border-radius: 999px;
+  gap: 0.4rem 0.6rem;
+  max-width: min(92vw, 380px);
+  padding: 0.6rem 0.85rem;
+  border-radius: 12px;
   background: var(--bg-secondary, #1a1a1a);
   color: var(--text-primary, #fff);
   border: 1px solid var(--brand, #4f46e5);
   box-shadow: 0 6px 16px rgba(0, 0, 0, 0.3);
   font-size: 0.8rem;
+  line-height: 1.35;
+}
+
+/* The leading RefreshCw icon (lucide renders an <svg> as the root). */
+.app-update-banner > svg {
+  flex-shrink: 0;
+}
+
+/* The message — takes the available width between the icon and the
+   button, wrapping at word boundaries; `min-width: 0` lets it shrink
+   below its content's intrinsic width so it actually wraps instead of
+   forcing the card wider. */
+.app-update-banner > span {
+  flex: 1 1 auto;
+  min-width: 0;
 }
 
 .app-update-reload {
+  flex-shrink: 0;
+  white-space: nowrap;
   border: none;
-  border-radius: 999px;
+  border-radius: 8px;
   padding: 0.3rem 0.7rem;
   background: var(--brand, #4f46e5);
   color: #fff;
@@ -40,10 +71,12 @@
 }
 
 @media (max-width: 640px) {
+  /* Phone: the sidebar is collapsed to a hamburger, so stretch the card
+     edge-to-edge. Still sits above where the FAB floats. */
   .app-update-banner {
     left: 0.6rem;
     right: 0.6rem;
-    bottom: 0.6rem;
-    justify-content: center;
+    bottom: 4rem;
+    max-width: none;
   }
 }

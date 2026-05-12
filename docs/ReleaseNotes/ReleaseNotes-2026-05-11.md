@@ -2090,6 +2090,25 @@ Net: the OfferBook's filter row is now Lending asset · Collateral asset
 `offerBookPage.hideMine*` i18n keys (all 10 locales); `OfferBook.test.tsx`
 needed no change (it never exercised either control).
 
+## AppUpdateBanner — reposition (clear of the sidebar) + wrap the message
+
+The "A new version of Vaipakam is available — Reload" banner was
+anchored bottom-LEFT (`position: fixed; left: 1rem`), which is the
+viewport's left edge — exactly where the AppLayout left sidebar sits,
+so the banner was partially covered by it. Moved to bottom-RIGHT,
+stacked above the diagnostics FAB (`right: 1rem; bottom: 4rem`) — clear
+of both the sidebar and the WalletConnectingOverlay (bottom-centre).
+
+Also restyled from a pill to a small card so the message can wrap
+(longer locale strings, narrow viewports): `border-radius: 12px`,
+`max-width: min(92vw, 380px)`, `flex-wrap: wrap`; the message `<span>`
+is `flex: 1 1 auto; min-width: 0` so it wraps at word boundaries, the
+icon and the Reload button are `flex-shrink: 0` (button also
+`white-space: nowrap`) so the button stays intact and only drops below
+the message when the row is genuinely too tight. Below 640 px (sidebar
+collapsed) the card stretches edge-to-edge, still above the FAB.
+CSS-only.
+
 ## Release-notes mid-stream date roll
 
 The conversation that produced this release-notes file started on
