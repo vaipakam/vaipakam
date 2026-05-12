@@ -32,6 +32,7 @@ import { SimulationPreview } from "../components/app/SimulationPreview";
 import { LiquidityPreflightBanner } from "../components/app/LiquidityPreflightBanner";
 import { OfferRiskPreview } from "../components/app/OfferRiskPreview";
 import { useLiquidityPreflight } from "../hooks/useLiquidityPreflight";
+import { useAssetLiquidity } from "../hooks/useAssetLiquidity";
 import { usePermit2Signing } from "../hooks/usePermit2Signing";
 import { DIAMOND_ABI_VIEM as DIAMOND_ABI } from "@vaipakam/contracts/abis";
 import { L as Link } from "../components/L";
@@ -197,6 +198,13 @@ export default function CreateOffer() {
   // refinance/offset flows must preserve the pinned original-loan types.
   const lendingDetection = useAssetType(form.lendingAsset || null);
   const collateralDetection = useAssetType(form.collateralAsset || null);
+  // Live `checkLiquidity` on the ERC-20 collateral (NFT collateral is
+  // expected-illiquid — the cross-chain "thin here" warning only makes
+  // sense for an ERC-20 we'd expect to be liquid but isn't on this
+  // chain). Drives the warning banner below.
+  const collateralLiquidityStatus = useAssetLiquidity(
+    form.collateralAssetType === "erc20" ? form.collateralAsset || null : null,
+  );
 
   useEffect(() => {
     if (lockAssetContinuity) return;
@@ -771,6 +779,18 @@ export default function CreateOffer() {
             <span>{t('createOffer.firstOfferBanner')}</span>
           </div>
         ))}
+      {/* Cross-chain "thin here" warning — the chosen ERC-20 collateral
+          is classified `Illiquid` by `checkLiquidity` on *this* chain
+          (an asset can be deep on its home chain and thin elsewhere).
+          Shows however the user got here. NFT collateral is excluded
+          (the hook is fed `null` for it) — "illiquid" is expected for
+          NFTs and the mutual-consent disclosures cover that case. */}
+      {collateralLiquidityStatus === "illiquid" && (
+        <div className="alert alert-warning" role="alert">
+          <AlertTriangle size={18} />
+          <span>{t('liquidityNotice.thinCollateralOnChain')}</span>
+        </div>
+      )}
 
       {error && <ErrorAlert message={error} />}
 

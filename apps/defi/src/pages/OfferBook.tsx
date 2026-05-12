@@ -6,6 +6,7 @@ import { encodeFunctionData } from 'viem';
 import { SimulationPreview } from '../components/app/SimulationPreview';
 import { LiquidityPreflightBanner } from '../components/app/LiquidityPreflightBanner';
 import { useLiquidityPreflight } from '../hooks/useLiquidityPreflight';
+import { useAssetLiquidity } from '../hooks/useAssetLiquidity';
 import { usePermit2Signing } from '../hooks/usePermit2Signing';
 import { useWallet } from '../context/WalletContext';
 import { useWalletClient } from 'wagmi';
@@ -1480,6 +1481,14 @@ function AcceptReviewModal({ offer, illiquid, consent, onConsentChange, submitti
   const { address: viewerAddress } = useWallet();
   const principalIlliquid = offer.principalLiquidity === 1;
   const collateralIlliquid = offer.collateralLiquidity === 1;
+  // Live `checkLiquidity` on the ERC-20 collateral (only when this is
+  // an ERC-20-collateralised loan, `offer.assetType === 0` — for NFT
+  // collateral "illiquid" is expected and the mutual-consent
+  // disclosures already cover it). Drives the cross-chain "thin here"
+  // warning below.
+  const collateralChainLiquidity = useAssetLiquidity(
+    offer.assetType === 0 ? offer.collateralAsset : null,
+  );
   const illiquidLegs = principalIlliquid && collateralIlliquid
     ? 'Both the principal and collateral legs'
     : principalIlliquid
@@ -1532,6 +1541,17 @@ function AcceptReviewModal({ offer, illiquid, consent, onConsentChange, submitti
           address={offer.creator as Address}
           label={t('banners.sanctionsLabelOfferCreator')}
         />
+
+        {/* Cross-chain "thin here" warning — the ERC-20 collateral on
+            this offer is `Illiquid` on the current chain (may be much
+            deeper on another). Accepting it here means a liquidation
+            swap may be costly or fail. */}
+        {collateralChainLiquidity === 'illiquid' && (
+          <div className="alert alert-warning" role="alert">
+            <AlertTriangle size={18} />
+            <span>{t('liquidityNotice.thinCollateralOnChain')}</span>
+          </div>
+        )}
 
         <dl style={{ display: 'grid', gridTemplateColumns: 'max-content 1fr', rowGap: 6, columnGap: 16, fontSize: '0.9rem', margin: '8px 0 12px 0' }}>
           <dt style={{ opacity: 0.7 }}>Side</dt>

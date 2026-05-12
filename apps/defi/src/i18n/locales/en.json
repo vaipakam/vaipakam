@@ -673,6 +673,9 @@
     "borrowButton": "Borrow at market rate",
     "footnote": "Opens Create Offer with the rate, amount and minimum collateral pre-filled — you confirm there. The minimum collateral is the smallest that keeps the loan's health factor at the protocol floor (1.5); you can raise it, not lower it."
   },
+  "liquidityNotice": {
+    "thinCollateralOnChain": "⚠ This collateral asset has thin liquidity on this chain. If it gets liquidated here the swap may be costly or fail — and this asset may be much deeper on another chain. Consider using the chain where it has more liquidity."
+  },
   "createOffer": {
     "connectTitle": "Connect Your Wallet",
     "marketWidgetBanner": "Posting at the current market rate (≈ {{rate}}% APR) for this pair. Review and adjust the terms below before confirming.",
