@@ -70,19 +70,61 @@ library LibVaipakam {
     uint256 constant SECONDS_PER_YEAR = 365 days;
     uint256 constant DAYS_PER_YEAR = 365;
     uint256 constant ONE_DAY = 1 days;
-    // $1M USD pool-depth floor for classifying an asset as Liquid.
-    // Expressed in $ × 1e6 units, i.e. `1_000_000 * 1e6` literally means
-    // "$1,000,000". {OracleFacet._v3DepthLiquid} computes a *real* USD
-    // depth-at-tick from the asset/WETH v3-style pool (the WETH-leg
-    // virtual reserve `L·√P/2⁹⁶` — or `L·2⁹⁶/√P` when WETH is token0 —
-    // valued at the spot ETH/USD feed, doubled, then × 1e6) and compares
-    // it to this. (Pre-2026-05: the metric was `poolLiquidity × ethPrice`
-    // whose magnitude was dominated by the paired token's decimals + unit
+    // Pool-depth floor for classifying an asset as `Liquid` — 1,000,000
+    // PAD units (the Predominantly Available Denominator: USD on the
+    // retail deploy, whatever governance has rotated it to via T-048
+    // otherwise — see {effectivePadSymbol}). Expressed in PAD × 1e6
+    // units, i.e. `1_000_000 * 1e6` literally means "1,000,000 PAD".
+    // {OracleFacet._v3DepthLiquid} computes a *real* depth-at-tick from
+    // the asset/WETH v3-style pool (the WETH-leg virtual reserve
+    // `L·√P/2⁹⁶` — or `L·2⁹⁶/√P` when WETH is token0 — valued at the
+    // spot ETH/PAD feed, doubled, then × 1e6) and compares it to this.
+    // (Pre-2026-05: the metric was `poolLiquidity × ethPrice` whose
+    // magnitude was dominated by the paired token's decimals + unit
     // price, so this threshold was effectively "the pool isn't empty";
-    // the metric was rewritten to a true dollar figure — see that
-    // function's natspec.) Tunable via ops if coverage shifts; the graded
-    // tiers on top of this floor (Piece B) carry their own knobs.
-    uint256 constant MIN_LIQUIDITY_USD = 1_000_000 * 1e6;
+    // the metric was rewritten to a true PAD-denominated figure — see
+    // that function's natspec.) Stays the binary `Liquid`/`Illiquid`
+    // gate until the Piece-B slippage-at-`floorSizePad` rework (§4.4
+    // step 3 in the design doc) replaces it with `cfgFloorSizePad()`;
+    // the graded LTV tiers on top of this floor carry their own knobs
+    // (`tier{1,2,3}SizePad` / `tier{1,2,3}MaxInitLtvBps`).
+    uint256 constant MIN_LIQUIDITY_PAD = 1_000_000 * 1e6;
+    // ─── Depth-tiered LTV (Piece B) — defaults + governance bounds ────
+    // All sizes below are PAD × 1e6 units (USD on the retail deploy);
+    // all `*_BPS` are basis points; the kill-switch
+    // `depthTieredLtvEnabled` defaults `false` so a fresh deploy keeps
+    // today's `HF ≥ 1.5` init gate. See
+    // docs/DesignsAndPlans/MarketRateWidgetAndDepthTieredLTV.md §4.2-§4.3.
+    // Slippage bound a simulated test trade must clear to count toward a
+    // tier (and the binary `Liquid` floor once §4.4-step-3-proper lands).
+    uint256 constant LIQUIDITY_SLIPPAGE_BPS_DEFAULT = 200; // 2%
+    uint256 constant MIN_LIQUIDITY_SLIPPAGE_BPS = 25; // 0.25% — floor so a setter can't make the test absurdly strict
+    uint256 constant MAX_LIQUIDITY_SLIPPAGE_BPS = 1000; // 10% — ceiling so it can't be loosened into meaninglessness
+    // Pool spot must agree with its own `twapWindowSec` TWAP within this
+    // band, else the pool is treated as recently-manipulated → `Illiquid`.
+    uint256 constant TWAP_CONSISTENCY_BPS_DEFAULT = 300; // 3%
+    uint256 constant MIN_TWAP_CONSISTENCY_BPS = 50; // 0.5%
+    uint256 constant MAX_TWAP_CONSISTENCY_BPS = 1000; // 10%
+    uint256 constant TWAP_WINDOW_SEC_DEFAULT = 30 minutes;
+    uint256 constant MIN_TWAP_WINDOW_SEC = 5 minutes; // too short ⇒ trivially flash-manipulable
+    uint256 constant MAX_TWAP_WINDOW_SEC = 1 days; // too long ⇒ stale, blocks legit fast moves
+    // Simulated-swap test sizes for the floor + the three graded tiers.
+    uint256 constant FLOOR_SIZE_PAD_DEFAULT = 5_000 * 1e6; // clear ⇒ `Liquid`; fail ⇒ `Illiquid`
+    uint256 constant TIER1_SIZE_PAD_DEFAULT = 50_000 * 1e6; // → Tier 1 (50% init-LTV)
+    uint256 constant TIER2_SIZE_PAD_DEFAULT = 500_000 * 1e6; // → Tier 2 (60% init-LTV)
+    uint256 constant TIER3_SIZE_PAD_DEFAULT = 5_000_000 * 1e6; // → Tier 3 (65% init-LTV)
+    uint256 constant MIN_TIER_SIZE_PAD = 1_000 * 1e6; // floor for any size knob (1,000 PAD)
+    // Per-tier init-LTV caps, applied as `min(assetRiskParams.maxLtvBps,
+    // tierNMaxInitLtvBps)` only while `depthTieredLtvEnabled`.
+    uint256 constant TIER1_MAX_INIT_LTV_BPS_DEFAULT = 5000; // 50%
+    uint256 constant TIER2_MAX_INIT_LTV_BPS_DEFAULT = 6000; // 60%
+    uint256 constant TIER3_MAX_INIT_LTV_BPS_DEFAULT = 6500; // 65%
+    uint256 constant MAX_TIER_INIT_LTV_BPS_CEIL = 8000; // 80% — hard ceiling on any tier-LTV setter
+    // Default keeper-confidence tier for an asset the relay hasn't
+    // touched yet — Tier 1, i.e. `effectiveTier` collapses to today's
+    // `HF ≥ 1.5` until the off-chain 0x/1inch confidence accumulates.
+    uint8 constant KEEPER_TIER_DEFAULT = 1;
+    uint8 constant MAX_LIQUIDITY_TIER = 3;
     uint256 constant LTV_SCALE = 10000; // Basis points (e.g., 7500 = 75%)
     uint256 constant RENTAL_BUFFER_BPS = 500; // 5% buffer for NFT rentals
     uint256 constant VOLATILITY_LTV_THRESHOLD_BPS = 11000; // 110% LTV for fallback (1.1x loan value)
@@ -600,6 +642,57 @@ library LibVaipakam {
         // setters are NOT gated by this flag — governance can tune
         // individual values within the same numeraire freely.
         bool numeraireSwapEnabled;
+        // ── Depth-tiered LTV (Piece B) — governance globals ───────────
+        // See docs/DesignsAndPlans/MarketRateWidgetAndDepthTieredLTV.md
+        // §4.2-§4.3. Every field is `0 ⇒ LibVaipakam constant default`;
+        // setters live in {ConfigFacet} under `ADMIN_ROLE` (later
+        // governance) and enforce the bounds + monotonicity noted below.
+        //
+        // Master kill-switch. Default `false` — the feature ships
+        // dormant: `OracleFacet.getLiquidityTier` still computes a tier
+        // (so the keeper / UI can read it) but the init gate in
+        // `LoanFacet._runInitGates` and the synthetic-HF check in
+        // `LibOfferMatch` ignore the per-tier LTV cap entirely → exactly
+        // today's behaviour (only `assetRiskParams.maxLtvBps` + the
+        // `HF ≥ 1.5` floor). Flipped on per chain by `ADMIN_ROLE` via
+        // `ConfigFacet.setDepthTieredLtvEnabled(bool)` only after that
+        // chain's slippage census + audit (§4.4 step 6).
+        bool depthTieredLtvEnabled;
+        // Slippage budget (bps) a simulated fixed-size swap must clear
+        // for the asset's pool to count toward a tier. 0 ⇒
+        // LIQUIDITY_SLIPPAGE_BPS_DEFAULT (200 = 2%). Bounded
+        // [MIN_LIQUIDITY_SLIPPAGE_BPS, MAX_LIQUIDITY_SLIPPAGE_BPS].
+        uint16 liquiditySlippageBps; // 0 ⇒ 200
+        // Pool spot-vs-own-TWAP agreement band (bps) — anti-manipulation
+        // guard in `getLiquidityTier`. 0 ⇒ TWAP_CONSISTENCY_BPS_DEFAULT
+        // (300 = 3%). Bounded [MIN_TWAP_CONSISTENCY_BPS, MAX_…].
+        uint16 twapConsistencyBps; // 0 ⇒ 300
+        // Per-tier max init-LTV caps (bps), applied as
+        // `min(assetRiskParams.maxLtvBps, tierNMaxInitLtvBps[
+        // effectiveTier])` while `depthTieredLtvEnabled`. 0 ⇒
+        // TIER{1,2,3}_MAX_INIT_LTV_BPS_DEFAULT (5000 / 6000 / 6500).
+        // Setter enforces `tier1 ≤ tier2 ≤ tier3 ≤ MAX_TIER_INIT_LTV_BPS_CEIL`.
+        uint16 tier1MaxInitLtvBps; // 0 ⇒ 5000
+        uint16 tier2MaxInitLtvBps; // 0 ⇒ 6000
+        uint16 tier3MaxInitLtvBps; // 0 ⇒ 6500
+        // TWAP observation window (seconds) for the consistency guard.
+        // 0 ⇒ TWAP_WINDOW_SEC_DEFAULT (1800 = 30 min). Bounded
+        // [MIN_TWAP_WINDOW_SEC, MAX_TWAP_WINDOW_SEC].
+        uint32 twapWindowSec; // 0 ⇒ 1800
+        // Simulated-swap test sizes for the binary `Liquid` floor and
+        // the three graded tiers, each in PAD × 1e6 units (so `5_000e6`
+        // literally means "5,000 PAD" — USD on the retail deploy,
+        // whatever governance has rotated PAD to via T-048 otherwise;
+        // see {effectivePadSymbol}). 0 ⇒ FLOOR_SIZE_PAD_DEFAULT /
+        // TIER{1,2,3}_SIZE_PAD_DEFAULT (5k / 50k / 500k / 5M). Setter
+        // enforces `floor ≤ tier1 ≤ tier2 ≤ tier3` and each ≥
+        // MIN_TIER_SIZE_PAD. (`floorSizePad` becomes the `Liquid`/`Illiquid`
+        // threshold once the §4.4-step-3-proper slippage rework lands;
+        // until then `MIN_LIQUIDITY_PAD` is that threshold.)
+        uint64 floorSizePad; // 0 ⇒ 5_000e6
+        uint64 tier1SizePad; // 0 ⇒ 50_000e6
+        uint64 tier2SizePad; // 0 ⇒ 500_000e6
+        uint64 tier3SizePad; // 0 ⇒ 5_000_000e6
     }
 
     /// @dev Struct to store parameters of createOffer function, avoiding stack-too-deep.
@@ -2118,6 +2211,36 @@ library LibVaipakam {
         // and we want it to revert loudly rather than silently rolling
         // negative.
         mapping(address => mapping(address => uint256)) protocolTrackedEscrowBalance;
+        // ── Depth-tiered LTV (Piece B) — Predominantly Available Assets ─
+        // Per-chain list of the "predominantly available" quote tokens
+        // the liquidity check probes an asset's pools against — the
+        // on-chain ERC-20 incarnations of the chain's deep stablecoin /
+        // ETH liquidity (e.g. `[WETH, USDC, USDT, DAI]` by their
+        // addresses on this chain). Distinct from PAD (the *unit of
+        // account* the size thresholds are denominated in — USD/EUR/…,
+        // typically not an ERC-20): PAA is *what pools we look at*, PAD
+        // is *what we measure depth in*. Maintained by `ADMIN_ROLE`
+        // (later governance) via `ConfigFacet.set/add/removePaaAsset`;
+        // empty ⇒ {effectivePaaAssets} falls back to `[wethContract]`,
+        // so an un-configured deploy behaves exactly like today's
+        // WETH-only probe in `OracleFacet._v3DepthLiquid`. Keep it short
+        // (2-4 entries) — every entry adds a `getPool` probe × the
+        // ≤0.3% fee tiers to the liquidity check's hot path. Order is
+        // irrelevant (the check takes the best route over all of them).
+        // Pure-address config — no per-asset *tiering* allowlist; the
+        // only per-asset *remove* lever stays `AdminFacet.pauseAsset` /
+        // the blacklist.
+        address[] paaAssets;
+        // Keeper liquidity-confidence tier per asset (§4.1.b item 2).
+        // Default `0` is read as `KEEPER_TIER_DEFAULT` (= Tier 1) via
+        // {effectiveKeeperTier} — so a brand-new asset opens at Tier 1
+        // (`HF ≥ 1.5`) until the off-chain 0x/1inch confidence relay
+        // (`KEEPER_ROLE`, §4.4 step 5) promotes it. `effectiveTier(asset)
+        // = min(getLiquidityTier(asset), effectiveKeeperTier(asset))` —
+        // a compromised keeper can only lower an asset's tier toward the
+        // no-keeper baseline, never raise it above the on-chain ceiling.
+        // Written only by `ConfigFacet.setKeeperTier` under `KEEPER_ROLE`.
+        mapping(address => uint8) keeperTier;
     }
 
     /// @dev Range Orders Phase 1 — set by matchOffers, read by
@@ -2470,6 +2593,151 @@ library LibVaipakam {
     function cfgNotificationFee() internal view returns (uint256) {
         uint256 v = storageSlot().protocolCfg.notificationFee;
         return v == 0 ? NOTIFICATION_FEE_DEFAULT : v;
+    }
+
+    // ─── Depth-tiered LTV (Piece B) — config accessors ────────────────
+    // See docs/DesignsAndPlans/MarketRateWidgetAndDepthTieredLTV.md §4.2.
+    // Every "size" is PAD × 1e6 units; every `*Bps` is basis points.
+
+    /// @dev Master kill-switch for the depth-tiered init-LTV cap. While
+    ///      `false` (the fresh-deploy default), `OracleFacet.getLiquidityTier`
+    ///      still resolves a tier (read-only — for the keeper / UI) but
+    ///      the loan-init gate and the `matchOffers` synthetic-HF check
+    ///      ignore the per-tier LTV cap → exactly today's `HF ≥ 1.5`
+    ///      behaviour. Flipped on per chain by `ConfigFacet.setDepthTieredLtvEnabled`
+    ///      after that chain's slippage census + audit.
+    function cfgDepthTieredLtvEnabled() internal view returns (bool) {
+        return storageSlot().protocolCfg.depthTieredLtvEnabled;
+    }
+
+    /// @dev Slippage bound (bps) a simulated fixed-size swap must clear
+    ///      for the asset's pool to count toward a tier. `0 ⇒
+    ///      LIQUIDITY_SLIPPAGE_BPS_DEFAULT` (200). Setter-bounded
+    ///      `[MIN_LIQUIDITY_SLIPPAGE_BPS, MAX_LIQUIDITY_SLIPPAGE_BPS]`.
+    function cfgLiquiditySlippageBps() internal view returns (uint256) {
+        uint16 v = storageSlot().protocolCfg.liquiditySlippageBps;
+        return v == 0 ? LIQUIDITY_SLIPPAGE_BPS_DEFAULT : uint256(v);
+    }
+
+    /// @dev Pool spot-vs-own-TWAP agreement band (bps) — manipulation
+    ///      guard in `getLiquidityTier`. `0 ⇒ TWAP_CONSISTENCY_BPS_DEFAULT`
+    ///      (300). Setter-bounded `[MIN_TWAP_CONSISTENCY_BPS, MAX_…]`.
+    function cfgTwapConsistencyBps() internal view returns (uint256) {
+        uint16 v = storageSlot().protocolCfg.twapConsistencyBps;
+        return v == 0 ? TWAP_CONSISTENCY_BPS_DEFAULT : uint256(v);
+    }
+
+    /// @dev TWAP observation window (seconds) for the consistency guard.
+    ///      `0 ⇒ TWAP_WINDOW_SEC_DEFAULT` (1800). Setter-bounded
+    ///      `[MIN_TWAP_WINDOW_SEC, MAX_TWAP_WINDOW_SEC]`.
+    function cfgTwapWindowSec() internal view returns (uint256) {
+        uint32 v = storageSlot().protocolCfg.twapWindowSec;
+        return v == 0 ? TWAP_WINDOW_SEC_DEFAULT : uint256(v);
+    }
+
+    /// @dev Binary `Liquid`/`Illiquid` floor — the simulated-swap test
+    ///      size below which an asset is `Illiquid`. `0 ⇒
+    ///      FLOOR_SIZE_PAD_DEFAULT` (5,000 PAD). (Becomes the active
+    ///      `_v3DepthLiquid` threshold once §4.4-step-3-proper lands;
+    ///      until then `MIN_LIQUIDITY_PAD` is.)
+    function cfgFloorSizePad() internal view returns (uint256) {
+        uint64 v = storageSlot().protocolCfg.floorSizePad;
+        return v == 0 ? FLOOR_SIZE_PAD_DEFAULT : uint256(v);
+    }
+
+    /// @dev Tier-1 simulated-swap test size. `0 ⇒ TIER1_SIZE_PAD_DEFAULT` (50k PAD).
+    function cfgTier1SizePad() internal view returns (uint256) {
+        uint64 v = storageSlot().protocolCfg.tier1SizePad;
+        return v == 0 ? TIER1_SIZE_PAD_DEFAULT : uint256(v);
+    }
+
+    /// @dev Tier-2 simulated-swap test size. `0 ⇒ TIER2_SIZE_PAD_DEFAULT` (500k PAD).
+    function cfgTier2SizePad() internal view returns (uint256) {
+        uint64 v = storageSlot().protocolCfg.tier2SizePad;
+        return v == 0 ? TIER2_SIZE_PAD_DEFAULT : uint256(v);
+    }
+
+    /// @dev Tier-3 simulated-swap test size. `0 ⇒ TIER3_SIZE_PAD_DEFAULT` (5M PAD).
+    function cfgTier3SizePad() internal view returns (uint256) {
+        uint64 v = storageSlot().protocolCfg.tier3SizePad;
+        return v == 0 ? TIER3_SIZE_PAD_DEFAULT : uint256(v);
+    }
+
+    /// @dev Convenience: the simulated-swap test size for tier `n`
+    ///      (1, 2, or 3). Tier 0 returns the binary `Liquid` floor
+    ///      (`cfgFloorSizePad`). Reverts for `n > MAX_LIQUIDITY_TIER`
+    ///      — callers iterate over the known tier range.
+    function cfgTierSizePad(uint8 tier) internal view returns (uint256) {
+        if (tier == 0) return cfgFloorSizePad();
+        if (tier == 1) return cfgTier1SizePad();
+        if (tier == 2) return cfgTier2SizePad();
+        if (tier == 3) return cfgTier3SizePad();
+        revert IVaipakamErrors.ParameterOutOfRange(
+            "liquidityTier", uint256(tier), 0, uint256(MAX_LIQUIDITY_TIER)
+        );
+    }
+
+    /// @dev Tier-1 init-LTV cap (bps). `0 ⇒ TIER1_MAX_INIT_LTV_BPS_DEFAULT` (5000).
+    function cfgTier1MaxInitLtvBps() internal view returns (uint256) {
+        uint16 v = storageSlot().protocolCfg.tier1MaxInitLtvBps;
+        return v == 0 ? TIER1_MAX_INIT_LTV_BPS_DEFAULT : uint256(v);
+    }
+
+    /// @dev Tier-2 init-LTV cap (bps). `0 ⇒ TIER2_MAX_INIT_LTV_BPS_DEFAULT` (6000).
+    function cfgTier2MaxInitLtvBps() internal view returns (uint256) {
+        uint16 v = storageSlot().protocolCfg.tier2MaxInitLtvBps;
+        return v == 0 ? TIER2_MAX_INIT_LTV_BPS_DEFAULT : uint256(v);
+    }
+
+    /// @dev Tier-3 init-LTV cap (bps). `0 ⇒ TIER3_MAX_INIT_LTV_BPS_DEFAULT` (6500).
+    function cfgTier3MaxInitLtvBps() internal view returns (uint256) {
+        uint16 v = storageSlot().protocolCfg.tier3MaxInitLtvBps;
+        return v == 0 ? TIER3_MAX_INIT_LTV_BPS_DEFAULT : uint256(v);
+    }
+
+    /// @dev The init-LTV cap (bps) at tier `n`. Tier 0 (below the
+    ///      `Liquid` floor) ⇒ `0` — no borrow against it. Reverts for
+    ///      `n > MAX_LIQUIDITY_TIER`. Only consulted while
+    ///      `depthTieredLtvEnabled`; the effective init cap is
+    ///      `min(assetRiskParams.maxLtvBps, cfgTierMaxInitLtvBps(tier))`.
+    function cfgTierMaxInitLtvBps(uint8 tier) internal view returns (uint256) {
+        if (tier == 0) return 0;
+        if (tier == 1) return cfgTier1MaxInitLtvBps();
+        if (tier == 2) return cfgTier2MaxInitLtvBps();
+        if (tier == 3) return cfgTier3MaxInitLtvBps();
+        revert IVaipakamErrors.ParameterOutOfRange(
+            "liquidityTier", uint256(tier), 0, uint256(MAX_LIQUIDITY_TIER)
+        );
+    }
+
+    /// @dev Keeper liquidity-confidence tier for `asset` — stored `0`
+    ///      reads as `KEEPER_TIER_DEFAULT` (= Tier 1) so an asset the
+    ///      relay hasn't touched opens at today's `HF ≥ 1.5` baseline.
+    ///      Pair with `OracleFacet.getLiquidityTier` for the effective
+    ///      tier: `min(onChainTier, effectiveKeeperTier)`.
+    function effectiveKeeperTier(address asset) internal view returns (uint8) {
+        uint8 v = storageSlot().keeperTier[asset];
+        return v == 0 ? KEEPER_TIER_DEFAULT : v;
+    }
+
+    /// @dev The "predominantly available assets" the liquidity check
+    ///      probes pools against (see `Storage.paaAssets`). Empty
+    ///      config ⇒ `[wethContract]` — so an un-configured deploy
+    ///      behaves like today's WETH-only probe. Returns a fresh
+    ///      memory array; callers must tolerate a single-element fallback
+    ///      (and a zero element if `wethContract` itself is unset, which
+    ///      `OracleFacet` already skips).
+    function effectivePaaAssets() internal view returns (address[] memory) {
+        Storage storage s = storageSlot();
+        uint256 n = s.paaAssets.length;
+        if (n == 0) {
+            address[] memory one = new address[](1);
+            one[0] = s.wethContract;
+            return one;
+        }
+        address[] memory out = new address[](n);
+        for (uint256 i; i < n; ++i) out[i] = s.paaAssets[i];
+        return out;
     }
 
     /// @dev Returns the four tier thresholds (T1 min, T2 min, T3 min, T4 min-exclusive).

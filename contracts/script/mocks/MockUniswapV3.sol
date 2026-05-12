@@ -53,7 +53,7 @@ contract MockUniswapV3Pool {
  *
  * @dev    Scripts instantiate this factory, call `createPool` once per
  *         liquid asset/WETH pair (passing a non-zero sqrtPriceX96 and a
- *         liquidity value above `MIN_LIQUIDITY_USD` post-conversion), then
+ *         liquidity value above `MIN_LIQUIDITY_PAD` post-conversion), then
  *         register the factory on the Diamond via
  *         `OracleAdminFacet.setUniswapV3Factory`.
  */

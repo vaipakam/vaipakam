@@ -163,7 +163,7 @@ contract SepoliaPositiveFlows is Script {
         // Mock v3-style AMM factory + mUSDC/mWETH 0.3% pool. OracleFacet
         // looks up pools via `factory.getPool(tokenA, tokenB, fee)` (no
         // CREATE2 derivation), so any ABI-compatible mock works. Pool
-        // liquidity is set well above the MIN_LIQUIDITY_USD floor so
+        // liquidity is set well above the MIN_LIQUIDITY_PAD floor so
         // mUSDC and mWETH classify Liquid; illiquidToken/illiquidLending
         // have no pool registered and classify Illiquid naturally.
         MockUniswapV3Factory univ3Factory = new MockUniswapV3Factory();

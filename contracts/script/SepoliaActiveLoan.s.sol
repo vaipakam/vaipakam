@@ -78,7 +78,7 @@ contract SepoliaActiveLoan is Script {
         registry.setFeed(address(weth), USD_DENOM, address(wethFeed));
 
         // Mock v3-style AMM infra: factory + mUSDC/mWETH 0.3% pool above the
-        // MIN_LIQUIDITY_USD threshold so OracleFacet._checkLiquidity
+        // MIN_LIQUIDITY_PAD threshold so OracleFacet._checkLiquidity
         // classifies both assets Liquid. sqrtPriceX96 is non-zero; the
         // pool-depth check uses `liquidity() * ethUsd` which with 1e24
         // liquidity and 2000e8 ETH clears the 1e12 floor with huge margin.

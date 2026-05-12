@@ -22,7 +22,7 @@ import {ERC20Mock} from "./mocks/ERC20Mock.sol";
  * Post-refactor oracle surface (recap):
  *   - Liquidity reference quote asset = WETH (was USDT).
  *   - Pool depth in ETH is converted to USD via a direct ETH/USD Chainlink
- *     feed (`ethNumeraireFeed`) and compared to `MIN_LIQUIDITY_USD`.
+ *     feed (`ethNumeraireFeed`) and compared to `MIN_LIQUIDITY_PAD`.
  *   - Asset pricing uses a hybrid path: direct asset/USD via the Feed
  *     Registry is primary; asset/ETH × ETH/USD is the fallback.
  *   - WETH itself is a supported quote/asset — its price comes directly
@@ -299,7 +299,7 @@ contract OracleFacetTest is Test {
         _mockFeedFull(mockFeed, int256(1e8), 8);
         // Trivially tiny WETH-leg depth: with sqrtPriceX96 = 2^96 the
         // WETH-leg virtual reserve == liquidity, and liquidity = 1 makes
-        // the USD depth integer-divide to 0 — far below MIN_LIQUIDITY_USD
+        // the USD depth integer-divide to 0 — far below MIN_LIQUIDITY_PAD
         // (1_000_000 * 1e6 = 1e12). See the Liquid test for the metric.
         _mockLiquidPool(mockAsset, 1);
         LibVaipakam.LiquidityStatus status = OracleFacet(address(diamond)).checkLiquidity(mockAsset);
@@ -314,7 +314,7 @@ contract OracleFacetTest is Test {
         //   usdDepthScaled = 2 × liquidity × ethPrice × 1e6 / (1e18 × 10**ethDec)
         //                  = 2 × liquidity × 2000e8 × 1e6 / (1e18 × 1e8)
         //                  = liquidity / 2.5e8.
-        // MIN_LIQUIDITY_USD = 1_000_000 * 1e6 = 1e12 ⇒ need liquidity ≥ 2.5e20.
+        // MIN_LIQUIDITY_PAD = 1_000_000 * 1e6 = 1e12 ⇒ need liquidity ≥ 2.5e20.
         // liquidity = 1e21 → usdDepthScaled = 4e12 ≫ 1e12. Comfortably liquid.
         _mockLiquidPool(mockAsset, uint128(1e21));
         LibVaipakam.LiquidityStatus status = OracleFacet(address(diamond)).checkLiquidity(mockAsset);
@@ -536,7 +536,7 @@ contract OracleFacetTest is Test {
         // Initialized pool (non-zero sqrtPriceX96) with sufficient depth.
         // sqrtPriceX96 = 2^96 ⇒ price 1.0 ⇒ `_v3DepthLiquid`'s WETH-leg
         // virtual reserve == liquidity; liquidity = 1e21 ⇒ usdDepthScaled
-        // = 1e21 / 2.5e8 = 4e12 ≫ MIN_LIQUIDITY_USD (1e12).
+        // = 1e21 / 2.5e8 = 4e12 ≫ MIN_LIQUIDITY_PAD (1e12).
         vm.mockCall(
             pool,
             abi.encodeWithSignature("slot0()"),
@@ -558,7 +558,7 @@ contract OracleFacetTest is Test {
     function testCheckLiquidityOnActiveNetworkLiquid() public {
         _mockRegistryFeed(mockAsset, mockFeed);
         _mockFeedFull(mockFeed, int256(1e8), 8);
-        // 1e21 ⇒ usdDepthScaled = 1e21 / 2.5e8 = 4e12 ≫ MIN_LIQUIDITY_USD;
+        // 1e21 ⇒ usdDepthScaled = 1e21 / 2.5e8 = 4e12 ≫ MIN_LIQUIDITY_PAD;
         // see {testCheckLiquidityReturnsLiquidWhenAllConditionsMet}.
         _mockLiquidPool(mockAsset, uint128(1e21));
         LibVaipakam.LiquidityStatus status =

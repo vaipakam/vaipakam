@@ -24,7 +24,7 @@ import {Deployments} from "./lib/Deployments.sol";
  *           1. Chainlink-led price path (mock Feed Registry +
  *              per-asset feed → 8-decimal USD price).
  *           2. v3-style AMM `asset/WETH` pool depth above
- *              `MIN_LIQUIDITY_USD = $1,000,000` (mock UniswapV3
+ *              `MIN_LIQUIDITY_PAD = $1,000,000` (mock UniswapV3
  *              factory + pool with `liquidity()` set to 1e24).
  *
  *         Real testnet WETH is reused as the quote asset (Base
@@ -119,7 +119,7 @@ contract DeployTestnetLiquidityMocks is Script {
     /// @dev Pool depth in raw `liquidity()` units. The protocol
     ///      converts this to USD via
     ///      `liquidity * ETH/USD price / 1e8` and compares against
-    ///      `MIN_LIQUIDITY_USD = 1_000_000 * 1e6`. With ETH at
+    ///      `MIN_LIQUIDITY_PAD = 1_000_000 * 1e6`. With ETH at
     ///      $2000 (8-decimal Chainlink) and `liquidity = 1e24`, the
     ///      computed USD depth is well above $1B — clears the floor
     ///      with overwhelming margin so the test never flakes on
@@ -215,7 +215,7 @@ contract DeployTestnetLiquidityMocks is Script {
         registry.setFeed(address(mWBTC), USD_DENOM, address(mWBTCFeed));
         registry.setFeed(weth, USD_DENOM, address(wethFeed));
 
-        // Mock UniV3 factory + per-pair pools. `MIN_LIQUIDITY_USD`
+        // Mock UniV3 factory + per-pair pools. `MIN_LIQUIDITY_PAD`
         // is satisfied via `MOCK_POOL_LIQUIDITY` chosen above. Both
         // `mUSDC/WETH` and `mWBTC/WETH` clear the floor so both
         // tokens come out Liquid under

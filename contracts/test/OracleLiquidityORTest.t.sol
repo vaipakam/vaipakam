@@ -59,12 +59,12 @@ contract OracleLiquidityORTest is Test {
 
     // Mocks set the pool's `sqrtPriceX96 = 2^96` (price 1.0), so
     // `_v3DepthLiquid`'s WETH-leg virtual reserve == `liquidity`, and the
-    // USD depth it compares to `MIN_LIQUIDITY_USD (1_000_000 * 1e6 = 1e12)`
+    // USD depth it compares to `MIN_LIQUIDITY_PAD (1_000_000 * 1e6 = 1e12)`
     // works out to `liquidity / 2.5e8` (with the mocked $2000 ETH price).
     // `type(uint128).max/4 ≈ 8.5e37` ⇒ depth ≈ 3.4e29 ≫ 1e12 (Liquid by
     // orders of magnitude); `1` integer-divides to 0 (far below the floor).
     uint128 constant LIQUIDITY_PASSING = type(uint128).max / 4;
-    uint128 constant LIQUIDITY_FAILING = 1; // way below MIN_LIQUIDITY_USD
+    uint128 constant LIQUIDITY_FAILING = 1; // way below MIN_LIQUIDITY_PAD
 
     function setUp() public {
         owner = address(this);
@@ -187,7 +187,7 @@ contract OracleLiquidityORTest is Test {
     ///      pseudo-pool whose `slot0()` and `liquidity()` are mocked
     ///      to satisfy the depth probe. `liquidity == LIQUIDITY_FAILING`
     ///      simulates "pool exists but too thin"; `LIQUIDITY_PASSING`
-    ///      crosses the MIN_LIQUIDITY_USD floor.
+    ///      crosses the MIN_LIQUIDITY_PAD floor.
     function _mockPool(
         address factory,
         address asset,

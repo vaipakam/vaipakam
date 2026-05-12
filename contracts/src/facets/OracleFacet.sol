@@ -193,22 +193,23 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
     ///      any UniswapV3-fork factory address (UniswapV3 itself,
     ///      PancakeSwap V3, SushiSwap V3, or any other ABI-compatible
     ///      mock). Returns true iff `factory` exposes an asset/WETH
-    ///      pool whose **USD depth-at-tick** meets
-    ///      {LibVaipakam.MIN_LIQUIDITY_USD} (= $1M, expressed in
-    ///      $ × 1e6 units).
+    ///      pool whose **depth-at-tick** meets
+    ///      {LibVaipakam.MIN_LIQUIDITY_PAD} (= 1,000,000 PAD — the
+    ///      Predominantly Available Denominator, USD on the retail
+    ///      deploy; expressed in PAD × 1e6 units).
     ///
-    ///      Depth metric — a real dollar figure, not the old
+    ///      Depth metric — a real PAD figure, not the old
     ///      `liquidity() × ethPrice` heuristic (whose magnitude was
     ///      dominated by the paired token's decimals + unit price, so a
     ///      single global threshold against it meant little more than
     ///      "the pool isn't empty"). At the current tick a V3 pool's
     ///      virtual reserves are `x_v = L · 2⁹⁶ / √P_X96` and
     ///      `y_v = L · √P_X96 / 2⁹⁶` (token0 / token1 base units), and
-    ///      the pool is value-balanced there — so the USD value of the
+    ///      the pool is value-balanced there — so the PAD value of the
     ///      WETH leg, doubled, is the depth a liquidator could trade
     ///      against without crossing ticks. We take the WETH leg (token1
     ///      when `asset < weth`, else token0), value it at the spot
-    ///      ETH/USD feed, and double it. `Math.mulDiv` keeps the 512-bit
+    ///      ETH/PAD feed, and double it. `Math.mulDiv` keeps the 512-bit
     ///      intermediate from overflowing.
     ///
     ///      Still an approximation (the virtual-reserve interpretation
@@ -265,16 +266,16 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
             ? Math.mulDiv(uint256(poolLiquidity), uint256(sqrtPriceX96), Q96)
             : Math.mulDiv(uint256(poolLiquidity), Q96, uint256(sqrtPriceX96));
 
-        // usdDepthScaled (= depth_in_USD × 1e6, to compare directly
-        // against `MIN_LIQUIDITY_USD = 1_000_000 * 1e6`):
-        //   wethLeg × ethPrice / 10**ethDec      = USD value of the leg × 1e18
+        // padDepthScaled (= depth_in_PAD × 1e6, to compare directly
+        // against `MIN_LIQUIDITY_PAD = 1_000_000 * 1e6`):
+        //   wethLeg × ethPrice / 10**ethDec      = PAD value of the leg × 1e18
         //   × 2 (both legs)  × 1e6 (the scale)   / 1e18 (undo the WETH scale)
-        uint256 usdDepthScaled = Math.mulDiv(
+        uint256 padDepthScaled = Math.mulDiv(
             Math.mulDiv(wethLeg, ethPrice, 10 ** ethDec),
             2_000_000,
             1e18
         );
-        return usdDepthScaled >= LibVaipakam.MIN_LIQUIDITY_USD;
+        return padDepthScaled >= LibVaipakam.MIN_LIQUIDITY_PAD;
     }
 
 
