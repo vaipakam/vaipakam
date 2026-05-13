@@ -147,6 +147,11 @@ export async function maybeAutonomousLiquidate(
 
   try {
     // Read loan struct so we know the assets + amounts to swap.
+    // `startTime` + `durationDays` are also picked up so we can decide
+    // whether the partial-liquidation path is open — partial liquidation
+    // (`triggerPartialLiquidation`) is in-term only by contract design,
+    // since past maturity late fees apply and the cleaner close-out is
+    // a full liquidation or the time-based default route.
     const loan = (await publicClient.readContract({
       address: ctx.diamond,
       abi: LOAN_DETAILS_ABI,
@@ -158,6 +163,8 @@ export async function maybeAutonomousLiquidate(
       principalAsset: Address;
       status: number;
       assetType: number;
+      startTime: bigint;
+      durationDays: bigint;
     };
 
     // assetType 0 = ERC20 — only liquidate ERC20 loans (NFT rentals
@@ -200,6 +207,49 @@ export async function maybeAutonomousLiquidate(
 
     const account = ctx.wallet.account;
     if (!account) return false;
+
+    // Partial-liquidation decision: when the loan is only *mildly*
+    // undercollateralized AND still in-term, a 50% partial sweep is
+    // usually enough to restore HF >= 1 without closing the position.
+    // The math: at HF ≈ 0.95 with a typical 85% liqThreshold and ~5%
+    // effective swap-fee (3% bonus + 2% handling + small slippage),
+    // a 50% partial moves HF back over 1.0 with a small buffer. For
+    // deeper distress (HF < 0.95) a 50% partial isn't enough and the
+    // on-chain {PartialMustRestoreHF} gate would revert — so we fall
+    // through to the full path. Past maturity, partial is locked out
+    // by the on-chain {PartialAfterMaturity} guard.
+    //
+    // Why prefer partial when feasible: it swaps half the collateral
+    // (smaller market impact, cleaner fill), preserves the borrower's
+    // residual position, and still pays the keeper the dynamic bonus.
+    // Aave's classic 50% close-factor for this same reason — let the
+    // borrower's healthier surviving position absorb future interest
+    // rather than zeroing out the loan on every transient HF dip.
+    const partialMinHfBps = parsePosIntEnv(env.PARTIAL_LIQ_MIN_HF_BPS, 9500);
+    const partialMinHfRaw = (10n ** 18n * BigInt(partialMinHfBps)) / 10_000n;
+    const endTime = loan.startTime + loan.durationDays * 86_400n;
+    const nowTs = BigInt(Math.floor(Date.now() / 1000));
+    const inTerm = nowTs < endTime;
+    const partialEligible =
+      inTerm &&
+      hfRaw >= partialMinHfRaw &&
+      hfRaw < 10n ** 18n &&
+      halfQuotes.calls.length > 0;
+
+    if (partialEligible) {
+      const hash = await ctx.wallet.writeContract({
+        address: ctx.diamond,
+        abi: TRIGGER_ABI,
+        functionName: 'triggerPartialLiquidation',
+        args: [loanIdBig, 5_000n, halfQuotes.calls],
+        account,
+        chain: ctx.wallet.chain,
+      });
+      console.log(
+        `[keeper] loan=${loanId} chain=${chain.name} submitted-partial tx=${hash} fraction=50% via=${halfQuotes.ranked[0].kind} hfBefore=${hfRaw} expected=${halfQuotes.ranked[0].expectedOutput}`,
+      );
+      return true;
+    }
 
     // Split-route decision: when ≥2 distinct-adapter quotes succeeded at
     // the half size AND their combined output beats the single-adapter

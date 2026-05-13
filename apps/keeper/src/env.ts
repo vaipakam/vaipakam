@@ -136,6 +136,25 @@ export interface Env {
    *  of a split-route isn't worth the marginal fill improvement.
    *  Default 100 (1%). */
   SPLIT_MIN_IMPROVEMENT_BPS?: string;
+
+  // Liquidator-hardening — partial-liquidation decision.
+  /** Minimum HF (in BPS, where 10_000 = HF_SCALE) at which the keeper
+   *  prefers `triggerPartialLiquidation` (50% sweep) over a full
+   *  liquidation. Default 9500 = 0.95. Rationale: at HF in [0.95, 1.0)
+   *  with a typical 85% `liqThreshold` and ~5% effective swap-fee, a
+   *  50% partial restores HF >= 1.0 with a small buffer — verified by
+   *  the algebra `f >= (T - 1.05r) / (T - 0.998)` where r = T/hfBefore.
+   *  Below this floor (HF < 0.95) a 50% partial isn't enough and the
+   *  on-chain {PartialMustRestoreHF} gate would revert, so the keeper
+   *  falls back to the full path (split-route or failover). Past
+   *  maturity, the partial path is locked out by the on-chain
+   *  {PartialAfterMaturity} guard regardless of this knob.
+   *
+   *  Tighten this (e.g. 9700 = 0.97) for jurisdictions / chains where
+   *  the operator wants a more conservative partial regime. Set to
+   *  10_000 to effectively disable the partial path (HF can't be both
+   *  >= 1.0 AND < 1.0 — the partial branch never fires). */
+  PARTIAL_LIQ_MIN_HF_BPS?: string;
 }
 
 export interface ChainConfig {
