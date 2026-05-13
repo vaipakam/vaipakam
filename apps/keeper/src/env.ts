@@ -128,6 +128,14 @@ export interface Env {
   /** Signal ③ — Minimum USD 24-hour trading volume (CoinGecko, same
    *  response as ②). Default $50M/day. */
   LIQ_TIER3_MIN_VOL_USD?: string;
+
+  // Liquidator-hardening — split-route swap decision.
+  /** Minimum bps improvement (split-sum vs failover-top-1) required
+   *  before the keeper submits `triggerLiquidationSplit` over the
+   *  default failover path. Below this the gas + atomic-revert risk
+   *  of a split-route isn't worth the marginal fill improvement.
+   *  Default 100 (1%). */
+  SPLIT_MIN_IMPROVEMENT_BPS?: string;
 }
 
 export interface ChainConfig {

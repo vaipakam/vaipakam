@@ -33,7 +33,59 @@ import {
 import { privateKeyToAccount } from 'viem/accounts';
 import { LoanFacetABI, RiskFacetABI } from '@vaipakam/contracts/abis';
 import type { ChainConfig, Env } from './env';
-import { orchestrateServerQuotes } from './serverQuotes';
+import {
+  orchestrateServerQuotes,
+  type ServerOrchestrationResult,
+  type ServerRankedQuote,
+} from './serverQuotes';
+
+function parsePosIntEnv(v: string | undefined, dflt: number): number {
+  if (!v) return dflt;
+  const n = Number.parseInt(v, 10);
+  return Number.isFinite(n) && n > 0 ? n : dflt;
+}
+
+/** Decide whether splitting the liquidation swap 50/50 across two
+ *  distinct adapters beats running the full size through a single
+ *  adapter via failover. Returns the chosen `{a, b}` half-quote pair
+ *  + the projected total + the bps improvement vs the full-size
+ *  top-1, or `null` if splitting doesn't help (no two distinct
+ *  adapters at the half size, or the improvement is below
+ *  `minImprovementBps` — gas + tx complexity isn't worth it).
+ *
+ *  The on-chain split is atomic-revert-on-leg-failure, so we only
+ *  return non-null when both halves have a successful aggregator
+ *  quote at the smaller size. Picks the top-2 *distinct-adapter*
+ *  half-quotes (which is usually 0x and 1inch, since each tends to
+ *  win when the other doesn't).
+ */
+function pickSplitLegs(
+  halfQuotes: ServerOrchestrationResult,
+  fullQuotes: ServerOrchestrationResult,
+  minImprovementBps: number,
+): { a: ServerRankedQuote; b: ServerRankedQuote; totalExpected: bigint; gainBps: number } | null {
+  if (halfQuotes.ranked.length < 2) return null;
+  if (fullQuotes.ranked.length === 0) return null;
+  // Find the top-2 quotes with distinct `adapterIdx`. `ranked` is
+  // already best-first by expectedOutput.
+  const a = halfQuotes.ranked[0];
+  let b: ServerRankedQuote | null = null;
+  for (let i = 1; i < halfQuotes.ranked.length; i++) {
+    if (halfQuotes.ranked[i].call.adapterIdx !== a.call.adapterIdx) {
+      b = halfQuotes.ranked[i];
+      break;
+    }
+  }
+  if (!b) return null;
+  const totalExpected = a.expectedOutput + b.expectedOutput;
+  const fullTop = fullQuotes.ranked[0].expectedOutput;
+  if (totalExpected <= fullTop) return null;
+  // `gainBps = (totalExpected - fullTop) * 10_000 / fullTop`, computed
+  // with bigints to avoid Number precision at e18 magnitudes.
+  const gainBps = Number(((totalExpected - fullTop) * 10_000n) / fullTop);
+  if (gainBps < minImprovementBps) return null;
+  return { a, b, totalExpected, gainBps };
+}
 
 // Diamond ABIs sourced from `@vaipakam/contracts/abis`. The previous
 // inline `parseAbi` block hand-typed the full Loan-tuple components
@@ -115,14 +167,30 @@ export async function maybeAutonomousLiquidate(
     // Defaulted, Settled) means the diamond would revert.
     if (loan.status !== 0) return false;
 
-    // Fetch quotes server-side. Empty result → nothing to submit.
-    const quotes = await orchestrateServerQuotes(env, publicClient, {
-      chainId: chain.id,
-      sellToken: loan.collateralAsset,
-      buyToken: loan.principalAsset,
-      sellAmount: loan.collateralAmount,
-      taker: ctx.diamond,
-    });
+    // Fetch full-size quotes AND half-size quotes in parallel. The
+    // half-size set lets us decide between failover (single adapter
+    // takes the whole input) and split-route (two adapters each take
+    // half). Doing both in parallel keeps the per-liquidation latency
+    // at `max(fullCall, halfCall)` rather than `full + half` — minimal
+    // overhead on the urgent HF<1 path.
+    const halfAmount = loan.collateralAmount / 2n;
+    const otherHalf = loan.collateralAmount - halfAmount;
+    const [quotes, halfQuotes] = await Promise.all([
+      orchestrateServerQuotes(env, publicClient, {
+        chainId: chain.id,
+        sellToken: loan.collateralAsset,
+        buyToken: loan.principalAsset,
+        sellAmount: loan.collateralAmount,
+        taker: ctx.diamond,
+      }),
+      orchestrateServerQuotes(env, publicClient, {
+        chainId: chain.id,
+        sellToken: loan.collateralAsset,
+        buyToken: loan.principalAsset,
+        sellAmount: halfAmount,
+        taker: ctx.diamond,
+      }),
+    ]);
     if (quotes.calls.length === 0) {
       console.log(
         `[keeper] loan=${loanId} chain=${chain.name} no-quotes (failed: ${quotes.failed.join(',')})`,
@@ -133,6 +201,36 @@ export async function maybeAutonomousLiquidate(
     const account = ctx.wallet.account;
     if (!account) return false;
 
+    // Split-route decision: when ≥2 distinct-adapter quotes succeeded at
+    // the half size AND their combined output beats the single-adapter
+    // full quote by `SPLIT_MIN_IMPROVEMENT_BPS` (default 100 = 1%), use
+    // `triggerLiquidationSplit`. Below the threshold the gas + tx
+    // complexity isn't worth it. The split is atomic-revert-on-leg-
+    // failure on-chain, so we only invoke it when both legs are
+    // independently OK at quote time.
+    const minImprovementBps = parsePosIntEnv(env.SPLIT_MIN_IMPROVEMENT_BPS, 100);
+    const split = pickSplitLegs(halfQuotes, quotes, minImprovementBps);
+    if (split) {
+      const splits = [
+        { adapterIdx: split.a.call.adapterIdx, splitAmount: halfAmount, data: split.a.call.data },
+        { adapterIdx: split.b.call.adapterIdx, splitAmount: otherHalf, data: split.b.call.data },
+      ];
+      const hash = await ctx.wallet.writeContract({
+        address: ctx.diamond,
+        abi: TRIGGER_ABI,
+        functionName: 'triggerLiquidationSplit',
+        args: [loanIdBig, splits],
+        account,
+        chain: ctx.wallet.chain,
+      });
+      const improvementBps = (split.gainBps);
+      console.log(
+        `[keeper] loan=${loanId} chain=${chain.name} submitted-split tx=${hash} via=${split.a.kind}+${split.b.kind} expected=${split.totalExpected} improvement=${improvementBps}bps over single-route`,
+      );
+      return true;
+    }
+
+    // Default path: failover via `triggerLiquidation` — unchanged.
     const hash = await ctx.wallet.writeContract({
       address: ctx.diamond,
       abi: TRIGGER_ABI,
