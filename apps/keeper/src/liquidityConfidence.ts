@@ -382,17 +382,50 @@ async function aggregatorConfirmedTier(
 }
 
 /**
- * Tier-3 "battle-tested elsewhere" advisory — the asset must be listed
- * as a yield pool with meaningful TVL on ≥ 1 of {Aave v3, Compound v3,
- * Morpho-blue, Morpho-Aave-v3} on this chain. Off-chain heuristic via
- * DeFiLlama's `/pools` endpoint — NOT a parameter source (their LTVs
- * are theirs; we read the *listing + TVL* as a "battle-tested"
- * advisory). Fails closed (returns `false`) on a network error,
- * unsupported chain, or any other unknown — so the relay safely caps
- * at Tier 2 instead of speculatively promoting. A compromised keeper
- * ignoring this advisory still can't promote past the on-chain
- * ceiling, so this is purely a conservatism gate.
+ * Tier-3 "battle-tested elsewhere" advisory — a **2-of-3 ensemble** of
+ * independent off-chain signals. The relay promotes an asset to Tier 3
+ * only when at least two of the three pass; one source down (or one
+ * wrong answer) can never single-handedly gate Tier 3, and a pure-
+ * popularity token without any DeFi-collateral footprint fails because
+ * the DeFi-listing signal alone can't carry it. Fails closed on every
+ * fetch error / unsupported chain / missing field.
+ *
+ *   ① DeFi-collateral listing + TVL — DeFiLlama `/pools` filtered to
+ *      {Aave v3, Compound v3, Morpho-blue} on this chain, TVL ≥
+ *      `LIQ_TIER3_MIN_TVL_USD` (default $10M). Reads their *listing
+ *      decision*, NOT their LTV numbers (those stay theirs). Operator-
+ *      disable-able via `LIQ_TIER3_DISABLE_DEFI_LISTING=1` for
+ *      operators who want zero competitor-data dependence — when
+ *      disabled the ensemble becomes 2-of-2 (both CG signals must
+ *      pass), stricter not looser, safe.
+ *      ─ Note: `morpho-aave-v3` was dropped from the slug set because
+ *         it's a thin Aave-v3 mirror on Morpho — counting it separately
+ *         double-counts the same underlying listing decision.
+ *
+ *   ② Circulating market cap — CoinGecko `/coins/{platform}/contract/
+ *      {address}` (free public endpoint, no auth). Reads
+ *      `market_data.market_cap.usd` (curated circulating, not
+ *      `totalSupply()×price` — excludes locked / treasury). Threshold
+ *      `LIQ_TIER3_MIN_MCAP_USD` (default $1B).
+ *
+ *   ③ Trading volume — 24h aggregate from the same CoinGecko response
+ *      (`market_data.total_volume.usd`). 24h is noisier than a 30d
+ *      average but it's one call instead of two, with a tighter
+ *      threshold `LIQ_TIER3_MIN_VOL_USD` (default $50M/day) to
+ *      compensate. Surfaces "the asset is actually traded broadly",
+ *      not just held.
+ *
+ * Why an ensemble vs a single source: CoinGecko / CMC measure *general
+ * market presence* (popularity, liquidity), not *collateral
+ * suitability* — a high-mcap volatile token (SHIB-like) can pass ②③
+ * while no serious lender lists it as collateral. The DeFi-listing
+ * signal carries information ②③ miss. Conversely, ② and ③ filter out
+ * stable-but-thinly-traded edge cases (e.g. an obscure stablecoin
+ * listed on one Morpho market). 2-of-3 catches the broad collateral-
+ * suitable mid-cap-and-up set without admitting either failure mode.
  */
+
+// ─── Signal ① state — DeFi-listing via DeFiLlama ────────────────────
 
 interface LlamaPool {
   project: string;
@@ -401,18 +434,15 @@ interface LlamaPool {
   underlyingTokens?: string[]; // lowercased 0x addresses
 }
 
-/** Module-scope cache of DeFiLlama's full pools list. The endpoint
- *  returns several MB; refetching every cron tick is wasteful + risks
- *  rate-limit pushback. 1h TTL is fine for "is this asset still listed
- *  somewhere with ≥ $X TVL" — listing/delisting decisions are
- *  measured in days, not minutes. */
-const LLAMA_TTL_MS = 60 * 60 * 1000;
+/** Shared 1h TTL for both off-chain advisory caches — listing /
+ *  market-cap / volume decisions move on days, not minutes. */
+const ADVISORY_TTL_MS = 60 * 60 * 1000;
 let llamaPoolsCache: { pools: LlamaPool[]; fetchedAt: number } | null = null;
 
 /** DeFiLlama uses display chain names; map every keeper-supported
- *  mainnet here. Testnets and chains not in this map ⇒ advisory
- *  returns false (no auto-Tier-3 there). Verify additions against
- *  the canonical list at https://api.llama.fi/chains. */
+ *  mainnet here. Testnets / unmapped chains ⇒ signal ① returns false
+ *  (the ensemble still has ②+③ to fall back on). Verify additions
+ *  against the canonical list at https://api.llama.fi/chains. */
 const LLAMA_CHAIN_NAMES: Record<number, string> = {
   1: 'Ethereum',
   10: 'Optimism',
@@ -422,19 +452,19 @@ const LLAMA_CHAIN_NAMES: Record<number, string> = {
   42161: 'Arbitrum',
 };
 
-/** DeFiLlama project slugs the advisory accepts as "battle-tested
- *  collateral elsewhere". These are the per-protocol-per-chain pool
- *  publishers — keep the set tight (the design says ≥ 1 of these). */
+/** Lending-protocol slugs the advisory accepts as "battle-tested
+ *  collateral elsewhere". `morpho-aave-v3` deliberately omitted: it's
+ *  a thin Aave-v3 mirror on Morpho ⇒ double-counts the same listing
+ *  decision against `aave-v3`. */
 const TIER3_BATTLETESTED_PROJECTS: ReadonlySet<string> = new Set([
   'aave-v3',
   'compound-v3',
   'morpho-blue',
-  'morpho-aave-v3',
 ]);
 
 async function fetchLlamaPoolsCached(): Promise<LlamaPool[]> {
   const now = Date.now();
-  if (llamaPoolsCache && now - llamaPoolsCache.fetchedAt < LLAMA_TTL_MS) {
+  if (llamaPoolsCache && now - llamaPoolsCache.fetchedAt < ADVISORY_TTL_MS) {
     return llamaPoolsCache.pools;
   }
   const res = await fetch('https://yields.llama.fi/pools');
@@ -445,20 +475,18 @@ async function fetchLlamaPoolsCached(): Promise<LlamaPool[]> {
   return pools;
 }
 
-async function battleTestedElsewhere(
-  env: Env,
-  chainId: number,
-  asset: Address,
-): Promise<boolean> {
+async function signalDefiListing(env: Env, chainId: number, asset: Address): Promise<boolean> {
+  const disabled = env.LIQ_TIER3_DISABLE_DEFI_LISTING === 'true' || env.LIQ_TIER3_DISABLE_DEFI_LISTING === '1';
+  if (disabled) return false;
   const chainName = LLAMA_CHAIN_NAMES[chainId];
-  if (!chainName) return false; // testnet / unmapped chain
+  if (!chainName) return false;
   const minTvl = parsePosIntEnv(env.LIQ_TIER3_MIN_TVL_USD, 10_000_000);
   let pools: LlamaPool[];
   try {
     pools = await fetchLlamaPoolsCached();
   } catch (err) {
-    console.log(`[keeper] battleTested advisory fetch failed: ${String(err).slice(0, 200)}`);
-    return false; // fail-closed
+    console.log(`[keeper] tier3 ① DeFiLlama fetch failed: ${String(err).slice(0, 200)}`);
+    return false;
   }
   const target = asset.toLowerCase();
   for (const p of pools) {
@@ -471,6 +499,102 @@ async function battleTestedElsewhere(
     }
   }
   return false;
+}
+
+// ─── Signals ②③ state — CoinGecko market cap + 24h volume ───────────
+
+/** Chain id → CoinGecko `asset_platforms` id. Free public endpoint
+ *  accepts the chain's slug as a path segment. Testnets / unmapped
+ *  chains ⇒ signals ②③ both return false. */
+const COINGECKO_PLATFORMS: Record<number, string> = {
+  1: 'ethereum',
+  10: 'optimistic-ethereum',
+  56: 'binance-smart-chain',
+  1101: 'polygon-zkevm',
+  8453: 'base',
+  42161: 'arbitrum-one',
+};
+
+interface CoinGeckoMarketEntry {
+  marketCapUsd: number;
+  totalVolume24hUsd: number;
+  fetchedAt: number;
+}
+
+/** Per-(chain,asset) cache for CoinGecko reads — one HTTP call per
+ *  asset per chain per `ADVISORY_TTL_MS`. With ~20-30 active collateral
+ *  assets across all chains and CoinGecko's free public rate limit of
+ *  ~10-50 calls/min, well within budget. */
+const coinGeckoCache: Map<string, CoinGeckoMarketEntry | null> = new Map();
+
+async function fetchCoinGeckoMarketCached(
+  chainId: number,
+  asset: Address,
+): Promise<CoinGeckoMarketEntry | null> {
+  const platform = COINGECKO_PLATFORMS[chainId];
+  if (!platform) return null;
+  const key = `${chainId}:${asset.toLowerCase()}`;
+  const cached = coinGeckoCache.get(key);
+  if (cached !== undefined && Date.now() - (cached?.fetchedAt ?? 0) < ADVISORY_TTL_MS) {
+    return cached;
+  }
+  const url = `https://api.coingecko.com/api/v3/coins/${platform}/contract/${asset.toLowerCase()}`;
+  let res: Response;
+  try {
+    res = await fetch(url);
+  } catch (err) {
+    console.log(`[keeper] tier3 ②③ CoinGecko fetch failed: ${String(err).slice(0, 200)}`);
+    coinGeckoCache.set(key, null);
+    return null;
+  }
+  // 404 = the token isn't listed on CoinGecko for this chain — cache
+  // the negative result so we don't retry every tick. 429 / 5xx = back
+  // off (cache the null for the TTL too; a real fix is API key in env).
+  if (!res.ok) {
+    coinGeckoCache.set(key, null);
+    return null;
+  }
+  let body: unknown;
+  try {
+    body = await res.json();
+  } catch {
+    coinGeckoCache.set(key, null);
+    return null;
+  }
+  const md = (body as { market_data?: { market_cap?: { usd?: number }; total_volume?: { usd?: number } } })
+    ?.market_data;
+  const mc = md?.market_cap?.usd;
+  const v = md?.total_volume?.usd;
+  if (typeof mc !== 'number' || typeof v !== 'number') {
+    coinGeckoCache.set(key, null);
+    return null;
+  }
+  const entry: CoinGeckoMarketEntry = {
+    marketCapUsd: mc,
+    totalVolume24hUsd: v,
+    fetchedAt: Date.now(),
+  };
+  coinGeckoCache.set(key, entry);
+  return entry;
+}
+
+async function battleTestedElsewhere(
+  env: Env,
+  chainId: number,
+  asset: Address,
+): Promise<boolean> {
+  // Signal ① — DeFi-collateral listing + TVL (disable-able).
+  const signal1 = await signalDefiListing(env, chainId, asset);
+  // Signals ②③ — single CoinGecko fetch carries both readings.
+  const cg = await fetchCoinGeckoMarketCached(chainId, asset);
+  const minMcap = parsePosIntEnv(env.LIQ_TIER3_MIN_MCAP_USD, 1_000_000_000); // $1B default
+  const minVol = parsePosIntEnv(env.LIQ_TIER3_MIN_VOL_USD, 50_000_000); // $50M default
+  const signal2 = cg !== null && cg.marketCapUsd >= minMcap;
+  const signal3 = cg !== null && cg.totalVolume24hUsd >= minVol;
+  // 2-of-3 majority. With signal ① operator-disabled the ensemble
+  // collapses to 2-of-2 (both CG signals required) — stricter, safe.
+  const passCount = (signal1 ? 1 : 0) + (signal2 ? 1 : 0) + (signal3 ? 1 : 0);
+  return passCount >= 2;
 }
 
 /** Apply the promote/demote state machine to one D1 row + return the

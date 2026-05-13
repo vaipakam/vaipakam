@@ -107,12 +107,27 @@ export interface Env {
   LIQ_CONFIDENCE_MIN_CHECKS?: string;
   /** wall-clock days that eligible streak must also span (default 3) */
   LIQ_CONFIDENCE_MIN_WINDOW_DAYS?: string;
-  /** Minimum USD TVL on at least one of {Aave v3, Compound v3,
-   *  Morpho-blue, Morpho-Aave-v3} (per DeFiLlama's `/pools`) for the
-   *  asset to qualify for Tier-3 promotion via `battleTestedElsewhere`.
-   *  Default 10_000_000 ($10M). Below the threshold the relay caps at
-   *  Tier 2 — fail-closed direction. */
+  // Tier-3 "battle-tested elsewhere" advisory — 2-of-3 ensemble in
+  // `liquidityConfidence.ts::battleTestedElsewhere`. The relay promotes
+  // an asset to Tier 3 only when ≥ 2 of the 3 signals below pass; the
+  // ensemble means no single source can single-handedly gate (or be
+  // dependent for) the promotion. All thresholds in plain USD (not the
+  // PAD × 1e6 scale the on-chain sizes use). All optional with sensible
+  // defaults; setting any to a custom value tunes that threshold.
+  /** Signal ① — Minimum USD TVL on at least one of {Aave v3, Compound v3,
+   *  Morpho-blue} (per DeFiLlama's `/pools`). Default $10M. */
   LIQ_TIER3_MIN_TVL_USD?: string;
+  /** Disable signal ① entirely (`1` / `true`) — for operators who want
+   *  zero competitor-lending-platform-data dependence. When disabled
+   *  the ensemble becomes 2-of-2 (both CoinGecko signals required) —
+   *  stricter, safe. Default off (signal ① active). */
+  LIQ_TIER3_DISABLE_DEFI_LISTING?: string;
+  /** Signal ② — Minimum USD circulating market cap from CoinGecko's
+   *  free `/coins/{platform}/contract/{address}` endpoint. Default $1B. */
+  LIQ_TIER3_MIN_MCAP_USD?: string;
+  /** Signal ③ — Minimum USD 24-hour trading volume (CoinGecko, same
+   *  response as ②). Default $50M/day. */
+  LIQ_TIER3_MIN_VOL_USD?: string;
 }
 
 export interface ChainConfig {
