@@ -324,6 +324,62 @@ contract AdminFacet is DiamondAccessControl, IVaipakamErrors {
         return LibVaipakam.storageSlot().sushiswapV3Factory;
     }
 
+    // ─── Depth-tiered LTV — Uni-V2-fork family (Piece B follow-up b) ───────
+    // Per-chain Uni-V2-clone factory addresses consulted by
+    // `OracleFacet.getLiquidityTier`'s route search alongside the V3
+    // trio. V2 pools have real reserves (no virtual-reserve
+    // approximation) — exact CPMM math — and each clone's canonical
+    // single fee tier differs (UniV2 / SushiV2 = 30bps; PancakeV2 =
+    // 25bps), fed into the same `LibSlippage.priceImpactBps`. A zero
+    // factory skips that leg.
+
+    /// @custom:event-category informational/config
+    event UniswapV2FactorySet(address indexed previous, address indexed current);
+    /// @custom:event-category informational/config
+    event SushiswapV2FactorySet(address indexed previous, address indexed current);
+    /// @custom:event-category informational/config
+    event PancakeswapV2FactorySet(address indexed previous, address indexed current);
+
+    /// @notice Set the chain's Uniswap V2 factory address. ADMIN_ROLE-only.
+    ///         Pass `address(0)` to disable UniV2's leg of the route search.
+    function setUniswapV2Factory(address newFactory) external onlyRole(LibAccessControl.ADMIN_ROLE) {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        address prev = s.uniswapV2Factory;
+        s.uniswapV2Factory = newFactory;
+        emit UniswapV2FactorySet(prev, newFactory);
+    }
+
+    /// @notice Read the Uniswap V2 factory address. Zero disables its leg.
+    function getUniswapV2Factory() external view returns (address) {
+        return LibVaipakam.storageSlot().uniswapV2Factory;
+    }
+
+    /// @notice Set the chain's SushiSwap V2 factory address. ADMIN_ROLE-only.
+    function setSushiswapV2Factory(address newFactory) external onlyRole(LibAccessControl.ADMIN_ROLE) {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        address prev = s.sushiswapV2Factory;
+        s.sushiswapV2Factory = newFactory;
+        emit SushiswapV2FactorySet(prev, newFactory);
+    }
+
+    /// @notice Read the SushiSwap V2 factory address. Zero disables its leg.
+    function getSushiswapV2Factory() external view returns (address) {
+        return LibVaipakam.storageSlot().sushiswapV2Factory;
+    }
+
+    /// @notice Set the chain's PancakeSwap V2 factory address. ADMIN_ROLE-only.
+    function setPancakeswapV2Factory(address newFactory) external onlyRole(LibAccessControl.ADMIN_ROLE) {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        address prev = s.pancakeswapV2Factory;
+        s.pancakeswapV2Factory = newFactory;
+        emit PancakeswapV2FactorySet(prev, newFactory);
+    }
+
+    /// @notice Read the PancakeSwap V2 factory address. Zero disables its leg.
+    function getPancakeswapV2Factory() external view returns (address) {
+        return LibVaipakam.storageSlot().pancakeswapV2Factory;
+    }
+
     /// @notice Returns the current protocol treasury address.
     /// @return treasury The configured treasury address (zero if unset).
     function getTreasury() external view returns (address treasury) {

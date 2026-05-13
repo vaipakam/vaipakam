@@ -2241,6 +2241,25 @@ library LibVaipakam {
         // no-keeper baseline, never raise it above the on-chain ceiling.
         // Written only by `ConfigFacet.setKeeperTier` under `KEEPER_ROLE`.
         mapping(address => uint8) keeperTier;
+        // ── Depth-tiered LTV (Piece B) — Uni-V2-fork families ───────────
+        // Per-chain Uniswap-V2-style factory addresses, each consulted
+        // as an additional leg of `OracleFacet.getLiquidityTier`'s route
+        // search alongside the V3-clone trio. V2 pools use a different
+        // ABI (`factory.getPair(t0, t1)` — bidirectional, no fee tier
+        // arg; `pool.getReserves()` returns *real* reserves, not the
+        // tick-virtual approximation — so the in-pool depth measurement
+        // is exact, no `_v3VirtualReserves` step), and each clone's
+        // canonical fee tier differs (UniV2 / SushiV2 = 30bps = 3000
+        // pips; PancakeV2 = 25bps = 2500 pips) — fed straight into
+        // {LibSlippage.priceImpactBps}'s `feePips` arg. Zero ⇒ skip
+        // that leg (same as the V3 trio); a fresh deploy has all three
+        // unset, so the route search behaves exactly like the V3-only
+        // configuration until governance configures them. Governance
+        // setters live on {AdminFacet} (`setUniswapV2Factory` etc.) —
+        // same shape as the V3-clone setters above.
+        address uniswapV2Factory;
+        address sushiswapV2Factory;
+        address pancakeswapV2Factory;
     }
 
     /// @dev Range Orders Phase 1 — set by matchOffers, read by

@@ -110,6 +110,12 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
     uint24 private constant V3_TIER_STANDARD  = 3000;
     uint24 private constant V3_TIER_HIGH      = 10000;
 
+    // Per-clone canonical fee tier for Uni-V2-fork pools (Piece B
+    // follow-up b). UniV2 and SushiV2 charge a flat 30bps; PancakeV2
+    // charges 25bps. Single fee per pool — no tier iteration like V3.
+    uint24 private constant V2_FEE_30BPS = 3000;
+    uint24 private constant V2_FEE_25BPS = 2500;
+
     /// @dev `2**96` — the fixed-point base for a Uniswap-V3-style pool's
     ///      `sqrtPriceX96`. Used in {_v3DepthLiquid} to reconstruct the
     ///      pool's virtual reserves from `(liquidity, sqrtPriceX96)`.
@@ -1412,20 +1418,95 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
         if (!okQ || pQ == 0) return;
         uint256 scaleQ = 10 ** (uint256(dQ) + uint256(_tryTokenDecimals(q)));
         bool assetIsToken0 = asset < q;
-        (address token0, address token1) = assetIsToken0 ? (asset, q) : (q, asset);
-        uint24[4] memory feeTiers = _le03FeeTiers();
-        address[3] memory factories = [
-            s.uniswapV3Factory,
-            s.pancakeswapV3Factory,
-            s.sushiswapV3Factory
-        ];
-        for (uint256 fi; fi < 3; ++fi) {
-            if (factories[fi] == address(0)) continue;
-            for (uint256 ti; ti < 4; ++ti) {
-                address pool = _tryGetPool(factories[fi], token0, token1, feeTiers[ti]);
-                if (pool == address(0)) continue;
-                _accumulatePoolImpacts(pool, feeTiers[ti], ctx, assetIsToken0, pQ, scaleQ, sizes, best);
+        // V3 leg: 3 factories × 4 fee tiers via `getPool(t0, t1, fee)`.
+        {
+            (address token0, address token1) = assetIsToken0 ? (asset, q) : (q, asset);
+            uint24[4] memory feeTiers = _le03FeeTiers();
+            address[3] memory factories = [
+                s.uniswapV3Factory,
+                s.pancakeswapV3Factory,
+                s.sushiswapV3Factory
+            ];
+            for (uint256 fi; fi < 3; ++fi) {
+                if (factories[fi] == address(0)) continue;
+                for (uint256 ti; ti < 4; ++ti) {
+                    address pool = _tryGetPool(factories[fi], token0, token1, feeTiers[ti]);
+                    if (pool == address(0)) continue;
+                    _accumulatePoolImpacts(pool, feeTiers[ti], ctx, assetIsToken0, pQ, scaleQ, sizes, best);
+                }
             }
+        }
+        // V2 leg (Piece B follow-up b): 3 factories with their canonical
+        // single fee tier via `getPair(a, b)` (bidirectional — order-
+        // independent) + `getReserves()` (real reserves, not the V3 in-tick
+        // virtual approximation ⇒ exact CPMM math). A zero factory skips
+        // that leg; on a fresh deploy all three are zero ⇒ V3-only route
+        // search, no behaviour change vs the pre-(b) state.
+        {
+            address[3] memory v2Factories = [
+                s.uniswapV2Factory,
+                s.sushiswapV2Factory,
+                s.pancakeswapV2Factory
+            ];
+            uint24[3] memory v2Fees = [V2_FEE_30BPS, V2_FEE_30BPS, V2_FEE_25BPS];
+            for (uint256 vi; vi < 3; ++vi) {
+                if (v2Factories[vi] == address(0)) continue;
+                _v2AccumulatePoolImpacts(
+                    v2Factories[vi], v2Fees[vi], asset, q, ctx, assetIsToken0, pQ, scaleQ, sizes, best
+                );
+            }
+        }
+    }
+
+    /// @dev V2 sibling of {_accumulatePoolImpacts}. `getPair` is
+    ///      bidirectional in canonical V2 (and every V2 fork tracked by
+    ///      Vaipakam — Sushi/Pancake), so we can pass `(asset, quote)`
+    ///      in either order. `getReserves()` returns the *real* reserves
+    ///      in token0/token1 order (canonical ascending address) — no
+    ///      in-tick virtual-reserve step. No on-chain TWAP guard for V2
+    ///      (no `observe`-style primitive in one shot); the value-balance
+    ///      guard (spot ≈ Chainlink feed) is the only manipulation check,
+    ///      same residual flash-loan-add-liquidity vector as V3 bounded
+    ///      by the LTV cushion.
+    function _v2AccumulatePoolImpacts(
+        address factory,
+        uint24 feePips,
+        address asset,
+        address quote,
+        _TierCtx memory ctx,
+        bool assetIsToken0,
+        uint256 pQ,
+        uint256 scaleQ,
+        uint256[4] memory sizes,
+        uint256[4] memory best
+    ) private view {
+        (bool ok, bytes memory pdata) = factory.staticcall(
+            abi.encodeWithSignature("getPair(address,address)", asset, quote)
+        );
+        if (!ok || pdata.length < 32) return;
+        address pool = abi.decode(pdata, (address));
+        if (pool == address(0) || pool.code.length == 0) return;
+        (bool rok, bytes memory rdata) = pool.staticcall(abi.encodeWithSignature("getReserves()"));
+        // V2 `getReserves` ABI = `(uint112, uint112, uint32)` → 3×32-byte words.
+        if (!rok || rdata.length < 96) return;
+        (uint256 r0, uint256 r1, ) = abi.decode(rdata, (uint256, uint256, uint256));
+        if (r0 == 0 || r1 == 0) return;
+        (uint256 reserveAsset, uint256 reserveQ) = assetIsToken0 ? (r0, r1) : (r1, r0);
+        // Value-balance guard (spot ≈ feed) — identical to the V3 path.
+        {
+            uint256 vAsset = Math.mulDiv(reserveAsset, ctx.pA * 1e6, ctx.scaleA);
+            uint256 vQ = Math.mulDiv(reserveQ, pQ * 1e6, scaleQ);
+            if (vAsset == 0 || vQ == 0) return;
+            (uint256 lo, uint256 hi) = vAsset < vQ ? (vAsset, vQ) : (vQ, vAsset);
+            uint256 bp = LibVaipakam.BASIS_POINTS;
+            if (ctx.band < bp && lo * bp < hi * (bp - ctx.band)) return;
+        }
+        for (uint256 si; si < 4; ++si) {
+            if (best[si] == 0 || sizes[si] == 0) continue;
+            uint256 amountIn = Math.mulDiv(sizes[si], ctx.scaleA, ctx.pA * 1e6);
+            if (amountIn == 0) continue;
+            uint256 imp = LibSlippage.priceImpactBps(amountIn, reserveAsset, uint256(feePips));
+            if (imp < best[si]) best[si] = imp;
         }
     }
 

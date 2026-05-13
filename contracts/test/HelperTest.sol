@@ -201,7 +201,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](22);
+        selectors = new bytes4[](28);
         selectors[0] = AdminFacet.setTreasury.selector;
         selectors[1] = AdminFacet.getTreasury.selector;
         selectors[2] = AdminFacet.setZeroExProxy.selector;
@@ -225,6 +225,15 @@ contract HelperTest {
         // Auto-pause primitive (Phase 1 follow-up).
         selectors[20] = AdminFacet.autoPause.selector;
         selectors[21] = AdminFacet.pausedUntil.selector;
+        // Depth-tiered LTV (Piece B follow-up b) — Uni-V2-fork family
+        // setters/getters. Configured per chain by ADMIN_ROLE; zero
+        // factory ⇒ that leg of the route search is skipped.
+        selectors[22] = AdminFacet.setUniswapV2Factory.selector;
+        selectors[23] = AdminFacet.getUniswapV2Factory.selector;
+        selectors[24] = AdminFacet.setSushiswapV2Factory.selector;
+        selectors[25] = AdminFacet.getSushiswapV2Factory.selector;
+        selectors[26] = AdminFacet.setPancakeswapV2Factory.selector;
+        selectors[27] = AdminFacet.getPancakeswapV2Factory.selector;
         return selectors;
     }
 

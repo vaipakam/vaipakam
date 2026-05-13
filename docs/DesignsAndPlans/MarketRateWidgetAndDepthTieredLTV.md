@@ -39,21 +39,51 @@ Implementation snapshot (branch `feat/market-rate-widget-and-tiered-ltv`):
   cap (`min(maxLtvBps, tierMaxInitLtvBps[effectiveTier(collateral)])`,
   HF floor relaxed to `≥ 1e18`) + `IVaipakamErrors.InitLtvAboveTier`. All
   6 commits, full forge suite green throughout (1718 passing).
+- **§4.4 step 5 — `apps/keeper` liquidity-confidence relay — LANDED**
+  (`liquidityConfidence.ts`): periodic 0x/1inch slippage-at-tier-sizes
+  per active ERC-20 collateral asset (best route over the on-chain PAA
+  list) ⇒ aggregator-confirmed tier ⇒ D1-backed promote/demote state
+  machine (`LIQ_CONFIDENCE_MIN_CHECKS` / `LIQ_CONFIDENCE_MIN_WINDOW_DAYS`
+  env knobs; demote immediately on degradation) ⇒ `setKeeperTier`
+  on-chain (gated on `isKeeperEnabled` AND `depthTieredLtvEnabled` for
+  the chain; the D1 counter is tracked regardless so the catch-up after
+  a switch-flip is fast). Tier-3 promotion additionally needs the
+  "battle-tested elsewhere" advisory (Aave v3 / Compound v3 /
+  Morpho-curated listing + TVL on this chain) — STUBBED in v1 ⇒ relay
+  caps at Tier 2. Cron-wired, tsc clean; not deployed.
+- **Piece B follow-up (c) — `LibOfferMatch.previewMatch` tier-cap
+  alignment — LANDED**: synthetic init-gate check now mirrors
+  `LoanFacet._checkInitialLtvAndHf` (the binding gate) under
+  `depthTieredLtvEnabled` — new `LibRiskMath.minCollateralForLtvCap` +
+  `MatchError.LtvAboveTier`. Closes the "bot submits reverting
+  matchOffers" gap when the switch flips. (Preclose/Refinance HF
+  re-checks deliberately stay at `HF ≥ 1.5` — they aren't fresh-loan
+  inits and the legacy bound is more conservative than the tier cap.)
+- **Piece B follow-up (a) — init-gate integration tests — LANDED** (5
+  cases extending `LoanFacetTest`: above/below Tier-1 cap, HF≥1e18 floor
+  relaxed, HF<1 still reverts, Tier-0 collateral rejected). The
+  `if (depthTieredLtvEnabled)` branch of `_checkInitialLtvAndHf` is no
+  longer unit-untested.
+- **Piece B follow-up (b) — Uni-V2-fork family in the route search —
+  LANDED**: per-chain `uniswapV2Factory` / `sushiswapV2Factory` /
+  `pancakeswapV2Factory` storage + `AdminFacet` setters/getters + a V2
+  probe (`factory.getPair(a, b)` + `pool.getReserves()` ⇒ real reserves
+  ⇒ exact CPMM math, same value-balance guard as V3, no on-chain TWAP
+  guard — value-balance is the only manipulation check on V2) +
+  selector plumbing + 3 new `DepthTieredLtv.t.sol` cases (V2 pulls an
+  asset up to Tier 3 above its V3-only Tier 1; V2 value-balance guard
+  excludes a mismatched pool; V2 alone can't make an asset `Liquid` —
+  `_checkLiquidity` deliberately stays V3-only). A zero V2 factory
+  skips that leg; a fresh deploy has all three zero ⇒ V3-only route
+  search, no behaviour change vs the pre-(b) state.
 - **Not done — must precede flipping `depthTieredLtvEnabled` on any
-  chain (the §4.4-step-6 audit covers all of this):** (a) the loan-init
-  INTEGRATION test for the `if (depthTieredLtvEnabled)` branch
-  (`DepthTieredLtv.t.sol` only covers the tier views + the config
-  surface); (b) the Uni-V2-fork family in `getLiquidityTier`'s route
-  search (per-chain V2 factory storage + `getPair`/`getReserves` —
-  `LibSlippage` is already V2-ready); (c) bringing `LibOfferMatch.previewMatch`'s
-  synthetic HF check (still `HF ≥ 1.5`-based — *under*-conservative vs the
-  50% Tier-1 cap, so a bot could submit a reverting `matchOffers`) and
-  the `PrecloseFacet` / `RefinanceFacet` post-transfer HF re-checks in
-  line with the tier cap; (d) §4.4 step 5 — the `apps/keeper`
-  liquidity-confidence relay process (the `keeperTier` storage + role
-  landed in step 4; the process hasn't); (e) frontend `useProtocolConfig`
-  wiring for the new bundle / `getEffectiveLiquidityTier`; (f)
-  deferred/parallel — harden the liquidator keeper bot for higher LTV.
+  chain (the §4.4-step-6 audit covers the remaining items):** (e)
+  frontend `useProtocolConfig` wiring for the new bundle /
+  `getEffectiveLiquidityTier` (ABIs exported, no consumer reads them
+  yet); (advisory) wiring the Tier-3 "battle-tested elsewhere" check in
+  the keeper relay (currently stubbed ⇒ caps at Tier 2); deferred /
+  parallel — harden the liquidator keeper bot for higher LTV (gates
+  the Tier-3 LTV ramp past its conservative opening).
 
 Author note: this doc records a real-pool depth census (§3) that
 changed the recommendation for Piece B — read §3 and §4 before
@@ -443,7 +473,13 @@ need either (a) integrating those DEX families on-chain (Uni-V2 +
 Curve closes most of the gap — decision 8), or (b) an *override*
 relay that can promote *above* the on-chain ceiling — which is the
 dangerous unbounded-up variant and would require a quorum + time-lock.
-v1: Uni-V3-clone family only, accept the conservative under-count.
+v1: Uni-V3-clone trio (Uni/Pancake/Sushi V3) **plus** the Uni-V2-clone
+trio (Uni V2 / Sushi V2 @ 30bps, Pancake V2 @ 25bps — landed as Piece B
+follow-up b: `factory.getPair(a, b)` + `pool.getReserves()` ⇒ real
+reserves, exact CPMM math, same value-balance guard as V3); a zero
+factory on any leg skips it. Curve StableSwap is the next-most-valuable
+on-chain expansion; the broader "every chain-native DEX" gap is fixed
+off-chain by the keeper relay (0x/1inch route over everything).
 
 **The tier = which size the asset clears at ≤ the slippage bound** (all
 governance globals):

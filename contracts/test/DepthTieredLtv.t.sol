@@ -210,6 +210,65 @@ contract DepthTieredLtv is Test {
         assertEq(OracleFacet(address(diamond)).getLiquidityTier(mockAsset), 0);
     }
 
+    // ─── getLiquidityTier — Uni-V2-fork family (Piece B follow-up b) ──
+
+    /// @dev With only a thin V3 pool (just enough for `_checkLiquidity`
+    ///      to pass) the route search lands Tier 1; adding a deep V2
+    ///      pool against the same quote token pulls the asset up to
+    ///      Tier 3 — i.e. the V2 leg is consulted alongside the V3 trio
+    ///      and contributes to the best-route selection.
+    function test_tier_v2_poolPullsAssetUpToTier3() public {
+        // Thin V3 pool — clears `_checkLiquidity`'s $1M depth-at-tick
+        // floor (L_TIER1 = 1e22 ⇒ ~$40M padDepthScaled) and lands Tier 1
+        // in the route search by itself.
+        _mockPool(mockUniFactory, mockAsset, 3000, L_TIER1);
+        assertEq(OracleFacet(address(diamond)).getLiquidityTier(mockAsset), 1);
+
+        // Configure the UniV2 factory + mock a deep V2 pool. With both
+        // legs of the route search active the V2 pool's lower slippage
+        // at the larger test sizes wins ⇒ Tier 3.
+        address mockUniV2 = makeAddr("uniV2Factory");
+        AdminFacet(address(diamond)).setUniswapV2Factory(mockUniV2);
+        _mockV2Pool(mockUniV2, mockAsset, mockWeth, uint112(L_TIER3), uint112(L_TIER3));
+        assertEq(OracleFacet(address(diamond)).getLiquidityTier(mockAsset), 3);
+    }
+
+    /// @dev V2 value-balance guard: a V2 pool with mismatched legs
+    ///      (asset reserves valued 2× the WETH reserve per the feeds)
+    ///      gets excluded from the route search — only the (thin) V3
+    ///      pool's contribution remains, so the tier doesn't climb.
+    function test_tier_v2_valueBalanceGuardExcludesMismatchedPool() public {
+        _mockPool(mockUniFactory, mockAsset, 3000, L_TIER1);
+        address mockUniV2 = makeAddr("uniV2Factory");
+        AdminFacet(address(diamond)).setUniswapV2Factory(mockUniV2);
+        // V2 pool with deep but unbalanced reserves (asset side 2× the
+        // WETH side at the feed prices ⇒ pool spot disagrees with the
+        // feed by 100% ⇒ guard rejects ⇒ V2 leg contributes nothing).
+        _mockV2Pool(mockUniV2, mockAsset, mockWeth, uint112(L_TIER3) * 2, uint112(L_TIER3));
+        assertEq(OracleFacet(address(diamond)).getLiquidityTier(mockAsset), 1);
+    }
+
+    /// @dev V2-only path: a chain with no V3 deployment configured
+    ///      (`uniswapV3Factory` zero) currently can't classify any asset
+    ///      `Liquid` because `_checkLiquidity` is V3-only — even a deep
+    ///      V2 pool doesn't get probed. Documents the deliberate
+    ///      `_checkLiquidity` gating: V2 is a route-search expansion,
+    ///      *not* a Liquid-classification path (that stays the §4.4-
+    ///      step-3-proper rework's job).
+    function test_tier_v2_aloneCannotClassifyLiquid() public {
+        address mockUniV2 = makeAddr("uniV2Factory");
+        AdminFacet(address(diamond)).setUniswapV2Factory(mockUniV2);
+        _mockV2Pool(mockUniV2, mockAsset, mockWeth, uint112(L_TIER3), uint112(L_TIER3));
+        // V3 factories all empty for this asset (default setUp) ⇒
+        // `_checkLiquidity` Illiquid ⇒ `getLiquidityTier` returns 0
+        // before entering the route search.
+        assertEq(
+            uint256(OracleFacet(address(diamond)).checkLiquidity(mockAsset)),
+            uint256(LibVaipakam.LiquidityStatus.Illiquid)
+        );
+        assertEq(OracleFacet(address(diamond)).getLiquidityTier(mockAsset), 0);
+    }
+
     // ─── getEffectiveLiquidityTier = min(onChain, keeperTier) ───────
 
     function test_effectiveTier_defaultKeeperTierIsOne() public {
@@ -540,5 +599,42 @@ contract DepthTieredLtv is Test {
                 abi.encode(address(0))
             );
         }
+    }
+
+    /// @dev Wire a Uni-V2-clone factory: `factory.getPair(a, b)` and
+    ///      `getPair(b, a)` both return a deterministic pseudo-pool
+    ///      whose `getReserves()` is mocked. Reserves are mapped to
+    ///      canonical token0/token1 order (ascending address) the same
+    ///      way real V2 factories store them. Plants bytecode at the
+    ///      pool address so the contract's `pool.code.length` check
+    ///      passes.
+    function _mockV2Pool(
+        address factory,
+        address a,
+        address b,
+        uint112 reserveA,
+        uint112 reserveB
+    ) internal {
+        (address t0, address t1) = a < b ? (a, b) : (b, a);
+        (uint112 r0, uint112 r1) = a < b ? (reserveA, reserveB) : (reserveB, reserveA);
+        address pool = address(
+            uint160(uint256(keccak256(abi.encode("mockV2Pool", factory, t0, t1))))
+        );
+        vm.mockCall(
+            factory,
+            abi.encodeWithSignature("getPair(address,address)", t0, t1),
+            abi.encode(pool)
+        );
+        vm.mockCall(
+            factory,
+            abi.encodeWithSignature("getPair(address,address)", t1, t0),
+            abi.encode(pool)
+        );
+        vm.etch(pool, hex"6080");
+        vm.mockCall(
+            pool,
+            abi.encodeWithSignature("getReserves()"),
+            abi.encode(r0, r1, uint32(0))
+        );
     }
 }

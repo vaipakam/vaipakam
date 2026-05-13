@@ -498,7 +498,7 @@ contract DeployDiamond is Script {
     }
 
     function _getAdminSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](22);
+        s = new bytes4[](28);
         s[0] = AdminFacet.setTreasury.selector;
         s[1] = AdminFacet.getTreasury.selector;
         s[2] = AdminFacet.setZeroExProxy.selector;
@@ -525,6 +525,15 @@ contract DeployDiamond is Script {
         // a `pausedUntil` view for the frontend countdown.
         s[20] = AdminFacet.autoPause.selector;
         s[21] = AdminFacet.pausedUntil.selector;
+        // Depth-tiered LTV (Piece B follow-up b) — Uni-V2-fork family
+        // setters/getters consulted by `OracleFacet.getLiquidityTier`'s
+        // route search alongside the V3 trio. Zero ⇒ that leg skipped.
+        s[22] = AdminFacet.setUniswapV2Factory.selector;
+        s[23] = AdminFacet.getUniswapV2Factory.selector;
+        s[24] = AdminFacet.setSushiswapV2Factory.selector;
+        s[25] = AdminFacet.getSushiswapV2Factory.selector;
+        s[26] = AdminFacet.setPancakeswapV2Factory.selector;
+        s[27] = AdminFacet.getPancakeswapV2Factory.selector;
     }
 
     function _getProfileSelectors() internal pure returns (bytes4[] memory s) {
