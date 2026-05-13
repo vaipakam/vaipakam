@@ -31,7 +31,11 @@ import {
   type WalletClient,
 } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
-import { LoanFacetABI, RiskFacetABI } from '@vaipakam/contracts/abis';
+import {
+  LoanFacetABI,
+  OracleFacetABI,
+  RiskFacetABI,
+} from '@vaipakam/contracts/abis';
 import type { ChainConfig, Env } from './env';
 import {
   orchestrateServerQuotes,
@@ -43,6 +47,77 @@ function parsePosIntEnv(v: string | undefined, dflt: number): number {
   if (!v) return dflt;
   const n = Number.parseInt(v, 10);
   return Number.isFinite(n) && n > 0 ? n : dflt;
+}
+
+/** Compute the smallest partial-liquidation fraction (in BPS) that
+ *  brings a distressed loan's health factor back above `1.0 +
+ *  targetBufferBps`, given the asset's `liqThresholdBps`.
+ *
+ *  Algebra (derived from the on-chain HF formula
+ *  `HF = collateralValue × T / debt`):
+ *
+ *      Let T = liqThresholdBps / 10_000  (e.g. 0.85)
+ *      Let HF = hfRaw / 1e18             (the pre-call HF, < 1)
+ *      Let k = swapEfficiencyBps / 10_000 (1 - effective swap-fee
+ *        deduction; the on-chain `triggerPartialLiquidation` deducts
+ *        up to 3% liquidator bonus + 2% handling fee = ~5% from the
+ *        raw swap proceeds before applying to debt — k = 0.95).
+ *      Let `target` = (10_000 + targetBufferBps) / 10_000 (e.g. 1.05).
+ *
+ *      For `HF_after ≥ target`, the partial fraction f must satisfy:
+ *
+ *        f ≥ T × (HF - target) / (HF × (T - target × k))
+ *
+ *      Both numerator and denominator are negative (HF < target,
+ *      T < target × k for any reasonable threshold), so the ratio is
+ *      positive. f ∈ (0, 1]; values close to 1 mean partial isn't
+ *      really partial (use full liquidation).
+ *
+ *  Returns the computed `f` in BPS, padded by a 5% safety margin to
+ *  cover real-world slippage beyond the deterministic bonus/handling
+ *  deductions. Clamped to `[MIN_FRACTION_BPS, MAX_FRACTION_BPS]` —
+ *  below the min the slice is dust, above the max we're past the
+ *  point of "partial". Callers fall back to full liquidation when the
+ *  computed fraction hits the upper clamp.
+ */
+function computeOptimalPartialFractionBps(
+  hfRaw: bigint,
+  liqThresholdBps: bigint,
+  targetBufferBps: number = 500,
+  swapEfficiencyBps: number = 9_500,
+  minFractionBps: number = 200,
+  maxFractionBps: number = 7_500,
+  safetyMargin: number = 1.05,
+): bigint {
+  if (liqThresholdBps <= 0n) return 0n;
+  if (hfRaw <= 0n) return 0n;
+
+  // Use Number for the float algebra (the magnitudes here stay safely
+  // within IEEE-754 range — T is in [0, 1], HF in [0, 1], so all
+  // intermediate products fit in a double). The final result rounds
+  // back to a bigint BPS value for on-chain submission.
+  const T = Number(liqThresholdBps) / 10_000;
+  const hf = Number(hfRaw) / 1e18;
+  const target = 1 + targetBufferBps / 10_000;
+  const k = swapEfficiencyBps / 10_000;
+
+  // Numerator = T × (HF - target). Negative since HF < target.
+  // Denominator = HF × (T - target × k). Negative since T < target × k
+  // for any conservative threshold (T ≈ 0.85, target × k ≈ 1.05 × 0.95
+  // = 0.9975 → denominator factor = 0.85 - 0.9975 = -0.1475).
+  const numerator = T * (hf - target);
+  const denominator = hf * (T - target * k);
+  if (denominator === 0) return 0n;
+
+  const fRaw = numerator / denominator;
+  if (fRaw <= 0) return 0n;
+  if (fRaw >= 1) return BigInt(maxFractionBps); // signal "too distressed for partial"
+
+  // Pad with the safety margin, ceil to the next BPS, then clamp.
+  const fBps = Math.ceil(fRaw * safetyMargin * 10_000);
+  if (fBps < minFractionBps) return BigInt(minFractionBps);
+  if (fBps > maxFractionBps) return BigInt(maxFractionBps);
+  return BigInt(fBps);
 }
 
 /** Decide whether splitting the liquidation swap 50/50 across two
@@ -97,6 +172,7 @@ function pickSplitLegs(
 // source on every deploy via `exportFrontendAbis.sh`.
 const TRIGGER_ABI = RiskFacetABI;       // hosts triggerLiquidation
 const LOAN_DETAILS_ABI = LoanFacetABI;  // hosts getLoanDetails
+const ORACLE_ABI = OracleFacetABI;      // hosts getAssetRiskProfile
 
 export interface KeeperContext {
   /** Wallet client for the keeper EOA on this chain. */
@@ -146,12 +222,11 @@ export async function maybeAutonomousLiquidate(
   if (!ctx) return false;
 
   try {
-    // Read loan struct so we know the assets + amounts to swap.
-    // `startTime` + `durationDays` are also picked up so we can decide
-    // whether the partial-liquidation path is open — partial liquidation
-    // (`triggerPartialLiquidation`) is in-term only by contract design,
-    // since past maturity late fees apply and the cleaner close-out is
-    // a full liquidation or the time-based default route.
+    // Read loan struct so we know the collateral asset (which we then
+    // use to fetch the asset risk profile for partial-fraction math).
+    // `startTime` + `durationDays` are picked up too so we can decide
+    // whether the partial-liquidation path is open — partial is in-term
+    // only by contract design.
     const loan = (await publicClient.readContract({
       address: ctx.diamond,
       abi: LOAN_DETAILS_ABI,
@@ -174,15 +249,92 @@ export async function maybeAutonomousLiquidate(
     // Defaulted, Settled) means the diamond would revert.
     if (loan.status !== 0) return false;
 
-    // Fetch full-size quotes AND half-size quotes in parallel. The
-    // half-size set lets us decide between failover (single adapter
-    // takes the whole input) and split-route (two adapters each take
-    // half). Doing both in parallel keeps the per-liquidation latency
-    // at `max(fullCall, halfCall)` rather than `full + half` — minimal
-    // overhead on the urgent HF<1 path.
+    // Now read the collateral asset's risk profile so we can size the
+    // partial swap precisely. `getAssetRiskProfile.liqThresholdBps`
+    // feeds `computeOptimalPartialFractionBps` — the smallest f that
+    // restores HF >= 1.05 given the per-asset threshold. Replaces the
+    // hardcoded 50% from the prior commit: at HF=0.99 / T=0.85 the
+    // optimal is ~37% (smaller swap, more residual to the borrower);
+    // at HF=0.93 / T=0.85 it's ~78% (the legacy 50% would have reverted
+    // {PartialMustRestoreHF}). If the read fails (RPC blip, asset not
+    // yet onboarded), `liqThresholdBps = 0n` and the math returns 0n,
+    // making the partial path skip — we fall through to full liquidation
+    // so the keeper stays operational on the legacy path.
+    const riskProfile = (await publicClient
+      .readContract({
+        address: ctx.diamond,
+        abi: ORACLE_ABI,
+        functionName: 'getAssetRiskProfile',
+        args: [loan.collateralAsset],
+      })
+      .catch(() => null)) as
+      | readonly [boolean, number, bigint, bigint, bigint]
+      | null;
+    // getAssetRiskProfile returns (isSupported, status, maxLtvBps,
+    // liqThresholdBps, liqBonusBps). We only need liqThresholdBps for
+    // the partial-fraction math; if the read failed (RPC blip, asset
+    // not yet onboarded, etc.) we fall through to the legacy 5_000
+    // fraction so the path stays operational.
+    const liqThresholdBps = riskProfile ? riskProfile[3] : 0n;
+
+    // Partial-liquidation decision: when the loan is only mildly-to-
+    // moderately undercollateralized AND still in-term, a precisely-
+    // sized partial sweep restores HF >= 1 without closing the
+    // position. The on-chain `triggerPartialLiquidation` checks the
+    // post-mutation HF strictly improves AND lands >= 1.0; if our
+    // computed fraction is too small the tx reverts and we retry
+    // next tick (possibly as full liquidation).
+    //
+    // Past maturity, partial is locked out by the on-chain
+    // {PartialAfterMaturity} guard.
+    //
+    // Why prefer partial when feasible: a smaller swap means lower
+    // market impact + cleaner fill (higher chance the keeper actually
+    // gets paid versus a full swap that exceeds the 6% slippage
+    // ceiling and falls back to the claim-time settlement), AND
+    // preserves the borrower's residual position. The optimal fraction
+    // here replaces the previous hardcoded 50% (Aave's classic
+    // close-factor) — at HF=0.99 / T=0.85 the optimal is ~37%, at
+    // HF=0.93 / T=0.85 it's ~78%. Smaller swap = less collateral
+    // sold = better outcome for the borrower whenever the smaller
+    // fraction works.
+    const partialMinHfBps = parsePosIntEnv(env.PARTIAL_LIQ_MIN_HF_BPS, 9500);
+    const partialMinHfRaw = (10n ** 18n * BigInt(partialMinHfBps)) / 10_000n;
+    const endTime = loan.startTime + loan.durationDays * 86_400n;
+    const nowTs = BigInt(Math.floor(Date.now() / 1000));
+    const inTerm = nowTs < endTime;
+
+    const optimalPartialFractionBps = computeOptimalPartialFractionBps(
+      hfRaw,
+      liqThresholdBps,
+    );
+    // Partial path is feasible when: in-term, HF below 1 but not so
+    // deeply distressed the per-asset math says we need > 75% (the
+    // upper clamp from computeOptimalPartialFractionBps means a
+    // returned 7_500n is the "no, use full instead" signal — above
+    // 75% the partial is mostly closing the loan anyway, full
+    // liquidation is cleaner because it refunds surplus collateral
+    // to the borrower and emits the terminal event), and HF is at
+    // least at the configured floor (default 0.95 — the floor is a
+    // coarse cutoff for chains where we don't yet have a tuned
+    // liqThresholdBps and don't want to attempt partial blindly).
+    const partialEligible =
+      inTerm &&
+      hfRaw >= partialMinHfRaw &&
+      hfRaw < 10n ** 18n &&
+      optimalPartialFractionBps > 0n &&
+      optimalPartialFractionBps < 7_500n;
+
+    // Compute the partial-size for quote fetching. Falls back to half
+    // when we don't have liqThresholdBps (the legacy 50% path).
+    const partialAmount = partialEligible
+      ? (loan.collateralAmount * optimalPartialFractionBps) / 10_000n
+      : loan.collateralAmount / 2n;
+    // The split-route decision is built around 50/50 splitting, so we
+    // always also fetch the half-size quote for that branch.
     const halfAmount = loan.collateralAmount / 2n;
     const otherHalf = loan.collateralAmount - halfAmount;
-    const [quotes, halfQuotes] = await Promise.all([
+    const [quotes, halfQuotes, partialQuotes] = await Promise.all([
       orchestrateServerQuotes(env, publicClient, {
         chainId: chain.id,
         sellToken: loan.collateralAsset,
@@ -197,6 +349,20 @@ export async function maybeAutonomousLiquidate(
         sellAmount: halfAmount,
         taker: ctx.diamond,
       }),
+      // Skip the third quote when partial isn't viable — keeps the
+      // hot-path RPC volume the same as before in the common "full
+      // liquidation" case. When partial IS viable, all three run in
+      // parallel so per-loan latency stays at the max of the three
+      // rather than serializing.
+      partialEligible && partialAmount !== halfAmount
+        ? orchestrateServerQuotes(env, publicClient, {
+            chainId: chain.id,
+            sellToken: loan.collateralAsset,
+            buyToken: loan.principalAsset,
+            sellAmount: partialAmount,
+            taker: ctx.diamond,
+          })
+        : Promise.resolve(null),
     ]);
     if (quotes.calls.length === 0) {
       console.log(
@@ -208,45 +374,29 @@ export async function maybeAutonomousLiquidate(
     const account = ctx.wallet.account;
     if (!account) return false;
 
-    // Partial-liquidation decision: when the loan is only *mildly*
-    // undercollateralized AND still in-term, a 50% partial sweep is
-    // usually enough to restore HF >= 1 without closing the position.
-    // The math: at HF ≈ 0.95 with a typical 85% liqThreshold and ~5%
-    // effective swap-fee (3% bonus + 2% handling + small slippage),
-    // a 50% partial moves HF back over 1.0 with a small buffer. For
-    // deeper distress (HF < 0.95) a 50% partial isn't enough and the
-    // on-chain {PartialMustRestoreHF} gate would revert — so we fall
-    // through to the full path. Past maturity, partial is locked out
-    // by the on-chain {PartialAfterMaturity} guard.
-    //
-    // Why prefer partial when feasible: it swaps half the collateral
-    // (smaller market impact, cleaner fill), preserves the borrower's
-    // residual position, and still pays the keeper the dynamic bonus.
-    // Aave's classic 50% close-factor for this same reason — let the
-    // borrower's healthier surviving position absorb future interest
-    // rather than zeroing out the loan on every transient HF dip.
-    const partialMinHfBps = parsePosIntEnv(env.PARTIAL_LIQ_MIN_HF_BPS, 9500);
-    const partialMinHfRaw = (10n ** 18n * BigInt(partialMinHfBps)) / 10_000n;
-    const endTime = loan.startTime + loan.durationDays * 86_400n;
-    const nowTs = BigInt(Math.floor(Date.now() / 1000));
-    const inTerm = nowTs < endTime;
-    const partialEligible =
-      inTerm &&
-      hfRaw >= partialMinHfRaw &&
-      hfRaw < 10n ** 18n &&
-      halfQuotes.calls.length > 0;
+    // Use the dedicated partial quote when we fetched one, else the
+    // half-quote (legacy 50% path when liqThresholdBps was missing).
+    const effectivePartialQuotes: ServerOrchestrationResult | null =
+      partialQuotes ?? (partialEligible ? halfQuotes : null);
+    const effectivePartialFractionBps: bigint = partialQuotes
+      ? optimalPartialFractionBps
+      : 5_000n;
 
-    if (partialEligible) {
+    if (
+      partialEligible &&
+      effectivePartialQuotes &&
+      effectivePartialQuotes.calls.length > 0
+    ) {
       const hash = await ctx.wallet.writeContract({
         address: ctx.diamond,
         abi: TRIGGER_ABI,
         functionName: 'triggerPartialLiquidation',
-        args: [loanIdBig, 5_000n, halfQuotes.calls],
+        args: [loanIdBig, effectivePartialFractionBps, effectivePartialQuotes.calls],
         account,
         chain: ctx.wallet.chain,
       });
       console.log(
-        `[keeper] loan=${loanId} chain=${chain.name} submitted-partial tx=${hash} fraction=50% via=${halfQuotes.ranked[0].kind} hfBefore=${hfRaw} expected=${halfQuotes.ranked[0].expectedOutput}`,
+        `[keeper] loan=${loanId} chain=${chain.name} submitted-partial tx=${hash} fraction=${effectivePartialFractionBps}bps liqThreshold=${liqThresholdBps}bps via=${effectivePartialQuotes.ranked[0].kind} hfBefore=${hfRaw} expected=${effectivePartialQuotes.ranked[0].expectedOutput}`,
       );
       return true;
     }
