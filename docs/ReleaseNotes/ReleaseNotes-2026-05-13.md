@@ -330,3 +330,55 @@ blocked only for flagged addresses) rather than a universal
 kill-switch.
 
 The partial-liquidation surface now has no untested gate or branch.
+
+## Base liquidity check — slippage-at-floor replaces depth-at-tick
+
+A separate Phase-7b-area improvement that also landed today, the
+§4.4 step 3 full upgrade. Until now, the protocol's "is this asset
+liquid enough to be a loan leg?" check looked at the WETH side of a
+Uniswap-V3-style pool and asked "how much virtual reserve sits in
+the current tick, and is that worth at least $1M?". The dollar
+figure was real, but the question itself was the wrong one — it
+told you how much sits *at* the current price, not how much price
+moves when you actually try to sell. A pool with a lot of
+concentrated liquidity at exactly the current tick passes the depth
+metric but cracks open the moment a real-size swap arrives; a pool
+with thinner-but-spread liquidity might fail the depth metric while
+absorbing a real liquidation cleanly.
+
+The check now asks the question liquidation actually cares about:
+"if I sold $5,000 worth of this asset right now, would the executed
+price fall below the Chainlink spot by more than 2%?". Same
+slippage-simulation machinery the depth-tier resolution already uses,
+constrained to the single floor size. Same value-balance guard
+(pool spot must match the Chainlink feed within a configurable band,
+catching manipulated pools) and TWAP-consistency guard (pool spot
+must agree with its own short-window mean, catching recently-
+manipulated pools whose price has since reverted) the tier
+resolution applies. The full routing scope kicks in too: the check
+considers asset/WETH, asset/USDC, asset/USDT pools across every
+configured V3-clone (Uniswap, Pancake, Sushi) and V2-fork (Uniswap,
+Sushi, Pancake) at fee tiers up to 0.3%, taking the best route.
+
+This is strictly more discerning than the old check in three ways:
+the new value-balance and TWAP guards reject manipulated pools the
+old metric let through; the slippage simulation correctly excludes
+degenerate-decimals cases the old metric had no way to spot; and the
+1% fee tier is deliberately dropped from the route search per the
+on-chain census this design rests on (dust pairs cluster there, so a
+pool that exists only at the 1% tier is now Illiquid). The check is
+more *inclusive* in one direction too: V2 routes are now consulted at
+the base layer, so a chain with deep V2 pools but no V3 deployment
+correctly classifies its assets as Liquid via the V2 leg.
+
+Behaviour change summary for operators: assets whose only depth is
+a manipulated or thin-but-pool-empty Uni-V3 venue may now flip to
+Illiquid (correct — they were never reliably tradable). Assets with
+deep V2 liquidity that were previously Illiquid (V3-only base check)
+now correctly classify Liquid. No governance per-asset config
+change is needed; pool discovery stays on-chain via
+`factory.getPool` / `factory.getPair`. Two existing tests had
+documented the old looser semantics explicitly — both have been
+flipped with rename and comments to reflect the new correct
+behaviour, and the regression suite stays at 1795 passing, 0 failed,
+5 skipped across 88 suites.
