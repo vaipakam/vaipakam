@@ -413,12 +413,16 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](5); // Adjust count
+        selectors = new bytes4[](6);
         selectors[0] = RiskFacet.updateRiskParams.selector;
         selectors[1] = RiskFacet.calculateLTV.selector;
         selectors[2] = RiskFacet.calculateHealthFactor.selector;
         selectors[3] = RiskFacet.isCollateralValueCollapsed.selector;
         selectors[4] = RiskFacet.triggerLiquidation.selector;
+        // Higher-LTV-aware liquidator (Piece B follow-up — split-route).
+        // Sum-to-input multi-route swap via `LibSwap.swapWithSplit`;
+        // atomic-revert-on-leg-failure (no soft-failure fallback).
+        selectors[5] = RiskFacet.triggerLiquidationSplit.selector;
     }
 
     function getClaimFacetSelectors()

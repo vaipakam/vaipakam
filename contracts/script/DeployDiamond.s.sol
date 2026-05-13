@@ -801,12 +801,16 @@ contract DeployDiamond is Script {
     }
 
     function _getRiskSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](5);
+        s = new bytes4[](6);
         s[0] = RiskFacet.updateRiskParams.selector;
         s[1] = RiskFacet.calculateLTV.selector;
         s[2] = RiskFacet.calculateHealthFactor.selector;
         s[3] = RiskFacet.isCollateralValueCollapsed.selector;
         s[4] = RiskFacet.triggerLiquidation.selector;
+        // Higher-LTV-aware liquidator (Piece B follow-up — split-route).
+        // Sum-to-input multi-route swap via `LibSwap.swapWithSplit`;
+        // atomic-revert-on-leg-failure (no soft-failure fallback path).
+        s[5] = RiskFacet.triggerLiquidationSplit.selector;
     }
 
     function _getClaimSelectors() internal pure returns (bytes4[] memory s) {

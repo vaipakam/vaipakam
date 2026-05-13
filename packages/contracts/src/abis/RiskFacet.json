@@ -88,6 +88,41 @@
   },
   {
     "type": "function",
+    "name": "triggerLiquidationSplit",
+    "inputs": [
+      {
+        "name": "loanId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "splits",
+        "type": "tuple[]",
+        "internalType": "struct LibSwap.SplitCall[]",
+        "components": [
+          {
+            "name": "adapterIdx",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "splitAmount",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "data",
+            "type": "bytes",
+            "internalType": "bytes"
+          }
+        ]
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "updateRiskParams",
     "inputs": [
       {
@@ -415,6 +450,11 @@
   },
   {
     "type": "error",
+    "name": "EmptySplitList",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "EnforcedPause",
     "inputs": []
   },
@@ -493,6 +533,22 @@
     "type": "error",
     "name": "IlliquidLoanNoRiskMath",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InitLtvAboveTier",
+    "inputs": [
+      {
+        "name": "ltv",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "tierCapBps",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
   },
   {
     "type": "error",
@@ -944,6 +1000,38 @@
     "type": "error",
     "name": "SourceEidNotExpected",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "SplitMinOutputUnderfilled",
+    "inputs": [
+      {
+        "name": "totalOutput",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "minOutputAmount",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "SplitSumMismatch",
+    "inputs": [
+      {
+        "name": "sum",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "inputAmount",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
   },
   {
     "type": "error",
