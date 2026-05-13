@@ -2601,4 +2601,211 @@ contract RiskFacetTest is Test {
         );
         vm.clearMockedCalls();
     }
+
+    // ─── Partial-liquidation validation gates (Piece B follow-up — item 2) ─────
+    //
+    // Coverage for `RiskFacet.triggerPartialLiquidation`'s parameter-gate
+    // surface. The post-mutation HF-restore happy path needs deeper
+    // fixture work (a real distressed loan whose HF crosses back over 1
+    // after the partial mutation, with the oracle math actually running);
+    // that lands in a follow-up. These tests verify every revert path
+    // BEFORE the swap so the keeper bot can rely on clean error semantics
+    // when it tunes its `fractionBps` heuristic.
+
+    /// @dev Loan must be in `LoanStatus.Active`. Non-existent loan id
+    ///      maps to a zero-init Loan struct (status = Active by enum 0)
+    ///      but `loan.id == 0` short-circuits via {InvalidLoan} on
+    ///      most facets. Here we exercise the more interesting
+    ///      "Active but actually Defaulted/Repaid" path by forcing the
+    ///      state via vm.store. Either way the function reverts cleanly.
+    function testPartialLiq_RevertsWhenLoanNotActive() public {
+        // Loan id 9999 is uninitialised → fallthrough state. The
+        // function reads `loan.status != Active` and reverts because
+        // the storage default for the enum is 0 (Active) but `id == 0`,
+        // which OTHER paths catch — here the same uninitialised slot
+        // means HF reads zero too, so the HealthFactorNotLow gate would
+        // fire if Active. We force a real Active loan into Defaulted to
+        // exercise the status check itself unambiguously.
+        uint256 loanId = createAndAcceptOffer();
+        // Set the loan to Defaulted via a triggerLiquidation execution.
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(RiskFacet.calculateHealthFactor.selector, loanId),
+            abi.encode(HF_SCALE - 1)
+        );
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(EscrowFactoryFacet.escrowWithdrawERC20.selector),
+            abi.encode(true)
+        );
+        deal(mockERC20, address(diamond), 1800 ether);
+        deal(mockCollateralERC20, address(diamond), 1800 ether);
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector),
+            abi.encode(true)
+        );
+        RiskFacet(address(diamond)).triggerLiquidation(loanId, defaultAdapterCalls());
+        vm.clearMockedCalls();
+
+        // Loan is now Defaulted — partial should reject.
+        vm.expectRevert(RiskFacet.InvalidLoan.selector);
+        RiskFacet(address(diamond)).triggerPartialLiquidation(
+            loanId,
+            5_000,
+            defaultAdapterCalls()
+        );
+    }
+
+    /// @dev Partial requires HF < 1 — same gate as `triggerLiquidation`.
+    ///      A healthy loan (default HF = 1.53 from the fixture) must
+    ///      revert with {HealthFactorNotLow}.
+    function testPartialLiq_RevertsWhenHFAboveOne() public {
+        uint256 loanId = createAndAcceptOffer();
+
+        // Mock HF >= 1.0 — the loan is healthy, partial is not allowed.
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(RiskFacet.calculateHealthFactor.selector, loanId),
+            abi.encode(HF_SCALE)
+        );
+
+        vm.expectRevert(RiskFacet.HealthFactorNotLow.selector);
+        RiskFacet(address(diamond)).triggerPartialLiquidation(
+            loanId,
+            5_000,
+            defaultAdapterCalls()
+        );
+        vm.clearMockedCalls();
+    }
+
+    /// @dev Past the loan's maturity, the partial path is locked out so
+    ///      late-fee accounting stays out of its math — operators use
+    ///      `triggerLiquidation` (full + late fee) or
+    ///      `DefaultedFacet.markDefaulted` (time-based) instead.
+    function testPartialLiq_RevertsAfterMaturity() public {
+        uint256 loanId = createAndAcceptOffer();
+        LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(loanId);
+        uint256 endTime = uint256(loan.startTime) + loan.durationDays * 1 days;
+
+        // Warp to just past maturity.
+        vm.warp(endTime + 1);
+
+        // Mock HF < 1 so we reach the maturity gate rather than the HF gate.
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(RiskFacet.calculateHealthFactor.selector, loanId),
+            abi.encode(HF_SCALE - 1)
+        );
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                RiskFacet.PartialAfterMaturity.selector,
+                endTime,
+                block.timestamp
+            )
+        );
+        RiskFacet(address(diamond)).triggerPartialLiquidation(
+            loanId,
+            5_000,
+            defaultAdapterCalls()
+        );
+        vm.clearMockedCalls();
+    }
+
+    /// @dev fractionBps must be in (0, cap]. Zero rejects.
+    function testPartialLiq_RevertsOnZeroFraction() public {
+        uint256 loanId = createAndAcceptOffer();
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(RiskFacet.calculateHealthFactor.selector, loanId),
+            abi.encode(HF_SCALE - 1)
+        );
+
+        // cap defaults to 10_000 (no governance override in this fixture
+        // since ConfigFacet isn't cut into the test diamond — the
+        // accessor's zero-fallback path lands on the library default).
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                RiskFacet.InvalidPartialFraction.selector,
+                uint256(0),
+                uint256(10_000)
+            )
+        );
+        RiskFacet(address(diamond)).triggerPartialLiquidation(
+            loanId,
+            0,
+            defaultAdapterCalls()
+        );
+        vm.clearMockedCalls();
+    }
+
+    /// @dev fractionBps > cap rejects. Default cap = 10_000, so 10_001
+    ///      trips it without needing a governance setter call.
+    function testPartialLiq_RevertsOnFractionAboveCap() public {
+        uint256 loanId = createAndAcceptOffer();
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(RiskFacet.calculateHealthFactor.selector, loanId),
+            abi.encode(HF_SCALE - 1)
+        );
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                RiskFacet.InvalidPartialFraction.selector,
+                uint256(10_001),
+                uint256(10_000)
+            )
+        );
+        RiskFacet(address(diamond)).triggerPartialLiquidation(
+            loanId,
+            10_001,
+            defaultAdapterCalls()
+        );
+        vm.clearMockedCalls();
+    }
+
+    /// @dev The post-mutation HF gate fires when the mocked HF doesn't
+    ///      change (vm.mockCall returns the same value pre- and post-
+    ///      mutation). This is a positive test for {PartialMustImproveHF}
+    ///      — without it the function would silently leave the loan
+    ///      stuck-distressed.
+    function testPartialLiq_RevertsWhenHFDoesNotImprove() public {
+        uint256 loanId = createAndAcceptOffer();
+
+        // Mock HF < 1 for both reads — mock returns the same value
+        // each call, so hfAfter == hfBefore and {PartialMustImproveHF}
+        // fires after the swap mutation.
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(RiskFacet.calculateHealthFactor.selector, loanId),
+            abi.encode(HF_SCALE - 1)
+        );
+        // Mock the escrow withdraw + NFT updates (cross-facet calls
+        // through the diamond proxy).
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(EscrowFactoryFacet.escrowWithdrawERC20.selector),
+            abi.encode(true)
+        );
+        // Deal collateral so the swap actually runs.
+        deal(mockERC20, address(diamond), 1800 ether);
+        deal(mockCollateralERC20, address(diamond), 1800 ether);
+
+        // The swap succeeds (mocked ZeroExProxy returns proceeds), the
+        // function reaches the post-mutation HF check, and reverts.
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                RiskFacet.PartialMustImproveHF.selector,
+                HF_SCALE - 1,
+                HF_SCALE - 1
+            )
+        );
+        RiskFacet(address(diamond)).triggerPartialLiquidation(
+            loanId,
+            5_000,
+            defaultAdapterCalls()
+        );
+        vm.clearMockedCalls();
+    }
 }
