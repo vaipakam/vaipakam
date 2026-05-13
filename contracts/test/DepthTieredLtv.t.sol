@@ -199,13 +199,19 @@ contract DepthTieredLtv is Test {
         // Pool is deep enough for Tier 3, but its 1:1 internal price
         // disagrees with the feeds (asset feed-priced 2× WETH while the
         // pool prices them equal) ⇒ the value-balance guard excludes it
-        // ⇒ no valid route ⇒ Tier 0 (even though `_checkLiquidity`,
-        // which reads the raw ETH feed, still says Liquid).
+        // ⇒ no valid route ⇒ Tier 0.
+        //
+        // Post-§4.4-step-3 upgrade: `_checkLiquidity` ALSO runs the same
+        // value-balance guard (it shares the route-search machinery
+        // with `getLiquidityTier`), so an asset whose only pool fails
+        // the guard now correctly classifies Illiquid at the base check
+        // too — a tightening vs the legacy `_v3DepthLiquid` metric which
+        // had no value-balance guard and would have said Liquid here.
         _mockPool(mockUniFactory, mockAsset, 3000, L_TIER3);
         _mockAssetPrice(mockAsset, uint256(uint256(PRICE_2000)) * 2, 8); // asset now "worth 2× WETH"
         assertEq(
             uint256(OracleFacet(address(diamond)).checkLiquidity(mockAsset)),
-            uint256(LibVaipakam.LiquidityStatus.Liquid)
+            uint256(LibVaipakam.LiquidityStatus.Illiquid)
         );
         assertEq(OracleFacet(address(diamond)).getLiquidityTier(mockAsset), 0);
     }
@@ -248,25 +254,28 @@ contract DepthTieredLtv is Test {
         assertEq(OracleFacet(address(diamond)).getLiquidityTier(mockAsset), 1);
     }
 
-    /// @dev V2-only path: a chain with no V3 deployment configured
-    ///      (`uniswapV3Factory` zero) currently can't classify any asset
-    ///      `Liquid` because `_checkLiquidity` is V3-only — even a deep
-    ///      V2 pool doesn't get probed. Documents the deliberate
-    ///      `_checkLiquidity` gating: V2 is a route-search expansion,
-    ///      *not* a Liquid-classification path (that stays the §4.4-
-    ///      step-3-proper rework's job).
-    function test_tier_v2_aloneCannotClassifyLiquid() public {
+    /// @dev V2-only path: a chain with no V3 deployment configured but a
+    ///      deep V2 pool now classifies the asset Liquid post-§4.4-step-3.
+    ///      The legacy `_v3DepthLiquid` was V3-only, so this scenario
+    ///      previously fell through to Illiquid (documented by the
+    ///      pre-step-3 version of this test, which has been kept here in
+    ///      flipped form to make the semantic upgrade legible). The new
+    ///      `_passesFloorSlippage` consults the same V2 leg the route
+    ///      search uses for tier resolution, so a deep V2 pool against a
+    ///      PAA quote is enough to clear the floor.
+    function test_tier_v2_aloneClassifiesLiquidPostStep3() public {
         address mockUniV2 = makeAddr("uniV2Factory");
         AdminFacet(address(diamond)).setUniswapV2Factory(mockUniV2);
         _mockV2Pool(mockUniV2, mockAsset, mockWeth, uint112(L_TIER3), uint112(L_TIER3));
-        // V3 factories all empty for this asset (default setUp) ⇒
-        // `_checkLiquidity` Illiquid ⇒ `getLiquidityTier` returns 0
-        // before entering the route search.
+        // V3 factories all empty for this asset (default setUp), but the
+        // deep V2 pool clears the floor slippage on its own.
         assertEq(
             uint256(OracleFacet(address(diamond)).checkLiquidity(mockAsset)),
-            uint256(LibVaipakam.LiquidityStatus.Illiquid)
+            uint256(LibVaipakam.LiquidityStatus.Liquid)
         );
-        assertEq(OracleFacet(address(diamond)).getLiquidityTier(mockAsset), 0);
+        // The tier resolution then runs over the same routes — V2 pool
+        // at L_TIER3 ⇒ clears every test size ⇒ Tier 3.
+        assertEq(OracleFacet(address(diamond)).getLiquidityTier(mockAsset), 3);
     }
 
     // ─── getEffectiveLiquidityTier = min(onChain, keeperTier) ───────

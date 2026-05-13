@@ -137,8 +137,19 @@ contract OracleLiquidityORTest is Test {
         // Default ETH/USD: $2000, 8 decimals, fresh.
         _mockFeedFull(mockEthUsdFeed, int256(2000e8), 8);
         // Default asset/USD feed wired so price-fresh check passes.
+        // Price set to $2000 (matching WETH) so the §4.4-step-3 slippage
+        // check's value-balance guard passes — the mock pool's
+        // `sqrtPriceX96 = 2^96` says asset:WETH = 1:1 in token units,
+        // which is consistent only when the asset's USD price equals
+        // WETH's. The legacy depth-at-tick metric had no value-balance
+        // guard so any asset price worked; the slippage check correctly
+        // catches the mismatch and skips the pool unless prices align.
+        // Tests asserting the OR-logic across venues (which venue
+        // commits, fee-tier iteration, etc.) don't care about the
+        // specific dollar value — they only care that "the pool passes"
+        // is achievable, which requires matching prices.
         _mockRegistryFeed(mockAsset, mockFeed);
-        _mockFeedFull(mockFeed, int256(1e8), 8);
+        _mockFeedFull(mockFeed, int256(2000e8), 8);
 
         // Default state: every factory returns "no pool" at every fee
         // tier. Tests opt-in to `_mockPool` for whichever (factory,
@@ -317,10 +328,15 @@ contract OracleLiquidityORTest is Test {
         assertEq(uint256(_checkLiquidity()), uint256(LibVaipakam.LiquidityStatus.Liquid));
     }
 
-    function testLiquidityFeeTier10000Found() public {
-        // Pool exists only at the 1% tier on UniV3.
+    function testLiquidityFeeTier10000Excluded() public {
+        // Pool exists ONLY at the 1% tier on UniV3 — the §4.4 step 3 full
+        // upgrade deliberately excludes the 1% bucket from the route
+        // search via `_le03FeeTiers()` (per the design's §3 census, dust
+        // pairs live there). An asset that has depth ONLY in a 1% pool
+        // is now classified Illiquid — a tightening of the gate vs the
+        // legacy depth-at-tick metric that included 1% via `_lookupPool`.
         _mockPool(mockUniFactory, mockAsset, 10000, LIQUIDITY_PASSING);
-        assertEq(uint256(_checkLiquidity()), uint256(LibVaipakam.LiquidityStatus.Liquid));
+        assertEq(uint256(_checkLiquidity()), uint256(LibVaipakam.LiquidityStatus.Illiquid));
     }
 
     function testLiquidityFeeTier100Found() public {

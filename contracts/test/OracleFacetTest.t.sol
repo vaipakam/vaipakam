@@ -308,14 +308,18 @@ contract OracleFacetTest is Test {
 
     function testCheckLiquidityReturnsLiquidWhenAllConditionsMet() public {
         _mockRegistryFeed(mockAsset, mockFeed);
-        _mockFeedFull(mockFeed, int256(1e8), 8);
-        // With sqrtPriceX96 = 2^96 (price 1.0) the WETH-leg virtual
-        // reserve == liquidity, so
-        //   usdDepthScaled = 2 × liquidity × ethPrice × 1e6 / (1e18 × 10**ethDec)
-        //                  = 2 × liquidity × 2000e8 × 1e6 / (1e18 × 1e8)
-        //                  = liquidity / 2.5e8.
-        // MIN_LIQUIDITY_PAD = 1_000_000 * 1e6 = 1e12 ⇒ need liquidity ≥ 2.5e20.
-        // liquidity = 1e21 → usdDepthScaled = 4e12 ≫ 1e12. Comfortably liquid.
+        // Asset feed-priced to match WETH ($2000): post-§4.4-step-3
+        // `_checkLiquidity` runs a slippage simulation that includes a
+        // value-balance guard requiring the pool's spot to match the
+        // Chainlink-feed-implied spot. Mock pool has sqrtPriceX96 =
+        // 2^96 ⇒ asset:WETH = 1:1 in token units. The value-balance
+        // guard accepts that only when both legs price equally — so
+        // both legs at $2000 lets the pool through.
+        _mockFeedFull(mockFeed, int256(2000e8), 8);
+        // With sqrtPriceX96 = 2^96 the WETH-leg virtual reserve == liquidity.
+        // The new check runs a $5k slippage simulation: at this depth
+        // the floor-size swap is a tiny fraction of the virtual reserve,
+        // so slippage stays well under 2% — passes.
         _mockLiquidPool(mockAsset, uint128(1e21));
         LibVaipakam.LiquidityStatus status = OracleFacet(address(diamond)).checkLiquidity(mockAsset);
         assertEq(uint8(status), uint8(LibVaipakam.LiquidityStatus.Liquid));
@@ -524,7 +528,10 @@ contract OracleFacetTest is Test {
 
     function testCheckLiquidityInitializedPoolCovered() public {
         _mockRegistryFeed(mockAsset, mockFeed);
-        _mockFeedFull(mockFeed, int256(1e8), 8);
+        // Asset feed-priced to match WETH ($2000) so the §4.4-step-3
+        // value-balance guard accepts the 1:1 mock pool (see
+        // {testCheckLiquidityReturnsLiquidWhenAllConditionsMet}).
+        _mockFeedFull(mockFeed, int256(2000e8), 8);
 
         address pool = _computePoolAddress(mockAsset, mockWeth);
         (address t0, address t1) = mockAsset < mockWeth ? (mockAsset, mockWeth) : (mockWeth, mockAsset);
@@ -534,9 +541,9 @@ contract OracleFacetTest is Test {
             abi.encode(pool)
         );
         // Initialized pool (non-zero sqrtPriceX96) with sufficient depth.
-        // sqrtPriceX96 = 2^96 ⇒ price 1.0 ⇒ `_v3DepthLiquid`'s WETH-leg
-        // virtual reserve == liquidity; liquidity = 1e21 ⇒ usdDepthScaled
-        // = 1e21 / 2.5e8 = 4e12 ≫ MIN_LIQUIDITY_PAD (1e12).
+        // sqrtPriceX96 = 2^96 ⇒ price 1.0; with the matched $2000:$2000
+        // feeds the value-balance guard passes, and a $5k slippage swap
+        // at liquidity = 1e21 stays well under the 2% floor — passes.
         vm.mockCall(
             pool,
             abi.encodeWithSignature("slot0()"),
@@ -557,9 +564,9 @@ contract OracleFacetTest is Test {
 
     function testCheckLiquidityOnActiveNetworkLiquid() public {
         _mockRegistryFeed(mockAsset, mockFeed);
-        _mockFeedFull(mockFeed, int256(1e8), 8);
-        // 1e21 ⇒ usdDepthScaled = 1e21 / 2.5e8 = 4e12 ≫ MIN_LIQUIDITY_PAD;
-        // see {testCheckLiquidityReturnsLiquidWhenAllConditionsMet}.
+        // Asset price-matched to WETH for the §4.4-step-3 value-balance
+        // guard — see {testCheckLiquidityReturnsLiquidWhenAllConditionsMet}.
+        _mockFeedFull(mockFeed, int256(2000e8), 8);
         _mockLiquidPool(mockAsset, uint128(1e21));
         LibVaipakam.LiquidityStatus status =
             OracleFacet(address(diamond)).checkLiquidityOnActiveNetwork(mockAsset);
