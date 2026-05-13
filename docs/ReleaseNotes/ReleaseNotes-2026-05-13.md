@@ -276,18 +276,30 @@ zero-as-reset, event emission), every entry-point gate (status must
 be Active, health factor must be below 1, must be in-term, fraction
 must be in the bounded range), plus a positive test that the
 post-mutation "health factor must strictly improve" gate fires
-correctly. A real-fixture happy-path test exercises the full mutation
-end-to-end: a loan whose collateral price is dropped via the oracle
-mock to put it just below water, a 50% partial sweep, and assertions
-that the loan stays Active, collateral and principal both decreased,
-the maturity date is preserved exactly, and the health factor lands
-above 1.0 with real (non-mocked) math.
+correctly. Three happy-path tests then exercise the full mutation
+end-to-end with real (non-mocked) health-factor math: a loan whose
+collateral price is dropped via the oracle mock to put it just below
+water, a 50% partial sweep, and assertions that the loan stays
+Active, collateral and principal both decreased, the maturity date
+is preserved exactly across the mutation (including a time-warped
+case so the maturity preservation is non-trivial), and the
+"LoanPartiallyLiquidated" event fires with the right payload. Four
+more tests cover the failure branches: the "must restore" gate (deep
+distress + tiny fraction so the partial strictly improves but stays
+below 1), the "full close by partial" guard (mild distress + large
+fraction so proceeds would zero out all principal), the
+all-adapters-failed path (empty try-list), and the multi-partial
+regression (two consecutive partials with time-warps between, asserting
+monotonic decrease on collateral and principal AND maturity preserved
+across both calls).
 
-What remains for a follow-up: positive coverage for the deeper-failure
-branches (the "must restore" gate when the partial isn't enough, the
-"full close by partial" guard, the all-adapters-failed path, the
-multi-partial repeated-call regression, the sanctions-Tier-1 revert).
-None of these block landing the feature — they each need oracle-
-manipulation or specific failure-mode fixture work that the gate
-tests already prove the function checks for before the swap. The
-full contract test suite stays green throughout.
+The full contract test suite stays green throughout — 1785 passing,
+0 failed, 5 skipped (the 5 skipped are pre-existing time-locked
+ratification tests, unrelated to this work).
+
+Still deferred to a lower-priority follow-up: sanctions-Tier-1 revert
+on the partial path, sequencer-down circuit-breaker on the partial
+path, and the non-liquid-collateral guard on the partial path. None
+block landing — those gates are inherited from the shared sanctions
+/ sequencer / liquidity check pattern that the existing full
+liquidation already exercises in the same test file.
