@@ -42,20 +42,34 @@ import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
  *         Required env vars:
  *           - `DIAMOND_ADDRESS`     The deployed Vaipakam diamond on
  *                                   the current chain.
- *           - `CENSUS_ASSETS`       Comma-separated asset addresses
- *                                   (no whitespace; 0x-prefixed).
- *                                   For a per-chain default list see
- *                                   `docs/SlippageCensusGuide.md`.
  *
  *         Optional env vars:
+ *           - `CENSUS_ASSETS`       Comma-separated asset addresses
+ *                                   (no whitespace; 0x-prefixed). When
+ *                                   set, overrides the per-chain default
+ *                                   list. When unset, the script falls
+ *                                   back to `script/SlippageCensus.assets.json`
+ *                                   keyed by `chain_<chainId>_assets`.
  *           - `CENSUS_LABEL`        A free-form label written to each
  *                                   row (e.g. "pre-depthTieredLtv-flip"
  *                                   or a date stamp).
+ *           - `CENSUS_ASSETS_JSON`  Override path to the default-list
+ *                                   JSON. Default: `script/SlippageCensus.assets.json`
+ *                                   resolved relative to the foundry
+ *                                   project root.
  *
- *         Example:
+ *         Default-list-only run (uses script/SlippageCensus.assets.json):
+ *           DIAMOND_ADDRESS=0xABC... \
+ *           CENSUS_LABEL=2026-05-14-base \
+ *             forge script \
+ *               script/SlippageCensus.s.sol:SlippageCensus \
+ *               --rpc-url $RPC_BASE \
+ *               -vvv
+ *
+ *         Operator-override run (one-off asset list):
  *           DIAMOND_ADDRESS=0xABC... \
  *           CENSUS_ASSETS=0xUSDC,0xUSDT,0xWBTC,0xLINK \
- *           CENSUS_LABEL=2026-05-14-base \
+ *           CENSUS_LABEL=2026-05-14-base-custom \
  *             forge script \
  *               script/SlippageCensus.s.sol:SlippageCensus \
  *               --rpc-url $RPC_BASE \
@@ -127,6 +141,37 @@ contract SlippageCensus is Script {
         return vm.parseAddress(s);
     }
 
+    /// @dev Resolve the per-chain default asset list from the
+    ///      `SlippageCensus.assets.json` config file. Looks up
+    ///      `chain_<block.chainid>_assets` (e.g. `chain_8453_assets`
+    ///      for Base) and parses it as an address array. Returns an
+    ///      empty array — not a revert — when the current chain has
+    ///      no entry, so the surrounding `require` produces a clean
+    ///      operator-facing error rather than a JSON-path stack trace.
+    ///
+    ///      Path override: `CENSUS_ASSETS_JSON` env var can point at
+    ///      an alternate file (useful for testnet runs against a
+    ///      pruned list, or CI runs against a fixture).
+    function _loadAssetsFromJson() internal view returns (address[] memory) {
+        string memory path;
+        try vm.envString("CENSUS_ASSETS_JSON") returns (string memory p) {
+            path = p;
+        } catch {
+            path = "script/SlippageCensus.assets.json";
+        }
+        string memory json = vm.readFile(path);
+        string memory key = string.concat(
+            ".chain_",
+            _uintStr(block.chainid),
+            "_assets"
+        );
+        try vm.parseJsonAddressArray(json, key) returns (address[] memory addrs) {
+            return addrs;
+        } catch {
+            return new address[](0);
+        }
+    }
+
     /// @dev `OracleFacet.checkLiquidity` returns the enum
     ///      `LibVaipakam.LiquidityStatus`. Stringify for CSV output.
     function _liquidityLabel(LibVaipakam.LiquidityStatus s)
@@ -159,7 +204,6 @@ contract SlippageCensus is Script {
 
     function run() external view {
         address diamond = vm.envAddress("DIAMOND_ADDRESS");
-        string memory csv = vm.envString("CENSUS_ASSETS");
         string memory label;
         try vm.envString("CENSUS_LABEL") returns (string memory l) {
             label = l;
@@ -167,8 +211,24 @@ contract SlippageCensus is Script {
             label = "";
         }
 
-        address[] memory assets = _parseAssets(csv);
-        require(assets.length > 0, "CENSUS: CENSUS_ASSETS env var must list >=1 asset");
+        // Asset list resolution: prefer the explicit `CENSUS_ASSETS`
+        // env var (operator one-off / CI override), fall back to the
+        // per-chain default list in `script/SlippageCensus.assets.json`
+        // keyed by `chain_<chainId>_assets`. The fallback keeps a
+        // routine `forge script ... --rpc-url $RPC` invocation
+        // copy-paste-free per chain; the env-var override stays
+        // available for one-off audits / pre-flip rehearsals against a
+        // narrowed list.
+        address[] memory assets;
+        try vm.envString("CENSUS_ASSETS") returns (string memory csv) {
+            assets = _parseAssets(csv);
+        } catch {
+            assets = _loadAssetsFromJson();
+        }
+        require(
+            assets.length > 0,
+            "CENSUS: no assets resolved (set CENSUS_ASSETS or add a chain_<id>_assets entry to script/SlippageCensus.assets.json)"
+        );
 
         OracleFacet oracle = OracleFacet(diamond);
 

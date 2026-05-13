@@ -58,23 +58,44 @@ run can be appended to a per-chain census log indefinitely.
 
 ## How to run
 
-The tool is invoked via `forge script` against the chain's RPC. Three
-env vars drive it:
+The tool is invoked via `forge script` against the chain's RPC. The
+asset list is resolved in this priority order:
 
-| Env var            | Required? | Description                                                                                |
-| ------------------ | --------- | ------------------------------------------------------------------------------------------ |
-| `DIAMOND_ADDRESS`  | yes       | The deployed Vaipakam diamond on the chain.                                                |
-| `CENSUS_ASSETS`    | yes       | Comma-separated list of asset addresses (0x-prefixed, no whitespace).                      |
-| `CENSUS_LABEL`     | no        | A free-form tag written to each row — useful for timestamping / contextualising the snapshot. |
+1. **`CENSUS_ASSETS` env var (operator override)** — comma-separated
+   list. Use this for one-off audits / pre-flip rehearsals against a
+   narrowed list, or when CI needs an explicit fixture.
+2. **`contracts/script/SlippageCensus.assets.json` (per-chain default)** —
+   looked up by `chain_<block.chainid>_assets`. This is what a routine
+   `forge script` invocation reads when `CENSUS_ASSETS` is unset, so
+   operators don't copy-paste addresses every run.
+
+Env vars:
+
+| Env var               | Required? | Description                                                                                                                         |
+| --------------------- | --------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| `DIAMOND_ADDRESS`     | yes       | The deployed Vaipakam diamond on the chain.                                                                                         |
+| `CENSUS_ASSETS`       | no        | Comma-separated list of asset addresses (0x-prefixed, no whitespace). When set, overrides the per-chain default JSON.               |
+| `CENSUS_LABEL`        | no        | A free-form tag written to each row — useful for timestamping / contextualising the snapshot.                                       |
+| `CENSUS_ASSETS_JSON`  | no        | Override path to the default-list JSON. Defaults to `script/SlippageCensus.assets.json`.                                            |
 
 ```bash
-# Example: base-sepolia, post-deploy snapshot, blue-chip + stable list.
+# Routine run — uses the per-chain default list from
+# contracts/script/SlippageCensus.assets.json (no asset addresses
+# pasted into the command line):
 DIAMOND_ADDRESS=0x... \
-CENSUS_ASSETS=0xUSDC...,0xUSDT...,0xWBTC...,0xLINK... \
-CENSUS_LABEL=2026-05-14-base-sepolia-post-deploy \
+CENSUS_LABEL=2026-05-14-base-post-deploy \
   forge script \
     contracts/script/SlippageCensus.s.sol:SlippageCensus \
-    --rpc-url $RPC_BASE_SEPOLIA \
+    --rpc-url $RPC_BASE \
+    -vvv
+
+# Operator-override run — narrow asset list for a one-off audit:
+DIAMOND_ADDRESS=0x... \
+CENSUS_ASSETS=0xUSDC...,0xUSDT...,0xWBTC...,0xLINK... \
+CENSUS_LABEL=2026-05-14-base-pre-flip-rehearsal \
+  forge script \
+    contracts/script/SlippageCensus.s.sol:SlippageCensus \
+    --rpc-url $RPC_BASE \
     -vvv
 ```
 
@@ -89,10 +110,14 @@ opens cleanly in a spreadsheet.
 
 ## Per-chain default asset lists
 
-These are the starter lists. Add to them per chain as new assets land
-on the protocol; do NOT remove items even if they classify Illiquid —
-the per-row `Illiquid` is itself the data the audit needs (it confirms
-the gate is doing its job).
+These are the starter lists, mirrored from
+[`contracts/script/SlippageCensus.assets.json`](../contracts/script/SlippageCensus.assets.json)
+— the JSON is the canonical source the census script reads when
+`CENSUS_ASSETS` is unset. Keep this doc and the JSON in sync; the
+script does not consult this doc. Add to both per chain as new assets
+land on the protocol; do NOT remove items even if they classify
+Illiquid — the per-row `Illiquid` is itself the data the audit needs
+(it confirms the gate is doing its job).
 
 The addresses come from each chain's canonical / bridged token list.
 Verify each address against a block explorer + the chain's bridge

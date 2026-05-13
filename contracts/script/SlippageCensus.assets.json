@@ -1,0 +1,61 @@
+{
+  "_README": "Per-chain default asset lists consumed by contracts/script/SlippageCensus.s.sol when the CENSUS_ASSETS env var is unset. Keys: chain_<chainId>_assets. Addresses sourced from each chain's canonical / bridged token registry — see docs/SlippageCensusGuide.md for provenance + verification steps. Add (but do NOT remove) assets per chain as new tokens land on the protocol; an Illiquid classification in the census output is itself signal the audit needs, not a reason to drop the asset from the list.",
+
+  "_README_chain_1": "Ethereum mainnet",
+  "chain_1_assets": [
+    "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+    "0xdAC17F958D2ee523a2206206994597C13D831ec7",
+    "0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599",
+    "0x6B175474E89094C44Da98b954EedeAC495271d0F",
+    "0x514910771AF9Ca656af840dff83E8264EcF986CA",
+    "0x7Fc66500c84A76Ad7e9c93437bFc5Ac33E2DDaE9",
+    "0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984",
+    "0x6982508145454Ce325dDbE47a25d4ec3d2311933",
+    "0x95aD61b0a150d79219dCF64E1E6Cc01f0B64C4cE"
+  ],
+
+  "_README_chain_8453": "Base mainnet",
+  "chain_8453_assets": [
+    "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+    "0xd9aAEc86B65D86f6A7B5B1b0c42FFA531710b6CA",
+    "0x2Ae3F1Ec7F1F5012CFEab0185bfc7aa3cf0DEc22",
+    "0xcbB7C0000aB88B473b1f5aFd9ef808440eed33Bf",
+    "0x4200000000000000000000000000000000000006"
+  ],
+
+  "_README_chain_42161": "Arbitrum One",
+  "chain_42161_assets": [
+    "0xFF970A61A04b1cA14834A43f5dE4533eBDDB5CC8",
+    "0xaf88d065e77c8cC2239327C5EDb3A432268e5831",
+    "0xFd086bC7CD5C481DCC9C85ebE478A1C0b69FCbb9",
+    "0x2f2a2543B76A4166549F7aaB2e75Bef0aefC5B0f",
+    "0x912CE59144191C1204E64559FE8253a0e49E6548",
+    "0xf97f4df75117a78c1A5a0DBb814Af92458539FB4"
+  ],
+
+  "_README_chain_10": "Optimism",
+  "chain_10_assets": [
+    "0x0b2C639c533813f4Aa9D7837CAf62653d097Ff85",
+    "0x7F5c764cBc14f9669B88837ca1490cCa17c31607",
+    "0x94b008aA00579c1307B0EF2c499aD98a8ce58e58",
+    "0x68f180fcCe6836688e9084f035309E29Bf0A2095",
+    "0x4200000000000000000000000000000000000042"
+  ],
+
+  "_README_chain_1101": "Polygon zkEVM",
+  "chain_1101_assets": [
+    "0xA8CE8aee21bC2A48a5EF670afCc9274C7bbbC035",
+    "0x1E4a5963aBFD975d8c9021ce480b42188849D41d",
+    "0x4F9A0e7FD2Bf6067db6994CF12E4495Df938E6e9",
+    "0xEA034fb02eB1808C2cc3adbC15f447B93CbE08e1"
+  ],
+
+  "_README_chain_56": "BNB Chain",
+  "chain_56_assets": [
+    "0x8AC76a51cc950d9822D68b83fE1Ad97B32Cd580d",
+    "0x55d398326f99059fF775485246999027B3197955",
+    "0x7130d2A12B9BCbFAe4f2634d864A1Ee1Ce3Ead9c",
+    "0x2170Ed0880ac9A755fd29B2688956BD959F933F8",
+    "0x0E09FaBB73Bd3Ade0a17ECC321fD13a19e81cE82"
+  ]
+}
