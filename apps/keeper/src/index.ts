@@ -10,14 +10,13 @@
  * tick:
  *
  *   1. `runWatcher(env)` walks every chain with an RPC + Diamond
- *      configured, iterates each user's active loans, and:
- *        a. Compares the on-chain HF to the user's per-loan
- *           thresholds (D1 `thresholds` table) and dispatches
- *           Telegram + Push alerts on band downgrades (watcher.ts).
- *        b. Submits `triggerLiquidation(loanId, calls)` on-chain
- *           when HF crosses 1.0 — gated by `KEEPER_ENABLED == 'true'`
- *           AND `KEEPER_PRIVATE_KEY` set (keeper.ts +
- *           serverQuotes.ts).
+ *      configured, iterates each subscribed user's active loans,
+ *      compares the on-chain HF to the user's per-loan thresholds
+ *      (D1 `thresholds` table), and dispatches Telegram + Push alerts
+ *      on band downgrades (watcher.ts). Notification surface only —
+ *      autonomous liquidation moved to `runLiquidator` (item 5)
+ *      so the keeper catches loans whose owners haven't subscribed
+ *      to notifications too.
  *
  *   2. `runDailyOracleSnapshot(env)` (moved from agent in the
  *      Stage 3 architectural-rebalance commit) — once per UTC
@@ -62,6 +61,22 @@
  *      for the *submit* — the counter is tracked in D1 regardless so the
  *      catch-up after the switch flips is fast.
  *
+ *   5. `runLiquidator(env)` — autonomous-liquidation pass
+ *      (liquidator.ts). Per chain: enumerate **every** active loan via
+ *      `getActiveLoansPaginated`, batch-read
+ *      `RiskFacet.calculateHealthFactor` via Multicall3 (one RPC
+ *      roundtrip per ~100 loans instead of N sequential eth_calls —
+ *      the speed half of the higher-LTV liquidator hardening), filter
+ *      to `hf < 1e18`, sort ascending so the most-at-risk loans go
+ *      first when the per-tick submit cap is hit, and submit
+ *      `triggerLiquidation` via `maybeAutonomousLiquidate`. Same
+ *      `isKeeperEnabled` gate as the matcher / liquidity-confidence
+ *      relay. Pre-split this lived inside `runWatcher`, scoped to
+ *      subscribed-user loans only — many loans never got an
+ *      autonomous attempt and relied on third-party MEV bots; the
+ *      split closes that coverage gap (the *coverage* half of the
+ *      higher-LTV hardening).
+ *
  * NO HTTP routes. The connected app's read-API surface
  * (`/loans/*`, `/offers/*`), the operator services
  * (`/quote/0x`, `/quote/1inch`, `/scan/blockaid`), the Telegram
@@ -76,6 +91,7 @@ import { runWatcher } from './watcher';
 import { runDailyOracleSnapshot } from './dailyOracleSnapshot';
 import { runMatcher } from './matcher';
 import { runLiquidityConfidence } from './liquidityConfidence';
+import { runLiquidator } from './liquidator';
 
 export default {
   async scheduled(
@@ -109,6 +125,12 @@ export default {
       runLiquidityConfidence(env).catch((err) => {
         // eslint-disable-next-line no-console
         console.error('[keeper] runLiquidityConfidence pass failed:', err);
+      }),
+    );
+    ctx.waitUntil(
+      runLiquidator(env).catch((err) => {
+        // eslint-disable-next-line no-console
+        console.error('[keeper] runLiquidator pass failed:', err);
       }),
     );
   },

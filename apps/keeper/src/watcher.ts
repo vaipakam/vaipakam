@@ -7,6 +7,12 @@
  * (e.g. a cron over-fire or manual debug run) does NOT re-send alerts.
  * Alert fires only when `band < last_band` (user is in a worse state than
  * they were last tick). Recovery transitions are no-ops by default.
+ *
+ * Scope: subscription-driven NOTIFICATIONS only. The autonomous-
+ * liquidation pass moved out into `liquidator.ts` so it can scan
+ * **every** active loan on-chain (not just the subscribed-user subset
+ * this pass walks) and batch-read HF via Multicall3 — a real coverage
+ * + speed win the higher-LTV regime needs. See that file's header.
  */
 
 import { createPublicClient, http, type Address } from 'viem';
@@ -25,7 +31,6 @@ import {
 import { sendMessage } from './telegram';
 import { sendPush } from './push';
 import { formatAlert, pushTitle } from './i18n';
-import { maybeAutonomousLiquidate, resetKeeperDedupe } from './keeper';
 
 // Diamond ABIs sourced from `@vaipakam/contracts/abis` — same per-facet
 // JSONs the indexer Worker imports. Drops the hand-typed parseAbi
@@ -53,11 +58,6 @@ const BAND_RANK: Record<Band, number> = {
 export async function runWatcher(env: Env): Promise<void> {
   // Sweep expired handshake codes first so the table stays bounded.
   await sweepExpiredLinks(env.DB);
-  // Reset the per-tick dedupe set so a previously-attempted loan can
-  // be retried this tick if it's still HF-liquidatable. The diamond
-  // reverts second-attempts on already-liquidated loans, so this is
-  // safe even when the keeper races itself.
-  resetKeeperDedupe();
 
   const chains = getChainConfigs(env);
   if (chains.length === 0) {
@@ -115,12 +115,9 @@ async function watchChain(env: Env, chain: ChainConfig): Promise<void> {
             await dispatchAlert(env, user, chain, loanId, hf, band);
           }
 
-          // Phase 7a.4 — autonomous liquidation. Independent of the
-          // user's notification thresholds: triggers strictly on
-          // on-chain HF < 1.0. The keeper attempts at most once per
-          // (chain, loan) per cron tick; permissionless trigger means
-          // any other keeper / MEV bot may beat us, which is fine.
-          await maybeAutonomousLiquidate(env, chain, loanIdBig, hfRaw, client);
+          // (Autonomous liquidation moved to `runLiquidator` — its
+          // own cron pass that scans ALL active loans on-chain, not
+          // just this subscribed-user subset.)
 
           await putNotifyState(env.DB, {
             wallet: user.wallet,
