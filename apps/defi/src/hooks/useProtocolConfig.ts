@@ -109,6 +109,43 @@ export interface ProtocolConfig {
    *  [300, 7200]. Frontend renders the security disclosure + the
    *  live countdown when AdminFacet.pausedUntil() returns non-zero. */
   autoPauseDurationSeconds: number;
+  // ── Depth-tiered LTV (Piece B) ─────────────────────────────────────
+  // From `ConfigFacet.getDepthTierConfigBundle` / `getPaaAssets`. While
+  // `depthTieredLtvEnabled` is false (the default), the loan-init gate
+  // stays today's HF≥1.5 — the rest of these are still meaningful for
+  // UI surfaces (the keeper / protocol-console knob registry / the
+  // "this asset is Tier N → up to X%" hint on create-offer).
+  /** Master kill-switch: when false the init gate ignores the tier
+   *  cap entirely (today's HF≥1.5 behaviour). */
+  depthTieredLtvEnabled: boolean;
+  /** Slippage budget (bps) a simulated test trade must clear to count
+   *  toward a tier. Default 200 (2%). */
+  liquiditySlippageBps: number;
+  liquiditySlippagePct: number;
+  /** TWAP-consistency guard window (seconds) and band (bps). Default
+   *  1800 / 300 (30 min / 3%). */
+  twapWindowSec: number;
+  twapConsistencyBps: number;
+  twapConsistencyPct: number;
+  /** Simulated-swap test sizes in PAD × 1e6 units (so `5000_000_000n`
+   *  = "5,000 PAD" — USD on the retail deploy, whatever governance has
+   *  rotated PAD to via T-048 otherwise). Defaults: 5k floor / 50k
+   *  Tier 1 / 500k Tier 2 / 5M Tier 3. */
+  floorSizePad: bigint;
+  tier1SizePad: bigint;
+  tier2SizePad: bigint;
+  tier3SizePad: bigint;
+  /** Per-tier max init-LTV caps (bps). Defaults: 5000 / 6000 / 6500. */
+  tier1MaxInitLtvBps: number;
+  tier2MaxInitLtvBps: number;
+  tier3MaxInitLtvBps: number;
+  tier1MaxInitLtvPct: number;
+  tier2MaxInitLtvPct: number;
+  tier3MaxInitLtvPct: number;
+  /** Resolved PAA list — the per-chain quote tokens the depth probe
+   *  looks at. Empty config resolves to `[wethContract]` on-chain, so
+   *  this is always at least 1 entry. */
+  paaAssets: readonly Address[];
   fetchedAt: number;
 }
 
@@ -119,6 +156,27 @@ interface CacheEntry {
 }
 
 let cached: CacheEntry | null = null;
+
+/**
+ * Tuple shape of `ConfigFacet.getDepthTierConfigBundle()` — the 11
+ * effective values (override OR library default) for the depth-tiered
+ * LTV mechanic. Kept as a separate bundle from {@link BundleTuple} so
+ * neither getter's tuple grows unwieldy on the contract side. See
+ * `contracts/src/facets/ConfigFacet.sol:getDepthTierConfigBundle`.
+ */
+type DepthTierBundleTuple = [
+  boolean, // depthTieredLtvEnabled
+  bigint,  // liquiditySlippageBps
+  bigint,  // twapWindowSec
+  bigint,  // twapConsistencyBps
+  bigint,  // floorSizePad (PAD × 1e6)
+  bigint,  // tier1SizePad
+  bigint,  // tier2SizePad
+  bigint,  // tier3SizePad
+  bigint,  // tier1MaxInitLtvBps
+  bigint,  // tier2MaxInitLtvBps
+  bigint,  // tier3MaxInitLtvBps
+];
 
 type BundleTuple = [
   bigint, // treasuryFeeBps
@@ -244,15 +302,18 @@ export function useProtocolConfig() {
         getProtocolConfigBundle: () => Promise<BundleTuple>;
         getProtocolConstants: () => Promise<[bigint, bigint, bigint, bigint]>;
         getVPFIToken: () => Promise<string>;
+        getDepthTierConfigBundle: () => Promise<DepthTierBundleTuple>;
+        getPaaAssets: () => Promise<readonly Address[]>;
       };
-      // Fetch the governance bundle, the compile-time constants, and
-      // the registered VPFI token address in parallel. All three feed
-      // the same `ProtocolConfig` shape so consumers don't have to
-      // thread three hooks. Constants degrade to the contract defaults
-      // if the view is missing on an older Diamond deploy. VPFI token
-      // address can be zero if the token hasn't been registered on
-      // this chain yet — handled below.
-      const [tuple, consts, vpfiTokenAddr] = await Promise.all([
+      // Fetch the governance bundle, the compile-time constants, the
+      // registered VPFI token address, and the depth-tier surface
+      // (Piece B — bundle + PAA list) in parallel. All feed the same
+      // `ProtocolConfig` shape so consumers don't have to thread
+      // multiple hooks. Each non-essential view degrades to a safe
+      // default if missing on an older deploy: constants → library
+      // defaults; depth-tier bundle → "feature off + library
+      // defaults"; PAA list → empty.
+      const [tuple, consts, vpfiTokenAddr, depthBundle, paaAssets] = await Promise.all([
         d.getProtocolConfigBundle(),
         d.getProtocolConstants().catch(() => [
           1500000000000000000n, // MIN_HEALTH_FACTOR default 1.5e18
@@ -261,6 +322,10 @@ export function useProtocolConfig() {
           30n,
         ] as [bigint, bigint, bigint, bigint]),
         d.getVPFIToken().catch(() => ZERO_ADDRESS),
+        d.getDepthTierConfigBundle().catch(
+          () => [false, 200n, 1800n, 300n, 5_000_000_000n, 50_000_000_000n, 500_000_000_000n, 5_000_000_000_000n, 5000n, 6000n, 6500n] as DepthTierBundleTuple,
+        ),
+        d.getPaaAssets().catch(() => [] as readonly Address[]),
       ]);
 
       // Live `decimals()` read on the VPFI token contract. Done as a
@@ -306,6 +371,19 @@ export function useProtocolConfig() {
         autoPauseDurationSeconds,
       ] = tuple;
       const [minHealthFactor, vpfiStakingPoolCap, vpfiInteractionPoolCap, maxInteractionClaimDays] = consts;
+      const [
+        depthTieredLtvEnabled,
+        liquiditySlippageBps,
+        twapWindowSec,
+        twapConsistencyBps,
+        floorSizePad,
+        tier1SizePad,
+        tier2SizePad,
+        tier3SizePad,
+        tier1MaxInitLtvBps,
+        tier2MaxInitLtvBps,
+        tier3MaxInitLtvBps,
+      ] = depthBundle;
 
       const next: ProtocolConfig = {
         treasuryFeeBps: Number(treasuryFeeBps),
@@ -367,6 +445,23 @@ export function useProtocolConfig() {
         lifMatcherFeeBps: Number(lifMatcherFeeBps),
         lifMatcherFeePct: bpsToPct(lifMatcherFeeBps),
         autoPauseDurationSeconds: Number(autoPauseDurationSeconds),
+        depthTieredLtvEnabled,
+        liquiditySlippageBps: Number(liquiditySlippageBps),
+        liquiditySlippagePct: bpsToPct(liquiditySlippageBps),
+        twapWindowSec: Number(twapWindowSec),
+        twapConsistencyBps: Number(twapConsistencyBps),
+        twapConsistencyPct: bpsToPct(twapConsistencyBps),
+        floorSizePad,
+        tier1SizePad,
+        tier2SizePad,
+        tier3SizePad,
+        tier1MaxInitLtvBps: Number(tier1MaxInitLtvBps),
+        tier2MaxInitLtvBps: Number(tier2MaxInitLtvBps),
+        tier3MaxInitLtvBps: Number(tier3MaxInitLtvBps),
+        tier1MaxInitLtvPct: bpsToPct(tier1MaxInitLtvBps),
+        tier2MaxInitLtvPct: bpsToPct(tier2MaxInitLtvBps),
+        tier3MaxInitLtvPct: bpsToPct(tier3MaxInitLtvBps),
+        paaAssets,
         fetchedAt: Date.now(),
       };
       cached = { data: next, at: Date.now(), key: cacheKey };
