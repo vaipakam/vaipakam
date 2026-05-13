@@ -3,6 +3,7 @@
 pragma solidity ^0.8.29;
 
 import {Test} from "forge-std/Test.sol";
+import {Vm} from "forge-std/Vm.sol";
 import {console} from "forge-std/console.sol";
 import {VaipakamDiamond} from "../src/VaipakamDiamond.sol";
 import {IDiamondCut} from "@diamond-3/interfaces/IDiamondCut.sol";
@@ -2096,6 +2097,130 @@ contract RiskFacetTest is Test {
             lenderAmt + borrowerAmt,
             1800 ether,
             "split must not exceed available collateral"
+        );
+
+        vm.clearMockedCalls();
+    }
+
+    /// @dev Phase 2 of AutonomousLtvAndOracleFallback.md — swap failed
+    ///      AND oracle quorum unavailable for the collateral leg. The
+    ///      pre-Phase-2 behaviour would have reverted the whole
+    ///      liquidation (`getAssetPrice` revert propagating through
+    ///      `LibFallback.collateralEquivalent`), pinning the loan in
+    ///      Active state. The Phase-2 path degenerates to "full
+    ///      collateral to lender, treasury + borrower zero" and emits
+    ///      {LiquidationFallbackOracleUnavailable} alongside the normal
+    ///      fallback events.
+    function testTriggerLiquidationSwapFails_OracleUnavailableFallback() public {
+        uint256 loanId = createAndAcceptOffer();
+
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(
+                RiskFacet.calculateHealthFactor.selector,
+                loanId
+            ),
+            abi.encode(HF_SCALE - 1)
+        );
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(
+                EscrowFactoryFacet.escrowWithdrawERC20.selector
+            ),
+            abi.encode(true)
+        );
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector),
+            abi.encode(true)
+        );
+        deal(mockERC20, address(diamond), 1800 ether);
+        deal(mockCollateralERC20, address(diamond), 1800 ether);
+
+        // Mock the swap to revert — drives the soft-fail into
+        // `_fullCollateralTransferFallback`.
+        vm.mockCallRevert(
+            address(mockZeroExProxy),
+            abi.encodeWithSelector(IZeroExProxy.swap.selector),
+            "swap reverted"
+        );
+        // Mock `getAssetPrice(collateralAsset)` to return zero price.
+        // `LibFallback.collateralEquivalent` short-circuits on
+        // `colPrice == 0` → returns 0 → `oracleAvailable = false`
+        // bubbles up. Equivalent semantics to "oracle quorum stale"
+        // but Forge's `vm.mockCallRevert` doesn't propagate cleanly
+        // through the `try this.getAssetPrice()` wrapper in
+        // `tryGetAssetPrice` on this toolchain version, while
+        // returning zero hits the same code path one layer in.
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(
+                OracleFacet.getAssetPrice.selector,
+                mockCollateralERC20
+            ),
+            abi.encode(uint256(0), uint8(8))
+        );
+
+        // Record the emitted logs and verify the new
+        // {LiquidationFallbackOracleUnavailable} signature appears.
+        // `vm.expectEmit` is strict-ordered (asserts the NEXT
+        // emission), which would catch the interleaved
+        // `LoanStatusUpdated` from the lifecycle transition before
+        // ever reaching our event. recordLogs + topic-0 search is
+        // robust to the intervening events.
+        vm.recordLogs();
+        RiskFacet(address(diamond)).triggerLiquidation(
+            loanId,
+            defaultAdapterCalls()
+        );
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        bytes32 expectedTopic = keccak256(
+            "LiquidationFallbackOracleUnavailable(uint256)"
+        );
+        bool oracleEventSeen;
+        for (uint256 i = 0; i < logs.length; ++i) {
+            if (logs[i].topics.length > 0 && logs[i].topics[0] == expectedTopic) {
+                assertEq(
+                    uint256(logs[i].topics[1]),
+                    loanId,
+                    "LiquidationFallbackOracleUnavailable.loanId mismatch"
+                );
+                oracleEventSeen = true;
+                break;
+            }
+        }
+        assertTrue(
+            oracleEventSeen,
+            "LiquidationFallbackOracleUnavailable must fire on stale-oracle fallback"
+        );
+
+        // Loan transitions to FallbackPending despite the stale oracle —
+        // the new path lets the protocol settle instead of pinning the
+        // loan in Active.
+        LibVaipakam.Loan memory loan = LoanFacet(address(diamond))
+            .getLoanDetails(loanId);
+        assertEq(
+            uint8(loan.status),
+            uint8(LibVaipakam.LoanStatus.FallbackPending),
+            "loan must transition to FallbackPending even with stale oracle"
+        );
+
+        // Lender absorbs the full 1800-ether collateral; borrower's
+        // share is zero (the fair-value split was impossible).
+        (address claimAsset, uint256 lenderAmt, ) = ClaimFacet(address(diamond))
+            .getClaimableAmount(loanId, true);
+        assertEq(claimAsset, mockCollateralERC20);
+        assertEq(
+            lenderAmt,
+            1800 ether,
+            "stale oracle => lender absorbs full collateral"
+        );
+        (, uint256 borrowerAmt, ) = ClaimFacet(address(diamond))
+            .getClaimableAmount(loanId, false);
+        assertEq(
+            borrowerAmt,
+            0,
+            "stale oracle => no fair-value surplus for borrower"
         );
 
         vm.clearMockedCalls();

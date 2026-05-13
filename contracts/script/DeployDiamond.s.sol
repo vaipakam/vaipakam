@@ -571,7 +571,7 @@ contract DeployDiamond is Script {
     }
 
     function _getOracleSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](13);
+        s = new bytes4[](14);
         s[0] = OracleFacet.checkLiquidity.selector;
         s[1] = OracleFacet.getAssetPrice.selector;
         s[2] = OracleFacet.calculateLTV.selector;
@@ -591,6 +591,10 @@ contract DeployDiamond is Script {
         // docs/DesignsAndPlans/MarketRateWidgetAndDepthTieredLTV.md §4.2.
         s[11] = OracleFacet.getLiquidityTier.selector;
         s[12] = OracleFacet.getEffectiveLiquidityTier.selector;
+        // Phase 2 of AutonomousLtvAndOracleFallback.md — try-wrapped
+        // `getAssetPrice` for callers (LibFallback) that need to detect
+        // oracle-quorum unavailability without reverting.
+        s[13] = OracleFacet.tryGetAssetPrice.selector;
     }
 
     function _getOracleAdminSelectors() internal pure returns (bytes4[] memory s) {

@@ -136,6 +136,22 @@ contract DefaultedFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
     /// @custom:event-category informational/liquidation
     event LiquidationFallback(uint256 indexed loanId);
 
+    /// @notice Emitted when the time-based default fallback ran without
+    ///         an oracle-quorum price — neither leg of the collateral /
+    ///         principal pair had a fresh Phase-7b 2-of-N reading
+    ///         available. The fallback degenerates to "full collateral
+    ///         to lender claim, treasury + borrower zero". Mirrors the
+    ///         same-named event on {RiskFacet}; downstream indexers can
+    ///         distinguish "oracle worked, lender claim exceeded
+    ///         collateral" from "oracle quorum stale" via this signal.
+    /// @dev    Phase 2 of AutonomousLtvAndOracleFallback.md design — the
+    ///         pre-Phase-2 behaviour reverted the whole default action
+    ///         when oracle was stale; the new path lets a stale oracle
+    ///         pair settle the loan (lender absorbs) rather than pinning
+    ///         it in Active state.
+    /// @custom:event-category informational/liquidation
+    event LiquidationFallbackOracleUnavailable(uint256 indexed loanId);
+
     /// @notice Emitted alongside {LiquidationFallback} with the README §7
     ///         three-way split.
     /// @dev    Informational — the lender / treasury / borrower allocation
@@ -591,7 +607,8 @@ contract DefaultedFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
             uint256 treasuryCol,
             uint256 borrowerCol,
             uint256 lenderPrincDue,
-            uint256 treasuryPrincDue
+            uint256 treasuryPrincDue,
+            bool oracleAvailable
         ) = LibFallback.computeFallbackEntitlements(address(this), loan, loanId);
 
         s.fallbackSnapshot[loanId] = LibVaipakam.FallbackSnapshot({
@@ -653,9 +670,14 @@ contract DefaultedFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
 
         // §1.4 + §1.5 — informational events carry only the loanId primary
         // key. lender + split are recoverable from s.loans[loanId] and
-        // s.fallbackSnapshot[loanId] respectively.
+        // s.fallbackSnapshot[loanId] respectively. The
+        // {LiquidationFallbackOracleUnavailable} extra event (Phase 2
+        // of AutonomousLtvAndOracleFallback.md) fires when the
+        // fair-value split was impossible due to stale oracle quorum —
+        // the lender absorbed everything in that case.
         emit LiquidationFallback(loanId);
         emit LiquidationFallbackSplit(loanId);
+        if (!oracleAvailable) emit LiquidationFallbackOracleUnavailable(loanId);
     }
 
 }

@@ -46,17 +46,29 @@ library LibFallback {
 
     /// @dev Inverse of `expectedSwapOutput` — converts a principal-asset
     ///      amount into collateral-asset units. Both sides must be liquid.
+    ///
+    ///      Phase 2 of AutonomousLtvAndOracleFallback.md design — switched
+    ///      from `getAssetPrice` (which reverts on stale / missing feeds)
+    ///      to `tryGetAssetPrice` (returns `ok=false` on failure) so the
+    ///      caller can detect oracle-quorum unavailability and route to
+    ///      the full-collateral fallback instead of having the whole
+    ///      liquidation revert. Sentinel return when oracle fails is `0`
+    ///      — the surrounding {computeFallbackEntitlements} surfaces
+    ///      this via its `oracleAvailable` flag, and {RiskFacet}'s
+    ///      `_fullCollateralTransferFallback` switches branches
+    ///      accordingly.
     function collateralEquivalent(
         address diamond,
         uint256 principalAmount,
         address collateralAsset,
         address principalAsset
     ) internal view returns (uint256) {
-        (uint256 colPrice, uint8 colFeedDec) = OracleFacet(diamond)
-            .getAssetPrice(collateralAsset);
-        (uint256 prinPrice, uint8 prinFeedDec) = OracleFacet(diamond)
-            .getAssetPrice(principalAsset);
-        if (colPrice == 0) return 0;
+        (bool colOk, uint256 colPrice, uint8 colFeedDec) = OracleFacet(diamond)
+            .tryGetAssetPrice(collateralAsset);
+        (bool prinOk, uint256 prinPrice, uint8 prinFeedDec) = OracleFacet(diamond)
+            .tryGetAssetPrice(principalAsset);
+        if (!colOk || !prinOk) return 0;
+        if (colPrice == 0 || prinPrice == 0) return 0;
         uint8 colTokenDec = IERC20Metadata(collateralAsset).decimals();
         uint8 prinTokenDec = IERC20Metadata(principalAsset).decimals();
         return
@@ -73,6 +85,22 @@ library LibFallback {
     ///      codified compensation for the fallback path. When collateral is
     ///      insufficient to cover the lender entitlement, the lender receives
     ///      the full remaining collateral and the other two are zeroed out.
+    ///
+    ///      Phase 2 of AutonomousLtvAndOracleFallback.md — added the
+    ///      `oracleAvailable` return so callers can distinguish the
+    ///      oracle-priced fair-value-equivalent split (this function's
+    ///      classic behaviour, now reachable only when both legs have a
+    ///      fresh oracle-quorum reading via `tryGetAssetPrice`) from the
+    ///      full-collateral-to-lender fallback (when oracle quorum is
+    ///      stale or missing). On oracle failure, `collateralEquivalent`
+    ///      returns 0 → `lenderCol` is 0 → the existing
+    ///      `collateralAmount <= lenderCol` branch lands lender = full
+    ///      collateral, others = 0, *but* the caller no longer has a way
+    ///      to distinguish "oracle worked and lender's entitlement
+    ///      exceeded collateral" from "oracle failed". The
+    ///      `oracleAvailable` flag disambiguates: callers emit a
+    ///      different event and the audit-package can trace which path
+    ///      ran on each fallback.
     function computeFallbackEntitlements(
         address diamond,
         LibVaipakam.Loan storage loan,
@@ -85,7 +113,8 @@ library LibFallback {
             uint256 treasuryCollateral,
             uint256 borrowerCollateral,
             uint256 lenderPrincipalDue,
-            uint256 treasuryPrincipalDue
+            uint256 treasuryPrincipalDue,
+            bool oracleAvailable
         )
     {
         uint256 elapsed = block.timestamp - loan.startTime;
@@ -120,6 +149,32 @@ library LibFallback {
             loan.collateralAsset,
             loan.principalAsset
         );
+
+        // Oracle-availability gate: `collateralEquivalent` returns 0 ONLY
+        // when at least one leg's oracle is unavailable (verified via
+        // `tryGetAssetPrice`). A zero lenderPrincipalDue should never
+        // happen (principal > 0 always for a fallback-eligible loan),
+        // so a zero `lenderCol` is a reliable oracle-failure signal.
+        // When oracle fails, drive the full-collateral-to-lender branch
+        // and signal it via the `oracleAvailable` flag.
+        oracleAvailable = lenderCol > 0;
+        if (!oracleAvailable) {
+            // Full collateral to lender; treasury + borrower zeroed.
+            // Same numbers as the existing "collateral insufficient"
+            // branch below, but reached because we can't price anything,
+            // not because the lender's claim is large.
+            lenderCollateral = loan.collateralAmount;
+            treasuryCollateral = 0;
+            borrowerCollateral = 0;
+            return (
+                lenderCollateral,
+                treasuryCollateral,
+                borrowerCollateral,
+                lenderPrincipalDue,
+                treasuryPrincipalDue,
+                false
+            );
+        }
 
         if (loan.collateralAmount <= lenderCol) {
             lenderCollateral = loan.collateralAmount;

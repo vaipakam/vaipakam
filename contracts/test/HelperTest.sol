@@ -277,7 +277,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](13);
+        selectors = new bytes4[](14);
         selectors[0] = OracleFacet.checkLiquidity.selector;
         selectors[1] = OracleFacet.getAssetPrice.selector;
         selectors[2] = OracleFacet.calculateLTV.selector;
@@ -294,6 +294,10 @@ contract HelperTest {
         // Depth-tiered LTV (Piece B) — liquidity-tier classification views.
         selectors[11] = OracleFacet.getLiquidityTier.selector;
         selectors[12] = OracleFacet.getEffectiveLiquidityTier.selector;
+        // Phase 2 of AutonomousLtvAndOracleFallback.md — try-wrapped
+        // `getAssetPrice` for callers (LibFallback) that need to detect
+        // oracle-quorum unavailability without reverting.
+        selectors[13] = OracleFacet.tryGetAssetPrice.selector;
         return selectors;
     }
 

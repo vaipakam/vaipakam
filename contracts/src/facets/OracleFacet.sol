@@ -195,12 +195,12 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
         // ≤ 0.3%) still clears the floor at the configured slippage.
         // Zero per-asset governance config — pool discovery is
         // on-chain via `factory.getPool` / `factory.getPair`.
-        (bool priceOk, , ) = _tryGetAssetPriceView(asset);
+        (bool priceOk, , ) = tryGetAssetPrice(asset);
         if (!priceOk) return LibVaipakam.LiquidityStatus.Illiquid;
 
         // ETH/USD freshness — kept as a soft pre-flight: the
         // route-search itself rechecks each quote-asset's oracle via
-        // `_tryGetAssetPriceView(q)`, but bailing out early here when
+        // `tryGetAssetPrice(q)`, but bailing out early here when
         // the ETH numeraire feed is stale matches the previous
         // behaviour and short-circuits the ~3 V3 staticcalls per PAA
         // quote that would otherwise run.
@@ -228,7 +228,7 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
         view
         returns (bool)
     {
-        (bool okA, uint256 pA, uint8 dA) = _tryGetAssetPriceView(asset);
+        (bool okA, uint256 pA, uint8 dA) = tryGetAssetPrice(asset);
         if (!okA || pA == 0) return false;
         _TierCtx memory ctx = _TierCtx({
             pA: pA,
@@ -1413,7 +1413,7 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
         uint256[4] memory sizes,
         uint256[4] memory best
     ) private view {
-        (bool okQ, uint256 pQ, uint8 dQ) = _tryGetAssetPriceView(q);
+        (bool okQ, uint256 pQ, uint8 dQ) = tryGetAssetPrice(q);
         if (!okQ || pQ == 0) return;
         uint256 scaleQ = 10 ** (uint256(dQ) + uint256(_tryTokenDecimals(q)));
         bool assetIsToken0 = asset < q;
@@ -1522,7 +1522,7 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
         returns (uint8)
     {
         if (_checkLiquidity(asset) != LibVaipakam.LiquidityStatus.Liquid) return 0;
-        (bool okA, uint256 pA, uint8 dA) = _tryGetAssetPriceView(asset);
+        (bool okA, uint256 pA, uint8 dA) = tryGetAssetPrice(asset);
         if (!okA || pA == 0) return 0;
         _TierCtx memory ctx = _TierCtx({
             pA: pA,
@@ -1556,11 +1556,21 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
         return 1; // cleared the floor ⇒ at least Tier 1
     }
 
-    /// @dev `getAssetPrice` look-alike but try/catch wrapped so callers
-    ///      that want to fail-closed (checkLiquidity, getIlliquidAssets)
-    ///      can detect pricing failure without bubbling a revert.
-    function _tryGetAssetPriceView(address asset)
-        private
+    /// @notice `getAssetPrice` look-alike but try/catch wrapped — callers
+    ///         that want to fail-closed instead of fail-open (the
+    ///         {checkLiquidity}, {getIlliquidAssets}, and the
+    ///         oracle-quorum failed-swap fallback in `LibFallback`) can
+    ///         detect pricing failure without bubbling a revert.
+    /// @dev    Promoted from `private _tryGetAssetPriceView` to `public
+    ///         tryGetAssetPrice` (Phase 2 of the
+    ///         AutonomousLtvAndOracleFallback.md design) so `LibFallback`
+    ///         can route through the diamond proxy to detect the
+    ///         oracle-quorum-stale case and switch from the
+    ///         oracle-priced settlement to the full-collateral fallback.
+    ///         Same behaviour as before for in-facet callers — internal
+    ///         calls bypass the proxy + try/catch overhead naturally.
+    function tryGetAssetPrice(address asset)
+        public
         view
         returns (bool ok, uint256 price, uint8 decimals)
     {

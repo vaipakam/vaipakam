@@ -273,6 +273,14 @@ contract DeployerZeroRolesTest is Test {
         vm.assume(rando != pauserMultisig);
         vm.assume(rando != watcherBot);
         vm.assume(rando != notifBillerBot);
+        // KEEPER_ROLE holder added by the Piece B / depth-tiered-LTV
+        // work — the off-chain liquidity-confidence relay calls
+        // `setKeeperTier` to lower an asset's effective tier on
+        // observed slippage degradation. Excluding the keeper bot
+        // here keeps the fuzz test focused on the "no STRAY grants"
+        // invariant rather than the rotation runbook's intended
+        // grant set.
+        vm.assume(rando != keeperBot);
 
         _rotateRolesToProduction();
 
