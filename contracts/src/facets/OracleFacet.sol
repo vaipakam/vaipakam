@@ -6,7 +6,6 @@ import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibSlippage} from "../libraries/LibSlippage.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
-import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 import {FeedRegistryInterface} from "@chainlink/contracts/src/v0.8/interfaces/FeedRegistryInterface.sol";
 import {AggregatorV3Interface} from "@chainlink/contracts/src/v0.8/shared/interfaces/AggregatorV3Interface.sol";
 import {AggregatorV2V3Interface} from "@chainlink/contracts/src/v0.8/shared/interfaces/AggregatorV2V3Interface.sol";
@@ -1239,17 +1238,24 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
         return [V3_TIER_LOW, V3_TIER_LOW_MID, V3_TIER_PANCAKE, V3_TIER_STANDARD];
     }
 
-    /// @dev Best-effort `IERC20Metadata.decimals()` — falls back to 18 on
-    ///      a non-conforming token. A wrong fallback is self-correcting:
-    ///      the value-balance guard in {_accumulatePoolImpacts} skips a
-    ///      pool whose legs don't balance, which is exactly what a
-    ///      decimals mismatch produces.
+    /// @dev Best-effort `decimals()` — low-level `staticcall` so a
+    ///      non-contract / non-conforming address (e.g. a fat-fingered
+    ///      PAA entry) can't revert the never-reverting classification
+    ///      view; falls back to `18` on call failure / short return /
+    ///      an implausible (> 36) value. A wrong fallback is
+    ///      self-correcting: the value-balance guard in
+    ///      {_accumulatePoolImpacts} skips a pool whose legs don't
+    ///      balance, which is exactly what a decimals mismatch produces.
+    ///      (`try/catch IERC20Metadata(addr).decimals()` is *not* enough:
+    ///      a call to a code-less address succeeds with empty returndata
+    ///      and the compiler's "call to non-contract" guard then reverts
+    ///      *outside* the catch.)
     function _tryTokenDecimals(address token) private view returns (uint8) {
-        try IERC20Metadata(token).decimals() returns (uint8 d) {
-            return d;
-        } catch {
-            return 18;
-        }
+        if (token.code.length == 0) return 18;
+        (bool ok, bytes memory data) = token.staticcall(abi.encodeWithSignature("decimals()"));
+        if (!ok || data.length < 32) return 18;
+        uint256 d = abi.decode(data, (uint256));
+        return d > 36 ? 18 : uint8(d);
     }
 
     /// @dev Read a Uni-V3-clone pool's state for the depth-tier route

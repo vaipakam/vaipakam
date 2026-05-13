@@ -268,7 +268,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](11);
+        selectors = new bytes4[](13);
         selectors[0] = OracleFacet.checkLiquidity.selector;
         selectors[1] = OracleFacet.getAssetPrice.selector;
         selectors[2] = OracleFacet.calculateLTV.selector;
@@ -282,6 +282,9 @@ contract HelperTest {
         // buffer for historical TVL reconstruction.
         selectors[9] = OracleFacet.captureDailyPriceSnapshot.selector;
         selectors[10] = OracleFacet.getHistoricalAssetPrice.selector;
+        // Depth-tiered LTV (Piece B) — liquidity-tier classification views.
+        selectors[11] = OracleFacet.getLiquidityTier.selector;
+        selectors[12] = OracleFacet.getEffectiveLiquidityTier.selector;
         return selectors;
     }
 
@@ -692,7 +695,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](55);
+        selectors = new bytes4[](66);
         selectors[0] = ConfigFacet.setFeesConfig.selector;
         selectors[1] = ConfigFacet.setLiquidationConfig.selector;
         selectors[2] = ConfigFacet.setRiskConfig.selector;
@@ -773,6 +776,19 @@ contract HelperTest {
         selectors[52] = ConfigFacet.getRangeAmountEnabled.selector;
         selectors[53] = ConfigFacet.getRangeRateEnabled.selector;
         selectors[54] = ConfigFacet.getPartialFillEnabled.selector;
+        // Depth-tiered LTV (Piece B) — governance setters + the
+        // liquidity-confidence relay write + getters / bundle.
+        selectors[55] = ConfigFacet.setDepthTieredLtvEnabled.selector;
+        selectors[56] = ConfigFacet.setLiquiditySlippageBps.selector;
+        selectors[57] = ConfigFacet.setTwapGuard.selector;
+        selectors[58] = ConfigFacet.setLiquidityTierSizes.selector;
+        selectors[59] = ConfigFacet.setTierMaxInitLtvBps.selector;
+        selectors[60] = ConfigFacet.setPaaAssets.selector;
+        selectors[61] = ConfigFacet.setKeeperTier.selector;
+        selectors[62] = ConfigFacet.getDepthTieredLtvEnabled.selector;
+        selectors[63] = ConfigFacet.getPaaAssets.selector;
+        selectors[64] = ConfigFacet.getKeeperTier.selector;
+        selectors[65] = ConfigFacet.getDepthTierConfigBundle.selector;
         return selectors;
     }
 

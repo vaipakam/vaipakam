@@ -562,7 +562,7 @@ contract DeployDiamond is Script {
     }
 
     function _getOracleSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](11);
+        s = new bytes4[](13);
         s[0] = OracleFacet.checkLiquidity.selector;
         s[1] = OracleFacet.getAssetPrice.selector;
         s[2] = OracleFacet.calculateLTV.selector;
@@ -576,6 +576,12 @@ contract DeployDiamond is Script {
         // buffer for historical TVL reconstruction.
         s[9] = OracleFacet.captureDailyPriceSnapshot.selector;
         s[10] = OracleFacet.getHistoricalAssetPrice.selector;
+        // Depth-tiered LTV (Piece B) — the on-chain liquidity-tier
+        // authority + the keeper-min effective tier the loan-init LTV
+        // cap consults. See
+        // docs/DesignsAndPlans/MarketRateWidgetAndDepthTieredLTV.md §4.2.
+        s[11] = OracleFacet.getLiquidityTier.selector;
+        s[12] = OracleFacet.getEffectiveLiquidityTier.selector;
     }
 
     function _getOracleAdminSelectors() internal pure returns (bytes4[] memory s) {
@@ -950,7 +956,7 @@ contract DeployDiamond is Script {
     }
 
     function _getConfigSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](55);
+        s = new bytes4[](66);
         // Setters
         s[0] = ConfigFacet.setFeesConfig.selector;
         s[1] = ConfigFacet.setLiquidationConfig.selector;
@@ -1037,6 +1043,23 @@ contract DeployDiamond is Script {
         s[52] = ConfigFacet.getEthPadFeed.selector;
         s[53] = ConfigFacet.getPadNumeraireRateFeed.selector;
         s[54] = ConfigFacet.getAssetNumeraireDirectFeedOverride.selector;
+        // Depth-tiered LTV (Piece B) — governance globals (all default
+        // to library constants until set; the master kill-switch
+        // `depthTieredLtvEnabled` defaults false) + the off-chain
+        // liquidity-confidence relay write (`setKeeperTier`, KEEPER_ROLE)
+        // + the frontend bundle / single-field getters. See
+        // docs/DesignsAndPlans/MarketRateWidgetAndDepthTieredLTV.md §4.2.
+        s[55] = ConfigFacet.setDepthTieredLtvEnabled.selector;
+        s[56] = ConfigFacet.setLiquiditySlippageBps.selector;
+        s[57] = ConfigFacet.setTwapGuard.selector;
+        s[58] = ConfigFacet.setLiquidityTierSizes.selector;
+        s[59] = ConfigFacet.setTierMaxInitLtvBps.selector;
+        s[60] = ConfigFacet.setPaaAssets.selector;
+        s[61] = ConfigFacet.setKeeperTier.selector;
+        s[62] = ConfigFacet.getDepthTieredLtvEnabled.selector;
+        s[63] = ConfigFacet.getPaaAssets.selector;
+        s[64] = ConfigFacet.getKeeperTier.selector;
+        s[65] = ConfigFacet.getDepthTierConfigBundle.selector;
     }
 
     function _getRewardAggregatorSelectors() internal pure returns (bytes4[] memory s) {
