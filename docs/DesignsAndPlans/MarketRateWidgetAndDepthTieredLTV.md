@@ -710,6 +710,28 @@ liquidation behaviour is observed.
 
 ### 4.4 Sequencing & gates
 
+**Status as of 2026-05-13 (branch `feat/market-rate-widget-and-tiered-ltv`):**
+
+- Step 1 — Piece A: **DONE & deployed** base-sepolia (`a1eb9fcb`). Widget + cross-chain "thin here" warning + 0x/1inch slippage preflight + i18n for all 10 locales all shipped.
+- Step 2 — matcher port: **DONE.** `apps/keeper/src/matcher.ts` + `runMatcher` wired into the cron. Not deployed yet — that's the deliberate ~2-week testnet-bake gate.
+- Step 3 — base `checkLiquidity` floor: **PARTIAL.** `OracleFacet._v3DepthLiquid` now reads `2 × WETH-leg-virtual-reserve × ethPrice` (a real PAD figure, was just `pool.liquidity()`). The FULL upgrade (replace the depth-at-tick gate with a slippage-at-`floorSizePad` simulation) is still queued.
+- Step 4 — rest of Piece B behind `depthTieredLtvEnabled`: **DONE.** 7 contract commits, `getLiquidityTier` view + `effectiveTier` + tier-size/tier-LTV/TWAP-guard/confidence-window globals + `LoanFacet._checkInitialLtvAndHf` cap + `keeperTier` mapping + `KEEPER_ROLE` + the Uni-V2-fork-family route search (`055af76`), the `LibOfferMatch.previewMatch` tier-cap alignment (`96d6697`), the init-gate integration tests (`cc6419a`), the frontend `useProtocolConfig` + `useAssetTier` wiring (`7118200`). Kill-switch default `false` ⇒ today's HF≥1.5 still binding.
+- Step 5 — liquidity-confidence relay: **DONE.** `apps/keeper/src/liquidityConfidence.ts` (`89920f4`) + the Tier-3 2-of-3 ensemble advisory (DeFiLlama listing + CoinGecko market cap + CoinGecko 24h volume — `2af421e`).
+- Step 6 — per-chain slippage census + audit + risk sign-off: **OPEN.** Required before `depthTieredLtvEnabled` flips on any chain.
+
+**Deferred / parallel — liquidator keeper bot hardening: SUBSTANTIALLY DONE.**
+
+- Multicall HF + priority sort (faster monitoring): `43f7b6c`.
+- Best/split-route swaps (`LibSwap.swapWithSplit` + `RiskFacet.triggerLiquidationSplit` + keeper decision logic): `4246a46` + `7d43034`.
+- Partial liquidations (`RiskFacet.triggerPartialLiquidation` + governance close-factor cap + full test sweep + keeper optimal-fraction math): `1ca7cba` + `8da2c8d` + `a3c53dd` + `c487239` + `3a0f81a` + `738c7c7` + `5bc4cd6`.
+- Flash-loan-funded execution: **BLOCKED** on a risk-committee decision about the keeper-incentive model. Under the current model the keeper EOA needs zero working capital (the diamond does the atomic swap from collateral custody) so flash-loans have no clear motivating use case; would need a switch to Aave-style "liquidator buys collateral at a discount" first. No code; surface to risk committee.
+
+The Tier-3 LTV ramp past its conservative opening (currently 65%) is gated on the above plus the Step-6 audit. Tiers 1 and 2 don't depend on flash-loan execution.
+
+---
+
+**Original plan (preserved for reference):**
+
 1. **Ship Piece A** — the widget + the §2.b cross-chain "thin here"
    warning + the §4.1.b 0x/1inch widget pre-check. Frontend-only, no
    contract dependency; can land with / just after the matcher-bot work.
