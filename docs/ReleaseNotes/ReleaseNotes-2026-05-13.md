@@ -247,26 +247,46 @@ a smaller fraction, a different route mix, or full liquidation
 The keeper's autonomous-liquidation pass now picks between three
 paths per distressed loan in this order: if the loan is in-term AND
 its health factor is in a configurable mildly-distressed band (default
-the [0.95, 1.0) range) AND a half-size quote is available, submit a
-50% partial liquidation; otherwise, if a half-size pair on two
-different aggregators beats the full-size single best by at least the
-configured improvement threshold, submit a split-route swap;
-otherwise, submit the existing single-route failover liquidation.
-The half-size quote is fetched only once and reused for both the
-partial and the split decision, so there is no extra remote-procedure
-call cost from adding the partial branch.
+the [0.95, 1.0) range) AND the optimal-fraction math returns a
+feasible partial size (between 2% and 75%), submit a partial
+liquidation at exactly that fraction; otherwise, if a half-size pair
+on two different aggregators beats the full-size single best by at
+least the configured improvement threshold, submit a split-route
+swap; otherwise, submit the existing single-route failover
+liquidation.
 
-Why the [0.95, 1.0) heuristic: the math says a 50% partial restores
-the health factor back over 1.0 with a small buffer in that band,
-given typical asset risk parameters and an effective swap-fee
-overhead of around 5%. Below 0.95 a 50% partial isn't enough — the
-on-chain "must restore" gate would revert the transaction — so the
-keeper falls back to full liquidation in that regime, no wasted gas.
-A finer model (compute the smallest fraction per-loan that restores
-the health factor by buffer) is the natural next step but isn't
-needed for the current launch envelope; that lands when liquidator
-competition or observed reverts under live operation justify the
-tighter math.
+The partial fraction is no longer a fixed 50% (Aave-style close
+factor) — the keeper now reads the collateral asset's liquidation
+threshold via `OracleFacet.getAssetRiskProfile` and computes the
+smallest swap fraction that restores the health factor back over 1.0
+with a small buffer. Concretely: at a health factor of 0.99 with a
+typical 85% liquidation threshold, the optimal fraction is about 35%
+(vs the previous fixed 50% — keeps more of the borrower's collateral
+in place); at 0.95 it's about 61% (the fixed 50% would have reverted
+the on-chain "must restore" gate and the keeper would have fallen
+through to full liquidation, closing the position unnecessarily).
+Above a 75% computed fraction the keeper falls back to full
+liquidation anyway — at that point the partial is mostly closing the
+loan and full liquidation refunds the borrower's surplus collateral
+and emits the terminal event cleanly.
+
+The formula derives directly from the on-chain health-factor
+formula (`HF = collateralValue × threshold / debt`) solved for the
+smallest fraction that lands HF ≥ 1.05 after the swap, accounting
+for the contract's ~5% effective fee deduction (3% liquidator bonus
++ 2% handling fee) and a further 5% safety margin on top to cover
+real-world swap slippage beyond the deterministic on-chain
+deductions.
+
+Cost: the keeper now fetches a third aggregator quote — at the exact
+optimal partial size, since the `AdapterCall[]` calldata must encode
+the precise sell-amount — in parallel with the existing full + half
+quotes. The third quote only fires when partial is eligible (HF in
+[0.95, 1.0), in-term, optimal fraction in [2%, 75%]), so hot-path
+RPC volume on the common "full liquidation" case is unchanged. If the
+risk-profile read fails (RPC blip, asset not yet onboarded), the
+keeper falls through to the legacy 50% fixed-fraction path so it
+stays operational on the previous behaviour.
 
 ### Test coverage
 
