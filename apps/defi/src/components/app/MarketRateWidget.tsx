@@ -2,9 +2,21 @@ import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { ArrowUpRight, HandCoins, Coins } from 'lucide-react';
+import { parseUnits, type Address } from 'viem';
 import { useMarketRateMinCollateral } from '../../hooks/useMarketRateMinCollateral';
 import { useAssetLiquidity } from '../../hooks/useAssetLiquidity';
+import { useLiquidityPreflight } from '../../hooks/useLiquidityPreflight';
+import { useReadChain } from '../../contracts/useDiamond';
 import { AssetSymbol } from './AssetSymbol';
+import { LiquidityPreflightBanner } from './LiquidityPreflightBanner';
+
+/** Worker origin for the 0x/1inch quote proxies — same env var
+ *  CreateOffer reads. Null disables the preflight banner (the widget
+ *  still works, you just don't get the aggregator-confirmed slippage
+ *  hint before you deep-link). */
+const PREFLIGHT_WORKER_ORIGIN =
+  (import.meta as unknown as { env: Record<string, string | undefined> }).env
+    .VITE_AGENT_ORIGIN ?? null;
 
 /**
  * "Lend / Borrow at market rate" widget — a shortcut on the OfferBook,
@@ -73,13 +85,43 @@ export function MarketRateWidget({
   // (`OracleFacet.checkLiquidity`). `collateralUnsupported` (no oracle /
   // risk-profile) is the stronger "can't compute a min" case; this
   // catches the "has a profile but the pool depth is below the floor"
-  // case too. Either ⇒ the "thin here" hint. The *precise* 0x/1inch
-  // slippage-at-your-size preflight runs on the Create Offer page the
-  // buttons land on (`<LiquidityPreflightBanner>`), so we keep the
-  // widget's check cheap and on-chain.
+  // case too. Either ⇒ the "thin here" hint. The aggregator-confirmed
+  // preflight below covers the third case (chain says Liquid but
+  // 0x/1inch can't route the user's specific size at ≤6%).
   const collateralChainLiquidity = useAssetLiquidity(collateralAsset);
   const thinOnThisChain =
     collateralUnsupported || collateralChainLiquidity === 'illiquid';
+
+  // Aggregator-confirmed slippage preflight — same hook CreateOffer
+  // uses. Mirrors the liquidator's path (sell collateral for principal
+  // through the worker's /quote/0x + /quote/1inch proxy) at the
+  // auto-computed min collateral, so the user sees the *realized*
+  // slippage at their size before they leave the page. The hook fails
+  // gracefully (`'unavailable'` when no diamond, no workerOrigin, or
+  // `collateralAmount == 0`); the banner suppresses idle/loading in
+  // compact mode and only surfaces a `thin` or `no-route` outcome.
+  // Decimals default to 18 (matches CreateOffer's wiring) — a 6-dec
+  // collateral (USDC/USDT) gets queried at 1e12× the intended size
+  // and usually classifies as `no-route` — a documented false-negative
+  // the downstream CreateOffer + real on-chain flow correct for.
+  const chain = useReadChain();
+  let preflightAmount: bigint = 0n;
+  try {
+    if (minCollateral && !collateralUnsupported) {
+      preflightAmount = parseUnits(minCollateral, 18);
+    }
+  } catch {
+    preflightAmount = 0n;
+  }
+  const preflight = useLiquidityPreflight({
+    collateralAsset: (collateralAsset || null) as Address | null,
+    principalAsset: (lendingAsset || null) as Address | null,
+    collateralAmount: preflightAmount,
+    collateralAssetType: 'erc20',
+    chainId: chain.chainId,
+    diamond: (chain.diamondAddress ?? null) as Address | null,
+    workerOrigin: PREFLIGHT_WORKER_ORIGIN,
+  });
 
   const anchorPct = useMemo(
     () => (anchorRateBps !== null ? Number(anchorRateBps) / 100 : null),
@@ -171,6 +213,11 @@ export function MarketRateWidget({
           </button>
         </div>
       </div>
+
+      {/* Aggregator-confirmed slippage preflight — only surfaces when
+          0x/1inch say the user's size routes thin or has no route at
+          all. Idle/loading/liquid render nothing (compact mode). */}
+      <LiquidityPreflightBanner result={preflight} compact />
 
       <p className="market-rate-widget-footnote">
         {t('marketRateWidget.footnote')}
