@@ -383,18 +383,93 @@ async function aggregatorConfirmedTier(
 
 /**
  * Tier-3 "battle-tested elsewhere" advisory — the asset must be listed
- * as collateral with meaningful TVL on ≥ 1 of {Aave v3, Compound v3,
- * Morpho-curated} on this chain. STUB for v1: returns `false` unless an
- * operator-supplied check is wired (so the relay caps at Tier 2 until
- * then). Hook a DeFiLlama / protocol-API check here when ready; a
- * compromised keeper ignoring this still can't promote past the
- * on-chain ceiling, so it's purely a conservatism gate.
+ * as a yield pool with meaningful TVL on ≥ 1 of {Aave v3, Compound v3,
+ * Morpho-blue, Morpho-Aave-v3} on this chain. Off-chain heuristic via
+ * DeFiLlama's `/pools` endpoint — NOT a parameter source (their LTVs
+ * are theirs; we read the *listing + TVL* as a "battle-tested"
+ * advisory). Fails closed (returns `false`) on a network error,
+ * unsupported chain, or any other unknown — so the relay safely caps
+ * at Tier 2 instead of speculatively promoting. A compromised keeper
+ * ignoring this advisory still can't promote past the on-chain
+ * ceiling, so this is purely a conservatism gate.
  */
+
+interface LlamaPool {
+  project: string;
+  chain: string;
+  tvlUsd?: number;
+  underlyingTokens?: string[]; // lowercased 0x addresses
+}
+
+/** Module-scope cache of DeFiLlama's full pools list. The endpoint
+ *  returns several MB; refetching every cron tick is wasteful + risks
+ *  rate-limit pushback. 1h TTL is fine for "is this asset still listed
+ *  somewhere with ≥ $X TVL" — listing/delisting decisions are
+ *  measured in days, not minutes. */
+const LLAMA_TTL_MS = 60 * 60 * 1000;
+let llamaPoolsCache: { pools: LlamaPool[]; fetchedAt: number } | null = null;
+
+/** DeFiLlama uses display chain names; map every keeper-supported
+ *  mainnet here. Testnets and chains not in this map ⇒ advisory
+ *  returns false (no auto-Tier-3 there). Verify additions against
+ *  the canonical list at https://api.llama.fi/chains. */
+const LLAMA_CHAIN_NAMES: Record<number, string> = {
+  1: 'Ethereum',
+  10: 'Optimism',
+  56: 'BSC',
+  1101: 'Polygon zkEVM',
+  8453: 'Base',
+  42161: 'Arbitrum',
+};
+
+/** DeFiLlama project slugs the advisory accepts as "battle-tested
+ *  collateral elsewhere". These are the per-protocol-per-chain pool
+ *  publishers — keep the set tight (the design says ≥ 1 of these). */
+const TIER3_BATTLETESTED_PROJECTS: ReadonlySet<string> = new Set([
+  'aave-v3',
+  'compound-v3',
+  'morpho-blue',
+  'morpho-aave-v3',
+]);
+
+async function fetchLlamaPoolsCached(): Promise<LlamaPool[]> {
+  const now = Date.now();
+  if (llamaPoolsCache && now - llamaPoolsCache.fetchedAt < LLAMA_TTL_MS) {
+    return llamaPoolsCache.pools;
+  }
+  const res = await fetch('https://yields.llama.fi/pools');
+  if (!res.ok) throw new Error(`llama ${res.status}`);
+  const body = (await res.json()) as { data?: LlamaPool[] };
+  const pools = body.data ?? [];
+  llamaPoolsCache = { pools, fetchedAt: now };
+  return pools;
+}
+
 async function battleTestedElsewhere(
-  _env: Env,
-  _chainId: number,
-  _asset: Address,
+  env: Env,
+  chainId: number,
+  asset: Address,
 ): Promise<boolean> {
+  const chainName = LLAMA_CHAIN_NAMES[chainId];
+  if (!chainName) return false; // testnet / unmapped chain
+  const minTvl = parsePosIntEnv(env.LIQ_TIER3_MIN_TVL_USD, 10_000_000);
+  let pools: LlamaPool[];
+  try {
+    pools = await fetchLlamaPoolsCached();
+  } catch (err) {
+    console.log(`[keeper] battleTested advisory fetch failed: ${String(err).slice(0, 200)}`);
+    return false; // fail-closed
+  }
+  const target = asset.toLowerCase();
+  for (const p of pools) {
+    if (!TIER3_BATTLETESTED_PROJECTS.has(p.project)) continue;
+    if (p.chain !== chainName) continue;
+    if ((p.tvlUsd ?? 0) < minTvl) continue;
+    if (!p.underlyingTokens) continue;
+    for (const t of p.underlyingTokens) {
+      if (typeof t === 'string' && t.toLowerCase() === target) return true;
+    }
+  }
   return false;
 }
 

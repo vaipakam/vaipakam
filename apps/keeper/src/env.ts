@@ -107,6 +107,12 @@ export interface Env {
   LIQ_CONFIDENCE_MIN_CHECKS?: string;
   /** wall-clock days that eligible streak must also span (default 3) */
   LIQ_CONFIDENCE_MIN_WINDOW_DAYS?: string;
+  /** Minimum USD TVL on at least one of {Aave v3, Compound v3,
+   *  Morpho-blue, Morpho-Aave-v3} (per DeFiLlama's `/pools`) for the
+   *  asset to qualify for Tier-3 promotion via `battleTestedElsewhere`.
+   *  Default 10_000_000 ($10M). Below the threshold the relay caps at
+   *  Tier 2 — fail-closed direction. */
+  LIQ_TIER3_MIN_TVL_USD?: string;
 }
 
 export interface ChainConfig {
