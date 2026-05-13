@@ -131,6 +131,16 @@ library LibVaipakam {
     uint256 constant MAX_LIQUIDATION_SLIPPAGE_BPS = 600; // 6% max slippage on DEX liquidation swaps (README §7)
     uint256 constant MAX_LIQUIDATOR_INCENTIVE_BPS = 300; // 3% cap on dynamic liquidator incentive (README §3)
     uint256 constant LIQUIDATION_HANDLING_FEE_BPS = 200; // 2% of proceeds to treasury on successful DEX liquidation (README §3)
+    // Partial-liquidation close-factor cap (item 2 of liquidator hardening).
+    // 10_000 BPS = 100% i.e. no cap by default — the keeper picks the
+    // smallest fraction that restores HF >= 1. Governance can tighten
+    // (e.g. to Aave-style 5_000 = 50%) via
+    // `ConfigFacet.setMaxPartialLiquidationCloseFactorBps` if it ever
+    // wants a per-call ceiling — useful for very long-tail collateral
+    // where any single partial above N% slippage is risky. The 10_000
+    // ceiling is also the hard upper bound at the setter: a partial
+    // can never swap more than 100% of remaining collateral, by definition.
+    uint256 constant MAX_PARTIAL_LIQUIDATION_CLOSE_FACTOR_BPS_DEFAULT = 10_000;
     uint256 constant LOAN_INITIATION_FEE_BPS = 10; // 0.1% fee deducted from ERC-20 principal at loan initiation (README §6 lines 280, 332)
     // Fallback-path split (README §7): lender gets principal + accrued
     // interest + {FALLBACK_LENDER_BONUS_BPS} of principal; treasury gets
@@ -544,6 +554,14 @@ library LibVaipakam {
         // "Match-fee economics revisit" Phase 2 item). Capped at
         // MAX_FEE_BPS (50%) by the setter.
         uint16 lifMatcherFeeBps; // 0 ⇒ LIF_MATCHER_FEE_BPS (100)
+        // Partial-liquidation close-factor cap (Phase 2 liquidator
+        // hardening, item 2). Governance ceiling on the swap fraction
+        // an off-chain keeper can pass to `RiskFacet.triggerPartialLiquidation`.
+        // 0 ⇒ MAX_PARTIAL_LIQUIDATION_CLOSE_FACTOR_BPS_DEFAULT (10_000 =
+        // no cap, keeper picks the smallest fraction that restores HF≥1).
+        // Setter clamps the configured value to ≤ 10_000 — by definition
+        // a partial can't swap more than 100% of remaining collateral.
+        uint16 maxPartialLiquidationCloseFactorBps; // 0 ⇒ MAX_PARTIAL_LIQUIDATION_CLOSE_FACTOR_BPS_DEFAULT (10_000)
         // Auto-pause window (Phase 1 follow-up). Duration in seconds
         // for an off-chain anomaly-watcher's `autoPause()` to freeze
         // the protocol while humans investigate. 0 ⇒
@@ -2577,6 +2595,20 @@ library LibVaipakam {
     function cfgLifMatcherFeeBps() internal view returns (uint256) {
         uint16 v = storageSlot().protocolCfg.lifMatcherFeeBps;
         return v == 0 ? LIF_MATCHER_FEE_BPS : uint256(v);
+    }
+
+    /// @dev Phase 2 liquidator hardening (item 2) — close-factor ceiling
+    ///      for `RiskFacet.triggerPartialLiquidation`. Governance-tunable
+    ///      via `ConfigFacet.setMaxPartialLiquidationCloseFactorBps`;
+    ///      falls back to MAX_PARTIAL_LIQUIDATION_CLOSE_FACTOR_BPS_DEFAULT
+    ///      (10_000 = 100%, no cap) when unset. Setter caps the configured
+    ///      value at 10_000 — a partial fraction above 100% has no
+    ///      semantic meaning (would swap more than the loan's remaining
+    ///      collateral). Read once at the partial-liquidation entry point
+    ///      to enforce `fractionBps ≤ cap`.
+    function cfgMaxPartialLiquidationCloseFactorBps() internal view returns (uint256) {
+        uint16 v = storageSlot().protocolCfg.maxPartialLiquidationCloseFactorBps;
+        return v == 0 ? MAX_PARTIAL_LIQUIDATION_CLOSE_FACTOR_BPS_DEFAULT : uint256(v);
     }
 
     /// @dev Phase 1 follow-up — auto-pause duration (seconds) used by

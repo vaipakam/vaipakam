@@ -177,6 +177,44 @@ contract ConfigFacet is DiamondAccessControl {
         emit LifMatcherFeeBpsSet(newBps);
     }
 
+    /// @notice Emitted on every change to the partial-liquidation close-factor cap.
+    /// @custom:event-category informational/config
+    event MaxPartialLiquidationCloseFactorBpsSet(uint16 newBps);
+
+    /// @notice Partial-liquidation close-factor cap was set above 100%.
+    /// @dev A fraction > 10_000 BPS has no semantic meaning — partial
+    ///      liquidation can never swap more than the loan's remaining
+    ///      collateral. Hard-rejected at the setter so the storage value
+    ///      can be trusted unconditionally at
+    ///      `RiskFacet.triggerPartialLiquidation`.
+    error InvalidPartialLiqCloseFactorBps(uint256 bps);
+
+    /**
+     * @notice Set the per-call close-factor ceiling for partial liquidations.
+     * @dev    ADMIN_ROLE-only. Used by `RiskFacet.triggerPartialLiquidation`
+     *         to bound how aggressive a single partial swap may be.
+     *
+     *         Pass `0` to reset to the library default
+     *         (`MAX_PARTIAL_LIQUIDATION_CLOSE_FACTOR_BPS_DEFAULT` = 10_000 =
+     *         100%, i.e. no governance-imposed cap; the keeper still
+     *         picks the smallest fraction that restores HF≥1). Pass any
+     *         value in `(0, 10_000]` to tighten — e.g. 5_000 for Aave-
+     *         style "max 50% per call". Values > 10_000 are rejected
+     *         (a partial above 100% of remaining collateral is not a
+     *         partial).
+     * @param  newBps New close-factor cap in BPS (0 = reset to default).
+     */
+    function setMaxPartialLiquidationCloseFactorBps(uint16 newBps)
+        external
+        onlyRole(LibAccessControl.ADMIN_ROLE)
+    {
+        if (newBps > uint16(LibVaipakam.BASIS_POINTS)) {
+            revert InvalidPartialLiqCloseFactorBps(newBps);
+        }
+        LibVaipakam.storageSlot().protocolCfg.maxPartialLiquidationCloseFactorBps = newBps;
+        emit MaxPartialLiquidationCloseFactorBpsSet(newBps);
+    }
+
     /// @notice Emitted on every change to the auto-pause window.
     /// @custom:event-category informational/config
     event AutoPauseDurationSet(uint32 newSeconds);

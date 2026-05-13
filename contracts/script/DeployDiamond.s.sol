@@ -801,7 +801,7 @@ contract DeployDiamond is Script {
     }
 
     function _getRiskSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](6);
+        s = new bytes4[](7);
         s[0] = RiskFacet.updateRiskParams.selector;
         s[1] = RiskFacet.calculateLTV.selector;
         s[2] = RiskFacet.calculateHealthFactor.selector;
@@ -811,6 +811,11 @@ contract DeployDiamond is Script {
         // Sum-to-input multi-route swap via `LibSwap.swapWithSplit`;
         // atomic-revert-on-leg-failure (no soft-failure fallback path).
         s[5] = RiskFacet.triggerLiquidationSplit.selector;
+        // Partial HF-restore liquidator (Piece B follow-up — partials).
+        // Sweeps only `fractionBps` of remaining collateral, leaves loan
+        // Active with reduced size and unchanged maturity. Strict
+        // HF-improves + HF>=1 post-mutation gates.
+        s[6] = RiskFacet.triggerPartialLiquidation.selector;
     }
 
     function _getClaimSelectors() internal pure returns (bytes4[] memory s) {
@@ -969,7 +974,7 @@ contract DeployDiamond is Script {
     }
 
     function _getConfigSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](66);
+        s = new bytes4[](67);
         // Setters
         s[0] = ConfigFacet.setFeesConfig.selector;
         s[1] = ConfigFacet.setLiquidationConfig.selector;
@@ -1073,6 +1078,11 @@ contract DeployDiamond is Script {
         s[63] = ConfigFacet.getPaaAssets.selector;
         s[64] = ConfigFacet.getKeeperTier.selector;
         s[65] = ConfigFacet.getDepthTierConfigBundle.selector;
+        // Liquidator hardening (item 2) — close-factor ceiling setter
+        // for `RiskFacet.triggerPartialLiquidation`. Default 10_000 = no
+        // cap (the keeper picks the smallest fraction that restores
+        // HF>=1); governance may tighten to Aave-style 5_000 (50%) etc.
+        s[66] = ConfigFacet.setMaxPartialLiquidationCloseFactorBps.selector;
     }
 
     function _getRewardAggregatorSelectors() internal pure returns (bytes4[] memory s) {

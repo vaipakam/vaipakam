@@ -123,6 +123,41 @@
   },
   {
     "type": "function",
+    "name": "triggerPartialLiquidation",
+    "inputs": [
+      {
+        "name": "loanId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "fractionBps",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "adapterCalls",
+        "type": "tuple[]",
+        "internalType": "struct LibSwap.AdapterCall[]",
+        "components": [
+          {
+            "name": "adapterIdx",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "data",
+            "type": "bytes",
+            "internalType": "bytes"
+          }
+        ]
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "updateRiskParams",
     "inputs": [
       {
@@ -200,6 +235,61 @@
         "name": "loanId",
         "type": "uint256",
         "indexed": true,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "LoanPartiallyLiquidated",
+    "inputs": [
+      {
+        "name": "loanId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "liquidator",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "fractionBps",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "swappedCollateral",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "proceeds",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "principalRepaid",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "interestRepaid",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "hfAfter",
+        "type": "uint256",
+        "indexed": false,
         "internalType": "uint256"
       }
     ],
@@ -608,6 +698,22 @@
   },
   {
     "type": "error",
+    "name": "InvalidPartialFraction",
+    "inputs": [
+      {
+        "name": "fractionBps",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "capBps",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "KYCRequired",
     "inputs": []
   },
@@ -817,6 +923,59 @@
         "internalType": "uint256"
       }
     ]
+  },
+  {
+    "type": "error",
+    "name": "PartialAfterMaturity",
+    "inputs": [
+      {
+        "name": "endTime",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "nowTs",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "PartialFullyClosedUseFull",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "PartialMustImproveHF",
+    "inputs": [
+      {
+        "name": "hfBefore",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "hfAfter",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "PartialMustRestoreHF",
+    "inputs": [
+      {
+        "name": "hfAfter",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "PartialSwapAllFailed",
+    "inputs": []
   },
   {
     "type": "error",

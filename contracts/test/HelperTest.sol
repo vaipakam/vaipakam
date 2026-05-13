@@ -413,7 +413,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](6);
+        selectors = new bytes4[](7);
         selectors[0] = RiskFacet.updateRiskParams.selector;
         selectors[1] = RiskFacet.calculateLTV.selector;
         selectors[2] = RiskFacet.calculateHealthFactor.selector;
@@ -423,6 +423,11 @@ contract HelperTest {
         // Sum-to-input multi-route swap via `LibSwap.swapWithSplit`;
         // atomic-revert-on-leg-failure (no soft-failure fallback).
         selectors[5] = RiskFacet.triggerLiquidationSplit.selector;
+        // Partial HF-restore liquidator (Piece B follow-up — partials).
+        // Sweeps only `fractionBps` of remaining collateral, leaves loan
+        // Active with reduced size and unchanged maturity. Strict
+        // HF-improves + HF>=1 post-mutation gates.
+        selectors[6] = RiskFacet.triggerPartialLiquidation.selector;
     }
 
     function getClaimFacetSelectors()
@@ -708,7 +713,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](66);
+        selectors = new bytes4[](67);
         selectors[0] = ConfigFacet.setFeesConfig.selector;
         selectors[1] = ConfigFacet.setLiquidationConfig.selector;
         selectors[2] = ConfigFacet.setRiskConfig.selector;
@@ -802,6 +807,10 @@ contract HelperTest {
         selectors[63] = ConfigFacet.getPaaAssets.selector;
         selectors[64] = ConfigFacet.getKeeperTier.selector;
         selectors[65] = ConfigFacet.getDepthTierConfigBundle.selector;
+        // Liquidator hardening (item 2) — close-factor ceiling setter
+        // for `RiskFacet.triggerPartialLiquidation`. Default 10_000 = no
+        // cap; governance may tighten per docs/RangeOffersDesign.md.
+        selectors[66] = ConfigFacet.setMaxPartialLiquidationCloseFactorBps.selector;
         return selectors;
     }
 

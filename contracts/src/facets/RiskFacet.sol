@@ -118,6 +118,69 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
     /// @custom:event-category informational/liquidation
     event LiquidationFallbackSplit(uint256 indexed loanId);
 
+    /// @notice Emitted on a successful partial HF-based liquidation that
+    ///         left the loan Active with reduced collateral + principal.
+    /// @dev    Indexer ingests this as a non-terminal mutation; the loan's
+    ///         `LoanInitiated` event remains the canonical "opening"
+    ///         record, and the terminal event (one of `HFLiquidationTriggered`,
+    ///         `LoanRepaid`, `LoanDefaulted`) lands at the eventual close.
+    ///         Multiple `LoanPartiallyLiquidated` may fire per loan if the
+    ///         keeper restores HF≥1 by repeated partials.
+    /// @param  loanId             The partially-liquidated loan.
+    /// @param  liquidator         The caller (msg.sender). Receives the
+    ///                            dynamic incentive bonus.
+    /// @param  fractionBps        Fraction of remaining collateral swept,
+    ///                            in BPS of the pre-call `collateralAmount`.
+    ///                            Bounded by `(0, maxPartialLiquidationCloseFactorBps]`.
+    /// @param  swappedCollateral  Absolute collateral-asset units swapped.
+    /// @param  proceeds           Principal-asset units received from the
+    ///                            keeper-supplied adapter try-list.
+    /// @param  principalRepaid    Reduction applied to `loan.principal`.
+    /// @param  interestRepaid     Interest portion paid through this partial
+    ///                            (gross of treasury cut).
+    /// @param  hfAfter            HF post-mutation. Guaranteed `>= HF_SCALE`.
+    /// @custom:event-category state-change/loan-mutation
+    event LoanPartiallyLiquidated(
+        uint256 indexed loanId,
+        address indexed liquidator,
+        uint256 fractionBps,
+        uint256 swappedCollateral,
+        uint256 proceeds,
+        uint256 principalRepaid,
+        uint256 interestRepaid,
+        uint256 hfAfter
+    );
+
+    /// @notice Partial fraction is zero, ≥ 10_000, or above the governance cap.
+    error InvalidPartialFraction(uint256 fractionBps, uint256 capBps);
+    /// @notice Partial swap left HF unchanged or worse — the keeper's
+    ///         fraction was too small; pick a larger one or fall back to
+    ///         {triggerLiquidation}.
+    error PartialMustImproveHF(uint256 hfBefore, uint256 hfAfter);
+    /// @notice Partial swap improved HF but it's still below 1.0 — the
+    ///         loan would remain liquidatable, defeating the point of a
+    ///         partial. Keeper picks a larger fraction or falls back to
+    ///         full {triggerLiquidation}.
+    error PartialMustRestoreHF(uint256 hfAfter);
+    /// @notice Partial swap proceeds were large enough to retire all
+    ///         outstanding principal — at that point the loan is no
+    ///         longer "partially" anything, the keeper should be using
+    ///         {triggerLiquidation} (failover) or {triggerLiquidationSplit}.
+    error PartialFullyClosedUseFull();
+    /// @notice Partial is only meaningful in-term; past maturity, the
+    ///         time-based path (`DefaultedFacet.markDefaulted`) or
+    ///         full {triggerLiquidation} are the right tools. Excludes
+    ///         late-fee accounting from the partial path.
+    error PartialAfterMaturity(uint256 endTime, uint256 nowTs);
+    /// @notice All adapters in the keeper's try-list reverted. Unlike
+    ///         {triggerLiquidation}'s soft-fallback to a claim-time
+    ///         settlement, partial liquidation cannot leave the loan in
+    ///         a half-settled-but-Active state — the only safe move on
+    ///         total swap failure is to revert and let the keeper retry
+    ///         (smaller fraction, different adapter mix, or full
+    ///         {triggerLiquidation}).
+    error PartialSwapAllFailed();
+
     /**
      * @notice Updates risk parameters for an asset.
      * @dev Callable only by Diamond owner (multi-sig/governance).
@@ -803,6 +866,293 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
             NFTStatusUpdateFailed.selector
         );
         emit HFLiquidationTriggered(loanId, msg.sender, proceeds);
+    }
+
+    /**
+     * @notice HF-restoring **partial** liquidation — the higher-LTV-aware
+     *         third sibling of {triggerLiquidation} (single-route failover)
+     *         and {triggerLiquidationSplit} (multi-route atomic split).
+     *         Sweeps only `fractionBps` of the loan's remaining collateral,
+     *         applies the swap proceeds to accrued-interest + principal,
+     *         and **leaves the loan Active with reduced size and the same
+     *         maturity date**. The loan keeps accruing interest on the
+     *         reduced principal from this moment forward.
+     *
+     * @dev    Use case — under the depth-tiered-LTV regime, a single
+     *         large swap can exceed the 6% slippage ceiling on long-tail
+     *         collateral even when a smaller fraction would clear cleanly.
+     *         The keeper computes the smallest `fractionBps` that brings
+     *         HF >= 1 (typically with a small safety buffer) and submits
+     *         that fraction here, saving the borrower from full
+     *         liquidation while still restoring protocol solvency.
+     *
+     *         Hard guards:
+     *
+     *         - HF must be `< 1e18` at entry (same as full liquidation).
+     *         - Block time must be `< endTime` (in-term only). Past
+     *           maturity, late fees are due and the right tool is
+     *           {triggerLiquidation} or `DefaultedFacet.markDefaulted`
+     *           — partial deliberately excludes late-fee accounting
+     *           from its math.
+     *         - `fractionBps` in `(0, maxPartialLiquidationCloseFactorBps]`
+     *           (default cap 10_000 = 100%; governance may tighten).
+     *         - HF strictly improves AND lands `>= 1e18` after mutation.
+     *           Reverts otherwise — the keeper picks a larger fraction or
+     *           falls back to full.
+     *         - Principal can't be fully retired through partial; if the
+     *           proceeds would zero out `loan.principal`, reverts with
+     *           {PartialFullyClosedUseFull} — that's a job for
+     *           {triggerLiquidation} which closes the loan, returns
+     *           surplus collateral to the borrower, and emits the
+     *           terminal event.
+     *
+     *         Failure path: unlike {triggerLiquidation}, there is no
+     *         soft-failure "fall back to a claim-time settlement"
+     *         branch. A still-Active loan can't be in a half-settled
+     *         state without corrupting the {ClaimFacet} / NFT-state
+     *         invariants. On any internal failure (all adapters revert,
+     *         HF didn't improve, principal fully repaid) the entire tx
+     *         reverts and the slice stays in the borrower's escrow.
+     *
+     *         Maturity preservation: the loan's `endTime` is unchanged.
+     *         Implementation rewires `startTime = block.timestamp` AND
+     *         shortens `durationDays` so `startTime + durationDays * 1 days`
+     *         is invariant. From now on, interest accrues on the reduced
+     *         principal for the remaining duration only.
+     *
+     *         Repeated partials: a loan may be partial-liquidated multiple
+     *         times. Each call further reduces collateral + principal,
+     *         restarts the interest clock, and emits a fresh
+     *         {LoanPartiallyLiquidated}. The terminal event is whichever
+     *         close-out path eventually fires.
+     *
+     *         VPFI / interaction rewards: NOT settled here — the loan is
+     *         still alive, so `forfeitBorrowerLif` / `LibInteractionRewards.closeLoan`
+     *         do NOT fire. They run at the eventual terminal event.
+     *
+     *         NFTs: stay Active (the borrower and lender position NFTs
+     *         continue to represent the now-smaller position).
+     *
+     * @param  loanId       The loan being partially liquidated. Must be
+     *                      Active with HF < 1, in-term.
+     * @param  fractionBps  Fraction of remaining collateral to sweep,
+     *                      in BPS. `(0, maxPartialLiquidationCloseFactorBps]`.
+     * @param  adapterCalls Keeper-supplied ranked adapter try-list for
+     *                      the slice swap, best-first by expected output.
+     *                      Same shape as {triggerLiquidation}.
+     */
+    function triggerPartialLiquidation(
+        uint256 loanId,
+        uint256 fractionBps,
+        LibSwap.AdapterCall[] calldata adapterCalls
+    ) external nonReentrant whenNotPaused {
+        // Tier-1 sanctions gate — the dynamic incentive bonus flows to
+        // msg.sender, so value-receipt blocked for sanctioned addresses.
+        LibVaipakam._assertNotSanctioned(msg.sender);
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        LibVaipakam.Loan storage loan = s.loans[loanId];
+        if (loan.status != LibVaipakam.LoanStatus.Active) revert InvalidLoan();
+
+        // Sequencer / HF / liquidity gates — identical to {triggerLiquidation}.
+        if (!OracleFacet(address(this)).sequencerHealthy()) {
+            revert SequencerUnhealthy();
+        }
+        uint256 hfBefore = RiskFacet(address(this)).calculateHealthFactor(loanId);
+        if (hfBefore >= LibVaipakam.HF_SCALE) revert HealthFactorNotLow();
+
+        // In-term gate — partial is a "before maturity" tool. Once the
+        // loan matures, late fees apply and the cleaner close-out is
+        // full liquidation or time-based default. Excludes late-fee
+        // accounting from this path entirely (safe simplification).
+        uint256 endTime = loan.startTime + loan.durationDays * 1 days;
+        if (block.timestamp >= endTime) {
+            revert PartialAfterMaturity(endTime, block.timestamp);
+        }
+
+        LibVaipakam.LiquidityStatus liquidity = OracleFacet(address(this))
+            .checkLiquidityOnActiveNetwork(loan.collateralAsset);
+        if (liquidity != LibVaipakam.LiquidityStatus.Liquid)
+            revert NonLiquidAsset();
+
+        // Fraction bounds: (0, cap]. cap is governance-tunable, default
+        // 10_000 (no cap — keeper picks the smallest fraction that
+        // restores HF >= 1).
+        uint256 cap = LibVaipakam.cfgMaxPartialLiquidationCloseFactorBps();
+        if (fractionBps == 0 || fractionBps > cap) {
+            revert InvalidPartialFraction(fractionBps, cap);
+        }
+
+        // Slice the collateral. Rounds DOWN to favour the borrower at the
+        // wei boundary — same convention as the rest of the protocol.
+        uint256 swappedCollateral = (loan.collateralAmount * fractionBps)
+            / LibVaipakam.BASIS_POINTS;
+        if (swappedCollateral == 0) {
+            // Defensive: tiny `collateralAmount` × small `fractionBps`
+            // can round to zero. A zero swap proves nothing — flag it
+            // back so the keeper picks a larger fraction.
+            revert InvalidPartialFraction(fractionBps, cap);
+        }
+
+        // Withdraw only the slice from the borrower's escrow. If the
+        // swap reverts downstream, the wrapping `revert` here unwinds
+        // the withdraw too (single tx, all storage rolled back) — no
+        // manual refund needed.
+        LibFacet.crossFacetCall(
+            abi.encodeWithSelector(
+                EscrowFactoryFacet.escrowWithdrawERC20.selector,
+                loan.borrower,
+                loan.collateralAsset,
+                address(this),
+                swappedCollateral
+            ),
+            EscrowWithdrawFailed.selector
+        );
+
+        // Oracle-derived expected proceeds + slippage floor, scoped to
+        // the slice. Same formula as {triggerLiquidation}.
+        uint256 expectedProceeds = LibFallback.expectedSwapOutput(
+            address(this),
+            loan.collateralAsset,
+            loan.principalAsset,
+            swappedCollateral
+        );
+        uint256 maxSlippageBps = LibVaipakam.cfgMaxLiquidationSlippageBps();
+        uint256 minOutputAmount = (expectedProceeds *
+            (LibVaipakam.BASIS_POINTS - maxSlippageBps)) /
+            LibVaipakam.BASIS_POINTS;
+
+        // Partial uses failover (single best adapter). The slice is
+        // smaller than a full liquidation by construction, so a single
+        // venue is much more likely to absorb it cleanly. If the keeper
+        // wants sub-slice splitting, the right move is to first reduce
+        // the fraction; a "split-of-a-partial" entry point doesn't pay
+        // for itself given the gas cost.
+        (bool swapSuccess, uint256 proceeds, ) = LibSwap.swapWithFailover(
+            loanId,
+            loan.collateralAsset,
+            loan.principalAsset,
+            swappedCollateral,
+            minOutputAmount,
+            address(this),
+            adapterCalls
+        );
+        if (!swapSuccess) revert PartialSwapAllFailed();
+
+        // Debt accounting at partial time. Late fee = 0 by the in-term
+        // guard above. interestPortion = currentBorrow - principal.
+        uint256 currentBorrowBalance = _calculateCurrentBorrowBalance(loan);
+        uint256 interestPortion = currentBorrowBalance - loan.principal;
+
+        // Dynamic-incentive bonus — same formula as full, scoped to slice.
+        uint256 realizedSlippageBps;
+        if (proceeds < expectedProceeds && expectedProceeds > 0) {
+            realizedSlippageBps = ((expectedProceeds - proceeds) * LibVaipakam.BASIS_POINTS)
+                / expectedProceeds;
+            if (realizedSlippageBps > maxSlippageBps) {
+                realizedSlippageBps = maxSlippageBps;
+            }
+        }
+        uint256 maxIncentiveBps = LibVaipakam.cfgMaxLiquidatorIncentiveBps();
+        uint256 incentiveBps = maxSlippageBps - realizedSlippageBps;
+        if (incentiveBps > maxIncentiveBps) incentiveBps = maxIncentiveBps;
+        uint256 assetCapBps = s.assetRiskParams[loan.collateralAsset].liqBonusBps;
+        if (assetCapBps != 0 && incentiveBps > assetCapBps) incentiveBps = assetCapBps;
+        uint256 bonus = (proceeds * incentiveBps) / LibVaipakam.BASIS_POINTS;
+        if (bonus > proceeds) bonus = proceeds;
+
+        // Tiered-KYC for the liquidator — identical to {triggerLiquidation}.
+        // The smaller slice means a smaller bonus, less likely to trip
+        // the KYC numeraire threshold, but we apply the same check
+        // uniformly for predictable bot behaviour.
+        (uint256 price, uint8 feedDecimals) = OracleFacet(address(this))
+            .getAssetPrice(loan.principalAsset);
+        uint8 tokenDecimals = IERC20Metadata(loan.principalAsset).decimals();
+        uint256 bonusNumeraire = (bonus * price * 1e18) / (10 ** feedDecimals) / (10 ** tokenDecimals);
+        if (!ProfileFacet(address(this)).meetsKYCRequirement(msg.sender, bonusNumeraire))
+            revert KYCRequired();
+
+        if (bonus > 0) {
+            IERC20(loan.principalAsset).safeTransfer(msg.sender, bonus);
+        }
+
+        // 2% handling fee on the slice's proceeds. Capped so bonus +
+        // handling can't exceed proceeds (matches {triggerLiquidation}).
+        uint256 handlingFee = (proceeds * LibVaipakam.cfgLiquidationHandlingFeeBps())
+            / LibVaipakam.BASIS_POINTS;
+        if (bonus + handlingFee > proceeds) {
+            handlingFee = proceeds - bonus;
+        }
+
+        // After fees, allocate to debt in order: interest first
+        // (treasury cut on it via splitTreasury), then principal. NO
+        // late fee — guaranteed zero by the in-term guard.
+        uint256 afterFees = proceeds - bonus - handlingFee;
+        uint256 interestRepaid;
+        uint256 treasuryInterestFee;
+        uint256 principalRepaid;
+        if (afterFees > interestPortion) {
+            interestRepaid = interestPortion;
+            (treasuryInterestFee, ) = LibEntitlement.splitTreasury(interestRepaid);
+            principalRepaid = afterFees - interestRepaid;
+        } else {
+            interestRepaid = afterFees;
+            (treasuryInterestFee, ) = LibEntitlement.splitTreasury(interestRepaid);
+            principalRepaid = 0;
+        }
+
+        // Partial can't fully retire principal — that's a full liquidation.
+        // The keeper retries with `triggerLiquidation` which closes the
+        // loan, refunds surplus collateral, and emits the terminal event.
+        if (principalRepaid >= loan.principal) revert PartialFullyClosedUseFull();
+
+        // Treasury receipt — single transfer, same as full.
+        address treasury = s.treasury;
+        uint256 toTreasury = handlingFee + treasuryInterestFee;
+        if (toTreasury > 0) {
+            IERC20(loan.principalAsset).safeTransfer(treasury, toTreasury);
+            LibFacet.recordTreasuryAccrual(loan.principalAsset, toTreasury);
+        }
+
+        // Lender's share goes directly to their escrow. We deliberately
+        // do NOT write `s.lenderClaims[loanId]` — claims are reserved
+        // for terminal events (the lender NFT is still Active, the
+        // claim flow runs at proper close / full liquidation / default).
+        uint256 lenderProceeds = afterFees - treasuryInterestFee;
+        if (lenderProceeds > 0) {
+            address lenderEscrow = LibFacet.getOrCreateEscrow(loan.lender);
+            IERC20(loan.principalAsset).safeTransfer(lenderEscrow, lenderProceeds);
+            LibVaipakam.recordEscrowDeposit(loan.lender, loan.principalAsset, lenderProceeds);
+        }
+
+        // Mutate the loan: reduce collateral + principal, restart the
+        // interest clock at now, shorten `durationDays` so `endTime` is
+        // preserved exactly. The lender's term is unchanged.
+        loan.collateralAmount -= swappedCollateral;
+        loan.principal -= principalRepaid;
+        uint256 remainingDays = (endTime - block.timestamp) / 1 days;
+        loan.startTime = uint64(block.timestamp);
+        loan.durationDays = remainingDays;
+
+        // Post-mutation HF check. Strictly improves AND must reach >= 1.
+        // If `remainingDays` rounded down to 0 (partial in the loan's
+        // last sub-day), the loan effectively matures next block — the
+        // HF read is still correct since `currentBorrow` re-derives from
+        // the now-tiny principal, so this branch reverts naturally if
+        // HF is still below 1.
+        uint256 hfAfter = RiskFacet(address(this)).calculateHealthFactor(loanId);
+        if (hfAfter <= hfBefore) revert PartialMustImproveHF(hfBefore, hfAfter);
+        if (hfAfter < LibVaipakam.HF_SCALE) revert PartialMustRestoreHF(hfAfter);
+
+        emit LoanPartiallyLiquidated(
+            loanId,
+            msg.sender,
+            fractionBps,
+            swappedCollateral,
+            proceeds,
+            principalRepaid,
+            interestRepaid,
+            hfAfter
+        );
     }
 
     // /**
