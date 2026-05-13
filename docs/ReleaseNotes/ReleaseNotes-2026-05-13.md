@@ -382,3 +382,35 @@ documented the old looser semantics explicitly — both have been
 flipped with rename and comments to reflect the new correct
 behaviour, and the regression suite stays at 1795 passing, 0 failed,
 5 skipped across 88 suites.
+
+## Slippage census tool — audit-prep input for the per-chain flip
+
+The companion deliverable to the base-liquidity-check upgrade: a
+Foundry script that runs the per-chain slippage census required by
+the design's §4.4 step 6 — the gate before `depthTieredLtvEnabled`
+flips on any chain. Each row of the script's CSV-friendly output
+records, for one asset on one chain, what the on-chain views see
+right now: whether the base check classifies the asset as Liquid,
+which tier the route search lands it at on its own merits, and which
+tier the loan-init gate would actually use (which can be capped lower
+by the off-chain keeper relay's confidence-confirmed promotion
+ceiling).
+
+Operators run the script at three checkpoints per chain:
+post-deploy of the new contracts (snapshot of what the chain looks
+like natively); post-bake of the keeper liquidity-confidence relay
+(snapshot of which assets the relay has actually promoted and how
+long the promotions took); and a pre-flip rehearsal immediately
+before flipping the chain. The three CSVs plus the corresponding
+relay logs make up the audit package the risk committee signs off
+on, chain by chain.
+
+The operator guide
+([`docs/SlippageCensusGuide.md`](../SlippageCensusGuide.md)) covers
+the column semantics, the per-chain default asset lists with
+canonical token addresses (Ethereum / Base / Arbitrum / Optimism /
+Polygon zkEVM / BNB Chain), the anomaly patterns that warrant
+follow-up before flipping, and the pitfalls (wrong Diamond, truncated
+asset list, unforked mainnet pre-deploy). Nothing about the flip is
+automated; the script generates data, the committee signs off, the
+flip is a manual `setDepthTieredLtvEnabled(true)` per chain.
