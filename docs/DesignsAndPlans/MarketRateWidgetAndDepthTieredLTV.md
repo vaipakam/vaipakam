@@ -1,12 +1,59 @@
 # "Lend / Borrow at market rate" widget + depth-tiered LTV
 
-Status: **design locked 2026-05-13 (§5) — implementation not started.**
-Two related but separable pieces. Piece A (the widget) is a
-frontend-only change on top of the already-shipped Range Orders Phase 1
-and the existing `HF ≥ 1.5e18` init gate — cleared to build. Piece B
-(depth-tiered LTV) is a contract risk-parameter change that **requires
-an audit + risk sign-off** and is queued behind the Range-Orders +
-matcher-bot testnet bake (§4.4).
+Status: **design locked 2026-05-13 (§5). Piece A SHIPPED; Piece B
+contracts LANDED behind the `depthTieredLtvEnabled` kill-switch (default
+`false` ⇒ no behaviour change); audit + the §4.4 follow-ups pending
+before the switch flips on any chain.**
+
+Implementation snapshot (branch `feat/market-rate-widget-and-tiered-ltv`):
+- **§4.4 step 1 — Piece A — SHIPPED & deployed** (base-sepolia
+  `a1eb9fcb`): the widget on OfferBook, auto min-collateral, deep-link to
+  Create Offer, cross-chain "thin here" warnings on Create Offer +
+  Accept Offer. (Polish left: i18n for the 9 non-en locales; optional
+  full 0x/1inch slippage preflight inside the widget.)
+- **§4.4 step 2 — matcher ported into `apps/keeper`** — `matcher.ts`
+  wired into the cron. Not deployed (the signing-Worker push / testnet
+  bake is the deliberate step).
+- **§4.4 step 3 (partial) — base `_v3DepthLiquid` made a real PAD
+  figure** (`2 × WETH-leg-virtual-reserve × ethPrice`; `MIN_LIQUIDITY_USD`
+  → `MIN_LIQUIDITY_PAD`, value unchanged). The *full* step 3 (replace
+  the depth-at-tick gate with a slippage-at-`floorSizePad` simulation —
+  §4.2) is still a follow-up; until then `MIN_LIQUIDITY_PAD` is the
+  binary `Liquid` threshold and `floorSizePad` is just a tier-test size.
+- **§4.4 step 4 — rest of Piece B — LANDED behind `depthTieredLtvEnabled`:**
+  `LibSlippage` (fee-aware CPMM price-impact, decimal-independent; V3
+  virtual-reserve in-tick approximation, *not* the gas-heavy Quoter) +
+  `OracleFacet.getLiquidityTier` / `getEffectiveLiquidityTier` (the
+  on-chain tier authority; best route over `paaAssets × {Uni/Pancake/Sushi
+  V3} × fee ≤ 0.3%`; value-balance + best-effort TWAP-tick guards;
+  `effectiveTier = min(onChain, keeperTier ∈ {1,2,3}, default 1)`) +
+  `ProtocolConfig` knobs (`liquiditySlippageBps` / `twapWindowSec` /
+  `twapConsistencyBps` / `floorSizePad` / `tier{1,2,3}SizePad` in PAD ×
+  1e6 — "PAD" = the T-048 Predominantly Available Denominator, USD on
+  the retail deploy; `tier{1,2,3}MaxInitLtvBps`) + `Storage.paaAssets[]`
+  (PAA — the per-chain quote tokens the depth probe looks at; empty ⇒
+  `[wethContract]`) + `keeperTier` mapping + `KEEPER_ROLE` + `ConfigFacet`
+  setters (`set{DepthTieredLtvEnabled, LiquiditySlippageBps, TwapGuard,
+  LiquidityTierSizes, TierMaxInitLtvBps, PaaAssets}` under `ADMIN_ROLE`;
+  `setKeeperTier` under `KEEPER_ROLE`) + `LoanFacet._checkInitialLtvAndHf`
+  cap (`min(maxLtvBps, tierMaxInitLtvBps[effectiveTier(collateral)])`,
+  HF floor relaxed to `≥ 1e18`) + `IVaipakamErrors.InitLtvAboveTier`. All
+  6 commits, full forge suite green throughout (1718 passing).
+- **Not done — must precede flipping `depthTieredLtvEnabled` on any
+  chain (the §4.4-step-6 audit covers all of this):** (a) the loan-init
+  INTEGRATION test for the `if (depthTieredLtvEnabled)` branch
+  (`DepthTieredLtv.t.sol` only covers the tier views + the config
+  surface); (b) the Uni-V2-fork family in `getLiquidityTier`'s route
+  search (per-chain V2 factory storage + `getPair`/`getReserves` —
+  `LibSlippage` is already V2-ready); (c) bringing `LibOfferMatch.previewMatch`'s
+  synthetic HF check (still `HF ≥ 1.5`-based — *under*-conservative vs the
+  50% Tier-1 cap, so a bot could submit a reverting `matchOffers`) and
+  the `PrecloseFacet` / `RefinanceFacet` post-transfer HF re-checks in
+  line with the tier cap; (d) §4.4 step 5 — the `apps/keeper`
+  liquidity-confidence relay process (the `keeperTier` storage + role
+  landed in step 4; the process hasn't); (e) frontend `useProtocolConfig`
+  wiring for the new bundle / `getEffectiveLiquidityTier`; (f)
+  deferred/parallel — harden the liquidator keeper bot for higher LTV.
 
 Author note: this doc records a real-pool depth census (§3) that
 changed the recommendation for Piece B — read §3 and §4 before
