@@ -3267,4 +3267,66 @@ contract RiskFacetTest is Test {
 
         vm.clearMockedCalls();
     }
+
+    /// @dev L2 sequencer circuit-breaker gates the partial path the same
+    ///      way it gates the full triggerLiquidation. While the sequencer
+    ///      is unhealthy (down OR still inside its 1h recovery grace),
+    ///      Chainlink prices + AMM state can be stale → a swap could
+    ///      execute against mispriced state → block all HF-based paths.
+    function testPartialLiq_RevertsWhenSequencerUnhealthy() public {
+        uint256 loanId = createAndAcceptOffer();
+
+        // HF < 1 (so the HF gate would otherwise pass).
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(RiskFacet.calculateHealthFactor.selector, loanId),
+            abi.encode(HF_SCALE - 1)
+        );
+        // Mark sequencer unhealthy — the partial path's first check.
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(OracleFacet.sequencerHealthy.selector),
+            abi.encode(false)
+        );
+
+        vm.expectRevert(RiskFacet.SequencerUnhealthy.selector);
+        RiskFacet(address(diamond)).triggerPartialLiquidation(
+            loanId,
+            5_000,
+            defaultAdapterCalls()
+        );
+        vm.clearMockedCalls();
+    }
+
+    /// @dev Non-liquid collateral blocks the partial path — same gate as
+    ///      the full triggerLiquidation. Without a tradable venue there's
+    ///      no swap path to run; the time-based default route in
+    ///      DefaultedFacet handles unswappable collateral via full-collateral
+    ///      transfer instead.
+    function testPartialLiq_RevertsOnNonLiquidCollateral() public {
+        uint256 loanId = createAndAcceptOffer();
+
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(RiskFacet.calculateHealthFactor.selector, loanId),
+            abi.encode(HF_SCALE - 1)
+        );
+        // Mark collateral as illiquid on the active network.
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(
+                OracleFacet.checkLiquidityOnActiveNetwork.selector,
+                mockCollateralERC20
+            ),
+            abi.encode(LibVaipakam.LiquidityStatus.Illiquid)
+        );
+
+        vm.expectRevert(IVaipakamErrors.NonLiquidAsset.selector);
+        RiskFacet(address(diamond)).triggerPartialLiquidation(
+            loanId,
+            5_000,
+            defaultAdapterCalls()
+        );
+        vm.clearMockedCalls();
+    }
 }

@@ -12,8 +12,10 @@ import {RepayFacet} from "../src/facets/RepayFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {LibSwap} from "../src/libraries/LibSwap.sol";
+import {OracleFacet} from "../src/facets/OracleFacet.sol";
 import {MockSanctionsList} from "./mocks/MockSanctionsList.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
+import {defaultAdapterCalls} from "./helpers/AdapterCallHelpers.sol";
 
 /**
  * @title SanctionsOracleTest
@@ -326,5 +328,91 @@ contract SanctionsOracleTest is RiskFacetTest {
             interestRateBpsMax: 0,
             periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None
         });
+    }
+
+    // ─── Partial-liquidation sanctions gate ────────────────────────────────
+    //
+    // Mirrors the existing triggerLiquidation sanctions coverage but
+    // for the partial path. Tier-1 gate: the dynamic liquidator bonus
+    // flows to `msg.sender`, so receipt by a flagged wallet is blocked.
+    // Unflagged callers can still call — the protocol isn't denied
+    // liquidation, just denied to sanctioned bots/liquidators.
+
+    /// @dev When the sanctions oracle flags the partial-liq caller, the
+    ///      function reverts {LibVaipakam.SanctionedAddress} BEFORE any
+    ///      collateral withdraw or swap — same first-line gate as
+    ///      triggerLiquidation.
+    function testPartialLiq_SanctionedCallerReverts() public {
+        uint256 loanId = createAndAcceptOffer();
+        MockSanctionsList m = _installSanctions();
+
+        // Flag address(this) — the default test caller.
+        m.setFlagged(address(this), true);
+
+        // Mock HF < 1 so we'd otherwise pass that gate.
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(RiskFacet.calculateHealthFactor.selector, loanId),
+            abi.encode(uint256(1e18) - 1)
+        );
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                ProfileFacet.SanctionedAddress.selector,
+                address(this)
+            )
+        );
+        RiskFacet(address(diamond)).triggerPartialLiquidation(
+            loanId,
+            5_000,
+            defaultAdapterCalls()
+        );
+
+        vm.clearMockedCalls();
+    }
+
+    /// @dev Negative control: an UNflagged caller passes the sanctions
+    ///      gate cleanly even when the oracle is installed. Confirms
+    ///      the gate is selective (Tier-1 = receipt blocked for flagged
+    ///      addresses only) — not a universal kill-switch.
+    function testPartialLiq_UnflaggedCallerPassesSanctionsGate() public {
+        uint256 loanId = createAndAcceptOffer();
+        MockSanctionsList m = _installSanctions();
+        // Flag someone ELSE so the oracle is non-trivial.
+        m.setFlagged(sanctionedWallet, true);
+
+        // Drop collateral price → HF below 1 for the partial happy path.
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(
+                OracleFacet.getAssetPrice.selector,
+                mockCollateralERC20
+            ),
+            abi.encode(0.65e8, 8)
+        );
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(EscrowFactoryFacet.escrowWithdrawERC20.selector),
+            abi.encode(true)
+        );
+        deal(mockCollateralERC20, address(diamond), 1800 ether);
+        deal(mockERC20, address(diamond), 5_000 ether);
+
+        // address(this) is NOT flagged → passes sanctions gate. The
+        // call should complete and leave the loan Active with a
+        // mutated collateral/principal pair.
+        RiskFacet(address(diamond)).triggerPartialLiquidation(
+            loanId,
+            5_000,
+            defaultAdapterCalls()
+        );
+
+        LibVaipakam.Loan memory loanAfter = LoanFacet(address(diamond))
+            .getLoanDetails(loanId);
+        assertEq(uint8(loanAfter.status), uint8(LibVaipakam.LoanStatus.Active));
+        assertLt(loanAfter.collateralAmount, 1800 ether);
+        assertLt(loanAfter.principal, 1000 ether);
+
+        vm.clearMockedCalls();
     }
 }
