@@ -352,4 +352,61 @@ contract OracleAdminFacet {
     function getPythConfidenceMaxBps() external view returns (uint16) {
         return LibVaipakam.effectivePythConfidenceMaxBps();
     }
+
+    /**
+     * @notice Configure the per-chain peer-lending-protocol addresses
+     *         the autonomous tier-LTV cache reads. Phase 3 of
+     *         AutonomousLtvAndOracleFallback.md.
+     * @dev    Owner-only (TimelockController post-handover, so 48h-gated).
+     *         Setting any to `address(0)` skips that peer in the
+     *         aggregation — fine for chains where the peer isn't
+     *         deployed. Addresses must be verified against each
+     *         protocol's official docs before this call; the on-chain
+     *         layer doesn't validate provenance.
+     *
+     *         Verification examples per peer:
+     *           - Aave V3 PoolDataProvider — per-chain address from
+     *             https://aave.com/docs/resources/addresses (chain-
+     *             specific deployment).
+     *           - Compound V3 Comet — one Comet per base asset; pick
+     *             the largest by liquidity on the target chain. From
+     *             https://docs.compound.finance/#networks.
+     *           - Morpho-Blue — single deployment per chain. From
+     *             https://docs.morpho.org. (For v1, this slot is
+     *             read but the Morpho aggregator is a Phase-3.5
+     *             follow-up — the address can be set early so the
+     *             registry is ready when the reader lands.)
+     *
+     * @param aaveV3PoolDataProvider Aave V3 data-provider, or zero.
+     * @param compoundV3Comet        Compound V3 Comet (one), or zero.
+     * @param morphoBlue             Morpho-Blue contract, or zero.
+     */
+    function setPeerProtocolAddresses(
+        address aaveV3PoolDataProvider,
+        address compoundV3Comet,
+        address morphoBlue
+    ) external {
+        LibVaipakam.setPeerProtocolAddresses(
+            aaveV3PoolDataProvider,
+            compoundV3Comet,
+            morphoBlue
+        );
+    }
+
+    /// @notice Read the configured peer-protocol addresses for this
+    ///         chain. Single-call view that returns the full triple,
+    ///         shaped to feed the protocol-console + the audit-package
+    ///         per-chain verification step.
+    function getPeerProtocolAddresses()
+        external
+        view
+        returns (
+            address aaveV3PoolDataProvider,
+            address compoundV3Comet,
+            address morphoBlue
+        )
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        return (s.aaveV3PoolDataProvider, s.compoundV3Comet, s.morphoBlue);
+    }
 }

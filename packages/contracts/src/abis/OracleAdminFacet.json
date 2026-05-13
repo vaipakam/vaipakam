@@ -51,6 +51,29 @@
   },
   {
     "type": "function",
+    "name": "getPeerProtocolAddresses",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "aaveV3PoolDataProvider",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "compoundV3Comet",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "morphoBlue",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "getPythConfidenceMaxBps",
     "inputs": [],
     "outputs": [
@@ -236,6 +259,29 @@
         "name": "minValidAnswer",
         "type": "int256",
         "internalType": "int256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "setPeerProtocolAddresses",
+    "inputs": [
+      {
+        "name": "aaveV3PoolDataProvider",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "compoundV3Comet",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "morphoBlue",
+        "type": "address",
+        "internalType": "address"
       }
     ],
     "outputs": [],
@@ -474,6 +520,31 @@
         "type": "int256",
         "indexed": false,
         "internalType": "int256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "PeerProtocolAddressesSet",
+    "inputs": [
+      {
+        "name": "aaveV3PoolDataProvider",
+        "type": "address",
+        "indexed": false,
+        "internalType": "address"
+      },
+      {
+        "name": "compoundV3Comet",
+        "type": "address",
+        "indexed": false,
+        "internalType": "address"
+      },
+      {
+        "name": "morphoBlue",
+        "type": "address",
+        "indexed": false,
+        "internalType": "address"
       }
     ],
     "anonymous": false

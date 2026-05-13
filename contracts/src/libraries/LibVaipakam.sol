@@ -2278,6 +2278,38 @@ library LibVaipakam {
         address uniswapV2Factory;
         address sushiswapV2Factory;
         address pancakeswapV2Factory;
+        // ── Phase 3 of AutonomousLtvAndOracleFallback.md — peer-protocol addresses ──
+        // Per-chain peer-lending-protocol addresses that the autonomous
+        // tier-LTV cache reads (Phase 4 builds the refresh function on
+        // top of these). All read-only — Vaipakam never writes to peer
+        // contracts; the addresses just say "where to read LTV data
+        // from for each protocol on this chain".
+        //
+        // Zero ⇒ skip that peer in the aggregation (peer not deployed
+        // on this chain). A fresh deploy has all three unset; the
+        // refresh function then falls back to library defaults.
+        //
+        // Governance setter: `OracleAdminFacet.setPeerProtocolAddresses`
+        // under `ORACLE_ADMIN_ROLE`. Addresses verified against each
+        // peer's official docs at the deploy step + audit.
+        //
+        // `aaveV3PoolDataProvider` — Aave V3's public data-provider
+        // contract. Calls `getReserveConfigurationData(asset)` to read
+        // an asset's LTV + liquidation threshold in BPS.
+        //
+        // `compoundV3Comet` — A single Compound V3 Comet (one base
+        // asset per Comet — typically the chain's largest by liquidity;
+        // operator picks at deploy). Multi-Comet aggregation is a
+        // documented Phase-3-follow-up; for v1, the single Comet is
+        // enough to add Compound to the consensus.
+        //
+        // `morphoBlue` — Morpho-Blue contract for per-market parameter
+        // reads. Documented as Phase-3-follow-up; v1 reads only Aave
+        // + Compound, so this slot can sit at zero until the
+        // market-id enumeration story is built (deferred to Phase 3.5).
+        address aaveV3PoolDataProvider;
+        address compoundV3Comet;
+        address morphoBlue;
     }
 
     /// @dev Range Orders Phase 1 — set by matchOffers, read by
@@ -3227,6 +3259,37 @@ library LibVaipakam {
         uint40 maxStaleness,
         int256 minValidAnswer
     );
+
+    /// @notice Emitted on every change to the autonomous tier-LTV
+    ///         peer-protocol read addresses (Phase 3 of
+    ///         AutonomousLtvAndOracleFallback.md). Off-chain monitoring
+    ///         watches this so a governance change is publicly
+    ///         observable.
+    /// @custom:event-category informational/config
+    event PeerProtocolAddressesSet(
+        address aaveV3PoolDataProvider,
+        address compoundV3Comet,
+        address morphoBlue
+    );
+
+    /// @dev Set the per-chain peer-lending-protocol addresses the
+    ///      autonomous tier-LTV cache reads. Owner-only — after the
+    ///      governance handover the owner is the TimelockController,
+    ///      so every change is 48h-gated. Setting any to `address(0)`
+    ///      skips that peer in the aggregation (treat as "peer not
+    ///      deployed on this chain").
+    function setPeerProtocolAddresses(
+        address aaveV3PoolDataProvider,
+        address compoundV3Comet,
+        address morphoBlue
+    ) internal {
+        LibDiamond.enforceIsContractOwner();
+        Storage storage s = storageSlot();
+        s.aaveV3PoolDataProvider = aaveV3PoolDataProvider;
+        s.compoundV3Comet = compoundV3Comet;
+        s.morphoBlue = morphoBlue;
+        emit PeerProtocolAddressesSet(aaveV3PoolDataProvider, compoundV3Comet, morphoBlue);
+    }
 
     /// @notice Installs or clears a per-feed staleness + min-answer
     ///         override for a specific Chainlink aggregator.

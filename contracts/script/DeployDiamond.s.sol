@@ -598,7 +598,7 @@ contract DeployDiamond is Script {
     }
 
     function _getOracleAdminSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](30);
+        s = new bytes4[](32);
         s[0] = OracleAdminFacet.setChainlinkRegistry.selector;
         s[1] = OracleAdminFacet.setUsdChainlinkDenominator.selector;
         s[2] = OracleAdminFacet.setEthChainlinkDenominator.selector;
@@ -640,6 +640,13 @@ contract DeployDiamond is Script {
         s[27] = OracleAdminFacet.getPythNumeraireMaxDeviationBps.selector;
         s[28] = OracleAdminFacet.setPythConfidenceMaxBps.selector;
         s[29] = OracleAdminFacet.getPythConfidenceMaxBps.selector;
+        // Phase 3 of AutonomousLtvAndOracleFallback.md — per-chain
+        // peer-lending-protocol addresses the autonomous tier-LTV cache
+        // reads (Aave V3 PoolDataProvider, Compound V3 Comet, Morpho-Blue).
+        // Set via owner-only setter; Phase 4 builds the refresh function
+        // on top of these addresses.
+        s[30] = OracleAdminFacet.setPeerProtocolAddresses.selector;
+        s[31] = OracleAdminFacet.getPeerProtocolAddresses.selector;
     }
 
     function _getNFTSelectors() internal pure returns (bytes4[] memory s) {
