@@ -449,6 +449,33 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
     /**
      * @dev Runs the initial LTV and HF gates via cross-facet staticcalls.
      *      Kept as a dedicated frame to isolate ltv/maxLtv/hf locals.
+     *
+     *      Two regimes, switched by `depthTieredLtvEnabled` (Piece B —
+     *      docs/DesignsAndPlans/MarketRateWidgetAndDepthTieredLTV.md §4.2):
+     *
+     *        • OFF (the default — and the state during the testnet bake):
+     *          today's gate, unchanged — `LTV ≤ assetRiskParams.maxLtvBps`
+     *          and `HF ≥ 1.5e18`. Effectively ~53% LTV on an ~82%
+     *          liq-threshold.
+     *
+     *        • ON: cap the init-LTV at `min(assetRiskParams.maxLtvBps,
+     *          tierMaxInitLtvBps[effectiveTier(collateral)])` — the
+     *          depth-graded ceiling (50% / 60% / 65% for Tier 1/2/3;
+     *          `0` for a Tier-0 / untierable collateral, which makes any
+     *          positive LTV revert). The `HF ≥ 1.5e18` floor is relaxed
+     *          to `HF ≥ 1e18` (not-born-already-liquidatable) because the
+     *          tier cap is the binding safety constraint and — given the
+     *          protocol invariant `maxLtvBps ≤ liqThresholdBps` — it
+     *          already implies a positive init buffer (`HF_init =
+     *          liqThreshold / cap ≥ 1`). Per-asset `liqThresholdBps` (the
+     *          liquidation trigger) is untouched in either regime.
+     *
+     *      `effectiveTier` = `OracleFacet.getEffectiveLiquidityTier`
+     *      = `min(on-chain slippage tier, keeperTier)` — so a brand-new
+     *      asset stays at today's `HF ≥ 1.5` baseline (Tier 1) until the
+     *      off-chain confidence relay promotes it; a compromised keeper
+     *      can only lower a tier, never raise it above the on-chain
+     *      ceiling. The view never reverts (fail-closed to `0`).
      */
     function _checkInitialLtvAndHf(
         uint256 loanId,
@@ -463,7 +490,28 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
             .storageSlot()
             .assetRiskParams[collateralAsset]
             .maxLtvBps;
-        if (ltv > maxLtvBps) revert LTVExceeded();
+        bool tieredOn = LibVaipakam.cfgDepthTieredLtvEnabled();
+
+        if (tieredOn) {
+            // Depth-graded ceiling: min(per-asset maxLtv, the tier cap for
+            // the collateral's effective liquidity tier). effTier ∈ 0..3;
+            // tier 0 ⇒ cap 0 ⇒ any positive LTV reverts (no borrow).
+            uint8 effTier = abi.decode(
+                LibFacet.crossFacetStaticCall(
+                    abi.encodeWithSelector(
+                        OracleFacet.getEffectiveLiquidityTier.selector,
+                        collateralAsset
+                    ),
+                    LTVCalculationFailed.selector
+                ),
+                (uint8)
+            );
+            uint256 tierCap = LibVaipakam.cfgTierMaxInitLtvBps(effTier);
+            uint256 cap = maxLtvBps < tierCap ? maxLtvBps : tierCap;
+            if (ltv > cap) revert InitLtvAboveTier(ltv, cap);
+        } else if (ltv > maxLtvBps) {
+            revert LTVExceeded();
+        }
 
         bytes memory hfResult = LibFacet.crossFacetStaticCall(
             abi.encodeWithSelector(
@@ -473,7 +521,10 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
             HealthFactorCalculationFailed.selector
         );
         uint256 hf = abi.decode(hfResult, (uint256));
-        if (hf < 150 * 1e16) revert HealthFactorTooLow();
+        // Switch ON ⇒ HF ≥ 1.0 (not born already-liquidatable; the tier
+        // cap is the binding buffer). Switch OFF ⇒ today's HF ≥ 1.5.
+        uint256 hfFloor = tieredOn ? LibVaipakam.HF_LIQUIDATION_THRESHOLD : 150 * 1e16;
+        if (hf < hfFloor) revert HealthFactorTooLow();
     }
 
     /**

@@ -95,6 +95,13 @@ interface IVaipakamErrors {
     // ─── Risk / Collateral ───────────────────────────────────────────────────
     error HealthFactorTooLow();
     error LTVExceeded();
+    /// @notice Depth-tiered LTV (Piece B): the loan's init-LTV exceeds the
+    ///         cap for the collateral's effective liquidity tier
+    ///         (`min(assetRiskParams.maxLtvBps, tierMaxInitLtvBps[
+    ///         effectiveTier])`). Only thrown while `depthTieredLtvEnabled`;
+    ///         a Tier-0 (illiquid / untierable) collateral makes the cap
+    ///         `0`, so any positive LTV reverts this.
+    error InitLtvAboveTier(uint256 ltv, uint256 tierCapBps);
     error IlliquidAsset();
     error NonLiquidAsset();
     /// @notice Risk-math (LTV / HF / volatility-collapse check) called on a
