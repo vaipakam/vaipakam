@@ -317,9 +317,16 @@ The full contract test suite stays green throughout — 1785 passing,
 0 failed, 5 skipped (the 5 skipped are pre-existing time-locked
 ratification tests, unrelated to this work).
 
-Still deferred to a lower-priority follow-up: sanctions-Tier-1 revert
-on the partial path, sequencer-down circuit-breaker on the partial
-path, and the non-liquid-collateral guard on the partial path. None
-block landing — those gates are inherited from the shared sanctions
-/ sequencer / liquidity check pattern that the existing full
-liquidation already exercises in the same test file.
+The remaining shared-gate inheritance items (sanctions-Tier-1,
+sequencer-down circuit-breaker, non-liquid-collateral guard) are now
+exercised positively on the partial path too — four further tests
+across the existing risk-facet and sanctions-oracle test files mock
+each first-line check independently, confirming the partial path
+reverts with the same dedicated error the full liquidation does. A
+negative-control test runs a full happy-path partial as an unflagged
+caller while the sanctions oracle is installed and pointing at a
+DIFFERENT wallet, confirming the Tier-1 gate is selective (receipt
+blocked only for flagged addresses) rather than a universal
+kill-switch.
+
+The partial-liquidation surface now has no untested gate or branch.
