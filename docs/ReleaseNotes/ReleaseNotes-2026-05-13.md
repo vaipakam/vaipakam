@@ -169,3 +169,125 @@ advisory, not a parameter source); the frontend wiring to read the new
 config bundle; and — tracked separately — hardening the liquidation
 keeper bot for the thinner cushion a higher borrow ceiling implies,
 which gates the top tier ramping past its conservative opening value.
+
+## Liquidator hardening — split-route swaps + partial liquidations
+
+The depth-tiered-LTV work above lets governance open the borrow
+ceiling higher per asset (50% / 60% / 65% by tier), which only makes
+sense if the liquidation side can handle the consequence: a thinner
+cushion at the moment a position falls below water. Today's session
+shipped the two main pieces of that follow-up — both of which are
+already on by default and don't depend on the depth-tiered-LTV
+kill-switch.
+
+### Split-route swaps
+
+When a single decentralised-exchange venue can't absorb the full
+collateral size at acceptable slippage on long-tail collateral, the
+keeper can now split the swap across two routes in the same
+transaction. The on-chain side is a new permissionless entry point
+that takes a list of (route, amount) pairs whose amounts sum to the
+loan's total collateral, runs each leg one after the other, and
+checks at the end that the combined output cleared the same
+oracle-derived floor a single-route liquidation would have to clear.
+Any leg that reverts unwinds the whole transaction — there is
+deliberately no "two-out-of-three is fine" half-settled state.
+
+The keeper now fetches a half-size quote on every distressed loan
+alongside the full-size quote it already had (the two requests run in
+parallel, so per-loan latency is unchanged). When the half-size pair
+on two different aggregators combined would clear a configurable
+margin above the single best full-size quote (default 1%), the
+keeper picks split-route; below the threshold the gas overhead isn't
+worth the marginal fill improvement and it falls back to the existing
+single-route try-list with its soft-fallback to the claim-time
+settlement.
+
+### Partial liquidations
+
+The bigger of the two: when a loan is only mildly underwater, the
+keeper no longer needs to swap the whole position. It can sweep just
+a fraction of the collateral, apply the proceeds to the borrower's
+accrued interest and principal, and leave the loan alive — at smaller
+size, with the same maturity date, and with the interest clock
+restarted on the reduced principal from that moment forward. The
+borrower keeps the rest of their collateral and their position; the
+keeper still gets paid the dynamic incentive bonus on the slice.
+
+The on-chain entry point only operates inside the loan's term (after
+maturity, late fees apply and the cleaner close-out is a full
+liquidation or the time-based default route, so the partial path
+deliberately stays out). The fraction is bounded by a new governance
+knob: by default the keeper picks the smallest fraction that brings
+the health factor back above 1.0, but governance can tighten the cap
+per chain (e.g. to Aave's classic 50%) if it wants to limit how
+aggressive a single partial call may be. The function will only
+commit the mutation if the post-call health factor strictly improves
+AND lands at or above 1.0 — any single call that would leave the
+loan still liquidatable reverts, so the keeper picks a larger fraction
+or falls back to full liquidation. If the proceeds would happen to
+zero out all remaining principal, the call also reverts — a "full
+close" by partial is undefined, the keeper retries through full
+liquidation which closes the loan, refunds the borrower's surplus
+collateral, and emits the terminal event. Repeated partials are
+allowed; each emits a fresh non-terminal event for indexers to track.
+
+What's deliberately unlike full liquidation: partial has no soft
+fallback. If every adapter in the keeper's try-list reverts, the
+whole transaction reverts and the borrower's escrow is untouched.
+A still-Active loan can't be in a half-settled state without
+corrupting the lender / borrower claim flow and the position-NFT
+state, so the choice is "complete the partial cleanly OR change
+nothing" — never a partial half-settlement. The keeper retries with
+a smaller fraction, a different route mix, or full liquidation
+(which DOES have the soft-fallback path) on the next tick.
+
+### Keeper decision rule
+
+The keeper's autonomous-liquidation pass now picks between three
+paths per distressed loan in this order: if the loan is in-term AND
+its health factor is in a configurable mildly-distressed band (default
+the [0.95, 1.0) range) AND a half-size quote is available, submit a
+50% partial liquidation; otherwise, if a half-size pair on two
+different aggregators beats the full-size single best by at least the
+configured improvement threshold, submit a split-route swap;
+otherwise, submit the existing single-route failover liquidation.
+The half-size quote is fetched only once and reused for both the
+partial and the split decision, so there is no extra remote-procedure
+call cost from adding the partial branch.
+
+Why the [0.95, 1.0) heuristic: the math says a 50% partial restores
+the health factor back over 1.0 with a small buffer in that band,
+given typical asset risk parameters and an effective swap-fee
+overhead of around 5%. Below 0.95 a 50% partial isn't enough — the
+on-chain "must restore" gate would revert the transaction — so the
+keeper falls back to full liquidation in that regime, no wasted gas.
+A finer model (compute the smallest fraction per-loan that restores
+the health factor by buffer) is the natural next step but isn't
+needed for the current launch envelope; that lands when liquidator
+competition or observed reverts under live operation justify the
+tighter math.
+
+### Test coverage
+
+The validation-gate surface (every revert path BEFORE the swap) has
+13 dedicated tests: every setter bound (admin gate, ≤100% ceiling,
+zero-as-reset, event emission), every entry-point gate (status must
+be Active, health factor must be below 1, must be in-term, fraction
+must be in the bounded range), plus a positive test that the
+post-mutation "health factor must strictly improve" gate fires
+correctly. A real-fixture happy-path test exercises the full mutation
+end-to-end: a loan whose collateral price is dropped via the oracle
+mock to put it just below water, a 50% partial sweep, and assertions
+that the loan stays Active, collateral and principal both decreased,
+the maturity date is preserved exactly, and the health factor lands
+above 1.0 with real (non-mocked) math.
+
+What remains for a follow-up: positive coverage for the deeper-failure
+branches (the "must restore" gate when the partial isn't enough, the
+"full close by partial" guard, the all-adapters-failed path, the
+multi-partial repeated-call regression, the sanctions-Tier-1 revert).
+None of these block landing the feature — they each need oracle-
+manipulation or specific failure-mode fixture work that the gate
+tests already prove the function checks for before the swap. The
+full contract test suite stays green throughout.
