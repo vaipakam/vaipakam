@@ -44,6 +44,24 @@
  *      optimisation could read candidate pairs from the indexer's
  *      `offers` table via the shared D1 binding.
  *
+ *   4. `runLiquidityConfidence(env)` — depth-tiered-LTV liquidity-
+ *      confidence relay (liquidityConfidence.ts; §4.4 step 5 of
+ *      docs/DesignsAndPlans/MarketRateWidgetAndDepthTieredLTV.md). Per
+ *      chain: for each ERC-20 collateral asset in an active loan, ask
+ *      the 0x / 1inch aggregators what a liquidator would net for a sell
+ *      of each tier size, derive the aggregator-confirmed tier (best
+ *      route over the on-chain PAA list, ≤ `liquiditySlippageBps`), and
+ *      walk a D1-backed confidence counter — promote the on-chain
+ *      `keeperTier(asset)` one step only after `LIQ_CONFIDENCE_MIN_CHECKS`
+ *      consecutive eligible ticks spanning ≥ `LIQ_CONFIDENCE_MIN_WINDOW_DAYS`
+ *      days; demote immediately on degradation; never above the on-chain
+ *      ceiling. Tier-3 promotion additionally needs the "battle-tested
+ *      elsewhere" (Aave/Compound/Morpho) advisory — stubbed for v1, so
+ *      the relay caps at Tier 2 until it's wired. Fourth consumer of the
+ *      signing key (`isKeeperEnabled`); also gated on `depthTieredLtvEnabled`
+ *      for the *submit* — the counter is tracked in D1 regardless so the
+ *      catch-up after the switch flips is fast.
+ *
  * NO HTTP routes. The connected app's read-API surface
  * (`/loans/*`, `/offers/*`), the operator services
  * (`/quote/0x`, `/quote/1inch`, `/scan/blockaid`), the Telegram
@@ -57,6 +75,7 @@ import type { Env } from './env';
 import { runWatcher } from './watcher';
 import { runDailyOracleSnapshot } from './dailyOracleSnapshot';
 import { runMatcher } from './matcher';
+import { runLiquidityConfidence } from './liquidityConfidence';
 
 export default {
   async scheduled(
@@ -84,6 +103,12 @@ export default {
       runMatcher(env).catch((err) => {
         // eslint-disable-next-line no-console
         console.error('[keeper] runMatcher pass failed:', err);
+      }),
+    );
+    ctx.waitUntil(
+      runLiquidityConfidence(env).catch((err) => {
+        // eslint-disable-next-line no-console
+        console.error('[keeper] runLiquidityConfidence pass failed:', err);
       }),
     );
   },

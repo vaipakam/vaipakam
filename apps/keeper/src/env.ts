@@ -91,6 +91,22 @@ export interface Env {
   // reverts the second tx so no double-spend.
   KEEPER_ENABLED?: string;
   KEEPER_PRIVATE_KEY?: string;
+
+  // Depth-tiered-LTV liquidity-confidence relay (`liquidityConfidence.ts`,
+  // §4.4 step 5). The off-chain process knobs — how much aggregator-
+  // confirmed evidence must accumulate before the relay promotes an
+  // asset's on-chain `keeperTier` one step. Both default conservatively
+  // when unset; demotion is always immediate (no window) regardless.
+  // The relay only *submits* `setKeeperTier` when the keeper is enabled
+  // AND `depthTieredLtvEnabled` is on for the chain — it tracks the
+  // confidence counter in D1 either way so it catches up fast once
+  // governance flips the switch. (Wiring the Tier-3 "battle-tested on
+  // Aave/Compound/Morpho" advisory is a follow-up — until then the relay
+  // caps at Tier 2.)
+  /** consecutive eligible-to-promote ticks required before a step up (default 5) */
+  LIQ_CONFIDENCE_MIN_CHECKS?: string;
+  /** wall-clock days that eligible streak must also span (default 3) */
+  LIQ_CONFIDENCE_MIN_WINDOW_DAYS?: string;
 }
 
 export interface ChainConfig {
