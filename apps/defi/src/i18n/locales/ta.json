@@ -260,7 +260,10 @@
       "disabledShort": "interval ≥ duration",
       "hintShort": "Pick a cadence to require interest settlement at fixed intervals during the loan. Larger principals (above the configured threshold) unlock finer cadences. If a borrower misses a period after the grace window, anyone can call a settler that sells just enough collateral to cover the shortfall.",
       "hintMultiYear": "Multi-year loans require at least Annual settlement. The borrower must pay each year's accrued interest by the year-end checkpoint, or after the grace window anyone can sell collateral to cover the shortfall — possibly triggering broader liquidation."
-    }
+    },
+    "marketWidgetBanner": "இந்த ஜோடிக்கான தற்போதைய சந்தை விகிதத்தில் (≈ {{rate}}% APR) இடுகிறது. உறுதிசெய்வதற்கு முன் கீழே உள்ள சரத்துக்களை மதிப்பாய்வு செய்து சரிசெய்யவும்.",
+    "firstOfferBanner": "இந்த ஜோடிக்கு இன்னும் சந்தை விகிதம் இல்லை — நீங்கள் முதல் வாய்ப்பை இடுவீர்கள். கீழே வட்டி விகிதத்தை அமைக்கவும்.",
+    "marketWidgetIlliquidBanner": "⚠ இந்த ஜோடியில் திரவ சந்தை இல்லாத சொத்து உள்ளது (ஆரக்கிள் விலை இல்லை). நெறிமுறையால் இங்கு குறைந்தபட்ச ஈட்டை தானாகக் கணக்கிட முடியாது அல்லது நிலையான ஆரோக்கிய காரணி / LTV சோதனைகளை இயக்க முடியாது — நீங்களும் உங்கள் எதிர் தரப்பினரும் நேரடியாக விலையை நிர்ணயிக்கிறீர்கள் இருவரும் சம்மதிக்க வேண்டும். கீழே அனைத்து சரத்துகளையும் அமைக்கவும்."
   },
   "loanDetails": {
     "connectTitle": "உங்கள் வாலெட்டை இணைக்கவும்",
@@ -1791,5 +1794,21 @@
     "message": "வைப்பகத்தின் புதிய பதிப்பு கிடைக்கிறது.",
     "reload": "மீண்டும் ஏற்று",
     "reloading": "ஏற்றுகிறது…"
+  },
+  "marketRateWidget": {
+    "title": "சந்தை விகிதத்தில் கடன் கொடு / எடு",
+    "lendingAmountLabel": "கடன் தொகை",
+    "marketRateHint": "தற்போதைய சந்தை விகிதம் ≈ {{rate}}% APR",
+    "noMarketRateHint": "இந்த ஜோடிக்கு இன்னும் சந்தை விகிதம் இல்லை — நீங்கள் முதல் வாய்ப்பை இடுவீர்கள்",
+    "minCollateralHint": "குறைந்தபட்ச ஈடு ≈ {{amount}}",
+    "minCollateralPrompt": "குறைந்தபட்ச ஈட்டைப் பார்க்க கடன் தொகையை உள்ளிடவும்",
+    "computingMinCollateral": "குறைந்தபட்ச ஈடு கணக்கிடப்படுகிறது…",
+    "illiquidCollateralHint": "இந்தச் சொத்து திரவ சந்தையில் இல்லை — வாய்ப்புப் பக்கத்தில் ஈட்டுச் சரத்துகளை அமைக்கவும்",
+    "lendButton": "சந்தை விகிதத்தில் கடன் கொடு",
+    "borrowButton": "சந்தை விகிதத்தில் கடன் எடு",
+    "footnote": "விகிதம், தொகை மற்றும் குறைந்தபட்ச ஈடு முன்-நிரப்பப்பட்ட நிலையில் வாய்ப்பை உருவாக்கு பக்கத்தை திறக்கிறது — அங்கு உறுதிசெய்கிறீர்கள். குறைந்தபட்ச ஈடு என்பது கடனின் ஆரோக்கிய காரணியை நெறிமுறையின் அடிமட்டத்தில் (1.5) வைத்திருக்கும் மிகச் சிறிய தொகை; நீங்கள் அதை அதிகரிக்கலாம், குறைக்க முடியாது."
+  },
+  "liquidityNotice": {
+    "thinCollateralOnChain": "⚠ இந்த ஈட்டுச் சொத்துக்கு இந்தச் சங்கிலியில் திரவத்தன்மை குறைவாக உள்ளது. இங்கு கலைக்கப்பட்டால், பரிமாற்றம் விலையுயர்ந்ததாக இருக்கலாம் அல்லது தோல்வியடையலாம் — இந்தச் சொத்து வேறு சங்கிலியில் மிகவும் ஆழமாக இருக்கலாம். அதிக திரவத்தன்மை உள்ள சங்கிலியைப் பயன்படுத்த பரிசீலிக்கவும்."
   }
 }

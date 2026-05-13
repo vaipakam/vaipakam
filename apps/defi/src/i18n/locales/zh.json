@@ -260,7 +260,10 @@
       "disabledShort": "interval ≥ duration",
       "hintShort": "Pick a cadence to require interest settlement at fixed intervals during the loan. Larger principals (above the configured threshold) unlock finer cadences. If a borrower misses a period after the grace window, anyone can call a settler that sells just enough collateral to cover the shortfall.",
       "hintMultiYear": "Multi-year loans require at least Annual settlement. The borrower must pay each year's accrued interest by the year-end checkpoint, or after the grace window anyone can sell collateral to cover the shortfall — possibly triggering broader liquidation."
-    }
+    },
+    "marketWidgetBanner": "按此交易对当前市场利率(≈ {{rate}}% 年化)发布。请在确认前审查并调整下方条款。",
+    "firstOfferBanner": "此交易对暂无市场利率 — 您将发布首个报价。请在下方设置利率。",
+    "marketWidgetIlliquidBanner": "⚠ 此交易对包含无流动市场的资产(无预言机价格)。协议无法在此自动计算最低抵押或执行标准的健康度 / LTV 检查 — 您和对手方需直接定价,双方均需同意。请在下方设置所有条款。"
   },
   "loanDetails": {
     "connectTitle": "连接您的钱包",
@@ -1791,5 +1794,21 @@
     "message": "Vaipakam 有新版本可用。",
     "reload": "重新加载",
     "reloading": "正在重新加载…"
+  },
+  "marketRateWidget": {
+    "title": "按市场利率出借 / 借入",
+    "lendingAmountLabel": "出借金额",
+    "marketRateHint": "当前市场利率 ≈ {{rate}}% 年化",
+    "noMarketRateHint": "此交易对暂无市场利率 — 您将发布首个报价",
+    "minCollateralHint": "最低抵押 ≈ {{amount}}",
+    "minCollateralPrompt": "输入出借金额以查看最低抵押",
+    "computingMinCollateral": "正在计算最低抵押…",
+    "illiquidCollateralHint": "此资产没有流动市场 — 请在报价页面设置抵押条款",
+    "lendButton": "按市场利率出借",
+    "borrowButton": "按市场利率借入",
+    "footnote": "打开「创建报价」页面,已预填利率、金额和最低抵押 — 您在那里确认。最低抵押是使贷款健康度保持在协议下限(1.5)的最小值;您可以提高,不可降低。"
+  },
+  "liquidityNotice": {
+    "thinCollateralOnChain": "⚠ 该抵押资产在此链上流动性较薄。如果在此清算,兑换可能成本高或失败 — 该资产在另一条链上可能流动性更深。建议使用流动性更好的链。"
   }
 }
