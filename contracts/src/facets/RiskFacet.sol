@@ -817,8 +817,9 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
         uint256 loanIdB,
         uint256 loanIdC
     ) external nonReentrant whenNotPaused {
-        // Tier-1 sanctions: matcher gets 1% per leg in PR5; blocking
-        // sanctioned wallets here keeps the value-receipt path closed.
+        // Tier-1 sanctions: matcher receives 1% per leg in PR5;
+        // blocking sanctioned wallets here keeps the value-receipt
+        // path closed.
         LibVaipakam._assertNotSanctioned(msg.sender);
 
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
@@ -833,30 +834,27 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
             if (loanIdC == loanIdB) revert InternalMatchSelfPair(loanIdB);
         }
 
-        LibVaipakam.Loan storage la = s.loans[loanIdA];
-        LibVaipakam.Loan storage lb = s.loans[loanIdB];
-        if (la.id == 0 || la.status != LibVaipakam.LoanStatus.Active)
+        if (s.loans[loanIdA].id == 0 || s.loans[loanIdA].status != LibVaipakam.LoanStatus.Active)
             revert InternalMatchLoanNotActive(loanIdA);
-        if (lb.id == 0 || lb.status != LibVaipakam.LoanStatus.Active)
+        if (s.loans[loanIdB].id == 0 || s.loans[loanIdB].status != LibVaipakam.LoanStatus.Active)
             revert InternalMatchLoanNotActive(loanIdB);
 
         // Asset opposition — 2-loan symmetric form.
         if (loanIdC == 0) {
             if (
-                la.principalAsset != lb.collateralAsset ||
-                la.collateralAsset != lb.principalAsset
+                s.loans[loanIdA].principalAsset != s.loans[loanIdB].collateralAsset ||
+                s.loans[loanIdA].collateralAsset != s.loans[loanIdB].principalAsset
             ) {
                 revert InternalMatchAssetMismatch(loanIdA, loanIdB);
             }
         } else {
             // 3-loan cycle A→B→C→A.
-            LibVaipakam.Loan storage lc = s.loans[loanIdC];
-            if (lc.id == 0 || lc.status != LibVaipakam.LoanStatus.Active)
+            if (s.loans[loanIdC].id == 0 || s.loans[loanIdC].status != LibVaipakam.LoanStatus.Active)
                 revert InternalMatchLoanNotActive(loanIdC);
             if (
-                la.principalAsset != lb.collateralAsset ||
-                lb.principalAsset != lc.collateralAsset ||
-                lc.principalAsset != la.collateralAsset
+                s.loans[loanIdA].principalAsset != s.loans[loanIdB].collateralAsset ||
+                s.loans[loanIdB].principalAsset != s.loans[loanIdC].collateralAsset ||
+                s.loans[loanIdC].principalAsset != s.loans[loanIdA].collateralAsset
             ) {
                 revert InternalMatchChainBroken(loanIdA, loanIdB, loanIdC);
             }
@@ -867,14 +865,137 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
         _requireLtvAboveFloor(loanIdB);
         if (loanIdC != 0) _requireLtvAboveFloor(loanIdC);
 
-        // PR4 body-less success: placeholder event so keeper-bot
-        // wiring + integration tests can exercise the gate matrix.
+        // PR5 execution body. 2-way today (PR5.5 will add the 3-way
+        // chain — see `Out of scope` in the design doc). The body
+        // implements partial-match α from §7 of
+        // InternalLiquidationLedger.md: each leg moves
+        // `min(debt, opposingCollateral)` of the receiving lender's
+        // asset, 1% withheld for `msg.sender` (the matcher), 99% to
+        // the lender's escrow. Loans whose principal hits zero
+        // transition to `LoanStatus.InternalMatched`; partial
+        // residuals stay `Active` for the next block's matching
+        // attempt or external fallback once LTV crosses the
+        // priority-window ceiling.
+        if (loanIdC != 0) {
+            // PR5.5 — 3-way chain match is tracked but not yet
+            // implemented in this PR. Validation flow is complete
+            // (any chain that would have matched produces a clean
+            // revert here instead of a misleading no-op).
+            revert("InternalMatch3WayPending");
+        }
+
+        (
+            uint256 movedX,
+            uint256 movedY,
+            uint256 incentiveX,
+            uint256 incentiveY
+        ) = _executeTwoWayMatch(loanIdA, loanIdB);
+
         emit InternalMatchExecuted(
-            loanIdA, loanIdB, loanIdC,
+            loanIdA, loanIdB, 0,
             msg.sender,
-            0, 0, 0,
-            0, 0, 0
+            movedX, movedY, 0,
+            incentiveX, incentiveY, 0
         );
+    }
+
+    /// @dev Execute the partial-match α swap between two opposing
+    ///      loans. Returns the gross moved amounts and the
+    ///      bot-incentive amounts in each leg's asset. Splits the
+    ///      withdraws into a 99% lender share + 1% matcher share so
+    ///      neither party touches the diamond's balance directly.
+    ///      Loans whose principal clears transition to
+    ///      `InternalMatched`; partial residuals stay `Active`.
+    function _executeTwoWayMatch(uint256 loanIdA, uint256 loanIdB)
+        private
+        returns (uint256 movedX, uint256 movedY, uint256 incentiveX, uint256 incentiveY)
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        LibVaipakam.Loan storage la = s.loans[loanIdA];
+        LibVaipakam.Loan storage lb = s.loans[loanIdB];
+
+        // Independent mins on each leg (design §7.1 α): each leg
+        // moves the smaller of the receiving lender's owed amount
+        // and the paying borrower's available collateral.
+        movedX = la.principal < lb.collateralAmount ? la.principal : lb.collateralAmount;
+        movedY = lb.principal < la.collateralAmount ? lb.principal : la.collateralAmount;
+
+        uint256 incentiveBps = LibVaipakam.cfgInternalMatchIncentivePerLegBps();
+        incentiveX = (movedX * incentiveBps) / LibVaipakam.BASIS_POINTS;
+        incentiveY = (movedY * incentiveBps) / LibVaipakam.BASIS_POINTS;
+        uint256 lenderShareX = movedX - incentiveX;
+        uint256 lenderShareY = movedY - incentiveY;
+
+        // Leg X — B's collateral (= A's principal asset) pays A's
+        // lender (99%) + matcher (1%). All withdraws come from
+        // B's borrower's escrow.
+        address xAsset = la.principalAsset;
+        if (movedX > 0) {
+            address aLenderEscrow = EscrowFactoryFacet(address(this))
+                .getOrCreateUserEscrow(la.lender);
+            if (lenderShareX > 0) {
+                EscrowFactoryFacet(address(this)).escrowWithdrawERC20(
+                    lb.borrower, xAsset, aLenderEscrow, lenderShareX
+                );
+                EscrowFactoryFacet(address(this)).recordEscrowDepositERC20(
+                    la.lender, xAsset, lenderShareX
+                );
+            }
+            if (incentiveX > 0) {
+                EscrowFactoryFacet(address(this)).escrowWithdrawERC20(
+                    lb.borrower, xAsset, msg.sender, incentiveX
+                );
+            }
+        }
+
+        // Leg Y — A's collateral (= B's principal asset) pays B's
+        // lender (99%) + matcher (1%).
+        address yAsset = lb.principalAsset;
+        if (movedY > 0) {
+            address bLenderEscrow = EscrowFactoryFacet(address(this))
+                .getOrCreateUserEscrow(lb.lender);
+            if (lenderShareY > 0) {
+                EscrowFactoryFacet(address(this)).escrowWithdrawERC20(
+                    la.borrower, yAsset, bLenderEscrow, lenderShareY
+                );
+                EscrowFactoryFacet(address(this)).recordEscrowDepositERC20(
+                    lb.lender, yAsset, lenderShareY
+                );
+            }
+            if (incentiveY > 0) {
+                EscrowFactoryFacet(address(this)).escrowWithdrawERC20(
+                    la.borrower, yAsset, msg.sender, incentiveY
+                );
+            }
+        }
+
+        // State updates — debt cleared by the gross moved amount
+        // (borrower forfeits the full amount; the 1% they "would
+        // have paid the lender" is reallocated to the matcher).
+        la.principal -= movedX;
+        lb.collateralAmount -= movedX;
+        lb.principal -= movedY;
+        la.collateralAmount -= movedY;
+
+        // Status transitions — when a loan's principal hits zero
+        // it transitions to `InternalMatched` and exits the active
+        // list. Any residual collateral stays on the loan struct
+        // for the borrower to claim through the existing claim
+        // flow (the analogous Repaid → Settled path).
+        if (la.principal == 0) {
+            LibLifecycle.transition(
+                la,
+                LibVaipakam.LoanStatus.Active,
+                LibVaipakam.LoanStatus.InternalMatched
+            );
+        }
+        if (lb.principal == 0) {
+            LibLifecycle.transition(
+                lb,
+                LibVaipakam.LoanStatus.Active,
+                LibVaipakam.LoanStatus.InternalMatched
+            );
+        }
     }
 
     /// @dev Internal helper for `triggerInternalMatchLiquidation` —

@@ -41,7 +41,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](60);
+        selectors = new bytes4[](61);
         selectors[0] = TestMutatorFacet.setLoan.selector;
         selectors[1] = TestMutatorFacet.setOffer.selector;
         selectors[2] = TestMutatorFacet.setNextLoanId.selector;
@@ -148,6 +148,10 @@ contract HelperTest {
         // to a single value (e.g. 8500) and preserve legacy HF math
         // that assumed an 85% per-asset threshold.
         selectors[59] = TestMutatorFacet.setTierLiquidationLtvBpsAllRaw.selector;
+        // PR5 — direct write to `protocolTrackedEscrowBalance` so
+        // execution-body tests can scaffold loans without running
+        // the `initiateLoan` flow.
+        selectors[60] = TestMutatorFacet.setProtocolTrackedEscrowBalanceRaw.selector;
         return selectors;
     }
 

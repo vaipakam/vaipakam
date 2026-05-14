@@ -221,6 +221,24 @@ contract TestMutatorFacet {
         LibVaipakam.storageSlot().interactionCapVpfiPerEth = value;
     }
 
+    /// @notice Write `protocolTrackedEscrowBalance[user][token]`
+    ///         directly. PR5 of internal-match work — execution-body
+    ///         tests `scaffoldActiveLoan` + `ERC20Mock.mint(escrow,
+    ///         …)` to set up loans without going through the
+    ///         `initiateLoan` HF gate, but that bypasses the
+    ///         counter that `escrowDepositERC20` would otherwise
+    ///         tick up. Without a matching counter write, the
+    ///         later `escrowWithdrawERC20` underflows when it
+    ///         decrements an untracked balance. This helper closes
+    ///         that gap purely for tests.
+    function setProtocolTrackedEscrowBalanceRaw(
+        address user,
+        address token,
+        uint256 amount
+    ) external {
+        LibVaipakam.storageSlot().protocolTrackedEscrowBalance[user][token] = amount;
+    }
+
     /// @notice Write all three per-tier liquidation-LTV slots in
     ///         `protocolCfg` directly. PR2 of internal-match work —
     ///         lets tests that don't cut `ConfigFacet` (most legacy

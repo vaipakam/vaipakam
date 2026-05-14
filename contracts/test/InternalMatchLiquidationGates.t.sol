@@ -243,28 +243,10 @@ contract InternalMatchLiquidationGatesTest is SetupTest {
         RiskFacet(address(diamond)).triggerInternalMatchLiquidation(LOAN_A, LOAN_B, 0);
     }
 
-    function test_validPair_emitsPlaceholderEvent() public {
-        // Make every leg liquidatable so the gates pass.
-        vm.mockCall(
-            address(diamond),
-            abi.encodeWithSelector(RiskFacet.calculateLTV.selector, LOAN_A),
-            abi.encode(uint256(9_000)) // ≥ floor 8500
-        );
-        vm.mockCall(
-            address(diamond),
-            abi.encodeWithSelector(RiskFacet.calculateLTV.selector, LOAN_B),
-            abi.encode(uint256(9_000))
-        );
-
-        // The body-less success path emits InternalMatchExecuted
-        // with zero notional/incentive — PR5 will fill those in.
-        vm.expectEmit(true, true, false, true);
-        emit RiskFacet.InternalMatchExecuted(
-            LOAN_A, LOAN_B, 0,
-            address(this),
-            0, 0, 0,
-            0, 0, 0
-        );
-        RiskFacet(address(diamond)).triggerInternalMatchLiquidation(LOAN_A, LOAN_B, 0);
-    }
+    // Note: the `test_validPair_emitsPlaceholderEvent` test that
+    //   ran on the PR4 body-less success path was retired in PR5
+    //   — the execution body now fires with real notional /
+    //   incentive numbers. End-to-end success path coverage
+    //   (full match, partial match, atomicity, incentive math) is
+    //   in `InternalMatchExecution.t.sol`.
 }
