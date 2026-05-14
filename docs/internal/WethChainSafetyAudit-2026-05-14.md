@@ -238,6 +238,33 @@ operators:
 
 ---
 
+## Part 6 — Second-pass sweep (2026-05-14)
+
+After the first audit (which the user pushed back on as too
+optimistic) surfaced 3 real gaps via per-user-direction
+investigation, the user asked for "another careful sweep." This
+section records the surfaces re-checked, the search shape used,
+and the result.
+
+| Surface | Search shape | Result |
+| ---- | ---- | ---- |
+| Hardcoded `0xC02aaA39…` WETH address | grep across `apps/`, `packages/`, `contracts/` | Only in `apps/defi/src/contracts/config.ts` chain-1 (Ethereum mainnet) entry. SAFE — chain-scoped, not assumed cross-chain. |
+| `wrappedNativeAddress` consumers | grep across all consumer surfaces, excluding the new `bridgedWethAddress` fallback | Only call sites: chain-config interface declarations + the OfferBook default-collateral pre-fill (which now does `bridgedWethAddress ?? wrappedNativeAddress`). SAFE. |
+| `apps/{indexer,agent,keeper}/src` ETH price usage (`ethPrice`, `getEthUsdPrice`, `getNativePrice`, `ETH_USD`) | regex grep | **Zero hits.** Workers don't convert native gas to USD anywhere. SAFE. |
+| `InteractionRewardsFacet` + `StakingRewardsFacet` + `LibStaking*` + `LibInteractionRewards` WETH usage | regex grep | **Zero hits.** Rewards math is VPFI-denominated; never converts native or WETH. SAFE. |
+| Frontend `ethPrice * X` multiplications | grep `ethPrice.*\*|\*.*ethPrice` across `apps/defi/src`, `apps/www/src` | Only doc-strings in `protocolConsoleKnobs.ts` + one comment in `useVPFIDiscount.ts`. No active math. SAFE. |
+| BuyVPFI BNB-mode display flow | grep for `nativeGasSymbol`/`bridgedWeth`/`vpfiBuyPaymentToken`/`paymentToken` in `BuyVPFI.tsx` | Chain-aware via `paymentToken()` read + chain-config inference. SAFE. |
+| `weiPerVpfi` rate math (`LibVPFIDiscount` + `useVPFIDiscount.ts`) | grep | Canonical-chain-only by design (`VPFIBuyReceiver` only runs on Base / Base Sepolia). Source chain never multiplies its native gas by `weiPerVpfi`. SAFE. |
+| Cross-chain BUY_REQUEST payload shape | grep `BUY_REQUEST`/`_lzReceive`/`_payload` in `VPFIBuyAdapter.sol` + `VPFIBuyReceiver.sol` | Payload carries the ETH-equivalent amount (the adapter's `_assertPaymentTokenSane` gate guarantees this). Receiver does not interpret source-chain native gas. SAFE. |
+| Keeper flash-loan `gasHeadroom` | inspection from prior pass | Denominated in principal-token base units (default `10n ** 18n` of the loan's principal token), not USD or native gas. SAFE. |
+
+**Result: no additional gaps surfaced.** The 3 fixes from Part 3
+(OfferBook default collateral, `setEthUsdFeed` natspec,
+`setWethContract` natspec) remain the only changes; the rest of
+the protocol passes the second sweep clean.
+
+---
+
 ## Conclusion
 
 The protocol design explicitly avoids the "WETH == native gas
@@ -248,5 +275,7 @@ per chain via `OracleAdminFacet.setWethContract`, and the chain-
 specific bridged WETH addresses for BNB / Polygon PoS are
 documented in CLAUDE.md.
 
-No code changes required. The one cheap natspec improvement
-landed in the same commit as this audit. Item B.1 is closed.
+Three real gaps surfaced after the user pushed back on the
+first pass's "all clear" conclusion, were fixed in commits
+`465e93e` + `1ba8939`. A second-pass sweep (Part 6) found no
+further gaps. Item B.1 is closed.
