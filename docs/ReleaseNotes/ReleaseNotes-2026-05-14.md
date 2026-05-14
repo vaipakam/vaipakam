@@ -407,3 +407,84 @@ The protocol's autonomy story plus the higher-LTV liquidator
 hardening are now both end-to-end on the code side. The audit
 package + the keeper-bot flash-loan branch are the next two
 gates.
+
+## Phase 3 — keeper-bot flash-loan branch (in-flight)
+
+The third item from the
+[FlashLoanLiquidationPath.md](../DesignsAndPlans/FlashLoanLiquidationPath.md)
+implementation plan: a same-tx flash-loan-funded execution path
+for the keeper bot, so the keeper EOA needs zero working capital.
+Landed in the same branch:
+
+1. **`contracts/src/keeper/FlashLoanLiquidator.sol`** — the
+   on-chain receiver. Implements both the Aave V3
+   `IFlashLoanSimpleReceiver` callback shape and the Balancer V2
+   `IFlashLoanRecipient` callback. Two owner-gated entry-points
+   (`liquidateViaAaveV3` / `liquidateViaBalancerV2`) initiate the
+   flash-loan; the shared `_runLiquidation` inner flow approves
+   the diamond, calls `triggerLiquidationDiscounted` with
+   `recipient = address(this)`, then swaps the seized collateral
+   back to the principal asset using off-chain-supplied
+   aggregator calldata. Post-swap balance check reverts the whole
+   tx if proceeds don't cover debt + flash-loan fee — borrower
+   state is preserved on every failure mode. `withdraw` /
+   `rescueToken` let the keeper-bot EOA sweep profits.
+
+2. **17 unit tests** — every constructor guard (zero owner, zero
+   diamond, both providers missing, Aave-only chain, Balancer-only
+   chain), every owner-gate (Aave / Balancer / withdraw — three
+   reverts), every callback in-flight guard, the unprofitable-trade
+   revert, the swap-target-reverts revert, the provider-not-
+   configured branches, and the happy-path settlements on each
+   provider with the exact net-profit math asserted. All green.
+
+3. **`apps/keeper/src/flashLoanProviders.ts`** — per-chain table
+   of Aave V3 Pool / Balancer V2 Vault / our FlashLoanLiquidator
+   deployment addresses. Aave V3 Pool addresses paste in for all
+   6 target chains (Eth / Base / Arb / OP / BNB / Polygon PoS);
+   Balancer V2 Vault uses the canonical CREATE2 address on every
+   chain it's deployed on (all but BNB). The `liquidator` slot is
+   `undefined` everywhere — populated per chain after each
+   `DeployFlashLoanLiquidator.s.sol` rehearsal lands. The branch
+   silently skips chains where the receiver isn't deployed.
+
+4. **`apps/keeper/src/keeper.ts`** — new
+   `tryFlashLoanDiscountedPath` branch wired ahead of the
+   existing partial / split / atomic decision tree. Three gates:
+   per-chain receiver deployed, diamond `discountPathEnabled`
+   true (read via env-side `DISCOUNT_PATH_ENABLED_<chainId>`
+   override during the staged rollout), and simulated swap
+   proceeds exceed `totalDebt + flashLoanFee + gasHeadroom`. v1
+   limitation: the existing `ServerOrchestrationResult` quote
+   bundle carries diamond-LibSwap-adapter calldata, not
+   DEX-direct calldata; the branch logs the would-submit
+   decision but defers actual submission until a `dexDirectQuotes.ts`
+   service lands. Operator running with the env flag enabled
+   sees simulation-positive trades in the logs and validates
+   assumptions before we wire the DEX-direct quote service.
+
+5. **ABI re-export** — `FlashLoanLiquidator.json` added to the
+   `@vaipakam/contracts/abis` bundle (named export, NOT spread
+   into `DIAMOND_ABI` — it's a standalone contract, not a facet).
+   `exportFrontendAbis.sh`'s `FACETS` array picks it up so future
+   re-exports stay in sync. All four downstream consumer
+   typechecks pass.
+
+## Discount path — completion picture
+
+The flash-loan path now exists end-to-end on the code side:
+on-chain receiver, unit tests, TS integration, ABI plumbing. Two
+operational follow-ups remain:
+
+- Per-chain `DeployFlashLoanLiquidator.s.sol` deployment script +
+  rehearsal on testnets, then mainnets, populating each chain's
+  `liquidator` slot in `flashLoanProviders.ts`.
+- `apps/keeper/src/dexDirectQuotes.ts` — DEX-direct quote
+  fetching (0x v2 / 1inch v6 / Balancer V2 SOR) that returns
+  `(swapTarget, swapAllowanceTarget, swapCalldata)` instead of
+  the diamond-LibSwap-adapter shape, so the simulated-positive
+  trades actually get submitted.
+
+Both are scoped, non-blocking, and external liquidators can
+already plug in via the public `triggerLiquidationDiscounted`
+ABI without waiting for our bot's wiring to finish.

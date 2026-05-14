@@ -106,6 +106,12 @@ FACETS=(
   "VPFIBuyReceiver"
   "VPFIDiscountFacet"
   "VPFITokenFacet"
+  # FlashLoanLiquidationPath.md Phase 3 — standalone reference
+  # receiver contract for `RiskFacet.triggerLiquidationDiscounted`.
+  # NOT a diamond facet, so deliberately NOT spread into
+  # `DIAMOND_ABI` in the barrel; the keeper bot in `apps/keeper`
+  # constructs calls to it directly by named ABI export.
+  "FlashLoanLiquidator"
 )
 
 echo "Exporting ABIs to $OUT_DIR"

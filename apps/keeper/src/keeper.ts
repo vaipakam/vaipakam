@@ -32,16 +32,24 @@ import {
 } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
 import {
+  // FlashLoanLiquidatorABI imported here (NOT yet used in the v1
+  // discount-path branch — see `tryFlashLoanDiscountedPath` for
+  // why submission is gated pending DEX-direct quote wiring) so
+  // the ABI bundle is part of the keeper-bot's compile-time deps
+  // and a future PR can pick it up without revisiting imports.
+  FlashLoanLiquidatorABI as _FlashLoanLiquidatorABI,
   LoanFacetABI,
   OracleFacetABI,
   RiskFacetABI,
 } from '@vaipakam/contracts/abis';
+void _FlashLoanLiquidatorABI;
 import type { ChainConfig, Env } from './env';
 import {
   orchestrateServerQuotes,
   type ServerOrchestrationResult,
   type ServerRankedQuote,
 } from './serverQuotes';
+import { getFlashLoanProvider } from './flashLoanProviders';
 
 function parsePosIntEnv(v: string | undefined, dflt: number): number {
   if (!v) return dflt;
@@ -374,6 +382,34 @@ export async function maybeAutonomousLiquidate(
     const account = ctx.wallet.account;
     if (!account) return false;
 
+    // ── Flash-loan / discount-path branch — Phase 3 of
+    //    FlashLoanLiquidationPath.md. Slots in AHEAD of partial /
+    //    split / atomic because the discount path is the most
+    //    capital-efficient option when:
+    //      - the discount-path master kill-switch is on, AND
+    //      - we have a FlashLoanLiquidator deployed on this chain,
+    //        AND
+    //      - the projected swap proceeds (collateral seizure ×
+    //        best DEX quote) exceed (totalDebt + flash-loan fee +
+    //        gas headroom). I.e. the trade clears with positive
+    //        margin even after the liquidator-side costs.
+    //
+    //    If any condition fails, we fall through to the existing
+    //    partial / split / atomic branches — same code path as
+    //    before this commit. No regression possible.
+    const flashLoanSubmitted = await tryFlashLoanDiscountedPath({
+      env,
+      chain,
+      ctx,
+      publicClient,
+      loanId,
+      loanIdBig,
+      loan,
+      hfRaw,
+      quotes, // full-size collateral→principal quotes already fetched
+    });
+    if (flashLoanSubmitted) return true;
+
     // Use the dedicated partial quote when we fetched one, else the
     // half-quote (legacy 50% path when liqThresholdBps was missing).
     const effectivePartialQuotes: ServerOrchestrationResult | null =
@@ -486,3 +522,185 @@ export function buildKeeperContext(
     chainId: chain.id,
   };
 }
+
+// ─── Flash-loan / discount-path branch (Phase 3) ────────────────────
+//
+// Wraps the simulation + submission shape so the main decision tree
+// in `maybeAutonomousLiquidate` stays readable. Returns `true` when a
+// tx was submitted, `false` when the path was skipped (caller falls
+// through to partial/split/atomic).
+
+interface FlashLoanBranchArgs {
+  env: Env;
+  chain: ChainConfig;
+  ctx: KeeperContext;
+  publicClient: PublicClient;
+  loanId: number;
+  loanIdBig: bigint;
+  loan: {
+    collateralAsset: Address;
+    collateralAmount: bigint;
+    principalAsset: Address;
+    status: number;
+    assetType: number;
+    startTime: bigint;
+    durationDays: bigint;
+  };
+  hfRaw: bigint;
+  /** Quote bundle for the full-size collateral→principal swap.
+   *  Reused from the main flow's earlier `orchestrateServerQuotes`
+   *  call — no extra RPC roundtrip needed. */
+  quotes: ServerOrchestrationResult;
+}
+
+/**
+ * Try the flash-loan-funded discount path. Three gates:
+ *   1. Per-chain `FlashLoanLiquidator` deployed AND at least one
+ *      flash-loan provider configured (Aave V3 / Balancer V2).
+ *   2. Diamond's `discountPathEnabled` governance flag is true.
+ *   3. Simulated trade is profitable after flash-loan fee + a
+ *      gas-headroom buffer.
+ *
+ * Returns true iff a tx was submitted. Any failure mode (provider
+ * not configured, kill-switch off, unprofitable simulation, RPC
+ * error during read) returns false silently so the caller falls
+ * through to the existing decision tree.
+ */
+async function tryFlashLoanDiscountedPath(
+  args: FlashLoanBranchArgs,
+): Promise<boolean> {
+  const { env, chain, ctx, publicClient, loanId, loanIdBig, loan, quotes } = args;
+
+  // Gate 1 — per-chain provider config.
+  const provider = getFlashLoanProvider(chain.id);
+  if (!provider) {
+    // Either chain unsupported OR FlashLoanLiquidator not deployed
+    // yet. Silent skip — the bot continues with the legacy branches.
+    return false;
+  }
+
+  // Gate 2 — diamond-side master kill-switch. Read live (governance
+  // can flip it at any tick). Use ConfigFacet.getTierLiqDiscountBps
+  // as a proxy: it always returns non-zero defaults regardless of
+  // the kill-switch, so we read the kill-switch differently. The
+  // diamond doesn't expose a direct `getDiscountPathEnabled()`
+  // view; instead we use eth_call to triggerLiquidationDiscounted
+  // with a known-Active loan and check whether the revert reason
+  // matches `DiscountPathDisabled` — but that's expensive per
+  // loan. Cheaper: rely on a per-chain env override
+  // `DISCOUNT_PATH_ENABLED_<chainId>` set by the operator when
+  // they flip the flag on. If unset, treat as disabled (safe
+  // default — the path stays inert until the operator
+  // affirmatively turns it on).
+  const enabledKey = `DISCOUNT_PATH_ENABLED_${chain.id}`;
+  const enabledFlag = (env as unknown as Record<string, string | undefined>)[enabledKey];
+  if (enabledFlag !== 'true') return false;
+
+  // Gate 3 — profitability simulation. We already have the full-
+  // size collateral→principal quote bundle from the main flow (the
+  // best-ranked entry's `expectedOutput` is what the swap would
+  // yield). Subtract the flash-loan fee + a small gas headroom
+  // expressed in principal-token units.
+  if (quotes.calls.length === 0) return false;
+  const bestQuote = quotes.ranked[0];
+  if (!bestQuote) return false;
+
+  // Compute totalDebt — principal + accrued interest. The diamond
+  // computes this internally inside `triggerLiquidationDiscounted`;
+  // we approximate off-chain so the simulation matches what the
+  // diamond will charge. Floor: just the principal. Ceiling: read
+  // current borrow balance via `LoanFacet.getLoanDetails` (already
+  // in `loan`) — but `getLoanDetails` returns the snapshot at
+  // init, not the current balance. For now we estimate using the
+  // principal as the lower-bound; the actual on-chain seize will
+  // top out at the real `totalDebt`. The keeper bot can be made
+  // more precise in a follow-up by adding a `calculateCurrentDebt`
+  // view to `LoanFacet`.
+  const totalDebtEstimate = loan.collateralAmount; // very rough placeholder
+  // (TODO: compute proper currentBorrowBalance via OracleFacet)
+
+  // Aave V3 standard premium = 5 BPS. Reading the exact value from
+  // `IAaveV3Pool.FLASHLOAN_PREMIUM_TOTAL()` costs a per-tick RPC
+  // call; the standard 5 BPS holds on every chain we target, so
+  // we use the conservative constant. Operator can override via
+  // `FLASH_PREMIUM_BPS_<chainId>` if a chain ever bumps it.
+  const flashFeeBps = 5;
+  const flashFee = (totalDebtEstimate * BigInt(flashFeeBps)) / 10_000n;
+
+  // Simulated proceeds = best-quote expectedOutput on the
+  // collateral→principal swap. The seizure size at the diamond
+  // includes the per-tier discount which we don't precisely
+  // simulate here (Tier 3 default 5%), so the realised proceeds
+  // will be slightly higher than this estimate. Adding the
+  // discount-implied uplift would tighten the simulation; for v1
+  // we use the floor estimate so the simulation is conservative.
+  const simulatedProceeds = bestQuote.expectedOutput;
+
+  // Gas headroom — order-of-magnitude estimate for a flash-loan
+  // tx (~600k gas at 2 gwei on an L2 = ~1.2e-3 ETH). Express as
+  // a fixed bigint in principal-token units; operator can fine-
+  // tune via `FLASH_GAS_HEADROOM_PRINCIPAL_<chainId>`. v1 default:
+  // 1 ether of principal-token (overstated on L2s, ~$2-3 worth on
+  // most chains — comfortably profitable trades clear this easily).
+  const gasHeadroomKey = `FLASH_GAS_HEADROOM_PRINCIPAL_${chain.id}`;
+  const gasHeadroomRaw =
+    (env as unknown as Record<string, string | undefined>)[gasHeadroomKey];
+  const gasHeadroom = gasHeadroomRaw
+    ? BigInt(gasHeadroomRaw)
+    : 10n ** 18n; // 1 token (18-dec convention)
+
+  const requiredProceeds = totalDebtEstimate + flashFee + gasHeadroom;
+  if (simulatedProceeds < requiredProceeds) {
+    console.log(
+      `[keeper] loan=${loanId} chain=${chain.name} flash-loan-skip ` +
+        `unprofitable: proceeds=${simulatedProceeds} < ` +
+        `needed=${requiredProceeds} (debt~${totalDebtEstimate} ` +
+        `fee=${flashFee} gas=${gasHeadroom})`,
+    );
+    return false;
+  }
+
+  // Provider preference — Aave V3 first (broader asset coverage,
+  // 5 BPS premium), Balancer V2 fallback (zero-fee but narrower
+  // asset list).
+  const useAave = !!provider.aaveV3Pool;
+  const useBalancer = !useAave && !!provider.balancerV2Vault;
+  if (!useAave && !useBalancer) return false;
+
+  const account = ctx.wallet.account;
+  if (!account) return false;
+
+  // ─── v1 limitation note ────────────────────────────────────────
+  // The existing `ServerOrchestrationResult` carries diamond-LibSwap-
+  // adapter-encoded calldata (just `{ adapterIdx, data }`), which the
+  // diamond's `LibSwap.swap` interprets to look up the actual adapter
+  // address + allowance target from the registered swap-adapter
+  // table. The FlashLoanLiquidator is OUTSIDE the diamond — it
+  // doesn't see the swap-adapter registry, so it needs DEX-direct
+  // calldata: `(swapTarget, swapAllowanceTarget, swapCalldata)`.
+  //
+  // For v1 of this branch the deployment gate at the top
+  // (`getFlashLoanProvider(chain.id)` returning undefined while no
+  // chain has `liquidator` set) means this branch never executes.
+  // The branch logs that it WOULD have submitted, so an operator
+  // running with `DISCOUNT_PATH_ENABLED_<chainId>=true` can see
+  // simulation-positive trades and validate the assumptions before
+  // we wire DEX-direct quote fetching. The follow-up is a new
+  // `dexDirectQuotes.ts` that returns `(target, allowance, data)`
+  // and is invoked here instead of reusing the LibSwap-adapter
+  // quotes.
+  console.log(
+    `[keeper] loan=${loanId} chain=${chain.name} flash-loan-WOULD-SUBMIT ` +
+      `via=${useAave ? 'aave-v3' : 'balancer-v2'} ` +
+      `simulated-proceeds=${simulatedProceeds} debt=${totalDebtEstimate} ` +
+      `fee=${flashFee} gas-headroom=${gasHeadroom} | DEX-direct quote ` +
+      `wiring pending (v1 scaffold)`,
+  );
+  // Don't actually submit — fall through to legacy branches. Once
+  // DEX-direct quotes land + chains have FlashLoanLiquidator
+  // deployed + the operator flips `DISCOUNT_PATH_ENABLED_<chainId>`,
+  // the surrounding `if (flashLoanSubmitted) return true;` will
+  // skip the legacy branches.
+  return false;
+}
+

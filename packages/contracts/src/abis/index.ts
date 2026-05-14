@@ -30,6 +30,10 @@ import VPFIBuyReceiverABI from './VPFIBuyReceiver.json';
 import RewardReporterFacetABI from './RewardReporterFacet.json';
 import ConfigFacetABI from './ConfigFacet.json';
 import LegalFacetABI from './LegalFacet.json';
+// FlashLoanLiquidationPath.md Phase 3 — standalone reference
+// receiver. Named export only; deliberately NOT spread into
+// DIAMOND_ABI below (it's not part of the diamond's selector set).
+import FlashLoanLiquidatorABI from './FlashLoanLiquidator.json';
 
 export {
   OfferFacetABI,
@@ -64,6 +68,7 @@ export {
   RewardReporterFacetABI,
   ConfigFacetABI,
   LegalFacetABI,
+  FlashLoanLiquidatorABI,
 };
 
 import type { Abi } from 'viem';
