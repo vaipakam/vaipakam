@@ -1,17 +1,55 @@
 # Release notes — 2026-05-14
 
-One thread today, but a big one: the **autonomous tier-LTV layer** —
-the missing piece in Vaipakam's "no continuous governance tuning"
-positioning. Yesterday's depth-tiered-LTV work made the per-asset
-*tier* autonomous (on-chain slippage simulation decides whether an
-asset is Tier 1, 2, or 3); today's work makes the *mapping from tier
-to LTV* autonomous too, by reading peer lending protocols' on-chain
-configs as the calibration signal. Seven phases landed end-to-end:
-design, oracle-quorum failed-swap fallback, the peer-read library,
-the on-chain cache + permissionless refresh, the loan-init
-integration, the pre-deploy mainnet-fork audit tool, and a
-governance-configurable safety-box layer that retains an emergency
-adjustment lever without re-introducing per-asset governance.
+Three threads landed today across the branch
+`feat/market-rate-widget-and-tiered-ltv`, all reinforcing the same
+strategic story: **Vaipakam's higher-LTV regime is autonomous on
+the calibration side AND hardened on the liquidator side, ready
+for audit**. Headline tally:
+
+| # | Thread | Commits | Tests added |
+|---|---|---|---|
+| 1 | Autonomous tier-LTV layer (7 phases) | through `656c502` | +18 LibPeerLTV + 9 ConfigFacet |
+| 2 | Pre-deploy audit-package census on 6 chains | `520cc47` | (operational) |
+| 3 | Liquidator-buys-at-discount path + flash-loan keeper bot extension | `a63d5ef`, `ee8a773` | +23 + 17 |
+
+Forge regression: **1890 pass / 0 fail / 5 skip** across 90 suites
+(the 5 skipped are pre-existing time-locked ratification tests).
+All four downstream consumer typechecks (defi frontend, keeper +
+indexer + agent workers) green throughout.
+
+**Thread 1** — the missing piece in Vaipakam's "no continuous
+governance tuning" positioning. Yesterday's depth-tiered-LTV work
+made the per-asset *tier* autonomous (on-chain slippage simulation
+decides whether an asset is Tier 1, 2, or 3); today's work makes
+the *mapping from tier to LTV* autonomous too, by reading peer
+lending protocols' on-chain configs as the calibration signal.
+Seven phases landed end-to-end: design, oracle-quorum failed-swap
+fallback, the peer-read library, the on-chain cache +
+permissionless refresh, the loan-init integration, the pre-deploy
+mainnet-fork audit tool, and a governance-configurable safety-box
+layer that retains an emergency adjustment lever without
+re-introducing per-asset governance.
+
+**Thread 2** — the audit-package pre-deploy census ran against
+all 6 target chains (Ethereum, Base, Arbitrum, Optimism, BNB
+Chain, Polygon PoS) using the new `SlippageCensusPreDeploy.s.sol`
+mainnet-fork tool. Output landed in
+[`docs/AuditPackage/pre-deploy-census-2026-05-14/`](AuditPackage/pre-deploy-census-2026-05-14/)
+as one CSV per chain plus a README. Ethereum produced a real
+peer-consensus Tier 3 = 73.37% (close to the 73% library
+default); the L2s mostly fell back to library defaults during
+this census window — see the README for the **April 18 2026
+Kelp/LayerZero OFT exploit aftermath** context and the
+**Aave V4 mainnet-only launch** (2026-03-30) note. Crucially,
+the consensus algorithm correctly REJECTED Aave's exploit-
+response zero LTVs as "asset deprecated by this peer" and fell
+back to library defaults — Vaipakam's autonomy layer passed its
+first live stress test essentially without us realising at
+census time.
+
+**Thread 3** — flash-loan / liquidator-buys-at-discount path.
+Two follow-up sections below: the design + contracts in commit
+`a63d5ef`, then the Phase-3 keeper-bot extension in `ee8a773`.
 
 ## Why this matters
 
