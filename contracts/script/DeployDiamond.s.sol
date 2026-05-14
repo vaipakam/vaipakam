@@ -571,7 +571,7 @@ contract DeployDiamond is Script {
     }
 
     function _getOracleSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](14);
+        s = new bytes4[](17);
         s[0] = OracleFacet.checkLiquidity.selector;
         s[1] = OracleFacet.getAssetPrice.selector;
         s[2] = OracleFacet.calculateLTV.selector;
@@ -595,10 +595,16 @@ contract DeployDiamond is Script {
         // `getAssetPrice` for callers (LibFallback) that need to detect
         // oracle-quorum unavailability without reverting.
         s[13] = OracleFacet.tryGetAssetPrice.selector;
+        // Phase 4 of AutonomousLtvAndOracleFallback.md — autonomous
+        // tier-LTV cache. Permissionless refresh + the two views the
+        // loan-init gate / protocol-console consume.
+        s[14] = OracleFacet.refreshTierLtvCache.selector;
+        s[15] = OracleFacet.getTierLtvCacheEntry.selector;
+        s[16] = OracleFacet.getEffectiveTierMaxInitLtvBps.selector;
     }
 
     function _getOracleAdminSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](32);
+        s = new bytes4[](34);
         s[0] = OracleAdminFacet.setChainlinkRegistry.selector;
         s[1] = OracleAdminFacet.setUsdChainlinkDenominator.selector;
         s[2] = OracleAdminFacet.setEthChainlinkDenominator.selector;
@@ -647,6 +653,10 @@ contract DeployDiamond is Script {
         // on top of these addresses.
         s[30] = OracleAdminFacet.setPeerProtocolAddresses.selector;
         s[31] = OracleAdminFacet.getPeerProtocolAddresses.selector;
+        // Phase 4 of AutonomousLtvAndOracleFallback.md — per-tier
+        // reference asset list (constitution-level governance set).
+        s[32] = OracleAdminFacet.setTierReferenceAssets.selector;
+        s[33] = OracleAdminFacet.getTierReferenceAssets.selector;
     }
 
     function _getNFTSelectors() internal pure returns (bytes4[] memory s) {

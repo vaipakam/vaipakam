@@ -409,4 +409,50 @@ contract OracleAdminFacet {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         return (s.aaveV3PoolDataProvider, s.compoundV3Comet, s.morphoBlue);
     }
+
+    /**
+     * @notice Set a tier's reference asset list. Phase 4 of
+     *         AutonomousLtvAndOracleFallback.md. Constitution-level
+     *         setting: changes are rare, governance-gated, and require
+     *         re-audit of the new asset list for collateral suitability.
+     * @dev    Owner-only (TimelockController post-handover, 48h-gated).
+     *         An empty array clears the tier — refreshes for that tier
+     *         then emit `no-reference-assets` and the cache stays at
+     *         its previous value (or library default if hard-stale).
+     *
+     *         Recommended reference lists per tier (per-chain — the
+     *         operator picks each chain's canonical token addresses):
+     *           Tier 3 (deepest, blue-chip): WBTC, WETH, USDC, USDT, DAI
+     *           Tier 2 (mid-cap):            LINK, AAVE, UNI, COMP, MKR
+     *           Tier 1 (entry):              a small list of well-attested mid/long-tail
+     *
+     *         The aggregator (`OracleFacet.refreshTierLtvCache`) reads
+     *         these assets' LTVs from each configured peer, applies
+     *         per-asset + per-tier consensus, applies the tier's
+     *         haircut, bound-checks, and persists. The list itself is
+     *         constitution-level: changing it doesn't auto-trigger a
+     *         refresh; operators call `refreshTierLtvCache()` after
+     *         updating the list to pick up the new asset universe.
+     * @param  tier   1, 2, or 3.
+     * @param  assets New reference asset list for this tier. Pass an
+     *                empty array to clear.
+     */
+    function setTierReferenceAssets(uint8 tier, address[] calldata assets) external {
+        // Convert calldata to memory once (LibVaipakam takes memory[]).
+        address[] memory mem = new address[](assets.length);
+        for (uint256 i = 0; i < assets.length; ++i) mem[i] = assets[i];
+        LibVaipakam.setTierReferenceAssets(tier, mem);
+    }
+
+    /// @notice Read a tier's reference asset list. Single-call view
+    ///         that returns the full array, shaped to feed the
+    ///         protocol-console + the audit-package per-chain
+    ///         verification step.
+    function getTierReferenceAssets(uint8 tier)
+        external
+        view
+        returns (address[] memory)
+    {
+        return LibVaipakam.getTierReferenceAssets(tier);
+    }
 }

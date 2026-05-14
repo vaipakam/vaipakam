@@ -180,4 +180,131 @@ library LibPeerLTV {
         }
         return (true, uint16(borrowBps), uint16(liquidateBps));
     }
+
+    // ─── Phase 4: tier-LTV aggregation ────────────────────────────────────
+
+    /// @notice Aggregate peer LTV readings across a reference asset
+    ///         list to produce a per-tier consensus median.
+    /// @dev    Two-stage aggregation:
+    ///           1. Per-asset: collect LTVs from every available peer
+    ///              (Aave + Compound; Morpho deferred to Phase 3.5).
+    ///              Reject the asset's contribution if fewer than
+    ///              `minPeerReadings` peers report, or if the spread
+    ///              across reporting peers exceeds
+    ///              `divergenceToleranceBps`. Otherwise take the
+    ///              asset's median across peers.
+    ///           2. Per-tier: median across all asset-medians. Reject
+    ///              the whole tier if fewer than `minAssetReadings`
+    ///              assets contributed.
+    ///
+    ///         All comparisons in BPS — no unit conversions in the
+    ///         aggregator (the peer reads already normalised at the
+    ///         library boundary).
+    ///
+    ///         Pure / view. No state in this library; the caller
+    ///         (`OracleFacet.refreshTierLtvCache`) persists the result
+    ///         and emits events.
+    ///
+    /// @param  aave  Aave V3 PoolDataProvider address. Zero ⇒ no Aave
+    ///               reads for this aggregation.
+    /// @param  comet Compound V3 Comet address. Zero ⇒ no Compound
+    ///               reads.
+    /// @param  refAssets Reference asset list for the tier being
+    ///                   aggregated.
+    /// @param  divergenceToleranceBps Per-asset divergence ceiling.
+    /// @param  minPeerReadings        Minimum peers per asset.
+    /// @param  minAssetReadings       Minimum assets per tier.
+    /// @return ok                  `true` iff the aggregation produced
+    ///                             a valid tier-median.
+    /// @return tierMedianBps       Median across asset-medians, or 0
+    ///                             when ok=false.
+    /// @return assetsContributing  Count of reference assets that
+    ///                             passed per-asset consensus and
+    ///                             contributed to the tier median.
+    function aggregateTierLtv(
+        address aave,
+        address comet,
+        address[] memory refAssets,
+        uint16 divergenceToleranceBps,
+        uint8 minPeerReadings,
+        uint8 minAssetReadings
+    )
+        internal
+        view
+        returns (bool ok, uint16 tierMedianBps, uint8 assetsContributing)
+    {
+        if (refAssets.length == 0) return (false, 0, 0);
+
+        uint16[] memory assetMedians = new uint16[](refAssets.length);
+        uint256 n;
+
+        for (uint256 i = 0; i < refAssets.length; ++i) {
+            (uint16 amed, bool aOk) = _perAssetMedian(
+                aave,
+                comet,
+                refAssets[i],
+                divergenceToleranceBps,
+                minPeerReadings
+            );
+            if (aOk) {
+                assetMedians[n++] = amed;
+            }
+        }
+
+        if (n < uint256(minAssetReadings)) return (false, 0, uint8(n));
+
+        // In-place insertion sort — n is small (typical ≤ 10), so the
+        // O(n²) is fine. Median of n entries: n%2==1 ⇒ middle; n%2==0
+        // ⇒ average of the two middle entries.
+        for (uint256 i = 1; i < n; ++i) {
+            uint16 key = assetMedians[i];
+            uint256 j = i;
+            while (j > 0 && assetMedians[j - 1] > key) {
+                assetMedians[j] = assetMedians[j - 1];
+                --j;
+            }
+            assetMedians[j] = key;
+        }
+        uint16 medianBps;
+        if (n % 2 == 1) {
+            medianBps = assetMedians[n / 2];
+        } else {
+            medianBps = uint16(
+                (uint256(assetMedians[n / 2 - 1]) + uint256(assetMedians[n / 2])) / 2
+            );
+        }
+        return (true, medianBps, uint8(n));
+    }
+
+    /// @dev Per-asset consensus: collect peer LTVs for one asset,
+    ///      return the asset-median if `minPeerReadings` peers agree
+    ///      within `divergenceToleranceBps`. The library currently
+    ///      reads Aave + Compound; the Morpho peer is deferred to
+    ///      Phase 3.5.
+    function _perAssetMedian(
+        address aave,
+        address comet,
+        address asset,
+        uint16 divergenceToleranceBps,
+        uint8 minPeerReadings
+    ) private view returns (uint16 medianBps, bool ok) {
+        uint16[] memory ltvs = new uint16[](2);
+        uint256 p;
+
+        (bool aOk, uint16 aLtv, ) = readAaveLtv(aave, asset);
+        if (aOk) ltvs[p++] = aLtv;
+        (bool cOk, uint16 cLtv, ) = readCometLtv(comet, asset);
+        if (cOk) ltvs[p++] = cLtv;
+
+        if (p < uint256(minPeerReadings)) return (0, false);
+
+        // For p == 2 (current cap): spread = |a - b|; reject if it
+        // exceeds the divergence tolerance, else median = average.
+        // For p == 1: handled by the minPeerReadings >= 2 guard above
+        // (single-peer doesn't satisfy consensus).
+        uint16 hi = ltvs[0] > ltvs[1] ? ltvs[0] : ltvs[1];
+        uint16 lo = ltvs[0] > ltvs[1] ? ltvs[1] : ltvs[0];
+        if (hi - lo > divergenceToleranceBps) return (0, false);
+        return (uint16((uint256(ltvs[0]) + uint256(ltvs[1])) / 2), true);
+    }
 }

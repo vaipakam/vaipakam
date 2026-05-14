@@ -131,6 +131,45 @@ library LibVaipakam {
     uint256 constant MAX_LIQUIDATION_SLIPPAGE_BPS = 600; // 6% max slippage on DEX liquidation swaps (README §7)
     uint256 constant MAX_LIQUIDATOR_INCENTIVE_BPS = 300; // 3% cap on dynamic liquidator incentive (README §3)
     uint256 constant LIQUIDATION_HANDLING_FEE_BPS = 200; // 2% of proceeds to treasury on successful DEX liquidation (README §3)
+    // ── Phase 4 of AutonomousLtvAndOracleFallback.md — tier-LTV cache constants ──
+    //
+    // Per-tier safety bounds for the autonomous tier-LTV cache. A
+    // peer-consensus reading that lands outside its tier's box is
+    // REJECTED (not silently clipped) — out-of-band data is signal
+    // something's wrong with peer state, not a value to use. Bounds
+    // are constitution-level: changing them requires an emergency
+    // multisig + source-code change + audit, not a refresh call.
+    uint16 constant TIER1_LTV_FLOOR_BPS = 3700;    // 37%
+    uint16 constant TIER1_LTV_CEIL_BPS  = 5500;    // 55%
+    uint16 constant TIER2_LTV_FLOOR_BPS = 5500;    // 55%
+    uint16 constant TIER2_LTV_CEIL_BPS  = 6900;    // 69%
+    uint16 constant TIER3_LTV_FLOOR_BPS = 6900;    // 69%
+    uint16 constant TIER3_LTV_CEIL_BPS  = 8200;    // 82%
+
+    // Library defaults — used when the cache is hard-stale (>14 days
+    // since last refresh) or never-refreshed. Sit at the midpoint of
+    // each tier's box so the cache-stale fallback is neutral.
+    uint16 constant TIER1_LTV_DEFAULT_BPS = 5000;  // 50%
+    uint16 constant TIER2_LTV_DEFAULT_BPS = 6200;  // 62%
+    uint16 constant TIER3_LTV_DEFAULT_BPS = 7300;  // 73%
+
+    // Per-tier haircut applied to the peer-consensus median before
+    // bound-check. Tier-3 (deepest, highest absolute-dollar exposure)
+    // takes a 5pp conservative haircut; Tier-1 / Tier-2 match peer
+    // median (the bound check still applies).
+    uint16 constant TIER1_LTV_HAIRCUT_BPS = 0;
+    uint16 constant TIER2_LTV_HAIRCUT_BPS = 0;
+    uint16 constant TIER3_LTV_HAIRCUT_BPS = 500;   // 5pp
+
+    // Cache TTLs.
+    uint256 constant TIER_LTV_CACHE_SOFT_TTL = 7 days;
+    uint256 constant TIER_LTV_CACHE_HARD_TTL = 14 days;
+
+    // Multi-peer / multi-asset consensus rules.
+    uint16 constant PEER_DIVERGENCE_TOLERANCE_BPS = 1500;  // 15pp — Aave / Compound / Morpho diverge naturally on long-tail; this catches anomalies without rejecting the spread
+    uint8 constant TIER_MIN_PEER_READINGS = 2;             // ≥ 2 peers agree per asset
+    uint8 constant TIER_MIN_ASSET_READINGS = 2;            // ≥ 2 reference assets reporting per tier
+
     // Partial-liquidation close-factor cap (item 2 of liquidator hardening).
     // 10_000 BPS = 100% i.e. no cap by default — the keeper picks the
     // smallest fraction that restores HF >= 1. Governance can tighten
@@ -2310,6 +2349,40 @@ library LibVaipakam {
         address aaveV3PoolDataProvider;
         address compoundV3Comet;
         address morphoBlue;
+        // ── Phase 4 of AutonomousLtvAndOracleFallback.md — tier-LTV cache ──
+        // Per-tier cached LTV in BPS + last-refreshed timestamp.
+        // Refreshed permissionlessly via `OracleFacet.refreshTierLtvCache()`
+        // by anyone; the on-chain aggregation reads Aave V3 + Compound
+        // V3 via `LibPeerLTV`, computes per-tier median across a
+        // reference asset list, applies the per-tier haircut + bound
+        // check, and writes here. Loan init reads this when computing
+        // the per-asset init-LTV cap.
+        //
+        // Cache TTLs: 7d soft (informational stale event), 14d hard
+        // (fall back to library defaults). Anyone may refresh at any
+        // time — no permission, no rate-limit (per-refresh gas cost
+        // is the natural rate-limit).
+        mapping(uint8 => TierLtvCacheEntry) tierLtvCache;
+        // Per-tier reference asset list — the assets that get queried
+        // across each peer protocol during a refresh. Constitution-level:
+        // set at deploy via `OracleAdminFacet.setTierReferenceAssets`,
+        // changes require an owner-level governance call. Asset
+        // selection is per-chain (e.g. Tier-3 on Base = WBTC, USDC,
+        // USDT, cbETH, cbBTC; Tier-3 on Arb = WBTC, USDC, USDT, WETH,
+        // LINK).
+        //
+        // Empty array for a tier ⇒ refreshes for that tier emit
+        // `TierLtvCacheRefreshRejected(_, _, "no-reference-assets")`
+        // and leave the cache value untouched.
+        mapping(uint8 => address[]) tierReferenceAssets;
+    }
+
+    /// @dev Cached tier-LTV reading. Updated permissionlessly via
+    ///      `OracleFacet.refreshTierLtvCache()`. Stale-detection (soft +
+    ///      hard TTL) drives the fallback semantics at loan init.
+    struct TierLtvCacheEntry {
+        uint16 ltvBps;            // 0 ⇒ never-refreshed
+        uint64 lastRefreshedAt;   // unix seconds; 0 ⇒ never-refreshed
     }
 
     /// @dev Range Orders Phase 1 — set by matchOffers, read by
@@ -3271,6 +3344,91 @@ library LibVaipakam {
         address compoundV3Comet,
         address morphoBlue
     );
+
+    /// @notice Emitted on every change to a tier's reference asset
+    ///         list (Phase 4 of AutonomousLtvAndOracleFallback.md).
+    ///         Constitution-level setting; off-chain monitoring
+    ///         watches for governance changes.
+    /// @custom:event-category informational/config
+    event TierReferenceAssetsSet(uint8 indexed tier, address[] assets);
+
+    /// @dev Per-tier safety-box bounds. Tier indices 1, 2, 3 (Tier 0
+    ///      is "untierable" — no LTV cap applies because the asset
+    ///      isn't accepted at all).
+    function tierLtvBoundsBps(uint8 tier)
+        internal
+        pure
+        returns (uint16 floorBps, uint16 ceilBps)
+    {
+        if (tier == 1) return (TIER1_LTV_FLOOR_BPS, TIER1_LTV_CEIL_BPS);
+        if (tier == 2) return (TIER2_LTV_FLOOR_BPS, TIER2_LTV_CEIL_BPS);
+        if (tier == 3) return (TIER3_LTV_FLOOR_BPS, TIER3_LTV_CEIL_BPS);
+        return (0, 0);
+    }
+
+    /// @dev Per-tier haircut (BPS) applied to the peer-consensus
+    ///      median before the bound check.
+    function tierLtvHaircutBps(uint8 tier) internal pure returns (uint16) {
+        if (tier == 1) return TIER1_LTV_HAIRCUT_BPS;
+        if (tier == 2) return TIER2_LTV_HAIRCUT_BPS;
+        if (tier == 3) return TIER3_LTV_HAIRCUT_BPS;
+        return 0;
+    }
+
+    /// @dev Library default LTV per tier — used when the cache is
+    ///      hard-stale (> 14 days) or never-refreshed. Sit at the
+    ///      midpoint of each tier's safety box.
+    function tierLtvLibraryDefaultBps(uint8 tier) internal pure returns (uint16) {
+        if (tier == 1) return TIER1_LTV_DEFAULT_BPS;
+        if (tier == 2) return TIER2_LTV_DEFAULT_BPS;
+        if (tier == 3) return TIER3_LTV_DEFAULT_BPS;
+        return 0;
+    }
+
+    /// @dev Effective tier-LTV the loan-init gate consults. Reads the
+    ///      cache if fresh (≤ 14d since last refresh), else returns
+    ///      the library default for that tier. Tier 0 always returns
+    ///      0 (asset not classified — caller must reject before
+    ///      reaching this).
+    function effectiveTierMaxInitLtvBps(uint8 tier) internal view returns (uint16) {
+        if (tier == 0 || tier > MAX_LIQUIDITY_TIER) return 0;
+        Storage storage s = storageSlot();
+        TierLtvCacheEntry storage entry = s.tierLtvCache[tier];
+        if (
+            entry.lastRefreshedAt > 0 &&
+            block.timestamp - uint256(entry.lastRefreshedAt) <= TIER_LTV_CACHE_HARD_TTL
+        ) {
+            return entry.ltvBps;
+        }
+        return tierLtvLibraryDefaultBps(tier);
+    }
+
+    /// @dev Owner-only setter for a tier's reference asset list. Used
+    ///      by `OracleAdminFacet.setTierReferenceAssets`. Passing an
+    ///      empty array clears the tier (refreshes for that tier will
+    ///      then no-op with `no-reference-assets`).
+    function setTierReferenceAssets(uint8 tier, address[] memory assets) internal {
+        LibDiamond.enforceIsContractOwner();
+        require(
+            tier >= 1 && tier <= MAX_LIQUIDITY_TIER,
+            "tier out of range"
+        );
+        Storage storage s = storageSlot();
+        delete s.tierReferenceAssets[tier];
+        for (uint256 i = 0; i < assets.length; ++i) {
+            require(assets[i] != address(0), "zero asset in reference list");
+            s.tierReferenceAssets[tier].push(assets[i]);
+        }
+        emit TierReferenceAssetsSet(tier, assets);
+    }
+
+    /// @dev Read a tier's reference asset list. Used by the
+    ///      refreshTierLtvCache aggregator + the
+    ///      `OracleAdminFacet.getTierReferenceAssets` view.
+    function getTierReferenceAssets(uint8 tier) internal view returns (address[] memory) {
+        if (tier == 0 || tier > MAX_LIQUIDITY_TIER) return new address[](0);
+        return storageSlot().tierReferenceAssets[tier];
+    }
 
     /// @dev Set the per-chain peer-lending-protocol addresses the
     ///      autonomous tier-LTV cache reads. Owner-only — after the

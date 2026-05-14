@@ -178,6 +178,25 @@
   },
   {
     "type": "function",
+    "name": "getTierReferenceAssets",
+    "inputs": [
+      {
+        "name": "tier",
+        "type": "uint8",
+        "internalType": "uint8"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address[]",
+        "internalType": "address[]"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "setApi3ServerV1",
     "inputs": [
       {
@@ -417,6 +436,24 @@
         "name": "oracle",
         "type": "address",
         "internalType": "address"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "setTierReferenceAssets",
+    "inputs": [
+      {
+        "name": "tier",
+        "type": "uint8",
+        "internalType": "uint8"
+      },
+      {
+        "name": "assets",
+        "type": "address[]",
+        "internalType": "address[]"
       }
     ],
     "outputs": [],
@@ -697,6 +734,25 @@
         "type": "address",
         "indexed": true,
         "internalType": "address"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "TierReferenceAssetsSet",
+    "inputs": [
+      {
+        "name": "tier",
+        "type": "uint8",
+        "indexed": true,
+        "internalType": "uint8"
+      },
+      {
+        "name": "assets",
+        "type": "address[]",
+        "indexed": false,
+        "internalType": "address[]"
       }
     ],
     "anonymous": false

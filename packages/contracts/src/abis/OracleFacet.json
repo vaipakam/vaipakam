@@ -168,6 +168,25 @@
   },
   {
     "type": "function",
+    "name": "getEffectiveTierMaxInitLtvBps",
+    "inputs": [
+      {
+        "name": "tier",
+        "type": "uint8",
+        "internalType": "uint8"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint16",
+        "internalType": "uint16"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "getHistoricalAssetPrice",
     "inputs": [
       {
@@ -254,6 +273,30 @@
   },
   {
     "type": "function",
+    "name": "getTierLtvCacheEntry",
+    "inputs": [
+      {
+        "name": "tier",
+        "type": "uint8",
+        "internalType": "uint8"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "ltvBps",
+        "type": "uint16",
+        "internalType": "uint16"
+      },
+      {
+        "name": "lastRefreshedAt",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "isAssetSupported",
     "inputs": [
       {
@@ -270,6 +313,13 @@
       }
     ],
     "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "refreshTierLtvCache",
+    "inputs": [],
+    "outputs": [],
+    "stateMutability": "nonpayable"
   },
   {
     "type": "function",
@@ -337,6 +387,62 @@
       },
       {
         "name": "feedDecimals",
+        "type": "uint8",
+        "indexed": false,
+        "internalType": "uint8"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "TierLtvCacheRefreshRejected",
+    "inputs": [
+      {
+        "name": "tier",
+        "type": "uint8",
+        "indexed": true,
+        "internalType": "uint8"
+      },
+      {
+        "name": "candidateLtvBps",
+        "type": "uint16",
+        "indexed": false,
+        "internalType": "uint16"
+      },
+      {
+        "name": "reason",
+        "type": "string",
+        "indexed": false,
+        "internalType": "string"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "TierLtvCacheUpdated",
+    "inputs": [
+      {
+        "name": "tier",
+        "type": "uint8",
+        "indexed": true,
+        "internalType": "uint8"
+      },
+      {
+        "name": "newLtvBps",
+        "type": "uint16",
+        "indexed": false,
+        "internalType": "uint16"
+      },
+      {
+        "name": "oldLtvBps",
+        "type": "uint16",
+        "indexed": false,
+        "internalType": "uint16"
+      },
+      {
+        "name": "assetsContributing",
         "type": "uint8",
         "indexed": false,
         "internalType": "uint8"

@@ -277,7 +277,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](14);
+        selectors = new bytes4[](17);
         selectors[0] = OracleFacet.checkLiquidity.selector;
         selectors[1] = OracleFacet.getAssetPrice.selector;
         selectors[2] = OracleFacet.calculateLTV.selector;
@@ -298,6 +298,13 @@ contract HelperTest {
         // `getAssetPrice` for callers (LibFallback) that need to detect
         // oracle-quorum unavailability without reverting.
         selectors[13] = OracleFacet.tryGetAssetPrice.selector;
+        // Phase 4 of AutonomousLtvAndOracleFallback.md — autonomous
+        // tier-LTV cache. `refreshTierLtvCache` is the permissionless
+        // refresh; the two views read the cache + the effective value
+        // (with library-default fallback when cache is hard-stale).
+        selectors[14] = OracleFacet.refreshTierLtvCache.selector;
+        selectors[15] = OracleFacet.getTierLtvCacheEntry.selector;
+        selectors[16] = OracleFacet.getEffectiveTierMaxInitLtvBps.selector;
         return selectors;
     }
 

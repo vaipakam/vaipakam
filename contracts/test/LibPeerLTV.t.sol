@@ -25,6 +25,24 @@ contract LibPeerLTVHarness {
     {
         return LibPeerLTV.readCometLtv(comet, asset);
     }
+
+    function aggregateTierLtv(
+        address aave,
+        address comet,
+        address[] memory refAssets,
+        uint16 divergenceToleranceBps,
+        uint8 minPeerReadings,
+        uint8 minAssetReadings
+    )
+        external
+        view
+        returns (bool ok, uint16 tierMedianBps, uint8 assetsContributing)
+    {
+        return LibPeerLTV.aggregateTierLtv(
+            aave, comet, refAssets,
+            divergenceToleranceBps, minPeerReadings, minAssetReadings
+        );
+    }
 }
 
 /**
@@ -260,5 +278,133 @@ contract LibPeerLTVTest is Test {
     function testCompound_ZeroCometAddressRejected() public view {
         (bool ok, , ) = harness.readCometLtv(address(0), asset);
         assertFalse(ok, "zero comet must short-circuit ok=false");
+    }
+
+    // ─── Aggregator (per-tier consensus across reference assets) ────────
+
+    /// @dev Set up Aave + Compound peer mocks for an asset returning
+    ///      the given borrowable LTV (BPS) on each side. Helper keeps
+    ///      the aggregator tests readable.
+    function _mockPeers(address a, uint16 aaveLtv, uint16 cometLtv) internal {
+        if (aaveLtv > 0) {
+            vm.mockCall(
+                aaveProvider,
+                abi.encodeWithSelector(
+                    IAavePoolDataProvider.getReserveConfigurationData.selector,
+                    a
+                ),
+                _encodeAaveConfig(uint256(aaveLtv), uint256(aaveLtv) + 500, true, false)
+            );
+        }
+        if (cometLtv > 0) {
+            // 1e18-scaled CF from BPS: bps × 1e14 = 1e18-scaled fraction.
+            uint64 cf = uint64(uint256(cometLtv) * 1e14);
+            vm.mockCall(
+                comet,
+                abi.encodeWithSelector(IComet.getAssetInfoByAddress.selector, a),
+                _encodeCometAssetInfo(a, cf, uint64(uint256(cometLtv + 500) * 1e14))
+            );
+        }
+    }
+
+    /// @dev Three reference assets, each peer reports identical LTVs
+    ///      ⇒ per-asset median = peer LTV, tier median = median across
+    ///      the three reference assets.
+    function testAggregate_HappyPath_ThreeAssetsAgree() public {
+        address[] memory refs = new address[](3);
+        refs[0] = makeAddr("ref0");
+        refs[1] = makeAddr("ref1");
+        refs[2] = makeAddr("ref2");
+
+        _mockPeers(refs[0], 7_300, 7_300);   // asset 0: median 7300
+        _mockPeers(refs[1], 7_500, 7_500);   // asset 1: median 7500
+        _mockPeers(refs[2], 7_700, 7_700);   // asset 2: median 7700
+
+        (bool ok, uint16 median, uint8 n) = harness.aggregateTierLtv(
+            aaveProvider, comet, refs, 1_500, 2, 2
+        );
+        assertTrue(ok);
+        // Tier median of [7300, 7500, 7700] = 7500.
+        assertEq(median, 7_500);
+        assertEq(n, 3);
+    }
+
+    /// @dev Two reference assets, each peer agrees within tolerance ⇒
+    ///      tier median = average of the two asset-medians.
+    function testAggregate_TwoAssetsTierMedianIsAverage() public {
+        address[] memory refs = new address[](2);
+        refs[0] = makeAddr("ref0");
+        refs[1] = makeAddr("ref1");
+        _mockPeers(refs[0], 7_000, 7_400);   // asset 0: median (7000+7400)/2 = 7200
+        _mockPeers(refs[1], 6_800, 7_200);   // asset 1: median 7000
+
+        (bool ok, uint16 median, uint8 n) = harness.aggregateTierLtv(
+            aaveProvider, comet, refs, 1_500, 2, 2
+        );
+        assertTrue(ok);
+        // Tier median of [7200, 7000] = (7200+7000)/2 = 7100.
+        assertEq(median, 7_100);
+        assertEq(n, 2);
+    }
+
+    /// @dev Per-asset peer divergence above tolerance ⇒ that asset
+    ///      drops out of the tier aggregation.
+    function testAggregate_AssetWithDivergentPeersExcluded() public {
+        address[] memory refs = new address[](3);
+        refs[0] = makeAddr("ref0");
+        refs[1] = makeAddr("ref1");
+        refs[2] = makeAddr("ref2");
+        _mockPeers(refs[0], 7_000, 7_300);                       // diff 300, within tolerance 1500
+        _mockPeers(refs[1], 5_000, 8_500);                       // diff 3500, ABOVE tolerance → excluded
+        _mockPeers(refs[2], 7_500, 7_600);                       // diff 100, within tolerance
+
+        (bool ok, uint16 median, uint8 n) = harness.aggregateTierLtv(
+            aaveProvider, comet, refs, 1_500, 2, 2
+        );
+        assertTrue(ok);
+        assertEq(n, 2, "asset[1] must be excluded as divergent");
+        // Tier median of [7150, 7550] = 7350.
+        assertEq(median, 7_350);
+    }
+
+    /// @dev Below `minAssetReadings` ⇒ tier rejected.
+    function testAggregate_InsufficientAssetsRejected() public {
+        address[] memory refs = new address[](2);
+        refs[0] = makeAddr("ref0");
+        refs[1] = makeAddr("ref1");
+        // asset[0]: divergent → drops out
+        _mockPeers(refs[0], 5_000, 8_500);
+        // asset[1]: only Aave reports (no Compound) → 1 peer < 2 minPeer → drops out
+        vm.mockCall(
+            aaveProvider,
+            abi.encodeWithSelector(
+                IAavePoolDataProvider.getReserveConfigurationData.selector,
+                refs[1]
+            ),
+            _encodeAaveConfig(7_200, 7_500, true, false)
+        );
+        // Compound REVERTS on the asset (not listed).
+        vm.mockCallRevert(
+            comet,
+            abi.encodeWithSelector(IComet.getAssetInfoByAddress.selector, refs[1]),
+            "not listed"
+        );
+
+        (bool ok, , uint8 n) = harness.aggregateTierLtv(
+            aaveProvider, comet, refs, 1_500, 2, 2
+        );
+        assertFalse(ok, "0 contributing assets must reject the tier");
+        assertEq(n, 0);
+    }
+
+    /// @dev Empty reference list ⇒ tier rejected.
+    function testAggregate_EmptyRefListRejected() public view {
+        address[] memory refs = new address[](0);
+        (bool ok, uint16 median, uint8 n) = harness.aggregateTierLtv(
+            aaveProvider, comet, refs, 1_500, 2, 2
+        );
+        assertFalse(ok);
+        assertEq(median, 0);
+        assertEq(n, 0);
     }
 }
