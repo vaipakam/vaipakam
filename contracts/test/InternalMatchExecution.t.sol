@@ -210,14 +210,14 @@ contract InternalMatchExecutionTest is SetupTest {
         assertEq(IERC20(mockCollateralERC20).balanceOf(matcher), 50);
     }
 
-    function test_threeWayChain_revertsWithPlaceholderUntilPR55() public {
+    function test_threeWayChain_fullCycleCleared() public {
         // Valid 3-loan A→B→C→A cycle (X = mockERC20, Y =
         // mockCollateralERC20, Z = mockY):
-        //   A: principal=X, collateral=Z   (A→Z to receive X back)
-        //   B: principal=Y, collateral=X   (B→X via A's repayment)
-        //   C: principal=Z, collateral=Y   (C→Y via B's repayment)
-        // PR5 ships 2-way only; the 3-way path reverts
-        // `InternalMatch3WayPending` until PR5.5 lands.
+        //   A: principal=X, collateral=Z   (A pays X to its lender via B's X-collateral)
+        //   B: principal=Y, collateral=X   (B pays Y to its lender via C's Y-collateral)
+        //   C: principal=Z, collateral=Y   (C pays Z to its lender via A's Z-collateral)
+        // Three independent min-match legs; with equal sizes, all
+        // three loans fully clear.
         address mockY = address(new ERC20Mock("ChainY", "CY", 18));
         _seedLoan(LOAN_A, lender, borrower, mockERC20, 1_000, mockY, 1_000);
         _seedLoan(LOAN_B, lenderB, borrowerB, mockCollateralERC20, 1_000, mockERC20, 1_000);
@@ -227,8 +227,24 @@ contract InternalMatchExecutionTest is SetupTest {
         _mockLtv(LOAN_C, 9_000);
 
         vm.prank(matcher);
-        vm.expectRevert(bytes("InternalMatch3WayPending"));
         RiskFacet(address(diamond)).triggerInternalMatchLiquidation(LOAN_A, LOAN_B, LOAN_C);
+
+        // All three loans fully cleared (1000 each leg, all
+        // collateral fully consumed).
+        LibVaipakam.Loan memory aAfter = _getLoan(LOAN_A);
+        LibVaipakam.Loan memory bAfter = _getLoan(LOAN_B);
+        LibVaipakam.Loan memory cAfter = _getLoan(LOAN_C);
+        assertEq(uint8(aAfter.status), uint8(LibVaipakam.LoanStatus.InternalMatched));
+        assertEq(uint8(bAfter.status), uint8(LibVaipakam.LoanStatus.InternalMatched));
+        assertEq(uint8(cAfter.status), uint8(LibVaipakam.LoanStatus.InternalMatched));
+        assertEq(aAfter.principal, 0);
+        assertEq(bAfter.principal, 0);
+        assertEq(cAfter.principal, 0);
+
+        // Matcher gets 1% × 3 legs in three different assets.
+        assertEq(IERC20(mockERC20).balanceOf(matcher), 10, "X-leg 1%");
+        assertEq(IERC20(mockCollateralERC20).balanceOf(matcher), 10, "Y-leg 1%");
+        assertEq(IERC20(mockY).balanceOf(matcher), 10, "Z-leg 1%");
     }
 
     function test_atomicity_revertsCleanlyOnEscrowFailure() public {

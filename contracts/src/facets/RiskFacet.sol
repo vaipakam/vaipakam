@@ -865,38 +865,140 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
         _requireLtvAboveFloor(loanIdB);
         if (loanIdC != 0) _requireLtvAboveFloor(loanIdC);
 
-        // PR5 execution body. 2-way today (PR5.5 will add the 3-way
-        // chain — see `Out of scope` in the design doc). The body
-        // implements partial-match α from §7 of
-        // InternalLiquidationLedger.md: each leg moves
+        // PR5 / PR5.5 execution body. Implements partial-match α from
+        // §7 of InternalLiquidationLedger.md: each leg moves
         // `min(debt, opposingCollateral)` of the receiving lender's
-        // asset, 1% withheld for `msg.sender` (the matcher), 99% to
-        // the lender's escrow. Loans whose principal hits zero
-        // transition to `LoanStatus.InternalMatched`; partial
-        // residuals stay `Active` for the next block's matching
-        // attempt or external fallback once LTV crosses the
-        // priority-window ceiling.
-        if (loanIdC != 0) {
-            // PR5.5 — 3-way chain match is tracked but not yet
-            // implemented in this PR. Validation flow is complete
-            // (any chain that would have matched produces a clean
-            // revert here instead of a misleading no-op).
-            revert("InternalMatch3WayPending");
+        // asset, configured % withheld for `msg.sender` (the matcher),
+        // remainder to the lender's escrow. Loans whose principal hits
+        // zero transition to `LoanStatus.InternalMatched`; partial
+        // residuals stay `Active`. PR5.5 extends the 2-way body to
+        // 3-loan cycles A→B→C→A — three independent min-match legs.
+        if (loanIdC == 0) {
+            (
+                uint256 movedX,
+                uint256 movedY,
+                uint256 incentiveX,
+                uint256 incentiveY
+            ) = _executeTwoWayMatch(loanIdA, loanIdB);
+            emit InternalMatchExecuted(
+                loanIdA, loanIdB, 0,
+                msg.sender,
+                movedX, movedY, 0,
+                incentiveX, incentiveY, 0
+            );
+        } else {
+            (
+                uint256 movedX,
+                uint256 movedY,
+                uint256 movedZ,
+                uint256 incentiveX,
+                uint256 incentiveY,
+                uint256 incentiveZ
+            ) = _executeThreeWayMatch(loanIdA, loanIdB, loanIdC);
+            emit InternalMatchExecuted(
+                loanIdA, loanIdB, loanIdC,
+                msg.sender,
+                movedX, movedY, movedZ,
+                incentiveX, incentiveY, incentiveZ
+            );
         }
+    }
 
-        (
+    /// @dev Execute the 3-loan chain A→B→C→A version of partial-match α.
+    ///      Independent min-match on each leg:
+    ///        movedX = min(A.principal, B.collateralAmount)  [B.X → A.lender + matcher]
+    ///        movedY = min(B.principal, C.collateralAmount)  [C.Y → B.lender + matcher]
+    ///        movedZ = min(C.principal, A.collateralAmount)  [A.Z → C.lender + matcher]
+    ///      Each loan whose principal hits zero transitions to
+    ///      InternalMatched. Residuals stay Active for the next
+    ///      block's matching attempt or external fallback.
+    function _executeThreeWayMatch(uint256 loanIdA, uint256 loanIdB, uint256 loanIdC)
+        private
+        returns (
             uint256 movedX,
             uint256 movedY,
+            uint256 movedZ,
             uint256 incentiveX,
-            uint256 incentiveY
-        ) = _executeTwoWayMatch(loanIdA, loanIdB);
+            uint256 incentiveY,
+            uint256 incentiveZ
+        )
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        LibVaipakam.Loan storage la = s.loans[loanIdA];
+        LibVaipakam.Loan storage lb = s.loans[loanIdB];
+        LibVaipakam.Loan storage lc = s.loans[loanIdC];
 
-        emit InternalMatchExecuted(
-            loanIdA, loanIdB, 0,
-            msg.sender,
-            movedX, movedY, 0,
-            incentiveX, incentiveY, 0
-        );
+        movedX = la.principal < lb.collateralAmount ? la.principal : lb.collateralAmount;
+        movedY = lb.principal < lc.collateralAmount ? lb.principal : lc.collateralAmount;
+        movedZ = lc.principal < la.collateralAmount ? lc.principal : la.collateralAmount;
+
+        uint256 incentiveBps = LibVaipakam.cfgInternalMatchIncentivePerLegBps();
+        incentiveX = (movedX * incentiveBps) / LibVaipakam.BASIS_POINTS;
+        incentiveY = (movedY * incentiveBps) / LibVaipakam.BASIS_POINTS;
+        incentiveZ = (movedZ * incentiveBps) / LibVaipakam.BASIS_POINTS;
+
+        // Leg X: B's collateral (= A's principal asset) → A.lender + matcher.
+        _settleLeg(lb.borrower, la.principalAsset, la.lender, movedX, incentiveX);
+        // Leg Y: C's collateral (= B's principal asset) → B.lender + matcher.
+        _settleLeg(lc.borrower, lb.principalAsset, lb.lender, movedY, incentiveY);
+        // Leg Z: A's collateral (= C's principal asset) → C.lender + matcher.
+        _settleLeg(la.borrower, lc.principalAsset, lc.lender, movedZ, incentiveZ);
+
+        // State updates — each loan's principal cleared by its leg,
+        // each borrower's collateral debited by the NEXT loan's leg.
+        la.principal -= movedX;
+        lb.collateralAmount -= movedX;
+        lb.principal -= movedY;
+        lc.collateralAmount -= movedY;
+        lc.principal -= movedZ;
+        la.collateralAmount -= movedZ;
+
+        if (la.principal == 0) {
+            LibLifecycle.transition(
+                la, LibVaipakam.LoanStatus.Active, LibVaipakam.LoanStatus.InternalMatched
+            );
+        }
+        if (lb.principal == 0) {
+            LibLifecycle.transition(
+                lb, LibVaipakam.LoanStatus.Active, LibVaipakam.LoanStatus.InternalMatched
+            );
+        }
+        if (lc.principal == 0) {
+            LibLifecycle.transition(
+                lc, LibVaipakam.LoanStatus.Active, LibVaipakam.LoanStatus.InternalMatched
+            );
+        }
+    }
+
+    /// @dev Settle one leg of an internal match — the receiving
+    ///      lender gets `moved - incentive`, the matcher gets
+    ///      `incentive`. Extracted helper so the 2-way and 3-way
+    ///      bodies share the cross-vault transfer logic without
+    ///      duplication.
+    function _settleLeg(
+        address payingBorrower,
+        address asset,
+        address receivingLender,
+        uint256 moved,
+        uint256 incentive
+    ) private {
+        if (moved == 0) return;
+        uint256 lenderShare = moved - incentive;
+        address lenderEscrow = EscrowFactoryFacet(address(this))
+            .getOrCreateUserEscrow(receivingLender);
+        if (lenderShare > 0) {
+            EscrowFactoryFacet(address(this)).escrowWithdrawERC20(
+                payingBorrower, asset, lenderEscrow, lenderShare
+            );
+            EscrowFactoryFacet(address(this)).recordEscrowDepositERC20(
+                receivingLender, asset, lenderShare
+            );
+        }
+        if (incentive > 0) {
+            EscrowFactoryFacet(address(this)).escrowWithdrawERC20(
+                payingBorrower, asset, msg.sender, incentive
+            );
+        }
     }
 
     /// @dev Execute the partial-match α swap between two opposing
@@ -923,55 +1025,15 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
         uint256 incentiveBps = LibVaipakam.cfgInternalMatchIncentivePerLegBps();
         incentiveX = (movedX * incentiveBps) / LibVaipakam.BASIS_POINTS;
         incentiveY = (movedY * incentiveBps) / LibVaipakam.BASIS_POINTS;
-        uint256 lenderShareX = movedX - incentiveX;
-        uint256 lenderShareY = movedY - incentiveY;
 
-        // Leg X — B's collateral (= A's principal asset) pays A's
-        // lender (99%) + matcher (1%). All withdraws come from
-        // B's borrower's escrow.
-        address xAsset = la.principalAsset;
-        if (movedX > 0) {
-            address aLenderEscrow = EscrowFactoryFacet(address(this))
-                .getOrCreateUserEscrow(la.lender);
-            if (lenderShareX > 0) {
-                EscrowFactoryFacet(address(this)).escrowWithdrawERC20(
-                    lb.borrower, xAsset, aLenderEscrow, lenderShareX
-                );
-                EscrowFactoryFacet(address(this)).recordEscrowDepositERC20(
-                    la.lender, xAsset, lenderShareX
-                );
-            }
-            if (incentiveX > 0) {
-                EscrowFactoryFacet(address(this)).escrowWithdrawERC20(
-                    lb.borrower, xAsset, msg.sender, incentiveX
-                );
-            }
-        }
-
-        // Leg Y — A's collateral (= B's principal asset) pays B's
-        // lender (99%) + matcher (1%).
-        address yAsset = lb.principalAsset;
-        if (movedY > 0) {
-            address bLenderEscrow = EscrowFactoryFacet(address(this))
-                .getOrCreateUserEscrow(lb.lender);
-            if (lenderShareY > 0) {
-                EscrowFactoryFacet(address(this)).escrowWithdrawERC20(
-                    la.borrower, yAsset, bLenderEscrow, lenderShareY
-                );
-                EscrowFactoryFacet(address(this)).recordEscrowDepositERC20(
-                    lb.lender, yAsset, lenderShareY
-                );
-            }
-            if (incentiveY > 0) {
-                EscrowFactoryFacet(address(this)).escrowWithdrawERC20(
-                    la.borrower, yAsset, msg.sender, incentiveY
-                );
-            }
-        }
+        // Leg X — B's collateral (= A's principal asset) → A.lender + matcher.
+        _settleLeg(lb.borrower, la.principalAsset, la.lender, movedX, incentiveX);
+        // Leg Y — A's collateral (= B's principal asset) → B.lender + matcher.
+        _settleLeg(la.borrower, lb.principalAsset, lb.lender, movedY, incentiveY);
 
         // State updates — debt cleared by the gross moved amount
-        // (borrower forfeits the full amount; the 1% they "would
-        // have paid the lender" is reallocated to the matcher).
+        // (borrower forfeits the full amount; the incentive % they
+        // "would have paid the lender" is reallocated to the matcher).
         la.principal -= movedX;
         lb.collateralAmount -= movedX;
         lb.principal -= movedY;
