@@ -85,14 +85,31 @@ export interface ChainConfig {
    *  no canonical CoinGecko page tracks the bridged WETH. */
   bridgedWethCoinGeckoSlug: string | null;
   /** Canonical wrapped-native ERC20 address on this chain (WETH on
-   *  ETH-side chains, WBNB on BNB, etc.). Used as the default
-   *  COLLATERAL pre-fill for the OfferBook's required
-   *  (lending, collateral) filter — the most-likely collateral asset
-   *  a user wants to browse on this chain. Null when no canonical
-   *  wrapped-native ERC20 is published yet (testnets where mocks
-   *  shift per deploy, or local Anvil). When null, the OfferBook
-   *  requires the user to pick a collateral asset manually. */
+   *  ETH-side chains, WBNB on BNB, WPOL/WMATIC on Polygon PoS, etc.).
+   *  Used for chain-native-asset rendering (e.g. "gas-equivalent
+   *  ERC-20" balance views) — NOT as the OfferBook default collateral
+   *  (that's now `bridgedWethAddress`; see below). Null when no
+   *  canonical wrapped-native ERC20 is published yet (testnets where
+   *  mocks shift per deploy, or local Anvil). */
   wrappedNativeAddress: string | null;
+  /** Canonical **bridged-WETH9** ERC20 address on this chain.
+   *
+   *  Per the 2026-05-14 WETH chain-safety audit
+   *  (`docs/internal/WethChainSafetyAudit-2026-05-14.md`), used as
+   *  the OfferBook's default COLLATERAL pre-fill so users see
+   *  bridged-ETH-collateral loans on landing, cross-chain-consistent.
+   *  On ETH-native chains (Ethereum / Base / Arbitrum / Optimism /
+   *  Polygon zkEVM) `wrappedNativeAddress` IS bridged-WETH; this field
+   *  can be `null` and consumers fall back to `wrappedNativeAddress`.
+   *  On non-ETH-native chains (BNB Chain mainnet — chainId 56 — and
+   *  Polygon PoS mainnet — chainId 137), this MUST be the chain's
+   *  canonical bridged-WETH9 (e.g.
+   *  `0x2170Ed0880ac9A755fd29B2688956BD959F933F8` on BNB), NOT
+   *  `wrappedNativeAddress` (which is WBNB / WPOL respectively —
+   *  wrong asset).
+   *
+   *  Consumer pattern: `bridgedWethAddress ?? wrappedNativeAddress`. */
+  bridgedWethAddress: string | null;
   /** Predominantly-used stablecoin ERC20 address on this chain
    *  (USDC on most EVMs, USDT on BNB). Used as the default LENDING
    *  asset pre-fill for the OfferBook's required

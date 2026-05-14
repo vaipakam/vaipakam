@@ -113,11 +113,88 @@ inspected entry-by-entry.
 
 ## Part 3 — Confirmed gaps
 
-**None.**
+The initial pass found zero contract-side gaps. A follow-up
+review pushed by the user surfaced **one frontend gap + two
+documentation gaps** that landed in the same commit as this audit:
 
-The audit looked for the specific anti-pattern — code that reads
-`wethContract.priceUsd()` (or equivalent) then USES that as "the
-value of 1 native-gas unit on this chain". No such code path exists.
+### Gap A — Frontend: OfferBook default collateral on BNB / Polygon
+
+**Location**: `apps/defi/src/pages/OfferBook.tsx:304` (pre-fix).
+
+**Issue**: The default value for the OfferBook's collateral
+filter read `activeReadChain.wrappedNativeAddress`. On every
+ETH-native chain (Ethereum / Base / Arbitrum / Optimism /
+Polygon zkEVM) that's WETH — correct. On **BNB Chain mainnet**
+that's WBNB (`0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c`), NOT
+bridged-WETH9. A user landing on the OfferBook from BNB Chain
+would see WBNB-collateral loans by default instead of
+bridged-ETH-collateral loans — inconsistent with every other
+chain and not what the user expects when they think
+"ETH-collateral loans".
+
+**Risk**: UX confusion, not a safety bug. But operator-facing
+intent is clearly "default to ETH-equivalent collateral across
+all chains" so the inconsistency reads as a defect.
+
+**Fix landed in this commit**:
+1. New `bridgedWethAddress: string | null` field on `ChainConfig`
+   in `packages/contracts/src/chain-config.ts` — documented as
+   "the chain's canonical bridged-WETH9, or null when wrapped-
+   native IS bridged-WETH (ETH-native chains)".
+2. BNB Chain mainnet config in `apps/defi/src/contracts/config.ts`
+   gains `bridgedWethAddress: "0x2170Ed0880ac9A755fd29B2688956BD959F933F8"`.
+3. `OfferBook.tsx` reads `bridgedWethAddress ?? wrappedNativeAddress`
+   so ETH-native chains keep today's behaviour (fallback) and BNB
+   defaults to bridged-WETH.
+4. Polygon PoS mainnet config will get `bridgedWethAddress:
+   "0x7ceB23fD6bC0adD59E62ac25578270cFf1b9f619"` when added to
+   the chain registry.
+
+### Gap B — Solidity: `setEthUsdFeed` natspec didn't flag the BNB/Polygon trap
+
+**Location**: `contracts/src/facets/OracleAdminFacet.sol:setEthUsdFeed`.
+
+**Issue**: The asset/ETH fallback price path multiplies an
+asset/ETH Chainlink read by `s.ethNumeraireFeed` (the slot name
+this setter writes to). The slot is semantically ETH/USD on every
+chain — including BNB and Polygon. But a deploy-time operator
+reading the natspec ("Chainlink ETH/USD aggregator contract
+address") might reasonably set this to BNB/USD on BNB Chain
+("makes sense — it's the native-gas-to-USD feed"). That
+substitution mis-prices every asset that traverses the fallback
+by the ETH-to-BNB ratio (~6× as of 2026-05).
+
+**Risk**: Operator-error vector during BNB / Polygon PoS deploy.
+The runtime can't detect the substitution; the protocol just
+returns wrong asset prices.
+
+**Fix landed in this commit**: Strengthened the `setEthUsdFeed`
+natspec to explicitly call out the BNB / Polygon PoS chain-
+specific requirement — "this MUST be the ETH/USD aggregator on
+every chain, NEVER the chain's native-gas/USD feed". Cross-refs
+this audit doc + CLAUDE.md "VPFIBuyAdapter — payment-token mode
+by chain". No behaviour change — same shape as the `setWethContract`
+hardening earlier in this commit.
+
+### Gap C — Solidity: `setWethContract` natspec didn't flag the BNB/Polygon trap
+
+**Location**: `contracts/src/facets/OracleAdminFacet.sol:setWethContract`.
+
+**Issue + risk + fix**: same shape as Gap B — operator on BNB
+might set the slot to WBNB (wrapped-native) instead of bridged-
+WETH9. The natspec didn't explicitly flag this. Strengthened in
+the same commit as Gap B's fix.
+
+---
+
+The original audit looked for the specific anti-pattern — code
+that reads `wethContract.priceUsd()` (or equivalent) then USES
+that as "the value of 1 native-gas unit on this chain". No such
+code path exists in the Solidity contracts. The frontend gap
+(Gap A) and the operator-documentation gaps (Gaps B + C) are
+real but less severe — they're about the surrounding *operator
+intent* layer (default UX + deploy-time NatSpec guidance) rather
+than buried mispricing logic.
 
 ---
 

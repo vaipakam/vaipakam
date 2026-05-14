@@ -301,7 +301,17 @@ export default function OfferBook() {
   // chain default rather than a free-text empty (see the wrapper
   // setters below).
   const defaultLendingAsset = activeReadChain.predominantStableAddress ?? '';
-  const defaultCollateralAsset = activeReadChain.wrappedNativeAddress ?? '';
+  // Per the 2026-05-14 WETH chain-safety audit: prefer the canonical
+  // bridged-WETH9 ERC-20 over the chain's wrapped-native for the
+  // OfferBook default collateral. On ETH-native chains the two are
+  // identical so the fallback to `wrappedNativeAddress` is a no-op.
+  // On BNB Chain mainnet (and Polygon PoS if/when added),
+  // `wrappedNativeAddress` is WBNB / WPOL — wrong asset for an
+  // ETH-collateral-by-default OfferBook landing experience.
+  const defaultCollateralAsset =
+    activeReadChain.bridgedWethAddress ??
+    activeReadChain.wrappedNativeAddress ??
+    '';
   const [lendingAssetFilter, setLendingAssetFilterRaw] = useState<string>(defaultLendingAsset);
   const [collateralAssetFilter, setCollateralAssetFilterRaw] = useState<string>(defaultCollateralAsset);
   // Wrap the setters so AssetPicker's "clear" (passes empty string)

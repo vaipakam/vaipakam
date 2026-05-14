@@ -133,12 +133,43 @@ contract OracleAdminFacet {
 
     /**
      * @notice Sets the direct Chainlink ETH/USD AggregatorV3 feed.
-     * @dev Owner-only. REQUIRED — used to price WETH itself and to
-     *      convert asset/WETH pool depth into USD for the Liquid/Illiquid
-     *      classification. Setting to `address(0)` disables every
-     *      ETH-quoted code path; WETH pricing reverts NoPriceFeed and
-     *      every asset classifies Illiquid.
-     * @param feed The ETH/USD Chainlink aggregator contract address.
+     * @dev Owner-only. REQUIRED — used to price WETH itself, to
+     *      convert asset/WETH pool depth into USD for the Liquid /
+     *      Illiquid classification, AND to multiply against the
+     *      asset/ETH fallback feed when no direct asset/USD feed
+     *      is available. Setting to `address(0)` disables every
+     *      ETH-quoted code path; WETH pricing reverts NoPriceFeed
+     *      and every asset classifies Illiquid.
+     *
+     *      **Chain-specificity** (per the 2026-05-14 WETH chain-safety
+     *      audit, `docs/internal/WethChainSafetyAudit-2026-05-14.md`):
+     *      this MUST be the **ETH/USD** feed on every chain, NOT the
+     *      chain's native-gas/USD feed. Specifically:
+     *      - **Ethereum / Base / Arbitrum / Optimism / Polygon zkEVM**:
+     *        native gas IS ETH; the chain's "native-gas/USD" feed AND
+     *        the "ETH/USD" feed are the same Chainlink aggregator.
+     *        Either intent works.
+     *      - **BNB Chain mainnet (chainId 56)**: native gas is BNB,
+     *        NOT ETH. **MUST set the chain's ETH/USD aggregator** (the
+     *        BNB-side Chainlink feed that prices ETH in USD), NEVER
+     *        the BNB/USD aggregator. The asset/ETH fallback formula
+     *        is `asset/ETH × ETH/USD`; with BNB/USD substituted, asset
+     *        prices mis-report by the ETH-to-BNB ratio (~6× as of
+     *        2026-05). Every depth-tier classification + every LTV /
+     *        HF read that traverses the fallback path mis-prices.
+     *      - **Polygon PoS mainnet (chainId 137)**: native gas is POL
+     *        (formerly MATIC), NOT ETH. **MUST set the chain's ETH/USD
+     *        aggregator**, NEVER POL/USD. Same failure mode as BNB.
+     *
+     *      The storage slot is named `ethNumeraireFeed` for historical
+     *      reasons (pre-numeraire-generalization). Read it as "the
+     *      ETH-side reference feed", not "the numeraire feed for the
+     *      chain's native asset". CLAUDE.md's deploy runbook + the
+     *      bounds-audit doc cover the canonical addresses per chain.
+     *
+     * @param feed The ETH/USD Chainlink aggregator contract address
+     *             on the active network (NOT the native-gas/USD feed
+     *             on non-ETH-gas chains).
      */
     function setEthUsdFeed(address feed) external {
         LibVaipakam.setEthUsdFeed(feed);

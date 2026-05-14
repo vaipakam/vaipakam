@@ -93,6 +93,13 @@ interface ChainMeta {
    *  (testnets with deploy-shifting mocks, local Anvil) can omit them
    *  and the {@link buildChainConfig} pass folds null. */
   wrappedNativeAddress?: string | null;
+  /** Optional override for the OfferBook default-collateral address
+   *  on chains where wrapped-native ≠ bridged-WETH9 (BNB Chain
+   *  mainnet, Polygon PoS mainnet). When null/undefined, consumers
+   *  fall back to {wrappedNativeAddress} — correct on ETH-native
+   *  chains where the two values are identical. Per the 2026-05-14
+   *  WETH chain-safety audit + the user-flagged frontend gap. */
+  bridgedWethAddress?: string | null;
   predominantStableAddress?: string | null;
 }
 
@@ -123,6 +130,7 @@ function buildChainConfig(meta: ChainMeta): ChainConfig {
     nativeGasCoinGeckoSlug: meta.nativeGasCoinGeckoSlug,
     bridgedWethCoinGeckoSlug: meta.bridgedWethCoinGeckoSlug,
     wrappedNativeAddress: meta.wrappedNativeAddress ?? null,
+    bridgedWethAddress: meta.bridgedWethAddress ?? null,
     predominantStableAddress: meta.predominantStableAddress ?? null,
   };
 }
@@ -218,8 +226,18 @@ const BNB = buildChainConfig({
   nativeGasSymbol: "BNB",
   nativeGasCoinGeckoSlug: "binancecoin",
   bridgedWethCoinGeckoSlug: "weth",
-  // WBNB — chain's wrapped-native, the natural collateral on BNB.
+  // WBNB — chain's wrapped-native. Kept for chain-native-asset
+  // rendering surfaces; NOT the OfferBook default collateral (see
+  // bridgedWethAddress below).
   wrappedNativeAddress: "0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c",
+  // Bridged-WETH9 on BNB — the canonical Ethereum-bridged ETH ERC-20
+  // (NOT WBNB). Per the 2026-05-14 WETH chain-safety audit, this is
+  // what the OfferBook should default to as the collateral filter so
+  // users see bridged-ETH-collateral loans on landing, consistent
+  // with every other chain. Verify against the chain's official
+  // bridge registry before mainnet (CLAUDE.md tracks the canonical
+  // address).
+  bridgedWethAddress: "0x2170Ed0880ac9A755fd29B2688956BD959F933F8",
   // USDT — dominant BNB stablecoin (USDC is also widely used but USDT
   // historically wins volume on BSC).
   predominantStableAddress: "0x55d398326f99059fF775485246999027B3197955",
