@@ -51,19 +51,30 @@ Implementation snapshot (branch `feat/market-rate-widget-and-tiered-ltv`):
   "battle-tested elsewhere" advisory (Aave v3 / Compound v3 /
   Morpho-curated listing + TVL on this chain) — STUBBED in v1 ⇒ relay
   caps at Tier 2. Cron-wired, tsc clean; not deployed.
-- **Piece B follow-up (c) — `LibOfferMatch.previewMatch` tier-cap
-  alignment — LANDED**: synthetic init-gate check now mirrors
-  `LoanFacet._checkInitialLtvAndHf` (the binding gate) under
-  `depthTieredLtvEnabled` — new `LibRiskMath.minCollateralForLtvCap` +
-  `MatchError.LtvAboveTier`. Closes the "bot submits reverting
-  matchOffers" gap when the switch flips. (Preclose/Refinance HF
-  re-checks deliberately stay at `HF ≥ 1.5` — they aren't fresh-loan
-  inits and the legacy bound is more conservative than the tier cap.)
-- **Piece B follow-up (a) — init-gate integration tests — LANDED** (5
-  cases extending `LoanFacetTest`: above/below Tier-1 cap, HF≥1e18 floor
-  relaxed, HF<1 still reverts, Tier-0 collateral rejected). The
-  `if (depthTieredLtvEnabled)` branch of `_checkInitialLtvAndHf` is no
-  longer unit-untested.
+- **Piece B follow-up (c) — `LibOfferMatch.previewMatch` AND
+  `RefinanceFacet` tier-cap alignment — LANDED**: both sites now
+  mirror `LoanFacet._checkInitialLtvAndHf` (the binding init-gate)
+  under `depthTieredLtvEnabled`. `previewMatch` got the
+  `LibRiskMath.minCollateralForLtvCap` + `MatchError.LtvAboveTier`
+  surface in the Phase-5 autonomous-LTV work; `RefinanceFacet`'s
+  post-refinance gate caught up 2026-05-14 (commit `d9de20a`):
+  switch-OFF keeps legacy `LTV ≤ maxLtvBps` + `HF ≥ 1.5`, switch-ON
+  uses `LTV ≤ min(maxLtvBps, tierCap)` + `HF ≥ 1.0`. Closes the "bot
+  submits reverting matchOffers" gap AND the analogous "borrower
+  refinances into a position the init gate would have rejected" gap.
+  (`PrecloseFacet.transferObligationViaOffer` has no HF revert gate
+  to align — only an event-payload best-effort read; borrower
+  substitution preserves the original loan's economics by
+  construction.) +4 new RefinanceFacet tests on top of the 5
+  pre-existing LoanFacet init-gate tests.
+- **Piece B follow-up (a) — init-gate integration tests — LANDED**
+  (8 cases on `LoanFacetTest` after the 2026-05-14 boundary
+  additions: above/below Tier-1 cap, HF≥1e18 floor relaxed, HF<1
+  still reverts, Tier-0 collateral rejected, Tier-2 boundary at
+  62%, Tier-3 boundary at 73%, and switch-OFF ignores the
+  tier entirely). The `if (depthTieredLtvEnabled)` branch of
+  `_checkInitialLtvAndHf` is fully unit-tested across all three tier
+  values + the kill-switch state.
 - **Piece B follow-up (b) — Uni-V2-fork family in the route search —
   LANDED**: per-chain `uniswapV2Factory` / `sushiswapV2Factory` /
   `pancakeswapV2Factory` storage + `AdminFacet` setters/getters + a V2
@@ -75,15 +86,42 @@ Implementation snapshot (branch `feat/market-rate-widget-and-tiered-ltv`):
   excludes a mismatched pool; V2 alone can't make an asset `Liquid` —
   `_checkLiquidity` deliberately stays V3-only). A zero V2 factory
   skips that leg; a fresh deploy has all three zero ⇒ V3-only route
-  search, no behaviour change vs the pre-(b) state.
+  search, no behaviour change vs the pre-(b) state. **Per-chain
+  rollout** (2026-05-14, commit `c80eb7e`):
+  `contracts/script/ConfigureV2Factories.s.sol` ships canonical V2
+  factory addresses for Ethereum / Base / Arbitrum / Optimism / BNB
+  Chain / Polygon PoS (verified against each protocol's official
+  registry); operator runs once per chain to flip the V2 leg on.
+- **Piece B follow-up (e) — frontend `useProtocolConfig` wiring —
+  LANDED** (2026-05-14, commit `f73646b`): the `useMarketRateMinCollateral`
+  auto-fill hook + `OfferRiskPreview` HF-warning component are now
+  tier-aware. Under `depthTieredLtvEnabled = false` they stay at
+  today's legacy `HF ≥ 1.5` math; flipped on, they switch to
+  `cap = min(maxLtvBps, tierMaxInitLtvBps[effectiveTier])` + `HF ≥
+  1.0` and surface the resolved cap (`effectiveLtvCapBps`) so callers
+  can render tier-aware hints. The on-chain `getEffectiveLiquidityTier`
+  read comes via the pre-existing `useAssetTier` hook (was defined
+  but unconsumed; this commit makes it the first real caller).
+- **Liquidator keeper bot hardening — LANDED** (2026-05-14, commits
+  `a63d5ef`, `ee8a773`, `43e5b8f`): partial-liquidation + split-route
+  + the new flash-loan / liquidator-buys-at-discount path
+  (`RiskFacet.triggerLiquidationDiscounted` + the standalone
+  `FlashLoanLiquidator` receiver supporting Aave V3 `flashLoanSimple`
+  + Balancer V2 `flashLoan`, behind the `discountPathEnabled`
+  master kill-switch). The Tier-3 LTV ramp past its conservative
+  opening figure is no longer gated on liquidator capacity — the
+  contract surface is end-to-end and external MEV-style liquidators
+  can plug in via the public ABI. See
+  `docs/DesignsAndPlans/FlashLoanLiquidationPath.md`.
 - **Not done — must precede flipping `depthTieredLtvEnabled` on any
-  chain (the §4.4-step-6 audit covers the remaining items):** (e)
-  frontend `useProtocolConfig` wiring for the new bundle /
-  `getEffectiveLiquidityTier` (ABIs exported, no consumer reads them
-  yet); (advisory) wiring the Tier-3 "battle-tested elsewhere" check in
-  the keeper relay (currently stubbed ⇒ caps at Tier 2); deferred /
-  parallel — harden the liquidator keeper bot for higher LTV (gates
-  the Tier-3 LTV ramp past its conservative opening).
+  chain (the §4.4-step-6 audit covers the remaining items):**
+  (advisory) wiring the Tier-3 "battle-tested elsewhere" check in
+  the keeper liquidity-confidence relay (currently stubbed ⇒ caps at
+  Tier 2); per-chain operational rollout — running
+  `ConfigureV2Factories.s.sol` on each target chain, running the
+  pre-deploy census, getting audit sign-off, then flipping
+  `setDepthTieredLtvEnabled(true)` + (independently)
+  `setDiscountPathEnabled(true)` per chain.
 
 Author note: this doc records a real-pool depth census (§3) that
 changed the recommendation for Piece B — read §3 and §4 before
@@ -724,9 +762,9 @@ liquidation behaviour is observed.
 - Multicall HF + priority sort (faster monitoring): `43f7b6c`.
 - Best/split-route swaps (`LibSwap.swapWithSplit` + `RiskFacet.triggerLiquidationSplit` + keeper decision logic): `4246a46` + `7d43034`.
 - Partial liquidations (`RiskFacet.triggerPartialLiquidation` + governance close-factor cap + full test sweep + keeper optimal-fraction math): `1ca7cba` + `8da2c8d` + `a3c53dd` + `c487239` + `3a0f81a` + `738c7c7` + `5bc4cd6`.
-- Flash-loan-funded execution: **BLOCKED** on a risk-committee decision about the keeper-incentive model. Under the current model the keeper EOA needs zero working capital (the diamond does the atomic swap from collateral custody) so flash-loans have no clear motivating use case; would need a switch to Aave-style "liquidator buys collateral at a discount" first. No code; surface to risk committee.
+- Flash-loan-funded execution: **DONE 2026-05-14** (commits `a63d5ef`, `ee8a773`, `43e5b8f`). The risk-committee question got resolved with a hybrid model: keep the existing atomic-swap path (`triggerLiquidation` / `Split` / `Partial`) AND add a parallel `RiskFacet.triggerLiquidationDiscounted` Aave-V3 / Compound-V3 / Morpho-Blue-style "liquidator buys collateral at a per-tier discount" path — gated by a separate `discountPathEnabled` master kill-switch. Standalone `contracts/src/keeper/FlashLoanLiquidator.sol` receiver supports Aave V3 `flashLoanSimple` + Balancer V2 `flashLoan` so the keeper EOA needs zero working capital. Per-chain rollout: see `docs/ops/FlashLoanLiquidatorRollout.md`. Design doc: `docs/DesignsAndPlans/FlashLoanLiquidationPath.md`.
 
-The Tier-3 LTV ramp past its conservative opening (currently 65%) is gated on the above plus the Step-6 audit. Tiers 1 and 2 don't depend on flash-loan execution.
+The Tier-3 LTV ramp past its conservative opening (currently 73%, per the Phase-5 autonomous tier-LTV cache library default) is gated on the Step-6 audit + the Tier-3 advisory "battle-tested elsewhere" check inside the liquidity-confidence relay (currently stubbed ⇒ relay caps at Tier 2). Tiers 1 and 2 don't depend on either.
 
 ---
 
