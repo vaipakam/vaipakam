@@ -17,6 +17,68 @@ ledger (§4.4.1). Three bands ratified by user: ≥85% advertise,
 ≥90% internal-match window, ≥92% external fallback. 1%
 matcher incentive split evenly across the two matched legs.
 
+## 0. Architectural pivot (2026-05-14 — post-§9.1 review)
+
+The user pointed out that the global "match-liquidate floor"
+(90%) and "external-fallback floor" (92%) in §9.1 must equal —
+NOT be independent of — the existing per-asset liquidation
+threshold. A separate global creates drift, contradicts per-asset
+risk gradients, and risks force-closing non-defaulting loans.
+The fix is **structural**, not just renaming knobs.
+
+**Pivot decisions (user-confirmed in plan-mode Q&A):**
+
+1. **Retire `assetRiskParams.liqThresholdBps` (per-asset, admin-set).**
+   Replaced by **per-tier liquidation threshold** (`tier1/2/3LiquidationLtvBps`
+   in `ProtocolConfig`), mirroring the existing per-tier
+   `tier1/2/3MaxInitLtvBps` origination caps. Defaults: Tier 1 =
+   90%, Tier 2 = 85%, Tier 3 = 80% (5% gradient, deeper liquidity
+   = higher threshold).
+2. **Snapshot-at-init.** `Loan.liquidationLtvBpsAtInit` captures
+   the effective per-tier value at `LoanFacet.initiateLoan` and is
+   read by `RiskFacet.calculateHealthFactor` thereafter. Tier
+   degradation mid-loan does NOT re-gate existing loans.
+3. **Naming refactor (mechanical)**: `assetRiskParams.maxLtvBps` →
+   `loanInitMaxLtvBps`. Per-asset `liqThresholdBps` is removed
+   entirely (no fallback).
+4. **Internal-match path simplifies to 3 globals.** Per-asset and
+   per-tier knobs for the trigger are no longer needed:
+   - `internalMatchEnabled` (bool) — kill switch.
+   - `externalLiquidationPriorityWindowBps` (uint16, default 200,
+     max 500) — how far past `loan.liquidationLtvBpsAtInit` the
+     external path stays blocked, so internal matchers always
+     get this LTV window before external opens.
+   - `internalMatchIncentivePerLegBps` (uint16, default 100, max 300).
+
+**Gate logic with the pivot:**
+- Internal-match callable at `LTV ≥ loan.liquidationLtvBpsAtInit`.
+- External callable at `LTV ≥ loan.liquidationLtvBpsAtInit + externalLiquidationPriorityWindowBps`.
+- Below `loan.liquidationLtvBpsAtInit` → nothing fires.
+
+Bad-debt safety preserved: highest per-tier liquidation threshold
+caps at 95% (`MAX_TIER_LIQUIDATION_LTV_BPS`), priority window caps
+at 5% (`MAX_EXTERNAL_LIQUIDATION_PRIORITY_WINDOW_BPS`), so worst-
+case absolute external floor ≤ 100% — but in practice the cross-
+tier monotonic invariant + tier-3-defaults-conservatively rule
+keeps it well below.
+
+**Sequencing — three PRs on `feat/internal-liquidation-ledger`:**
+- **PR1**: rename `maxLtvBps` → `loanInitMaxLtvBps` across ~19
+  files. No behaviour change. Forge build green.
+- **PR2**: per-tier liquidation threshold + `Loan.liquidationLtvBpsAtInit`
+  snapshot + HF formula reads the snapshot. Retire
+  `assetRiskParams.liqThresholdBps` entirely. New ConfigFacet
+  setter/view. KEEPER_ROLE relay channel extended.
+- **PR3**: internal-match scaffold using the 3 globals from
+  decision (4) above. `LoanStatus.InternalMatched` enum. New
+  `MetricsFacet.getMatchEligibleLoans` view. External-path
+  priority-window gate in `triggerLiquidation`.
+
+The remainder of this doc (§1–§13) reflects the **original** 4-knob
+design and is preserved for the alternatives-discussion audit
+trail. The implementation follows the pivot above; §9.1's 4-knob
+table is **superseded** by this section.
+
 ## 1. Goal
 
 Today every liquidation routes through an external aggregator
