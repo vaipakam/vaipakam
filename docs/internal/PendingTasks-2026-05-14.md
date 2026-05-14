@@ -154,25 +154,59 @@ explicitly call out the BNB/Polygon chain-specific addresses +
 the "wrapped-native ≠ bridged-WETH" distinction. Operator-
 documentation improvement; no behaviour change.
 
-### B.2 Internal-liquidation ledger proposal
+### ~~B.2 Internal-liquidation ledger proposal~~ — CLOSED 2026-05-15
 
-Bot-driven cross-vault asset matching at LTV bands before falling
-through to external 0x/1inch:
-- 85% LTV → loan info enters the matching ledger
-- 90% → internal-match liquidation allowed (bots can settle
-  opposing-direction liquidations against each other)
-- 92% → external liquidation path opens
+End-to-end shipped on `feat/internal-liquidation-ledger` (11
+commits in the vaipakam repo + 1 in `vaipakam-keeper-bot`).
+Design doc + implementation summary in
+[`docs/DesignsAndPlans/InternalLiquidationLedger.md`](../DesignsAndPlans/InternalLiquidationLedger.md)
+§0.0. The original 3-band 85/90/92 LTV proposal pivoted during
+plan-mode Q&A into the cleaner shape that ships:
+- The "match-liquidate floor" is per-loan, snapshotted from
+  the existing per-tier liquidation threshold at `initiateLoan`
+  → no separate knob to drift away from the per-asset risk
+  gradient.
+- "Is the ledger really needed?" — view-based design wins. No
+  storage, no add/remove maintenance. `MetricsFacet.getMatchEligibleLoans`
+  filters `s.activeLoanIdsList` per-block.
+- 1% per-leg incentive, governance-tunable up to 3% cap, paid
+  synchronously on match.
+- 2-way partial-match α + 3-way A→B→C→A chain. Both kill-
+  switched off by default; production stays in today's external-
+  liquidation behaviour until per-chain governance flips it on.
 
-1% bot incentive on internal matches. Alternatives to discuss
-before coding (in scope of the design doc):
-- Dutch-auction matching engine
-- Periodic-clearing batched matching
-- Simple priority queue
-- "Is the ledger really needed?" — could be a state-derived view
-  rather than a separate data structure
+**Forge regression**: 1936 passed / 0 failed / 5 skipped on the
+non-invariant suite. Frontend + worker typechecks green.
+**Audit**: bundles with A.4 next engagement per D7 of the
+plan-mode Q&A.
 
-Feature-sized. Deserves a design doc like
-[`FlashLoanLiquidationPath.md`](../DesignsAndPlans/FlashLoanLiquidationPath.md).
+**B.2 follow-ups** (intentionally out of scope for this branch
+— track here so they don't get lost):
+
+- **B.2.1 Per-page badge wiring** for `LoanStatus.InternalMatched`.
+  Label exists in `apps/defi/src/types/loan.ts`; pages that
+  render loan status (Dashboard, LoanTimeline,
+  LenderEarlyWithdrawal, BorrowerPreclose, Refinance,
+  NftVerifier) treat unknown-variant as Active for now.
+- **B.2.2 MyLoans "near-liquidation" filter bucket** — surface
+  borrowers' loans currently in
+  `[liquidationLtvBpsAtInit − 5%, liquidationLtvBpsAtInit)`
+  with a CTA to top-up collateral / repay before the match
+  window opens.
+- **B.2.3 Indexer schema row for `InternalMatchExecuted`** —
+  currently allowlisted in `apps/indexer/scripts/check-event-coverage.mjs`
+  (event surfaces via live `getLoanDetails` for now). Wire a
+  proper handler in `chainIndexer.ts` + activity-event row.
+- **B.2.4 3-way chain in the keeper-bot** —
+  `vaipakam-keeper-bot/src/detectors/internalMatcher.ts`
+  finds 2-way pairs today. The contract supports 3-way via
+  `triggerInternalMatchLiquidation(idA, idB, idC)`; bot needs
+  a second pass over loans that didn't pair up 2-way to detect
+  3-cycles.
+- **B.2.5 Companion bot pair-search algorithm doc** in
+  `vaipakam-keeper-bot/docs/InternalMatchSearchAlgorithm.md`
+  (per D8 of plan-mode Q&A). Spec: candidate enumeration, pair
+  scoring, 3-way chain detection, gas-vs-profit threshold logic.
 
 ---
 

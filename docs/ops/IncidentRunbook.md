@@ -229,6 +229,83 @@ permanent fix" path.
 Full per-chain rollout sequence + troubleshooting in
 [`FlashLoanLiquidatorRollout.md`](FlashLoanLiquidatorRollout.md).
 
+## 3.6 Targeted snap-off — internal-match path (added 2026-05-15)
+
+When a problem is scoped to the internal-liquidation match path
+(`RiskFacet.triggerInternalMatchLiquidation` + the priority-window
+gate inside `triggerLiquidation`), use a targeted snap-off instead
+of a full pause. The atomic-swap path remains the protocol's
+default fallback — disabling internal-match returns the system to
+exactly today's behaviour (external liquidation across the full
+LTV range), so the snap-off is non-disruptive to recovery.
+
+Two escalation tiers, least to most disruptive:
+
+**Tier 1 — bot-side snap-off (keeper-bot operator only)**
+
+Stop the `internalMatcher` detector in
+[`vaipakam-keeper-bot/src/detectors/internalMatcher.ts`](https://github.com/vaipakam/vaipakam-keeper-bot/blob/main/src/detectors/internalMatcher.ts)
+on this chain. Either:
+- Comment out the per-tick invocation, redeploy the bot, **or**
+- Add an early-return on `chainId === <affected>` at the top of
+  `runInternalMatcherTick`.
+
+Affects ONLY our bot; external operators running their own
+matcher detectors are unaffected (use Tier 2 for that). The
+on-chain entry point stays callable; only OUR bot stops calling
+it.
+
+**Tier 2 — flip the on-chain kill-switch (affects EVERYONE)**
+
+```solidity
+ConfigFacet.setInternalMatchEnabled(false)
+```
+
+Reverts every `triggerInternalMatchLiquidation` call regardless
+of caller AND short-circuits the priority-window gate inside
+`triggerLiquidation` (external opens back up across the full
+LTV range, exactly as today). Use this when the issue is in the
+diamond's internal-match code itself (the cross-vault transfer
+logic, the lifecycle transition, the per-leg incentive math)
+and every operator's matcher must be stopped.
+
+Post-handover this needs a Timelock-scheduled tx with the
+48h delay — **not an emergency lever once handover lands.** The
+asset-level `AdminFacet.pauseAsset` is the immediate-effect lever
+for the affected asset's loans; Tier 2 is for "we want to
+permanently disable the match path while we triage."
+
+### What does NOT require flipping the internal-match
+kill-switch
+
+- **A single match transaction reverts.** The bot's revert is
+  visible in `internalMatcher.submit.failed` log lines but
+  doesn't risk protocol funds — the tx rolled back atomically.
+  Common causes: lost a race to another matcher, kill-switch
+  flipped between simulate + execute, escrow balance drifted.
+  Investigation only; no action.
+- **Spurious bot revenue.** The 1% per-leg incentive is bounded
+  by the per-leg matched notional. A spike in `InternalMatchExecuted`
+  emissions means the path is working as designed. Validate via
+  `getInternalMatchConfigBundle()` returning the expected `(true,
+  200, 100)` tuple and the per-tier liquidation thresholds via
+  `getTierLiquidationLtvBps()`.
+- **LTV oscillation around the priority window.** A loan
+  crossing the floor → above-window → back below as oracle
+  prices move is normal market dynamics; external opens AND
+  closes its callability window per block. No incident.
+
+### Symptoms that DO warrant a snap-off
+
+- Loans transitioning to `LoanStatus.InternalMatched` while
+  having non-zero `principal` — bug in the lifecycle transition.
+- Borrower's escrow balance + collateralAmount drifting after a
+  match — bug in the cross-vault transfer.
+- Matcher receiving > the cap'd `internalMatchIncentivePerLegBps`
+  in a single match — bug in the incentive math.
+- External `triggerLiquidation` succeeding inside the priority
+  window when the kill-switch is on — bug in the gate.
+
 ---
 
 ## 4. Off-chain alert-rail key compromise
