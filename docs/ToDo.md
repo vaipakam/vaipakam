@@ -449,3 +449,12 @@ Also the info icon mapping inside protocol console should go only to `www` (http
 - [ ] **ET-001**: Lets use Blowfish instead of Blockaid
 
 ---
+
+Have 3 modes in website `Basic/Advanced/Technical`, Basic: for Dummy users (with polished wordings), Advanced: for users with no technical knoweldge but can understand all financial jargons, Technical: for users with technical knoweldge but not much with all financial jargons
+what do you say? whats your take?
+
+---
+
+update protocol console and include each and every configs in admin viewable/proposable page, what do you say?
+
+---
