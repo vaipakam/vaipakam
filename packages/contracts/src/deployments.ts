@@ -191,6 +191,17 @@ export interface Deployment {
   mockWBTCFeed?: HexAddress;
   mockWETHFeed?: HexAddress;
 
+  // ── FlashLoanLiquidator (Phase 3 of FlashLoanLiquidationPath.md) ──
+  /** Address of the chain-local `FlashLoanLiquidator` receiver
+   *  contract that the keeper bot drives for flash-loan-funded
+   *  discount-path liquidations. Optional: chains where we haven't
+   *  yet run `DeployFlashLoanLiquidator.s.sol` leave it `undefined`,
+   *  and the keeper bot silently skips the flash-loan branch on
+   *  those chains. External liquidators can deploy their own
+   *  equivalent receivers — `triggerLiquidationDiscounted` is
+   *  permissionless, this is just OUR reference deployment. */
+  flashLoanLiquidator?: HexAddress;
+
   // ── Deploy metadata ─────────────────────────────────────────────
   deployedAt?: string;
 }

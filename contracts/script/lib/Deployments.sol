@@ -123,6 +123,7 @@ library Deployments {
     function readVPFIBuyAdapter()  internal view returns (address) { return _readAddr(".vpfiBuyAdapter",  "VPFI_BUY_ADAPTER_ADDRESS"); }
     function readVPFIBuyReceiver() internal view returns (address) { return _readAddr(".vpfiBuyReceiver", "VPFI_BUY_RECEIVER_ADDRESS"); }
     function readRewardOApp()      internal view returns (address) { return _readAddr(".rewardOApp",      "REWARD_OAPP_ADDRESS"); }
+    function readFlashLoanLiquidator() internal view returns (address) { return _tryReadAddr(".flashLoanLiquidator"); }
 
     // Track-C mock infra (Base Sepolia testnet only). Falls back to env on chains
     // where these aren't deployed; readers pre-check for `address(0)` and skip.
@@ -166,6 +167,7 @@ library Deployments {
     function writeVPFIBuyReceiver(address a) internal { _writeAddr(".vpfiBuyReceiver", a); }
     function writeVPFIBuyReceiverImpl(address a) internal { _writeAddr(".vpfiBuyReceiverImpl", a); }
     function writeRewardOApp(address a)      internal { _writeAddr(".rewardOApp",      a); }
+    function writeFlashLoanLiquidator(address a) internal { _writeAddr(".flashLoanLiquidator", a); }
     function writeRewardOAppBootstrapImpl(address a) internal { _writeAddr(".rewardOAppBootstrapImpl", a); }
     function writeRewardOAppRealImpl(address a)      internal { _writeAddr(".rewardOAppRealImpl",      a); }
     function writeWeth(address a)            internal { _writeAddr(".weth",            a); }

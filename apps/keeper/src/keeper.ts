@@ -32,17 +32,12 @@ import {
 } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
 import {
-  // FlashLoanLiquidatorABI imported here (NOT yet used in the v1
-  // discount-path branch — see `tryFlashLoanDiscountedPath` for
-  // why submission is gated pending DEX-direct quote wiring) so
-  // the ABI bundle is part of the keeper-bot's compile-time deps
-  // and a future PR can pick it up without revisiting imports.
-  FlashLoanLiquidatorABI as _FlashLoanLiquidatorABI,
+  FlashLoanLiquidatorABI,
   LoanFacetABI,
   OracleFacetABI,
   RiskFacetABI,
 } from '@vaipakam/contracts/abis';
-void _FlashLoanLiquidatorABI;
+import { orchestrateDexDirectQuotes } from './dexDirectQuotes';
 import type { ChainConfig, Env } from './env';
 import {
   orchestrateServerQuotes,
@@ -670,37 +665,74 @@ async function tryFlashLoanDiscountedPath(
   const account = ctx.wallet.account;
   if (!account) return false;
 
-  // ─── v1 limitation note ────────────────────────────────────────
-  // The existing `ServerOrchestrationResult` carries diamond-LibSwap-
-  // adapter-encoded calldata (just `{ adapterIdx, data }`), which the
-  // diamond's `LibSwap.swap` interprets to look up the actual adapter
-  // address + allowance target from the registered swap-adapter
-  // table. The FlashLoanLiquidator is OUTSIDE the diamond — it
-  // doesn't see the swap-adapter registry, so it needs DEX-direct
-  // calldata: `(swapTarget, swapAllowanceTarget, swapCalldata)`.
-  //
-  // For v1 of this branch the deployment gate at the top
-  // (`getFlashLoanProvider(chain.id)` returning undefined while no
-  // chain has `liquidator` set) means this branch never executes.
-  // The branch logs that it WOULD have submitted, so an operator
-  // running with `DISCOUNT_PATH_ENABLED_<chainId>=true` can see
-  // simulation-positive trades and validate the assumptions before
-  // we wire DEX-direct quote fetching. The follow-up is a new
-  // `dexDirectQuotes.ts` that returns `(target, allowance, data)`
-  // and is invoked here instead of reusing the LibSwap-adapter
-  // quotes.
-  console.log(
-    `[keeper] loan=${loanId} chain=${chain.name} flash-loan-WOULD-SUBMIT ` +
-      `via=${useAave ? 'aave-v3' : 'balancer-v2'} ` +
-      `simulated-proceeds=${simulatedProceeds} debt=${totalDebtEstimate} ` +
-      `fee=${flashFee} gas-headroom=${gasHeadroom} | DEX-direct quote ` +
-      `wiring pending (v1 scaffold)`,
-  );
-  // Don't actually submit — fall through to legacy branches. Once
-  // DEX-direct quotes land + chains have FlashLoanLiquidator
-  // deployed + the operator flips `DISCOUNT_PATH_ENABLED_<chainId>`,
-  // the surrounding `if (flashLoanSubmitted) return true;` will
-  // skip the legacy branches.
-  return false;
+  // ── DEX-direct quote fetch ────────────────────────────────────
+  // Re-fetch with the FlashLoanLiquidator receiver as taker (not
+  // the diamond), so the aggregator builds calldata + allowance
+  // target tailored to the receiver's call shape. We can't reuse
+  // the `quotes` bundle from the main flow because that was
+  // built with `taker = diamond` for the diamond-LibSwap-adapter
+  // path; the aggregator's response is taker-specific.
+  const directQuotes = await orchestrateDexDirectQuotes(env, publicClient, {
+    chainId: chain.id,
+    sellToken: loan.collateralAsset,
+    buyToken: loan.principalAsset,
+    sellAmount: loan.collateralAmount,
+    taker: provider.liquidator as Address,
+  });
+  if (directQuotes.ranked.length === 0) {
+    console.log(
+      `[keeper] loan=${loanId} chain=${chain.name} flash-loan-skip ` +
+        `no-dex-direct-quotes (failed: ${directQuotes.failed.join(',')})`,
+    );
+    return false;
+  }
+  const bestDirect = directQuotes.ranked[0];
+
+  // Re-validate profitability against the DEX-direct quote
+  // (which can differ from the LibSwap-adapter quote we used in
+  // the initial simulation — the aggregator returns slightly
+  // different routes per-taker).
+  if (bestDirect.expectedOutput < requiredProceeds) {
+    console.log(
+      `[keeper] loan=${loanId} chain=${chain.name} flash-loan-skip ` +
+        `direct-quote-unprofitable: proceeds=${bestDirect.expectedOutput} < ` +
+        `needed=${requiredProceeds}`,
+    );
+    return false;
+  }
+
+  try {
+    const fnName = useAave ? 'liquidateViaAaveV3' : 'liquidateViaBalancerV2';
+    const hash = await ctx.wallet.writeContract({
+      address: provider.liquidator as Address,
+      abi: FlashLoanLiquidatorABI,
+      functionName: fnName,
+      args: [
+        loanIdBig,
+        loan.principalAsset,
+        loan.collateralAsset,
+        totalDebtEstimate,
+        bestDirect.swapTarget,
+        bestDirect.swapAllowanceTarget,
+        bestDirect.swapCalldata,
+      ],
+      account,
+      chain: ctx.wallet.chain,
+    });
+    console.log(
+      `[keeper] loan=${loanId} chain=${chain.name} submitted-flashloan ` +
+        `tx=${hash} via=${useAave ? 'aave-v3' : 'balancer-v2'} ` +
+        `swap=${bestDirect.kind} expected=${bestDirect.expectedOutput}`,
+    );
+    return true;
+  } catch (err) {
+    console.error(
+      `[keeper] loan=${loanId} chain=${chain.name} flash-loan-submit-failed ` +
+        `err=${String(err).slice(0, 250)}`,
+    );
+    // Fall through to legacy branches so the loan still gets
+    // liquidated somehow.
+    return false;
+  }
 }
 

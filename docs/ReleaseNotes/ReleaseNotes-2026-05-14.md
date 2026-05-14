@@ -526,3 +526,76 @@ operational follow-ups remain:
 Both are scoped, non-blocking, and external liquidators can
 already plug in via the public `triggerLiquidationDiscounted`
 ABI without waiting for our bot's wiring to finish.
+
+## Phase 3 closure — deploy script + DEX-direct quotes + live submission
+
+Same-day follow-up commit that closes the flash-loan thread. The
+Phase 3 work that was scoped-but-deferred earlier today now
+lands:
+
+1. **`contracts/script/DeployFlashLoanLiquidator.s.sol`** — per-
+   chain deploy script for the `FlashLoanLiquidator` receiver.
+   Reads `KEEPER_BOT_OWNER` (CRITICAL: must match the bot's
+   `KEEPER_PRIVATE_KEY` derived address in the Worker
+   secrets — the deploy reverts on a mismatch downstream),
+   per-chain `<CHAIN>_AAVE_V3_POOL` + `<CHAIN>_BALANCER_V2_VAULT`
+   env vars (falls back to bare keys for ad-hoc runs), and reads
+   the diamond address from this chain's
+   `addresses.json`. Writes the deployed receiver address back
+   into `addresses.json` via the new
+   `Deployments.writeFlashLoanLiquidator` helper; the
+   consolidated `deployments.json` merge step picks it up
+   automatically. Constructor enforces at-least-one-provider so
+   a chain with neither Aave V3 nor Balancer V2 deployed reverts
+   at deploy-time rather than shipping an operationally-inert
+   receiver.
+
+2. **`packages/contracts/src/deployments.ts`** — new optional
+   `flashLoanLiquidator?: HexAddress` field on `Deployment`.
+   Chains without it leave the keeper's flash-loan branch
+   skipping silently.
+
+3. **`apps/keeper/src/dexDirectQuotes.ts`** — DEX-direct quote
+   service returning `(swapTarget, swapAllowanceTarget,
+   swapCalldata, expectedOutput)` for collateral→principal
+   swaps. v1 coverage: 0x v2 (uses the Permit2 allowance-target
+   split) + 1inch v6 (single address for both). Balancer V2 SOR
+   direct-quote deferred — most flash-loan-funded trades route
+   fine via 0x/1inch alone, and Balancer SOR needs either the
+   SDK or a custom solver against the Vault's `batchSwap`
+   interface (bigger lift).
+
+4. **`apps/keeper/src/keeper.ts` `tryFlashLoanDiscountedPath`**
+   activated — the function now re-fetches quotes with the
+   receiver address as taker (the aggregator builds calldata
+   tailored per-taker), re-validates profitability against the
+   DEX-direct quote, and calls
+   `FlashLoanLiquidator.liquidateViaAaveV3` /
+   `liquidateViaBalancerV2` for real. The legacy partial /
+   split / atomic branches still run as fallbacks if the
+   flash-loan submission reverts.
+
+The keeper bot's path-selection logic is now end-to-end on the
+code side. Mainnet rollout sequence per chain (operator-side, NOT
+code):
+
+1. Set `KEEPER_BOT_OWNER` + Aave V3 Pool / Balancer V2 Vault env
+   vars per chain in the deploy environment.
+2. Run `forge script DeployFlashLoanLiquidator --rpc-url <RPC>
+   --broadcast` per chain. Verify the address in
+   `contracts/deployments/<slug>/addresses.json`.
+3. Run `bash contracts/script/exportFrontendDeployments.sh` to
+   refresh `packages/contracts/src/deployments.json`.
+4. Hand-edit `apps/keeper/src/flashLoanProviders.ts`'s per-chain
+   `liquidator` slot to match the deployed address (the keeper
+   reads a TS-typed config, not the JSON).
+5. Set the `DISCOUNT_PATH_ENABLED_<chainId>` env var in the
+   keeper Worker's Cloudflare secrets once governance flips the
+   on-chain `discountPathEnabled` flag for that chain.
+6. Watch keeper logs for `submitted-flashloan` entries.
+
+External liquidators don't need any of the above — they call
+`RiskFacet.triggerLiquidationDiscounted` directly on the
+diamond, or write their own receiver against
+`IFlashLoanSimpleReceiver` / `IFlashLoanRecipient` (both
+interfaces are now in `contracts/src/interfaces/`).
