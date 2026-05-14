@@ -422,34 +422,39 @@ The 1% incentive needs a clear source-of-funds story.
 Otherwise we're either silently dipping treasury or stealing
 from one side.
 
-Proposed: **each side contributes 0.5% of its matched leg.**
+Locked: **1% per leg** (per user-confirmed wording in plan-mode Q&A).
+Range-bounded `[0, 300]` BPS, admin-tunable per §9.1.
 
-For each leg:
+For each matched leg:
 - Borrower would have paid the per-tier liquidation discount
   (Tier-1: 7.7%, Tier-2: 6.0%, Tier-3: 5.0%) under external
-  liquidation. They save the full discount minus 0.5% = at
-  least 4.5% saved (Tier-3) or 7.2% saved (Tier-1).
-- Protocol nets +0% (same flow modeled differently).
-- Bot earns 0.5% of leg-A's matched notional + 0.5% of leg-B's
-  matched notional = ~1% of total matched notional.
+  liquidation. They save the full discount minus 1% = at
+  least 4.0% saved (Tier-3 at cap) or 6.7% saved (Tier-1 at
+  default 1%). Borrowers net positive vs external at every
+  legal incentive value.
+- Protocol nets +0% (same value flow modeled differently).
+- Bot earns 1% of leg-A's matched notional + 1% of leg-B's
+  matched notional in their respective assets. On a 3-way chain
+  match (per §7 option α-with-3-way), 1% × 3 legs.
 
 Implementation: at execution time, before transferring the
-matched collateral, withhold 0.5% of each side's matched
-collateral and route it to `msg.sender`. Withheld asset is
-the receiving lender's asset (i.e., asset they were going to
-receive anyway).
+matched collateral cross-vault, withhold 1% of each leg's
+matched amount and route it to `msg.sender`. Withheld asset is
+the asset the receiving lender was going to receive (no FX
+conversion needed).
 
-**Why split 0.5/0.5 instead of 1% from one side**: makes the
-incentive symmetric so neither borrower feels singled out. Also
-keeps the unit per-leg, which matches the asymmetric partial-
-match accounting from §7.
+**Why 1% per leg (= 1% of single-side notional, sourced from
+each borrower)**: the user-locked framing. Both legs contribute
+the same rate, so neither borrower feels singled out; the bot's
+income scales linearly with match size; and the per-leg unit
+matches the asymmetric partial-match accounting from §7.
 
 **Alternative considered**: 1% from treasury. Rejected — the
 protocol shouldn't bankroll matcher infra; the saving belongs
 to the borrowers who avoided external liquidation, and a slice
 of that saving should pay the matcher who delivered it.
 
-## 9. Master kill-switch + per-chain enablement
+## 9. Master kill-switch + per-chain enablement + range-bounded admin tunables
 
 Same shape as the depth-tiered LTV switch (per
 [`MarketRateWidgetAndDepthTieredLTV.md`](MarketRateWidgetAndDepthTieredLTV.md)):
@@ -458,13 +463,50 @@ Same shape as the depth-tiered LTV switch (per
 - `ConfigFacet.setInternalMatchEnabled(bool)` under
   `ADMIN_ROLE`.
 - View `getInternalMatchConfigBundle()` exposes
-  `(enabled, advertiseLtv, matchLtv, externalLtv, incentiveBps)`
-  to frontend for status surfacing.
-- The 4 band thresholds + 1% incentive are
-  `ConfigFacet.setInternalMatchBands(uint16,uint16,uint16,uint16)`
-  under `ADMIN_ROLE`, with monotonic cross-tier validation
-  (`MATCH_ADVERTISE_LTV_BPS < MATCH_LIQUIDATE_LTV_BPS <
-  EXTERNAL_LIQUIDATE_LTV_BPS`).
+  `(enabled, advertiseLtv, matchLtv, externalLtv, incentivePerLegBps)`
+  to the frontend for status surfacing.
+
+### 9.1 Range-bounded admin/governance tunables
+
+**Every numeric value mentioned in this doc — 1%, 90%, 92%, and
+the 85% view-filter — is admin-configurable, range-bounded by a
+compile-time `MIN_` / `MAX_` constant in
+[`LibVaipakam.sol`](../../contracts/src/libraries/LibVaipakam.sol).**
+Admin (and later governance) cannot punch through the bounds via
+any setter; only a contract upgrade can move them.
+
+| Knob | Default | Hard range (compile-time) | Why this range |
+| --- | --- | --- | --- |
+| `advertiseLtvBps` | 8_500 (85%) | `[MIN_MATCH_ADVERTISE_LTV_BPS = 5_000 (50%), liquidateLtvBps − 100]` | Min 50% so "approaching liquidation" stays meaningful; max forces a ≥ 1% gap below the internal-match floor (no zero-band collapse). |
+| `liquidateLtvBps` | 9_000 (90%) | `[advertiseLtvBps + 100, externalLtvBps − 100]` | Monotonically above advertise; ≥ 1% below external (priority window can't collapse). |
+| `externalLtvBps` | 9_200 (92%) | `[liquidateLtvBps + 100, MAX_EXTERNAL_LIQUIDATE_LTV_BPS = 9_900 (99%)]` | Above internal-match; capped at 99% so external still fires before LTV crosses 100% (bad-debt prevention). |
+| `incentivePerLegBps` | 100 (1%) | `[MIN_MATCH_INCENTIVE_BPS_PER_LEG = 0, MAX_MATCH_INCENTIVE_BPS_PER_LEG = 300 (3%)]` | Floor 0 lets governance zero the incentive without disabling the path. Cap 3% per leg = 6% total on a 2-way match, still within the 5–7.7% external-discount budget — so even at the cap, borrowers always net out ahead of external liquidation. |
+
+Setter (`ConfigFacet.setInternalMatchBands(uint16,uint16,uint16,uint16)`)
+under `ADMIN_ROLE`, with three independent revert paths:
+
+1. `BandOutOfRange(field, value, min, max)` — any of the 4 values outside its hard range.
+2. `InvalidBandOrdering(advertise, liquidate, external)` — monotonic cross-tier check fails.
+3. `IncentiveAboveCap(value, max)` — incentive above 300 BPS.
+
+Test coverage parallels `ConfigKnobBoundsAudit-2026-05-14.md`'s
+boundary-at-cap / boundary-just-over / huge-value pattern.
+
+### 9.2 Per-chain enablement
+
+Per-chain enablement happens by flipping
+`setInternalMatchEnabled(true)` on the chains where bot infra is
+ready and active-loan volume justifies it. Defaults `false`; sparse
+chains where match-pair probability is too low can stay off.
+
+### 9.3 What the 84% / 86% values from earlier discussion became
+
+Earlier drafts referenced "≥86% enters ledger, <84% removed
+(soft-delete)." The view-only design (§4.4.1) dissolves this:
+membership is derived per-block from current LTV, so there is no
+add/remove pair to tune. The single relevant threshold is the view
+filter's `advertiseLtvBps`, defaulting to 85% and range-bounded
+above. No hysteresis tuning knob exists in the v1 surface.
 
 Per-chain enablement: enable on chains where bot infrastructure
 is ready and active-loan volume justifies it. Disable on
