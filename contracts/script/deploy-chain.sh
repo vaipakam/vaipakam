@@ -41,6 +41,14 @@
 #     ceremony, can't safely live in a script. Run via the
 #     DeploymentRunbook §6 once the contract deploy is green and the
 #     deployer has finished the first-day config sweep.
+#   - Mainnet hardware-wallet enforcement + the 48h Admin-EOA →
+#     Multisig handover deadline (ratified 2026-05-14) — both live
+#     in `deploy-mainnet.sh` (HARD-FAIL) and `deploy-testnet.sh`
+#     (WARN-mode mirror for rehearsal muscle memory). This
+#     one-shot quick-iteration script is end-to-end in a single
+#     command (no `--phase handover` step exists to gate) and is
+#     refused on mainnet chain-slugs anyway, so neither guard has
+#     a place to attach.
 #   - LayerZero peer wiring across chains — needs canonical AND
 #     mirror deployed first; the 2-leg `setPeer` ceremony is in
 #     `WireVPFIPeers.s.sol`. Run after `deploy-chain.sh` lands the
