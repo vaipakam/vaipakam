@@ -15,6 +15,11 @@ export const LoanStatus = {
   Defaulted: 2,
   Settled: 3,
   FallbackPending: 4,
+  // PR3+ of internal-match work (B.2). Terminal state for a loan
+  // whose principal hits zero via `triggerInternalMatchLiquidation`.
+  // Partial matches stay `Active` with reduced principal/collateral;
+  // only fully-cleared loans transition here.
+  InternalMatched: 5,
 } as const;
 export type LoanStatus = (typeof LoanStatus)[keyof typeof LoanStatus];
 
@@ -37,6 +42,7 @@ export const LOAN_STATUS_LABELS: Record<LoanStatus, string> = {
   [LoanStatus.Defaulted]: 'Defaulted',
   [LoanStatus.Settled]: 'Settled',
   [LoanStatus.FallbackPending]: 'Fallback Pending',
+  [LoanStatus.InternalMatched]: 'Internally Matched',
 };
 
 export const ASSET_TYPE_LABELS: Record<AssetType, string> = {
