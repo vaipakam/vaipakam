@@ -395,3 +395,11 @@ Tip: queue all 3 in the Safe at once, then sign once per signer (each signer's s
 Ping me when you've executed all 3 and I'll verify on-chain (Ownable.owner() == Safe) and then run DeployerZeroRolesTest against a Base Sepolia fork as the hard exit gate. PositiveFlows on arb-sepolia is still chugging in the background — independent.
 
 ---
+
+Need to check what are all the data that we fetch off chain and need to see that would we be able to fetch them from on chain itself
+
+---
+
+What if timelocker keys are compromised opr admin keys are compromised? is all configs are range bounded?
+
+---
