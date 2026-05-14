@@ -166,7 +166,20 @@ library LibVaipakam {
     uint256 constant TIER_LTV_CACHE_HARD_TTL = 14 days;
 
     // Multi-peer / multi-asset consensus rules.
-    uint16 constant PEER_DIVERGENCE_TOLERANCE_BPS = 1500;  // 15pp — Aave / Compound / Morpho diverge naturally on long-tail; this catches anomalies without rejecting the spread
+    // Peer divergence tolerance — how far apart two peers' LTV readings
+    // can be on the same asset before we treat them as "contested" and
+    // drop the asset from the tier aggregation. Set wide enough to
+    // tolerate the structural Aave-vs-Compound disagreement: Aave's
+    // per-asset LTVs (governance-set after risk-team modeling) are
+    // systematically more conservative than Compound's borrow
+    // collateral factors — empirically the spread for mid-cap assets
+    // (LINK, UNI) sits at 20–30pp without anyone being "wrong",
+    // because the two protocols have different liquidation models +
+    // different risk-bonus structures. Set to 30pp so honest peer
+    // disagreement doesn't reject the asset; manipulation (or peer
+    // governance attack) would have to push values >30pp apart to
+    // dodge this gate.
+    uint16 constant PEER_DIVERGENCE_TOLERANCE_BPS = 3000;
     uint8 constant TIER_MIN_PEER_READINGS = 2;             // ≥ 2 peers agree per asset
     uint8 constant TIER_MIN_ASSET_READINGS = 2;            // ≥ 2 reference assets reporting per tier
 

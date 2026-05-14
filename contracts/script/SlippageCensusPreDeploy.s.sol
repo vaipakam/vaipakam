@@ -124,21 +124,15 @@ contract SlippageCensusPreDeploy is Script {
             "_peers.",
             which
         );
-        try this._extParseAddress(json, key) returns (address a) {
-            return a;
-        } catch {
-            return address(0);
-        }
-    }
-
-    /// @dev External wrapper so the surrounding `try` can catch a
-    ///      missing-key revert from `vm.parseJsonAddress`.
-    function _extParseAddress(string memory json, string memory key)
-        external
-        view
-        returns (address)
-    {
-        return vm.parseJsonAddress(json, key);
+        // Mirror the `_safeParseAddressArray` pattern: `vm.parseJson`
+        // returns empty bytes on a missing key (not a revert), so a
+        // simple length-zero check is enough. `try this._ext...()`
+        // was the original pattern but Foundry's script runtime
+        // rejects `address(this)` usage in scripts (script contracts
+        // are ephemeral).
+        bytes memory raw = vm.parseJson(json, key);
+        if (raw.length == 0) return address(0);
+        return abi.decode(raw, (address));
     }
 
     // ─── Minimal Diamond bootstrap ───────────────────────────────────────
@@ -191,6 +185,13 @@ contract SlippageCensusPreDeploy is Script {
 
         // ── Deploy a minimal Diamond into the fork ──────────────────
         // No broadcast — we're operating on a fork; no real deployment.
+        // `vm.prank` (NOT `vm.startBroadcast`) is the safer impersonation
+        // primitive here — it guarantees pure simulation even if an
+        // operator accidentally adds `--broadcast` to the forge script
+        // invocation. The diamond is owner-gated for setter calls, so
+        // we impersonate `deployer` for the configuration block; the
+        // permissionless `refreshTierLtvCache` call later doesn't need
+        // a prank.
         address deployer = msg.sender;
         DiamondCutFacet cutFacet = new DiamondCutFacet();
         VaipakamDiamond diamond = new VaipakamDiamond(deployer, address(cutFacet));
@@ -209,6 +210,7 @@ contract SlippageCensusPreDeploy is Script {
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: _oracleAdminSelectors()
         });
+        vm.startPrank(deployer);
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");
 
         // ── Configure: peer addresses + reference assets ────────────
@@ -218,6 +220,7 @@ contract SlippageCensusPreDeploy is Script {
         if (tier1.length > 0) OracleAdminFacet(address(diamond)).setTierReferenceAssets(1, tier1);
         if (tier2.length > 0) OracleAdminFacet(address(diamond)).setTierReferenceAssets(2, tier2);
         if (tier3.length > 0) OracleAdminFacet(address(diamond)).setTierReferenceAssets(3, tier3);
+        vm.stopPrank();
 
         // ── Header row for the CSV. ─────────────────────────────────
         console.log(
