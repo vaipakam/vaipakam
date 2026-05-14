@@ -1,29 +1,46 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useDiamondRead } from '../contracts/useDiamond';
+import { useAssetTier } from './useAssetTier';
 import { useProtocolConfig } from './useProtocolConfig';
 
 /**
  * Computes the smallest collateral that clears the on-chain loan-init
- * gate (`HF ≥ MIN_HEALTH_FACTOR`, ~1.5) for a given lending asset +
- * amount + collateral asset, as a human-readable decimal string ready
- * for the Create Offer collateral input. Powers the "Lend / Borrow at
- * market rate" widget's auto-fill (the widget then deep-links to Create
- * Offer with this value prefilled; Create Offer re-validates and blocks
- * decreasing below it).
+ * gate for a given lending asset + amount + collateral asset, as a
+ * human-readable decimal string ready for the Create Offer collateral
+ * input. Powers the "Lend / Borrow at market rate" widget's auto-fill
+ * (the widget then deep-links to Create Offer with this value prefilled;
+ * Create Offer re-validates and blocks decreasing below it).
  *
- * The math mirrors `OfferRiskPreview`'s preview, inverted: that shows
- * `HF = collateralUSD × liqThresholdBps/10000 / debtUSD`; here we solve
- * for `collateral` at `HF = minHealthFactor`:
+ * Two regimes, matching the on-chain `LoanFacet._checkInitialLtvAndHf`:
  *
- *    minCollateralUSD = debtUSD × minHealthFactor / (liqThresholdBps/10000)
- *    minCollateral    = minCollateralUSD / collateralPriceUSD × (1 + buffer)
+ *   • OFF (`depthTieredLtvEnabled = false`, the default): the
+ *     classic gate — `LTV ≤ maxLtvBps` AND `HF ≥ MIN_HEALTH_FACTOR`
+ *     (1.5). The HF floor is typically binding (since
+ *     `liqThresholdBps/1.5 < maxLtvBps` for typical params), so the
+ *     min-collateral math inverts the HF formula:
  *
- * Reads `OracleFacet.getAssetPrice` for both legs and the collateral's
- * `getAssetRiskProfile().{isSupported, liqThresholdBps}`; pulls
- * `MIN_HEALTH_FACTOR` from `useProtocolConfig`. The buffer is a small
- * cushion so a user who takes the suggested value doesn't land exactly
- * on the HF≥1.5 boundary and revert from oracle rounding / a price tick
- * between preview and submit.
+ *        minCollateralUSD = debtUSD × 1.5 / (liqThresholdBps/10000)
+ *
+ *   • ON (`depthTieredLtvEnabled = true`, post-flip per chain): the
+ *     binding gate becomes a per-tier LTV cap with the HF floor
+ *     relaxed to ≥ 1.0:
+ *
+ *        cap              = min(maxLtvBps, tierMaxInitLtvBps[tier])
+ *        minByLtvCap      = debtUSD / (cap/10000)
+ *        minByHfRelaxed   = debtUSD × 1.0 / (liqThresholdBps/10000)
+ *        minCollateralUSD = max(minByLtvCap, minByHfRelaxed)
+ *
+ *     With the usual `maxLtvBps ≤ liqThresholdBps` invariant the
+ *     tier cap is the binding constraint and the HF=1 term is just a
+ *     defensive lower bound for unusual parameter regimes.
+ *
+ * Reads `OracleFacet.getAssetPrice` for both legs, the collateral's
+ * `getAssetRiskProfile().{isSupported, maxLtvBps, liqThresholdBps}`,
+ * the protocol-config bundle (kill-switch + per-tier LTV caps), and
+ * the per-asset effective tier via `useAssetTier`. The buffer is a
+ * small cushion so a user who takes the suggested value doesn't land
+ * exactly on the boundary and revert from oracle rounding / a price
+ * tick between preview and submit.
  *
  * Returns `collateralUnsupported: true` (and `minCollateral: null`) when
  * the collateral asset has no oracle / risk-profile entry — i.e. it's
@@ -45,17 +62,28 @@ interface PriceSnapshot {
 }
 
 export interface MarketRateCollateralResult {
-  /** Smallest collateral satisfying `HF ≥ minHealthFactor` for the
-   *  typed lending amount, as a decimal string; `null` until inputs +
-   *  oracle data are ready, or when the pair isn't priceable. */
+  /** Smallest collateral satisfying the on-chain loan-init gate for
+   *  the typed lending amount, as a decimal string; `null` until
+   *  inputs + oracle data are ready, or when the pair isn't priceable. */
   minCollateral: string | null;
   lendingPriceUsd: number | null;
   collateralPriceUsd: number | null;
   /** The collateral asset's `liqThresholdBps`, or `null`. */
   liqThresholdBps: number | null;
-  /** The on-chain HF floor at loan init (`MIN_HEALTH_FACTOR`), as a
-   *  float — defaults to 1.5 if the protocol config isn't loaded yet. */
+  /** The on-chain HF floor at loan init, as a float — `1.5` in the
+   *  legacy regime (`depthTieredLtvEnabled = false`); relaxed to
+   *  `1.0` when the kill-switch is on (the tier cap is the binding
+   *  buffer in that regime). Defaults to 1.5 if the protocol config
+   *  isn't loaded yet. */
   minHealthFactor: number;
+  /** The effective init-LTV ceiling actually applied (BPS). In the
+   *  legacy regime this is just `maxLtvBps`; under the tier regime
+   *  it's `min(maxLtvBps, tierMaxInitLtvBps[tier])`. `null` while
+   *  the tier read is in flight. */
+  effectiveLtvCapBps: number | null;
+  /** Whether the on-chain depth-tiered-LTV master kill-switch is
+   *  flipped on this chain (mirrors `ProtocolConfig.depthTieredLtvEnabled`). */
+  depthTieredLtvEnabled: boolean;
   loading: boolean;
   error: string | null;
   /** Collateral asset has no oracle / risk-profile entry (illiquid). */
@@ -74,8 +102,15 @@ export function useMarketRateMinCollateral({
 }): MarketRateCollateralResult {
   const diamondRead = useDiamondRead();
   const { config } = useProtocolConfig();
-  const minHealthFactor =
-    config && config.minHealthFactor > 0n
+  const tierStatus = useAssetTier(collateralAsset);
+  const depthTieredLtvEnabled = !!config?.depthTieredLtvEnabled;
+  // Under the tier-mode regime the binding HF floor on-chain is 1.0
+  // (the tier cap supplies the safety buffer). Pre-flip the floor
+  // stays at 1.5 (today's behaviour). Defaults to 1.5 while the
+  // config is still loading.
+  const minHealthFactor = depthTieredLtvEnabled
+    ? 1
+    : config && config.minHealthFactor > 0n
       ? Number(config.minHealthFactor) / 1e18
       : 1.5;
 
@@ -88,6 +123,11 @@ export function useMarketRateMinCollateral({
   const [data, setData] = useState<{
     lendingPrice: PriceSnapshot;
     collateralPrice: PriceSnapshot;
+    /** Per-asset hard LTV cap from `getAssetRiskProfile`. Always
+     *  applies — the on-chain init gate uses
+     *  `min(maxLtvBps, tierMaxInitLtvBps[tier])` under the tier
+     *  regime, just `maxLtvBps` in the legacy regime. */
+    maxLtvBps: number;
     liqThresholdBps: number;
     isSupported: boolean;
   } | null>(null);
@@ -123,13 +163,29 @@ export function useMarketRateMinCollateral({
           }
           return { raw: price, decimals: dec, usd: Number(price) / 10 ** dec };
         };
+        // `getAssetRiskProfile(asset)` returns
+        // `(isSupported, status, maxLtvBps, liqThresholdBps, liqBonusBps)`.
+        // We need the first, third and fourth fields here. The viem
+        // decoder gives us either a tuple (`Array.isArray(rp)` true)
+        // or a named-record shape depending on the registered ABI.
         const profile = Array.isArray(rp)
-          ? { isSupported: Boolean(rp[0]), liqThresholdBps: Number(rp[3]) }
-          : (rp as { isSupported: boolean; liqThresholdBps: bigint | number });
+          ? {
+              isSupported: Boolean(rp[0]),
+              maxLtvBps: Number(rp[2]),
+              liqThresholdBps: Number(rp[3]),
+            }
+          : (rp as {
+              isSupported: boolean;
+              maxLtvBps: bigint | number;
+              liqThresholdBps: bigint | number;
+            });
         if (cancelled) return;
         setData({
           lendingPrice: decode(lp),
           collateralPrice: decode(cp),
+          maxLtvBps: Number(
+            (profile as { maxLtvBps: bigint | number }).maxLtvBps,
+          ),
           liqThresholdBps: Number(
             (profile as { liqThresholdBps: bigint | number }).liqThresholdBps,
           ),
@@ -155,6 +211,26 @@ export function useMarketRateMinCollateral({
     };
   }, [haveAddrs, diamondRead, lendingAsset, collateralAsset]);
 
+  // Resolve the effective LTV cap (BPS). Under the tier regime
+  // it's `min(maxLtvBps, tierMaxInitLtvBps[effectiveTier])`; under
+  // the legacy regime it's just `maxLtvBps`. Returns null while
+  // the tier read is in flight (tier-mode only).
+  const effectiveLtvCapBps = useMemo<number | null>(() => {
+    if (!data) return null;
+    if (!depthTieredLtvEnabled) return data.maxLtvBps;
+    if (tierStatus === 'loading' || tierStatus === 'unknown') return null;
+    if (tierStatus === 0) return 0; // untierable ⇒ no borrow
+    const tier = tierStatus;
+    const tierCap =
+      tier === 1
+        ? (config?.tier1MaxInitLtvBps ?? 0)
+        : tier === 2
+          ? (config?.tier2MaxInitLtvBps ?? 0)
+          : (config?.tier3MaxInitLtvBps ?? 0);
+    if (tierCap <= 0) return null; // config still loading
+    return Math.min(data.maxLtvBps, tierCap);
+  }, [data, depthTieredLtvEnabled, tierStatus, config]);
+
   const minCollateral = useMemo<string | null>(() => {
     if (!data) return null;
     const debt = Number(lendingAmount);
@@ -167,8 +243,26 @@ export function useMarketRateMinCollateral({
       return null;
     }
     const debtUsd = debt * data.lendingPrice.usd;
-    const minCollateralUsd =
-      (debtUsd * minHealthFactor) / (data.liqThresholdBps / 1e4);
+    // HF-floor leg: `collateralUSD ≥ debtUSD × minHF / (liqThreshold/10000)`
+    // — applies in BOTH regimes, with `minHealthFactor` already
+    // resolved to 1.0 or 1.5 depending on the kill-switch state.
+    const minByHfUsd = (debtUsd * minHealthFactor) / (data.liqThresholdBps / 1e4);
+    // LTV-cap leg: `collateralUSD ≥ debtUSD / (cap/10000)`. Only
+    // computable once we have the resolved cap (waits for tier read
+    // in tier mode). Tier 0 (cap=0) means no borrow at all — return
+    // null and let the caller surface the "this collateral is
+    // untierable" message.
+    let minByLtvUsd = 0;
+    if (effectiveLtvCapBps !== null) {
+      if (effectiveLtvCapBps === 0) return null; // Tier 0 ⇒ no borrow
+      minByLtvUsd = debtUsd / (effectiveLtvCapBps / 1e4);
+    } else if (depthTieredLtvEnabled) {
+      // Tier mode is on but the cap isn't resolved yet ⇒ defer the
+      // suggestion. Showing a HF-only value would mis-represent the
+      // binding gate.
+      return null;
+    }
+    const minCollateralUsd = Math.max(minByHfUsd, minByLtvUsd);
     const buffered = minCollateralUsd * (1 + MIN_COLLATERAL_BUFFER_BPS / 1e4);
     const collateralTokens = buffered / data.collateralPrice.usd;
     if (!isFinite(collateralTokens) || collateralTokens <= 0) return null;
@@ -177,7 +271,13 @@ export function useMarketRateMinCollateral({
     const decimals = collateralTokens >= 1 ? 4 : 8;
     const factor = 10 ** decimals;
     return (Math.ceil(collateralTokens * factor) / factor).toString();
-  }, [data, lendingAmount, minHealthFactor]);
+  }, [
+    data,
+    lendingAmount,
+    minHealthFactor,
+    effectiveLtvCapBps,
+    depthTieredLtvEnabled,
+  ]);
 
   return {
     minCollateral,
@@ -185,6 +285,8 @@ export function useMarketRateMinCollateral({
     collateralPriceUsd: data?.collateralPrice.usd ?? null,
     liqThresholdBps: data?.liqThresholdBps ?? null,
     minHealthFactor,
+    effectiveLtvCapBps,
+    depthTieredLtvEnabled,
     loading,
     error,
     collateralUnsupported: data ? !data.isSupported : false,

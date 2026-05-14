@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useDiamondRead } from '../../contracts/useDiamond';
+import { useProtocolConfig } from '../../hooks/useProtocolConfig';
 import { HealthFactorGauge, LTVBar } from './RiskGauge';
 
 /**
@@ -73,6 +74,14 @@ export function OfferRiskPreview({
   onCollateralAmountChange,
 }: OfferRiskPreviewProps) {
   const diamondRead = useDiamondRead();
+  const { config: protocolConfig } = useProtocolConfig();
+  // The on-chain init-gate HF floor depends on
+  // `ProtocolConfig.depthTieredLtvEnabled`: legacy regime requires
+  // HF ≥ 1.5, tier-on regime relaxes to ≥ 1.0 (the tier-LTV cap
+  // becomes the binding safety buffer). Mirror that here so the
+  // preview's "worst-case HF below floor" warning fires at the same
+  // threshold the diamond would actually reject at.
+  const initHfFloor = protocolConfig?.depthTieredLtvEnabled ? 1.0 : 1.5;
   const [risk, setRisk] = useState<RiskInputs | null>(null);
   const [loadErr, setLoadErr] = useState<string | null>(null);
 
@@ -278,7 +287,7 @@ export function OfferRiskPreview({
             </span>
           </div>
 
-          {projection.hfWorst < 1.5 && (
+          {projection.hfWorst < initHfFloor && (
             <div className="data-row">
               <span
                 className="data-value"
@@ -287,9 +296,10 @@ export function OfferRiskPreview({
                   color: 'var(--accent-orange, #f59e0b)',
                 }}
               >
-                ⚠ Worst-case HF is below 1.5 — at the upper end of the
-                range, `initiateLoan` would revert with `HFTooLow`. Add
-                collateral or tighten the amount ceiling.
+                ⚠ Worst-case HF is below {initHfFloor.toFixed(1)} — at
+                the upper end of the range, `initiateLoan` would revert
+                with `HFTooLow`. Add collateral or tighten the amount
+                ceiling.
               </span>
             </div>
           )}
@@ -360,8 +370,10 @@ export function OfferRiskPreview({
       >
         Live oracle prices and the collateral asset's liquidation
         threshold ({((risk?.liqThresholdBps ?? 0) / 100).toFixed(1)}%).
-        The on-chain HF floor at loan init is 1.5; offers whose worst
-        case dips below that will only fill at lower amounts.
+        The on-chain HF floor at loan init is {initHfFloor.toFixed(1)}
+        {protocolConfig?.depthTieredLtvEnabled ? ' (depth-tiered-LTV mode — the per-tier LTV cap is the binding constraint)' : ''};
+        offers whose worst case dips below that will only fill at lower
+        amounts.
       </div>
     </div>
   );

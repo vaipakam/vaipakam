@@ -28,8 +28,12 @@ const PREFLIGHT_WORKER_ORIGIN =
  * What it does:
  *  - takes a lending amount,
  *  - auto-fills the *minimum* collateral that clears the on-chain
- *    `HF ≥ MIN_HEALTH_FACTOR` (~1.5) gate (via `useMarketRateMinCollateral`)
- *    so the user sees the floor *before* leaving the page,
+ *    init-gate (via `useMarketRateMinCollateral`) — `HF ≥ 1.5` in the
+ *    legacy regime, or `LTV ≤ min(maxLtvBps, tierMaxInitLtvBps[tier])`
+ *    + `HF ≥ 1.0` once governance flips `depthTieredLtvEnabled` on
+ *    this chain. The hook resolves the binding constraint internally;
+ *    the widget just surfaces the result so the user sees the floor
+ *    *before* leaving the page,
  *  - shows the current Market anchor rate (the mid of recent matches
  *    for this pair) as a hint — or "no market rate yet" when the book
  *    is empty for the pair,
