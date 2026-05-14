@@ -40,17 +40,23 @@ Implementation snapshot (branch `feat/market-rate-widget-and-tiered-ltv`):
   HF floor relaxed to `≥ 1e18`) + `IVaipakamErrors.InitLtvAboveTier`. All
   6 commits, full forge suite green throughout (1718 passing).
 - **§4.4 step 5 — `apps/keeper` liquidity-confidence relay — LANDED**
-  (`liquidityConfidence.ts`): periodic 0x/1inch slippage-at-tier-sizes
-  per active ERC-20 collateral asset (best route over the on-chain PAA
-  list) ⇒ aggregator-confirmed tier ⇒ D1-backed promote/demote state
-  machine (`LIQ_CONFIDENCE_MIN_CHECKS` / `LIQ_CONFIDENCE_MIN_WINDOW_DAYS`
-  env knobs; demote immediately on degradation) ⇒ `setKeeperTier`
-  on-chain (gated on `isKeeperEnabled` AND `depthTieredLtvEnabled` for
-  the chain; the D1 counter is tracked regardless so the catch-up after
-  a switch-flip is fast). Tier-3 promotion additionally needs the
-  "battle-tested elsewhere" advisory (Aave v3 / Compound v3 /
-  Morpho-curated listing + TVL on this chain) — STUBBED in v1 ⇒ relay
-  caps at Tier 2. Cron-wired, tsc clean; not deployed.
+  (`liquidityConfidence.ts`, 799 lines): periodic 0x/1inch
+  slippage-at-tier-sizes per active ERC-20 collateral asset (best
+  route over the on-chain PAA list) ⇒ aggregator-confirmed tier ⇒
+  D1-backed promote/demote state machine (`LIQ_CONFIDENCE_MIN_CHECKS`
+  / `LIQ_CONFIDENCE_MIN_WINDOW_DAYS` env knobs; demote immediately on
+  degradation) ⇒ `setKeeperTier` on-chain (gated on `isKeeperEnabled`
+  AND `depthTieredLtvEnabled` for the chain; the D1 counter is tracked
+  regardless so the catch-up after a switch-flip is fast). Tier-3
+  promotion additionally requires a **2-of-3 "battle-tested elsewhere"
+  ensemble**: ① DeFiLlama listing on Aave V3 / Compound V3 / Morpho
+  on this chain with TVL ≥ `LIQ_TIER3_MIN_TVL_USD` (default $10M);
+  ② CoinGecko market cap ≥ `LIQ_TIER3_MIN_MCAP_USD` (default $1B);
+  ③ CoinGecko 24h volume ≥ `LIQ_TIER3_MIN_VOL_USD` (default $50M).
+  Operators can disable signal ① via `LIQ_TIER3_DISABLE_DEFI_LISTING`
+  (the ensemble then collapses to 2-of-2 CoinGecko-only — stricter,
+  safe). Cron-wired (`runLiquidityConfidence` in `apps/keeper/src/index.ts`),
+  tsc clean; not deployed.
 - **Piece B follow-up (c) — `LibOfferMatch.previewMatch` AND
   `RefinanceFacet` tier-cap alignment — LANDED**: both sites now
   mirror `LoanFacet._checkInitialLtvAndHf` (the binding init-gate)
@@ -113,15 +119,22 @@ Implementation snapshot (branch `feat/market-rate-widget-and-tiered-ltv`):
   contract surface is end-to-end and external MEV-style liquidators
   can plug in via the public ABI. See
   `docs/DesignsAndPlans/FlashLoanLiquidationPath.md`.
-- **Not done — must precede flipping `depthTieredLtvEnabled` on any
-  chain (the §4.4-step-6 audit covers the remaining items):**
-  (advisory) wiring the Tier-3 "battle-tested elsewhere" check in
-  the keeper liquidity-confidence relay (currently stubbed ⇒ caps at
-  Tier 2); per-chain operational rollout — running
-  `ConfigureV2Factories.s.sol` on each target chain, running the
-  pre-deploy census, getting audit sign-off, then flipping
-  `setDepthTieredLtvEnabled(true)` + (independently)
-  `setDiscountPathEnabled(true)` per chain.
+- **Code side — COMPLETE.** Everything that was on the "must precede
+  flipping `depthTieredLtvEnabled` on any chain" list is now landed
+  end-to-end. The remaining work is **operational** (the §4.4-step-6
+  audit gate + per-chain rollout):
+  - Run `ConfigureV2Factories.s.sol` per chain to wire V2 forks
+    (zero by default ⇒ V3-only until configured).
+  - Run the pre-deploy census per chain
+    (`docs/AuditPackage/pre-deploy-census-2026-05-14/` was today's
+    first pass; re-run after Aave's WETH-restoration AIP executes
+    to capture post-exploit steady state).
+  - Auditor engagement (covers depth-tiered-LTV gate + autonomous
+    tier-LTV layer + the new discount path together).
+  - Risk-committee sign-off.
+  - Per-chain `setDepthTieredLtvEnabled(true)` +
+    (independently) `setDiscountPathEnabled(true)` — see
+    [`docs/ops/FlashLoanLiquidatorRollout.md`](../ops/FlashLoanLiquidatorRollout.md).
 
 Author note: this doc records a real-pool depth census (§3) that
 changed the recommendation for Piece B — read §3 and §4 before
@@ -764,7 +777,7 @@ liquidation behaviour is observed.
 - Partial liquidations (`RiskFacet.triggerPartialLiquidation` + governance close-factor cap + full test sweep + keeper optimal-fraction math): `1ca7cba` + `8da2c8d` + `a3c53dd` + `c487239` + `3a0f81a` + `738c7c7` + `5bc4cd6`.
 - Flash-loan-funded execution: **DONE 2026-05-14** (commits `a63d5ef`, `ee8a773`, `43e5b8f`). The risk-committee question got resolved with a hybrid model: keep the existing atomic-swap path (`triggerLiquidation` / `Split` / `Partial`) AND add a parallel `RiskFacet.triggerLiquidationDiscounted` Aave-V3 / Compound-V3 / Morpho-Blue-style "liquidator buys collateral at a per-tier discount" path — gated by a separate `discountPathEnabled` master kill-switch. Standalone `contracts/src/keeper/FlashLoanLiquidator.sol` receiver supports Aave V3 `flashLoanSimple` + Balancer V2 `flashLoan` so the keeper EOA needs zero working capital. Per-chain rollout: see `docs/ops/FlashLoanLiquidatorRollout.md`. Design doc: `docs/DesignsAndPlans/FlashLoanLiquidationPath.md`.
 
-The Tier-3 LTV ramp past its conservative opening (currently 73%, per the Phase-5 autonomous tier-LTV cache library default) is gated on the Step-6 audit + the Tier-3 advisory "battle-tested elsewhere" check inside the liquidity-confidence relay (currently stubbed ⇒ relay caps at Tier 2). Tiers 1 and 2 don't depend on either.
+The Tier-3 LTV ramp past its conservative opening (currently 73%, per the Phase-5 autonomous tier-LTV cache library default) is gated on the Step-6 audit alone. The Tier-3 advisory "battle-tested elsewhere" 2-of-3 ensemble (DeFiLlama listing + CoinGecko market cap + CoinGecko 24h volume) is fully implemented in `apps/keeper/src/liquidityConfidence.ts`. Tiers 1 and 2 don't depend on the audit (the kill-switch keeps the legacy `HF ≥ 1.5` gate until governance flips per chain).
 
 ---
 
