@@ -237,6 +237,29 @@
   },
   {
     "type": "function",
+    "name": "getInternalMatchConfigBundle",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "enabled",
+        "type": "bool",
+        "internalType": "bool"
+      },
+      {
+        "name": "externalLiquidationPriorityWindowBps",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "internalMatchIncentivePerLegBps",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "getKeeperTier",
     "inputs": [
       {
@@ -705,6 +728,29 @@
   },
   {
     "type": "function",
+    "name": "getTierLiquidationLtvBps",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "tier1",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "tier2",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "tier3",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "getTierLtvParams",
     "inputs": [],
     "outputs": [
@@ -938,6 +984,37 @@
             "internalType": "uint256"
           }
         ]
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "setInternalMatchConfig",
+    "inputs": [
+      {
+        "name": "externalLiquidationPriorityWindowBps_",
+        "type": "uint16",
+        "internalType": "uint16"
+      },
+      {
+        "name": "internalMatchIncentivePerLegBps_",
+        "type": "uint16",
+        "internalType": "uint16"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "setInternalMatchEnabled",
+    "inputs": [
+      {
+        "name": "enabled",
+        "type": "bool",
+        "internalType": "bool"
       }
     ],
     "outputs": [],
@@ -1313,6 +1390,29 @@
   },
   {
     "type": "function",
+    "name": "setTierLiquidationLtvBps",
+    "inputs": [
+      {
+        "name": "tier1",
+        "type": "uint16",
+        "internalType": "uint16"
+      },
+      {
+        "name": "tier2",
+        "type": "uint16",
+        "internalType": "uint16"
+      },
+      {
+        "name": "tier3",
+        "type": "uint16",
+        "internalType": "uint16"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "setTierLtvParams",
     "inputs": [
       {
@@ -1572,6 +1672,38 @@
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "InternalMatchConfigSet",
+    "inputs": [
+      {
+        "name": "externalLiquidationPriorityWindowBps",
+        "type": "uint16",
+        "indexed": false,
+        "internalType": "uint16"
+      },
+      {
+        "name": "internalMatchIncentivePerLegBps",
+        "type": "uint16",
+        "indexed": false,
+        "internalType": "uint16"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "InternalMatchEnabledSet",
+    "inputs": [
+      {
+        "name": "enabled",
+        "type": "bool",
+        "indexed": false,
+        "internalType": "bool"
       }
     ],
     "anonymous": false
@@ -1941,6 +2073,31 @@
   },
   {
     "type": "event",
+    "name": "TierLiquidationLtvBpsSet",
+    "inputs": [
+      {
+        "name": "tier1",
+        "type": "uint16",
+        "indexed": false,
+        "internalType": "uint16"
+      },
+      {
+        "name": "tier2",
+        "type": "uint16",
+        "indexed": false,
+        "internalType": "uint16"
+      },
+      {
+        "name": "tier3",
+        "type": "uint16",
+        "indexed": false,
+        "internalType": "uint16"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "TierLtvParamsSet",
     "inputs": [
       {
@@ -2188,6 +2345,38 @@
   },
   {
     "type": "error",
+    "name": "InternalMatchIncentiveAboveCap",
+    "inputs": [
+      {
+        "name": "provided",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "maxAllowed",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "InternalMatchWindowAboveCap",
+    "inputs": [
+      {
+        "name": "provided",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "maxAllowed",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "InvalidAddress",
     "inputs": []
   },
@@ -2390,6 +2579,27 @@
   },
   {
     "type": "error",
+    "name": "NonMonotoneTierLiquidationLtvBps",
+    "inputs": [
+      {
+        "name": "t1",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "t2",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "t3",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "NonMonotoneTierLtvBps",
     "inputs": [
       {
@@ -2547,6 +2757,38 @@
         "name": "ceilBps",
         "type": "uint16",
         "internalType": "uint16"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "TierLiquidationLtvBpsTooHigh",
+    "inputs": [
+      {
+        "name": "provided",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "maxAllowed",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "TierLiquidationLtvBpsTooLow",
+    "inputs": [
+      {
+        "name": "provided",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "minAllowed",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ]
   },

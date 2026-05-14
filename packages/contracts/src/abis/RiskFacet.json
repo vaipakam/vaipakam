@@ -189,12 +189,7 @@
         "internalType": "address"
       },
       {
-        "name": "maxLtvBps",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "liqThresholdBps",
+        "name": "loanInitMaxLtvBps",
         "type": "uint256",
         "internalType": "uint256"
       },
@@ -397,13 +392,7 @@
         "internalType": "address"
       },
       {
-        "name": "maxLtvBps",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "liqThresholdBps",
+        "name": "loanInitMaxLtvBps",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"

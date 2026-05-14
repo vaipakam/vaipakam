@@ -180,6 +180,11 @@
                 "internalType": "uint16"
               },
               {
+                "name": "liquidationLtvBpsAtInit",
+                "type": "uint16",
+                "internalType": "uint16"
+              },
+              {
                 "name": "borrower",
                 "type": "address",
                 "internalType": "address"
@@ -419,6 +424,11 @@
               },
               {
                 "name": "fallbackTreasuryBpsAtInit",
+                "type": "uint16",
+                "internalType": "uint16"
+              },
+              {
+                "name": "liquidationLtvBpsAtInit",
                 "type": "uint16",
                 "internalType": "uint16"
               },
