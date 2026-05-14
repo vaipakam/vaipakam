@@ -479,7 +479,7 @@ any setter; only a contract upgrade can move them.
 | --- | --- | --- | --- |
 | `advertiseLtvBps` | 8_500 (85%) | `[MIN_MATCH_ADVERTISE_LTV_BPS = 5_000 (50%), liquidateLtvBps − 100]` | Min 50% so "approaching liquidation" stays meaningful; max forces a ≥ 1% gap below the internal-match floor (no zero-band collapse). |
 | `liquidateLtvBps` | 9_000 (90%) | `[advertiseLtvBps + 100, externalLtvBps − 100]` | Monotonically above advertise; ≥ 1% below external (priority window can't collapse). |
-| `externalLtvBps` | 9_200 (92%) | `[liquidateLtvBps + 100, MAX_EXTERNAL_LIQUIDATE_LTV_BPS = 9_600 (96%)]` | Above internal-match; capped at 96% so external still fires with ≥ 4% LTV buffer below 100% (bad-debt prevention — even at the cap, one external swap clears with room to spare). |
+| `externalLtvBps` | 9_200 (92%) | `[liquidateLtvBps + 100, MAX_EXTERNAL_LIQUIDATE_LTV_BPS = 9_500 (95%)]` | Above internal-match; capped at 95% so external still fires with ≥ 5% LTV buffer below 100% (bad-debt prevention — even at the cap, one external swap clears with room to spare). |
 | `incentivePerLegBps` | 100 (1%) | `[MIN_MATCH_INCENTIVE_BPS_PER_LEG = 0, MAX_MATCH_INCENTIVE_BPS_PER_LEG = 300 (3%)]` | Floor 0 lets governance zero the incentive without disabling the path. Cap 3% per leg = 6% total on a 2-way match, still within the 5–7.7% external-discount budget — so even at the cap, borrowers always net out ahead of external liquidation. |
 
 Setter (`ConfigFacet.setInternalMatchBands(uint16,uint16,uint16,uint16)`)
