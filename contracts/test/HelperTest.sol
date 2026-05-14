@@ -41,7 +41,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](59);
+        selectors = new bytes4[](60);
         selectors[0] = TestMutatorFacet.setLoan.selector;
         selectors[1] = TestMutatorFacet.setOffer.selector;
         selectors[2] = TestMutatorFacet.setNextLoanId.selector;
@@ -95,12 +95,13 @@ contract HelperTest {
         // into the minimal test diamond, so the production
         // owner-gated setter isn't reachable from test setUp).
         selectors[41] = TestMutatorFacet.setWethContractRaw.selector;
-        // Layout-resilient `liqThresholdBps` writer that bypasses the
-        // bounded-range guard on the production setter. Used by
-        // `RiskFacetTest.testCalculateHealthFactorZeroLiqThreshold` to
-        // exercise the HF == 0 branch without depending on hardcoded
-        // storage slot offsets.
-        selectors[42] = TestMutatorFacet.setLiqThresholdBpsRaw.selector;
+        // Layout-resilient `loan.liquidationLtvBpsAtInit` writer.
+        // PR2 of internal-match work replaced the old
+        // `setLiqThresholdBpsRaw` (which wrote the retired per-asset
+        // `RiskParams.liqThresholdBps`) with this per-loan snapshot
+        // writer. Used by HF tests to stress the
+        // `liquidationLtvBpsAtInit == 0` branch.
+        selectors[42] = TestMutatorFacet.setLiquidationLtvBpsAtInitRaw.selector;
         // Layout-resilient mapping writers used by EarlyWithdrawal
         // tests to scaffold loan-sale state without slot math.
         selectors[43] = TestMutatorFacet.setOfferIdToLoanIdRaw.selector;
@@ -141,6 +142,12 @@ contract HelperTest {
         // legacy `LTV ≤ loanInitMaxLtvBps` + `HF ≥ 1.5`) without cutting
         // ConfigFacet into their minimal diamonds.
         selectors[58] = TestMutatorFacet.setDepthTieredLtvEnabledRaw.selector;
+        // PR2 of internal-match work — per-tier liquidation-LTV
+        // direct-write helper for fixtures that don't cut
+        // ConfigFacet. Used in test setUps to pin all three tiers
+        // to a single value (e.g. 8500) and preserve legacy HF math
+        // that assumed an 85% per-asset threshold.
+        selectors[59] = TestMutatorFacet.setTierLiquidationLtvBpsAllRaw.selector;
         return selectors;
     }
 
@@ -742,7 +749,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](72);
+        selectors = new bytes4[](74);
         selectors[0] = ConfigFacet.setFeesConfig.selector;
         selectors[1] = ConfigFacet.setLiquidationConfig.selector;
         selectors[2] = ConfigFacet.setRiskConfig.selector;
@@ -854,6 +861,11 @@ contract HelperTest {
         selectors[69] = ConfigFacet.setDiscountPathEnabled.selector;
         selectors[70] = ConfigFacet.setTierLiqDiscountBps.selector;
         selectors[71] = ConfigFacet.getTierLiqDiscountBps.selector;
+        // PR2 of internal-match work (2026-05-14) — per-tier
+        // LIQUIDATION threshold setter + view. Replaces the retired
+        // per-asset `RiskParams.liqThresholdBps`.
+        selectors[72] = ConfigFacet.setTierLiquidationLtvBps.selector;
+        selectors[73] = ConfigFacet.getTierLiquidationLtvBps.selector;
         return selectors;
     }
 

@@ -261,20 +261,10 @@ contract RepayFacetTest is Test {
         // Set loanInitMaxLtvBps in risk params (assume owner sets)
         // For mockERC20 collateral: loanInitMaxLtvBps 8000 (80%)
         vm.prank(owner);
-        RiskFacet(address(diamond)).updateRiskParams(
-            mockERC20,
-            8000,
-            8500,
-            300,
-            1000
+        RiskFacet(address(diamond)).updateRiskParams(mockERC20, 8000, 300, 1000
         );
         vm.prank(owner);
-        RiskFacet(address(diamond)).updateRiskParams(
-            mockCollateralERC20,
-            8000,
-            8500,
-            300,
-            1000
+        RiskFacet(address(diamond)).updateRiskParams(mockCollateralERC20, 8000, 300, 1000
         );
 
         // Assume create/accept loan for tests (mock or call)

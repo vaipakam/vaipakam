@@ -1065,6 +1065,13 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
      * @notice Asset risk-parameter profile. Mirrors `RiskParams` with the
      *         Liquid/Illiquid classification decided live from
      *         {checkLiquidity}. Never reverts.
+     * @dev    PR2 of internal-match work (2026-05-14) dropped
+     *         `liqThresholdBps` from the return tuple — the per-asset
+     *         liquidation threshold was retired in favour of per-tier
+     *         values. Frontend should read the effective per-tier
+     *         liquidation LTV via the tier returned by
+     *         `getEffectiveLiquidityTier(asset)` + the
+     *         `getTierLiquidationLtvBps()` view on `ConfigFacet`.
      */
     function getAssetRiskProfile(address token)
         external
@@ -1073,17 +1080,15 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
             bool isSupported,
             LibVaipakam.LiquidityStatus status,
             uint256 loanInitMaxLtvBps,
-            uint256 liqThresholdBps,
             uint256 liqBonusBps
         )
     {
         if (token == address(0)) {
-            return (false, LibVaipakam.LiquidityStatus.Illiquid, 0, 0, 0);
+            return (false, LibVaipakam.LiquidityStatus.Illiquid, 0, 0);
         }
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.RiskParams storage rp = s.assetRiskParams[token];
         loanInitMaxLtvBps = rp.loanInitMaxLtvBps;
-        liqThresholdBps = rp.liqThresholdBps;
         liqBonusBps = rp.liqBonusBps;
         status = _checkLiquidity(token);
         isSupported = status == LibVaipakam.LiquidityStatus.Liquid;

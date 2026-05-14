@@ -738,6 +738,37 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
         // parties agreed to these specific splits.
         loan.fallbackLenderBonusBpsAtInit = uint16(LibVaipakam.cfgFallbackLenderBonusBps());
         loan.fallbackTreasuryBpsAtInit = uint16(LibVaipakam.cfgFallbackTreasuryBps());
+        // Snapshot the effective per-tier LIQUIDATION threshold (PR2 of
+        // internal-match work, 2026-05-14). Replaces the retired
+        // per-asset `RiskParams.liqThresholdBps`. Read by
+        // `RiskFacet.calculateHealthFactor` /
+        // `isCollateralValueCollapsed` / `PartialWithdrawalFacet` for
+        // the loan's entire lifetime. Snapshot semantics mirror the
+        // fallback split above — any subsequent admin tune via
+        // `ConfigFacet.setTierLiquidationLtvBps` applies prospectively
+        // only. Illiquid collateral leaves the field at 0 (the HF
+        // consumers revert `IlliquidLoanNoRiskMath` upstream so the
+        // zero never reaches math). When the asset IS liquid but the
+        // depth-tier classifier returns 0 (e.g. test envs where pool
+        // depth isn't simulated), `cfgTierLiquidationLtvBps(0)`
+        // already returns the conservative Tier-3 default — no
+        // further fallback needed here.
+        if (collateralLiquidity == LibVaipakam.LiquidityStatus.Liquid) {
+            // Low-level staticcall + fallback so the snapshot stays
+            // operational on test diamonds that don't cut
+            // `getEffectiveLiquidityTier` into their oracle surface.
+            // Failure ⇒ treat as tier 0 (unclassified); the
+            // `cfgTierLiquidationLtvBps(0)` helper returns the
+            // conservative Tier-3 default anyway.
+            (bool ok, bytes memory ret) = address(this).staticcall(
+                abi.encodeWithSelector(
+                    OracleFacet.getEffectiveLiquidityTier.selector,
+                    loan.collateralAsset
+                )
+            );
+            uint8 effTier = ok ? abi.decode(ret, (uint8)) : 0;
+            loan.liquidationLtvBpsAtInit = uint16(LibVaipakam.cfgTierLiquidationLtvBps(effTier));
+        }
     }
 
     function _copyCollateralAssetFields(

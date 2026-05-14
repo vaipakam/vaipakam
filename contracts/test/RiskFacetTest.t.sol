@@ -409,18 +409,23 @@ contract RiskFacetTest is Test {
         RiskFacet(address(diamond)).updateRiskParams(
             mockERC20,
             8000,
-            8500,
             300,
             1000
         );
         vm.prank(owner);
-        RiskFacet(address(diamond)).updateRiskParams(
-            mockCollateralERC20,
-            8000,
-            8500,
-            300,
-            1000
+        RiskFacet(address(diamond)).updateRiskParams(mockCollateralERC20, 8000, 300, 1000
         );
+
+        // PR2 of internal-match work (2026-05-14) — per-tier
+        // LIQUIDATION threshold replaces the retired per-asset
+        // `liqThresholdBps`. The HF assertions in this suite were
+        // calibrated to an 85% (8500 BPS) threshold (`HF = 1800 *
+        // 8500 / 10000 / 1000 * 1e18 = 1.53e18`). Pin every tier to
+        // 8500 so each loan's snapshot lands on the legacy value
+        // and the existing HF math stays valid. Uses the test
+        // mutator instead of `ConfigFacet.setTierLiquidationLtvBps`
+        // because this test diamond doesn't cut `ConfigFacet`.
+        TestMutatorFacet(address(diamond)).setTierLiquidationLtvBpsAllRaw(8500, 8500, 8500);
 
         // Mock oracle: Set liquid for mockERC20, illiquid for others.
         // Mock both classification and execution-routing variants — README §1.
@@ -730,43 +735,20 @@ contract RiskFacetTest is Test {
     function testUpdateAssetRiskParamsSuccess() public {
         vm.prank(owner);
         vm.expectEmit(true, true, false, true);
-        emit RiskFacet.RiskParamsUpdated(mockERC20, 7000, 7500, 250, 1500);
-        RiskFacet(address(diamond)).updateRiskParams(
-            mockERC20,
-            7000,
-            7500,
-            250,
-            1500
-        );
+        emit RiskFacet.RiskParamsUpdated(mockERC20, 7000, 250, 1500);
+        RiskFacet(address(diamond)).updateRiskParams(mockERC20, 7000, 250, 1500);
         // Note: LibVaipakam.storageSlot() accesses the test contract's storage, not the diamond's.
         // Verification is done via the emitted event (RiskParamsUpdated) above.
         // The parameters are applied when createAndAcceptOffer uses the updated risk params.
     }
 
-    function testUpdateAssetRiskParamsRevertsInvalidParams() public {
-        // maxLtv=9000 is in-range; liqThreshold=8000 fails the
-        // composite check (`liqThreshold > maxLtv` is required).
-        // Under the T-033 audit the composite path emits
-        // `ParameterOutOfRange("liqThresholdBps", ...)` rather than
-        // the legacy `UpdateNotAllowed()` so callers can disambiguate.
-        vm.prank(owner);
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                IVaipakamErrors.ParameterOutOfRange.selector,
-                bytes32("liqThresholdBps"),
-                uint256(8000),
-                uint256(LibVaipakam.RISK_PARAMS_LIQ_THRESHOLD_BPS_MIN),
-                LibVaipakam.BASIS_POINTS
-            )
-        );
-        RiskFacet(address(diamond)).updateRiskParams(
-            mockERC20,
-            9000,
-            8000,
-            300,
-            1000
-        ); // maxLtv > liqThreshold
-    }
+    // Note: the `testUpdateAssetRiskParamsRevertsInvalidParams` test that
+    // covered the composite `liqThreshold > maxLtv` revert was retired
+    // in PR2 of the internal-match work (2026-05-14) — the per-asset
+    // `liqThresholdBps` parameter on `updateRiskParams` no longer
+    // exists. Per-tier liquidation-threshold validation lives on the
+    // new `ConfigFacet.setTierLiquidationLtvBps` setter; cross-tier
+    // monotonic coverage is added in PR3's tier-config tests.
 
     function testUpdateAssetRiskParamsRevertsNotOwner() public {
         vm.prank(lender);
@@ -780,7 +762,6 @@ contract RiskFacetTest is Test {
         RiskFacet(address(diamond)).updateRiskParams(
             mockERC20,
             8000,
-            8500,
             300,
             1000
         );
@@ -963,7 +944,6 @@ contract RiskFacetTest is Test {
         RiskFacet(address(diamond)).updateRiskParams(
             address(0),
             8000,
-            8500,
             300,
             1000
         );
@@ -1501,12 +1481,7 @@ contract RiskFacetTest is Test {
                 LibVaipakam.BASIS_POINTS
             )
         );
-        RiskFacet(address(diamond)).updateRiskParams(
-            mockERC20,
-            0,
-            8500,
-            300,
-            1000
+        RiskFacet(address(diamond)).updateRiskParams(mockERC20, 0, 300, 1000
         );
     }
 
@@ -1515,19 +1490,13 @@ contract RiskFacetTest is Test {
         vm.prank(owner);
         vm.expectRevert(
             abi.encodeWithSelector(
-                IVaipakamErrors.ParameterOutOfRange.selector,
-                bytes32("loanInitMaxLtvBps"),
+                IVaipakamErrors.ParameterOutOfRange.selector, bytes32("loanInitMaxLtvBps"),
                 uint256(10001),
                 uint256(LibVaipakam.RISK_PARAMS_MAX_LTV_BPS_MIN),
                 LibVaipakam.BASIS_POINTS
             )
         );
-        RiskFacet(address(diamond)).updateRiskParams(
-            mockERC20,
-            10001,
-            10002,
-            300,
-            1000
+        RiskFacet(address(diamond)).updateRiskParams(mockERC20, 10001, 300, 1000
         );
     }
 
@@ -1537,13 +1506,7 @@ contract RiskFacetTest is Test {
     function testUpdateRiskParamsRevertsLiqBonusExceedsBasis() public {
         vm.prank(owner);
         vm.expectRevert(IVaipakamErrors.UpdateNotAllowed.selector);
-        RiskFacet(address(diamond)).updateRiskParams(
-            mockERC20,
-            8000,
-            8500,
-            301,
-            1000
-        );
+        RiskFacet(address(diamond)).updateRiskParams(mockERC20, 8000, 301, 1000);
     }
 
     /// @dev Test O: updateRiskParams reverts when reserveFactorBps is
@@ -1565,7 +1528,6 @@ contract RiskFacetTest is Test {
         RiskFacet(address(diamond)).updateRiskParams(
             mockERC20,
             8000,
-            8500,
             300,
             10001
         );
@@ -1578,13 +1540,7 @@ contract RiskFacetTest is Test {
     function testUpdateRiskParamsRespectsIncentiveCap() public {
         vm.prank(owner);
         vm.expectRevert(IVaipakamErrors.UpdateNotAllowed.selector);
-        RiskFacet(address(diamond)).updateRiskParams(
-            mockERC20,
-            8000,
-            8500,
-            10000,
-            1000
-        );
+        RiskFacet(address(diamond)).updateRiskParams(mockERC20, 8000, 301, 1000);
     }
 
     /// @dev Test Q: triggerLiquidation where afterBonus < totalDebt (undercollateralized).
@@ -1751,23 +1707,26 @@ contract RiskFacetTest is Test {
         vm.clearMockedCalls();
     }
 
-    /// @dev Tests calculateHealthFactor when liqThresholdBps is 0 → riskAdjustedCollateral=0, healthFactor=0.
-    ///      Uses TestMutatorFacet.setLiqThresholdBpsRaw to bypass the
-    ///      bounded-range guard on the production setter (which floors
-    ///      liqThresholdBps at RISK_PARAMS_LIQ_THRESHOLD_BPS_MIN).
-    ///      Layout-resilient: the mutator references the field by
-    ///      named storage path so it stays correct when the Storage
-    ///      struct shifts (e.g. T-048 PAD additions).
+    /// @dev Tests calculateHealthFactor when `loan.liquidationLtvBpsAtInit`
+    ///      is 0 → riskAdjustedCollateral=0, healthFactor=0. PR2 of the
+    ///      internal-match work retired the per-asset
+    ///      `liqThresholdBps`; the liquidation threshold is now a
+    ///      per-loan snapshot. Uses
+    ///      `TestMutatorFacet.setLiquidationLtvBpsAtInitRaw` to write
+    ///      the snapshot directly, bypassing the production
+    ///      `LoanFacet.initiateLoan` path that always snapshots a
+    ///      non-zero per-tier value.
     function testCalculateHealthFactorZeroLiqThreshold() public {
         uint256 loanId = createAndAcceptOffer();
 
-        TestMutatorFacet(address(diamond)).setLiqThresholdBpsRaw(mockCollateralERC20, 0);
+        TestMutatorFacet(address(diamond)).setLiquidationLtvBpsAtInitRaw(loanId, 0);
 
         uint256 hf = RiskFacet(address(diamond)).calculateHealthFactor(loanId);
-        assertEq(hf, 0, "HF should be 0 when liqThresholdBps is 0");
+        assertEq(hf, 0, "HF should be 0 when liquidationLtvBpsAtInit is 0");
 
-        // Restore risk params for any subsequent assertions in this test contract.
-        TestMutatorFacet(address(diamond)).setLiqThresholdBpsRaw(mockCollateralERC20, 8500);
+        // Restore the snapshot value for any subsequent assertions
+        // in this test contract (Tier-2 default = 85% = 8500 BPS).
+        TestMutatorFacet(address(diamond)).setLiquidationLtvBpsAtInitRaw(loanId, 8500);
     }
 
     /// @dev Tests calculateLTV when collateral price = 0 → collateralValueUSD = 0 → ZeroCollateral revert.
@@ -1794,7 +1753,6 @@ contract RiskFacetTest is Test {
         RiskFacet(address(diamond)).updateRiskParams(
             collateralToken,
             8000,
-            8500,
             300,
             1000
         );
@@ -1909,7 +1867,6 @@ contract RiskFacetTest is Test {
         RiskFacet(address(diamond)).updateRiskParams(
             mockERC20,
             8000,
-            8500,
             0, // liqBonusBps = 0
             1000
         );

@@ -1075,6 +1075,81 @@ contract ConfigFacet is DiamondAccessControl {
         emit TierMaxInitLtvBpsSet(tier1, tier2, tier3);
     }
 
+    /// @notice Emitted on every change to the per-tier LIQUIDATION
+    ///         threshold (the LTV at which a loan with that tier's
+    ///         collateral becomes liquidatable). PR2 of the
+    ///         internal-match work — see `InternalLiquidationLedger.md`
+    ///         §0. Off-chain monitoring watches this so a governance
+    ///         change to liquidation gates is publicly observable.
+    /// @custom:event-category informational/config
+    event TierLiquidationLtvBpsSet(uint16 tier1, uint16 tier2, uint16 tier3);
+
+    /// @notice Bound + monotonic-ordering errors for the per-tier
+    ///         liquidation-threshold setter.
+    error TierLiquidationLtvBpsTooHigh(uint256 provided, uint256 maxAllowed);
+    error TierLiquidationLtvBpsTooLow(uint256 provided, uint256 minAllowed);
+    error NonMonotoneTierLiquidationLtvBps(uint256 t1, uint256 t2, uint256 t3);
+
+    /// @notice Set the per-tier LIQUIDATION threshold (bps) atomically
+    ///         for all three liquidity tiers. PR2 of the internal-match
+    ///         work — replaces the retired per-asset
+    ///         `RiskParams.liqThresholdBps`. Each `0` ⇒ library default
+    ///         (9000 / 8500 / 8000 = 90% / 85% / 80%).
+    /// @dev    ADMIN_ROLE-only (TimelockController post-handover).
+    ///         Validation:
+    ///           - Each tier value (after default-resolution) lies in
+    ///             `[MIN_TIER_LIQUIDATION_LTV_BPS, MAX_TIER_LIQUIDATION_LTV_BPS]`
+    ///             (i.e. 50% ≤ value ≤ 95%). Floor 50% prevents an
+    ///             accidental "always liquidatable" misconfig; ceiling
+    ///             95% preserves the ≥5% LTV bad-debt buffer below
+    ///             100% at the most permissive setting.
+    ///           - Cross-tier monotonic: `T1 ≥ T2 ≥ T3` (deeper-
+    ///             liquidity tier tolerates higher pre-liquidation LTV).
+    ///         New loans snapshot the effective value at `initiateLoan`
+    ///         onto `Loan.liquidationLtvBpsAtInit`; existing loans
+    ///         keep their original snapshot — admin tunes apply
+    ///         prospectively only.
+    function setTierLiquidationLtvBps(uint16 tier1, uint16 tier2, uint16 tier3)
+        external
+        onlyRole(LibAccessControl.ADMIN_ROLE)
+    {
+        uint256 t1 = tier1 == 0 ? uint256(LibVaipakam.DEFAULT_TIER1_LIQUIDATION_LTV_BPS) : uint256(tier1);
+        uint256 t2 = tier2 == 0 ? uint256(LibVaipakam.DEFAULT_TIER2_LIQUIDATION_LTV_BPS) : uint256(tier2);
+        uint256 t3 = tier3 == 0 ? uint256(LibVaipakam.DEFAULT_TIER3_LIQUIDATION_LTV_BPS) : uint256(tier3);
+        uint256 floor = uint256(LibVaipakam.MIN_TIER_LIQUIDATION_LTV_BPS);
+        uint256 ceil = uint256(LibVaipakam.MAX_TIER_LIQUIDATION_LTV_BPS);
+        if (t1 < floor) revert TierLiquidationLtvBpsTooLow(t1, floor);
+        if (t2 < floor) revert TierLiquidationLtvBpsTooLow(t2, floor);
+        if (t3 < floor) revert TierLiquidationLtvBpsTooLow(t3, floor);
+        if (t1 > ceil) revert TierLiquidationLtvBpsTooHigh(t1, ceil);
+        if (t2 > ceil) revert TierLiquidationLtvBpsTooHigh(t2, ceil);
+        if (t3 > ceil) revert TierLiquidationLtvBpsTooHigh(t3, ceil);
+        // Cross-tier monotonic: deeper-liquidity tier tolerates higher
+        // pre-liquidation LTV, i.e. T1 ≥ T2 ≥ T3.
+        if (!(t1 >= t2 && t2 >= t3)) revert NonMonotoneTierLiquidationLtvBps(t1, t2, t3);
+        LibVaipakam.ProtocolConfig storage c = LibVaipakam.storageSlot().protocolCfg;
+        c.tier1LiquidationLtvBps = tier1;
+        c.tier2LiquidationLtvBps = tier2;
+        c.tier3LiquidationLtvBps = tier3;
+        emit TierLiquidationLtvBpsSet(tier1, tier2, tier3);
+    }
+
+    /// @notice Get the effective per-tier LIQUIDATION threshold (bps)
+    ///         — override OR library default — for each of the three
+    ///         liquidity tiers. Frontend reads this to render the
+    ///         "liquidation at LTV X%" disclosure per loan after
+    ///         resolving the asset's tier via
+    ///         `OracleFacet.getEffectiveLiquidityTier`.
+    function getTierLiquidationLtvBps()
+        external
+        view
+        returns (uint256 tier1, uint256 tier2, uint256 tier3)
+    {
+        tier1 = LibVaipakam.cfgTier1LiquidationLtvBps();
+        tier2 = LibVaipakam.cfgTier2LiquidationLtvBps();
+        tier3 = LibVaipakam.cfgTier3LiquidationLtvBps();
+    }
+
     /// @notice Replace the PAA list — the per-chain "predominantly
     ///         available" quote tokens the depth-tier route search probes
     ///         an asset's pools against (e.g. `[WETH, USDC, USDT, DAI]`

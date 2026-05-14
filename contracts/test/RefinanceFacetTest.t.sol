@@ -156,9 +156,10 @@ contract RefinanceFacetTest is Test {
         ProfileFacet(address(diamond)).updateKYCTier(borrower, LibVaipakam.KYCTier.Tier2);
 
         vm.prank(owner);
-        RiskFacet(address(diamond)).updateRiskParams(mockERC20, 8000, 8500, 300, 1000);
+        RiskFacet(address(diamond)).updateRiskParams(mockERC20, 8000, 300, 1000);
         vm.prank(owner);
-        RiskFacet(address(diamond)).updateRiskParams(mockCollateralERC20, 8000, 8500, 300, 1000);
+        RiskFacet(address(diamond)).updateRiskParams(mockCollateralERC20, 8000, 300, 1000);
+        TestMutatorFacet(address(diamond)).setTierLiquidationLtvBpsAllRaw(8500, 8500, 8500);
 
         mockLiquidity(mockERC20, LibVaipakam.LiquidityStatus.Liquid);
         mockPrice(mockERC20, 1e8, 8);
@@ -724,7 +725,7 @@ contract RefinanceFacetTest is Test {
         mockLiquidity(otherERC20, LibVaipakam.LiquidityStatus.Liquid);
         mockPrice(otherERC20, 1e8, 8);
         vm.prank(owner);
-        RiskFacet(address(diamond)).updateRiskParams(otherERC20, 8000, 8500, 300, 1000);
+        RiskFacet(address(diamond)).updateRiskParams(otherERC20, 8000, 300, 1000);
         address borrowerEscrow = EscrowFactoryFacet(address(diamond)).getOrCreateUserEscrow(borrower);
         address nlEscrow = EscrowFactoryFacet(address(diamond)).getOrCreateUserEscrow(newLender);
         vm.prank(borrower); ERC20(otherERC20).approve(borrowerEscrow, type(uint256).max);
@@ -782,7 +783,7 @@ contract RefinanceFacetTest is Test {
         mockLiquidity(otherERC20, LibVaipakam.LiquidityStatus.Liquid);
         mockPrice(otherERC20, 1e8, 8);
         vm.prank(owner);
-        RiskFacet(address(diamond)).updateRiskParams(otherERC20, 8000, 8500, 300, 1000);
+        RiskFacet(address(diamond)).updateRiskParams(otherERC20, 8000, 300, 1000);
         address borrowerEscrow = EscrowFactoryFacet(address(diamond)).getOrCreateUserEscrow(borrower);
         address nlEscrow = EscrowFactoryFacet(address(diamond)).getOrCreateUserEscrow(newLender);
         vm.prank(borrower); ERC20(otherERC20).approve(borrowerEscrow, type(uint256).max);

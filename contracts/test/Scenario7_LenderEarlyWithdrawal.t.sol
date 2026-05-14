@@ -160,9 +160,10 @@ contract Scenario7_LenderEarlyWithdrawal is Test {
         ProfileFacet(address(diamond)).updateKYCTier(borrower, LibVaipakam.KYCTier.Tier2);
 
         vm.prank(owner);
-        RiskFacet(address(diamond)).updateRiskParams(mockERC20, 8000, 8500, 300, 1000);
+        RiskFacet(address(diamond)).updateRiskParams(mockERC20, 8000, 300, 1000);
         vm.prank(owner);
-        RiskFacet(address(diamond)).updateRiskParams(mockCollateralERC20, 8000, 8500, 300, 1000);
+        RiskFacet(address(diamond)).updateRiskParams(mockCollateralERC20, 8000, 300, 1000);
+        TestMutatorFacet(address(diamond)).setTierLiquidationLtvBpsAllRaw(8500, 8500, 8500);
 
         mockLiquidity(mockERC20, LibVaipakam.LiquidityStatus.Liquid);
         mockPrice(mockERC20, 1e8, 8);

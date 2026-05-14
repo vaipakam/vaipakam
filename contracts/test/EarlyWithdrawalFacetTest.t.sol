@@ -229,9 +229,10 @@ contract EarlyWithdrawalFacetTest is Test {
         ProfileFacet(address(diamond)).updateKYCTier(borrower, LibVaipakam.KYCTier.Tier2);
 
         vm.prank(owner);
-        RiskFacet(address(diamond)).updateRiskParams(mockERC20, 8000, 8500, 300, 1000);
+        RiskFacet(address(diamond)).updateRiskParams(mockERC20, 8000, 300, 1000);
         vm.prank(owner);
-        RiskFacet(address(diamond)).updateRiskParams(mockCollateralERC20, 8000, 8500, 300, 1000);
+        RiskFacet(address(diamond)).updateRiskParams(mockCollateralERC20, 8000, 300, 1000);
+        TestMutatorFacet(address(diamond)).setTierLiquidationLtvBpsAllRaw(8500, 8500, 8500);
 
         mockLiquidity(mockERC20, LibVaipakam.LiquidityStatus.Liquid);
         mockPrice(mockERC20, 1e8, 8);
@@ -1064,7 +1065,7 @@ contract EarlyWithdrawalFacetTest is Test {
         mockPrice(otherToken, 1e8, 8);
         address nlEscrow = EscrowFactoryFacet(address(diamond)).getOrCreateUserEscrow(newLender);
         vm.prank(newLender); ERC20(otherToken).approve(nlEscrow, type(uint256).max);
-        vm.prank(owner); RiskFacet(address(diamond)).updateRiskParams(otherToken, 8000, 8500, 300, 1000);
+        vm.prank(owner); RiskFacet(address(diamond)).updateRiskParams(otherToken, 8000, 300, 1000);
 
         vm.prank(newLender);
         uint256 wrongColl = OfferFacet(address(diamond)).createOffer(

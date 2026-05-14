@@ -205,9 +205,10 @@ contract PrecloseFacetTest is Test {
         ProfileFacet(address(diamond)).updateKYCTier(newBorrower, LibVaipakam.KYCTier.Tier2);
 
         vm.prank(owner);
-        RiskFacet(address(diamond)).updateRiskParams(mockERC20, 8000, 8500, 300, 1000);
+        RiskFacet(address(diamond)).updateRiskParams(mockERC20, 8000, 300, 1000);
         vm.prank(owner);
-        RiskFacet(address(diamond)).updateRiskParams(mockCollateralERC20, 8000, 8500, 300, 1000);
+        RiskFacet(address(diamond)).updateRiskParams(mockCollateralERC20, 8000, 300, 1000);
+        TestMutatorFacet(address(diamond)).setTierLiquidationLtvBpsAllRaw(8500, 8500, 8500);
 
         mockLiquidity(mockERC20, LibVaipakam.LiquidityStatus.Liquid);
         mockPrice(mockERC20, 1e8, 8);
@@ -342,7 +343,7 @@ contract PrecloseFacetTest is Test {
         mockPrice(otherToken, 1e8, 8);
         address nbEscrow = EscrowFactoryFacet(address(diamond)).getOrCreateUserEscrow(newBorrower);
         vm.prank(newBorrower); ERC20(otherToken).approve(nbEscrow, type(uint256).max);
-        vm.prank(owner); RiskFacet(address(diamond)).updateRiskParams(otherToken, 8000, 8500, 300, 1000);
+        vm.prank(owner); RiskFacet(address(diamond)).updateRiskParams(otherToken, 8000, 300, 1000);
 
         vm.prank(newBorrower);
         uint256 badOffer = OfferFacet(address(diamond)).createOffer(
@@ -865,7 +866,7 @@ contract PrecloseFacetTest is Test {
         mockPrice(otherToken, 1e8, 8);
         address nbEscrow = EscrowFactoryFacet(address(diamond)).getOrCreateUserEscrow(newBorrower);
         vm.prank(newBorrower); ERC20(otherToken).approve(nbEscrow, type(uint256).max);
-        vm.prank(owner); RiskFacet(address(diamond)).updateRiskParams(otherToken, 8000, 8500, 300, 1000);
+        vm.prank(owner); RiskFacet(address(diamond)).updateRiskParams(otherToken, 8000, 300, 1000);
 
         vm.prank(newBorrower);
         uint256 badCollOffer = OfferFacet(address(diamond)).createOffer(
@@ -1213,7 +1214,7 @@ contract PrecloseFacetTest is Test {
         mockPrice(otherToken, 1e8, 8);
         address nbEscrow = EscrowFactoryFacet(address(diamond)).getOrCreateUserEscrow(newBorrower);
         vm.prank(newBorrower); ERC20(otherToken).approve(nbEscrow, type(uint256).max);
-        vm.prank(owner); RiskFacet(address(diamond)).updateRiskParams(otherToken, 8000, 8500, 300, 1000);
+        vm.prank(owner); RiskFacet(address(diamond)).updateRiskParams(otherToken, 8000, 300, 1000);
 
         vm.prank(newBorrower);
         uint256 badOffer = OfferFacet(address(diamond)).createOffer(

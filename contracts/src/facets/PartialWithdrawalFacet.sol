@@ -216,7 +216,13 @@ contract PartialWithdrawalFacet is DiamondReentrancyGuard, DiamondPausable, IVai
         ctx.collateralPriceDivisor =
             (10 ** collateralFeedDecimals) * (10 ** collateralTokenDecimals);
 
-        ctx.liqThresholdBps = s.assetRiskParams[loan.collateralAsset].liqThresholdBps;
+        // PR2 of internal-match work (2026-05-14): per-asset
+        // `liqThresholdBps` was retired in favour of per-tier values
+        // snapshotted onto the loan at `initiateLoan`. Read the
+        // snapshot so partial-withdrawal HF/LTV simulation matches
+        // what `RiskFacet.calculateHealthFactor` would compute for
+        // this loan today.
+        ctx.liqThresholdBps = uint256(loan.liquidationLtvBpsAtInit);
     }
 
     function _hfFromContext(

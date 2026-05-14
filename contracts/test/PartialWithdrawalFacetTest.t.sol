@@ -146,9 +146,10 @@ contract PartialWithdrawalFacetTest is Test {
         ProfileFacet(address(diamond)).updateKYCTier(borrower, LibVaipakam.KYCTier.Tier2);
 
         vm.prank(owner);
-        RiskFacet(address(diamond)).updateRiskParams(mockERC20, 8000, 8500, 300, 1000);
+        RiskFacet(address(diamond)).updateRiskParams(mockERC20, 8000, 300, 1000);
         vm.prank(owner);
-        RiskFacet(address(diamond)).updateRiskParams(mockCollateralERC20, 8000, 8500, 300, 1000);
+        RiskFacet(address(diamond)).updateRiskParams(mockCollateralERC20, 8000, 300, 1000);
+        TestMutatorFacet(address(diamond)).setTierLiquidationLtvBpsAllRaw(8500, 8500, 8500);
 
         mockLiquidity(mockERC20, LibVaipakam.LiquidityStatus.Liquid);
         mockPrice(mockERC20, 1e8, 8);
@@ -298,7 +299,7 @@ contract PartialWithdrawalFacetTest is Test {
         // With principal=1000, collateral_after=1770:
         //   LTV ≈ 56.5% > loanInitMaxLtvBps=10% → LTVExceeded still triggers.
         vm.prank(owner);
-        RiskFacet(address(diamond)).updateRiskParams(mockCollateralERC20, 1000, 9000, 300, 1000);
+        RiskFacet(address(diamond)).updateRiskParams(mockCollateralERC20, 1000, 300, 1000);
 
         // Set principal = 1000 ether; collateral = 1800 ether via mutator.
         // After withdrawal of 30: LTV = 1000/1770 * 10000 ≈ 5650 > loanInitMaxLtvBps=1000 → LTVExceeded
@@ -316,14 +317,14 @@ contract PartialWithdrawalFacetTest is Test {
 
         // Restore risk params
         vm.prank(owner);
-        RiskFacet(address(diamond)).updateRiskParams(mockCollateralERC20, 8000, 8500, 300, 1000);
+        RiskFacet(address(diamond)).updateRiskParams(mockCollateralERC20, 8000, 300, 1000);
+        TestMutatorFacet(address(diamond)).setTierLiquidationLtvBpsAllRaw(8500, 8500, 8500);
     }
 
     /// @dev Covers CrossFacetCallFailed("Withdraw failed") in partialWithdrawCollateral
     function testPartialWithdrawCrossFacetFails() public {
         vm.mockCallRevert(
-            address(diamond),
-            abi.encodeWithSelector(EscrowFactoryFacet.escrowWithdrawERC20.selector),
+            address(diamond), abi.encodeWithSelector(EscrowFactoryFacet.escrowWithdrawERC20.selector),
             "withdraw failed"
         );
 

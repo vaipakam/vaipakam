@@ -84,8 +84,8 @@ contract InvariantBase is Test {
         AdminFacet(address(diamond)).setallowanceTarget(makeAddr("zeroExAllowance"));
 
         ProfileFacet(address(diamond)).setTradeAllowance("US", "US", true);
-        RiskFacet(address(diamond)).updateRiskParams(mockUSDC, 8000, 8500, 300, 1000);
-        RiskFacet(address(diamond)).updateRiskParams(mockWETH, 8000, 8500, 300, 1000);
+        RiskFacet(address(diamond)).updateRiskParams(mockUSDC, 8000, 300, 1000);
+        RiskFacet(address(diamond)).updateRiskParams(mockWETH, 8000, 300, 1000);
 
         _mockOracle();
 

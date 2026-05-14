@@ -1002,7 +1002,7 @@ contract DeployDiamond is Script {
     }
 
     function _getConfigSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](72);
+        s = new bytes4[](74);
         // Setters
         s[0] = ConfigFacet.setFeesConfig.selector;
         s[1] = ConfigFacet.setLiquidationConfig.selector;
@@ -1125,6 +1125,12 @@ contract DeployDiamond is Script {
         s[69] = ConfigFacet.setDiscountPathEnabled.selector;
         s[70] = ConfigFacet.setTierLiqDiscountBps.selector;
         s[71] = ConfigFacet.getTierLiqDiscountBps.selector;
+        // PR2 of internal-match work (2026-05-14) — per-tier
+        // LIQUIDATION threshold setter + view. Replaces the retired
+        // per-asset `RiskParams.liqThresholdBps`. See
+        // InternalLiquidationLedger.md §0.
+        s[72] = ConfigFacet.setTierLiquidationLtvBps.selector;
+        s[73] = ConfigFacet.getTierLiquidationLtvBps.selector;
     }
 
     function _getRewardAggregatorSelectors() internal pure returns (bytes4[] memory s) {

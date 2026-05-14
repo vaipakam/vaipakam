@@ -211,7 +211,7 @@ contract PauseGatingTest is Test {
 
     function test_pause_updateRiskParams() public {
         vm.expectRevert(LibPausable.EnforcedPause.selector);
-        RiskFacet(address(diamond)).updateRiskParams(address(0), 0, 0, 0, 0);
+        RiskFacet(address(diamond)).updateRiskParams(address(0), 0, 0, 0);
     }
 
     // ── DefaultedFacet ──────────────────────────────────────────────────────

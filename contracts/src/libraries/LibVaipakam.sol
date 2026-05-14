@@ -120,6 +120,30 @@ library LibVaipakam {
     uint256 constant TIER2_MAX_INIT_LTV_BPS_DEFAULT = 6000; // 60%
     uint256 constant TIER3_MAX_INIT_LTV_BPS_DEFAULT = 6500; // 65%
     uint256 constant MAX_TIER_INIT_LTV_BPS_CEIL = 8000; // 80% — hard ceiling on any tier-LTV setter
+
+    // ── Per-tier LIQUIDATION threshold (PR2 of internal-match work) ────
+    // The LTV at which a loan becomes liquidatable, indexed by the
+    // collateral asset's liquidity tier. Replaces the previous per-asset
+    // `RiskParams.liqThresholdBps`. Mirror shape of the per-tier init-LTV
+    // caps above: tier 1 (deepest liquidity) tolerates the highest
+    // pre-liquidation LTV because we can sell quickly with low slippage;
+    // tier 3 needs a wider cushion. Each `Loan` snapshots the EFFECTIVE
+    // value at `initiateLoan` onto `Loan.liquidationLtvBpsAtInit`, so
+    // tier-degradation mid-loan never re-gates existing loans.
+    //
+    // See docs/DesignsAndPlans/InternalLiquidationLedger.md §0 for the
+    // user-locked decision trail. Defaults span a 5% gradient between
+    // tiers, mirroring the 5% gradient on the init-LTV side (50/60/65
+    // ⇒ 90/85/80).
+    uint16 constant DEFAULT_TIER1_LIQUIDATION_LTV_BPS = 9_000; // 90%
+    uint16 constant DEFAULT_TIER2_LIQUIDATION_LTV_BPS = 8_500; // 85%
+    uint16 constant DEFAULT_TIER3_LIQUIDATION_LTV_BPS = 8_000; // 80%
+    // Hard range bounds enforced by `ConfigFacet.setTierLiquidationLtvBps`.
+    // Floor 50% prevents an accidental "always liquidatable" misconfig;
+    // ceiling 95% preserves the ≥5% LTV bad-debt buffer below 100% even
+    // at the most permissive admin setting.
+    uint16 constant MIN_TIER_LIQUIDATION_LTV_BPS = 5_000;      // 50%
+    uint16 constant MAX_TIER_LIQUIDATION_LTV_BPS = 9_500;      // 95%
     // Default keeper-confidence tier for an asset the relay hasn't
     // touched yet — Tier 1, i.e. `effectiveTier` collapses to today's
     // `HF ≥ 1.5` until the off-chain 0x/1inch confidence accumulates.
@@ -829,6 +853,20 @@ library LibVaipakam {
         uint16 tier1LiqDiscountBps; // 0 ⇒ 770
         uint16 tier2LiqDiscountBps; // 0 ⇒ 600
         uint16 tier3LiqDiscountBps; // 0 ⇒ 500
+        // Per-tier LIQUIDATION threshold (PR2 of internal-match work):
+        // the LTV at which a loan becomes liquidatable, indexed by the
+        // collateral asset's liquidity tier (deepest-first). Each `0 ⇒
+        // DEFAULT_TIER{N}_LIQUIDATION_LTV_BPS` library constant (9000 /
+        // 8500 / 8000). Setter (`setTierLiquidationLtvBps`) bounds each
+        // value inside `[MIN_TIER_LIQUIDATION_LTV_BPS,
+        // MAX_TIER_LIQUIDATION_LTV_BPS]` and enforces the cross-tier
+        // monotonic invariant `T1 ≥ T2 ≥ T3` (deeper liquidity tier
+        // tolerates higher pre-liquidation LTV). Snapshotted to each
+        // loan at `initiateLoan` onto `Loan.liquidationLtvBpsAtInit`,
+        // so subsequent admin tunes never re-gate existing loans.
+        uint16 tier1LiquidationLtvBps; // 0 ⇒ 9000
+        uint16 tier2LiquidationLtvBps; // 0 ⇒ 8500
+        uint16 tier3LiquidationLtvBps; // 0 ⇒ 8000
     }
 
     /// @dev Struct to store parameters of createOffer function, avoiding stack-too-deep.
@@ -1000,6 +1038,18 @@ library LibVaipakam {
         // in `LibFallback` (backfill-safe).
         uint16 fallbackLenderBonusBpsAtInit;
         uint16 fallbackTreasuryBpsAtInit;
+        // Snapshotted from the effective per-tier liquidation LTV at
+        // `initiateLoan` (computed from the collateral asset's effective
+        // liquidity tier via `LibVaipakam.effectiveLiquidationLtvBps`).
+        // Read by `RiskFacet.calculateHealthFactor` /
+        // `isCollateralValueCollapsed` / `PartialWithdrawalFacet` instead
+        // of the retired `RiskParams.liqThresholdBps`. Immutable for the
+        // loan's lifetime — same snapshot discipline as the fallback
+        // split fields above. Tier degradation mid-loan does NOT
+        // re-gate existing loans. Zero on a pre-PR2 loan would short-
+        // circuit HF math; backfill by storage slot init is not
+        // applicable on a fresh deploy.
+        uint16 liquidationLtvBpsAtInit;
         // Slot 3: borrower(20) + 1 small field (1) + 1 enum (1)
         //         + uint64 (8) = 30 bytes packed; 2 free
         address borrower;
@@ -1189,10 +1239,15 @@ library LibVaipakam {
 
     struct RiskParams {
         uint256 loanInitMaxLtvBps; // Max LTV in basis points
-        uint256 liqThresholdBps; // Liquidation Threshold in basis points
         uint256 liqBonusBps; // Liquidation Bonus in basis points
         uint256 reserveFactorBps; // Reserve Factor in basis points
         uint256 minPartialBps; // Min partial repay % (e.g., 100 for 1%)
+        // NOTE: The per-asset `liqThresholdBps` was retired in PR2 of
+        //   the internal-match work (2026-05-14). The liquidation
+        //   threshold is now per-tier (see ProtocolConfig.tier{1,2,3}
+        //   LiquidationLtvBps), snapshotted onto each loan as
+        //   `Loan.liquidationLtvBpsAtInit` at `initiateLoan`. The HF
+        //   formula reads the snapshot — no per-asset value remains.
     }
 
     /// @notice One row of the duration-tiered grace-period table.
@@ -2636,12 +2691,12 @@ library LibVaipakam {
     ///      the existing inline check.
     uint16 internal constant RISK_PARAMS_MAX_LTV_BPS_MIN = 1000;
 
-    /// @dev Bounds for {RiskFacet.updateRiskParams.liqThresholdBps}.
-    ///      Min 15%. The existing inline check enforces
-    ///      `liqThreshold > maxLtv`, so the absolute floor only
-    ///      kicks in for unrealistically-low maxLtv settings the
-    ///      RISK_PARAMS_MAX_LTV_BPS_MIN already prevents.
-    uint16 internal constant RISK_PARAMS_LIQ_THRESHOLD_BPS_MIN = 1500;
+    // NOTE: `RISK_PARAMS_LIQ_THRESHOLD_BPS_MIN` retired in PR2 of the
+    //   internal-match work — the per-asset `RiskParams.liqThresholdBps`
+    //   it gated no longer exists. Liquidation threshold is now
+    //   per-tier; bounds live on `MIN_TIER_LIQUIDATION_LTV_BPS` /
+    //   `MAX_TIER_LIQUIDATION_LTV_BPS` and are enforced by
+    //   `ConfigFacet.setTierLiquidationLtvBps`.
 
     /// @dev Bounds for {RiskFacet.updateRiskParams.reserveFactorBps}.
     ///      Max 50% — `reserveFactor = BASIS_POINTS` (100%) means
@@ -2967,6 +3022,39 @@ library LibVaipakam {
         if (tier == 1) return cfgTier1MaxInitLtvBps();
         if (tier == 2) return cfgTier2MaxInitLtvBps();
         if (tier == 3) return cfgTier3MaxInitLtvBps();
+        revert IVaipakamErrors.ParameterOutOfRange(
+            "liquidityTier", uint256(tier), 0, uint256(MAX_LIQUIDITY_TIER)
+        );
+    }
+
+    /// @dev Tier-1 LIQUIDATION threshold (bps). `0 ⇒ DEFAULT_TIER1_LIQUIDATION_LTV_BPS` (9000 = 90%).
+    function cfgTier1LiquidationLtvBps() internal view returns (uint256) {
+        uint16 v = storageSlot().protocolCfg.tier1LiquidationLtvBps;
+        return v == 0 ? uint256(DEFAULT_TIER1_LIQUIDATION_LTV_BPS) : uint256(v);
+    }
+
+    /// @dev Tier-2 LIQUIDATION threshold (bps). `0 ⇒ DEFAULT_TIER2_LIQUIDATION_LTV_BPS` (8500 = 85%).
+    function cfgTier2LiquidationLtvBps() internal view returns (uint256) {
+        uint16 v = storageSlot().protocolCfg.tier2LiquidationLtvBps;
+        return v == 0 ? uint256(DEFAULT_TIER2_LIQUIDATION_LTV_BPS) : uint256(v);
+    }
+
+    /// @dev Tier-3 LIQUIDATION threshold (bps). `0 ⇒ DEFAULT_TIER3_LIQUIDATION_LTV_BPS` (8000 = 80%).
+    function cfgTier3LiquidationLtvBps() internal view returns (uint256) {
+        uint16 v = storageSlot().protocolCfg.tier3LiquidationLtvBps;
+        return v == 0 ? uint256(DEFAULT_TIER3_LIQUIDATION_LTV_BPS) : uint256(v);
+    }
+
+    /// @dev Per-tier liquidation threshold (bps) by liquidity tier. Tier 0
+    ///      (illiquid) is meaningless — illiquid loans never enter the HF
+    ///      path (they revert `IlliquidLoanNoRiskMath` in `RiskFacet`),
+    ///      so we return Tier-3 (most conservative) as a fail-safe; the
+    ///      gating site should already have rejected the loan.
+    function cfgTierLiquidationLtvBps(uint8 tier) internal view returns (uint256) {
+        if (tier == 0) return cfgTier3LiquidationLtvBps();
+        if (tier == 1) return cfgTier1LiquidationLtvBps();
+        if (tier == 2) return cfgTier2LiquidationLtvBps();
+        if (tier == 3) return cfgTier3LiquidationLtvBps();
         revert IVaipakamErrors.ParameterOutOfRange(
             "liquidityTier", uint256(tier), 0, uint256(MAX_LIQUIDITY_TIER)
         );

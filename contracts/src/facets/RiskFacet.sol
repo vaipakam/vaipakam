@@ -60,16 +60,19 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
     using SafeERC20 for IERC20;
 
     /// @notice Emitted when an asset's risk parameters are updated.
+    /// @dev PR2 of internal-match work (2026-05-14) dropped
+    ///      `liqThresholdBps` — the per-asset liquidation threshold
+    ///      was retired in favour of per-tier
+    ///      `ProtocolConfig.tier{1,2,3}LiquidationLtvBps` +
+    ///      `Loan.liquidationLtvBpsAtInit` snapshot.
     /// @param asset The asset address.
     /// @param loanInitMaxLtvBps New max LTV in basis points.
-    /// @param liqThresholdBps New liquidation threshold in basis points.
     /// @param liqBonusBps New liquidation bonus in basis points.
     /// @param reserveFactorBps New reserve factor in basis points.
     /// @custom:event-category informational/config
     event RiskParamsUpdated(
         address indexed asset,
         uint256 loanInitMaxLtvBps,
-        uint256 liqThresholdBps,
         uint256 liqBonusBps,
         uint256 reserveFactorBps
     );
@@ -255,11 +258,15 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
     /**
      * @notice Updates risk parameters for an asset.
      * @dev Callable only by Diamond owner (multi-sig/governance).
-     *      Validates params (e.g., liqThreshold > maxLtv).
-     *      Emits RiskParamsUpdated.
+     *      Validates params. Emits RiskParamsUpdated.
+     *
+     *      PR2 of the internal-match work (2026-05-14) retired the
+     *      per-asset `liqThresholdBps`. The liquidation threshold is
+     *      now per-tier (configured via
+     *      `ConfigFacet.setTierLiquidationLtvBps`) and snapshotted to
+     *      each loan at `initiateLoan` onto `Loan.liquidationLtvBpsAtInit`.
      * @param asset The asset address (collateral/lending).
      * @param loanInitMaxLtvBps Max LTV in bps (e.g., 8000 for 80%).
-     * @param liqThresholdBps Liquidation threshold in bps (> maxLtv).
      * @param liqBonusBps Per-asset ceiling on the dynamic liquidator incentive, in bps.
      *        Must be ≤ MAX_LIQUIDATOR_INCENTIVE_BPS (300 = 3%). The runtime incentive is
      *        still computed as `6% − realized slippage%` capped at 3%; this value only
@@ -269,7 +276,6 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
     function updateRiskParams(
         address asset,
         uint256 loanInitMaxLtvBps,
-        uint256 liqThresholdBps,
         uint256 liqBonusBps,
         uint256 reserveFactorBps
     ) external whenNotPaused onlyRole(LibAccessControl.RISK_ADMIN_ROLE) {
@@ -291,21 +297,6 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
                 LibVaipakam.BASIS_POINTS
             );
         }
-        if (
-            liqThresholdBps < LibVaipakam.RISK_PARAMS_LIQ_THRESHOLD_BPS_MIN ||
-            liqThresholdBps <= loanInitMaxLtvBps ||
-            liqThresholdBps > LibVaipakam.BASIS_POINTS
-        ) {
-            // Composite check: the relative `> loanInitMaxLtvBps` rule is
-            // load-bearing for the liquidation math, so it stays.
-            // The absolute floor + ceiling are the new guards.
-            revert IVaipakamErrors.ParameterOutOfRange(
-                "liqThresholdBps",
-                liqThresholdBps,
-                uint256(LibVaipakam.RISK_PARAMS_LIQ_THRESHOLD_BPS_MIN),
-                LibVaipakam.BASIS_POINTS
-            );
-        }
         // README §3: liquidator incentive is dynamic (6% − realized slippage)
         // and capped at 3% of liquidation proceeds. The stored `liqBonusBps`
         // is a legacy ceiling and must never be configured above that cap.
@@ -322,14 +313,12 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.RiskParams storage params = s.assetRiskParams[asset];
         params.loanInitMaxLtvBps = loanInitMaxLtvBps;
-        params.liqThresholdBps = liqThresholdBps;
         params.liqBonusBps = liqBonusBps;
         params.reserveFactorBps = reserveFactorBps;
 
         emit RiskParamsUpdated(
             asset,
             loanInitMaxLtvBps,
-            liqThresholdBps,
             liqBonusBps,
             reserveFactorBps
         );
@@ -392,9 +381,11 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
 
         if (borrowValueNumeraire == 0) return type(uint256).max; // Infinite HF if no borrow
 
-        uint256 liqThresholdBps = s
-            .assetRiskParams[loan.collateralAsset]
-            .liqThresholdBps;
+        // PR2 of internal-match work: per-asset `liqThresholdBps` was
+        // retired. HF now reads the snapshotted per-tier liquidation
+        // threshold from the loan itself (`liquidationLtvBpsAtInit`),
+        // so tier degradation mid-loan never re-gates existing loans.
+        uint256 liqThresholdBps = uint256(loan.liquidationLtvBpsAtInit);
         // Rounds DOWN on both steps — HF is slightly under-reported, which
         // means liquidation may trigger marginally earlier than theoretical.
         // Protocol-favourable (safe direction). Error magnitude: sub-wei on
@@ -434,9 +425,10 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
         if (borrowValueNumeraire == 0) {
             hf = type(uint256).max;
         } else {
-            uint256 liqThresholdBps = s
-                .assetRiskParams[loan.collateralAsset]
-                .liqThresholdBps;
+            // PR2 of internal-match work: read snapshotted per-tier
+            // liquidation threshold from the loan instead of the
+            // retired per-asset `liqThresholdBps`.
+            uint256 liqThresholdBps = uint256(loan.liquidationLtvBpsAtInit);
             uint256 riskAdjustedCollateral = (collateralValueNumeraire * liqThresholdBps)
                 / LibVaipakam.BASIS_POINTS;
             hf = (riskAdjustedCollateral * LibVaipakam.HF_SCALE) / borrowValueNumeraire;

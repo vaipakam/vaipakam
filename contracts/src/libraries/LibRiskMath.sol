@@ -52,14 +52,20 @@ library LibRiskMath {
     ) internal view returns (uint256 floor) {
         if (amountMax == 0) return 0;
 
-        LibVaipakam.RiskParams storage rp =
-            LibVaipakam.storageSlot().assetRiskParams[collateralAsset];
-        uint256 liqThresholdBps = rp.liqThresholdBps;
-        if (liqThresholdBps == 0) {
-            // Collateral asset has no risk params registered — treat as
-            // "no create-time bound", fall through to runtime HF gate.
+        // PR2 of internal-match work (2026-05-14): per-asset
+        // `liqThresholdBps` was retired in favour of per-tier values.
+        // Resolve the collateral asset's effective tier via the
+        // cross-facet helper (same pattern as `LibOfferMatch`), then
+        // look up the per-tier liquidation LTV. Tier 0 (illiquid)
+        // returns the conservative Tier-3 default — but callers should
+        // reject illiquid before reaching here, so this is fail-safe.
+        uint8 tier = OracleFacet(address(this)).getEffectiveLiquidityTier(collateralAsset);
+        if (tier == 0) {
+            // Illiquid asset — no on-chain bound enforceable; fall through
+            // to the runtime gate (which will revert the loan anyway).
             return 0;
         }
+        uint256 liqThresholdBps = LibVaipakam.cfgTierLiquidationLtvBps(tier);
 
         (uint256 principalUSD, uint256 priceCollateral, uint256 collateralScale) =
             _gatherUsd(amountMax, principalAsset, collateralAsset);
@@ -159,12 +165,13 @@ library LibRiskMath {
     ) internal view returns (uint256 ceiling) {
         if (collateralAmount == 0) return 0;
 
-        LibVaipakam.RiskParams storage rp =
-            LibVaipakam.storageSlot().assetRiskParams[collateralAsset];
-        uint256 liqThresholdBps = rp.liqThresholdBps;
-        if (liqThresholdBps == 0) {
+        // PR2 of internal-match work: read per-tier liquidation LTV
+        // (same pattern as `minCollateralForLending` above).
+        uint8 tier = OracleFacet(address(this)).getEffectiveLiquidityTier(collateralAsset);
+        if (tier == 0) {
             return type(uint256).max;
         }
+        uint256 liqThresholdBps = LibVaipakam.cfgTierLiquidationLtvBps(tier);
 
         (uint256 collateralUSD, uint256 pricePrincipal, uint256 principalScale) =
             _gatherUsd(collateralAmount, collateralAsset, principalAsset);

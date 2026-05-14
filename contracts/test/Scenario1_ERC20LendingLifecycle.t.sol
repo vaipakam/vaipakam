@@ -151,9 +151,9 @@ contract Scenario1_ERC20LendingLifecycle is Test {
 
         // Risk params for WETH collateral
         vm.prank(owner);
-        RiskFacet(address(diamond)).updateRiskParams(mockWETH, 8000, 8500, 300, 1000);
+        RiskFacet(address(diamond)).updateRiskParams(mockWETH, 8000, 300, 1000);
         vm.prank(owner);
-        RiskFacet(address(diamond)).updateRiskParams(mockUSDC, 8000, 8500, 300, 1000);
+        RiskFacet(address(diamond)).updateRiskParams(mockUSDC, 8000, 300, 1000);
 
         // Mock oracle: both assets liquid, $1 price
         mockLiquidity(mockUSDC, LibVaipakam.LiquidityStatus.Liquid);
