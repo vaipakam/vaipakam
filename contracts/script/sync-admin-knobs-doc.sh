@@ -4,31 +4,34 @@
 # Configurable Knobs runbook in sync with the canonical docs/ops/
 # version.
 #
-# T-042 admin dashboard renders the same markdown content from inside
-# the app (info-icons deep-link to per-knob anchor IDs), so the
-# canonical source of truth at `docs/ops/AdminConfigurableKnobsAndSwitches.md`
-# is mirrored to `apps/defi/src/content/admin/AdminConfigurableKnobsAndSwitches.en.md`
-# at build time. English-only on purpose — the runbook is technical
-# auditor-facing copy that translation drift would harm more than it
-# would help (same policy as the Whitepaper).
+# The `/protocol-console/docs` route lives on the marketing apex
+# (`apps/www`) — the connected-app surface (`apps/defi`) keeps only
+# the interactive `/protocol-console` dashboard whose info-icons
+# deep-link cross-domain to the prose docs via the `marketingUrl()`
+# helper. So the canonical source of truth at
+# `docs/ops/AdminConfigurableKnobsAndSwitches.md` is mirrored into
+# `apps/www/src/content/admin/AdminConfigurableKnobsAndSwitches.en.md`
+# (NOT apps/defi any more). English-only on purpose — the runbook is
+# technical auditor-facing copy that translation drift would harm more
+# than it would help (same policy as the Whitepaper).
 #
 # Usage:
 #   bash contracts/script/sync-admin-knobs-doc.sh
 #
 # Workflow:
 #   1. Edit the canonical at docs/ops/AdminConfigurableKnobsAndSwitches.md
-#   2. Run this script to mirror the change into the frontend bundle
+#   2. Run this script to mirror the change into the marketing-site bundle
 #   3. Commit both files together
 #
-# The frontend's vite build also picks up the change on hot-reload
-# during dev because the file lives under `src/content/`.
+# The www app's vite build picks up the change on hot-reload during
+# dev because the file lives under `apps/www/src/content/`.
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 SRC="$REPO_ROOT/docs/ops/AdminConfigurableKnobsAndSwitches.md"
-DST="$REPO_ROOT/apps/defi/src/content/admin/AdminConfigurableKnobsAndSwitches.en.md"
+DST="$REPO_ROOT/apps/www/src/content/admin/AdminConfigurableKnobsAndSwitches.en.md"
 
 if [ ! -f "$SRC" ]; then
   echo "Error: canonical doc not found at $SRC" >&2
@@ -41,5 +44,5 @@ cp "$SRC" "$DST"
 echo "Synced: $SRC → $DST"
 echo "Bytes:  $(wc -c < "$DST")"
 echo
-echo "Reminder: commit both files together so the frontend bundle"
-echo "matches the canonical reference."
+echo "Reminder: commit both files together so the marketing-site"
+echo "bundle matches the canonical reference."

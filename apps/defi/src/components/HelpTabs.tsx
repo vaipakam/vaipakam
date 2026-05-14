@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next';
 import { Search } from 'lucide-react';
 import { useMode } from '../context/ModeContext';
 import { isSupportedLocale, withLocalePrefix } from './LocaleResolver';
+import { marketingUrl } from '../lib/marketingUrl';
 import type { SupportedLocale } from '../i18n/glossary';
 
 /**
@@ -57,7 +58,15 @@ export function HelpTabs() {
     locale,
   );
   const technicalHref = withLocalePrefix('/help/technical', locale);
-  const parametersHref = withLocalePrefix('/protocol-console/docs', locale);
+  // The Parameters tab points at the cross-domain canonical home
+  // for the Knobs & Switches reference (apex marketing site).
+  // The connected-app surface no longer hosts the prose docs; only
+  // the interactive `/protocol-console` dashboard. Rendered as a
+  // plain `<a target="_blank">` further down, NOT a react-router
+  // `<Link>`.
+  const parametersHref = marketingUrl(
+    withLocalePrefix('/protocol-console/docs', locale),
+  );
   const isParameters =
     stripped.startsWith('/protocol-console') || stripped.startsWith('/admin');
   const searchHref = withLocalePrefix('/help/search', locale);
@@ -101,14 +110,19 @@ export function HelpTabs() {
       >
         {t('helpTabs.technical')}
       </Link>
-      <Link
-        to={parametersHref}
+      {/* Cross-domain — uses `<a>` (not `<Link>`) because the docs
+       *  live on the marketing apex. New tab to keep the user's
+       *  in-app context. */}
+      <a
+        href={parametersHref}
+        target="_blank"
+        rel="noopener noreferrer"
         role="tab"
         aria-selected={isParameters}
         className={`help-tab ${isParameters ? 'is-active' : ''}`}
       >
         {t('helpTabs.parameters', 'Parameters')}
-      </Link>
+      </a>
       {/* Hide the inline search box on the search-results page itself
        * — that page already has its own larger in-page search input,
        * and showing two side-by-side confuses users about which one
