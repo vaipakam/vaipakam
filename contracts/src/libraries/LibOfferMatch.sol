@@ -255,7 +255,14 @@ library LibOfferMatch {
             uint8 effTier =
                 OracleFacet(address(this)).getEffectiveLiquidityTier(L.collateralAsset);
             uint256 maxLtv = s.assetRiskParams[L.collateralAsset].maxLtvBps;
-            uint256 tierCap = LibVaipakam.cfgTierMaxInitLtvBps(effTier);
+            // Phase 5 of AutonomousLtvAndOracleFallback.md — read the
+            // autonomous tier-LTV cache (peer-derived + bound-checked,
+            // refreshable permissionlessly) instead of the governance
+            // setter. Hard-stale cache falls back to per-tier library
+            // defaults. Keeps `matchOffers`' synthetic-HF check in sync
+            // with `LoanFacet._checkInitialLtvAndHf` — both consult
+            // the same effective cap.
+            uint256 tierCap = uint256(LibVaipakam.effectiveTierMaxInitLtvBps(effTier));
             uint256 cap = maxLtv < tierCap ? maxLtv : tierCap;
             uint256 capFloor = LibRiskMath.minCollateralForLtvCap(
                 r.matchAmount,

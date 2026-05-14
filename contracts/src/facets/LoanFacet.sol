@@ -506,7 +506,25 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
                 ),
                 (uint8)
             );
-            uint256 tierCap = LibVaipakam.cfgTierMaxInitLtvBps(effTier);
+            // Phase 5 of AutonomousLtvAndOracleFallback.md — read the
+            // autonomous tier-LTV cache (peer-protocol-derived, bounded
+            // per-tier, refreshable permissionlessly via
+            // `OracleFacet.refreshTierLtvCache`) instead of the
+            // governance-set `cfgTierMaxInitLtvBps`. When the cache is
+            // hard-stale (> 14d since last refresh) or has never been
+            // refreshed on this chain, `effectiveTierMaxInitLtvBps` falls
+            // back to the per-tier library defaults — so the gate stays
+            // operational even when nobody has called the refresh yet.
+            //
+            // The legacy `cfgTier1/2/3MaxInitLtvBps` governance setters
+            // are intentionally still wired (their selectors stay on
+            // the diamond + ConfigFacet); they're soft-deprecated and
+            // can be removed in a follow-up sweep once the cache has
+            // baked in production. Today they have no effect because
+            // this read no longer consults them.
+            uint256 tierCap = uint256(
+                LibVaipakam.effectiveTierMaxInitLtvBps(effTier)
+            );
             uint256 cap = maxLtvBps < tierCap ? maxLtvBps : tierCap;
             if (ltv > cap) revert InitLtvAboveTier(ltv, cap);
         } else if (ltv > maxLtvBps) {
