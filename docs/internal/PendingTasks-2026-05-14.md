@@ -135,20 +135,24 @@ project-wide
 [propose-alternatives](../../../.claude/projects/-home-pranav-Codes-Vaipakam-vaipakam/memory/feedback_propose_alternatives.md)
 rule).
 
-### B.1 WETH-vs-native-token check on Polygon / BNB
+### ~~B.1 WETH-vs-native-token check on Polygon / BNB~~ — CLOSED 2026-05-14
 
-Audit code paths that compute "what's WETH on this chain" outside
-the already-handled `VPFIBuyAdapter` payment-token policy (which
-already enforces bridged-WETH-pull on BNB mainnet + Polygon PoS
-mainnet). Likely-affected surfaces:
+Walked every Solidity + TypeScript code path that touches WETH.
+Result: **0 gaps**. The "admin-configurable WETH address per
+chain" the ToDo entry asked about is already the design —
+`OracleAdminFacet.setWethContract(address)` is owner-only and
+must be set per chain. The VPFIBuyAdapter payment-token policy
+already enforces correct chain-specific values for the cross-chain
+buy lane.
 
-- LIF + interest accrual sites
-- Any helper that hardcodes a single WETH address
-- Frontend "use WETH" rendering
-- Liquidation swap paths through `LibSwap` adapters
+Full audit:
+[`WethChainSafetyAudit-2026-05-14.md`](WethChainSafetyAudit-2026-05-14.md).
 
-If gaps found, add an admin-configurable WETH-address-per-chain
-storage slot + setter. ~1 day investigation + targeted fix.
+One cheap natspec hardening landed alongside the audit doc —
+strengthened `OracleAdminFacet.setWethContract` natspec to
+explicitly call out the BNB/Polygon chain-specific addresses +
+the "wrapped-native ≠ bridged-WETH" distinction. Operator-
+documentation improvement; no behaviour change.
 
 ### B.2 Internal-liquidation ledger proposal
 

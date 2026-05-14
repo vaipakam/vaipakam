@@ -165,6 +165,18 @@ contract ConfigureV2Factories is Script {
         console.log("  sushiV2    :", sushi);
         console.log("  pancakeV2  :", pancake);
 
+        // If the chain has no V2 forks configured (a testnet that
+        // doesn't host any V2 deployment, or a mainnet operator who
+        // explicitly disabled all three), skip the broadcast. The
+        // setters would emit 3 events writing zeros — semantically a
+        // no-op (storage already zero by default) but wasted gas +
+        // tx-history noise. Reporting + exit-0 is the clean UX.
+        if (uni == address(0) && sushi == address(0) && pancake == address(0)) {
+            console.log("  no V2 factories configured for this chain - skipping");
+            console.log("  (route search stays V3-only on this chain)");
+            return;
+        }
+
         uint256 signerKey = vm.envUint("DEPLOYER_PRIVATE_KEY");
         vm.startBroadcast(signerKey);
 

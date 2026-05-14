@@ -89,10 +89,43 @@ contract OracleAdminFacet {
 
     /**
      * @notice Sets the canonical WETH ERC-20 used by OracleFacet as the
-     *         v3-style AMM asset/WETH pool-depth quote asset.
-     * @dev Owner-only. Setting to `address(0)` fail-closes every asset to
-     *      Illiquid (no pool to discover).
-     * @param weth The WETH ERC-20 contract address on the active network.
+     *         v3-style AMM asset/WETH pool-depth quote asset AND as the
+     *         fallback PAA list entry when {paaAssets} is empty.
+     * @dev Owner-only. Setting to `address(0)` fail-closes every asset
+     *      to Illiquid (no pool to discover).
+     *
+     *      **Chain-specificity** (per the 2026-05-14 WETH chain-safety
+     *      audit, `docs/internal/WethChainSafetyAudit-2026-05-14.md`):
+     *      this value MUST be the chain's canonical bridged-WETH9 ERC-20,
+     *      NOT the chain's wrapped-native (WBNB / WMATIC / etc.).
+     *
+     *      Specifically:
+     *      - **Ethereum / Base / Arbitrum / Optimism / Polygon zkEVM**:
+     *        the chain's wrapped-native IS WETH (native gas is ETH);
+     *        wrapped-native and bridged-WETH are the same address; either
+     *        intent works.
+     *      - **BNB Chain mainnet (chainId 56)**: native gas is BNB, NOT
+     *        ETH. Wrapped-native = WBNB (`0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c`),
+     *        bridged-WETH9 = `0x2170Ed0880ac9A755fd29B2688956BD959F933F8`.
+     *        **MUST set the bridged-WETH9**, never WBNB — the pool-depth
+     *        leg assumes ETH-denominated value, and using WBNB would
+     *        mis-price every depth-tier classification.
+     *      - **Polygon PoS mainnet (chainId 137)**: native gas is POL,
+     *        NOT ETH. Wrapped-native = WPOL/WMATIC, bridged-WETH9 =
+     *        `0x7ceB23fD6bC0adD59E62ac25578270cFf1b9f619`. **MUST set
+     *        the bridged-WETH9**, never WPOL.
+     *
+     *      The VPFIBuyAdapter's payment-token policy already enforces
+     *      this for the cross-chain buy lane (CLAUDE.md "VPFIBuyAdapter
+     *      — payment-token mode by chain"); this setter is the
+     *      equivalent operator-responsibility surface for the
+     *      OracleFacet liquidity / tier classification path. There's no
+     *      runtime contract check that the address is WETH-shaped —
+     *      operator must verify against the chain's official bridge
+     *      registry. CLAUDE.md tracks the canonical addresses.
+     *
+     * @param weth The bridged-WETH9 ERC-20 contract address on the active
+     *             network (NOT the wrapped-native on non-ETH-gas chains).
      */
     function setWethContract(address weth) external {
         LibVaipakam.setWethContract(weth);
