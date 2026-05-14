@@ -724,7 +724,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](67);
+        selectors = new bytes4[](69);
         selectors[0] = ConfigFacet.setFeesConfig.selector;
         selectors[1] = ConfigFacet.setLiquidationConfig.selector;
         selectors[2] = ConfigFacet.setRiskConfig.selector;
@@ -822,6 +822,11 @@ contract HelperTest {
         // for `RiskFacet.triggerPartialLiquidation`. Default 10_000 = no
         // cap; governance may tighten per docs/RangeOffersDesign.md.
         selectors[66] = ConfigFacet.setMaxPartialLiquidationCloseFactorBps.selector;
+        // Phase 7 of AutonomousLtvAndOracleFallback.md — per-tier
+        // LTV safety-box parameters (atomic governance setter +
+        // bundle getter).
+        selectors[67] = ConfigFacet.setTierLtvParams.selector;
+        selectors[68] = ConfigFacet.getTierLtvParams.selector;
         return selectors;
     }
 

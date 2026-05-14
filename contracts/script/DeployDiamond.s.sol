@@ -995,7 +995,7 @@ contract DeployDiamond is Script {
     }
 
     function _getConfigSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](67);
+        s = new bytes4[](69);
         // Setters
         s[0] = ConfigFacet.setFeesConfig.selector;
         s[1] = ConfigFacet.setLiquidationConfig.selector;
@@ -1104,6 +1104,12 @@ contract DeployDiamond is Script {
         // cap (the keeper picks the smallest fraction that restores
         // HF>=1); governance may tighten to Aave-style 5_000 (50%) etc.
         s[66] = ConfigFacet.setMaxPartialLiquidationCloseFactorBps.selector;
+        // Phase 7 of AutonomousLtvAndOracleFallback.md — per-tier
+        // LTV safety-box parameters: atomic setter (all three tiers
+        // updated in one call so the cross-tier monotonic invariant
+        // is never temporarily broken) + bundle getter.
+        s[67] = ConfigFacet.setTierLtvParams.selector;
+        s[68] = ConfigFacet.getTierLtvParams.selector;
     }
 
     function _getRewardAggregatorSelectors() internal pure returns (bytes4[] memory s) {

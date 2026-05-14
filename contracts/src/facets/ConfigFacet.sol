@@ -215,6 +215,138 @@ contract ConfigFacet is DiamondAccessControl {
         emit MaxPartialLiquidationCloseFactorBpsSet(newBps);
     }
 
+    /// @notice Emitted whenever the per-tier LTV safety-box parameters
+    ///         (floor / ceiling / haircut) are updated via
+    ///         `setTierLtvParams`. Off-chain monitoring watches this
+    ///         so a governance change is publicly observable.
+    /// @custom:event-category informational/config
+    event TierLtvParamsSet(
+        uint16 tier1FloorBps, uint16 tier1CeilBps, uint16 tier1HaircutBps,
+        uint16 tier2FloorBps, uint16 tier2CeilBps, uint16 tier2HaircutBps,
+        uint16 tier3FloorBps, uint16 tier3CeilBps, uint16 tier3HaircutBps
+    );
+
+    /// @notice Per-tier LTV params validation errors.
+    error TierLtvFloorAboveCeil(uint8 tier, uint16 floorBps, uint16 ceilBps);
+    error TierLtvCeilTooHigh(uint8 tier, uint16 ceilBps);
+    error TierLtvHaircutTooHigh(uint8 tier, uint16 haircutBps);
+    error TierLtvBoundsNonMonotonic(
+        uint16 tier1CeilBps, uint16 tier2FloorBps,
+        uint16 tier2CeilBps, uint16 tier3FloorBps
+    );
+
+    /// @notice Max haircut governance may configure (10pp = 1000 BPS).
+    ///         A haircut larger than that would push the autonomous
+    ///         cache so far below the peer median that the gate becomes
+    ///         vacuous; bounded here so a misfire can't lock borrowers
+    ///         out via accidentally aggressive haircuts.
+    uint16 internal constant TIER_LTV_HAIRCUT_CEIL_BPS = 1_000;
+
+    /**
+     * @notice Set the per-tier LTV safety-box parameters (floor /
+     *         ceiling / haircut) for all three tiers atomically.
+     *         Phase 7 of AutonomousLtvAndOracleFallback.md.
+     *
+     * @dev    ADMIN_ROLE-only — TimelockController post-handover, so
+     *         48h-gated. Atomic for all three tiers so governance
+     *         can never leave the protocol in a half-updated state
+     *         where the cross-tier monotonic invariant (T1 box <= T2
+     *         box <= T3 box) is temporarily broken.
+     *
+     *         Validation:
+     *           - For each tier: `floor < ceil` and `ceil <= 10_000`.
+     *           - Haircut <= 1_000 BPS (10pp) per tier — beyond that
+     *             the gate is effectively vacuous.
+     *           - Cross-tier monotonic: `T1.ceil <= T2.floor` AND
+     *             `T2.ceil <= T3.floor` (boxes don't overlap, tier
+     *             ordering is preserved).
+     *
+     *         Defaults (library constants used until governance
+     *         overrides):
+     *           Tier 1: floor 37% / ceil 55% / haircut 0pp
+     *           Tier 2: floor 55% / ceil 69% / haircut 0pp
+     *           Tier 3: floor 69% / ceil 82% / haircut 5pp
+     *
+     *         Each `TierLtvParams` slot is "configured" iff its
+     *         `ceilBps` is non-zero — that's the storage-vs-default
+     *         indicator. Passing a `ceilBps` of 0 for any tier is
+     *         therefore rejected by the `floor < ceil` check (0 isn't
+     *         a valid ceiling anyway).
+     */
+    function setTierLtvParams(
+        uint16 tier1FloorBps, uint16 tier1CeilBps, uint16 tier1HaircutBps,
+        uint16 tier2FloorBps, uint16 tier2CeilBps, uint16 tier2HaircutBps,
+        uint16 tier3FloorBps, uint16 tier3CeilBps, uint16 tier3HaircutBps
+    ) external onlyRole(LibAccessControl.ADMIN_ROLE) {
+        uint16 bpsCeil = uint16(LibVaipakam.BASIS_POINTS);
+
+        // Per-tier internal consistency.
+        if (tier1FloorBps >= tier1CeilBps) revert TierLtvFloorAboveCeil(1, tier1FloorBps, tier1CeilBps);
+        if (tier1CeilBps > bpsCeil)        revert TierLtvCeilTooHigh(1, tier1CeilBps);
+        if (tier1HaircutBps > TIER_LTV_HAIRCUT_CEIL_BPS) revert TierLtvHaircutTooHigh(1, tier1HaircutBps);
+
+        if (tier2FloorBps >= tier2CeilBps) revert TierLtvFloorAboveCeil(2, tier2FloorBps, tier2CeilBps);
+        if (tier2CeilBps > bpsCeil)        revert TierLtvCeilTooHigh(2, tier2CeilBps);
+        if (tier2HaircutBps > TIER_LTV_HAIRCUT_CEIL_BPS) revert TierLtvHaircutTooHigh(2, tier2HaircutBps);
+
+        if (tier3FloorBps >= tier3CeilBps) revert TierLtvFloorAboveCeil(3, tier3FloorBps, tier3CeilBps);
+        if (tier3CeilBps > bpsCeil)        revert TierLtvCeilTooHigh(3, tier3CeilBps);
+        if (tier3HaircutBps > TIER_LTV_HAIRCUT_CEIL_BPS) revert TierLtvHaircutTooHigh(3, tier3HaircutBps);
+
+        // Cross-tier monotonic invariant.
+        if (tier1CeilBps > tier2FloorBps || tier2CeilBps > tier3FloorBps) {
+            revert TierLtvBoundsNonMonotonic(
+                tier1CeilBps, tier2FloorBps,
+                tier2CeilBps, tier3FloorBps
+            );
+        }
+
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        s.tierLtvParams[1] = LibVaipakam.TierLtvParams({
+            floorBps: tier1FloorBps,
+            ceilBps:  tier1CeilBps,
+            haircutBps: tier1HaircutBps
+        });
+        s.tierLtvParams[2] = LibVaipakam.TierLtvParams({
+            floorBps: tier2FloorBps,
+            ceilBps:  tier2CeilBps,
+            haircutBps: tier2HaircutBps
+        });
+        s.tierLtvParams[3] = LibVaipakam.TierLtvParams({
+            floorBps: tier3FloorBps,
+            ceilBps:  tier3CeilBps,
+            haircutBps: tier3HaircutBps
+        });
+
+        emit TierLtvParamsSet(
+            tier1FloorBps, tier1CeilBps, tier1HaircutBps,
+            tier2FloorBps, tier2CeilBps, tier2HaircutBps,
+            tier3FloorBps, tier3CeilBps, tier3HaircutBps
+        );
+    }
+
+    /// @notice Read the effective per-tier safety-box parameters
+    ///         (governance override if set, library default otherwise).
+    ///         Single-call view returning all three tiers' triples for
+    ///         the protocol-console + audit-package per-chain
+    ///         verification step.
+    function getTierLtvParams()
+        external
+        view
+        returns (
+            uint16 tier1FloorBps, uint16 tier1CeilBps, uint16 tier1HaircutBps,
+            uint16 tier2FloorBps, uint16 tier2CeilBps, uint16 tier2HaircutBps,
+            uint16 tier3FloorBps, uint16 tier3CeilBps, uint16 tier3HaircutBps
+        )
+    {
+        (tier1FloorBps, tier1CeilBps) = LibVaipakam.tierLtvBoundsBps(1);
+        tier1HaircutBps = LibVaipakam.tierLtvHaircutBps(1);
+        (tier2FloorBps, tier2CeilBps) = LibVaipakam.tierLtvBoundsBps(2);
+        tier2HaircutBps = LibVaipakam.tierLtvHaircutBps(2);
+        (tier3FloorBps, tier3CeilBps) = LibVaipakam.tierLtvBoundsBps(3);
+        tier3HaircutBps = LibVaipakam.tierLtvHaircutBps(3);
+    }
+
     /// @notice Emitted on every change to the auto-pause window.
     /// @custom:event-category informational/config
     event AutoPauseDurationSet(uint32 newSeconds);

@@ -682,6 +682,59 @@
   },
   {
     "type": "function",
+    "name": "getTierLtvParams",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "tier1FloorBps",
+        "type": "uint16",
+        "internalType": "uint16"
+      },
+      {
+        "name": "tier1CeilBps",
+        "type": "uint16",
+        "internalType": "uint16"
+      },
+      {
+        "name": "tier1HaircutBps",
+        "type": "uint16",
+        "internalType": "uint16"
+      },
+      {
+        "name": "tier2FloorBps",
+        "type": "uint16",
+        "internalType": "uint16"
+      },
+      {
+        "name": "tier2CeilBps",
+        "type": "uint16",
+        "internalType": "uint16"
+      },
+      {
+        "name": "tier2HaircutBps",
+        "type": "uint16",
+        "internalType": "uint16"
+      },
+      {
+        "name": "tier3FloorBps",
+        "type": "uint16",
+        "internalType": "uint16"
+      },
+      {
+        "name": "tier3CeilBps",
+        "type": "uint16",
+        "internalType": "uint16"
+      },
+      {
+        "name": "tier3HaircutBps",
+        "type": "uint16",
+        "internalType": "uint16"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "getTreasuryFeeBps",
     "inputs": [],
     "outputs": [
@@ -1192,6 +1245,59 @@
     "inputs": [
       {
         "name": "aprBps",
+        "type": "uint16",
+        "internalType": "uint16"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "setTierLtvParams",
+    "inputs": [
+      {
+        "name": "tier1FloorBps",
+        "type": "uint16",
+        "internalType": "uint16"
+      },
+      {
+        "name": "tier1CeilBps",
+        "type": "uint16",
+        "internalType": "uint16"
+      },
+      {
+        "name": "tier1HaircutBps",
+        "type": "uint16",
+        "internalType": "uint16"
+      },
+      {
+        "name": "tier2FloorBps",
+        "type": "uint16",
+        "internalType": "uint16"
+      },
+      {
+        "name": "tier2CeilBps",
+        "type": "uint16",
+        "internalType": "uint16"
+      },
+      {
+        "name": "tier2HaircutBps",
+        "type": "uint16",
+        "internalType": "uint16"
+      },
+      {
+        "name": "tier3FloorBps",
+        "type": "uint16",
+        "internalType": "uint16"
+      },
+      {
+        "name": "tier3CeilBps",
+        "type": "uint16",
+        "internalType": "uint16"
+      },
+      {
+        "name": "tier3HaircutBps",
         "type": "uint16",
         "internalType": "uint16"
       }
@@ -1738,6 +1844,67 @@
   },
   {
     "type": "event",
+    "name": "TierLtvParamsSet",
+    "inputs": [
+      {
+        "name": "tier1FloorBps",
+        "type": "uint16",
+        "indexed": false,
+        "internalType": "uint16"
+      },
+      {
+        "name": "tier1CeilBps",
+        "type": "uint16",
+        "indexed": false,
+        "internalType": "uint16"
+      },
+      {
+        "name": "tier1HaircutBps",
+        "type": "uint16",
+        "indexed": false,
+        "internalType": "uint16"
+      },
+      {
+        "name": "tier2FloorBps",
+        "type": "uint16",
+        "indexed": false,
+        "internalType": "uint16"
+      },
+      {
+        "name": "tier2CeilBps",
+        "type": "uint16",
+        "indexed": false,
+        "internalType": "uint16"
+      },
+      {
+        "name": "tier2HaircutBps",
+        "type": "uint16",
+        "indexed": false,
+        "internalType": "uint16"
+      },
+      {
+        "name": "tier3FloorBps",
+        "type": "uint16",
+        "indexed": false,
+        "internalType": "uint16"
+      },
+      {
+        "name": "tier3CeilBps",
+        "type": "uint16",
+        "indexed": false,
+        "internalType": "uint16"
+      },
+      {
+        "name": "tier3HaircutBps",
+        "type": "uint16",
+        "indexed": false,
+        "internalType": "uint16"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "TierMaxInitLtvBpsSet",
     "inputs": [
       {
@@ -2241,6 +2408,32 @@
   },
   {
     "type": "error",
+    "name": "TierLtvBoundsNonMonotonic",
+    "inputs": [
+      {
+        "name": "tier1CeilBps",
+        "type": "uint16",
+        "internalType": "uint16"
+      },
+      {
+        "name": "tier2FloorBps",
+        "type": "uint16",
+        "internalType": "uint16"
+      },
+      {
+        "name": "tier2CeilBps",
+        "type": "uint16",
+        "internalType": "uint16"
+      },
+      {
+        "name": "tier3FloorBps",
+        "type": "uint16",
+        "internalType": "uint16"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "TierLtvBpsTooHigh",
     "inputs": [
       {
@@ -2252,6 +2445,59 @@
         "name": "maxAllowed",
         "type": "uint256",
         "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "TierLtvCeilTooHigh",
+    "inputs": [
+      {
+        "name": "tier",
+        "type": "uint8",
+        "internalType": "uint8"
+      },
+      {
+        "name": "ceilBps",
+        "type": "uint16",
+        "internalType": "uint16"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "TierLtvFloorAboveCeil",
+    "inputs": [
+      {
+        "name": "tier",
+        "type": "uint8",
+        "internalType": "uint8"
+      },
+      {
+        "name": "floorBps",
+        "type": "uint16",
+        "internalType": "uint16"
+      },
+      {
+        "name": "ceilBps",
+        "type": "uint16",
+        "internalType": "uint16"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "TierLtvHaircutTooHigh",
+    "inputs": [
+      {
+        "name": "tier",
+        "type": "uint8",
+        "internalType": "uint8"
+      },
+      {
+        "name": "haircutBps",
+        "type": "uint16",
+        "internalType": "uint16"
       }
     ]
   },

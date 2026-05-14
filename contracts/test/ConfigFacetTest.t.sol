@@ -486,4 +486,137 @@ contract ConfigFacetTest is Test {
         emit ConfigFacet.MaxPartialLiquidationCloseFactorBpsSet(3_000);
         ConfigFacet(address(diamond)).setMaxPartialLiquidationCloseFactorBps(3_000);
     }
+
+    // ─── setTierLtvParams (Phase 7 of AutonomousLtvAndOracleFallback) ───
+    //
+    // Atomic per-tier LTV-bounds + haircut setter. Validates: every
+    // (floor, ceil, haircut) triple satisfies floor<ceil, ceil<=10_000,
+    // haircut<=1_000; and the cross-tier monotonic invariant
+    // T1.ceil <= T2.floor <= T2.ceil <= T3.floor.
+
+    function testSetTierLtvParams_DefaultsBeforeAnySetter() public view {
+        // Untouched ⇒ getter falls through to library constants.
+        (
+            uint16 t1f, uint16 t1c, uint16 t1h,
+            uint16 t2f, uint16 t2c, uint16 t2h,
+            uint16 t3f, uint16 t3c, uint16 t3h
+        ) = ConfigFacet(address(diamond)).getTierLtvParams();
+        assertEq(t1f, 3_700); assertEq(t1c, 5_500); assertEq(t1h, 0);
+        assertEq(t2f, 5_500); assertEq(t2c, 6_900); assertEq(t2h, 0);
+        assertEq(t3f, 6_900); assertEq(t3c, 8_200); assertEq(t3h, 500);
+    }
+
+    function testSetTierLtvParams_HappyPath() public {
+        // Match the library defaults verbatim — equivalent semantics
+        // to never having called the setter, but exercises the
+        // storage-write path.
+        ConfigFacet(address(diamond)).setTierLtvParams(
+            3_700, 5_500, 0,
+            5_500, 6_900, 0,
+            6_900, 8_200, 500
+        );
+        (
+            uint16 t1f, uint16 t1c, uint16 t1h,
+            uint16 t2f, uint16 t2c, uint16 t2h,
+            uint16 t3f, uint16 t3c, uint16 t3h
+        ) = ConfigFacet(address(diamond)).getTierLtvParams();
+        assertEq(t1f, 3_700); assertEq(t1c, 5_500); assertEq(t1h, 0);
+        assertEq(t2f, 5_500); assertEq(t2c, 6_900); assertEq(t2h, 0);
+        assertEq(t3f, 6_900); assertEq(t3c, 8_200); assertEq(t3h, 500);
+    }
+
+    function testSetTierLtvParams_GovernanceTightening() public {
+        // Aggressive tighter Tier-3 — narrow the cap from 82% to 75%.
+        ConfigFacet(address(diamond)).setTierLtvParams(
+            3_700, 5_500, 0,
+            5_500, 6_900, 0,
+            6_900, 7_500, 200
+        );
+        (, , , , , , , uint16 t3c, uint16 t3h) =
+            ConfigFacet(address(diamond)).getTierLtvParams();
+        assertEq(t3c, 7_500);
+        assertEq(t3h, 200);
+    }
+
+    function testSetTierLtvParams_RejectsFloorAboveCeil() public {
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                ConfigFacet.TierLtvFloorAboveCeil.selector,
+                uint8(2), uint16(7_000), uint16(6_900)
+            )
+        );
+        ConfigFacet(address(diamond)).setTierLtvParams(
+            3_700, 5_500, 0,
+            7_000, 6_900, 0,    // T2: floor 70% > ceil 69%
+            6_900, 8_200, 500
+        );
+    }
+
+    function testSetTierLtvParams_RejectsCeilAboveBasisPoints() public {
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                ConfigFacet.TierLtvCeilTooHigh.selector,
+                uint8(3), uint16(10_001)
+            )
+        );
+        ConfigFacet(address(diamond)).setTierLtvParams(
+            3_700, 5_500, 0,
+            5_500, 6_900, 0,
+            6_900, 10_001, 500  // T3: ceil > BASIS_POINTS
+        );
+    }
+
+    function testSetTierLtvParams_RejectsHaircutTooHigh() public {
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                ConfigFacet.TierLtvHaircutTooHigh.selector,
+                uint8(3), uint16(1_001)
+            )
+        );
+        ConfigFacet(address(diamond)).setTierLtvParams(
+            3_700, 5_500, 0,
+            5_500, 6_900, 0,
+            6_900, 8_200, 1_001  // T3: haircut > 10pp ceiling
+        );
+    }
+
+    function testSetTierLtvParams_RejectsNonMonotonicBoundaries() public {
+        // T1 ceil 6_000 > T2 floor 5_500 → overlap.
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                ConfigFacet.TierLtvBoundsNonMonotonic.selector,
+                uint16(6_000), uint16(5_500),
+                uint16(6_900), uint16(6_900)
+            )
+        );
+        ConfigFacet(address(diamond)).setTierLtvParams(
+            3_700, 6_000, 0,    // T1 ceil overlaps T2 floor
+            5_500, 6_900, 0,
+            6_900, 8_200, 500
+        );
+    }
+
+    function testSetTierLtvParams_RejectsNonAdmin() public {
+        vm.prank(attacker);
+        vm.expectRevert();
+        ConfigFacet(address(diamond)).setTierLtvParams(
+            3_700, 5_500, 0,
+            5_500, 6_900, 0,
+            6_900, 8_200, 500
+        );
+    }
+
+    function testSetTierLtvParams_EmitsEvent() public {
+        vm.expectEmit(false, false, false, true);
+        emit ConfigFacet.TierLtvParamsSet(
+            3_700, 5_500, 0,
+            5_500, 6_900, 0,
+            6_900, 8_200, 500
+        );
+        ConfigFacet(address(diamond)).setTierLtvParams(
+            3_700, 5_500, 0,
+            5_500, 6_900, 0,
+            6_900, 8_200, 500
+        );
+    }
 }

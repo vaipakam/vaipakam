@@ -2375,6 +2375,15 @@ library LibVaipakam {
         // `TierLtvCacheRefreshRejected(_, _, "no-reference-assets")`
         // and leave the cache value untouched.
         mapping(uint8 => address[]) tierReferenceAssets;
+        // Phase 7 of AutonomousLtvAndOracleFallback.md — per-tier
+        // safety-box parameters (floor / ceiling / haircut), governance-
+        // configurable via `ConfigFacet.setTierLtvParams` (ADMIN_ROLE,
+        // atomic for all three tiers, monotonic-boundary enforced).
+        // Zero entries fall through to the library constants
+        // (`TIER1/2/3_LTV_FLOOR_BPS` / `_CEIL_BPS` / `_HAIRCUT_BPS`).
+        // A fresh deploy never touches this mapping ⇒ library defaults
+        // apply everywhere until governance overrides.
+        mapping(uint8 => TierLtvParams) tierLtvParams;
     }
 
     /// @dev Cached tier-LTV reading. Updated permissionlessly via
@@ -2383,6 +2392,24 @@ library LibVaipakam {
     struct TierLtvCacheEntry {
         uint16 ltvBps;            // 0 ⇒ never-refreshed
         uint64 lastRefreshedAt;   // unix seconds; 0 ⇒ never-refreshed
+    }
+
+    /// @dev Phase 7 of AutonomousLtvAndOracleFallback.md — per-tier
+    ///      safety-box parameters, governance-configurable so the
+    ///      protocol can adjust risk tolerance over time (Aave-style)
+    ///      without redeploying. Three uint16 fields = 48 bits per
+    ///      tier × 3 tiers = 144 bits → all three entries pack into
+    ///      a single storage slot via the mapping value layout.
+    ///
+    ///      Zero-valued entries are the indicator "never configured"
+    ///      and the read accessors fall through to the library
+    ///      constants (`TIER1/2/3_LTV_FLOOR_BPS` / `_CEIL_BPS` /
+    ///      `_HAIRCUT_BPS`). Governance can override all three at once
+    ///      via `ConfigFacet.setTierLtvParams` (atomic, ADMIN_ROLE).
+    struct TierLtvParams {
+        uint16 floorBps;
+        uint16 ceilBps;
+        uint16 haircutBps;
     }
 
     /// @dev Range Orders Phase 1 — set by matchOffers, read by
@@ -3355,24 +3382,53 @@ library LibVaipakam {
     /// @dev Per-tier safety-box bounds. Tier indices 1, 2, 3 (Tier 0
     ///      is "untierable" — no LTV cap applies because the asset
     ///      isn't accepted at all).
+    ///
+    ///      Phase 7 of AutonomousLtvAndOracleFallback.md — reads
+    ///      governance overrides from `s.tierLtvParams[tier]` if set
+    ///      (non-zero ceil = "configured" indicator); otherwise falls
+    ///      through to the library constants. The constants stay
+    ///      authoritative on a fresh deploy and after a hypothetical
+    ///      governance "clear" (no clear API exists; governance
+    ///      effectively-clears by setting back to the constants).
     function tierLtvBoundsBps(uint8 tier)
         internal
-        pure
+        view
         returns (uint16 floorBps, uint16 ceilBps)
     {
+        if (tier == 0 || tier > MAX_LIQUIDITY_TIER) return (0, 0);
+        TierLtvParams storage p = storageSlot().tierLtvParams[tier];
+        if (p.ceilBps != 0) {
+            return (p.floorBps, p.ceilBps);
+        }
         if (tier == 1) return (TIER1_LTV_FLOOR_BPS, TIER1_LTV_CEIL_BPS);
         if (tier == 2) return (TIER2_LTV_FLOOR_BPS, TIER2_LTV_CEIL_BPS);
-        if (tier == 3) return (TIER3_LTV_FLOOR_BPS, TIER3_LTV_CEIL_BPS);
-        return (0, 0);
+        return (TIER3_LTV_FLOOR_BPS, TIER3_LTV_CEIL_BPS);
     }
 
     /// @dev Per-tier haircut (BPS) applied to the peer-consensus
-    ///      median before the bound check.
-    function tierLtvHaircutBps(uint8 tier) internal pure returns (uint16) {
+    ///      median before the bound check. Reads governance override
+    ///      from `s.tierLtvParams[tier].haircutBps`; zero falls
+    ///      through to the library constant (Phase 7).
+    ///
+    ///      Note: a configured-haircut value of zero can't be
+    ///      distinguished from "never configured" at the storage
+    ///      level — the convention is that callers configure the WHOLE
+    ///      `TierLtvParams` triple (floor + ceil + haircut) atomically,
+    ///      and a non-zero ceil acts as the "configured" indicator for
+    ///      the full triple. A governance-set 0pp haircut is therefore
+    ///      indistinguishable from the library 0pp default for Tier 1 /
+    ///      Tier 2 (which already default to 0pp), and for Tier 3 the
+    ///      library default of 500 (5pp) is what governance would
+    ///      typically inherit anyway.
+    function tierLtvHaircutBps(uint8 tier) internal view returns (uint16) {
+        if (tier == 0 || tier > MAX_LIQUIDITY_TIER) return 0;
+        TierLtvParams storage p = storageSlot().tierLtvParams[tier];
+        if (p.ceilBps != 0) {
+            return p.haircutBps;
+        }
         if (tier == 1) return TIER1_LTV_HAIRCUT_BPS;
         if (tier == 2) return TIER2_LTV_HAIRCUT_BPS;
-        if (tier == 3) return TIER3_LTV_HAIRCUT_BPS;
-        return 0;
+        return TIER3_LTV_HAIRCUT_BPS;
     }
 
     /// @dev Library default LTV per tier — used when the cache is
