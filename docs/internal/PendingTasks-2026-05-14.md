@@ -212,23 +212,40 @@ but a systematic sweep + written audit are missing.
 
 ---
 
-## Group D — Deploy-script modernization (IN PROGRESS, paused)
+## ~~Group D — Deploy-script modernization~~ — CLOSED 2026-05-14 (commit `a74bc7c`)
 
-See memory:
-[`project_deploy_script_modernization.md`](../../../.claude/projects/-home-pranav-Codes-Vaipakam-vaipakam/memory/project_deploy_script_modernization.md).
+All three ratification points resolved + two new operational
+guards landed today:
 
-`contracts/script/deploy-chain.sh` (1097 lines) +
-`deploy-mainnet.sh` (809 lines) hardcode the pre-Stage-3/4 source
-tree (`frontend/`, `ops/hf-watcher/`). Today those paths are
-`apps/{defi, www, keeper, indexer, agent}`. Plus a new tiered
-`--phase <preflight|contracts|configure|handover|abi-sync|cf-*>`
-model with `--confirm-i-have-multisig-ready` gates on testnet.
+- **Q1**: single `TIMELOCK_PROPOSER` env var via deterministic
+  CREATE2. ✅ Already in scripts; ratified.
+- **Q2**: PAUSER_ROLE direct to Safe, skipping Timelock.
+  ✅ Already in scripts; ratified.
+- **Q3**: Deployer EOA → Admin EOA (immediate in-script) →
+  Admin EOA does config → Admin EOA → Multisig (final, with
+  manual-pause + auditable-resume). ✅ Ratified — matches the
+  scripts' existing topology.
+- **NEW guard 1**: Mainnet HW-signer hard-fail in
+  `deploy-mainnet.sh` preflight. Requires
+  `--confirm-mainnet-hardware-signer` flag (operator's attested
+  statement that Admin EOA's signing path is a hardware wallet,
+  not a .env hot key). Testnet (`deploy-testnet.sh`) accepts the
+  same flag in WARN-mode for rehearsal muscle-memory.
+- **NEW guard 2**: 48-hour Admin EOA → Multisig handover deadline.
+  Both scripts write the timestamp at `--phase contracts` end;
+  mainnet HARD-FAILS at `--phase handover` if >48h elapsed unless
+  `--reset-handover-deadline` is passed (with audit-trail logging
+  to `.markers/handover-deadline.log`). Testnet WARN-only.
+- `deploy-chain.sh` (one-shot quick-iter, no `--phase handover`
+  step) gets only a top-of-file comment explaining why neither
+  guard attaches.
 
-- **Design ratified except 3 open ratification points** (memory has
-  them). Resume by re-asking those points.
-- **~250 lines surgery on deploy-chain.sh** + **~150 on
-  deploy-mainnet.sh**.
-- Blocks ALL operational rollout for Group A.
+The 2026-05-09 memory's "~250 lines surgery + ~150 lines surgery"
+estimate was based on stale state — the legacy-path debt
+(`frontend/` / `ops/hf-watcher/`) had ALREADY been paid down in
+commits between 2026-05-09 and 2026-05-14. Today's commit added
+208 lines net (the two new guards + their documentation), not the
+~400 lines the original memory anticipated.
 
 ---
 
