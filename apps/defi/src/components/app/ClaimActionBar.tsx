@@ -97,7 +97,13 @@ export function ClaimActionBar({
   const isClaimableStatus =
     status === LoanStatus.Repaid ||
     status === LoanStatus.Defaulted ||
-    status === LoanStatus.FallbackPending;
+    status === LoanStatus.FallbackPending ||
+    // PR5 internal-match terminal — the lender already received
+    // their 99% of each matched leg via `_settleLeg`, and the
+    // borrower may have residual collateral on the loan struct
+    // (partial-match α leaves it unconsumed). Both sides routed
+    // through the same claim flow as Repaid.
+    status === LoanStatus.InternalMatched;
   const isLender = me !== null && lenderHolder !== null && me === lenderHolder;
   const isBorrower = me !== null && borrowerHolder !== null && me === borrowerHolder;
   const eligible = isClaimableStatus && (isLender || isBorrower);
