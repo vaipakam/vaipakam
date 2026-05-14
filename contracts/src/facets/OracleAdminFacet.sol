@@ -12,6 +12,41 @@ import {LibVaipakam} from "../libraries/LibVaipakam.sol";
  *         v3-style AMM checks or be treated as Illiquid.
  */
 contract OracleAdminFacet {
+    // ─── Bound-related errors (post-audit hardening, 2026-05-14) ──────
+    // Two gaps closed off `docs/internal/ConfigKnobBoundsAudit-2026-05-14.md`:
+    // `setStableTokenFeed` accepting an unbounded `string symbol`
+    // (storage / observability noise vector), and `setTierReferenceAssets`
+    // accepting an unbounded array (hot-path-cost vector).
+    //
+    // The audit's Gap #1 candidate (`setUsdChainlinkDenominator`
+    // accepting zero) turned out to be a false positive — zero is an
+    // intentional sentinel mirroring `setChainlinkRegistry`'s
+    // "disable this leg, fall through to the ETH path" semantics. The
+    // existing `testOwnerCanZeroUsdDenominator` documents the
+    // supported flow: post-zero, `getAssetPrice` reverts cleanly with
+    // `NoPriceFeed` (no silent breakage). Closing it out
+    // (revert-on-zero) would break the documented L2 / fallback path.
+
+    /// @notice `setStableTokenFeed.symbol` exceeded MAX_STABLE_SYMBOL_LEN
+    ///         (10 bytes — accommodates every ISO 4217 fiat code +
+    ///         common precious-metal tickers like "XAU" / "XAG").
+    error StableSymbolTooLong(uint256 length, uint256 maxLength);
+
+    /// @notice `setTierReferenceAssets.assets` exceeded
+    ///         MAX_TIER_REFERENCE_ASSETS (20). The cache-refresh
+    ///         iteration is O(assets × peers) on the hot path; an
+    ///         unbounded list would let a single config call DoS the
+    ///         permissionless refresh.
+    error TierReferenceAssetsTooLong(uint256 length, uint256 maxLength);
+
+    /// @dev See {StableSymbolTooLong}.
+    uint256 internal constant MAX_STABLE_SYMBOL_LEN = 10;
+
+    /// @dev See {TierReferenceAssetsTooLong}. 20 leaves headroom over
+    ///      today's 4-asset Tier-3 reference set without permitting
+    ///      a 1000-asset hot-path-DoS vector.
+    uint256 internal constant MAX_TIER_REFERENCE_ASSETS = 20;
+
     /**
      * @notice Sets the Chainlink Feed Registry address used by
      *         OracleFacet for asset/USD and asset/ETH lookups.
@@ -109,6 +144,18 @@ contract OracleAdminFacet {
      *               `address(0)` to deregister.
      */
     function setStableTokenFeed(string calldata symbol, address feed) external {
+        // Gap #2 from the 2026-05-14 bounds audit
+        // (`docs/internal/ConfigKnobBoundsAudit-2026-05-14.md`):
+        // `symbol` was unconstrained. A fat-fingered or malicious
+        // governance call could register a 100-KB symbol, polluting
+        // the peg-lookup table + bloating storage. Cap at 10 bytes —
+        // covers every ISO 4217 fiat ticker ("USD", "EUR", "JPY", …)
+        // and the precious-metal tickers ("XAU" / "XAG") the design
+        // anticipates.
+        uint256 len = bytes(symbol).length;
+        if (len > MAX_STABLE_SYMBOL_LEN) {
+            revert StableSymbolTooLong(len, MAX_STABLE_SYMBOL_LEN);
+        }
         LibVaipakam.setStableTokenFeed(symbol, feed);
     }
 
@@ -438,6 +485,19 @@ contract OracleAdminFacet {
      *                empty array to clear.
      */
     function setTierReferenceAssets(uint8 tier, address[] calldata assets) external {
+        // Gap #3 from the 2026-05-14 bounds audit
+        // (`docs/internal/ConfigKnobBoundsAudit-2026-05-14.md`):
+        // `refreshTierLtvCache`'s hot-path iterates O(assets × peers).
+        // Without a cap, a single config call could push 1000+ assets
+        // per tier and DoS the permissionless refresh. 20 leaves
+        // headroom over today's 4-asset Tier-3 reference set without
+        // permitting griefing.
+        if (assets.length > MAX_TIER_REFERENCE_ASSETS) {
+            revert TierReferenceAssetsTooLong(
+                assets.length,
+                MAX_TIER_REFERENCE_ASSETS
+            );
+        }
         // Convert calldata to memory once (LibVaipakam takes memory[]).
         address[] memory mem = new address[](assets.length);
         for (uint256 i = 0; i < assets.length; ++i) mem[i] = assets[i];

@@ -215,10 +215,33 @@ contract ConfigFacetTest is Test {
     }
 
     function testSetRiskConfigRevertsRentalAboveCap() public {
+        // Gap #4 from ConfigKnobBoundsAudit-2026-05-14: cap tightened
+        // from MAX_FEE_BPS (5000 ≡ 50%) to a dedicated
+        // MAX_RENTAL_BUFFER_BPS (2000 ≡ 20%). The just-above-cap
+        // boundary is now 2001. Default is 500 (5%); 20% still gives
+        // 4× upward governance flex.
         vm.expectRevert(
-            abi.encodeWithSelector(ConfigFacet.InvalidRentalBufferBps.selector, 5001)
+            abi.encodeWithSelector(ConfigFacet.InvalidRentalBufferBps.selector, 2001)
         );
-        ConfigFacet(address(diamond)).setRiskConfig(11_000, 5001);
+        ConfigFacet(address(diamond)).setRiskConfig(11_000, 2001);
+    }
+
+    function testSetRiskConfigAcceptsRentalAtCap() public {
+        // Boundary acceptance — 2000 BPS (the cap exactly) must
+        // succeed. Confirms the cap is `>` not `≥`.
+        ConfigFacet(address(diamond)).setRiskConfig(11_000, 2_000);
+        (, uint256 rb) = ConfigFacet(address(diamond)).getRiskConfig();
+        assertEq(rb, 2_000);
+    }
+
+    function testSetRiskConfigRevertsRentalAt5000_PostAuditTightening() public {
+        // Sanity test pinning the post-audit tightening explicitly.
+        // Before the 2026-05-14 audit, 5000 (= MAX_FEE_BPS) was the
+        // top-of-band acceptance value. Post-audit it reverts.
+        vm.expectRevert(
+            abi.encodeWithSelector(ConfigFacet.InvalidRentalBufferBps.selector, 5_000)
+        );
+        ConfigFacet(address(diamond)).setRiskConfig(11_000, 5_000);
     }
 
     // ─── setStakingApr ───────────────────────────────────────────────────

@@ -112,6 +112,14 @@ contract ConfigFacet is DiamondAccessControl {
     uint16 private constant MAX_SLIPPAGE_BPS = 2_500;       // 25%
     uint16 private constant MAX_INCENTIVE_BPS = 2_000;      // 20%
     uint16 private constant MAX_DISCOUNT_BPS = 9_000;       // 90%
+    // Gap #4 from the 2026-05-14 bounds audit
+    // (`docs/internal/ConfigKnobBoundsAudit-2026-05-14.md`):
+    // tightened from the shared `MAX_FEE_BPS` (50%) ceiling to a
+    // dedicated 20% ceiling for the NFT-rental prepay buffer.
+    // Default is 500 bps (5%); 20% gives realistic upward governance
+    // flex (4× the default) without permitting a 10× spike that
+    // would economically punish renters.
+    uint16 private constant MAX_RENTAL_BUFFER_BPS = 2_000;  // 20%
     // Fallback-split bounds: each party capped at 10% of principal, combined
     // (lender bonus + treasury) at 15%. These keep the borrower's remainder
     // meaningful even under the most adverse governance setting — a
@@ -558,7 +566,7 @@ contract ConfigFacet is DiamondAccessControl {
         if (volatilityLtvThresholdBps != 0 && volatilityLtvThresholdBps <= uint16(LibVaipakam.BASIS_POINTS)) {
             revert InvalidVolatilityLtvBps(volatilityLtvThresholdBps);
         }
-        if (rentalBufferBps > MAX_FEE_BPS) revert InvalidRentalBufferBps(rentalBufferBps);
+        if (rentalBufferBps > MAX_RENTAL_BUFFER_BPS) revert InvalidRentalBufferBps(rentalBufferBps);
         LibVaipakam.ProtocolConfig storage c = LibVaipakam.storageSlot().protocolCfg;
         c.volatilityLtvThresholdBps = volatilityLtvThresholdBps;
         c.rentalBufferBps = rentalBufferBps;
