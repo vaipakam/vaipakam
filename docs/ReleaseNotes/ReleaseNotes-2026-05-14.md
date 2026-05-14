@@ -1,18 +1,21 @@
 # Release notes — 2026-05-14
 
-Three threads landed today across the branch
+Five threads landed today across the branch
 `feat/market-rate-widget-and-tiered-ltv`, all reinforcing the same
 strategic story: **Vaipakam's higher-LTV regime is autonomous on
-the calibration side AND hardened on the liquidator side, ready
-for audit**. Headline tally:
+the calibration side AND hardened on the liquidator side, AND the
+audit-prerequisite follow-up list is fully closed on the code side**.
+Headline tally:
 
 | # | Thread | Commits | Tests added |
 |---|---|---|---|
 | 1 | Autonomous tier-LTV layer (7 phases) | through `656c502` | +18 LibPeerLTV + 9 ConfigFacet |
 | 2 | Pre-deploy audit-package census on 6 chains | `520cc47` | (operational) |
-| 3 | Liquidator-buys-at-discount path + flash-loan keeper bot extension | `a63d5ef`, `ee8a773` | +23 + 17 |
+| 3 | Liquidator-buys-at-discount path + flash-loan keeper bot extension | `a63d5ef`, `ee8a773`, `43e5b8f` | +23 + 17 |
+| 4 | Operator surfaces: runbooks + protocol-console docs subdomain move | `3882989`, `835cd2a` | (docs only) |
+| 5 | Market-rate-widget / depth-tiered-LTV follow-up list closed (items a/b/c/d/e/f) | `d9de20a`, `c80eb7e`, `f73646b`, `7e7a11d`, `230c3f0` | +7 |
 
-Forge regression: **1890 pass / 0 fail / 5 skip** across 90 suites
+Forge regression: **1897 pass / 0 fail / 5 skip** across 90 suites
 (the 5 skipped are pre-existing time-locked ratification tests).
 All four downstream consumer typechecks (defi frontend, keeper +
 indexer + agent workers) green throughout.
@@ -48,8 +51,39 @@ first live stress test essentially without us realising at
 census time.
 
 **Thread 3** — flash-loan / liquidator-buys-at-discount path.
-Two follow-up sections below: the design + contracts in commit
-`a63d5ef`, then the Phase-3 keeper-bot extension in `ee8a773`.
+Three follow-up sections below: the design + contracts in commit
+`a63d5ef`, the Phase-3 keeper-bot extension in `ee8a773`, and the
+late-day closure (`43e5b8f`) that lands the per-chain deploy
+script + DEX-direct quote service + activates real tx submission
+in `apps/keeper`.
+
+**Thread 4** — operator surfaces. Two artifacts so the audit team
+and the deploy operator have a coherent paper trail:
+[`docs/ops/FlashLoanLiquidatorRollout.md`](../ops/FlashLoanLiquidatorRollout.md)
+codifies the 6-step per-chain rollout for the discount path with
+a multi-chain address table, troubleshooting matrix, and a 3-tier
+snap-off procedure cross-referenced from the incident runbook.
+The protocol-console docs were also moved from
+`defi.vaipakam.com/protocol-console/docs` to the marketing apex
+`vaipakam.com/protocol-console/docs` so public-read explainer
+content lives alongside the rest of the indexable copy (the
+interactive `/protocol-console` dashboard stays on the
+connected-app surface).
+
+**Thread 5** — the
+[`MarketRateWidgetAndDepthTieredLTV.md`](../DesignsAndPlans/MarketRateWidgetAndDepthTieredLTV.md)
+"NOT done" follow-up list (six items labelled a–f) was the gating
+work for flipping `depthTieredLtvEnabled` on any chain. All six
+items closed today, mostly by *verifying* that prior work was
+already in place but unreflected in the memory + doc — the actual
+remaining contract work was tighter than the list suggested.
+What did land for real: the `RefinanceFacet` post-rollover gate
+catches up to the tier-aware regime (was the last unaligned
+init-gate site), the frontend's min-collateral + HF-preview
+surfaces consume the new bundle, and a per-chain
+`ConfigureV2Factories.s.sol` script ships canonical V2-fork
+factory addresses so operators can flip the V2 leg of the
+depth-tier route search on without hand-typing each address.
 
 ## Why this matters
 
@@ -599,3 +633,157 @@ External liquidators don't need any of the above — they call
 diamond, or write their own receiver against
 `IFlashLoanSimpleReceiver` / `IFlashLoanRecipient` (both
 interfaces are now in `contracts/src/interfaces/`).
+
+## Operator surfaces — runbooks + protocol-console docs subdomain move
+
+Two operator-facing artifacts landed in the same window so the
+flash-loan rollout has a coherent paper trail and the docs live
+where the audit team expects them.
+
+**`docs/ops/FlashLoanLiquidatorRollout.md`** (commit `3882989`)
+— a focused runbook for the per-chain rollout of the new
+discount path. Covers preconditions (audit sign-off, governance
+flip of on-chain `discountPathEnabled`, keeper EOA gas funds),
+6 sequential steps from env setup → deploy →
+`exportFrontendDeployments` → `flashLoanProviders.ts` hand-edit
+→ Cloudflare secret flip → log watching, plus a multi-chain
+address table (Aave V3 Pool per chain, Balancer V2 Vault
+canonical), recommended rollout order (testnet first, lowest-TVL
+mainnet next, Ethereum last), and a troubleshooting matrix for
+the common failure modes (`NotOwner` mismatch, premature
+`DISCOUNT_PATH_ENABLED` flip, oracle-stale, etc.). The 3-tier
+snap-off procedure (delete keeper-side env flag → pull receiver
+from `flashLoanProviders.ts` → flip on-chain
+`setDiscountPathEnabled(false)`) is cross-referenced as
+[`§3.5 of IncidentRunbook.md`](../ops/IncidentRunbook.md).
+[`AdminConfigurableKnobsAndSwitches.md`](../ops/AdminConfigurableKnobsAndSwitches.md)
+gains a "Liquidator-buys-at-discount path" section covering
+both governance levers: master kill-switch `discountPathEnabled`
++ atomic per-tier discount setter with the safety boxes
+T1 ∈ [3%, 15%] / T2 ∈ [3%, 10%] / T3 ∈ [2%, 8%] documented.
+
+**Protocol-console docs moved to the marketing apex** (commit
+`835cd2a`). The interactive `/protocol-console` dashboard stays
+on the connected-app surface (apps/defi) where wallet-bearing
+flows live; the public-read prose reference (`/protocol-console/docs`)
+moves to the marketing apex (apps/www) where the rest of the
+indexable explainer content (Whitepaper / Overview / User Guide)
+lives. Canonical URL becomes
+`https://vaipakam.com/protocol-console/docs`. The connected-app
+side bookmark-survives via a new `<ExternalRedirect>` component
+that `window.location.replace`s to the marketing URL — the old
+defi-side URL still resolves. `AdminDashboard.tsx` `docsPath` +
+KnobCard `docsBase` + `HelpTabs` "Parameters" tab all cross-domain
+via the existing `marketingUrl()` helper.
+
+## Market-rate-widget / depth-tiered-LTV follow-up list — closed
+
+The
+[`MarketRateWidgetAndDepthTieredLTV.md`](../DesignsAndPlans/MarketRateWidgetAndDepthTieredLTV.md)
+status block before today had six follow-up items labelled (a)
+through (f) — collectively the gate on flipping
+`depthTieredLtvEnabled` on any chain. Walking through them in
+order this afternoon turned up an unexpected pattern: **most
+items were either already done or done modulo a small alignment
+gap**; the memory's "NOT done" list had drifted out of date.
+What actually landed today:
+
+**(c) HF-recheck alignment** (commit `d9de20a`). The
+`RefinanceFacet` post-rollover gate was the last init-gate-class
+site that still used the legacy `HF ≥ 1.5` + `LTV ≤ maxLtvBps`
+check unconditionally. Today it mirrors
+`LoanFacet._checkInitialLtvAndHf` exactly: switch-OFF keeps
+today's gate; switch-ON caps LTV at
+`min(maxLtvBps, effectiveTierMaxInitLtvBps(getEffectiveLiquidityTier(coll)))`
+and relaxes the HF floor to `≥ 1.0e18`. `LibOfferMatch.previewMatch`
+was already aligned (Phase 5 autonomy work landed both branches);
+`PrecloseFacet.transferObligationViaOffer` has no HF revert gate
+to align — borrower substitution preserves the loan's economics
+by construction. +4 new RefinanceFacet tests on top of the 5
+pre-existing LoanFacet init-gate tests.
+
+**(a) Init-gate integration test** (in the same commit `d9de20a`).
+Three boundary additions to round out the LoanFacet matrix:
+Tier-2 cap at 62%, Tier-3 cap at 73% (the autonomous-LTV cache's
+library default, not the original 65% the design draft mentioned),
+and a switch-OFF case verifying the init gate ignores the tier
+entirely under the kill-switch default. Suite is now 8 tests
+across all three tier values + the kill-switch state + HF floor
+matrix + Tier 0 collateral.
+
+**(b) Uni-V2 fork route** (commit `c80eb7e`). The contract code,
+storage slots, AdminFacet setters, route integration, and three
+test cases all already existed (Piece B). What was missing was
+the operational layer — every chain ships with the three storage
+slots as `address(0)`, V2 leg dormant until governance flips it
+on. A new `contracts/script/ConfigureV2Factories.s.sol`
+addresses this with canonical V2-fork factory addresses for
+Ethereum / Base / Arbitrum / Optimism / BNB Chain / Polygon PoS
+(verified against each protocol's docs registry), per-chain env
+overrides for non-canonical forks, and an env-example template
+block. Operator runs once per chain to flip the V2 leg on.
+
+**(e) Frontend `useProtocolConfig` wiring** (commit `f73646b`).
+The `useProtocolConfig` hook already exposed the full
+depth-tiered-LTV config bundle + the per-asset `useAssetTier`
+hook existed but had no consumer. Today the
+`useMarketRateMinCollateral` auto-fill (powers the Lend/Borrow
+at market rate widget) and `OfferRiskPreview` (the HF/LTV
+preview on CreateOffer + AcceptOffer) consume both: switch-OFF
+keeps today's `HF ≥ 1.5` math; switch-ON resolves
+`cap = min(maxLtvBps, tierMaxInitLtvBps[effectiveTier])` and
+takes the binding constraint between the LTV-cap leg and the
+relaxed HF leg. The min-collateral hook exposes two new return
+fields (`effectiveLtvCapBps` + `depthTieredLtvEnabled`) so
+callers can render tier-aware hints.
+
+**(d) Doc status block refresh** (commit `7e7a11d`). The doc's
+status block was several commits behind reality — entries for
+(a)/(b)/(c)/(e)/(f) all needed updating with today's commit
+hashes, and the original liquidator-bot hardening "BLOCKED on
+risk-committee" footer was no longer accurate after the
+flash-loan thread landed. Pure doc edit; no contract changes.
+
+**(f) Keeper liquidity-confidence relay** — discovered to be
+fully done, not stubbed (commit `230c3f0` corrects the doc).
+`apps/keeper/src/liquidityConfidence.ts` is 799 lines of real
+implementation: periodic 0x/1inch slippage checks at tier sizes,
+D1-backed promote/demote state machine, `setKeeperTier`
+submission, and a complete Tier-3 "battle-tested elsewhere"
+2-of-3 ensemble (DeFiLlama listing on Aave V3 / Compound V3 /
+Morpho with TVL ≥ $10M default + CoinGecko market cap ≥ $1B
+default + CoinGecko 24h volume ≥ $50M default). The relay is
+wired into the keeper Worker's scheduled cron via
+`runLiquidityConfidence`. The previous doc claim that the
+advisory was "STUBBED in v1 ⇒ relay caps at Tier 2" was
+inherited from a stale memory entry and is now corrected.
+
+## What's actually left
+
+Code side: **NOTHING blocking the audit**. The remaining work
+is operational, per the now-accurate
+[`MarketRateWidgetAndDepthTieredLTV.md`](../DesignsAndPlans/MarketRateWidgetAndDepthTieredLTV.md):
+
+1. Run `ConfigureV2Factories.s.sol` per chain (V2 leg of the
+   route search). Without this, the depth-tier classification
+   under-counts long-tail / mid-cap assets that live mostly on
+   V2 venues.
+2. Re-run the pre-deploy slippage census in 1–2 weeks, once
+   Aave's WETH-restoration AIP settles the post-OFT-exploit
+   transient. The Arbitrum / Base / Mantle Tier-3 results should
+   climb from library-default fallback into real peer-consensus
+   values mirroring Ethereum's 73.37%.
+3. Auditor engagement — single review covering all three layers:
+   autonomous tier-LTV (Phases 1-7 yesterday), depth-tiered-LTV
+   route + init-gate (today's market-rate-widget thread), and
+   the new liquidator-buys-at-discount path
+   (`FlashLoanLiquidationPath.md`).
+4. Risk-committee sign-off.
+5. Per-chain rollout — see
+   [`docs/ops/FlashLoanLiquidatorRollout.md`](../ops/FlashLoanLiquidatorRollout.md).
+   Two independent kill-switches per chain: `setDepthTieredLtvEnabled(true)`
+   (higher-LTV gate) and `setDiscountPathEnabled(true)`
+   (liquidator-buys-at-discount path). Each enabled separately
+   so governance can stage them.
+
+The branch is ready for review.
