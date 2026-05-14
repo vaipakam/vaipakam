@@ -67,12 +67,13 @@ fi
 # reads only the surface it actually uses, so additions here are
 # meaningful and should be paired with a bot-side update.
 FACETS=(
-  "MetricsFacet"      # getActiveLoansCount, getActiveLoansPaginated, getActiveOffersCount, getActiveOffersPaginated
-  "RiskFacet"         # calculateHealthFactor, triggerLiquidation
+  "MetricsFacet"      # getActiveLoansCount, getActiveLoansPaginated, getActiveOffersCount, getActiveOffersPaginated, getMatchEligibleLoans (internal-match detector)
+  "RiskFacet"         # calculateHealthFactor, triggerLiquidation, triggerInternalMatchLiquidation
   "LoanFacet"         # getLoanDetails
   "OfferFacet"        # createOffer / acceptOffer (kept for completeness — pre-2026-04 the matcher fns lived here)
   "OfferCancelFacet"  # getOffer (offer hydration in offerMatcher detector — moved from OfferFacet in EIP-170 split)
   "OfferMatchFacet"   # previewMatch, matchOffers — current home of the matcher selectors after the facet split
+  "ConfigFacet"       # getInternalMatchConfigBundle — kill-switch + tunables read by the internalMatcher detector
 )
 
 echo "Exporting ABIs to $OUT_DIR"
