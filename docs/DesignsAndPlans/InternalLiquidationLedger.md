@@ -17,6 +17,46 @@ ledger (§4.4.1). Three bands ratified by user: ≥85% advertise,
 ≥90% internal-match window, ≥92% external fallback. 1%
 matcher incentive split evenly across the two matched legs.
 
+## 0.0 Implementation status (2026-05-15)
+
+All four phases from §11 shipped on
+`feat/internal-liquidation-ledger`:
+
+| PR | Commit | Scope | Tests |
+| --- | --- | --- | --- |
+| PR1 | `741e42d` | Rename `RiskParams.maxLtvBps` → `loanInitMaxLtvBps` (20 files, mechanical) | Existing suite (re-green) |
+| PR2 | `4c84eb5` | Retire per-asset `liqThresholdBps`; add per-tier `tier{1,2,3}LiquidationLtvBps` + `Loan.liquidationLtvBpsAtInit` snapshot | Existing suite + tier defaults coverage |
+| PR3 | `3037a7a` | Internal-match scaffold: kill-switch + priority-window + incentive setters; `LoanStatus.InternalMatched` reservation; `MetricsFacet.getMatchEligibleLoans` view | `InternalMatchConfig.t.sol` (13 tests) |
+| PR4 | `73b8118` | `triggerInternalMatchLiquidation` validation surface + external-path `InternalMatchOnlyBand` gate in `triggerLiquidation` | `InternalMatchLiquidationGates.t.sol` (10) + `InternalMatchPriorityWindow.t.sol` (5) |
+| PR5 | `49a98b3` | 2-way execution body with α partial-match + 1% per-leg incentive + lifecycle `Active → InternalMatched` edge | `InternalMatchExecution.t.sol` (5 tests) |
+| PR5.5 | `826e98d` | 3-way A→B→C→A chain match — three independent min-match legs | Adds 6th test in `InternalMatchExecution.t.sol` |
+| PR6 | `f902415` / `d4332bd` / `be723a9` | Frontend `useInternalMatchConfig` hook + `LoanStatus.InternalMatched` label + indexer event-coverage allowlist + ABI sync (defi + workers + keeper-bot) | tsc-clean across defi / keeper / indexer / agent |
+| Bot | `df847d9` (`vaipakam-keeper-bot`) | `src/detectors/internalMatcher.ts` — per-tick scan + bucket pairing + per-leg submit; kill-switch-aware short-circuit | npm typecheck clean |
+
+**Full forge test green at PR5.5**: 1936 passed / 0 failed / 5
+skipped on `--no-match-path "test/invariants/*"`.
+
+**Deployment state**: kill-switch defaults `false` on every
+fresh deploy. Production stays in today's behaviour (external
+liquidation across the full LTV range, no internal-match path)
+until governance flips
+`ConfigFacet.setInternalMatchEnabled(true)` per chain — see §9.2
+for the per-chain rollout discipline.
+
+**Tracked follow-ups** (out of scope for this branch):
+- Per-page badge wiring for the `InternalMatched` status across
+  Dashboard / LoanTimeline / LenderEarlyWithdrawal / Refinance /
+  NftVerifier — the label exists, the badges don't.
+- `MyLoans` filter bucket "near liquidation, awaiting internal
+  match" for borrowers with current LTV in
+  `[liquidationLtvBpsAtInit − 5%, liquidationLtvBpsAtInit)`.
+- Indexer schema row + activity event for `InternalMatchExecuted`
+  (currently allowlisted — read live via `getLoanDetails`).
+- 3-way chain detection in the keeper-bot (the contracts support
+  it; the detector only finds 2-way pairs today).
+- Companion doc in the keeper-bot repo with the off-chain pair-
+  search algorithm spec.
+
 ## 0. Architectural pivot (2026-05-14 — post-§9.1 review)
 
 The user pointed out that the global "match-liquidate floor"
