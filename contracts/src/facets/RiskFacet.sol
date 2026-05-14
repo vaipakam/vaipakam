@@ -97,6 +97,31 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
     ///         against stale Chainlink / AMM state.
     error SequencerUnhealthy();
 
+    // ── Internal-liquidation match path (B.2) — PR4 validation errors ──
+    /// @notice The master kill-switch (`internalMatchEnabled`) is off.
+    error InternalMatchDisabled();
+    /// @notice One of the loans referenced isn't in `LoanStatus.Active`.
+    error InternalMatchLoanNotActive(uint256 loanId);
+    /// @notice Caller passed the same loan ID for two legs of a match.
+    error InternalMatchSelfPair(uint256 loanId);
+    /// @notice The two loans don't form an opposing pair —
+    ///         `A.principalAsset == B.collateralAsset` AND
+    ///         `A.collateralAsset == B.principalAsset` must both hold.
+    error InternalMatchAssetMismatch(uint256 loanIdA, uint256 loanIdB);
+    /// @notice The 3-loan chain doesn't form a closed `A→B→C→A` cycle.
+    error InternalMatchChainBroken(uint256 loanIdA, uint256 loanIdB, uint256 loanIdC);
+    /// @notice The loan's current LTV is below its snapshotted
+    ///         liquidation threshold — it isn't liquidatable yet, so
+    ///         internal-match can't fire.
+    error InternalMatchLtvBelowFloor(uint256 loanId, uint256 currentLtvBps, uint256 floorBps);
+    /// @notice External `triggerLiquidation` blocked because the loan
+    ///         is still inside the internal-match priority window
+    ///         `[liquidationLtvBpsAtInit,
+    ///          liquidationLtvBpsAtInit + cfgExternalLiquidationPriorityWindowBps)`.
+    ///         Above that, external opens up; below it the loan isn't
+    ///         liquidatable at all.
+    error InternalMatchOnlyBand(uint256 currentLtvBps, uint256 windowCeilingBps);
+
     // MAX_LIQUIDATION_SLIPPAGE_BPS consolidated in LibVaipakam
 
     /// @notice Emitted when an HF-triggered liquidation falls back to the
@@ -483,6 +508,27 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
         uint256 hf = RiskFacet(address(this)).calculateHealthFactor(loanId);
         if (hf >= LibVaipakam.HF_SCALE) revert HealthFactorNotLow();
 
+        // ── Internal-match priority window (B.2 / PR4) ─────────────────
+        // When the kill-switch is on, the external swap-liquidation path
+        // is blocked for a configurable LTV band immediately above the
+        // loan's snapshotted liquidation threshold — giving internal
+        // matchers a clean priority slot. Above that band, external
+        // opens up (worst case: ~2% LTV deterioration vs today, well
+        // within the bad-debt buffer guaranteed by
+        // MAX_TIER_LIQUIDATION_LTV_BPS = 9500 + MAX window = 500 ⇒ 100%).
+        if (s.protocolCfg.internalMatchEnabled) {
+            uint256 currentLtv = RiskFacet(address(this)).calculateLTV(loanId);
+            uint256 floor = uint256(loan.liquidationLtvBpsAtInit);
+            uint256 windowCeiling = floor + LibVaipakam.cfgExternalLiquidationPriorityWindowBps();
+            // HF < 1 already implies LTV >= floor for liquid collateral,
+            // so only the upper bound needs gating. A zero floor (illiquid
+            // loan with no snapshot) means we never enter the window
+            // and external proceeds — safe by construction.
+            if (floor > 0 && currentLtv < windowCeiling) {
+                revert InternalMatchOnlyBand(currentLtv, windowCeiling);
+            }
+        }
+
         // Execution routing (README §1): HF-based liquidation requires the
         // collateral to be swappable on the live network. If the active-
         // network liquidity check fails, revert — the time-based default
@@ -710,6 +756,139 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
         );
 
         emit HFLiquidationTriggered(loanId, msg.sender, proceeds);
+    }
+
+    /// @notice Emitted by `triggerInternalMatchLiquidation` on a valid
+    ///         match. PR4 is validation-only and emits this from the
+    ///         no-op success path; PR5 will repurpose the same event
+    ///         after the execution body lands (cross-vault collateral
+    ///         transfer + incentive payout + status transition).
+    ///         The two indexed leg fields make event-grep cheap for
+    ///         the keeper-bot detector that scans matches.
+    /// @custom:event-category state-change/loan-mutation
+    event InternalMatchExecuted(
+        uint256 indexed loanIdA,
+        uint256 indexed loanIdB,
+        uint256 loanIdC,
+        address matcher,
+        uint256 notionalA,
+        uint256 notionalB,
+        uint256 notionalC,
+        uint256 incentivePaidA,
+        uint256 incentivePaidB,
+        uint256 incentivePaidC
+    );
+
+    /**
+     * @notice Internal-liquidation match path (B.2 / PR4) — validates a
+     *         2-loan or 3-loan match without yet mutating state.
+     *
+     *         The validation surface ratified in plan-mode Q&A:
+     *           1. Kill-switch (`internalMatchEnabled`) must be on.
+     *           2. Loans referenced must be `LoanStatus.Active`.
+     *           3. No leg may repeat (self-pair / chain-repeat).
+     *           4. Asset opposition — 2-loan: `A.principalAsset ==
+     *              B.collateralAsset && A.collateralAsset ==
+     *              B.principalAsset`; 3-loan chain: `A.principalAsset
+     *              == B.collateralAsset && B.principalAsset ==
+     *              C.collateralAsset && C.principalAsset ==
+     *              A.collateralAsset`.
+     *           5. Each leg's current LTV must be at or above its
+     *              snapshotted liquidation threshold (`HF < 1` ⇔
+     *              loan is liquidatable).
+     *           6. Tier-1 sanctions gate on `msg.sender`.
+     *
+     *         PR4 ships intentionally body-less: after all gates pass
+     *         the function emits a placeholder `InternalMatchExecuted`
+     *         with zero notional / incentive fields and returns. PR5
+     *         fills in the matched-collateral movement + incentive
+     *         payout + status transitions. The kill-switch defaults
+     *         `false` so production deploys never reach this path
+     *         until governance flips it on AFTER PR5 has landed.
+     *
+     * @param  loanIdA  First leg loan ID.
+     * @param  loanIdB  Second leg loan ID (must oppose A).
+     * @param  loanIdC  Third leg loan ID for a 3-loan chain, or `0`
+     *                  to skip the chain branch and run a 2-loan
+     *                  match.
+     */
+    function triggerInternalMatchLiquidation(
+        uint256 loanIdA,
+        uint256 loanIdB,
+        uint256 loanIdC
+    ) external nonReentrant whenNotPaused {
+        // Tier-1 sanctions: matcher gets 1% per leg in PR5; blocking
+        // sanctioned wallets here keeps the value-receipt path closed.
+        LibVaipakam._assertNotSanctioned(msg.sender);
+
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        if (!s.protocolCfg.internalMatchEnabled) revert InternalMatchDisabled();
+
+        // Self-pair / chain-repeat. Includes the C=A and C=B cases
+        // when C is non-zero. A zero C means "skip 3-way", so the
+        // A/B duplicate is the only check that matters there.
+        if (loanIdA == loanIdB) revert InternalMatchSelfPair(loanIdA);
+        if (loanIdC != 0) {
+            if (loanIdC == loanIdA) revert InternalMatchSelfPair(loanIdA);
+            if (loanIdC == loanIdB) revert InternalMatchSelfPair(loanIdB);
+        }
+
+        LibVaipakam.Loan storage la = s.loans[loanIdA];
+        LibVaipakam.Loan storage lb = s.loans[loanIdB];
+        if (la.id == 0 || la.status != LibVaipakam.LoanStatus.Active)
+            revert InternalMatchLoanNotActive(loanIdA);
+        if (lb.id == 0 || lb.status != LibVaipakam.LoanStatus.Active)
+            revert InternalMatchLoanNotActive(loanIdB);
+
+        // Asset opposition — 2-loan symmetric form.
+        if (loanIdC == 0) {
+            if (
+                la.principalAsset != lb.collateralAsset ||
+                la.collateralAsset != lb.principalAsset
+            ) {
+                revert InternalMatchAssetMismatch(loanIdA, loanIdB);
+            }
+        } else {
+            // 3-loan cycle A→B→C→A.
+            LibVaipakam.Loan storage lc = s.loans[loanIdC];
+            if (lc.id == 0 || lc.status != LibVaipakam.LoanStatus.Active)
+                revert InternalMatchLoanNotActive(loanIdC);
+            if (
+                la.principalAsset != lb.collateralAsset ||
+                lb.principalAsset != lc.collateralAsset ||
+                lc.principalAsset != la.collateralAsset
+            ) {
+                revert InternalMatchChainBroken(loanIdA, loanIdB, loanIdC);
+            }
+        }
+
+        // LTV-floor gates — each leg must be liquidatable.
+        _requireLtvAboveFloor(loanIdA);
+        _requireLtvAboveFloor(loanIdB);
+        if (loanIdC != 0) _requireLtvAboveFloor(loanIdC);
+
+        // PR4 body-less success: placeholder event so keeper-bot
+        // wiring + integration tests can exercise the gate matrix.
+        emit InternalMatchExecuted(
+            loanIdA, loanIdB, loanIdC,
+            msg.sender,
+            0, 0, 0,
+            0, 0, 0
+        );
+    }
+
+    /// @dev Internal helper for `triggerInternalMatchLiquidation` —
+    ///      reverts `InternalMatchLtvBelowFloor` when the loan's
+    ///      current LTV hasn't reached its snapshotted liquidation
+    ///      threshold. Illiquid loans (LTV math reverts) revert
+    ///      `IlliquidLoanNoRiskMath` from inside `calculateLTV`.
+    function _requireLtvAboveFloor(uint256 loanId) private view {
+        LibVaipakam.Loan storage loan = LibVaipakam.storageSlot().loans[loanId];
+        uint256 floor = uint256(loan.liquidationLtvBpsAtInit);
+        uint256 currentLtv = RiskFacet(address(this)).calculateLTV(loanId);
+        if (currentLtv < floor) {
+            revert InternalMatchLtvBelowFloor(loanId, currentLtv, floor);
+        }
     }
 
     /**

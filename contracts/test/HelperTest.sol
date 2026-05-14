@@ -441,7 +441,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](8);
+        selectors = new bytes4[](9);
         selectors[0] = RiskFacet.updateRiskParams.selector;
         selectors[1] = RiskFacet.calculateLTV.selector;
         selectors[2] = RiskFacet.calculateHealthFactor.selector;
@@ -464,6 +464,11 @@ contract HelperTest {
         // by default — the selector is wired but the entry-point
         // reverts `DiscountPathDisabled` until governance flips it.
         selectors[7] = RiskFacet.triggerLiquidationDiscounted.selector;
+        // PR4 of internal-match work — match-liquidation entry point.
+        // Body-less in PR4 (validates and emits placeholder event);
+        // PR5 fills in the cross-vault transfer + incentive payout.
+        // Kill-switch defaults `false` so the selector is dormant.
+        selectors[8] = RiskFacet.triggerInternalMatchLiquidation.selector;
     }
 
     function getClaimFacetSelectors()

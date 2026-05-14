@@ -822,7 +822,7 @@ contract DeployDiamond is Script {
     }
 
     function _getRiskSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](8);
+        s = new bytes4[](9);
         s[0] = RiskFacet.updateRiskParams.selector;
         s[1] = RiskFacet.calculateLTV.selector;
         s[2] = RiskFacet.calculateHealthFactor.selector;
@@ -844,6 +844,12 @@ contract DeployDiamond is Script {
         // selector is wired but the entry-point reverts
         // `DiscountPathDisabled` until governance flips it on per chain.
         s[7] = RiskFacet.triggerLiquidationDiscounted.selector;
+        // PR4 of internal-match work (2026-05-15) — match-liquidation
+        // entry point. Body-less in PR4 (validates and emits placeholder
+        // event); PR5 adds the cross-vault transfer + incentive payout.
+        // Kill-switch `internalMatchEnabled` defaults `false` so the
+        // selector is dormant on every fresh deploy.
+        s[8] = RiskFacet.triggerInternalMatchLiquidation.selector;
     }
 
     function _getClaimSelectors() internal pure returns (bytes4[] memory s) {
