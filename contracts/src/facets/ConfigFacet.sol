@@ -1054,7 +1054,7 @@ contract ConfigFacet is DiamondAccessControl {
     ///         *effective* values: `tier1 ≤ tier2 ≤ tier3` and each ≤
     ///         `MAX_TIER_INIT_LTV_BPS_CEIL` (8000 ≡ 80%). When
     ///         `depthTieredLtvEnabled`, loan-init caps the LTV at
-    ///         `min(assetRiskParams.maxLtvBps, tierMaxInitLtvBps[
+    ///         `min(assetRiskParams.loanInitMaxLtvBps, tierMaxInitLtvBps[
     ///         effectiveTier])`.
     function setTierMaxInitLtvBps(uint16 tier1, uint16 tier2, uint16 tier3)
         external

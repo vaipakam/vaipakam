@@ -114,7 +114,7 @@ library LibVaipakam {
     uint256 constant TIER2_SIZE_PAD_DEFAULT = 500_000 * 1e6; // → Tier 2 (60% init-LTV)
     uint256 constant TIER3_SIZE_PAD_DEFAULT = 5_000_000 * 1e6; // → Tier 3 (65% init-LTV)
     uint256 constant MIN_TIER_SIZE_PAD = 1_000 * 1e6; // floor for any size knob (1,000 PAD)
-    // Per-tier init-LTV caps, applied as `min(assetRiskParams.maxLtvBps,
+    // Per-tier init-LTV caps, applied as `min(assetRiskParams.loanInitMaxLtvBps,
     // tierNMaxInitLtvBps)` only while `depthTieredLtvEnabled`.
     uint256 constant TIER1_MAX_INIT_LTV_BPS_DEFAULT = 5000; // 50%
     uint256 constant TIER2_MAX_INIT_LTV_BPS_DEFAULT = 6000; // 60%
@@ -766,7 +766,7 @@ library LibVaipakam {
         // (so the keeper / UI can read it) but the init gate in
         // `LoanFacet._runInitGates` and the synthetic-HF check in
         // `LibOfferMatch` ignore the per-tier LTV cap entirely → exactly
-        // today's behaviour (only `assetRiskParams.maxLtvBps` + the
+        // today's behaviour (only `assetRiskParams.loanInitMaxLtvBps` + the
         // `HF ≥ 1.5` floor). Flipped on per chain by `ADMIN_ROLE` via
         // `ConfigFacet.setDepthTieredLtvEnabled(bool)` only after that
         // chain's slippage census + audit (§4.4 step 6).
@@ -781,7 +781,7 @@ library LibVaipakam {
         // (300 = 3%). Bounded [MIN_TWAP_CONSISTENCY_BPS, MAX_…].
         uint16 twapConsistencyBps; // 0 ⇒ 300
         // Per-tier max init-LTV caps (bps), applied as
-        // `min(assetRiskParams.maxLtvBps, tierNMaxInitLtvBps[
+        // `min(assetRiskParams.loanInitMaxLtvBps, tierNMaxInitLtvBps[
         // effectiveTier])` while `depthTieredLtvEnabled`. 0 ⇒
         // TIER{1,2,3}_MAX_INIT_LTV_BPS_DEFAULT (5000 / 6000 / 6500).
         // Setter enforces `tier1 ≤ tier2 ≤ tier3 ≤ MAX_TIER_INIT_LTV_BPS_CEIL`.
@@ -1188,7 +1188,7 @@ library LibVaipakam {
     }
 
     struct RiskParams {
-        uint256 maxLtvBps; // Max LTV in basis points
+        uint256 loanInitMaxLtvBps; // Max LTV in basis points
         uint256 liqThresholdBps; // Liquidation Threshold in basis points
         uint256 liqBonusBps; // Liquidation Bonus in basis points
         uint256 reserveFactorBps; // Reserve Factor in basis points
@@ -2630,7 +2630,7 @@ library LibVaipakam {
     uint256 internal constant INTERACTION_CAP_VPFI_PER_ETH_MIN = 1;
     uint256 internal constant INTERACTION_CAP_VPFI_PER_ETH_MAX = 1_000_000;
 
-    /// @dev Bounds for {RiskFacet.updateRiskParams.maxLtvBps}. Min
+    /// @dev Bounds for {RiskFacet.updateRiskParams.loanInitMaxLtvBps}. Min
     ///      10% — `maxLtv = 1` would effectively disable borrowing
     ///      for the asset. Upper bound stays at BASIS_POINTS via
     ///      the existing inline check.
@@ -2961,7 +2961,7 @@ library LibVaipakam {
     ///      `Liquid` floor) ⇒ `0` — no borrow against it. Reverts for
     ///      `n > MAX_LIQUIDITY_TIER`. Only consulted while
     ///      `depthTieredLtvEnabled`; the effective init cap is
-    ///      `min(assetRiskParams.maxLtvBps, cfgTierMaxInitLtvBps(tier))`.
+    ///      `min(assetRiskParams.loanInitMaxLtvBps, cfgTierMaxInitLtvBps(tier))`.
     function cfgTierMaxInitLtvBps(uint8 tier) internal view returns (uint256) {
         if (tier == 0) return 0;
         if (tier == 1) return cfgTier1MaxInitLtvBps();

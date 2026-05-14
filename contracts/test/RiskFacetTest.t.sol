@@ -403,8 +403,8 @@ contract RiskFacetTest is Test {
         // createAndAcceptOffer uses 1800 ether collateral → real HF = 1.53 >= MIN_HF(1.5). ✓
         // Real LTV for 1000 principal / 1800 collateral at $1 = 5555 bps.
 
-        // Set maxLtvBps in risk params (assume owner sets)
-        // For mockERC20 collateral: maxLtvBps 8000 (80%)
+        // Set loanInitMaxLtvBps in risk params (assume owner sets)
+        // For mockERC20 collateral: loanInitMaxLtvBps 8000 (80%)
         vm.prank(owner);
         RiskFacet(address(diamond)).updateRiskParams(
             mockERC20,
@@ -676,7 +676,7 @@ contract RiskFacetTest is Test {
     //         8500,
     //         500,
     //         1000
-    //     ); // maxLtvBps=80%, liqThresholdBps=85%, liqBonusBps=5%, reserveFactorBps=10%
+    //     ); // loanInitMaxLtvBps=80%, liqThresholdBps=85%, liqBonusBps=5%, reserveFactorBps=10%
     // }
 
     // Internal helper to create FacetCut (with dynamic selectors if needed; placeholder for all functions)
@@ -1485,7 +1485,7 @@ contract RiskFacetTest is Test {
 
     // ─── Tests L–Q: updateRiskParams validation and liquidation edge cases ─
 
-    /// @dev Test L: updateRiskParams reverts when maxLtvBps is below the
+    /// @dev Test L: updateRiskParams reverts when loanInitMaxLtvBps is below the
     ///      hard floor (T-033 setter range audit: floor is
     ///      `RISK_PARAMS_MAX_LTV_BPS_MIN = 1000`; previously only `> 0`
     ///      which let a degenerate `1`-bp setting effectively disable
@@ -1495,7 +1495,7 @@ contract RiskFacetTest is Test {
         vm.expectRevert(
             abi.encodeWithSelector(
                 IVaipakamErrors.ParameterOutOfRange.selector,
-                bytes32("maxLtvBps"),
+                bytes32("loanInitMaxLtvBps"),
                 uint256(0),
                 uint256(LibVaipakam.RISK_PARAMS_MAX_LTV_BPS_MIN),
                 LibVaipakam.BASIS_POINTS
@@ -1510,13 +1510,13 @@ contract RiskFacetTest is Test {
         );
     }
 
-    /// @dev Test M: updateRiskParams reverts when maxLtvBps > 10000.
+    /// @dev Test M: updateRiskParams reverts when loanInitMaxLtvBps > 10000.
     function testUpdateRiskParamsRevertsMaxLtvExceedsBasis() public {
         vm.prank(owner);
         vm.expectRevert(
             abi.encodeWithSelector(
                 IVaipakamErrors.ParameterOutOfRange.selector,
-                bytes32("maxLtvBps"),
+                bytes32("loanInitMaxLtvBps"),
                 uint256(10001),
                 uint256(LibVaipakam.RISK_PARAMS_MAX_LTV_BPS_MIN),
                 LibVaipakam.BASIS_POINTS

@@ -37,7 +37,7 @@ import {VPFIDiscountFacet} from "./VPFIDiscountFacet.sol";
  *        2. Borrower calls {refinanceLoan}: repays the old lender
  *           (principal + full-term interest + any shortfall — early
  *           repayment economics per README), releases old collateral,
- *           verifies post-refinance HF ≥ 1.5 and LTV ≤ maxLtvBps on the new
+ *           verifies post-refinance HF ≥ 1.5 and LTV ≤ loanInitMaxLtvBps on the new
  *           loan, and transitions the old loan to Repaid.
  */
 contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors {
@@ -299,10 +299,10 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
         // both regimes (depth-tiered ON / OFF) must agree.
         //
         // Regime OFF (default / pre-flip): today's gate — `LTV ≤
-        // assetRiskParams.maxLtvBps` and `HF ≥ 1.5e18`.
+        // assetRiskParams.loanInitMaxLtvBps` and `HF ≥ 1.5e18`.
         //
         // Regime ON (post-flip per chain): cap LTV at
-        // `min(maxLtvBps, effectiveTierMaxInitLtvBps[effectiveTier(
+        // `min(loanInitMaxLtvBps, effectiveTierMaxInitLtvBps[effectiveTier(
         // collateral)])` and relax HF floor to `≥ 1e18` (tier cap is
         // the binding buffer; see LoanFacet for full rationale).
         bytes memory ltvResult = LibFacet.crossFacetStaticCall(
@@ -310,9 +310,9 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
             LTVCalculationFailed.selector
         );
         uint256 newLTV = abi.decode(ltvResult, (uint256));
-        uint256 maxLtvBps = s
+        uint256 loanInitMaxLtvBps = s
             .assetRiskParams[oldLoan.collateralAsset]
-            .maxLtvBps;
+            .loanInitMaxLtvBps;
         bool tieredOn = LibVaipakam.cfgDepthTieredLtvEnabled();
         if (tieredOn) {
             uint8 effTier = OracleFacet(address(this))
@@ -320,11 +320,11 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
             uint256 tierCap = uint256(
                 LibVaipakam.effectiveTierMaxInitLtvBps(effTier)
             );
-            uint256 cap = maxLtvBps < tierCap ? maxLtvBps : tierCap;
+            uint256 cap = loanInitMaxLtvBps < tierCap ? loanInitMaxLtvBps : tierCap;
             if (newLTV > cap) {
                 revert IVaipakamErrors.InitLtvAboveTier(newLTV, cap);
             }
-        } else if (newLTV > maxLtvBps) {
+        } else if (newLTV > loanInitMaxLtvBps) {
             revert LTVExceeded();
         }
 

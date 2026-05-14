@@ -1072,7 +1072,7 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
         returns (
             bool isSupported,
             LibVaipakam.LiquidityStatus status,
-            uint256 maxLtvBps,
+            uint256 loanInitMaxLtvBps,
             uint256 liqThresholdBps,
             uint256 liqBonusBps
         )
@@ -1082,7 +1082,7 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
         }
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.RiskParams storage rp = s.assetRiskParams[token];
-        maxLtvBps = rp.maxLtvBps;
+        loanInitMaxLtvBps = rp.loanInitMaxLtvBps;
         liqThresholdBps = rp.liqThresholdBps;
         liqBonusBps = rp.liqBonusBps;
         status = _checkLiquidity(token);

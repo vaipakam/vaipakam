@@ -36,7 +36,7 @@ import {LibSwap} from "../libraries/LibSwap.sol";
  * @dev Part of the Diamond Standard (EIP-2535). Reentrancy-guarded, pausable
  *      (mutating paths only; views are always available).
  *
- *      Per-asset risk parameters (`AssetRiskParams`): maxLtvBps,
+ *      Per-asset risk parameters (`AssetRiskParams`): loanInitMaxLtvBps,
  *      liqThresholdBps, liqBonusBps, reserveFactorBps, minPartialBps —
  *      updatable by RISK_ADMIN_ROLE.
  *
@@ -61,14 +61,14 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
 
     /// @notice Emitted when an asset's risk parameters are updated.
     /// @param asset The asset address.
-    /// @param maxLtvBps New max LTV in basis points.
+    /// @param loanInitMaxLtvBps New max LTV in basis points.
     /// @param liqThresholdBps New liquidation threshold in basis points.
     /// @param liqBonusBps New liquidation bonus in basis points.
     /// @param reserveFactorBps New reserve factor in basis points.
     /// @custom:event-category informational/config
     event RiskParamsUpdated(
         address indexed asset,
-        uint256 maxLtvBps,
+        uint256 loanInitMaxLtvBps,
         uint256 liqThresholdBps,
         uint256 liqBonusBps,
         uint256 reserveFactorBps
@@ -258,7 +258,7 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
      *      Validates params (e.g., liqThreshold > maxLtv).
      *      Emits RiskParamsUpdated.
      * @param asset The asset address (collateral/lending).
-     * @param maxLtvBps Max LTV in bps (e.g., 8000 for 80%).
+     * @param loanInitMaxLtvBps Max LTV in bps (e.g., 8000 for 80%).
      * @param liqThresholdBps Liquidation threshold in bps (> maxLtv).
      * @param liqBonusBps Per-asset ceiling on the dynamic liquidator incentive, in bps.
      *        Must be ≤ MAX_LIQUIDATOR_INCENTIVE_BPS (300 = 3%). The runtime incentive is
@@ -268,7 +268,7 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
      */
     function updateRiskParams(
         address asset,
-        uint256 maxLtvBps,
+        uint256 loanInitMaxLtvBps,
         uint256 liqThresholdBps,
         uint256 liqBonusBps,
         uint256 reserveFactorBps
@@ -281,22 +281,22 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
         // = lender receives 0% interest). Tightened to credible
         // ranges; surfaced via `ParameterOutOfRange`.
         if (
-            maxLtvBps < LibVaipakam.RISK_PARAMS_MAX_LTV_BPS_MIN ||
-            maxLtvBps > LibVaipakam.BASIS_POINTS
+            loanInitMaxLtvBps < LibVaipakam.RISK_PARAMS_MAX_LTV_BPS_MIN ||
+            loanInitMaxLtvBps > LibVaipakam.BASIS_POINTS
         ) {
             revert IVaipakamErrors.ParameterOutOfRange(
-                "maxLtvBps",
-                maxLtvBps,
+                "loanInitMaxLtvBps",
+                loanInitMaxLtvBps,
                 uint256(LibVaipakam.RISK_PARAMS_MAX_LTV_BPS_MIN),
                 LibVaipakam.BASIS_POINTS
             );
         }
         if (
             liqThresholdBps < LibVaipakam.RISK_PARAMS_LIQ_THRESHOLD_BPS_MIN ||
-            liqThresholdBps <= maxLtvBps ||
+            liqThresholdBps <= loanInitMaxLtvBps ||
             liqThresholdBps > LibVaipakam.BASIS_POINTS
         ) {
-            // Composite check: the relative `> maxLtvBps` rule is
+            // Composite check: the relative `> loanInitMaxLtvBps` rule is
             // load-bearing for the liquidation math, so it stays.
             // The absolute floor + ceiling are the new guards.
             revert IVaipakamErrors.ParameterOutOfRange(
@@ -321,14 +321,14 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
 
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.RiskParams storage params = s.assetRiskParams[asset];
-        params.maxLtvBps = maxLtvBps;
+        params.loanInitMaxLtvBps = loanInitMaxLtvBps;
         params.liqThresholdBps = liqThresholdBps;
         params.liqBonusBps = liqBonusBps;
         params.reserveFactorBps = reserveFactorBps;
 
         emit RiskParamsUpdated(
             asset,
-            maxLtvBps,
+            loanInitMaxLtvBps,
             liqThresholdBps,
             liqBonusBps,
             reserveFactorBps

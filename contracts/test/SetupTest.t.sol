@@ -411,8 +411,8 @@ contract SetupTest is Test {
             abi.encode(6666)
         );
 
-        // Set maxLtvBps in risk params (assume owner sets)
-        // For mockERC20 collateral: maxLtvBps 8000 (80%)
+        // Set loanInitMaxLtvBps in risk params (assume owner sets)
+        // For mockERC20 collateral: loanInitMaxLtvBps 8000 (80%)
         vm.prank(owner);
         RiskFacet(address(diamond)).updateRiskParams(
             mockERC20,

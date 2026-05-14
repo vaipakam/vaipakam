@@ -97,7 +97,7 @@ interface IVaipakamErrors {
     error LTVExceeded();
     /// @notice Depth-tiered LTV (Piece B): the loan's init-LTV exceeds the
     ///         cap for the collateral's effective liquidity tier
-    ///         (`min(assetRiskParams.maxLtvBps, tierMaxInitLtvBps[
+    ///         (`min(assetRiskParams.loanInitMaxLtvBps, tierMaxInitLtvBps[
     ///         effectiveTier])`). Only thrown while `depthTieredLtvEnabled`;
     ///         a Tier-0 (illiquid / untierable) collateral makes the cap
     ///         `0`, so any positive LTV reverts this.

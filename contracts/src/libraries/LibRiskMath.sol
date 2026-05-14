@@ -98,14 +98,14 @@ library LibRiskMath {
     ///         {minCollateralForLending}, used by `LibOfferMatch.previewMatch`
     ///         when `depthTieredLtvEnabled` so a bot's preview matches the
     ///         binding `LoanFacet._checkInitialLtvAndHf` gate. `capBps` is
-    ///         the effective cap = `min(assetRiskParams.maxLtvBps,
+    ///         the effective cap = `min(assetRiskParams.loanInitMaxLtvBps,
     ///         cfgTierMaxInitLtvBps(effectiveTier(collateral)))`.
     /// @dev    `LTV = debtUSD × BASIS_POINTS / collateralUSD` (mirrors
     ///         `OracleFacet.calculateLTV`), so `LTV ≤ capBps` ⟺
     ///         `collateralUSD ≥ debtUSD × BASIS_POINTS / capBps`. Doesn't
     ///         involve `liqThresholdBps` (the LTV cap is on the *borrow*
     ///         ratio, not the liquidation trigger; and since the invariant
-    ///         `capBps ≤ maxLtvBps ≤ liqThresholdBps` holds, this floor
+    ///         `capBps ≤ loanInitMaxLtvBps ≤ liqThresholdBps` holds, this floor
     ///         dominates the `HF ≥ 1e18` floor `_checkInitialLtvAndHf`
     ///         also keeps). Returns `type(uint256).max` when `capBps == 0`
     ///         (a Tier-0 / no-borrow collateral — no positive amount

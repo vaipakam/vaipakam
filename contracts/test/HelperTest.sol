@@ -138,7 +138,7 @@ contract HelperTest {
         // depth-tiered-LTV master kill-switch. Refinance / Preclose /
         // OfferMatch test fixtures use this to assert both regimes
         // (switch ON tier-aware caps + relaxed HF floor; switch OFF
-        // legacy `LTV ≤ maxLtvBps` + `HF ≥ 1.5`) without cutting
+        // legacy `LTV ≤ loanInitMaxLtvBps` + `HF ≥ 1.5`) without cutting
         // ConfigFacet into their minimal diamonds.
         selectors[58] = TestMutatorFacet.setDepthTieredLtvEnabledRaw.selector;
         return selectors;
